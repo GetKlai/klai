@@ -1,11 +1,11 @@
 """Tests for knowledge_ingest/sparse_embedder.py"""
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
 from knowledge_ingest.sparse_embedder import embed_sparse, embed_sparse_batch
-
 
 # --- embed_sparse (single text, delegates to batch) ---
 

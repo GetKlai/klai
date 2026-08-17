@@ -110,14 +110,9 @@ def test_no_heading_doc_falls_back_to_single_section() -> None:
 
 def test_frontmatter_is_stripped_from_chunks() -> None:
     """YAML frontmatter must not appear in any child or parent text."""
-    doc = (
-        "---\n"
-        "title: Test\n"
-        "tags: [crm, voys]\n"
-        "---\n"
-        "\n"
-        "# Visible heading\n\n"
-    ) + ("Visible body content. " * 30)
+    doc = ("---\ntitle: Test\ntags: [crm, voys]\n---\n\n# Visible heading\n\n") + (
+        "Visible body content. " * 30
+    )
     children, parents = chunk_markdown_with_parents(doc)
     for c in children:
         assert "title: Test" not in c.text
@@ -149,12 +144,7 @@ def test_blocknote_json_is_normalized_before_chunking() -> None:
             "children": [],
         },
     ]
-    content = (
-        "---\n"
-        "title: Invite people\n"
-        "---\n\n"
-        f"{json.dumps(blocks)}"
-    )
+    content = f"---\ntitle: Invite people\n---\n\n{json.dumps(blocks)}"
 
     normalized = normalize_document_for_chunking(content)
     children, parents = chunk_markdown_with_parents(normalized)
@@ -184,6 +174,4 @@ def test_parent_text_contains_all_child_content() -> None:
         # First 50 chars of the child body must appear somewhere in the parent.
         sample = child_body[:50].strip()
         if sample:
-            assert sample in parent_body, (
-                f"Child fragment {sample!r} not found in parent text"
-            )
+            assert sample in parent_body, f"Child fragment {sample!r} not found in parent text"

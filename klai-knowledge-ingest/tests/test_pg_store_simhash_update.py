@@ -63,9 +63,7 @@ async def test_update_warns_when_no_row() -> None:
         if log.get("event") == "crawled_pages_simhash_update_no_row"
         and log.get("log_level") == "warning"
     ]
-    assert matched, (
-        "expected structlog warning event crawled_pages_simhash_update_no_row"
-    )
+    assert matched, "expected structlog warning event crawled_pages_simhash_update_no_row"
     assert matched[0]["url"] == "https://x/missing-row"
     assert matched[0]["org_id"] == "org-1"
     assert matched[0]["kb_slug"] == "kb-1"

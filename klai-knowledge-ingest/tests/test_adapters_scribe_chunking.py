@@ -3,17 +3,18 @@
 Tests _cluster_segments, _split_paragraphs, and _detect_content_type
 from klai-scribe/scribe-api/app/services/knowledge_adapter.py.
 """
+
 import sys
 from types import ModuleType
 from unittest.mock import MagicMock
-
-import pytest
 
 # The knowledge_adapter module lives in klai-scribe/scribe-api/ and imports from
 # app.core.config which requires the full Scribe app context.  We mock the
 # entire app.* package tree so that Python can resolve the import chain, then
 # add scribe-api to sys.path so the actual knowledge_adapter module is found.
-_scribe_api = str(__import__("pathlib").Path(__file__).resolve().parents[2] / "klai-scribe" / "scribe-api")
+_scribe_api = str(
+    __import__("pathlib").Path(__file__).resolve().parents[2] / "klai-scribe" / "scribe-api"
+)
 sys.path.insert(0, _scribe_api)
 
 _mock_app = ModuleType("app")
@@ -23,7 +24,7 @@ _mock_core.__path__ = [_scribe_api + "/app/core"]
 _mock_config = ModuleType("app.core.config")
 _mock_config.settings = MagicMock(
     knowledge_ingest_url="http://test:9100",
-    knowledge_ingest_secret="test-secret",
+    knowledge_ingest_secret="test-secret",  # noqa: S106  # testfixture, geen echt secret
 )
 _mock_services = ModuleType("app.services")
 _mock_services.__path__ = [_scribe_api + "/app/services"]
@@ -38,7 +39,6 @@ from app.services.knowledge_adapter import (  # noqa: E402
     _detect_content_type,
     _split_paragraphs,
 )
-
 
 # -- _cluster_segments --
 

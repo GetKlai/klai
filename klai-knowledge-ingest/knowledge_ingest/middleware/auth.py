@@ -10,6 +10,7 @@ emptiness is rejected at settings load time, so this middleware never runs
 with an unset secret. There is no fail-open branch; the only possible
 outcomes are "valid secret → allow" or "invalid/missing secret → 401".
 """
+
 import hmac
 import json
 

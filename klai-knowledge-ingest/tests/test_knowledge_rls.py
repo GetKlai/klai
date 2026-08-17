@@ -27,8 +27,6 @@ import pytest
 
 pytestmark = pytest.mark.no_mock_db_helpers
 
-import pytest
-
 # ---------------------------------------------------------------------------
 # Helpers: mock pool + connection
 # ---------------------------------------------------------------------------

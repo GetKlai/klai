@@ -67,6 +67,12 @@ jobs:
       #                            transitively by ragas. Local attack vector
       #                            (AV:L) + user interaction; the cache dir is
       #                            container-internal and not attacker-writable.
+      - name: Lint (ruff)
+        run: uv run --frozen --extra dev ruff check .
+
+      - name: Format check (ruff)
+        run: uv run --frozen --extra dev ruff format --check .
+
       - name: Dependency vulnerability scan (pip-audit)
         run: >
           uv run --with pip-audit pip-audit --skip-editable

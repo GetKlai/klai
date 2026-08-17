@@ -53,9 +53,7 @@ def no_crawl() -> AsyncMock:
         "https://10.0.0.5/",
     ],
 )
-def test_preview_rejects_ssrf_urls(
-    client: TestClient, no_crawl: AsyncMock, url: str
-) -> None:
+def test_preview_rejects_ssrf_urls(client: TestClient, no_crawl: AsyncMock, url: str) -> None:
     """AC-1 + AC-6: preview returns 400 and never calls the crawl engine."""
 
     resp = client.post("/ingest/v1/crawl/preview", json={"url": url})
@@ -80,23 +78,15 @@ def test_crawl_url_ssrf_parity(client: TestClient, no_crawl: AsyncMock) -> None:
     assert no_crawl.await_count == 0
 
 
-def test_preview_http_scheme_rejected(
-    client: TestClient, no_crawl: AsyncMock
-) -> None:
+def test_preview_http_scheme_rejected(client: TestClient, no_crawl: AsyncMock) -> None:
     """Non-HTTPS URLs are rejected by the first guard check."""
 
-    resp = client.post(
-        "/ingest/v1/crawl/preview", json={"url": "http://example.com/path"}
-    )
+    resp = client.post("/ingest/v1/crawl/preview", json={"url": "http://example.com/path"})
     assert resp.status_code == 400
     assert no_crawl.await_count == 0
 
 
-def test_preview_no_hostname_rejected(
-    client: TestClient, no_crawl: AsyncMock
-) -> None:
-    resp = client.post(
-        "/ingest/v1/crawl/preview", json={"url": "https:///nohost"}
-    )
+def test_preview_no_hostname_rejected(client: TestClient, no_crawl: AsyncMock) -> None:
+    resp = client.post("/ingest/v1/crawl/preview", json={"url": "https:///nohost"})
     assert resp.status_code == 400
     assert no_crawl.await_count == 0

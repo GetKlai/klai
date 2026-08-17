@@ -13,6 +13,7 @@ version of the document.
 Queue: ingest-kb (separate from enrichment queues so it can be tuned
 independently; drained by the same Procrastinate worker in app.py).
 """
+
 from __future__ import annotations
 
 import structlog

@@ -18,8 +18,8 @@ class IngestRequest(BaseModel):
             "Reference: SPEC-SEC-AUDIT-2026-04 C3."
         ),
     )
-    kb_slug: str         # e.g. "personal"
-    path: str            # e.g. "my-note.md" (relative within KB)
+    kb_slug: str  # e.g. "personal"
+    path: str  # e.g. "my-note.md" (relative within KB)
     content: str = Field(max_length=500_000)  # Full markdown content (with optional frontmatter)
     title: str | None = None  # Human-readable source title from portal/connectors
     user_id: str | None = Field(
@@ -58,7 +58,7 @@ class RetrieveRequest(BaseModel):
 
 class ChunkResult(BaseModel):
     text: str
-    source: str          # "{kb_slug}/{path}"
+    source: str  # "{kb_slug}/{path}"
     score: float
     metadata: dict = {}
     artifact_id: str | None = None
@@ -75,8 +75,8 @@ class RetrieveResponse(BaseModel):
 class CrawlRequest(BaseModel):
     org_id: str
     kb_slug: str
-    url: str                          # URL to fetch and ingest
-    path: str | None = None           # Override storage path (default: derived from URL)
+    url: str  # URL to fetch and ingest
+    path: str | None = None  # Override storage path (default: derived from URL)
 
 
 class CrawlResponse(BaseModel):
@@ -152,11 +152,11 @@ class GiteaCommit(BaseModel):
 
 
 class GiteaRepository(BaseModel):
-    full_name: str        # e.g. "org-myslug/personal"
+    full_name: str  # e.g. "org-myslug/personal"
 
 
 class GiteaPushEvent(BaseModel):
-    ref: str              # e.g. "refs/heads/main"
+    ref: str  # e.g. "refs/heads/main"
     commits: list[GiteaCommit] = []
     repository: GiteaRepository
     pusher: GiteaPusher | None = None

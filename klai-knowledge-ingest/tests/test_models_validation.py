@@ -1,4 +1,5 @@
 """Tests for Pydantic Field constraints (TASK-010)."""
+
 import pytest
 from pydantic import ValidationError
 

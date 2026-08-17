@@ -28,5 +28,7 @@ def test_bootstrap_filter_scans_only_untagged_when_taxonomy_exists():
     must = scroll_filter.must or []
     assert len(must) == 3
     assert any(isinstance(condition, IsEmptyCondition) for condition in must)
-    empty_condition = next(condition for condition in must if isinstance(condition, IsEmptyCondition))
+    empty_condition = next(
+        condition for condition in must if isinstance(condition, IsEmptyCondition)
+    )
     assert empty_condition.is_empty.key == "taxonomy_node_ids"

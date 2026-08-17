@@ -198,9 +198,7 @@ class TestSimhashStorage:
             )
 
         pg.update_crawled_page_simhash.assert_called_once()
-        assert (
-            pg.update_crawled_page_simhash.call_args.kwargs["content_simhash"] == target
-        )
+        assert pg.update_crawled_page_simhash.call_args.kwargs["content_simhash"] == target
 
 
 # ---------------------------------------------------------------------------

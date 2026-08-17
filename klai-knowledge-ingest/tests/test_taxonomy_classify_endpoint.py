@@ -2,6 +2,7 @@
 
 Verifies the new classify endpoint calls classify_document and returns node IDs.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
@@ -22,8 +23,10 @@ class TestTaxonomyClassifyEndpoint:
         mock_classify = AsyncMock(return_value=([(5, 0.9), (7, 0.7)], ["billing"]))
         mock_fetch = AsyncMock(return_value=mock_nodes)
 
-        with patch("knowledge_ingest.routes.taxonomy.classify_document", mock_classify), \
-             patch("knowledge_ingest.routes.taxonomy.fetch_taxonomy_nodes", mock_fetch):
+        with (
+            patch("knowledge_ingest.routes.taxonomy.classify_document", mock_classify),
+            patch("knowledge_ingest.routes.taxonomy.fetch_taxonomy_nodes", mock_fetch),
+        ):
             # SPEC-SEC-011: ``client`` fixture provides the default header.
             resp = client.post(
                 "/ingest/v1/taxonomy/classify",
@@ -59,8 +62,10 @@ class TestTaxonomyClassifyEndpoint:
         mock_classify = AsyncMock(return_value=([], []))
         mock_fetch = AsyncMock(return_value=mock_nodes)
 
-        with patch("knowledge_ingest.routes.taxonomy.classify_document", mock_classify), \
-             patch("knowledge_ingest.routes.taxonomy.fetch_taxonomy_nodes", mock_fetch):
+        with (
+            patch("knowledge_ingest.routes.taxonomy.classify_document", mock_classify),
+            patch("knowledge_ingest.routes.taxonomy.fetch_taxonomy_nodes", mock_fetch),
+        ):
             # SPEC-SEC-011: ``client`` fixture provides the default header.
             resp = client.post(
                 "/ingest/v1/taxonomy/classify",

@@ -119,9 +119,7 @@ def _build_report(
     # Find URLs that meet the cluster threshold (>= cluster_min OTHERS).
     flagged_urls: set[str] = set()
     for url, target_hash in url_to_hash.items():
-        siblings = _count_cluster_siblings(
-            url, target_hash, url_to_hash, hamming_max=hamming_max
-        )
+        siblings = _count_cluster_siblings(url, target_hash, url_to_hash, hamming_max=hamming_max)
         if siblings >= cluster_min:
             flagged_urls.add(url)
 
@@ -142,10 +140,7 @@ def _build_report(
             for other in flagged_urls:
                 if other in visited:
                     continue
-                if (
-                    hamming_distance(url_to_hash[current], url_to_hash[other])
-                    <= hamming_max
-                ):
+                if hamming_distance(url_to_hash[current], url_to_hash[other]) <= hamming_max:
                     stack.append(other)
         component.sort()
         clusters.append({"size": len(component), "sample_urls": component[:sample_size]})
@@ -159,9 +154,7 @@ def _build_report(
             continue
         url = row["url"]
         target_hash = url_to_hash[url]
-        siblings = _count_cluster_siblings(
-            url, target_hash, url_to_hash, hamming_max=hamming_max
-        )
+        siblings = _count_cluster_siblings(url, target_hash, url_to_hash, hamming_max=hamming_max)
         if siblings < cluster_min:
             recovery_candidates.append(url)
 

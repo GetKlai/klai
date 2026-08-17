@@ -40,6 +40,7 @@ Expected runtime: < 60 s.
 
 Acceptance: SPEC-CRAWLER-005 AC-07.1.
 """
+
 from __future__ import annotations
 
 import os

@@ -1,7 +1,7 @@
 """Tests for taxonomy_classifier -- multi-label classification + tag suggestion."""
+
 from __future__ import annotations
 
-import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -15,22 +15,24 @@ def _make_nodes(*names: str) -> list[TaxonomyNode]:
 
 
 def _make_nodes_with_desc(*items: tuple[str, str | None]) -> list[TaxonomyNode]:
-    return [TaxonomyNode(id=i + 1, name=name, description=desc) for i, (name, desc) in enumerate(items)]
+    return [
+        TaxonomyNode(id=i + 1, name=name, description=desc) for i, (name, desc) in enumerate(items)
+    ]
 
 
-def _mock_litellm_response(
-    nodes: list[dict], tags: list[str] | None = None
-) -> AsyncMock:
+def _mock_litellm_response(nodes: list[dict], tags: list[str] | None = None) -> AsyncMock:
     """Build a mock httpx response for multi-label LiteLLM response."""
     response_json = {
         "choices": [
             {
                 "message": {
-                    "content": json.dumps({
-                        "nodes": nodes,
-                        "tags": tags or [],
-                        "reasoning": "test",
-                    })
+                    "content": json.dumps(
+                        {
+                            "nodes": nodes,
+                            "tags": tags or [],
+                            "reasoning": "test",
+                        }
+                    )
                 }
             }
         ]
@@ -57,7 +59,9 @@ class TestClassifyDocumentMultiLabel:
             ],
             tags=["sso", "billing"],
         )
-        with patch("knowledge_ingest.taxonomy_classifier.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "knowledge_ingest.taxonomy_classifier.httpx.AsyncClient", return_value=mock_client
+        ):
             matched, tags = await classify_document("SSO billing setup", "...", nodes)
         assert len(matched) == 2
         assert matched[0] == (1, 0.9)
@@ -73,8 +77,10 @@ class TestClassifyDocumentMultiLabel:
                 {"node_id": 2, "confidence": 0.3},  # below threshold
             ],
         )
-        with patch("knowledge_ingest.taxonomy_classifier.httpx.AsyncClient", return_value=mock_client):
-            matched, tags = await classify_document("Invoice", "...", nodes)
+        with patch(
+            "knowledge_ingest.taxonomy_classifier.httpx.AsyncClient", return_value=mock_client
+        ):
+            matched, _tags = await classify_document("Invoice", "...", nodes)
         assert len(matched) == 1
         assert matched[0] == (1, 0.9)
 
@@ -87,8 +93,10 @@ class TestClassifyDocumentMultiLabel:
                 {"node_id": 2, "confidence": 0.2},
             ],
         )
-        with patch("knowledge_ingest.taxonomy_classifier.httpx.AsyncClient", return_value=mock_client):
-            matched, tags = await classify_document("Ambiguous", "...", nodes)
+        with patch(
+            "knowledge_ingest.taxonomy_classifier.httpx.AsyncClient", return_value=mock_client
+        ):
+            matched, _tags = await classify_document("Ambiguous", "...", nodes)
         assert matched == []
 
     @pytest.mark.asyncio
@@ -102,7 +110,7 @@ class TestClassifyDocumentMultiLabel:
         nodes = _make_nodes("Billing")
         with patch(
             "knowledge_ingest.taxonomy_classifier._call_litellm",
-            side_effect=asyncio.TimeoutError(),
+            side_effect=TimeoutError(),
         ):
             matched, tags = await classify_document("Title", "Content", nodes)
         assert matched == []
@@ -126,8 +134,10 @@ class TestClassifyDocumentMultiLabel:
         mock_client = _mock_litellm_response(
             nodes=[{"node_id": 999, "confidence": 0.95}],
         )
-        with patch("knowledge_ingest.taxonomy_classifier.httpx.AsyncClient", return_value=mock_client):
-            matched, tags = await classify_document("Title", "Content", nodes)
+        with patch(
+            "knowledge_ingest.taxonomy_classifier.httpx.AsyncClient", return_value=mock_client
+        ):
+            matched, _tags = await classify_document("Title", "Content", nodes)
         assert matched == []
 
     @pytest.mark.asyncio
@@ -136,8 +146,10 @@ class TestClassifyDocumentMultiLabel:
         mock_client = _mock_litellm_response(
             nodes=[{"node_id": i, "confidence": 0.9 - i * 0.01} for i in range(1, 10)],
         )
-        with patch("knowledge_ingest.taxonomy_classifier.httpx.AsyncClient", return_value=mock_client):
-            matched, tags = await classify_document("Title", "Content", nodes)
+        with patch(
+            "knowledge_ingest.taxonomy_classifier.httpx.AsyncClient", return_value=mock_client
+        ):
+            matched, _tags = await classify_document("Title", "Content", nodes)
         assert len(matched) <= 5
 
     @pytest.mark.asyncio
@@ -147,8 +159,10 @@ class TestClassifyDocumentMultiLabel:
             nodes=[{"node_id": 1, "confidence": 0.9}],
             tags=["a", "b", "c", "d", "e", "f", "g"],
         )
-        with patch("knowledge_ingest.taxonomy_classifier.httpx.AsyncClient", return_value=mock_client):
-            matched, tags = await classify_document("Title", "Content", nodes)
+        with patch(
+            "knowledge_ingest.taxonomy_classifier.httpx.AsyncClient", return_value=mock_client
+        ):
+            _matched, tags = await classify_document("Title", "Content", nodes)
         assert len(tags) <= 5
 
     @pytest.mark.asyncio
@@ -158,8 +172,10 @@ class TestClassifyDocumentMultiLabel:
             nodes=[{"node_id": 1, "confidence": 0.9}],
             tags=["SSO", "sso", "OKTA", " billing "],
         )
-        with patch("knowledge_ingest.taxonomy_classifier.httpx.AsyncClient", return_value=mock_client):
-            matched, tags = await classify_document("Title", "Content", nodes)
+        with patch(
+            "knowledge_ingest.taxonomy_classifier.httpx.AsyncClient", return_value=mock_client
+        ):
+            _matched, tags = await classify_document("Title", "Content", nodes)
         assert tags == ["sso", "okta", "billing"]
 
     @pytest.mark.asyncio
@@ -210,6 +226,8 @@ class TestClassifyDocumentMultiLabel:
                 {"node_id": 2, "confidence": 0.7},
             ],
         )
-        with patch("knowledge_ingest.taxonomy_classifier.httpx.AsyncClient", return_value=mock_client):
-            matched, tags = await classify_document("Title", "Content", nodes)
+        with patch(
+            "knowledge_ingest.taxonomy_classifier.httpx.AsyncClient", return_value=mock_client
+        ):
+            matched, _tags = await classify_document("Title", "Content", nodes)
         assert matched[0][1] >= matched[1][1] >= matched[2][1]

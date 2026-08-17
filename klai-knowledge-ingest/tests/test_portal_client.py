@@ -1,7 +1,7 @@
 """Tests for portal_client — taxonomy node fetching and proposal submission."""
+
 from __future__ import annotations
 
-import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,7 +12,6 @@ from knowledge_ingest.portal_client import (
     invalidate_cache,
     submit_taxonomy_proposal,
 )
-from knowledge_ingest.taxonomy_classifier import TaxonomyNode
 
 
 def _mock_httpx_response(status_code: int, body: object) -> MagicMock:
@@ -42,8 +41,10 @@ class TestFetchTaxonomyNodes:
         mock_resp = _mock_httpx_response(200, nodes_data)
         mock_client = _mock_client(mock_resp)
 
-        with patch("knowledge_ingest.portal_client.httpx.AsyncClient", return_value=mock_client), \
-             patch("knowledge_ingest.portal_client.settings") as mock_settings:
+        with (
+            patch("knowledge_ingest.portal_client.httpx.AsyncClient", return_value=mock_client),
+            patch("knowledge_ingest.portal_client.settings") as mock_settings,
+        ):
             mock_settings.portal_internal_token = "secret"
             mock_settings.portal_url = "http://portal-api:8000"
             nodes = await fetch_taxonomy_nodes("kb1", "org1")
@@ -64,8 +65,10 @@ class TestFetchTaxonomyNodes:
         mock_resp = _mock_httpx_response(404, None)
         mock_client = _mock_client(mock_resp)
 
-        with patch("knowledge_ingest.portal_client.httpx.AsyncClient", return_value=mock_client), \
-             patch("knowledge_ingest.portal_client.settings") as mock_settings:
+        with (
+            patch("knowledge_ingest.portal_client.httpx.AsyncClient", return_value=mock_client),
+            patch("knowledge_ingest.portal_client.settings") as mock_settings,
+        ):
             mock_settings.portal_internal_token = "secret"
             mock_settings.portal_url = "http://portal-api:8000"
             nodes = await fetch_taxonomy_nodes("kb1", "org1")
@@ -78,8 +81,10 @@ class TestFetchTaxonomyNodes:
         mock_resp = _mock_httpx_response(200, nodes_data)
         mock_client = _mock_client(mock_resp)
 
-        with patch("knowledge_ingest.portal_client.httpx.AsyncClient", return_value=mock_client), \
-             patch("knowledge_ingest.portal_client.settings") as mock_settings:
+        with (
+            patch("knowledge_ingest.portal_client.httpx.AsyncClient", return_value=mock_client),
+            patch("knowledge_ingest.portal_client.settings") as mock_settings,
+        ):
             mock_settings.portal_internal_token = "secret"
             mock_settings.portal_url = "http://portal-api:8000"
             nodes1 = await fetch_taxonomy_nodes("kb1", "org1")
@@ -96,8 +101,10 @@ class TestFetchTaxonomyNodes:
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client.get = AsyncMock(side_effect=Exception("connection refused"))
 
-        with patch("knowledge_ingest.portal_client.httpx.AsyncClient", return_value=mock_client), \
-             patch("knowledge_ingest.portal_client.settings") as mock_settings:
+        with (
+            patch("knowledge_ingest.portal_client.httpx.AsyncClient", return_value=mock_client),
+            patch("knowledge_ingest.portal_client.settings") as mock_settings,
+        ):
             mock_settings.portal_internal_token = "secret"
             mock_settings.portal_url = "http://portal-api:8000"
             nodes = await fetch_taxonomy_nodes("kb1", "org1")
@@ -118,8 +125,10 @@ class TestSubmitTaxonomyProposal:
             sample_titles=["API Guide", "REST Docs"],
         )
 
-        with patch("knowledge_ingest.portal_client.httpx.AsyncClient", return_value=mock_client), \
-             patch("knowledge_ingest.portal_client.settings") as mock_settings:
+        with (
+            patch("knowledge_ingest.portal_client.httpx.AsyncClient", return_value=mock_client),
+            patch("knowledge_ingest.portal_client.settings") as mock_settings,
+        ):
             mock_settings.portal_internal_token = "secret"
             mock_settings.portal_url = "http://portal-api:8000"
             await submit_taxonomy_proposal("kb1", "org1", proposal)
@@ -141,8 +150,10 @@ class TestSubmitTaxonomyProposal:
             sample_titles=[],
         )
 
-        with patch("knowledge_ingest.portal_client.httpx.AsyncClient", return_value=mock_client), \
-             patch("knowledge_ingest.portal_client.settings") as mock_settings:
+        with (
+            patch("knowledge_ingest.portal_client.httpx.AsyncClient", return_value=mock_client),
+            patch("knowledge_ingest.portal_client.settings") as mock_settings,
+        ):
             mock_settings.portal_internal_token = ""
             await submit_taxonomy_proposal("kb1", "org1", proposal)
 
@@ -163,8 +174,10 @@ class TestSubmitTaxonomyProposal:
             sample_titles=[],
         )
 
-        with patch("knowledge_ingest.portal_client.httpx.AsyncClient", return_value=mock_client), \
-             patch("knowledge_ingest.portal_client.settings") as mock_settings:
+        with (
+            patch("knowledge_ingest.portal_client.httpx.AsyncClient", return_value=mock_client),
+            patch("knowledge_ingest.portal_client.settings") as mock_settings,
+        ):
             mock_settings.portal_internal_token = "secret"
             mock_settings.portal_url = "http://portal-api:8000"
             # Must not raise

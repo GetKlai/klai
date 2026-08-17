@@ -4,17 +4,16 @@ SPEC-CRAWLER-003: R9, R10, R11
 Verifies that anchor texts from linking pages are deduplicated and appended
 to enriched_text only, leaving original_text and context_prefix unchanged.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
 
 # ---------------------------------------------------------------------------
 # Fake EnrichedChunk -- mirrors knowledge_ingest.enrichment.EnrichedChunk
 # without pulling in the real module and its heavy transitive deps.
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class FakeEnrichedChunk:
@@ -47,6 +46,7 @@ def _make_chunks(texts: list[str]) -> list[FakeEnrichedChunk]:
 # ---------------------------------------------------------------------------
 # Scenario 4.1: Anchor text deduplicated and appended
 # ---------------------------------------------------------------------------
+
 
 class TestAnchorTextDeduplicatedAndAppended:
     """Given enriched chunks and extra_payload with duplicate anchor_texts,
@@ -90,6 +90,7 @@ class TestAnchorTextDeduplicatedAndAppended:
 # Scenario 4.2: Empty anchor_texts list -- no modification
 # ---------------------------------------------------------------------------
 
+
 class TestEmptyAnchorTextsNoModification:
     """Given extra_payload with empty anchor_texts, enriched_text is unchanged."""
 
@@ -104,7 +105,7 @@ class TestEmptyAnchorTextsNoModification:
             for ec in chunks:
                 ec.enriched_text += anchor_block
 
-        for ec, orig in zip(chunks, original_texts):
+        for ec, orig in zip(chunks, original_texts, strict=True):
             assert ec.enriched_text == orig
 
     def test_missing_key_no_change(self):
@@ -119,7 +120,7 @@ class TestEmptyAnchorTextsNoModification:
             for ec in chunks:
                 ec.enriched_text += anchor_block
 
-        for ec, orig in zip(chunks, original_texts):
+        for ec, orig in zip(chunks, original_texts, strict=True):
             assert ec.enriched_text == orig
 
     def test_none_extra_payload_no_change(self):
@@ -134,13 +135,14 @@ class TestEmptyAnchorTextsNoModification:
             for ec in chunks:
                 ec.enriched_text += anchor_block
 
-        for ec, orig in zip(chunks, original_texts):
+        for ec, orig in zip(chunks, original_texts, strict=True):
             assert ec.enriched_text == orig
 
 
 # ---------------------------------------------------------------------------
 # Scenario 4.3: original_text and context_prefix unchanged
 # ---------------------------------------------------------------------------
+
 
 class TestOriginalFieldsUnchanged:
     """Given anchor_texts, original_text and context_prefix must NOT be modified."""
@@ -155,7 +157,7 @@ class TestOriginalFieldsUnchanged:
         for ec in chunks:
             ec.enriched_text += anchor_block
 
-        for ec, orig in zip(chunks, original_original):
+        for ec, orig in zip(chunks, original_original, strict=True):
             assert ec.original_text == orig
 
     def test_context_prefix_unchanged(self):
@@ -168,7 +170,7 @@ class TestOriginalFieldsUnchanged:
         for ec in chunks:
             ec.enriched_text += anchor_block
 
-        for ec, orig in zip(chunks, original_prefixes):
+        for ec, orig in zip(chunks, original_prefixes, strict=True):
             assert ec.context_prefix == orig
 
     def test_questions_unchanged(self):
@@ -181,5 +183,5 @@ class TestOriginalFieldsUnchanged:
         for ec in chunks:
             ec.enriched_text += anchor_block
 
-        for ec, orig in zip(chunks, original_questions):
+        for ec, orig in zip(chunks, original_questions, strict=True):
             assert ec.questions == orig

@@ -2,6 +2,7 @@
 Context extraction strategies for enrichment.
 Each strategy extracts the most relevant document context for a given content type.
 """
+
 from __future__ import annotations
 
 
@@ -35,7 +36,9 @@ def extract_most_recent_messages(doc: str, n: int, **kwargs: object) -> str:
     return doc[-max_chars:] if len(doc) > max_chars else doc
 
 
-def extract_front_matter(doc: str, n: int, *, front_matter: str | None = None, **kwargs: object) -> str:
+def extract_front_matter(
+    doc: str, n: int, *, front_matter: str | None = None, **kwargs: object
+) -> str:
     """Title + TOC extracted during PDF parsing.
     Falls back to first_n if no front_matter is provided."""
     if front_matter:

@@ -1,7 +1,7 @@
 """Tests for description_generator -- taxonomy node description generation."""
+
 from __future__ import annotations
 
-import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -13,13 +13,7 @@ from knowledge_ingest.description_generator import generate_node_description
 def _mock_litellm_response(description: str) -> AsyncMock:
     """Build a mock httpx response for description generation."""
     response_json = {
-        "choices": [
-            {
-                "message": {
-                    "content": json.dumps({"description": description})
-                }
-            }
-        ]
+        "choices": [{"message": {"content": json.dumps({"description": description})}}]
     }
     mock_resp = MagicMock()
     mock_resp.raise_for_status = MagicMock()
@@ -36,7 +30,9 @@ class TestGenerateNodeDescription:
     @pytest.mark.asyncio
     async def test_returns_description(self):
         mock_client = _mock_litellm_response("Questions about invoices and payments")
-        with patch("knowledge_ingest.description_generator.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "knowledge_ingest.description_generator.httpx.AsyncClient", return_value=mock_client
+        ):
             desc = await generate_node_description("Billing", None, ["Invoice FAQ"])
         assert desc == "Questions about invoices and payments"
 
@@ -44,7 +40,9 @@ class TestGenerateNodeDescription:
     async def test_truncates_to_200_chars(self):
         long_desc = "x" * 300
         mock_client = _mock_litellm_response(long_desc)
-        with patch("knowledge_ingest.description_generator.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "knowledge_ingest.description_generator.httpx.AsyncClient", return_value=mock_client
+        ):
             desc = await generate_node_description("Billing", None, [])
         assert len(desc) <= 200
 
@@ -52,7 +50,7 @@ class TestGenerateNodeDescription:
     async def test_returns_empty_on_timeout(self):
         with patch(
             "knowledge_ingest.description_generator._call_litellm",
-            side_effect=asyncio.TimeoutError(),
+            side_effect=TimeoutError(),
         ):
             desc = await generate_node_description("Billing", None, [])
         assert desc == ""

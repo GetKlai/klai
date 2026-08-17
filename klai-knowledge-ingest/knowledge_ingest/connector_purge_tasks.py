@@ -53,9 +53,7 @@ def register_connector_purge_task(procrastinate_app: Any) -> None:
             attempt = job.attempts  # 0-based after first failure
             if attempt >= len(self._waits):
                 return None  # exhausted, give up
-            return procrastinate.RetryDecision(
-                retry_in={"seconds": self._waits[attempt]}
-            )
+            return procrastinate.RetryDecision(retry_in={"seconds": self._waits[attempt]})
 
     @procrastinate_app.task(
         queue=queues.CONNECTOR_PURGE,

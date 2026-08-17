@@ -2,6 +2,7 @@
 Knowledge management routes:
   POST /knowledge/v1/crawl - enqueue a bulk web crawl job
 """
+
 import json
 import time
 import uuid
@@ -9,7 +10,7 @@ import uuid
 import structlog
 from fastapi import APIRouter, Request
 
-from knowledge_ingest.db import get_pool, tenant_scoped_connection
+from knowledge_ingest.db import tenant_scoped_connection
 from knowledge_ingest.identity import assert_caller_identity
 from knowledge_ingest.models import BulkCrawlRequest, BulkCrawlResponse
 
@@ -37,11 +38,15 @@ async def start_crawl(req: BulkCrawlRequest, request: Request) -> BulkCrawlRespo
             """INSERT INTO knowledge.crawl_jobs
                (id, org_id, kb_slug, config, status, created_at, updated_at)
                VALUES ($1, $2, $3, $4, 'pending', $5, $5)""",
-            job_id, verified_org_id, req.kb_slug,
-            json.dumps(req.model_dump()), now,
+            job_id,
+            verified_org_id,
+            req.kb_slug,
+            json.dumps(req.model_dump()),
+            now,
         )
 
     from knowledge_ingest import enrichment_tasks
+
     proc_app = enrichment_tasks.get_app()
     await proc_app.run_crawl.defer_async(  # type: ignore[attr-defined]
         job_id=job_id,

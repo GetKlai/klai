@@ -46,11 +46,10 @@ def test_revision_id_is_distinct_uuid_style() -> None:
     """Revision id must be a 12-char hex string and not collide with predecessors."""
     content = MIGRATION.read_text()
     match = re.search(r'^revision: str = "([^"]+)"', content, re.MULTILINE)
-    assert match, "top-level `revision: str = \"...\"` declaration not found"
+    assert match, 'top-level `revision: str = "..."` declaration not found'
     rev = match.group(1)
     assert re.fullmatch(r"[0-9a-f]{12}", rev), (
-        f"revision id {rev!r} must be 12 lowercase hex chars, matching "
-        "the pattern set by 0002-0004"
+        f"revision id {rev!r} must be 12 lowercase hex chars, matching the pattern set by 0002-0004"
     )
     assert rev not in {
         "603787256fb8",

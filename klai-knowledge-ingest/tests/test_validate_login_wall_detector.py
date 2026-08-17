@@ -88,9 +88,7 @@ class TestClusterDiscovery:
         )
         assert len(report["clusters"]) == 1
         assert report["clusters"][0]["size"] == 6
-        assert "https://help.voys.nl/2fa-freedom" not in (
-            report["clusters"][0]["sample_urls"]
-        )
+        assert "https://help.voys.nl/2fa-freedom" not in (report["clusters"][0]["sample_urls"])
 
     def test_sample_size_caps_url_list(self) -> None:
         report = _build_report(
@@ -210,9 +208,7 @@ class TestReportShape:
     def test_clusters_sorted_by_size_desc(self) -> None:
         # Two distinct clusters: 6 walls (large) and 6 clean dupes (small group).
         wall_rows = _walls(6)
-        clean_rows = [
-            _row(url=f"https://x/clean-{i}", raw=_clean()) for i in range(7)
-        ]
+        clean_rows = [_row(url=f"https://x/clean-{i}", raw=_clean()) for i in range(7)]
         report = _build_report(
             wall_rows + clean_rows,
             org_id="org-1",

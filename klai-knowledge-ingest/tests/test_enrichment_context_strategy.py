@@ -1,10 +1,10 @@
 """Tests that context strategies are correctly applied in enrich_chunks."""
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from knowledge_ingest.enrichment import enrich_chunks
-
 
 DOCUMENT = " ".join([f"word{i}" for i in range(500)])  # ~500 words, long enough for all strategies
 
@@ -12,7 +12,17 @@ DOCUMENT = " ".join([f"word{i}" for i in range(500)])  # ~500 words, long enough
 def _fake_enrich_chunk_factory(captured: list) -> AsyncMock:
     """Return an AsyncMock that records the context_window argument each call receives."""
 
-    async def _fake(document_text, chunk_text, title, path, *, question_focus="", participant_context="", context_window=None, **kwargs):
+    async def _fake(
+        document_text,
+        chunk_text,
+        title,
+        path,
+        *,
+        question_focus="",
+        participant_context="",
+        context_window=None,
+        **kwargs,
+    ):
         captured.append(context_window)
         return MagicMock(context_prefix="prefix", questions=["q?"])
 
@@ -24,7 +34,10 @@ async def test_first_n_strategy_uses_start_of_document():
     """first_n strategy: context window should start from the beginning of the document."""
     captured: list = []
 
-    with patch("knowledge_ingest.enrichment.enrich_chunk", side_effect=_fake_enrich_chunk_factory(captured)):
+    with patch(
+        "knowledge_ingest.enrichment.enrich_chunk",
+        side_effect=_fake_enrich_chunk_factory(captured),
+    ):
         await enrich_chunks(
             document_text=DOCUMENT,
             chunks=["chunk A", "chunk B"],
@@ -47,7 +60,10 @@ async def test_rolling_window_strategy_differs_per_chunk():
     """rolling_window strategy: context window should differ for different chunk positions."""
     captured: list = []
 
-    with patch("knowledge_ingest.enrichment.enrich_chunk", side_effect=_fake_enrich_chunk_factory(captured)):
+    with patch(
+        "knowledge_ingest.enrichment.enrich_chunk",
+        side_effect=_fake_enrich_chunk_factory(captured),
+    ):
         await enrich_chunks(
             document_text=DOCUMENT,
             chunks=["chunk A", "chunk B", "chunk C", "chunk D", "chunk E"],
@@ -71,7 +87,10 @@ async def test_most_recent_strategy_uses_end_of_document():
     captured: list = []
     doc = "start " * 100 + "end_content"
 
-    with patch("knowledge_ingest.enrichment.enrich_chunk", side_effect=_fake_enrich_chunk_factory(captured)):
+    with patch(
+        "knowledge_ingest.enrichment.enrich_chunk",
+        side_effect=_fake_enrich_chunk_factory(captured),
+    ):
         await enrich_chunks(
             document_text=doc,
             chunks=["chunk A"],
@@ -92,7 +111,10 @@ async def test_unknown_strategy_falls_back_to_first_n():
     """Unknown strategy name falls back to first_n (via STRATEGIES.get default)."""
     captured: list = []
 
-    with patch("knowledge_ingest.enrichment.enrich_chunk", side_effect=_fake_enrich_chunk_factory(captured)):
+    with patch(
+        "knowledge_ingest.enrichment.enrich_chunk",
+        side_effect=_fake_enrich_chunk_factory(captured),
+    ):
         await enrich_chunks(
             document_text=DOCUMENT,
             chunks=["chunk A"],
@@ -113,7 +135,10 @@ async def test_context_window_passed_to_enrich_chunk():
     """Verify that enrich_chunk receives context_window (not None) when strategy is active."""
     captured: list = []
 
-    with patch("knowledge_ingest.enrichment.enrich_chunk", side_effect=_fake_enrich_chunk_factory(captured)):
+    with patch(
+        "knowledge_ingest.enrichment.enrich_chunk",
+        side_effect=_fake_enrich_chunk_factory(captured),
+    ):
         await enrich_chunks(
             document_text="hello world " * 100,
             chunks=["chunk"],

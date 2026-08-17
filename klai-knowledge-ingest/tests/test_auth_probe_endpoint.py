@@ -32,7 +32,6 @@ from fastapi.testclient import TestClient
 
 from knowledge_ingest.routes.crawl import _ProbeResponse
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -111,12 +110,8 @@ def test_auth_probe_no_cookies_short_circuits_without_fetching(
 def test_auth_probe_significant_word_diff_returns_auth_ok(client: TestClient) -> None:
     """Cookies that produce a measurably larger response authenticate."""
     with _patch_probe_fetch(
-        with_cookies=_probe(
-            word_count=7299, byte_size=181000, text="Logged in body. " * 500
-        ),
-        without_cookies=_probe(
-            word_count=5572, byte_size=140000, text="Anonymous body. " * 300
-        ),
+        with_cookies=_probe(word_count=7299, byte_size=181000, text="Logged in body. " * 500),
+        without_cookies=_probe(word_count=5572, byte_size=140000, text="Anonymous body. " * 300),
     ):
         resp = client.post(
             "/ingest/v1/crawl/auth-probe",
@@ -156,9 +151,7 @@ def test_auth_probe_no_diff_returns_auth_failed_still_walled(
     """Cookies that produce an identical (or near-identical) response to the
     anonymous baseline have no authenticating effect — the wizard MUST NOT
     green-light this case."""
-    identical = _probe(
-        word_count=250, byte_size=10000, text="Same body for both fetches."
-    )
+    identical = _probe(word_count=250, byte_size=10000, text="Same body for both fetches.")
     with _patch_probe_fetch(with_cookies=identical, without_cookies=identical):
         resp = client.post(
             "/ingest/v1/crawl/auth-probe",
@@ -225,9 +218,7 @@ def test_auth_probe_auth_ok_emits_canary_fingerprint(client: TestClient) -> None
             byte_size=30000,
             text="Long unique logged-in content. " * 200,
         ),
-        without_cookies=_probe(
-            word_count=300, byte_size=8000, text="Short anonymous body. " * 50
-        ),
+        without_cookies=_probe(word_count=300, byte_size=8000, text="Short anonymous body. " * 50),
     ):
         resp = client.post(
             "/ingest/v1/crawl/auth-probe",

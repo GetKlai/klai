@@ -52,9 +52,7 @@ def _sample_tokens(text: str) -> list[str]:
 
 def _token_hash(token: str) -> int:
     """64-bit hash of a single token via blake2b (matches trafilatura._hash)."""
-    return int.from_bytes(
-        blake2b(token.encode(), digest_size=8).digest(), "big"
-    )
+    return int.from_bytes(blake2b(token.encode(), digest_size=8).digest(), "big")
 
 
 def compute_content_fingerprint(markdown: str) -> str:

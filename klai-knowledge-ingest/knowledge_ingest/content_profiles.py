@@ -2,17 +2,18 @@
 Content-type parameter profiles for enrichment.
 Each profile specifies HyPE behavior, context strategy, token ranges, and prompt focus.
 """
+
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 
 @dataclass(frozen=True)
 class ContentTypeProfile:
     content_type: str
     hype_enabled: Callable[[int], bool]  # (synthesis_depth) -> bool
-    context_strategy: str                # name of function in context_strategies.STRATEGIES
+    context_strategy: str  # name of function in context_strategies.STRATEGIES
     context_tokens_min: int
     context_tokens_max: int
     chunk_tokens_min: int
@@ -56,8 +57,7 @@ PROFILES: dict[str, ContentTypeProfile] = {
         chunk_tokens_min=100,
         chunk_tokens_max=300,
         hype_question_focus=(
-            "Genereer vragen over toezeggingen, besproken onderwerpen "
-            "en genoemde namen."
+            "Genereer vragen over toezeggingen, besproken onderwerpen en genoemde namen."
         ),
     ),
     "email_thread": ContentTypeProfile(
@@ -69,8 +69,7 @@ PROFILES: dict[str, ContentTypeProfile] = {
         chunk_tokens_min=200,
         chunk_tokens_max=500,
         hype_question_focus=(
-            "Genereer vragen over de status, beslissingen "
-            "en verzoeken in deze e-mailthread."
+            "Genereer vragen over de status, beslissingen en verzoeken in deze e-mailthread."
         ),
     ),
     "pdf_document": ContentTypeProfile(

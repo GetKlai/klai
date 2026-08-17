@@ -122,5 +122,3 @@ async def test_upsert_enriched_chunks_persists_heading_path(mock_qdrant_client):
 
         points = mock_qdrant_client.upsert.call_args.kwargs["points"]
         assert points[0].payload["heading_path"] == "Admin > Mensen"
-
-

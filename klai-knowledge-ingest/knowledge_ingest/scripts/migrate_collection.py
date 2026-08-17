@@ -11,6 +11,7 @@ Usage:
 After validation, switch the active collection:
     Set QDRANT_COLLECTION=klai_knowledge_v2 in /opt/klai/.env and restart knowledge-ingest.
 """
+
 import argparse
 import asyncio
 import logging
@@ -65,6 +66,7 @@ async def migrate(dry_run: bool, batch_size: int) -> None:
                 # Fetch document content from Qdrant v1 (existing raw points)
                 client = qdrant_store.get_client()
                 from qdrant_client.models import FieldCondition, Filter, MatchValue
+
                 existing_points, _ = await client.scroll(
                     qdrant_store.COLLECTION,
                     scroll_filter=Filter(
@@ -78,7 +80,12 @@ async def migrate(dry_run: bool, batch_size: int) -> None:
                 )
 
                 if not existing_points:
-                    logger.warning("No Qdrant points for artifact %s (%s/%s) — skipping", artifact_id, kb_slug, path)
+                    logger.warning(
+                        "No Qdrant points for artifact %s (%s/%s) — skipping",
+                        artifact_id,
+                        kb_slug,
+                        path,
+                    )
                     continue
 
                 # Reconstruct chunks and document text from existing points
@@ -88,7 +95,14 @@ async def migrate(dry_run: bool, batch_size: int) -> None:
                 title = existing_points[0].payload.get("title", path)
                 extra_payload = {
                     k: existing_points[0].payload[k]
-                    for k in ("title", "source_type", "tags", "provenance_type", "confidence", "artifact_id")
+                    for k in (
+                        "title",
+                        "source_type",
+                        "tags",
+                        "provenance_type",
+                        "confidence",
+                        "artifact_id",
+                    )
                     if k in existing_points[0].payload
                 }
                 user_id = existing_points[0].payload.get("user_id")
@@ -108,7 +122,10 @@ async def migrate(dry_run: bool, batch_size: int) -> None:
                 # Embed questions for depth 0-1
                 question_vectors: list[list[float] | None]
                 if synthesis_depth <= 1:
-                    q_strings = [" ".join(ec.questions) if ec.questions else ec.original_text for ec in enriched_chunks]
+                    q_strings = [
+                        " ".join(ec.questions) if ec.questions else ec.original_text
+                        for ec in enriched_chunks
+                    ]
                     question_vectors = await embedder.embed(q_strings)
                 else:
                     question_vectors = [None] * len(enriched_chunks)
@@ -130,12 +147,16 @@ async def migrate(dry_run: bool, batch_size: int) -> None:
                     logger.info("Progress: %d/%d artifacts migrated", processed, total)
 
             except Exception as exc:
-                logger.error("Failed to migrate artifact %s (%s/%s): %s", artifact_id, kb_slug, path, exc)
+                logger.error(
+                    "Failed to migrate artifact %s (%s/%s): %s", artifact_id, kb_slug, path, exc
+                )
                 errors += 1
 
         logger.info(
             "Migration complete: %d/%d processed, %d errors.",
-            processed, total, errors,
+            processed,
+            total,
+            errors,
         )
 
         if not dry_run:
@@ -150,9 +171,13 @@ async def migrate(dry_run: bool, batch_size: int) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Migrate Qdrant collection to v2 with named vectors")
+    parser = argparse.ArgumentParser(
+        description="Migrate Qdrant collection to v2 with named vectors"
+    )
     parser.add_argument("--dry-run", action="store_true", help="List artifacts without migrating")
-    parser.add_argument("--batch-size", type=int, default=10, help="Concurrent enrichment batch size")
+    parser.add_argument(
+        "--batch-size", type=int, default=10, help="Concurrent enrichment batch size"
+    )
     args = parser.parse_args()
 
     try:

@@ -2,6 +2,7 @@
 
 Verifies the new job enqueue endpoint and Procrastinate task registration.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -76,11 +77,13 @@ class TestAutoCategoriseTaskRegistration:
                 registered_tasks[fn.__name__] = kwargs
                 mock_app.__setattr__(fn.__name__, fn)
                 return fn
+
             return decorator
 
         mock_app.task = mock_task
 
         import sys
+
         mock_procrastinate = MagicMock()
 
         # _StepwiseRetry inherits from BaseRetryStrategy — provide a real base class.
@@ -101,4 +104,3 @@ class TestAutoCategoriseTaskRegistration:
         # Verify stepwise backoff: 30s, 5m, 30m (SPEC-KB-026 R5)
         retry = task_config["retry"]
         assert retry._waits == [30, 300, 1800]
-

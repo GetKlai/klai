@@ -1,4 +1,5 @@
 """Tests for knowledge_ingest/content_profiles.py"""
+
 from knowledge_ingest.content_profiles import PROFILES, ContentTypeProfile, get_profile
 
 
@@ -72,6 +73,7 @@ def test_all_six_content_types_defined():
 
 def test_all_profiles_have_valid_context_strategy():
     from knowledge_ingest.context_strategies import STRATEGIES
+
     for name, profile in PROFILES.items():
         assert profile.context_strategy in STRATEGIES, (
             f"{name} has unknown strategy: {profile.context_strategy}"

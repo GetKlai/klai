@@ -5,6 +5,7 @@ import structlog
 from fastapi import FastAPI
 
 from knowledge_ingest import db, kb_config, org_config, qdrant_store
+from knowledge_ingest._patch_graphiti import apply as _apply_graphiti_patch
 from knowledge_ingest.config import settings
 from knowledge_ingest.logging_setup import RequestContextMiddleware, setup_logging
 from knowledge_ingest.middleware.auth import InternalSecretMiddleware
@@ -26,8 +27,6 @@ logger = structlog.get_logger()
 # Patch graphiti-core FalkorDB search before any Graphiti usage.
 # See: https://github.com/getzep/graphiti/issues/1272
 # Remove once graphiti-core >= 0.29 includes the fix.
-from knowledge_ingest._patch_graphiti import apply as _apply_graphiti_patch
-
 _apply_graphiti_patch()
 
 
@@ -46,7 +45,7 @@ async def lifespan(app: FastAPI):
         # Keeps the lifespan focused on lifecycle ordering, not task-runner
         # internals. See SPEC-PROCRASTINATE-ZOMBIE-001 +
         # SPEC-INGEST-QUEUE-SEPARATION-001.
-        from knowledge_ingest.worker import WorkerLifecycle  # noqa: PLC0415
+        from knowledge_ingest.worker import WorkerLifecycle
 
         async with WorkerLifecycle.start(postgres_dsn=settings.postgres_dsn):
             listener_task = asyncio.create_task(org_config.start_listener(pool))
@@ -58,9 +57,7 @@ async def lifespan(app: FastAPI):
                 logger.info("shutting_down_config_listeners")
                 listener_task.cancel()
                 kb_config_listener_task.cancel()
-                await asyncio.gather(
-                    listener_task, kb_config_listener_task, return_exceptions=True
-                )
+                await asyncio.gather(listener_task, kb_config_listener_task, return_exceptions=True)
     else:
         logger.info("enrichment_disabled_skipping_worker")
         yield
@@ -131,7 +128,7 @@ async def health():
     # Uses TCP check — graphiti-core[falkordb] is deferred in requirements.txt (pydantic constraint)
     if settings.graphiti_enabled:
         try:
-            import socket  # noqa: PLC0415
+            import socket
 
             s = socket.create_connection(
                 (settings.falkordb_host, settings.falkordb_port), timeout=3.0

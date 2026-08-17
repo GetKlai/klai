@@ -12,6 +12,7 @@ were returned for other users' org-scope queries in the same org. The
 ``get_kb_visibility`` override below makes that drift impossible to recur
 on new ingests.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock
@@ -42,9 +43,7 @@ class TestPersonalKbVisibilityOverride:
         conn = AsyncMock()
         conn.fetchrow = AsyncMock(return_value={"visibility": "internal"})
 
-        visibility = await kb_config.get_kb_visibility(
-            conn, "org-1", "personal-364818484816773122"
-        )
+        visibility = await kb_config.get_kb_visibility(conn, "org-1", "personal-364818484816773122")
         assert visibility == "private"
         # The DB lookup MUST NOT be the source of truth — the helper
         # should short-circuit before any fetchrow call.
@@ -59,9 +58,7 @@ class TestPersonalKbVisibilityOverride:
         conn = AsyncMock()
         conn.fetchrow = AsyncMock(return_value=None)
 
-        visibility = await kb_config.get_kb_visibility(
-            conn, "org-1", "personal-someuser"
-        )
+        visibility = await kb_config.get_kb_visibility(conn, "org-1", "personal-someuser")
         assert visibility == "private"
 
     @pytest.mark.asyncio

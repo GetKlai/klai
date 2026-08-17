@@ -22,7 +22,9 @@ def test_empty_input_returns_empty() -> None:
 
 def test_deterministic() -> None:
     """Same input produces same fingerprint."""
-    text = "This is a test document with enough words for a meaningful fingerprint computation result"
+    text = (
+        "This is a test document with enough words for a meaningful fingerprint computation result"
+    )
     assert compute_content_fingerprint(text) == compute_content_fingerprint(text)
 
 
