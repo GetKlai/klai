@@ -1785,7 +1785,9 @@ async def _recover_bulk_5xx_batch(
         await _recovery_sleep(cooldown)
 
         attempted += 1
-        result = await _crawl_page_with_config(url, crawler_config, cookies=cookies, selector=None, stealth=stealth)
+        result = await _crawl_page_with_config(
+            url, crawler_config, cookies=cookies, selector=None, stealth=stealth
+        )
         reason_code = _classify_fetch_outcome(
             {
                 "success": result.success,
