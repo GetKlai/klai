@@ -167,7 +167,11 @@ class _HTMLTextCounter(HTMLParser):
         self._skip_depth = 0
         self.parts: list[str] = []
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+    def handle_starttag(
+        self,
+        tag: str,
+        attrs: list[tuple[str, str | None]],  # noqa: ARG002 — stdlib HTMLParser override signature
+    ) -> None:
         if tag.lower() in {"script", "style", "noscript", "template", "svg"}:
             self._skip_depth += 1
 

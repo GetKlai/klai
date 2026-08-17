@@ -491,7 +491,7 @@ async def search(
     user_id: str | None = None,
     sparse_vector: SparseVector | None = None,
     content_type_filter: str | None = None,
-    sparse_weight: float | None = None,
+    sparse_weight: float | None = None,  # noqa: ARG001 — parked, see @MX:TODO/@MX:REASON below
 ) -> list[dict]:
     """Search for chunks matching the query vector.
 

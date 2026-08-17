@@ -433,7 +433,10 @@ def _patch_bidirectional_edge_dedup() -> None:
 
     @classmethod  # type: ignore[misc]
     async def get_between_nodes_bidirectional(
-        cls, driver: GraphDriver, node_uuid_a: str, node_uuid_b: str
+        cls,  # noqa: ARG001 — classmethod signature required to patch EntityEdge below
+        driver: GraphDriver,
+        node_uuid_a: str,
+        node_uuid_b: str,
     ):
         match_query = """
             MATCH (n:Entity {uuid: $node_uuid_a})-[e:RELATES_TO]-(m:Entity {uuid: $node_uuid_b})

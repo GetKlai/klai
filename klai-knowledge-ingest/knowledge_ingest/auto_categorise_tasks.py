@@ -30,7 +30,10 @@ def register_auto_categorise_task(procrastinate_app: Any) -> None:
         _waits: ClassVar[list[int]] = [30, 300, 1800]
 
         def get_retry_decision(
-            self, *, exception: BaseException, job: Any
+            self,
+            *,
+            exception: BaseException,  # noqa: ARG002 — procrastinate.BaseRetryStrategy signature
+            job: Any,
         ) -> procrastinate.RetryDecision | None:
             if job.attempts >= len(self._waits):
                 logger.error(

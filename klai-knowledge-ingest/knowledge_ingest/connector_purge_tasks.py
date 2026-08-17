@@ -48,7 +48,10 @@ def register_connector_purge_task(procrastinate_app: Any) -> None:
         max_attempts = 5
 
         def get_retry_decision(
-            self, *, exception: BaseException, job: procrastinate.JobContext
+            self,
+            *,
+            exception: BaseException,  # noqa: ARG002 — procrastinate.BaseRetryStrategy signature
+            job: procrastinate.JobContext,
         ) -> procrastinate.RetryDecision | None:
             attempt = job.attempts  # 0-based after first failure
             if attempt >= len(self._waits):
