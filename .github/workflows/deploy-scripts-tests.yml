@@ -19,6 +19,8 @@ on:
     paths:
       - 'deploy/scripts/**'
       - 'deploy/librechat/tests/**'
+      - '**/Dockerfile'
+      - '**/Dockerfile.*'
       - '.claude/hooks/klai/container-hygiene-preflight.sh'
       - '.claude/hooks/klai/tests/**'
       - '.github/workflows/deploy-scripts-tests.yml'
@@ -27,6 +29,8 @@ on:
     paths:
       - 'deploy/scripts/**'
       - 'deploy/librechat/tests/**'
+      - '**/Dockerfile'
+      - '**/Dockerfile.*'
       - '.claude/hooks/klai/container-hygiene-preflight.sh'
       - '.claude/hooks/klai/tests/**'
       - '.github/workflows/deploy-scripts-tests.yml'
@@ -51,6 +55,12 @@ jobs:
 
       - name: compose-up.sh verification suite
         run: bash deploy/scripts/tests/compose-up-verify.test.sh
+
+      # A shipped image that does not patch its base OS is a deploy the Trivy
+      # gate will block — for whoever happens to touch that service next, not
+      # for whoever left it unpatched.
+      - name: base-image security-update guard suite
+        run: bash deploy/scripts/tests/check-dockerfile-security-updates.test.sh
 
       - name: assert-safe-to-prune guard suite
         run: sh deploy/scripts/tests/assert-safe-to-prune.test.sh

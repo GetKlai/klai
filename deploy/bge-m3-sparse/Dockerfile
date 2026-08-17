@@ -1,5 +1,11 @@
 FROM python:3.11-slim
 
+# Apply security patches to base image OS packages. Built on gpu-01 rather
+# than in CI, so nothing else would ever catch a stale OS package here.
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
+
 # SEC-018 F-029: create non-root user + writable model cache before runtime.
 RUN useradd --create-home --uid 1000 --shell /bin/bash app && \
     mkdir -p /models && chown -R app:app /models

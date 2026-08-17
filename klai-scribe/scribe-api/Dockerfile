@@ -34,7 +34,10 @@ RUN uv sync --frozen --no-dev --no-install-project
 # Stage 2: Application
 FROM python:3.12-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Apply security patches to base image OS packages before installing
+# runtime deps (Trivy blocks the deploy on unfixed CVEs, e.g. CVE-2026-53615)
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends \
     ffmpeg \
     libmagic1 \
     && rm -rf /var/lib/apt/lists/*

@@ -18,7 +18,8 @@ FROM nvidia/cuda:12.9.1-cudnn-runtime-ubuntu24.04
 # the binary has no purpose in the runtime container, so we remove the
 # entire family. Combined with the 12.9.1 base bump this defends against
 # CVE-2025-68973 by both patching AND removing the affected binaries.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends \
     python3 python3-pip python3-venv \
     ffmpeg \
     libsndfile1 \

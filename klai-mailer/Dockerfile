@@ -34,6 +34,11 @@ FROM python:3.12-slim
 
 WORKDIR /repo/klai-mailer
 
+# Apply security patches to base image OS packages (Trivy blocks the deploy
+# on unfixed CVEs shipped by python:3.12-slim, e.g. CVE-2026-53615)
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
 # Venv (has editable klai-log-utils + klai-webhook-replay pointers) + the
 # shared-lib sources the editable installs point at.
 COPY --from=deps /repo/klai-mailer/.venv /repo/klai-mailer/.venv
