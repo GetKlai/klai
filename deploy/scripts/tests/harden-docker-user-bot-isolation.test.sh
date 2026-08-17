@@ -28,12 +28,17 @@ FAIL=0
 
 run_script() {
     # $1 = subnet the docker stub reports ("" = network not found)
+    # $2 = meeting-api's address on that network ("" = pin missing)
     local subnet="$1"
+    local MEETING_IP="${2-172.29.0.10}"
     local tmp; tmp="$(mktemp -d)"
 
     cat > "$tmp/docker" <<STUB
 #!/usr/bin/env bash
-[ -n "$subnet" ] && echo "$subnet"
+case "\$*" in
+  *IPAM*)      [ -n "$subnet" ] && echo "$subnet" ;;
+  *meeting-api*) [ -n "$MEETING_IP" ] && echo "$MEETING_IP" ;;
+esac
 exit 0
 STUB
     cat > "$tmp/iptables" <<STUB
@@ -78,15 +83,21 @@ check "the SPEC's stale 172.27.0.0/16 is not used" \
 check "a default DROP is installed for the bot subnet" \
     bash -c 'echo "$0" | grep -q -- "-I INPUT 1 -s 172.29.0.0/16 -j DROP"' "$LAST_CALLS"
 
-check "transcription (8000) is excepted" \
-    bash -c 'echo "$0" | grep -q -- "-s 172.29.0.0/16 -p tcp --dport 8000 -j ACCEPT"' "$LAST_CALLS"
+check "transcription (8000) is excepted for the pinned address only" \
+    bash -c 'echo "$0" | grep -q -- "-I INPUT 1 -s 172.29.0.10 -p tcp --dport 8000 -j ACCEPT"' "$LAST_CALLS"
+
+check "the whole subnet is NOT excepted — that would cover every bot" \
+    bash -c '! echo "$0" | grep -q -- "-I INPUT 1 -s 172.29.0.0/16 -p tcp --dport 8000"' "$LAST_CALLS"
+
+check "the old whole-subnet exception is cleared on re-run" \
+    bash -c 'echo "$0" | grep -q -- "-D INPUT -s 172.29.0.0/16 -p tcp --dport 8000 -j ACCEPT"' "$LAST_CALLS"
 
 # Both are inserted at position 1, so the LAST insert ends up on top. The ACCEPT
 # has to be the last one written or the DROP shadows it and transcription dies.
 check "the exception is inserted after the DROP, so it lands above it" \
     bash -c '
       drop=$(echo "$0" | grep -n -- "-I INPUT 1 -s 172.29.0.0/16 -j DROP" | tail -1 | cut -d: -f1)
-      acc=$(echo "$0" | grep -n -- "-I INPUT 1 -s 172.29.0.0/16 -p tcp --dport 8000" | tail -1 | cut -d: -f1)
+      acc=$(echo "$0" | grep -n -- "-I INPUT 1 -s 172.29.0.10 -p tcp --dport 8000" | tail -1 | cut -d: -f1)
       [ -n "$drop" ] && [ -n "$acc" ] && [ "$acc" -gt "$drop" ]' "$LAST_CALLS"
 
 check "existing rules are cleared first, so re-runs do not stack" \
@@ -100,6 +111,21 @@ check "a missing bot network produces no INPUT rules" \
 
 check "a missing bot network warns loudly" \
     bash -c 'echo "$0" | grep -qi "WARNING.*not found"' "$LAST_OUT"
+
+# The pin disappearing must fail CLOSED: deny stays, exception is not installed,
+# and it says so. Silently widening back to the subnet would undo the whole point.
+run_script "172.29.0.0/16" ""
+
+check "a missing pin still installs the deny" \
+    bash -c 'echo "$0" | grep -q -- "-I INPUT 1 -s 172.29.0.0/16 -j DROP"' "$LAST_CALLS"
+
+# Match the INSERT specifically. The cleanup -D probes carry the same text, so a
+# looser grep passes even when the rule really was installed.
+check "a missing pin installs NO exception (fails closed)" \
+    bash -c '! echo "$0" | grep -q -- "-I INPUT 1 .*--dport 8000 -j ACCEPT"' "$LAST_CALLS"
+
+check "a missing pin warns loudly" \
+    bash -c 'echo "$0" | grep -qi "WARNING.*transcription"' "$LAST_OUT"
 
 echo "──────────────────────────────"
 if [ "$FAIL" -eq 0 ]; then

@@ -63,13 +63,19 @@ iptables -L DOCKER-USER -n --line-numbers
 # Default-deny with one exception rather than a blocklist, so a service bound to
 # a new host port later is covered without anyone remembering to add it.
 #
-# The exception is 8000: vexa12-meeting-api carries
-# TRANSCRIPTION_SERVICE_URL=http://172.18.0.1:8000/... and sits on this same
-# subnet. Transcription demonstrably works, and with no bot running there was no
-# way to prove which process actually opens that connection — so it stays open
-# rather than being closed on a guess. Narrowing it needs a capture during a real
-# meeting (SPEC-SEC-022 Phase 1); until then this is a deliberate, documented
-# hole and not an oversight.
+# The exception is tcp/8000, the transcription endpoint, and it is scoped to one
+# address. vexa12-meeting-api carries TRANSCRIPTION_SERVICE_URL pointing there
+# and shares this network with the bots by design — the runtime puts each bot
+# alongside redis and meeting-api, which is the name it dials for its callback.
+#
+# So the boundary cannot be drawn per network; it is drawn inside it. The compose
+# file confines dynamic allocation on vexa12-bots to 172.29.128.0/17 and pins
+# meeting-api at 172.29.0.10, outside that pool. A bot can never be handed that
+# address, so allowing it grants nothing to a compromised browser.
+#
+# Read the pinned address from Docker rather than repeating the literal — if the
+# compose pin is ever dropped, MEETING_API_IP comes back empty and the exception
+# is simply not installed, which fails closed.
 #
 # The subnet is read from Docker rather than hardcoded: 172.29.0.0/16 today, but
 # the SPEC was written against 172.27.0.0/16 and that range now belongs to a
@@ -83,13 +89,27 @@ if [ -n "$BOTS_CIDR" ]; then
     echo ""
     echo "Restricting $BOTS_NET ($BOTS_CIDR) → host ..."
 
-    # Idempotent: the unit re-runs on every boot and after every deploy.
+    MEETING_API_IP="$(docker inspect klai-core-vexa12-meeting-api-1 \
+        --format '{{range $k,$v := .NetworkSettings.Networks}}{{if eq $k "vexa12-bots"}}{{$v.IPAddress}}{{end}}{{end}}' \
+        2>/dev/null || true)"
+
+    # Idempotent: the unit re-runs on every boot and after every deploy. Clear the
+    # whole-subnet form too — it is what this script installed before the pin
+    # existed, and leaving it behind would keep every bot excepted.
     while iptables -D INPUT -s "$BOTS_CIDR" -p tcp --dport 8000 -j ACCEPT 2>/dev/null; do :; done
+    [ -n "$MEETING_API_IP" ] && \
+        while iptables -D INPUT -s "$MEETING_API_IP" -p tcp --dport 8000 -j ACCEPT 2>/dev/null; do :; done
     while iptables -D INPUT -s "$BOTS_CIDR" -j DROP 2>/dev/null; do :; done
 
     # Order matters: the exception has to sit above the deny.
     iptables -I INPUT 1 -s "$BOTS_CIDR" -j DROP
-    iptables -I INPUT 1 -s "$BOTS_CIDR" -p tcp --dport 8000 -j ACCEPT
+    if [ -n "$MEETING_API_IP" ]; then
+        iptables -I INPUT 1 -s "$MEETING_API_IP" -p tcp --dport 8000 -j ACCEPT
+        echo "  transcription exception: $MEETING_API_IP only"
+    else
+        echo "  WARNING: vexa12-meeting-api has no vexa12-bots address — transcription" >&2
+        echo "           exception NOT installed. Meetings will fail until this resolves." >&2
+    fi
 
     echo "Done. INPUT rules for $BOTS_CIDR:"
     iptables -L INPUT -n --line-numbers | grep -E "^(num|[0-9]+ .*${BOTS_CIDR//./\\.})" || true
