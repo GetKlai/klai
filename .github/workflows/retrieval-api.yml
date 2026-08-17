@@ -65,6 +65,16 @@ jobs:
       - name: Dependency vulnerability scan (pip-audit)
         run: uv run --with pip-audit pip-audit --skip-editable
 
+      # pyproject.toml's [tool.ruff.lint] select already included TRY (SPEC-SEC-HYGIENE-001
+      # REQ-43.4, to catch logger.error(...) inside except blocks dropping the traceback)
+      # but nothing in CI ran ruff, so the config was decorative. Two TRY400 violations had
+      # already landed unnoticed before this gate was wired up.
+      - name: Lint (ruff)
+        run: uv run --extra dev ruff check .
+
+      - name: Format check (ruff)
+        run: uv run --extra dev ruff format --check .
+
       - name: Test (pytest)
         run: uv run --extra dev pytest -q --tb=short
 
