@@ -42,6 +42,22 @@ CREATE OR REPLACE VIEW portal_feedback_correlation_stats AS
 
 GRANT SELECT ON portal_feedback_correlation_stats TO grafana_reader;
 
+-- ── SPEC-RAG-EVAL — faithfulness + canary alerts ─────────────────────────
+--
+-- rag-eval-001-faithfulness-low and rag-eval-001-canary-dropped read
+-- knowledge.rag_eval_results and both failed with "permission denied for
+-- schema knowledge" on every evaluation since they were provisioned. USAGE on
+-- the schema is a separate privilege from SELECT on the table -- granting only
+-- one of the two still denies.
+--
+-- Granted at table level rather than schema-wide: a future table under
+-- knowledge may well hold customer content, and this role should not inherit
+-- access to it by accident. The table itself holds no user text -- scores,
+-- timings, chunk ids, a query_id, and a meta jsonb whose only keys are
+-- variant/error/errors (verified against production, 7264 rows). No RLS.
+GRANT USAGE ON SCHEMA knowledge TO grafana_reader;
+GRANT SELECT ON knowledge.rag_eval_results TO grafana_reader;
+
 -- Verify after running (must return a non-zero count, not an error and not 0):
 --   SET ROLE grafana_reader;
 --   SELECT count(*) FROM portal_feedback_correlation_stats;

@@ -9,6 +9,8 @@ on:
       - 'scripts/audit-alert-uid-length.sh'
       - 'scripts/verify-alert-runbooks.sh'
       - 'scripts/test-alerting-guards.sh'
+      - 'deploy/scripts/verify-alert-datasource-access.py'
+      - 'deploy/scripts/tests/verify-alert-datasource-access.test.sh'
       - 'docs/runbooks/**'
       - 'docs/retros/**'
       - '.github/workflows/alerting-check.yml'
@@ -21,6 +23,8 @@ on:
       - 'scripts/audit-alert-uid-length.sh'
       - 'scripts/verify-alert-runbooks.sh'
       - 'scripts/test-alerting-guards.sh'
+      - 'deploy/scripts/verify-alert-datasource-access.py'
+      - 'deploy/scripts/tests/verify-alert-datasource-access.test.sh'
       - 'docs/runbooks/**'
       - 'docs/retros/**'
 
@@ -32,8 +36,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install jq (required by audit-alert-uid-length.sh)
-        run: sudo apt-get update -y && sudo apt-get install -y jq
+      - name: Install jq + python3-yaml (required by the audit scripts)
+        run: sudo apt-get update -y && sudo apt-get install -y jq python3-yaml
 
       - name: Audit secrets in alerting provisioning
         run: bash scripts/audit-alert-secrets.sh
@@ -49,6 +53,14 @@ jobs:
       # pitfall `grafana-uid-40-char-limit (HIGH)` in process-rules.md.
       - name: Audit Grafana UID length (40-char limit)
         run: bash scripts/audit-alert-uid-length.sh
+
+      # The datasource-access checker itself runs at deploy time, on core-01,
+      # where a real database exists. What CI can prove is that its relation
+      # extraction is right: a rule whose relations are mis-parsed gets checked
+      # against the wrong table and passes while blind. Also fails on a stale
+      # KNOWN_BLIND entry, so the allowlist cannot outlive the rule it excuses.
+      - name: Self-test — alert datasource-access parser
+        run: bash deploy/scripts/tests/verify-alert-datasource-access.test.sh
 
       - name: Regression tests — both guards catch the CLASS of bug
         # Deliberately-bad fixtures must fail the audit/verify scripts;
