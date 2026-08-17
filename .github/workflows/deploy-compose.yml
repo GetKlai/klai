@@ -257,6 +257,25 @@ jobs:
             sync_and_recreate caddy       deploy/caddy/Caddyfile        /opt/klai/caddy/Caddyfile
             sync_and_recreate alloy       deploy/alloy/config.alloy     /opt/klai/alloy/config.alloy
             sync_and_recreate searxng     deploy/searxng/settings.yml   /opt/klai/searxng/settings.yml
+
+            # Re-apply the firewall after compose has settled.
+            #
+            # klai-harden-firewall.service is After=docker.service / WantedBy=
+            # multi-user.target — it runs at boot and never again. The bot
+            # isolation rules (SPEC-SEC-022 REQ-2) carry the vexa12-bots subnet,
+            # read from Docker at the time they were installed. A compose change
+            # that recreates that network can hand it a different subnet, and the
+            # rules then match nothing at all: bots regain the host until the next
+            # reboot, silently.
+            #
+            # That is not hypothetical — recreating the network on 2026-08-17 is
+            # what surfaced this, and the rules had to be re-applied by hand.
+            # A deploy is exactly when the network can change, so a deploy is when
+            # the rules get rewritten.
+            echo "Re-applying firewall rules (network definitions may have changed) ..."
+            sudo systemctl restart klai-harden-firewall.service
+            systemctl is-active --quiet klai-harden-firewall.service \
+              || { echo "::error::klai-harden-firewall failed to re-apply"; exit 1; }
             clear_librechat_config_cache() {
               local pattern="${1:-configs:*}"
               docker compose --project-directory /opt/klai exec -T redis sh -lc '

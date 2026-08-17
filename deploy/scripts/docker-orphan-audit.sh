@@ -2,7 +2,7 @@
 # /opt/klai/scripts/docker-orphan-audit.sh
 #
 # Weekly orphan audit emitting structlog-events to stdout (Alloy →
-# VictoriaLogs). Detects seven categories of "wees" state:
+# VictoriaLogs). Detects eight categories of "wees" state:
 #
 #   1. orphan_no_managed_label
 #      Running container without klasse-A (compose-project=klai-core)
@@ -26,6 +26,10 @@
 #   5. caddy_upstream_missing
 #      Caddy upstream in the live config that does NOT match any running
 #      container — broken routing-rule.
+#
+#   8. bot_isolation_rules_stale
+#      The SPEC-SEC-022 INPUT deny names a subnet the bot network no longer
+#      uses, so it matches nothing and the bots can reach the host again.
 #
 #   7. compose_hand_edit_artifact
 #      A sibling of the deployed compose file (.bak / .orig / .pre-* / …).
@@ -325,6 +329,27 @@ if [[ -d "$COMPOSE_DIR" ]]; then
         emit_event "compose_hand_edit_artifact" "warning" "$(basename "$artifact")" \
             "{\"path\":\"$artifact\",\"detail\":\"sibling of the deployed compose file; the deploy pipeline never creates one, so this marks an edit made outside it\"}"
     done < <(find "$COMPOSE_DIR" -maxdepth 1 -type f -name "${COMPOSE_BASE}.*" 2>/dev/null | sort)
+fi
+
+# ─── Detection 8: bot-isolation rules that no longer match the network ───────
+#
+# The INPUT rules from SPEC-SEC-022 REQ-2 carry the vexa12-bots subnet as it was
+# when harden-docker-user.sh last ran. Recreating that network can hand it a
+# different subnet, and the rules then match nothing: bots regain the host, with
+# every counter reading zero because no packet ever hits them.
+#
+# The deploy re-applies the rules now, so this should never fire. That is the
+# point — it catches the case where the re-apply itself failed or was skipped,
+# which a green deploy log will not tell you.
+if command -v iptables >/dev/null 2>&1 && [[ -n "$(docker network ls -q -f name=^vexa12-bots$ 2>/dev/null)" ]]; then
+    live_cidr="$(docker network inspect vexa12-bots \
+        --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}' 2>/dev/null || true)"
+    rule_cidr="$(iptables -S INPUT 2>/dev/null | awk '/-j DROP/ && /-s /{for(i=1;i<=NF;i++) if($i=="-s") print $(i+1)}' | grep -E '^172\.' | head -1 || true)"
+
+    if [[ -n "$live_cidr" ]] && [[ "$rule_cidr" != "$live_cidr" ]]; then
+        emit_event "bot_isolation_rules_stale" "critical" "vexa12-bots" \
+            "{\"network\":\"$live_cidr\",\"rule\":\"${rule_cidr:-none}\",\"detail\":\"INPUT deny does not match the live bot subnet; bots can reach the host until harden-docker-user.sh is re-run\"}"
+    fi
 fi
 
 # ─── Always emit run-completed marker ────────────────────────────────────────

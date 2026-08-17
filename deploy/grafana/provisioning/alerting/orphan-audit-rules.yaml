@@ -291,3 +291,79 @@ groups:
             26 of these accumulated between April and May 2026 before anything
             watched for them. None held a service absent from git, so nothing
             was lost that time.
+
+      - uid: spec-sec-022-rules-stale
+        title: bot_isolation_rules_stale
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 691200
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: 'service:klai-orphan-audit AND event:bot_isolation_rules_stale'
+              queryType: instant
+          - refId: count
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 691200
+              to: 0
+            model:
+              refId: count
+              type: reduce
+              reducer: count
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 691200
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: count
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 0s
+        keepFiringFor: 1h
+        isPaused: false
+        labels:
+          # warning, not critical, unlike the two rules above. Those describe a
+          # route or a container that is wrong right now; this describes a file
+          # that should not exist. It wants cleaning up, not waking anyone. The
+          # emitted event carries the same level, so the two agree.
+          severity: critical
+          spec: SPEC-INFRA-CONTAINER-HYGIENE-001
+          service_group: hygiene-orphan-audit
+        annotations:
+          summary: 'the meeting-bot host-isolation rules no longer match the bot network — bots can reach the host'
+          runbook_url: 'docs/runbooks/container-hygiene-systemd-install.md'
+          description: |
+            The INPUT deny installed by harden-docker-user.sh names a subnet
+            that vexa12-bots no longer uses, so it matches nothing. Every
+            counter on it reads zero because no packet ever hits it, which is
+            why this needs an alert rather than a dashboard.
+
+            Effect: meeting bots — Chromium against pages we do not control —
+            can reach the host again, including SSH and the unauthenticated GPU
+            inference ports (SPEC-SEC-022 REQ-2).
+
+            The deploy re-applies these rules after every compose sync, so this
+            firing means that step failed or was skipped.
+
+            Fix:
+              ssh core-01 "sudo systemctl restart klai-harden-firewall.service"
+
+            Then confirm the deny matches the live subnet:
+              ssh core-01 "docker network inspect vexa12-bots --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}'; sudo iptables -S INPUT | head -3"
