@@ -95,7 +95,7 @@ def test_correlate_speakers_with_events() -> None:
         SpeakerEvent(timestamp=5.5, participant_name="Bob"),
         SpeakerEvent(timestamp=11.0, participant_name="Alice"),
     ]
-    result = _correlate_speakers(segments, events, duration_seconds=15.0)
+    result = _correlate_speakers(segments, events)
 
     assert len(result) == 3
     assert result[0]["speaker"] == "Alice"
@@ -114,7 +114,7 @@ def test_correlate_speakers_unknown_fallback() -> None:
         SpeakerEvent(timestamp=0.0, participant_name=None),
         SpeakerEvent(timestamp=3.5, participant_name=None),
     ]
-    result = _correlate_speakers(segments, events, duration_seconds=6.0)
+    result = _correlate_speakers(segments, events)
 
     assert len(result) == 2
     # Unknown speakers get "Deelnemer N" labels
@@ -127,7 +127,7 @@ def test_correlate_speakers_empty_events() -> None:
         {"start": 0.0, "end": 5.0, "text": "Hello"},
         {"start": 6.0, "end": 10.0, "text": "World"},
     ]
-    result = _correlate_speakers(segments, speaker_events=[], duration_seconds=10.0)
+    result = _correlate_speakers(segments, speaker_events=[])
 
     # With no speaker events, segments are returned unchanged
     assert result == segments
@@ -144,7 +144,7 @@ def test_correlate_speakers_mixed_known_unknown() -> None:
         SpeakerEvent(timestamp=0.0, participant_name="Alice"),
         SpeakerEvent(timestamp=4.0, participant_name=None),
     ]
-    result = _correlate_speakers(segments, events, duration_seconds=8.0)
+    result = _correlate_speakers(segments, events)
 
     assert result[0]["speaker"] == "Alice"
     assert result[1]["speaker"].startswith("Deelnemer")

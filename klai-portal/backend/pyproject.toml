@@ -134,7 +134,7 @@ line-length = 120
 target-version = "py313"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "C90", "B", "TRY", "S", "RUF", "G", "LOG"]
+select = ["E", "F", "I", "UP", "C90", "B", "TRY", "S", "RUF", "G", "LOG", "ARG"]
 ignore = [
     "E501",    # line length — handled by formatter
     "B008",    # Depends() in default args — standard FastAPI pattern, not a bug
@@ -154,4 +154,8 @@ max-complexity = 15
 # tests/*: hardcoded "passwords" in test fixtures are fake tokens —
 # S105 already global-ignored, S106 covers module-level kwargs, S107
 # covers function default arguments (e.g. token: str = "test-secret").
-"tests/*" = ["S106", "S107"]
+# ARG: pytest fixtures are injected for their side effect (not read), and
+# mock/stub signatures must mirror the real callable they replace even when
+# a given test ignores some parameters. Enforcing ARG here would force
+# churn without catching anything.
+"tests/*" = ["S106", "S107", "ARG"]

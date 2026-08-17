@@ -429,18 +429,21 @@ async def toggle_group_admin(
 # ---------------------------------------------------------------------------
 
 
+# group_id/product below: required in the signature so the path template
+# matches (FastAPI binds {group_id}/{product} regardless of whether the stub
+# body reads them); the 410 body never needs the value.
 @router.get("/groups/{group_id}/products", status_code=status.HTTP_410_GONE)
-async def list_group_products_gone(group_id: int) -> dict:
+async def list_group_products_gone(group_id: int) -> dict:  # noqa: ARG001
     raise HTTPException(status_code=status.HTTP_410_GONE, detail=_GONE_BODY)
 
 
 @router.post("/groups/{group_id}/products", status_code=status.HTTP_410_GONE)
-async def assign_group_product_gone(group_id: int) -> dict:
+async def assign_group_product_gone(group_id: int) -> dict:  # noqa: ARG001
     raise HTTPException(status_code=status.HTTP_410_GONE, detail=_GONE_BODY)
 
 
 @router.delete("/groups/{group_id}/products/{product}", status_code=status.HTTP_410_GONE)
-async def revoke_group_product_gone(group_id: int, product: str) -> dict:
+async def revoke_group_product_gone(group_id: int, product: str) -> dict:  # noqa: ARG001
     raise HTTPException(status_code=status.HTTP_410_GONE, detail=_GONE_BODY)
 
 

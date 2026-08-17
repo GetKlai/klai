@@ -10,7 +10,7 @@ from pydantic import SecretStr
 
 
 def mask_secret_str(
-    logger: Any,
+    logger: Any,  # noqa: ARG001 — structlog processor signature is fixed: (logger, method_name, event_dict)
     _method_name: str,
     event_dict: structlog.types.EventDict,
 ) -> structlog.types.EventDict:

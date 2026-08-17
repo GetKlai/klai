@@ -366,7 +366,7 @@ class ZitadelClient:
         )
         resp.raise_for_status()
 
-    async def verify_user_email(self, org_id: str, user_id: str, code: str) -> None:
+    async def verify_user_email(self, org_id: str, user_id: str, code: str) -> None:  # noqa: ARG002  # TODO: doorgegeven maar ongebruikt — zie rapport (ruff ARG audit)
         """Verify a user's email address using a v2 email verification code.
 
         ``org_id`` is kept for the public method contract and legacy callers,
@@ -778,7 +778,7 @@ class ZitadelClient:
         user = result[0]
         return user["userId"], user["details"]["resourceOwner"]
 
-    async def has_totp(self, user_id: str, org_id: str | None = None) -> bool:
+    async def has_totp(self, user_id: str, org_id: str | None = None) -> bool:  # noqa: ARG002  # TODO: doorgegeven maar ongebruikt — zie rapport (ruff ARG audit)
         """Return True if the user has a verified TOTP factor registered."""
         resp = await self._http.get(f"/v2/users/{user_id}/authentication_methods")
         resp.raise_for_status()
@@ -1075,8 +1075,8 @@ def _grant_has_project_role(grant: dict, role: str) -> bool:
 
 async def _sync_zitadel_role_grant(
     zitadel_user_id: str,
-    old_role: str,
-    new_role: str,
+    old_role: str,  # noqa: ARG001  # TODO: doorgegeven maar ongebruikt — zie rapport (ruff ARG audit)
+    new_role: str,  # noqa: ARG001  # TODO: doorgegeven maar ongebruikt — zie rapport (ruff ARG audit)
 ) -> None:
     """Reconcile the global Zitadel org:owner grant for one portal identity.
 

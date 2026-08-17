@@ -291,7 +291,7 @@ def _frontend_redirect_url(path: str) -> str:
 
 @router.get("/providers")
 async def list_providers(
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(get_current_user_id),  # noqa: ARG001 — unread; Depends() still enforces the caller is authenticated
 ) -> dict[str, dict[str, Any]]:
     """Advertise which OAuth providers are enabled via backend settings.
 
@@ -495,7 +495,7 @@ async def callback_provider(
     state: str = Query(...),
     code: str | None = Query(None, description="Authorization code from provider (absent if user denied consent)"),
     error: str | None = Query(None, description="OAuth error code (e.g. 'access_denied' when user denies consent)"),
-    error_description: str | None = Query(None, description="Human-readable error detail from provider"),
+    error_description: str | None = Query(None, description="Human-readable error detail from provider"),  # noqa: ARG001  # TODO: doorgegeven maar ongebruikt — zie rapport (ruff ARG audit)
     klai_oauth_state: str | None = Cookie(default=None),
     user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),

@@ -298,7 +298,7 @@ async def add_youtube_source(
     kb_slug: str,
     request: Request,
     perms: UserPermissions = Depends(get_caller),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db),  # noqa: ARG001 — unread; kept only so the route keeps its normal auth Depends() chain
 ) -> dict[str, Any]:
     """SPEC-KB-YOUTUBE-REMOVE-001: removed route, returns HTTP 410 Gone.
 

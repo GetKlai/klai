@@ -51,7 +51,7 @@ async def delete_recording(recording_id: int, meeting_id: str | None = None) -> 
 # @MX:SPEC SPEC-GDPR-002
 async def cleanup_recording(
     meeting: VexaMeeting,
-    db: AsyncSession,
+    db: AsyncSession,  # noqa: ARG001 — intentionally unread, see @MX:REASON above
     *,
     recording_id: int | None = None,
 ) -> None:

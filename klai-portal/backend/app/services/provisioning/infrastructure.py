@@ -377,7 +377,9 @@ def _sync_librechat_tenant_config_files(slug: str, mcp_servers: dict | None = No
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
+    # Signature is fixed by urllib.request.HTTPRedirectHandler; only the
+    # override's presence (returning None to suppress the redirect) matters.
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ARG002
         return None
 
 

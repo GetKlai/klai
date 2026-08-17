@@ -563,7 +563,7 @@ async def create_app_knowledge_base(
     if body.owner_type == "user":
         await assert_can_create_personal_kb(user_id=perms.user_id, org=org, db=db, role=perms.role)
     elif body.owner_type == "org":
-        await assert_can_create_org_kb(org=org, db=db, role=perms.role)
+        await assert_can_create_org_kb(org=org, role=perms.role)
 
     owner_user_id = perms.user_id if body.owner_type == "user" else None
 

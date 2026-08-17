@@ -418,7 +418,6 @@ async def authorize_get(
 
 @router.post("/oauth/authorize")
 async def authorize_post(
-    request: Request,
     request_id: str = Form(...),
     csrf_token: str = Form(...),
     decision: str = Form(...),

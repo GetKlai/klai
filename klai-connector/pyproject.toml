@@ -76,8 +76,27 @@ target-version = "py312"
 line-length = 120
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "N", "UP", "B", "SIM", "G", "LOG"]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "G", "LOG", "ARG"]
 ignore = ["B008"]  # Depends() in FastAPI endpoint defaults is standard pattern
+
+[tool.ruff.lint.per-file-ignores]
+# Unused arguments in tests are structural, not bugs: pytest fixtures are
+# injected for their side effect (not read), and mock/stub signatures must
+# mirror the real callable they replace even when a given test ignores some
+# parameters. Enforcing ARG here would force churn without catching anything.
+"tests/**" = ["ARG"]
+# BaseAdapter.list_documents/get_cursor_state/post_sync share one call
+# signature so sync_engine can invoke every adapter uniformly (see the
+# adapter-framework-bleed pitfall in .claude/rules/klai/pitfalls). Airtable
+# and Confluence are full-scan (no incremental cursor), so cursor_context is
+# unused there; both cursor-state methods just return a timestamp, so
+# connector is unused; the base class's post_sync default no-op takes
+# connector only to keep every override's signature identical.
+"app/adapters/airtable.py" = ["ARG002"]
+"app/adapters/base.py" = ["ARG002"]
+"app/adapters/confluence.py" = ["ARG002"]
+"app/adapters/github.py" = ["ARG002"]
+"app/adapters/notion.py" = ["ARG002"]
 
 [tool.pyright]
 pythonVersion = "3.12"

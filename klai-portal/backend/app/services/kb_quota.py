@@ -157,7 +157,6 @@ async def assert_can_add_item_to_kb(
 
 async def assert_can_create_org_kb(
     org: PortalOrg,
-    db: AsyncSession,
     role: str = "company",
 ) -> None:
     """Raise HTTP 403 when the (role, plan) combination does not allow org-scoped KBs.

@@ -97,7 +97,7 @@ async def _handle_meeting_ended(snap: _ActiveMeetingSnapshot) -> None:
         await db.commit()
 
         await set_tenant(db, snap.org_id)
-        await run_transcription(m, db)
+        await run_transcription(m)
         await db.commit()
         if m.status == "done":
             await cleanup_recording(m, db)
@@ -142,7 +142,7 @@ async def _recover_stuck_meeting(snap: _ActiveMeetingSnapshot) -> None:
         )
         if m is None:
             return
-        await run_transcription(m, db)
+        await run_transcription(m)
         await db.commit()
         if m.status == "done":
             await cleanup_recording(m, db)

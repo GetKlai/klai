@@ -161,7 +161,7 @@ class AddonsOut(BaseModel):
 @router.get("/settings/addons", response_model=AddonsOut, deprecated=True)
 async def get_addons(
     perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db),  # noqa: ARG001 — unread; ADMIN Depends() chain still gates the route
 ) -> AddonsOut:
     """Read-only facade — returns the subset of platform_unlocked_features
     that are user-facing products (scribe/docs).
