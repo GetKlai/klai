@@ -19,6 +19,8 @@ on:
     paths:
       - 'deploy/scripts/**'
       - 'deploy/librechat/tests/**'
+      - '**/Dockerfile'
+      - '**/Dockerfile.*'
       - '.claude/hooks/klai/container-hygiene-preflight.sh'
       - '.claude/hooks/klai/tests/**'
       - '.github/workflows/deploy-scripts-tests.yml'
@@ -27,6 +29,8 @@ on:
     paths:
       - 'deploy/scripts/**'
       - 'deploy/librechat/tests/**'
+      - '**/Dockerfile'
+      - '**/Dockerfile.*'
       - '.claude/hooks/klai/container-hygiene-preflight.sh'
       - '.claude/hooks/klai/tests/**'
       - '.github/workflows/deploy-scripts-tests.yml'
@@ -52,6 +56,12 @@ jobs:
       - name: compose-up.sh verification suite
         run: bash deploy/scripts/tests/compose-up-verify.test.sh
 
+      # A shipped image that does not patch its base OS is a deploy the Trivy
+      # gate will block — for whoever happens to touch that service next, not
+      # for whoever left it unpatched.
+      - name: base-image security-update guard suite
+        run: bash deploy/scripts/tests/check-dockerfile-security-updates.test.sh
+
       - name: assert-safe-to-prune guard suite
         run: sh deploy/scripts/tests/assert-safe-to-prune.test.sh
 
@@ -66,6 +76,12 @@ jobs:
 
       - name: orphan-audit caddy-route suite
         run: bash deploy/scripts/tests/docker-orphan-audit-caddy-routes.test.sh
+
+      - name: orphan-audit hand-edit suite
+        run: bash deploy/scripts/tests/docker-orphan-audit-hand-edits.test.sh
+
+      - name: bot host-isolation suite (SPEC-SEC-022)
+        run: bash deploy/scripts/tests/harden-docker-user-bot-isolation.test.sh
 
       - name: container-hygiene preflight suite
         run: bash .claude/hooks/klai/tests/container-hygiene-preflight.test.sh

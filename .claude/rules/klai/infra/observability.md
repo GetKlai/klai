@@ -103,6 +103,43 @@ Useful queries:
 - Tenant activity: `SELECT * FROM product_events WHERE org_id = <id> ORDER BY created_at DESC`
 - Reconnect-funnel health: `SELECT properties->>'reason' AS reason, COUNT(*) FROM product_events WHERE event_type = 'connector.reconnect_failed' GROUP BY 1`
 
+## A provisioned alert must be proven able to read its data (HIGH)
+
+An alert that cannot read its datasource is worse than no alert: it reports
+healthy forever. On 2026-08-14, four of six Postgres-backed rules were blind.
+Nothing in Grafana showed it, because a query error under `execErrState: OK`
+looks exactly like "nothing wrong".
+
+Two distinct failure modes, and checking only the first is how the second hid
+for months:
+
+| Mode | Cause | Looks like |
+|---|---|---|
+| Permission | no `SELECT` grant, or `USAGE` on the schema missing | query error, swallowed by `execErrState: OK` |
+| RLS blackhole | grant exists, but the table's SELECT policy is scoped to another role or to a tenant GUC Grafana never sets | success, zero rows, forever |
+
+`deploy/scripts/verify-alert-datasource-access.py` checks both — `EXPLAIN` as
+`grafana_reader` for the first, and a superuser-vs-reader row-count comparison
+per relation for the second. It runs on core-01 from `deploy-compose.yml` after
+the provisioning sync, and fails the deploy on any blind rule that is not
+listed in the script's `KNOWN_BLIND` allowlist with a reason. The parser has its
+own self-test in CI, and a stale allowlist entry fails it.
+
+When wiring a new Postgres-backed alert:
+
+- `grafana_reader` needs `GRANT USAGE ON SCHEMA <s>` **and** `GRANT SELECT ON
+  <s>.<table>` — one without the other still denies.
+- `ALTER DEFAULT PRIVILEGES` in `deploy/grafana/sql/grafana-reader-setup.sql`
+  only covers tables created by the role that ran it. Alembic creates tables as
+  `portal_api`, so anything newer is invisible until granted explicitly.
+- For an RLS table, prefer a superuser-owned view exposing only the columns the
+  rule needs (see `portal_feedback_correlation_stats`). A view that is not
+  `security_invoker` evaluates the base table's RLS as its owner, so the rule
+  can read the aggregate without widening the base-table grant — which matters
+  when the table also holds user-written text.
+- Set `execErrState: Error`, not `OK`, on any rule whose purpose is catching
+  silence. Otherwise the rule can fail silently itself.
+
 ## When to use what
 | Scenario | Tool |
 |---|---|

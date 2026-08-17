@@ -2,7 +2,7 @@
 # /opt/klai/scripts/docker-orphan-audit.sh
 #
 # Weekly orphan audit emitting structlog-events to stdout (Alloy →
-# VictoriaLogs). Detects six categories of "wees" state:
+# VictoriaLogs). Detects eight categories of "wees" state:
 #
 #   1. orphan_no_managed_label
 #      Running container without klasse-A (compose-project=klai-core)
@@ -24,8 +24,16 @@
 #      timestamp > 7 days. May contain klantdata; never auto-prune.
 #
 #   5. caddy_upstream_missing
-#      Caddy upstream in /opt/klai/Caddyfile that does NOT match any
-#      running container — broken routing-rule.
+#      Caddy upstream in the live config that does NOT match any running
+#      container — broken routing-rule.
+#
+#   8. bot_isolation_rules_stale
+#      The SPEC-SEC-022 INPUT deny names a subnet the bot network no longer
+#      uses, so it matches nothing and the bots can reach the host again.
+#
+#   7. compose_hand_edit_artifact
+#      A sibling of the deployed compose file (.bak / .orig / .pre-* / …).
+#      The deploy pipeline never creates one, so it marks a hand-edit.
 #
 #   6. tenant_container_no_route
 #      Container with klasse-B label OR tenant-pattern-name (`librechat-*`)
@@ -74,7 +82,7 @@ echo 0 > "$EVENT_TMP"
 
 # ─── Assemble the full Caddy config ──────────────────────────────────────────
 #
-# /opt/klai/Caddyfile ends in `import /etc/caddy/tenants/*.caddyfile`, and every
+# The live Caddyfile ends in `import /etc/caddy/tenants/*.caddyfile`, and every
 # tenant route lives in there — written by portal-api at provisioning time,
 # stored in a Docker volume, so the path in that import is container-internal and
 # does not exist on the host.
@@ -299,6 +307,49 @@ if [[ -n "$CADDY_TENANTS_OK" ]]; then
             emit_event "caddy_upstream_missing" "critical" "$host" \
                 "{\"upstream_in_caddyfile\":\"$host\"}"
         done
+fi
+
+# ─── Detection 7: hand-edit artifacts beside the deployed compose file ───────
+#
+# /opt/klai/docker-compose.yml is written by deploy-compose.yml from the repo.
+# Nothing in that pipeline ever creates a sibling — so a docker-compose.yml.bak,
+# .orig, .pre-*, or .before-* is the fingerprint of somebody editing the
+# deployed file by hand, which the repo forbids as CRIT.
+#
+# By 2026-08-17 there were 26 of them, spanning April to May, 1.7 MB. None was
+# mounted and none held a service absent from git, so nothing was lost — but
+# every one marked an edit made outside the pipeline, and the pile grew for four
+# months with nothing watching. The audit is the only layer that sees a human on
+# the server, so it is the layer that has to notice.
+COMPOSE_DIR="$(dirname "$COMPOSE_FILE")"
+COMPOSE_BASE="$(basename "$COMPOSE_FILE")"
+if [[ -d "$COMPOSE_DIR" ]]; then
+    while IFS= read -r artifact; do
+        [[ -z "$artifact" ]] && continue
+        emit_event "compose_hand_edit_artifact" "warning" "$(basename "$artifact")" \
+            "{\"path\":\"$artifact\",\"detail\":\"sibling of the deployed compose file; the deploy pipeline never creates one, so this marks an edit made outside it\"}"
+    done < <(find "$COMPOSE_DIR" -maxdepth 1 -type f -name "${COMPOSE_BASE}.*" 2>/dev/null | sort)
+fi
+
+# ─── Detection 8: bot-isolation rules that no longer match the network ───────
+#
+# The INPUT rules from SPEC-SEC-022 REQ-2 carry the vexa12-bots subnet as it was
+# when harden-docker-user.sh last ran. Recreating that network can hand it a
+# different subnet, and the rules then match nothing: bots regain the host, with
+# every counter reading zero because no packet ever hits them.
+#
+# The deploy re-applies the rules now, so this should never fire. That is the
+# point — it catches the case where the re-apply itself failed or was skipped,
+# which a green deploy log will not tell you.
+if command -v iptables >/dev/null 2>&1 && [[ -n "$(docker network ls -q -f name=^vexa12-bots$ 2>/dev/null)" ]]; then
+    live_cidr="$(docker network inspect vexa12-bots \
+        --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}' 2>/dev/null || true)"
+    rule_cidr="$(iptables -S INPUT 2>/dev/null | awk '/-j DROP/ && /-s /{for(i=1;i<=NF;i++) if($i=="-s") print $(i+1)}' | grep -E '^172\.' | head -1 || true)"
+
+    if [[ -n "$live_cidr" ]] && [[ "$rule_cidr" != "$live_cidr" ]]; then
+        emit_event "bot_isolation_rules_stale" "critical" "vexa12-bots" \
+            "{\"network\":\"$live_cidr\",\"rule\":\"${rule_cidr:-none}\",\"detail\":\"INPUT deny does not match the live bot subnet; bots can reach the host until harden-docker-user.sh is re-run\"}"
+    fi
 fi
 
 # ─── Always emit run-completed marker ────────────────────────────────────────

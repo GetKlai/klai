@@ -5,6 +5,11 @@
 
 FROM python:3.12-slim
 
+# Apply security patches to base image OS packages (Trivy blocks the deploy
+# on unfixed CVEs shipped by python:3.12-slim, e.g. CVE-2026-53615)
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
 # uv from the official distroless image
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 

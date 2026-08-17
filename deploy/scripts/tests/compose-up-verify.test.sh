@@ -163,6 +163,10 @@ echo "2026-08-14T11:00:00Z" > "$case_dir/fixtures/created_new456"
 run_target demo
 check "compose exit 1 + container REPLACED -> 0" 0 "$rc"
 check_output "  names both container ids" "cid123 -> new456"
+# The run is GREEN in this case, so the only thing that makes shipping through
+# a compose failure visible is the annotation on the run summary. Drop the
+# prefix and it becomes a line in a log nobody opens.
+check_output "  surfaces as a workflow annotation" "::warning::"
 
 # The dangerous twin, and the reason the override is narrow. An unresolvable
 # image tag or a dependency that will not start makes compose abort BEFORE
@@ -174,6 +178,7 @@ fx up_stderr "Error failed to resolve reference ghcr.io/getklai/nope:bad"
 run_target demo
 check "compose exit 1 + same container -> 1" 1 "$rc"
 check_output "  says the deploy shipped nothing" "shipped nothing"
+check_output "  surfaces as a workflow annotation" "::error::"
 
 new_case compose_fails_no_container
 fx up_rc 1
@@ -189,12 +194,14 @@ fx status_cid123 "exited"
 run_target demo
 check "compose exit 0 + container exited -> 1" 1 "$rc"
 check_output "  dumps container logs" "stub container log line"
+check_output "  puts the reason on the run summary" "::error::demo is 'exited'"
 
 new_case crash_loop
 printf '0\n1\n' > "$case_dir/fixtures/restarts"
 run_target demo
 check "restart count rising -> 1" 1 "$rc"
 check_output "  calls it a crash loop" "crash loop"
+check_output "  puts the reason on the run summary" "::error::"
 
 new_case unhealthy
 fx health "unhealthy"

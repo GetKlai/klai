@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import pytest
 
+from retrieval_api import quality_boost, quality_floor
 from retrieval_api.quality_floor import filter_quality_floor
 
 
@@ -161,6 +162,34 @@ class TestFeedbackColdStartExemption:
         out, n_filtered = filter_quality_floor(chunks, floor=0.6)
         assert n_filtered == 1
         assert out == []
+
+
+class TestColdStartThresholdIsShared:
+    """The floor and the boost must agree on what counts as a signal.
+
+    Both modules define _COLD_START_MIN_VOTES and a comment in each says they
+    have to stay equal. A comment is not a guard, and "two files, two
+    assumptions" is exactly the shape of the defect this exemption fixes: the
+    floor and the scorer each held a defensible view of what 0.0 meant, and
+    nothing forced them to meet.
+
+    Raise the boost's threshold without raising the floor's and chunks become
+    filterable while still too cold to be boosted -- the original bug, back.
+    Lower it in one place only and a single vote regains the power to remove a
+    chunk. Either direction, this test fails first.
+    """
+
+    def test_floor_and_boost_use_the_same_threshold(self) -> None:
+        assert quality_floor._COLD_START_MIN_VOTES == quality_boost._COLD_START_MIN_VOTES, (
+            "quality_floor and quality_boost disagree about the cold-start "
+            f"threshold ({quality_floor._COLD_START_MIN_VOTES} vs "
+            f"{quality_boost._COLD_START_MIN_VOTES}). SPEC-KB-015 r.182 defines one "
+            "guard, not two. Change both or neither."
+        )
+
+    def test_threshold_matches_the_spec(self) -> None:
+        """SPEC-KB-015 r.112/118 fixes the value at 3 votes."""
+        assert quality_floor._COLD_START_MIN_VOTES == 3
 
 
 class TestFloorPerformance:

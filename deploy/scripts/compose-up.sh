@@ -254,7 +254,7 @@ verify_service_running() {
     cid="$(service_container_id "$service")"
     VERIFIED_CID="$cid"
     if [[ -z "$cid" ]]; then
-        echo "ERROR: no container for $service after recreate" >&2
+        echo "::error::no container for $service after recreate"
         return 1
     fi
 
@@ -268,16 +268,16 @@ verify_service_running() {
         restarts="$(inspect_field "$cid" '{{.RestartCount}}')"
 
         if [[ -z "$status" ]]; then
-            echo "ERROR: cannot inspect $service's container ($cid) — daemon unreachable or container gone" >&2
+            echo "::error::cannot inspect $service's container ($cid) — daemon unreachable or container gone"
             return 1
         fi
         if [[ "$status" != "running" ]]; then
-            echo "ERROR: $service is '$status' after recreate (expected running)" >&2
+            echo "::error::$service is '$status' after recreate (expected running)"
             "$DOCKER" logs --tail 30 "$cid" 2>&1 | sed 's/^/    /' >&2 || true
             return 1
         fi
         if [[ -n "$prev_restarts" && -n "$restarts" && "$restarts" != "$prev_restarts" ]]; then
-            echo "ERROR: $service restarted during verification ($prev_restarts -> $restarts) — crash loop" >&2
+            echo "::error::$service restarted during verification ($prev_restarts -> $restarts) — crash loop"
             "$DOCKER" logs --tail 30 "$cid" 2>&1 | sed 's/^/    /' >&2 || true
             return 1
         fi
@@ -288,7 +288,7 @@ verify_service_running() {
     health="$(inspect_field "$cid" '{{if .State.Health}}{{.State.Health.Status}}{{end}}')"
     case "$health" in
         unhealthy)
-            echo "ERROR: $service is running but its healthcheck reports unhealthy" >&2
+            echo "::error::$service is running but its healthcheck reports unhealthy"
             "$DOCKER" logs --tail 30 "$cid" 2>&1 | sed 's/^/    /' >&2 || true
             return 1
             ;;
@@ -392,11 +392,14 @@ if [[ -n "$SERVICE" ]]; then
     if verify_service_running "$SERVICE"; then
         if (( COMPOSE_RC != 0 )); then
             if [[ -n "$PRE_CID" && "$VERIFIED_CID" == "$PRE_CID" ]]; then
-                echo "ERROR: docker compose exited $COMPOSE_RC and $SERVICE was never replaced —" >&2
-                echo "       container ${PRE_CID:0:12} is the one that was already running, so this deploy shipped nothing." >&2
+                echo "::error::$SERVICE was never replaced: docker compose exited $COMPOSE_RC and container ${PRE_CID:0:12} is the one that was already running, so this deploy shipped nothing"
                 exit 1
             fi
-            echo "WARN: docker compose exited $COMPOSE_RC, but $SERVICE was replaced (${PRE_CID:0:12} -> ${VERIFIED_CID:0:12}) and verified running — treating the deploy as successful" >&2
+            # ::warning:: puts this on the GitHub Actions run summary. Without
+            # it the run is green and the only trace is a line in a log nobody
+            # opens, so the one case where we ship THROUGH a compose failure
+            # would be the least visible thing the deploy does.
+            echo "::warning::$SERVICE deployed despite docker compose exiting $COMPOSE_RC — container was replaced (${PRE_CID:0:12} -> ${VERIFIED_CID:0:12}) and verified running"
         fi
     else
         if (( COMPOSE_RC != 0 )); then

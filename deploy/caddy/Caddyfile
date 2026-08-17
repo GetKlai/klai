@@ -349,39 +349,15 @@
         }
     }
 
-    # Dev environment — dev.getklai.com routes to portal-api-dev + /srv/portal-dev
-    # Must come BEFORE the general /api/* handler below.
-    # Uses `route` to preserve directive order.
-    #
-    # SPEC-SEC-008 F-018 — protected by basic_auth to gate public internet access.
-    # Credentials stored in SOPS (CADDY_DEV_USERNAME / CADDY_DEV_PASSWORD_HASH).
-    @dev-host host dev.{$DOMAIN}
-    handle @dev-host {
-        basic_auth {
-            {$CADDY_DEV_USERNAME} {$CADDY_DEV_PASSWORD_HASH}
-        }
-        route {
-            @dev-api path /api/*
-            reverse_proxy @dev-api portal-api-dev:8010 {
-                header_up -X-Internal-Secret
-                header_up -X-Caller-Service
-                header_up -X-Org-ID
-                header_up -X-Org-Slug
-                header_up -X-User-ID
-            }
-
-            root * /srv/portal-dev
-
-            @dev-spa-assets path /assets/*
-            header @dev-spa-assets Cache-Control "public, max-age=31536000, immutable"
-
-            @dev-spa-html not path /assets/*
-            header @dev-spa-html Cache-Control "no-cache"
-
-            try_files {path} /index.html
-            file_server
-        }
-    }
+    # dev.getklai.com was removed 2026-08-17. It routed to portal-api-dev +
+    # /srv/portal-dev, a parallel review environment from PR #103
+    # (feat/chat-first-redesign, April 2026) where every feat/* push auto-deployed.
+    # That PR was closed, taking its compose file and both deploy workflows with
+    # it; the route reached main separately via 53d31aa4f, which brought the
+    # server's Caddyfile under version control three days earlier. So the route
+    # outlived the thing it pointed at by four months: no CI deployed to it, no
+    # container backed it, and 30 days of logs held 932 basic-auth rejections,
+    # a handful of crawlers, and no human request at all.
 
     # SPEC-KB-FILE-UPLOAD-001 REQ-2: scoped multipart-body cap on the
     # KB file-upload endpoint. 200 MB matches the binary path's

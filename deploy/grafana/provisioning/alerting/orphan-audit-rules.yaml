@@ -126,7 +126,7 @@ groups:
                  legitimate tenant container — its tenant_slug label tells you
                  which tenant.
               3. Check why Caddy lost the upstream:
-                   ssh core-01 "grep -n {NAME} /opt/klai/Caddyfile /opt/klai/caddy/tenants/*.caddyfile"
+                   ssh core-01 "docker exec klai-core-caddy-1 grep -rn {NAME} /etc/caddy/Caddyfile /etc/caddy/tenants/"
                  If absent, the per-tenant Caddyfile was lost — recreate via
                  the portal-api provisioning re-run flow (see provisioning-retry.md
                  runbook).
@@ -203,10 +203,167 @@ groups:
                  The `container_name` field names the upstream Caddy could
                  not resolve.
               2. Verify Caddyfile state:
-                   ssh core-01 "grep -nE '(^|[[:space:]]){NAME}([[:space:]]|:|$)' /opt/klai/Caddyfile /opt/klai/caddy/tenants/*.caddyfile"
+                   ssh core-01 "docker exec klai-core-caddy-1 grep -rnE '(^|[[:space:]]){NAME}([[:space:]]|:|$)' /etc/caddy/Caddyfile /etc/caddy/tenants/"
               3. Decide: is this a stale Caddyfile entry (service was
                  intentionally removed) or a missing container (service
                  should exist)?
                  - Stale entry: edit Caddyfile, remove the route, redeploy.
                  - Missing container: investigate why it's down via
                    container_down runbook + recreate via compose-up.sh.
+
+      - uid: spec-hyg-001-compose-hand-edit
+        title: compose_hand_edit_artifact
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 691200
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: 'service:klai-orphan-audit AND event:compose_hand_edit_artifact'
+              queryType: instant
+          - refId: count
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 691200
+              to: 0
+            model:
+              refId: count
+              type: reduce
+              reducer: count
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 691200
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: count
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 0s
+        keepFiringFor: 1h
+        isPaused: false
+        labels:
+          # warning, not critical, unlike the two rules above. Those describe a
+          # route or a container that is wrong right now; this describes a file
+          # that should not exist. It wants cleaning up, not waking anyone. The
+          # emitted event carries the same level, so the two agree.
+          severity: warning
+          spec: SPEC-INFRA-CONTAINER-HYGIENE-001
+          service_group: hygiene-orphan-audit
+        annotations:
+          summary: 'a file was edited beside the deployed docker-compose.yml — someone bypassed the deploy pipeline'
+          runbook_url: 'docs/runbooks/container-hygiene-systemd-install.md'
+          description: |
+            A sibling of /opt/klai/docker-compose.yml exists (.bak, .orig,
+            .pre-*, .before-*). The deploy pipeline writes that file from the
+            repo and never creates a sibling, so this marks an edit made by
+            hand on the server — which the repo forbids as CRIT
+            (infra/deploy.md, "No manual server edits").
+
+            The edit itself is the problem, not the leftover: deploy-compose.yml
+            overwrites the deployed file on the next push, so whatever was
+            changed by hand is silently lost, and the backup is the only record
+            that it ever happened.
+
+            What to do:
+              1. Diff the leftover against the deployed file to see what was
+                 changed:  diff /opt/klai/docker-compose.yml <leftover>
+              2. If the change is still wanted, put it in deploy/docker-compose.yml
+                 and push. If not, delete the leftover.
+              3. Either way the leftover goes; it is not a backup worth keeping,
+                 because deploy/docker-compose.yml is in git.
+
+            26 of these accumulated between April and May 2026 before anything
+            watched for them. None held a service absent from git, so nothing
+            was lost that time.
+
+      - uid: spec-sec-022-rules-stale
+        title: bot_isolation_rules_stale
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 691200
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: 'service:klai-orphan-audit AND event:bot_isolation_rules_stale'
+              queryType: instant
+          - refId: count
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 691200
+              to: 0
+            model:
+              refId: count
+              type: reduce
+              reducer: count
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 691200
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: count
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 0s
+        keepFiringFor: 1h
+        isPaused: false
+        labels:
+          # warning, not critical, unlike the two rules above. Those describe a
+          # route or a container that is wrong right now; this describes a file
+          # that should not exist. It wants cleaning up, not waking anyone. The
+          # emitted event carries the same level, so the two agree.
+          severity: critical
+          spec: SPEC-INFRA-CONTAINER-HYGIENE-001
+          service_group: hygiene-orphan-audit
+        annotations:
+          summary: 'the meeting-bot host-isolation rules no longer match the bot network — bots can reach the host'
+          runbook_url: 'docs/runbooks/container-hygiene-systemd-install.md'
+          description: |
+            The INPUT deny installed by harden-docker-user.sh names a subnet
+            that vexa12-bots no longer uses, so it matches nothing. Every
+            counter on it reads zero because no packet ever hits it, which is
+            why this needs an alert rather than a dashboard.
+
+            Effect: meeting bots — Chromium against pages we do not control —
+            can reach the host again, including SSH and the unauthenticated GPU
+            inference ports (SPEC-SEC-022 REQ-2).
+
+            The deploy re-applies these rules after every compose sync, so this
+            firing means that step failed or was skipped.
+
+            Fix:
+              ssh core-01 "sudo systemctl restart klai-harden-firewall.service"
+
+            Then confirm the deny matches the live subnet:
+              ssh core-01 "docker network inspect vexa12-bots --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}'; sudo iptables -S INPUT | head -3"
