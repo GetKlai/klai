@@ -43,14 +43,16 @@ class SignatureError(Exception):
     not returned — see REQ-7.2.
     """
 
-    REASONS = frozenset({
-        "missing_header",
-        "malformed_header",
-        "timestamp_out_of_window",
-        "hmac_mismatch",
-        "unknown_vN_field",
-        "replay",
-    })
+    REASONS = frozenset(
+        {
+            "missing_header",
+            "malformed_header",
+            "timestamp_out_of_window",
+            "hmac_mismatch",
+            "unknown_vN_field",
+            "replay",
+        }
+    )
 
     def __init__(self, reason: str, *, extra: dict[str, Any] | None = None) -> None:
         if reason not in self.REASONS:

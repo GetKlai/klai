@@ -43,6 +43,7 @@ def _append_lang_to_url(url: str, lang: str | None) -> str:
     separator = "&" if "?" in url else "?"
     return f"{url}{separator}lang={lang}"
 
+
 # Inline styles injected on plain-text-to-HTML converted elements.
 # Applied via regex so they survive Outlook's CSS stripping.
 _ELEMENT_STYLES: list[tuple[str, str]] = [
@@ -155,8 +156,6 @@ class Renderer:
         # remaining content is the body HTML. The separator is a blank line.
         if rendered.startswith("Subject:"):
             first_line, _, body = rendered.partition("\n")
-            subject = first_line[len("Subject:"):].strip()
+            subject = first_line[len("Subject:") :].strip()
             return {"subject": subject, "body": body.lstrip()}
-        raise ValueError(
-            f"internal template {template_path} must start with `Subject: <line>\\n`"
-        )
+        raise ValueError(f"internal template {template_path} must start with `Subject: <line>\\n`")

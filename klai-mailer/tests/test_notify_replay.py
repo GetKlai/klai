@@ -31,10 +31,12 @@ def _load_main_with_redis(redis_client):
     for mod in ("app.main", "app.nonce", "app.signature"):
         sys.modules.pop(mod, None)
     import app.nonce as nonce_mod
+
     nonce_mod.set_redis_client(redis_client)
     main = importlib.import_module("app.main")
     # main.py imports nonce; ensure its reference is also patched
     import app.nonce as nonce_after
+
     nonce_after.set_redis_client(redis_client)
     return main
 
@@ -67,7 +69,8 @@ async def test_first_call_accepted_second_is_replay(client_with_fakeredis, setti
     assert resp2.status_code == 401
     assert resp2.json() == {"detail": "invalid signature"}
     replay_events = [
-        e for e in events
+        e
+        for e in events
         if e.get("event") == "mailer_signature_invalid" and e.get("reason") == "replay"
     ]
     assert replay_events, f"expected reason=replay log event; got {events}"
@@ -125,9 +128,7 @@ async def test_nonce_not_polluted_by_forged_signatures(
 
     # Forged: same timestamp, bogus v1
     forged = f"t={ts},v1=deadbeef"
-    resp_forged = client.post(
-        "/notify", content=VALID_BODY, headers={"ZITADEL-Signature": forged}
-    )
+    resp_forged = client.post("/notify", content=VALID_BODY, headers={"ZITADEL-Signature": forged})
     assert resp_forged.status_code == 401
 
     # Legitimate: real v1 for same body+timestamp — must be accepted

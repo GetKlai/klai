@@ -56,7 +56,6 @@ class JoinRequestApprovedVars(_BaseVars):
     workspace_url: HttpUrl
 
 
-
 class AutoJoinAdminNotificationVars(_BaseVars):
     """Variables for the `auto_join_admin_notification` email.
 

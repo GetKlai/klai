@@ -23,11 +23,13 @@ def _load_main(redis_client):
         sys.modules.pop(mod, None)
     import app.nonce as nonce_mod
     import app.rate_limit as rl_mod
+
     nonce_mod.set_redis_client(redis_client)
     rl_mod.set_redis_client(redis_client)
     main = importlib.import_module("app.main")
     import app.nonce as n
     import app.rate_limit as r
+
     n.set_redis_client(redis_client)
     r.set_redis_client(redis_client)
     return main
@@ -158,9 +160,7 @@ def test_case_insensitive_collision(client_fakeredis, stub_smtp):
         assert resp.status_code == 429
 
 
-def test_redis_unavailable_fails_open(
-    client_brokenredis, stub_smtp, portal_ok, broken_redis
-):
+def test_redis_unavailable_fails_open(client_brokenredis, stub_smtp, portal_ok, broken_redis):
     """REQ-4.3: Redis down → allow sends, log mailer_rate_limit_redis_unavailable."""
     with capture_logs() as events:
         # Go past the normal ceiling — must all succeed
@@ -172,15 +172,11 @@ def test_redis_unavailable_fails_open(
             )
             assert resp.status_code == 200, resp.text
 
-    unavail_events = [
-        e for e in events if e.get("event") == "mailer_rate_limit_redis_unavailable"
-    ]
+    unavail_events = [e for e in events if e.get("event") == "mailer_rate_limit_redis_unavailable"]
     assert unavail_events, "expected fail-open warning log"
 
 
-def test_failed_validation_does_not_deplete_budget(
-    client_fakeredis, stub_smtp, portal_ok
-):
+def test_failed_validation_does_not_deplete_budget(client_fakeredis, stub_smtp, portal_ok):
     """REQ-4.5: schema-invalid requests MUST NOT count toward the budget."""
     # 10 invalid requests (missing org_id)
     bad_payload = {

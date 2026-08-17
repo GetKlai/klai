@@ -22,11 +22,13 @@ def _load_main(settings_env, fake_redis, stub_smtp):
         sys.modules.pop(mod, None)
     import app.nonce as nonce_mod
     import app.rate_limit as rl_mod
+
     nonce_mod.set_redis_client(fake_redis)
     rl_mod.set_redis_client(fake_redis)
     main = importlib.import_module("app.main")
     import app.nonce as n
     import app.rate_limit as r
+
     n.set_redis_client(fake_redis)
     r.set_redis_client(fake_redis)
     return main
@@ -42,9 +44,9 @@ def client(settings_env, fake_redis, stub_smtp):
 def respx_mock_portal(settings_env):
     """Mock portal-api admin-email lookup."""
     with respx.mock(assert_all_called=False) as router:
-        router.get(
-            url__regex=r"^.+/internal/org/\d+/admin-email$"
-        ).mock(return_value=httpx.Response(200, json={"admin_email": "admin@test.example"}))
+        router.get(url__regex=r"^.+/internal/org/\d+/admin-email$").mock(
+            return_value=httpx.Response(200, json={"admin_email": "admin@test.example"})
+        )
         yield router
 
 
@@ -162,9 +164,7 @@ def test_unknown_template_returns_400(client, respx_mock_portal, stub_smtp):
     assert "Unknown template" in resp.json()["detail"]
 
 
-def test_branding_not_overridable_by_caller(
-    client, respx_mock_portal, stub_smtp, settings_env
-):
+def test_branding_not_overridable_by_caller(client, respx_mock_portal, stub_smtp, settings_env):
     """REQ-2.4: `brand_url` comes from settings even if caller tries to
     inject it via `variables`. The extra key is rejected outright by
     extra=forbid."""
@@ -219,16 +219,17 @@ def test_sandbox_blocks_dunder_via_template_context(client, respx_mock_portal):
     renderer itself blocks dunder access."""
     import importlib as _il
     import sys as _sys
+
     for mod in ("app.renderer", "app.config"):
         _sys.modules.pop(mod, None)
     renderer_mod = _il.import_module("app.renderer")
     from pathlib import Path
-    r = renderer_mod.Renderer(
-        theme_dir=Path("theme")
-    )
+
+    r = renderer_mod.Renderer(theme_dir=Path("theme"))
     # Write a tiny template that tries dunder access — use Renderer's
     # env directly
     template = r._theme_env.from_string("{{ x.__class__ }}")
     from jinja2.exceptions import SecurityError
+
     with pytest.raises(SecurityError):
         template.render(x="test")

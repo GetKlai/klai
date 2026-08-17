@@ -20,6 +20,7 @@ def _get_client(settings_env, stub_smtp):
     # Fresh import so REQ-9 validator and REQ-8 compare_digest land in the module
     import importlib
     import sys
+
     for mod in ("app.main", "app.config"):
         sys.modules.pop(mod, None)
     main = importlib.import_module("app.main")

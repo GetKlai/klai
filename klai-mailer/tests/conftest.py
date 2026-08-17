@@ -51,10 +51,19 @@ def settings_env(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
 def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Start from an empty env so per-test monkeypatch.setenv is deterministic."""
     for key in list(os.environ):
-        if key in DEFAULT_TEST_ENV or key.startswith((
-            "SMTP_", "WEBHOOK_", "INTERNAL_", "BRAND_", "LOGO_",
-            "PORTAL_", "REDIS_", "DEBUG", "MAILER_",
-        )):
+        if key in DEFAULT_TEST_ENV or key.startswith(
+            (
+                "SMTP_",
+                "WEBHOOK_",
+                "INTERNAL_",
+                "BRAND_",
+                "LOGO_",
+                "PORTAL_",
+                "REDIS_",
+                "DEBUG",
+                "MAILER_",
+            )
+        ):
             monkeypatch.delenv(key, raising=False)
 
 
@@ -76,11 +85,13 @@ class StubSMTPSender:
         subject: str,
         html_body: str,
     ) -> None:
-        self.sent.append({
-            "to_address": to_address,
-            "subject": subject,
-            "html_body": html_body,
-        })
+        self.sent.append(
+            {
+                "to_address": to_address,
+                "subject": subject,
+                "html_body": html_body,
+            }
+        )
 
     def reset(self) -> None:
         self.sent.clear()
@@ -97,10 +108,12 @@ def stub_smtp(monkeypatch: pytest.MonkeyPatch) -> StubSMTPSender:
     stub = StubSMTPSender()
     # Patch source module
     import app.mailer as mailer_module
+
     monkeypatch.setattr(mailer_module, "send_email", stub, raising=True)
     # Patch the re-export used by main.py (only if main is already imported)
     try:
         import app.main as main_module
+
         if hasattr(main_module, "send_email"):
             monkeypatch.setattr(main_module, "send_email", stub, raising=False)
     except ImportError:
