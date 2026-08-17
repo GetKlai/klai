@@ -46,7 +46,7 @@ async def lifespan(app: FastAPI):
         # Keeps the lifespan focused on lifecycle ordering, not task-runner
         # internals. See SPEC-PROCRASTINATE-ZOMBIE-001 +
         # SPEC-INGEST-QUEUE-SEPARATION-001.
-        from knowledge_ingest.worker import WorkerLifecycle  # noqa: PLC0415
+        from knowledge_ingest.worker import WorkerLifecycle
 
         async with WorkerLifecycle.start(postgres_dsn=settings.postgres_dsn):
             listener_task = asyncio.create_task(org_config.start_listener(pool))
@@ -131,7 +131,7 @@ async def health():
     # Uses TCP check — graphiti-core[falkordb] is deferred in requirements.txt (pydantic constraint)
     if settings.graphiti_enabled:
         try:
-            import socket  # noqa: PLC0415
+            import socket
 
             s = socket.create_connection(
                 (settings.falkordb_host, settings.falkordb_port), timeout=3.0

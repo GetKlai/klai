@@ -7,9 +7,6 @@ to enriched_text only, leaving original_text and context_prefix unchanged.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
 
 # ---------------------------------------------------------------------------
 # Fake EnrichedChunk -- mirrors knowledge_ingest.enrichment.EnrichedChunk

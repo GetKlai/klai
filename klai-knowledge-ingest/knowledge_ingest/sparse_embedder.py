@@ -6,9 +6,8 @@ Falls back gracefully when the sidecar is unavailable.
 """
 from __future__ import annotations
 
-import structlog
-
 import httpx
+import structlog
 from qdrant_client.models import SparseVector
 
 from knowledge_ingest.config import settings

@@ -1,7 +1,6 @@
 """Tests for content_labeler -- blind keyword generation before taxonomy (SPEC-KB-023)."""
 from __future__ import annotations
 
-import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -44,7 +43,7 @@ class TestGenerateContentLabel:
     async def test_returns_empty_list_on_timeout(self):
         with patch(
             "knowledge_ingest.content_labeler._call_litellm",
-            side_effect=asyncio.TimeoutError(),
+            side_effect=TimeoutError(),
         ):
             labels = await generate_content_label("Title", "Content")
         assert labels == []

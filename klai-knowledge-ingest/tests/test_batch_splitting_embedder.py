@@ -9,8 +9,9 @@ import pytest
 from knowledge_ingest.graph import _GRAPHITI_AVAILABLE
 
 if _GRAPHITI_AVAILABLE:
-    from knowledge_ingest.graph import _BatchSplittingEmbedder
     from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
+
+    from knowledge_ingest.graph import _BatchSplittingEmbedder
 
 pytestmark = pytest.mark.skipif(not _GRAPHITI_AVAILABLE, reason="graphiti-core not installed")
 

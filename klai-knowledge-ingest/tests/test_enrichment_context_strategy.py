@@ -5,7 +5,6 @@ import pytest
 
 from knowledge_ingest.enrichment import enrich_chunks
 
-
 DOCUMENT = " ".join([f"word{i}" for i in range(500)])  # ~500 words, long enough for all strategies
 
 

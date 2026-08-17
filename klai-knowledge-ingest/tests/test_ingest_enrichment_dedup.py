@@ -10,12 +10,12 @@ environments where libpq is not installed (CI, local dev on Windows).
 """
 from __future__ import annotations
 
+import logging
 import sys
 import types
-import logging
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # Minimal procrastinate stub — avoids the psycopg / libpq import chain
@@ -75,7 +75,7 @@ _QUEUEING_LOCK = "{org_id}:{kb_slug}:{path}:{artifact_id}".format(**_DEFER_KWARG
 async def _run_enqueue(task_fn):
     """Replicate the try/except block from ingest.py."""
     try:
-        from procrastinate.exceptions import AlreadyEnqueued as _AE  # noqa: PLC0415
+        from procrastinate.exceptions import AlreadyEnqueued as _AE
         await task_fn.configure(
             queueing_lock=_QUEUEING_LOCK,
         ).defer_async(artifact_id=_DEFER_KWARGS["artifact_id"])
@@ -141,7 +141,7 @@ async def test_queueing_lock_includes_org_kb_path_and_artifact():
     for org_id, artifact_id, task_fn in scenarios:
         lock = f"{org_id}:{kb_slug}:{path}:{artifact_id}"
         try:
-            from procrastinate.exceptions import AlreadyEnqueued as _AE  # noqa: PLC0415
+            from procrastinate.exceptions import AlreadyEnqueued as _AE
             await task_fn.configure(queueing_lock=lock).defer_async(
                 artifact_id=artifact_id,
             )

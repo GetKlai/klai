@@ -1717,8 +1717,8 @@ class TestConsolidate:
         from unittest.mock import patch as _patch
 
         from knowledge_ingest.proposal_generator import (
-            generate_bootstrap_proposals_v2,
             DocumentSummary,
+            generate_bootstrap_proposals_v2,
         )
 
         # Build a fixture that yields exactly 4 base clusters (well under target_max=9)
@@ -1802,8 +1802,8 @@ class TestConsolidate:
         from unittest.mock import patch as _patch
 
         from knowledge_ingest.proposal_generator import (
-            generate_bootstrap_proposals_v2,
             DocumentSummary,
+            generate_bootstrap_proposals_v2,
         )
 
         # Build a fixture with > target_max=9 base clusters so consolidate WOULD trigger.

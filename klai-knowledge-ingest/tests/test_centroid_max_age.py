@@ -6,12 +6,8 @@ are rejected and a warning is logged.
 from __future__ import annotations
 
 import json
-import os
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
-
-import pytest
-import structlog
 
 from knowledge_ingest.clustering import CentroidStore, load_centroids
 

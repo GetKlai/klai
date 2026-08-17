@@ -1,7 +1,7 @@
 """Tests for taxonomy_node_ids and tags in qdrant_store payload handling."""
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 

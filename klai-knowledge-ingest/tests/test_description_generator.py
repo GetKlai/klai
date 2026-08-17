@@ -1,7 +1,6 @@
 """Tests for description_generator -- taxonomy node description generation."""
 from __future__ import annotations
 
-import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -52,7 +51,7 @@ class TestGenerateNodeDescription:
     async def test_returns_empty_on_timeout(self):
         with patch(
             "knowledge_ingest.description_generator._call_litellm",
-            side_effect=asyncio.TimeoutError(),
+            side_effect=TimeoutError(),
         ):
             desc = await generate_node_description("Billing", None, [])
         assert desc == ""

@@ -181,7 +181,6 @@ async def test_run_crawl_job_populates_link_fields_on_every_page():
         mock_pg.upsert_page_links = AsyncMock()
 
         from knowledge_ingest.adapters.crawler import run_crawl_job
-
         from tests.test_crawl_registry_dedup import _make_mock_conn as _make_conn
 
         await run_crawl_job(
@@ -300,7 +299,6 @@ async def test_run_crawl_job_no_post_crawl_link_counts_call():
             qs_mod, "update_link_counts", new_callable=AsyncMock
         ) as mock_update_link_counts:
             from knowledge_ingest.adapters.crawler import run_crawl_job
-
             from tests.test_crawl_registry_dedup import _make_mock_conn as _make_conn
 
             await run_crawl_job(

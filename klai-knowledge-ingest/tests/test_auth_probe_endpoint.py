@@ -32,7 +32,6 @@ from fastapi.testclient import TestClient
 
 from knowledge_ingest.routes.crawl import _ProbeResponse
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

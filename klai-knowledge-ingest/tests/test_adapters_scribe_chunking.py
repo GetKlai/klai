@@ -7,8 +7,6 @@ import sys
 from types import ModuleType
 from unittest.mock import MagicMock
 
-import pytest
-
 # The knowledge_adapter module lives in klai-scribe/scribe-api/ and imports from
 # app.core.config which requires the full Scribe app context.  We mock the
 # entire app.* package tree so that Python can resolve the import chain, then
@@ -38,7 +36,6 @@ from app.services.knowledge_adapter import (  # noqa: E402
     _detect_content_type,
     _split_paragraphs,
 )
-
 
 # -- _cluster_segments --
 

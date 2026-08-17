@@ -9,7 +9,7 @@ import uuid
 import structlog
 from fastapi import APIRouter, Request
 
-from knowledge_ingest.db import get_pool, tenant_scoped_connection
+from knowledge_ingest.db import tenant_scoped_connection
 from knowledge_ingest.identity import assert_caller_identity
 from knowledge_ingest.models import BulkCrawlRequest, BulkCrawlResponse
 

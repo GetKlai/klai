@@ -50,11 +50,11 @@ def _patch_edge_search() -> None:
     from graphiti_core.edges import EntityEdge, get_entity_edge_from_record
     from graphiti_core.graph_queries import get_relationships_query
     from graphiti_core.models.edges.edge_db_queries import get_entity_edge_return_query
+    from graphiti_core.search import search_utils
     from graphiti_core.search.search_filters import (
         SearchFilters,
         edge_search_filter_query_constructor,
     )
-    from graphiti_core.search import search_utils
 
     # --- Patch (a): module-level edge_fulltext_search in search_utils.py ---
     _original_fulltext = search_utils.edge_fulltext_search
@@ -299,8 +299,8 @@ def _patch_driver_clone() -> None:
 def _patch_decorator_routing() -> None:
     import functools
 
-    from graphiti_core.driver.driver import GraphProvider
     from graphiti_core import decorators
+    from graphiti_core.driver.driver import GraphProvider
     from graphiti_core.helpers import semaphore_gather
     from graphiti_core.search.search_config import SearchResults
 
@@ -392,10 +392,10 @@ def _patch_decorator_routing() -> None:
 # ---------------------------------------------------------------------------
 
 def _patch_bidirectional_edge_dedup() -> None:
-    from graphiti_core.edges import EntityEdge
     from graphiti_core.driver.driver import GraphDriver
-    from graphiti_core.models.edges.edge_db_queries import get_entity_edge_return_query
     from graphiti_core.driver.record_parsers import entity_edge_from_record
+    from graphiti_core.edges import EntityEdge
+    from graphiti_core.models.edges.edge_db_queries import get_entity_edge_return_query
 
     @classmethod  # type: ignore[misc]
     async def get_between_nodes_bidirectional(

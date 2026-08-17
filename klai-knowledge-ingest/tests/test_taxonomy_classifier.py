@@ -1,7 +1,6 @@
 """Tests for taxonomy_classifier -- multi-label classification + tag suggestion."""
 from __future__ import annotations
 
-import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -102,7 +101,7 @@ class TestClassifyDocumentMultiLabel:
         nodes = _make_nodes("Billing")
         with patch(
             "knowledge_ingest.taxonomy_classifier._call_litellm",
-            side_effect=asyncio.TimeoutError(),
+            side_effect=TimeoutError(),
         ):
             matched, tags = await classify_document("Title", "Content", nodes)
         assert matched == []

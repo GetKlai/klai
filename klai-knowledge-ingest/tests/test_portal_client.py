@@ -1,7 +1,6 @@
 """Tests for portal_client — taxonomy node fetching and proposal submission."""
 from __future__ import annotations
 
-import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,7 +11,6 @@ from knowledge_ingest.portal_client import (
     invalidate_cache,
     submit_taxonomy_proposal,
 )
-from knowledge_ingest.taxonomy_classifier import TaxonomyNode
 
 
 def _mock_httpx_response(status_code: int, body: object) -> MagicMock:
