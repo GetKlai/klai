@@ -164,6 +164,15 @@ load_config() {
   fi
 }
 
+FAILED_STEPS=()
+
+# A failing data source must not cost us the offsite copy of everything else.
+# Under `set -e` a step returning non-zero aborted the whole run, so when the
+# Vexa Redis step started failing on 2026-08-14 the script never reached step
+# 16 ("Encrypt and upload to Storage Box") — three nights of backups stayed on
+# a single local disk while the log still showed steps 1-5 succeeding. Collect
+# failures instead, keep going, and report them at the end so the run is still
+# visibly red to cron and Uptime Kuma.
 run_step() {
   local title="$1"
   shift
@@ -172,7 +181,11 @@ run_step() {
   CURRENT_STEP="[${STEP}/${TOTAL_STEPS}] ${title}"
   printf '\n'
   log "${CURRENT_STEP}"
-  "$@"
+  if ! "$@"; then
+    log "      STEP FAILED — continuing so later steps (incl. upload) still run"
+    FAILED_STEPS+=("${title}")
+    return 0
+  fi
 }
 
 backup_postgres() {
@@ -273,9 +286,19 @@ backup_vexa_redis() {
     return 0
   fi
 
+  # The password is on the COMMAND LINE (`redis-server --requirepass <x>`),
+  # not in the environment — compose passes it as an argument. Reading only
+  # .Config.Env yielded an empty password, so BGSAVE ran unauthenticated,
+  # returned NOAUTH, and this step failed every night from 2026-08-14 on.
+  # Env is still checked first so a future move to an env var keeps working.
   password="$(docker inspect "${container}" \
     --format '{{range .Config.Env}}{{println .}}{{end}}' \
     | grep '^VEXA_REDIS_PASSWORD=' | head -1 | cut -d= -f2-)"
+  if [ -z "${password}" ]; then
+    password="$(docker inspect "${container}" \
+      --format '{{range $i, $a := .Config.Cmd}}{{println $a}}{{end}}' \
+      | grep -A1 '^--requirepass$' | tail -1)"
+  fi
 
   if ! docker exec "${container}" \
        redis-cli ${password:+-a "${password}"} --no-auth-warning BGSAVE >/dev/null; then
@@ -653,7 +676,11 @@ main() {
   run_step "Research uploads: rsync user uploads" backup_research_uploads
   run_step "Encrypt and upload to Storage Box" encrypt_and_upload
 
-  kuma_push up "OK - $(artifact_size "${BACKUP_DIR}")"
+  if [ ${#FAILED_STEPS[@]} -gt 0 ]; then
+    kuma_push down "${#FAILED_STEPS[@]} step(s) failed: ${FAILED_STEPS[*]}"
+  else
+    kuma_push up "OK - $(artifact_size "${BACKUP_DIR}")"
+  fi
 
   CURRENT_STEP="local retention"
   if ! local_retention; then
@@ -663,6 +690,13 @@ main() {
   CURRENT_STEP="summary"
   if ! print_summary; then
     log "Summary output failed (non-fatal; backup artifacts were already produced)"
+  fi
+
+  # Exit non-zero AFTER the upload so cron mail and Kuma see the failure while
+  # the artifacts we did manage to collect are already safely offsite.
+  if [ ${#FAILED_STEPS[@]} -gt 0 ]; then
+    log "Backup finished with ${#FAILED_STEPS[@]} failed step(s): ${FAILED_STEPS[*]}"
+    return 1
   fi
 }
 
