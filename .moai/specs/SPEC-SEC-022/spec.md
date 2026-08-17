@@ -1,6 +1,6 @@
 ---
 id: SPEC-SEC-022
-version: 0.3.0
+version: 0.4.0
 status: partially_implemented
 created: 2026-04-19
 updated: 2026-08-17
@@ -11,6 +11,41 @@ priority: medium
 # SPEC-SEC-022: vexa-bots network egress allowlist
 
 ## HISTORY
+
+### v0.4.0 (2026-08-17)
+
+**The transcription exception is closed down from a /16 to a single address.**
+
+v0.3.0 left tcp/8000 open to the whole bot subnet because meeting-api needed it
+and shared that subnet with the bots. Re-measuring showed the earlier claim that
+"meeting-api cannot reach 8000" was a false negative: that container has no `nc`,
+so the probe failed rather than the connection. With python, meeting-api reaches
+it fine — it is the consumer.
+
+Separating the two onto different networks is not possible: the runtime's
+`DOCKER_NETWORK` deliberately places each bot alongside redis and meeting-api,
+which is the name a bot dials for its callback. So the boundary is drawn inside
+the network instead. `vexa12-bots` now confines dynamic allocation to
+172.29.128.0/17 and pins meeting-api at 172.29.0.10, outside that pool, so a bot
+can never be handed the excepted address. The firewall allows that one /32.
+
+The script reads the pinned address from Docker rather than repeating the
+literal. If the pin is ever dropped from compose, the lookup comes back empty,
+the exception is not installed and the run warns — it fails closed, and
+transcription breaking loudly is the correct outcome there.
+
+Rejected alternative: binding the transcription forward on the vexa12-internal
+gateway, which bots are not attached to. It would have removed the exception
+entirely, but `gpu-tunnel.service` runs `autossh` with `ExitOnForwardFailure=yes`
+and `After=network-online.target` — it already survives the klai-net bridge not
+existing at boot only through `Restart=always`. Adding a vexa-specific bridge to
+its bind list would make all GPU inference — retrieval, embeddings, reranking,
+ollama — depend on a vexa network existing. Wrong trade.
+
+**Root cause, unfixed and out of scope here:** the endpoint behind 8000 is nginx
+with no authentication, so network position is the only control. Authenticating
+it on the GPU host would make this firewall rule defence-in-depth instead of the
+whole defence. That belongs in klai-infra.
 
 ### v0.3.0 (2026-08-17)
 
