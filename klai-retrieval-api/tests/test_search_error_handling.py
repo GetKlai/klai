@@ -104,9 +104,8 @@ def test_no_error_str_exc_anywhere_under_retrieval_api():
         if "error=str(exc)" in _strip_comments(_read(py)):
             offenders.append(str(py.relative_to(_REPO_ROOT)))
 
-    assert not offenders, (
-        "Files still using `error=str(exc)` (drops traceback): "
-        + ", ".join(offenders)
+    assert not offenders, "Files still using `error=str(exc)` (drops traceback): " + ", ".join(
+        offenders
     )
 
 
@@ -185,8 +184,7 @@ async def test_search_logs_exception_with_traceback_on_qdrant_failure(monkeypatc
         return {}
 
     qdrant_records = [
-        rec for rec in log_capture
-        if _event_dict(rec).get("event") == "qdrant_search_failed"
+        rec for rec in log_capture if _event_dict(rec).get("event") == "qdrant_search_failed"
     ]
     assert qdrant_records, (
         "Expected `qdrant_search_failed` log record, found none. "
@@ -194,8 +192,7 @@ async def test_search_logs_exception_with_traceback_on_qdrant_failure(monkeypatc
     )
 
     has_traceback = any(
-        "TimeoutError" in str(_event_dict(rec).get("exception", ""))
-        for rec in qdrant_records
+        "TimeoutError" in str(_event_dict(rec).get("exception", "")) for rec in qdrant_records
     )
     assert has_traceback, (
         "qdrant_search_failed log record has no rendered traceback in the "

@@ -14,7 +14,6 @@ from unittest.mock import patch
 
 import pytest
 
-
 # -- TASK-004: EvidenceProfile structure (R6) ----------------------------------
 
 
@@ -24,8 +23,13 @@ class TestEvidenceProfile:
         from retrieval_api.services.evidence_tier import DEFAULT_EVIDENCE_PROFILE
 
         expected_types = {
-            "kb_article", "pdf_document", "meeting_transcript",
-            "1on1_transcript", "web_crawl", "graph_edge", "unknown",
+            "kb_article",
+            "pdf_document",
+            "meeting_transcript",
+            "1on1_transcript",
+            "web_crawl",
+            "graph_edge",
+            "unknown",
         }
         assert set(DEFAULT_EVIDENCE_PROFILE["content_type_weights"].keys()) == expected_types
 
@@ -48,9 +52,7 @@ class TestEvidenceProfile:
         from retrieval_api.services.evidence_tier import DEFAULT_EVIDENCE_PROFILE
 
         weights = DEFAULT_EVIDENCE_PROFILE["content_type_weights"]
-        assert weights["kb_article"] >= max(
-            v for k, v in weights.items() if k != "kb_article"
-        )
+        assert weights["kb_article"] >= max(v for k, v in weights.items() if k != "kb_article")
 
     def test_default_profile_specific_values(self):
         """Verify specific weight values from the SPEC."""
@@ -229,8 +231,9 @@ class TestTemporalDecay:
 # -- TASK-006: apply() + U-shape ordering (R7, R2) ----------------------------
 
 
-def _make_chunk(chunk_id: str, score: float, content_type: str = "kb_article",
-                ingested_at: int | None = None) -> dict:
+def _make_chunk(
+    chunk_id: str, score: float, content_type: str = "kb_article", ingested_at: int | None = None
+) -> dict:
     """Create a chunk dict as returned by the reranker."""
     return {
         "chunk_id": chunk_id,
@@ -264,7 +267,9 @@ class TestApply:
         assert result[0]["final_score"] is not None
 
     def test_final_score_formula(self):
-        """final_score = reranker_score * content_type_weight * assertion_weight * temporal_decay."""
+        """final_score = reranker_score * content_type_weight * assertion_weight *
+        temporal_decay.
+        """
         from retrieval_api.services.evidence_tier import apply
 
         chunks = [_make_chunk("c1", 0.80, content_type="kb_article")]
@@ -323,7 +328,7 @@ class TestUShapeOrdering:
         # Sorted desc: c1(0.9), c3(0.8), c2(0.7)
         # U-shape: even indices front [c1, c2], odd indices reversed [c3]
         # Result: [c1, c2, c3]
-        assert ids[0] == "c1"   # strongest at front
+        assert ids[0] == "c1"  # strongest at front
         assert ids[-1] == "c3"  # second strongest at back
 
     def test_u_shape_6_chunks(self):

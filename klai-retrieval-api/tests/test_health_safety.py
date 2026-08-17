@@ -207,9 +207,7 @@ def test_health_response_body_does_not_leak_internal_topology(monkeypatch, log_c
     # AC-39 step 6: no internal IPs / hostnames / verbose error strings anywhere in the body
     body_str = str(body)
     for needle in ("172.18.", "connection refused", "no route to host"):
-        assert needle not in body_str, (
-            f"/health response leaks topology via {needle!r}: {body_str}"
-        )
+        assert needle not in body_str, f"/health response leaks topology via {needle!r}: {body_str}"
 
     # AC-39 step 7: structlog captures the full exception via exc_info
     exc_records = [rec for rec in log_capture if rec.exc_info is not None]

@@ -6,6 +6,7 @@ consumer of list-shaped payload keys (``anchor_texts``, ``links_to``,
 ``image_urls``) MUST read through :func:`payload_list` to avoid silent
 drift between the two shapes.
 """
+
 from __future__ import annotations
 
 from collections.abc import Mapping

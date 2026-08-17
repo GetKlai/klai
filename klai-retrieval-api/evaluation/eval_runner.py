@@ -74,10 +74,14 @@ async def retry_with_backoff(
             last_exc = exc
             if attempt == max_retries - 1:
                 break
-            delay = min(base_delay * (2 ** attempt) + random.uniform(0, 1), max_delay)
+            jitter = random.uniform(0, 1)  # noqa: S311 -- retry backoff jitter, not security-sensitive
+            delay = min(base_delay * (2**attempt) + jitter, max_delay)
             logger.warning(
                 "Attempt %d/%d failed: %s. Retrying in %.1fs...",
-                attempt + 1, max_retries, exc, delay,
+                attempt + 1,
+                max_retries,
+                exc,
+                delay,
             )
             await asyncio.sleep(delay)
 
@@ -192,15 +196,17 @@ async def run_baseline(
             retrieved_ids = [c["chunk_id"] for c in resp.get("chunks", [])]
             gt_ids = q.get("ground_truth_chunks", [])
 
-            results.append({
-                "query": q["query"],
-                "retrieved_chunk_ids": retrieved_ids,
-                "ndcg_at_10": compute_ndcg_at_k(retrieved_ids, gt_ids, k=10),
-                "recall_at_10": compute_recall_at_k(retrieved_ids, gt_ids, k=10),
-                "chunks": resp.get("chunks", []),
-            })
+            results.append(
+                {
+                    "query": q["query"],
+                    "retrieved_chunk_ids": retrieved_ids,
+                    "ndcg_at_10": compute_ndcg_at_k(retrieved_ids, gt_ids, k=10),
+                    "recall_at_10": compute_recall_at_k(retrieved_ids, gt_ids, k=10),
+                    "chunks": resp.get("chunks", []),
+                }
+            )
         except Exception as exc:
-            logger.error("Baseline query %d failed: %s", i + 1, exc)
+            logger.exception("Baseline query %d failed", i + 1)
             results.append({"query": q["query"], "error": str(exc)})
         finally:
             # Restore original env
@@ -260,15 +266,17 @@ async def run_evidence_tier(
             retrieved_ids = [c["chunk_id"] for c in resp.get("chunks", [])]
             gt_ids = q.get("ground_truth_chunks", [])
 
-            results.append({
-                "query": q["query"],
-                "retrieved_chunk_ids": retrieved_ids,
-                "ndcg_at_10": compute_ndcg_at_k(retrieved_ids, gt_ids, k=10),
-                "recall_at_10": compute_recall_at_k(retrieved_ids, gt_ids, k=10),
-                "chunks": resp.get("chunks", []),
-            })
+            results.append(
+                {
+                    "query": q["query"],
+                    "retrieved_chunk_ids": retrieved_ids,
+                    "ndcg_at_10": compute_ndcg_at_k(retrieved_ids, gt_ids, k=10),
+                    "recall_at_10": compute_recall_at_k(retrieved_ids, gt_ids, k=10),
+                    "chunks": resp.get("chunks", []),
+                }
+            )
         except Exception as exc:
-            logger.error("Evidence-tier query %d failed: %s", i + 1, exc)
+            logger.exception("Evidence-tier query %d failed", i + 1)
             results.append({"query": q["query"], "error": str(exc)})
         finally:
             for k, v in original_env.items():
@@ -302,19 +310,17 @@ def compare_results(
     }
 
     for metric in ("ndcg_at_10", "recall_at_10"):
-        baseline_scores = [
-            r.get(metric, 0.0) for r in baseline if "error" not in r
-        ]
-        treatment_scores = [
-            r.get(metric, 0.0) for r in treatment if "error" not in r
-        ]
+        baseline_scores = [r.get(metric, 0.0) for r in baseline if "error" not in r]
+        treatment_scores = [r.get(metric, 0.0) for r in treatment if "error" not in r]
 
         if len(baseline_scores) != len(treatment_scores):
             logger.warning("Mismatched result counts for %s, skipping", metric)
             continue
 
         if len(baseline_scores) < 5:
-            logger.warning("Too few samples (%d) for Wilcoxon test on %s", len(baseline_scores), metric)
+            logger.warning(
+                "Too few samples (%d) for Wilcoxon test on %s", len(baseline_scores), metric
+            )
             report["metrics"][metric] = {
                 "baseline_mean": sum(baseline_scores) / max(len(baseline_scores), 1),
                 "treatment_mean": sum(treatment_scores) / max(len(treatment_scores), 1),
@@ -325,8 +331,7 @@ def compare_results(
         baseline_mean = sum(baseline_scores) / len(baseline_scores)
         treatment_mean = sum(treatment_scores) / len(treatment_scores)
         improvement_pct = (
-            ((treatment_mean - baseline_mean) / baseline_mean * 100)
-            if baseline_mean > 0 else 0.0
+            ((treatment_mean - baseline_mean) / baseline_mean * 100) if baseline_mean > 0 else 0.0
         )
 
         # Wilcoxon signed-rank test (paired, non-parametric)
@@ -433,7 +438,9 @@ async def main(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="RAGAS evaluation for evidence-tier scoring")
-    parser.add_argument("--baseline-only", action="store_true", help="Only run baseline measurement")
+    parser.add_argument(
+        "--baseline-only", action="store_true", help="Only run baseline measurement"
+    )
     parser.add_argument(
         "--dimension",
         choices=["content_type", "temporal_decay", "assertion_mode"],

@@ -232,6 +232,7 @@ def test_evidence_pack_preserves_heading_metadata_for_prompt_context():
 # when ``source_url`` is absent. All chunks from the same upload
 # collapse into one synthetic source ``artifact:<uuid>``.
 
+
 def test_evidence_pack_includes_uploaded_documents_without_source_url():
     """Uploads (PDFs, pasted text) have no public URL — their chunks
     must still reach the evidence pack via the ``artifact_id``
@@ -308,8 +309,7 @@ def test_evidence_pack_prefers_original_filename_for_file_sha_upload_title():
                 "chunk_id": "cv-chunk-1",
                 "artifact_id": "853797a1-3a22-4d90-872e-6a917d996c9a",
                 "title": (
-                    "file:sha256:"
-                    "59f8048203feeb17818abffa52de51405e0705c9e7907e2a57ebd5aa48c6697a"
+                    "file:sha256:59f8048203feeb17818abffa52de51405e0705c9e7907e2a57ebd5aa48c6697a"
                 ),
                 "original_filename": "CV_Jantine_Doornbos.pdf",
                 "text": "WERKERVARING\nMede-oprichter bij Klai jan 2026 - heden.",

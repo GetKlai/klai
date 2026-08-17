@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -137,10 +136,12 @@ class TestFetchChunksByUrls:
     async def test_timeout_returns_empty_with_warning(self):
         """6.5: Timeout on scroll returns [] and logs a warning."""
         mock_client = AsyncMock()
-        mock_client.scroll.side_effect = asyncio.TimeoutError()
+        mock_client.scroll.side_effect = TimeoutError()
 
-        with patch.object(search, "_get_client", return_value=mock_client), \
-             patch.object(search, "logger") as mock_logger:
+        with (
+            patch.object(search, "_get_client", return_value=mock_client),
+            patch.object(search, "logger") as mock_logger,
+        ):
             req = RetrieveRequest(query="test", org_id="org-1", scope="org")
             results = await search.fetch_chunks_by_urls(
                 urls=["https://docs.example.com/x"],
@@ -158,8 +159,10 @@ class TestFetchChunksByUrls:
         mock_client = AsyncMock()
         mock_client.scroll.side_effect = RuntimeError("connection lost")
 
-        with patch.object(search, "_get_client", return_value=mock_client), \
-             patch.object(search, "logger") as mock_logger:
+        with (
+            patch.object(search, "_get_client", return_value=mock_client),
+            patch.object(search, "logger") as mock_logger,
+        ):
             req = RetrieveRequest(query="test", org_id="org-1", scope="org")
             results = await search.fetch_chunks_by_urls(
                 urls=["https://docs.example.com/x"],

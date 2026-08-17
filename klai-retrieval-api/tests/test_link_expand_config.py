@@ -1,4 +1,5 @@
 """Tests for link expansion config settings (SPEC-CRAWLER-003, R19, R20)."""
+
 import pytest
 
 
