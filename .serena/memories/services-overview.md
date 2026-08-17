@@ -7,7 +7,9 @@
 ## klai-scribe (`klai-scribe/`)
 - **Purpose:** Meeting/audio transcription
 - **Components:**
-  - `whisper-server/` — Whisper ASR server image/runtime
+  - `whisper-server/` — reference ASR image for self-hosters. NOT what Klai
+    production runs: SPEC-VEXA-003 replaced it with the Vexa transcription
+    workers on the same port and the same OpenAI-compatible path.
   - `scribe-api/` — FastAPI, stores transcriptions, integrates with portal
 
 ## klai-website (`klai-website/`)
@@ -39,7 +41,7 @@ Inference endpoints are environment-specific. The public product contracts are:
 | embedding runtime | BGE-M3-compatible | Dense embeddings for knowledge-ingest and retrieval-api |
 | reranker runtime | cross-encoder reranker | Reranking for retrieval-api |
 | sparse embedding runtime | BGE-M3-compatible sparse encoder | Sparse embeddings for knowledge-ingest |
-| whisper-server | Whisper-compatible ASR | STT for scribe-api |
+| whisper-server | Whisper-compatible ASR | Self-host reference image. Klai production serves STT from the Vexa transcription workers (SPEC-VEXA-003), reached through the same `WHISPER_SERVER_URL`. |
 
 ## External Platform Services
 | Service | Role | URL |
