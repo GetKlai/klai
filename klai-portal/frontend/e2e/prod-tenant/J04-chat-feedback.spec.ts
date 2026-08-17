@@ -27,6 +27,16 @@
  * response body reflects rating "thumbsUp" -> assert the button's
  * aria-pressed flips to "true" so a silently-failing handler is caught.
  *
+ * The SECOND half -- whether the forwarded feedback actually correlates with a
+ * retrieval log, so Qdrant learns anything -- cannot be asserted from a browser
+ * at all: it happens server-side and no client-visible response reflects it.
+ * That is deliberately covered instead by
+ * klai-portal/backend/tests/test_kb_feedback_correlation.py, which runs the real
+ * correlation against a real Redis and pins both causes of the four-month
+ * outage (identity namespace, and message-createdAt vs click time). Do not add
+ * a correlation assertion here; it would need the internal secret in the
+ * browser's environment to read that state.
+ *
  * docs/testing/test-suite-plan.md §6 (J04).
  */
 import { test, expect } from '@playwright/test'
