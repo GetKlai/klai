@@ -22,13 +22,18 @@ AUDIT="$REPO_ROOT/deploy/scripts/docker-orphan-audit.sh"
 STUB_DIR="$(mktemp -d)"
 trap 'rm -rf "$STUB_DIR"' EXIT
 
-# Fixture: name|compose-project|klai.managed_by|klai.adhoc|runtime.managed|image
+# Fixture: name|compose-project|klai.managed_by|klai.adhoc|runtime.managed|image|compose-service
+#
+# This suite exercises detection 1 only: with no readable main Caddy config the
+# route detections are skipped, so the script never reaches the pipeline that
+# aborts on an empty service set. The compose-service column is here for parity
+# with the caddy-routes fixture, where it IS load-bearing — see the note there.
 cat > "$STUB_DIR/containers.txt" <<'EOF'
-klai-core-portal-api-1|klai-core|||false|ghcr.io/getklai/portal-api:latest
-librechat-voys||portal-api-provisioning||false|1b8fa0a19a2c
-vexa-mtg-5-9a935aa1||||true|vexaai/vexa-bot:v0.12.22
-debug-shell||||false|alpine:3.22
-impostor-bot||||true|alpine:3.22
+klai-core-portal-api-1|klai-core|||false|ghcr.io/getklai/portal-api:latest|portal-api
+librechat-voys||portal-api-provisioning||false|1b8fa0a19a2c|
+vexa-mtg-5-9a935aa1||||true|vexaai/vexa-bot:v0.12.22|
+debug-shell||||false|alpine:3.22|
+impostor-bot||||true|alpine:3.22|
 EOF
 
 cat > "$STUB_DIR/docker" <<'STUB'
@@ -45,6 +50,7 @@ case "$1" in
     for a in "$@"; do [[ "$a" == "-a" ]] && exit 0; done
     case "$*" in
       *'{{.Names}}'*) cut -d'|' -f1 "$FIX" ;;
+      *com.docker.compose.service*) cut -d'|' -f7 "$FIX" ;;
       *) : ;;
     esac
     ;;
@@ -52,7 +58,7 @@ case "$1" in
     name="$2"; tpl="$4"
     case "$tpl" in
       *com.docker.compose.project*) field "$name" 2 ;;
-      *com.docker.compose.service*) : ;;
+      *com.docker.compose.service*) field "$name" 7 ;;
       *klai.managed_by*)            field "$name" 3 ;;
       *klai.tenant_slug*)           : ;;
       *klai.adhoc*)                 field "$name" 4 ;;
@@ -84,6 +90,17 @@ expect() {
 }
 
 echo "── orphan-audit managed-class guard ──"
+
+# The run must reach its own last line. `set -euo pipefail` aborts silently, so a
+# suite that only asserts on early detections stays green against a script that
+# died halfway — which is exactly what happened here before the compose-service
+# column existed.
+if echo "$OUT" | grep -q '"event":"audit_run_completed"'; then
+    echo "OK:   audit ran to completion"
+else
+    echo "FAIL: audit aborted before its final event — later detections never ran" >&2
+    FAIL=1
+fi
 expect exempt  klai-core-portal-api-1 "klasse A — compose-project=klai-core"
 expect exempt  librechat-voys         "klasse B — klai.managed_by=portal-api-provisioning"
 expect exempt  vexa-mtg-5-9a935aa1    "klasse C — runtime.managed=true on a vexaai/* image"

@@ -44,7 +44,27 @@ TIMESTAMP="$(date -Iseconds)"
 COMPOSE_FILE="${COMPOSE_FILE:-/opt/klai/docker-compose.yml}"
 OVERRIDE_FILE="${OVERRIDE_FILE:-/opt/klai/docker-compose.override.yml}"
 DEV_FILE="${DEV_FILE:-/opt/klai/docker-compose.dev.yml}"
-CADDYFILE="${CADDYFILE:-/opt/klai/Caddyfile}"
+# Which Caddyfile is the real one? Two files on this host answer to that name:
+#
+#   /opt/klai/caddy/Caddyfile   592 lines, bind-mounted into the container — LIVE
+#   /opt/klai/Caddyfile         256 lines, last touched 2026-04-21 — a leftover
+#
+# The second predates SPEC-INFRA-CADDY-CONFIG-DEPLOY-001, which moved the synced
+# path under caddy/. Nothing reads it, but it still looks authoritative, and this
+# audit defaulted to it — so detection 5 compared live upstreams against a route
+# set four months old. It also carries a comment claiming basic_auth was removed
+# from the dev host, while the live config still has it, which is how the decoy
+# produces confident wrong answers rather than obvious ones.
+#
+# Do not pick a path. Ask the container which file it actually mounted, the same
+# way the tenant directory is resolved below. The literal is only a fallback for
+# when there is no container to ask, and it now names the correct file.
+if [[ -z "${CADDYFILE:-}" ]]; then
+    CADDYFILE=$(docker inspect klai-core-caddy-1 \
+        --format '{{range .Mounts}}{{if eq .Destination "/etc/caddy/Caddyfile"}}{{.Source}}{{end}}{{end}}' \
+        2>/dev/null || echo "")
+    [[ -n "$CADDYFILE" ]] || CADDYFILE="/opt/klai/caddy/Caddyfile"
+fi
 
 # Use a tempfile to count events across subshells (while|read pipelines)
 EVENT_TMP="$(mktemp)"
