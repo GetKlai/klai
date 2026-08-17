@@ -1,9 +1,9 @@
 ---
 id: SPEC-SEC-022
-version: 0.2.0
-status: in_progress
+version: 0.3.0
+status: partially_implemented
 created: 2026-04-19
-updated: 2026-04-22
+updated: 2026-08-17
 author: Mark Vletter
 priority: medium
 ---
@@ -11,6 +11,69 @@ priority: medium
 # SPEC-SEC-022: vexa-bots network egress allowlist
 
 ## HISTORY
+
+### v0.3.0 (2026-08-17)
+
+**REQ-2 implemented and verified. REQ-1 deliberately dropped. The rest of this
+document was written against a stack that no longer exists — read the notes
+below before acting on anything above them.**
+
+The April premise was measured on Vexa 0.10: `vexa-bots`, subnet 172.27.0.0/16,
+`Internal=false`, bots with "arbitrary internet + full access to our internal
+network". Vexa 0.12.22 replaced that stack in August. What is true now:
+
+- The bot network is `vexa12-bots`, subnet **172.29.0.0/16**. The SPEC's
+  172.27.0.0/16 is now `vexa12-portal`, an `Internal=true` network — applying
+  the Phase 3 rules verbatim would have filtered the wrong containers and left
+  the bots untouched.
+- Bots **cannot** reach klai-net containers. Docker's `DOCKER-FORWARD` isolation
+  handles it; verified by probing container IPs directly, not names, so the
+  result is a packet drop and not a DNS failure.
+- Bots **could** reach the host: SSH on 22, and all five GPU tunnel forwards
+  (ollama 11434, vLLM 8000/8001, embeddings 7997, reranker 7998), every one
+  unauthenticated. `DOCKER-USER` is inbound-only (`-i $EXT_IF`) and never saw
+  this traffic; it lands in INPUT, whose policy is ACCEPT and which nothing
+  filters — ufw is not even installed here, only its empty chains remain.
+
+**REQ-2 — done.** `deploy/scripts/harden-docker-user.sh` installs a default-deny
+from the bot subnet to the host with one exception, applied by the existing
+`klai-harden-firewall.service` and persisted through `netfilter-persistent`.
+Verified from a container on `vexa12-bots`: SSH and four GPU endpoints closed,
+transcription + redis + internet still open. `retrieval-api` on klai-net still
+reaches all four GPU endpoints — that path was never in scope and is untouched.
+
+The exception is tcp/8000, the transcription endpoint. `vexa12-meeting-api`
+carries `TRANSCRIPTION_SERVICE_URL` pointing at it and sits on the same subnet.
+With no bot running there was no way to prove which process actually opens that
+connection, and transcription demonstrably works — so it stays open rather than
+being closed on a guess. Narrowing it needs REQ-1's capture during a real
+meeting. This is a documented hole, not an oversight.
+
+`172.18.0.1:443` also remains reachable, and stays that way: DNAT rewrites it to
+the Caddy container before INPUT sees it, so it is FORWARD traffic. Confirmed by
+counters — the DROP counter moved by exactly the blocked probes and not by that
+one. A bot reaching Caddy has the same access as any host on the internet.
+
+**REQ-1 — dropped, not deferred.** The full-internet allowlist was never built
+because Phase 1 needs a ≥4-hour capture across ≥15 meetings on three providers,
+and that window never happened in four months. The SPEC's own risk section
+explains why: Google, Microsoft and Zoom rotate CDN IPs continuously, so the
+allowlist needs a 6-hourly refresh and breaks meetings when it drifts. That is a
+permanent maintenance cost against a browser whose job is to visit URLs we do
+not control — and the lateral-movement risk it was meant to contain is now
+covered by REQ-2 plus Docker's network isolation. Egress to the internet on
+443 stays open. If this is revisited, start by measuring, not by enforcing.
+
+REQ-3, REQ-4 and REQ-5 belonged to REQ-1's allowlist and go with it. REQ-5's
+conntrack concern does not arise: the rules are subnet-scoped, not per-IP, so a
+recycled bot IP is evaluated against the same rule.
+
+**Guard:** `deploy/scripts/tests/harden-docker-user-bot-isolation.test.sh` pins
+the shape — subnet read from Docker rather than hardcoded, exception ordered
+above the deny, re-runs that do not stack rules, and a loud warning if the
+network is missing instead of a silent skip. Verified by mutation: hardcoding
+the SPEC's old CIDR fails six assertions, swapping the rule order fails one, and
+downgrading the warning fails one.
 
 ### v0.2.0 (2026-04-22)
 - **Phase 1 infrastructure ready.** `scripts/vexa-egress-capture.sh` wraps
