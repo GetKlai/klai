@@ -131,7 +131,7 @@ class TestClusterDocumentsHdbscan:
         from knowledge_ingest.clustering import cluster_documents_hdbscan
 
         embeddings, _true_labels = _make_synthetic_embeddings()
-        labels, metrics = cluster_documents_hdbscan(
+        labels, _metrics = cluster_documents_hdbscan(
             embeddings, min_cluster_size=5, pre_reduce=False
         )
 
@@ -150,7 +150,7 @@ class TestClusterDocumentsHdbscan:
         from knowledge_ingest.clustering import cluster_documents_hdbscan
 
         embeddings, _ = _make_synthetic_embeddings()
-        labels, metrics = cluster_documents_hdbscan(embeddings, min_cluster_size=5)
+        _labels, metrics = cluster_documents_hdbscan(embeddings, min_cluster_size=5)
 
         assert "clusters_found" in metrics
         assert "outlier_count" in metrics
@@ -219,8 +219,6 @@ class TestAdaptiveClusterCount:
         """closest_to_centroid returns top-N indices closest to cluster centroid."""
         from knowledge_ingest.clustering import closest_to_centroid
 
-        rng = np.random.RandomState(42)
-        center = np.array([1.0, 0.0, 0.0, 0.0])
         # Make 5 vectors: first 3 close to center, last 2 far
         vecs = np.array(
             [
@@ -445,7 +443,7 @@ class TestBootstrapProposalsV2Integration:
                 AsyncMock(return_value=""),
             ),
         ):
-            result = await generate_bootstrap_proposals_v2(
+            await generate_bootstrap_proposals_v2(
                 org_id="org1",
                 kb_slug="test-kb",
                 document_summaries=doc_summaries,
@@ -556,7 +554,10 @@ class TestBootstrapProposalsV2Integration:
         # If synthetic data gave us 3 clusters, we cap to 2
         if result.clusters_found >= 2:
             assert result.proposals_submitted <= 2
-            log_events = [e["event"] for e in captured]
+            # TODO: this test's docstring says "log bootstrap_clusters_capped"
+            # (AC-7) but that event is never asserted here. Should likely be:
+            #   assert "bootstrap_clusters_capped" in _log_events
+            _log_events = [e["event"] for e in captured]
             # Only log capped if we actually had more than max
             # (synthetic data may give exactly 2 or 3 clusters)
 
@@ -646,7 +647,7 @@ class TestBootstrapProposalsV2Integration:
                     AsyncMock(return_value="a description"),
                 ),
             ):
-                result = await generate_bootstrap_proposals_v2(
+                await generate_bootstrap_proposals_v2(
                     org_id="org-test",
                     kb_slug="kb-test",
                     document_summaries=doc_summaries,
@@ -743,7 +744,7 @@ class TestBootstrapLatency:
                 AsyncMock(return_value=""),
             ),
         ):
-            result = await generate_bootstrap_proposals_v2(
+            await generate_bootstrap_proposals_v2(
                 org_id="org1",
                 kb_slug="perf-kb",
                 document_summaries=doc_summaries,
@@ -779,7 +780,7 @@ class TestBootstrapLatency:
                 AsyncMock(return_value=""),
             ),
         ):
-            result = await generate_bootstrap_proposals_v2(
+            await generate_bootstrap_proposals_v2(
                 org_id="org1",
                 kb_slug="large-kb",
                 document_summaries=doc_summaries,
@@ -920,7 +921,7 @@ class TestDuplicatePreventionRegression:
             patch("knowledge_ingest.proposal_generator.submit_taxonomy_proposal", mock_submit),
             patch("knowledge_ingest.proposal_generator.settings", mock_settings),
         ):
-            result = await generate_bootstrap_proposals_v2(
+            await generate_bootstrap_proposals_v2(
                 org_id="voys-org",
                 kb_slug="voys-help-notion",
                 document_summaries=doc_summaries,

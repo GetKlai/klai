@@ -131,7 +131,6 @@ async def test_run_crawl_job_populates_link_fields_on_every_page():
     """
     results = _build_cross_linked_results()
     graph = _build_in_memory_graph(results)
-    mock_pool = _make_mock_pool()
 
     # Capture all ingest calls to verify extra dicts
     captured_ingest_calls: list[dict] = []
@@ -252,7 +251,6 @@ async def test_run_crawl_job_no_post_crawl_link_counts_call():
             [{"href": "https://example.com/b", "text": "B"}],
         ),
     ]
-    mock_pool = _make_mock_pool()
 
     with (
         patch(

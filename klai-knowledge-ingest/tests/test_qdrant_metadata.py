@@ -103,9 +103,11 @@ async def test_search_with_user_id_filter():
         mock_client.return_value.query_points = mock_query
         await search("org1", [0.1] * 1024, kb_slugs=["personal-user123"], user_id="user123")
 
-        call_kwargs = mock_query.call_args
-        # The filter is passed via prefetch entries; check that user_id filter exists
-        # by verifying query_points was called (the filter construction is tested implicitly)
+        # TODO: call_kwargs is captured but never asserted on. The filter is
+        # passed via prefetch entries' `filter=` kwarg (see qdrant_store.search),
+        # so this test does not actually verify the user_id filter was applied —
+        # only that query_points was called at all.
+        _call_kwargs = mock_query.call_args
         mock_query.assert_called_once()
 
 

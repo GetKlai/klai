@@ -126,9 +126,9 @@ async def test_first_ingest_not_skipped():
 async def test_queueing_lock_includes_org_kb_path_and_artifact():
     """queueing_lock includes path identity plus the concrete artifact version."""
     # Two tasks for different orgs, same KB+path — must get different locks
-    task_fn_a, configured_a = _make_task_fn(side_effects=[None])
-    task_fn_b, configured_b = _make_task_fn(side_effects=[None])
-    task_fn_c, configured_c = _make_task_fn(side_effects=[None])
+    task_fn_a, _configured_a = _make_task_fn(side_effects=[None])
+    task_fn_b, _configured_b = _make_task_fn(side_effects=[None])
+    task_fn_c, _configured_c = _make_task_fn(side_effects=[None])
 
     org_a, org_b = "orgA", "orgB"
     kb_slug, path = "shared-kb", "docs/page.md"
