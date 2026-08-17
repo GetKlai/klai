@@ -126,7 +126,7 @@ groups:
                  legitimate tenant container — its tenant_slug label tells you
                  which tenant.
               3. Check why Caddy lost the upstream:
-                   ssh core-01 "grep -n {NAME} /opt/klai/Caddyfile /opt/klai/caddy/tenants/*.caddyfile"
+                   ssh core-01 "docker exec klai-core-caddy-1 grep -rn {NAME} /etc/caddy/Caddyfile /etc/caddy/tenants/"
                  If absent, the per-tenant Caddyfile was lost — recreate via
                  the portal-api provisioning re-run flow (see provisioning-retry.md
                  runbook).
@@ -203,7 +203,7 @@ groups:
                  The `container_name` field names the upstream Caddy could
                  not resolve.
               2. Verify Caddyfile state:
-                   ssh core-01 "grep -nE '(^|[[:space:]]){NAME}([[:space:]]|:|$)' /opt/klai/Caddyfile /opt/klai/caddy/tenants/*.caddyfile"
+                   ssh core-01 "docker exec klai-core-caddy-1 grep -rnE '(^|[[:space:]]){NAME}([[:space:]]|:|$)' /etc/caddy/Caddyfile /etc/caddy/tenants/"
               3. Decide: is this a stale Caddyfile entry (service was
                  intentionally removed) or a missing container (service
                  should exist)?

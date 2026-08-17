@@ -102,8 +102,12 @@ runs checks and `exit 2` blocks the tool-call:
 3. **Compose git-history grep:** if `klai-infra` checkout reachable,
    search `deploy/docker-compose*.yml` history for the target. Match
    means it was a declared service at some point — needs review.
-4. **Caddy upstream check:** target reachable via `/opt/klai/Caddyfile`
-   (best-effort, only when core-01 reachable — fail-open on dev).
+4. **Caddy upstream check:** target reachable in the live Caddy config
+   (best-effort, only when core-01 reachable — fail-open on dev). Read it from
+   inside the container — `docker exec klai-core-caddy-1 grep -r <name>
+   /etc/caddy/Caddyfile /etc/caddy/tenants/` — never from a host path. Two host
+   files answer to the name Caddyfile and the tenant configs live in a volume,
+   so every host-path form of this check has been wrong.
 5. **VictoriaLogs traffic check:** target had log-events in last 30d
    (best-effort — fail-open on dev).
 
