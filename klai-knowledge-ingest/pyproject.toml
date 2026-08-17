@@ -64,7 +64,7 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "S", "RUF", "G", "LOG"]
+select = ["E", "F", "I", "UP", "B", "S", "RUF", "G", "LOG", "ARG"]
 ignore = [
     "S101",  # assert is fine in tests
     "S105",  # hardcoded passwords — false positives on config defaults
@@ -77,6 +77,23 @@ ignore = [
 "tests/test_alembic_bootstrap.py" = ["E501", "S603", "S607"]  # test file calls subprocess with known-safe args
 "tests/test_clustering_umap.py" = ["E501"]  # patch() strings and assert messages legitimately exceed 100 chars
 "tests/test_taxonomy_v2_bootstrap.py" = ["E501"]  # patch() strings and docstrings legitimately exceed 100 chars
+# Unused arguments in tests are structural, not bugs: pytest fixtures are
+# injected for their side effect (not read), and mock/stub signatures must
+# mirror the real callable they replace even when a given test ignores some
+# parameters. Enforcing ARG here would force churn without catching anything.
+"tests/**" = ["ARG"]
+# Every ContentTypeProfile.hype_enabled is typed Callable[[int], bool]; some
+# profiles' lambdas don't need the depth value but must keep the shared
+# call signature so enrichment.py can invoke any profile uniformly.
+"knowledge_ingest/content_profiles.py" = ["ARG005"]
+# Every STRATEGIES entry is called with the same kwargs (e.g. chunk_index=)
+# regardless of which strategy is selected; **kwargs is the common-signature
+# escape hatch for strategies that don't need a given kwarg.
+"knowledge_ingest/context_strategies.py" = ["ARG001"]
+# Every route here declares request: Request per this file's FastAPI handler
+# convention; InternalSecretMiddleware already validates requests centrally,
+# so individual handlers don't need to inspect it today.
+"knowledge_ingest/routes/taxonomy.py" = ["ARG001"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

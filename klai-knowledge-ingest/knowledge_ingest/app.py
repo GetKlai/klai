@@ -31,7 +31,7 @@ _apply_graphiti_patch()
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI):  # noqa: ARG001 — FastAPI lifespan contract requires this param
     logger.info("starting_knowledge_ingest_service")
     await qdrant_store.ensure_collection()
     logger.info("qdrant_collection_ready")

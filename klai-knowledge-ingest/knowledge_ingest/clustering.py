@@ -385,7 +385,6 @@ async def run_clustering_for_kb(
     org_id: str,
     kb_slug: str,
     qdrant_client: AsyncQdrantClient,
-    taxonomy_nodes: list,
 ) -> CentroidStore | None:
     """Fetch embeddings from Qdrant, run HDBSCAN, compute centroids.
 

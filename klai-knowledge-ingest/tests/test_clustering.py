@@ -289,6 +289,5 @@ async def test_run_clustering_too_few_docs():
         org_id="org-1",
         kb_slug="test-kb",
         qdrant_client=mock_client,
-        taxonomy_nodes=[],
     )
     assert result is None
