@@ -1,4 +1,5 @@
 """Tests for metadata allowlist in qdrant_store.py (TASK-007)."""
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -24,15 +25,17 @@ def _make_query_response(points):
 @pytest.mark.asyncio
 async def test_metadata_does_not_contain_user_id():
     """user_id must NOT appear in metadata (V008)."""
-    mock_point = _make_query_point({
-        "text": "some text",
-        "kb_slug": "personal-secret-user-123",
-        "path": "note.md",
-        "org_id": "org1",
-        "user_id": "secret-user-123",
-        "chunk_index": 0,
-        "title": "My Note",
-    })
+    mock_point = _make_query_point(
+        {
+            "text": "some text",
+            "kb_slug": "personal-secret-user-123",
+            "path": "note.md",
+            "org_id": "org1",
+            "user_id": "secret-user-123",
+            "chunk_index": 0,
+            "title": "My Note",
+        }
+    )
 
     with patch("knowledge_ingest.qdrant_store.get_client") as mock_client:
         mock_client.return_value.query_points = AsyncMock(
@@ -47,13 +50,15 @@ async def test_metadata_does_not_contain_user_id():
 @pytest.mark.asyncio
 async def test_metadata_does_not_contain_org_id():
     """org_id must NOT appear in metadata."""
-    mock_point = _make_query_point({
-        "text": "some text",
-        "kb_slug": "org",
-        "path": "doc.md",
-        "org_id": "org1",
-        "chunk_index": 0,
-    })
+    mock_point = _make_query_point(
+        {
+            "text": "some text",
+            "kb_slug": "org",
+            "path": "doc.md",
+            "org_id": "org1",
+            "chunk_index": 0,
+        }
+    )
 
     with patch("knowledge_ingest.qdrant_store.get_client") as mock_client:
         mock_client.return_value.query_points = AsyncMock(
@@ -67,16 +72,18 @@ async def test_metadata_does_not_contain_org_id():
 @pytest.mark.asyncio
 async def test_metadata_contains_allowed_fields():
     """Allowed fields should appear in metadata."""
-    mock_point = _make_query_point({
-        "text": "some text",
-        "kb_slug": "org",
-        "path": "doc.md",
-        "org_id": "org1",
-        "chunk_index": 3,
-        "title": "Test Title",
-        "created_at": "2026-01-01",
-        "user_id": "leak-me-not",
-    })
+    mock_point = _make_query_point(
+        {
+            "text": "some text",
+            "kb_slug": "org",
+            "path": "doc.md",
+            "org_id": "org1",
+            "chunk_index": 3,
+            "title": "Test Title",
+            "created_at": "2026-01-01",
+            "user_id": "leak-me-not",
+        }
+    )
 
     with patch("knowledge_ingest.qdrant_store.get_client") as mock_client:
         mock_client.return_value.query_points = AsyncMock(
@@ -132,15 +139,17 @@ def test_allowed_metadata_fields_includes_assertion_mode():
 @pytest.mark.asyncio
 async def test_metadata_contains_assertion_mode():
     """assertion_mode should pass through metadata when present in payload."""
-    mock_point = _make_query_point({
-        "text": "some text",
-        "kb_slug": "org",
-        "path": "doc.md",
-        "org_id": "org1",
-        "assertion_mode": "fact",
-        "content_type": "kb_article",
-        "ingested_at": 1711843200,
-    })
+    mock_point = _make_query_point(
+        {
+            "text": "some text",
+            "kb_slug": "org",
+            "path": "doc.md",
+            "org_id": "org1",
+            "assertion_mode": "fact",
+            "content_type": "kb_article",
+            "ingested_at": 1711843200,
+        }
+    )
 
     with patch("knowledge_ingest.qdrant_store.get_client") as mock_client:
         mock_client.return_value.query_points = AsyncMock(

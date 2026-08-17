@@ -44,8 +44,7 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     op.execute(
-        "ALTER TABLE knowledge.crawled_pages "
-        "ADD COLUMN IF NOT EXISTS content_simhash bigint"
+        "ALTER TABLE knowledge.crawled_pages ADD COLUMN IF NOT EXISTS content_simhash bigint"
     )
     op.execute(
         "CREATE INDEX IF NOT EXISTS idx_crawled_pages_simhash_org_kb "
@@ -56,6 +55,4 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.execute("DROP INDEX IF EXISTS knowledge.idx_crawled_pages_simhash_org_kb")
-    op.execute(
-        "ALTER TABLE knowledge.crawled_pages DROP COLUMN IF EXISTS content_simhash"
-    )
+    op.execute("ALTER TABLE knowledge.crawled_pages DROP COLUMN IF EXISTS content_simhash")

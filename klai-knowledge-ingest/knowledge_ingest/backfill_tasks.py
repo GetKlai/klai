@@ -200,9 +200,7 @@ async def backfill_detect_login_walls(
         )
 
         # Pass 1: ensure every row has a SimHash (Phase D, plan.md item 1).
-        url_to_hash = await _ensure_simhashes(
-            conn, list(rows), org_id=org_id, kb_slug=kb_slug
-        )
+        url_to_hash = await _ensure_simhashes(conn, list(rows), org_id=org_id, kb_slug=kb_slug)
 
         # Pass 2: cluster eval in-memory (single O(N^2) scan, no extra SQL).
         processed = len(rows)
@@ -314,9 +312,7 @@ async def recover_purged_pages(
             kb_slug,
         )
 
-        url_to_hash = await _ensure_simhashes(
-            conn, list(rows), org_id=org_id, kb_slug=kb_slug
-        )
+        url_to_hash = await _ensure_simhashes(conn, list(rows), org_id=org_id, kb_slug=kb_slug)
 
         processed = 0
         recovered = 0
@@ -367,9 +363,7 @@ def register_backfill_login_walls_task(procrastinate_app: Any) -> None:
     """Register the backfill + recover tasks on the given app."""
 
     @procrastinate_app.task(queue=queues.ENRICH_BULK)
-    async def backfill_detect_login_walls_task(
-        org_id: str, kb_slug: str
-    ) -> dict[str, int]:
+    async def backfill_detect_login_walls_task(org_id: str, kb_slug: str) -> dict[str, int]:
         return await backfill_detect_login_walls(org_id=org_id, kb_slug=kb_slug)
 
     @procrastinate_app.task(queue=queues.ENRICH_BULK)

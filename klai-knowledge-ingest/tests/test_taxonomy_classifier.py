@@ -1,4 +1,5 @@
 """Tests for taxonomy_classifier -- multi-label classification + tag suggestion."""
+
 from __future__ import annotations
 
 import json
@@ -15,24 +16,23 @@ def _make_nodes(*names: str) -> list[TaxonomyNode]:
 
 def _make_nodes_with_desc(*items: tuple[str, str | None]) -> list[TaxonomyNode]:
     return [
-        TaxonomyNode(id=i + 1, name=name, description=desc)
-        for i, (name, desc) in enumerate(items)
+        TaxonomyNode(id=i + 1, name=name, description=desc) for i, (name, desc) in enumerate(items)
     ]
 
 
-def _mock_litellm_response(
-    nodes: list[dict], tags: list[str] | None = None
-) -> AsyncMock:
+def _mock_litellm_response(nodes: list[dict], tags: list[str] | None = None) -> AsyncMock:
     """Build a mock httpx response for multi-label LiteLLM response."""
     response_json = {
         "choices": [
             {
                 "message": {
-                    "content": json.dumps({
-                        "nodes": nodes,
-                        "tags": tags or [],
-                        "reasoning": "test",
-                    })
+                    "content": json.dumps(
+                        {
+                            "nodes": nodes,
+                            "tags": tags or [],
+                            "reasoning": "test",
+                        }
+                    )
                 }
             }
         ]

@@ -1,13 +1,12 @@
 """Tests that context strategies are correctly applied in enrich_chunks."""
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from knowledge_ingest.enrichment import enrich_chunks
 
-DOCUMENT = " ".join(
-    [f"word{i}" for i in range(500)]
-)  # ~500 words, long enough for all strategies
+DOCUMENT = " ".join([f"word{i}" for i in range(500)])  # ~500 words, long enough for all strategies
 
 
 def _fake_enrich_chunk_factory(captured: list) -> AsyncMock:

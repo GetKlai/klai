@@ -142,6 +142,7 @@ async def _run_backfill(org_id: str, kb_slug: str, batch_size: int) -> dict:
     # Taxonomy phases require nodes — skip if none exist.
     # Always bypass cache: new nodes may have been approved just before this job ran.
     from knowledge_ingest.portal_client import invalidate_cache
+
     invalidate_cache(org_id, kb_slug)
     taxonomy_nodes = await fetch_taxonomy_nodes(kb_slug, org_id)
     if not taxonomy_nodes:

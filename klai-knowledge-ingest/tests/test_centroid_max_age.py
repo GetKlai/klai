@@ -3,6 +3,7 @@
 Verifies that stale centroid files (older than taxonomy_centroid_max_age_hours)
 are rejected and a warning is logged.
 """
+
 from __future__ import annotations
 
 import json
@@ -113,7 +114,6 @@ class TestCentroidMaxAge:
             result = load_centroids("org1", "kb1")
 
         assert result is not None
-
 
     def test_naive_datetime_treated_as_utc(self, tmp_path):
         """Naive computed_at is treated as UTC and stale check works correctly."""

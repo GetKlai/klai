@@ -8,6 +8,7 @@ older queued job can be the only enrichment job left after a re-ingest.
 procrastinate is mocked at the sys.modules level so this file runs in
 environments where libpq is not installed (CI, local dev on Windows).
 """
+
 from __future__ import annotations
 
 import logging
@@ -20,6 +21,7 @@ import pytest
 # ---------------------------------------------------------------------------
 # Minimal procrastinate stub — avoids the psycopg / libpq import chain
 # ---------------------------------------------------------------------------
+
 
 class _AlreadyEnqueued(Exception):
     """Stub for procrastinate.exceptions.AlreadyEnqueued."""
@@ -50,6 +52,7 @@ AlreadyEnqueued = sys.modules["procrastinate.exceptions"].AlreadyEnqueued
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_task_fn(side_effects):
     """
     Return a mock task function whose .configure().defer_async() uses the
@@ -76,6 +79,7 @@ async def _run_enqueue(task_fn):
     """Replicate the try/except block from ingest.py."""
     try:
         from procrastinate.exceptions import AlreadyEnqueued as _AE
+
         await task_fn.configure(
             queueing_lock=_QUEUEING_LOCK,
         ).defer_async(artifact_id=_DEFER_KWARGS["artifact_id"])
@@ -91,6 +95,7 @@ async def _run_enqueue(task_fn):
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_second_ingest_skipped_when_already_enqueued(caplog):
@@ -142,6 +147,7 @@ async def test_queueing_lock_includes_org_kb_path_and_artifact():
         lock = f"{org_id}:{kb_slug}:{path}:{artifact_id}"
         try:
             from procrastinate.exceptions import AlreadyEnqueued as _AE
+
             await task_fn.configure(queueing_lock=lock).defer_async(
                 artifact_id=artifact_id,
             )

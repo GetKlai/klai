@@ -1,4 +1,5 @@
 """Tests for content_labeler -- blind keyword generation before taxonomy (SPEC-KB-023)."""
+
 from __future__ import annotations
 
 import json
@@ -11,15 +12,7 @@ from knowledge_ingest.content_labeler import generate_content_label
 
 def _mock_litellm_response(keywords: list[str]) -> AsyncMock:
     """Build a mock httpx client returning a LiteLLM-style response."""
-    response_json = {
-        "choices": [
-            {
-                "message": {
-                    "content": json.dumps({"keywords": keywords})
-                }
-            }
-        ]
-    }
+    response_json = {"choices": [{"message": {"content": json.dumps({"keywords": keywords})}}]}
     mock_resp = MagicMock()
     mock_resp.raise_for_status = MagicMock()
     mock_resp.json = MagicMock(return_value=response_json)
@@ -123,9 +116,9 @@ class TestGenerateContentLabel:
 
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
-        mock_resp.json = MagicMock(return_value={
-            "choices": [{"message": {"content": '{"keywords": ["test"]}'}}]
-        })
+        mock_resp.json = MagicMock(
+            return_value={"choices": [{"message": {"content": '{"keywords": ["test"]}'}}]}
+        )
 
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -147,6 +140,7 @@ class TestGenerateContentLabel:
     async def test_system_prompt_has_no_taxonomy_reference(self):
         """System prompt must not reference taxonomy (no list of categories is injected)."""
         from knowledge_ingest.content_labeler import _SYSTEM_PROMPT
+
         assert "taxonomy" not in _SYSTEM_PROMPT.lower()
         # "category names" is allowed — it instructs the LLM NOT to use them
         # What must be absent: any taxonomy node data injected into the prompt

@@ -11,6 +11,7 @@ Usage:
 After validation, switch the active collection:
     Set QDRANT_COLLECTION=klai_knowledge_v2 in /opt/klai/.env and restart knowledge-ingest.
 """
+
 import argparse
 import asyncio
 import logging
@@ -65,6 +66,7 @@ async def migrate(dry_run: bool, batch_size: int) -> None:
                 # Fetch document content from Qdrant v1 (existing raw points)
                 client = qdrant_store.get_client()
                 from qdrant_client.models import FieldCondition, Filter, MatchValue
+
                 existing_points, _ = await client.scroll(
                     qdrant_store.COLLECTION,
                     scroll_filter=Filter(
@@ -80,7 +82,9 @@ async def migrate(dry_run: bool, batch_size: int) -> None:
                 if not existing_points:
                     logger.warning(
                         "No Qdrant points for artifact %s (%s/%s) — skipping",
-                        artifact_id, kb_slug, path,
+                        artifact_id,
+                        kb_slug,
+                        path,
                     )
                     continue
 
@@ -92,8 +96,12 @@ async def migrate(dry_run: bool, batch_size: int) -> None:
                 extra_payload = {
                     k: existing_points[0].payload[k]
                     for k in (
-                        "title", "source_type", "tags",
-                        "provenance_type", "confidence", "artifact_id",
+                        "title",
+                        "source_type",
+                        "tags",
+                        "provenance_type",
+                        "confidence",
+                        "artifact_id",
                     )
                     if k in existing_points[0].payload
                 }
@@ -146,7 +154,9 @@ async def migrate(dry_run: bool, batch_size: int) -> None:
 
         logger.info(
             "Migration complete: %d/%d processed, %d errors.",
-            processed, total, errors,
+            processed,
+            total,
+            errors,
         )
 
         if not dry_run:

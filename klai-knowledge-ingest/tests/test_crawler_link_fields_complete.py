@@ -6,6 +6,7 @@ Verifies:
 2. Every ingested page gets correct link fields because the graph is ready.
 3. qdrant_store.update_link_counts is NEVER called (REQ-05.1).
 """
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -87,8 +88,10 @@ def _get_outbound_urls_from_graph(
     graph: dict[str, list[dict]],
 ) -> AsyncMock:
     """Return an AsyncMock for link_graph.get_outbound_urls backed by in-memory graph."""
+
     async def _impl(conn: object, url: str, org_id: str, kb_slug: str) -> list[str]:
         return [link["href"] for link in graph.get(url, [])]
+
     return AsyncMock(side_effect=_impl)
 
 
@@ -96,6 +99,7 @@ def _get_anchor_texts_from_graph(
     graph: dict[str, list[dict]],
 ) -> AsyncMock:
     """Return an AsyncMock for link_graph.get_anchor_texts backed by in-memory graph."""
+
     async def _impl(conn: object, url: str, org_id: str, kb_slug: str) -> list[str]:
         texts = []
         for _from_url, links in graph.items():
@@ -103,6 +107,7 @@ def _get_anchor_texts_from_graph(
                 if link["href"] == url and link.get("text"):
                     texts.append(link["text"])
         return texts
+
     return AsyncMock(side_effect=_impl)
 
 
@@ -110,6 +115,7 @@ def _get_incoming_count_from_graph(
     graph: dict[str, list[dict]],
 ) -> AsyncMock:
     """Return an AsyncMock for link_graph.get_incoming_count backed by in-memory graph."""
+
     async def _impl(conn: object, url: str, org_id: str, kb_slug: str) -> int:
         count = 0
         for _from_url, links in graph.items():
@@ -117,6 +123,7 @@ def _get_incoming_count_from_graph(
                 if link["href"] == url:
                     count += 1
         return count
+
     return AsyncMock(side_effect=_impl)
 
 
@@ -205,11 +212,11 @@ async def test_run_crawl_job_populates_link_fields_on_every_page():
     # Build expected counts from graph
     base = "https://example.com"
     expected_incoming = {
-        f"{base}/a": 1,   # D→A
-        f"{base}/b": 1,   # A→B
-        f"{base}/c": 2,   # A→C + B→C
-        f"{base}/d": 1,   # C→D
-        f"{base}/e": 0,   # nobody links to E
+        f"{base}/a": 1,  # D→A
+        f"{base}/b": 1,  # A→B
+        f"{base}/c": 2,  # A→C + B→C
+        f"{base}/d": 1,  # C→D
+        f"{base}/e": 0,  # nobody links to E
     }
 
     for entry in captured_ingest_calls:
@@ -217,9 +224,7 @@ async def test_run_crawl_job_populates_link_fields_on_every_page():
         extra = entry["extra"]
         expected_count = expected_incoming[url]
 
-        assert "incoming_link_count" in extra, (
-            f"Page {url}: missing 'incoming_link_count' in extra"
-        )
+        assert "incoming_link_count" in extra, f"Page {url}: missing 'incoming_link_count' in extra"
         assert extra["incoming_link_count"] == expected_count, (
             f"Page {url}: expected incoming_link_count={expected_count}, "
             f"got {extra['incoming_link_count']}"
@@ -308,8 +313,11 @@ async def test_run_crawl_job_no_post_crawl_link_counts_call():
                 max_depth=1,
             )
 
-            mock_update_link_counts.assert_not_called(), (
-                "qdrant_store.update_link_counts was called from run_crawl_job. "
-                "REQ-05.1: this function must NOT be called — the two-phase pipeline "
-                "makes the post-crawl batch update dead code."
+            (
+                mock_update_link_counts.assert_not_called(),
+                (
+                    "qdrant_store.update_link_counts was called from run_crawl_job. "
+                    "REQ-05.1: this function must NOT be called — the two-phase pipeline "
+                    "makes the post-crawl batch update dead code."
+                ),
             )

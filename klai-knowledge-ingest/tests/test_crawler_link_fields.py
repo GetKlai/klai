@@ -6,6 +6,7 @@ Note: the post-crawl compute_incoming_counts + update_link_counts calls were
 removed in SPEC-CRAWLER-005 REQ-05.1. See test_crawler_link_fields_complete.py
 for the two-phase pipeline tests.
 """
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -62,16 +63,22 @@ async def test_ingest_crawl_result_populates_link_fields():
     with (
         patch("knowledge_ingest.adapters.crawler.pg_store", mock_pg),
         patch.object(
-            link_graph, "get_outbound_urls",
-            new_callable=AsyncMock, return_value=outbound_urls,
+            link_graph,
+            "get_outbound_urls",
+            new_callable=AsyncMock,
+            return_value=outbound_urls,
         ),
         patch.object(
-            link_graph, "get_anchor_texts",
-            new_callable=AsyncMock, return_value=["Link to B"],
+            link_graph,
+            "get_anchor_texts",
+            new_callable=AsyncMock,
+            return_value=["Link to B"],
         ),
         patch.object(
-            link_graph, "get_incoming_count",
-            new_callable=AsyncMock, return_value=3,
+            link_graph,
+            "get_incoming_count",
+            new_callable=AsyncMock,
+            return_value=3,
         ),
         patch(
             "knowledge_ingest.routes.ingest.ingest_document",
@@ -112,16 +119,22 @@ async def test_ingest_crawl_result_graceful_on_link_graph_error():
     with (
         patch("knowledge_ingest.adapters.crawler.pg_store", mock_pg),
         patch.object(
-            link_graph, "get_outbound_urls",
-            new_callable=AsyncMock, side_effect=Exception("DB down"),
+            link_graph,
+            "get_outbound_urls",
+            new_callable=AsyncMock,
+            side_effect=Exception("DB down"),
         ),
         patch.object(
-            link_graph, "get_anchor_texts",
-            new_callable=AsyncMock, return_value=[],
+            link_graph,
+            "get_anchor_texts",
+            new_callable=AsyncMock,
+            return_value=[],
         ),
         patch.object(
-            link_graph, "get_incoming_count",
-            new_callable=AsyncMock, return_value=0,
+            link_graph,
+            "get_incoming_count",
+            new_callable=AsyncMock,
+            return_value=0,
         ),
         patch(
             "knowledge_ingest.routes.ingest.ingest_document",

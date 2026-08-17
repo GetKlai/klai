@@ -175,11 +175,7 @@ async def _remove_taxonomy_node_from_qdrant(
             if not isinstance(raw_ids, list):
                 raw_ids = [raw_ids]
 
-            remaining_ids = [
-                raw_id
-                for raw_id in raw_ids
-                if _payload_int(raw_id) != node_id
-            ]
+            remaining_ids = [raw_id for raw_id in raw_ids if _payload_int(raw_id) != node_id]
             ids_changed = len(remaining_ids) != len(raw_ids)
             legacy_changed = _payload_int(payload.get("taxonomy_node_id")) == node_id
 

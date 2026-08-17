@@ -4,6 +4,7 @@ SPEC-CRAWLER-003: R9, R10, R11
 Verifies that anchor texts from linking pages are deduplicated and appended
 to enriched_text only, leaving original_text and context_prefix unchanged.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -12,6 +13,7 @@ from dataclasses import dataclass, field
 # Fake EnrichedChunk -- mirrors knowledge_ingest.enrichment.EnrichedChunk
 # without pulling in the real module and its heavy transitive deps.
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class FakeEnrichedChunk:
@@ -44,6 +46,7 @@ def _make_chunks(texts: list[str]) -> list[FakeEnrichedChunk]:
 # ---------------------------------------------------------------------------
 # Scenario 4.1: Anchor text deduplicated and appended
 # ---------------------------------------------------------------------------
+
 
 class TestAnchorTextDeduplicatedAndAppended:
     """Given enriched chunks and extra_payload with duplicate anchor_texts,
@@ -86,6 +89,7 @@ class TestAnchorTextDeduplicatedAndAppended:
 # ---------------------------------------------------------------------------
 # Scenario 4.2: Empty anchor_texts list -- no modification
 # ---------------------------------------------------------------------------
+
 
 class TestEmptyAnchorTextsNoModification:
     """Given extra_payload with empty anchor_texts, enriched_text is unchanged."""
@@ -138,6 +142,7 @@ class TestEmptyAnchorTextsNoModification:
 # ---------------------------------------------------------------------------
 # Scenario 4.3: original_text and context_prefix unchanged
 # ---------------------------------------------------------------------------
+
 
 class TestOriginalFieldsUnchanged:
     """Given anchor_texts, original_text and context_prefix must NOT be modified."""

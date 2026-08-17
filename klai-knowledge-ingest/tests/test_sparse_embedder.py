@@ -1,4 +1,5 @@
 """Tests for knowledge_ingest/sparse_embedder.py"""
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx

@@ -1,4 +1,5 @@
 """Tests for description_generator -- taxonomy node description generation."""
+
 from __future__ import annotations
 
 import json
@@ -12,13 +13,7 @@ from knowledge_ingest.description_generator import generate_node_description
 def _mock_litellm_response(description: str) -> AsyncMock:
     """Build a mock httpx response for description generation."""
     response_json = {
-        "choices": [
-            {
-                "message": {
-                    "content": json.dumps({"description": description})
-                }
-            }
-        ]
+        "choices": [{"message": {"content": json.dumps({"description": description})}}]
     }
     mock_resp = MagicMock()
     mock_resp.raise_for_status = MagicMock()

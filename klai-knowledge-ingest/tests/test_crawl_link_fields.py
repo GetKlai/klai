@@ -139,12 +139,8 @@ async def test_crawl_url_caps_links_to_at_20():
             new_callable=AsyncMock,
             return_value=[f"https://example.com/page-{i}" for i in range(25)],
         ),
-        patch.object(
-            link_graph, "get_anchor_texts", new_callable=AsyncMock, return_value=[]
-        ),
-        patch.object(
-            link_graph, "get_incoming_count", new_callable=AsyncMock, return_value=0
-        ),
+        patch.object(link_graph, "get_anchor_texts", new_callable=AsyncMock, return_value=[]),
+        patch.object(link_graph, "get_incoming_count", new_callable=AsyncMock, return_value=0),
     ):
         mock_pg.get_crawled_page_stored = AsyncMock(return_value=None)
         mock_pg.upsert_crawled_page = AsyncMock()
@@ -195,12 +191,8 @@ async def test_crawl_url_graceful_degradation_on_link_graph_error():
             new_callable=AsyncMock,
             side_effect=Exception("DB connection failed"),
         ),
-        patch.object(
-            link_graph, "get_anchor_texts", new_callable=AsyncMock, return_value=[]
-        ),
-        patch.object(
-            link_graph, "get_incoming_count", new_callable=AsyncMock, return_value=0
-        ),
+        patch.object(link_graph, "get_anchor_texts", new_callable=AsyncMock, return_value=[]),
+        patch.object(link_graph, "get_incoming_count", new_callable=AsyncMock, return_value=0),
     ):
         mock_pg.get_crawled_page_stored = AsyncMock(return_value=None)
         mock_pg.upsert_crawled_page = AsyncMock()

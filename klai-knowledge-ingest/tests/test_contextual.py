@@ -96,8 +96,7 @@ def test_detect_language_unknown_lang_falls_back_to_default() -> None:
 
 
 _SUMMARY_CONTENT_NL = (
-    "Dit document beschrijft de Voys customer-service "
-    "procedures voor portering en integraties."
+    "Dit document beschrijft de Voys customer-service procedures voor portering en integraties."
 )
 _SUMMARY_200_BODY = {
     "choices": [

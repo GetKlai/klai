@@ -1,4 +1,5 @@
 """Tests for knowledge_ingest/context_strategies.py"""
+
 from knowledge_ingest.context_strategies import (
     STRATEGIES,
     extract_first_n_tokens,

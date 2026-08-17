@@ -86,7 +86,8 @@ def _embedded_gate_result() -> CrawlResult:
         "when you want to read this article\n"
         "This article is available to authenticated users. Sign in to access "
         "the protected content and documentation.\n"
-        + "More public text after the protected section. " * 50
+        + "More public text after the protected section. "
+        * 50
     )
     return CrawlResult(
         url="https://wiki.example.test/nl/crm-software/example",

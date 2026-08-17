@@ -2,6 +2,7 @@
 Context extraction strategies for enrichment.
 Each strategy extracts the most relevant document context for a given content type.
 """
+
 from __future__ import annotations
 
 

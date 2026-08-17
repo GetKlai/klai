@@ -447,9 +447,12 @@ class TestConfigurableThreshold:
         conn = _FakeConn([target] * 3)  # 3 OTHERS
 
         # Default 5 → no flag
-        assert await detect_anonymous_auth_wall(
-            wall_text, org_id="x", kb_slug="y", url="https://x", conn=conn
-        ) is None
+        assert (
+            await detect_anonymous_auth_wall(
+                wall_text, org_id="x", kb_slug="y", url="https://x", conn=conn
+            )
+            is None
+        )
         # Lowered to 3 → flag
         signal = await detect_anonymous_auth_wall(
             wall_text,

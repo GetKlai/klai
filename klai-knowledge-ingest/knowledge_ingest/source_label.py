@@ -1,4 +1,5 @@
 """Source label computation for chunk payload (SPEC-KB-021 Change 1)."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

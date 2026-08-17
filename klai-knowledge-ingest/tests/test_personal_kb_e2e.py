@@ -9,6 +9,7 @@ Verifies the full roundtrip:
 These tests validate the core security property of personal KB:
 content indexed with user_id=A cannot be retrieved when filtering for user_id=B.
 """
+
 from __future__ import annotations
 
 from unittest.mock import patch
@@ -53,7 +54,7 @@ async def mem_client():
 
 def _unit_vector(dim: int = EMBED_DIM) -> list[float]:
     """Return a normalised vector of ones (valid for cosine distance)."""
-    val = 1.0 / dim ** 0.5
+    val = 1.0 / dim**0.5
     return [val] * dim
 
 
@@ -71,9 +72,7 @@ async def test_upsert_chunks_stores_user_id(mem_client):
             user_id="user-aaa",
         )
 
-    points, _ = await mem_client.scroll(
-        COLLECTION, with_payload=True, limit=10
-    )
+    points, _ = await mem_client.scroll(COLLECTION, with_payload=True, limit=10)
     assert len(points) == 1
     payload = points[0].payload
     assert payload["user_id"] == "user-aaa"
@@ -216,9 +215,7 @@ async def test_personal_chunk_not_returned_without_user_id_filter(mem_client):
         )
 
     # Without user_id filter: chunk is present (org-level scroll)
-    all_points, _ = await mem_client.scroll(
-        COLLECTION, with_payload=True, limit=10
-    )
+    all_points, _ = await mem_client.scroll(COLLECTION, with_payload=True, limit=10)
     assert len(all_points) == 1
 
     # With wrong user_id filter: chunk is NOT returned

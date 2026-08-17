@@ -152,6 +152,5 @@ def test_link_density_long_urls_do_not_dilute_density() -> None:
     # Visible after sub: "a a a ... a" — link chars 20, visible chars 39
     # → density ~51% (was ~3% under old formula).
     assert density > LINK_DENSITY_THRESHOLD, (
-        f"Short-anchor + long-URL nav must score above {LINK_DENSITY_THRESHOLD}; "
-        f"got {density:.3f}"
+        f"Short-anchor + long-URL nav must score above {LINK_DENSITY_THRESHOLD}; got {density:.3f}"
     )

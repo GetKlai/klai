@@ -210,8 +210,7 @@ def test_long_article_with_login_link_in_nav_does_not_match_marker() -> None:
     """
     body = (
         "Log in | Sign up | Help\n\n"  # nav header text up front
-        + "Welcome to our article. This article is about how to use the API. "
-        * 60
+        + "Welcome to our article. This article is about how to use the API. " * 60
         + "Read more at the end of the article. The conclusion is left as an "
         + "exercise to the reader.\n"
     )
@@ -231,7 +230,8 @@ def test_marker_in_middle_of_body_does_not_match() -> None:
     body = (
         "Article start, lots of content. "
         "log in to read this article in the middle of the body. "
-        + "More content following the supposed marker, plenty of words. " * 30
+        + "More content following the supposed marker, plenty of words. "
+        * 30
     )
     result = classify_auth_wall(
         response_status_code=200,
@@ -382,11 +382,13 @@ def test_repeated_login_marker_anywhere_in_body_classified_as_walled() -> None:
         "Bubble Desktop Pop-up is een slimme aanvulling op uw werkomgeving. "
         "Log in when you want to read this article. "  # tab 1 marker
         "This article is providing information to users of our software. "
-        + "More tab content here with words to push marker out of tail. " * 30
+        + "More tab content here with words to push marker out of tail. "
+        * 30
         + "Compatibiliteit Bubble Desktop Pop-up is compatibel. "
         "Log in when you want to read this article. "  # tab 2 marker, mid-body
         "This article is providing information to users of our software. "
-        + "Even more padding so the marker is NOT in the last 200 chars. " * 40
+        + "Even more padding so the marker is NOT in the last 200 chars. "
+        * 40
     )
     result = classify_auth_wall(
         response_status_code=200,
@@ -413,7 +415,8 @@ def test_single_embedded_login_gate_in_body_classified_as_walled() -> None:
         "Information that contains things like, how to install our software, "
         "how to use certain options and more. If you want to read this article, "
         "you will have to log in with your Red Cactus account.\n"
-        + "Trailing public content that pushes the marker out of the tail. " * 50
+        + "Trailing public content that pushes the marker out of the tail. "
+        * 50
     )
     result = classify_auth_wall(
         response_status_code=200,

@@ -97,8 +97,7 @@ def test_register_stale_pending_artifact_reaper_registers_periodic_io_task():
     assert len(app.tasks) == 1
     task_kwargs = app.tasks[0][1]
     assert task_kwargs["name"] == (
-        "knowledge_ingest.stale_pending_artifact_reaper."
-        "reap_stale_pending_artifacts_periodic"
+        "knowledge_ingest.stale_pending_artifact_reaper.reap_stale_pending_artifacts_periodic"
     )
     assert task_kwargs["queue"] == "ingest-kb"
     assert task_kwargs["queueing_lock"] == "stale-pending-artifact-reaper"

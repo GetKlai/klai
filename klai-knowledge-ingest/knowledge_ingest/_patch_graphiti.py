@@ -45,6 +45,7 @@ def apply() -> None:
 #    We patch BOTH to be safe.
 # ---------------------------------------------------------------------------
 
+
 def _patch_edge_search() -> None:
     from graphiti_core.driver.driver import GraphDriver, GraphProvider
     from graphiti_core.edges import EntityEdge, get_entity_edge_from_record
@@ -73,7 +74,7 @@ def _patch_edge_search() -> None:
             )
 
         fuzzy_query = search_utils.fulltext_query(query, group_ids, driver)
-        if fuzzy_query == '':
+        if fuzzy_query == "":
             return []
 
         # FIX: use startNode/endNode instead of re-MATCH
@@ -98,15 +99,15 @@ def _patch_edge_search() -> None:
             search_filter, driver.provider
         )
         if group_ids is not None:
-            filter_queries.append('e.group_id IN $group_ids')
-            filter_params['group_ids'] = group_ids
+            filter_queries.append("e.group_id IN $group_ids")
+            filter_params["group_ids"] = group_ids
 
-        filter_query = ''
+        filter_query = ""
         if filter_queries:
-            filter_query = ' WHERE ' + (' AND '.join(filter_queries))
+            filter_query = " WHERE " + (" AND ".join(filter_queries))
 
         cypher = (
-            get_relationships_query('edge_name_and_fact', limit=limit, provider=driver.provider)
+            get_relationships_query("edge_name_and_fact", limit=limit, provider=driver.provider)
             + match_query
             + filter_query
             + """
@@ -119,7 +120,11 @@ def _patch_edge_search() -> None:
             """
         )
         records, _, _ = await driver.execute_query(
-            cypher, query=fuzzy_query, limit=limit, routing_='r', **filter_params,
+            cypher,
+            query=fuzzy_query,
+            limit=limit,
+            routing_="r",
+            **filter_params,
         )
         return [get_entity_edge_from_record(r, driver.provider) for r in records]
 
@@ -149,12 +154,12 @@ def _patch_edge_search() -> None:
             search_filter, driver.provider
         )
         if group_ids is not None:
-            filter_queries.append('e.group_id IN $group_ids')
-            filter_params['group_ids'] = group_ids
+            filter_queries.append("e.group_id IN $group_ids")
+            filter_params["group_ids"] = group_ids
 
-        filter_query = ''
+        filter_query = ""
         if filter_queries:
-            filter_query = ' WHERE ' + (' AND '.join(filter_queries))
+            filter_query = " WHERE " + (" AND ".join(filter_queries))
 
         # FIX: use startNode/endNode for FalkorDB
         if driver.provider == GraphProvider.FALKORDB:
@@ -166,7 +171,7 @@ def _patch_edge_search() -> None:
                 WITH rel AS e, startNode(rel) AS n, endNode(rel) AS m
                 WHERE type(e) = 'RELATES_TO'
                 """
-                + (' AND ' + ' AND '.join(filter_queries) if filter_queries else '')
+                + (" AND " + " AND ".join(filter_queries) if filter_queries else "")
                 + """
                 RETURN DISTINCT
                 """
@@ -195,8 +200,12 @@ def _patch_edge_search() -> None:
             )
 
         records, _, _ = await driver.execute_query(
-            query, bfs_origin_node_uuids=bfs_origin_node_uuids, depth=bfs_max_depth,
-            limit=limit, routing_='r', **filter_params,
+            query,
+            bfs_origin_node_uuids=bfs_origin_node_uuids,
+            depth=bfs_max_depth,
+            limit=limit,
+            routing_="r",
+            **filter_params,
         )
         return [get_entity_edge_from_record(r, driver.provider) for r in records]
 
@@ -206,6 +215,7 @@ def _patch_edge_search() -> None:
 
     # Also patch the import in search.py (it imports at module level)
     from graphiti_core.search import search as search_module
+
     search_module.edge_fulltext_search = _patched_module_edge_fulltext_search
     search_module.edge_bfs_search = _patched_module_edge_bfs_search
 
@@ -216,19 +226,31 @@ def _patch_edge_search() -> None:
 # 2. Node dedup: case-insensitive duplicate_name matching
 # ---------------------------------------------------------------------------
 
+
 def _patch_node_dedup() -> None:
     from graphiti_core.utils.maintenance import node_operations
 
     _original = node_operations._resolve_with_llm
 
-    async def _patched(llm_client, extracted_nodes, indexes, state,
-                       episode=None, previous_episodes=None, entity_types=None):
+    async def _patched(
+        llm_client,
+        extracted_nodes,
+        indexes,
+        state,
+        episode=None,
+        previous_episodes=None,
+        entity_types=None,
+    ):
         lower_to_node = {n.name.lower(): n for n in indexes.existing_nodes}
         exact_names = {n.name for n in indexes.existing_nodes}
 
         result = await _original(
-            llm_client, extracted_nodes, indexes, state,
-            episode=episode, previous_episodes=previous_episodes,
+            llm_client,
+            extracted_nodes,
+            indexes,
+            state,
+            episode=episode,
+            previous_episodes=previous_episodes,
             entity_types=entity_types,
         )
 
@@ -244,8 +266,10 @@ def _patch_node_dedup() -> None:
                 state.resolved_nodes[i] = existing
                 state.uuid_map[extracted.uuid] = existing.uuid
                 state.duplicate_pairs.append((extracted, existing))
-                logger.info("case_insensitive_dedup_fixed",
-                            extra={"extracted": extracted.name, "matched": existing.name})
+                logger.info(
+                    "case_insensitive_dedup_fixed",
+                    extra={"extracted": extracted.name, "matched": existing.name},
+                )
 
         return result
 
@@ -259,6 +283,7 @@ def _patch_node_dedup() -> None:
 #    From getzep/graphiti#1305
 # ---------------------------------------------------------------------------
 
+
 def _patch_driver_clone() -> None:
     from graphiti_core.driver.falkordb_driver import FalkorDriver
 
@@ -266,7 +291,7 @@ def _patch_driver_clone() -> None:
 
     def _patched_init(self, *args, **kwargs):
         _original_init(self, *args, **kwargs)
-        if not hasattr(self, '_initialized_databases'):
+        if not hasattr(self, "_initialized_databases"):
             self._initialized_databases: set[str] = set()
         self._initialized_databases.add(self._database)
 
@@ -278,7 +303,7 @@ def _patch_driver_clone() -> None:
         return cloned
 
     async def _ensure_database_initialized(self) -> None:
-        if not hasattr(self, '_initialized_databases'):
+        if not hasattr(self, "_initialized_databases"):
             self._initialized_databases = set()
         if self._database not in self._initialized_databases:
             self._initialized_databases.add(self._database)
@@ -296,6 +321,7 @@ def _patch_driver_clone() -> None:
 #    single-tenant case entirely. From getzep/graphiti#1305, #1326
 # ---------------------------------------------------------------------------
 
+
 def _patch_decorator_routing() -> None:
     import functools
 
@@ -306,6 +332,7 @@ def _patch_decorator_routing() -> None:
 
     def _get_parameter_position(func, param_name: str) -> int | None:
         import inspect
+
         sig = inspect.signature(func)
         for idx, (name, _) in enumerate(sig.parameters.items()):
             if name == param_name:
@@ -315,16 +342,16 @@ def _patch_decorator_routing() -> None:
     def handle_multiple_group_ids(func):
         @functools.wraps(func)
         async def wrapper(self, *args, **kwargs):
-            group_ids_func_pos = _get_parameter_position(func, 'group_ids')
-            group_ids_pos = (group_ids_func_pos - 1 if group_ids_func_pos is not None else None)
-            group_ids = kwargs.get('group_ids')
+            group_ids_func_pos = _get_parameter_position(func, "group_ids")
+            group_ids_pos = group_ids_func_pos - 1 if group_ids_func_pos is not None else None
+            group_ids = kwargs.get("group_ids")
 
             if group_ids is None and group_ids_pos is not None and len(args) > group_ids_pos:
                 group_ids = args[group_ids_pos]
 
             if (
-                hasattr(self, 'clients')
-                and hasattr(self.clients, 'driver')
+                hasattr(self, "clients")
+                and hasattr(self.clients, "driver")
                 and self.clients.driver.provider == GraphProvider.FALKORDB
                 and group_ids
             ):
@@ -336,17 +363,18 @@ def _patch_decorator_routing() -> None:
                         filtered_args.pop(group_ids_pos)
 
                     cloned = driver.clone(database=gid)
-                    if hasattr(cloned, 'ensure_database_initialized'):
+                    if hasattr(cloned, "ensure_database_initialized"):
                         await cloned.ensure_database_initialized()
 
                     return await func(
-                        self, *filtered_args,
-                        **{**kwargs, 'group_ids': [gid], 'driver': cloned},
+                        self,
+                        *filtered_args,
+                        **{**kwargs, "group_ids": [gid], "driver": cloned},
                     )
 
                 results = await semaphore_gather(
                     *[execute_for_group(gid) for gid in group_ids],
-                    max_coroutines=getattr(self, 'max_coroutines', None),
+                    max_coroutines=getattr(self, "max_coroutines", None),
                 )
 
                 if isinstance(results[0], SearchResults):
@@ -373,11 +401,16 @@ def _patch_decorator_routing() -> None:
 
     try:
         from graphiti_core.graphiti import Graphiti
-        for method_name in ['search', 'build_communities', 'build_communities_with_endpoint',
-                            'get_all_edges']:
+
+        for method_name in [
+            "search",
+            "build_communities",
+            "build_communities_with_endpoint",
+            "get_all_edges",
+        ]:
             if hasattr(Graphiti, method_name):
                 method = getattr(Graphiti, method_name)
-                original = getattr(method, '__wrapped__', method)
+                original = getattr(method, "__wrapped__", method)
                 setattr(Graphiti, method_name, handle_multiple_group_ids(original))
     except Exception as e:
         logger.warning("could not re-decorate Graphiti methods: %s", e)
@@ -390,6 +423,7 @@ def _patch_decorator_routing() -> None:
 #    Edge dedup only searched forward direction, missing reversed duplicates.
 #    From getzep/graphiti#1303
 # ---------------------------------------------------------------------------
+
 
 def _patch_bidirectional_edge_dedup() -> None:
     from graphiti_core.driver.driver import GraphDriver
@@ -405,11 +439,12 @@ def _patch_bidirectional_edge_dedup() -> None:
             MATCH (n:Entity {uuid: $node_uuid_a})-[e:RELATES_TO]-(m:Entity {uuid: $node_uuid_b})
         """
         records, _, _ = await driver.execute_query(
-            match_query + "\n            RETURN\n            "
+            match_query
+            + "\n            RETURN\n            "
             + get_entity_edge_return_query(driver.provider),
             node_uuid_a=node_uuid_a,
             node_uuid_b=node_uuid_b,
-            routing_='r',
+            routing_="r",
         )
         return [entity_edge_from_record(r) for r in records]
 
@@ -419,14 +454,26 @@ def _patch_bidirectional_edge_dedup() -> None:
 
     _original_resolve = edge_operations.resolve_extracted_edges
 
-    async def _patched_resolve(clients, extracted_edges, existing_edges, episode, nodes,
-                               previous_episodes=None, entity_types=None):
+    async def _patched_resolve(
+        clients,
+        extracted_edges,
+        existing_edges,
+        episode,
+        nodes,
+        previous_episodes=None,
+        entity_types=None,
+    ):
         _original_get = EntityEdge.get_between_nodes
         EntityEdge.get_between_nodes = EntityEdge.get_between_nodes_bidirectional
         try:
             return await _original_resolve(
-                clients, extracted_edges, existing_edges, episode, nodes,
-                previous_episodes=previous_episodes, entity_types=entity_types,
+                clients,
+                extracted_edges,
+                existing_edges,
+                episode,
+                nodes,
+                previous_episodes=previous_episodes,
+                entity_types=entity_types,
             )
         finally:
             EntityEdge.get_between_nodes = _original_get
@@ -442,6 +489,7 @@ def _patch_bidirectional_edge_dedup() -> None:
 #    Patches the module-level fulltext_query() in search_utils.py
 # ---------------------------------------------------------------------------
 
+
 def _patch_empty_fulltext_guard() -> None:
     from graphiti_core.search import search_utils
 
@@ -451,15 +499,16 @@ def _patch_empty_fulltext_guard() -> None:
         result = _original_fulltext_query(query, group_ids, driver)
         # Guard: if all query words were stopwords, the result may be
         # "(@group_id:...) ()" which is invalid RediSearch syntax.
-        if result and result.endswith('()'):
-            return ''
+        if result and result.endswith("()"):
+            return ""
         return result
 
     search_utils.fulltext_query = _patched_fulltext_query
 
     # Also patch in search.py which imports it
     from graphiti_core.search import search as search_module
-    if hasattr(search_module, 'fulltext_query'):
+
+    if hasattr(search_module, "fulltext_query"):
         search_module.fulltext_query = _patched_fulltext_query
 
     logger.info("graphiti_empty_fulltext_guard_patched")

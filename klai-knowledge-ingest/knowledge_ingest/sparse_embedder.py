@@ -4,6 +4,7 @@ Sparse embedding client for BGE-M3 FlagEmbedding sidecar.
 Calls the bge-m3-sparse FastAPI sidecar and returns a Qdrant SparseVector.
 Falls back gracefully when the sidecar is unavailable.
 """
+
 from __future__ import annotations
 
 import httpx

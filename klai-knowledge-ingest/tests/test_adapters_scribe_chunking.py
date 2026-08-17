@@ -3,6 +3,7 @@
 Tests _cluster_segments, _split_paragraphs, and _detect_content_type
 from klai-scribe/scribe-api/app/services/knowledge_adapter.py.
 """
+
 import sys
 from types import ModuleType
 from unittest.mock import MagicMock

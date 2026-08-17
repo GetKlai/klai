@@ -124,9 +124,7 @@ def test_anchor_text_normalised_url_dropped() -> None:
     page_a = "Click [here](https://example.com/a) for the doc."
     page_b = "Click [here](https://example.com/totally-different-url) for the doc."
     distance = hamming_distance(compute_simhash(page_a), compute_simhash(page_b))
-    assert distance == 0, (
-        f"Anchor URL change should not affect hash, got distance {distance}"
-    )
+    assert distance == 0, f"Anchor URL change should not affect hash, got distance {distance}"
 
 
 # ---------------------------------------------------------------------------
@@ -164,9 +162,7 @@ def test_cross_cms_pages_hash_far_apart() -> None:
         compute_simhash(voys_clean),
         compute_simhash(redcactus_wall),
     )
-    assert distance > 10, (
-        f"Cross-CMS fingerprints produced Hamming {distance}, expected > 10"
-    )
+    assert distance > 10, f"Cross-CMS fingerprints produced Hamming {distance}, expected > 10"
 
 
 # ---------------------------------------------------------------------------

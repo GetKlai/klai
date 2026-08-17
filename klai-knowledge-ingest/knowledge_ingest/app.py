@@ -57,9 +57,7 @@ async def lifespan(app: FastAPI):
                 logger.info("shutting_down_config_listeners")
                 listener_task.cancel()
                 kb_config_listener_task.cancel()
-                await asyncio.gather(
-                    listener_task, kb_config_listener_task, return_exceptions=True
-                )
+                await asyncio.gather(listener_task, kb_config_listener_task, return_exceptions=True)
     else:
         logger.info("enrichment_disabled_skipping_worker")
         yield

@@ -62,10 +62,7 @@ def _row(
 def _walled_cluster(count: int) -> list[dict]:
     """Build ``count`` rows, all sharing the wall content (= one cluster)."""
     base = _walled_md()
-    return [
-        _row(url=f"https://wiki.redcactus.cloud/wall-{i}", raw=base)
-        for i in range(count)
-    ]
+    return [_row(url=f"https://wiki.redcactus.cloud/wall-{i}", raw=base) for i in range(count)]
 
 
 def _make_conn(rows: list[dict]):
@@ -157,9 +154,7 @@ class TestBackfillCluster:
         assert qdrant.delete.await_count == 6
 
     @pytest.mark.asyncio()
-    async def test_at_threshold_minus_one_not_flagged(
-        self, patched_externals
-    ) -> None:
+    async def test_at_threshold_minus_one_not_flagged(self, patched_externals) -> None:
         """5 identical pages → 4 OTHERS each → below default threshold 5 → no flag."""
         _conn, qdrant, set_rows = patched_externals
         set_rows(_walled_cluster(5))
@@ -276,14 +271,10 @@ class TestSimhashBackfillPass:
             for c in conn.fetchval.await_args_list
             if c.args and "SET content_simhash" in c.args[0]
         ]
-        assert update_calls == [], (
-            "content_simhash UPDATE should not run when already populated"
-        )
+        assert update_calls == [], "content_simhash UPDATE should not run when already populated"
 
     @pytest.mark.asyncio()
-    async def test_empty_raw_markdown_does_not_store_zero_hash(
-        self, patched_externals
-    ) -> None:
+    async def test_empty_raw_markdown_does_not_store_zero_hash(self, patched_externals) -> None:
         """Pages with empty/whitespace raw_markdown produce simhash=0; the
         backfill MUST NOT persist 0 (would let empty pages cluster across a
         tenant). Row stays content_simhash=NULL.
@@ -308,9 +299,7 @@ class TestSimhashBackfillPass:
             for c in conn.fetchval.await_args_list
             if c.args and "SET content_simhash" in c.args[0]
         ]
-        assert update_calls == [], (
-            "Empty-content rows must not have content_simhash=0 written"
-        )
+        assert update_calls == [], "Empty-content rows must not have content_simhash=0 written"
 
 
 class TestZeroHashSafeguard:
@@ -356,9 +345,7 @@ class TestZeroHashSafeguard:
 
 class TestTenantIsolation:
     @pytest.mark.asyncio()
-    async def test_qdrant_filter_includes_org_id_kb_slug_path(
-        self, patched_externals
-    ) -> None:
+    async def test_qdrant_filter_includes_org_id_kb_slug_path(self, patched_externals) -> None:
         """REQ-09.1 — Qdrant delete filter MUST contain org_id + kb_slug + path.
 
         Removing any one of these is blocked by the semgrep rule in
