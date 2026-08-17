@@ -207,6 +207,7 @@ def _should_retry_relaxed_for_thin_content(result: CrawlResult) -> bool:
 def build_crawl_config(
     selector: str | None,
     login_indicator_selector: str | None = None,
+    rate_limit: float | None = None,
 ) -> dict[str, Any]:
     """Build a CrawlerRunConfig-compatible JSON payload.
 
@@ -220,6 +221,19 @@ def build_crawl_config(
       selector matches, the page never satisfies ``wait_for`` and crawl4ai
       returns ``success=False`` after ``page_timeout``. The caller can then
       treat that failure as an auth-wall event.
+
+    Rate limiting (2026-08-17, intermedia.com incident): ``rate_limit``
+    (requests/second) is translated into crawl4ai's OWN pacing controls —
+    ``semaphore_count`` and ``mean_delay`` — instead of being accepted and
+    discarded. Previously every ``run_crawl_job`` sent up to 100 URLs in a
+    single ``POST /crawl`` and crawl4ai fetched them as fast as it could,
+    which produced a Cloudflare challenge and then a hard HTTP 429 on
+    intermedia.com, and separately starved a concurrently-running healthy
+    crawl of the shared crawl4ai container's 2 GB RAM / 2 CPU budget.
+    Verified against the running crawl4ai 0.9.2: both ``semaphore_count``
+    and ``mean_delay`` pass the untrusted-config boundary (HTTP 200) — this
+    is real pacing crawl4ai itself enforces, not a client-side rate limiter
+    layered on top.
     """
     md_gen: dict[str, Any] = {
         "type": "DefaultMarkdownGenerator",
@@ -268,6 +282,18 @@ def build_crawl_config(
     else:
         # Chrome stripping itself lives in wait_for's prep (see build_wait_for).
         params["excluded_tags"] = ["nav", "footer", "header", "aside", "script", "style"]
+
+    if rate_limit is not None and rate_limit > 0:
+        # semaphore_count: how many pages crawl4ai fetches concurrently.
+        # round(rate_limit) is a simple, explainable mapping from "N
+        # requests/second" to "N concurrent fetches" — bounded to [1, 8] so
+        # a misconfigured very-high rate_limit can't reintroduce the
+        # unbounded-concurrency problem this change fixes, and a very-low
+        # rate_limit still gets at least one fetch in flight.
+        params["semaphore_count"] = max(1, min(round(rate_limit), 8))
+        # mean_delay: average pause (seconds) crawl4ai inserts between
+        # requests — the direct inverse of "requests per second".
+        params["mean_delay"] = 1.0 / rate_limit
 
     return params
 
@@ -621,6 +647,22 @@ def _classify_fetch_outcome(
         # ``_is_minimal_content_antibot_error``) for the retired approach.
         if isinstance(error, httpx.HTTPStatusError):
             status_code = error.response.status_code
+            # 2026-08-17 (intermedia.com rate-limit incident): crawl4ai can
+            # wrap a target-site 429 inside its own wrapper status/body —
+            # e.g. "Blocked by anti-bot protection: HTTP 429 Too Many
+            # Requests" — regardless of the wrapper's own transport status
+            # code. Checked before the status-code branches below so a
+            # rate-limit signal is honoured even when the wrapper reports a
+            # different status, and drives the sequential-recovery breaker
+            # (see _recover_bulk_5xx_batch) to stop instead of continuing
+            # to hammer a site that already told us to back off. This is
+            # narrower than the retired generic anti-bot body match above
+            # (which never fired in production) — it only matches the
+            # specific 429 / "too many requests" signal, not any anti-bot
+            # wording.
+            body = error.response.text.lower()
+            if "429" in body or "too many requests" in body:
+                return FetchReasonCode.RATE_LIMITED.value
             if status_code == 429:
                 return FetchReasonCode.RATE_LIMITED.value
             if status_code in (401, 403):
@@ -646,6 +688,16 @@ def _classify_fetch_outcome(
 
     status = page_result.get("status_code")
     err_msg = (page_result.get("error_message") or "").lower()
+
+    # 2026-08-17 (intermedia.com rate-limit incident): crawl4ai wraps a real
+    # 429 inside the SAME "Blocked by anti-bot protection: ..." prefix used
+    # for genuine anti-bot challenges — e.g. "Blocked by anti-bot
+    # protection: HTTP 429 Too Many Requests". Checked BEFORE the generic
+    # anti-bot marker below so a rate-limit signal drives the
+    # sequential-recovery breaker (see _recover_bulk_5xx_batch) instead of
+    # being treated as an ordinary anti-bot block worth retrying.
+    if "429" in err_msg or "too many requests" in err_msg:
+        return FetchReasonCode.RATE_LIMITED.value
 
     # Checked before the status-code branches: crawl4ai can return HTTP 200
     # with results[i].success=false and this marker inline in error_message —
@@ -1307,12 +1359,18 @@ async def crawl_site(
     exclude_patterns: list[str] | None = None,
     login_indicator_selector: str | None = None,
     cookies: list[dict[str, Any]] | None = None,
+    rate_limit: float | None = None,
 ) -> tuple[list[CrawlResult], list[FetchOutcome]]:
     """Crawl a site with a Klai-owned deterministic frontier.
 
     Crawl4AI renders pages and extracts links; Klai owns URL scheduling.
     Every in-scope discovered URL is either fetched or emitted as a
     ``not_fetched_*`` outcome, so page-budget/depth limits fail loudly.
+
+    ``rate_limit`` (requests/second) is translated into crawl4ai's own
+    ``semaphore_count`` + ``mean_delay`` pacing via ``build_crawl_config`` —
+    see that function's docstring for the mapping and the 2026-08-17
+    intermedia.com incident that motivated it.
 
     Returns ``(crawl_results, outcomes)``:
     - ``crawl_results``: same-domain pages with non-empty markdown.
@@ -1326,6 +1384,7 @@ async def crawl_site(
     crawler_config = build_crawl_config(
         selector,
         login_indicator_selector=login_indicator_selector,
+        rate_limit=rate_limit,
     )
     ledger = CrawlLedger(
         start_url=start_url,
@@ -1716,13 +1775,13 @@ async def _recover_bulk_5xx_batch(
         max_seconds=time_budget,
     )
 
-    def _abandon_remaining(index: int) -> int:
-        """Mark every not-yet-attempted URL HTTP_5XX; return how many."""
+    def _abandon_remaining(index: int, *, reason_code: str = FetchReasonCode.HTTP_5XX.value) -> int:
+        """Mark every not-yet-attempted URL with ``reason_code``; return how many."""
         for leftover_url in urls[index:]:
             outcomes.append(
                 {
                     "url": leftover_url,
-                    "reason_code": FetchReasonCode.HTTP_5XX.value,
+                    "reason_code": reason_code,
                     "status_code": None,
                     "content_length": 0,
                 }
@@ -1806,6 +1865,27 @@ async def _recover_bulk_5xx_batch(
                 "content_length": len(result.html or ""),
             }
         )
+
+        # A confirmed rate-limit (429, including crawl4ai's "Blocked by
+        # anti-bot protection: HTTP 429 Too Many Requests" wrapping — see
+        # _classify_fetch_outcome) means the target site has explicitly
+        # told us to back off. Continuing the sequential retry — each one
+        # separated only by the anti-bot cooldown, not a rate-limit-aware
+        # backoff — provably makes the site's throttling worse instead of
+        # recovering pages. Stop this batch's recovery immediately rather
+        # than burning the remaining budget/cooldown on attempts that will
+        # only add to the 429 pressure.
+        if reason_code == FetchReasonCode.RATE_LIMITED.value:
+            remaining = _abandon_remaining(i + 1, reason_code=FetchReasonCode.RATE_LIMITED.value)
+            still_failing += 1 + remaining
+            logger.warning(
+                "crawl_sequential_recovery_rate_limited",
+                url=url,
+                recovered=recovered,
+                still_failing=still_failing,
+                remaining=remaining,
+            )
+            break
 
         if not result.success:
             still_failing += 1

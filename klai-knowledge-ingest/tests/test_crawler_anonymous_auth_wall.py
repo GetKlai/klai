@@ -79,6 +79,16 @@ def _patch_crawler_externals(crawl_results: list[CrawlResult], ingest_side_effec
             "knowledge_ingest.adapters.crawler._ingest_crawl_result",
             new=AsyncMock(side_effect=ingest_side_effect),
         ),
+        # 2026-08-17 per-domain adaptive rate limit: no stored override, no
+        # signal to persist — not the concern of these auth-wall tests.
+        patch(
+            "knowledge_ingest.adapters.crawler.get_domain_rate_limit",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "knowledge_ingest.adapters.crawler.lower_domain_rate_limit",
+            new=AsyncMock(return_value=None),
+        ),
     ]
 
 

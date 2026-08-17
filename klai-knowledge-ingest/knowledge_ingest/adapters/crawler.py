@@ -24,6 +24,11 @@ from klai_image_storage import ImageStore, download_and_upload_crawl_images
 from knowledge_ingest import pg_store, qdrant_store
 from knowledge_ingest.config import settings
 from knowledge_ingest.crawl4ai_client import CrawlResult, _canonicalise_url, crawl_site
+from knowledge_ingest.domain_selectors import (
+    extract_domain,
+    get_domain_rate_limit,
+    lower_domain_rate_limit,
+)
 from knowledge_ingest.models import IngestRequest
 from knowledge_ingest.reason_codes import FETCH_REASON_VALUES, FetchReasonCode
 from knowledge_ingest.utils.auth_wall_classifier import classify_auth_wall
@@ -461,6 +466,18 @@ async def _build_link_graph(
 
 _UNSET = object()  # sentinel: stored_hash not yet fetched from DB
 
+# 2026-08-17 (intermedia.com + support.ascendcloud.com incident): when a
+# crawl hits RATE_LIMITED or BLOCKED_ANTI_BOT, the NEXT crawl of that same
+# domain should start already paced down instead of walking into the same
+# wall again. Halving is a simple, explainable adjustment — no PID
+# controller, no multi-run trend analysis — and the floor keeps a very
+# touchy site making forward progress (1 request every 5s) instead of the
+# halving asymptoting toward zero over repeated bad runs.
+_MIN_DOMAIN_RATE_LIMIT = 0.2
+_RATE_LIMIT_LOWERING_TRIGGER_REASON_CODES = frozenset(
+    {FetchReasonCode.RATE_LIMITED.value, FetchReasonCode.BLOCKED_ANTI_BOT.value}
+)
+
 
 async def run_crawl_job(
     conn: asyncpg.Connection,
@@ -498,8 +515,15 @@ async def run_crawl_job(
     Klai-owned frontier schedule same-domain links to max_depth.
 
     ``exclude_patterns`` is applied after crawl4ai discovery and before
-    progress counting / dirty-content decisions. ``rate_limit`` is accepted
-    for compatibility; Crawl4AI manages its own request pacing.
+    progress counting / dirty-content decisions. ``rate_limit`` (requests/
+    second) is translated into crawl4ai's own pacing controls
+    (``semaphore_count`` + ``mean_delay``, see ``build_crawl_config``) so
+    crawl4ai itself paces its requests instead of firing every discovered
+    URL in a batch at once. If ``knowledge.crawl_domains`` holds a
+    previously-lowered rate for this domain (set after a prior
+    RATE_LIMITED/BLOCKED_ANTI_BOT outcome — see
+    ``_RATE_LIMIT_LOWERING_TRIGGER_REASON_CODES`` below), that stored value
+    is used instead of this default.
 
     ``login_indicator_selector`` (SPEC-CRAWLER-004 Fase B / REQ-02.3) is
     injected into crawl4ai's wait_for and also re-checked on every returned
@@ -522,6 +546,23 @@ async def run_crawl_job(
     auth_wall_pages: list[str] = []
 
     try:
+        # 2026-08-17 (intermedia.com + support.ascendcloud.com incident): if
+        # a PREVIOUS crawl of this domain got rate-limited or anti-bot
+        # blocked, start this one already paced down instead of hitting the
+        # same wall again. See _RATE_LIMIT_LOWERING_TRIGGER_REASON_CODES
+        # below for where the stored value gets written.
+        domain = extract_domain(start_url)
+        stored_rate_limit = await get_domain_rate_limit(conn, domain, org_id)
+        effective_rate_limit = stored_rate_limit if stored_rate_limit is not None else rate_limit
+        if stored_rate_limit is not None:
+            logger.info(
+                "crawl_domain_rate_limit_applied",
+                job_id=job_id,
+                domain=domain,
+                stored_rate_limit=stored_rate_limit,
+                default_rate_limit=rate_limit,
+            )
+
         # SPEC-INGEST-RECONCILE-001 AC-4: crawl_site now returns
         # ``(results, outcomes)``. ``outcomes`` is a JSONB-shaped list with
         # one entry per discovered candidate URL — written to
@@ -536,6 +577,7 @@ async def run_crawl_job(
             exclude_patterns=exclude_patterns,
             login_indicator_selector=login_indicator_selector,
             cookies=cookies,
+            rate_limit=effective_rate_limit,
         )
 
         # Validated-seed pass. A client-rendered homepage/hub can defeat the
@@ -575,6 +617,7 @@ async def run_crawl_job(
                 exclude_patterns=exclude_patterns,
                 login_indicator_selector=login_indicator_selector,
                 cookies=cookies,
+                rate_limit=effective_rate_limit,
             )
             seen = {_canonicalise_url(r.url) for r in results}
             for seed_result in seed_results:
@@ -590,6 +633,25 @@ async def run_crawl_job(
                 discovery_seed_url=discovery_seed_url,
                 seed_pages=len(seed_results),
                 pages=len(results),
+            )
+
+        # 2026-08-17 (intermedia.com + support.ascendcloud.com incident):
+        # this crawl told us to back off — halve the rate for next time
+        # (floor _MIN_DOMAIN_RATE_LIMIT) instead of hitting the same wall
+        # again on the next sync. One halving per crawl job that actually
+        # saw the signal; no multi-run trend analysis.
+        if any(
+            outcome.get("reason_code") in _RATE_LIMIT_LOWERING_TRIGGER_REASON_CODES
+            for outcome in fetch_outcomes
+        ):
+            lowered_rate_limit = max(_MIN_DOMAIN_RATE_LIMIT, effective_rate_limit / 2)
+            await lower_domain_rate_limit(conn, domain, org_id, lowered_rate_limit)
+            logger.warning(
+                "crawl_domain_rate_limit_lowered",
+                job_id=job_id,
+                domain=domain,
+                previous_rate_limit=effective_rate_limit,
+                lowered_rate_limit=lowered_rate_limit,
             )
 
         crawl_outcome_warning = _build_crawl_outcome_warning(
