@@ -64,6 +64,7 @@ jobs:
           bash deploy/scripts/tests/docker-orphan-audit-klasse-c.test.sh
           bash deploy/scripts/tests/docker-orphan-audit-caddy-routes.test.sh
           bash deploy/scripts/tests/docker-orphan-audit-hand-edits.test.sh
+          bash deploy/scripts/tests/harden-docker-user-bot-isolation.test.sh
 
       - name: Sync docker-compose.yml + config + run smoke-test
         uses: appleboy/ssh-action@v1
