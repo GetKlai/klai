@@ -537,7 +537,6 @@ class VexaWebhookPayload(BaseModel):
 def _correlate_speakers(
     segments: list[dict],
     speaker_events: list["SpeakerEvent"],
-    duration_seconds: float,
 ) -> list[dict]:
     """Assign speaker labels to Whisper segments using timed speaker events."""
     if not speaker_events:
@@ -573,7 +572,7 @@ def _correlate_speakers(
     return result
 
 
-async def run_transcription(meeting: VexaMeeting, db: AsyncSession) -> None:
+async def run_transcription(meeting: VexaMeeting) -> None:
     """Fetch transcript segments from Vexa meeting-api; fall back to Whisper audio."""
     from app.services.transcript_filter import filter_segments
 
@@ -720,7 +719,7 @@ async def _claim_webhook_event(payload: "VexaWebhookPayload") -> bool:
 async def vexa_webhook(
     payload: VexaWebhookPayload,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db),  # noqa: ARG001 — unread; the handler opens its own tenant/cross-org sessions below
 ) -> dict:
     _require_webhook_secret(request)
 
@@ -850,7 +849,7 @@ async def vexa_webhook(
         await scoped_db.commit()
 
         await set_tenant(scoped_db, meeting_org_id)
-        await run_transcription(meeting, scoped_db)
+        await run_transcription(meeting)
         await scoped_db.commit()
 
         if meeting.status == "done":

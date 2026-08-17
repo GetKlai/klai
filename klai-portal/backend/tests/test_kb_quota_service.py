@@ -190,18 +190,14 @@ class TestAssertCanCreateOrgKB:
     async def test_passes_for_complete_plan(self) -> None:
         from app.services.kb_quota import assert_can_create_org_kb
 
-        mock_db = _make_db_mock()
-
-        await assert_can_create_org_kb(org=_make_org("knowledge"), db=mock_db, role="kb_manager")
+        await assert_can_create_org_kb(org=_make_org("knowledge"), role="kb_manager")
 
     @pytest.mark.asyncio
     async def test_raises_403_for_core_plan(self) -> None:
         from app.services.kb_quota import assert_can_create_org_kb
 
-        mock_db = _make_db_mock()
-
         with pytest.raises(HTTPException) as exc_info:
-            await assert_can_create_org_kb(org=_make_org("chat"), db=mock_db)
+            await assert_can_create_org_kb(org=_make_org("chat"))
 
         assert exc_info.value.status_code == 403
         assert exc_info.value.detail["error_code"] == "kb_quota_org_kb_not_allowed"
@@ -210,10 +206,8 @@ class TestAssertCanCreateOrgKB:
     async def test_raises_403_for_professional_plan(self) -> None:
         from app.services.kb_quota import assert_can_create_org_kb
 
-        mock_db = _make_db_mock()
-
         with pytest.raises(HTTPException) as exc_info:
-            await assert_can_create_org_kb(org=_make_org("chat"), db=mock_db)
+            await assert_can_create_org_kb(org=_make_org("chat"))
 
         assert exc_info.value.status_code == 403
         assert exc_info.value.detail["error_code"] == "kb_quota_org_kb_not_allowed"
@@ -222,10 +216,8 @@ class TestAssertCanCreateOrgKB:
     async def test_error_detail_includes_plan(self) -> None:
         from app.services.kb_quota import assert_can_create_org_kb
 
-        mock_db = _make_db_mock()
-
         with pytest.raises(HTTPException) as exc_info:
-            await assert_can_create_org_kb(org=_make_org("chat"), db=mock_db)
+            await assert_can_create_org_kb(org=_make_org("chat"))
 
         detail = exc_info.value.detail
         assert "plan" in detail

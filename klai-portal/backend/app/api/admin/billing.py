@@ -186,8 +186,10 @@ async def per_seat_billing_status(
 
 @router.post("/billing/switch-to-per-seat", response_model=None)
 async def switch_to_per_seat_billing(
-    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
-    db: AsyncSession = Depends(get_db),
+    # perms/db: unread, but Depends() still runs the ADMIN auth gate below —
+    # see the docstring note on why the 501 sits behind that check.
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),  # noqa: ARG001
+    db: AsyncSession = Depends(get_db),  # noqa: ARG001
 ) -> None:
     """Phase 5 light stub for the per-seat-type Moneybird migration.
 

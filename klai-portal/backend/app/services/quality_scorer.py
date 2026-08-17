@@ -128,7 +128,8 @@ def schedule_quality_update(
     """Fire-and-forget quality score update via asyncio.create_task."""
     try:
         task = asyncio.create_task(apply_quality_score(chunk_ids, rating, org_id))
-        # prevent GC
-        task.add_done_callback(lambda t: None)
+        # prevent GC — asyncio.Task.add_done_callback always invokes the
+        # callback with the completed task; this callback only needs to exist.
+        task.add_done_callback(lambda t: None)  # noqa: ARG005
     except RuntimeError:
         logger.warning("quality_score_schedule_failed: no running event loop")

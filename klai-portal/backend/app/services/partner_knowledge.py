@@ -16,7 +16,7 @@ logger = structlog.get_logger()
 
 
 async def ingest_knowledge(
-    org_id: int,
+    org_id: int,  # noqa: ARG001  # TODO: doorgegeven maar ongebruikt — zie rapport (ruff ARG audit)
     zitadel_org_id: str,
     kb_slug: str,
     title: str | None,

@@ -132,7 +132,7 @@ async def test_handle_meeting_ended_rearms_tenant_context_after_stopping_commit(
     async def _set_tenant(_db, _org_id):
         events.append("set_tenant")
 
-    async def _run_transcription(_meeting, _db):
+    async def _run_transcription(_meeting):
         events.append("run_transcription")
 
     monkeypatch.setattr(bot_poller, "tenant_scoped_session", _tenant_session)

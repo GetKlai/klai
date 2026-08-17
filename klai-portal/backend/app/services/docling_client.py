@@ -162,7 +162,6 @@ async def submit_file_async(
     content: bytes,
     content_type: str,
     input_format: str | None = None,
-    to_formats: tuple[str, ...] = ("md",),
 ) -> DoclingSubmitResult:
     """Submit a file to docling-serve's async queue.
 

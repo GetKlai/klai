@@ -63,7 +63,7 @@ class EffectiveProductsResponse(BaseModel):
 @router.get("/products", response_model=ProductsResponse)
 async def list_available_products(
     perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db),  # noqa: ARG001 — unread; ADMIN Depends() chain still gates the route
 ) -> ProductsResponse:
     """Return products available to the caller given (profile, seat_type, platform_unlocked_features).
 
@@ -132,18 +132,21 @@ async def get_user_effective_products(
 # ---------------------------------------------------------------------------
 
 
+# zitadel_user_id/product below: required in the signature so the path
+# template matches (FastAPI binds {zitadel_user_id}/{product} regardless of
+# whether the stub body reads them); the 410 body never needs the value.
 @router.post("/users/{zitadel_user_id}/products", status_code=status.HTTP_410_GONE)
-async def assign_product_gone(zitadel_user_id: str) -> dict:
+async def assign_product_gone(zitadel_user_id: str) -> dict:  # noqa: ARG001
     raise HTTPException(status_code=status.HTTP_410_GONE, detail=_GONE_BODY)
 
 
 @router.delete("/users/{zitadel_user_id}/products/{product}", status_code=status.HTTP_410_GONE)
-async def revoke_product_gone(zitadel_user_id: str, product: str) -> dict:
+async def revoke_product_gone(zitadel_user_id: str, product: str) -> dict:  # noqa: ARG001
     raise HTTPException(status_code=status.HTTP_410_GONE, detail=_GONE_BODY)
 
 
 @router.get("/users/{zitadel_user_id}/products", status_code=status.HTTP_410_GONE)
-async def get_user_products_gone(zitadel_user_id: str) -> dict:
+async def get_user_products_gone(zitadel_user_id: str) -> dict:  # noqa: ARG001
     raise HTTPException(status_code=status.HTTP_410_GONE, detail=_GONE_BODY)
 
 

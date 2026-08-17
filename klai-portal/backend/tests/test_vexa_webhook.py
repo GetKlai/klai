@@ -205,7 +205,7 @@ async def test_webhook_rearms_tenant_context_after_stopping_commit(monkeypatch) 
     async def _set_tenant(_db, _org_id):
         events.append("set_tenant")
 
-    async def _run_transcription(_meeting, _db):
+    async def _run_transcription(_meeting):
         events.append("run_transcription")
         _meeting.status = "done"
 

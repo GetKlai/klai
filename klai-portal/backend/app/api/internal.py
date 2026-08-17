@@ -971,7 +971,7 @@ async def notify_page_saved(
     org_id: int,
     body: PageSavedNotification,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db),  # noqa: ARG001 — unread; schedule_rescore() opens its own session via db_factory
 ) -> None:
     """Notify portal-api that a page was saved in a Klai-native KB.
 
@@ -2631,7 +2631,7 @@ class McpTokenVerifyDeny(BaseModel):
 async def verify_mcp_token(
     request: Request,
     body: McpTokenVerifyRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db),  # noqa: ARG001 — unread; the handler opens its own cross_org_session() below
 ) -> Response:
     """Verify a klai_mcp_<...> bearer token, return verified identity tuple.
 
