@@ -58,6 +58,38 @@ def test_no_selector_enables_chrome_stripping() -> None:
     assert "el.remove()" in cfg["wait_for"]
 
 
+def test_rate_limit_translates_to_semaphore_count_and_mean_delay() -> None:
+    """2026-08-17 (intermedia.com incident): rate_limit (requests/second)
+    must become crawl4ai's OWN pacing controls, not be silently discarded.
+    2.0 req/s → semaphore_count 2 (round(2.0), within [1, 8]) and
+    mean_delay 0.5s (1 / 2.0)."""
+    cfg = build_crawl_config(selector=None, rate_limit=2.0)
+
+    assert cfg["semaphore_count"] == 2
+    assert cfg["mean_delay"] == 0.5
+
+
+def test_rate_limit_semaphore_count_is_bounded() -> None:
+    """A very high rate_limit must not reintroduce unbounded concurrency
+    against the shared crawl4ai container — bounded to 8."""
+    cfg = build_crawl_config(selector=None, rate_limit=50.0)
+    assert cfg["semaphore_count"] == 8
+
+    # A very low rate_limit still gets at least one fetch in flight.
+    cfg = build_crawl_config(selector=None, rate_limit=0.1)
+    assert cfg["semaphore_count"] == 1
+    assert cfg["mean_delay"] == 10.0
+
+
+def test_no_rate_limit_omits_pacing_keys() -> None:
+    """Existing behaviour (no rate_limit passed) must stay unchanged —
+    neither key is present at all, not present-with-a-default."""
+    cfg = build_crawl_config(selector=None)
+
+    assert "semaphore_count" not in cfg
+    assert "mean_delay" not in cfg
+
+
 def test_selector_with_complex_css_is_passed_as_list() -> None:
     # Crawl4AI's target_elements expects List[str]; single-element list is
     # the stable shape across versions.

@@ -1634,6 +1634,164 @@ async def test_bulk_5xx_is_retried_with_stealth_before_the_sequential_path(
     }
 
 
+class TestClassifyFetchOutcomeRateLimitedWrapper:
+    """2026-08-17 (intermedia.com rate-limit incident): crawl4ai wraps a
+    real target-site 429 inside the SAME "Blocked by anti-bot protection"
+    marker used for genuine anti-bot challenges — e.g. "Blocked by anti-bot
+    protection: HTTP 429 Too Many Requests". The 429 / "too many requests"
+    check must win over both the generic anti-bot marker AND the plain
+    5xx/4xx status-code branches, on both the dict (page_result) and the
+    raised-exception (transport_error) classification paths."""
+
+    def test_dict_path_anti_bot_wrapped_429_classifies_rate_limited(self) -> None:
+        assert (
+            _classify_fetch_outcome(
+                {
+                    "success": False,
+                    "status_code": None,
+                    "error_message": (
+                        '{"detail":"Blocked by anti-bot protection: HTTP 429 Too Many Requests"}'
+                    ),
+                }
+            )
+            == FetchReasonCode.RATE_LIMITED.value
+        )
+
+    def test_transport_error_path_anti_bot_wrapped_429_classifies_rate_limited(self) -> None:
+        request = httpx.Request("POST", "http://crawl4ai:11235/crawl")
+        response = httpx.Response(
+            500,
+            json={"detail": "Blocked by anti-bot protection: HTTP 429 Too Many Requests"},
+            request=request,
+        )
+        exc = httpx.HTTPStatusError("crawl4ai failed", request=request, response=response)
+        assert _classify_fetch_outcome(None, error=exc) == FetchReasonCode.RATE_LIMITED.value
+
+
+@pytest.mark.asyncio
+async def test_recovery_stops_immediately_on_rate_limited(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A confirmed rate-limit during sequential bulk-5xx recovery means the
+    target site explicitly told us to back off. The recovery loop must stop
+    after the FIRST 429 — no second attempt — and mark every remaining URL
+    in the batch RATE_LIMITED (not HTTP_5XX, the default abandon reason),
+    with the stop event logged exactly once."""
+    call_count = 0
+
+    async def _fake_crawl_page_with_config(
+        url: str,
+        _crawler_config: dict[str, Any],
+        *,
+        cookies: list[dict[str, Any]] | None,
+        selector: str | None,
+        relaxed: bool = False,
+        stealth: bool = False,
+    ) -> CrawlResult:
+        nonlocal call_count
+        call_count += 1
+        return CrawlResult(
+            url=url,
+            fit_markdown="",
+            raw_markdown="",
+            html="",
+            word_count=0,
+            success=False,
+            error_message="Blocked by anti-bot protection: HTTP 429 Too Many Requests",
+            status_code=None,
+        )
+
+    monkeypatch.setattr(crawl4ai_client, "_crawl_page_with_config", _fake_crawl_page_with_config)
+
+    urls = [
+        "https://example.com/a",
+        "https://example.com/b",
+        "https://example.com/c",
+    ]
+
+    with patch.object(crawl4ai_client.logger, "warning") as mock_warning:
+        (
+            crawl_results,
+            link_source_results,
+            outcomes,
+            attempted,
+        ) = await crawl4ai_client._recover_bulk_5xx_batch(
+            urls,
+            crawler_config={},
+            cookies=None,
+            base_domain="example.com",
+            recovery_budget=60,
+        )
+
+    # Only the first URL was actually attempted over the network.
+    assert call_count == 1
+    assert attempted == 1
+
+    by_url = {o["url"]: o["reason_code"] for o in outcomes}
+    for u in urls:
+        assert by_url[u] == FetchReasonCode.RATE_LIMITED.value
+    assert crawl_results == []
+    assert link_source_results == []
+
+    rate_limited_calls = [
+        call
+        for call in mock_warning.call_args_list
+        if call.args[:1] == ("crawl_sequential_recovery_rate_limited",)
+    ]
+    assert len(rate_limited_calls) == 1
+    _, kwargs = rate_limited_calls[0]
+    assert kwargs["url"] == "https://example.com/a"
+    assert kwargs["recovered"] == 0
+    assert kwargs["still_failing"] == 3
+    assert kwargs["remaining"] == 2
+
+
+@pytest.mark.asyncio
+async def test_crawl_site_rate_limit_reaches_the_crawl4ai_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """2026-08-17 (intermedia.com incident): ``crawl_site(rate_limit=...)``
+    must actually reach the ``POST /crawl`` payload's crawler_config
+    params — not just be accepted and dropped on the floor (the exact bug
+    this fix replaces, see build_crawl_config)."""
+
+    async def _fake_sitemap(_base: str) -> list[str]:
+        return ["https://example.com/page-a"]
+
+    monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _fake_sitemap)
+    _patch_seed(monkeypatch, _seed("https://example.com"))
+
+    seen: list[dict[str, Any]] = []
+
+    async def _fake_crawl_sync(
+        _client: httpx.AsyncClient, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        seen.append(payload)
+        return {
+            "results": [
+                {
+                    "url": u,
+                    "success": True,
+                    "status_code": 200,
+                    "html": "<html><body>Real page content, plenty of words here.</body></html>",
+                    "markdown": "Real page content, plenty of words here.",
+                    "links": {"internal": []},
+                    "media": {},
+                }
+                for u in payload["urls"]
+            ]
+        }
+
+    monkeypatch.setattr(crawl4ai_client, "_crawl_sync", _fake_crawl_sync)
+
+    await crawl4ai_client.crawl_site(start_url="https://example.com", max_pages=5, rate_limit=2.0)
+
+    assert seen, "expected at least one bulk /crawl request"
+    params = seen[0]["crawler_config"]["params"]
+    assert params["semaphore_count"] == 2
+    assert params["mean_delay"] == 0.5
+
+
 def test_browser_config_merges_cookies_and_stealth() -> None:
     """Stealth must not drop an authenticated crawl's cookies."""
     cookies = [{"name": "session", "value": "abc", "domain": "example.com", "path": "/"}]
