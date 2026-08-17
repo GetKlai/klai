@@ -18,6 +18,11 @@ RUN npm run build
 
 # Production image
 FROM base AS runner
+
+# Apply security patches to base image OS packages. node:22-alpine ships
+# apk packages with fixed CVEs and the Trivy gate blocks the deploy on them.
+RUN apk update && apk upgrade --no-cache
+
 WORKDIR /app
 ENV NODE_ENV=production
 

@@ -40,6 +40,11 @@ FROM python:3.12-slim
 
 WORKDIR /repo/klai-connector
 
+# Apply security patches to base image OS packages (Trivy blocks the deploy
+# on unfixed CVEs shipped by python:3.12-slim, e.g. CVE-2026-53615)
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
 # Venv (has editable klai-connector-credentials pointer) + the shared-lib
 # source the editable install points at.
 COPY --from=deps /repo/klai-connector/.venv /repo/klai-connector/.venv
