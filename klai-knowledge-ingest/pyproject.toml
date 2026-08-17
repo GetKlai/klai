@@ -72,6 +72,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "knowledge_ingest/crawl4ai_client.py" = ["E501"]  # JS strings in multiline literals
+"knowledge_ingest/_patch_graphiti.py" = ["E501"]  # Cypher query strings in multiline literals, wrapping risks changing query syntax
 "alembic/versions/*.py" = ["E501"]  # SQL DDL lines legitimately exceed 100 chars
 "tests/test_alembic_bootstrap.py" = ["E501", "S603", "S607"]  # test file calls subprocess with known-safe args
 "tests/test_clustering_umap.py" = ["E501"]  # patch() strings and assert messages legitimately exceed 100 chars
