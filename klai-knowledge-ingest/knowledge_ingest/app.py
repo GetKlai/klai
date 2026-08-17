@@ -5,6 +5,7 @@ import structlog
 from fastapi import FastAPI
 
 from knowledge_ingest import db, kb_config, org_config, qdrant_store
+from knowledge_ingest._patch_graphiti import apply as _apply_graphiti_patch
 from knowledge_ingest.config import settings
 from knowledge_ingest.logging_setup import RequestContextMiddleware, setup_logging
 from knowledge_ingest.middleware.auth import InternalSecretMiddleware
@@ -26,8 +27,6 @@ logger = structlog.get_logger()
 # Patch graphiti-core FalkorDB search before any Graphiti usage.
 # See: https://github.com/getzep/graphiti/issues/1272
 # Remove once graphiti-core >= 0.29 includes the fix.
-from knowledge_ingest._patch_graphiti import apply as _apply_graphiti_patch
-
 _apply_graphiti_patch()
 
 
