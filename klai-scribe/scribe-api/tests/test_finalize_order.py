@@ -10,6 +10,7 @@ Two concerns covered here:
 
 See SPEC-SEC-HYGIENE-001 REQ-36.
 """
+
 from __future__ import annotations
 
 import time
@@ -22,6 +23,7 @@ import pytest
 # ---------------------------------------------------------------------------
 # REQ-36.1 — order: delete BEFORE mutate
 # ---------------------------------------------------------------------------
+
 
 class _FakeResult(SimpleNamespace):
     pass
@@ -66,8 +68,12 @@ def test_finalize_calls_delete_before_mutate(tmp_path: Path, monkeypatch) -> Non
     monkeypatch.setattr(audio_storage, "delete_audio", _spy_delete)
 
     result = _FakeResult(
-        text="hello", language="nl", duration_seconds=1.0,
-        inference_time_seconds=0.1, provider="whisper", model="m",
+        text="hello",
+        language="nl",
+        duration_seconds=1.0,
+        inference_time_seconds=0.1,
+        provider="whisper",
+        model="m",
     )
     audio_storage.finalize_success(record, result)
 
@@ -98,8 +104,12 @@ def test_finalize_aborts_on_delete_failure(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(audio_storage, "delete_audio", _failing_delete)
 
     result = _FakeResult(
-        text="hello", language="nl", duration_seconds=1.0,
-        inference_time_seconds=0.1, provider="whisper", model="m",
+        text="hello",
+        language="nl",
+        duration_seconds=1.0,
+        inference_time_seconds=0.1,
+        provider="whisper",
+        model="m",
     )
 
     with pytest.raises(PermissionError):
@@ -121,8 +131,12 @@ def test_finalize_with_no_audio_path(tmp_path: Path, monkeypatch) -> None:
 
     record = _make_record(audio_path=None)
     result = _FakeResult(
-        text="hello", language="nl", duration_seconds=1.0,
-        inference_time_seconds=0.1, provider="whisper", model="m",
+        text="hello",
+        language="nl",
+        duration_seconds=1.0,
+        inference_time_seconds=0.1,
+        provider="whisper",
+        model="m",
     )
     audio_storage.finalize_success(record, result)
 
@@ -133,6 +147,7 @@ def test_finalize_with_no_audio_path(tmp_path: Path, monkeypatch) -> None:
 # ---------------------------------------------------------------------------
 # REQ-36.2 — janitor sweep
 # ---------------------------------------------------------------------------
+
 
 def _async_session_returning(referenced_paths: list[str]) -> AsyncMock:
     """Build an AsyncSession mock whose execute returns the given audio_paths."""
@@ -156,6 +171,7 @@ async def test_janitor_deletes_orphan_after_grace(tmp_path: Path) -> None:
     # Backdate mtime to 25 hours ago.
     old = time.time() - (25 * 3600)
     import os
+
     os.utime(orphan, (old, old))
 
     session = _async_session_returning([])  # No DB references
@@ -194,6 +210,7 @@ async def test_janitor_keeps_referenced_file(tmp_path: Path) -> None:
     kept.write_bytes(b"keep-data")
     old = time.time() - (25 * 3600)
     import os
+
     os.utime(kept, (old, old))
 
     session = _async_session_returning(["user1/keep.wav"])
@@ -250,6 +267,7 @@ async def test_janitor_mixed(tmp_path: Path) -> None:
     old_orphan.parent.mkdir(parents=True)
     old_orphan.write_bytes(b"old")
     import os
+
     old = time.time() - (25 * 3600)
     os.utime(old_orphan, (old, old))
     os.utime(referenced, (old, old))  # also old, but referenced — must keep.

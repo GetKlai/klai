@@ -8,6 +8,7 @@ Optional user-provided name for a transcription (e.g. "Verkoopgesprek Jan").
 Nullable so existing rows remain valid.
 
 """
+
 from collections.abc import Sequence
 
 import sqlalchemy as sa

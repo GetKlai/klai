@@ -8,6 +8,7 @@ Calls the Vexa transcription-service (OpenAI-compatible) with
 and yield to real-time meeting traffic (tier=realtime reserved slots).
 On HTTP 503 we honour ``Retry-After`` up to `_MAX_RETRIES` attempts.
 """
+
 from __future__ import annotations
 
 import asyncio

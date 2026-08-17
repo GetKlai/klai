@@ -79,10 +79,9 @@ class TestKnowledgeAdapterNoSilentOmit:
         src = src_path.read_text(encoding="utf-8")
         # The unconditional shape: dict literal with X-Internal-Secret ->
         # settings.knowledge_ingest_secret.
-        assert (
-            'headers = {"X-Internal-Secret": settings.knowledge_ingest_secret}'
-            in src
-        ), "expected unconditional X-Internal-Secret header injection in knowledge_adapter.py"
+        assert 'headers = {"X-Internal-Secret": settings.knowledge_ingest_secret}' in src, (
+            "expected unconditional X-Internal-Secret header injection in knowledge_adapter.py"
+        )
 
 
 # ---------------------------------------------------------------------------

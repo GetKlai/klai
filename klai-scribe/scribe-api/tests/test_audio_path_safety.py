@@ -4,6 +4,7 @@ Defense-in-depth partner of HY-34 (sub regex). Even if a future auth flow
 returns a malformed `sub`, the path helper MUST refuse to escape the audio
 base directory. See SPEC-SEC-HYGIENE-001 REQ-33.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -14,11 +15,12 @@ import pytest
 # _safe_audio_path(base, user_id, txn_id) — REQ-33.1
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize(
     "user_id,txn_id",
     [
         ("269462541789364226", "txn_a1b2c3"),  # Normal Zitadel sub + UUID
-        ("X", "txn_short"),                    # Boundary: minimal
+        ("X", "txn_short"),  # Boundary: minimal
     ],
 )
 def test_safe_audio_path_normal(tmp_path: Path, user_id: str, txn_id: str) -> None:
@@ -36,19 +38,17 @@ def test_safe_audio_path_normal(tmp_path: Path, user_id: str, txn_id: str) -> No
 @pytest.mark.parametrize(
     "user_id,txn_id",
     [
-        ("../../../etc/passwd", "txn_a1"),    # Path traversal in user_id
-        ("../evil", "txn_a1"),                # Relative escape
-        ("/absolute/path", "txn_a1"),         # Absolute path attempt
-        ("..\\win", "txn_a1"),                # Windows-style traversal
-        ("user.with.dot", "txn_a1"),          # Defense-in-depth (HY-34 also rejects)
-        ("", "txn_a1"),                       # Empty user_id
-        ("user", ""),                         # Empty txn_id
-        ("user", "../etc"),                   # Traversal in txn_id
+        ("../../../etc/passwd", "txn_a1"),  # Path traversal in user_id
+        ("../evil", "txn_a1"),  # Relative escape
+        ("/absolute/path", "txn_a1"),  # Absolute path attempt
+        ("..\\win", "txn_a1"),  # Windows-style traversal
+        ("user.with.dot", "txn_a1"),  # Defense-in-depth (HY-34 also rejects)
+        ("", "txn_a1"),  # Empty user_id
+        ("user", ""),  # Empty txn_id
+        ("user", "../etc"),  # Traversal in txn_id
     ],
 )
-def test_safe_audio_path_rejects_traversal(
-    tmp_path: Path, user_id: str, txn_id: str
-) -> None:
+def test_safe_audio_path_rejects_traversal(tmp_path: Path, user_id: str, txn_id: str) -> None:
     from app.services.audio_storage import _safe_audio_path
 
     base = tmp_path / "audio_base"
@@ -61,6 +61,7 @@ def test_safe_audio_path_rejects_traversal(
 # ---------------------------------------------------------------------------
 # _safe_stored_path(base, rel) — REQ-33.2 helper for read / delete
 # ---------------------------------------------------------------------------
+
 
 def test_safe_stored_path_normal(tmp_path: Path) -> None:
     from app.services.audio_storage import _safe_stored_path
@@ -96,6 +97,7 @@ def test_safe_stored_path_rejects_traversal(tmp_path: Path, rel: str) -> None:
 # ---------------------------------------------------------------------------
 # save_audio integration — REQ-33.2 reroute confirmation
 # ---------------------------------------------------------------------------
+
 
 def test_save_audio_rejects_malformed_user_id(tmp_path: Path, monkeypatch) -> None:
     """save_audio MUST route through _safe_audio_path and refuse traversal."""

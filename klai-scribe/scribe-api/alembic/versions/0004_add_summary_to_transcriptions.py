@@ -9,6 +9,7 @@ NULL means the transcription has never been summarized.
 summary_json.type stores the recording type used for summarization.
 
 """
+
 from collections.abc import Sequence
 
 import sqlalchemy as sa

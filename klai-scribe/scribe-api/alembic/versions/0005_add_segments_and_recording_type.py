@@ -8,6 +8,7 @@ Adds nullable recording_type (VARCHAR(32)) and segments_json (JSON)
 columns to scribe.transcriptions.
 
 """
+
 from collections.abc import Sequence
 
 import sqlalchemy as sa

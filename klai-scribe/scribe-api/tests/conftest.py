@@ -4,6 +4,7 @@ Sets required env vars BEFORE `app.core.config.Settings` is instantiated at
 module import time. pytest-asyncio is configured to auto mode in
 pyproject.toml, so async tests run without per-function markers.
 """
+
 from __future__ import annotations
 
 import os

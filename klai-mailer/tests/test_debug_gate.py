@@ -29,11 +29,13 @@ def _fresh_app(monkeypatch, **env_overrides: str):
     import fakeredis.aioredis
 
     import app.nonce as nonce_mod
+
     client = fakeredis.aioredis.FakeRedis(decode_responses=False)
     nonce_mod.set_redis_client(client)
     main = importlib.import_module("app.main")
     # re-apply (main re-imports nonce)
     import app.nonce as nonce_after
+
     nonce_after.set_redis_client(client)
     return main
 
@@ -41,9 +43,11 @@ def _fresh_app(monkeypatch, **env_overrides: str):
 @pytest.fixture
 def in_env(monkeypatch, settings_env, stub_smtp):
     """Yield a factory that produces a TestClient with `portal_env` + `debug` overridden."""
+
     def _build(portal_env: str, debug: str) -> tuple[TestClient, object]:
         main = _fresh_app(monkeypatch, PORTAL_ENV=portal_env, DEBUG=debug)
         return TestClient(main.app), main
+
     return _build
 
 
@@ -58,9 +62,7 @@ def test_production_env_returns_404_even_with_debug_true(in_env, settings_env):
 
     header, _ = sign(VALID_BODY, settings_env["WEBHOOK_SECRET"])
     with capture_logs() as events:
-        resp = client.post(
-            "/debug", content=VALID_BODY, headers={"ZITADEL-Signature": header}
-        )
+        resp = client.post("/debug", content=VALID_BODY, headers={"ZITADEL-Signature": header})
 
     assert resp.status_code == 404
     assert resp.json() == {"detail": "Not found"}
@@ -69,8 +71,7 @@ def test_production_env_returns_404_even_with_debug_true(in_env, settings_env):
     # mailer_debug_* or signature events). FastAPI's default 404 is a plain
     # HTTP response, not an application event.
     relevant_events = [
-        e for e in events
-        if (e.get("event") or "").startswith(("mailer_debug", "mailer_signature"))
+        e for e in events if (e.get("event") or "").startswith(("mailer_debug", "mailer_signature"))
     ]
     assert relevant_events == [], f"unexpected app events: {relevant_events}"
 
@@ -79,9 +80,7 @@ def test_development_debug_true_works(in_env, settings_env):
     """Sanity: PORTAL_ENV=development, DEBUG=true → /debug returns 200."""
     client, _ = in_env(portal_env="development", debug="true")
     header, _ = sign(VALID_BODY, settings_env["WEBHOOK_SECRET"])
-    resp = client.post(
-        "/debug", content=VALID_BODY, headers={"ZITADEL-Signature": header}
-    )
+    resp = client.post("/debug", content=VALID_BODY, headers={"ZITADEL-Signature": header})
     assert resp.status_code == 200, resp.text
 
 
@@ -89,9 +88,7 @@ def test_development_debug_false_returns_404(in_env, settings_env):
     """REQ-5.2 legacy: PORTAL_ENV=development, DEBUG=false → 404."""
     client, _ = in_env(portal_env="development", debug="false")
     header, _ = sign(VALID_BODY, settings_env["WEBHOOK_SECRET"])
-    resp = client.post(
-        "/debug", content=VALID_BODY, headers={"ZITADEL-Signature": header}
-    )
+    resp = client.post("/debug", content=VALID_BODY, headers={"ZITADEL-Signature": header})
     assert resp.status_code == 404
 
 
@@ -99,9 +96,7 @@ def test_staging_debug_true_works(in_env, settings_env):
     """Staging is NOT production — the gate only blocks the production value."""
     client, _ = in_env(portal_env="staging", debug="true")
     header, _ = sign(VALID_BODY, settings_env["WEBHOOK_SECRET"])
-    resp = client.post(
-        "/debug", content=VALID_BODY, headers={"ZITADEL-Signature": header}
-    )
+    resp = client.post("/debug", content=VALID_BODY, headers={"ZITADEL-Signature": header})
     assert resp.status_code == 200, resp.text
 
 
@@ -115,9 +110,7 @@ def test_signature_verify_not_called_in_production(in_env, settings_env):
     client, _ = in_env(portal_env="production", debug="true")
     bad_header = "t=1,v1=deadbeef"
     with capture_logs() as events:
-        resp = client.post(
-            "/debug", content=VALID_BODY, headers={"ZITADEL-Signature": bad_header}
-        )
+        resp = client.post("/debug", content=VALID_BODY, headers={"ZITADEL-Signature": bad_header})
     assert resp.status_code == 404
     sig_events = [e for e in events if (e.get("event") or "").startswith("mailer_signature")]
     assert sig_events == [], f"signature check ran in production: {sig_events}"

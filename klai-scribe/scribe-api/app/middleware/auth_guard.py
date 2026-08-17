@@ -39,9 +39,7 @@ class AuthGuardMiddleware(BaseHTTPMiddleware):
     This guard only checks for *presence* of ``X-Internal-Secret``.
     """
 
-    async def dispatch(
-        self, request: Request, call_next: RequestResponseEndpoint
-    ) -> Response:
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         path = request.url.path
 
         if path in _EXEMPT_PATHS or path.startswith(_EXEMPT_PREFIXES):

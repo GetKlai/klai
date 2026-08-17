@@ -75,9 +75,7 @@ def test_uniform_401_body_across_failure_modes(client, failure_cases):
 
     first = bodies[0]
     for i, b in enumerate(bodies[1:], start=1):
-        assert b == first, (
-            f"body-{i} differs from body-0: {b!r} vs {first!r}"
-        )
+        assert b == first, f"body-{i} differs from body-0: {b!r} vs {first!r}"
     assert json.loads(first) == {"detail": "invalid signature"}
 
 
@@ -98,18 +96,13 @@ def test_log_reason_distinct_per_mode(client, failure_cases, captured_logs):
         captured_logs.clear()
         resp = client.post("/notify", content=VALID_BODY, headers=headers)
         assert resp.status_code == 401
-        sig_events = [
-            e for e in captured_logs
-            if e.get("event") == "mailer_signature_invalid"
-        ]
+        sig_events = [e for e in captured_logs if e.get("event") == "mailer_signature_invalid"]
         assert sig_events, (
-            f"no mailer_signature_invalid event for {expected_reason}; "
-            f"captured: {captured_logs}"
+            f"no mailer_signature_invalid event for {expected_reason}; captured: {captured_logs}"
         )
         reasons = [e.get("reason") for e in sig_events]
         assert expected_reason in reasons, (
-            f"expected reason={expected_reason!r} for headers={headers}, "
-            f"got reasons={reasons}"
+            f"expected reason={expected_reason!r} for headers={headers}, got reasons={reasons}"
         )
         reasons_seen.append(expected_reason)
 

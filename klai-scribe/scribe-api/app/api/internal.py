@@ -46,9 +46,7 @@ async def wipe_org_state(
 
     async with AsyncSessionLocal() as session:
         result = await session.execute(
-            select(Transcription.audio_path)
-            .where(Transcription.org_id == org_id)
-            .with_for_update()
+            select(Transcription.audio_path).where(Transcription.org_id == org_id).with_for_update()
         )
         audio_paths = [path for path in result.scalars().all() if path]
 

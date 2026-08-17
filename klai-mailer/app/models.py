@@ -23,6 +23,7 @@ class ContextInfo(BaseModel):
 
 class TemplateData(BaseModel):
     """Pre-rendered message text fields from Zitadel's configured message texts."""
+
     title: str | None = None
     preHeader: str | None = None
     subject: str | None = None
@@ -35,6 +36,7 @@ class TemplateData(BaseModel):
 
 class ZitadelArgs(BaseModel):
     """Raw event arguments sent alongside templateData."""
+
     Code: str | None = None
     Expiry: str | None = None
     ApplicationName: str | None = None
@@ -68,4 +70,3 @@ class ZitadelPayload(BaseModel):
 
     def footer_note(self) -> str:
         return (self.templateData and self.templateData.footerText) or ""
-

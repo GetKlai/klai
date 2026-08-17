@@ -6,6 +6,7 @@ Covers:
 - Three consecutive 503s raise HTTPException(503)
 - ConnectError is retried up to _MAX_RETRIES
 """
+
 from __future__ import annotations
 
 import httpx
@@ -47,6 +48,7 @@ def _patch_settings(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture(autouse=True)
 def _no_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
     """Don't actually wait during retries."""
+
     async def _instant(_: float) -> None:
         return None
 
@@ -95,6 +97,7 @@ class _FakeClient:
 @pytest.fixture
 def patch_client(monkeypatch: pytest.MonkeyPatch):
     """Replace httpx.AsyncClient with a scripted FakeClient."""
+
     def _install(script: list[httpx.Response | Exception]) -> _FakeClient:
         client = _FakeClient(script)
         monkeypatch.setattr(providers.httpx, "AsyncClient", lambda **_: client)
@@ -232,18 +235,20 @@ class TestPayloadFieldsAreOptional:
     async def test_missing_inference_time_seconds_does_not_raise(self, patch_client) -> None:
         # Whisper-server response observed live on 2026-05-03 — no
         # `inference_time_seconds` field present.
-        client = patch_client([
-            httpx.Response(
-                200,
-                json={
-                    "text": "",
-                    "language": "en",
-                    "language_probability": 0.6,
-                    "duration": 0.0,
-                    "segments": [],
-                },
-            )
-        ])
+        client = patch_client(
+            [
+                httpx.Response(
+                    200,
+                    json={
+                        "text": "",
+                        "language": "en",
+                        "language_probability": 0.6,
+                        "duration": 0.0,
+                        "segments": [],
+                    },
+                )
+            ]
+        )
 
         result = await WhisperHttpProvider().transcribe(b"audio", language=None)
 

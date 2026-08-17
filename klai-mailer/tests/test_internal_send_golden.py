@@ -58,11 +58,13 @@ def _load_main(fake_redis):
         sys.modules.pop(mod, None)
     import app.nonce as nonce_mod
     import app.rate_limit as rl_mod
+
     nonce_mod.set_redis_client(fake_redis)
     rl_mod.set_redis_client(fake_redis)
     main = importlib.import_module("app.main")
     import app.nonce as n
     import app.rate_limit as r
+
     n.set_redis_client(fake_redis)
     r.set_redis_client(fake_redis)
     return main

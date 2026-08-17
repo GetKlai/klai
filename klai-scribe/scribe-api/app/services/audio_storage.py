@@ -8,6 +8,7 @@ Retention policy:
 
 Invariant: only `failed` records should have an audio file on disk at rest.
 """
+
 from __future__ import annotations
 
 import re
@@ -64,9 +65,7 @@ def _safe_audio_path(base: Path, user_id: str, txn_id: str) -> Path:
     base_resolved = base.resolve()
     candidate = (base_resolved / user_id / f"{txn_id}.wav").resolve()
     if not candidate.is_relative_to(base_resolved):
-        raise ValueError(
-            f"invalid audio path: {user_id!r}/{txn_id!r} escapes base"
-        )
+        raise ValueError(f"invalid audio path: {user_id!r}/{txn_id!r} escapes base")
     return candidate
 
 

@@ -30,9 +30,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # if that changes, consider an advisory lock or a leader election.
     try:
         async with AsyncSessionLocal() as session:
-            count = await reap_stranded(
-                session, timeout_min=settings.scribe_stranded_timeout_min
-            )
+            count = await reap_stranded(session, timeout_min=settings.scribe_stranded_timeout_min)
         if count:
             logger.warning("scribe_startup_reaped", count=count)
     except Exception:

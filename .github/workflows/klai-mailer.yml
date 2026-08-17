@@ -51,6 +51,9 @@ jobs:
       - name: Lint (ruff)
         run: uv run ruff check .
 
+      - name: Format check (ruff)
+        run: uv run ruff format --check .
+
       # --skip-editable keeps the gate on external deps; internal klai-libs are
       # editable path deps, not PyPI releases to query by distribution name.
       - name: Dependency vulnerability scan (pip-audit)
