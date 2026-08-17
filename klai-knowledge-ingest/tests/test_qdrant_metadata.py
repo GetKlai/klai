@@ -3,8 +3,18 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from qdrant_client.models import FieldCondition, MatchValue
 
 from knowledge_ingest.qdrant_store import search
+
+
+def _user_id_conditions(mock_query):
+    """Extract user_id FieldConditions from every prefetch leg's filter.must."""
+    prefetch = mock_query.call_args.kwargs["prefetch"]
+    conditions = []
+    for leg in prefetch:
+        conditions.extend(c for c in leg.filter.must if c.key == "user_id")
+    return conditions
 
 
 def _make_query_point(payload: dict, score: float = 0.9):
@@ -104,18 +114,33 @@ async def test_metadata_contains_allowed_fields():
 
 @pytest.mark.asyncio
 async def test_search_with_user_id_filter():
-    """When user_id and personal kb_slugs provided, filter should be applied."""
+    """When user_id and personal kb_slugs provided, the user_id filter must be
+    applied to every prefetch leg's Qdrant filter (see qdrant_store.search)."""
     with patch("knowledge_ingest.qdrant_store.get_client") as mock_client:
         mock_query = AsyncMock(return_value=_make_query_response([]))
         mock_client.return_value.query_points = mock_query
         await search("org1", [0.1] * 1024, kb_slugs=["personal-user123"], user_id="user123")
 
-        # TODO: call_kwargs is captured but never asserted on. The filter is
-        # passed via prefetch entries' `filter=` kwarg (see qdrant_store.search),
-        # so this test does not actually verify the user_id filter was applied —
-        # only that query_points was called at all.
-        _call_kwargs = mock_query.call_args
         mock_query.assert_called_once()
+        conditions = _user_id_conditions(mock_query)
+        assert len(conditions) > 0
+        expected = FieldCondition(key="user_id", match=MatchValue(value="user123"))
+        assert all(c == expected for c in conditions)
+
+
+@pytest.mark.asyncio
+async def test_search_with_user_id_non_personal_kb_no_user_filter():
+    """A user_id is present but kb_slugs is NOT a personal KB — the user_id
+    filter must NOT be applied. This is the tenant-isolation boundary that
+    test_search_with_user_id_filter alone does not cover: passing a user_id
+    is not sufficient to scope the search, kb_slugs must also be personal."""
+    with patch("knowledge_ingest.qdrant_store.get_client") as mock_client:
+        mock_query = AsyncMock(return_value=_make_query_response([]))
+        mock_client.return_value.query_points = mock_query
+        await search("org1", [0.1] * 1024, kb_slugs=["org"], user_id="user123")
+
+        mock_query.assert_called_once()
+        assert _user_id_conditions(mock_query) == []
 
 
 @pytest.mark.asyncio
@@ -127,6 +152,7 @@ async def test_search_without_user_id_no_extra_filter():
         await search("org1", [0.1] * 1024)
 
         mock_query.assert_called_once()
+        assert _user_id_conditions(mock_query) == []
 
 
 def test_allowed_metadata_fields_includes_assertion_mode():

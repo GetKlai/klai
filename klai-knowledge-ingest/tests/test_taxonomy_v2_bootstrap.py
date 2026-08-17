@@ -554,12 +554,23 @@ class TestBootstrapProposalsV2Integration:
         # If synthetic data gave us 3 clusters, we cap to 2
         if result.clusters_found >= 2:
             assert result.proposals_submitted <= 2
-            # TODO: this test's docstring says "log bootstrap_clusters_capped"
-            # (AC-7) but that event is never asserted here. Should likely be:
-            #   assert "bootstrap_clusters_capped" in _log_events
-            _log_events = [e["event"] for e in captured]
-            # Only log capped if we actually had more than max
-            # (synthetic data may give exactly 2 or 3 clusters)
+            # _make_synthetic_embeddings(seed=42) produces 3 clearly-separated
+            # clusters with 0 outliers. cluster_documents_hdbscan uses a fixed
+            # random_state (settings.taxonomy_bootstrap_umap_random_state,
+            # default 42) for its UMAP pre-reduction, so with
+            # taxonomy_bootstrap_max_clusters=2 the raw cluster count (3) is
+            # deterministically > max_clusters and the cap in
+            # proposal_generator.generate_bootstrap_proposals_v2 always fires
+            # here (verified empirically: 3 raw clusters across repeated runs
+            # with this fixture's seed/settings). Scope the assertion on the
+            # actual emitted event rather than asserting unconditionally.
+            capped_events = [e for e in captured if e["event"] == "bootstrap_clusters_capped"]
+            assert capped_events, (
+                "expected bootstrap_clusters_capped (AC-7) when raw cluster "
+                f"count exceeds max_clusters; got events={[e['event'] for e in captured]}"
+            )
+            assert capped_events[0]["total_clusters"] > 2
+            assert capped_events[0]["kept_clusters"] == 2
 
     @pytest.mark.asyncio
     async def test_ac8_all_duplicates_returns_reason(self, mock_settings):
