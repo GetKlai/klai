@@ -74,7 +74,8 @@ async def retry_with_backoff(
             last_exc = exc
             if attempt == max_retries - 1:
                 break
-            delay = min(base_delay * (2 ** attempt) + random.uniform(0, 1), max_delay)
+            jitter = random.uniform(0, 1)  # noqa: S311 -- retry backoff jitter, not security-sensitive
+            delay = min(base_delay * (2**attempt) + jitter, max_delay)
             logger.warning(
                 "Attempt %d/%d failed: %s. Retrying in %.1fs...",
                 attempt + 1, max_retries, exc, delay,
@@ -200,7 +201,7 @@ async def run_baseline(
                 "chunks": resp.get("chunks", []),
             })
         except Exception as exc:
-            logger.error("Baseline query %d failed: %s", i + 1, exc)
+            logger.exception("Baseline query %d failed", i + 1)
             results.append({"query": q["query"], "error": str(exc)})
         finally:
             # Restore original env
@@ -268,7 +269,7 @@ async def run_evidence_tier(
                 "chunks": resp.get("chunks", []),
             })
         except Exception as exc:
-            logger.error("Evidence-tier query %d failed: %s", i + 1, exc)
+            logger.exception("Evidence-tier query %d failed", i + 1)
             results.append({"query": q["query"], "error": str(exc)})
         finally:
             for k, v in original_env.items():
@@ -314,7 +315,9 @@ def compare_results(
             continue
 
         if len(baseline_scores) < 5:
-            logger.warning("Too few samples (%d) for Wilcoxon test on %s", len(baseline_scores), metric)
+            logger.warning(
+                "Too few samples (%d) for Wilcoxon test on %s", len(baseline_scores), metric
+            )
             report["metrics"][metric] = {
                 "baseline_mean": sum(baseline_scores) / max(len(baseline_scores), 1),
                 "treatment_mean": sum(treatment_scores) / max(len(treatment_scores), 1),
@@ -433,7 +436,9 @@ async def main(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="RAGAS evaluation for evidence-tier scoring")
-    parser.add_argument("--baseline-only", action="store_true", help="Only run baseline measurement")
+    parser.add_argument(
+        "--baseline-only", action="store_true", help="Only run baseline measurement"
+    )
     parser.add_argument(
         "--dimension",
         choices=["content_type", "temporal_decay", "assertion_mode"],

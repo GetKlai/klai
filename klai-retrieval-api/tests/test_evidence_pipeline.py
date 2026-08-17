@@ -5,8 +5,6 @@ from __future__ import annotations
 import os
 from unittest.mock import AsyncMock, patch
 
-import pytest
-
 
 class TestEvidenceTierInPipeline:
     """Verify evidence_tier.apply() is called after reranking."""

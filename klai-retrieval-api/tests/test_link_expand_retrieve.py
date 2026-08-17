@@ -1,10 +1,11 @@
-"""Tests for link expansion + authority boost in the retrieve pipeline (SPEC-CRAWLER-003 R14-R17)."""
+"""Tests for link expansion + authority boost in the retrieve pipeline.
+
+SPEC-CRAWLER-003 R14-R17.
+"""
 
 from __future__ import annotations
 
 import math
-
-import pytest
 
 
 def _make_chunk(

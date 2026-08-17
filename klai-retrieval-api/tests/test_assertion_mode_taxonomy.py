@@ -34,7 +34,9 @@ class TestNewTaxonomyValuesPassthrough:
         search._client = None
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("mode", ["fact", "claim", "speculation", "procedural", "quoted", "unknown"])
+    @pytest.mark.parametrize(
+        "mode", ["fact", "claim", "speculation", "procedural", "quoted", "unknown"]
+    )
     async def test_new_assertion_mode_values_pass_through(self, mode):
         """Each new taxonomy value must appear in search results."""
         point = _make_point(

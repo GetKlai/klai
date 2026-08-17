@@ -14,7 +14,6 @@ from unittest.mock import patch
 
 import pytest
 
-
 # -- TASK-004: EvidenceProfile structure (R6) ----------------------------------
 
 
@@ -264,7 +263,9 @@ class TestApply:
         assert result[0]["final_score"] is not None
 
     def test_final_score_formula(self):
-        """final_score = reranker_score * content_type_weight * assertion_weight * temporal_decay."""
+        """final_score = reranker_score * content_type_weight * assertion_weight *
+        temporal_decay.
+        """
         from retrieval_api.services.evidence_tier import apply
 
         chunks = [_make_chunk("c1", 0.80, content_type="kb_article")]

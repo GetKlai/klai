@@ -97,7 +97,7 @@ def _content_type_weight(content_type: str | None, profile: EvidenceProfile) -> 
 
 
 # PageRank boost constants.
-# Scale brings typical FalkorDB algo.pageRank values (0.003–0.05) into log1p-friendly range.
+# Scale brings typical FalkorDB algo.pageRank values (0.003-0.05) into log1p-friendly range.
 # Alpha caps the max boost at ~25% for hub entities in the current graph size.
 # Consistent with the Hebbian boost pattern in graph_search._convert_results.
 _PAGERANK_SCALE = 100.0
@@ -112,9 +112,9 @@ def _pagerank_weight(pagerank_max: float | None) -> float:
     graph data or when the feature flag is disabled.
 
     Typical boost range (production graph, 290 entities):
-        pagerank_max 0.003 → ×1.05  (+5%)
-        pagerank_max 0.010 → ×1.14  (+14%)
-        pagerank_max 0.020 → ×1.22  (+22%)
+        pagerank_max 0.003 -> x1.05  (+5%)
+        pagerank_max 0.010 -> x1.14  (+14%)
+        pagerank_max 0.020 -> x1.22  (+22%)
     """
     if not _is_enabled("EVIDENCE_PAGERANK_ENABLED"):
         return 1.0
@@ -126,7 +126,8 @@ def _pagerank_weight(pagerank_max: float | None) -> float:
 # @MX:NOTE: [AUTO] assertion_mode now applies the conservative weight table from
 # @MX:NOTE: DEFAULT_EVIDENCE_PROFILE, but stays shadow-gated at the retrieve.py caller
 # @MX:NOTE: (EVIDENCE_SHADOW_MODE=true) so it is measured, not served.
-# @MX:SPEC: SPEC-EVIDENCE-002 — go-live preconditions in docs/research/assertion-modes/assertion-mode-weights.md §8-9.
+# @MX:SPEC: SPEC-EVIDENCE-002 — go-live preconditions in
+# @MX:SPEC: docs/research/assertion-modes/assertion-mode-weights.md §8-9.
 def _assertion_weight(assertion_mode: str | None, profile: EvidenceProfile) -> float:
     """Return the multiplicative weight for a chunk's assertion_mode.
 

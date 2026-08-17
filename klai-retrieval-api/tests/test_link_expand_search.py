@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -137,7 +136,7 @@ class TestFetchChunksByUrls:
     async def test_timeout_returns_empty_with_warning(self):
         """6.5: Timeout on scroll returns [] and logs a warning."""
         mock_client = AsyncMock()
-        mock_client.scroll.side_effect = asyncio.TimeoutError()
+        mock_client.scroll.side_effect = TimeoutError()
 
         with patch.object(search, "_get_client", return_value=mock_client), \
              patch.object(search, "logger") as mock_logger:
