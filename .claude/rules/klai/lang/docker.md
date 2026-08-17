@@ -92,3 +92,47 @@ docker compose up -d <service>
 **For build-stage Dockerfiles:** keep gpgv. Vulnerable code-path requires a malicious keybox file, which has no path in a deployed image that doesn't run apt. Document via `.trivyignore.yaml` per `infra/deploy.md` § Trivy scanning.
 
 **See:** `docs/retros/2026-05-06-trivy-spec-iteration.md` § Lesson 3.
+
+## Network recreate silently drops service aliases (HIGH)
+
+Changing a network's definition in `docker-compose.yml` — adding `ipam`, an
+`ip_range`, a driver option — makes compose recreate the network. It reconnects
+the attached containers rather than recreating them, and on that reconnect the
+**automatic service-name alias is lost**.
+
+The container keeps running and keeps its IP. Only DNS breaks, and only for the
+services that other containers dial by name. So nothing looks wrong in
+`docker ps`; the failure shows up as `gaierror` / `Temporary failure in name
+resolution` inside the application.
+
+Observed 2026-08-17 while adding `ipam.ip_range` to `vexa12-bots`
+(SPEC-SEC-022). Afterwards:
+
+```
+vexa12-redis-1        aliases=[]                                    ← broken
+vexa12-runtime-1      aliases=[]                                    ← broken
+vexa12-meeting-api-1  aliases=[... vexa12-meeting-api meeting-api]  ← survived
+```
+
+The runtime could no longer resolve `vexa12-redis`; meeting-api logged 357
+connection errors in ten minutes.
+
+**Why meeting-api survived:** it declares the long form with an explicit
+`aliases:` block, which compose re-applies on connect. The other two use the
+shorthand list (`networks: ['vexa12-bots']`), where the alias is derived
+implicitly — and the derivation does not happen on a bare reconnect.
+
+**Prevention:**
+
+1. After any change to a network's definition, recreate every container attached
+   to it — do not trust the automatic reconnect:
+   ```bash
+   /opt/klai/scripts/compose-up.sh --force-recreate <svc>   # for each attached service
+   ```
+2. Verify the aliases came back before declaring it done. `docker ps` will not
+   tell you:
+   ```bash
+   docker inspect <ctr> --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{$v.Aliases}}{{end}}'
+   ```
+3. A service that others dial by name should prefer the long form with an
+   explicit `aliases:` entry. It is the only form that survived here.
