@@ -71,9 +71,10 @@ CADDY_WHITELIST=(
     # SPEC-VEXA-004: the 0.10 names (api-gateway, admin-api, meeting-api,
     # runtime-api) are deliberately NOT whitelisted — they no longer exist, so a
     # Caddy upstream naming one is a resurrected orphan the audit must surface.
-    '^vexa12-meeting-api$'       # Vexa internal — managed by the Vexa stack
-    '^vexa12-admin-api$'         # Vexa internal
-    '^vexa12-runtime$'           # Vexa internal
+    # vexa12-meeting-api / -admin-api / -runtime used to be listed here as
+    # "Vexa internal". They are declared services in deploy/docker-compose.yml,
+    # so the normal check already resolves them and the entries only widened the
+    # exemption for names nobody was exempting. Removed 2026-08-17.
 )
 
 is_whitelisted() {
