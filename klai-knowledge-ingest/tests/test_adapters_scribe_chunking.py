@@ -21,7 +21,7 @@ _mock_core.__path__ = [_scribe_api + "/app/core"]
 _mock_config = ModuleType("app.core.config")
 _mock_config.settings = MagicMock(
     knowledge_ingest_url="http://test:9100",
-    knowledge_ingest_secret="test-secret",
+    knowledge_ingest_secret="test-secret",  # noqa: S106  # testfixture, geen echt secret
 )
 _mock_services = ModuleType("app.services")
 _mock_services.__path__ = [_scribe_api + "/app/services"]

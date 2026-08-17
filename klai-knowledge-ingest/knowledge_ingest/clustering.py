@@ -258,7 +258,7 @@ def cluster_documents_hdbscan(
         EOM under-fitted at typical KB sizes (e.g. Voys/support 154 docs → 3 clusters even
         with min_cluster_size_floor=3) because EOM rejects smaller stable sub-clusters in
         favour of bigger 'most stable' merges. Leaf returns the leaves of the cluster
-        hierarchy → typically 2-4× more clusters, lands in the 5-9 IA sweet spot.
+        hierarchy → typically 2-4x more clusters, lands in the 5-9 IA sweet spot.
 
     Args:
         embeddings: (n_docs, dim) float32 array of unit-normalised embeddings.

@@ -1386,7 +1386,7 @@ class TestConsolidate:
 
     @pytest.fixture
     def document_embeddings(self, base_proposals):
-        # 12 clusters × 5 docs = 60 unit-norm vectors.
+        # 12 clusters x 5 docs = 60 unit-norm vectors.
         rng = np.random.RandomState(42)
         embs = rng.randn(60, DIM).astype(np.float32)
         embs = embs / np.linalg.norm(embs, axis=1, keepdims=True)
@@ -1472,7 +1472,7 @@ class TestConsolidate:
             )
 
         assert len(parents) == 3
-        assert all(p.document_count == 20 for p in parents)  # 4 children × 5 docs
+        assert all(p.document_count == 20 for p in parents)  # 4 children x 5 docs
         # Child cluster names propagated
         assert parents[0].child_cluster_names == [
             "Cluster 0 name",
@@ -1701,7 +1701,7 @@ class TestConsolidate:
             )
 
         prompt = captured_system_prompt["text"]
-        # Total docs = 12 clusters × 5 = 60 → doc_cap = 60 // 4 = 15
+        # Total docs = 12 clusters x 5 = 60 → doc_cap = 60 // 4 = 15
         assert "60" in prompt  # total docs
         assert "12" in prompt  # n_clusters
         assert "15" in prompt or "~15" in prompt  # doc_cap
@@ -1808,7 +1808,7 @@ class TestConsolidate:
         )
 
         # Build a fixture with > target_max=9 base clusters so consolidate WOULD trigger.
-        # 12 well-separated clusters × 5 docs = 60 docs.
+        # 12 well-separated clusters x 5 docs = 60 docs.
         rng = np.random.RandomState(7)
         embs_list = []
         for cluster_idx in range(12):

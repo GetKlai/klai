@@ -101,7 +101,7 @@ class TestEmptyAnchorTextsNoModification:
             for ec in chunks:
                 ec.enriched_text += anchor_block
 
-        for ec, orig in zip(chunks, original_texts):
+        for ec, orig in zip(chunks, original_texts, strict=True):
             assert ec.enriched_text == orig
 
     def test_missing_key_no_change(self):
@@ -116,7 +116,7 @@ class TestEmptyAnchorTextsNoModification:
             for ec in chunks:
                 ec.enriched_text += anchor_block
 
-        for ec, orig in zip(chunks, original_texts):
+        for ec, orig in zip(chunks, original_texts, strict=True):
             assert ec.enriched_text == orig
 
     def test_none_extra_payload_no_change(self):
@@ -131,7 +131,7 @@ class TestEmptyAnchorTextsNoModification:
             for ec in chunks:
                 ec.enriched_text += anchor_block
 
-        for ec, orig in zip(chunks, original_texts):
+        for ec, orig in zip(chunks, original_texts, strict=True):
             assert ec.enriched_text == orig
 
 
@@ -152,7 +152,7 @@ class TestOriginalFieldsUnchanged:
         for ec in chunks:
             ec.enriched_text += anchor_block
 
-        for ec, orig in zip(chunks, original_original):
+        for ec, orig in zip(chunks, original_original, strict=True):
             assert ec.original_text == orig
 
     def test_context_prefix_unchanged(self):
@@ -165,7 +165,7 @@ class TestOriginalFieldsUnchanged:
         for ec in chunks:
             ec.enriched_text += anchor_block
 
-        for ec, orig in zip(chunks, original_prefixes):
+        for ec, orig in zip(chunks, original_prefixes, strict=True):
             assert ec.context_prefix == orig
 
     def test_questions_unchanged(self):
@@ -178,5 +178,5 @@ class TestOriginalFieldsUnchanged:
         for ec in chunks:
             ec.enriched_text += anchor_block
 
-        for ec, orig in zip(chunks, original_questions):
+        for ec, orig in zip(chunks, original_questions, strict=True):
             assert ec.questions == orig
