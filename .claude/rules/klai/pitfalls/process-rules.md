@@ -2440,3 +2440,85 @@ silently exceeded the moment more than one caller is active concurrently.
    `deploy/grafana/provisioning/alerting/knowledge-ingest-llm-rules.yaml`
    adds a rule on `enrichment_llm_error` rate — apply the same pattern to
    any other queue-consumer calling a rate-limited external API.
+
+## configured-but-never-wired (HIGH)
+
+A knob exists, is documented, is threaded through call signatures, and is
+read by nothing. Nothing errors, because absence of a consumer is not a
+failure — the value simply sits there being correct and inert. The feature
+looks implemented from every angle except the one that matters.
+
+This is not a rare slip. On 2026-08-17 three independent instances surfaced
+in a single day, in three different services:
+
+| Instance | What looked present | What was missing |
+|---|---|---|
+| `rate_limit` (knowledge-ingest crawler) | plumbed from the Procrastinate task through `run_crawl_job` → `crawl_site`, with a sensible default of 2.0 req/s | never mapped onto crawl4ai's `semaphore_count`/`mean_delay`, so every crawl ran at crawl4ai's default of 5 concurrent sessions with a 0.1s delay |
+| `TRY400`/`TRY401` (retrieval-api) | in `pyproject.toml`'s `select`, with a comment naming the SPEC and stating the rules were added "so future regressions are caught in CI" | `.github/workflows/retrieval-api.yml` had zero references to ruff; nothing ever ran it |
+| `taxonomy_cluster_trigger_count` (knowledge-ingest) | defined at exactly SPEC-KB-024 R7's value of 20; the clustering engine `run_clustering_for_kb` fully built | `clustering_tasks.py` — the periodic task the SPEC names as owner — does not exist, and nothing reads the setting |
+
+The `rate_limit` one cost days of debugging and a customer-visible
+regression: a source stuck on "failed" for 8 days, and a healthy sibling
+crawl collapsing from 466 pages to 115 once the unthrottled crawls started
+competing.
+
+**Why it survives review.** Every individual file reads correctly. The
+config declaration is right, the parameter is passed, the SPEC is written.
+The defect is the *absence* of an edge, and absence is invisible in a diff.
+Tests do not catch it either: a test that exercises the caller passes,
+because the caller genuinely does its part.
+
+**Why it survives for months.** There is no error. A dead knob produces no
+log line, no exception, no alert. The only symptom is that behaviour never
+changes when you change the value — which nobody tries, because the value
+is already what they wanted.
+
+### Detection
+
+1. **Enable `ARG` on production code.** Ruff's unused-argument rule is the
+   cheapest detector for the parameter-shaped variant, and it is precisely
+   what would have caught `rate_limit` on day one. Exclude `tests/**` —
+   unused pytest fixtures are correct by design there. Landed for
+   knowledge-ingest, portal-api and connector on 2026-08-17.
+
+   `ARG` does **not** catch the config-field variant (`taxonomy_cluster_trigger_count`,
+   `sparse_index_on_disk`) — those are attributes, not arguments. For those,
+   grep each settings field for a reader as a periodic audit.
+
+2. **When a SPEC names an owner file, verify that file exists.** SPEC-KB-024
+   R7 names `knowledge_ingest/clustering_tasks.py`. A one-line `find` would
+   have closed the question. Do this at sync time, not only at plan time.
+
+3. **When a config comment claims CI enforces something, verify CI does.**
+   `grep -c ruff .github/workflows/<service>.yml` is the whole check. A
+   comment asserting a guarantee is not a guarantee.
+
+### Classification when you find one
+
+Three categories, and conflating them is how the bug gets worse:
+
+- **Framework-mandated** — the signature is fixed by a base class or
+  framework (FastAPI `lifespan`, procrastinate `get_retry_decision`, stdlib
+  overrides). Correct as-is; add a targeted ignore *with a reason*.
+- **Genuinely dead** — no caller passes anything meaningful. Remove it,
+  including every caller, after a repo-wide grep.
+- **Passed but ignored** — a caller supplies a real value and the callee
+  drops it. **This is the dangerous one and it is not a cleanup task.**
+  Removing the parameter is wrong (the caller meant something) and wiring
+  it up is a behaviour change. Report it and let a human decide.
+
+The same trap applies at feature level. `run_clustering_for_kb` looks like
+dead code — no production caller, only a test. Deleting it would have thrown
+away a working engine and hidden the real gap, which is that its trigger was
+never built. **Before deleting anything that looks orphaned, ask whether it
+is dead or merely unconnected.** Check the git history for when the last
+caller disappeared; that usually answers it in one command.
+
+### Prevention
+
+Any SPEC that introduces a configurable threshold must name, in its
+acceptance criteria, the file that *reads* it — not only the file that
+declares it. "Add setting X" is not a deliverable; "X changes behaviour Y,
+demonstrated by test Z" is.
+
+Reference: PRs #1034, #1036, #1037, #1039, #1040 (2026-08-17).
