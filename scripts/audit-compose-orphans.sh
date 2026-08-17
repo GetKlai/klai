@@ -74,7 +74,6 @@ CADDY_WHITELIST=(
     '^vexa12-meeting-api$'       # Vexa internal — managed by the Vexa stack
     '^vexa12-admin-api$'         # Vexa internal
     '^vexa12-runtime$'           # Vexa internal
-    '^portal-api-dev$'           # protected dev environment outside prod compose
 )
 
 is_whitelisted() {
