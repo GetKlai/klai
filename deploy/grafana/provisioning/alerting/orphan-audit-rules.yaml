@@ -210,3 +210,84 @@ groups:
                  - Stale entry: edit Caddyfile, remove the route, redeploy.
                  - Missing container: investigate why it's down via
                    container_down runbook + recreate via compose-up.sh.
+
+      - uid: spec-hyg-001-compose-hand-edit
+        title: compose_hand_edit_artifact
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 691200
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: 'service:klai-orphan-audit AND event:compose_hand_edit_artifact'
+              queryType: instant
+          - refId: count
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 691200
+              to: 0
+            model:
+              refId: count
+              type: reduce
+              reducer: count
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 691200
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: count
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 0s
+        keepFiringFor: 1h
+        isPaused: false
+        labels:
+          # warning, not critical, unlike the two rules above. Those describe a
+          # route or a container that is wrong right now; this describes a file
+          # that should not exist. It wants cleaning up, not waking anyone. The
+          # emitted event carries the same level, so the two agree.
+          severity: warning
+          spec: SPEC-INFRA-CONTAINER-HYGIENE-001
+          service_group: hygiene-orphan-audit
+        annotations:
+          summary: 'a file was edited beside the deployed docker-compose.yml — someone bypassed the deploy pipeline'
+          runbook_url: 'docs/runbooks/container-hygiene-systemd-install.md'
+          description: |
+            A sibling of /opt/klai/docker-compose.yml exists (.bak, .orig,
+            .pre-*, .before-*). The deploy pipeline writes that file from the
+            repo and never creates a sibling, so this marks an edit made by
+            hand on the server — which the repo forbids as CRIT
+            (infra/deploy.md, "No manual server edits").
+
+            The edit itself is the problem, not the leftover: deploy-compose.yml
+            overwrites the deployed file on the next push, so whatever was
+            changed by hand is silently lost, and the backup is the only record
+            that it ever happened.
+
+            What to do:
+              1. Diff the leftover against the deployed file to see what was
+                 changed:  diff /opt/klai/docker-compose.yml <leftover>
+              2. If the change is still wanted, put it in deploy/docker-compose.yml
+                 and push. If not, delete the leftover.
+              3. Either way the leftover goes; it is not a backup worth keeping,
+                 because deploy/docker-compose.yml is in git.
+
+            26 of these accumulated between April and May 2026 before anything
+            watched for them. None held a service absent from git, so nothing
+            was lost that time.

@@ -2,7 +2,7 @@
 # /opt/klai/scripts/docker-orphan-audit.sh
 #
 # Weekly orphan audit emitting structlog-events to stdout (Alloy →
-# VictoriaLogs). Detects six categories of "wees" state:
+# VictoriaLogs). Detects seven categories of "wees" state:
 #
 #   1. orphan_no_managed_label
 #      Running container without klasse-A (compose-project=klai-core)
@@ -26,6 +26,10 @@
 #   5. caddy_upstream_missing
 #      Caddy upstream in the live config that does NOT match any running
 #      container — broken routing-rule.
+#
+#   7. compose_hand_edit_artifact
+#      A sibling of the deployed compose file (.bak / .orig / .pre-* / …).
+#      The deploy pipeline never creates one, so it marks a hand-edit.
 #
 #   6. tenant_container_no_route
 #      Container with klasse-B label OR tenant-pattern-name (`librechat-*`)
@@ -299,6 +303,28 @@ if [[ -n "$CADDY_TENANTS_OK" ]]; then
             emit_event "caddy_upstream_missing" "critical" "$host" \
                 "{\"upstream_in_caddyfile\":\"$host\"}"
         done
+fi
+
+# ─── Detection 7: hand-edit artifacts beside the deployed compose file ───────
+#
+# /opt/klai/docker-compose.yml is written by deploy-compose.yml from the repo.
+# Nothing in that pipeline ever creates a sibling — so a docker-compose.yml.bak,
+# .orig, .pre-*, or .before-* is the fingerprint of somebody editing the
+# deployed file by hand, which the repo forbids as CRIT.
+#
+# By 2026-08-17 there were 26 of them, spanning April to May, 1.7 MB. None was
+# mounted and none held a service absent from git, so nothing was lost — but
+# every one marked an edit made outside the pipeline, and the pile grew for four
+# months with nothing watching. The audit is the only layer that sees a human on
+# the server, so it is the layer that has to notice.
+COMPOSE_DIR="$(dirname "$COMPOSE_FILE")"
+COMPOSE_BASE="$(basename "$COMPOSE_FILE")"
+if [[ -d "$COMPOSE_DIR" ]]; then
+    while IFS= read -r artifact; do
+        [[ -z "$artifact" ]] && continue
+        emit_event "compose_hand_edit_artifact" "warning" "$(basename "$artifact")" \
+            "{\"path\":\"$artifact\",\"detail\":\"sibling of the deployed compose file; the deploy pipeline never creates one, so this marks an edit made outside it\"}"
+    done < <(find "$COMPOSE_DIR" -maxdepth 1 -type f -name "${COMPOSE_BASE}.*" 2>/dev/null | sort)
 fi
 
 # ─── Always emit run-completed marker ────────────────────────────────────────
