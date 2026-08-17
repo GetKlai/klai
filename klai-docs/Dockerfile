@@ -26,7 +26,15 @@ RUN apk update && apk upgrade --no-cache
 WORKDIR /app
 ENV NODE_ENV=production
 
-RUN npm install -g npm@11.18.0
+# npm is removed, not upgraded. The runtime is `node server.js` on a Next
+# standalone build — npm is never invoked here, but its bundled dependency
+# tree is scanned, and that tree is where CVE-2026-14257 / CVE-2026-69152
+# (brace-expansion) and CVE-2026-69192 (ip-address) live today. Pinning
+# npm@11.18.0 cleared the previous round of exactly these advisories and then
+# became the thing carrying the next round. Deleting what we do not run ends
+# the treadmill instead of pacing it, same reasoning as the gnupg purge in
+# klai-scribe/whisper-server/Dockerfile.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
