@@ -7,6 +7,7 @@ assignment, audio_path preservation).
 
 See SPEC-SEC-HYGIENE-001 REQ-35.
 """
+
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
@@ -46,11 +47,11 @@ def _session_returning(records: list[SimpleNamespace]) -> AsyncMock:
 # REQ-35.1 — flip stranded rows to failed
 # ---------------------------------------------------------------------------
 
+
 async def test_reaper_flips_stranded_to_failed() -> None:
     from app.services import reaper
 
-    stranded = _record("txn_old", status="processing", minutes_ago=35,
-                       audio_path="user1/old.wav")
+    stranded = _record("txn_old", status="processing", minutes_ago=35, audio_path="user1/old.wav")
     session = _session_returning([stranded])
 
     flipped = await reaper.reap_stranded(session, timeout_min=30)
@@ -65,8 +66,9 @@ async def test_reaper_preserves_audio_path(caplog) -> None:
     """REQ-35.3 — reaper MUST NOT delete the underlying audio file."""
     from app.services import reaper
 
-    stranded = _record("txn_old", status="processing", minutes_ago=40,
-                       audio_path="user1/preserved.wav")
+    stranded = _record(
+        "txn_old", status="processing", minutes_ago=40, audio_path="user1/preserved.wav"
+    )
     session = _session_returning([stranded])
 
     await reaper.reap_stranded(session, timeout_min=30)
@@ -108,8 +110,7 @@ async def test_reaper_emits_structlog_event() -> None:
     """REQ-35.2 — every recovered row emits scribe_stranded_recovered with txn_id + age_minutes."""
     from app.services import reaper
 
-    stranded = _record("txn_logged", status="processing", minutes_ago=42,
-                       audio_path="u/x.wav")
+    stranded = _record("txn_logged", status="processing", minutes_ago=42, audio_path="u/x.wav")
     session = _session_returning([stranded])
 
     with structlog.testing.capture_logs() as cap_logs:

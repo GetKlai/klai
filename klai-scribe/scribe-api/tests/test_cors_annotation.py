@@ -7,6 +7,7 @@ exposes scribe to browsers triggers a review against SPEC-SEC-CORS-001.
 
 See SPEC-SEC-HYGIENE-001 REQ-38.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -49,10 +50,9 @@ def test_cors_mx_reason_mentions_back_end_only() -> None:
     preceding = src[:cors_idx]
     preceding_window = "\n".join(preceding.splitlines()[-25:]).lower()
 
-    assert (
-        "back-end-only" in preceding_window
-        or "not browser-reachable" in preceding_window
-    ), "@MX:REASON must mention 'back-end-only' or 'not browser-reachable'"
+    assert "back-end-only" in preceding_window or "not browser-reachable" in preceding_window, (
+        "@MX:REASON must mention 'back-end-only' or 'not browser-reachable'"
+    )
 
 
 def test_cors_mx_reason_references_spec() -> None:
@@ -64,6 +64,5 @@ def test_cors_mx_reason_references_spec() -> None:
     preceding_window = "\n".join(preceding.splitlines()[-25:])
 
     assert (
-        "SPEC-SEC-HYGIENE-001 REQ-38" in preceding_window
-        or "SPEC-SEC-CORS-001" in preceding_window
+        "SPEC-SEC-HYGIENE-001 REQ-38" in preceding_window or "SPEC-SEC-CORS-001" in preceding_window
     )

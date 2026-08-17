@@ -9,6 +9,7 @@ the record stays with status='failed' and the audio file is retained for
 retry. Columns that are only populated after successful transcription
 (text, language, duration, etc.) become nullable.
 """
+
 from collections.abc import Sequence
 
 import sqlalchemy as sa

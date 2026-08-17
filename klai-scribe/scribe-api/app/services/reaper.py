@@ -12,6 +12,7 @@ still possible.
 
 SPEC-SEC-HYGIENE-001 REQ-35.
 """
+
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta

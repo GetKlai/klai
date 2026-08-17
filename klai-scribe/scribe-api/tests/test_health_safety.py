@@ -10,6 +10,7 @@ Two concerns covered here:
 
 See SPEC-SEC-HYGIENE-001 REQ-37.
 """
+
 from __future__ import annotations
 
 import json
@@ -22,6 +23,7 @@ from pydantic import ValidationError
 # ---------------------------------------------------------------------------
 # REQ-37.1 — Settings validator allowlist
 # ---------------------------------------------------------------------------
+
 
 def _build_settings(whisper_url: str):
     """Build a Settings instance with the given whisper_server_url override.
@@ -41,7 +43,7 @@ def _build_settings(whisper_url: str):
         "http://whisper-server:8000",
         "http://localhost:8000",
         "http://127.0.0.1:8000",
-        "http://172.18.0.1:8000",          # current prod default — see config.py
+        "http://172.18.0.1:8000",  # current prod default — see config.py
         "https://whisper.getklai.com",
         "https://transcription.getklai.com:8443/v1",
     ],
@@ -56,17 +58,17 @@ def test_whisper_url_accepted(url: str) -> None:
     [
         "http://evil.com/",
         "http://evil.com:8000/health",
-        "http://169.254.169.254/",         # AWS instance metadata
-        "http://10.0.0.5:8000",            # private RFC1918 — not in allowlist
+        "http://169.254.169.254/",  # AWS instance metadata
+        "http://10.0.0.5:8000",  # private RFC1918 — not in allowlist
         "http://192.168.1.1:8000",
         "http://internal-admin-api/health",
-        "http://whisper.evil.com/",        # subdomain trickery
+        "http://whisper.evil.com/",  # subdomain trickery
         "https://attacker.getklai.com.evil/",  # suffix bypass attempt
         "file:///etc/passwd",
         "ftp://whisper:8000/",
         "javascript:alert(1)",
-        "",                                # empty
-        "not-a-url-at-all",                # no scheme
+        "",  # empty
+        "not-a-url-at-all",  # no scheme
     ],
 )
 def test_whisper_url_rejected(url: str) -> None:
@@ -109,9 +111,7 @@ async def test_health_returns_503_on_connect_error_with_sanitised_body() -> None
     from app.api.health import health
 
     async def _connect_error(self, url, **kw):
-        raise httpx.ConnectError(
-            "http://whisper-internal-secret:8000/health: connection refused"
-        )
+        raise httpx.ConnectError("http://whisper-internal-secret:8000/health: connection refused")
 
     with patch.object(httpx.AsyncClient, "get", _connect_error):
         result = await health()

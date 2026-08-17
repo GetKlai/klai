@@ -8,6 +8,7 @@ Scribe rows were historically scoped only by Zitadel user id. This adds an
 explicit tenant dimension and backfills it from portal membership so every
 user-facing transcription query can require both user_id and org_id.
 """
+
 from collections.abc import Sequence
 
 import sqlalchemy as sa

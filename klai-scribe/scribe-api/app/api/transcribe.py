@@ -10,6 +10,7 @@ Transcription API endpoints:
   POST /v1/transcriptions/{id}/summarize - AI summarization
   POST /v1/transcriptions/{id}/ingest    - ingest into knowledge base
 """
+
 import asyncio
 import logging
 import uuid
@@ -49,6 +50,7 @@ _FORCE_SUMMARY = Query(default=False)
 
 
 # -- Response models -----------------------------------------------------------
+
 
 class TranscriptionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -127,9 +129,7 @@ def _to_response(record: Transcription) -> TranscriptionResponse:
         language=record.language,
         duration_seconds=float(record.duration_seconds) if record.duration_seconds else None,
         inference_time_seconds=(
-            float(record.inference_time_seconds)
-            if record.inference_time_seconds
-            else None
+            float(record.inference_time_seconds) if record.inference_time_seconds else None
         ),
         summary_json=record.summary_json,
         created_at=record.created_at,
@@ -154,6 +154,7 @@ def _caller_transcription_filters(caller: CallerIdentity):
 
 
 # -- POST /v1/transcribe ------------------------------------------------------
+
 
 @router.post("/transcribe", response_model=TranscriptionResponse, status_code=201)
 async def transcribe(
@@ -243,6 +244,7 @@ async def transcribe(
 
 # -- POST /v1/transcriptions/{id}/retry ----------------------------------------
 
+
 @router.post("/transcriptions/{txn_id}/retry", response_model=TranscriptionResponse)
 async def retry_transcription(
     txn_id: str,
@@ -305,6 +307,7 @@ async def retry_transcription(
 
 # -- GET /v1/transcriptions ----------------------------------------------------
 
+
 @router.get("/transcriptions", response_model=TranscriptionListResponse)
 async def list_transcriptions(
     limit: int = _LIST_LIMIT,
@@ -313,7 +316,9 @@ async def list_transcriptions(
     db: AsyncSession = _DB,
 ) -> TranscriptionListResponse:
     total_result = await db.execute(
-        select(func.count()).select_from(Transcription).where(*_caller_transcription_filters(caller))
+        select(func.count())
+        .select_from(Transcription)
+        .where(*_caller_transcription_filters(caller))
     )
     total = total_result.scalar_one()
 
@@ -346,6 +351,7 @@ async def list_transcriptions(
 
 # -- GET /v1/transcriptions/{id} -----------------------------------------------
 
+
 @router.get("/transcriptions/{txn_id}", response_model=TranscriptionResponse)
 async def get_transcription(
     txn_id: str,
@@ -366,6 +372,7 @@ async def get_transcription(
 
 
 # -- PATCH /v1/transcriptions/{id} ---------------------------------------------
+
 
 @router.patch("/transcriptions/{txn_id}", response_model=TranscriptionResponse)
 async def patch_transcription(
@@ -394,6 +401,7 @@ async def patch_transcription(
 
 # -- DELETE /v1/transcriptions/{id} --------------------------------------------
 
+
 @router.delete("/transcriptions/{txn_id}", status_code=204)
 async def delete_transcription(
     txn_id: str,
@@ -413,13 +421,12 @@ async def delete_transcription(
     # Clean up audio file (legacy records that still have audio at time of delete)
     delete_audio(record.audio_path)
 
-    await db.execute(
-        delete(Transcription).where(*_owned_transcription_filters(txn_id, caller))
-    )
+    await db.execute(delete(Transcription).where(*_owned_transcription_filters(txn_id, caller)))
     await db.commit()
 
 
 # -- POST /v1/transcriptions/{id}/summarize ------------------------------------
+
 
 @router.post("/transcriptions/{txn_id}/summarize", response_model=SummarizeResponse)
 async def summarize_transcription(
@@ -471,6 +478,7 @@ async def summarize_transcription(
 
 
 # -- POST /v1/transcriptions/{id}/ingest --------------------------------------
+
 
 class IngestToKBRequest(BaseModel):
     """Body schema for transcription-to-KB ingest.

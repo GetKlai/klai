@@ -8,6 +8,7 @@ SPEC-SEC-HYGIENE-001 REQ-37.2 — error responses MUST NOT leak the internal
 whisper URL or exception detail. Generic 503 + opaque body; full traceback
 goes to structlog only.
 """
+
 from __future__ import annotations
 
 import httpx

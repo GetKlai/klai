@@ -8,6 +8,7 @@ txn_id is generated as "txn_" + uuid4().hex = 4 + 32 = 36 chars.
 The original migration defined id as VARCHAR(32), which is too short.
 
 """
+
 from collections.abc import Sequence
 
 import sqlalchemy as sa

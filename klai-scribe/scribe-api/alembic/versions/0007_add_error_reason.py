@@ -9,6 +9,7 @@ flips `status='processing'` rows older than the timeout to `failed` with
 `error_reason='worker_restart_stranded'`. Existing legitimate transitions
 to `failed` (whisper error during transcribe) leave `error_reason` NULL.
 """
+
 from collections.abc import Sequence
 
 import sqlalchemy as sa
