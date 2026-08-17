@@ -15,6 +15,7 @@ Covers:
 
 from __future__ import annotations
 
+import inspect
 from typing import Any
 from unittest.mock import patch
 
@@ -1687,6 +1688,7 @@ async def test_recovery_stops_immediately_on_rate_limited(
         selector: str | None,
         relaxed: bool = False,
         stealth: bool = False,
+        timeout: float = 90.0,
     ) -> CrawlResult:
         nonlocal call_count
         call_count += 1
@@ -1744,6 +1746,85 @@ async def test_recovery_stops_immediately_on_rate_limited(
     assert kwargs["recovered"] == 0
     assert kwargs["still_failing"] == 3
     assert kwargs["remaining"] == 2
+
+
+def test_recovery_timeout_exceeds_crawl4ai_internal_backoff_ceiling() -> None:
+    """2026-08-17 (intermedia.com incident, second act): crawl4ai's own
+    RateLimiter retries a 429 up to ``max_retries=3`` times with backoff
+    capped at ``max_delay=60.0`` seconds each — hardcoded inside crawl4ai's
+    dispatcher, not exposed via CrawlerRunConfig (only mean_delay /
+    max_range / semaphore_count come through). Worst case before crawl4ai
+    gives up and returns the REAL 429 result to us: 3 * 60.0 = 180s of pure
+    backoff.
+
+    If the httpx timeout the sequential-recovery path uses for its
+    per-URL requests (``_recover_bulk_5xx_batch`` -> ``_crawl_page_with_config``)
+    is not strictly greater than that 180s ceiling, our own client cuts
+    the request off before crawl4ai's real 429 comes back. The recovery
+    loop then sees an ``httpx.TimeoutException`` instead of the 429, and
+    ``_classify_fetch_outcome`` — which is otherwise correct — has nothing
+    to classify but a timeout. Confirmed in production 2026-08-17 on
+    intermedia.com: 105 of 107 crawl4ai container-log failures were
+    literally ``Error: Blocked by anti-bot protection: HTTP 429 Too Many
+    Requests``, while ``crawl_jobs.fetch_outcomes`` recorded 110x
+    ``timeout``, 2x ``blocked_anti_bot``, and 0x ``rate_limited``."""
+    assert (
+        settings.crawl_sequential_recovery_timeout_seconds
+        > crawl4ai_client._CRAWL4AI_RATE_LIMIT_BACKOFF_CEILING_SECONDS
+    )
+
+
+@pytest.mark.asyncio
+async def test_recovery_passes_the_longer_timeout_to_crawl_page_with_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression guard for the fix itself, not just the ceiling contract
+    above: ``_recover_bulk_5xx_batch`` must actually pass
+    ``settings.crawl_sequential_recovery_timeout_seconds`` down to
+    ``_crawl_page_with_config`` on every per-URL attempt. Without this
+    wiring, ``test_recovery_timeout_exceeds_crawl4ai_internal_backoff_ceiling``
+    could pass (the settings value exists and is large enough) while the
+    recovery loop still used the old 90s default underneath — the
+    contract test alone cannot catch a forgotten call-site."""
+    captured_timeouts: list[float | None] = []
+
+    async def _fake_fetch(
+        url: str,
+        _crawler_config: dict[str, Any],
+        *,
+        cookies: list[dict[str, Any]] | None = None,
+        selector: str | None = None,
+        relaxed: bool = False,
+        stealth: bool = False,
+        timeout: float | None = None,
+    ) -> CrawlResult:
+        captured_timeouts.append(timeout)
+        return _ok_result(url)
+
+    monkeypatch.setattr(crawl4ai_client, "_crawl_page_with_config", _fake_fetch)
+
+    await crawl4ai_client._recover_bulk_5xx_batch(
+        ["https://example.com/a", "https://example.com/b"],
+        crawler_config={},
+        cookies=None,
+        base_domain="example.com",
+        recovery_budget=60,
+    )
+
+    assert captured_timeouts == [settings.crawl_sequential_recovery_timeout_seconds] * 2
+    assert settings.crawl_sequential_recovery_timeout_seconds != 90.0, (
+        "if this ever equals 90.0, the test above stops proving anything"
+    )
+
+
+def test_seed_crawl_page_keeps_the_default_ninety_second_timeout() -> None:
+    """The seed/single-page callers (``crawl_page`` at lines ~902/919) must
+    NOT inherit the longer recovery timeout. The diagnosis is explicit that
+    90s remains the right ceiling there — only the sequential-recovery path
+    needs the longer one, to actually observe crawl4ai's internal 429
+    backoff instead of cutting it off."""
+    sig = inspect.signature(crawl4ai_client._crawl_page_with_config)
+    assert sig.parameters["timeout"].default == 90.0
 
 
 @pytest.mark.asyncio

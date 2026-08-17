@@ -94,6 +94,26 @@ class Settings(BaseSettings):
         default=1200.0,
         validation_alias=AliasChoices("KLAI_CRAWL_SEQUENTIAL_RECOVERY_MAX_SECONDS"),
     )
+    # httpx timeout for the PER-URL request `_recover_bulk_5xx_batch` makes
+    # via `_crawl_page_with_config` (crawl4ai_client.py). MUST stay strictly
+    # above crawl4ai's own internal 429-backoff ceiling
+    # (`_CRAWL4AI_RATE_LIMIT_BACKOFF_CEILING_SECONDS` = 3 retries * 60.0s
+    # max_delay = 180.0s, hardcoded inside crawl4ai's RateLimiter, not
+    # exposed via CrawlerRunConfig) — otherwise our own httpx client cuts
+    # the request off before crawl4ai's real 429 result comes back, and a
+    # rate-limit storm gets classified as `timeout` instead of
+    # `rate_limited` (2026-08-17 intermedia.com incident: 105 of 107
+    # crawl4ai container-log failures were literally "Blocked by anti-bot
+    # protection: HTTP 429 Too Many Requests"; `fetch_outcomes` recorded
+    # 110x timeout, 2x blocked_anti_bot, 0x rate_limited). 180s backoff
+    # ceiling + 60s margin for the actual fetch/render once a retry is let
+    # through. Deliberately NOT applied to the seed/single-page callers of
+    # `_crawl_page_with_config` (`crawl_page`) — those keep the original
+    # 90.0s default, which is the right ceiling for a normal single fetch.
+    crawl_sequential_recovery_timeout_seconds: float = Field(
+        default=240.0,
+        validation_alias=AliasChoices("KLAI_CRAWL_SEQUENTIAL_RECOVERY_TIMEOUT_SECONDS"),
+    )
     # LLM enrichment (contextual prefix + HyPE questions via LiteLLM proxy)
     litellm_url: str = "http://litellm:4000"
     litellm_api_key: str = ""

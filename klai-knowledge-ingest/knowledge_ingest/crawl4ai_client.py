@@ -936,7 +936,16 @@ async def _crawl_page_with_config(
     selector: str | None,
     relaxed: bool = False,
     stealth: bool = False,
+    timeout: float = 90.0,
 ) -> CrawlResult:
+    """Fetch a single page via ``POST /crawl``.
+
+    ``timeout`` defaults to 90.0s, the right ceiling for the seed/single-page
+    callers (``crawl_page``). The sequential bulk-5xx recovery path
+    (``_recover_bulk_5xx_batch``) passes a longer, configurable timeout
+    (``settings.crawl_sequential_recovery_timeout_seconds``) — see that
+    setting's docstring in config.py for why 90s is too short there.
+    """
     payload: dict[str, Any] = {
         "urls": [url],
         "crawler_config": {"type": "CrawlerRunConfig", "params": crawler_config},
@@ -945,7 +954,7 @@ async def _crawl_page_with_config(
     if bc:
         payload["browser_config"] = bc
 
-    async with httpx.AsyncClient(timeout=90.0) as client:
+    async with httpx.AsyncClient(timeout=timeout) as client:
         try:
             data = await _crawl_sync(client, payload)
         except Exception as exc:
@@ -1849,7 +1858,16 @@ async def _recover_bulk_5xx_batch(
 
         attempted += 1
         result = await _crawl_page_with_config(
-            url, crawler_config, cookies=cookies, selector=None, stealth=stealth
+            url,
+            crawler_config,
+            cookies=cookies,
+            selector=None,
+            stealth=stealth,
+            # See settings.crawl_sequential_recovery_timeout_seconds
+            # docstring: must exceed crawl4ai's internal 429-backoff
+            # ceiling or we cut the request off before the real 429
+            # comes back (2026-08-17 intermedia.com incident).
+            timeout=settings.crawl_sequential_recovery_timeout_seconds,
         )
         reason_code = _classify_fetch_outcome(
             {
@@ -2125,6 +2143,19 @@ _BULK_CHUNK_SIZE = 100
 # once exhausted, remaining URLs are marked HTTP_5XX (not a guessed
 # BLOCKED_ANTI_BOT) without a network call (crawl_bulk_5xx_recovery_capped).
 _MAX_SEQUENTIAL_RECOVERY = 60
+
+# crawl4ai's own RateLimiter (inside its dispatcher, used for both the bulk
+# arun_many path AND the single-page /crawl path) retries a 429 up to
+# max_retries=3 times with an exponential backoff capped at max_delay=60.0
+# seconds — both hardcoded in crawl4ai, not exposed via CrawlerRunConfig
+# (only mean_delay / max_range / semaphore_count come through, see
+# build_crawl_config's rate_limit handling). Worst case before crawl4ai
+# gives up and returns the REAL 429 result to us: 3 * 60.0 = 180s of pure
+# backoff, before whatever the actual page fetch/render itself costs on
+# top. Reference only — see settings.crawl_sequential_recovery_timeout_seconds
+# (config.py) for the httpx timeout that must stay above this ceiling, and
+# why (2026-08-17 intermedia.com incident).
+_CRAWL4AI_RATE_LIMIT_BACKOFF_CEILING_SECONDS = 3 * 60.0
 
 # Indirection so tests can drive the recovery loop's pacing without ever
 # sleeping for real: a suite that honours the 75s production cooldown would
