@@ -24,8 +24,8 @@
 #      timestamp > 7 days. May contain klantdata; never auto-prune.
 #
 #   5. caddy_upstream_missing
-#      Caddy upstream in /opt/klai/Caddyfile that does NOT match any
-#      running container — broken routing-rule.
+#      Caddy upstream in the live config that does NOT match any running
+#      container — broken routing-rule.
 #
 #   6. tenant_container_no_route
 #      Container with klasse-B label OR tenant-pattern-name (`librechat-*`)
@@ -74,7 +74,7 @@ echo 0 > "$EVENT_TMP"
 
 # ─── Assemble the full Caddy config ──────────────────────────────────────────
 #
-# /opt/klai/Caddyfile ends in `import /etc/caddy/tenants/*.caddyfile`, and every
+# The live Caddyfile ends in `import /etc/caddy/tenants/*.caddyfile`, and every
 # tenant route lives in there — written by portal-api at provisioning time,
 # stored in a Docker volume, so the path in that import is container-internal and
 # does not exist on the host.
