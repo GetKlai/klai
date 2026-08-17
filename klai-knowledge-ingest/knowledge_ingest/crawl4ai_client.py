@@ -780,9 +780,19 @@ def _extract_result(url: str, page: dict[str, Any]) -> CrawlResult:
 
 def _build_browser_config_with_cookies(
     cookies: list[dict[str, Any]] | None,
+    *,
+    stealth: bool = False,
 ) -> dict[str, Any] | None:
     """Build a BrowserConfig payload that injects cookies natively at browser
     context creation.
+
+    ``stealth=True`` additionally turns on crawl4ai's own ``enable_stealth``
+    and a randomised user agent. Both are shipped crawl4ai features and both
+    pass its untrusted-config boundary (``magic``, ``simulate_user`` and
+    ``override_navigator`` do NOT — the server rejects those with HTTP 400).
+    Reserved for the escalation path in ``crawl_site``: it is not the default
+    because a randomised UA can change what a site serves, and every crawl
+    that works today does so without it.
 
     Why not the ``on_page_context_created`` hook we used before? The hook
     pattern has known timing issues — Playwright #26786 (cookies added before
@@ -805,11 +815,17 @@ def _build_browser_config_with_cookies(
         if bc:
             payload["browser_config"] = bc
     """
-    if not cookies:
+    params: dict[str, Any] = {}
+    if cookies:
+        params["cookies"] = cookies
+    if stealth:
+        params["enable_stealth"] = True
+        params["user_agent_mode"] = "random"
+    if not params:
         return None
     return {
         "type": "BrowserConfig",
-        "params": {"cookies": cookies},
+        "params": params,
     }
 
 
@@ -863,12 +879,13 @@ async def _crawl_page_with_config(
     cookies: list[dict[str, Any]] | None,
     selector: str | None,
     relaxed: bool = False,
+    stealth: bool = False,
 ) -> CrawlResult:
     payload: dict[str, Any] = {
         "urls": [url],
         "crawler_config": {"type": "CrawlerRunConfig", "params": crawler_config},
     }
-    bc = _build_browser_config_with_cookies(cookies)
+    bc = _build_browser_config_with_cookies(cookies, stealth=stealth)
     if bc:
         payload["browser_config"] = bc
 
@@ -1365,6 +1382,23 @@ async def crawl_site(
         fetched_count += len(batch)
 
         if transport_error is not None and _is_bulk_5xx_error(transport_error):
+            # Escalation step 1: retry the SAME batch once with crawl4ai's
+            # stealth mode + a randomised UA. Measured on intermedia.com
+            # 2026-08-15: the plain bulk request 500s wholesale, the identical
+            # batch with stealth returns 200 with 5 of 6 pages — seconds, not
+            # the ~20 minutes the sequential path costs. Stealth is not the
+            # default because a randomised UA can change what a site serves,
+            # and every crawl that works today works without it; earning it
+            # via a failure keeps healthy sites untouched.
+            logger.info("crawl_bulk_5xx_stealth_retry", urls=len(batch))
+            raw_results, transport_error = await _chunked_bulk_fetch(
+                urls=batch,
+                crawler_config=crawler_config,
+                cookies=cookies,
+                stealth=True,
+            )
+
+        if transport_error is not None and _is_bulk_5xx_error(transport_error):
             # crawl4ai's bulk endpoint failed the WHOLE batch with an
             # opaque 5xx (evidence + budget: see _MAX_SEQUENTIAL_RECOVERY,
             # _is_bulk_5xx_error). The client-side cause is unknowable from
@@ -1385,6 +1419,12 @@ async def crawl_site(
                 base_domain=base_domain,
                 recovery_budget=sequential_recovery_budget,
                 deadline=sequential_recovery_deadline,
+                # Stealth already earned by two consecutive bulk 5xx; the
+                # per-URL retries get it too. Measured: with stealth a failure
+                # no longer poisons the session (3 of 5 succeeded back-to-back
+                # with no cooldown at all), which is exactly what the cooldown
+                # was working around.
+                stealth=True,
             )
             sequential_recovery_budget -= recovery_attempted
         else:
@@ -1616,6 +1656,7 @@ async def _recover_bulk_5xx_batch(
     base_domain: str,
     recovery_budget: int,
     deadline: float | None = None,
+    stealth: bool = False,
 ) -> tuple[list[CrawlResult], list[CrawlResult], list[FetchOutcome], int]:
     """Sequentially re-fetch a batch that failed WHOLESALE via bulk fetch.
 
@@ -1744,7 +1785,7 @@ async def _recover_bulk_5xx_batch(
         await _recovery_sleep(cooldown)
 
         attempted += 1
-        result = await _crawl_page_with_config(url, crawler_config, cookies=cookies, selector=None)
+        result = await _crawl_page_with_config(url, crawler_config, cookies=cookies, selector=None, stealth=stealth)
         reason_code = _classify_fetch_outcome(
             {
                 "success": result.success,
@@ -2193,6 +2234,7 @@ async def _chunked_bulk_fetch(
     urls: list[str],
     crawler_config: dict[str, Any],
     cookies: list[dict[str, Any]] | None,
+    stealth: bool = False,
 ) -> tuple[list[dict[str, Any]], BaseException | None]:
     """Submit ``urls`` to crawl4ai's bulk ``/crawl`` endpoint in chunks of 100.
 
@@ -2211,7 +2253,7 @@ async def _chunked_bulk_fetch(
             "urls": chunk_urls,
             "crawler_config": {"type": "CrawlerRunConfig", "params": crawler_config},
         }
-        bc = _build_browser_config_with_cookies(cookies)
+        bc = _build_browser_config_with_cookies(cookies, stealth=stealth)
         if bc:
             payload["browser_config"] = bc
         try:
