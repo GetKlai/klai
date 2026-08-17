@@ -170,6 +170,18 @@ jobs:
               docker compose --project-directory /opt/klai up -d grafana
             fi
 
+            # A provisioned alert that cannot read its datasource is worse than
+            # no alert: it reports healthy forever. On 2026-08-14 four of six
+            # Postgres-backed rules were blind -- two on a missing grant, one on
+            # an RLS policy scoped to another role, and the fourth had shipped
+            # broken that same afternoon. None of it was visible in Grafana,
+            # because a query error with execErrState: OK looks exactly like
+            # "nothing wrong". This runs after the sync so it judges what is
+            # actually on disk, and fails the deploy on any rule that is blind
+            # without a documented reason.
+            python3 deploy/scripts/verify-alert-datasource-access.py \
+              /opt/klai/grafana/provisioning/alerting
+
             # SPEC-INFRA-CONFIG-SYNC-001 R1 — bash helper for bind-mount
             # config sync. Replaces the inline Caddyfile block from
             # SPEC-INFRA-CADDY-CONFIG-DEPLOY-001 (which is now one of
