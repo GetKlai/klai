@@ -125,9 +125,7 @@ class TestEvalRunner:
         """eval_runner.py must include Wilcoxon signed-rank test."""
         runner_path = EVAL_DIR / "eval_runner.py"
         source = runner_path.read_text()
-        assert "wilcoxon" in source.lower(), (
-            "eval_runner.py must include wilcoxon signed-rank test"
-        )
+        assert "wilcoxon" in source.lower(), "eval_runner.py must include wilcoxon signed-rank test"
 
     def test_eval_runner_has_retry_logic(self):
         """eval_runner.py must include retry/backoff for rate-limited LLM calls."""
@@ -143,9 +141,7 @@ class TestEvalRunner:
         source = runner_path.read_text().lower()
         forbidden = ["gpt-4", "gpt-3.5", "claude-", "text-davinci"]
         for model in forbidden:
-            assert model not in source, (
-                f"eval_runner.py references forbidden model: {model}"
-            )
+            assert model not in source, f"eval_runner.py references forbidden model: {model}"
 
     def test_eval_runner_uses_per_dimension_isolation(self):
         """eval_runner.py must support per-dimension isolation testing."""

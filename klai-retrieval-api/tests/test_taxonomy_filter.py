@@ -7,6 +7,7 @@ Verifies that:
 - A non-empty list adds appropriate filters
 - Backward-compatible: OR filter matches both taxonomy_node_ids and taxonomy_node_id
 """
+
 from __future__ import annotations
 
 from retrieval_api.models import RetrieveRequest

@@ -12,8 +12,7 @@ from retrieval_api.services.reranker import rerank
 
 def _make_candidates(n: int) -> list[dict]:
     return [
-        {"chunk_id": f"c{i}", "text": f"Chunk {i} text", "score": 0.9 - i * 0.1}
-        for i in range(n)
+        {"chunk_id": f"c{i}", "text": f"Chunk {i} text", "score": 0.9 - i * 0.1} for i in range(n)
     ]
 
 

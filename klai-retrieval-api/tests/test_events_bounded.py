@@ -65,6 +65,7 @@ async def clean_events(monkeypatch):
 def log_capture():
     """Capture structlog event records emitted at WARNING+."""
     from retrieval_api.logging_setup import setup_logging
+
     setup_logging()
 
     records: list[logging.LogRecord] = []
@@ -132,7 +133,8 @@ async def test_pending_set_capped_at_configured_max(clean_events, monkeypatch, l
 
     # REQ-40.2: at least one rate-limited cap-hit log was emitted.
     cap_hit_logs = [
-        rec for rec in log_capture
+        rec
+        for rec in log_capture
         if isinstance(rec.msg, dict) and rec.msg.get("event") == "retrieval_events_cap_hit"
     ]
     assert cap_hit_logs, (
@@ -165,7 +167,8 @@ async def test_cap_hit_log_is_rate_limited(clean_events, monkeypatch, log_captur
     await asyncio.sleep(0)
 
     cap_hit_logs = [
-        rec for rec in log_capture
+        rec
+        for rec in log_capture
         if isinstance(rec.msg, dict) and rec.msg.get("event") == "retrieval_events_cap_hit"
     ]
     assert len(cap_hit_logs) <= 2, (

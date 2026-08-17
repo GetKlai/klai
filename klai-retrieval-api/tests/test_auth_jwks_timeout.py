@@ -54,13 +54,13 @@ async def test_fetch_jwks_timeout_capped_at_three_seconds(monkeypatch):
     # ``_fetch_jwks`` does ``import httpx`` locally — patch the httpx
     # module attribute itself so the local rebind picks up our stub.
     import httpx as _httpx
+
     monkeypatch.setattr(_httpx, "AsyncClient", _RecordingClient)
 
     await auth._fetch_jwks()
 
     assert _RecordingClient.timeout_seen is not None, (
-        "Test scaffolding broken — _fetch_jwks did not construct an httpx "
-        "AsyncClient via our stub."
+        "Test scaffolding broken — _fetch_jwks did not construct an httpx AsyncClient via our stub."
     )
     assert _RecordingClient.timeout_seen <= 3.0, (
         f"_fetch_jwks built httpx.AsyncClient with timeout="

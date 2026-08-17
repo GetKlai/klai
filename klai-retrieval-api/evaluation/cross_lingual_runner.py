@@ -132,7 +132,7 @@ async def _http_synthesize(
                 # SSE: "data: <json>"
                 if not line or not line.startswith("data: "):
                     continue
-                payload = line[len("data: "):].strip()
+                payload = line[len("data: ") :].strip()
                 try:
                     evt = json.loads(payload)
                 except json.JSONDecodeError:
@@ -343,9 +343,7 @@ def main() -> int:
     import os
 
     args = _parse_args()
-    internal_secret = (
-        args.internal_secret or os.environ.get("RETRIEVAL_INTERNAL_SECRET") or None
-    )
+    internal_secret = args.internal_secret or os.environ.get("RETRIEVAL_INTERNAL_SECRET") or None
 
     async def _http_synth(query: str, org_id: str) -> str:
         return await _http_synthesize(

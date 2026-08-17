@@ -50,8 +50,8 @@ def test_rate_limit_fail_open_carries_mx_warn_annotation():
     # Find the fail-open except block (the one returning True, 0).
     fail_open_block = re.search(
         r"except\s+Exception:[^\n]*\n"  # except line
-        r"(?:[ \t]+[^\n]*\n)+"           # body lines
-        r"[ \t]+return\s+True,\s*0",     # ending in `return True, 0`
+        r"(?:[ \t]+[^\n]*\n)+"  # body lines
+        r"[ \t]+return\s+True,\s*0",  # ending in `return True, 0`
         src,
     )
     assert fail_open_block, (

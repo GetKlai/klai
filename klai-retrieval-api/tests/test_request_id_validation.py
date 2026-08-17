@@ -81,12 +81,12 @@ async def _dispatch_and_capture_context(headers: dict[str, str] | None) -> dict:
     [
         ("abc-123", True),
         ("plain_id", True),
-        ("A" * 128, True),                       # exactly at cap
-        ("A" * 129, False),                      # over cap → UUID
-        ("<script>", False),                     # invalid charset
-        ("\x1b[31mred\x1b[0m", False),           # ANSI escape
-        ("hello world", False),                  # space disallowed
-        ("rid;rm -rf /", False),                 # shell metacharacters
+        ("A" * 128, True),  # exactly at cap
+        ("A" * 129, False),  # over cap → UUID
+        ("<script>", False),  # invalid charset
+        ("\x1b[31mred\x1b[0m", False),  # ANSI escape
+        ("hello world", False),  # space disallowed
+        ("rid;rm -rf /", False),  # shell metacharacters
     ],
     ids=[
         "kebab-id",
@@ -117,9 +117,7 @@ async def test_request_id_validation(inbound: str, should_keep: bool):
             f"X-Request-ID {inbound!r} fails the regex / length cap and "
             f"must be replaced — got {request_id!r}"
         )
-        assert _UUID_RE.match(request_id), (
-            f"Replacement `request_id` is not a UUID: {request_id!r}"
-        )
+        assert _UUID_RE.match(request_id), f"Replacement `request_id` is not a UUID: {request_id!r}"
 
 
 async def test_request_id_oversized_garbage_does_not_pollute_context():
@@ -152,13 +150,13 @@ async def test_request_id_missing_or_empty_gets_uuid(missing_value: str | None):
     [
         ("42", True),
         ("0", True),
-        ("9" * 20, True),                        # exactly at cap
-        ("1" * 22, False),                       # over cap → drop
-        ("abc", False),                          # non-numeric
-        ("-5", False),                           # negative sign
-        ("3.14", False),                         # decimal
-        ("12 34", False),                        # space
-        ("<svg>", False),                        # HTML tag
+        ("9" * 20, True),  # exactly at cap
+        ("1" * 22, False),  # over cap → drop
+        ("abc", False),  # non-numeric
+        ("-5", False),  # negative sign
+        ("3.14", False),  # decimal
+        ("12 34", False),  # space
+        ("<svg>", False),  # HTML tag
     ],
     ids=[
         "small-int",

@@ -8,6 +8,7 @@ AC-7:  returns [] on timeout or error (graceful degradation).
 AC-8:  returns [] immediately when GRAPHITI_ENABLED=false.
 AC-10: group_ids=[org_id] enforces tenant isolation.
 """
+
 from __future__ import annotations
 
 import asyncio

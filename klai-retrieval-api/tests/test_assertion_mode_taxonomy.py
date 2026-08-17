@@ -4,6 +4,7 @@ RED phase: verify that assertion_mode flows through search results.
 The retrieval-api search.py already passes assertion_mode through — these tests
 verify the new vocabulary values are correctly returned.
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -40,7 +41,9 @@ class TestNewTaxonomyValuesPassthrough:
     async def test_new_assertion_mode_values_pass_through(self, mode):
         """Each new taxonomy value must appear in search results."""
         point = _make_point(
-            "c1", "chunk text", 0.8,
+            "c1",
+            "chunk text",
+            0.8,
             org_id="org-1",
             assertion_mode=mode,
         )

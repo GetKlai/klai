@@ -1,4 +1,5 @@
 """Tests for retrieval_api.util.payload.payload_list (SPEC-CRAWLER-005 AC-04.1)."""
+
 from __future__ import annotations
 
 import pytest

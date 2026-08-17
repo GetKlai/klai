@@ -217,9 +217,7 @@ class TestBuildCitations:
         assert result[0]["index"] == 1
         assert result[0]["indices"] == [1, 2]
         assert result[0]["chunk_ids"] == ["c1", "c2"]
-        assert result[0]["source_url"] == (
-            "https://getklai.com/docs/company/steward-ownership"
-        )
+        assert result[0]["source_url"] == ("https://getklai.com/docs/company/steward-ownership")
         assert result[0]["relevance_score"] == 0.9
         assert result[1]["source_url"] == "https://getklai.com/docs/company/mission"
 

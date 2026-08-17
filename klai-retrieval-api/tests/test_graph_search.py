@@ -127,9 +127,7 @@ async def test_search_skips_graphiti_empty_fulltext_syntax_error():
 async def test_search_warns_on_non_empty_fulltext_syntax_error():
     mock_graphiti = AsyncMock()
     mock_graphiti.search = AsyncMock(
-        side_effect=RuntimeError(
-            'RediSearch syntax error near "(@group_id:\\"org-1\\") (hello)"'
-        )
+        side_effect=RuntimeError('RediSearch syntax error near "(@group_id:\\"org-1\\") (hello)"')
     )
 
     with (
