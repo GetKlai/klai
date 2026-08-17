@@ -197,7 +197,7 @@ Usage reporting (token usage per user/company) does not exist natively in LibreC
 
 Added early, already working in another stack. UI likely custom-built. Architecture principle: voice data is per user, not per company. No sharing between users.
 
-**Deployment (updated 2026-03):** `scribe-api` runs on core-01 and calls `whisper-server` on gpu-01 via SSH tunnel (`http://172.18.0.1:8000`). GPU migration completed with SPEC-GPU-001/SPEC-DEVOPS-002. No env change needed when scaling to a larger GPU — just update the tunnel config.
+**Deployment (updated 2026-08-17):** `scribe-api` runs on core-01 and reaches speech-to-text over the GPU SSH tunnel (`http://172.18.0.1:8000`). What answers there is the Vexa transcription stack — an nginx load balancer in front of two faster-whisper CUDA workers — not a `whisper-server` container: SPEC-VEXA-003 replaced it deliberately on the same port and the same OpenAI-compatible path, which is why `WHISPER_SERVER_URL` never had to change. GPU migration completed with SPEC-GPU-001/SPEC-DEVOPS-002. No env change needed when scaling to a larger GPU — just update the tunnel config.
 
 **Whisper model (Phase 3+):** faster-whisper large-v3-turbo, INT8 quantization. ~2-2.5 GB weights, ~4-6 GB VRAM total. 6x faster than large-v3, multilingual (NL/DE/EN), less than 1-2% quality loss. Deployed on ai-01 alongside vLLM — ~34 GB VRAM free, no conflict. NVIDIA MPS with `CUDA_MPS_ACTIVE_THREAD_PERCENTAGE=20` prevents SM contention.
 
