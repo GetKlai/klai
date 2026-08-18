@@ -21,7 +21,7 @@
 > longer flat).
 >
 > For the research backing these design decisions, see
-> [knowledge-system-fundamentals.md](knowledge-system-fundamentals.md).
+> [knowledge-system-fundamentals.md](../research/knowledge-system-fundamentals.md).
 > For evidence-weighted scoring and assertion mode weights research, see
 > [Evidence-Weighted Knowledge Retrieval: Research Synthesis](../research/README.md).
 

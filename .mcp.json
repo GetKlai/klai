@@ -1,13 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/anthropics/claude-code/main/.mcp.schema.json",
   "mcpServers": {
-    "serena": {
-      "$comment": "Semantic code navigation and persistent project memories. Uses installed binary — NOT uvx (too slow, exceeds MCP timeout).",
-      "type": "stdio",
-      "command": "serena",
-      "args": ["start-mcp-server", "--project-from-cwd"],
-      "env": {}
-    },
     "context7": {
       "$comment": "Up-to-date documentation and code examples via Context7",
       "type": "stdio",

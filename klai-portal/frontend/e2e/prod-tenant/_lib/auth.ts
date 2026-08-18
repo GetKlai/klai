@@ -15,7 +15,7 @@ function requireEnv(name: string): string {
   if (!v) {
     throw new Error(
       `[e2e/prod-tenant] missing required env var: ${name}. ` +
-        `Set E2E_USER_EMAIL, E2E_USER_PASSWORD, E2E_TOTP_SECRET, E2E_BASE_URL ` +
+        `Set E2E_USER_EMAIL, E2E_USER_PASSWORD, and E2E_BASE_URL ` +
         `before running. See docs/testing/test-suite-plan.md §7.`,
     )
   }
@@ -23,7 +23,7 @@ function requireEnv(name: string): string {
 }
 
 /**
- * Log in as the e2e bot via email + password + TOTP.
+ * Log in as the e2e bot via email + password and optional TOTP.
  *
  * On entry: page may be on any URL.
  * On exit: page is on /app/* (chat or default app landing).
@@ -33,7 +33,7 @@ function requireEnv(name: string): string {
 export async function loginAsE2EBot(page: Page): Promise<void> {
   const email = requireEnv('E2E_USER_EMAIL')
   const password = requireEnv('E2E_USER_PASSWORD')
-  const totpSecret = requireEnv('E2E_TOTP_SECRET')
+  const totpSecret = process.env.E2E_TOTP_SECRET ?? ''
 
   // Always start from the canonical login page so redirects don't leak
   // half-finished auth state from prior runs.
@@ -49,20 +49,23 @@ export async function loginAsE2EBot(page: Page): Promise<void> {
   // exact button label depends on locale (NL "Inloggen" / EN "Sign in").
   await page.locator('button[type="submit"]').first().click()
 
-  // TOTP step. The form may not always appear (e.g. if MFA is disabled
-  // - which we explicitly do NOT want for the e2e bot, see plan §1).
-  // Wait up to 10s; failure here is a hard fail.
-  await page.waitForSelector('input[name="totp"], input[autocomplete="one-time-code"]', {
-    timeout: 10_000,
-  })
-
-  const code = await generate({ secret: totpSecret })
-  // Try both common selectors for the OTP input.
   const totpInput = page.locator('input[name="totp"], input[autocomplete="one-time-code"]').first()
-  await totpInput.fill(code)
+  const totpVisible = await totpInput
+    .waitFor({ state: 'visible', timeout: 3_000 })
+    .then(() => true)
+    .catch(() => false)
 
-  // Submit TOTP. Same broad selector as above.
-  await page.locator('button[type="submit"]').first().click()
+  if (totpVisible) {
+    if (!totpSecret) {
+      throw new Error(
+        '[e2e/prod-tenant] TOTP form appeared but E2E_TOTP_SECRET is not set. ' +
+          'Set the enrolled seed or disable MFA for the bot user. See plan §7.',
+      )
+    }
+    const code = await generate({ secret: totpSecret })
+    await totpInput.fill(code)
+    await page.locator('button[type="submit"]').first().click()
+  }
 
   // Land on /app/*. Allow up to 15s for any post-login redirects.
   await page.waitForURL(/\/app(\/|$)/, { timeout: 15_000 })

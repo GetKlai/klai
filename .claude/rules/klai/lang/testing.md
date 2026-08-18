@@ -8,6 +8,18 @@ paths:
 ---
 # Testing Rules
 
+## Prove effects, not configuration plumbing
+
+For settings that cross a process, library, or HTTP boundary, tests that only
+assert payload shape or that the value reaches a config object are insufficient.
+Predict and measure an observable effect such as elapsed time, concurrency,
+request count, or a required log event. A remote service may accept and return a
+field while a different dispatcher or explicit argument bypasses it entirely.
+
+For every new configurable threshold, identify the production reader and add a
+test in which changing the setting changes behavior. Treat a passed-but-ignored
+parameter as a behavior bug requiring a decision, not automatically as dead code.
+
 ## [HARD] Close browser when done
 After ANY Playwright testing, close all tabs then `browser_close()`. The persistent
 profile dir is workspace-hashed (see below), but the running Chrome instance still
@@ -73,8 +85,8 @@ Rules:
   (macOS) and restart Claude Code, then log in once more by hand.
 - Grant permissions programmatically: `context.grantPermissions(['microphone'], { origin: '...' })`
 
-For the full reasoning + anti-patterns, see `playwright-mcp-config-cycle` in
-`.claude/rules/klai/pitfalls/process-rules.md`.
+Treat Playwright MCP configuration changes as a separate diagnostic task; do
+not rewrite the shared browser setup while verifying an application change.
 
 ## Browser console + GlitchTip
 - Check browser errors: `browser_console_messages({ level: 'error' })`

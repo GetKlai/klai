@@ -16,9 +16,8 @@ from Claude so no agent makes a false assumption.
   in the directory chain (root → cwd, 32 KiB combined cap). The compact gates
   in each `AGENTS.md` are therefore self-sufficient; the `.claude/rules/**`
   files are optional deeper reference you must choose to open.
-- **No MoAI `/moai …` orchestration or Claude `Agent()` subagent catalog.**
-  Those are Claude-only. Use Codex's own task/plan model; do not treat MoAI
-  command syntax or the Agent catalog as required workflow.
+- **No Claude plugin runtime.** Claude gets Python/TypeScript symbol navigation
+  from its Pyright and TypeScript LSP plugins; Codex uses Serena instead.
 
 ## Reasoning effort
 
@@ -35,8 +34,8 @@ before escalating — escalate for genuine uncertainty, not by default:
 
 ## What Codex shares with Claude
 
-- The same MCP servers (`serena`, `context7`, `playwright`, `codeindex`,
-  `grafana`, `victorialogs`) — configured in `~/.codex/config.toml`.
+- Project-scoped CodeIndex graph context for high-blast-radius Klai work.
+- Project browser and observability tooling where configured for the active CLI.
 - The same model-neutral rules in the root and nested `AGENTS.md` files.
 
 ## Serena under Codex

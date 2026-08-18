@@ -6,7 +6,7 @@
 # (see policies.yaml).
 #
 # UID convention: spec-iam-002-* (per
-# .claude/rules/klai/pitfalls/process-rules.md grafana-uid-40-char-limit).
+# .claude/rules/klai/infra/observability.md).
 #
 # Alert philosophy: don't try to detect "no traffic" (false positives
 # at 3am are noise). Detect actual deny events on the BFF-verified

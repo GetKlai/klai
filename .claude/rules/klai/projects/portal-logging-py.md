@@ -6,7 +6,6 @@ paths:
   - "klai-mailer/**/*.py"
   - "klai-retrieval-api/**/*.py"
   - "klai-scribe/**/*.py"
-  - "klai-focus/**/*.py"
 ---
 
 # Python Logging Standards
@@ -59,8 +58,8 @@ async with httpx.AsyncClient(
     resp = await client.get("/ingest/v1/...")
 ```
 
-Downstream services (`knowledge-ingest`, `retrieval-api`, `connector`, `scribe`, `mailer`,
-`research-api`) bind `X-Request-ID` and `X-Org-ID` from incoming headers via
+Downstream services (`knowledge-ingest`, `retrieval-api`, `connector`, `scribe`, and `mailer`)
+bind `X-Request-ID` and `X-Org-ID` from incoming headers via
 `RequestContextMiddleware` in their `logging_setup.py`.
 
 **Result:** One `request_id:<uuid>` query in VictoriaLogs shows the full chain across all services.

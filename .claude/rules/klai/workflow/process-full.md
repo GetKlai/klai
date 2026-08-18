@@ -6,8 +6,8 @@ paths:
 ---
 # Process Pitfalls — Extended Reference
 
-> Full descriptions with root causes and sources.
-> Compact version (always loaded): `pitfalls/process-rules.md`
+> Historical extended process reference for specification work. Current technical
+> invariants live in the path-scoped domain rules that govern the affected code.
 
 ---
 
@@ -69,7 +69,7 @@ After 2 failures: stop, summarize what failed, ask user. Third blind retry rarel
 Only changes explicitly requested. No "improving" surrounding code, refactoring, or formatting untouched files.
 
 ### read-spec-first (CRIT)
-Read FULL spec in `.moai/specs/` or `.workflow/specs/` before implementing. Title alone is never enough.
+Read FULL spec in `docs/specs/` or `.workflow/specs/` before implementing. Title alone is never enough.
 
 ### search-broadly-when-changing (HIGH)
 When renaming or changing defaults: search entire codebase for all consumers, all case variants

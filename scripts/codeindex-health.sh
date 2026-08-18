@@ -234,28 +234,6 @@ for (const [eventName, entries] of Object.entries(settings.hooks)) {
   }
 }
 
-const gatedCommand = 'bash -lc \'script="${CLAUDE_PROJECT_DIR:-}/.claude/scripts/codeindex-gated-hook.cjs"; [ -f "$script" ] || exit 0; exec node "$script"\'';
-settings.hooks.PreToolUse = Array.isArray(settings.hooks.PreToolUse)
-  ? settings.hooks.PreToolUse
-  : [];
-
-const alreadyRegistered = settings.hooks.PreToolUse.some((entry) =>
-  entry && Array.isArray(entry.hooks) &&
-  entry.hooks.some((hook) => String(hook && hook.command ? hook.command : '') === gatedCommand)
-);
-
-if (!alreadyRegistered) {
-  settings.hooks.PreToolUse.push({
-    matcher: 'Grep|Bash',
-    hooks: [{
-      type: 'command',
-      command: gatedCommand,
-      timeout: 6000,
-      statusMessage: 'Checking whether CodeIndex graph context is useful...',
-    }],
-  });
-}
-
 fs.writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
 NODE
 }

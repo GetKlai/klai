@@ -24,7 +24,6 @@ permissionMode: plan
 memory: project
 skills:
   - klai-tenant-isolation-checks
-  - moai-foundation-core
 tools: Read, Grep, Glob, Bash, mcp__sequential-thinking__sequentialthinking
 ---
 
@@ -85,8 +84,7 @@ If the diff includes:
 
 ## Output language
 
-Default: same as user's `conversation_language` from
-`.moai/config/sections/language.yaml` (currently `nl`).
+Default: `nl`.
 
 Code anchors and standards refs stay in English.
 

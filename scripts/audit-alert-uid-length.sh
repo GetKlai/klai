@@ -18,8 +18,7 @@
 # `deploy/grafana/provisioning/dashboards/**` and fails the build if any
 # UID is over the limit.
 #
-# Reference: pitfall `grafana-uid-40-char-limit (HIGH)` in
-# .claude/rules/klai/pitfalls/process-rules.md.
+# Maintained guidance: .claude/rules/klai/infra/observability.md.
 
 set -euo pipefail
 
@@ -96,7 +95,7 @@ echo ""
 if [[ "$ERRORS" -gt 0 ]]; then
     red "FAIL: $ERRORS UID(s) exceed Grafana's $LIMIT-char limit."
     red "      Grafana refuses to provision these — deploy will crash-loop."
-    red "      See pitfall \`grafana-uid-40-char-limit (HIGH)\` in process-rules.md."
+    red "      See .claude/rules/klai/infra/observability.md."
     exit 1
 fi
 green "OK: all alert-rule and dashboard UIDs are within the $LIMIT-char limit."

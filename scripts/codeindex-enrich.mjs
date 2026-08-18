@@ -37,7 +37,7 @@ const REPO_PATH = process.argv.includes('--repo-path')
 
 const REGISTRY_PATH = join(homedir(), '.codeindex', 'registry.json');
 const GIT_LOG_DAYS = 90;
-const SPEC_DIRS = ['.moai/specs', '.workflow/specs'];
+const SPEC_DIRS = ['docs/specs', 'klai-docs/.workflow/specs', 'klai-portal/.workflow/specs'];
 const TEST_PATTERNS = ['test_', '_test.', '.test.', '.spec.', '/tests/', '__tests__'];
 const NOISE_NAMES = new Set([
   'get', 'set', 'run', 'init', 'main', 'start', 'stop', 'create', 'delete',

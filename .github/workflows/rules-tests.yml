@@ -16,12 +16,34 @@ on:
     paths:
       - 'rules/**'
       - 'sgconfig.yml'
+      - 'AGENTS.md'
+      - 'CLAUDE.md'
+      - '.agents/skills/**'
+      - '.claude/agents/**'
+      - '.claude/commands/**'
+      - '.claude/rules/**'
+      - '.claude/settings.json'
+      - 'klai-website/AGENTS.md'
+      - 'klai-website/CLAUDE.md'
+      - 'klai-website/.claude/**'
+      - 'scripts/check-agent-knowledge.sh'
       - '.github/workflows/rules-tests.yml'
   pull_request:
     branches: [main]
     paths:
       - 'rules/**'
       - 'sgconfig.yml'
+      - 'AGENTS.md'
+      - 'CLAUDE.md'
+      - '.agents/skills/**'
+      - '.claude/agents/**'
+      - '.claude/commands/**'
+      - '.claude/rules/**'
+      - '.claude/settings.json'
+      - 'klai-website/AGENTS.md'
+      - 'klai-website/CLAUDE.md'
+      - 'klai-website/.claude/**'
+      - 'scripts/check-agent-knowledge.sh'
       - '.github/workflows/rules-tests.yml'
   workflow_dispatch:
 
@@ -43,3 +65,6 @@ jobs:
         # Tests are stand-alone pytest invocations against ast-grep CLI;
         # no service .venv needed. uv brings pytest in via tool-run.
         run: uv tool run --with pytest --with pyyaml pytest rules/tests/ -v
+
+      - name: Check active agent knowledge
+        run: bash scripts/check-agent-knowledge.sh

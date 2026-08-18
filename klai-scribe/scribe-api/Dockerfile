@@ -64,7 +64,7 @@ RUN chmod +x /app/scripts/uvicorn-launch.sh
 # SPEC-SEC-AUDIT-2026-04 C5 / SPEC-SEC-HYGIENE-001: container entrypoint runs
 # alembic upgrade head before starting uvicorn so that new migrations are
 # applied automatically on every deploy. Mirrors the portal-api pattern.
-# See scribe-deploy-no-alembic pitfall in .claude/rules/klai/pitfalls/process-rules.md.
+# See .claude/rules/klai/infra/deploy.md.
 COPY klai-scribe/scribe-api/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 

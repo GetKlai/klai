@@ -192,7 +192,7 @@ There is no rollback. The deletions are intentionally non-reversible:
   within the retention window, the original files can be restored from
   there.
 - **SOPS env vars** — re-add them via the standard SOPS roundtrip on
-  core-01 (see [credential-rotation.md](credential-rotation.md)).
+  core-01 (see [credential-rotation.md](../../klai-infra/docs/runbooks/credential-rotation.md)).
 - **product_events row** — leave it. It's a compliance trail; even if
   Step 4 ran but the rest didn't, the entry is still accurate
   documentation.

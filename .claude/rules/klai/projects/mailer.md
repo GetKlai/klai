@@ -4,6 +4,18 @@ paths:
 ---
 # Mailer Patterns & Pitfalls
 
+## Template rendering is a security boundary (CRIT)
+
+Never interpolate mail templates with `str.format`, `format_map`, or another
+unrestricted string evaluator. Keep `app/renderer.py` on Jinja2's
+`SandboxedEnvironment` with `StrictUndefined` and HTML autoescape. Internal
+template context must first pass the per-template Pydantic schema in
+`app/schemas.py`; unknown templates and extra fields are rejected.
+
+When changing templates or renderer setup, run
+`tests/test_internal_send_sandbox.py` and the golden-render tests. Test missing
+variables, unexpected context, HTML escaping, and forbidden attribute access.
+
 ## Zitadel webhook payload — no preferredLanguage field (HIGH)
 
 Zitadel's HTTP notification provider does NOT include `preferredLanguage`

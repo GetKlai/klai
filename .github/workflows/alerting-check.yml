@@ -50,7 +50,7 @@ jobs:
       # fails CI on any oversized UID before it can crash Grafana on
       # core-01. Added after the 2026-05-04 incident where a 49-char UID
       # crashed grafana into a restart loop on first provisioning. See
-      # pitfall `grafana-uid-40-char-limit (HIGH)` in process-rules.md.
+      # .claude/rules/klai/infra/observability.md.
       - name: Audit Grafana UID length (40-char limit)
         run: bash scripts/audit-alert-uid-length.sh
 
