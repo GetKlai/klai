@@ -8,6 +8,7 @@ on:
       - 'klai-libs/connector-credentials/**'
       - 'klai-libs/image-storage/**'
       - 'klai-libs/kb-slugs/**'
+      - 'klai-libs/llm-throttle/**'
       - '.github/workflows/knowledge-ingest.yml'
   pull_request:
     branches: [main]
@@ -16,6 +17,7 @@ on:
       - 'klai-libs/connector-credentials/**'
       - 'klai-libs/image-storage/**'
       - 'klai-libs/kb-slugs/**'
+      - 'klai-libs/llm-throttle/**'
       - '.github/workflows/knowledge-ingest.yml'
   workflow_dispatch:
 

@@ -33,49 +33,24 @@ Usage::
 
 ``tests/test_llm_throttle.py`` contains a drift-guard that fails when a
 module POSTs to ``chat/completions`` without referencing this limiter.
+
+``TokenBucketLimiter`` itself lives in the shared ``klai_llm_throttle``
+package (klai-libs/llm-throttle), not here — the SAME class of bug (an
+uncoordinated direct caller of this shared budget) recurred in a second,
+independent service (``deploy/litellm/klai_kb_query_rewrite.py``,
+2026-08-18) precisely because the fix lived only inside this
+knowledge-ingest-local module. This module now only owns the
+knowledge-ingest-specific singleton wiring (its own settings, its own
+lazy-init getter); the reusable rate-limiting logic is shared.
 """
 
 from __future__ import annotations
 
-import asyncio
+from klai_llm_throttle import TokenBucketLimiter
 
 from knowledge_ingest.config import settings
 
-
-class TokenBucketLimiter:
-    """Async token bucket: ``rate`` sustained calls/sec with ``capacity`` burst.
-
-    ``acquire()`` returns immediately while burst tokens remain and sleeps
-    just long enough for the next token otherwise. The sleep happens while
-    holding the internal lock, so concurrent acquirers are served strictly
-    in arrival order — same serialisation behaviour as the previous
-    graph.py ``_TokenBucketLimiter``, now with a burst allowance.
-    """
-
-    def __init__(self, rate: float, capacity: float | None = None) -> None:
-        if rate <= 0:
-            raise ValueError(f"rate must be > 0, got {rate}")
-        self._rate = rate
-        self._capacity = max(1.0, capacity if capacity is not None else rate)
-        self._tokens = self._capacity
-        self._last: float | None = None
-        self._lock = asyncio.Lock()
-
-    async def acquire(self) -> None:
-        async with self._lock:
-            loop = asyncio.get_event_loop()
-            now = loop.time()
-            if self._last is not None:
-                self._tokens = min(self._capacity, self._tokens + (now - self._last) * self._rate)
-            self._last = now
-            if self._tokens >= 1.0:
-                self._tokens -= 1.0
-                return
-            wait = (1.0 - self._tokens) / self._rate
-            self._tokens = 0.0
-            await asyncio.sleep(wait)
-            self._last = loop.time()
-
+__all__ = ["TokenBucketLimiter", "shared_klai_fast_limiter"]
 
 _shared_limiter: TokenBucketLimiter | None = None
 
