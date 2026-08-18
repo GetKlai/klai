@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from html import unescape
 from html.parser import HTMLParser
 from typing import Any, Literal
-from urllib.parse import urldefrag, urlparse, urlunparse
+from urllib.parse import unquote, urldefrag, urlparse, urlunparse
 
 import httpx
 import structlog
@@ -256,6 +256,52 @@ def _url_has_non_html_extension(url: str) -> bool:
         return False
     extension = last_segment.rsplit(".", 1)[-1].lower()
     return extension in _NON_HTML_PATH_EXTENSIONS
+
+
+# 2026-08-18 (support.ascendcloud.com incident) — a site's client-side
+# templating framework can end up in the crawled HTML with its interpolation
+# syntax never rendered, e.g. a search-results widget emitting:
+#
+#   .../themes/standard/{{item.SearchResultURL != '' ?+item.SearchResultURL+...}}
+#
+# crawl4ai extracts ``<a href>`` via lxml's raw attribute text (see the
+# vendored crawl4ai 0.9.2 ``normalize_url``/``normalize_url_for_deep_crawl``,
+# both of which explicitly avoid ``quote(unquote())`` so the path is passed
+# through byte-for-byte) — so a URL reaching ``CrawlLedger.add`` is exactly
+# what the site's HTML attribute contained, un-rendered placeholder syntax
+# included. Such a link is never a real page: fetching it 404s with a tiny
+# error body, and crawl4ai's structural anti-bot heuristic then misreads the
+# small page as a block (see ``_classify_fetch_outcome``), which — because
+# BLOCKED_ANTI_BOT stops the rest of the crawl (``_STOP_CHUNKING_REASON_CODES``)
+# — aborted 192 real pages over four bogus template links in production.
+#
+# Checked against both the raw URL and its percent-decoded form: some sites'
+# JS builds the href through something like ``encodeURIComponent`` before
+# writing it into the HTML source, so the placeholder syntax can arrive
+# percent-encoded (``%7B%7B`` for ``{{``) instead of literal. ``unquote`` is
+# safe to call unconditionally — a URL with no percent-escapes round-trips
+# unchanged.
+_TEMPLATE_PLACEHOLDER_PATTERNS = (
+    "{{",  # Handlebars / Angular / Vue interpolation (open)
+    "}}",  # Handlebars / Angular / Vue interpolation (close)
+    "${",  # JavaScript template literal
+    "<%",  # ERB / JSP / ASP (open)
+    "%>",  # ERB / JSP / ASP (close)
+    "{%",  # Jinja / Django / Liquid tag (open)
+    "%}",  # Jinja / Django / Liquid tag (close)
+)
+
+
+def _url_has_unrendered_template_syntax(url: str) -> bool:
+    """True when ``url`` still contains un-rendered client-side template
+    placeholder syntax — see ``_TEMPLATE_PLACEHOLDER_PATTERNS`` above.
+
+    Checked against the URL as-is AND its percent-decoded form, since it is
+    not guaranteed which one a given site's HTML delivers into
+    ``result.links`` — see the module comment above.
+    """
+    decoded = unquote(url)
+    return any(pattern in url or pattern in decoded for pattern in _TEMPLATE_PLACEHOLDER_PATTERNS)
 
 
 class _HTMLTextCounter(HTMLParser):
@@ -713,6 +759,18 @@ def _is_non_content_listing_page(result: CrawlResult) -> bool:
     return _looks_like_link_listing(result)
 
 
+# 2026-08-18 (support.ascendcloud.com incident) — status codes that mean
+# "this page definitely doesn't exist", which is incompatible with "this
+# page was blocked". A 404/410 alongside crawl4ai's "blocked by anti-bot
+# protection" marker below is not a block: it's a real 404 with a tiny body
+# that happened to trip the STRUCTURAL half of that marker (page-shape
+# heuristics like "minimal_text on small page" rather than a concrete
+# challenge observation like "Cloudflare JS challenge"). 401/403 are
+# deliberately excluded here — a real anti-bot wall commonly answers with
+# exactly one of those, so they stay compatible with the anti-bot marker.
+_DEFINITIVE_NONEXISTENT_STATUS_CODES = frozenset({404, 410})
+
+
 def _classify_fetch_outcome(
     page_result: dict[str, Any] | None,
     *,
@@ -796,7 +854,16 @@ def _classify_fetch_outcome(
     # retired above 2026-08-14). Applies to the bulk per-page result shape
     # and the seed/single-page synthesized shape built in
     # _build_outcome_from_result.
-    if "blocked by anti-bot protection" in err_msg:
+    #
+    # 2026-08-18: a definitive "doesn't exist" status code overrides this
+    # heuristic marker rather than being overridden by it — see
+    # _DEFINITIVE_NONEXISTENT_STATUS_CODES above. Falls through to the
+    # ordinary status-code branches below, which classify 404/410 as
+    # HTTP_4XX.
+    if (
+        "blocked by anti-bot protection" in err_msg
+        and status not in _DEFINITIVE_NONEXISTENT_STATUS_CODES
+    ):
         return FetchReasonCode.BLOCKED_ANTI_BOT.value
 
     if status == 429:
@@ -1368,6 +1435,13 @@ class CrawlLedger:
             # in adapters/crawler.py, which both key off any not_fetched_*
             # prefix and would otherwise mark the whole crawl failed_partial
             # over one PDF link.
+            return False
+        if _url_has_unrendered_template_syntax(url):
+            # Same contract as the extension check above — never a
+            # ``not_fetched_*`` reason code. A link that is un-rendered
+            # template syntax was never a real page to begin with; see
+            # ``_url_has_unrendered_template_syntax`` for why this must be
+            # filtered before a network request is ever made.
             return False
         url = _coerce_same_site_url_to_base_host(url, self.base_domain)
         if not force:
