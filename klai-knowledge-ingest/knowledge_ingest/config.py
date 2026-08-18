@@ -114,20 +114,28 @@ class Settings(BaseSettings):
         default=240.0,
         validation_alias=AliasChoices("KLAI_CRAWL_SEQUENTIAL_RECOVERY_TIMEOUT_SECONDS"),
     )
-    # Base component of the bulk-crawl httpx timeout (crawl4ai_client
-    # ._bulk_crawl_timeout_for_chunk / _chunked_bulk_fetch). Historically a
-    # fixed 300.0s covering fetch/render time only. Since PR #1034,
-    # `rate_limit` is translated into crawl4ai's own `mean_delay` pacing
-    # (build_crawl_config), so a chunk's minimum duration now also scales
-    # with `len(chunk_urls) * mean_delay` — that pacing component is added
-    # on top of this base at request time, never folded into the base
-    # itself. 300.0 default keeps behaviour unchanged for every caller that
-    # does not set rate_limit (2026-08-18 fix/bulk-timeout-scales-with-pacing,
-    # intermedia.com incident: 146 real crawl4ai-side 429s were recorded as
-    # `timeout` because the fixed 300.0s cut the request off before the
-    # chunk's own self-imposed delay had even elapsed).
+    # httpx timeout for one bulk `/crawl` chunk request
+    # (crawl4ai_client._chunked_bulk_fetch). With client-side pacing
+    # (fix/client-side-crawl-pacing) the wait between chunks happens BEFORE
+    # a chunk's request starts, so a chunk's own duration is only its
+    # fetch/render time on the crawl4ai container — this is a fixed
+    # vangnet, not a formula that scales with anything we impose.
+    #
+    # 2026-08-18 (fix/timeout-race-vs-batch-process): the crawl4ai REST
+    # server's own `timeouts.batch_process` config is ALSO 300.0s. A client
+    # timeout exactly equal to the server's own timeout is a race with no
+    # margin — on a borderline-slow chunk it is unpredictable whether our
+    # httpx client or crawl4ai's own batch_process guard fires first, so we
+    # cannot rely on getting a clean server response back before cutting
+    # the connection ourselves. Every other timeout in this pacing/recovery
+    # chain keeps deliberate margin over the value it bounds
+    # (crawl_sequential_recovery_timeout_seconds keeps 60s over the 180s
+    # crawl4ai 429-backoff ceiling; the seed/single-page path keeps 90s
+    # against a 30s page_timeout) — this one is the only exception, so it
+    # gets the same +60s margin used elsewhere in this file: 300.0 (known
+    # server batch_process timeout) + 60.0 = 360.0.
     crawl_bulk_base_timeout_seconds: float = Field(
-        default=300.0,
+        default=360.0,
         validation_alias=AliasChoices("KLAI_CRAWL_BULK_BASE_TIMEOUT_SECONDS"),
     )
     # LLM enrichment (contextual prefix + HyPE questions via LiteLLM proxy)

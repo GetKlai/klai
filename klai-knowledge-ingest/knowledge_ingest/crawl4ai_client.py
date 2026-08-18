@@ -211,7 +211,6 @@ def _should_retry_relaxed_for_thin_content(result: CrawlResult) -> bool:
 def build_crawl_config(
     selector: str | None,
     login_indicator_selector: str | None = None,
-    rate_limit: float | None = None,
 ) -> dict[str, Any]:
     """Build a CrawlerRunConfig-compatible JSON payload.
 
@@ -226,18 +225,19 @@ def build_crawl_config(
       returns ``success=False`` after ``page_timeout``. The caller can then
       treat that failure as an auth-wall event.
 
-    Rate limiting (2026-08-17, intermedia.com incident): ``rate_limit``
-    (requests/second) is translated into crawl4ai's OWN pacing controls —
-    ``semaphore_count`` and ``mean_delay`` — instead of being accepted and
-    discarded. Previously every ``run_crawl_job`` sent up to 100 URLs in a
-    single ``POST /crawl`` and crawl4ai fetched them as fast as it could,
-    which produced a Cloudflare challenge and then a hard HTTP 429 on
-    intermedia.com, and separately starved a concurrently-running healthy
-    crawl of the shared crawl4ai container's 2 GB RAM / 2 CPU budget.
-    Verified against the running crawl4ai 0.9.2: both ``semaphore_count``
-    and ``mean_delay`` pass the untrusted-config boundary (HTTP 200) — this
-    is real pacing crawl4ai itself enforces, not a client-side rate limiter
-    layered on top.
+    No rate-limiting knobs (2026-08-18, corrected after a 2026-08-17 fix
+    attempt that added ``semaphore_count`` + ``mean_delay`` here believing
+    they were real crawl4ai-enforced pacing). Measured live against the
+    running crawl4ai REST server (``/app/api.py:681``): it builds its OWN
+    ``MemoryAdaptiveDispatcher`` and passes THAT to ``arun_many`` — it never
+    reads ``semaphore_count`` or ``mean_delay`` off ``CrawlerRunConfig``.
+    8 URLs configured with ``mean_delay=2.0`` finished in 3.2s instead of
+    the predicted 16s, and ``semaphore_count`` 1 vs 8 made no measurable
+    difference. Both keys pass crawl4ai's untrusted-config boundary
+    (HTTP 200), which is why the original fix looked like it worked in
+    testing — the server silently accepts and discards them. Real pacing
+    happens client-side in ``_chunked_bulk_fetch`` (burst size via
+    ``_burst_size_for`` + inter-chunk sleep), not here.
     """
     md_gen: dict[str, Any] = {
         "type": "DefaultMarkdownGenerator",
@@ -286,18 +286,6 @@ def build_crawl_config(
     else:
         # Chrome stripping itself lives in wait_for's prep (see build_wait_for).
         params["excluded_tags"] = ["nav", "footer", "header", "aside", "script", "style"]
-
-    if rate_limit is not None and rate_limit > 0:
-        # semaphore_count: how many pages crawl4ai fetches concurrently.
-        # round(rate_limit) is a simple, explainable mapping from "N
-        # requests/second" to "N concurrent fetches" — bounded to [1, 8] so
-        # a misconfigured very-high rate_limit can't reintroduce the
-        # unbounded-concurrency problem this change fixes, and a very-low
-        # rate_limit still gets at least one fetch in flight.
-        params["semaphore_count"] = max(1, min(round(rate_limit), 8))
-        # mean_delay: average pause (seconds) crawl4ai inserts between
-        # requests — the direct inverse of "requests per second".
-        params["mean_delay"] = 1.0 / rate_limit
 
     return params
 
@@ -1244,11 +1232,13 @@ def _is_recoverable_bulk_failure(exc: BaseException) -> bool:
     reason_code, honestly, instead of a guessed BLOCKED_ANTI_BOT).
 
     Case 2 — ``httpx.TimeoutException`` (added 2026-08-18,
-    fix/bulk-timeout-scales-with-pacing). Since PR #1034, ``rate_limit`` is
-    translated into crawl4ai's own ``mean_delay`` pacing, so a bulk-request
-    read-timeout can now legitimately mean "the request was still waiting out
-    its own self-imposed delay when the client gave up" rather than a real
-    server failure. Evidence 2026-08-17 (intermedia.com, rate_limit=0.5): the
+    fix/bulk-timeout-scales-with-pacing). crawl4ai's own RateLimiter retries
+    a 429 up to 3 times server-side with a backoff capped at 60s per retry
+    (see ``_CRAWL4AI_RATE_LIMIT_BACKOFF_CEILING_SECONDS`` = 180s worst
+    case) before it returns the real result to us — so a bulk-request
+    read-timeout can legitimately mean "the server was still working
+    through its own 429 backoff when the client gave up" rather than a
+    real permanent failure. Evidence 2026-08-17 (intermedia.com, rate_limit=0.5): the
     crawl4ai container log recorded 254 real ``HTTP 429 Too Many Requests``
     responses, while ``fetch_outcomes`` recorded 146 ``timeout`` and 0
     ``rate_limited`` — the fixed bulk httpx timeout fired before crawl4ai's
@@ -1415,10 +1405,11 @@ async def crawl_site(
     Every in-scope discovered URL is either fetched or emitted as a
     ``not_fetched_*`` outcome, so page-budget/depth limits fail loudly.
 
-    ``rate_limit`` (requests/second) is translated into crawl4ai's own
-    ``semaphore_count`` + ``mean_delay`` pacing via ``build_crawl_config`` —
-    see that function's docstring for the mapping and the 2026-08-17
-    intermedia.com incident that motivated it.
+    ``rate_limit`` (requests/second, optional) paces the bulk-fetch chunks
+    client-side — see ``_chunked_bulk_fetch`` / ``_burst_size_for`` for the
+    mechanism, and ``build_crawl_config``'s docstring for why crawl4ai's own
+    ``CrawlerRunConfig`` pacing knobs (``semaphore_count`` / ``mean_delay``)
+    cannot do this: the REST server ignores them.
 
     Returns ``(crawl_results, outcomes)``:
     - ``crawl_results``: same-domain pages with non-empty markdown.
@@ -1432,7 +1423,6 @@ async def crawl_site(
     crawler_config = build_crawl_config(
         selector,
         login_indicator_selector=login_indicator_selector,
-        rate_limit=rate_limit,
     )
     ledger = CrawlLedger(
         start_url=start_url,
@@ -1455,10 +1445,22 @@ async def crawl_site(
     # per-batch clock would let a many-batch crawl spend its full wall-clock
     # allowance again and again, which is exactly the "one job holds a worker
     # slot for over an hour" case the budget exists to prevent.
+    #
+    # sequential_recovery_time_remaining tracks TIME ACTUALLY SPENT INSIDE
+    # RECOVERY, not wall-clock time since crawl_site started. A single
+    # deadline computed once here (as this used to do) would also count
+    # every second spent on unrelated work — client-side rate_limit pacing
+    # between bulk chunks (_chunked_bulk_fetch) chief among them — against
+    # the recovery budget for free. At a low rate_limit that pacing alone
+    # can exceed crawl_sequential_recovery_max_seconds before a single
+    # batch has even failed, making recovery structurally unavailable on
+    # exactly the low-rate_limit (fragile) sites that need it most. The
+    # deadline passed to each _recover_bulk_5xx_batch call below is
+    # therefore derived from this remaining budget immediately before that
+    # call, and the remaining budget is debited only by the wall-clock time
+    # that specific call actually consumed.
     sequential_recovery_budget = _MAX_SEQUENTIAL_RECOVERY
-    sequential_recovery_deadline = (
-        _recovery_monotonic() + settings.crawl_sequential_recovery_max_seconds
-    )
+    sequential_recovery_time_remaining = settings.crawl_sequential_recovery_max_seconds
 
     start_result = await _fetch_seed_page(
         start_url=start_url,
@@ -1485,6 +1487,7 @@ async def crawl_site(
             urls=batch,
             crawler_config=crawler_config,
             cookies=cookies,
+            rate_limit=rate_limit,
         )
         fetched_count += len(batch)
 
@@ -1503,6 +1506,7 @@ async def crawl_site(
                 crawler_config=crawler_config,
                 cookies=cookies,
                 stealth=True,
+                rate_limit=rate_limit,
             )
 
         if transport_error is not None and _is_recoverable_bulk_failure(transport_error):
@@ -1515,6 +1519,13 @@ async def crawl_site(
             # REAL per-URL reason_code, instead of writing off every URL in
             # the batch as unknown_exception (or guessing blocked_anti_bot
             # without evidence).
+            #
+            # The deadline handed to this call is derived from the
+            # job-wide time REMAINING, evaluated right now — not a
+            # deadline fixed at crawl_site's start — so that only the time
+            # this call itself spends recovering is ever charged against
+            # the budget (see sequential_recovery_time_remaining above).
+            recovery_started_at = _recovery_monotonic()
             (
                 batch_results,
                 link_source_results,
@@ -1526,7 +1537,7 @@ async def crawl_site(
                 cookies=cookies,
                 base_domain=base_domain,
                 recovery_budget=sequential_recovery_budget,
-                deadline=sequential_recovery_deadline,
+                deadline=recovery_started_at + sequential_recovery_time_remaining,
                 # Stealth already earned by two consecutive bulk failures;
                 # the per-URL retries get it too. Measured: with stealth a
                 # failure no longer poisons the session (3 of 5 succeeded
@@ -1539,6 +1550,14 @@ async def crawl_site(
                 trigger_reason_code=_bulk_failure_trigger_reason_code(transport_error),
             )
             sequential_recovery_budget -= recovery_attempted
+            # Debit only the wall-clock time THIS call actually spent
+            # recovering — never below zero, so a call that overshoots
+            # (the deadline is only checked before each attempt starts,
+            # not after) cannot hand the next batch a negative allowance.
+            sequential_recovery_time_remaining = max(
+                sequential_recovery_time_remaining - (_recovery_monotonic() - recovery_started_at),
+                0.0,
+            )
         else:
             batch_results, batch_outcomes = _combine_bulk_responses(
                 candidates=batch,
@@ -1559,6 +1578,7 @@ async def crawl_site(
                 crawler_config=crawler_config,
                 cookies=cookies,
                 base_domain=base_domain,
+                rate_limit=rate_limit,
             )
         for outcome in batch_outcomes:
             ledger.mark_outcome(outcome)
@@ -2104,6 +2124,7 @@ async def _recover_thin_bulk_results(
     crawler_config: dict[str, Any],
     cookies: list[dict[str, Any]] | None,
     base_domain: str,
+    rate_limit: float | None = None,
 ) -> list[CrawlResult]:
     """Re-crawl thin-but-rich-HTML bulk pages with the relaxed config.
 
@@ -2119,6 +2140,12 @@ async def _recover_thin_bulk_results(
     Worst case (a site that is thin under strict config on every page) is one
     extra bulk crawl of those pages — the precise cost of recovering content
     the strict pipeline over-pruned. Logged so that cost is visible.
+
+    ``rate_limit`` (2026-08-18 fix, previously missing here): this is still a
+    bulk request against the same domain crawl_site's main batch just fetched
+    — it MUST inherit the same client-side pacing, or a rate-limited site
+    gets an unpaced burst on every batch that has thin results, defeating
+    the pacing this whole mechanism exists for.
     """
     thin = [r for r in batch_results if _should_retry_relaxed_for_thin_content(r)]
     if not thin:
@@ -2134,6 +2161,7 @@ async def _recover_thin_bulk_results(
         urls=thin_urls,
         crawler_config=_relax_seed_crawl_config(crawler_config),
         cookies=cookies,
+        rate_limit=rate_limit,
     )
     relaxed_results, _ = _combine_bulk_responses(
         candidates=thin_urls,
@@ -2167,50 +2195,28 @@ async def _recover_thin_bulk_results(
     return recovered
 
 
-# Base bulk-crawl request budget — see settings.crawl_bulk_base_timeout_seconds
-# (config.py) for the tunable value and _bulk_crawl_timeout_for_chunk below
-# for how the chunk's own rate_limit pacing is added on top of it.
+# httpx timeout for one bulk ``/crawl`` chunk request — see
+# settings.crawl_bulk_base_timeout_seconds (config.py) for the tunable
+# value and the margin it keeps over crawl4ai's server-side
+# ``timeouts.batch_process`` (300.0s, deploy/crawl4ai config). With
+# client-side pacing (fix/client-side-crawl-pacing) the wait happens
+# BEFORE a chunk request starts, in ``_chunked_bulk_fetch``'s inter-chunk
+# sleep — not inside the request itself — so a chunk's own duration is
+# just the burst's fetch/render time, not the pacing gap. This timeout is
+# therefore a fixed vangnet, not a per-chunk formula.
 #
 # crawl4ai's MemoryAdaptiveDispatcher handles in-batch concurrency
 # server-side; the client just waits for the whole batch. Voys-scale
 # Voys/support (~500 candidates) completes well under 90s on the production
-# container — tuned to give 5x headroom for fetch/render time.
+# container.
 #
 # 2026-08-18 (fix/bulk-timeout-scales-with-pacing, intermedia.com incident
-# #2): this used to be the WHOLE timeout, fixed regardless of rate_limit.
-# Since PR #1034, ``rate_limit`` is translated into crawl4ai's own
-# ``mean_delay`` pacing (build_crawl_config) — crawl4ai's RateLimiter keeps
-# per-domain state and serialises starts globally, so on a single-domain
-# crawl a chunk's minimum duration is >= ``len(chunk_urls) * mean_delay``
-# regardless of ``semaphore_count``. A fixed timeout does not scale with
-# that self-imposed delay: at rate_limit=0.25 (mean_delay=4.0s) a 100-URL
-# chunk needs >= 400s of pure pacing alone, well past a fixed 300s.
-
-
-def _bulk_crawl_timeout_for_chunk(chunk_size: int, crawler_config: dict[str, Any]) -> float:
-    """httpx timeout for one bulk ``/crawl`` chunk request.
-
-    Invariant: we must never time out on vertraging die we zelf hebben
-    ingesteld (pacing WE imposed via ``rate_limit``). The historical fixed
-    ``settings.crawl_bulk_base_timeout_seconds`` (300.0 default) covers the
-    fetch/render headroom that has always been there; on top of it we add
-    exactly the pacing this chunk's ``mean_delay`` imposes —
-    ``chunk_size * mean_delay`` — because crawl4ai's RateLimiter serialises
-    request starts per-domain across the whole dispatcher regardless of
-    ``semaphore_count``, so that pacing directly determines the chunk's
-    minimum wall-clock duration.
-
-    ``mean_delay`` is read from ``crawler_config`` (set by
-    ``build_crawl_config`` when ``rate_limit`` is passed). When absent —
-    no rate_limit was configured for this crawl — there is no client-imposed
-    pacing to account for, so the timeout is exactly the base value,
-    unchanged from the historical fixed constant.
-    """
-    base = settings.crawl_bulk_base_timeout_seconds
-    mean_delay = crawler_config.get("mean_delay")
-    if mean_delay is None:
-        return base
-    return base + chunk_size * mean_delay
+# #2): a prior version of this timeout scaled with ``mean_delay`` on the
+# belief that crawl4ai's own RateLimiter enforced our ``rate_limit``
+# server-side. Measured 2026-08-18 (see build_crawl_config's docstring):
+# it does not — ``mean_delay``/``semaphore_count`` are silently ignored by
+# the REST server. That formula is removed; pacing lives entirely in
+# ``_chunked_bulk_fetch`` now.
 
 
 # crawl4ai 0.8 server enforces ``List should have at most 100 items after
@@ -2218,6 +2224,47 @@ def _bulk_crawl_timeout_for_chunk(chunk_size: int, crawler_config: dict[str, Any
 # be raised in lock-step with any future crawl4ai schema relaxation.
 # Discovered live on help.voys.nl (208 sitemap entries → 422 → 1 ingested).
 _BULK_CHUNK_SIZE = 100
+
+# Client-side pacing (2026-08-18, fix/client-side-crawl-pacing): measured
+# live against the running crawl4ai server that ``mean_delay`` /
+# ``semaphore_count`` on CrawlerRunConfig are silently ignored — the REST
+# server builds its own ``MemoryAdaptiveDispatcher`` (api.py) and passes
+# THAT to ``arun_many``, never reading our config. 8 URLs with
+# ``mean_delay=2.0`` finished in 3.2s instead of the predicted 16s, and
+# ``semaphore_count`` 1 vs 8 made no measurable difference. Separately, a
+# single bulk chunk IS one burst on the target site: 16 URLs in one request
+# completed within 330ms of each other. Real rate limiting can therefore
+# only happen client-side, via the two knobs we actually control: how many
+# URLs go in one request (the burst — see ``_burst_size_for``) and how long
+# we wait between requests (the gap — see ``_chunked_bulk_fetch``).
+#
+# ``_BURST_WINDOW_SECONDS`` is the size of that accounting window: how much
+# a site is allowed to receive within one window, at the requested
+# rate_limit. A larger window produces bigger bursts with longer pauses
+# between them (fewer HTTP round-trips, coarser pacing); a smaller window
+# is smoother traffic but costs more round-trips for the same rate.
+_BURST_WINDOW_SECONDS = 10.0
+
+
+def _burst_size_for(rate_limit: float | None) -> int:
+    """Translate a requests/second rate limit into a per-request burst size.
+
+    ``rate_limit is None`` means no client-side pacing was requested: keep
+    the historical fixed chunk size (``_BULK_CHUNK_SIZE``), so crawls
+    without a rate_limit are completely unaffected by this function.
+
+    Uses ``int(x + 0.5)``, deliberately NOT ``round()``. Python's
+    ``round()`` uses banker's rounding to the nearest even integer —
+    ``round(0.5) == 0`` and ``round(2.5) == 2`` — which already caused a
+    real bug in this codebase (``build_crawl_config``'s
+    ``semaphore_count = max(1, min(round(rate_limit), 8))`` collapsed
+    ``rate_limit=0.5`` down to 1 instead of the intended 2). Do not
+    reintroduce ``round()`` here.
+    """
+    if rate_limit is None:
+        return _BULK_CHUNK_SIZE
+    return max(1, min(_BULK_CHUNK_SIZE, int(rate_limit * _BURST_WINDOW_SECONDS + 0.5)))
+
 
 # Total budget (per crawl_site call) for sequential one-URL-at-a-time
 # recovery of a bulk batch that failed as a whole with an opaque 5xx (or,
@@ -2241,8 +2288,9 @@ _MAX_SEQUENTIAL_RECOVERY = 60
 # arun_many path AND the single-page /crawl path) retries a 429 up to
 # max_retries=3 times with an exponential backoff capped at max_delay=60.0
 # seconds — both hardcoded in crawl4ai, not exposed via CrawlerRunConfig
-# (only mean_delay / max_range / semaphore_count come through, see
-# build_crawl_config's rate_limit handling). Worst case before crawl4ai
+# (only mean_delay / max_range / semaphore_count are accepted as config
+# keys at all — and even those are silently ignored by the REST server,
+# see build_crawl_config's docstring). Worst case before crawl4ai
 # gives up and returns the REAL 429 result to us: 3 * 60.0 = 180s of pure
 # backoff, before whatever the actual page fetch/render itself costs on
 # top. Reference only — see settings.crawl_sequential_recovery_timeout_seconds
@@ -2255,6 +2303,14 @@ _CRAWL4AI_RATE_LIMIT_BACKOFF_CEILING_SECONDS = 3 * 60.0
 # take hours. Patch these, not asyncio/time, so nothing else is affected.
 _recovery_sleep = asyncio.sleep
 _recovery_monotonic = time.monotonic
+
+# Same indirection, dedicated to the client-side bulk-chunk pacing in
+# ``_chunked_bulk_fetch`` (see ``_burst_size_for`` above). Kept separate
+# from ``_recovery_sleep`` / ``_recovery_monotonic`` — they pace an
+# unrelated loop (sequential 5xx recovery) and patching one must not
+# silently affect the other.
+_pacing_sleep = asyncio.sleep
+_pacing_monotonic = time.monotonic
 
 # Server-side BFS deep crawl polling budget. /crawl/job is async — submit,
 # get task_id, poll status. Voys-support full-depth crawl (~500 pages
@@ -2445,25 +2501,48 @@ async def _chunked_bulk_fetch(
     crawler_config: dict[str, Any],
     cookies: list[dict[str, Any]] | None,
     stealth: bool = False,
+    rate_limit: float | None = None,
 ) -> tuple[list[dict[str, Any]], BaseException | None]:
-    """Submit ``urls`` to crawl4ai's bulk ``/crawl`` endpoint in chunks of 100.
+    """Submit ``urls`` to crawl4ai's bulk ``/crawl`` endpoint in chunks.
 
     crawl4ai 0.8 server enforces a 100-URL cap on the ``urls`` array.
     Submitting more in one request returns 422. We chunk client-side and
     accumulate raw results; per-chunk transport failure is logged but the
     remaining chunks still ship — partial coverage beats zero coverage.
 
-    Each chunk's httpx timeout is computed from that chunk's own size and
-    pacing via ``_bulk_crawl_timeout_for_chunk`` — see that function's
-    docstring for the invariant this protects (never time out on pacing we
-    imposed on ourselves).
+    ``rate_limit`` (requests/second, optional) additionally paces the
+    chunks client-side. crawl4ai's server ignores our ``mean_delay`` /
+    ``semaphore_count`` config (see ``_burst_size_for``'s docstring for the
+    measurement), so real rate limiting can only happen here: the chunk
+    size itself becomes the burst (``_burst_size_for``), and the gap
+    between the START of one chunk and the START of the next is held to
+    ``chunk_size / rate_limit`` seconds — crediting whatever time the
+    chunk's own request already consumed, so we never add avoidable
+    latency on top of a slow response. ``rate_limit is None`` disables all
+    pacing: chunk size reverts to the historical fixed ``_BULK_CHUNK_SIZE``
+    and no sleep is ever inserted, matching pre-pacing behaviour exactly.
+
+    Each chunk request uses the fixed
+    ``settings.crawl_bulk_base_timeout_seconds`` httpx timeout — see that
+    setting's docstring (config.py) for the margin it keeps over crawl4ai's
+    server-side ``timeouts.batch_process``. The pacing gap above happens
+    BEFORE a chunk's request starts, so it never eats into that timeout.
     """
     raw_results: list[dict[str, Any]] = []
     transport_error: BaseException | None = None
     if not urls:
         return raw_results, None
-    for chunk_start in range(0, len(urls), _BULK_CHUNK_SIZE):
-        chunk_urls = urls[chunk_start : chunk_start + _BULK_CHUNK_SIZE]
+    chunk_size = _burst_size_for(rate_limit)
+    previous_chunk_start: float | None = None
+    for chunk_start in range(0, len(urls), chunk_size):
+        if rate_limit is not None and previous_chunk_start is not None:
+            gap_seconds = chunk_size / rate_limit
+            elapsed_since_previous_start = _pacing_monotonic() - previous_chunk_start
+            remaining = gap_seconds - elapsed_since_previous_start
+            if remaining > 0:
+                await _pacing_sleep(remaining)
+        previous_chunk_start = _pacing_monotonic()
+        chunk_urls = urls[chunk_start : chunk_start + chunk_size]
         payload: dict[str, Any] = {
             "urls": chunk_urls,
             "crawler_config": {"type": "CrawlerRunConfig", "params": crawler_config},
@@ -2471,16 +2550,17 @@ async def _chunked_bulk_fetch(
         bc = _build_browser_config_with_cookies(cookies, stealth=stealth)
         if bc:
             payload["browser_config"] = bc
-        chunk_timeout = _bulk_crawl_timeout_for_chunk(len(chunk_urls), crawler_config)
         try:
-            async with httpx.AsyncClient(timeout=chunk_timeout) as client:
+            async with httpx.AsyncClient(
+                timeout=settings.crawl_bulk_base_timeout_seconds
+            ) as client:
                 data = await _crawl_sync(client, payload)
             raw_results.extend(_normalise_results_block(data))
         except Exception as exc:
             transport_error = exc
             logger.warning(
                 "crawl_site_bulk_chunk_failed",
-                chunk_index=chunk_start // _BULK_CHUNK_SIZE,
+                chunk_index=chunk_start // chunk_size,
                 chunk_size=len(chunk_urls),
                 error=str(exc),
             )

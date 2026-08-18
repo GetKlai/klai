@@ -516,11 +516,11 @@ async def run_crawl_job(
 
     ``exclude_patterns`` is applied after crawl4ai discovery and before
     progress counting / dirty-content decisions. ``rate_limit`` (requests/
-    second) is translated into crawl4ai's own pacing controls
-    (``semaphore_count`` + ``mean_delay``, see ``build_crawl_config``) so
-    crawl4ai itself paces its requests instead of firing every discovered
-    URL in a batch at once. If ``knowledge.crawl_domains`` holds a
-    previously-lowered rate for this domain (set after a prior
+    second) paces the bulk-fetch chunks client-side, in
+    ``crawl4ai_client._chunked_bulk_fetch`` — crawl4ai's REST server builds
+    its own dispatcher and ignores any pacing knobs on ``CrawlerRunConfig``
+    (see ``build_crawl_config``'s docstring). If ``knowledge.crawl_domains``
+    holds a previously-lowered rate for this domain (set after a prior
     RATE_LIMITED/BLOCKED_ANTI_BOT outcome — see
     ``_RATE_LIMIT_LOWERING_TRIGGER_REASON_CODES`` below), that stored value
     is used instead of this default.
