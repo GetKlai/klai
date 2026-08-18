@@ -69,9 +69,21 @@ class AuthWallSignal:
             v1; tests pin the new value so a regression is caught.
         evidence: Single-element tuple of the form
             ``("cluster_size={N} hamming<={M}",)`` used for diagnostic logs.
-        confidence: Always ``0.9`` for cluster matches. v1's tiered confidence
-            (0.95 for canonical phrase, 0.7 for weak signal) is gone — v2 has
-            one signal type.
+        confidence: 2026-08-18 stop-the-bleeding fix — no longer hardcoded
+            to 0.9 for cluster matches. Near-duplicate content is a real,
+            deterministic structural observation (hamming distance,
+            cluster size), but it does NOT prove an authentication wall —
+            an SPA fallback, a render error, or a tenant-wide error page
+            produce the identical signal. The old 0.9 was inherited from
+            v1's tiered confidence design (0.95 canonical phrase, 0.7 weak
+            signal) and never actually varied with anything about the
+            observation; reporting it invited callers to read it as "90%
+            sure this is a login wall", which misdirected a live
+            production investigation for an hour (13 near-identical
+            OpenAPI-parser error pages, not a login wall). Defaults to 0.0
+            (dataclass default) for cluster-only detections — the
+            ``evidence`` tuple carries the actual observation
+            (cluster_size, hamming distance) instead.
     """
 
     pattern: str
@@ -206,8 +218,11 @@ async def detect_anonymous_auth_wall(
     if cluster_size < cluster_min:
         return None
 
+    # 2026-08-18 stop-the-bleeding fix: no confidence value set here — a
+    # cluster observation carries no authentication-specific certainty
+    # (see the ``confidence`` attribute docstring above). Falls back to the
+    # dataclass default (0.0). The actual observation is in ``evidence``.
     return AuthWallSignal(
         pattern="template_cluster",
         evidence=(f"cluster_size={cluster_size} hamming<={hamming_max}",),
-        confidence=0.9,
     )

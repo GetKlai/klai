@@ -92,7 +92,11 @@ class TestClusterDetection:
         assert signal is not None
         assert signal.pattern == "template_cluster"
         assert signal.evidence == ("cluster_size=5 hamming<=3",)
-        assert signal.confidence == 0.9
+        # 2026-08-18 stop-the-bleeding fix: cluster-only detections no
+        # longer report an auth-specific confidence — a near-duplicate
+        # cluster is not proof of an authentication wall. See
+        # tests/test_auth_wall_signal_reporting.py for the regression test.
+        assert signal.confidence == 0.0
 
     @pytest.mark.asyncio
     async def test_no_flag_when_only_4_others_match(self) -> None:
@@ -382,7 +386,9 @@ class TestSignalShape:
         )
         assert signal is not None
         assert signal.pattern == "template_cluster"
-        assert signal.confidence == 0.9
+        # 2026-08-18 stop-the-bleeding fix: no auth-specific confidence for
+        # a cluster-only observation — see test_auth_wall_signal_reporting.py.
+        assert signal.confidence == 0.0
         assert len(signal.evidence) == 1
         assert "cluster_size=" in signal.evidence[0]
         assert "hamming<=3" in signal.evidence[0]

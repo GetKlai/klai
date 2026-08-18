@@ -761,12 +761,21 @@ async def run_crawl_job(
                 # NOT a session-wide failure. Record + continue BFS so sibling
                 # URLs (which may be public) still ingest.
                 auth_wall_pages.append(wall_exc.url)
+                # 2026-08-18 stop-the-bleeding fix: was "crawl_page_login_wall".
+                # The event name asserted the presumed CAUSE (a login wall)
+                # rather than the actual OBSERVATION (near-duplicate content
+                # cluster). On 2026-08-18 this misdirected a live
+                # investigation for an hour — the operator saw "login wall"
+                # in the logs and went looking for credentials, when the
+                # real cause was 13 identical OpenAPI-parser error pages.
+                # Behaviour is unchanged: the page is still skipped, BFS
+                # still continues (REQ-04.1).
                 logger.info(
-                    "crawl_page_login_wall",
+                    "crawl_page_template_cluster_skipped",
                     url=url,
                     job_id=job_id,
                     pattern=wall_exc.signal.pattern,
-                    confidence=wall_exc.signal.confidence,
+                    evidence=wall_exc.signal.evidence,
                 )
             except Exception as exc:
                 logger.warning("crawl_page_failed", url=url, job_id=job_id, error=str(exc))
@@ -1243,9 +1252,25 @@ async def _ingest_crawl_result(
         )
     if login_wall_signal is not None:
         login_wall_mode = _resolve_login_wall_mode()
+        # 2026-08-18 stop-the-bleeding fix — event names below were
+        # "login_wall_reject" / "login_wall_degrade" / "login_wall_detected".
+        # ``login_wall_signal`` can come from TWO different detectors:
+        # ``classify_auth_wall`` (pattern="auth_wall_classifier" — a real
+        # auth signal: redirect/cookie/word-count heuristics) or
+        # ``detect_anonymous_auth_wall`` (pattern="template_cluster" — near-
+        # duplicate content, which does NOT prove an auth wall; an SPA
+        # fallback or a tenant-wide error page produces the same signal).
+        # The old event names asserted "login wall" as the event's identity
+        # regardless of which detector fired, which misdirected a live
+        # investigation for an hour on 2026-08-18 (13 identical OpenAPI-
+        # parser error pages, not a login wall). The renamed events report
+        # the observation neutrally; ``pattern`` in the payload still
+        # distinguishes the two detectors precisely. Behaviour (reject
+        # raises, degrade ingests with quality_score=0.0, audit_only warns
+        # + ingests unchanged) is unchanged.
         if login_wall_mode == "reject":
             logger.info(
-                "login_wall_reject",
+                "content_wall_signal_reject",
                 url=url,
                 org_id=org_id,
                 kb_slug=kb_slug,
@@ -1256,7 +1281,7 @@ async def _ingest_crawl_result(
             raise AnonymousAuthWallDetected(url, login_wall_signal)
         if login_wall_mode == "degrade":
             logger.info(
-                "login_wall_degrade",
+                "content_wall_signal_degrade",
                 url=url,
                 org_id=org_id,
                 kb_slug=kb_slug,
@@ -1266,7 +1291,7 @@ async def _ingest_crawl_result(
             )
         else:  # audit_only
             logger.warning(
-                "login_wall_detected",
+                "content_wall_signal_observed",
                 url=url,
                 org_id=org_id,
                 kb_slug=kb_slug,
@@ -1283,6 +1308,13 @@ async def _ingest_crawl_result(
     # overrides over its hard-coded default of 0.5. The retrieval-side floor
     # filter (Phase E) refuses to serve quality_score < 0.05 chunks, which
     # is the actual exclusion mechanism.
+    # 2026-08-18 stop-the-bleeding fix — deliberately did NOT rename the
+    # "login_wall_detected" string below. Unlike the log EVENT names above
+    # (diagnostic-only, changed), this is persisted DOCUMENT metadata
+    # (``extra["ingest_warning"]``), asserted by
+    # tests/test_ingest_login_wall_integration.py, and out of this fix's
+    # declared scope (log-event naming + confidence claim, not the
+    # document-metadata contract).
     if login_wall_mode == "degrade":
         extra["quality_score"] = 0.0
         extra["ingest_warning"] = "login_wall_detected"
