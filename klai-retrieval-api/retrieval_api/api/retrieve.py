@@ -189,10 +189,18 @@ async def _retrieve_sub_queries(
                 # them), but a question like "En hoe lang duurt het?" still
                 # needs coreference resolution against conversation_history
                 # (already carried on ``req`` and preserved by model_copy)
-                # to resolve "het". ``None`` lets retrieval-api's own
-                # coreference step run per sub-question instead of treating
-                # the raw text as already-resolved.
-                "raw_query": None,
+                # to resolve "het". ``coreference_resolved: None`` lets
+                # retrieval-api's own coreference step run per sub-question
+                # instead of treating the raw text as already-resolved.
+                # ``raw_query`` is set to the pre-coreference sub-question
+                # text itself (not None): the existing logic in
+                # ``retrieve()`` only activates the extra literal-term RRF
+                # leg when ``raw_query != query_resolved`` — so this is a
+                # no-op when this sub-question's own coreference step makes
+                # no change (same behaviour as before), but if it DOES
+                # rewrite, the raw leg can still recover exact terms the
+                # rewrite dropped.
+                "raw_query": sub_query,
                 "coreference_resolved": None,
                 "sub_queries": None,
                 "top_k": per_query_top_k,

@@ -504,7 +504,9 @@ def _append_visible_sources_section(
 
 
 def _has_visible_agent_activity(kb_meta: dict[str, Any] | None) -> bool:
-    if not isinstance(kb_meta, dict) or kb_meta.get("gate_bypassed"):
+    if not isinstance(kb_meta, dict):
+        return False
+    if kb_meta.get("gate_bypassed") and not kb_meta.get("unchecked_questions"):
         return False
     # Deterministic backstop (Fix I): questions beyond the fan-out cap must
     # always surface in the visible footer, even when the rest of kb_meta is

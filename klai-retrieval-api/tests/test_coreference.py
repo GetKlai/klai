@@ -102,3 +102,50 @@ class TestCoreference:
                 [{"role": "user", "content": "hi"}],
             )
             assert result == "What about that?"
+
+    @pytest.mark.asyncio
+    async def test_destructive_rewrite_hijacking_topic_returns_original(self, caplog):
+        """Fix 1 (feedback-chat-context PR): retrieval-api's own coreference
+        resolver did not have the destructive-rewrite guard that
+        ``deploy/litellm/klai_kb_query_rewrite.py`` already had — this is the
+        exact incident class the litellm-side guard was built for: a
+        self-contained question ("Wat weet je over klai?") rewritten by the
+        LLM into an unrelated historical topic (Yealink phone configuration).
+        The shared guard (``klai_citations.query_guard``) must reject this
+        rewrite here too and return the original query."""
+        import logging
+
+        caplog.set_level(logging.WARNING)
+
+        with patch(
+            "retrieval_api.services.coreference._call_llm",
+            new_callable=AsyncMock,
+            return_value=(
+                "Hoe stel ik een Yealink toestel in en welke instellingen zijn er mogelijk?"
+            ),
+        ):
+            result = await resolve(
+                "Wat weet je over klai?",
+                [{"role": "user", "content": "Hoe stel ik mijn Yealink toestel in?"}],
+            )
+
+        assert result == "Wat weet je over klai?"
+        assert "coreference_destructive_rewrite_blocked" in caplog.text
+        assert "klai" in caplog.text.lower()
+
+    @pytest.mark.asyncio
+    async def test_rewrite_preserving_subject_is_not_blocked(self):
+        """Regression guard: a legitimate rewrite that keeps the current
+        question's subject must still pass through unaffected by the new
+        guard."""
+        with patch(
+            "retrieval_api.services.coreference._call_llm",
+            new_callable=AsyncMock,
+            return_value="Wat kost de Klai integratie met Salesforce precies?",
+        ):
+            result = await resolve(
+                "Wat kost dat?",
+                [{"role": "user", "content": "We overwegen de Klai integratie met Salesforce."}],
+            )
+
+        assert result == "Wat kost de Klai integratie met Salesforce precies?"

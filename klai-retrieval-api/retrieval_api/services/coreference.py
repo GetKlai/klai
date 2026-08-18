@@ -6,6 +6,7 @@ import asyncio
 import logging
 
 import httpx
+from klai_citations import rewrite_preserves_subject, salient_tokens
 
 from retrieval_api.config import settings
 from retrieval_api.services.llm_safety_adapter import (
@@ -77,6 +78,13 @@ async def resolve(query: str, history: list[dict]) -> str:
             )
             return query
         if resolved:
+            if not rewrite_preserves_subject(query, resolved):
+                logger.warning(
+                    "coreference_destructive_rewrite_blocked query=%s dropped_tokens=%s",
+                    query,
+                    ",".join(sorted(salient_tokens(query))[:8]),
+                )
+                return query
             return resolved
         return query
     except TimeoutError:

@@ -1033,6 +1033,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 retrieval_request_id=retrieval_request_id,
                 kb_scope_mode=kb_scope_mode,
                 kbs_in_scope=kbs_in_scope,
+                unchecked_questions=unchecked_questions or None,
             )
             return data
 
@@ -1493,7 +1494,9 @@ class KlaiKnowledgeHook(CustomLogger):
 
     async def async_post_call_success_hook(self, data, user_api_key_dict, response):
         kb_meta = data.get("metadata", {}).get("_klai_kb_meta")
-        if kb_meta and not kb_meta.get("gate_bypassed"):
+        if kb_meta and (
+            not kb_meta.get("gate_bypassed") or kb_meta.get("unchecked_questions")
+        ):
             stats = _compose_non_streaming_kb_response(response, kb_meta)
             _log_kb_citation_render(logger, kb_meta, stats, stream=False)
             logger.info(
@@ -1511,7 +1514,7 @@ class KlaiKnowledgeHook(CustomLogger):
         kb_meta = request_data.get("metadata", {}).get("_klai_kb_meta")
         if (
             not kb_meta
-            or kb_meta.get("gate_bypassed")
+            or (kb_meta.get("gate_bypassed") and not kb_meta.get("unchecked_questions"))
             or not _is_streaming_kb_render_mode(kb_meta.get("render_mode"))
         ):
             async for item in response:

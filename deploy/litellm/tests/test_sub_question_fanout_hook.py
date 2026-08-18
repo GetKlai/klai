@@ -1045,6 +1045,216 @@ class TestHookFanoutEndToEnd:
         assert meta["unchecked_questions"] is None
 
     @pytest.mark.asyncio
+    async def test_gate_bypassed_with_unchecked_questions_still_shows_footer(
+        self, monkeypatch
+    ):
+        """Fix 3 (feedback-chat-context PR): retrieval-api can bypass the
+        gate (no KB context needed) for a message that ALSO has more than
+        MAX_SUB_QUESTIONS=6 questions. Before this fix, ``gate_bypassed``
+        unconditionally suppressed the footer — including the 7th
+        question's "not searched separately" line, even though that
+        question was never checked for a completely different reason (the
+        fan-out cap, not the gate). unchecked_questions must still surface,
+        and the post-call hook must not take its early-return skip."""
+        from tests.test_klai_knowledge_hook import (
+            _make_cache,
+            _make_resp,
+            _make_user_api_key,
+            _patch_http,
+        )
+
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache()
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": INCIDENT_MESSAGE}],
+        }
+        # Gate bypass — kb_narrow must be False here: kb_narrow=True +
+        # retrieval_bypassed=True hits the SEPARATE strict-bypass-failure
+        # branch (fail closed), not the gate_bypassed branch under test.
+        retrieval_resp = _make_resp({"chunks": [], "retrieval_bypassed": True})
+        portal_resp = _make_resp(
+            {
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": True,
+                "kb_slugs_filter": None,
+                "kb_narrow": False,
+                "kb_pref_version": 12,
+                "zitadel_user_id": "300000000000000002",
+            }
+        )
+
+        with _patch_http(
+            monkeypatch, portal_resp=portal_resp, retrieval_resp=retrieval_resp
+        ):
+            pre_call_result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        meta = pre_call_result["metadata"]["_klai_kb_meta"]
+        assert meta["gate_bypassed"] is True
+        assert meta["unchecked_questions"] == [
+            "Hoe lang na een gesprek is de opname gemiddeld beschikbaar?"
+        ]
+
+        # Model answer says nothing about the unchecked 7th question — the
+        # deterministic footer must surface it regardless.
+        model_answer = "Hier is een algemeen antwoord zonder kennisbank-context."
+        response = types.SimpleNamespace(
+            choices=[
+                types.SimpleNamespace(
+                    message=types.SimpleNamespace(content=model_answer)
+                )
+            ]
+        )
+
+        returned = await hook.async_post_call_success_hook(
+            pre_call_result, None, response
+        )
+
+        assert returned is response
+        content = response.choices[0].message.content
+        assert content != model_answer, "early-return must not fire"
+        assert "Niet apart doorzocht (limiet bereikt)" in content
+        assert (
+            "Hoe lang na een gesprek is de opname gemiddeld beschikbaar?" in content
+        )
+        assert "**Agent activiteit**" in content
+
+    @pytest.mark.asyncio
+    async def test_gate_bypassed_without_unchecked_questions_keeps_early_return(
+        self, monkeypatch
+    ):
+        """Regression guard for Fix 3: a plain gate-bypassed message (<= 6
+        questions, no unchecked_questions) must behave exactly as before —
+        no footer, no mutation of the model's answer."""
+        from tests.test_klai_knowledge_hook import (
+            _make_cache,
+            _make_resp,
+            _make_user_api_key,
+            _patch_http,
+        )
+
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache()
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "Wat zijn onze bedrijfswaarden?"}],
+        }
+        retrieval_resp = _make_resp({"chunks": [], "retrieval_bypassed": True})
+        portal_resp = _make_resp(
+            {
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": True,
+                "kb_slugs_filter": None,
+                "kb_narrow": False,
+                "kb_pref_version": 12,
+                "zitadel_user_id": "300000000000000002",
+            }
+        )
+
+        with _patch_http(
+            monkeypatch, portal_resp=portal_resp, retrieval_resp=retrieval_resp
+        ):
+            pre_call_result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        meta = pre_call_result["metadata"]["_klai_kb_meta"]
+        assert meta["gate_bypassed"] is True
+        assert meta["unchecked_questions"] is None
+
+        model_answer = "Onze bedrijfswaarden zijn klantgerichtheid en transparantie."
+        response = types.SimpleNamespace(
+            choices=[
+                types.SimpleNamespace(
+                    message=types.SimpleNamespace(content=model_answer)
+                )
+            ]
+        )
+
+        returned = await hook.async_post_call_success_hook(
+            pre_call_result, None, response
+        )
+
+        assert returned is response
+        assert response.choices[0].message.content == model_answer
+
+    @pytest.mark.asyncio
+    async def test_gate_bypassed_with_unchecked_questions_shows_footer_streaming(
+        self, monkeypatch
+    ):
+        """Fix 3, streaming variant. Constructs kb_meta directly (matching
+        the pattern used by the other streaming-hook tests) rather than
+        going through the full pre-call pipeline, since the pipeline does
+        not set ``render_mode`` on the gate_bypassed branch — that gap is
+        pre-existing and out of scope for this fix. This test pins the
+        streaming-hook-level contract added by Fix 3: gate_bypassed=True
+        with unchecked_questions must not take the early pass-through."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+
+        data = {
+            "metadata": {
+                "_klai_kb_meta": {
+                    "org_id": "org123",
+                    "user_id": "user123",
+                    "chunks_injected": 0,
+                    "retrieval_ms": 5,
+                    "gate_bypassed": True,
+                    "unchecked_questions": ["Vraag zeven?"],
+                    "render_mode": "streaming_guard",
+                    "allowed_source_urls": [],
+                    "allowed_image_urls": [],
+                    "trusted_sources": [],
+                    "citation_chunks": [],
+                }
+            }
+        }
+
+        first = types.SimpleNamespace(
+            choices=[
+                types.SimpleNamespace(
+                    delta=types.SimpleNamespace(content="Algemeen antwoord."),
+                    finish_reason=None,
+                )
+            ]
+        )
+        final = types.SimpleNamespace(
+            choices=[
+                types.SimpleNamespace(
+                    delta=types.SimpleNamespace(content=""), finish_reason="stop"
+                )
+            ]
+        )
+
+        async def stream():
+            for item in (first, final):
+                yield item
+
+        streamed = [
+            item
+            async for item in hook.async_post_call_streaming_iterator_hook(
+                None, stream(), data
+            )
+        ]
+
+        # Buffered + footer-appended, not a bare pass-through: pass-through
+        # would yield exactly the 2 source items unchanged.
+        assert len(streamed) == 3
+        footer = streamed[1]
+        assert "Niet apart doorzocht (limiet bereikt)" in footer.choices[0].delta.content
+        assert "Vraag zeven?" in footer.choices[0].delta.content
+        assert "**Agent activiteit**" in footer.choices[0].delta.content
+        assert streamed[2].choices[0].finish_reason == "stop"
+
+    @pytest.mark.asyncio
     async def test_evidence_floor_drop_recounts_sub_query_coverage(self, monkeypatch):
         """Fix E: retrieval-api reports evidence_count BEFORE the hook's own
         evidence-floor filtering runs. When the floor drops every chunk for
