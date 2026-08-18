@@ -5,11 +5,7 @@
   "permissions": {
     "allow": [
       "mcp__playwright__browser_evaluate",
-      "Bash(codeindex update:*)",
-      "Bash(rm /Users/mark/Server/projects/klai/klai-portal/backend/tests/test_partner_router.py)"
-    ],
-    "additionalDirectories": [
-      "/Users/mark/.claude/mcp-brave-profile"
+      "Bash(codeindex update:*)"
     ]
   },
   "hooks": {
@@ -61,7 +57,18 @@
         ]
       }
     ],
-    "Stop": []
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/check.sh\"",
+            "timeout": 240,
+            "statusMessage": "Running repo check gate (make lint)..."
+          }
+        ]
+      }
+    ]
   },
   "autoMemoryEnabled": false
 }
