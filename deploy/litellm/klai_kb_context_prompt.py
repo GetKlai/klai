@@ -163,10 +163,10 @@ def _sub_query_grouped_context(
             index = start_index + offset
             header = f"[Question {index}: {_sanitize_question_echo(question)}]"
             blocks.append(
-                f"{header}\n[This question was NOT separately searched "
-                "(question limit reached) — answer it only if the evidence "
-                "above clearly covers it; otherwise say you could not fully "
-                "check it. Do NOT say it is not in the knowledge base.]"
+                f"{header}\n[This question was NOT separately searched — do "
+                "not attempt to answer it from general knowledge or from "
+                "other questions' evidence. The application will inform the "
+                "user separately that this question could not be checked.]"
             )
         if remainder > 0:
             blocks.append(

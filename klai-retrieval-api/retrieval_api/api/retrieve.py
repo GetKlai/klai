@@ -172,6 +172,15 @@ async def _retrieve_sub_queries(
     t0 = time.perf_counter()
     per_query_top_k = max(1, min(req.top_k, settings.sub_query_top_k))
 
+    # Bounds how many sub-question pipelines run concurrently WITHIN this
+    # one request's fan-out — created fresh per call so different users'
+    # requests never contend with each other, only the sub-questions of the
+    # SAME message do. See Settings.sub_query_max_concurrent for why: the
+    # reranker is one shared GPU instance and an unbounded gather() over up
+    # to MAX_SUB_QUESTIONS (6) sub-questions would burst it with that many
+    # full pipelines (embed + qdrant + graphiti + rerank) at once.
+    semaphore = asyncio.Semaphore(settings.sub_query_max_concurrent)
+
     async def _one(sub_query: str) -> RetrieveResponse:
         sub_req = req.model_copy(
             update={
@@ -189,7 +198,8 @@ async def _retrieve_sub_queries(
                 "top_k": per_query_top_k,
             }
         )
-        return await retrieve(sub_req, request, _auth=auth)
+        async with semaphore:
+            return await retrieve(sub_req, request, _auth=auth)
 
     # Each recursive ``retrieve()`` call below would otherwise emit its own
     # knowledge.queried product event — 6 events for one user question. Mark

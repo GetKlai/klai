@@ -10,6 +10,7 @@ errors, never as "not in the knowledge base".
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -476,6 +477,93 @@ class TestSubQueryTopKRespectsOne:
         )
 
         assert all(sub_req.top_k == 1 for sub_req in captured)
+
+
+class TestSubQueryBoundedConcurrency:
+    @pytest.mark.asyncio
+    async def test_concurrency_never_exceeds_configured_limit(self, monkeypatch):
+        """Fix II: sub_query_max_concurrent bounds how many full retrieval
+        pipelines (embed + qdrant + graphiti + rerank) run at once WITHIN
+        one request's fan-out — protects the single shared GPU reranker
+        from a burst of up to MAX_SUB_QUESTIONS (6) simultaneous pipelines.
+        Six sub-questions, each artificially delayed, must never show more
+        than the configured limit active at the same time."""
+        monkeypatch.setattr(retrieve_module.settings, "sub_query_max_concurrent", 2)
+
+        active = 0
+        max_active = 0
+        lock = asyncio.Lock()
+
+        async def fake_retrieve(sub_req, request, _auth=None):
+            nonlocal active, max_active
+            async with lock:
+                active += 1
+                max_active = max(max_active, active)
+            await asyncio.sleep(0.02)
+            async with lock:
+                active -= 1
+            return _response("medium", [], [])
+
+        monkeypatch.setattr(retrieve_module, "retrieve", fake_retrieve)
+
+        await retrieve_module._retrieve_sub_queries(
+            _request([f"vraag {i}?" for i in range(1, 7)]), MagicMock(), MagicMock()
+        )
+
+        assert max_active <= 2
+
+    @pytest.mark.asyncio
+    async def test_semaphore_does_not_change_results_or_order(self, monkeypatch):
+        """The semaphore only bounds concurrency — it must not change
+        results, ordering, or which sub-question maps to which coverage
+        entry. A tight limit (1 == fully serial) must produce identical
+        output to the unbounded case."""
+        monkeypatch.setattr(retrieve_module.settings, "sub_query_max_concurrent", 1)
+
+        responses = {
+            "vraag over meldingen": _response(
+                "high", [_item("E1", "c-meldingen")], [_source("S1", ["E1"])]
+            ),
+            "vraag over responstijd": _response("low", [], []),
+        }
+
+        async def fake_retrieve(sub_req, request, _auth=None):
+            return responses[sub_req.query]
+
+        monkeypatch.setattr(retrieve_module, "retrieve", fake_retrieve)
+
+        result = await retrieve_module._retrieve_sub_queries(
+            _request(["vraag over meldingen", "vraag over responstijd"]),
+            MagicMock(),
+            MagicMock(),
+        )
+
+        assert [sub.index for sub in result.sub_results] == [1, 2]
+        assert result.sub_results[0].confidence_band == "high"
+        assert result.sub_results[0].evidence_count == 1
+        assert result.sub_results[1].confidence_band == "low"
+        assert result.sub_results[1].evidence_count == 0
+        assert result.confidence_band == "high"
+        assert [item.evidence_id for item in result.evidence_pack.items] == ["Q1E1"]
+
+
+class TestSubQueryMaxConcurrentConfig:
+    def test_default_is_three(self):
+        from retrieval_api.config import Settings
+
+        assert Settings().sub_query_max_concurrent == 3
+
+    def test_env_override(self, monkeypatch):
+        monkeypatch.setenv("SUB_QUERY_MAX_CONCURRENT", "5")
+        from importlib import reload
+
+        import retrieval_api.config as cfg_mod
+
+        reload(cfg_mod)
+        try:
+            assert cfg_mod.Settings().sub_query_max_concurrent == 5
+        finally:
+            reload(cfg_mod)
 
 
 class TestFanoutRunsAfterIdentityCheck:
