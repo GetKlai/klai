@@ -10,6 +10,20 @@ Subagent model routing follows the global standard in `~/.claude/CLAUDE.md` (mod
 
 Code review follows the global two-pass Sol contract: GPT-5.6 Sol does the recall pass (`codex --profile review`; `review-deep` for security/migrations), Claude verifies and filters the findings.
 
+## Environment Contract
+
+Local dev is Makefile-driven — run `make help` for the full list. Key targets:
+
+- `make setup` — first-time setup (env files, keys, deps)
+- `make dev-up` — start Docker services (Postgres, Redis, Mongo, Meilisearch, LiteLLM)
+- `make migrate` — run Alembic migrations
+- `make seed` — seed demo data
+- `make backend` / `make frontend` — run the API (port 8010) / Vite dev server (port 5174)
+- `make lint` — ruff + eslint
+- `make check` — pyright + tsc
+
+`make lint` MUST pass before a session can be reported done — it is the Stop-gate.
+
 <!-- codeindex:start -->
 # CodeIndex MCP
 
