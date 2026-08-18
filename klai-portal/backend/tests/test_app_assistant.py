@@ -110,9 +110,11 @@ async def test_submit_feedback_schedules_triage(monkeypatch):
     monkeypatch.setattr(app_assistant, "create_feedback_submission", fake_create_feedback_submission)
 
     background_tasks = BackgroundTasks()
+    # Non-chat page: schedules plain triage. Chat-page submissions schedule
+    # the chat-context enrichment wrapper instead (test_feedback_chat_context).
     body = app_assistant.AssistantFeedbackIn(
         raw_text="Maak het makkelijker om feedback te geven.",
-        page_url="https://app.getklai.com/app/chat",
+        page_url="https://app.getklai.com/app/knowledge",
     )
 
     response = await app_assistant.submit_feedback(

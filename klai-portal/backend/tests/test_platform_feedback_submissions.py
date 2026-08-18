@@ -138,6 +138,7 @@ async def test_platform_feedback_submissions_reads_assistant_events(monkeypatch)
             route_id="/app/knowledge",
             locale="nl",
             viewport="1440x900",
+            chat_context=None,
             created_at="2026-05-27T10:00:00Z",
         )
     ]
@@ -196,6 +197,7 @@ async def test_platform_feedback_submissions_includes_ai_suggestion(monkeypatch)
             route_id="/admin/platform",
             locale="nl",
             viewport="1440x900",
+            chat_context=None,
             created_at=created_at,
         )
     ]
@@ -269,6 +271,7 @@ async def test_platform_feedback_submission_detail_returns_one_submission(monkey
             route_id="/admin/platform",
             locale="nl",
             viewport="1440x900",
+            chat_context=None,
             created_at=created_at,
         )
     ]
@@ -600,6 +603,7 @@ async def test_platform_feedback_item_detail_returns_linked_customer_evidence(mo
             route_id="/admin/platform",
             locale="nl",
             viewport="1440x900",
+            chat_context=None,
             created_at=datetime(2026, 5, 27, 10, 30, tzinfo=UTC),
             link_type="evidence",
             linked_at=linked_at,

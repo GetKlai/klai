@@ -172,6 +172,7 @@ class PlatformFeedbackSubmission(BaseModel):
     route_id: str | None
     locale: str | None
     viewport: str | None
+    chat_context: dict | None = None
     created_at: datetime
     triage_suggestion: PlatformFeedbackTriageSuggestion | None = None
     linked_item_id: int | None = None
@@ -461,6 +462,7 @@ def _platform_feedback_submission(
         route_id=row.route_id,
         locale=row.locale,
         viewport=row.viewport,
+        chat_context=row.chat_context,
         created_at=row.created_at,
         triage_suggestion=triage_suggestions.get(row.id),
         linked_item_id=linked.id if linked is not None else None,
@@ -1131,6 +1133,7 @@ async def platform_feedback_submissions(
 
     feedback_type = FeedbackSubmission.metadata_json["feedback_type"].astext
     severity = FeedbackSubmission.metadata_json["severity"].astext
+    chat_context = FeedbackSubmission.metadata_json["chat_context"]
 
     query = (
         select(
@@ -1150,6 +1153,7 @@ async def platform_feedback_submissions(
             FeedbackSubmission.route_id.label("route_id"),
             FeedbackSubmission.locale.label("locale"),
             FeedbackSubmission.viewport.label("viewport"),
+            chat_context.label("chat_context"),
             FeedbackSubmission.created_at.label("created_at"),
         )
         .select_from(FeedbackSubmission)
@@ -1216,6 +1220,7 @@ async def platform_feedback_submission_detail(
     await _audit(perms, "feedback:submission_detail", str(submission_id))
     feedback_type = FeedbackSubmission.metadata_json["feedback_type"].astext
     severity = FeedbackSubmission.metadata_json["severity"].astext
+    chat_context = FeedbackSubmission.metadata_json["chat_context"]
     query = (
         select(
             FeedbackSubmission.id.label("id"),
@@ -1234,6 +1239,7 @@ async def platform_feedback_submission_detail(
             FeedbackSubmission.route_id.label("route_id"),
             FeedbackSubmission.locale.label("locale"),
             FeedbackSubmission.viewport.label("viewport"),
+            chat_context.label("chat_context"),
             FeedbackSubmission.created_at.label("created_at"),
         )
         .select_from(FeedbackSubmission)
@@ -1309,6 +1315,7 @@ async def platform_feedback_item_detail(
     await _audit(perms, "feedback:item_detail", str(item_id))
     feedback_type = FeedbackSubmission.metadata_json["feedback_type"].astext
     severity = FeedbackSubmission.metadata_json["severity"].astext
+    chat_context = FeedbackSubmission.metadata_json["chat_context"]
     async with cross_org_session() as db:
         try:
             item = await get_feedback_item(db, item_id)
@@ -1331,6 +1338,7 @@ async def platform_feedback_item_detail(
                         FeedbackSubmission.route_id.label("route_id"),
                         FeedbackSubmission.locale.label("locale"),
                         FeedbackSubmission.viewport.label("viewport"),
+                        chat_context.label("chat_context"),
                         FeedbackSubmission.created_at.label("created_at"),
                         FeedbackItemLink.link_type.label("link_type"),
                         FeedbackItemLink.created_at.label("linked_at"),
@@ -1373,6 +1381,7 @@ async def platform_feedback_item_detail(
                     route_id=r.route_id,
                     locale=r.locale,
                     viewport=r.viewport,
+                    chat_context=r.chat_context,
                     created_at=r.created_at,
                     link_type=r.link_type,
                     linked_at=r.linked_at,

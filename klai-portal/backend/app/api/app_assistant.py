@@ -9,15 +9,21 @@ from __future__ import annotations
 from typing import Literal
 from urllib.parse import urlsplit, urlunsplit
 
+import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import cross_org_session, get_db
 from app.core.permissions import UserPermissions, get_caller
-from app.klai_feedback.service import create_feedback_submission
+from app.klai_feedback.service import create_feedback_submission, get_feedback_submission
 from app.klai_feedback.triage import run_feedback_triage_for_submission
 from app.services.events import emit_event
+from app.services.librechat_chat_context import recent_chat_conversations
+
+logger = structlog.get_logger()
+
+CHAT_ROUTE_PATH = "/app/chat"
 
 router = APIRouter(prefix="/api/app/assistant", tags=["app-assistant"])
 
@@ -76,6 +82,57 @@ def _feedback_metadata(
         "client_host": request_context.get("client_host"),
         **extra,
     }
+
+
+def _is_chat_route(body: AssistantContextIn) -> bool:
+    if body.route_id and body.route_id.rstrip("/") == CHAT_ROUTE_PATH:
+        return True
+    return urlsplit(body.page_url).path.rstrip("/") == CHAT_ROUTE_PATH
+
+
+def _schedule_followup(
+    background_tasks: BackgroundTasks,
+    *,
+    body: AssistantContextIn,
+    perms: UserPermissions,
+    submission_id: int,
+) -> None:
+    """Queue post-persist work: chat-context enrichment (chat route only), then triage.
+
+    The Mongo lookup runs AFTER the submission is durably stored so a slow or
+    unreachable Mongo can never delay or fail the feedback POST itself.
+    """
+    if _is_chat_route(body) and perms.org_slug:
+        background_tasks.add_task(enrich_chat_context_and_triage, submission_id, perms.org_slug, perms.user_id)
+    else:
+        background_tasks.add_task(run_feedback_triage_for_submission, submission_id)
+
+
+async def enrich_chat_context_and_triage(
+    submission_id: int,
+    org_slug: str,
+    zitadel_user_id: str,
+) -> None:
+    """Attach the reporter's recent LibreChat conversations, then run triage.
+
+    The chat lives in a cross-origin iframe, so ``page_url`` can never carry
+    the conversation; this server-side lookup is the only way to link a
+    report to conversation candidates. Best-effort: any failure is logged and
+    triage still runs.
+    """
+    conversations = await recent_chat_conversations(org_slug, zitadel_user_id)
+    if conversations:
+        try:
+            async with cross_org_session() as db:
+                submission = await get_feedback_submission(db, submission_id)
+                submission.metadata_json = {
+                    **(submission.metadata_json or {}),
+                    "chat_context": {"recent_conversations": conversations},
+                }
+                await db.commit()
+        except Exception:
+            logger.warning("feedback_chat_context_persist_failed", submission_id=submission_id, exc_info=True)
+    await run_feedback_triage_for_submission(submission_id)
 
 
 def _base_properties(
@@ -169,7 +226,7 @@ async def submit_feedback(
             "feedback_type": body.type,
         },
     )
-    background_tasks.add_task(run_feedback_triage_for_submission, submission.id)
+    _schedule_followup(background_tasks, body=body, perms=perms, submission_id=submission.id)
     return AssistantSubmitResponse()
 
 
@@ -214,5 +271,5 @@ async def submit_problem_report(
             "severity": body.severity,
         },
     )
-    background_tasks.add_task(run_feedback_triage_for_submission, submission.id)
+    _schedule_followup(background_tasks, body=body, perms=perms, submission_id=submission.id)
     return AssistantSubmitResponse()

@@ -200,6 +200,19 @@ export interface PlatformFeedbackTriageSuggestion {
   created_at: string | null
 }
 
+export interface PlatformFeedbackChatConversation {
+  conversation_id: string | null
+  title: string | null
+  model: string | null
+  url: string | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface PlatformFeedbackChatContext {
+  recent_conversations: PlatformFeedbackChatConversation[]
+}
+
 export interface PlatformFeedbackSubmission {
   id: number
   org_id: number | null
@@ -217,6 +230,7 @@ export interface PlatformFeedbackSubmission {
   route_id: string | null
   locale: string | null
   viewport: string | null
+  chat_context: PlatformFeedbackChatContext | null
   created_at: string
   triage_suggestion: PlatformFeedbackTriageSuggestion | null
   linked_item_id: number | null
