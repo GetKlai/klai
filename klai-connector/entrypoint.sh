@@ -11,9 +11,9 @@
 # `Sync now` clicks failed with "column sync_runs.org_id does not exist"
 # until a manual `docker exec ... alembic upgrade head` was run by hand.
 #
-# Same root cause as the scribe-deploy-no-alembic pitfall
-# (.claude/rules/klai/pitfalls/process-rules.md). Mirrors the canonical
-# pattern from klai-portal/backend/entrypoint.sh.
+# Maintained migration guidance lives in
+# .claude/rules/klai/infra/deploy.md. Mirrors the canonical pattern from
+# klai-portal/backend/entrypoint.sh.
 set -eu
 
 echo "[entrypoint] Running alembic upgrade head…"

@@ -16,8 +16,7 @@ language: python
 severity: error
 message: |
   enabled_addons was retired by SPEC-PORTAL-EXTENSIONS-UNIFY-001 (2026-05-12).
-  Read perms.platform_unlocked_features instead. See
-  .moai/specs/SPEC-PORTAL-EXTENSIONS-UNIFY-001/spec.md.
+  Read perms.platform_unlocked_features instead.
 
 rule:
   pattern: $OBJ.enabled_addons

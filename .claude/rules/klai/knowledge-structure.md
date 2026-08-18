@@ -10,10 +10,10 @@ Reference for adding learnings to `.claude/rules/klai/`. Used by `manager-learn`
 ## Decision tree
 
 1. **Platform component** (Caddy, LiteLLM, LibreChat, vLLM, Zitadel)? → `platform/{component}.md`
-2. **Infrastructure** (servers, CI/CD, SOPS, env vars)? → `infra/deploy.md`, `infra/servers.md`, or `infra/sops-env.md`
+2. **Infrastructure** (servers, CI/CD, SOPS, env vars)? → `infra/deploy.md`, `infra/servers.md`, or `infra/secrets.md`
 3. **Language/tool** (Docker, Python, TypeScript, testing)? → `lang/{docker|python|typescript|testing}.md`
 4. **Project-specific** (portal, website, docs, knowledge)? → `projects/{portal-backend|portal-frontend|portal-security|portal-logging-py|portal-logging-ts|website|docs|knowledge|python-services}.md`
-5. **AI dev process rule** (debugging, verification, communication)? → `pitfalls/process-rules.md`
+5. **Reusable workflow guidance**? → the global agent instructions; use `workflow/process-full.md` only for spec-specific guidance that is not already global
 6. **Design/branding**? → `design/styleguide.md`
 
 ## Adding an entry

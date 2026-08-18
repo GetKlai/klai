@@ -94,7 +94,7 @@ Must have:
 - [ ] `@model_validator(mode="after")` rejecting empty/whitespace
 - [ ] Encryption keys: validator also checks base64-decodes to expected length
 - [ ] Pre-flight: env-var exists in `klai-infra/core-01/.env.sops` BEFORE the validator merges
-  (per `validator-env-parity` pitfall — comment in PR body confirming this)
+  (see `.claude/rules/klai/infra/secrets.md`; confirm the deploy order in the PR)
 
 **Standards ref:** standards.md section 5
 
@@ -119,8 +119,8 @@ For every new endpoint that:
 Must have:
 - [ ] `klai_identity_assert.IdentityAsserter.verify(...)` call
 - [ ] Caller-side: every consumer sends `X-Caller-Service: <known-name>` header
-- [ ] Unit test that locks the header on outbound calls (per
-      `retrieve-caller-service-header-mismatch` pitfall)
+- [ ] Unit test that locks the header on outbound calls (see
+      `.claude/rules/klai/projects/knowledge.md`)
 
 **Standards ref:** standards.md section 7
 
@@ -130,7 +130,6 @@ For every new `client.search/scroll/retrieve/delete/upsert` on Qdrant:
 - [ ] Does the `Filter(must=[...])` include a `FieldCondition` for the
       collection's tenant key?
   - `klai_knowledge` → `org_id` (Zitadel string)
-  - `klai_focus` → `tenant_id` (Zitadel string)  *(decommissioned per SPEC-DECOMM-FOCUS-001)*
 - [ ] Type discipline: both are STRINGS (not int) in current code
 - [ ] Cross-collection key-bug check: not `tenant_id` filter on `klai_knowledge`
 
@@ -216,8 +215,8 @@ For every new alembic migration in services that DON'T currently auto-migrate
 - [ ] Either: add `entrypoint.sh` that runs `alembic upgrade head` before the CMD
 - [ ] Or: explicit operator-step in PR body to run migration manually
 
-Without this, the migration ships in the image but never applies on prod
-(per `alembic-stamped-past-skipped-migration` pitfall).
+Without this, the migration ships in the image but never applies in production.
+See `.claude/rules/klai/infra/deploy.md`.
 
 Services that already have auto-migrate (verified 2026-05-05):
 portal-api, klai-connector, scribe-api, klai-knowledge-ingest.

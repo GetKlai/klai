@@ -8,8 +8,8 @@
 # Without this entrypoint the Dockerfile CMD launched uvicorn directly,
 # so new columns were dormant until a manual:
 #   docker exec klai-core-scribe-api-1 alembic upgrade head
-# SPEC-SEC-HYGIENE-001 scribe-slice was bitten exactly by this pattern
-# (see scribe-deploy-no-alembic pitfall in .claude/rules/klai/pitfalls/process-rules.md).
+# SPEC-SEC-HYGIENE-001 scribe-slice was bitten exactly by this pattern.
+# Maintained migration guidance: .claude/rules/klai/infra/deploy.md.
 #
 # SPEC-SEC-AUDIT-2026-04 C5 / SPEC-SEC-HYGIENE-001 fix: mirrors the portal-api
 # entrypoint.sh pattern (SPEC-CHAT-TEMPLATES-CLEANUP-001).

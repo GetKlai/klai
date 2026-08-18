@@ -5,7 +5,6 @@ paths:
   - "klai-mailer/**/*.py"
   - "klai-retrieval-api/**/*.py"
   - "klai-scribe/**/*.py"
-  - "klai-focus/**/*.py"
   - "klai-knowledge-ingest/**/*.py"
 ---
 # Python Microservices

@@ -183,7 +183,6 @@ audit are designed around compose-as-source-of-truth.
 
 ## Related
 
-- `pitfalls/process-rules.md` — `container-cleanup-without-preflight (HIGH)`
 - `infra/deploy.md` — CI deploy verification + atomic env writes
 - `infra/observability.md` — VictoriaLogs / Grafana / product_events split
 - `platform/docker-socket-proxy.md` — what tool to use for which Docker

@@ -164,6 +164,53 @@ Two branches with migrations → multiple heads → `alembic upgrade head` fails
 Fix: `alembic merge heads -m "merge heads"`. Use `IF NOT EXISTS` in all DDL.
 The CI integrity check (see above) catches this before merge to main.
 
+Generated no-op merge revisions contain unused `op`/`sqlalchemy` imports; remove
+them and run ruff before pushing. An admin merge can create a second head after
+PR checks have already passed, so always verify the post-merge `main` workflow
+before walking away from a migration merge.
+
+Treat every service's Alembic graph as a serial resource. Rebase or add a merge revision when another migration lands on the same parent, and run that service's `alembic heads` check after reconciliation. Portal's `validate_alembic.py` does not validate the connector, ingest, or scribe graphs.
+
+## Alembic head is not schema proof (CRIT)
+
+`alembic_version` records graph position; it does not prove every DDL statement
+at that position exists. If an application reports `UndefinedTable` or
+`UndefinedColumn` while Alembic says it is at head, probe the expected object
+directly (for example with `to_regclass` or `information_schema`) and inspect
+the relevant revision before changing migration state.
+
+Never `stamp` a production database merely to make the version table agree,
+and never stamp backwards and replay blindly. Stamping is allowed only after
+schema state has been verified and as part of a documented bootstrap/recovery
+procedure. `docs/runbooks/knowledge-ingest-alembic-stamp.md` is the narrow,
+idempotent baseline exception; it is not a general repair recipe.
+
+## Config validators and deployment order (HIGH)
+
+Before making a production setting mandatory at startup, verify the corresponding variable exists and is non-empty in the owning SOPS inventory and compose environment. Tests commonly inject defaults that production does not have.
+
+Deploy in this order:
+
+1. add and roundtrip-verify the SOPS value;
+2. wire it through compose and synchronize the environment;
+3. verify the target container receives it;
+4. only then deploy the fail-closed validator and dependent code.
+
+Use `infra/secrets.md` for the SOPS and shared-secret invariants.
+
+## Retiring bind-mounted files
+
+Remove a file bind-mount from every container definition and recreate the
+containers before deleting or rsync-pruning its host source. Docker resolves the
+source at container start and silently creates a directory when a missing source
+is referenced; a later restart then fails even though the deletion looked safe.
+Guard file mounts with `is_file()`, not `exists()`.
+
+Every container has one owner. Compose-managed containers must only be recreated
+by compose; portal provisioning may restart them to reload config but must not
+remove and replace them. Provisioning-managed tenant containers remain owned by
+the portal lifecycle described in `infra/container-hygiene.md`.
+
 ## CI compose-sync overwrites server config (HIGH)
 
 The `deploy-compose.yml` GitHub Actions workflow syncs `deploy/docker-compose.yml` to the server and triggers service recreation. If the repo contains template placeholders (like `RENDER_ME`) or config files without real secrets, it overwrites the working server config.

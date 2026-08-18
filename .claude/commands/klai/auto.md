@@ -19,7 +19,7 @@ Pre-execution git context:
 ## Doel
 
 Voer de complete post-SPEC cyclus volledig autonoom uit. Geen menselijke goedkeuring
-vereist. De enige bewuste stop in de totale workflow is de SPEC annotation in `/moai plan`
+vereist. De enige bewuste stop in de totale workflow is de SPEC-goedkeuring in de plan-fase
 — die heeft de gebruiker al gedaan.
 
 **Flags:**
@@ -42,13 +42,14 @@ run → [STOP: interview review] → migraties → sync --pr → e2e → [STOP: 
 
 ## Phase 0: SPEC Verificatie
 
-Lees `.moai/specs/{SPEC-ID}/spec.md` om te bevestigen dat de SPEC bestaat.
+Lees de SPEC in `docs/specs/{SPEC-ID}/spec.md` of `docs/specs/{SPEC-ID}.md`
+(of `.workflow/specs/{SPEC-ID}/spec.md`) om te bevestigen dat de SPEC bestaat.
 
 Als de SPEC niet bestaat: geef een foutmelding en stop.
 
 Bepaal:
 - `spec_title`: de titel van de SPEC
-- `branch_name`: `feature/{SPEC-ID}` (lees uit git-strategy.yaml)
+- `branch_name`: `feature/{SPEC-ID}`
 - `review_mode`: true als `--review` vlag aanwezig
 - `has_e2e`: true tenzij `--no-e2e` vlag aanwezig
 
@@ -56,10 +57,10 @@ Bepaal:
 
 ## Phase 1: Implementatie
 
-Roep de run workflow aan via `Skill("moai:run")` met het SPEC-ID als argument en
-`--solo` mode. Wacht op de completion marker `<moai>DONE</moai>` of `<moai>COMPLETE</moai>`.
+Implementeer de SPEC direct: lees de acceptance criteria, maak de code- en testwijzigingen,
+en draai de relevante test- en lintcommando's tot ze slagen.
 
-Als run de completion marker geeft maar er zijn test failures of build errors:
+Als er na implementatie nog test failures of build errors zijn:
 - Delegeer aan `expert-debug` subagent met de exacte foutmelding
 - Verifieer dat de fix de tests laat slagen
 - Herhaal tot alle tests groen zijn (max 10 iteraties)
@@ -93,7 +94,7 @@ Delegeer aan `manager-quality` subagent:
 > - Single Responsibility Principle gevolgd?
 >
 > **2. Architectuur & patronen**
-> - Volgt de code de bestaande patronen in `.moai/project/structure.md`?
+> - Volgt de code de bestaande patronen elders in de betrokken service/module?
 > - Geen onnodige abstracties (YAGNI)?
 > - Geen duplicatie (DRY)?
 > - Dependency injection waar van toepassing?
@@ -233,12 +234,12 @@ Log: "N nieuwe migratie(s) [succesvol gedraaid op core-01 / gefaald — zie rapp
 
 ## Phase 4: Sync & PR
 
-Delegeer aan sync workflow via `Skill("moai:sync")` met `--pr` vlag
-(en `--no-issue` als die vlag meegegeven is).
+Push de branch en open een PR met `gh pr create` (tenzij `--no-issue` is
+meegegeven, dan geen gekoppelde GitHub Issue aanmaken).
 
 Wacht op:
-- PR URL in output
-- Sync completion marker
+- PR URL in de output van `gh pr create`
+- Bevestiging dat de branch is gepusht
 
 Sla de PR URL op voor gebruik in Phase 5 en 6.
 
@@ -340,7 +341,7 @@ Toon altijd een eindrapport, ongeacht flags:
 ✓ Gemerged naar main
 
 Volgende spec: /klai:auto {VOLGENDE-SPEC-ID}
-Nieuwe spec schrijven: /moai plan
+Nieuwe spec schrijven: voeg toe onder `docs/specs/{SPEC-ID}/spec.md`
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
@@ -358,7 +359,7 @@ Als een phase faalt met een onverwachte error (niet hierboven gedekt):
 
 ## Configuratie
 
-Lees voor git workflow uit `.moai/config/sections/git-strategy.yaml`:
-- `branch_prefix`: voor branch naming
-- `main_branch`: target voor merge
+Git workflow (vast, geen externe config):
+- `branch_prefix`: `feature/` — branch naming volgt `feature/{SPEC-ID}`
+- `main_branch`: `main` — target voor merge
 - `workflow`: github-flow / main_direct

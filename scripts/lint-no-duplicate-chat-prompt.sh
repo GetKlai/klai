@@ -70,7 +70,7 @@ cd "$REPO_ROOT"
 # automatically. Two canonical homes for this anchor: canonical library
 # and vendored copy. Drift between them is enforced by
 # test_klai_chat_prompts_drift.py.
-GROUNDED_ALLOWED='^(klai-libs/chat-prompts/|deploy/litellm/klai_chat_prompts\.py|deploy/litellm/tests/|\.moai/specs/SPEC-RAG-MULTILINGUAL-CHAT-001/|scripts/lint-no-duplicate-chat-prompt\.sh|\.claude/rules/klai/|docs/architecture/|docs/runbooks/|docs/retros/|docs/audit-|docs/research/kb-chat-system-prompts\.md)'
+GROUNDED_ALLOWED='^(klai-libs/chat-prompts/|deploy/litellm/klai_chat_prompts\.py|deploy/litellm/tests/|docs/specs/|scripts/lint-no-duplicate-chat-prompt\.sh|\.claude/rules/klai/|docs/architecture/|docs/runbooks/|docs/retros/|docs/audit-|docs/research/kb-chat-system-prompts\.md)'
 
 # Allowed paths for the HOOK anchors (set 2):
 #   - the LiteLLM hook/policy/context-prompt files (canonical homes)
@@ -78,7 +78,7 @@ GROUNDED_ALLOWED='^(klai-libs/chat-prompts/|deploy/litellm/klai_chat_prompts\.py
 #   - this script
 #   - SPEC + klai rules + docs (they describe what the hook says)
 #   - LiteLLM hook tests
-HOOK_ALLOWED='^(deploy/litellm/klai_knowledge\.py|deploy/litellm/klai_kb_answer_policy\.py|deploy/litellm/klai_kb_context_prompt\.py|deploy/litellm/test_|deploy/litellm/tests/|klai-libs/chat-prompts/|\.moai/specs/SPEC-RAG-MULTILINGUAL-CHAT-001/|scripts/lint-no-duplicate-chat-prompt\.sh|\.claude/rules/klai/|docs/architecture/|docs/runbooks/|docs/retros/|docs/audit-|docs/research/kb-chat-system-prompts\.md)'
+HOOK_ALLOWED='^(deploy/litellm/klai_knowledge\.py|deploy/litellm/klai_kb_answer_policy\.py|deploy/litellm/klai_kb_context_prompt\.py|deploy/litellm/test_|deploy/litellm/tests/|klai-libs/chat-prompts/|docs/specs/|scripts/lint-no-duplicate-chat-prompt\.sh|\.claude/rules/klai/|docs/architecture/|docs/runbooks/|docs/retros/|docs/audit-|docs/research/kb-chat-system-prompts\.md)'
 
 # Excludes for traversal speed + correctness. These are paths we never
 # want to scan (build artefacts, vendored deps).

@@ -1,0 +1,49 @@
+name: Validate gpu-01 compose
+
+on:
+  pull_request:
+    paths:
+      - 'deploy/docker-compose.gpu.yml'
+      - 'deploy/check-image-tags.sh'
+      - 'deploy/check-image-pullable.sh'
+      - 'deploy/tests/test-check-image-pullable-anonymous.sh'
+      - 'deploy/tests/fixtures/fake-docker-anonymous-check'
+      - '.github/workflows/validate-gpu-compose.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/docker-compose.gpu.yml'
+      - 'deploy/check-image-tags.sh'
+      - 'deploy/check-image-pullable.sh'
+      - 'deploy/tests/test-check-image-pullable-anonymous.sh'
+      - 'deploy/tests/fixtures/fake-docker-anonymous-check'
+      - '.github/workflows/validate-gpu-compose.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-gpu-compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Test anonymous registry isolation
+        run: sh deploy/tests/test-check-image-pullable-anonymous.sh
+
+      - name: Validate image tags and anonymous pullability
+        run: |
+          sh deploy/check-image-tags.sh
+          sh deploy/check-image-pullable.sh
+
+      - name: Validate gpu-01 compose syntax
+        run: |
+          if [[ -f deploy/docker-compose.gpu.yml ]]; then
+            docker compose -f deploy/docker-compose.gpu.yml config --quiet
+          else
+            echo "GPU Compose is not present on this branch yet; validation activates when it lands."
+          fi
+
+      - name: Explain deployment boundary
+        run: echo "Validation only; this workflow does not sync or deploy gpu-01."

@@ -1,7 +1,7 @@
 ---
 name: klai-security-audit
 description: |
-  Klai-specific adversarial security auditor. Extends moai expert-security with klai topology awareness,
+  Klai-specific adversarial security auditor with klai topology awareness,
   six explicit review lenses, and mandatory chain-building. Use for systematic audits of klai-portal,
   klai-knowledge-ingest, klai-retrieval-api, klai-connector, klai-mailer, and cross-service secret paths.
   Skeptical by default — tuned to find defects, not rationalize acceptance.
@@ -18,9 +18,6 @@ description: |
 model: opus
 permissionMode: plan
 memory: project
-skills:
-  - moai-foundation-core
-  - moai-ref-owasp-checklist
 tools: Read, Grep, Glob, Bash, TodoWrite, Skill, mcp__sequential-thinking__sequentialthinking
 ---
 
@@ -32,7 +29,7 @@ Systematic adversarial security audit of the klai monorepo, applied exhaustively
 authenticated endpoint, URL-consuming code path, tenant-scoped query, and cross-service secret.
 Tuned to find defects. Explicitly rejects "looks fine" as a verdict.
 
-This agent extends `moai/expert-security` with three things the generic OWASP-based agent
+This agent focuses on three things a generic OWASP-based agent
 systematically misses on klai:
 
 1. **Klai topology awareness** — docker-socket-proxy, shared `INTERNAL_SECRET`, Caddy proxy-headers,
@@ -180,12 +177,12 @@ Maintain a mental map. Flag deviations:
 
 | Secret | Services that hold it | Primary use |
 |---|---|---|
-| `INTERNAL_SECRET` | portal-api, mailer, knowledge-ingest, retrieval-api, connector, scribe, research-api, LibreChat patch env, LiteLLM hook env | Shared service-to-service bearer |
+| `INTERNAL_SECRET` | portal-api, mailer, knowledge-ingest, retrieval-api, connector, scribe, LibreChat patch env, LiteLLM hook env | Shared service-to-service bearer |
 | `ENCRYPTION_KEY` | portal-api | `connector.config` JSONB field encryption |
 | `PORTAL_SECRETS_KEY` | portal-api | Fernet key for session/pending cookies |
 | `SSO_COOKIE_KEY` | portal-api | Fernet key for `klai_sso` cookie |
 | `ZITADEL_PAT` | portal-api | User/org management via Zitadel admin API |
-| `DATABASE_URL` | portal-api, retrieval-api, knowledge-ingest, connector, research-api | Postgres with RLS |
+| `DATABASE_URL` | portal-api, retrieval-api, knowledge-ingest, connector | Postgres with RLS |
 | `MONEYBIRD_WEBHOOK_TOKEN` | portal-api | Billing webhook signature |
 | `WIDGET_JWT_SECRET` | portal-api | HS256 widget session tokens |
 | `VEXA_WEBHOOK_SECRET` | portal-api | Meeting bot webhook auth |

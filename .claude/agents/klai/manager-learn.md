@@ -8,7 +8,7 @@ description: |
   - The sync command triggers end-of-cycle learning capture
   - User runs /retro with a description of what happened
 tools: Read, Write, Edit, Grep, Glob, TodoWrite
-model: inherit
+model: sonnet
 permissionMode: acceptEdits
 memory: project
 ---
@@ -33,10 +33,10 @@ The full structure is documented in `.claude/rules/klai/knowledge-structure.md` 
 
 **Decision flow (6 steps):**
 1. Platform-specific (Caddy, LiteLLM, LibreChat, vLLM, Zitadel)? → `platform/{component}.md`
-2. Infrastructure (servers, CI/CD, SOPS, env vars)? → `infra/deploy.md`, `infra/sops-env.md`, or `infra/servers.md`
+2. Infrastructure (servers, CI/CD, SOPS, env vars)? → `infra/deploy.md`, `infra/secrets.md`, or `infra/servers.md`
 3. Language/tool-specific (Docker, Python, TypeScript, testing)? → `lang/{docker|python|typescript|testing}.md`
 4. Project-specific (portal backend, portal frontend, website, docs, knowledge)? → `projects/{portal-backend|portal-frontend|portal-security|portal-logging-py|portal-logging-ts|website|docs|knowledge|python-services}.md`
-5. Universal AI dev process rule? → `pitfalls/process-rules.md` (compact, always loaded) or `workflow/process-full.md` (extended)
+5. Reusable workflow guidance? → keep global behavior in the global agent instructions; use `workflow/process-full.md` only for spec-specific knowledge that is not already global
 6. Design/branding? → `design/styleguide.md`
 
 **There are no more index files** — `patterns.md` and `pitfalls.md` have been deleted. Each domain file is self-contained.

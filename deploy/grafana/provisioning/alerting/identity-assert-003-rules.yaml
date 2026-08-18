@@ -5,7 +5,7 @@
 # (see policies.yaml).
 #
 # UID convention: spec-iam-003-* (per
-# .claude/rules/klai/pitfalls/process-rules.md grafana-uid-40-char-limit).
+# .claude/rules/klai/infra/observability.md).
 #
 # Mirrors SPEC-002's identity-assert-rules.yaml shape — count-based
 # thresholds on deny events, not ratios.

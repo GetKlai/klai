@@ -68,8 +68,7 @@ jobs:
                 new Date().toISOString() + '.',
               '',
               'See the full triage steps in `scripts/check_zitadel_oidc_drift.py`',
-              'docstring and `.claude/rules/klai/pitfalls/process-rules.md` ' +
-                '(allowlist-must-enumerate-all-host-classes).',
+              'and `.claude/rules/klai/projects/portal-backend.md`.',
               '',
               '### stderr',
               '```',

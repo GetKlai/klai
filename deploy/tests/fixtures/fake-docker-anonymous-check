@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+
+[ -n "${DOCKER_CONFIG:-}" ]
+[ "$DOCKER_CONFIG" != "$EXPECTED_AUTH_CONFIG" ]
+[ ! -e "$DOCKER_CONFIG/config.json" ]
+[ -z "${DOCKER_AUTH_CONFIG+x}" ]
+
+printf '%s\n' "$DOCKER_CONFIG" >> "$DOCKER_CALL_LOG"
