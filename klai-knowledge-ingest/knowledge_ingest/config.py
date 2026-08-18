@@ -28,6 +28,31 @@ class Settings(BaseSettings):
     # due to a config typo.
     ingest_login_wall_detect_enabled: bool = True
     ingest_login_wall_detect_mode: str = "reject"
+    # 2026-08-18 stop-the-bleeding fix — minimum stripped-text length (chars)
+    # for a crawled page to be persisted as knowledge. Below this, the page
+    # is skipped with PersistSkipReason.CONTENT_TOO_SHORT and never reaches
+    # Qdrant or knowledge.artifacts.
+    #
+    # Calibration: NOT derived from a measured production content-length
+    # distribution — this sandboxed dev environment has no Postgres/Grafana
+    # access to query knowledge.crawled_pages.raw_markdown. The only hard
+    # data point is the incident that prompted this fix: 13 pages from
+    # openapi.eu-production.holodeck.voys.nl were exactly ~92 chars of
+    # boilerplate ("Failed to parse OpenAPI file..."). 150 gives ~60%
+    # margin above that measured case (catching near-identical variants of
+    # the same error-page class) while staying far below any real KB
+    # article, which is virtually always multiple sentences. Deliberately
+    # conservative: a real short page is not known to exist below this
+    # bound today, but if one does, it will be dropped silently until
+    # someone raises the exception — better to under-catch (see rule:
+    # "beter te weinig vangen dan echte inhoud weggooien") than delete
+    # real content. Re-calibrate once production content-length data is
+    # available (see rule: allowlist-must-enumerate-all-host-classes for
+    # the same "measure before you gate" principle applied to thresholds).
+    ingest_min_content_length: int = Field(
+        default=150,
+        validation_alias=AliasChoices("KLAI_INGEST_MIN_CONTENT_LENGTH"),
+    )
     # SPEC-INGEST-LOGIN-WALL-DETECT-002 REQ-02 — cluster threshold. A page is
     # flagged as a wall iff this many OR MORE OTHER pages in the same
     # (org_id, kb_slug) have a SimHash within Hamming distance 3 of the page's

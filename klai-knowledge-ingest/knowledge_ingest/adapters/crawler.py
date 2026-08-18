@@ -30,7 +30,11 @@ from knowledge_ingest.domain_selectors import (
     lower_domain_rate_limit,
 )
 from knowledge_ingest.models import IngestRequest
-from knowledge_ingest.reason_codes import FETCH_REASON_VALUES, FetchReasonCode
+from knowledge_ingest.reason_codes import (
+    FETCH_REASON_VALUES,
+    FetchReasonCode,
+    PersistSkipReason,
+)
 from knowledge_ingest.utils.auth_wall_classifier import classify_auth_wall
 from knowledge_ingest.utils.auth_wall_detector import (
     AuthWallSignal,
@@ -1132,6 +1136,29 @@ async def _ingest_crawl_result(
 
     text = result.fit_markdown or result.raw_markdown or ""
     front_matter = (result.metadata or {}).get("description", "")
+
+    # 2026-08-18 stop-the-bleeding fix: a page that fetched successfully
+    # (HTTP 200) can still be pure boilerplate/error text — e.g.
+    # openapi.eu-production.holodeck.voys.nl served 13 pages of the exact
+    # same 92-char "Failed to parse OpenAPI file" message, and 5 landed in
+    # a customer's knowledge base before the template-cluster detector
+    # (a different mechanism, meant for auth walls, not error pages)
+    # happened to reject the rest once 5 near-identical siblings existed.
+    # There was previously no minimum-content-length check anywhere on
+    # this path — PersistSkipReason.CONTENT_TOO_SHORT existed in
+    # reason_codes.py but was never wired up here.
+    stripped_length = len(text.strip())
+    if stripped_length < settings.ingest_min_content_length:
+        logger.info(
+            "crawl_skipped_content_too_short",
+            url=url,
+            org_id=org_id,
+            kb_slug=kb_slug,
+            content_length=stripped_length,
+            threshold=settings.ingest_min_content_length,
+            reason=PersistSkipReason.CONTENT_TOO_SHORT.value,
+        )
+        return
 
     content_hash = hashlib.sha256(text.encode()).hexdigest()
     if stored is not None:

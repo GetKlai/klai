@@ -28,7 +28,11 @@ def _make_crawl_result(
     internal_links: list[dict] | None = None,
 ) -> CrawlResult:
     """Build a successful CrawlResult with the given internal links."""
-    text = f"Markdown content for {url}"
+    # 2026-08-18 stop-the-bleeding fix: content-length gate
+    # (settings.ingest_min_content_length) now skips persistence below
+    # threshold. Padded well above default (150 chars) so this fixture
+    # keeps exercising the ingest path.
+    text = f"Markdown content for {url}. " * 6
     return CrawlResult(
         url=url,
         fit_markdown=text,

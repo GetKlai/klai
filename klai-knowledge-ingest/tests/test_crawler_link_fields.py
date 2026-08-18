@@ -29,7 +29,11 @@ def _make_mock_conn():
 def _make_crawl_result(
     url: str = "https://example.com/a",
     success: bool = True,
-    text: str = "Some markdown content for testing",
+    # 2026-08-18 stop-the-bleeding fix: content-length gate
+    # (settings.ingest_min_content_length) now skips persistence below
+    # threshold. Padded well above default (150 chars) so these link-graph
+    # tests keep exercising the ingest path, not the new short-content skip.
+    text: str = "Some markdown content for testing. " * 6,
     links: dict | None = None,
 ) -> CrawlResult:
     return CrawlResult(
