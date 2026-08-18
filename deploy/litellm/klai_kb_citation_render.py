@@ -17,6 +17,12 @@ from klai_citations import (
 )
 from klai_kb_answer_policy import strict_kb_unavailable_message
 from klai_kb_chat_mode import prompt_mode_is_known, prompt_mode_is_strict
+# Cross-module reuse of a "private" helper is intentional here: the footer
+# echoes the same user/caller-controlled sub-question text that the prompt
+# builder echoes into the system prompt, and both call sites need the exact
+# same prompt-injection hardening (strip brackets, collapse whitespace, cap
+# length). Duplicating the sanitizer would risk the two copies drifting.
+from klai_kb_context_prompt import _sanitize_question_echo
 from klai_kb_traceability import dedupe_strings
 from klai_kb_urls import normalise_guard_url
 from klai_litellm_response import (
@@ -33,6 +39,13 @@ from klai_pasted_correspondence import (
 )
 
 _STREAM_LINK_GUARD_TAIL_CHARS = 16
+
+# A message with dozens of unchecked sub-questions (e.g. a pasted FAQ list)
+# would otherwise dominate the visible footer. Show individual questions for
+# at most this many; the rest collapse into an "and N more" tail. Shorter
+# than klai_kb_context_prompt.MAX_UNCHECKED_QUESTIONS_SHOWN (6) on purpose —
+# this is a user-facing summary line, not the full per-question prompt echo.
+_FOOTER_MAX_UNCHECKED_SHOWN = 5
 
 
 @dataclass
@@ -491,8 +504,16 @@ def _append_visible_sources_section(
 
 
 def _has_visible_agent_activity(kb_meta: dict[str, Any] | None) -> bool:
-    if not isinstance(kb_meta, dict) or kb_meta.get("gate_bypassed"):
+    if not isinstance(kb_meta, dict):
         return False
+    if kb_meta.get("gate_bypassed") and not kb_meta.get("unchecked_questions"):
+        return False
+    # Deterministic backstop (Fix I): questions beyond the fan-out cap must
+    # always surface in the visible footer, even when the rest of kb_meta is
+    # otherwise empty (e.g. no chunks, no sources) — the model's own prompt
+    # instruction to mention them is not a guarantee.
+    if kb_meta.get("unchecked_questions"):
+        return True
     has_kb_trace_labels = bool(
         _format_kb_scope_text(kb_meta)
         or _format_limited_label_list(kb_meta.get("kbs_with_results"))
@@ -597,6 +618,30 @@ def _format_visible_agent_activity(
             if failed:
                 line += f", {failed} could not be checked"
         lines.append(line + ".")
+
+    # Deterministic backstop (Fix I): questions beyond the fan-out cap were
+    # never searched at all. The prompt asks the model to mention this, but
+    # that is not a guarantee — the application-rendered footer is the
+    # code-enforced fallback, mirroring the pattern that closed the original
+    # hallucination incident (never trust prompt-only obedience for a hard
+    # coverage guarantee).
+    unchecked_questions = kb_meta.get("unchecked_questions")
+    if isinstance(unchecked_questions, list) and unchecked_questions:
+        shown = unchecked_questions[:_FOOTER_MAX_UNCHECKED_SHOWN]
+        remainder = len(unchecked_questions) - len(shown)
+        sanitized = [
+            sanitized_question
+            for question in shown
+            if (sanitized_question := _sanitize_question_echo(str(question)))
+        ]
+        joined = "; ".join(sanitized)
+        if language == "nl":
+            line = f"- Niet apart doorzocht (limiet bereikt): {joined}"
+            line += f"; en {remainder} meer." if remainder > 0 else "."
+        else:
+            line = f"- Not searched separately (limit reached): {joined}"
+            line += f"; and {remainder} more." if remainder > 0 else "."
+        lines.append(line)
 
     kb_scope_text = _format_kb_scope_text(kb_meta, language=language)
     if kb_scope_text:

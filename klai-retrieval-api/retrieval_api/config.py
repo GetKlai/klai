@@ -31,6 +31,13 @@ class Settings(BaseSettings):
     # Multi-part fan-out: chunks served per sub-question. Keeps the merged
     # context bounded (6 sub-questions x 4 chunks max).
     sub_query_top_k: int = 4
+    # Multi-part fan-out: bounds how many full sub-question pipelines
+    # (embed + qdrant + graphiti + rerank) run concurrently within ONE
+    # request's fan-out. The reranker is a single shared GPU instance
+    # (infinity_reranker_url, ~96ms/20 docs at normal single-query load);
+    # an unbounded gather() over up to MAX_SUB_QUESTIONS (6) sub-questions
+    # would burst that many full pipelines at the reranker at once.
+    sub_query_max_concurrent: int = 3
 
     sparse_sidecar_url: str = "http://172.18.0.1:8001"
     sparse_sidecar_timeout: float = 5.0

@@ -1019,6 +1019,23 @@ class KlaiKnowledgeHook(CustomLogger):
             )
             _append_final_language_reminder(messages, include_kb_reminder=False)
             data["messages"] = messages
+            # @MX:NOTE: render_mode must stay None for the common
+            # gate_bypassed-without-unchecked-questions path (the vast
+            # majority of chats with no KB scope) — computing it
+            # unconditionally would force data["stream"] = False on every
+            # such request. Only when unchecked_questions is non-empty does
+            # the streaming iterator hook need a real render_mode to avoid
+            # short-circuiting before the footer can render. See the
+            # `configured-but-never-wired` pitfall class for why this must
+            # be verified against the real hook flow, not a hand-built
+            # kb_meta in a test.
+            render_mode = None
+            if unchecked_questions:
+                original_stream = data.get("stream")
+                render_strategy = _select_kb_render_strategy(original_stream)
+                if render_strategy.force_non_streaming:
+                    data["stream"] = False
+                render_mode = render_strategy.mode
             answer_policy = KbAnswerPolicy(
                 state="gate_bypassed",
                 prompt_mode=chat_retrieval_policy.prompt_mode,
@@ -1033,6 +1050,8 @@ class KlaiKnowledgeHook(CustomLogger):
                 retrieval_request_id=retrieval_request_id,
                 kb_scope_mode=kb_scope_mode,
                 kbs_in_scope=kbs_in_scope,
+                unchecked_questions=unchecked_questions or None,
+                render_mode=render_mode,
             )
             return data
 
@@ -1493,7 +1512,9 @@ class KlaiKnowledgeHook(CustomLogger):
 
     async def async_post_call_success_hook(self, data, user_api_key_dict, response):
         kb_meta = data.get("metadata", {}).get("_klai_kb_meta")
-        if kb_meta and not kb_meta.get("gate_bypassed"):
+        if kb_meta and (
+            not kb_meta.get("gate_bypassed") or kb_meta.get("unchecked_questions")
+        ):
             stats = _compose_non_streaming_kb_response(response, kb_meta)
             _log_kb_citation_render(logger, kb_meta, stats, stream=False)
             logger.info(
@@ -1511,7 +1532,7 @@ class KlaiKnowledgeHook(CustomLogger):
         kb_meta = request_data.get("metadata", {}).get("_klai_kb_meta")
         if (
             not kb_meta
-            or kb_meta.get("gate_bypassed")
+            or (kb_meta.get("gate_bypassed") and not kb_meta.get("unchecked_questions"))
             or not _is_streaming_kb_render_mode(kb_meta.get("render_mode"))
         ):
             async for item in response:

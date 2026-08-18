@@ -172,6 +172,15 @@ async def _retrieve_sub_queries(
     t0 = time.perf_counter()
     per_query_top_k = max(1, min(req.top_k, settings.sub_query_top_k))
 
+    # Bounds how many sub-question pipelines run concurrently WITHIN this
+    # one request's fan-out — created fresh per call so different users'
+    # requests never contend with each other, only the sub-questions of the
+    # SAME message do. See Settings.sub_query_max_concurrent for why: the
+    # reranker is one shared GPU instance and an unbounded gather() over up
+    # to MAX_SUB_QUESTIONS (6) sub-questions would burst it with that many
+    # full pipelines (embed + qdrant + graphiti + rerank) at once.
+    semaphore = asyncio.Semaphore(settings.sub_query_max_concurrent)
+
     async def _one(sub_query: str) -> RetrieveResponse:
         sub_req = req.model_copy(
             update={
@@ -180,16 +189,25 @@ async def _retrieve_sub_queries(
                 # them), but a question like "En hoe lang duurt het?" still
                 # needs coreference resolution against conversation_history
                 # (already carried on ``req`` and preserved by model_copy)
-                # to resolve "het". ``None`` lets retrieval-api's own
-                # coreference step run per sub-question instead of treating
-                # the raw text as already-resolved.
-                "raw_query": None,
+                # to resolve "het". ``coreference_resolved: None`` lets
+                # retrieval-api's own coreference step run per sub-question
+                # instead of treating the raw text as already-resolved.
+                # ``raw_query`` is set to the pre-coreference sub-question
+                # text itself (not None): the existing logic in
+                # ``retrieve()`` only activates the extra literal-term RRF
+                # leg when ``raw_query != query_resolved`` — so this is a
+                # no-op when this sub-question's own coreference step makes
+                # no change (same behaviour as before), but if it DOES
+                # rewrite, the raw leg can still recover exact terms the
+                # rewrite dropped.
+                "raw_query": sub_query,
                 "coreference_resolved": None,
                 "sub_queries": None,
                 "top_k": per_query_top_k,
             }
         )
-        return await retrieve(sub_req, request, _auth=auth)
+        async with semaphore:
+            return await retrieve(sub_req, request, _auth=auth)
 
     # Each recursive ``retrieve()`` call below would otherwise emit its own
     # knowledge.queried product event — 6 events for one user question. Mark
@@ -450,7 +468,9 @@ async def retrieve(
         decision_record["coreference_ms"] = 0.0
     else:
         t_coref = time.perf_counter()
-        query_resolved = await coreference.resolve(req.query, req.conversation_history)
+        query_resolved = await coreference.resolve(
+            req.query, req.conversation_history, telemetry_level=effective_level
+        )
         coref_ms = (time.perf_counter() - t_coref) * 1000
         step_latency_seconds.labels(step="coref").observe(time.perf_counter() - t_coref)
         decision_record["coreference_rewrite"] = {

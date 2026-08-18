@@ -78,8 +78,15 @@ MULTI_QUESTION_FANOUT_GUARD_TEXT = (
 
 MAX_SUB_QUESTIONS = 6
 
+# CJK-pasted question lists use the full-width question mark (U+FF1F, "？")
+# instead of (or alongside) the ASCII "?". Recognized everywhere the ASCII
+# mark is, so a pasted Chinese/Japanese FAQ list splits the same way an
+# ASCII one does.
+_FULL_WIDTH_QUESTION_MARK = "？"
+_QUESTION_MARK_CHARS = "?" + _FULL_WIDTH_QUESTION_MARK
+
 _LEADING_LIST_MARKER_RE = re.compile(r"^\s*(?:[-*+•]|\d{1,3}[.)])\s*")
-_QUESTION_SEGMENT_RE = re.compile(r"[^?]+\?")
+_QUESTION_SEGMENT_RE = re.compile(r"[^?？]+[?？]")
 _MIN_SUB_QUESTION_CHARS = 8
 _MAX_SUB_QUESTION_CHARS = 300
 
@@ -88,7 +95,7 @@ def is_multi_question_query(query: object) -> bool:
     """Return whether the user message asks several distinct questions."""
     if not isinstance(query, str):
         return False
-    return query.count("?") >= 2
+    return sum(query.count(mark) for mark in _QUESTION_MARK_CHARS) >= 2
 
 
 def split_sub_questions(query: object, max_questions: int | None = None) -> list[str]:
@@ -119,7 +126,10 @@ def split_sub_questions(query: object, max_questions: int | None = None) -> list
     questions: list[str] = []
     for line in query.splitlines():
         stripped = _LEADING_LIST_MARKER_RE.sub("", line.strip())
-        if stripped.endswith("?") and len(stripped) >= _MIN_SUB_QUESTION_CHARS:
+        if (
+            stripped.endswith(("?", _FULL_WIDTH_QUESTION_MARK))
+            and len(stripped) >= _MIN_SUB_QUESTION_CHARS
+        ):
             questions.append(stripped[-_MAX_SUB_QUESTION_CHARS:])
     if len(questions) < 2:
         segments = [
@@ -132,7 +142,7 @@ def split_sub_questions(query: object, max_questions: int | None = None) -> list
             if len(segment) >= _MIN_SUB_QUESTION_CHARS
         ]
     if len(questions) < 2:
-        if "?" not in query:
+        if not any(mark in query for mark in _QUESTION_MARK_CHARS):
             list_marker_questions: list[str] = []
             for line in query.splitlines():
                 raw = line.strip()

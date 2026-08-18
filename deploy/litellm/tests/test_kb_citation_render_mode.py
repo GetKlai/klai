@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from klai_kb_citation_render import compose_non_streaming_kb_response
+from klai_kb_citation_render import (
+    compose_non_streaming_kb_response,
+    compose_streaming_kb_response,
+)
 
 
 def _response(content: str) -> dict:
@@ -121,3 +124,73 @@ def test_visible_footer_keeps_dutch_for_dutch_user_query():
     assert "**Bronnen**" in content
     assert "**Agent activiteit**" in content
     assert "Kennisbank geraadpleegd" in content
+
+
+def _fanout_meta(**overrides) -> dict:
+    """kb_meta for a normal (non-strict) fan-out answer with a real chunk,
+    so both the non-streaming and streaming composers take the "answer with
+    sources" path rather than the strict-refusal path."""
+    return _meta(
+        chat_retrieval_prompt_mode="open_kb",
+        no_citable_sources=False,
+        citation_chunks=[
+            {
+                "text": "Meldingen worden bij een storing niet opnieuw aangeboden.",
+                "source_url": "https://docs.klai.example/meldingen",
+                "metadata": {"title": "Gespreksmeldingen"},
+                "chunk_id": "c1",
+                "reranker_score": 0.62,
+            }
+        ],
+        trusted_sources=[
+            {
+                "title": "Gespreksmeldingen",
+                "url": "https://docs.klai.example/meldingen",
+            }
+        ],
+        chunks_injected=1,
+        retrieval_ms=12,
+        citable_sources_count=1,
+        confidence_band="medium",
+        **overrides,
+    )
+
+
+def test_non_streaming_response_includes_unchecked_questions_footer():
+    """Fix I (non-streaming path): the deterministic footer must list
+    unchecked sub-questions regardless of what the model itself wrote."""
+    response = _response("De meldingen worden niet opnieuw aangeboden.")
+
+    compose_non_streaming_kb_response(
+        response,
+        _fanout_meta(unchecked_questions=["Vraag zeven?", "Vraag acht?"]),
+    )
+
+    content = response["choices"][0]["message"]["content"]
+    assert "- Niet apart doorzocht (limiet bereikt): Vraag zeven?; Vraag acht?." in content
+
+
+def test_streaming_response_includes_unchecked_questions_footer():
+    """Fix I (streaming path): ``_append_visible_sources_section`` is the
+    single call-point shared by both ``compose_non_streaming_kb_response``
+    and ``compose_streaming_kb_response`` — this proves the deterministic
+    unchecked-questions footer also reaches the streamed final chunk, not
+    just the non-streaming response."""
+    kb_meta = _fanout_meta(unchecked_questions=["Vraag zeven?", "Vraag acht?"])
+
+    first = {
+        "choices": [
+            {"delta": {"content": "De meldingen worden "}, "finish_reason": None}
+        ]
+    }
+    final = {
+        "choices": [
+            {"delta": {"content": "niet opnieuw aangeboden."}, "finish_reason": "stop"}
+        ]
+    }
+
+    compose_streaming_kb_response(first, kb_meta)
+    compose_streaming_kb_response(final, kb_meta, flush_stream=True)
+
+    content = final["choices"][0]["delta"]["content"]
+    assert "- Niet apart doorzocht (limiet bereikt): Vraag zeven?; Vraag acht?." in content

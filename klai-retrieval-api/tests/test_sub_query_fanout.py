@@ -10,8 +10,9 @@ errors, never as "not in the knowledge base".
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -150,7 +151,16 @@ class TestRetrieveSubQueries:
         """Round-3 Fix 1: coreference_resolved is None (not True) so
         retrieval-api's own coreference step runs per sub-question against
         the carried conversation_history — a sub-question like "En hoe lang
-        duurt het?" needs that resolution to know what "het" refers to."""
+        duurt het?" needs that resolution to know what "het" refers to.
+
+        Fix 2 (feedback-chat-context PR): ``raw_query`` carries the
+        pre-coreference sub-question text itself (not None) so the raw-term
+        RRF leg in ``retrieve()`` can still fire if this sub-question's own
+        coreference step rewrites it — see
+        ``TestSubQuerySharesRawQueryRRFLeg.test_raw_leg_activates_when_sub_query_coreference_rewrites``.
+        Setting it equal to ``query`` here is a no-op until coreference
+        changes ``query_resolved``.
+        """
         captured = []
 
         async def fake_retrieve(sub_req, request, _auth=None):
@@ -165,7 +175,8 @@ class TestRetrieveSubQueries:
 
         assert all(sub_req.sub_queries is None for sub_req in captured)
         assert all(sub_req.coreference_resolved is None for sub_req in captured)
-        assert all(sub_req.raw_query is None for sub_req in captured)
+        assert [sub_req.raw_query for sub_req in captured] == ["vraag een", "vraag twee"]
+        assert all(sub_req.raw_query == sub_req.query for sub_req in captured)
         assert all(
             sub_req.top_k == retrieve_module.settings.sub_query_top_k for sub_req in captured
         )
@@ -478,6 +489,93 @@ class TestSubQueryTopKRespectsOne:
         assert all(sub_req.top_k == 1 for sub_req in captured)
 
 
+class TestSubQueryBoundedConcurrency:
+    @pytest.mark.asyncio
+    async def test_concurrency_never_exceeds_configured_limit(self, monkeypatch):
+        """Fix II: sub_query_max_concurrent bounds how many full retrieval
+        pipelines (embed + qdrant + graphiti + rerank) run at once WITHIN
+        one request's fan-out — protects the single shared GPU reranker
+        from a burst of up to MAX_SUB_QUESTIONS (6) simultaneous pipelines.
+        Six sub-questions, each artificially delayed, must never show more
+        than the configured limit active at the same time."""
+        monkeypatch.setattr(retrieve_module.settings, "sub_query_max_concurrent", 2)
+
+        active = 0
+        max_active = 0
+        lock = asyncio.Lock()
+
+        async def fake_retrieve(sub_req, request, _auth=None):
+            nonlocal active, max_active
+            async with lock:
+                active += 1
+                max_active = max(max_active, active)
+            await asyncio.sleep(0.02)
+            async with lock:
+                active -= 1
+            return _response("medium", [], [])
+
+        monkeypatch.setattr(retrieve_module, "retrieve", fake_retrieve)
+
+        await retrieve_module._retrieve_sub_queries(
+            _request([f"vraag {i}?" for i in range(1, 7)]), MagicMock(), MagicMock()
+        )
+
+        assert max_active <= 2
+
+    @pytest.mark.asyncio
+    async def test_semaphore_does_not_change_results_or_order(self, monkeypatch):
+        """The semaphore only bounds concurrency — it must not change
+        results, ordering, or which sub-question maps to which coverage
+        entry. A tight limit (1 == fully serial) must produce identical
+        output to the unbounded case."""
+        monkeypatch.setattr(retrieve_module.settings, "sub_query_max_concurrent", 1)
+
+        responses = {
+            "vraag over meldingen": _response(
+                "high", [_item("E1", "c-meldingen")], [_source("S1", ["E1"])]
+            ),
+            "vraag over responstijd": _response("low", [], []),
+        }
+
+        async def fake_retrieve(sub_req, request, _auth=None):
+            return responses[sub_req.query]
+
+        monkeypatch.setattr(retrieve_module, "retrieve", fake_retrieve)
+
+        result = await retrieve_module._retrieve_sub_queries(
+            _request(["vraag over meldingen", "vraag over responstijd"]),
+            MagicMock(),
+            MagicMock(),
+        )
+
+        assert [sub.index for sub in result.sub_results] == [1, 2]
+        assert result.sub_results[0].confidence_band == "high"
+        assert result.sub_results[0].evidence_count == 1
+        assert result.sub_results[1].confidence_band == "low"
+        assert result.sub_results[1].evidence_count == 0
+        assert result.confidence_band == "high"
+        assert [item.evidence_id for item in result.evidence_pack.items] == ["Q1E1"]
+
+
+class TestSubQueryMaxConcurrentConfig:
+    def test_default_is_three(self):
+        from retrieval_api.config import Settings
+
+        assert Settings().sub_query_max_concurrent == 3
+
+    def test_env_override(self, monkeypatch):
+        monkeypatch.setenv("SUB_QUERY_MAX_CONCURRENT", "5")
+        from importlib import reload
+
+        import retrieval_api.config as cfg_mod
+
+        reload(cfg_mod)
+        try:
+            assert cfg_mod.Settings().sub_query_max_concurrent == 5
+        finally:
+            reload(cfg_mod)
+
+
 class TestFanoutRunsAfterIdentityCheck:
     def test_cross_user_mismatch_with_subqueries_returns_403_not_502(self):
         """Fix C.1: the fan-out branch is positioned AFTER
@@ -505,3 +603,127 @@ class TestFanoutRunsAfterIdentityCheck:
             )
         assert resp.status_code == 403
         assert resp.json()["detail"] == {"error": "user_mismatch"}
+
+
+class TestSubQuerySharesRawQueryRRFLeg:
+    """Fix 2 (feedback-chat-context PR): each sub-question's recursive
+    ``retrieve()`` call now carries its own pre-coreference text as
+    ``raw_query`` (see ``_retrieve_sub_queries`` in retrieve.py). The
+    existing ``raw_query`` logic in ``retrieve()`` only activates the extra
+    literal-term RRF leg when ``raw_query != query_resolved`` — these tests
+    pin both halves of that contract at the decision_record level: no
+    behaviour change when a sub-question's own coreference step changes
+    nothing, and the raw leg firing when it does.
+    """
+
+    @staticmethod
+    def _decision_records(caplog):
+        return [
+            record
+            for record in caplog.records
+            if "retrieval_decision_record" in record.getMessage()
+        ]
+
+    def test_raw_leg_not_activated_when_sub_query_coreference_is_a_noop(self, client, caplog):
+        """No conversation_history → ``coreference.resolve`` short-circuits
+        (returns the query unchanged) for each sub-question without an LLM
+        call — so ``raw_query == query_resolved`` and the existing
+        ``raw_query_leg_applied`` behaviour in decision_record must stay
+        False, exactly as before this fix."""
+        import logging
+
+        caplog.set_level(logging.INFO)
+
+        with (
+            patch(
+                "retrieval_api.api.retrieve.embed_single",
+                new_callable=AsyncMock,
+                return_value=[0.1, 0.2, 0.3],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_sparse",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "retrieval_api.api.retrieve.gate.should_bypass",
+                new_callable=AsyncMock,
+                return_value=(True, 0.9),
+            ),
+        ):
+            resp = client.post(
+                "/retrieve",
+                json={
+                    "query": "volledige meerdelige vraag",
+                    "org_id": "org-1",
+                    "sub_queries": [
+                        "Wat kost de Salesforce integratie?",
+                        "Werkt het ook met Outlook?",
+                    ],
+                },
+            )
+
+        assert resp.status_code == 200
+        decision_records = self._decision_records(caplog)
+        assert len(decision_records) == 2
+        for record in decision_records:
+            assert record.msg["raw_query_leg_applied"] is False
+
+    def test_raw_leg_activates_when_sub_query_coreference_rewrites(self, client, caplog):
+        """A sub-question whose own coreference step rewrites the text
+        (e.g. resolving a product name reference from conversation_history)
+        must still recover exact terms via the raw-query RRF leg — that is
+        the whole point of carrying ``raw_query`` on the sub-request instead
+        of ``None``."""
+        import logging
+
+        caplog.set_level(logging.INFO)
+
+        async def _rewrite(
+            query: str, history: list[dict], *, telemetry_level: str = "shadow"
+        ) -> str:
+            return f"{query} Salesforce CRM koppeling"
+
+        with (
+            patch(
+                "retrieval_api.api.retrieve.coreference.resolve",
+                new_callable=AsyncMock,
+                side_effect=_rewrite,
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_single",
+                new_callable=AsyncMock,
+                return_value=[0.1, 0.2, 0.3],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_sparse",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "retrieval_api.api.retrieve.gate.should_bypass",
+                new_callable=AsyncMock,
+                return_value=(True, 0.9),
+            ),
+        ):
+            resp = client.post(
+                "/retrieve",
+                json={
+                    "query": "volledige meerdelige vraag",
+                    "org_id": "org-1",
+                    "conversation_history": [
+                        {"role": "user", "content": "We gebruiken Salesforce."},
+                        {"role": "assistant", "content": "Begrepen."},
+                    ],
+                    "sub_queries": [
+                        "Wat kost de integratie?",
+                        "Werkt het ook met Outlook?",
+                    ],
+                },
+            )
+
+        assert resp.status_code == 200
+        decision_records = self._decision_records(caplog)
+        assert len(decision_records) == 2
+        for record in decision_records:
+            assert record.msg["raw_query_leg_applied"] is True
