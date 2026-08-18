@@ -98,11 +98,15 @@ def split_sub_questions(query: object, max_questions: int | None = None) -> list
     per line, so line-shaped questions win; inline prose falls back to
     ``?``-terminated segments; a numbered/bulleted list with no ``?`` anywhere
     in the message falls back to list-marker lines (e.g. a pasted procedure
-    written as imperative steps). The list-marker fallback only fires when NO
-    line in the message ends with ``?`` — a genuine mixed message (one real
-    question plus unrelated list lines) must never be split. Returns ``[]``
-    unless at least two usable questions are found — single questions keep
-    the normal retrieval path.
+    written as imperative steps). The list-marker fallback only fires when the
+    message contains NO ``?`` character AT ALL — not merely "no line ends
+    with ?". A message like "Can you help? Details:\n1. First\n2. Second" has
+    its one real question mid-line (not line-terminal), so a line-terminal-
+    only check would wrongly treat this as list-shaped and split it, losing
+    the real question. Checking the whole message for any ``?`` keeps a
+    genuine mixed message (one real question plus unrelated list lines)
+    intact. Returns ``[]`` unless at least two usable questions are found —
+    single questions keep the normal retrieval path.
 
     ``max_questions`` caps the returned list. ``None`` (the default) returns
     every usable question found, uncapped: callers that need a bounded subset
@@ -128,10 +132,7 @@ def split_sub_questions(query: object, max_questions: int | None = None) -> list
             if len(segment) >= _MIN_SUB_QUESTION_CHARS
         ]
     if len(questions) < 2:
-        any_question_mark_line = any(
-            line.strip().endswith("?") for line in query.splitlines()
-        )
-        if not any_question_mark_line:
+        if "?" not in query:
             list_marker_questions: list[str] = []
             for line in query.splitlines():
                 raw = line.strip()

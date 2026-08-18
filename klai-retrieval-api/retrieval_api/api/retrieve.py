@@ -176,10 +176,15 @@ async def _retrieve_sub_queries(
         sub_req = req.model_copy(
             update={
                 "query": sub_query,
-                # Sub-questions are standalone by contract; skip per-question
-                # coreference LLM calls and raw-query RRF legs.
+                # Sub-questions are standalone TEXT (splitting never rewrites
+                # them), but a question like "En hoe lang duurt het?" still
+                # needs coreference resolution against conversation_history
+                # (already carried on ``req`` and preserved by model_copy)
+                # to resolve "het". ``None`` lets retrieval-api's own
+                # coreference step run per sub-question instead of treating
+                # the raw text as already-resolved.
                 "raw_query": None,
-                "coreference_resolved": True,
+                "coreference_resolved": None,
                 "sub_queries": None,
                 "top_k": per_query_top_k,
             }
@@ -206,6 +211,7 @@ async def _retrieve_sub_queries(
     candidates_total = 0
     reranked_total = 0
     failures = 0
+    successful_bypassed_flags: list[bool] = []
     for (index, query), result in zip(sub_queries, results, strict=True):
         if isinstance(result, BaseException):
             # A 4xx from a sub-call is an auth/validation failure of the
@@ -229,6 +235,7 @@ async def _retrieve_sub_queries(
         pack = result.evidence_pack
         evidence_count = len(pack.items) if pack is not None else 0
         indexed_packs.append((index, pack))
+        successful_bypassed_flags.append(result.retrieval_bypassed)
         sub_results.append(
             SubQueryResult(
                 index=index,
@@ -253,6 +260,13 @@ async def _retrieve_sub_queries(
     overall_band = (
         max(covered_bands, key=lambda band: _BAND_RANK.get(band, 0)) if covered_bands else "unknown"
     )
+    # Aggregate retrieval_bypassed: True only when there is at least one
+    # successful sub-response AND every successful sub-response was
+    # gate-bypassed. A parent False with zero successes (all failed) is
+    # already unreachable here — the all-failures branch above raises 502
+    # first. Mixed bypassed/non-bypassed correctly stays False: real
+    # retrieval happened for at least one question.
+    all_bypassed = bool(successful_bypassed_flags) and all(successful_bypassed_flags)
     merged_pack = merge_evidence_packs(indexed_packs)
     retrieval_ms = (time.perf_counter() - t0) * 1000
     logger.info(
@@ -302,7 +316,7 @@ async def _retrieve_sub_queries(
 
     return RetrieveResponse(
         query_resolved=req.query,
-        retrieval_bypassed=False,
+        retrieval_bypassed=all_bypassed,
         chunks=merged_chunks,
         metadata=RetrieveMetadata(
             candidates_retrieved=candidates_total,

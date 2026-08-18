@@ -146,7 +146,11 @@ class TestRetrieveSubQueries:
         assert result.retrieval_bypassed is False
 
     @pytest.mark.asyncio
-    async def test_sub_query_uses_bounded_top_k_and_standalone_flags(self, monkeypatch):
+    async def test_sub_query_uses_bounded_top_k_and_lets_coreference_run(self, monkeypatch):
+        """Round-3 Fix 1: coreference_resolved is None (not True) so
+        retrieval-api's own coreference step runs per sub-question against
+        the carried conversation_history — a sub-question like "En hoe lang
+        duurt het?" needs that resolution to know what "het" refers to."""
         captured = []
 
         async def fake_retrieve(sub_req, request, _auth=None):
@@ -160,7 +164,7 @@ class TestRetrieveSubQueries:
         )
 
         assert all(sub_req.sub_queries is None for sub_req in captured)
-        assert all(sub_req.coreference_resolved is True for sub_req in captured)
+        assert all(sub_req.coreference_resolved is None for sub_req in captured)
         assert all(sub_req.raw_query is None for sub_req in captured)
         assert all(
             sub_req.top_k == retrieve_module.settings.sub_query_top_k for sub_req in captured
@@ -221,6 +225,74 @@ class TestRetrieveSubQueries:
 
         assert result.sub_results[0].retrieval_bypassed is False
         assert result.sub_results[1].retrieval_bypassed is True
+
+    @pytest.mark.asyncio
+    async def test_parent_retrieval_bypassed_true_when_all_sub_queries_bypassed(self, monkeypatch):
+        """Round-3 Fix 3: the merged RetrieveResponse's own retrieval_bypassed
+        must aggregate the sub-responses instead of being hardcoded False —
+        a fully gate-skipped fan-out (Open mode, no sub-question needed KB
+        lookup) must report bypassed=True at the parent level too."""
+
+        async def fake_retrieve(sub_req, request, _auth=None):
+            return _response("unknown", [], [], retrieval_bypassed=True)
+
+        monkeypatch.setattr(retrieve_module, "retrieve", fake_retrieve)
+
+        result = await retrieve_module._retrieve_sub_queries(
+            _request(["vraag een", "vraag twee"]), MagicMock(), MagicMock()
+        )
+
+        assert result.retrieval_bypassed is True
+
+    @pytest.mark.asyncio
+    async def test_parent_retrieval_bypassed_false_when_mixed(self, monkeypatch):
+        async def fake_retrieve(sub_req, request, _auth=None):
+            bypassed = sub_req.query == "meta vraag"
+            return _response(
+                "unknown" if bypassed else "medium", [], [], retrieval_bypassed=bypassed
+            )
+
+        monkeypatch.setattr(retrieve_module, "retrieve", fake_retrieve)
+
+        result = await retrieve_module._retrieve_sub_queries(
+            _request(["gewone vraag", "meta vraag"]), MagicMock(), MagicMock()
+        )
+
+        assert result.retrieval_bypassed is False
+
+    @pytest.mark.asyncio
+    async def test_parent_retrieval_bypassed_false_when_none_bypassed(self, monkeypatch):
+        async def fake_retrieve(sub_req, request, _auth=None):
+            return _response("medium", [], [], retrieval_bypassed=False)
+
+        monkeypatch.setattr(retrieve_module, "retrieve", fake_retrieve)
+
+        result = await retrieve_module._retrieve_sub_queries(
+            _request(["vraag een", "vraag twee"]), MagicMock(), MagicMock()
+        )
+
+        assert result.retrieval_bypassed is False
+
+    @pytest.mark.asyncio
+    async def test_parent_retrieval_bypassed_false_when_one_sub_query_failed(self, monkeypatch):
+        """A failed sub-question is not a 'successful bypass' — the parent
+        must not report bypassed=True just because the only SUCCESSFUL
+        sub-response happened to be bypassed while another one errored."""
+
+        async def fake_retrieve(sub_req, request, _auth=None):
+            if sub_req.query == "kapotte vraag":
+                raise RuntimeError("down")
+            return _response("unknown", [], [], retrieval_bypassed=True)
+
+        monkeypatch.setattr(retrieve_module, "retrieve", fake_retrieve)
+
+        result = await retrieve_module._retrieve_sub_queries(
+            _request(["goede vraag", "kapotte vraag"]), MagicMock(), MagicMock()
+        )
+
+        # Only one successful sub-response and it WAS bypassed — per the
+        # spec (>=1 success AND all successes bypassed), this is True.
+        assert result.retrieval_bypassed is True
 
 
 class TestSubQueryFourXXPassthrough:
