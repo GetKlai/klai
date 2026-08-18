@@ -2,7 +2,9 @@
 
 ## Deploy workflow
 
-After every commit to klai-portal:
+Never push automatically after a commit — only push and deploy when the user explicitly asks for it.
+
+When deploying:
 
 1. `git push`
 2. `gh run watch --exit-status` — wait for the GitHub Action to complete
