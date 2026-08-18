@@ -11,4 +11,4 @@ When a workflow requires user approval or a decision:
 - Wait for the user's text reply
 - Do NOT call AskUserQuestion
 
-This applies to all MoAI workflow phases including plan approval, quality gate decisions, and next step options.
+This applies to all workflow phases including plan approval, quality gate decisions, and next step options.

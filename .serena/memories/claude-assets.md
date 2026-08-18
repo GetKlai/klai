@@ -10,10 +10,8 @@ klai-website has its own `.claude/` at `/Users/mark/Server/projects/klai/klai-we
   agents/
     klai/       ← Klai-built agents (ceo-sparring, manager-learn)
     gtm/        ← GTM agents (blog-writer, seo-architect, etc.)
-    moai/       ← MoAI-ADK upstream reference agents
   commands/
     klai/       ← Klai slash commands (/sparring, /retro)
-    moai/       ← MoAI slash commands (/plan, /run, /sync, etc.)
   rules/
     klai/       ← Klai rules (paths: frontmatter triggers loading)
       confidence.md     ← always loaded
@@ -28,10 +26,8 @@ klai-website has its own `.claude/` at `/Users/mark/Server/projects/klai/klai-we
                docs.md, knowledge.md, python-services.md
       workflow/process-full.md
     gtm/        ← GTM rules (brand-voice, humanizer, mark-tone-of-voice)
-    moai/       ← MoAI core rules
   hooks/
     klai/       ← Klai hooks (confidence-check.py, domain-context-injection.sh, git-safety-guard.sh)
-    moai/       ← MoAI hooks
   skills/       ← Skill definitions
 ```
 

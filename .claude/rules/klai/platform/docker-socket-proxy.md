@@ -2,7 +2,6 @@
 paths:
   - "klai-portal/backend/**"
   - "deploy/docker-compose.yml"
-  - ".moai/specs/SPEC-*/plan.md"
 ---
 # docker-socket-proxy
 

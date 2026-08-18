@@ -40,7 +40,7 @@ in this repo only disables the keys that existed at the time it was written.
 2. Bump the `version:` field in our yaml to match the latest supported schema
    (current running version is shown in LibreChat startup logs as
    "Outdated Config version: X.Y.Z").
-3. Run `/moai workflow-dispatch deploy-librechat-config.yml` after merging
+3. Run `gh workflow run deploy-librechat-config.yml` after merging
    — the workflow regenerates per-tenant yaml + FLUSHALLs Redis + restarts
    every tenant container.
 

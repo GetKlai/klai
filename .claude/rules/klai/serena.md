@@ -49,7 +49,7 @@ Unscoped searches return thousands of matches — Serena truncates to useless ou
 |---|---|---|
 | `relative_path` | You know the directory/file | `"klai-portal/backend/app"` |
 | `paths_include_glob` | You know the file type | `"**/*.py"` |
-| `paths_exclude_glob` | Exclude noise directories | `"**/.moai/**"` |
+| `paths_exclude_glob` | Exclude noise directories | `"**/node_modules/**"` |
 | `restrict_search_to_code_files` | Only code symbols | `true` |
 
 **Decision tree:**
@@ -60,7 +60,7 @@ Unscoped searches return thousands of matches — Serena truncates to useless ou
 
 **If "answer is too long":** Do NOT raise `max_answer_chars`. Narrow with `relative_path`, `paths_include_glob`, or a more specific pattern.
 
-**Ignored directories:** `.moai/specs/`, `.workflow/`, `docs/specs/`, `docs/gtm/` are excluded from Serena searches. Use Grep or `read_file` for those.
+**Ignored directories:** `.workflow/`, `docs/specs/`, `docs/gtm/` are excluded from Serena searches. Use Grep or `read_file` for those.
 
 ## Before Editing Code
 
@@ -70,7 +70,7 @@ Unscoped searches return thousands of matches — Serena truncates to useless ou
 
 ## Delegating to Subagents
 
-MoAI subagents cannot access Serena tools. Use Serena first to gather context (signatures, structure, references), then include it in the subagent prompt.
+Subagents cannot access Serena tools. Use Serena first to gather context (signatures, structure, references), then include it in the subagent prompt.
 
 ## Memory Management
 

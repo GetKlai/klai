@@ -690,7 +690,7 @@ say "decrypt → modify → encrypt-in-place → mv", do exactly that — not
 a creative alternative with redirects or pipes.
 
 ## spec-discipline
-Before implementing a SPEC, read the full document in `.moai/specs/`
+Before implementing a SPEC, read the full document in `docs/specs/`
 or `.workflow/specs/`. Write down each constraint and how to verify it:
 image tags, resource limits, excluded services. Then during work:
 - If your architecture diverges from the SPEC — STOP. State the
@@ -850,9 +850,6 @@ the risk — the mess ships as-is.
   the worktree, replay the edits there.
 - Rule-of-thumb trigger: if the SPEC touches more than 3 files, worktree.
   Below that, a normal feature branch is fine.
-
-See `.claude/rules/moai/workflow/worktree-integration.md` for the decision
-tree and `worktree add` flags.
 
 ## worktree-teardown-after-merge (HIGH)
 After `gh pr merge --delete-branch` from inside a worktree, the LOCAL-side

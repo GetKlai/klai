@@ -32,7 +32,7 @@ if ! git rev-parse --show-toplevel >/dev/null 2>&1; then
 fi
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
-if [ ! -d "$REPO_ROOT/.moai" ] || [ ! -d "$REPO_ROOT/klai-portal" ]; then
+if [ ! -d "$REPO_ROOT/klai-portal" ] || [ ! -f "$REPO_ROOT/Makefile" ]; then
     # Not the klai repo
     exit 0
 fi
