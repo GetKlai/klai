@@ -104,7 +104,7 @@ class TestCoreference:
             assert result == "What about that?"
 
     @pytest.mark.asyncio
-    async def test_destructive_rewrite_hijacking_topic_returns_original(self, caplog):
+    async def test_destructive_rewrite_hijacking_topic_returns_original(self, capsys):
         """Fix 1 (feedback-chat-context PR): retrieval-api's own coreference
         resolver did not have the destructive-rewrite guard that
         ``deploy/litellm/klai_kb_query_rewrite.py`` already had — this is the
@@ -112,10 +112,16 @@ class TestCoreference:
         self-contained question ("Wat weet je over klai?") rewritten by the
         LLM into an unrelated historical topic (Yealink phone configuration).
         The shared guard (``klai_citations.query_guard``) must reject this
-        rewrite here too and return the original query."""
-        import logging
+        rewrite here too and return the original query.
 
-        caplog.set_level(logging.WARNING)
+        Uses ``capsys`` (not ``caplog``) because ``setup_logging()`` clears
+        the root logger's handler list — including any handler pytest's
+        ``caplog`` fixture already attached — and re-attaches its own
+        ``StreamHandler(sys.stdout)``. See the ``log_capture`` fixture in
+        ``tests/test_search_error_handling.py`` for the same constraint."""
+        from retrieval_api.logging_setup import setup_logging
+
+        setup_logging()
 
         with patch(
             "retrieval_api.services.coreference._call_llm",
@@ -130,8 +136,66 @@ class TestCoreference:
             )
 
         assert result == "Wat weet je over klai?"
-        assert "coreference_destructive_rewrite_blocked" in caplog.text
-        assert "klai" in caplog.text.lower()
+        out = capsys.readouterr().out
+        assert "coreference_destructive_rewrite_blocked" in out
+
+    @pytest.mark.asyncio
+    async def test_destructive_rewrite_blocked_full_telemetry_logs_raw_query(self, capsys):
+        """Privacy fix (semgrep python-logger-credential-disclosure):
+        ``telemetry_level="full"`` is the ONLY level allowed to see the literal
+        query text in the ``coreference_destructive_rewrite_blocked`` log,
+        mirroring the ``query_rewrite_destructive_blocked`` precedent in
+        ``deploy/litellm/klai_knowledge.py``."""
+        from retrieval_api.logging_setup import setup_logging
+
+        setup_logging()
+
+        with patch(
+            "retrieval_api.services.coreference._call_llm",
+            new_callable=AsyncMock,
+            return_value=(
+                "Hoe stel ik een Yealink toestel in en welke instellingen zijn er mogelijk?"
+            ),
+        ):
+            result = await resolve(
+                "Wat weet je over klai?",
+                [{"role": "user", "content": "Hoe stel ik mijn Yealink toestel in?"}],
+                telemetry_level="full",
+            )
+
+        assert result == "Wat weet je over klai?"
+        out = capsys.readouterr().out
+        assert "coreference_destructive_rewrite_blocked" in out
+        assert "Wat weet je over klai?" in out
+        assert "<redacted>" not in out
+
+    @pytest.mark.asyncio
+    async def test_destructive_rewrite_blocked_shadow_telemetry_redacts_query(self, capsys):
+        """Default (``shadow``) telemetry_level MUST NOT leak the raw query
+        text into logs — this is the privacy regression the semgrep finding
+        caught."""
+        from retrieval_api.logging_setup import setup_logging
+
+        setup_logging()
+
+        with patch(
+            "retrieval_api.services.coreference._call_llm",
+            new_callable=AsyncMock,
+            return_value=(
+                "Hoe stel ik een Yealink toestel in en welke instellingen zijn er mogelijk?"
+            ),
+        ):
+            result = await resolve(
+                "Wat weet je over klai?",
+                [{"role": "user", "content": "Hoe stel ik mijn Yealink toestel in?"}],
+                # telemetry_level omitted — defaults to "shadow"
+            )
+
+        assert result == "Wat weet je over klai?"
+        out = capsys.readouterr().out
+        assert "coreference_destructive_rewrite_blocked" in out
+        assert "Wat weet je over klai?" not in out
+        assert "<redacted>" in out
 
     @pytest.mark.asyncio
     async def test_rewrite_preserving_subject_is_not_blocked(self):

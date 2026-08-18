@@ -679,7 +679,9 @@ class TestSubQuerySharesRawQueryRRFLeg:
 
         caplog.set_level(logging.INFO)
 
-        async def _rewrite(query: str, history: list[dict]) -> str:
+        async def _rewrite(
+            query: str, history: list[dict], *, telemetry_level: str = "shadow"
+        ) -> str:
             return f"{query} Salesforce CRM koppeling"
 
         with (

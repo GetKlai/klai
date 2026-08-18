@@ -468,7 +468,9 @@ async def retrieve(
         decision_record["coreference_ms"] = 0.0
     else:
         t_coref = time.perf_counter()
-        query_resolved = await coreference.resolve(req.query, req.conversation_history)
+        query_resolved = await coreference.resolve(
+            req.query, req.conversation_history, telemetry_level=effective_level
+        )
         coref_ms = (time.perf_counter() - t_coref) * 1000
         step_latency_seconds.labels(step="coref").observe(time.perf_counter() - t_coref)
         decision_record["coreference_rewrite"] = {
