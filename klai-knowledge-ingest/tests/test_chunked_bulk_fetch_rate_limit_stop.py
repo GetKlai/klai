@@ -96,11 +96,31 @@ async def test_per_url_429_in_chunk_one_stops_chunk_two_and_three(
 
 
 @pytest.mark.asyncio
-async def test_blocked_anti_bot_signal_also_stops_further_chunks(
+async def test_single_blocked_anti_bot_signal_no_longer_stops_further_chunks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """BLOCKED_ANTI_BOT is the sibling trigger to RATE_LIMITED — both mean
-    "stop asking this site right now"."""
+    """2026-08-18 (antibot-classification-and-threshold): BLOCKED_ANTI_BOT
+    used to be RATE_LIMITED's sibling immediate-stop trigger — a single
+    signal aborted every remaining chunk. A production audit of 100
+    historical BLOCKED_ANTI_BOT outcomes (91 misclassifications) and 60
+    crawl jobs (three lost 216/192/17 URLs each to only 4-5 false
+    signals) proved that reaction disproportionate. BLOCKED_ANTI_BOT now
+    only stops once a crawl-wide ratio threshold is crossed (see
+    tests/test_chunked_bulk_fetch_antibot_ratio_stop.py) — RATE_LIMITED
+    is unaffected and still stops on the very first signal, since a 429
+    is the target site explicitly telling us to back off, not a guess.
+    One signal on two URLs (50%) stays well under the default
+    ``crawl_antibot_stop_min_count`` floor (3), so chunking continues."""
+    # Chunking no longer stops after chunk 1, so a second chunk's pacing
+    # gap would otherwise really sleep — same virtual-clock pattern as
+    # test_no_stop_when_no_chunk_observes_rate_limit below.
+    monkeypatch.setattr(crawl4ai_client, "_pacing_monotonic", lambda: 0.0)
+
+    async def _no_sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(crawl4ai_client, "_pacing_sleep", _no_sleep)
+
     calls: list[list[str]] = []
 
     async def _fake_crawl_sync(
@@ -133,8 +153,9 @@ async def test_blocked_anti_bot_signal_also_stops_further_chunks(
         rate_limit=_ONE_URL_PER_CHUNK_RATE_LIMIT,
     )
 
-    assert calls == [["https://example.com/1"]]
-    assert fetch.not_attempted == ["https://example.com/2"]
+    assert calls == [["https://example.com/1"], ["https://example.com/2"]]
+    assert fetch.stopped_early is False
+    assert fetch.not_attempted == []
 
 
 @pytest.mark.asyncio
