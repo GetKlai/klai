@@ -1969,13 +1969,21 @@ def test_seed_crawl_page_keeps_the_default_ninety_second_timeout() -> None:
 
 
 @pytest.mark.asyncio
-async def test_crawl_site_rate_limit_reaches_the_crawl4ai_payload(
+async def test_crawl_site_rate_limit_never_reaches_crawl4ai_payload_as_pacing_keys(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """2026-08-17 (intermedia.com incident): ``crawl_site(rate_limit=...)``
-    must actually reach the ``POST /crawl`` payload's crawler_config
-    params — not just be accepted and dropped on the floor (the exact bug
-    this fix replaces, see build_crawl_config)."""
+    """Guard against reintroduction, at the ``crawl_site`` integration level
+    (sibling to the unit-level guard in ``test_build_crawl_config.py``).
+
+    2026-08-17/18: an earlier fix believed ``crawl_site(rate_limit=...)``
+    needed to reach the ``POST /crawl`` payload's ``crawler_config`` params
+    as ``semaphore_count`` / ``mean_delay`` for pacing to work. Measured live:
+    crawl4ai's REST server ignores both — it builds its own dispatcher (see
+    ``build_crawl_config``'s docstring). Real pacing for ``rate_limit`` is
+    client-side, in ``_chunked_bulk_fetch`` (covered by
+    ``tests/test_client_side_pacing.py``), and must never leak into the
+    crawler_config payload sent to the server.
+    """
 
     async def _fake_sitemap(_base: str) -> list[str]:
         return ["https://example.com/page-a"]
@@ -2010,8 +2018,8 @@ async def test_crawl_site_rate_limit_reaches_the_crawl4ai_payload(
 
     assert seen, "expected at least one bulk /crawl request"
     params = seen[0]["crawler_config"]["params"]
-    assert params["semaphore_count"] == 2
-    assert params["mean_delay"] == 0.5
+    assert "semaphore_count" not in params
+    assert "mean_delay" not in params
 
 
 def test_browser_config_merges_cookies_and_stealth() -> None:

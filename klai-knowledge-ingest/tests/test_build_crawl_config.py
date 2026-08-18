@@ -58,32 +58,19 @@ def test_no_selector_enables_chrome_stripping() -> None:
     assert "el.remove()" in cfg["wait_for"]
 
 
-def test_rate_limit_translates_to_semaphore_count_and_mean_delay() -> None:
-    """2026-08-17 (intermedia.com incident): rate_limit (requests/second)
-    must become crawl4ai's OWN pacing controls, not be silently discarded.
-    2.0 req/s → semaphore_count 2 (round(2.0), within [1, 8]) and
-    mean_delay 0.5s (1 / 2.0)."""
-    cfg = build_crawl_config(selector=None, rate_limit=2.0)
-
-    assert cfg["semaphore_count"] == 2
-    assert cfg["mean_delay"] == 0.5
-
-
-def test_rate_limit_semaphore_count_is_bounded() -> None:
-    """A very high rate_limit must not reintroduce unbounded concurrency
-    against the shared crawl4ai container — bounded to 8."""
-    cfg = build_crawl_config(selector=None, rate_limit=50.0)
-    assert cfg["semaphore_count"] == 8
-
-    # A very low rate_limit still gets at least one fetch in flight.
-    cfg = build_crawl_config(selector=None, rate_limit=0.1)
-    assert cfg["semaphore_count"] == 1
-    assert cfg["mean_delay"] == 10.0
-
-
-def test_no_rate_limit_omits_pacing_keys() -> None:
-    """Existing behaviour (no rate_limit passed) must stay unchanged —
-    neither key is present at all, not present-with-a-default."""
+def test_build_crawl_config_never_sets_ignored_pacing_keys() -> None:
+    """Guard against reintroduction (2026-08-18): a prior fix added
+    ``semaphore_count`` / ``mean_delay`` to this config believing crawl4ai's
+    REST server enforced them. Measured live against the running server
+    (``/app/api.py:681``): it builds its own ``MemoryAdaptiveDispatcher`` and
+    passes THAT to ``arun_many`` — these ``CrawlerRunConfig`` keys are never
+    read. They still pass the untrusted-config boundary silently (HTTP 200),
+    so a future "fix" that sets them again would look correct in review and
+    in this exact kind of unit test, and would do nothing in production. Real
+    pacing lives in ``_chunked_bulk_fetch`` (client-side burst + gap), not in
+    this config. ``build_crawl_config`` no longer even accepts a
+    ``rate_limit`` argument — see its docstring.
+    """
     cfg = build_crawl_config(selector=None)
 
     assert "semaphore_count" not in cfg
