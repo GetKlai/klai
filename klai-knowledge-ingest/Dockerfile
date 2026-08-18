@@ -34,6 +34,11 @@ COPY --chown=app:app klai-libs/identity-assert klai-libs/identity-assert
 COPY --chown=app:app klai-libs/kb-slugs klai-libs/kb-slugs
 # SPEC-CHAT-GUARDRAILS-001: shared LLM safety policy path-dep.
 COPY --chown=app:app klai-libs/llm-safety klai-libs/llm-safety
+# Shared token-bucket rate limiter (extracted 2026-08-18 after the same
+# uncoordinated-caller bug recurred in deploy/litellm — see
+# klai-libs/llm-throttle/README.md). shared_klai_fast_limiter now imports
+# TokenBucketLimiter from here instead of defining its own copy.
+COPY --chown=app:app klai-libs/llm-throttle klai-libs/llm-throttle
 COPY --chown=app:app klai-knowledge-ingest/pyproject.toml klai-knowledge-ingest/pyproject.toml
 COPY --chown=app:app klai-knowledge-ingest/uv.lock klai-knowledge-ingest/uv.lock
 

@@ -41,6 +41,11 @@ dependencies = [
     "numpy>=1.26",
     # Shared deterministic LLM safety policy for untrusted document/DOM rails.
     "klai-llm-safety",
+    # Shared token-bucket rate limiter for every klai-fast-budget LLM caller.
+    # Extracted 2026-08-18 after the same class of bug (uncoordinated direct
+    # caller of a shared upstream budget) recurred in deploy/litellm — see
+    # klai-libs/llm-throttle/README.md.
+    "klai-llm-throttle",
 ]
 
 [tool.uv.sources]
@@ -49,6 +54,7 @@ klai-image-storage = { path = "../klai-libs/image-storage", editable = true }
 klai-identity-assert = { path = "../klai-libs/identity-assert", editable = true }
 klai-kb-slugs = { path = "../klai-libs/kb-slugs", editable = true }
 klai-llm-safety = { path = "../klai-libs/llm-safety", editable = true }
+klai-llm-throttle = { path = "../klai-libs/llm-throttle", editable = true }
 
 [project.optional-dependencies]
 dev = [

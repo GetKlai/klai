@@ -14,6 +14,12 @@ from klai_chat_prompts import DUTCH_QUERY_MARKERS, no_citable_sources_message
 
 _DUTCH = "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
 _ENGLISH = "I cannot answer this reliably from the available knowledge sources."
+_DUTCH_WITH_HINT = (
+    _DUTCH + " Probeer het in Open-modus voor een antwoord op basis van algemene kennis."
+)
+_ENGLISH_WITH_HINT = (
+    _ENGLISH + " Try Open mode for an answer based on general knowledge."
+)
 
 
 @pytest.mark.parametrize(
@@ -76,3 +82,26 @@ def test_marker_set_contains_no_single_letter_or_short_tokens() -> None:
 def test_marker_set_is_lowercase() -> None:
     for token in DUTCH_QUERY_MARKERS:
         assert token == token.lower(), f"marker not lowercase: {token!r}"
+
+
+def test_suggest_open_mode_defaults_false_no_hint() -> None:
+    assert no_citable_sources_message("Wat is dit?") == _DUTCH
+    assert no_citable_sources_message("What is this?") == _ENGLISH
+
+
+def test_suggest_open_mode_true_appends_dutch_hint() -> None:
+    assert (
+        no_citable_sources_message("Wat is dit?", suggest_open_mode=True)
+        == _DUTCH_WITH_HINT
+    )
+
+
+def test_suggest_open_mode_true_appends_english_hint() -> None:
+    assert (
+        no_citable_sources_message("What is this?", suggest_open_mode=True)
+        == _ENGLISH_WITH_HINT
+    )
+
+
+def test_suggest_open_mode_true_non_string_query_falls_through_english() -> None:
+    assert no_citable_sources_message(None, suggest_open_mode=True) == _ENGLISH_WITH_HINT

@@ -4,6 +4,7 @@ litellm is not installed locally (runs in Docker), so we mock the import via
 the shared fixture in test_klai_knowledge_hook.py.
 """
 
+import asyncio
 import importlib
 import sys
 import types
@@ -322,3 +323,693 @@ def test_format_history_skips_blank_content(monkeypatch):
     # Two blanks dropped:
     assert formatted.count("USER:") == 1
     assert formatted.count("ASSISTANT:") == 1
+
+
+# ---------------------------------------------------------------------------
+# SPEC-RAG-CORRESPONDENCE-DISTILL-001 — pasted-correspondence distillation
+# ---------------------------------------------------------------------------
+
+# Exact ground-truth of _QUERY_REWRITE_PROMPT as it existed before this SPEC
+# (captured verbatim from the pre-change module). AC-3: the formatted prompt
+# sent to the LLM MUST be byte-identical to this when pasted_correspondence
+# is False (the default) — proves zero behavior change for ordinary turns.
+_PRE_SPEC_PLAIN_PROMPT_TEMPLATE = (
+    "You are a query rewriter for a RAG search system. Rewrite the user's "
+    "current question so it makes sense as a stand-alone search query — "
+    "resolve pronouns and references using the conversation history. If the "
+    "question is already clear and self-contained, return it unchanged.\n\n"
+    "The rewrite MUST keep the subject of the user's CURRENT question. "
+    "History may only supply referents for pronouns, ellipsis, or follow-up "
+    "phrases — never replace the current question's topic with a topic from "
+    "history. When the current question introduces a new topic, ignore the "
+    "history and return the question unchanged.\n\n"
+    "Brand-bridging: if the question mentions a third-party brand or product "
+    "name (e.g. Salesforce, HubSpot, Pipedrive, Zoom, Microsoft Teams, "
+    "Outlook), also include 2–4 broader category or related-brand terms in "
+    "the rewritten query so search can find category-specific or partner-brand "
+    "pages even when the original brand string is absent. If no third-party "
+    "brand is mentioned, leave the rewrite unchanged beyond standard pronoun "
+    "resolution.\n\n"
+    "Conversation history (oldest → newest):\n{history}\n\n"
+    "User's current question: {raw_query}\n\n"
+    "Reply with ONLY the rewritten question, no preamble, no explanation, "
+    "no quotes. Maximum 200 characters. Same language as the user's input."
+)
+
+
+class _CapturingTransport(httpx.AsyncBaseTransport):
+    """Like _MockTransport but records the outbound request body."""
+
+    def __init__(self, status_code: int, json_body: dict | None = None) -> None:
+        self._status_code = status_code
+        self._json_body = json_body or {}
+        self.requests: list[httpx.Request] = []
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        import json
+
+        self.requests.append(request)
+        return httpx.Response(
+            status_code=self._status_code,
+            headers={"content-type": "application/json"},
+            content=json.dumps(self._json_body).encode(),
+            request=request,
+        )
+
+    def sent_prompt(self) -> str:
+        import json
+
+        body = json.loads(self.requests[0].content)
+        return body["messages"][0]["content"]
+
+
+_PASTED_EMAIL_QUERY = (
+    "Wat denk jij dat er niet goed is?\n\n"
+    "Van: Klant <klant@example.nl>\n"
+    "Verzonden: vrijdag 14 augustus 2026 21:22\n"
+    "Aan: Support <support@example.nl>\n"
+    "Onderwerp: RE: storing URGENT\n\n"
+    "Uitgaand bellen faalt met SIP 404 Not Found na een geslaagde sessie-opzet."
+)
+
+
+@pytest.mark.asyncio
+async def test_rewrite_query_prompt_unchanged_when_no_correspondence(monkeypatch):
+    """AC-3: pasted_correspondence=False (default) sends the byte-identical
+    pre-SPEC prompt — zero behavior change for ordinary turns."""
+    hook = _load_hook(monkeypatch)
+    transport = _CapturingTransport(
+        status_code=200, json_body=_ok_response("Wat is de status van de aanvraag?")
+    )
+
+    await hook._rewrite_query(
+        "Wat is de status van de aanvraag?",
+        _HISTORY_3_TURNS,
+        _transport=transport,
+    )
+
+    history_str = hook._format_history_for_rewrite(_HISTORY_3_TURNS)
+    expected = _PRE_SPEC_PLAIN_PROMPT_TEMPLATE.format(
+        history=history_str, raw_query="Wat is de status van de aanvraag?"
+    )
+    assert transport.sent_prompt() == expected
+
+
+@pytest.mark.asyncio
+async def test_rewrite_query_prompt_includes_distillation_instructions_when_flagged(
+    monkeypatch,
+):
+    """REQ-2: pasted_correspondence=True adds a distillation instruction
+    block; the base prompt content is otherwise unchanged."""
+    hook = _load_hook(monkeypatch)
+    transport = _CapturingTransport(
+        status_code=200,
+        json_body=_ok_response("SIP 404 Not Found uitgaand bellen na sessie-opzet"),
+    )
+
+    await hook._rewrite_query(
+        _PASTED_EMAIL_QUERY,
+        [],
+        allow_empty_history=True,
+        pasted_correspondence=True,
+        _transport=transport,
+    )
+
+    sent = transport.sent_prompt()
+    assert "distill" in sent.lower()
+    assert "verbatim" in sent.lower()
+    # Original instructions still present — this is an addition, not a
+    # replacement.
+    assert "Brand-bridging" in sent
+    assert "Reply with ONLY the rewritten question" in sent
+
+
+@pytest.mark.asyncio
+async def test_rewrite_query_distillation_preserves_technical_token(monkeypatch):
+    """AC-5: a distilled query must keep at least one verbatim technical
+    token from the source — also exercises REQ-4's existing guard, since a
+    distillation that drops it would be rejected as destructive."""
+    hook = _load_hook(monkeypatch)
+    transport = _CapturingTransport(
+        status_code=200,
+        json_body=_ok_response("SIP 404 Not Found trunk uitgaand bellen"),
+    )
+
+    rewritten, meta = await hook._rewrite_query(
+        _PASTED_EMAIL_QUERY,
+        [],
+        allow_empty_history=True,
+        pasted_correspondence=True,
+        _transport=transport,
+    )
+
+    assert "404" in rewritten
+    assert meta.get("skipped") != "destructive_rewrite"
+
+
+@pytest.mark.asyncio
+async def test_rewrite_query_distillation_guard_still_rejects_lossy_rewrite(
+    monkeypatch,
+):
+    """AC-4: the pre-existing destructive-rewrite guard (REQ-4) is not
+    bypassed by pasted_correspondence=True — a distillation that drops every
+    salient token from the source is rejected exactly like today."""
+    hook = _load_hook(monkeypatch)
+    transport = _CapturingTransport(
+        status_code=200,
+        json_body=_ok_response("Hoe stel ik een Yealink toestel in?"),
+    )
+
+    rewritten, meta = await hook._rewrite_query(
+        _PASTED_EMAIL_QUERY,
+        [],
+        allow_empty_history=True,
+        pasted_correspondence=True,
+        _transport=transport,
+    )
+
+    assert rewritten == _PASTED_EMAIL_QUERY
+    assert meta["skipped"] == "destructive_rewrite"
+
+
+@pytest.mark.asyncio
+async def test_rewrite_query_meta_carries_pasted_correspondence_flag(monkeypatch):
+    """REQ-5: telemetry visibility, independent of skip/success outcome."""
+    hook = _load_hook(monkeypatch)
+
+    # Success path.
+    transport = _CapturingTransport(
+        status_code=200, json_body=_ok_response("SIP 404 trunk uitgaand bellen")
+    )
+    _, meta_true = await hook._rewrite_query(
+        _PASTED_EMAIL_QUERY,
+        [],
+        allow_empty_history=True,
+        pasted_correspondence=True,
+        _transport=transport,
+    )
+    assert meta_true["pasted_correspondence_detected"] is True
+
+    _, meta_default = await hook._rewrite_query(
+        "Wat is het beleid voor opnames?", _HISTORY_3_TURNS, _transport=transport
+    )
+    assert meta_default["pasted_correspondence_detected"] is False
+
+    # Skip path (disabled) — flag still recorded.
+    hook_disabled = _load_hook(monkeypatch, extra_env={"QUERY_REWRITE_ENABLED": "false"})
+    _, meta_skipped = await hook_disabled._rewrite_query(
+        _PASTED_EMAIL_QUERY, [], allow_empty_history=True, pasted_correspondence=True
+    )
+    assert meta_skipped["pasted_correspondence_detected"] is True
+    assert meta_skipped["skipped"] == "disabled"
+
+
+@pytest.mark.asyncio
+async def test_rewrite_query_distillation_excludes_unique_incident_identifiers(
+    monkeypatch,
+):
+    """Empirical finding (this SPEC's AC-2 replay, 2026-08-18): preserving
+    unique per-incident identifiers (Call-ID, specific trunk/account
+    numbers) in the distilled query measurably HURTS retrieval — those
+    tokens never appear in knowledge-base articles and pull the embedding
+    away from the general topic (0.571 top score with identifiers vs. 0.847
+    without, same underlying question, live retrieval-api A/B). The
+    instruction must explicitly exclude them, distinct from the "preserve
+    domain terminology verbatim" instruction for reusable technical terms."""
+    hook = _load_hook(monkeypatch)
+    transport = _CapturingTransport(
+        status_code=200,
+        json_body=_ok_response("SIP 404 Not Found uitgaand bellen na sessie-opzet"),
+    )
+
+    await hook._rewrite_query(
+        _PASTED_EMAIL_QUERY,
+        [],
+        allow_empty_history=True,
+        pasted_correspondence=True,
+        _transport=transport,
+    )
+
+    sent = transport.sent_prompt().lower()
+    assert "call-id" in sent
+    assert "do not preserve" in sent or "not preserve" in sent
+
+
+@pytest.mark.asyncio
+async def test_rewrite_query_distillation_requests_keyword_style_output(monkeypatch):
+    """Second empirical finding (same AC-2 replay session): a full
+    grammatical question ('Wat veroorzaakt de 404 Not Found ... na
+    succesvolle sessie-opzet?') scored WORSE (0.261, band=low, target
+    article absent from top-5) than a terse keyword-style phrase ('SIP 404
+    Not Found response code oorzaak', 0.974, band=high). The instruction
+    must steer the model toward search-engine-style keyword phrasing, not
+    natural-language questions."""
+    hook = _load_hook(monkeypatch)
+    transport = _CapturingTransport(
+        status_code=200,
+        json_body=_ok_response("SIP 404 Not Found uitgaand bellen na sessie-opzet"),
+    )
+
+    await hook._rewrite_query(
+        _PASTED_EMAIL_QUERY,
+        [],
+        allow_empty_history=True,
+        pasted_correspondence=True,
+        _transport=transport,
+    )
+
+    sent = transport.sent_prompt().lower()
+    assert "keyword" in sent
+    assert "not a full grammatical question" in sent or "no question words" in sent
+
+
+@pytest.mark.asyncio
+async def test_rewrite_query_strips_markdown_from_distillation(monkeypatch):
+    """Empirical finding (SPEC HISTORY 0.2.0): the model does not reliably
+    follow the 'no markdown formatting' instruction. Enforce it in code —
+    deterministic, not a request — for the distillation path only."""
+    hook = _load_hook(monkeypatch)
+    transport = _CapturingTransport(
+        status_code=200,
+        json_body=_ok_response(
+            "Wat veroorzaakt de **404 Not Found** met `Q.850;cause=1` bij SIP?"
+        ),
+    )
+
+    rewritten, _meta = await hook._rewrite_query(
+        _PASTED_EMAIL_QUERY,
+        [],
+        allow_empty_history=True,
+        pasted_correspondence=True,
+        _transport=transport,
+    )
+
+    assert "*" not in rewritten
+    assert "`" not in rewritten
+    assert "404 Not Found" in rewritten
+
+
+@pytest.mark.asyncio
+async def test_rewrite_query_strips_long_digit_runs_from_distillation(monkeypatch):
+    """Empirical finding (SPEC HISTORY 0.2.0): the model kept a 9-digit
+    trunk number despite being told not to preserve unique per-incident
+    identifiers — measurably hurt retrieval (0.571 vs 0.847 top score, live
+    A/B). SIP/HTTP status codes are always 3 digits; any 5+ digit run is
+    almost certainly a unique identifier. Enforce dropping it in code."""
+    hook = _load_hook(monkeypatch)
+    transport = _CapturingTransport(
+        status_code=200,
+        json_body=_ok_response(
+            "404 Not Found trunk 451030015 uitgaand bellen sessie-opzet"
+        ),
+    )
+
+    rewritten, _meta = await hook._rewrite_query(
+        _PASTED_EMAIL_QUERY,
+        [],
+        allow_empty_history=True,
+        pasted_correspondence=True,
+        _transport=transport,
+    )
+
+    assert "451030015" not in rewritten
+    assert "404" in rewritten
+    assert "trunk" in rewritten
+
+
+@pytest.mark.asyncio
+async def test_rewrite_query_cleanup_does_not_apply_without_correspondence_flag(
+    monkeypatch,
+):
+    """AC-3-adjacent regression guard: an ordinary (non-correspondence)
+    rewrite must NOT be touched by the new cleanup step, even if it happens
+    to contain markdown or a long number — e.g. a legitimate order number
+    the user is asking about."""
+    hook = _load_hook(monkeypatch)
+    transport = _CapturingTransport(
+        status_code=200,
+        json_body=_ok_response("Status van bestelling **123456789**?"),
+    )
+
+    rewritten, _meta = await hook._rewrite_query(
+        "Wat is de status van mijn bestelling?",
+        _HISTORY_3_TURNS,
+        _transport=transport,
+    )
+
+    assert rewritten == "Status van bestelling **123456789**?"
+
+
+@pytest.mark.asyncio
+async def test_rewrite_query_cleanup_skipped_when_guard_rejects(monkeypatch):
+    """Cleanup must not run on the raw-fallback path (destructive-rewrite
+    guard rejection) — that path returns the user's own pasted text
+    unchanged, which must not be silently mangled."""
+    hook = _load_hook(monkeypatch)
+    transport = _CapturingTransport(
+        status_code=200,
+        json_body=_ok_response("Hoe stel ik een **Yealink** toestel in?"),
+    )
+
+    rewritten, meta = await hook._rewrite_query(
+        _PASTED_EMAIL_QUERY,
+        [],
+        allow_empty_history=True,
+        pasted_correspondence=True,
+        _transport=transport,
+    )
+
+    assert meta["skipped"] == "destructive_rewrite"
+    assert rewritten == _PASTED_EMAIL_QUERY
+
+
+# ---------------------------------------------------------------------------
+# Shared rate-limit throttle (2026-08-18 uncoordinated-caller incident)
+# ---------------------------------------------------------------------------
+#
+# klai_kb_query_rewrite.py calls Mistral directly (bypassing the litellm
+# proxy's own klai-fast/klai-primary rpm accounting entirely). This traffic
+# was invisible to litellm's router AND to knowledge-ingest's independent
+# shared_klai_fast_limiter (a different process/package) — production saw
+# 1000+ RouterRateLimitError/429 events in a single hour. Fix: both direct
+# Mistral call sites (rewrite_query, rewrite_and_classify) must acquire from
+# a shared klai_llm_throttle.TokenBucketLimiter before every call.
+
+
+@pytest.mark.asyncio
+async def test_rewrite_query_acquires_from_shared_throttle_before_calling_mistral(
+    monkeypatch,
+):
+    hook = _load_hook(monkeypatch)
+    transport = _MockTransport(
+        status_code=200, json_body=_ok_response("Wat is de status?")
+    )
+
+    calls: list[str] = []
+    real_limiter = hook._direct_mistral_limiter()
+
+    async def _tracking_acquire():
+        calls.append("acquire")
+
+    monkeypatch.setattr(real_limiter, "acquire", _tracking_acquire)
+
+    await hook._rewrite_query(
+        "Wat is de status van de aanvraag?",
+        _HISTORY_3_TURNS,
+        _transport=transport,
+    )
+
+    assert calls == ["acquire"], (
+        "rewrite_query must acquire from the shared throttle exactly once "
+        "before its Mistral call"
+    )
+
+
+@pytest.mark.asyncio
+async def test_rewrite_and_classify_plain_fallback_acquires_from_shared_throttle(
+    monkeypatch,
+):
+    """The no-taxonomy fallback path (rewrite_and_classify -> rewrite_query)
+    must also be covered — it makes the SAME direct Mistral call."""
+    hook = _load_hook(monkeypatch)
+    transport = _MockTransport(
+        status_code=200, json_body=_ok_response("Wat is SAML?")
+    )
+
+    calls: list[str] = []
+    real_limiter = hook._direct_mistral_limiter()
+
+    async def _tracking_acquire():
+        calls.append("acquire")
+
+    monkeypatch.setattr(real_limiter, "acquire", _tracking_acquire)
+
+    await hook._rewrite_and_classify(
+        "Wat is SAML?", [], {}, _transport=transport
+    )
+
+    assert calls == ["acquire"]
+
+
+def test_direct_mistral_limiter_is_a_singleton(monkeypatch):
+    hook = _load_hook(monkeypatch)
+    assert hook._direct_mistral_limiter() is hook._direct_mistral_limiter()
+
+
+def test_direct_mistral_limiter_is_a_token_bucket_limiter(monkeypatch):
+    from klai_llm_throttle import TokenBucketLimiter
+
+    hook = _load_hook(monkeypatch)
+    assert isinstance(hook._direct_mistral_limiter(), TokenBucketLimiter)
+
+
+# ---------------------------------------------------------------------------
+# Review #7 — underscore preserved, code-context digit runs preserved
+# ---------------------------------------------------------------------------
+
+_PASTED_EMAIL_QUERY_ERR = (
+    "Wat is hier het probleem?\n\n"
+    "Van: Klant <klant@example.nl>\n"
+    "Verzonden: vrijdag 14 augustus 2026 21:22\n"
+    "Aan: Support <support@example.nl>\n"
+    "Onderwerp: RE: login storing URGENT\n\n"
+    "Inloggen faalt met ERR_AUTH_FAILED na correcte invoer van het wachtwoord."
+)
+
+
+@pytest.mark.asyncio
+async def test_rewrite_query_preserves_underscore_identifier_in_distillation(
+    monkeypatch,
+):
+    """HISTORY 0.4.0 / review finding #7: underscore is no longer stripped by
+    the cleanup regex — it is the word-separator in reusable identifiers like
+    ERR_AUTH_FAILED, not markdown emphasis. The pre-fix `[*_\\`]` pattern
+    mangled these into 'ERRAUTHFAILED', directly contradicting the
+    'preserve error codes verbatim' requirement."""
+    hook = _load_hook(monkeypatch)
+    transport = _CapturingTransport(
+        status_code=200,
+        json_body=_ok_response(
+            "ERR_AUTH_FAILED bij inloggen na wachtwoord invoer"
+        ),
+    )
+
+    rewritten, meta = await hook._rewrite_query(
+        _PASTED_EMAIL_QUERY_ERR,
+        [],
+        allow_empty_history=True,
+        pasted_correspondence=True,
+        _transport=transport,
+    )
+
+    assert "ERR_AUTH_FAILED" in rewritten
+    assert meta.get("skipped") != "destructive_rewrite"
+
+
+@pytest.mark.asyncio
+async def test_rewrite_query_distillation_preserves_code_context_digit_runs(
+    monkeypatch,
+):
+    """review finding #7: a 5+ digit run immediately preceded by a hyphen
+    (structured code like CVE-2026-12345) or preceded within ~20 chars by a
+    code/error/status/cve keyword (e.g. "error 10060") survives cleanup —
+    these are reusable technical identifiers, not unique per-incident
+    numbers."""
+    hook = _load_hook(monkeypatch)
+    transport = _CapturingTransport(
+        status_code=200,
+        json_body=_ok_response(
+            "CVE-2026-12345 error 10060 SIP 404 verbinding mislukt"
+        ),
+    )
+
+    rewritten, meta = await hook._rewrite_query(
+        _PASTED_EMAIL_QUERY,
+        [],
+        allow_empty_history=True,
+        pasted_correspondence=True,
+        _transport=transport,
+    )
+
+    assert "CVE-2026-12345" in rewritten
+    assert "10060" in rewritten
+    assert meta.get("skipped") != "destructive_rewrite"
+
+
+@pytest.mark.asyncio
+async def test_rewrite_query_distillation_strips_digit_runs_without_code_context(
+    monkeypatch,
+):
+    """review finding #7 counterpart: a bare digit run with no hyphen/keyword
+    context — a phone number or trunk/ticket number — is still stripped,
+    exactly like before this fix."""
+    hook = _load_hook(monkeypatch)
+    transport = _CapturingTransport(
+        status_code=200,
+        json_body=_ok_response(
+            "Bel 0612345678 over trunk 202392 SIP 404 uitgaand bellen"
+        ),
+    )
+
+    rewritten, meta = await hook._rewrite_query(
+        _PASTED_EMAIL_QUERY,
+        [],
+        allow_empty_history=True,
+        pasted_correspondence=True,
+        _transport=transport,
+    )
+
+    assert "0612345678" not in rewritten
+    assert "202392" not in rewritten
+    assert "404" in rewritten
+    assert meta.get("skipped") != "destructive_rewrite"
+
+
+# ---------------------------------------------------------------------------
+# Review #8 — clean-then-guard ordering regression
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_rewrite_query_cleanup_before_guard_never_returns_empty_query(
+    monkeypatch,
+):
+    """review finding #8: the model rewrite overlaps raw_query ONLY on the
+    exact identifier that cleanup then strips (raw "Ticket 123456" vs. model
+    output "123456"). Cleaning BEFORE the destructive-rewrite guard means the
+    guard's own salient-token-overlap check naturally rejects this case,
+    instead of letting an emptied string through to retrieval."""
+    hook = _load_hook(monkeypatch)
+    transport = _CapturingTransport(
+        status_code=200, json_body=_ok_response("123456")
+    )
+
+    rewritten, meta = await hook._rewrite_query(
+        "Ticket 123456",
+        [],
+        allow_empty_history=True,
+        pasted_correspondence=True,
+        _transport=transport,
+    )
+
+    assert rewritten == "Ticket 123456"
+    assert rewritten.strip() != ""
+    assert meta["skipped"] in ("destructive_rewrite", "empty_after_distillation")
+
+
+# ---------------------------------------------------------------------------
+# Review #1 — limiter-wait bounded by QUERY_REWRITE_TIMEOUT
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_rewrite_query_timeout_wraps_limiter_wait_and_falls_back(monkeypatch):
+    """review finding #1: without wrapping acquire() + the HTTP POST together
+    in asyncio.wait_for, a limiter-wait that blocks past QUERY_REWRITE_TIMEOUT
+    made the total call time unbounded even though the httpx client timeout
+    only covers the HTTP leg. A slow acquire() must now fail-open to the raw
+    query within QUERY_REWRITE_TIMEOUT, exactly like any other rewrite
+    failure."""
+    hook = _load_hook(monkeypatch)
+    query_rewrite_module = sys.modules["klai_kb_query_rewrite"]
+    monkeypatch.setattr(query_rewrite_module, "QUERY_REWRITE_TIMEOUT", 0.05)
+
+    real_limiter = hook._direct_mistral_limiter()
+
+    async def _slow_acquire():
+        await asyncio.sleep(0.2)
+
+    monkeypatch.setattr(real_limiter, "acquire", _slow_acquire)
+
+    transport = _MockTransport(
+        status_code=200, json_body=_ok_response("Wat is de status?")
+    )
+
+    rewritten, meta = await asyncio.wait_for(
+        hook._rewrite_query(
+            "Wat is de status van de aanvraag?",
+            _HISTORY_3_TURNS,
+            _transport=transport,
+        ),
+        timeout=1.0,
+    )
+
+    assert rewritten == "Wat is de status van de aanvraag?"
+    assert meta["skipped"] == "exception"
+
+
+# ---------------------------------------------------------------------------
+# Sol delta-review Fix 2 — deterministic SIP Call-ID / IPv4 stripping
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_rewrite_query_strips_sip_call_id_and_ipv4_from_distillation(
+    monkeypatch,
+):
+    """A distilled output that keeps a SIP Call-ID (token@host shape) and/or
+    a raw IPv4 address leaks unique per-incident identifiers into the
+    retrieval query, same failure class as long digit runs and phone
+    numbers. Both must be stripped deterministically; the reusable "SIP 404
+    Not Found trunk" vocabulary around them must survive untouched."""
+    hook = _load_hook(monkeypatch)
+    transport = _CapturingTransport(
+        status_code=200,
+        json_body=_ok_response("Call-ID aa11bb22@203.0.113.42 SIP 404 Not Found trunk"),
+    )
+
+    rewritten, meta = await hook._rewrite_query(
+        _PASTED_EMAIL_QUERY,
+        [],
+        allow_empty_history=True,
+        pasted_correspondence=True,
+        _transport=transport,
+    )
+
+    assert "aa11bb22@203.0.113.42" not in rewritten
+    assert "203.0.113.42" not in rewritten
+    assert "SIP 404 Not Found trunk" in rewritten
+    assert meta.get("skipped") != "destructive_rewrite"
+
+
+# ---------------------------------------------------------------------------
+# Sol delta-review Fix 3 — narrow the hyphen exception in the digit-run rule
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_rewrite_query_digit_run_hyphen_exception_narrowed_to_uppercase_codes(
+    monkeypatch,
+):
+    """The old bare `prefix.endswith("-")` check preserved ANY hyphenated
+    digit run, including lowercase incident identifiers like
+    "ticket-123456" and "trunk-451030015" — exactly the class of unique
+    per-incident identifier this cleanup exists to strip. Only an
+    uppercase structured-code shape ending in a hyphen (CVE-2026-12345,
+    ERR-10060) should survive; plain lowercase-prefixed digit runs must
+    now be stripped like any other bare digit run."""
+    hook = _load_hook(monkeypatch)
+    transport = _CapturingTransport(
+        status_code=200,
+        json_body=_ok_response(
+            "CVE-2026-12345 ERR-10060 ticket-123456 trunk-451030015 06-12345678 SIP 404"
+        ),
+    )
+
+    rewritten, meta = await hook._rewrite_query(
+        _PASTED_EMAIL_QUERY,
+        [],
+        allow_empty_history=True,
+        pasted_correspondence=True,
+        _transport=transport,
+    )
+
+    assert "CVE-2026-12345" in rewritten
+    assert "ERR-10060" in rewritten
+    assert "ticket-123456" not in rewritten
+    assert "123456" not in rewritten
+    assert "trunk-451030015" not in rewritten
+    assert "451030015" not in rewritten
+    assert "06-12345678" not in rewritten
+    assert "12345678" not in rewritten
+    assert meta.get("skipped") != "destructive_rewrite"

@@ -137,11 +137,19 @@ _DUTCH_REFUSAL: Final[str] = (
 _ENGLISH_REFUSAL: Final[str] = (
     "I cannot answer this reliably from the available knowledge sources."
 )
+_DUTCH_OPEN_MODE_HINT: Final[str] = (
+    " Probeer het in Open-modus voor een antwoord op basis van algemene kennis."
+)
+_ENGLISH_OPEN_MODE_HINT: Final[str] = (
+    " Try Open mode for an answer based on general knowledge."
+)
 
 _TOKEN_RE: Final[re.Pattern[str]] = re.compile(r"[a-zA-ZÀ-ÿ]+")
 
 
-def no_citable_sources_message(user_query: object) -> str:
+def no_citable_sources_message(
+    user_query: object, *, suggest_open_mode: bool = False
+) -> str:
     """Pick the language for the canned strict-mode refusal.
 
     Returns the Dutch refusal when the query contains any token from
@@ -153,14 +161,25 @@ def no_citable_sources_message(user_query: object) -> str:
     a general language-detector dependency: we only need to choose
     between two languages for one canned sentence, and a wordlist keeps
     the latency at microseconds with no model-load cost.
+
+    ``suggest_open_mode`` appends a hint to try Open mode. Default False:
+    only path A (the LiteLLM hook backing LibreChat) has a user-facing
+    Strict/Open toggle the hint can point at. Callers without that toggle
+    — partner_chat.py (path B, widget/partner API) and retrieval-api's
+    ``/chat`` (path C) — must leave this False; the hint would reference a
+    switch their caller cannot use.
     """
     query = user_query if isinstance(user_query, str) else ""
     if not query:
-        return _ENGLISH_REFUSAL
-    tokens = {token.lower() for token in _TOKEN_RE.findall(query)}
-    if tokens & DUTCH_QUERY_MARKERS:
-        return _DUTCH_REFUSAL
-    return _ENGLISH_REFUSAL
+        base = _ENGLISH_REFUSAL
+        hint = _ENGLISH_OPEN_MODE_HINT
+    else:
+        tokens = {token.lower() for token in _TOKEN_RE.findall(query)}
+        if tokens & DUTCH_QUERY_MARKERS:
+            base, hint = _DUTCH_REFUSAL, _DUTCH_OPEN_MODE_HINT
+        else:
+            base, hint = _ENGLISH_REFUSAL, _ENGLISH_OPEN_MODE_HINT
+    return base + hint if suggest_open_mode else base
 
 
 # Shared language-detection contract (SPEC-RAG-MULTILINGUAL-CHAT-001

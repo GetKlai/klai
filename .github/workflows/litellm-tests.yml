@@ -18,12 +18,16 @@ on:
       # Without this trigger a canonical-only edit lands without ever running
       # the drift gate, and the NEXT unrelated litellm PR fails on it.
       - 'klai-libs/chat-prompts/**'
+      # Same drift-gate reasoning as chat-prompts, for klai_llm_throttle
+      # (test_klai_llm_throttle_drift.py).
+      - 'klai-libs/llm-throttle/**'
   pull_request:
     paths:
       - 'deploy/litellm/**'
       - 'klai-libs/citations/**'
       - 'klai-libs/service-auth/**'
       - 'klai-libs/chat-prompts/**'
+      - 'klai-libs/llm-throttle/**'
 
 jobs:
   litellm-tests:
@@ -47,4 +51,5 @@ jobs:
           --with pyyaml
           --with ../../klai-libs/citations
           --with ../../klai-libs/service-auth
+          --with ../../klai-libs/llm-throttle
           python -m pytest tests/ -q --tb=short

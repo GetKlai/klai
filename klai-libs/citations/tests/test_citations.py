@@ -1461,3 +1461,63 @@ def test_evidence_label_ids_positional_and_explicit() -> None:
     assert ids == {"E1", "E2", "E7"}
     assert evidence_label_ids(None) == set()
     assert evidence_label_ids([]) == set()
+
+
+def test_evidence_label_ids_excludes_positions_skipped_by_render() -> None:
+    """Regression (review finding #9): render_evidence_context skips chunks
+    with blank/whitespace-only text, but the E-number is assigned by
+    positional index in the ORIGINAL chunks list — a blank chunk at position
+    1 means the first chunk actually rendered is labelled "Evidence E2", and
+    "Evidence E1" never appears in the prompt at all.
+
+    Before the fix, evidence_label_ids derived a naive
+    ``range(1, len(chunks) + 1)`` that still included "E1" as a strippable
+    label even though it was never injected. A model hallucinating "(E1)"
+    would then be silently treated as if it cited a real, shown source and
+    have that citation marker stripped — hiding the hallucination instead of
+    letting it surface as user-facing (and reviewable) unsupported text.
+    """
+    from klai_citations import evidence_label_ids, render_evidence_context
+
+    chunks = [
+        {"text": "   "},  # blank -> skipped by render_evidence_context
+        {"text": "Real content A"},
+        {"text": "Real content B"},
+    ]
+
+    rendered = render_evidence_context(chunks)
+    assert "Evidence E1" not in rendered
+    assert "Evidence E2" in rendered
+    assert "Evidence E3" in rendered
+
+    ids = evidence_label_ids(chunks)
+    assert ids == {"E2", "E3"}
+    assert "E1" not in ids
+
+
+def test_evidence_label_ids_does_not_model_max_chars_truncation() -> None:
+    """Pinned KNOWN LIMITATION, not desired behavior: render_evidence_context's
+    ``max_chars`` drops whole trailing entries, but evidence_label_ids derives
+    its set from the FULL chunk list — so a truncated-away label ("E2" here)
+    is still reported as strippable. Safe today because no caller combines
+    ``max_chars`` with a label-consuming call on the same chunk list
+    (mechanically enforced by
+    deploy/litellm/tests/test_truncated_render_label_guard.py). If a future
+    caller needs both, it must pass the rendered subset to
+    evidence_label_ids / compose_answer_with_trusted_sources — at which point
+    this pin should be replaced by the real contract.
+    """
+    from klai_citations import evidence_label_ids, render_evidence_context
+
+    chunks = [
+        {"text": "First entry content, long enough to fill the budget."},
+        {"text": "Second entry content that gets truncated away."},
+    ]
+
+    # Entry 1 renders to 94 chars; a 120-char budget fits entry 1 but not both.
+    rendered = render_evidence_context(chunks, max_chars=120)
+    assert "Evidence E1" in rendered
+    assert "Evidence E2" not in rendered
+
+    # The divergence this test pins: E2 was never shown, yet is strippable.
+    assert evidence_label_ids(chunks) == {"E1", "E2"}
