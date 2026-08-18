@@ -1445,10 +1445,22 @@ async def crawl_site(
     # per-batch clock would let a many-batch crawl spend its full wall-clock
     # allowance again and again, which is exactly the "one job holds a worker
     # slot for over an hour" case the budget exists to prevent.
+    #
+    # sequential_recovery_time_remaining tracks TIME ACTUALLY SPENT INSIDE
+    # RECOVERY, not wall-clock time since crawl_site started. A single
+    # deadline computed once here (as this used to do) would also count
+    # every second spent on unrelated work — client-side rate_limit pacing
+    # between bulk chunks (_chunked_bulk_fetch) chief among them — against
+    # the recovery budget for free. At a low rate_limit that pacing alone
+    # can exceed crawl_sequential_recovery_max_seconds before a single
+    # batch has even failed, making recovery structurally unavailable on
+    # exactly the low-rate_limit (fragile) sites that need it most. The
+    # deadline passed to each _recover_bulk_5xx_batch call below is
+    # therefore derived from this remaining budget immediately before that
+    # call, and the remaining budget is debited only by the wall-clock time
+    # that specific call actually consumed.
     sequential_recovery_budget = _MAX_SEQUENTIAL_RECOVERY
-    sequential_recovery_deadline = (
-        _recovery_monotonic() + settings.crawl_sequential_recovery_max_seconds
-    )
+    sequential_recovery_time_remaining = settings.crawl_sequential_recovery_max_seconds
 
     start_result = await _fetch_seed_page(
         start_url=start_url,
@@ -1507,6 +1519,13 @@ async def crawl_site(
             # REAL per-URL reason_code, instead of writing off every URL in
             # the batch as unknown_exception (or guessing blocked_anti_bot
             # without evidence).
+            #
+            # The deadline handed to this call is derived from the
+            # job-wide time REMAINING, evaluated right now — not a
+            # deadline fixed at crawl_site's start — so that only the time
+            # this call itself spends recovering is ever charged against
+            # the budget (see sequential_recovery_time_remaining above).
+            recovery_started_at = _recovery_monotonic()
             (
                 batch_results,
                 link_source_results,
@@ -1518,7 +1537,7 @@ async def crawl_site(
                 cookies=cookies,
                 base_domain=base_domain,
                 recovery_budget=sequential_recovery_budget,
-                deadline=sequential_recovery_deadline,
+                deadline=recovery_started_at + sequential_recovery_time_remaining,
                 # Stealth already earned by two consecutive bulk failures;
                 # the per-URL retries get it too. Measured: with stealth a
                 # failure no longer poisons the session (3 of 5 succeeded
@@ -1531,6 +1550,14 @@ async def crawl_site(
                 trigger_reason_code=_bulk_failure_trigger_reason_code(transport_error),
             )
             sequential_recovery_budget -= recovery_attempted
+            # Debit only the wall-clock time THIS call actually spent
+            # recovering — never below zero, so a call that overshoots
+            # (the deadline is only checked before each attempt starts,
+            # not after) cannot hand the next batch a negative allowance.
+            sequential_recovery_time_remaining = max(
+                sequential_recovery_time_remaining - (_recovery_monotonic() - recovery_started_at),
+                0.0,
+            )
         else:
             batch_results, batch_outcomes = _combine_bulk_responses(
                 candidates=batch,

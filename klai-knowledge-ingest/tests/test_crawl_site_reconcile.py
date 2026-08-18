@@ -2022,6 +2022,253 @@ async def test_crawl_site_rate_limit_never_reaches_crawl4ai_payload_as_pacing_ke
     assert "mean_delay" not in params
 
 
+# ---------------------------------------------------------------------------
+# crawl_site-level sequential-recovery TIME budget: must measure time spent
+# actually recovering, not wall-clock time since crawl_site started. Sibling
+# to test_recovery_deadline_is_job_wide_not_per_batch (which covers the same
+# job-wide-not-per-batch contract at the _recover_bulk_5xx_batch level, given
+# an already-computed deadline). These tests cover crawl_site's bookkeeping
+# that PRODUCES that deadline.
+# ---------------------------------------------------------------------------
+
+
+class _RecoveryClock:
+    """A monotonic clock for ``_recovery_monotonic`` driven by test code.
+
+    Unlike ``_pacing_monotonic`` (see test_client_side_pacing.py's
+    ``_VirtualClock``), nothing in ``_recover_bulk_5xx_batch`` advances this
+    clock automatically except the (patched) cooldown sleep — callers
+    advance ``.now`` directly to simulate wall-clock time consumed by other
+    work (bulk fetches, client-side pacing) that shares the same physical
+    clock in production (``_recovery_monotonic`` and ``_pacing_monotonic``
+    are both literally ``time.monotonic`` there).
+    """
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+    async def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def _success_page(url: str, *, internal: list[str] | None = None) -> dict[str, Any]:
+    return {
+        "url": url,
+        "success": True,
+        "status_code": 200,
+        "html": "<html><body>Real page content, plenty of words here.</body></html>",
+        "markdown": "Real page content, plenty of words here.",
+        "links": {"internal": [{"href": h, "text": ""} for h in (internal or [])]},
+        "media": {},
+    }
+
+
+def _bulk_5xx_error() -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "http://crawl4ai:11235/crawl")
+    response = httpx.Response(
+        500,
+        json={"error": "Internal server error", "correlation_id": "188834187d7d"},
+        request=request,
+    )
+    return httpx.HTTPStatusError("crawl4ai failed", request=request, response=response)
+
+
+@pytest.mark.asyncio
+async def test_crawl_site_recovery_available_after_slow_pacing_phase(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: the sequential-recovery time budget must measure time
+    actually spent recovering, not wall-clock time elapsed since crawl_site
+    started.
+
+    Before this fix, ``crawl_site`` computed one deadline up front
+    (``_recovery_monotonic() + crawl_sequential_recovery_max_seconds``,
+    evaluated once before the bulk-fetch loop even started) and handed the
+    SAME deadline to every batch's recovery call. Any wall-clock time spent
+    on work other than recovery -- most importantly client-side
+    ``rate_limit`` pacing between bulk chunks (fix/client-side-crawl-pacing)
+    -- ate into that budget for free. At ``rate_limit=0.25`` a 500-page
+    crawl spends ~2000s on pacing alone, comfortably exceeding the default
+    1200s recovery budget before a single chunk has failed -- so recovery
+    was structurally unavailable on exactly the low-rate_limit (fragile)
+    sites that need it most.
+
+    This test simulates that: the wall-clock time consumed by the bulk
+    phase alone (2000s, on the same physical clock recovery bookkeeping
+    reads from) already exceeds ``crawl_sequential_recovery_max_seconds``
+    (1200s) by the time the bulk batch fails. Recovery must still run in
+    full for both URLs.
+    """
+    monkeypatch.setattr(settings, "crawl_sequential_recovery_max_seconds", 1200.0)
+
+    async def _fake_sitemap(_base: str) -> list[str]:
+        return ["https://example.com/page-a", "https://example.com/page-b"]
+
+    monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _fake_sitemap)
+    _patch_seed(monkeypatch, _seed("https://example.com"))
+
+    clock = _RecoveryClock()
+    monkeypatch.setattr(crawl4ai_client, "_recovery_monotonic", clock.monotonic)
+    # _recovery_sleep stays the autouse instant no-op (tests/conftest.py) —
+    # only the pre-recovery elapsed time is under test here.
+
+    async def _fake_crawl_sync(
+        _client: httpx.AsyncClient, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        urls = payload["urls"]
+        if len(urls) > 1:
+            # Simulate the wall-clock cost of everything that happened
+            # BEFORE this bulk batch's failure was even known (pacing,
+            # earlier chunks, the fetch itself) -- more than the entire
+            # recovery budget, on the same clock _recovery_monotonic reads.
+            clock.now += 2000.0
+            raise _bulk_5xx_error()
+        (url,) = urls
+        return {"results": [_success_page(url)]}
+
+    monkeypatch.setattr(crawl4ai_client, "_crawl_sync", _fake_crawl_sync)
+
+    results, outcomes = await crawl4ai_client.crawl_site(
+        start_url="https://example.com",
+        max_pages=10,
+    )
+
+    by_url = {o["url"]: o for o in outcomes}
+    assert by_url["https://example.com/page-a"]["reason_code"] == FetchReasonCode.SUCCESS.value
+    assert by_url["https://example.com/page-b"]["reason_code"] == FetchReasonCode.SUCCESS.value
+    result_urls = {r.url for r in results}
+    assert {"https://example.com/page-a", "https://example.com/page-b"} <= result_urls
+
+
+@pytest.mark.asyncio
+async def test_crawl_site_recovery_time_budget_carries_over_between_batches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The original intent is preserved: one job does not get a fresh
+    recovery-time allowance per batch.
+
+    Batch 1 recovers both its URLs, but doing so (2 cooldowns of 60s each)
+    consumes 120s against a 100s budget -- overshooting it. Batch 2 (whose
+    URLs are only discovered via batch 1's recovered links) must then start
+    with its remaining budget already at zero, so its bulk-5xx failure gets
+    NO sequential recovery at all, not a fresh 100s.
+    """
+    monkeypatch.setattr(settings, "crawl_sequential_recovery_max_seconds", 100.0)
+    monkeypatch.setattr(settings, "crawl_sequential_recovery_cooldown_seconds", 60.0)
+    monkeypatch.setattr(settings, "crawl_sequential_recovery_max_consecutive_failures", 99)
+
+    async def _fake_sitemap(_base: str) -> list[str]:
+        return ["https://example.com/page-a", "https://example.com/page-b"]
+
+    monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _fake_sitemap)
+    _patch_seed(monkeypatch, _seed("https://example.com"))
+
+    clock = _RecoveryClock()
+    monkeypatch.setattr(crawl4ai_client, "_recovery_monotonic", clock.monotonic)
+    monkeypatch.setattr(crawl4ai_client, "_recovery_sleep", clock.sleep)
+
+    single_url_calls: list[str] = []
+
+    async def _fake_crawl_sync(
+        _client: httpx.AsyncClient, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        urls = payload["urls"]
+        if len(urls) > 1:
+            raise _bulk_5xx_error()
+        (url,) = urls
+        single_url_calls.append(url)
+        if url == "https://example.com/page-a":
+            # Discovered only via this recovered page's own links, so
+            # batch 2 cannot start until batch 1's recovery has run.
+            return {"results": [_success_page(url, internal=["https://example.com/page-c"])]}
+        if url == "https://example.com/page-b":
+            return {"results": [_success_page(url, internal=["https://example.com/page-d"])]}
+        return {"results": [_success_page(url)]}
+
+    monkeypatch.setattr(crawl4ai_client, "_crawl_sync", _fake_crawl_sync)
+
+    results, outcomes = await crawl4ai_client.crawl_site(
+        start_url="https://example.com",
+        max_pages=10,
+    )
+
+    # Batch 1 (page-a, page-b): both actually re-fetched sequentially.
+    assert single_url_calls.count("https://example.com/page-a") == 1
+    assert single_url_calls.count("https://example.com/page-b") == 1
+    # Batch 2 (page-c, page-d): budget already at zero -- no network call.
+    assert "https://example.com/page-c" not in single_url_calls
+    assert "https://example.com/page-d" not in single_url_calls
+
+    by_url = {o["url"]: o for o in outcomes}
+    assert by_url["https://example.com/page-a"]["reason_code"] == FetchReasonCode.SUCCESS.value
+    assert by_url["https://example.com/page-b"]["reason_code"] == FetchReasonCode.SUCCESS.value
+    assert by_url["https://example.com/page-c"]["reason_code"] == FetchReasonCode.HTTP_5XX.value
+    assert by_url["https://example.com/page-d"]["reason_code"] == FetchReasonCode.HTTP_5XX.value
+    result_urls = {r.url for r in results}
+    assert "https://example.com/page-c" not in result_urls
+    assert "https://example.com/page-d" not in result_urls
+
+
+@pytest.mark.asyncio
+async def test_crawl_site_recovery_stops_mid_batch_once_time_budget_genuinely_spent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exhaustion must still work when the budget IS genuinely spent on
+    recovery (not on unrelated wall-clock time): the third URL in a single
+    bulk-5xx batch is abandoned without a network call once the first two
+    sequential attempts have burned the whole time budget."""
+    monkeypatch.setattr(settings, "crawl_sequential_recovery_max_seconds", 50.0)
+    monkeypatch.setattr(settings, "crawl_sequential_recovery_cooldown_seconds", 30.0)
+    monkeypatch.setattr(settings, "crawl_sequential_recovery_max_consecutive_failures", 99)
+
+    async def _fake_sitemap(_base: str) -> list[str]:
+        return [
+            "https://example.com/page-a",
+            "https://example.com/page-b",
+            "https://example.com/page-c",
+        ]
+
+    monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _fake_sitemap)
+    _patch_seed(monkeypatch, _seed("https://example.com"))
+
+    clock = _RecoveryClock()
+    monkeypatch.setattr(crawl4ai_client, "_recovery_monotonic", clock.monotonic)
+    monkeypatch.setattr(crawl4ai_client, "_recovery_sleep", clock.sleep)
+
+    single_url_calls: list[str] = []
+
+    async def _fake_crawl_sync(
+        _client: httpx.AsyncClient, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        urls = payload["urls"]
+        if len(urls) > 1:
+            raise _bulk_5xx_error()
+        (url,) = urls
+        single_url_calls.append(url)
+        return {"results": [_success_page(url)]}
+
+    monkeypatch.setattr(crawl4ai_client, "_crawl_sync", _fake_crawl_sync)
+
+    _results, outcomes = await crawl4ai_client.crawl_site(
+        start_url="https://example.com",
+        max_pages=10,
+    )
+
+    # 30s + 30s = 60s > 50s budget: page-a and page-b are attempted (the
+    # deadline is only checked BEFORE each attempt starts), page-c is not.
+    assert single_url_calls == [
+        "https://example.com/page-a",
+        "https://example.com/page-b",
+    ]
+    by_url = {o["url"]: o for o in outcomes}
+    assert by_url["https://example.com/page-a"]["reason_code"] == FetchReasonCode.SUCCESS.value
+    assert by_url["https://example.com/page-b"]["reason_code"] == FetchReasonCode.SUCCESS.value
+    assert by_url["https://example.com/page-c"]["reason_code"] == FetchReasonCode.HTTP_5XX.value
+
+
 def test_browser_config_merges_cookies_and_stealth() -> None:
     """Stealth must not drop an authenticated crawl's cookies."""
     cookies = [{"name": "session", "value": "abc", "domain": "example.com", "path": "/"}]
