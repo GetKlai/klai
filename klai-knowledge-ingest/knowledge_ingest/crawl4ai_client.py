@@ -759,16 +759,89 @@ def _is_non_content_listing_page(result: CrawlResult) -> bool:
     return _looks_like_link_listing(result)
 
 
-# 2026-08-18 (support.ascendcloud.com incident) — status codes that mean
-# "this page definitely doesn't exist", which is incompatible with "this
-# page was blocked". A 404/410 alongside crawl4ai's "blocked by anti-bot
-# protection" marker below is not a block: it's a real 404 with a tiny body
-# that happened to trip the STRUCTURAL half of that marker (page-shape
-# heuristics like "minimal_text on small page" rather than a concrete
-# challenge observation like "Cloudflare JS challenge"). 401/403 are
-# deliberately excluded here — a real anti-bot wall commonly answers with
-# exactly one of those, so they stay compatible with the anti-bot marker.
-_DEFINITIVE_NONEXISTENT_STATUS_CODES = frozenset({404, 410})
+# 2026-08-18 (production audit of every historical BLOCKED_ANTI_BOT outcome,
+# 100 rows): 91 of 100 carried a status code that itself contradicts "this
+# was a block" — 51x 200 (server delivered content), 26x 404 (+4 more with
+# the new "Structural: minimal_text" wording — nonexistent page, the exact
+# support.ascendcloud.com incident this subsumes), 10x 307 (redirect, not a
+# block), 5x 500 (server error, not a block). Only 4x 403 — a status a real
+# anti-bot wall commonly answers with — looked genuinely consistent with a
+# block. Root cause: crawl4ai's "Blocked by anti-bot protection: <reason>"
+# prefix (async_webcrawler.py:633) wraps TWO fundamentally different kinds
+# of <reason>, sourced from crawl4ai.antibot_detector (pinned 0.9.2, see
+# deploy/crawl4ai/Dockerfile):
+#
+#   - Tier 1 structural markers (_TIER1_PATTERNS): a concrete, named
+#     vendor/challenge signature (e.g. "Cloudflare JS challenge", "Akamai
+#     block (Reference #)") matched anywhere on the page regardless of
+#     status code or page size. A real observation, not a guess — kept as
+#     BLOCKED_ANTI_BOT even when the status code would otherwise contradict
+#     it (a challenge page is very often served with a plain 200).
+#   - Tier 2/3 heuristics (generic short-page terms, and the
+#     "Structural: minimal_text on small page (...)" / "no <body> tag" /
+#     "Near-empty content ... with HTTP 200" / "HTTP {status} with
+#     near-empty response" fallbacks): page-SHAPE guesses with no vendor
+#     signature at all — exactly the class that misfired on 91 of the 100
+#     production rows above. A guess loses to a status code that itself
+#     proves this wasn't a block.
+#
+# ``_CONCRETE_ANTI_BOT_MARKERS`` below is the exact, pinned-version set of
+# Tier 1 reason strings (crawl4ai.antibot_detector._TIER1_PATTERNS, second
+# element of each tuple) — anything else reaching this prefix is a Tier 2/3
+# guess. 401/403 are deliberately NOT in the "contradicts" set: a real
+# anti-bot wall commonly answers with exactly one of those (the 4 production
+# rows above), so a guess stays trusted there.
+#
+# Supersedes a narrower, 404/410-only "definitively nonexistent" status set
+# from the support.ascendcloud.com incident fix (single-signal precedent):
+# every 2xx/3xx/5xx status code contradicts a structural guess just as much
+# as 404/410 does, and a concrete detection needs to survive a contradicting
+# status code too (a Cloudflare challenge on a 200 is real). One mechanism,
+# not two overlapping ones — see ``_status_contradicts_structural_anti_bot_guess``.
+_CONCRETE_ANTI_BOT_MARKERS = frozenset(
+    {
+        "akamai block (reference #)",
+        "akamai challenge (pardon our interruption)",
+        "cloudflare challenge form",
+        "cloudflare firewall block",
+        "cloudflare js challenge",
+        "perimeterx block",
+        "perimeterx captcha",
+        "datadome captcha",
+        "imperva/incapsula block",
+        "imperva/incapsula incident",
+        "sucuri firewall block",
+        "kasada challenge",
+        "network security block",
+    }
+)
+
+
+def _is_concrete_anti_bot_detection(err_msg: str) -> bool:
+    """True when ``err_msg`` (already lower-cased) names a specific,
+    known anti-bot vendor/challenge signature — as opposed to a generic
+    page-shape guess. See the module comment above ``_classify_fetch_outcome``
+    for the full rationale and the crawl4ai source this is derived from.
+    """
+    return any(marker in err_msg for marker in _CONCRETE_ANTI_BOT_MARKERS)
+
+
+def _status_contradicts_structural_anti_bot_guess(status: Any) -> bool:
+    """True when ``status`` is a status code that is incompatible with a
+    STRUCTURAL anti-bot guess (never with a concrete detection — see
+    ``_is_concrete_anti_bot_detection``). Subsumes the narrower
+    404/410-only "definitively nonexistent" case: 404/410 (nonexistent),
+    every 2xx (content was actually delivered), every 3xx (a redirect, not
+    a block), and every 5xx (a server error, not a block). 401/403 are
+    intentionally excluded — see the module comment above.
+    """
+    if not isinstance(status, int):
+        return False
+    if 200 <= status < 400:
+        return True
+    if status in (404, 410):
+        return True
+    return 500 <= status < 600
 
 
 def _classify_fetch_outcome(
@@ -855,14 +928,18 @@ def _classify_fetch_outcome(
     # and the seed/single-page synthesized shape built in
     # _build_outcome_from_result.
     #
-    # 2026-08-18: a definitive "doesn't exist" status code overrides this
-    # heuristic marker rather than being overridden by it — see
-    # _DEFINITIVE_NONEXISTENT_STATUS_CODES above. Falls through to the
-    # ordinary status-code branches below, which classify 404/410 as
-    # HTTP_4XX.
-    if (
-        "blocked by anti-bot protection" in err_msg
-        and status not in _DEFINITIVE_NONEXISTENT_STATUS_CODES
+    # 2026-08-18: a concrete detection (named vendor/challenge signature)
+    # always wins — see _is_concrete_anti_bot_detection. A structural GUESS
+    # only wins when the status code does not itself contradict a block —
+    # see _status_contradicts_structural_anti_bot_guess and the module
+    # comment above for the production evidence (91 of 100 historical
+    # BLOCKED_ANTI_BOT outcomes carried a contradicting status code).
+    # Falls through to the ordinary status-code branches below on a
+    # contradicted guess, which classify e.g. 404/410 as HTTP_4XX, 200 has
+    # already returned SUCCESS above, and 5xx as HTTP_5XX.
+    if "blocked by anti-bot protection" in err_msg and (
+        _is_concrete_anti_bot_detection(err_msg)
+        or not _status_contradicts_structural_anti_bot_guess(status)
     ):
         return FetchReasonCode.BLOCKED_ANTI_BOT.value
 
@@ -3059,9 +3136,18 @@ async def _bfs_deep_crawl(
 # stop ``_chunked_bulk_fetch`` from sending any further chunk (A1): sending
 # chunk 2..N after chunk 1 already saw this signal is precisely the
 # "ignore the 429, keep hammering" bug this fixes.
-_STOP_CHUNKING_REASON_CODES = frozenset(
-    {FetchReasonCode.RATE_LIMITED.value, FetchReasonCode.BLOCKED_ANTI_BOT.value}
-)
+#
+# 2026-08-18 (antibot-classification-and-threshold): RATE_LIMITED stays an
+# IMMEDIATE stop — a 429 is the target site explicitly telling us to slow
+# down, not a guess. BLOCKED_ANTI_BOT is deliberately NOT in this set any
+# more: it only comes from a per-URL page result (never from the
+# exception path — see ``_classify_fetch_outcome``'s error branch, which
+# never checks the "blocked by anti-bot protection" marker), and a single
+# such signal is exactly the disproportionate trigger this fix removes —
+# see ``crawl_antibot_stop_ratio`` / ``crawl_antibot_stop_min_count``
+# (config.py) for the production evidence and the replacement, crawl-wide
+# ratio+floor gate applied further down in this function.
+_STOP_CHUNKING_REASON_CODES = frozenset({FetchReasonCode.RATE_LIMITED.value})
 
 
 @dataclass
@@ -3094,7 +3180,9 @@ class ChunkedFetchResult:
         not_attempted: URLs belonging to chunks that were never submitted
             at all because an earlier chunk's outcome (page-level
             classification, or the chunk's own transport exception)
-            classified as RATE_LIMITED or BLOCKED_ANTI_BOT and the loop
+            classified as RATE_LIMITED — or the crawl-wide BLOCKED_ANTI_BOT
+            ratio crossed its threshold (see ``crawl_antibot_stop_ratio`` /
+            ``crawl_antibot_stop_min_count``, config.py) — and the loop
             stopped sending further chunks (A1, see ``stopped_early``).
             These made ZERO network calls — kept out of ``failed`` so a
             caller never conflates "the site rejected this URL" with "we
@@ -3144,19 +3232,33 @@ async def _chunked_bulk_fetch(
     server-side ``timeouts.batch_process``. The pacing gap above happens
     BEFORE a chunk's request starts, so it never eats into that timeout.
 
-    A1 (2026-08-18): once a chunk's outcome classifies as RATE_LIMITED or
-    BLOCKED_ANTI_BOT — either a per-URL page result within a successfully
-    transported chunk, or the chunk's own transport exception — every
-    later, not-yet-submitted chunk is skipped entirely instead of being
-    sent anyway. The chunk that produced the signal still fully completes
-    (its own request already went out; we cannot un-send it), only chunks
-    AFTER it are affected. See ``ChunkedFetchResult.not_attempted``.
+    A1 (2026-08-18): once a chunk's outcome classifies as RATE_LIMITED —
+    either a per-URL page result within a successfully transported chunk,
+    or the chunk's own transport exception — every later, not-yet-submitted
+    chunk is skipped entirely instead of being sent anyway. The chunk that
+    produced the signal still fully completes (its own request already
+    went out; we cannot un-send it), only chunks AFTER it are affected.
+    See ``ChunkedFetchResult.not_attempted``.
+
+    2026-08-18 (antibot-classification-and-threshold): BLOCKED_ANTI_BOT is
+    a SEPARATE, ratio-gated trigger, not an immediate stop like
+    RATE_LIMITED. A running tally of anti-bot signals and total attempted
+    URLs is kept across every chunk processed by THIS call (crawl-wide,
+    not per-chunk — a 1-URL chunk that itself classifies BLOCKED_ANTI_BOT
+    is trivially 100% locally, which is meaningless in isolation).
+    Chunking stops only once BOTH ``settings.crawl_antibot_stop_min_count``
+    (absolute floor, protects small crawls from one stray signal) AND
+    ``settings.crawl_antibot_stop_ratio`` (share of attempted URLs so far)
+    are met. See config.py for the production evidence behind both
+    defaults (0.25 / 3).
     """
     result = ChunkedFetchResult()
     if not urls:
         return result
     chunk_size = _burst_size_for(rate_limit)
     previous_chunk_start: float | None = None
+    attempted_count = 0
+    antibot_signal_count = 0
     for chunk_start in range(0, len(urls), chunk_size):
         if rate_limit is not None and previous_chunk_start is not None:
             gap_seconds = chunk_size / rate_limit
@@ -3182,11 +3284,22 @@ async def _chunked_bulk_fetch(
                 data = await _crawl_sync(client, payload)
             chunk_pages = _normalise_results_block(data)
             result.raw_results.extend(chunk_pages)
+            attempted_count += len(chunk_pages)
             for page in chunk_pages:
-                chunk_reason_codes.add(_classify_fetch_outcome(page))
+                page_reason_code = _classify_fetch_outcome(page)
+                chunk_reason_codes.add(page_reason_code)
+                if page_reason_code == FetchReasonCode.BLOCKED_ANTI_BOT.value:
+                    antibot_signal_count += 1
         except Exception as exc:
+            # A chunk-level transport exception can never itself classify
+            # BLOCKED_ANTI_BOT (see _classify_fetch_outcome's error branch:
+            # it never checks the "blocked by anti-bot protection" body
+            # marker) — attempted_count still advances by the whole chunk
+            # (a network call WAS made for every URL in it), but the
+            # anti-bot tally is untouched here.
             for chunk_url in chunk_urls:
                 result.failed[chunk_url] = exc
+            attempted_count += len(chunk_urls)
             chunk_reason_codes.add(_classify_fetch_outcome(None, error=exc))
             logger.warning(
                 "crawl_site_bulk_chunk_failed",
@@ -3195,18 +3308,29 @@ async def _chunked_bulk_fetch(
                 error=str(exc),
             )
 
-        if chunk_reason_codes & _STOP_CHUNKING_REASON_CODES:
+        antibot_ratio_exceeded = (
+            antibot_signal_count >= settings.crawl_antibot_stop_min_count
+            and attempted_count > 0
+            and (antibot_signal_count / attempted_count) >= settings.crawl_antibot_stop_ratio
+        )
+        stop_triggered = bool(chunk_reason_codes & _STOP_CHUNKING_REASON_CODES) or (
+            FetchReasonCode.BLOCKED_ANTI_BOT.value in chunk_reason_codes and antibot_ratio_exceeded
+        )
+        if stop_triggered:
             remaining_urls = urls[chunk_start + chunk_size :]
             if remaining_urls:
                 result.stopped_early = True
                 result.not_attempted = remaining_urls
+                triggering_reason_codes = set(chunk_reason_codes & _STOP_CHUNKING_REASON_CODES)
+                if antibot_ratio_exceeded:
+                    triggering_reason_codes.add(FetchReasonCode.BLOCKED_ANTI_BOT.value)
                 logger.warning(
                     "crawl_bulk_stopped_after_rate_limit_signal",
                     sent_urls=chunk_start + len(chunk_urls),
                     not_attempted_urls=len(remaining_urls),
-                    triggering_reason_codes=sorted(
-                        chunk_reason_codes & _STOP_CHUNKING_REASON_CODES
-                    ),
+                    triggering_reason_codes=sorted(triggering_reason_codes),
+                    antibot_signal_count=antibot_signal_count,
+                    antibot_attempted_count=attempted_count,
                 )
             break
 
