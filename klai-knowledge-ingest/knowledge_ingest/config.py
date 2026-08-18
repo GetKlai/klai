@@ -114,6 +114,39 @@ class Settings(BaseSettings):
         default=240.0,
         validation_alias=AliasChoices("KLAI_CRAWL_SEQUENTIAL_RECOVERY_TIMEOUT_SECONDS"),
     )
+    # 2026-08-18 (block B, AIMD recovery follow-up to the 2026-08-17
+    # halving-only lowering): additive-increase side of the per-domain
+    # rate-limit controller (knowledge_ingest.domain_rate_limit_control).
+    # A domain that hit RATE_LIMITED/BLOCKED_ANTI_BOT once should not stay
+    # throttled forever — but raising too eagerly just repeats the
+    # incident, so all three knobs below are deliberately conservative.
+    #
+    # crawl_rate_limit_recovery_step: fixed additive step (req/s) applied
+    # per ELIGIBLE job — never more than one step, regardless of how far
+    # past the threshold the clean streak has grown.
+    crawl_rate_limit_recovery_step: float = Field(
+        default=0.2,
+        validation_alias=AliasChoices("KLAI_CRAWL_RATE_LIMIT_RECOVERY_STEP"),
+    )
+    # crawl_rate_limit_recovery_clean_threshold: clean (SUCCESS) observations
+    # required before a step is even considered. 50 is roughly one
+    # successful crawl of a small site, so in practice this is at most one
+    # step per day for a domain that crawls daily. From the 0.2 floor back
+    # to a 2.0 default that is 9 steps ~= 9 days — deliberately slow: too
+    # fast repeats the incident, and this is background work where a day
+    # of extra caution is not a real cost.
+    crawl_rate_limit_recovery_clean_threshold: int = Field(
+        default=50,
+        validation_alias=AliasChoices("KLAI_CRAWL_RATE_LIMIT_RECOVERY_CLEAN_THRESHOLD"),
+    )
+    # crawl_rate_limit_recovery_cooldown_hours: minimum time since the last
+    # congestion signal before a raise is allowed, even if the clean
+    # threshold is already met — the hysteresis that stops a single good
+    # crawl right after a bad one from immediately undoing the backoff.
+    crawl_rate_limit_recovery_cooldown_hours: float = Field(
+        default=24.0,
+        validation_alias=AliasChoices("KLAI_CRAWL_RATE_LIMIT_RECOVERY_COOLDOWN_HOURS"),
+    )
     # httpx timeout for one bulk `/crawl` chunk request
     # (crawl4ai_client._chunked_bulk_fetch). With client-side pacing
     # (fix/client-side-crawl-pacing) the wait between chunks happens BEFORE

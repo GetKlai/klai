@@ -1,31 +1,47 @@
-"""Per-domain adaptive rate-limit lowering (2026-08-17 incident).
+"""Per-domain adaptive rate-limit control, wired through ``run_crawl_job``
+(2026-08-17 halving incident + 2026-08-18 block B additive recovery).
 
 A domain that returns RATE_LIMITED or BLOCKED_ANTI_BOT outcomes should not
-get hammered again at the same pace on the next crawl. ``run_crawl_job``
-stores a halved rate_limit in ``knowledge.crawl_domains`` for that domain
-(``domain_selectors.lower_domain_rate_limit``) and applies a previously
-stored value on the NEXT crawl instead of the caller's default
-(``domain_selectors.get_domain_rate_limit``).
+get hammered again at the same pace on the next crawl — and a domain that
+has since behaved should not stay throttled forever. ``run_crawl_job``:
+
+- reads the full AIMD state for the domain
+  (``domain_selectors.get_domain_rate_limit_state``) and applies its
+  ``rate_limit`` INSTEAD OF the caller's default when one is stored,
+- counts this job's fetch_outcomes into congestion/clean signals
+  (``domain_rate_limit_control.count_rate_limit_observations``),
+- runs the pure regelwet
+  (``domain_rate_limit_control.compute_domain_rate_limit_update``), and
+- persists the result in one write
+  (``domain_selectors.save_domain_rate_limit_state``) — unless the
+  regelwet says nothing needs persisting.
 
 These tests mock ``crawl_site`` entirely — the crawl4ai wiring itself is
 covered by tests/test_build_crawl_config.py and
-tests/test_crawl_site_reconcile.py. Here the concern is purely: does
-run_crawl_job read the stored override, and does it write one back when the
-signal fires.
+tests/test_crawl_site_reconcile.py. The pure regelwet itself (hysteresis,
+floor, ceiling, table-cleanliness edge cases) is covered exhaustively,
+without any mocking, in tests/test_domain_rate_limit_control.py. Here the
+concern is purely the wiring: does run_crawl_job read the stored state,
+does it feed the right observations into the regelwet, and does it persist
+exactly what the regelwet returned.
 """
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from knowledge_ingest.adapters.crawler import run_crawl_job
 from knowledge_ingest.crawl4ai_client import CrawlResult
+from knowledge_ingest.domain_rate_limit_control import DomainRateLimitState
 from knowledge_ingest.reason_codes import FetchReasonCode
 
 START_URL = "https://intermedia.com/support"
 DOMAIN = "intermedia.com"
+
+_NO_OVERRIDE = DomainRateLimitState(rate_limit=None, clean_streak=0, last_congestion_at=None)
 
 
 def _mock_conn() -> MagicMock:
@@ -51,19 +67,19 @@ def _page(url: str) -> CrawlResult:
 async def _run(
     *,
     crawl_site_mock: AsyncMock,
-    get_domain_rate_limit_mock: AsyncMock,
-    lower_domain_rate_limit_mock: AsyncMock,
+    get_state_mock: AsyncMock,
+    save_state_mock: AsyncMock,
     rate_limit: float = 2.0,
 ) -> None:
     with (
         patch("knowledge_ingest.adapters.crawler.crawl_site", new=crawl_site_mock),
         patch(
-            "knowledge_ingest.adapters.crawler.get_domain_rate_limit",
-            new=get_domain_rate_limit_mock,
+            "knowledge_ingest.adapters.crawler.get_domain_rate_limit_state",
+            new=get_state_mock,
         ),
         patch(
-            "knowledge_ingest.adapters.crawler.lower_domain_rate_limit",
-            new=lower_domain_rate_limit_mock,
+            "knowledge_ingest.adapters.crawler.save_domain_rate_limit_state",
+            new=save_state_mock,
         ),
         patch(
             "knowledge_ingest.adapters.crawler.pg_store.get_crawled_page_hashes",
@@ -88,6 +104,18 @@ async def _run(
         )
 
 
+def _outcomes(*reason_codes: str) -> list[dict]:
+    return [
+        {
+            "url": f"https://intermedia.com/support/{i}",
+            "reason_code": reason_code,
+            "status_code": 200 if reason_code == FetchReasonCode.SUCCESS.value else None,
+            "content_length": 100 if reason_code == FetchReasonCode.SUCCESS.value else 0,
+        }
+        for i, reason_code in enumerate(reason_codes)
+    ]
+
+
 @pytest.mark.asyncio
 async def test_rate_limited_outcome_lowers_the_domain_rate_limit() -> None:
     """A crawl whose outcomes include RATE_LIMITED must halve and persist
@@ -96,37 +124,27 @@ async def test_rate_limited_outcome_lowers_the_domain_rate_limit() -> None:
     crawl_site = AsyncMock(
         return_value=(
             [_page(START_URL)],
-            [
-                {
-                    "url": START_URL,
-                    "reason_code": FetchReasonCode.SUCCESS.value,
-                    "status_code": 200,
-                    "content_length": 100,
-                },
-                {
-                    "url": "https://intermedia.com/support/a",
-                    "reason_code": FetchReasonCode.RATE_LIMITED.value,
-                    "status_code": None,
-                    "content_length": 0,
-                },
-            ],
+            _outcomes(FetchReasonCode.SUCCESS.value, FetchReasonCode.RATE_LIMITED.value),
         )
     )
-    get_domain_rate_limit = AsyncMock(return_value=None)  # no prior override
-    lower_domain_rate_limit = AsyncMock(return_value=None)
+    get_state = AsyncMock(return_value=_NO_OVERRIDE)  # no prior override
+    save_state = AsyncMock(return_value=None)
 
     await _run(
         crawl_site_mock=crawl_site,
-        get_domain_rate_limit_mock=get_domain_rate_limit,
-        lower_domain_rate_limit_mock=lower_domain_rate_limit,
+        get_state_mock=get_state,
+        save_state_mock=save_state,
         rate_limit=2.0,
     )
 
-    lower_domain_rate_limit.assert_awaited_once()
-    args = lower_domain_rate_limit.await_args
+    save_state.assert_awaited_once()
+    args = save_state.await_args
     assert args.args[1] == DOMAIN
     assert args.args[2] == "org-1"
-    assert args.args[3] == pytest.approx(1.0)  # 2.0 / 2
+    new_state = args.args[3]
+    assert new_state.rate_limit == pytest.approx(1.0)  # 2.0 / 2
+    assert new_state.clean_streak == 0
+    assert new_state.last_congestion_at is not None
 
 
 @pytest.mark.asyncio
@@ -134,58 +152,38 @@ async def test_blocked_anti_bot_outcome_also_lowers_the_domain_rate_limit() -> N
     """BLOCKED_ANTI_BOT is the sibling trigger to RATE_LIMITED — a site
     that anti-bot-blocked us should also be paced down next time."""
     crawl_site = AsyncMock(
-        return_value=(
-            [_page(START_URL)],
-            [
-                {
-                    "url": "https://intermedia.com/support/b",
-                    "reason_code": FetchReasonCode.BLOCKED_ANTI_BOT.value,
-                    "status_code": None,
-                    "content_length": 0,
-                },
-            ],
-        )
+        return_value=([_page(START_URL)], _outcomes(FetchReasonCode.BLOCKED_ANTI_BOT.value))
     )
-    get_domain_rate_limit = AsyncMock(return_value=None)
-    lower_domain_rate_limit = AsyncMock(return_value=None)
+    get_state = AsyncMock(return_value=_NO_OVERRIDE)
+    save_state = AsyncMock(return_value=None)
 
     await _run(
         crawl_site_mock=crawl_site,
-        get_domain_rate_limit_mock=get_domain_rate_limit,
-        lower_domain_rate_limit_mock=lower_domain_rate_limit,
-        rate_limit=2.0,
+        get_state_mock=get_state,
+        save_state_mock=save_state,
     )
 
-    lower_domain_rate_limit.assert_awaited_once()
+    save_state.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_healthy_crawl_does_not_touch_the_domain_rate_limit() -> None:
-    """No RATE_LIMITED / BLOCKED_ANTI_BOT signal → nothing written. A
-    healthy site is never touched by the adaptive throttle."""
+async def test_healthy_crawl_with_no_override_does_not_touch_the_domain_rate_limit() -> None:
+    """No RATE_LIMITED / BLOCKED_ANTI_BOT signal, no stored override →
+    nothing written. A healthy site is never touched by the adaptive
+    throttle, and no row is created for it."""
     crawl_site = AsyncMock(
-        return_value=(
-            [_page(START_URL)],
-            [
-                {
-                    "url": START_URL,
-                    "reason_code": FetchReasonCode.SUCCESS.value,
-                    "status_code": 200,
-                    "content_length": 100,
-                },
-            ],
-        )
+        return_value=([_page(START_URL)], _outcomes(FetchReasonCode.SUCCESS.value))
     )
-    get_domain_rate_limit = AsyncMock(return_value=None)
-    lower_domain_rate_limit = AsyncMock(return_value=None)
+    get_state = AsyncMock(return_value=_NO_OVERRIDE)
+    save_state = AsyncMock(return_value=None)
 
     await _run(
         crawl_site_mock=crawl_site,
-        get_domain_rate_limit_mock=get_domain_rate_limit,
-        lower_domain_rate_limit_mock=lower_domain_rate_limit,
+        get_state_mock=get_state,
+        save_state_mock=save_state,
     )
 
-    lower_domain_rate_limit.assert_not_awaited()
+    save_state.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -193,25 +191,17 @@ async def test_a_previously_lowered_rate_is_applied_on_the_next_crawl() -> None:
     """A stored override for this domain must be used INSTEAD OF the
     caller's default rate_limit, on both crawl_site call sites."""
     crawl_site = AsyncMock(
-        return_value=(
-            [_page(START_URL)],
-            [
-                {
-                    "url": START_URL,
-                    "reason_code": FetchReasonCode.SUCCESS.value,
-                    "status_code": 200,
-                    "content_length": 100,
-                },
-            ],
-        )
+        return_value=([_page(START_URL)], _outcomes(FetchReasonCode.SUCCESS.value))
     )
-    get_domain_rate_limit = AsyncMock(return_value=0.5)  # stored override
-    lower_domain_rate_limit = AsyncMock(return_value=None)
+    get_state = AsyncMock(
+        return_value=DomainRateLimitState(rate_limit=0.5, clean_streak=0, last_congestion_at=None)
+    )
+    save_state = AsyncMock(return_value=None)
 
     await _run(
         crawl_site_mock=crawl_site,
-        get_domain_rate_limit_mock=get_domain_rate_limit,
-        lower_domain_rate_limit_mock=lower_domain_rate_limit,
+        get_state_mock=get_state,
+        save_state_mock=save_state,
         rate_limit=2.0,  # caller's default — must be overridden
     )
 
@@ -224,27 +214,82 @@ async def test_lowering_never_goes_below_the_floor() -> None:
     """Repeated lowering on an already-low stored rate must not asymptote
     toward zero — floor is 0.2 req/s."""
     crawl_site = AsyncMock(
-        return_value=(
-            [_page(START_URL)],
-            [
-                {
-                    "url": "https://intermedia.com/support/a",
-                    "reason_code": FetchReasonCode.RATE_LIMITED.value,
-                    "status_code": None,
-                    "content_length": 0,
-                },
-            ],
-        )
+        return_value=([_page(START_URL)], _outcomes(FetchReasonCode.RATE_LIMITED.value))
     )
-    get_domain_rate_limit = AsyncMock(return_value=0.3)  # already low
-    lower_domain_rate_limit = AsyncMock(return_value=None)
+    get_state = AsyncMock(
+        return_value=DomainRateLimitState(rate_limit=0.3, clean_streak=0, last_congestion_at=None)
+    )
+    save_state = AsyncMock(return_value=None)
 
     await _run(
         crawl_site_mock=crawl_site,
-        get_domain_rate_limit_mock=get_domain_rate_limit,
-        lower_domain_rate_limit_mock=lower_domain_rate_limit,
+        get_state_mock=get_state,
+        save_state_mock=save_state,
         rate_limit=2.0,
     )
 
-    lower_domain_rate_limit.assert_awaited_once()
-    assert lower_domain_rate_limit.await_args.args[3] == pytest.approx(0.2)  # floor, not 0.15
+    save_state.assert_awaited_once()
+    assert save_state.await_args.args[3].rate_limit == pytest.approx(0.2)  # floor, not 0.15
+
+
+@pytest.mark.asyncio
+async def test_a_clean_job_that_clears_recovery_threshold_and_cooldown_raises_and_persists() -> (
+    None
+):
+    """Integration-level (block B): a domain with a stored override, a
+    clean streak already past the recovery threshold, and a last
+    congestion outside the cooldown window gets raised by exactly one step
+    and the raised state is actually written back — not just computed."""
+    crawl_site = AsyncMock(
+        return_value=([_page(START_URL)], _outcomes(FetchReasonCode.SUCCESS.value))
+    )
+    get_state = AsyncMock(
+        return_value=DomainRateLimitState(
+            rate_limit=0.5,
+            clean_streak=60,
+            last_congestion_at=datetime.now(UTC) - timedelta(hours=48),
+        )
+    )
+    save_state = AsyncMock(return_value=None)
+
+    await _run(
+        crawl_site_mock=crawl_site,
+        get_state_mock=get_state,
+        save_state_mock=save_state,
+        rate_limit=2.0,
+    )
+
+    save_state.assert_awaited_once()
+    new_state = save_state.await_args.args[3]
+    assert new_state.rate_limit == pytest.approx(0.7)  # 0.5 + one 0.2 step
+    assert new_state.clean_streak == 0
+
+
+@pytest.mark.asyncio
+async def test_a_clean_job_within_cooldown_does_not_raise_despite_a_large_streak() -> None:
+    """Hysteresis wired end-to-end: even with a clean streak already past
+    the threshold, a congestion inside the cooldown window blocks the
+    raise — the persisted state keeps the same (lowered) rate_limit."""
+    crawl_site = AsyncMock(
+        return_value=([_page(START_URL)], _outcomes(FetchReasonCode.SUCCESS.value))
+    )
+    get_state = AsyncMock(
+        return_value=DomainRateLimitState(
+            rate_limit=0.5,
+            clean_streak=60,
+            last_congestion_at=datetime.now(UTC) - timedelta(hours=1),
+        )
+    )
+    save_state = AsyncMock(return_value=None)
+
+    await _run(
+        crawl_site_mock=crawl_site,
+        get_state_mock=get_state,
+        save_state_mock=save_state,
+        rate_limit=2.0,
+    )
+
+    save_state.assert_awaited_once()
+    new_state = save_state.await_args.args[3]
+    assert new_state.rate_limit == pytest.approx(0.5)  # unchanged — still throttled
+    assert new_state.clean_streak == 61  # 60 stored + 1 SUCCESS this job
