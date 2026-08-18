@@ -28,6 +28,34 @@ class Settings(BaseSettings):
     # due to a config typo.
     ingest_login_wall_detect_enabled: bool = True
     ingest_login_wall_detect_mode: str = "reject"
+    # 2026-08-18 stop-the-bleeding fix, corrected same day after a
+    # production content-length measurement (n=1426,
+    # knowledge.crawled_pages) refuted the original design (a single flat
+    # threshold below which every page is rejected).
+    #
+    # The measurement: two real, unique pages (getklai.com/contact at ~85
+    # chars, help.voys.nl/help-pages-nl at ~108 chars) sit INSIDE the same
+    # length band as measured error-page clusters (5x exactly 92 chars,
+    # 3x exactly 98, 3x exactly 101, 3x exactly 88 — the incident that
+    # prompted this fix, openapi.eu-production.holodeck.voys.nl, is the
+    # 92-char cluster). A flat threshold below 85 lets every measured
+    # error page through; a flat threshold above 118 drops both real
+    # pages. Length alone cannot separate these two classes — only
+    # uniqueness can (see ``_ingest_crawl_result`` in adapters/crawler.py
+    # for the full two-tier rule this setting is now one half of, and
+    # tests/test_crawler_content_too_short.py for the measured numbers).
+    #
+    # This setting is now ONLY the soft-zone ceiling: below it (and at or
+    # above ``_HARD_MIN_CONTENT_LENGTH`` in crawler.py), a page is
+    # persisted UNLESS it is a near-duplicate of >= 2 other pages in the
+    # same KB. At or above this value, a page is always persisted
+    # regardless of clustering. 150 stays far below any real KB article
+    # (virtually always multiple sentences) while giving margin above the
+    # measured 88-118 char error-page band.
+    ingest_min_content_length: int = Field(
+        default=150,
+        validation_alias=AliasChoices("KLAI_INGEST_MIN_CONTENT_LENGTH"),
+    )
     # SPEC-INGEST-LOGIN-WALL-DETECT-002 REQ-02 — cluster threshold. A page is
     # flagged as a wall iff this many OR MORE OTHER pages in the same
     # (org_id, kb_slug) have a SimHash within Hamming distance 3 of the page's
@@ -113,6 +141,39 @@ class Settings(BaseSettings):
     crawl_sequential_recovery_timeout_seconds: float = Field(
         default=240.0,
         validation_alias=AliasChoices("KLAI_CRAWL_SEQUENTIAL_RECOVERY_TIMEOUT_SECONDS"),
+    )
+    # 2026-08-18 (block B, AIMD recovery follow-up to the 2026-08-17
+    # halving-only lowering): additive-increase side of the per-domain
+    # rate-limit controller (knowledge_ingest.domain_rate_limit_control).
+    # A domain that hit RATE_LIMITED/BLOCKED_ANTI_BOT once should not stay
+    # throttled forever — but raising too eagerly just repeats the
+    # incident, so all three knobs below are deliberately conservative.
+    #
+    # crawl_rate_limit_recovery_step: fixed additive step (req/s) applied
+    # per ELIGIBLE job — never more than one step, regardless of how far
+    # past the threshold the clean streak has grown.
+    crawl_rate_limit_recovery_step: float = Field(
+        default=0.2,
+        validation_alias=AliasChoices("KLAI_CRAWL_RATE_LIMIT_RECOVERY_STEP"),
+    )
+    # crawl_rate_limit_recovery_clean_threshold: clean (SUCCESS) observations
+    # required before a step is even considered. 50 is roughly one
+    # successful crawl of a small site, so in practice this is at most one
+    # step per day for a domain that crawls daily. From the 0.2 floor back
+    # to a 2.0 default that is 9 steps ~= 9 days — deliberately slow: too
+    # fast repeats the incident, and this is background work where a day
+    # of extra caution is not a real cost.
+    crawl_rate_limit_recovery_clean_threshold: int = Field(
+        default=50,
+        validation_alias=AliasChoices("KLAI_CRAWL_RATE_LIMIT_RECOVERY_CLEAN_THRESHOLD"),
+    )
+    # crawl_rate_limit_recovery_cooldown_hours: minimum time since the last
+    # congestion signal before a raise is allowed, even if the clean
+    # threshold is already met — the hysteresis that stops a single good
+    # crawl right after a bad one from immediately undoing the backoff.
+    crawl_rate_limit_recovery_cooldown_hours: float = Field(
+        default=24.0,
+        validation_alias=AliasChoices("KLAI_CRAWL_RATE_LIMIT_RECOVERY_COOLDOWN_HOURS"),
     )
     # httpx timeout for one bulk `/crawl` chunk request
     # (crawl4ai_client._chunked_bulk_fetch). With client-side pacing

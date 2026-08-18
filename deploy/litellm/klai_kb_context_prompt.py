@@ -76,6 +76,7 @@ def build_kb_context_prompt(
     low_confidence_injection_disabled: bool,
     low_confidence_strict_text: str,
     low_confidence_open_text: str,
+    multi_question_guard_text: str = "",
 ) -> KbContextPrompt:
     """Build the chunks-present KB prompt block and its metadata side effects."""
     lines = [kb_chunks_present_header(kb_narrow), KB_ANSWER_FORMAT_INSTRUCTION]
@@ -118,6 +119,10 @@ def build_kb_context_prompt(
     lines.append("[End knowledge base context]")
     if low_confidence_applied:
         lines.append(low_confidence_strict_text if kb_narrow else low_confidence_open_text)
+    if multi_question_guard_text:
+        # Multi-part messages get one retrieval pass; force per-question
+        # coverage judgement regardless of the aggregate confidence band.
+        lines.append(multi_question_guard_text)
 
     lines.append(KB_CONTEXT_LANGUAGE_REMINDER)
 

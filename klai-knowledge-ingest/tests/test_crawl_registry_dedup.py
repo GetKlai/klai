@@ -35,6 +35,14 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
+# 2026-08-18 stop-the-bleeding fix: content-length gate
+# (settings.ingest_min_content_length) now skips persistence below
+# threshold. Appended to fixture text below so these dedup tests keep
+# exercising the ingest/upsert paths they were written to test, not the
+# new short-content skip.
+_PAD_ABOVE_MIN_CONTENT_LENGTH = " Filler sentence for length only." * 5
+
+
 def _make_crawl_result(
     text: str = "# Hello\nPage content here.",
     html: str = "<html><body>Hello</body></html>",
@@ -121,7 +129,7 @@ async def test_bulk_crawl_skip_unchanged() -> None:
 async def test_bulk_crawl_reingests_unchanged_connector_when_active_artifact_missing() -> None:
     """Known crawled_pages hashes must not hide a retired connector artifact."""
     html = "<html><body>Hello</body></html>"
-    text = "# Hello\nPage content here."
+    text = "# Hello\nPage content here." + _PAD_ABOVE_MIN_CONTENT_LENGTH
     stored = (_sha256(html), _sha256(text))
 
     result = _make_crawl_result(text=text, html=html)
@@ -166,7 +174,7 @@ async def test_bulk_crawl_reingests_unchanged_connector_when_active_artifact_mis
 @pytest.mark.asyncio
 async def test_bulk_crawl_skip_html_noise() -> None:
     """When raw HTML changed but content hash is identical, skip ingest but update raw_html_hash."""
-    text = "# Article content"
+    text = "# Article content" + _PAD_ABOVE_MIN_CONTENT_LENGTH
     old_html = "<html><body>Article</body></html>"
     new_html = "<html><body>Article<script>analytics()</script></body></html>"
     stored = (_sha256(old_html), _sha256(text))
@@ -203,7 +211,7 @@ async def test_bulk_crawl_skip_html_noise() -> None:
 @pytest.mark.asyncio
 async def test_bulk_crawl_reingest_on_change() -> None:
     """When content hash differs, ingest_document IS called and crawled_pages is updated."""
-    text = "# Updated content"
+    text = "# Updated content" + _PAD_ABOVE_MIN_CONTENT_LENGTH
     html = "<html><body>Updated</body></html>"
     old_stored = (_sha256("old html"), _sha256("# Old content"))
 
@@ -243,7 +251,7 @@ async def test_bulk_crawl_reingest_on_change() -> None:
 @pytest.mark.asyncio
 async def test_bulk_crawl_new_page() -> None:
     """When URL is not in crawled_pages (None), insert + ingest."""
-    text = "# Brand new page"
+    text = "# Brand new page" + _PAD_ABOVE_MIN_CONTENT_LENGTH
     html = "<html><body>New</body></html>"
 
     result = _make_crawl_result(text=text, html=html)

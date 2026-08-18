@@ -221,7 +221,7 @@ async def test_observed_rate_limit_still_triggers_domain_rate_limit_lowering(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Regression guard for the interaction with
-    ``adapters.crawler._RATE_LIMIT_LOWERING_TRIGGER_REASON_CODES``: even
+    ``domain_rate_limit_control.count_rate_limit_observations``: even
     though only ONE chunk's URL was actually rate-limited, that single real
     observation must still appear in ``crawl_site``'s outcomes as
     RATE_LIMITED — the NOT_FETCHED_RATE_LIMIT_STOP entries for the skipped
@@ -266,9 +266,14 @@ async def test_observed_rate_limit_still_triggers_domain_rate_limit_lowering(
     assert by_url["https://example.com/2"] == FetchReasonCode.NOT_FETCHED_RATE_LIMIT_STOP.value
     assert by_url["https://example.com/3"] == FetchReasonCode.NOT_FETCHED_RATE_LIMIT_STOP.value
 
-    # The lowering trigger set in adapters/crawler.py fires on RATE_LIMITED
-    # / BLOCKED_ANTI_BOT — confirm the one real observation is present and
-    # would still trip it.
-    from knowledge_ingest.adapters.crawler import _RATE_LIMIT_LOWERING_TRIGGER_REASON_CODES
+    # The congestion signal counted by domain_rate_limit_control fires on
+    # RATE_LIMITED / BLOCKED_ANTI_BOT — confirm the one real observation is
+    # present and would still trip it. The seed page (fetched separately,
+    # SUCCESS) is the only clean observation; the two
+    # NOT_FETCHED_RATE_LIMIT_STOP skips must NOT count as additional clean
+    # or congestion signals.
+    from knowledge_ingest.domain_rate_limit_control import count_rate_limit_observations
 
-    assert any(o["reason_code"] in _RATE_LIMIT_LOWERING_TRIGGER_REASON_CODES for o in outcomes)
+    observation = count_rate_limit_observations(outcomes)
+    assert observation.had_congestion is True
+    assert observation.clean_count == 1  # the seed page only

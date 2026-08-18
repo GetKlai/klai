@@ -16,6 +16,10 @@ from knowledge_ingest.crawl4ai_client import CrawlResult
 
 
 def _make_mock_pool() -> MagicMock:
+    # ``fetch`` returning ``[]`` also matters for the content-length gate
+    # in ``_ingest_crawl_result``: fixture text below (42 chars) is inside
+    # the gate's soft zone, and with no cluster siblings returned it is
+    # treated as unique short content and kept, not rejected.
     pool = MagicMock()
     pool.execute = AsyncMock(return_value=None)
     pool.fetch = AsyncMock(return_value=[])

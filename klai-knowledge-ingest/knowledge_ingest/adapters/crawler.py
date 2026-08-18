@@ -14,6 +14,7 @@ import hashlib
 import json
 import time
 from collections import Counter
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlparse
 
 import asyncpg
@@ -24,13 +25,21 @@ from klai_image_storage import ImageStore, download_and_upload_crawl_images
 from knowledge_ingest import pg_store, qdrant_store
 from knowledge_ingest.config import settings
 from knowledge_ingest.crawl4ai_client import CrawlResult, _canonicalise_url, crawl_site
+from knowledge_ingest.domain_rate_limit_control import (
+    compute_domain_rate_limit_update,
+    count_rate_limit_observations,
+)
 from knowledge_ingest.domain_selectors import (
     extract_domain,
-    get_domain_rate_limit,
-    lower_domain_rate_limit,
+    get_domain_rate_limit_state,
+    save_domain_rate_limit_state,
 )
 from knowledge_ingest.models import IngestRequest
-from knowledge_ingest.reason_codes import FETCH_REASON_VALUES, FetchReasonCode
+from knowledge_ingest.reason_codes import (
+    FETCH_REASON_VALUES,
+    FetchReasonCode,
+    PersistSkipReason,
+)
 from knowledge_ingest.utils.auth_wall_classifier import classify_auth_wall
 from knowledge_ingest.utils.auth_wall_detector import (
     AuthWallSignal,
@@ -69,6 +78,27 @@ AUTH_WALL_DETECTED_REASON = "auth_wall_detected"
 FETCH_FAILURE_DOMINANT_REASON = "fetch_failure_dominant"
 
 _NOT_FETCHED_REASON_PREFIX = "not_fetched_"
+
+# 2026-08-18 stop-the-bleeding fix, corrected same day after production
+# measurement (n=1426, knowledge.crawled_pages) — see the long comment at
+# the short-content-cluster gate in _ingest_crawl_result for the full
+# rationale and tests/test_crawler_content_too_short.py for the measured
+# numbers this is calibrated against.
+#
+# Hard floor: below this length, a page is rejected unconditionally, no
+# cluster lookup needed. Calibrated against the measurement: the only
+# pages below 30 chars in the whole dataset are 3 completely empty
+# (1-char) pages; the shortest legitimate real page measured is ~85
+# chars, far above this floor, so 30 cannot falsely reject real content.
+_HARD_MIN_CONTENT_LENGTH = 30
+
+# Cluster-size requirement for the short-content-cluster gate (soft
+# zone), reusing detect_anonymous_auth_wall's SimHash lookup. Lower than
+# that detector's own DEFAULT_CLUSTER_MIN (5) because the measurement's
+# smallest error-page cluster is 3 total pages (2 OTHERS from any one
+# page's perspective) — cluster_min=5 would silently miss it, letting
+# the 3-page 404 cluster and both 3-page Ascend clusters through.
+_SHORT_CONTENT_CLUSTER_MIN = 2
 
 _DIRTY_CONTENT_SUGGESTION = (
     "Re-run preview from the connector edit page. The site likely now requires "
@@ -320,6 +350,40 @@ def _build_crawl_outcome_warning(
     }
 
 
+def _crawl_fully_fetched(fetch_outcomes: list[dict]) -> bool:
+    """True only when every discovered candidate URL was actually fetched.
+
+    2026-08-18 stop-the-bleeding fix: the stale-connector-artifact
+    reconciliation below compares ``current_paths`` (the URLs that were
+    successfully fetched THIS run) against everything on record for the
+    connector, and deletes anything missing as "stale". A URL that merely
+    hit a real fetch failure (timeout, 5xx, DNS, ...) this run is absent
+    from ``current_paths`` for a reason that has nothing to do with the
+    page still existing on the site — deleting it destroys live knowledge.
+    ``decide_fetch_failure_terminal_status`` tolerates up to
+    ``ingest_fetch_failure_dirty_trip_rate`` (30% by default) of real
+    failures before it stops the job from reaching ``completed``, so a
+    job well within that tolerance can still have failed some pages.
+
+    Reconciliation may only run when every discovered URL was demonstrably
+    resolved (``success`` or ``non_content_listing_page``) — never on a
+    real fetch failure, and never on a deliberately-unfetched
+    ``not_fetched_*`` scheduling omission (budget/depth/exclude/duplicate).
+    This is intentionally conservative: a crawl with any incompleteness at
+    all skips reconciliation entirely rather than trying to distinguish
+    "gone" from "not reached this run" — the more precise three-way split
+    (present / demonstrably gone / unknown) is a larger design left for a
+    follow-up.
+    """
+    for outcome in fetch_outcomes:
+        reason = str(outcome.get("reason_code") or "")
+        if reason in _FETCH_FAILURE_REASON_CODES:
+            return False
+        if reason.startswith(_NOT_FETCHED_REASON_PREFIX):
+            return False
+    return True
+
+
 def _crawl_warning_terminal_status(crawl_warning: dict | None) -> str:
     """Return the terminal status implied by a crawl warning, if any."""
     if crawl_warning is None:
@@ -472,17 +536,15 @@ async def _build_link_graph(
 
 _UNSET = object()  # sentinel: stored_hash not yet fetched from DB
 
-# 2026-08-17 (intermedia.com + support.ascendcloud.com incident): when a
-# crawl hits RATE_LIMITED or BLOCKED_ANTI_BOT, the NEXT crawl of that same
-# domain should start already paced down instead of walking into the same
-# wall again. Halving is a simple, explainable adjustment — no PID
-# controller, no multi-run trend analysis — and the floor keeps a very
-# touchy site making forward progress (1 request every 5s) instead of the
-# halving asymptoting toward zero over repeated bad runs.
-_MIN_DOMAIN_RATE_LIMIT = 0.2
-_RATE_LIMIT_LOWERING_TRIGGER_REASON_CODES = frozenset(
-    {FetchReasonCode.RATE_LIMITED.value, FetchReasonCode.BLOCKED_ANTI_BOT.value}
-)
+# 2026-08-17 (intermedia.com + support.ascendcloud.com incident), extended
+# 2026-08-18 with additive recovery (block B): a crawl that hits
+# RATE_LIMITED or BLOCKED_ANTI_BOT paces the NEXT crawl of that domain down
+# instead of walking into the same wall again, and a domain that has
+# behaved for a while gets its rate limit raised back up. The regelwet
+# (halve on congestion, floor, additive step, hysteresis) lives in
+# ``knowledge_ingest.domain_rate_limit_control`` as a pure function so it
+# is testable without a database; this module only wires observed outcomes
+# into it and persists the result.
 
 
 async def run_crawl_job(
@@ -528,8 +590,9 @@ async def run_crawl_job(
     (see ``build_crawl_config``'s docstring). If ``knowledge.crawl_domains``
     holds a previously-lowered rate for this domain (set after a prior
     RATE_LIMITED/BLOCKED_ANTI_BOT outcome — see
-    ``_RATE_LIMIT_LOWERING_TRIGGER_REASON_CODES`` below), that stored value
-    is used instead of this default.
+    ``knowledge_ingest.domain_rate_limit_control``), that stored value is
+    used instead of this default, and it climbs back toward this default
+    over subsequent clean crawls (same module).
 
     ``login_indicator_selector`` (SPEC-CRAWLER-004 Fase B / REQ-02.3) is
     injected into crawl4ai's wait_for and also re-checked on every returned
@@ -555,10 +618,11 @@ async def run_crawl_job(
         # 2026-08-17 (intermedia.com + support.ascendcloud.com incident): if
         # a PREVIOUS crawl of this domain got rate-limited or anti-bot
         # blocked, start this one already paced down instead of hitting the
-        # same wall again. See _RATE_LIMIT_LOWERING_TRIGGER_REASON_CODES
-        # below for where the stored value gets written.
+        # same wall again. See knowledge_ingest.domain_rate_limit_control
+        # for where the stored value gets written (and raised back up).
         domain = extract_domain(start_url)
-        stored_rate_limit = await get_domain_rate_limit(conn, domain, org_id)
+        domain_rate_limit_state = await get_domain_rate_limit_state(conn, domain, org_id)
+        stored_rate_limit = domain_rate_limit_state.rate_limit
         effective_rate_limit = stored_rate_limit if stored_rate_limit is not None else rate_limit
         if stored_rate_limit is not None:
             logger.info(
@@ -641,24 +705,43 @@ async def run_crawl_job(
                 pages=len(results),
             )
 
-        # 2026-08-17 (intermedia.com + support.ascendcloud.com incident):
-        # this crawl told us to back off — halve the rate for next time
-        # (floor _MIN_DOMAIN_RATE_LIMIT) instead of hitting the same wall
-        # again on the next sync. One halving per crawl job that actually
-        # saw the signal; no multi-run trend analysis.
-        if any(
-            outcome.get("reason_code") in _RATE_LIMIT_LOWERING_TRIGGER_REASON_CODES
-            for outcome in fetch_outcomes
-        ):
-            lowered_rate_limit = max(_MIN_DOMAIN_RATE_LIMIT, effective_rate_limit / 2)
-            await lower_domain_rate_limit(conn, domain, org_id, lowered_rate_limit)
-            logger.warning(
-                "crawl_domain_rate_limit_lowered",
-                job_id=job_id,
-                domain=domain,
-                previous_rate_limit=effective_rate_limit,
-                lowered_rate_limit=lowered_rate_limit,
-            )
+        # 2026-08-17 (intermedia.com + support.ascendcloud.com incident),
+        # extended 2026-08-18 (block B): fold this job's fetch_outcomes into
+        # the AIMD regelwet — halve on congestion (floor
+        # domain_rate_limit_control.MIN_DOMAIN_RATE_LIMIT), or raise one
+        # step once the domain has stayed clean past the recovery threshold
+        # AND the cooldown since the last congestion. ``updated_state`` is
+        # None when nothing needs writing (a healthy domain with no stored
+        # override stays untouched — see compute_domain_rate_limit_update).
+        rate_limit_observation = count_rate_limit_observations(fetch_outcomes)
+        updated_rate_limit_state = compute_domain_rate_limit_update(
+            domain_rate_limit_state,
+            had_congestion=rate_limit_observation.had_congestion,
+            clean_observations=rate_limit_observation.clean_count,
+            default_rate_limit=rate_limit,
+            step_up=settings.crawl_rate_limit_recovery_step,
+            recovery_threshold=settings.crawl_rate_limit_recovery_clean_threshold,
+            cooldown=timedelta(hours=settings.crawl_rate_limit_recovery_cooldown_hours),
+            now=datetime.now(UTC),
+        )
+        if updated_rate_limit_state is not None:
+            await save_domain_rate_limit_state(conn, domain, org_id, updated_rate_limit_state)
+            if rate_limit_observation.had_congestion:
+                logger.warning(
+                    "crawl_domain_rate_limit_lowered",
+                    job_id=job_id,
+                    domain=domain,
+                    previous_rate_limit=effective_rate_limit,
+                    lowered_rate_limit=updated_rate_limit_state.rate_limit,
+                )
+            elif updated_rate_limit_state.rate_limit != domain_rate_limit_state.rate_limit:
+                logger.info(
+                    "crawl_domain_rate_limit_raised",
+                    job_id=job_id,
+                    domain=domain,
+                    previous_rate_limit=domain_rate_limit_state.rate_limit,
+                    raised_rate_limit=updated_rate_limit_state.rate_limit,
+                )
 
         crawl_outcome_warning = _build_crawl_outcome_warning(
             fetch_outcomes,
@@ -723,12 +806,21 @@ async def run_crawl_job(
                 # NOT a session-wide failure. Record + continue BFS so sibling
                 # URLs (which may be public) still ingest.
                 auth_wall_pages.append(wall_exc.url)
+                # 2026-08-18 stop-the-bleeding fix: was "crawl_page_login_wall".
+                # The event name asserted the presumed CAUSE (a login wall)
+                # rather than the actual OBSERVATION (near-duplicate content
+                # cluster). On 2026-08-18 this misdirected a live
+                # investigation for an hour — the operator saw "login wall"
+                # in the logs and went looking for credentials, when the
+                # real cause was 13 identical OpenAPI-parser error pages.
+                # Behaviour is unchanged: the page is still skipped, BFS
+                # still continues (REQ-04.1).
                 logger.info(
-                    "crawl_page_login_wall",
+                    "crawl_page_template_cluster_skipped",
                     url=url,
                     job_id=job_id,
                     pattern=wall_exc.signal.pattern,
-                    confidence=wall_exc.signal.confidence,
+                    evidence=wall_exc.signal.evidence,
                 )
             except Exception as exc:
                 logger.warning("crawl_page_failed", url=url, job_id=job_id, error=str(exc))
@@ -898,45 +990,62 @@ async def run_crawl_job(
             await _update_job(conn, job_id, status=terminal_status)
 
         if connector_id and terminal_status == "completed" and pages_done > 0:
-            current_urls = [result.url for result in results]
-            stale_paths = await pg_store.list_stale_connector_artifact_paths(
-                conn,
-                org_id=org_id,
-                kb_slug=kb_slug,
-                connector_id=connector_id,
-                current_paths=current_urls,
-            )
-            if stale_paths:
-                stale_paths_deleted: list[str] = []
-                for path in stale_paths:
-                    try:
-                        await qdrant_store.delete_document(org_id, kb_slug, path)
-                    except Exception as exc:
-                        logger.warning(
-                            "crawl_connector_stale_vector_delete_failed",
+            if not _crawl_fully_fetched(fetch_outcomes):
+                skip_reason_counts = Counter(
+                    reason
+                    for outcome in fetch_outcomes
+                    if (reason := str(outcome.get("reason_code") or ""))
+                    in _FETCH_FAILURE_REASON_CODES
+                    or reason.startswith(_NOT_FETCHED_REASON_PREFIX)
+                )
+                logger.info(
+                    "crawl_connector_stale_reconcile_skipped",
+                    job_id=job_id,
+                    connector_id=connector_id,
+                    kb_slug=kb_slug,
+                    reason="incomplete_crawl",
+                    skip_reason_counts=dict(skip_reason_counts),
+                )
+            else:
+                current_urls = [result.url for result in results]
+                stale_paths = await pg_store.list_stale_connector_artifact_paths(
+                    conn,
+                    org_id=org_id,
+                    kb_slug=kb_slug,
+                    connector_id=connector_id,
+                    current_paths=current_urls,
+                )
+                if stale_paths:
+                    stale_paths_deleted: list[str] = []
+                    for path in stale_paths:
+                        try:
+                            await qdrant_store.delete_document(org_id, kb_slug, path)
+                        except Exception as exc:
+                            logger.warning(
+                                "crawl_connector_stale_vector_delete_failed",
+                                job_id=job_id,
+                                connector_id=connector_id,
+                                kb_slug=kb_slug,
+                                path=path,
+                                error=str(exc),
+                            )
+                        else:
+                            stale_paths_deleted.append(path)
+                    if stale_paths_deleted:
+                        retired_count = await pg_store.soft_delete_stale_connector_artifacts(
+                            conn,
+                            org_id=org_id,
+                            kb_slug=kb_slug,
+                            connector_id=connector_id,
+                            stale_paths=stale_paths_deleted,
+                        )
+                        logger.info(
+                            "crawl_connector_stale_artifacts_retired",
                             job_id=job_id,
                             connector_id=connector_id,
                             kb_slug=kb_slug,
-                            path=path,
-                            error=str(exc),
+                            retired_count=retired_count,
                         )
-                    else:
-                        stale_paths_deleted.append(path)
-                if stale_paths_deleted:
-                    retired_count = await pg_store.soft_delete_stale_connector_artifacts(
-                        conn,
-                        org_id=org_id,
-                        kb_slug=kb_slug,
-                        connector_id=connector_id,
-                        stale_paths=stale_paths_deleted,
-                    )
-                    logger.info(
-                        "crawl_connector_stale_artifacts_retired",
-                        job_id=job_id,
-                        connector_id=connector_id,
-                        kb_slug=kb_slug,
-                        retired_count=retired_count,
-                    )
 
         if terminal_status == "completed" and pages_done > 0:
             await _enqueue_taxonomy_backfill_after_crawl(
@@ -1082,6 +1191,88 @@ async def _ingest_crawl_result(
     text = result.fit_markdown or result.raw_markdown or ""
     front_matter = (result.metadata or {}).get("description", "")
 
+    # SPEC-INGEST-LOGIN-WALL-DETECT-002 REQ-01 — compute the page's SimHash
+    # once, BEFORE any use (this call site's short-content-cluster gate
+    # below, the login-wall detector further down, and the operator-
+    # triggered backfill / validation script) and store it AFTER the
+    # upsert below so the next crawl can cluster against it. Moved earlier
+    # than its original position (2026-08-18 stop-the-bleeding fix) so the
+    # short-content-cluster gate can reuse it instead of computing a
+    # second SimHash for the same text.
+    #
+    # Empty / whitespace-only content yields ``compute_simhash == 0``. Storing
+    # 0 would let "empty" pages cluster together (all match Hamming 0), which
+    # would falsely flag a tenant whose crawl results were 5+ rendered-but-
+    # empty pages. We treat the missing-content case as "no fingerprint" by
+    # leaving content_simhash NULL, matching the cold-start contract.
+    page_simhash: int | None = compute_simhash(text)
+    if page_simhash == 0:
+        page_simhash = None
+
+    # 2026-08-18 stop-the-bleeding fix, corrected same day after a
+    # production content-length measurement (n=1426,
+    # knowledge.crawled_pages) refuted the original flat 150-char
+    # threshold: two real, unique pages (getklai.com/contact at ~85 chars,
+    # help.voys.nl/help-pages-nl at ~108 chars) sit INSIDE the same length
+    # band as measured error-page clusters (88/92/98/101 chars). Length
+    # alone cannot separate "short and real" from "short and boilerplate"
+    # — see the module docstring in
+    # tests/test_crawler_content_too_short.py for the full measurement.
+    #
+    # Two-tier rule:
+    #
+    # 1. Hard floor: below _HARD_MIN_CONTENT_LENGTH, reject unconditionally
+    #    — no page in the measured dataset that isn't outright empty falls
+    #    this low (only 3 exactly-empty 1-char pages measured below it).
+    # 2. Soft zone: below settings.ingest_min_content_length (150) but at
+    #    or above the hard floor, reject ONLY when the page is a near-
+    #    duplicate of >= _SHORT_CONTENT_CLUSTER_MIN OTHER pages in the same
+    #    KB — reusing the exact SimHash cluster-lookup mechanism from
+    #    detect_anonymous_auth_wall (utils/auth_wall_detector.py), not a
+    #    second implementation of it. cluster_min is lower here than that
+    #    detector's own default (5): the smallest measured error cluster
+    #    is 3 total pages (2 OTHERS from any one page's view), so the
+    #    default would silently miss it.
+    stripped_length = len(text.strip())
+    if stripped_length < _HARD_MIN_CONTENT_LENGTH:
+        logger.info(
+            "crawl_skipped_content_too_short",
+            url=url,
+            org_id=org_id,
+            kb_slug=kb_slug,
+            content_length=stripped_length,
+            gate="hard_floor",
+            threshold=_HARD_MIN_CONTENT_LENGTH,
+            reason=PersistSkipReason.CONTENT_TOO_SHORT.value,
+        )
+        return
+    if stripped_length < settings.ingest_min_content_length:
+        duplicate_signal = await detect_anonymous_auth_wall(
+            result.raw_markdown or "",
+            fit_markdown=result.fit_markdown or None,
+            url=url,
+            org_id=org_id,
+            kb_slug=kb_slug,
+            conn=conn,
+            cluster_min=_SHORT_CONTENT_CLUSTER_MIN,
+            target_simhash=page_simhash,
+        )
+        if duplicate_signal is not None:
+            logger.info(
+                "crawl_skipped_content_too_short",
+                url=url,
+                org_id=org_id,
+                kb_slug=kb_slug,
+                content_length=stripped_length,
+                gate="duplicate_cluster",
+                threshold=settings.ingest_min_content_length,
+                evidence=duplicate_signal.evidence,
+                reason=PersistSkipReason.CONTENT_TOO_SHORT.value,
+            )
+            return
+        # Short but unique (no near-duplicate siblings): fall through and
+        # keep it — this is the case the flat threshold got wrong.
+
     content_hash = hashlib.sha256(text.encode()).hexdigest()
     if stored is not None:
         _, stored_content = stored  # type: ignore[misc]
@@ -1103,21 +1294,8 @@ async def _ingest_crawl_result(
             logger.info("crawl_skipped_html_noise", url=url, org_id=org_id, kb_slug=kb_slug)
             return
 
-    # SPEC-INGEST-LOGIN-WALL-DETECT-002 REQ-01 — compute the page's SimHash
-    # once, BEFORE the detector call (the detector reuses it for cluster
-    # lookup) and store it AFTER the upsert below so the next crawl can
-    # cluster against it. Computed unconditionally — even with detection
-    # disabled, the fingerprint is needed for the operator-triggered
-    # backfill / validation script.
-    #
-    # Empty / whitespace-only content yields ``compute_simhash == 0``. Storing
-    # 0 would let "empty" pages cluster together (all match Hamming 0), which
-    # would falsely flag a tenant whose crawl results were 5+ rendered-but-
-    # empty pages. We treat the missing-content case as "no fingerprint" by
-    # leaving content_simhash NULL, matching the cold-start contract.
-    page_simhash: int | None = compute_simhash(text)
-    if page_simhash == 0:
-        page_simhash = None
+    # page_simhash was computed earlier (see comment above, near the
+    # short-content-cluster gate) and is reused here unchanged.
 
     # SPEC-CONNECTOR-INPUT-VALIDATION-001 / REQ-4 — shared auth-wall
     # classifier at sync time. This catches single embedded protected-section
@@ -1165,9 +1343,25 @@ async def _ingest_crawl_result(
         )
     if login_wall_signal is not None:
         login_wall_mode = _resolve_login_wall_mode()
+        # 2026-08-18 stop-the-bleeding fix — event names below were
+        # "login_wall_reject" / "login_wall_degrade" / "login_wall_detected".
+        # ``login_wall_signal`` can come from TWO different detectors:
+        # ``classify_auth_wall`` (pattern="auth_wall_classifier" — a real
+        # auth signal: redirect/cookie/word-count heuristics) or
+        # ``detect_anonymous_auth_wall`` (pattern="template_cluster" — near-
+        # duplicate content, which does NOT prove an auth wall; an SPA
+        # fallback or a tenant-wide error page produces the same signal).
+        # The old event names asserted "login wall" as the event's identity
+        # regardless of which detector fired, which misdirected a live
+        # investigation for an hour on 2026-08-18 (13 identical OpenAPI-
+        # parser error pages, not a login wall). The renamed events report
+        # the observation neutrally; ``pattern`` in the payload still
+        # distinguishes the two detectors precisely. Behaviour (reject
+        # raises, degrade ingests with quality_score=0.0, audit_only warns
+        # + ingests unchanged) is unchanged.
         if login_wall_mode == "reject":
             logger.info(
-                "login_wall_reject",
+                "content_wall_signal_reject",
                 url=url,
                 org_id=org_id,
                 kb_slug=kb_slug,
@@ -1178,7 +1372,7 @@ async def _ingest_crawl_result(
             raise AnonymousAuthWallDetected(url, login_wall_signal)
         if login_wall_mode == "degrade":
             logger.info(
-                "login_wall_degrade",
+                "content_wall_signal_degrade",
                 url=url,
                 org_id=org_id,
                 kb_slug=kb_slug,
@@ -1188,7 +1382,7 @@ async def _ingest_crawl_result(
             )
         else:  # audit_only
             logger.warning(
-                "login_wall_detected",
+                "content_wall_signal_observed",
                 url=url,
                 org_id=org_id,
                 kb_slug=kb_slug,
@@ -1205,6 +1399,13 @@ async def _ingest_crawl_result(
     # overrides over its hard-coded default of 0.5. The retrieval-side floor
     # filter (Phase E) refuses to serve quality_score < 0.05 chunks, which
     # is the actual exclusion mechanism.
+    # 2026-08-18 stop-the-bleeding fix — deliberately did NOT rename the
+    # "login_wall_detected" string below. Unlike the log EVENT names above
+    # (diagnostic-only, changed), this is persisted DOCUMENT metadata
+    # (``extra["ingest_warning"]``), asserted by
+    # tests/test_ingest_login_wall_integration.py, and out of this fix's
+    # declared scope (log-event naming + confidence claim, not the
+    # document-metadata contract).
     if login_wall_mode == "degrade":
         extra["quality_score"] = 0.0
         extra["ingest_warning"] = "login_wall_detected"
