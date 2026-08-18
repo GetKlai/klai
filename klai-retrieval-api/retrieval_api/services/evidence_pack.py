@@ -296,3 +296,65 @@ def evidence_pack_items_as_chunks(pack: EvidencePack) -> list[dict[str, Any]]:
         }
         for item in pack.items
     ]
+
+
+def merge_evidence_packs(
+    indexed_packs: list[tuple[int, EvidencePack | None]],
+) -> EvidencePack:
+    """Merge per-sub-question evidence packs into one referentially-intact pack.
+
+    Evidence and source ids are namespaced per sub-question (``E1`` of
+    sub-question 2 becomes ``Q2E1``) so ids never collide across packs, and
+    every item is tagged with its ``sub_query_index`` so prompt builders can
+    group evidence per question. Sources pointing at the same document (same
+    ``source_url`` / artifact key) are deduplicated across sub-questions with
+    their evidence ids combined.
+    """
+    merged_items: list[EvidenceItem] = []
+    merged_sources: list[EvidenceSource] = []
+    source_by_key: dict[str, EvidenceSource] = {}
+
+    for index, pack in indexed_packs:
+        if pack is None:
+            continue
+        id_map: dict[str, str] = {}
+        for item in pack.items:
+            namespaced = f"Q{index}{item.evidence_id}"
+            id_map[item.evidence_id] = namespaced
+            merged_items.append(
+                item.model_copy(update={"evidence_id": namespaced, "sub_query_index": index})
+            )
+        for source in pack.sources:
+            mapped_ids = [
+                id_map[evidence_id] for evidence_id in source.evidence_ids if evidence_id in id_map
+            ]
+            if not mapped_ids:
+                continue
+            key = source.source_url or (
+                f"artifact:{source.artifact_id}" if source.artifact_id else source.title
+            )
+            existing = source_by_key.get(key)
+            if existing is None:
+                merged = source.model_copy(
+                    update={
+                        "source_id": f"Q{index}{source.source_id}",
+                        "evidence_ids": mapped_ids,
+                    }
+                )
+                source_by_key[key] = merged
+                merged_sources.append(merged)
+            else:
+                existing.evidence_ids.extend(
+                    evidence_id
+                    for evidence_id in mapped_ids
+                    if evidence_id not in existing.evidence_ids
+                )
+                existing.relevance_score = max(existing.relevance_score, source.relevance_score)
+
+    if not merged_items:
+        return EvidencePack(no_citable_reason="no_evidence")
+    return EvidencePack(
+        items=merged_items,
+        sources=merged_sources,
+        no_citable_reason=None if merged_sources else "no_citable_sources",
+    )

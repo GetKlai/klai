@@ -179,6 +179,7 @@ def build_retrieve_body(
     scope_decision: KbRetrievalScopeDecision,
     taxonomy_applied: bool,
     classified_node_ids: list,
+    sub_queries: list | None = None,
 ) -> dict:
     """Build the retrieval-api request body from resolved policy state.
 
@@ -210,6 +211,8 @@ def build_retrieve_body(
         body["include_owned_private_kbs"] = True
     if taxonomy_applied:
         body["taxonomy_node_ids"] = classified_node_ids
+    if sub_queries:
+        body["sub_queries"] = sub_queries
     return body
 
 

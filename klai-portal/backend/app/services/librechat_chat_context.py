@@ -59,8 +59,11 @@ def _sync_recent_conversations(
             return None
         cursor = (
             db.conversations.find(
-                # LibreChat stores the owning user's ``_id`` as a string.
-                {"user": str(user["_id"])},
+                # LibreChat stores the owning user's ``_id`` as a string in
+                # production, but tolerate an ObjectId-typed value too — a
+                # schema drift or older LibreChat write path storing the raw
+                # ObjectId would otherwise silently match zero conversations.
+                {"user": {"$in": [str(user["_id"]), user["_id"]]}},
                 {"conversationId": 1, "title": 1, "model": 1, "createdAt": 1, "updatedAt": 1, "_id": 0},
             )
             .sort("updatedAt", pymongo.DESCENDING)

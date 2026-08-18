@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     retrieval_gate_shadow: bool = True
     retrieval_candidates: int = 60
     reranker_candidates: int = 20  # top-N from retrieval sent to reranker (CPU budget)
+    # Multi-part fan-out: chunks served per sub-question. Keeps the merged
+    # context bounded (6 sub-questions x 4 chunks max).
+    sub_query_top_k: int = 4
 
     sparse_sidecar_url: str = "http://172.18.0.1:8001"
     sparse_sidecar_timeout: float = 5.0
