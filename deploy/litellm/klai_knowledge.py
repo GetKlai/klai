@@ -1376,6 +1376,9 @@ class KlaiKnowledgeHook(CustomLogger):
                             if isinstance(evidence_pack, dict)
                             else None
                         ),
+                        multi_question=multi_question,
+                        sub_query_coverage=sub_query_results,
+                        unchecked_questions=unchecked_questions or None,
                         original_stream=original_stream,
                         render_mode=render_strategy.mode,
                         retrieval_request_id=retrieval_request_id,

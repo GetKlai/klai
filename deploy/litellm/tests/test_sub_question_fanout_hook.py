@@ -146,6 +146,18 @@ class TestSplitSubQuestions:
         )
         assert questions == []
 
+    def test_mid_line_question_mark_blocks_list_fallback(self, monkeypatch):
+        """Round-3 Fix 4: the list-marker fallback must only fire when the
+        message has NO '?' anywhere — not merely 'no line ends with ?'. A
+        question mid-line ('Can you help? Details:') would pass the old
+        line-terminal-only check and wrongly get list-split, losing the real
+        question."""
+        klai_knowledge = _load_hook(monkeypatch)
+        questions = klai_knowledge._split_sub_questions(
+            "Can you help? Details:\n1. First instruction\n2. Second instruction"
+        )
+        assert questions == []
+
 
 class TestRetrieveBodyCarriesSubQueries:
     def test_body_includes_sub_queries_when_present(self, monkeypatch):
@@ -372,6 +384,77 @@ class TestGroupedContext:
         q2_pos = block.index("[Question 2:")
         q3_pos = block.index("[Question 3:")
         assert q2_pos < q3_pos
+
+    def test_unchecked_questions_beyond_display_cap_collapse_to_summary_line(
+        self, monkeypatch
+    ):
+        """Round-3 Fix 5: a message with dozens of unchecked questions (e.g.
+        a pasted 100-item FAQ) must render at most MAX_UNCHECKED_QUESTIONS_SHOWN
+        individual markers, with the rest collapsed into one summary line —
+        otherwise the prompt is dominated by near-identical marker blocks."""
+        _load_hook(monkeypatch)
+        from klai_kb_context_prompt import (
+            MAX_UNCHECKED_QUESTIONS_SHOWN,
+            _sub_query_grouped_context,
+        )
+
+        assert MAX_UNCHECKED_QUESTIONS_SHOWN == 6
+
+        unchecked = [f"Vraag {i}?" for i in range(1, 95)]  # 94 unchecked
+        rendered = _sub_query_grouped_context(
+            context_chunks=[
+                {
+                    "chunk_id": "c1",
+                    "text": "Antwoord.",
+                    "title": "Titel",
+                    "sub_query_index": 1,
+                }
+            ],
+            sub_query_results=[
+                {"index": 1, "query": "Hoofdvraag?", "evidence_count": 1},
+            ],
+            unchecked_questions=unchecked,
+        )
+
+        # Exactly 6 individual unchecked markers, numbered 2..7 (continuing
+        # from the 1 searched question).
+        for n in range(2, 8):
+            assert f"[Question {n}: Vraag {n - 1}?]" in rendered
+        assert "[Question 8:" not in rendered
+
+        summary_line = (
+            "[Plus 88 more questions were not separately searched — tell "
+            "the user you could not check them all and suggest splitting "
+            "the message into smaller parts.]"
+        )
+        assert summary_line in rendered
+
+        # The whole unchecked section (6 individual markers + the summary
+        # line) stays well under ~2000 chars despite 94 unchecked questions.
+        unchecked_section_start = rendered.index("[Question 2:")
+        assert len(rendered[unchecked_section_start:]) < 2000
+
+    def test_unchecked_questions_at_or_below_cap_show_no_summary_line(
+        self, monkeypatch
+    ):
+        prompt = self._build(
+            monkeypatch,
+            sub_query_results=[
+                {"index": 1, "query": "Hoofdvraag?", "evidence_count": 1},
+            ],
+            chunks=[
+                {
+                    "chunk_id": "c1",
+                    "text": "Antwoord.",
+                    "title": "Titel",
+                    "sub_query_index": 1,
+                }
+            ],
+            unchecked_questions=[f"Vraag {i}?" for i in range(1, 7)],  # exactly 6
+        )
+        block = prompt.context_block
+        assert "more questions were not separately searched" not in block
+        assert "[Question 7: Vraag 6?]" in block
 
     def test_retrieval_bypassed_question_gets_gate_skipped_marker(self, monkeypatch):
         """Fix B: a gate-bypassed sub-question (Open mode) must render a
@@ -870,3 +953,76 @@ class TestHookFanoutEndToEnd:
         coverage = {entry["index"]: entry for entry in meta["sub_query_coverage"]}
         assert coverage[1]["evidence_count"] == 0
         assert coverage[2]["evidence_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_zero_chunks_branch_carries_sub_query_coverage(self, monkeypatch):
+        """Round-3 Fix 2: the zero-chunks route must be fan-out-aware. Strict
+        mode still refuses deterministically (mock_response), but
+        kb_meta['sub_query_coverage'] must carry BOTH sub-question entries
+        (the error and the genuinely-empty one) so the 'Deelvragen' footer
+        reflects reality even when the fan-out found nothing at all."""
+        from tests.test_klai_knowledge_hook import (
+            _make_cache,
+            _make_resp,
+            _make_user_api_key,
+            _patch_http,
+        )
+
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache()
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Wat is de responstijd?\nWat is de SLA?",
+                }
+            ],
+        }
+        retrieval_resp = _make_resp(
+            {
+                "chunks": [],
+                "retrieval_bypassed": False,
+                "confidence_band": "unknown",
+                "sub_results": [
+                    {
+                        "index": 1,
+                        "query": "Wat is de responstijd?",
+                        "error": "RuntimeError",
+                    },
+                    {
+                        "index": 2,
+                        "query": "Wat is de SLA?",
+                        "evidence_count": 0,
+                    },
+                ],
+            }
+        )
+        portal_resp = _make_resp(
+            {
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": True,
+                "kb_slugs_filter": None,
+                "kb_narrow": True,
+                "kb_pref_version": 12,
+                "zitadel_user_id": "300000000000000002",
+            }
+        )
+
+        with _patch_http(
+            monkeypatch, portal_resp=portal_resp, retrieval_resp=retrieval_resp
+        ):
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        assert "mock_response" in result
+
+        meta = result["metadata"]["_klai_kb_meta"]
+        coverage = {entry["index"]: entry for entry in meta["sub_query_coverage"]}
+        assert set(coverage) == {1, 2}
+        assert coverage[1]["error"] == "RuntimeError"
+        assert coverage[2]["evidence_count"] == 0

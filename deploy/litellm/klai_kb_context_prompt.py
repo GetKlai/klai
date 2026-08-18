@@ -59,6 +59,12 @@ KB_ANSWER_FORMAT_INSTRUCTION = (
 
 _QUESTION_ECHO_MAX_CHARS = 150
 
+# A message with dozens of "unchecked" sub-questions (e.g. a pasted FAQ list)
+# would otherwise render one full marker block per question and dominate the
+# prompt. Show individual markers for at most this many; the rest collapse
+# into one summary line.
+MAX_UNCHECKED_QUESTIONS_SHOWN = 6
+
 
 def _sanitize_question_echo(text: str) -> str:
     """Sanitize a user-supplied sub-question before echoing it verbatim into
@@ -151,7 +157,9 @@ def _sub_query_grouped_context(
             )
     if unchecked_questions:
         start_index = len(entries) + 1
-        for offset, question in enumerate(unchecked_questions):
+        shown = unchecked_questions[:MAX_UNCHECKED_QUESTIONS_SHOWN]
+        remainder = len(unchecked_questions) - len(shown)
+        for offset, question in enumerate(shown):
             index = start_index + offset
             header = f"[Question {index}: {_sanitize_question_echo(question)}]"
             blocks.append(
@@ -159,6 +167,12 @@ def _sub_query_grouped_context(
                 "(question limit reached) — answer it only if the evidence "
                 "above clearly covers it; otherwise say you could not fully "
                 "check it. Do NOT say it is not in the knowledge base.]"
+            )
+        if remainder > 0:
+            blocks.append(
+                f"[Plus {remainder} more questions were not separately "
+                "searched — tell the user you could not check them all and "
+                "suggest splitting the message into smaller parts.]"
             )
     if ungrouped:
         rendered = render_evidence_context(ungrouped, include_source_urls=False)

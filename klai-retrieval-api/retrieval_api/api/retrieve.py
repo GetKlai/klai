@@ -176,10 +176,15 @@ async def _retrieve_sub_queries(
         sub_req = req.model_copy(
             update={
                 "query": sub_query,
-                # Sub-questions are standalone by contract; skip per-question
-                # coreference LLM calls and raw-query RRF legs.
+                # Sub-questions are standalone TEXT (splitting never rewrites
+                # them), but a question like "En hoe lang duurt het?" still
+                # needs coreference resolution against conversation_history
+                # (already carried on ``req`` and preserved by model_copy)
+                # to resolve "het". ``None`` lets retrieval-api's own
+                # coreference step run per sub-question instead of treating
+                # the raw text as already-resolved.
                 "raw_query": None,
-                "coreference_resolved": True,
+                "coreference_resolved": None,
                 "sub_queries": None,
                 "top_k": per_query_top_k,
             }
@@ -206,6 +211,7 @@ async def _retrieve_sub_queries(
     candidates_total = 0
     reranked_total = 0
     failures = 0
+    successful_bypassed_flags: list[bool] = []
     for (index, query), result in zip(sub_queries, results, strict=True):
         if isinstance(result, BaseException):
             # A 4xx from a sub-call is an auth/validation failure of the
@@ -229,6 +235,7 @@ async def _retrieve_sub_queries(
         pack = result.evidence_pack
         evidence_count = len(pack.items) if pack is not None else 0
         indexed_packs.append((index, pack))
+        successful_bypassed_flags.append(result.retrieval_bypassed)
         sub_results.append(
             SubQueryResult(
                 index=index,
@@ -252,6 +259,22 @@ async def _retrieve_sub_queries(
     covered_bands = [sub.confidence_band for sub in sub_results if sub.confidence_band is not None]
     overall_band = (
         max(covered_bands, key=lambda band: _BAND_RANK.get(band, 0)) if covered_bands else "unknown"
+    )
+    # Aggregate retrieval_bypassed: True only when there are ZERO failures
+    # AND at least one successful sub-response AND every successful
+    # sub-response was gate-bypassed. The failures==0 guard matters even
+    # though a mix of "some bypassed, some failed" still has
+    # bool(successful_bypassed_flags) and all(...) both true — without it,
+    # a partially-failed fan-out (e.g. 1 bypassed success + 1 error) would
+    # report bypassed=True at the parent level. The litellm hook treats
+    # retrieval_bypassed=True as an early-return "gate bypassed" branch that
+    # never reaches sub_query_coverage/unchecked_questions, so that failed
+    # sub-question would silently vanish from what the user sees instead of
+    # surfacing as "could not check this one". All-failures (failures ==
+    # len(sub_queries)) is already unreachable here — that branch raises 502
+    # above — so this guard only affects the partial-failure case.
+    all_bypassed = (
+        failures == 0 and bool(successful_bypassed_flags) and all(successful_bypassed_flags)
     )
     merged_pack = merge_evidence_packs(indexed_packs)
     retrieval_ms = (time.perf_counter() - t0) * 1000
@@ -302,7 +325,7 @@ async def _retrieve_sub_queries(
 
     return RetrieveResponse(
         query_resolved=req.query,
-        retrieval_bypassed=False,
+        retrieval_bypassed=all_bypassed,
         chunks=merged_chunks,
         metadata=RetrieveMetadata(
             candidates_retrieved=candidates_total,
