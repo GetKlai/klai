@@ -275,9 +275,13 @@ class TestRetrieveSubQueries:
 
     @pytest.mark.asyncio
     async def test_parent_retrieval_bypassed_false_when_one_sub_query_failed(self, monkeypatch):
-        """A failed sub-question is not a 'successful bypass' — the parent
-        must not report bypassed=True just because the only SUCCESSFUL
-        sub-response happened to be bypassed while another one errored."""
+        """Round-4 fix: a failed sub-question must block the aggregate
+        bypass, even when the only SUCCESSFUL sub-response was itself
+        gate-bypassed. The litellm hook treats retrieval_bypassed=True as
+        an early-return 'gate bypassed' branch that never reaches
+        sub_query_coverage/unchecked_questions — so a bypassed=True here
+        would make the failed sub-question silently vanish from what the
+        user sees instead of surfacing as 'could not check this one'."""
 
         async def fake_retrieve(sub_req, request, _auth=None):
             if sub_req.query == "kapotte vraag":
@@ -290,9 +294,9 @@ class TestRetrieveSubQueries:
             _request(["goede vraag", "kapotte vraag"]), MagicMock(), MagicMock()
         )
 
-        # Only one successful sub-response and it WAS bypassed — per the
-        # spec (>=1 success AND all successes bypassed), this is True.
-        assert result.retrieval_bypassed is True
+        # One sub-question failed — the aggregate must stay False even
+        # though the sole successful sub-response was bypassed.
+        assert result.retrieval_bypassed is False
 
 
 class TestSubQueryFourXXPassthrough:

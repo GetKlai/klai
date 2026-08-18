@@ -260,13 +260,22 @@ async def _retrieve_sub_queries(
     overall_band = (
         max(covered_bands, key=lambda band: _BAND_RANK.get(band, 0)) if covered_bands else "unknown"
     )
-    # Aggregate retrieval_bypassed: True only when there is at least one
-    # successful sub-response AND every successful sub-response was
-    # gate-bypassed. A parent False with zero successes (all failed) is
-    # already unreachable here — the all-failures branch above raises 502
-    # first. Mixed bypassed/non-bypassed correctly stays False: real
-    # retrieval happened for at least one question.
-    all_bypassed = bool(successful_bypassed_flags) and all(successful_bypassed_flags)
+    # Aggregate retrieval_bypassed: True only when there are ZERO failures
+    # AND at least one successful sub-response AND every successful
+    # sub-response was gate-bypassed. The failures==0 guard matters even
+    # though a mix of "some bypassed, some failed" still has
+    # bool(successful_bypassed_flags) and all(...) both true — without it,
+    # a partially-failed fan-out (e.g. 1 bypassed success + 1 error) would
+    # report bypassed=True at the parent level. The litellm hook treats
+    # retrieval_bypassed=True as an early-return "gate bypassed" branch that
+    # never reaches sub_query_coverage/unchecked_questions, so that failed
+    # sub-question would silently vanish from what the user sees instead of
+    # surfacing as "could not check this one". All-failures (failures ==
+    # len(sub_queries)) is already unreachable here — that branch raises 502
+    # above — so this guard only affects the partial-failure case.
+    all_bypassed = (
+        failures == 0 and bool(successful_bypassed_flags) and all(successful_bypassed_flags)
+    )
     merged_pack = merge_evidence_packs(indexed_packs)
     retrieval_ms = (time.perf_counter() - t0) * 1000
     logger.info(
