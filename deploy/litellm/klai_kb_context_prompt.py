@@ -57,6 +57,61 @@ KB_ANSWER_FORMAT_INSTRUCTION = (
     "- Do NOT add images in the TL;DR (section 1).]\n"
 )
 
+def _sub_query_grouped_context(
+    context_chunks: list[dict[str, Any]],
+    sub_query_results: list[dict] | None,
+) -> str | None:
+    """Render evidence grouped per sub-question, with explicit coverage notes.
+
+    Returns ``None`` when there is no per-question retrieval info, so the
+    single-query render path stays untouched. Questions without evidence and
+    questions whose retrieval failed get distinct, actionable markers — the
+    model must never conflate "not found" with "could not check".
+    """
+    if not sub_query_results:
+        return None
+    entries = [entry for entry in sub_query_results if isinstance(entry, dict)]
+    if not entries:
+        return None
+
+    chunks_by_index: dict[int, list[dict[str, Any]]] = {}
+    ungrouped: list[dict[str, Any]] = []
+    for chunk in context_chunks:
+        index = chunk.get("sub_query_index")
+        if isinstance(index, int):
+            chunks_by_index.setdefault(index, []).append(chunk)
+        else:
+            ungrouped.append(chunk)
+
+    blocks: list[str] = []
+    for entry in entries:
+        index = entry.get("index")
+        question = str(entry.get("query") or "").strip()
+        header = f"[Question {index}: {question}]"
+        if entry.get("error"):
+            blocks.append(
+                f"{header}\n[Retrieval FAILED for this question — tell the "
+                "user you could not check the knowledge base for it. Do NOT "
+                "answer it and do NOT say it is not in the knowledge base.]"
+            )
+            continue
+        question_chunks = chunks_by_index.get(index) if isinstance(index, int) else None
+        if question_chunks:
+            rendered = render_evidence_context(question_chunks, include_source_urls=False)
+            blocks.append(f"{header}\n{rendered}")
+        else:
+            blocks.append(
+                f"{header}\n[No knowledge-base evidence found for this "
+                "question — say plainly, in the user's language, that it is "
+                "not in the knowledge base.]"
+            )
+    if ungrouped:
+        rendered = render_evidence_context(ungrouped, include_source_urls=False)
+        if rendered:
+            blocks.append(f"[Additional evidence, not tied to one question]\n{rendered}")
+    return "\n\n".join(blocks)
+
+
 @dataclass(frozen=True)
 class KbContextPrompt:
     context_block: str
@@ -77,6 +132,7 @@ def build_kb_context_prompt(
     low_confidence_strict_text: str,
     low_confidence_open_text: str,
     multi_question_guard_text: str = "",
+    sub_query_results: list[dict] | None = None,
 ) -> KbContextPrompt:
     """Build the chunks-present KB prompt block and its metadata side effects."""
     lines = [kb_chunks_present_header(kb_narrow), KB_ANSWER_FORMAT_INSTRUCTION]
@@ -97,9 +153,13 @@ def build_kb_context_prompt(
     )
     allowed_image_urls: set[str] = set()
 
-    context_block = render_evidence_context(context_chunks, include_source_urls=False)
-    if context_block:
-        lines.append(context_block)
+    grouped_block = _sub_query_grouped_context(context_chunks, sub_query_results)
+    if grouped_block is not None:
+        lines.append(grouped_block)
+    else:
+        context_block = render_evidence_context(context_chunks, include_source_urls=False)
+        if context_block:
+            lines.append(context_block)
 
     for chunk in context_chunks:
         absolute_urls = [

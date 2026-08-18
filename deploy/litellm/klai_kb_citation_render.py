@@ -573,6 +573,24 @@ def _format_visible_agent_activity(
                     f"- Knowledge base queried: {chunks_injected} {chunk_label} retrieved."
                 )
 
+    sub_query_coverage = kb_meta.get("sub_query_coverage")
+    if isinstance(sub_query_coverage, list) and sub_query_coverage:
+        entries = [entry for entry in sub_query_coverage if isinstance(entry, dict)]
+        covered = sum(1 for entry in entries if (entry.get("evidence_count") or 0) > 0)
+        failed = sum(1 for entry in entries if entry.get("error"))
+        if language == "nl":
+            line = f"- Deelvragen: {len(entries)} apart gezocht; {covered} met bronnen"
+            if failed:
+                line += f", {failed} niet controleerbaar"
+        else:
+            line = (
+                f"- Sub-questions: {len(entries)} searched separately; "
+                f"{covered} with sources"
+            )
+            if failed:
+                line += f", {failed} could not be checked"
+        lines.append(line + ".")
+
     kb_scope_text = _format_kb_scope_text(kb_meta, language=language)
     if kb_scope_text:
         label = "Kennisbanken in scope" if language == "nl" else "Knowledge bases in scope"

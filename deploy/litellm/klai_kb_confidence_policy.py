@@ -8,6 +8,7 @@ take effect on process restart.
 from __future__ import annotations
 
 import os
+import re
 
 from klai_citations import extract_salient_query_tokens
 
@@ -61,11 +62,63 @@ MULTI_QUESTION_GUARD_TEXT = (
 )
 
 
+MULTI_QUESTION_FANOUT_GUARD_TEXT = (
+    "[Klai retrieval — multi-part question, evidence grouped per question]\n"
+    "The user message contains multiple questions and retrieval ran once PER "
+    "question; the evidence above is grouped per question. Answer per "
+    "question, using only that question's evidence group. For questions "
+    "marked as having no knowledge-base evidence, say in the user's language "
+    "that it is not in the knowledge base. For questions marked as "
+    "retrieval-failed, say you could not check the knowledge base for that "
+    "question — do NOT present that as missing knowledge. The number of "
+    "answers must equal the number of questions. Do not invent or substitute "
+    "questions. Do not reuse a number or value from one question's evidence "
+    "to answer a different question."
+)
+
+MAX_SUB_QUESTIONS = 6
+
+_LEADING_LIST_MARKER_RE = re.compile(r"^\s*(?:[-*+•]|\d{1,3}[.)])\s*")
+_QUESTION_SEGMENT_RE = re.compile(r"[^?]+\?")
+_MIN_SUB_QUESTION_CHARS = 8
+_MAX_SUB_QUESTION_CHARS = 300
+
+
 def is_multi_question_query(query: object) -> bool:
     """Return whether the user message asks several distinct questions."""
     if not isinstance(query, str):
         return False
     return query.count("?") >= 2
+
+
+def split_sub_questions(query: object, max_questions: int = MAX_SUB_QUESTIONS) -> list[str]:
+    """Split a multi-part message into standalone sub-questions for retrieval.
+
+    Deterministic on purpose (no LLM): pasted question lists put one question
+    per line, so line-shaped questions win; inline prose falls back to
+    ``?``-terminated segments. Returns ``[]`` unless at least two usable
+    questions are found — single questions keep the normal retrieval path.
+    """
+    if not isinstance(query, str):
+        return []
+    questions: list[str] = []
+    for line in query.splitlines():
+        stripped = _LEADING_LIST_MARKER_RE.sub("", line.strip())
+        if stripped.endswith("?") and len(stripped) >= _MIN_SUB_QUESTION_CHARS:
+            questions.append(stripped[-_MAX_SUB_QUESTION_CHARS:])
+    if len(questions) < 2:
+        segments = [
+            " ".join(segment.split())
+            for segment in _QUESTION_SEGMENT_RE.findall(query)
+        ]
+        questions = [
+            segment[-_MAX_SUB_QUESTION_CHARS:]
+            for segment in segments
+            if len(segment) >= _MIN_SUB_QUESTION_CHARS
+        ]
+    if len(questions) < 2:
+        return []
+    return questions[:max_questions]
 
 
 def low_confidence_query_tokens(query: object) -> set[str]:

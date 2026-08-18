@@ -240,6 +240,8 @@ class KbAnswerPolicy:
         kbs_in_scope: list | None = None,
         kbs_with_results: list | None = None,
         kbs_used_as_sources: list | None = None,
+        multi_question: bool = False,
+        sub_query_coverage: list | None = None,
     ) -> dict[str, Any]:
         """Build the COMPLETE ``_klai_kb_meta`` dict for any branch."""
         return {
@@ -278,6 +280,8 @@ class KbAnswerPolicy:
             "kbs_used_as_sources": (
                 kbs_used_as_sources if kbs_used_as_sources is not None else []
             ),
+            "multi_question": multi_question,
+            "sub_query_coverage": sub_query_coverage,
             **self.metadata(),
         }
 

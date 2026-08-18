@@ -55,9 +55,11 @@ from klai_kb_confidence_policy import (
     LOW_CONFIDENCE_INJECTION_DISABLED as _LOW_CONFIDENCE_INJECTION_DISABLED,
     LOW_CONFIDENCE_INJECTION_TEXT as _LOW_CONFIDENCE_INJECTION_TEXT,
     LOW_CONFIDENCE_OPEN_CONTEXT_TEXT as _LOW_CONFIDENCE_OPEN_CONTEXT_TEXT,
+    MULTI_QUESTION_FANOUT_GUARD_TEXT as _MULTI_QUESTION_FANOUT_GUARD_TEXT,
     MULTI_QUESTION_GUARD_TEXT as _MULTI_QUESTION_GUARD_TEXT,
     has_direct_evidence_for_query as _has_direct_evidence_for_query,
     is_multi_question_query as _is_multi_question_query,
+    split_sub_questions as _split_sub_questions,
     low_confidence_query_tokens as _low_confidence_query_tokens,
     should_apply_low_confidence_injection as _should_apply_low_confidence_injection,
 )
@@ -240,7 +242,9 @@ __all__ = [
     "_has_direct_evidence_for_query",
     "_should_apply_low_confidence_injection",
     "_MULTI_QUESTION_GUARD_TEXT",
+    "_MULTI_QUESTION_FANOUT_GUARD_TEXT",
     "_is_multi_question_query",
+    "_split_sub_questions",
     "_chunk_below_evidence_floor",
     "KLAI_KB_MIN_EVIDENCE_SCORE",
     "_META_QUERY_PATTERNS",
@@ -796,6 +800,10 @@ class KlaiKnowledgeHook(CustomLogger):
             except Exception:
                 pass
 
+        # Multi-part messages: deterministic split into standalone
+        # sub-questions; retrieval-api fans out one retrieval per question
+        # and returns per-question coverage (sub_results).
+        sub_questions = _split_sub_questions(query)
         retrieve_body = _build_retrieve_body(
             rewritten_query=rewritten_query,
             raw_query=query,
@@ -808,6 +816,7 @@ class KlaiKnowledgeHook(CustomLogger):
             scope_decision=scope_decision,
             taxonomy_applied=taxonomy_decision.applied,
             classified_node_ids=classified_node_ids,
+            sub_queries=sub_questions or None,
         )
 
         # Internal-secret auth + X-Caller-Service; end-user identity in the
@@ -1100,11 +1109,16 @@ class KlaiKnowledgeHook(CustomLogger):
             user_query=query,
             evidence_chunks=context_chunks,
         )
-        # Multi-part messages get one retrieval pass over the whole message,
-        # so an aggregate low-confidence refusal would also swallow the
-        # questions the chunks DO cover. Suppress the deterministic refusal
-        # and force per-question coverage judgement in the context instead.
-        multi_question = _is_multi_question_query(query)
+        # Multi-part messages: an aggregate low-confidence refusal would also
+        # swallow the questions the chunks DO cover. Suppress the deterministic
+        # refusal and force per-question coverage judgement in the context.
+        multi_question = bool(sub_questions) or _is_multi_question_query(query)
+        raw_sub_results = result.get("sub_results")
+        sub_query_results: list[dict] | None = (
+            [entry for entry in raw_sub_results if isinstance(entry, dict)]
+            if isinstance(raw_sub_results, list)
+            else None
+        ) or None
 
         # --- Gap detection (KB-014) ---
         gap_type = _classify_gap(chunks)
@@ -1280,9 +1294,14 @@ class KlaiKnowledgeHook(CustomLogger):
             low_confidence_injection_disabled=_LOW_CONFIDENCE_INJECTION_DISABLED,
             low_confidence_strict_text=_LOW_CONFIDENCE_INJECTION_TEXT,
             low_confidence_open_text=_LOW_CONFIDENCE_OPEN_CONTEXT_TEXT,
-            multi_question_guard_text=_MULTI_QUESTION_GUARD_TEXT
+            multi_question_guard_text=(
+                _MULTI_QUESTION_FANOUT_GUARD_TEXT
+                if sub_query_results
+                else _MULTI_QUESTION_GUARD_TEXT
+            )
             if multi_question
             else "",
+            sub_query_results=sub_query_results,
         )
         if context_prompt.low_confidence_injection_applied:
             # NOTE: warning-level (not info) is deliberate. The litellm
@@ -1343,6 +1362,8 @@ class KlaiKnowledgeHook(CustomLogger):
             evidence_pack=evidence_pack if isinstance(evidence_pack, dict) else None,
             citable_sources_count=len(trusted_sources),
             confidence_band=confidence_band,
+            multi_question=multi_question,
+            sub_query_coverage=sub_query_results,
             original_stream=original_stream,
             render_mode=render_strategy.mode,
             retrieval_request_id=retrieval_request_id,

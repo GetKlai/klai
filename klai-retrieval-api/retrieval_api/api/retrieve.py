@@ -35,16 +35,22 @@ from retrieval_api.middleware.auth import AuthContext, require_scope, verify_bod
 from retrieval_api.models import (
     ChunkResult,
     ConfidenceBand,
+    EvidencePack,
     RetrieveMetadata,
     RetrieveRequest,
     RetrieveResponse,
+    SubQueryResult,
 )
 from retrieval_api.quality_boost import quality_boost
 from retrieval_api.quality_floor import filter_quality_floor
 from retrieval_api.services import coreference, evidence_tier, gate, graph_search, reranker, search
 from retrieval_api.services.diversity import source_aware_select
 from retrieval_api.services.events import emit_event
-from retrieval_api.services.evidence_pack import build_evidence_pack, chunk_source_key
+from retrieval_api.services.evidence_pack import (
+    build_evidence_pack,
+    chunk_source_key,
+    merge_evidence_packs,
+)
 from retrieval_api.services.features import extract_features
 from retrieval_api.services.router import fetch_source_catalog, route_to_sources
 from retrieval_api.services.tei import embed_single, embed_sparse
@@ -140,6 +146,121 @@ def _caller_pre_resolved(req: RetrieveRequest) -> bool:
     return bool(req.raw_query) and req.raw_query != req.query
 
 
+_BAND_RANK = {"high": 3, "medium": 2, "low": 1, "unknown": 0}
+
+
+async def _retrieve_sub_queries(
+    req: RetrieveRequest,
+    request: Request,
+    auth: AuthContext,
+) -> RetrieveResponse:
+    """Fan out one full retrieval per sub-question and merge the results.
+
+    Each sub-question runs the complete single-query pipeline (embedding,
+    gate, search, rerank, evidence pack) via a recursive ``retrieve`` call,
+    so per-sub-question decision records, metrics, and identity verification
+    all behave exactly like a normal request. The merge namespaces evidence
+    ids per question (``merge_evidence_packs``) and reports per-question
+    coverage in ``sub_results`` — a failed sub-question is reported as an
+    error, never conflated with "not in the knowledge base".
+    """
+    sub_queries = [
+        (index, query.strip())
+        for index, query in enumerate(req.sub_queries or [], 1)
+        if isinstance(query, str) and query.strip()
+    ]
+    t0 = time.perf_counter()
+    per_query_top_k = max(2, min(req.top_k, settings.sub_query_top_k))
+
+    async def _one(sub_query: str) -> RetrieveResponse:
+        sub_req = req.model_copy(
+            update={
+                "query": sub_query,
+                # Sub-questions are standalone by contract; skip per-question
+                # coreference LLM calls and raw-query RRF legs.
+                "raw_query": None,
+                "coreference_resolved": True,
+                "sub_queries": None,
+                "top_k": per_query_top_k,
+            }
+        )
+        return await retrieve(sub_req, request, _auth=auth)
+
+    results = await asyncio.gather(
+        *[_one(query) for _, query in sub_queries], return_exceptions=True
+    )
+
+    sub_results: list[SubQueryResult] = []
+    indexed_packs: list[tuple[int, EvidencePack | None]] = []
+    merged_chunks: list[ChunkResult] = []
+    seen_chunk_ids: set[str] = set()
+    candidates_total = 0
+    reranked_total = 0
+    failures = 0
+    for (index, query), result in zip(sub_queries, results, strict=True):
+        if isinstance(result, BaseException):
+            failures += 1
+            logger.warning(
+                "retrieval_sub_query_failed",
+                org_id=req.org_id,
+                sub_query_index=index,
+                error=type(result).__name__,
+            )
+            sub_results.append(
+                SubQueryResult(index=index, query=query, error=type(result).__name__)
+            )
+            continue
+        pack = result.evidence_pack
+        evidence_count = len(pack.items) if pack is not None else 0
+        indexed_packs.append((index, pack))
+        sub_results.append(
+            SubQueryResult(
+                index=index,
+                query=query,
+                confidence_band=result.confidence_band,
+                evidence_count=evidence_count,
+            )
+        )
+        candidates_total += result.metadata.candidates_retrieved
+        reranked_total += result.metadata.reranked_to
+        for chunk in result.chunks:
+            if chunk.chunk_id in seen_chunk_ids:
+                continue
+            seen_chunk_ids.add(chunk.chunk_id)
+            merged_chunks.append(chunk)
+
+    if failures == len(sub_queries):
+        raise HTTPException(status_code=502, detail="all sub-query retrievals failed")
+
+    covered_bands = [sub.confidence_band for sub in sub_results if sub.confidence_band is not None]
+    overall_band = (
+        max(covered_bands, key=lambda band: _BAND_RANK.get(band, 0)) if covered_bands else "unknown"
+    )
+    merged_pack = merge_evidence_packs(indexed_packs)
+    retrieval_ms = (time.perf_counter() - t0) * 1000
+    logger.info(
+        "retrieval_sub_query_fanout",
+        org_id=req.org_id,
+        sub_query_count=len(sub_queries),
+        failures=failures,
+        evidence_items=len(merged_pack.items),
+        retrieval_ms=round(retrieval_ms, 1),
+    )
+    return RetrieveResponse(
+        query_resolved=req.query,
+        retrieval_bypassed=False,
+        chunks=merged_chunks,
+        metadata=RetrieveMetadata(
+            candidates_retrieved=candidates_total,
+            reranked_to=reranked_total,
+            retrieval_ms=round(retrieval_ms, 1),
+        ),
+        confidence_band=overall_band,
+        evidence_pack=merged_pack,
+        sub_results=sub_results,
+    )
+
+
 @router.post("/retrieve", response_model=RetrieveResponse)
 async def retrieve(
     req: RetrieveRequest,
@@ -152,6 +273,11 @@ async def retrieve(
     # --- Validation ---
     if req.scope in ("personal", "both") and not req.user_id:
         raise HTTPException(status_code=400, detail="user_id required for scope=personal/both")
+
+    # Multi-part fan-out: >= 2 usable sub-questions delegate to the merge
+    # path; each sub-question re-enters this endpoint as a normal request.
+    if req.sub_queries and sum(1 for q in req.sub_queries if isinstance(q, str) and q.strip()) >= 2:
+        return await _retrieve_sub_queries(req, request, _auth)
 
     # SPEC-PORTAL-RBAC-REFACTOR-001 REQ-17 / REQ-6: personal-role callers may
     # only search personal-scope KBs. Force scope to "personal" and strip any

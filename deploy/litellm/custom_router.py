@@ -7,6 +7,8 @@ conversation context:
   Tool call history detected         →  klai-large    (mistral-large, agentic/MCP flows)
   Long user message detected         →  klai-large    (complex analytical request)
   Web search content detected        →  klai-fast     (mistral-small, speed for synthesis)
+  Strict KB + risk signals           →  klai-medium   (multi-part question or low-confidence
+                                                       evidence: stronger instruction-following)
   Default                            →  klai-primary  (mistral-small, normal chat)
 
 Scope: klai-primary is routed for LibreChat/chat traffic. Explicit klai-fast,
@@ -82,6 +84,20 @@ def _context_meta_has_tool_history(metadata: dict) -> bool:
         context_meta.get("omitted_tool_messages")
         or context_meta.get("omitted_tool_content_parts")
     )
+
+
+def _kb_risk_upgrade(kb_meta: object) -> bool:
+    """Strict-mode KB answers with known hallucination-risk signals get a
+    stronger model. Risk = the model actually answers (chunks_present) while
+    the message is multi-part or the low-confidence guard fired — the exact
+    conditions of the 2026-08-17 fabricated-webhook-timeout incident. Cost
+    stays bounded: this is a small fraction of KB chat traffic.
+    """
+    if not isinstance(kb_meta, dict) or not kb_meta.get("kb_narrow"):
+        return False
+    if kb_meta.get("answer_policy_state") != "chunks_present":
+        return False
+    return bool(kb_meta.get("multi_question") or kb_meta.get("low_confidence_inject"))
 
 
 def _is_chat_context_request(requested_model: object, data: dict, metadata: dict) -> bool:
@@ -206,8 +222,12 @@ class TokenRouter(CustomLogger):
                         final_model = "klai-fast"
                         route_reason = "web_search_content"
                     elif metadata.get("_klai_kb_meta"):
-                        final_model = requested_model
-                        route_reason = "kb_context"
+                        if _kb_risk_upgrade(metadata["_klai_kb_meta"]):
+                            final_model = "klai-medium"
+                            route_reason = "strict_kb_risk"
+                        else:
+                            final_model = requested_model
+                            route_reason = "kb_context"
                     else:
                         # Safety net: very long context without tool calls → klai-fast
                         total_tokens = litellm.token_counter(

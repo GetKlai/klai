@@ -1,0 +1,340 @@
+"""Sub-question fan-out on the LiteLLM hook side.
+
+Multi-part messages are split deterministically into standalone sub-questions
+(``split_sub_questions``), sent to retrieval-api as ``sub_queries`` (one full
+retrieval per question server-side), and the returned per-question coverage
+(``sub_results``) drives a per-question evidence layout in the prompt plus a
+"Deelvragen" line in the activity footer. All fixtures synthetic.
+"""
+
+from __future__ import annotations
+
+import importlib
+import sys
+import types
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from tests.klai_module_reset import reset_klai_kb_modules
+
+
+@pytest.fixture(autouse=True)
+def _mock_litellm():
+    litellm_mod = types.ModuleType("litellm")
+    integrations_mod = types.ModuleType("litellm.integrations")
+    custom_logger_mod = types.ModuleType("litellm.integrations.custom_logger")
+
+    class CustomLogger:
+        async def async_pre_call_hook(self, *args, **kwargs):
+            pass
+
+        async def async_post_call_success_hook(self, *args, **kwargs):
+            pass
+
+        async def async_post_call_failure_hook(self, *args, **kwargs):
+            pass
+
+    custom_logger_mod.CustomLogger = CustomLogger
+    litellm_mod.integrations = integrations_mod
+    integrations_mod.custom_logger = custom_logger_mod
+
+    sys.modules["litellm"] = litellm_mod
+    sys.modules["litellm.integrations"] = integrations_mod
+    sys.modules["litellm.integrations.custom_logger"] = custom_logger_mod
+
+    yield
+
+    for mod_name in [
+        "litellm",
+        "litellm.integrations",
+        "litellm.integrations.custom_logger",
+    ]:
+        sys.modules.pop(mod_name, None)
+    reset_klai_kb_modules()
+
+
+def _load_hook(monkeypatch, extra_env=None):
+    env = {
+        "PORTAL_INTERNAL_SECRET": "test-portal-secret",
+        "RETRIEVAL_INTERNAL_SECRET": "test-retrieval-secret",
+        "KNOWLEDGE_RETRIEVE_URL": "http://retrieval-api:8040/retrieve",
+        "PORTAL_API_URL": "http://portal-api:8000",
+    }
+    if extra_env:
+        env.update(extra_env)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    reset_klai_kb_modules()
+    import klai_knowledge
+
+    importlib.reload(klai_knowledge)
+    return klai_knowledge
+
+
+INCIDENT_MESSAGE = (
+    "Geef netjes antwoorden:\n"
+    "Wat moet onze webhook exact teruggeven om te routeren?\n"
+    "Wat is de maximale responstijd van deze webhook?\n"
+    "Welke fallback wordt uitgevoerd wanneer onze webhook niet bereikbaar is?\n"
+    "Worden gespreksmeldingen bij een tijdelijke storing opnieuw aangeboden?\n"
+    "Hoe worden gespreksmeldingen beveiligd?\n"
+    "Kunnen we een apart technisch serviceaccount gebruiken?\n"
+    "Hoe lang na een gesprek is de opname gemiddeld beschikbaar?\n"
+)
+
+
+class TestSplitSubQuestions:
+    def test_splits_pasted_question_list_and_caps_at_six(self, monkeypatch):
+        klai_knowledge = _load_hook(monkeypatch)
+        questions = klai_knowledge._split_sub_questions(INCIDENT_MESSAGE)
+        assert len(questions) == 6  # 7 questions in the message, capped
+        assert questions[0] == "Wat moet onze webhook exact teruggeven om te routeren?"
+        assert all(question.endswith("?") for question in questions)
+
+    def test_strips_list_markers(self, monkeypatch):
+        klai_knowledge = _load_hook(monkeypatch)
+        questions = klai_knowledge._split_sub_questions(
+            "1. Wat is de responstijd?\n- Welke fallback geldt er?"
+        )
+        assert questions == ["Wat is de responstijd?", "Welke fallback geldt er?"]
+
+    def test_inline_prose_falls_back_to_segments(self, monkeypatch):
+        klai_knowledge = _load_hook(monkeypatch)
+        questions = klai_knowledge._split_sub_questions(
+            "Wat kost een extra seat? En hoe zeg ik het abonnement op?"
+        )
+        assert len(questions) == 2
+
+    def test_single_question_returns_empty(self, monkeypatch):
+        klai_knowledge = _load_hook(monkeypatch)
+        assert klai_knowledge._split_sub_questions("Wat is de responstijd?") == []
+        assert klai_knowledge._split_sub_questions(None) == []
+
+
+class TestRetrieveBodyCarriesSubQueries:
+    def test_body_includes_sub_queries_when_present(self, monkeypatch):
+        _load_hook(monkeypatch)
+        from klai_kb_scope_policy import build_retrieve_body
+
+        scope_decision = MagicMock()
+        scope_decision.action = "continue"
+        scope_decision.scope = "org"
+        scope_decision.kb_narrow = True
+        scope_decision.kb_slugs_for_request = None
+        scope_decision.include_owned_private_kbs = False
+
+        body = build_retrieve_body(
+            rewritten_query="q",
+            raw_query="q",
+            coreference_resolved=True,
+            org_id="42",
+            user_id="u",
+            top_k=20,
+            conversation_history=[],
+            telemetry_level="shadow",
+            scope_decision=scope_decision,
+            taxonomy_applied=False,
+            classified_node_ids=[],
+            sub_queries=["vraag een?", "vraag twee?"],
+        )
+        assert body["sub_queries"] == ["vraag een?", "vraag twee?"]
+
+        body_without = build_retrieve_body(
+            rewritten_query="q",
+            raw_query="q",
+            coreference_resolved=True,
+            org_id="42",
+            user_id="u",
+            top_k=20,
+            conversation_history=[],
+            telemetry_level="shadow",
+            scope_decision=scope_decision,
+            taxonomy_applied=False,
+            classified_node_ids=[],
+            sub_queries=None,
+        )
+        assert "sub_queries" not in body_without
+
+
+class TestGroupedContext:
+    def _build(self, monkeypatch, *, sub_query_results, chunks):
+        _load_hook(monkeypatch)
+        from klai_kb_context_prompt import build_kb_context_prompt
+        from klai_kb_confidence_policy import MULTI_QUESTION_FANOUT_GUARD_TEXT
+
+        return build_kb_context_prompt(
+            kb_narrow=True,
+            context_chunks=chunks,
+            trusted_sources=[],
+            templates_block="",
+            images_base_url="https://example.test",
+            low_confidence_inject=False,
+            low_confidence_injection_disabled=False,
+            low_confidence_strict_text="STRICT-GUARD",
+            low_confidence_open_text="OPEN-GUARD",
+            multi_question_guard_text=MULTI_QUESTION_FANOUT_GUARD_TEXT,
+            sub_query_results=sub_query_results,
+        )
+
+    def test_groups_evidence_per_question_with_coverage_markers(self, monkeypatch):
+        prompt = self._build(
+            monkeypatch,
+            sub_query_results=[
+                {"index": 1, "query": "Worden meldingen opnieuw aangeboden?", "evidence_count": 1},
+                {"index": 2, "query": "Wat is de maximale responstijd?", "evidence_count": 0},
+                {"index": 3, "query": "Welke fallback geldt er?", "error": "RuntimeError"},
+            ],
+            chunks=[
+                {
+                    "chunk_id": "c1",
+                    "text": "Meldingen worden niet opnieuw aangeboden.",
+                    "title": "Gespreksmeldingen",
+                    "sub_query_index": 1,
+                }
+            ],
+        )
+        block = prompt.context_block
+        assert "[Question 1: Worden meldingen opnieuw aangeboden?]" in block
+        assert "Meldingen worden niet opnieuw aangeboden." in block
+        assert "[Question 2: Wat is de maximale responstijd?]" in block
+        assert "[No knowledge-base evidence found for this" in block
+        assert "[Question 3: Welke fallback geldt er?]" in block
+        assert "[Retrieval FAILED for this question" in block
+        assert "evidence grouped per question" in block  # fanout guard text
+
+    def test_no_sub_query_results_keeps_single_render(self, monkeypatch):
+        prompt = self._build(
+            monkeypatch,
+            sub_query_results=None,
+            chunks=[{"chunk_id": "c1", "text": "inhoud", "title": "Titel"}],
+        )
+        assert "[Question" not in prompt.context_block
+
+
+class TestActivityFooterSubQuestions:
+    def test_footer_reports_sub_question_coverage(self, monkeypatch):
+        _load_hook(monkeypatch)
+        from klai_kb_citation_render import _format_visible_agent_activity
+
+        footer = _format_visible_agent_activity(
+            {
+                "kb_narrow": True,
+                "chat_retrieval_prompt_mode": "strict_kb",
+                "chunks_injected": 3,
+                "retrieval_ms": 1200,
+                "sub_query_coverage": [
+                    {"index": 1, "query": "a?", "evidence_count": 2},
+                    {"index": 2, "query": "b?", "evidence_count": 0},
+                    {"index": 3, "query": "c?", "error": "RuntimeError"},
+                ],
+            },
+            [],
+            language="nl",
+        )
+        assert "- Deelvragen: 3 apart gezocht; 1 met bronnen, 1 niet controleerbaar." in footer
+
+    def test_footer_omits_line_without_coverage(self, monkeypatch):
+        _load_hook(monkeypatch)
+        from klai_kb_citation_render import _format_visible_agent_activity
+
+        footer = _format_visible_agent_activity(
+            {
+                "kb_narrow": True,
+                "chat_retrieval_prompt_mode": "strict_kb",
+                "chunks_injected": 3,
+                "retrieval_ms": 1200,
+            },
+            [],
+            language="nl",
+        )
+        assert "Deelvragen" not in footer
+
+
+class TestHookFanoutEndToEnd:
+    @pytest.mark.asyncio
+    async def test_multi_question_message_sends_sub_queries_and_groups_context(
+        self, monkeypatch
+    ):
+        from tests.test_klai_knowledge_hook import (
+            _make_cache,
+            _make_resp,
+            _make_user_api_key,
+            _patch_http,
+        )
+
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache()
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": INCIDENT_MESSAGE}],
+        }
+        chunks = [
+            {
+                "text": "Meldingen worden bij een storing niet opnieuw aangeboden.",
+                "scope": "org",
+                "metadata": {"title": "Gespreksmeldingen"},
+                "source_url": "https://docs.klai.example/meldingen",
+                "chunk_id": "meldingen-1",
+                "reranker_score": 0.62,
+            }
+        ]
+        retrieval_resp = _make_resp(
+            {
+                "chunks": chunks,
+                "retrieval_bypassed": False,
+                "confidence_band": "medium",
+                "sub_results": [
+                    {
+                        "index": 4,
+                        "query": "Worden gespreksmeldingen bij een tijdelijke storing opnieuw aangeboden?",
+                        "confidence_band": "medium",
+                        "evidence_count": 1,
+                    },
+                    {
+                        "index": 2,
+                        "query": "Wat is de maximale responstijd van deze webhook?",
+                        "confidence_band": "low",
+                        "evidence_count": 0,
+                    },
+                ],
+            }
+        )
+        portal_resp = _make_resp(
+            {
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": True,
+                "kb_slugs_filter": None,
+                "kb_narrow": True,
+                "kb_pref_version": 12,
+                "zitadel_user_id": "300000000000000002",
+            }
+        )
+
+        with _patch_http(
+            monkeypatch, portal_resp=portal_resp, retrieval_resp=retrieval_resp
+        ) as mock_client:
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        # Retrieve body carried the split sub-questions.
+        retrieve_call = mock_client.post.call_args_list[-1]
+        sent_body = retrieve_call.kwargs.get("json") or retrieve_call.args[1]
+        assert len(sent_body["sub_queries"]) == 6
+        assert sent_body["sub_queries"][1] == "Wat is de maximale responstijd van deze webhook?"
+
+        # Prompt groups evidence per question and flags the uncovered one.
+        system_content = "\n".join(
+            m["content"] for m in result["messages"] if m.get("role") == "system"
+        )
+        assert "evidence grouped per question" in system_content
+        assert "[Question 2: Wat is de maximale responstijd van deze webhook?]" in system_content
+        assert "[No knowledge-base evidence found for this" in system_content
+
+        meta = result["metadata"]["_klai_kb_meta"]
+        assert meta["multi_question"] is True
+        assert len(meta["sub_query_coverage"]) == 2

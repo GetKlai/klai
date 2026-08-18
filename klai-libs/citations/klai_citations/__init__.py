@@ -1165,6 +1165,7 @@ def evidence_pack_items_as_chunks(evidence_pack: object) -> list[dict[str, Any]]
                 "scope": item.get("scope"),
                 "image_urls": item.get("image_urls"),
                 "is_parent_text": item.get("is_parent_text"),
+                "sub_query_index": item.get("sub_query_index"),
             }
         )
     return chunks
