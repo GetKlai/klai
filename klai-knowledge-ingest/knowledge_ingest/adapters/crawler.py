@@ -320,6 +320,40 @@ def _build_crawl_outcome_warning(
     }
 
 
+def _crawl_fully_fetched(fetch_outcomes: list[dict]) -> bool:
+    """True only when every discovered candidate URL was actually fetched.
+
+    2026-08-18 stop-the-bleeding fix: the stale-connector-artifact
+    reconciliation below compares ``current_paths`` (the URLs that were
+    successfully fetched THIS run) against everything on record for the
+    connector, and deletes anything missing as "stale". A URL that merely
+    hit a real fetch failure (timeout, 5xx, DNS, ...) this run is absent
+    from ``current_paths`` for a reason that has nothing to do with the
+    page still existing on the site — deleting it destroys live knowledge.
+    ``decide_fetch_failure_terminal_status`` tolerates up to
+    ``ingest_fetch_failure_dirty_trip_rate`` (30% by default) of real
+    failures before it stops the job from reaching ``completed``, so a
+    job well within that tolerance can still have failed some pages.
+
+    Reconciliation may only run when every discovered URL was demonstrably
+    resolved (``success`` or ``non_content_listing_page``) — never on a
+    real fetch failure, and never on a deliberately-unfetched
+    ``not_fetched_*`` scheduling omission (budget/depth/exclude/duplicate).
+    This is intentionally conservative: a crawl with any incompleteness at
+    all skips reconciliation entirely rather than trying to distinguish
+    "gone" from "not reached this run" — the more precise three-way split
+    (present / demonstrably gone / unknown) is a larger design left for a
+    follow-up.
+    """
+    for outcome in fetch_outcomes:
+        reason = str(outcome.get("reason_code") or "")
+        if reason in _FETCH_FAILURE_REASON_CODES:
+            return False
+        if reason.startswith(_NOT_FETCHED_REASON_PREFIX):
+            return False
+    return True
+
+
 def _crawl_warning_terminal_status(crawl_warning: dict | None) -> str:
     """Return the terminal status implied by a crawl warning, if any."""
     if crawl_warning is None:
@@ -898,45 +932,62 @@ async def run_crawl_job(
             await _update_job(conn, job_id, status=terminal_status)
 
         if connector_id and terminal_status == "completed" and pages_done > 0:
-            current_urls = [result.url for result in results]
-            stale_paths = await pg_store.list_stale_connector_artifact_paths(
-                conn,
-                org_id=org_id,
-                kb_slug=kb_slug,
-                connector_id=connector_id,
-                current_paths=current_urls,
-            )
-            if stale_paths:
-                stale_paths_deleted: list[str] = []
-                for path in stale_paths:
-                    try:
-                        await qdrant_store.delete_document(org_id, kb_slug, path)
-                    except Exception as exc:
-                        logger.warning(
-                            "crawl_connector_stale_vector_delete_failed",
+            if not _crawl_fully_fetched(fetch_outcomes):
+                skip_reason_counts = Counter(
+                    reason
+                    for outcome in fetch_outcomes
+                    if (reason := str(outcome.get("reason_code") or ""))
+                    in _FETCH_FAILURE_REASON_CODES
+                    or reason.startswith(_NOT_FETCHED_REASON_PREFIX)
+                )
+                logger.info(
+                    "crawl_connector_stale_reconcile_skipped",
+                    job_id=job_id,
+                    connector_id=connector_id,
+                    kb_slug=kb_slug,
+                    reason="incomplete_crawl",
+                    skip_reason_counts=dict(skip_reason_counts),
+                )
+            else:
+                current_urls = [result.url for result in results]
+                stale_paths = await pg_store.list_stale_connector_artifact_paths(
+                    conn,
+                    org_id=org_id,
+                    kb_slug=kb_slug,
+                    connector_id=connector_id,
+                    current_paths=current_urls,
+                )
+                if stale_paths:
+                    stale_paths_deleted: list[str] = []
+                    for path in stale_paths:
+                        try:
+                            await qdrant_store.delete_document(org_id, kb_slug, path)
+                        except Exception as exc:
+                            logger.warning(
+                                "crawl_connector_stale_vector_delete_failed",
+                                job_id=job_id,
+                                connector_id=connector_id,
+                                kb_slug=kb_slug,
+                                path=path,
+                                error=str(exc),
+                            )
+                        else:
+                            stale_paths_deleted.append(path)
+                    if stale_paths_deleted:
+                        retired_count = await pg_store.soft_delete_stale_connector_artifacts(
+                            conn,
+                            org_id=org_id,
+                            kb_slug=kb_slug,
+                            connector_id=connector_id,
+                            stale_paths=stale_paths_deleted,
+                        )
+                        logger.info(
+                            "crawl_connector_stale_artifacts_retired",
                             job_id=job_id,
                             connector_id=connector_id,
                             kb_slug=kb_slug,
-                            path=path,
-                            error=str(exc),
+                            retired_count=retired_count,
                         )
-                    else:
-                        stale_paths_deleted.append(path)
-                if stale_paths_deleted:
-                    retired_count = await pg_store.soft_delete_stale_connector_artifacts(
-                        conn,
-                        org_id=org_id,
-                        kb_slug=kb_slug,
-                        connector_id=connector_id,
-                        stale_paths=stale_paths_deleted,
-                    )
-                    logger.info(
-                        "crawl_connector_stale_artifacts_retired",
-                        job_id=job_id,
-                        connector_id=connector_id,
-                        kb_slug=kb_slug,
-                        retired_count=retired_count,
-                    )
 
         if terminal_status == "completed" and pages_done > 0:
             await _enqueue_taxonomy_backfill_after_crawl(
