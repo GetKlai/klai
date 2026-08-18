@@ -23,7 +23,7 @@ description: "Use when the user asks how code works, wants to understand archite
 5. READ codeindex://repo/{name}/process/{name}      → Trace full execution flow
 ```
 
-> If step 2 says "Index is stale" → run `npx codeindex analyze` in terminal.
+> If step 2 says "Index is stale", treat CodeIndex results as advisory and verify with source files. Do not block the task on re-indexing unless the user explicitly asked to refresh the index.
 
 ## Checklist
 

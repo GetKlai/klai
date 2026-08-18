@@ -22,7 +22,7 @@ description: "Use when the user wants to rename, extract, split, move, or restru
 4. Plan update order: interfaces → implementations → callers → tests
 ```
 
-> If "Index is stale" → run `npx codeindex analyze` in terminal.
+> If "Index is stale", treat CodeIndex results as advisory and verify with source files. Do not block the task on re-indexing unless the user explicitly asked to refresh the index.
 
 ## Checklists
 

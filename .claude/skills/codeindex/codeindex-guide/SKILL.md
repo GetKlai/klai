@@ -15,7 +15,7 @@ For any task involving code understanding, debugging, impact analysis, or refact
 2. **Match your task to a skill below** and **read that skill file**
 3. **Follow the skill's workflow and checklist**
 
-> If step 1 warns the index is stale, run `npx codeindex analyze` in the terminal first.
+> If step 1 warns the index is stale, treat CodeIndex results as advisory and verify with source files. Do not block the task on re-indexing unless the user explicitly asked to refresh the index.
 
 ## Skills
 
