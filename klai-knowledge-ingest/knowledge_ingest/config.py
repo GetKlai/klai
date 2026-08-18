@@ -199,6 +199,41 @@ class Settings(BaseSettings):
         default=360.0,
         validation_alias=AliasChoices("KLAI_CRAWL_BULK_BASE_TIMEOUT_SECONDS"),
     )
+    # 2026-08-18 — ``_chunked_bulk_fetch`` used to stop the WHOLE remaining
+    # crawl the moment a single page classified BLOCKED_ANTI_BOT
+    # (`_STOP_CHUNKING_REASON_CODES`). A production audit of 60 crawl jobs
+    # found the false-positive rate this reacted to: 48 jobs had zero
+    # anti-bot signals, 7 stayed under 2%, 5 sat between 2% and 10%, and
+    # ZERO landed between 10% and 100% — the highest observed noise ratio
+    # across all 60 jobs was 5.9%. Three jobs paid for the single-signal
+    # trigger directly: 216, 192, and 17 URLs never even attempted, caused
+    # by only 4, 4, and 5 misclassified signals respectively. A genuine
+    # site-wide block, by contrast, drives this ratio toward 100% (the
+    # target rejects nearly everything), not into the 10-100% gap that has
+    # zero production observations.
+    #
+    # ``crawl_antibot_stop_ratio`` (0.25): chosen inside that empty 10-100%
+    # gap, more than 4x above the worst observed noise (5.9%) so ordinary
+    # misclassification noise never trips it, while still intervening well
+    # before a crawl burns through most of its remaining pages against a
+    # site that is genuinely blocking us.
+    crawl_antibot_stop_ratio: float = Field(
+        default=0.25,
+        validation_alias=AliasChoices("KLAI_CRAWL_ANTIBOT_STOP_RATIO"),
+    )
+    # ``crawl_antibot_stop_min_count`` (3): absolute floor protecting SMALL
+    # crawls, where the ratio alone is too noisy to trust — a 3-page crawl
+    # with one signal is already 33%, comfortably above the 25% ratio
+    # above, yet a single stray signal is exactly the noise this fix
+    # exists to stop reacting to. Requiring at least 3 confirmed signals
+    # before the ratio gate can fire means a crawl under ~12 pages
+    # (3 / 0.25) needs to see MOST of its pages blocked before stopping —
+    # deliberately conservative for small sites, where losing even a
+    # handful of pages to a false stop is proportionally expensive.
+    crawl_antibot_stop_min_count: int = Field(
+        default=3,
+        validation_alias=AliasChoices("KLAI_CRAWL_ANTIBOT_STOP_MIN_COUNT"),
+    )
     # LLM enrichment (contextual prefix + HyPE questions via LiteLLM proxy)
     litellm_url: str = "http://litellm:4000"
     litellm_api_key: str = ""

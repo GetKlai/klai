@@ -438,6 +438,115 @@ class TestClassifyFetchOutcome:
         )
 
 
+class TestClassifyFetchOutcomeStructuralGuessVsStatusCode:
+    """2026-08-18 — production audit of 100 historical BLOCKED_ANTI_BOT
+    outcomes: 91 carried a status code that itself contradicts a block
+    (51x 200, 26x 404 [+4 "Structural: minimal_text"], 10x 307, 5x 500).
+    Only 4x 403 looked genuinely consistent. Root cause: crawl4ai's
+    "Blocked by anti-bot protection: <reason>" prefix wraps both a
+    concrete vendor/challenge signature (Tier 1 — trusted regardless of
+    status) and a generic page-shape GUESS (Tier 2/3 — a structural guess
+    that a contradicting status code should override). See the module
+    comment above ``_classify_fetch_outcome`` in crawl4ai_client.py."""
+
+    _STRUCTURAL_GUESS_MESSAGE = (
+        "Blocked by anti-bot protection: Structural: minimal_text on small page "
+        "(940 bytes, 12 chars visible)"
+    )
+
+    @pytest.mark.parametrize(
+        ("status", "expected"),
+        [
+            # 2xx — the server delivered content; never a block.
+            (200, FetchReasonCode.UNKNOWN_EXCEPTION.value),
+            # 3xx — a redirect; never a block.
+            (307, FetchReasonCode.UNKNOWN_EXCEPTION.value),
+            # 5xx — a server error; never a block.
+            (500, FetchReasonCode.HTTP_5XX.value),
+            # 404/410 — definitively nonexistent, subsumes the narrower
+            # 404/410-only branch from fix/crawl-template-urls-and-404-classification.
+            (404, FetchReasonCode.HTTP_4XX.value),
+            (410, FetchReasonCode.HTTP_4XX.value),
+        ],
+    )
+    def test_structural_guess_loses_to_a_contradicting_status_code(
+        self, status: int, expected: str
+    ) -> None:
+        assert (
+            _classify_fetch_outcome(
+                {
+                    "success": False,
+                    "status_code": status,
+                    "error_message": self._STRUCTURAL_GUESS_MESSAGE,
+                }
+            )
+            == expected
+        )
+
+    def test_structural_guess_on_403_stays_blocked_anti_bot(self) -> None:
+        """401/403 remain compatible with anti-bot — a real wall commonly
+        answers with exactly one of those (the 4 genuine production rows)."""
+        assert (
+            _classify_fetch_outcome(
+                {
+                    "success": False,
+                    "status_code": 403,
+                    "error_message": self._STRUCTURAL_GUESS_MESSAGE,
+                }
+            )
+            == FetchReasonCode.BLOCKED_ANTI_BOT.value
+        )
+
+    def test_structural_guess_on_401_stays_blocked_anti_bot(self) -> None:
+        assert (
+            _classify_fetch_outcome(
+                {
+                    "success": False,
+                    "status_code": 401,
+                    "error_message": self._STRUCTURAL_GUESS_MESSAGE,
+                }
+            )
+            == FetchReasonCode.BLOCKED_ANTI_BOT.value
+        )
+
+    @pytest.mark.parametrize("status", [200, 307, 404, 410, 500, 403, None])
+    def test_concrete_cloudflare_challenge_always_stays_blocked_anti_bot(
+        self, status: int | None
+    ) -> None:
+        """A concrete challenge observation is a real detection, not a
+        guess — it must never be overridden by a contradicting status
+        code, unlike the structural guess above. Challenge pages are
+        commonly served with a plain HTTP 200."""
+        assert (
+            _classify_fetch_outcome(
+                {
+                    "success": False,
+                    "status_code": status,
+                    "error_message": "Blocked by anti-bot protection: Cloudflare JS challenge",
+                }
+            )
+            == FetchReasonCode.BLOCKED_ANTI_BOT.value
+        )
+
+    def test_429_wrapped_in_anti_bot_prefix_stays_rate_limited_not_structural_guess(
+        self,
+    ) -> None:
+        """Regression guard: the pre-existing 429-wrapper check (checked
+        before this fix's status-code logic) must still win — a rate-limit
+        signal is not a structural anti-bot guess and must never fall
+        through to it."""
+        assert (
+            _classify_fetch_outcome(
+                {
+                    "success": False,
+                    "status_code": 200,
+                    "error_message": ("Blocked by anti-bot protection: HTTP 429 Too Many Requests"),
+                }
+            )
+            == FetchReasonCode.RATE_LIMITED.value
+        )
+
+
 class TestBuildCandidateSetExcludeStartUrl:
     def test_excludes_start_url_from_output(self) -> None:
         candidates = _build_candidate_set(
