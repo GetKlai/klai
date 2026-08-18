@@ -170,6 +170,93 @@ _PRIORITY_PAGE_LINK = 50
 _LISTING_LINK_THRESHOLD = 50
 _THIN_CONTENT_WORD_COUNT = 100
 
+# 2026-08-18 (intermedia.com incident) — a website crawl exists to fetch
+# HTML pages, not documents. crawl4ai's browser tries to *navigate* to
+# every discovered same-domain link; pointed at a PDF (or any other
+# document/archive/media/binary), the browser starts a download instead
+# of rendering and the request fails.
+#
+# This is NOT about a bad URL poisoning a whole bulk chunk — measured
+# directly against the running crawl4ai container (2026-08-18): a PDF
+# submitted together with a good URL in one bulk ``/crawl`` request comes
+# back HTTP 200 with two results, the PDF's own ``success: false`` and an
+# error message, the good page fetched normally. crawl4ai's REST API
+# dispatches bulk requests to ``crawler.arun_many``, which isolates
+# failures per URL — exactly as it should. A single-URL request is a
+# different code path (``crawler.arun``, chosen by crawl4ai's own
+# ``api.py`` whenever ``len(urls) == 1``) that does NOT isolate the
+# failure and returns a bare HTTP 500 instead.
+#
+# That single-URL path is exactly what the sequential-recovery route
+# (``_recover_bulk_5xx_batch``) and the seed fetch (``_fetch_seed_page``)
+# use — one URL at a time, each attempt preceded by a real
+# ``crawl_sequential_recovery_cooldown_seconds`` (75s) wait and counted
+# against the crawl-job-wide ``_MAX_SEQUENTIAL_RECOVERY`` budget. A PDF
+# can never become fetchable HTML no matter how many times or how slowly
+# it is retried, so letting one reach that route wastes a guaranteed-to-
+# fail 75-second attempt and a budget slot that a genuinely recoverable
+# HTML page (a real transient 5xx or timeout) needed instead.
+#
+# This is also not a workaround for a crawler limitation: Klai already
+# has a dedicated document connector for exactly this content class. The
+# web crawler's job is web pages; PDFs, spreadsheets, archives and media
+# belong to that other connector, not to this one's frontier. Filtering
+# them out here, before a single network request is made, costs nothing
+# and is deterministic — unlike a HEAD request or content-type sniff.
+_NON_HTML_PATH_EXTENSIONS = frozenset(
+    {
+        # documents
+        "pdf",
+        "doc",
+        "docx",
+        "xls",
+        "xlsx",
+        "ppt",
+        "pptx",
+        "odt",
+        # archives
+        "zip",
+        "tar",
+        "gz",
+        "rar",
+        "7z",
+        # media
+        "jpg",
+        "jpeg",
+        "png",
+        "gif",
+        "svg",
+        "webp",
+        "ico",
+        "mp4",
+        "mp3",
+        "avi",
+        "mov",
+        "wav",
+        # binaries
+        "exe",
+        "dmg",
+        "pkg",
+        "deb",
+    }
+)
+
+
+def _url_has_non_html_extension(url: str) -> bool:
+    """True when ``url``'s PATH (query params ignored) ends in a
+    document/archive/media/binary extension — see
+    ``_NON_HTML_PATH_EXTENSIONS`` above.
+
+    ``.../rapport.pdf?download=1`` matches: only ``urlparse(url).path`` is
+    inspected, so a query string can never hide the extension or trigger a
+    false positive on a path segment that merely contains a dot.
+    """
+    last_segment = urlparse(url).path.rsplit("/", 1)[-1]
+    if "." not in last_segment:
+        return False
+    extension = last_segment.rsplit(".", 1)[-1].lower()
+    return extension in _NON_HTML_PATH_EXTENSIONS
+
 
 class _HTMLTextCounter(HTMLParser):
     """Cheap rendered-HTML text signal for deciding whether a crawl was over-pruned."""
@@ -1272,6 +1359,15 @@ class CrawlLedger:
         if not url:
             return False
         if not _same_site_domain(urlparse(url).netloc.lower(), self.base_domain):
+            return False
+        if _url_has_non_html_extension(url):
+            # Deliberately produces NO outcome at all (same contract as the
+            # domain check above) — never a ``not_fetched_*`` reason code.
+            # A URL we correctly never wanted to crawl is not incomplete
+            # coverage; see _build_crawl_outcome_warning / _crawl_fully_fetched
+            # in adapters/crawler.py, which both key off any not_fetched_*
+            # prefix and would otherwise mark the whole crawl failed_partial
+            # over one PDF link.
             return False
         url = _coerce_same_site_url_to_base_host(url, self.base_domain)
         if not force:
