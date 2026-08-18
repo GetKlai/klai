@@ -116,6 +116,7 @@ _EXPECTED_KEYS = {
     "low_confidence_inject",
     "allow_uncited_user_content",
     "suppress_kb_citations",
+    "pasted_correspondence_detected",
 }
 
 

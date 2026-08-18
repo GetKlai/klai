@@ -170,6 +170,10 @@ class KbAnswerPolicy:
     prompt_mode: ChatRetrievalPromptMode
     user_provided_content_context: bool
     low_confidence_inject: bool = False
+    # Code-side detector result (klai_pasted_correspondence): the user pasted
+    # third-party correspondence. Carried into ``_klai_kb_meta`` so the
+    # visible agent-activity footer can state how that content was treated.
+    pasted_correspondence: bool = False
 
     def __post_init__(self) -> None:
         if self.state not in KB_ANSWER_POLICY_STATES:
@@ -209,6 +213,7 @@ class KbAnswerPolicy:
             "low_confidence_inject": self.low_confidence_inject,
             "allow_uncited_user_content": self.allow_uncited_user_content,
             "suppress_kb_citations": self.suppress_kb_citations,
+            "pasted_correspondence_detected": self.pasted_correspondence,
         }
 
     def to_kb_meta(

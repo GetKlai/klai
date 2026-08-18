@@ -1387,3 +1387,77 @@ def test_strip_keeps_legitimate_agent_activity_explainer() -> None:
     )
     cleaned = strip_model_citation_artifacts(text)
     assert "This tab shows each retrieval step the agent performed." in cleaned
+
+
+def test_strip_removes_internal_evidence_labels() -> None:
+    """Internal "Evidence E<n>" prompt labels must never reach the user.
+
+    Regression (Voys trunk incident, 2026-08-17): the model wrote "de
+    kennisbank (E3) bevestigt dat ..." — parroting the internal evidence
+    label from the prompt context as if it were a citation. Stripping is
+    gated on the evidence ids actually injected for the request.
+    """
+    from klai_citations import strip_model_citation_artifacts
+
+    text = (
+        "De kennisbank (E3) bevestigt dat blokkades kunnen optreden.\n"
+        "Zie ook Evidence E12 voor context, en (Evidence E1) hierboven.\n"
+        "Meerdere labels (E1, E2) in een run, en de brackets [E4] en [E5, E6].\n"
+        "Ook lowercase evidence E7 wordt geparrot."
+    )
+    evidence_ids = {f"E{i}" for i in range(1, 13)}
+
+    cleaned = strip_model_citation_artifacts(text, evidence_ids=evidence_ids)
+    assert "E3" not in cleaned
+    assert "E12" not in cleaned
+    assert "Evidence" not in cleaned
+    assert "evidence E7" not in cleaned
+    assert "(E1" not in cleaned
+    assert "[E4]" not in cleaned
+    assert "E5" not in cleaned
+    assert "De kennisbank" in cleaned
+    assert "blokkades kunnen optreden" in cleaned
+
+
+def test_strip_keeps_e_numbers_outside_injected_evidence_ids() -> None:
+    """Legitimate E-numbers must survive: bare words always, and even
+    label-shaped tokens when the number was never an injected evidence id."""
+    from klai_citations import strip_model_citation_artifacts
+
+    text = (
+        "De E19 richting Antwerpen (E19) is dicht; tank geen E10.\n"
+        "Foutcode (E42) staat los van de kennisbank."
+    )
+
+    cleaned = strip_model_citation_artifacts(
+        text, evidence_ids={"E1", "E2", "E3"}
+    )
+    assert "E19" in cleaned
+    assert "(E19)" in cleaned
+    assert "E10" in cleaned
+    assert "(E42)" in cleaned
+
+
+def test_strip_without_evidence_ids_strips_no_labels() -> None:
+    """No injected evidence → the model cannot be parroting labels; every
+    E-number token is user-facing content and must survive."""
+    from klai_citations import strip_model_citation_artifacts
+
+    text = "Foutcode (E3) en ligase (E3) blijven staan; Evidence E3 ook."
+
+    cleaned = strip_model_citation_artifacts(text)
+    assert "(E3)" in cleaned
+    assert "Evidence E3" in cleaned
+
+
+def test_evidence_label_ids_positional_and_explicit() -> None:
+    from klai_citations import evidence_label_ids
+
+    chunks = [
+        {"text": "a"},
+        {"text": "b", "evidence_id": "E7"},
+    ]
+    ids = evidence_label_ids(chunks)
+    assert ids == {"E1", "E2", "E7"}
+    assert evidence_label_ids(None) == set()
+    assert evidence_label_ids([]) == set()

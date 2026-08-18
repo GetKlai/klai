@@ -12,6 +12,7 @@ from typing import Any
 from klai_chat_prompts import DUTCH_QUERY_MARKERS, no_citable_sources_message
 from klai_citations import (
     compose_answer_with_trusted_sources,
+    evidence_label_ids,
     strip_model_citation_artifacts,
 )
 from klai_kb_answer_policy import strict_kb_unavailable_message
@@ -25,6 +26,10 @@ from klai_litellm_response import (
     get_response_choices,
     set_message_content,
     set_message_field,
+)
+from klai_pasted_correspondence import (
+    pasted_correspondence_activity_line,
+    pasted_correspondence_detected_from_meta,
 )
 
 _STREAM_LINK_GUARD_TAIL_CHARS = 16
@@ -493,6 +498,8 @@ def _has_visible_agent_activity(kb_meta: dict[str, Any] | None) -> bool:
         or _format_limited_label_list(kb_meta.get("kbs_with_results"))
         or _format_limited_label_list(kb_meta.get("kbs_used_as_sources"))
     )
+    if pasted_correspondence_detected_from_meta(kb_meta):
+        return True
     if bool(kb_meta.get("allow_uncited_user_content")):
         return bool(_format_limited_label_list(kb_meta.get("kbs_used_as_sources")))
     if has_kb_trace_labels:
@@ -677,6 +684,9 @@ def _format_visible_agent_activity(
                 f"- Citability: no usable source selected ({no_citable_reason})."
             )
 
+    if pasted_correspondence_detected_from_meta(kb_meta):
+        lines.append(pasted_correspondence_activity_line(language))
+
     return "\n".join(lines)
 
 
@@ -741,7 +751,21 @@ def _citation_user_content_flags(kb_meta: dict[str, Any]) -> tuple[bool, bool]:
     )
 
 
+# Internal evidence labels ("(E3)", "(Evidence E3)", bare "Evidence E3")
+# stream out before the end-of-stream cleaner can strip them — "(" and plain
+# words are not guard starts, unlike "[". Withhold from the earliest actual
+# label opener so the flush-time ``strip_model_citation_artifacts`` pass can
+# remove it before the user sees it (PR #1059 review rounds 1+2). The
+# ``E\d`` requirement keeps ordinary prose like "(Evidence suggests ...)"
+# streaming normally; the 16-char tail holdback covers labels split across
+# stream deltas.
+_EVIDENCE_STREAM_GUARD_RE = re.compile(
+    r"\(\s*(?:[Ee]vidence\s+)?E\d|\b[Ee]vidence\s+E\d"
+)
+
+
 def _earliest_stream_guard_start(text: str) -> int:
+    evidence_match = _EVIDENCE_STREAM_GUARD_RE.search(text)
     starts = [
         idx
         for idx in (
@@ -749,6 +773,7 @@ def _earliest_stream_guard_start(text: str) -> int:
             text.find("["),
             text.find("http://"),
             text.find("https://"),
+            evidence_match.start() if evidence_match else -1,
         )
         if idx >= 0
     ]
@@ -1039,6 +1064,7 @@ def compose_streaming_kb_response(
                     for source in trusted_sources
                     if isinstance(source.get("title"), str)
                 },
+                evidence_ids=evidence_label_ids(citation_chunks),
             )
             decision["stream_flush_alignment"] = "raw_remainder"
         else:

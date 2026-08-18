@@ -325,6 +325,7 @@ services:
       - ./litellm/klai_kb_urls.py:/app/klai_kb_urls.py:ro
       - ./litellm/klai_litellm_response.py:/app/klai_litellm_response.py:ro
       - ./litellm/klai_chat_attachments.py:/app/klai_chat_attachments.py:ro
+      - ./litellm/klai_pasted_correspondence.py:/app/klai_pasted_correspondence.py:ro
       - ./litellm/custom_router.py:/app/custom_router.py:ro
       # SPEC-CHAT-GUARDRAILS-001: vendored package copy of klai-libs/llm-safety
       # (kept byte-identical via deploy/litellm/tests/test_klai_llm_safety_drift.py).

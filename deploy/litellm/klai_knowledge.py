@@ -102,6 +102,11 @@ from klai_kb_system_prompt import (
 from klai_kb_chat_mode import (
     prompt_mode_is_unavailable as _prompt_mode_is_unavailable,
 )
+from klai_pasted_correspondence import (
+    PASTED_CORRESPONDENCE_SCOPE as _PASTED_CORRESPONDENCE_SCOPE,
+    detect_pasted_correspondence as _detect_pasted_correspondence,
+    latest_user_turn_has_correspondence as _latest_user_turn_has_correspondence,
+)
 from klai_kb_query_rewrite import (
     KLAI_TAXONOMY_COVERAGE_THRESHOLD,
     TAXONOMY_ENABLED,
@@ -416,7 +421,15 @@ class KlaiKnowledgeHook(CustomLogger):
             context_meta = context_result.meta
             data["messages"] = messages
             data.setdefault("metadata", {})["_klai_context_meta"] = context_meta
-        if not query or _is_trivial(query):
+        if not query:
+            return data
+        # Conversation-wide correspondence detection, computed BEFORE the
+        # trivial fast-path: a short follow-up ("waarom?") after a pasted
+        # customer email must still get the epistemic contract — the
+        # correspondence is still in the model's context and follow-ups are
+        # exactly where the sender's claims get re-adopted as facts.
+        pasted_correspondence = _detect_pasted_correspondence(messages)
+        if _is_trivial(query) and not pasted_correspondence:
             return data
 
         # org_id lives in LiteLLM team key metadata
@@ -436,8 +449,18 @@ class KlaiKnowledgeHook(CustomLogger):
         if not librechat_user_id:
             return data
 
-        user_provided_content_context = _has_user_provided_content_context(
-            messages, query
+        # Pasted correspondence counts as user-provided content:
+        # USER_PROVIDED_CONTENT_SCOPE already promises that "text the user
+        # attached or pasted" is usable in every mode. Without this OR,
+        # Strict mode with zero citable sources refuses via mock_response and
+        # the model never sees the pasted email at all (Sol review P1,
+        # PR #1059). LATEST-TURN ONLY: correspondence pasted in an earlier
+        # turn must not keep bypassing the deterministic Strict refusal for
+        # later, unrelated questions — the conversation-wide flag (computed
+        # at the trivial gate) drives only the prompt contract and footer.
+        user_provided_content_context = (
+            _has_user_provided_content_context(messages, query)
+            or _latest_user_turn_has_correspondence(messages)
         )
         data["messages"] = messages
         if context_meta is not None:
@@ -540,6 +563,25 @@ class KlaiKnowledgeHook(CustomLogger):
                 query[:80],
             )
             return data
+
+        # Pasted third-party correspondence (Voys trunk incident, 2026-08-17):
+        # a customer email pasted into chat was answered as verified fact,
+        # with the model adopting the sender's we/you framing against the
+        # user's own organisation. Detection is code-side and deterministic
+        # (computed above, before the safety/meta gates, so it also feeds
+        # user_provided_content_context); the model only receives the
+        # epistemic contract when the detector fires. Injected BEFORE the
+        # branch prefixes so every later ``_prepend_system_prefix`` stacks
+        # the branch foundation above it. Trivial follow-ups ("waarom?") do
+        # NOT bypass this: the trivial fast-path is disabled when the
+        # conversation contains correspondence.
+        if pasted_correspondence:
+            _prepend_system_prefix(messages, _PASTED_CORRESPONDENCE_SCOPE)
+            logger.info(
+                "pasted_correspondence_detected org_id=%s user_id=%s",
+                org_id,
+                librechat_user_id,
+            )
 
         # Feature, KB scope, identity, and request-mode policy.
         feature = await _get_kb_feature(librechat_user_id, org_id, cache)
@@ -900,6 +942,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 state="retrieval_failure",
                 prompt_mode=chat_retrieval_policy.prompt_mode,
                 user_provided_content_context=user_provided_content_context,
+                pasted_correspondence=pasted_correspondence,
             )
             data.setdefault("metadata", {})["_klai_kb_meta"] = answer_policy.to_kb_meta(
                 org_id=org_id,
@@ -948,6 +991,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 state="retrieval_failure",
                 prompt_mode=chat_retrieval_policy.prompt_mode,
                 user_provided_content_context=user_provided_content_context,
+                pasted_correspondence=pasted_correspondence,
             )
             data.setdefault("metadata", {})["_klai_kb_meta"] = answer_policy.to_kb_meta(
                 org_id=org_id,
@@ -979,6 +1023,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 state="gate_bypassed",
                 prompt_mode=chat_retrieval_policy.prompt_mode,
                 user_provided_content_context=user_provided_content_context,
+                pasted_correspondence=pasted_correspondence,
             )
             data.setdefault("metadata", {})["_klai_kb_meta"] = answer_policy.to_kb_meta(
                 org_id=org_id,
@@ -1015,6 +1060,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 state="missing_evidence_pack",
                 prompt_mode=chat_retrieval_policy.prompt_mode,
                 user_provided_content_context=user_provided_content_context,
+                pasted_correspondence=pasted_correspondence,
             )
             data.setdefault("metadata", {})["_klai_kb_meta"] = answer_policy.to_kb_meta(
                 org_id=org_id,
@@ -1223,6 +1269,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 state="chunks_present",
                 prompt_mode=chat_retrieval_policy.prompt_mode,
                 user_provided_content_context=user_provided_content_context,
+                pasted_correspondence=pasted_correspondence,
                 low_confidence_inject=low_confidence_inject,
             )
             data.setdefault("metadata", {})["_klai_kb_meta"] = answer_policy.to_kb_meta(
@@ -1297,6 +1344,7 @@ class KlaiKnowledgeHook(CustomLogger):
                     state="zero_chunks",
                     prompt_mode=chat_retrieval_policy.prompt_mode,
                     user_provided_content_context=user_provided_content_context,
+                    pasted_correspondence=pasted_correspondence,
                     low_confidence_inject=low_confidence_inject,
                 )
                 data.setdefault("metadata", {})["_klai_kb_meta"] = (
@@ -1403,6 +1451,7 @@ class KlaiKnowledgeHook(CustomLogger):
             state="chunks_present",
             prompt_mode=chat_retrieval_policy.prompt_mode,
             user_provided_content_context=user_provided_content_context,
+            pasted_correspondence=pasted_correspondence,
             low_confidence_inject=low_confidence_inject,
         )
         # Signal KB injection to downstream hooks (e.g. custom_router, post-call logger)
