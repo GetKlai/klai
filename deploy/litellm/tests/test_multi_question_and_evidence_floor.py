@@ -258,11 +258,21 @@ class TestEvidenceScoreFloor:
         assert not klai_knowledge._chunk_below_evidence_floor({"chunk_id": "c1"})
 
     def test_first_present_score_key_wins(self, monkeypatch) -> None:
-        """reranker_score is authoritative when present; a high raw score on
-        the same chunk must not resurrect it."""
+        """final_score is authoritative when present (checked before
+        reranker_score); a high raw score on the same chunk must not
+        resurrect it."""
         klai_knowledge = _load_hook(monkeypatch)
         assert klai_knowledge._chunk_below_evidence_floor(
-            {"chunk_id": "c1", "reranker_score": 0.05, "score": 0.9}
+            {"chunk_id": "c1", "final_score": 0.05, "score": 0.9}
+        )
+
+    def test_final_score_wins_over_reranker_score(self, monkeypatch) -> None:
+        """Fix 4: final_score (post-evidence-tier ranking truth) is checked
+        BEFORE reranker_score — a stale high reranker_score on a chunk whose
+        final_score dropped below the floor must not resurrect it."""
+        klai_knowledge = _load_hook(monkeypatch)
+        assert klai_knowledge._chunk_below_evidence_floor(
+            {"chunk_id": "c1", "final_score": 0.1, "reranker_score": 0.9}
         )
 
     def test_raw_score_alone_never_drops(self, monkeypatch) -> None:
@@ -272,6 +282,76 @@ class TestEvidenceScoreFloor:
         assert not klai_knowledge._chunk_below_evidence_floor(
             {"chunk_id": "c1", "score": 0.0}
         )
+
+
+# ---------------------------------------------------------------------------
+# 3b. Evidence score floor drops all chunks -> correct no_citable_reason
+# ---------------------------------------------------------------------------
+
+
+class TestEvidenceFloorNoCitableReason:
+    @pytest.mark.asyncio
+    async def test_floor_drop_reports_below_relevance_threshold_not_safety(
+        self, monkeypatch
+    ) -> None:
+        """Fix 6: ``_filter_evidence_pack_for_chunks`` is shared with the LLM
+        safety filter and stamps "safety_filtered_all_sources" whenever it
+        empties the sources list. When the SCORE FLOOR is what emptied the
+        list, the reason must say so, not claim a safety block happened."""
+        from tests.test_klai_knowledge_hook import (
+            _make_cache,
+            _make_resp,
+            _make_user_api_key,
+            _patch_http,
+        )
+
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache()
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "Wat is de opzegtermijn?"}],
+        }
+        chunks = [
+            {
+                "text": "Irrelevante tag-pagina.",
+                "scope": "org",
+                "metadata": {"title": "Tags"},
+                "source_url": "https://docs.klai.example/tags",
+                "chunk_id": "tags-1",
+                "reranker_score": 0.05,
+            }
+        ]
+        retrieval_resp = _make_resp(
+            {
+                "chunks": chunks,
+                "retrieval_bypassed": False,
+                "confidence_band": "low",
+            }
+        )
+        portal_resp = _make_resp(
+            {
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": True,
+                "kb_slugs_filter": None,
+                "kb_narrow": True,
+                "kb_pref_version": 12,
+                "zitadel_user_id": "300000000000000002",
+            }
+        )
+
+        with _patch_http(
+            monkeypatch, portal_resp=portal_resp, retrieval_resp=retrieval_resp
+        ):
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        meta = result["metadata"]["_klai_kb_meta"]
+        assert meta["no_citable_reason"] == "below_relevance_threshold"
+        assert meta["no_citable_reason"] != "safety_filtered_all_sources"
 
 
 # ---------------------------------------------------------------------------

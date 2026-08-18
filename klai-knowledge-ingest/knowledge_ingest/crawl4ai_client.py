@@ -123,6 +123,18 @@ class CrawlResult:
     # honestly instead of falling through to UNKNOWN_EXCEPTION — see the
     # bulk-5xx sequential-recovery rework in ``crawl_site`` / adapters/crawler.py.
     status_code: int | None = None
+    # 2026-08-18 (SPEC-CRAWLER-FAILURE-EVIDENCE): populated ONLY by the
+    # single-page fetch paths (``_fetch_seed_page`` / ``_crawl_page_with_config``)
+    # when they catch a raised Python exception, BEFORE it is collapsed into
+    # the bare ``str(exc)`` stored in ``error_message`` above. Lets the
+    # fetch_outcomes evidence builder (``_evidence_for_crawl_result``) recover
+    # the real exception type + response body (which may carry crawl4ai's
+    # ``correlation_id``) instead of only the flattened string. Both additive
+    # and None for every other CrawlResult (success, page-level failure with
+    # no raised exception, bulk-path results) — never read outside the
+    # evidence builder.
+    error_type: str | None = None
+    raw_error_text: str | None = None
 
 
 DiscoverySourceKind = Literal["start", "sitemap", "page_link"]
@@ -157,6 +169,93 @@ _PRIORITY_LISTING_CHILD = 25
 _PRIORITY_PAGE_LINK = 50
 _LISTING_LINK_THRESHOLD = 50
 _THIN_CONTENT_WORD_COUNT = 100
+
+# 2026-08-18 (intermedia.com incident) — a website crawl exists to fetch
+# HTML pages, not documents. crawl4ai's browser tries to *navigate* to
+# every discovered same-domain link; pointed at a PDF (or any other
+# document/archive/media/binary), the browser starts a download instead
+# of rendering and the request fails.
+#
+# This is NOT about a bad URL poisoning a whole bulk chunk — measured
+# directly against the running crawl4ai container (2026-08-18): a PDF
+# submitted together with a good URL in one bulk ``/crawl`` request comes
+# back HTTP 200 with two results, the PDF's own ``success: false`` and an
+# error message, the good page fetched normally. crawl4ai's REST API
+# dispatches bulk requests to ``crawler.arun_many``, which isolates
+# failures per URL — exactly as it should. A single-URL request is a
+# different code path (``crawler.arun``, chosen by crawl4ai's own
+# ``api.py`` whenever ``len(urls) == 1``) that does NOT isolate the
+# failure and returns a bare HTTP 500 instead.
+#
+# That single-URL path is exactly what the sequential-recovery route
+# (``_recover_bulk_5xx_batch``) and the seed fetch (``_fetch_seed_page``)
+# use — one URL at a time, each attempt preceded by a real
+# ``crawl_sequential_recovery_cooldown_seconds`` (75s) wait and counted
+# against the crawl-job-wide ``_MAX_SEQUENTIAL_RECOVERY`` budget. A PDF
+# can never become fetchable HTML no matter how many times or how slowly
+# it is retried, so letting one reach that route wastes a guaranteed-to-
+# fail 75-second attempt and a budget slot that a genuinely recoverable
+# HTML page (a real transient 5xx or timeout) needed instead.
+#
+# This is also not a workaround for a crawler limitation: Klai already
+# has a dedicated document connector for exactly this content class. The
+# web crawler's job is web pages; PDFs, spreadsheets, archives and media
+# belong to that other connector, not to this one's frontier. Filtering
+# them out here, before a single network request is made, costs nothing
+# and is deterministic — unlike a HEAD request or content-type sniff.
+_NON_HTML_PATH_EXTENSIONS = frozenset(
+    {
+        # documents
+        "pdf",
+        "doc",
+        "docx",
+        "xls",
+        "xlsx",
+        "ppt",
+        "pptx",
+        "odt",
+        # archives
+        "zip",
+        "tar",
+        "gz",
+        "rar",
+        "7z",
+        # media
+        "jpg",
+        "jpeg",
+        "png",
+        "gif",
+        "svg",
+        "webp",
+        "ico",
+        "mp4",
+        "mp3",
+        "avi",
+        "mov",
+        "wav",
+        # binaries
+        "exe",
+        "dmg",
+        "pkg",
+        "deb",
+    }
+)
+
+
+def _url_has_non_html_extension(url: str) -> bool:
+    """True when ``url``'s PATH (query params ignored) ends in a
+    document/archive/media/binary extension — see
+    ``_NON_HTML_PATH_EXTENSIONS`` above.
+
+    ``.../rapport.pdf?download=1`` matches: only ``urlparse(url).path`` is
+    inspected, so a query string can never hide the extension or trigger a
+    false positive on a path segment that merely contains a dot.
+    """
+    last_segment = urlparse(url).path.rsplit("/", 1)[-1]
+    if "." not in last_segment:
+        return False
+    extension = last_segment.rsplit(".", 1)[-1].lower()
+    return extension in _NON_HTML_PATH_EXTENSIONS
 
 
 class _HTMLTextCounter(HTMLParser):
@@ -721,6 +820,204 @@ def _classify_fetch_outcome(
     return FetchReasonCode.UNKNOWN_EXCEPTION.value
 
 
+# ---------------------------------------------------------------------------
+# Fetch-failure evidence (SPEC-CRAWLER-FAILURE-EVIDENCE)
+#
+# ``reason_code`` alone collapses every fetch failure that doesn't map to a
+# recognised status/keyword straight into UNKNOWN_EXCEPTION — production's
+# single largest failure category (349 occurrences across 23 jobs, all-time —
+# more jobs than any other non-success reason). These helpers attach the
+# underlying exception type, a truncated+sanitised error message, and a
+# crawl4ai ``correlation_id`` (when the failure body carries one) to every
+# outcome, so an UNKNOWN_EXCEPTION entry is diagnosable instead of a dead
+# end. Purely additive to the existing ``{url, reason_code, status_code,
+# content_length}`` shape — see ``_with_evidence``.
+# ---------------------------------------------------------------------------
+
+# Hard cap on how much raw error text is persisted per outcome into
+# crawl_jobs.fetch_outcomes JSONB. Bounds storage/log volume and rules out
+# ever writing an entire HTML error page (or a URL carrying an auth token)
+# into the database unbounded. 300 chars keeps an exception message or a
+# crawl4ai error body legible while staying well clear of "content".
+_ERROR_MESSAGE_MAX_LEN = 300
+_TRUNCATION_MARKER = "…[truncated]"
+
+# Redact common secret-bearing query-param VALUES before anything is
+# truncated and persisted. A failing URL can be echoed back verbatim inside
+# crawl4ai's own error body, and that URL may carry an auth/session token —
+# fetch_outcomes goes into the database and into logs, so the token must
+# never survive into either.
+_SENSITIVE_QUERY_PARAM_RE = re.compile(
+    r"(?i)\b(token|access_token|api[_-]?key|secret|password|auth)=([^&\s\"'<>]+)"
+)
+
+# crawl4ai's opaque bulk-5xx body is
+# ``{"error": "Internal server error", "correlation_id": "188834187d7d"}``
+# (see the module comment on ``_classify_fetch_outcome``) — the only handle
+# operators have to cross-reference a failure against crawl4ai's own logs.
+_CORRELATION_ID_RE = re.compile(r'correlation_id"?\s*[:=]\s*"?([a-zA-Z0-9_-]+)"?', re.IGNORECASE)
+
+_NO_EVIDENCE: dict[str, Any] = {
+    "error_type": None,
+    "error_message": None,
+    "correlation_id": None,
+}
+
+
+def _mask_sensitive_query_params(text: str) -> str:
+    """Redact token/secret/password/api-key/auth query-param VALUES."""
+    return _SENSITIVE_QUERY_PARAM_RE.sub(lambda m: f"{m.group(1)}=***", text)
+
+
+def _truncate_error_message(text: str, *, max_len: int = _ERROR_MESSAGE_MAX_LEN) -> str:
+    """Sanitise then bound raw error text before it is persisted.
+
+    Masking runs BEFORE truncation so a secret sitting near the cut point
+    cannot survive partially exposed.
+    """
+    masked = _mask_sensitive_query_params(text.strip())
+    if len(masked) <= max_len:
+        return masked
+    keep = max(max_len - len(_TRUNCATION_MARKER), 0)
+    return masked[:keep].rstrip() + _TRUNCATION_MARKER
+
+
+def _extract_correlation_id(text: str) -> str | None:
+    """Pull crawl4ai's ``correlation_id`` out of an error body, when present."""
+    match = _CORRELATION_ID_RE.search(text)
+    return match.group(1) if match else None
+
+
+def _error_type_name(error: BaseException) -> str:
+    """Stable ``module.ClassName`` label — e.g. ``httpx.ReadTimeout``.
+
+    Builtin exceptions (``RuntimeError``, ...) report just the class name,
+    since ``builtins.RuntimeError`` adds nothing a reader doesn't already
+    know.
+    """
+    cls = type(error)
+    module = cls.__module__
+    if module in ("builtins", "__main__"):
+        return cls.__qualname__
+    return f"{module}.{cls.__qualname__}"
+
+
+def _raw_error_text(error: BaseException) -> str:
+    """Prefer the HTTP response body over ``str(error)``.
+
+    crawl4ai's own error detail (including ``correlation_id``) lives in the
+    response body, not in httpx's exception message — ``str(HTTPStatusError)``
+    is just ``"crawl4ai failed"`` regardless of what the server actually said.
+    """
+    if isinstance(error, httpx.HTTPStatusError):
+        try:
+            body = error.response.text
+        except Exception:
+            body = ""
+        if body:
+            return body
+    return str(error)
+
+
+def _evidence_from_exception_text(*, error_type: str | None, raw_text: str) -> dict[str, Any]:
+    return {
+        "error_type": error_type,
+        "error_message": _truncate_error_message(raw_text) if raw_text else None,
+        "correlation_id": _extract_correlation_id(raw_text) if raw_text else None,
+    }
+
+
+def _evidence_from_exception(error: BaseException) -> dict[str, Any]:
+    """Evidence bundle for a fetch whose Python exception is directly in hand."""
+    return _evidence_from_exception_text(
+        error_type=_error_type_name(error), raw_text=_raw_error_text(error)
+    )
+
+
+def _evidence_from_page_result(
+    page_result: dict[str, Any] | None, *, reason_code: str
+) -> dict[str, Any]:
+    """Evidence for a crawl4ai page-level failure (``success: false``) with
+    no raised Python exception — ``error_type`` falls back to the
+    crawl4ai-side failure category (its own ``reason_code``) since there is
+    no exception class to report. A page carrying ``success: true`` (even
+    when ``reason_code`` was overridden to NON_CONTENT_LISTING_PAGE) is not
+    a failure — no evidence to report."""
+    if not page_result or page_result.get("success"):
+        return dict(_NO_EVIDENCE)
+    raw_text = str(page_result.get("error_message") or "")
+    if not raw_text:
+        return {
+            "error_type": f"crawl4ai:{reason_code}",
+            "error_message": None,
+            "correlation_id": None,
+        }
+    return {
+        "error_type": f"crawl4ai:{reason_code}",
+        "error_message": _truncate_error_message(raw_text),
+        "correlation_id": _extract_correlation_id(raw_text),
+    }
+
+
+def _evidence_for_crawl_result(result: CrawlResult, *, reason_code: str) -> dict[str, Any]:
+    """Evidence for a CrawlResult from the single-page fetch path
+    (``_fetch_seed_page`` / ``_crawl_page_with_config``) — shared by the seed
+    fetch and the sequential bulk-5xx/timeout recovery loop.
+
+    Prefers ``result.raw_error_text``/``result.error_type`` (the exception
+    caught at the transport boundary, before it was collapsed into the bare
+    ``error_message`` string) when present; falls back to classifying
+    crawl4ai's own reported ``error_message`` otherwise.
+    """
+    if result.success:
+        return dict(_NO_EVIDENCE)
+    if result.raw_error_text is not None:
+        return _evidence_from_exception_text(
+            error_type=result.error_type, raw_text=result.raw_error_text
+        )
+    return _evidence_from_page_result(
+        {"error_message": result.error_message or ""}, reason_code=reason_code
+    )
+
+
+def _with_evidence(
+    outcome: FetchOutcome, evidence: dict[str, Any], *, observed: bool
+) -> FetchOutcome:
+    """Merge evidence fields into an outcome dict — additive to the existing
+    ``{url, reason_code, status_code, content_length}`` shape.
+
+    ``observed`` answers one narrow question: for THIS url, did we get our
+    own individual result back, or is the outcome a label we assigned
+    without one?
+
+    ``True`` — a per-URL result exists for this exact URL: a page-level
+    response from a successfully transported bulk request (even a failed
+    one — 404, 500, ...), or a single-page fetch via
+    ``_crawl_page_with_config``/the seed path.
+
+    ``False`` — no per-URL result exists. This includes a chunk-level
+    transport failure attributed to every URL in that chunk: the CHUNK's
+    request genuinely failed, but that is one observation about the
+    request, not N observations about N URLs. Also false for anything we
+    never individually sent (budget/circuit-breaker/deadline abandonment,
+    a previous rate-limit stop signal) and for a bulk response with no
+    matching entry for this candidate.
+
+    Why this matters: the field exists so a question like "how many times
+    did intermedia.com actually give us a timeout?" has a real answer.
+    Counting a chunk of 20 URLs that failed together as 20 observations
+    inflates that count 20x — exactly the polluted-counter failure mode
+    this field was added to prevent. Do not "simplify" this to
+    `has an error is observed` without re-reading this comment; the whole
+    point is that a URL can have reason_code=TIMEOUT and evidence attached
+    while still being unobserved, because the evidence describes the
+    request, not a confirmed per-URL result.
+    """
+    outcome.update(evidence)
+    outcome["observed"] = observed
+    return outcome
+
+
 async def _crawl_sync(
     client: httpx.AsyncClient,
     payload: dict[str, Any],
@@ -956,6 +1253,8 @@ async def _crawl_page_with_config(
                 success=False,
                 error_message=str(exc),
                 status_code=_status_code_from_exception(exc),
+                error_type=_error_type_name(exc),
+                raw_error_text=_raw_error_text(exc),
             )
 
     results = data.get("results", [])
@@ -1061,6 +1360,15 @@ class CrawlLedger:
             return False
         if not _same_site_domain(urlparse(url).netloc.lower(), self.base_domain):
             return False
+        if _url_has_non_html_extension(url):
+            # Deliberately produces NO outcome at all (same contract as the
+            # domain check above) — never a ``not_fetched_*`` reason code.
+            # A URL we correctly never wanted to crawl is not incomplete
+            # coverage; see _build_crawl_outcome_warning / _crawl_fully_fetched
+            # in adapters/crawler.py, which both key off any not_fetched_*
+            # prefix and would otherwise mark the whole crawl failed_partial
+            # over one PDF link.
+            return False
         url = _coerce_same_site_url_to_base_host(url, self.base_domain)
         if not force:
             if not _url_matches_include_patterns(url, self.include_patterns):
@@ -1130,13 +1438,19 @@ class CrawlLedger:
             if item.status == "omitted" and item.reason_code
         ]
         omitted.sort(key=lambda i: (i.priority, i.depth, i.order))
+        # Deliberate scheduling omissions (budget/depth/discovery limit) —
+        # never attempted over the network, so never observed.
         return [
-            {
-                "url": item.url,
-                "reason_code": item.reason_code,
-                "status_code": None,
-                "content_length": 0,
-            }
+            _with_evidence(
+                {
+                    "url": item.url,
+                    "reason_code": item.reason_code,
+                    "status_code": None,
+                    "content_length": 0,
+                },
+                dict(_NO_EVIDENCE),
+                observed=False,
+            )
             for item in omitted
         ]
 
@@ -1740,6 +2054,8 @@ async def _fetch_seed_page(
             success=False,
             error_message=str(exc),
             status_code=_status_code_from_exception(exc),
+            error_type=_error_type_name(exc),
+            raw_error_text=_raw_error_text(exc),
         )
 
     pages = _normalise_results_block(data)
@@ -1833,12 +2149,16 @@ def _build_outcome_from_result(url: str, result: CrawlResult) -> FetchOutcome:
                 "error_message": result.error_message or "",
             },
         )
-    return {
+    outcome: FetchOutcome = {
         "url": url,
         "reason_code": reason_code,
         "status_code": result.status_code,
         "content_length": len(result.html or ""),
     }
+    evidence = _evidence_for_crawl_result(result, reason_code=reason_code)
+    # A seed fetch is always individually attempted — it is the ONE URL
+    # _fetch_seed_page ever sends, never a batch fallout label.
+    return _with_evidence(outcome, evidence, observed=True)
 
 
 def _result_is_ingestable(result: CrawlResult, *, base_domain: str) -> bool:
@@ -1935,12 +2255,16 @@ async def _recover_bulk_5xx_batch(
         """
         for leftover_url in urls[index:]:
             outcomes.append(
-                {
-                    "url": leftover_url,
-                    "reason_code": reason_code,
-                    "status_code": None,
-                    "content_length": 0,
-                }
+                _with_evidence(
+                    {
+                        "url": leftover_url,
+                        "reason_code": reason_code,
+                        "status_code": None,
+                        "content_length": 0,
+                    },
+                    dict(_NO_EVIDENCE),
+                    observed=False,
+                )
             )
         return len(urls) - index
 
@@ -2022,13 +2346,19 @@ async def _recover_bulk_5xx_batch(
         is_non_content_listing = result.success and _is_non_content_listing_page(result)
         if reason_code == FetchReasonCode.SUCCESS.value and is_non_content_listing:
             reason_code = FetchReasonCode.NON_CONTENT_LISTING_PAGE.value
+        # This URL was individually attempted over the network (unlike the
+        # abandoned/not-yet-attempted URLs above) — a real observation.
         outcomes.append(
-            {
-                "url": url,
-                "reason_code": reason_code,
-                "status_code": result.status_code,
-                "content_length": len(result.html or ""),
-            }
+            _with_evidence(
+                {
+                    "url": url,
+                    "reason_code": reason_code,
+                    "status_code": result.status_code,
+                    "content_length": len(result.html or ""),
+                },
+                _evidence_for_crawl_result(result, reason_code=reason_code),
+                observed=True,
+            )
         )
 
         # A confirmed rate-limit (429, including crawl4ai's "Blocked by
@@ -2129,13 +2459,20 @@ def _combine_bulk_responses(
 
     for i, url in enumerate(candidates):
         if transport_error is not None:
+            # The whole-batch request failed transport-wide — this
+            # candidate's own outcome was never individually confirmed, even
+            # though the same exception genuinely applies to the batch.
             outcomes.append(
-                {
-                    "url": url,
-                    "reason_code": _classify_fetch_outcome(None, error=transport_error),
-                    "status_code": None,
-                    "content_length": 0,
-                }
+                _with_evidence(
+                    {
+                        "url": url,
+                        "reason_code": _classify_fetch_outcome(None, error=transport_error),
+                        "status_code": None,
+                        "content_length": 0,
+                    },
+                    _evidence_from_exception(transport_error),
+                    observed=False,
+                )
             )
             continue
 
@@ -2169,13 +2506,21 @@ def _combine_bulk_responses(
                     claimed_response_indices.add(i)
 
         if page is None:
+            # The bulk request itself transported fine, but no response in
+            # it matches this candidate (and the redirect fallback above
+            # didn't resolve it either) — this URL's own outcome was never
+            # confirmed.
             outcomes.append(
-                {
-                    "url": url,
-                    "reason_code": _classify_fetch_outcome(page),
-                    "status_code": None,
-                    "content_length": 0,
-                }
+                _with_evidence(
+                    {
+                        "url": url,
+                        "reason_code": _classify_fetch_outcome(page),
+                        "status_code": None,
+                        "content_length": 0,
+                    },
+                    dict(_NO_EVIDENCE),
+                    observed=False,
+                )
             )
             continue
 
@@ -2184,13 +2529,18 @@ def _combine_bulk_responses(
         is_non_content_listing = _is_non_content_listing_page(result)
         if reason_code == FetchReasonCode.SUCCESS.value and is_non_content_listing:
             reason_code = FetchReasonCode.NON_CONTENT_LISTING_PAGE.value
+        # A real per-URL page result came back from crawl4ai's bulk response.
         outcomes.append(
-            {
-                "url": url,
-                "reason_code": reason_code,
-                "status_code": page.get("status_code"),
-                "content_length": len(page.get("html", "") or ""),
-            }
+            _with_evidence(
+                {
+                    "url": url,
+                    "reason_code": reason_code,
+                    "status_code": page.get("status_code"),
+                    "content_length": len(page.get("html", "") or ""),
+                },
+                _evidence_from_page_result(page, reason_code=reason_code),
+                observed=True,
+            )
         )
 
         if _result_is_ingestable(result, base_domain=base_domain) and not is_non_content_listing:
@@ -2203,14 +2553,22 @@ def _outcome_for_failed_url(url: str, error: BaseException) -> FetchOutcome:
     """Outcome for a URL whose OWN chunk failed to transport (A2).
 
     Classified from THAT chunk's actual exception — never borrowed from a
-    different chunk's failure, and never a guess.
+    different chunk's failure, and never a guess. ``observed=False``: the
+    exception is a genuine observation about the CHUNK's request (which may
+    have bundled many URLs), not a confirmed per-URL result — we do not
+    know whether the site would have failed this specific URL if it had
+    been sent alone. Attributing the chunk's single failure as `observed`
+    for every URL in it would inflate "how many times did this domain
+    actually fail" by the chunk size. See ``_with_evidence``'s docstring
+    for the full rationale.
     """
-    return {
+    outcome: FetchOutcome = {
         "url": url,
         "reason_code": _classify_fetch_outcome(None, error=error),
         "status_code": _status_code_from_exception(error),
         "content_length": 0,
     }
+    return _with_evidence(outcome, _evidence_from_exception(error), observed=False)
 
 
 def _outcome_for_not_attempted_url(url: str) -> FetchOutcome:
@@ -2221,14 +2579,17 @@ def _outcome_for_not_attempted_url(url: str) -> FetchOutcome:
     Deliberately NOT ``FetchReasonCode.RATE_LIMITED`` — that value stays
     reserved for a URL we actually asked and got that answer from, so a
     "how many times did this domain really reject us" count is not
-    inflated by URLs we chose not to send.
+    inflated by URLs we chose not to send. ``observed=False``: no network
+    call was ever made for this URL, so there is nothing to report as
+    evidence.
     """
-    return {
+    outcome: FetchOutcome = {
         "url": url,
         "reason_code": FetchReasonCode.NOT_FETCHED_RATE_LIMIT_STOP.value,
         "status_code": None,
         "content_length": 0,
     }
+    return _with_evidence(outcome, dict(_NO_EVIDENCE), observed=False)
 
 
 async def _recover_thin_bulk_results(

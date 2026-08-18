@@ -13,6 +13,12 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
+from klai_citations.query_guard import (
+    is_followup_query,
+    rewrite_preserves_subject,
+    salient_tokens,
+)
+
 
 @dataclass
 class CitationSource:
@@ -1236,6 +1242,7 @@ def evidence_pack_items_as_chunks(evidence_pack: object) -> list[dict[str, Any]]
                 "scope": item.get("scope"),
                 "image_urls": item.get("image_urls"),
                 "is_parent_text": item.get("is_parent_text"),
+                "sub_query_index": item.get("sub_query_index"),
             }
         )
     return chunks
@@ -1483,6 +1490,7 @@ __all__ = [
     "evidence_pack_items_as_chunks",
     "extract_salient_query_tokens",
     "format_sources_markdown",
+    "is_followup_query",
     "normalise_source_url",
     "render_evidence_context",
     "render_markdown_answer",
@@ -1490,6 +1498,8 @@ __all__ = [
     "render_markdown_sources",
     "render_structured_answer",
     "render_structured_sources",
+    "rewrite_preserves_subject",
+    "salient_tokens",
     "source_url_key",
     "strip_model_citation_artifacts",
     "trusted_sources_from_evidence_pack",

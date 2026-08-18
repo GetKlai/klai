@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 
 import httpx
+import structlog
+from klai_citations import rewrite_preserves_subject, salient_tokens
 
 from retrieval_api.config import settings
 from retrieval_api.services.llm_safety_adapter import (
@@ -13,7 +14,7 @@ from retrieval_api.services.llm_safety_adapter import (
     check_coreference_output,
 )
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 _SYSTEM_PROMPT = (
     "You are a coreference resolver. Given a conversation history and the latest "
@@ -27,20 +28,25 @@ _SYSTEM_PROMPT = (
 )
 
 
-async def resolve(query: str, history: list[dict]) -> str:
+async def resolve(query: str, history: list[dict], *, telemetry_level: str = "shadow") -> str:
     """Return a standalone version of *query* given prior *history*.
 
     If history is empty, or the LLM call times out / fails, the original query
     is returned unchanged.
+
+    ``telemetry_level`` gates raw query content out of logs (SPEC-PRIVACY-QUERY-
+    SHADOW-001 precedent, mirrored from the ``query_rewrite_destructive_blocked``
+    log in the LiteLLM hook): only ``"full"`` allows the literal query text to be
+    logged. The default is privacy-safe.
     """
     if not history:
         return query
     input_decision = check_coreference_input(query, history)
     if not input_decision.allowed:
         logger.warning(
-            "coreference_safety_input_blocked reason=%s categories=%s",
-            input_decision.reason,
-            ",".join(input_decision.categories),
+            "coreference_safety_input_blocked",
+            reason=input_decision.reason,
+            categories=",".join(input_decision.categories),
         )
         return query
 
@@ -71,20 +77,28 @@ async def resolve(query: str, history: list[dict]) -> str:
         output_decision = check_coreference_output(resolved, query=query)
         if not output_decision.allowed:
             logger.warning(
-                "coreference_safety_output_blocked reason=%s categories=%s",
-                output_decision.reason,
-                ",".join(output_decision.categories),
+                "coreference_safety_output_blocked",
+                reason=output_decision.reason,
+                categories=",".join(output_decision.categories),
             )
             return query
         if resolved:
+            if not rewrite_preserves_subject(query, resolved):
+                dropped_tokens = ",".join(sorted(salient_tokens(query))[:8])
+                logger.warning(
+                    "coreference_destructive_rewrite_blocked",
+                    query=query if telemetry_level == "full" else "<redacted>",
+                    dropped_tokens=dropped_tokens if telemetry_level == "full" else "<redacted>",
+                )
+                return query
             return resolved
         return query
     except TimeoutError:
-        logger.warning("Coreference resolution timed out, using original query")
+        logger.warning("coreference_resolution_timed_out")
         return query
     except Exception:
         # F6 audit cleanup (TRY401): exc_info=True preserves traceback.
-        logger.warning("Coreference resolution failed", exc_info=True)
+        logger.warning("coreference_resolution_failed", exc_info=True)
         return query
 
 

@@ -537,6 +537,7 @@ def test_trusted_sources_are_projected_only_from_evidence_pack_sources() -> None
             "scope": None,
             "image_urls": None,
             "is_parent_text": None,
+            "sub_query_index": None,
         }
     ]
 

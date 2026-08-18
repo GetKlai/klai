@@ -105,6 +105,9 @@ _EXPECTED_KEYS = {
     "kbs_in_scope",
     "kbs_with_results",
     "kbs_used_as_sources",
+    "multi_question",
+    "sub_query_coverage",
+    "unchecked_questions",
     # policy-derived
     "answer_policy_state",
     "chat_retrieval_prompt_mode",

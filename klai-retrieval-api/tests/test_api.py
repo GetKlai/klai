@@ -185,6 +185,70 @@ class TestRetrieveEndpoint:
         assert "Refund policy" in decision_attrs
         assert "top_item_chunk_ids" in decision_attrs
 
+    def test_retrieve_passes_effective_telemetry_level_to_coreference(
+        self, client, sample_retrieve_request
+    ):
+        """Privacy fix (semgrep python-logger-credential-disclosure /
+        coreference.py): the endpoint MUST forward the request-scoped
+        ``effective_level`` (SPEC-PRIVACY-QUERY-SHADOW-001 min(client,
+        canonical) resolution) into ``coreference.resolve`` so the
+        destructive-rewrite log gates raw query content on the same level as
+        every other telemetry decision in this request."""
+        with (
+            patch(
+                "retrieval_api.api.retrieve.coreference.resolve",
+                new_callable=AsyncMock,
+                return_value="resolved query",
+            ) as mock_coref,
+            patch(
+                "retrieval_api.api.retrieve.get_canonical_level",
+                new_callable=AsyncMock,
+                return_value="full",
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_single",
+                new_callable=AsyncMock,
+                return_value=[0.1, 0.2, 0.3],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_sparse",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "retrieval_api.api.retrieve.gate.should_bypass",
+                new_callable=AsyncMock,
+                return_value=(False, 0.05),
+            ),
+            patch(
+                "retrieval_api.api.retrieve.search.hybrid_search",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch("retrieval_api.api.retrieve.settings") as mock_settings,
+        ):
+            mock_settings.reranker_enabled = False
+            mock_settings.retrieval_candidates = 60
+            mock_settings.graphiti_enabled = False
+            mock_settings.link_expand_enabled = False
+            mock_settings.source_quota_enabled = False
+            mock_settings.router_enabled = False
+            mock_settings.retrieval_quality_floor = 0.05
+            mock_settings.confidence_band_high_threshold = 0.60
+            mock_settings.confidence_band_low_threshold = 0.30
+            request = {
+                **sample_retrieve_request,
+                "raw_query": sample_retrieve_request["query"],
+                # Requested upper bound is "full"; canonical is mocked to
+                # "full" too, so effective_level resolves to "full".
+                "telemetry_level": "full",
+            }
+            resp = client.post("/retrieve", json=request)
+
+        assert resp.status_code == 200
+        mock_coref.assert_awaited_once()
+        assert mock_coref.call_args.kwargs["telemetry_level"] == "full"
+
     @pytest.mark.parametrize(
         "pre_resolved_shape",
         [

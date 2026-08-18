@@ -512,9 +512,20 @@ async def test_crawl_site_bulk_transport_failure_records_one_outcome_per_candida
         assert by_url[url]["reason_code"] == FetchReasonCode.TIMEOUT.value
         assert by_url[url]["status_code"] is None
 
-    # Shape sanity — all four required keys present on every outcome.
+    # Shape sanity — all required keys present on every outcome.
+    # SPEC-CRAWLER-FAILURE-EVIDENCE added error_type/error_message/
+    # correlation_id/observed, additive to the original four.
     for outcome in outcomes:
-        assert set(outcome.keys()) == {"url", "reason_code", "status_code", "content_length"}
+        assert set(outcome.keys()) == {
+            "url",
+            "reason_code",
+            "status_code",
+            "content_length",
+            "error_type",
+            "error_message",
+            "correlation_id",
+            "observed",
+        }
 
 
 @pytest.mark.asyncio
