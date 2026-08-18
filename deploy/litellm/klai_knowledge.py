@@ -1019,6 +1019,23 @@ class KlaiKnowledgeHook(CustomLogger):
             )
             _append_final_language_reminder(messages, include_kb_reminder=False)
             data["messages"] = messages
+            # @MX:NOTE: render_mode must stay None for the common
+            # gate_bypassed-without-unchecked-questions path (the vast
+            # majority of chats with no KB scope) — computing it
+            # unconditionally would force data["stream"] = False on every
+            # such request. Only when unchecked_questions is non-empty does
+            # the streaming iterator hook need a real render_mode to avoid
+            # short-circuiting before the footer can render. See the
+            # `configured-but-never-wired` pitfall class for why this must
+            # be verified against the real hook flow, not a hand-built
+            # kb_meta in a test.
+            render_mode = None
+            if unchecked_questions:
+                original_stream = data.get("stream")
+                render_strategy = _select_kb_render_strategy(original_stream)
+                if render_strategy.force_non_streaming:
+                    data["stream"] = False
+                render_mode = render_strategy.mode
             answer_policy = KbAnswerPolicy(
                 state="gate_bypassed",
                 prompt_mode=chat_retrieval_policy.prompt_mode,
@@ -1034,6 +1051,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 kb_scope_mode=kb_scope_mode,
                 kbs_in_scope=kbs_in_scope,
                 unchecked_questions=unchecked_questions or None,
+                render_mode=render_mode,
             )
             return data
 

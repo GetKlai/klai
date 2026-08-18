@@ -1190,33 +1190,67 @@ class TestHookFanoutEndToEnd:
     async def test_gate_bypassed_with_unchecked_questions_shows_footer_streaming(
         self, monkeypatch
     ):
-        """Fix 3, streaming variant. Constructs kb_meta directly (matching
-        the pattern used by the other streaming-hook tests) rather than
-        going through the full pre-call pipeline, since the pipeline does
-        not set ``render_mode`` on the gate_bypassed branch — that gap is
-        pre-existing and out of scope for this fix. This test pins the
-        streaming-hook-level contract added by Fix 3: gate_bypassed=True
-        with unchecked_questions must not take the early pass-through."""
+        """Fix 3 + render_mode gap fix, streaming variant, real hook flow.
+
+        Regression guard for the gap discovered right after Fix 3: the
+        gate_bypassed branch in async_pre_call_hook never set render_mode,
+        so ``_is_streaming_kb_render_mode(None)`` was always False and the
+        streaming iterator hook's early-passthrough OR-condition fired
+        regardless of unchecked_questions. A hand-built kb_meta (as the
+        prior version of this test used) could not catch that — it must go
+        through async_pre_call_hook for real, exactly as a live streaming
+        request with gate_bypassed=True and unchecked_questions would."""
+        from tests.test_klai_knowledge_hook import (
+            _make_cache,
+            _make_resp,
+            _make_user_api_key,
+            _patch_http,
+        )
+
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache()
 
         data = {
-            "metadata": {
-                "_klai_kb_meta": {
-                    "org_id": "org123",
-                    "user_id": "user123",
-                    "chunks_injected": 0,
-                    "retrieval_ms": 5,
-                    "gate_bypassed": True,
-                    "unchecked_questions": ["Vraag zeven?"],
-                    "render_mode": "streaming_guard",
-                    "allowed_source_urls": [],
-                    "allowed_image_urls": [],
-                    "trusted_sources": [],
-                    "citation_chunks": [],
-                }
-            }
+            "stream": True,
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": INCIDENT_MESSAGE}],
         }
+        # Gate bypass — kb_narrow must be False: kb_narrow=True +
+        # retrieval_bypassed=True hits the separate strict-bypass-failure
+        # branch, not the gate_bypassed branch under test.
+        retrieval_resp = _make_resp({"chunks": [], "retrieval_bypassed": True})
+        portal_resp = _make_resp(
+            {
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": True,
+                "kb_slugs_filter": None,
+                "kb_narrow": False,
+                "kb_pref_version": 12,
+                "zitadel_user_id": "300000000000000002",
+            }
+        )
+
+        with _patch_http(
+            monkeypatch, portal_resp=portal_resp, retrieval_resp=retrieval_resp
+        ):
+            pre_call_result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        meta = pre_call_result["metadata"]["_klai_kb_meta"]
+        assert meta["gate_bypassed"] is True
+        assert meta["unchecked_questions"] == [
+            "Hoe lang na een gesprek is de opname gemiddeld beschikbaar?"
+        ]
+        # The actual bug: render_mode used to stay None here, which made
+        # _is_streaming_kb_render_mode(None) False and short-circuited the
+        # streaming hook before the footer could ever render.
+        assert meta["render_mode"] is not None
+        assert mod._is_streaming_kb_render_mode(meta["render_mode"])
+        # original_stream=True must never be forced to non-streaming.
+        assert pre_call_result["stream"] is True
 
         first = types.SimpleNamespace(
             choices=[
@@ -1241,7 +1275,7 @@ class TestHookFanoutEndToEnd:
         streamed = [
             item
             async for item in hook.async_post_call_streaming_iterator_hook(
-                None, stream(), data
+                None, stream(), pre_call_result
             )
         ]
 
@@ -1250,9 +1284,95 @@ class TestHookFanoutEndToEnd:
         assert len(streamed) == 3
         footer = streamed[1]
         assert "Niet apart doorzocht (limiet bereikt)" in footer.choices[0].delta.content
-        assert "Vraag zeven?" in footer.choices[0].delta.content
+        assert (
+            "Hoe lang na een gesprek is de opname gemiddeld beschikbaar?"
+            in footer.choices[0].delta.content
+        )
         assert "**Agent activiteit**" in footer.choices[0].delta.content
         assert streamed[2].choices[0].finish_reason == "stop"
+
+    @pytest.mark.asyncio
+    async def test_gate_bypassed_without_unchecked_questions_streaming_unchanged(
+        self, monkeypatch
+    ):
+        """Regression guard: a plain gate-bypassed streaming message (<= 6
+        questions, no unchecked_questions) must keep the exact pre-fix
+        behavior — render_mode stays None, data["stream"] is never forced
+        to False, and the streaming hook still takes the early
+        pass-through (no footer, items yielded unchanged). This is the
+        common, high-volume path (no KB scope at all); the render_mode fix
+        must not touch it."""
+        from tests.test_klai_knowledge_hook import (
+            _make_cache,
+            _make_resp,
+            _make_user_api_key,
+            _patch_http,
+        )
+
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache()
+
+        data = {
+            "stream": True,
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": "Wat zijn onze bedrijfswaarden?"}],
+        }
+        retrieval_resp = _make_resp({"chunks": [], "retrieval_bypassed": True})
+        portal_resp = _make_resp(
+            {
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": True,
+                "kb_slugs_filter": None,
+                "kb_narrow": False,
+                "kb_pref_version": 12,
+                "zitadel_user_id": "300000000000000002",
+            }
+        )
+
+        with _patch_http(
+            monkeypatch, portal_resp=portal_resp, retrieval_resp=retrieval_resp
+        ):
+            pre_call_result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        meta = pre_call_result["metadata"]["_klai_kb_meta"]
+        assert meta["gate_bypassed"] is True
+        assert meta["unchecked_questions"] is None
+        assert meta["render_mode"] is None
+        assert pre_call_result["stream"] is True
+
+        first = types.SimpleNamespace(
+            choices=[
+                types.SimpleNamespace(
+                    delta=types.SimpleNamespace(content="Klantgerichtheid."),
+                    finish_reason=None,
+                )
+            ]
+        )
+        final = types.SimpleNamespace(
+            choices=[
+                types.SimpleNamespace(
+                    delta=types.SimpleNamespace(content=""), finish_reason="stop"
+                )
+            ]
+        )
+
+        async def stream():
+            for item in (first, final):
+                yield item
+
+        streamed = [
+            item
+            async for item in hook.async_post_call_streaming_iterator_hook(
+                None, stream(), pre_call_result
+            )
+        ]
+
+        # Early pass-through: exactly the 2 source items, unchanged.
+        assert streamed == [first, final]
 
     @pytest.mark.asyncio
     async def test_evidence_floor_drop_recounts_sub_query_coverage(self, monkeypatch):
