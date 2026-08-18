@@ -202,6 +202,10 @@ class SubQueryResult(BaseModel):
     # Set when this sub-question's retrieval failed; consumers must present
     # the question as "could not be checked", never as "not in the KB".
     error: str | None = None
+    # True when the gate decided no KB lookup was needed for this specific
+    # sub-question (Open mode). Consumers must present this as "answer per
+    # mode rules", never as "not in the KB" or "could not be checked".
+    retrieval_bypassed: bool = False
 
 
 class RetrieveResponse(BaseModel):

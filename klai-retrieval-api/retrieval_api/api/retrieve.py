@@ -208,6 +208,13 @@ async def _retrieve_sub_queries(
     failures = 0
     for (index, query), result in zip(sub_queries, results, strict=True):
         if isinstance(result, BaseException):
+            # A 4xx from a sub-call is an auth/validation failure of the
+            # WHOLE request (bad identity, bad scope), not a per-question
+            # retrieval miss. Re-raise it as-is so the caller sees the real
+            # status code instead of a misleading 502 once every sub-query
+            # is (wrongly) treated as failed.
+            if isinstance(result, HTTPException) and result.status_code < 500:
+                raise result
             failures += 1
             logger.warning(
                 "retrieval_sub_query_failed",
@@ -228,6 +235,7 @@ async def _retrieve_sub_queries(
                 query=query,
                 confidence_band=result.confidence_band,
                 evidence_count=evidence_count,
+                retrieval_bypassed=result.retrieval_bypassed,
             )
         )
         candidates_total += result.metadata.candidates_retrieved
@@ -320,11 +328,6 @@ async def retrieve(
     if req.scope in ("personal", "both") and not req.user_id:
         raise HTTPException(status_code=400, detail="user_id required for scope=personal/both")
 
-    # Multi-part fan-out: >= 2 usable sub-questions delegate to the merge
-    # path; each sub-question re-enters this endpoint as a normal request.
-    if req.sub_queries and sum(1 for q in req.sub_queries if isinstance(q, str) and q.strip()) >= 2:
-        return await _retrieve_sub_queries(req, request, _auth)
-
     # SPEC-PORTAL-RBAC-REFACTOR-001 REQ-17 / REQ-6: personal-role callers may
     # only search personal-scope KBs. Force scope to "personal" and strip any
     # caller-supplied kb_slugs so they cannot reach org KBs via this endpoint.
@@ -364,6 +367,16 @@ async def retrieve(
     # On allow this also pins request.state.verified_caller, which is what
     # emit_event below sources for product_events integrity (REQ-6).
     await verify_body_identity(request, req.org_id, req.user_id)
+
+    # Multi-part fan-out: >= 2 usable sub-questions delegate to the merge
+    # path; each sub-question re-enters this endpoint as a normal request.
+    # Deliberately placed AFTER verify_body_identity: an identity mismatch
+    # (403) must surface immediately, not get relabeled as a 502
+    # "all sub-query retrievals failed" once it reaches every sub-call. Uses
+    # the already-narrowed ``req`` (personal-role scope/kb_slugs stripping
+    # above already applied).
+    if req.sub_queries and sum(1 for q in req.sub_queries if isinstance(q, str) and q.strip()) >= 2:
+        return await _retrieve_sub_queries(req, request, _auth)
 
     # SPEC-PRIVACY-QUERY-SHADOW-001 — canonical-level enforcement.
     # The body's ``telemetry_level`` is treated as a *requested upper

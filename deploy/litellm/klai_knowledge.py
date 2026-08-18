@@ -1150,6 +1150,35 @@ class KlaiKnowledgeHook(CustomLogger):
             else None
         ) or None
 
+        if sub_query_results:
+            # retrieval-api reports evidence_count BEFORE the hook's own
+            # evidence-floor / LLM-safety filtering above can drop chunks.
+            # Recount from what actually survived into context_chunks so the
+            # grouped prompt and the "Deelvragen" footer line agree with
+            # what the model can actually see — never invent evidence
+            # retrieval-api didn't report (only ever lower the count), and
+            # never touch failed / gate-bypassed entries (not about count).
+            actual_counts_by_index: dict[int, int] = {}
+            for chunk in context_chunks:
+                chunk_index = chunk.get("sub_query_index")
+                if isinstance(chunk_index, int):
+                    actual_counts_by_index[chunk_index] = (
+                        actual_counts_by_index.get(chunk_index, 0) + 1
+                    )
+            recounted_sub_query_results: list[dict] = []
+            for entry in sub_query_results:
+                if entry.get("error") or entry.get("retrieval_bypassed"):
+                    recounted_sub_query_results.append(entry)
+                    continue
+                entry_index = entry.get("index")
+                original_count = entry.get("evidence_count", 0)
+                if isinstance(entry_index, int) and isinstance(original_count, int):
+                    actual_count = actual_counts_by_index.get(entry_index, 0)
+                    if actual_count < original_count:
+                        entry = {**entry, "evidence_count": actual_count}
+                recounted_sub_query_results.append(entry)
+            sub_query_results = recounted_sub_query_results
+
         # --- Gap detection (KB-014) ---
         gap_type = _classify_gap(chunks)
         if gap_type is not None and org_id and user_id:

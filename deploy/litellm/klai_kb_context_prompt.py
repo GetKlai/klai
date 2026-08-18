@@ -57,6 +57,26 @@ KB_ANSWER_FORMAT_INSTRUCTION = (
     "- Do NOT add images in the TL;DR (section 1).]\n"
 )
 
+_QUESTION_ECHO_MAX_CHARS = 150
+
+
+def _sanitize_question_echo(text: str) -> str:
+    """Sanitize a user-supplied sub-question before echoing it verbatim into
+    a system-role prompt header.
+
+    The ``[Question N: ...]`` headers echo caller/user-controlled text back
+    into the system prompt. Without sanitizing, a crafted question containing
+    ``]`` can close the bracketed instruction early and inject arbitrary
+    follow-on text that looks like a NEW system directive to the model. This
+    strips the bracket characters that give the header its structural
+    meaning, collapses whitespace (defends against newline-based injection
+    attempts), and caps length so one oversized "question" cannot dominate
+    the prompt.
+    """
+    collapsed = " ".join(text.replace("[", "").replace("]", "").split())
+    return collapsed[:_QUESTION_ECHO_MAX_CHARS]
+
+
 def _sub_query_grouped_context(
     context_chunks: list[dict[str, Any]],
     sub_query_results: list[dict] | None,
@@ -91,13 +111,25 @@ def _sub_query_grouped_context(
     blocks: list[str] = []
     for entry in entries:
         index = entry.get("index")
-        question = str(entry.get("query") or "").strip()
+        question = _sanitize_question_echo(str(entry.get("query") or "").strip())
         header = f"[Question {index}: {question}]"
         if entry.get("error"):
             blocks.append(
                 f"{header}\n[Retrieval FAILED for this question — tell the "
                 "user you could not check the knowledge base for it. Do NOT "
                 "answer it and do NOT say it is not in the knowledge base.]"
+            )
+            continue
+        if entry.get("retrieval_bypassed"):
+            # Checked BEFORE the no-evidence branch: a gate-skipped question
+            # (Open mode) has no evidence chunks either, but it must never be
+            # presented as "not in the knowledge base" — retrieval was never
+            # attempted for it.
+            blocks.append(
+                f"{header}\n[Retrieval was skipped for this question (the "
+                "gate decided no knowledge-base lookup was needed) — answer "
+                "it per the current mode's rules; do NOT say it is not in "
+                "the knowledge base.]"
             )
             continue
         question_chunks = chunks_by_index.get(index) if isinstance(index, int) else None
@@ -121,7 +153,7 @@ def _sub_query_grouped_context(
         start_index = len(entries) + 1
         for offset, question in enumerate(unchecked_questions):
             index = start_index + offset
-            header = f"[Question {index}: {question}]"
+            header = f"[Question {index}: {_sanitize_question_echo(question)}]"
             blocks.append(
                 f"{header}\n[This question was NOT separately searched "
                 "(question limit reached) — answer it only if the evidence "

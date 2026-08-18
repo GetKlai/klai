@@ -99,10 +99,12 @@ def _response(
     band: str | None,
     items: list[EvidenceItem],
     sources: list[EvidenceSource],
+    *,
+    retrieval_bypassed: bool = False,
 ) -> RetrieveResponse:
     return RetrieveResponse(
         query_resolved="q",
-        retrieval_bypassed=False,
+        retrieval_bypassed=retrieval_bypassed,
         chunks=[
             ChunkResult(chunk_id=item.chunk_id, text=item.text, score=item.score) for item in items
         ],
@@ -199,6 +201,67 @@ class TestRetrieveSubQueries:
                 _request(["vraag een", "vraag twee"]), MagicMock(), MagicMock()
             )
         assert exc.value.status_code == 502
+
+    @pytest.mark.asyncio
+    async def test_sub_query_carries_retrieval_bypassed_flag(self, monkeypatch):
+        """Fix B: a gate-bypassed sub-question (Open mode, gate decided no KB
+        lookup needed) must be distinguishable from a genuinely empty
+        result — never conflated with 'not in the knowledge base'."""
+
+        async def fake_retrieve(sub_req, request, _auth=None):
+            if sub_req.query == "meta vraag":
+                return _response("unknown", [], [], retrieval_bypassed=True)
+            return _response("medium", [_item("E1", "c1")], [_source("S1", ["E1"])])
+
+        monkeypatch.setattr(retrieve_module, "retrieve", fake_retrieve)
+
+        result = await retrieve_module._retrieve_sub_queries(
+            _request(["gewone vraag", "meta vraag"]), MagicMock(), MagicMock()
+        )
+
+        assert result.sub_results[0].retrieval_bypassed is False
+        assert result.sub_results[1].retrieval_bypassed is True
+
+
+class TestSubQueryFourXXPassthrough:
+    @pytest.mark.asyncio
+    async def test_4xx_from_sub_call_is_re_raised_not_masked_as_502(self, monkeypatch):
+        """Fix C.2: an auth/validation failure inside a sub-question call is
+        a failure of the WHOLE request, not a per-question retrieval miss —
+        it must surface with its real status code, not a misleading 502."""
+        from fastapi import HTTPException
+
+        async def fake_retrieve(sub_req, request, _auth=None):
+            if sub_req.query == "verboden vraag":
+                raise HTTPException(status_code=403, detail={"error": "user_mismatch"})
+            return _response("medium", [_item("E1", "c1")], [_source("S1", ["E1"])])
+
+        monkeypatch.setattr(retrieve_module, "retrieve", fake_retrieve)
+
+        with pytest.raises(HTTPException) as exc:
+            await retrieve_module._retrieve_sub_queries(
+                _request(["goede vraag", "verboden vraag"]), MagicMock(), MagicMock()
+            )
+        assert exc.value.status_code == 403
+        assert exc.value.detail == {"error": "user_mismatch"}
+
+    @pytest.mark.asyncio
+    async def test_5xx_from_sub_call_still_counts_as_per_question_failure(self, monkeypatch):
+        """Server errors keep the existing per-question-failure behaviour —
+        only 4xx auth/validation failures escalate to a whole-request raise."""
+        from fastapi import HTTPException
+
+        async def fake_retrieve(sub_req, request, _auth=None):
+            if sub_req.query == "kapotte vraag":
+                raise HTTPException(status_code=503, detail="upstream down")
+            return _response("medium", [_item("E1", "c1")], [_source("S1", ["E1"])])
+
+        monkeypatch.setattr(retrieve_module, "retrieve", fake_retrieve)
+
+        result = await retrieve_module._retrieve_sub_queries(
+            _request(["goede vraag", "kapotte vraag"]), MagicMock(), MagicMock()
+        )
+        assert result.sub_results[1].error == "HTTPException"
 
     @pytest.mark.asyncio
     async def test_duplicate_chunks_across_sub_queries_deduplicated(self, monkeypatch):
@@ -337,3 +400,32 @@ class TestSubQueryTopKRespectsOne:
         )
 
         assert all(sub_req.top_k == 1 for sub_req in captured)
+
+
+class TestFanoutRunsAfterIdentityCheck:
+    def test_cross_user_mismatch_with_subqueries_returns_403_not_502(self):
+        """Fix C.1: the fan-out branch is positioned AFTER
+        verify_body_identity, so an identity mismatch surfaces as its real
+        403 — it must never reach ``_retrieve_sub_queries`` and come back
+        masked as a fan-out 502 'all sub-query retrievals failed'."""
+        from fastapi.testclient import TestClient
+
+        from retrieval_api.main import app
+        from tests.test_auth import _make_jwt_payload, _patch_jwt
+
+        client = TestClient(app)
+        payload = _make_jwt_payload(sub="user_a", resourceowner="org_x")
+        with _patch_jwt(payload):
+            resp = client.post(
+                "/retrieve",
+                json={
+                    "query": "gecombineerde vraag",
+                    "org_id": "org_x",
+                    "user_id": "user_b",
+                    "scope": "personal",
+                    "sub_queries": ["vraag een?", "vraag twee?"],
+                },
+                headers={"Authorization": "Bearer valid"},
+            )
+        assert resp.status_code == 403
+        assert resp.json()["detail"] == {"error": "user_mismatch"}

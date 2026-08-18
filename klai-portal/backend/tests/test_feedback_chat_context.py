@@ -149,6 +149,65 @@ class TestRecentChatConversations:
         assert await librechat_chat_context.recent_chat_conversations("acme", "sub") is None
 
 
+class TestSyncRecentConversationsMongoFilter:
+    """Fix A: the conversations query must match both the string-typed
+    ``user`` field production actually uses AND a raw ObjectId, in case a
+    schema drift or older write path stores the owner id untyped."""
+
+    def test_filter_uses_in_with_both_string_and_objectid(self, monkeypatch):
+        class FakeObjectId:
+            def __str__(self):
+                return "conv-owner-string-id"
+
+        owner_id = FakeObjectId()
+        find_calls = []
+
+        class FakeCursor:
+            def sort(self, *args, **kwargs):
+                return self
+
+            def limit(self, *args, **kwargs):
+                return self
+
+            def __iter__(self):
+                return iter([])
+
+        class FakeConversations:
+            def find(self, filter_, projection):
+                find_calls.append(filter_)
+                return FakeCursor()
+
+        class FakeUsers:
+            def find_one(self, query, projection):
+                return {"_id": owner_id}
+
+        class FakeDB:
+            def __init__(self):
+                self.users = FakeUsers()
+                self.conversations = FakeConversations()
+
+        class FakeClient:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc_info):
+                return False
+
+            def __getitem__(self, name):
+                return FakeDB()
+
+        monkeypatch.setattr(
+            librechat_chat_context.pymongo,
+            "MongoClient",
+            lambda **kwargs: FakeClient(),
+        )
+
+        librechat_chat_context._sync_recent_conversations("librechat-acme", "sub-1", 3)
+
+        assert len(find_calls) == 1
+        assert find_calls[0]["user"] == {"$in": ["conv-owner-string-id", owner_id]}
+
+
 class TestFollowupScheduling:
     async def _submit_problem(self, monkeypatch, *, route_id, page_url):
         async def fake_create(db, **kwargs):
