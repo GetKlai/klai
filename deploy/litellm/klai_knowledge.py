@@ -100,6 +100,7 @@ from klai_kb_chat_mode import (
 from klai_pasted_correspondence import (
     PASTED_CORRESPONDENCE_SCOPE as _PASTED_CORRESPONDENCE_SCOPE,
     detect_pasted_correspondence as _detect_pasted_correspondence,
+    latest_user_turn_has_correspondence as _latest_user_turn_has_correspondence,
 )
 from klai_kb_query_rewrite import (
     KLAI_TAXONOMY_COVERAGE_THRESHOLD,
@@ -386,7 +387,15 @@ class KlaiKnowledgeHook(CustomLogger):
             context_meta = context_result.meta
             data["messages"] = messages
             data.setdefault("metadata", {})["_klai_context_meta"] = context_meta
-        if not query or _is_trivial(query):
+        if not query:
+            return data
+        # Conversation-wide correspondence detection, computed BEFORE the
+        # trivial fast-path: a short follow-up ("waarom?") after a pasted
+        # customer email must still get the epistemic contract — the
+        # correspondence is still in the model's context and follow-ups are
+        # exactly where the sender's claims get re-adopted as facts.
+        pasted_correspondence = _detect_pasted_correspondence(messages)
+        if _is_trivial(query) and not pasted_correspondence:
             return data
 
         # org_id lives in LiteLLM team key metadata
@@ -406,17 +415,18 @@ class KlaiKnowledgeHook(CustomLogger):
         if not librechat_user_id:
             return data
 
-        # Pasted third-party correspondence counts as user-provided content:
+        # Pasted correspondence counts as user-provided content:
         # USER_PROVIDED_CONTENT_SCOPE already promises that "text the user
-        # attached or pasted" is usable in every mode, and the deterministic
-        # detector gives us that signal for correspondence. Without this OR,
+        # attached or pasted" is usable in every mode. Without this OR,
         # Strict mode with zero citable sources refuses via mock_response and
         # the model never sees the pasted email at all (Sol review P1,
-        # PR #1059).
-        pasted_correspondence = _detect_pasted_correspondence(messages)
+        # PR #1059). LATEST-TURN ONLY: correspondence pasted in an earlier
+        # turn must not keep bypassing the deterministic Strict refusal for
+        # later, unrelated questions — the conversation-wide flag (computed
+        # at the trivial gate) drives only the prompt contract and footer.
         user_provided_content_context = (
             _has_user_provided_content_context(messages, query)
-            or pasted_correspondence
+            or _latest_user_turn_has_correspondence(messages)
         )
         data["messages"] = messages
         if context_meta is not None:
@@ -528,10 +538,9 @@ class KlaiKnowledgeHook(CustomLogger):
         # user_provided_content_context); the model only receives the
         # epistemic contract when the detector fires. Injected BEFORE the
         # branch prefixes so every later ``_prepend_system_prefix`` stacks
-        # the branch foundation above it. Known limitation: trivial
-        # follow-up turns ("waarom?") return before this point and get no
-        # prompt injection at all — that is the pre-existing trivial-query
-        # contract (no grounded rules either), not specific to this block.
+        # the branch foundation above it. Trivial follow-ups ("waarom?") do
+        # NOT bypass this: the trivial fast-path is disabled when the
+        # conversation contains correspondence.
         if pasted_correspondence:
             _prepend_system_prefix(messages, _PASTED_CORRESPONDENCE_SCOPE)
             logger.info(

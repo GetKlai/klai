@@ -63,12 +63,16 @@ _BARE_BRACKET_CITATION_RE = re.compile(r"(?<!!)\[\s*\d{1,3}\s*\]")
 _PAREN_CITATION_RE = re.compile(r"\(\s*\d{1,3}(?:\s*[,;]\s*\d{1,3})*\s*\)")
 # Internal evidence labels ("Evidence E3" headers in the prompt context) that
 # the model parrots back — observed as "de kennisbank (E3) bevestigt" in the
-# Voys trunk incident (2026-08-17). Never user-facing vocabulary.
+# Voys trunk incident (2026-08-17). Never user-facing vocabulary. Stripping is
+# gated on the evidence ids ACTUALLY injected for the request (see
+# ``strip_model_citation_artifacts``), so legitimate E-numbers outside that
+# set — the E19 motorway, an E3 error code — survive untouched.
 _EVIDENCE_LABEL_RE = re.compile(
-    r"\(\s*(?:Evidence\s+)?E\d{1,3}(?:\s*[,;]\s*E\d{1,3})*\s*\)"
-    r"|\[\s*(?:Evidence\s+)?E\d{1,3}(?:\s*[,;]\s*E\d{1,3})*\s*\]"
-    r"|\bEvidence\s+E\d{1,3}\b"
+    r"\(\s*(?:[Ee]vidence\s+)?E\d{1,3}(?:\s*[,;]\s*E\d{1,3})*\s*\)"
+    r"|\[\s*(?:[Ee]vidence\s+)?E\d{1,3}(?:\s*[,;]\s*E\d{1,3})*\s*\]"
+    r"|\b[Ee]vidence\s+E\d{1,3}\b"
 )
+_EVIDENCE_ID_TOKEN_RE = re.compile(r"E\d{1,3}")
 _MALFORMED_NUMBER_URL_RE = re.compile(r"\b\d{1,3}\(https?://[^)\s]+\)")
 _BARE_NUMBER_RUN_RE = re.compile(r"(?<![\w/])\b\d{1,3}(?:\s*[,;]\s*\d{1,3})+\b(?=(?:[.!?])?(?:\s|$))")
 _TOKEN_RE = re.compile(r"[a-z0-9À-ÿ][a-z0-9À-ÿ_-]{2,}", re.IGNORECASE)
@@ -524,13 +528,36 @@ def _renumber_ordered_list_runs(text: str) -> str:
     return "\n".join(output)
 
 
+def evidence_label_ids(evidence_chunks: list[dict] | None) -> set[str]:
+    """Evidence ids that could appear as prompt labels for these chunks.
+
+    ``render_evidence_context`` labels chunks positionally (E1..En); evidence-
+    pack items may additionally carry explicit ``evidence_id`` values. Both
+    count as strippable labels.
+    """
+    chunks = [chunk for chunk in (evidence_chunks or []) if isinstance(chunk, dict)]
+    ids = {f"E{index}" for index in range(1, len(chunks) + 1)}
+    for chunk in chunks:
+        evidence_id = chunk.get("evidence_id")
+        if isinstance(evidence_id, str) and evidence_id.strip():
+            ids.add(evidence_id.strip())
+    return ids
+
+
 def strip_model_citation_artifacts(
     text: str,
     *,
     allowed_image_urls: set[str] | None = None,
     source_titles: set[str] | None = None,
+    evidence_ids: set[str] | None = None,
 ) -> str:
-    """Remove model-authored citations/source lists before composing our own."""
+    """Remove model-authored citations/source lists before composing our own.
+
+    ``evidence_ids`` gates internal evidence-label stripping: only labels whose
+    every E-number is in this set (the ids actually injected into the prompt)
+    are removed. Without it no evidence labels are stripped — the model cannot
+    parrot labels it never received, and legitimate E-numbers must survive.
+    """
     allowed_image_urls = {
         normalised for normalised in (normalise_source_url(url) for url in (allowed_image_urls or set())) if normalised
     }
@@ -568,7 +595,15 @@ def strip_model_citation_artifacts(
     cleaned = _MARKDOWN_LINK_RE.sub(r"\1", cleaned)
     cleaned = _BARE_BRACKET_CITATION_RE.sub("", cleaned)
     cleaned = _PAREN_CITATION_RE.sub("", cleaned)
-    cleaned = _EVIDENCE_LABEL_RE.sub("", cleaned)
+    if evidence_ids:
+
+        def _strip_injected_evidence_label(match: re.Match[str]) -> str:
+            tokens = _EVIDENCE_ID_TOKEN_RE.findall(match.group(0))
+            if tokens and all(token in evidence_ids for token in tokens):
+                return ""
+            return match.group(0)
+
+        cleaned = _EVIDENCE_LABEL_RE.sub(_strip_injected_evidence_label, cleaned)
     cleaned = _BARE_NUMBER_RUN_RE.sub("", cleaned)
     cleaned = _RAW_URL_RE.sub("", cleaned)
     # Trailing whitespace only — `\s+\n` would also swallow blank lines and
@@ -1327,6 +1362,7 @@ def compose_answer_with_trusted_sources(
         text,
         allowed_image_urls=allowed_image_urls,
         source_titles=_source_title_set(candidate_sources),
+        evidence_ids=evidence_label_ids(evidence_chunks),
     )
     selected, decision = _select_supported_sources_with_decision(
         cleaned,
@@ -1416,6 +1452,7 @@ __all__ = [
     "compose_answer_with_trusted_sources",
     "compose_citations",
     "evidence_chunks_from_chunks",
+    "evidence_label_ids",
     "evidence_pack_items_as_chunks",
     "extract_salient_query_tokens",
     "format_sources_markdown",

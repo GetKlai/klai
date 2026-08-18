@@ -12,6 +12,7 @@ from typing import Any
 from klai_chat_prompts import DUTCH_QUERY_MARKERS, no_citable_sources_message
 from klai_citations import (
     compose_answer_with_trusted_sources,
+    evidence_label_ids,
     strip_model_citation_artifacts,
 )
 from klai_kb_answer_policy import strict_kb_unavailable_message
@@ -732,16 +733,21 @@ def _citation_user_content_flags(kb_meta: dict[str, Any]) -> tuple[bool, bool]:
     )
 
 
-# Parenthesized internal evidence labels ("(E3)", "(Evidence E3)") stream out
-# before the end-of-stream cleaner can strip them — "(" is not a guard start,
-# unlike "[". Withhold from the earliest such opener so the flush-time
-# ``strip_model_citation_artifacts`` pass removes the label before the user
-# sees it (Sol review P1, PR #1059).
-_EVIDENCE_PAREN_GUARD_RE = re.compile(r"\((?:Evidence\b|E\d)")
+# Internal evidence labels ("(E3)", "(Evidence E3)", bare "Evidence E3")
+# stream out before the end-of-stream cleaner can strip them — "(" and plain
+# words are not guard starts, unlike "[". Withhold from the earliest actual
+# label opener so the flush-time ``strip_model_citation_artifacts`` pass can
+# remove it before the user sees it (PR #1059 review rounds 1+2). The
+# ``E\d`` requirement keeps ordinary prose like "(Evidence suggests ...)"
+# streaming normally; the 16-char tail holdback covers labels split across
+# stream deltas.
+_EVIDENCE_STREAM_GUARD_RE = re.compile(
+    r"\(\s*(?:[Ee]vidence\s+)?E\d|\b[Ee]vidence\s+E\d"
+)
 
 
 def _earliest_stream_guard_start(text: str) -> int:
-    evidence_match = _EVIDENCE_PAREN_GUARD_RE.search(text)
+    evidence_match = _EVIDENCE_STREAM_GUARD_RE.search(text)
     starts = [
         idx
         for idx in (
@@ -1040,6 +1046,7 @@ def compose_streaming_kb_response(
                     for source in trusted_sources
                     if isinstance(source.get("title"), str)
                 },
+                evidence_ids=evidence_label_ids(citation_chunks),
             )
             decision["stream_flush_alignment"] = "raw_remainder"
         else:

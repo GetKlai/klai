@@ -71,24 +71,30 @@ _QUOTE_LINE_RE = re.compile(
 )
 
 
+def _message_texts(message: object) -> list[str]:
+    if not isinstance(message, dict):
+        return []
+    content = message.get("content")
+    if isinstance(content, str):
+        return [content]
+    if isinstance(content, list):
+        return [
+            part["text"]
+            for part in content
+            if isinstance(part, dict)
+            and part.get("type") == "text"
+            and isinstance(part.get("text"), str)
+        ]
+    return []
+
+
 def _iter_user_texts(messages: object) -> Iterator[str]:
     if not isinstance(messages, list):
         return
     for message in messages:
         if not isinstance(message, dict) or message.get("role") != "user":
             continue
-        content = message.get("content")
-        if isinstance(content, str):
-            yield content
-            continue
-        if isinstance(content, list):
-            for part in content:
-                if (
-                    isinstance(part, dict)
-                    and part.get("type") == "text"
-                    and isinstance(part.get("text"), str)
-                ):
-                    yield part["text"]
+        yield from _message_texts(message)
 
 
 def _distinct_header_labels(text: str) -> set[str]:
@@ -109,10 +115,33 @@ def text_contains_pasted_correspondence(text: str) -> bool:
 
 
 def detect_pasted_correspondence(messages: object) -> bool:
-    """True when any user message in the request contains pasted correspondence."""
+    """True when any user message in the request contains pasted correspondence.
+
+    Conversation-wide by design: this drives the epistemic prompt contract and
+    the footer transparency line, which stay relevant for follow-up turns as
+    long as the correspondence is still in the model's context.
+    """
     return any(
         text_contains_pasted_correspondence(text) for text in _iter_user_texts(messages)
     )
+
+
+def latest_user_turn_has_correspondence(messages: object) -> bool:
+    """Detection restricted to the LATEST user turn.
+
+    Used for the Strict-mode user-content exception ONLY: correspondence
+    pasted in an earlier turn must not keep bypassing the deterministic
+    Strict refusal for later, unrelated questions.
+    """
+    if not isinstance(messages, list):
+        return False
+    for message in reversed(messages):
+        if isinstance(message, dict) and message.get("role") == "user":
+            return any(
+                text_contains_pasted_correspondence(text)
+                for text in _message_texts(message)
+            )
+    return False
 
 
 # Injected by the hook ONLY when the detector fires. Sits below the branch

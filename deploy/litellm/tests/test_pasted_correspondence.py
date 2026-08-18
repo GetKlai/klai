@@ -294,3 +294,77 @@ class TestStreamGuardEvidenceLabels:
         safe, kept = _pop_streaming_guard_text(text, final=True)
         assert safe == text
         assert kept == ""
+
+
+class TestLatestTurnDetection:
+    """Review round 2, finding 1: the Strict user-content exception may only
+    look at the LATEST user turn — correspondence pasted earlier must not
+    keep bypassing the deterministic Strict refusal for unrelated questions."""
+
+    def test_email_in_earlier_turn_only(self):
+        from klai_pasted_correspondence import latest_user_turn_has_correspondence
+
+        messages = [
+            {"role": "user", "content": _VOYS_INCIDENT_PASTE},
+            {"role": "assistant", "content": "Analyse van de mail ..."},
+            {"role": "user", "content": "Hoeveel vakantiedagen heb ik?"},
+        ]
+        assert latest_user_turn_has_correspondence(messages) is False
+        # Conversation-wide detection still fires (contract + footer).
+        assert detect_pasted_correspondence(messages) is True
+
+    def test_email_in_latest_turn(self):
+        from klai_pasted_correspondence import latest_user_turn_has_correspondence
+
+        messages = [
+            {"role": "user", "content": "Kan ik je iets voorleggen?"},
+            {"role": "assistant", "content": "Ja hoor."},
+            {"role": "user", "content": _VOYS_INCIDENT_PASTE},
+        ]
+        assert latest_user_turn_has_correspondence(messages) is True
+
+    def test_no_user_messages(self):
+        from klai_pasted_correspondence import latest_user_turn_has_correspondence
+
+        assert latest_user_turn_has_correspondence([]) is False
+        assert latest_user_turn_has_correspondence(None) is False
+        assert (
+            latest_user_turn_has_correspondence(
+                [{"role": "assistant", "content": _VOYS_INCIDENT_PASTE}]
+            )
+            is False
+        )
+
+
+class TestStreamGuardWordFormAndProse:
+    """Review round 2, findings 2+3: bare "Evidence E3" must be withheld,
+    ordinary "(Evidence suggests ...)" prose must keep streaming."""
+
+    def test_bare_evidence_word_label_is_withheld(self):
+        from klai_kb_citation_render import _pop_streaming_guard_text
+
+        safe, kept = _pop_streaming_guard_text(
+            "Zie Evidence E3 hierboven plus nog een flinke lap tekst erna",
+            final=False,
+        )
+        assert "Evidence E3" not in safe
+        assert kept.startswith("Evidence E3")
+
+    def test_lowercase_evidence_word_label_is_withheld(self):
+        from klai_kb_citation_render import _pop_streaming_guard_text
+
+        safe, _kept = _pop_streaming_guard_text(
+            "volgens evidence E3 is dit zo, en er volgt nog veel meer tekst",
+            final=False,
+        )
+        assert "evidence E3" not in safe
+
+    def test_evidence_prose_paren_still_streams(self):
+        from klai_kb_citation_render import _pop_streaming_guard_text
+
+        text = (
+            "Dit is duidelijk (Evidence suggests more tests are needed) "
+            "en daarna gaat de zin nog een heel stuk verder door"
+        )
+        safe, _kept = _pop_streaming_guard_text(text, final=False)
+        assert "(Evidence suggests more tests are needed)" in safe

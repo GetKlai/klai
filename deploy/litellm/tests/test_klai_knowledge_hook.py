@@ -8081,6 +8081,103 @@ class TestPastedCorrespondenceWiring:
             "refusal — the pasted-email exception may not widen it away"
         )
 
+
+    @pytest.mark.asyncio
+    async def test_strict_refusal_returns_for_unrelated_question_after_old_email(
+        self, monkeypatch
+    ):
+        """Review round 2, finding 1: correspondence in an EARLIER turn must
+        not keep bypassing the deterministic Strict refusal — an unrelated
+        later question with zero citable sources still gets mock_response."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature={"kb_narrow": True})
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": self._PASTE},
+                {"role": "assistant", "content": "Analyse van de mail ..."},
+                {"role": "user", "content": "Hoeveel vakantiedagen heb ik dit jaar?"},
+            ],
+        }
+        retrieval_resp = _make_resp(
+            {
+                "chunks": [],
+                "retrieval_bypassed": False,
+                "confidence_band": "unknown",
+                "evidence_pack": {"items": [], "no_citable_reason": "zero_results"},
+            }
+        )
+
+        with _patch_http(monkeypatch, retrieval_resp=retrieval_resp):
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        assert "mock_response" in result, (
+            "an unrelated Strict question must keep the deterministic refusal "
+            "even when an email was pasted in an earlier turn"
+        )
+        meta = result["metadata"]["_klai_kb_meta"]
+        assert meta["user_provided_content_context"] is False
+        # Conversation-wide contract + footer flag still apply.
+        assert meta["pasted_correspondence_detected"] is True
+
+    @pytest.mark.asyncio
+    async def test_trivial_follow_up_still_gets_contract(self, monkeypatch):
+        """Review round 2, finding 6: a short follow-up ("waarom?") after a
+        pasted email must not skip the hook via the trivial fast-path — the
+        correspondence is still in context and the contract must be there."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        data = {
+            "user": "u1" * 12,
+            "messages": [
+                {"role": "user", "content": self._PASTE},
+                {"role": "assistant", "content": "Analyse van de mail ..."},
+                {"role": "user", "content": "waarom?"},
+            ],
+        }
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.get = AsyncMock(return_value=_make_resp({"instructions": []}))
+            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), self._general_mode_cache(), data, "completion"
+            )
+
+        system_msg = next(
+            (m for m in data["messages"] if m["role"] == "system"), None
+        )
+        assert system_msg is not None, (
+            "trivial fast-path must be disabled when the conversation "
+            "contains pasted correspondence"
+        )
+        assert "[Pasted third-party correspondence]" in system_msg["content"]
+
+    @pytest.mark.asyncio
+    async def test_trivial_without_correspondence_keeps_fast_path(self, monkeypatch):
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        data = {
+            "user": "u1" * 12,
+            "messages": [{"role": "user", "content": "waarom?"}],
+        }
+
+        result = await hook.async_pre_call_hook(
+            _make_user_api_key(), self._general_mode_cache(), data, "completion"
+        )
+
+        assert not any(m.get("role") == "system" for m in result["messages"]), (
+            "plain trivial turns must keep the zero-injection fast-path"
+        )
+
     @pytest.mark.asyncio
     async def test_plain_question_does_not_get_contract(self, monkeypatch):
         mod = _load_hook(monkeypatch)
