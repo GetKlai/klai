@@ -16,6 +16,10 @@ from knowledge_ingest.crawl4ai_client import CrawlResult
 
 
 def _make_mock_pool() -> MagicMock:
+    # ``fetch`` returning ``[]`` also matters for the content-length gate
+    # in ``_ingest_crawl_result``: fixture text below (42 chars) is inside
+    # the gate's soft zone, and with no cluster siblings returned it is
+    # treated as unique short content and kept, not rejected.
     pool = MagicMock()
     pool.execute = AsyncMock(return_value=None)
     pool.fetch = AsyncMock(return_value=[])
@@ -28,11 +32,7 @@ def _make_crawl_result(
     internal_links: list[dict] | None = None,
 ) -> CrawlResult:
     """Build a successful CrawlResult with the given internal links."""
-    # 2026-08-18 stop-the-bleeding fix: content-length gate
-    # (settings.ingest_min_content_length) now skips persistence below
-    # threshold. Padded well above default (150 chars) so this fixture
-    # keeps exercising the ingest path.
-    text = f"Markdown content for {url}. " * 6
+    text = f"Markdown content for {url}"
     return CrawlResult(
         url=url,
         fit_markdown=text,

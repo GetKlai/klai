@@ -16,7 +16,13 @@ from knowledge_ingest.crawl4ai_client import CrawlResult
 
 
 def _make_mock_conn():
-    """SPEC-TI-003-FOLLOWUP-001: helpers take asyncpg.Connection directly."""
+    """SPEC-TI-003-FOLLOWUP-001: helpers take asyncpg.Connection directly.
+
+    ``fetch`` returning ``[]`` also matters for the content-length gate in
+    ``_ingest_crawl_result``: the default fixture text below (33 chars) is
+    inside the gate's soft zone, and with no cluster siblings returned it
+    is treated as unique short content and kept, not rejected.
+    """
     conn = MagicMock()
     conn.execute = AsyncMock(return_value=None)
     conn.executemany = AsyncMock(return_value=None)
@@ -29,11 +35,7 @@ def _make_mock_conn():
 def _make_crawl_result(
     url: str = "https://example.com/a",
     success: bool = True,
-    # 2026-08-18 stop-the-bleeding fix: content-length gate
-    # (settings.ingest_min_content_length) now skips persistence below
-    # threshold. Padded well above default (150 chars) so these link-graph
-    # tests keep exercising the ingest path, not the new short-content skip.
-    text: str = "Some markdown content for testing. " * 6,
+    text: str = "Some markdown content for testing",
     links: dict | None = None,
 ) -> CrawlResult:
     return CrawlResult(

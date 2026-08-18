@@ -74,6 +74,27 @@ FETCH_FAILURE_DOMINANT_REASON = "fetch_failure_dominant"
 
 _NOT_FETCHED_REASON_PREFIX = "not_fetched_"
 
+# 2026-08-18 stop-the-bleeding fix, corrected same day after production
+# measurement (n=1426, knowledge.crawled_pages) — see the long comment at
+# the short-content-cluster gate in _ingest_crawl_result for the full
+# rationale and tests/test_crawler_content_too_short.py for the measured
+# numbers this is calibrated against.
+#
+# Hard floor: below this length, a page is rejected unconditionally, no
+# cluster lookup needed. Calibrated against the measurement: the only
+# pages below 30 chars in the whole dataset are 3 completely empty
+# (1-char) pages; the shortest legitimate real page measured is ~85
+# chars, far above this floor, so 30 cannot falsely reject real content.
+_HARD_MIN_CONTENT_LENGTH = 30
+
+# Cluster-size requirement for the short-content-cluster gate (soft
+# zone), reusing detect_anonymous_auth_wall's SimHash lookup. Lower than
+# that detector's own DEFAULT_CLUSTER_MIN (5) because the measurement's
+# smallest error-page cluster is 3 total pages (2 OTHERS from any one
+# page's perspective) — cluster_min=5 would silently miss it, letting
+# the 3-page 404 cluster and both 3-page Ascend clusters through.
+_SHORT_CONTENT_CLUSTER_MIN = 2
+
 _DIRTY_CONTENT_SUGGESTION = (
     "Re-run preview from the connector edit page. The site likely now requires "
     "authentication or the content_selector is no longer matching."
@@ -1146,28 +1167,87 @@ async def _ingest_crawl_result(
     text = result.fit_markdown or result.raw_markdown or ""
     front_matter = (result.metadata or {}).get("description", "")
 
-    # 2026-08-18 stop-the-bleeding fix: a page that fetched successfully
-    # (HTTP 200) can still be pure boilerplate/error text — e.g.
-    # openapi.eu-production.holodeck.voys.nl served 13 pages of the exact
-    # same 92-char "Failed to parse OpenAPI file" message, and 5 landed in
-    # a customer's knowledge base before the template-cluster detector
-    # (a different mechanism, meant for auth walls, not error pages)
-    # happened to reject the rest once 5 near-identical siblings existed.
-    # There was previously no minimum-content-length check anywhere on
-    # this path — PersistSkipReason.CONTENT_TOO_SHORT existed in
-    # reason_codes.py but was never wired up here.
+    # SPEC-INGEST-LOGIN-WALL-DETECT-002 REQ-01 — compute the page's SimHash
+    # once, BEFORE any use (this call site's short-content-cluster gate
+    # below, the login-wall detector further down, and the operator-
+    # triggered backfill / validation script) and store it AFTER the
+    # upsert below so the next crawl can cluster against it. Moved earlier
+    # than its original position (2026-08-18 stop-the-bleeding fix) so the
+    # short-content-cluster gate can reuse it instead of computing a
+    # second SimHash for the same text.
+    #
+    # Empty / whitespace-only content yields ``compute_simhash == 0``. Storing
+    # 0 would let "empty" pages cluster together (all match Hamming 0), which
+    # would falsely flag a tenant whose crawl results were 5+ rendered-but-
+    # empty pages. We treat the missing-content case as "no fingerprint" by
+    # leaving content_simhash NULL, matching the cold-start contract.
+    page_simhash: int | None = compute_simhash(text)
+    if page_simhash == 0:
+        page_simhash = None
+
+    # 2026-08-18 stop-the-bleeding fix, corrected same day after a
+    # production content-length measurement (n=1426,
+    # knowledge.crawled_pages) refuted the original flat 150-char
+    # threshold: two real, unique pages (getklai.com/contact at ~85 chars,
+    # help.voys.nl/help-pages-nl at ~108 chars) sit INSIDE the same length
+    # band as measured error-page clusters (88/92/98/101 chars). Length
+    # alone cannot separate "short and real" from "short and boilerplate"
+    # — see the module docstring in
+    # tests/test_crawler_content_too_short.py for the full measurement.
+    #
+    # Two-tier rule:
+    #
+    # 1. Hard floor: below _HARD_MIN_CONTENT_LENGTH, reject unconditionally
+    #    — no page in the measured dataset that isn't outright empty falls
+    #    this low (only 3 exactly-empty 1-char pages measured below it).
+    # 2. Soft zone: below settings.ingest_min_content_length (150) but at
+    #    or above the hard floor, reject ONLY when the page is a near-
+    #    duplicate of >= _SHORT_CONTENT_CLUSTER_MIN OTHER pages in the same
+    #    KB — reusing the exact SimHash cluster-lookup mechanism from
+    #    detect_anonymous_auth_wall (utils/auth_wall_detector.py), not a
+    #    second implementation of it. cluster_min is lower here than that
+    #    detector's own default (5): the smallest measured error cluster
+    #    is 3 total pages (2 OTHERS from any one page's view), so the
+    #    default would silently miss it.
     stripped_length = len(text.strip())
-    if stripped_length < settings.ingest_min_content_length:
+    if stripped_length < _HARD_MIN_CONTENT_LENGTH:
         logger.info(
             "crawl_skipped_content_too_short",
             url=url,
             org_id=org_id,
             kb_slug=kb_slug,
             content_length=stripped_length,
-            threshold=settings.ingest_min_content_length,
+            gate="hard_floor",
+            threshold=_HARD_MIN_CONTENT_LENGTH,
             reason=PersistSkipReason.CONTENT_TOO_SHORT.value,
         )
         return
+    if stripped_length < settings.ingest_min_content_length:
+        duplicate_signal = await detect_anonymous_auth_wall(
+            result.raw_markdown or "",
+            fit_markdown=result.fit_markdown or None,
+            url=url,
+            org_id=org_id,
+            kb_slug=kb_slug,
+            conn=conn,
+            cluster_min=_SHORT_CONTENT_CLUSTER_MIN,
+            target_simhash=page_simhash,
+        )
+        if duplicate_signal is not None:
+            logger.info(
+                "crawl_skipped_content_too_short",
+                url=url,
+                org_id=org_id,
+                kb_slug=kb_slug,
+                content_length=stripped_length,
+                gate="duplicate_cluster",
+                threshold=settings.ingest_min_content_length,
+                evidence=duplicate_signal.evidence,
+                reason=PersistSkipReason.CONTENT_TOO_SHORT.value,
+            )
+            return
+        # Short but unique (no near-duplicate siblings): fall through and
+        # keep it — this is the case the flat threshold got wrong.
 
     content_hash = hashlib.sha256(text.encode()).hexdigest()
     if stored is not None:
@@ -1190,21 +1270,8 @@ async def _ingest_crawl_result(
             logger.info("crawl_skipped_html_noise", url=url, org_id=org_id, kb_slug=kb_slug)
             return
 
-    # SPEC-INGEST-LOGIN-WALL-DETECT-002 REQ-01 — compute the page's SimHash
-    # once, BEFORE the detector call (the detector reuses it for cluster
-    # lookup) and store it AFTER the upsert below so the next crawl can
-    # cluster against it. Computed unconditionally — even with detection
-    # disabled, the fingerprint is needed for the operator-triggered
-    # backfill / validation script.
-    #
-    # Empty / whitespace-only content yields ``compute_simhash == 0``. Storing
-    # 0 would let "empty" pages cluster together (all match Hamming 0), which
-    # would falsely flag a tenant whose crawl results were 5+ rendered-but-
-    # empty pages. We treat the missing-content case as "no fingerprint" by
-    # leaving content_simhash NULL, matching the cold-start contract.
-    page_simhash: int | None = compute_simhash(text)
-    if page_simhash == 0:
-        page_simhash = None
+    # page_simhash was computed earlier (see comment above, near the
+    # short-content-cluster gate) and is reused here unchanged.
 
     # SPEC-CONNECTOR-INPUT-VALIDATION-001 / REQ-4 — shared auth-wall
     # classifier at sync time. This catches single embedded protected-section

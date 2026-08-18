@@ -28,27 +28,30 @@ class Settings(BaseSettings):
     # due to a config typo.
     ingest_login_wall_detect_enabled: bool = True
     ingest_login_wall_detect_mode: str = "reject"
-    # 2026-08-18 stop-the-bleeding fix — minimum stripped-text length (chars)
-    # for a crawled page to be persisted as knowledge. Below this, the page
-    # is skipped with PersistSkipReason.CONTENT_TOO_SHORT and never reaches
-    # Qdrant or knowledge.artifacts.
+    # 2026-08-18 stop-the-bleeding fix, corrected same day after a
+    # production content-length measurement (n=1426,
+    # knowledge.crawled_pages) refuted the original design (a single flat
+    # threshold below which every page is rejected).
     #
-    # Calibration: NOT derived from a measured production content-length
-    # distribution — this sandboxed dev environment has no Postgres/Grafana
-    # access to query knowledge.crawled_pages.raw_markdown. The only hard
-    # data point is the incident that prompted this fix: 13 pages from
-    # openapi.eu-production.holodeck.voys.nl were exactly ~92 chars of
-    # boilerplate ("Failed to parse OpenAPI file..."). 150 gives ~60%
-    # margin above that measured case (catching near-identical variants of
-    # the same error-page class) while staying far below any real KB
-    # article, which is virtually always multiple sentences. Deliberately
-    # conservative: a real short page is not known to exist below this
-    # bound today, but if one does, it will be dropped silently until
-    # someone raises the exception — better to under-catch (see rule:
-    # "beter te weinig vangen dan echte inhoud weggooien") than delete
-    # real content. Re-calibrate once production content-length data is
-    # available (see rule: allowlist-must-enumerate-all-host-classes for
-    # the same "measure before you gate" principle applied to thresholds).
+    # The measurement: two real, unique pages (getklai.com/contact at ~85
+    # chars, help.voys.nl/help-pages-nl at ~108 chars) sit INSIDE the same
+    # length band as measured error-page clusters (5x exactly 92 chars,
+    # 3x exactly 98, 3x exactly 101, 3x exactly 88 — the incident that
+    # prompted this fix, openapi.eu-production.holodeck.voys.nl, is the
+    # 92-char cluster). A flat threshold below 85 lets every measured
+    # error page through; a flat threshold above 118 drops both real
+    # pages. Length alone cannot separate these two classes — only
+    # uniqueness can (see ``_ingest_crawl_result`` in adapters/crawler.py
+    # for the full two-tier rule this setting is now one half of, and
+    # tests/test_crawler_content_too_short.py for the measured numbers).
+    #
+    # This setting is now ONLY the soft-zone ceiling: below it (and at or
+    # above ``_HARD_MIN_CONTENT_LENGTH`` in crawler.py), a page is
+    # persisted UNLESS it is a near-duplicate of >= 2 other pages in the
+    # same KB. At or above this value, a page is always persisted
+    # regardless of clustering. 150 stays far below any real KB article
+    # (virtually always multiple sentences) while giving margin above the
+    # measured 88-118 char error-page band.
     ingest_min_content_length: int = Field(
         default=150,
         validation_alias=AliasChoices("KLAI_INGEST_MIN_CONTENT_LENGTH"),
