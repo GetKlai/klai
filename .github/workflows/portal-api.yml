@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'klai-portal/backend/**'
+      - 'klai-libs/chat-prompts/**'
       - 'klai-libs/citations/**'
       - 'klai-libs/connector-credentials/**'
       - 'klai-libs/kb-slugs/**'
@@ -13,6 +14,7 @@ on:
     branches: [main]
     paths:
       - 'klai-portal/backend/**'
+      - 'klai-libs/chat-prompts/**'
       - 'klai-libs/citations/**'
       - 'klai-libs/connector-credentials/**'
       - 'klai-libs/kb-slugs/**'

@@ -7930,3 +7930,128 @@ class TestMissingSecretRedisFeatureCache:
         assert feature["settings_unavailable"] is True
         redis_get.assert_awaited_once_with("user1", "org1")
         cls.assert_not_called()
+
+
+class TestKlaiKnowledgeHookMultiQuestionIncident:
+    """Regression contracts for the 2026-08-17 multi-question hallucination
+    incident (Strict mode, 11 questions, one usable source). All synthetic."""
+
+    _PORTAL_STRICT = {
+        "enabled": True,
+        "kb_retrieval_enabled": True,
+        "kb_personal_enabled": True,
+        "kb_slugs_filter": None,
+        "kb_narrow": True,
+        "kb_pref_version": 12,
+        "zitadel_user_id": "300000000000000002",
+    }
+
+    @pytest.mark.asyncio
+    async def test_strict_junk_evidence_refuses_instead_of_citing_noise(
+        self, monkeypatch
+    ):
+        """Evidence below the score floor must not survive into the prompt or
+        the citations: Strict routes into the zero-chunks refusal instead
+        (the incident's 'Ik weet het niet.' still cited a 0.05 source)."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache()
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "Wat is de maximale responstijd?"}
+            ],
+        }
+        junk_chunks = [
+            {
+                "text": "Tabel met supporttags per module.",
+                "scope": "org",
+                "metadata": {"title": "Using the right tags"},
+                "source_url": "https://docs.klai.example/tags",
+                "chunk_id": "junk-1",
+                "reranker_score": 0.05,
+            }
+        ]
+        retrieval_resp = _make_resp(
+            {
+                "chunks": junk_chunks,
+                "retrieval_bypassed": False,
+                "confidence_band": "low",
+            }
+        )
+        portal_resp = _make_resp(self._PORTAL_STRICT)
+
+        with _patch_http(
+            monkeypatch, portal_resp=portal_resp, retrieval_resp=retrieval_resp
+        ):
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        assert result.get("mock_response")
+        meta = result["metadata"]["_klai_kb_meta"]
+        assert meta["answer_policy_state"] == "zero_chunks"
+        assert meta["no_citable_sources"] is True
+        assert meta["chunks_injected"] == 0
+        assert meta["trusted_sources"] == []
+
+    @pytest.mark.asyncio
+    async def test_strict_multi_question_gets_guard_instead_of_blanket_refusal(
+        self, monkeypatch
+    ):
+        """A multi-part message must reach the model with the per-question
+        coverage guard: an aggregate low-confidence refusal would also swallow
+        the questions the chunks DO cover."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache()
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        "Wat moet de koppeling teruggeven om te routeren? "
+                        "Wat is de maximale responstijd? "
+                        "Worden meldingen opnieuw aangeboden bij een storing?"
+                    ),
+                }
+            ],
+        }
+        chunks = [
+            {
+                "text": "Meldingen worden bij een storing niet opnieuw aangeboden.",
+                "scope": "org",
+                "metadata": {"title": "Gespreksmeldingen"},
+                "source_url": "https://docs.klai.example/meldingen",
+                "chunk_id": "meldingen-1",
+                "reranker_score": 0.55,
+            }
+        ]
+        retrieval_resp = _make_resp(
+            {
+                "chunks": chunks,
+                "retrieval_bypassed": False,
+                "confidence_band": "low",
+            }
+        )
+        portal_resp = _make_resp(self._PORTAL_STRICT)
+
+        with _patch_http(
+            monkeypatch, portal_resp=portal_resp, retrieval_resp=retrieval_resp
+        ):
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        assert not result.get("mock_response")
+        system_content = "\n".join(
+            m["content"] for m in result["messages"] if m.get("role") == "system"
+        )
+        assert "[Klai retrieval — multi-part question]" in system_content
+        assert "The number of answers must equal the number of questions" in system_content
+        meta = result["metadata"]["_klai_kb_meta"]
+        assert meta["answer_policy_state"] == "chunks_present"
+        assert meta["chunks_injected"] == 1

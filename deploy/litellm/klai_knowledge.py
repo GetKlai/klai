@@ -55,7 +55,9 @@ from klai_kb_confidence_policy import (
     LOW_CONFIDENCE_INJECTION_DISABLED as _LOW_CONFIDENCE_INJECTION_DISABLED,
     LOW_CONFIDENCE_INJECTION_TEXT as _LOW_CONFIDENCE_INJECTION_TEXT,
     LOW_CONFIDENCE_OPEN_CONTEXT_TEXT as _LOW_CONFIDENCE_OPEN_CONTEXT_TEXT,
+    MULTI_QUESTION_GUARD_TEXT as _MULTI_QUESTION_GUARD_TEXT,
     has_direct_evidence_for_query as _has_direct_evidence_for_query,
+    is_multi_question_query as _is_multi_question_query,
     low_confidence_query_tokens as _low_confidence_query_tokens,
     should_apply_low_confidence_injection as _should_apply_low_confidence_injection,
 )
@@ -237,6 +239,10 @@ __all__ = [
     "_low_confidence_query_tokens",
     "_has_direct_evidence_for_query",
     "_should_apply_low_confidence_injection",
+    "_MULTI_QUESTION_GUARD_TEXT",
+    "_is_multi_question_query",
+    "_chunk_below_evidence_floor",
+    "KLAI_KB_MIN_EVIDENCE_SCORE",
     "_META_QUERY_PATTERNS",
     "RETRIEVE_HISTORY_API_CONTENT_LIMIT_CHARS",
     "RETRIEVE_HISTORY_MAX_CONTENT_CHARS",
@@ -268,6 +274,25 @@ RETRIEVE_TIMEOUT = float(os.getenv("KNOWLEDGE_RETRIEVE_TIMEOUT", "3.0"))
 # candidates server-side (reranker_candidates=20) so this only changes
 # how many chunks are forwarded to the LLM, not how many are scored.
 RETRIEVE_TOP_K = int(os.getenv("KNOWLEDGE_RETRIEVE_TOP_K", "20"))
+# Evidence below this reranker score is noise, not support: a 0.05-relevance
+# chunk must never end up rendered as a "Bronnen" entry under an answer
+# (2026-08-17 Voys incident: "Ik weet het niet." cited a 0.05 Notion tag
+# page). Chunks without any numeric score are kept (fail-open).
+KLAI_KB_MIN_EVIDENCE_SCORE = float(os.getenv("KLAI_KB_MIN_EVIDENCE_SCORE", "0.15"))
+
+
+def _chunk_below_evidence_floor(chunk: dict) -> bool:
+    """True when the chunk carries an explicit relevance score below the floor.
+
+    Only reranker/final scores count: the raw retrieval ``score`` field uses a
+    different scale (and defaults to 0.0 in several producers), so it must not
+    drop chunks on its own. No score at all keeps the chunk (fail-open).
+    """
+    for key in ("reranker_score", "final_score"):
+        value = chunk.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value) < KLAI_KB_MIN_EVIDENCE_SCORE
+    return False
 KLAI_GAP_SOFT_THRESHOLD = float(os.getenv("KLAI_GAP_SOFT_THRESHOLD", "0.4"))
 KLAI_GAP_DENSE_THRESHOLD = float(os.getenv("KLAI_GAP_DENSE_THRESHOLD", "0.35"))
 PORTAL_RETRIEVAL_LOG_URL = os.getenv(
@@ -982,6 +1007,38 @@ class KlaiKnowledgeHook(CustomLogger):
             return data
         evidence_chunks = evidence_pack_items_as_chunks(evidence_pack)
         trusted_sources = trusted_sources_from_evidence_pack(evidence_pack)
+        # Strict mode only: Strict promises KB-only answers, so noise-level
+        # evidence becomes fabricated authority (and junk "Bronnen" entries).
+        # Open mode deliberately keeps weak chunks as labeled weak context —
+        # see TestKlaiKnowledgeHookOpenMode's screenshot contract.
+        relevant_chunks = (
+            [
+                chunk
+                for chunk in evidence_chunks
+                if not _chunk_below_evidence_floor(chunk)
+            ]
+            if kb_narrow
+            else evidence_chunks
+        )
+        if len(relevant_chunks) < len(evidence_chunks):
+            # Dropping every chunk routes into the zero-chunks branch below:
+            # Strict then refuses deterministically instead of citing noise.
+            logger.warning(
+                "kb_evidence_below_score_floor_dropped org_id=%s user_id=%s "
+                "dropped=%d kept=%d floor=%s",
+                org_id,
+                user_id,
+                len(evidence_chunks) - len(relevant_chunks),
+                len(relevant_chunks),
+                KLAI_KB_MIN_EVIDENCE_SCORE,
+            )
+            evidence_chunks = relevant_chunks
+            trusted_sources = _filter_trusted_sources_for_chunks(
+                trusted_sources, evidence_chunks
+            )
+            evidence_pack = _filter_evidence_pack_for_chunks(
+                evidence_pack, evidence_chunks
+            )
         context_chunks = evidence_chunks
         safety_metadata = data.setdefault("metadata", {})
         if _llm_safety_enabled():
@@ -1043,6 +1100,11 @@ class KlaiKnowledgeHook(CustomLogger):
             user_query=query,
             evidence_chunks=context_chunks,
         )
+        # Multi-part messages get one retrieval pass over the whole message,
+        # so an aggregate low-confidence refusal would also swallow the
+        # questions the chunks DO cover. Suppress the deterministic refusal
+        # and force per-question coverage judgement in the context instead.
+        multi_question = _is_multi_question_query(query)
 
         # --- Gap detection (KB-014) ---
         gap_type = _classify_gap(chunks)
@@ -1067,6 +1129,7 @@ class KlaiKnowledgeHook(CustomLogger):
             context_chunks
             and kb_narrow
             and low_confidence_inject
+            and not multi_question
             and not user_provided_content_context
         ):
             # Strict + weak/tangential chunks is not a prompt problem. Bypass
@@ -1217,6 +1280,9 @@ class KlaiKnowledgeHook(CustomLogger):
             low_confidence_injection_disabled=_LOW_CONFIDENCE_INJECTION_DISABLED,
             low_confidence_strict_text=_LOW_CONFIDENCE_INJECTION_TEXT,
             low_confidence_open_text=_LOW_CONFIDENCE_OPEN_CONTEXT_TEXT,
+            multi_question_guard_text=_MULTI_QUESTION_GUARD_TEXT
+            if multi_question
+            else "",
         )
         if context_prompt.low_confidence_injection_applied:
             # NOTE: warning-level (not info) is deliberate. The litellm
