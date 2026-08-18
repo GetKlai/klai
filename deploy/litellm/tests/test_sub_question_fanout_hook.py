@@ -85,12 +85,23 @@ INCIDENT_MESSAGE = (
 
 
 class TestSplitSubQuestions:
-    def test_splits_pasted_question_list_and_caps_at_six(self, monkeypatch):
+    def test_splits_pasted_question_list_uncapped_by_default(self, monkeypatch):
+        """split_sub_questions(query) with no max_questions returns ALL usable
+        questions (no cap) — the hook itself does the capping so truncated
+        questions stay visible instead of being silently dropped (Fix 1)."""
         klai_knowledge = _load_hook(monkeypatch)
         questions = klai_knowledge._split_sub_questions(INCIDENT_MESSAGE)
-        assert len(questions) == 6  # 7 questions in the message, capped
+        assert len(questions) == 7  # all 7 questions in the message, uncapped
         assert questions[0] == "Wat moet onze webhook exact teruggeven om te routeren?"
         assert all(question.endswith("?") for question in questions)
+
+    def test_max_questions_caps_the_returned_list(self, monkeypatch):
+        klai_knowledge = _load_hook(monkeypatch)
+        questions = klai_knowledge._split_sub_questions(
+            INCIDENT_MESSAGE, max_questions=6
+        )
+        assert len(questions) == 6
+        assert questions[0] == "Wat moet onze webhook exact teruggeven om te routeren?"
 
     def test_strips_list_markers(self, monkeypatch):
         klai_knowledge = _load_hook(monkeypatch)
@@ -110,6 +121,30 @@ class TestSplitSubQuestions:
         klai_knowledge = _load_hook(monkeypatch)
         assert klai_knowledge._split_sub_questions("Wat is de responstijd?") == []
         assert klai_knowledge._split_sub_questions(None) == []
+
+    def test_numbered_list_without_question_marks_splits_as_sub_questions(
+        self, monkeypatch
+    ):
+        """Fix 5: a pasted procedure written as imperative steps (no '?'
+        anywhere) is still a set of standalone sub-questions in intent."""
+        klai_knowledge = _load_hook(monkeypatch)
+        questions = klai_knowledge._split_sub_questions(
+            "1. Geef de maximale timeout\n2. Beschrijf het retrygedrag"
+        )
+        assert questions == [
+            "Geef de maximale timeout",
+            "Beschrijf het retrygedrag",
+        ]
+
+    def test_mixed_message_with_one_real_question_is_not_split(self, monkeypatch):
+        """Fix 5: the list-marker fallback must NOT fire when the message
+        already contains a genuine '?'-terminated question — a pasted
+        procedure with one real question stays a single question."""
+        klai_knowledge = _load_hook(monkeypatch)
+        questions = klai_knowledge._split_sub_questions(
+            "Waarom werkt stap 3 niet?\n1. Open de app\n2. Klik op start"
+        )
+        assert questions == []
 
 
 class TestRetrieveBodyCarriesSubQueries:
@@ -158,7 +193,7 @@ class TestRetrieveBodyCarriesSubQueries:
 
 
 class TestGroupedContext:
-    def _build(self, monkeypatch, *, sub_query_results, chunks):
+    def _build(self, monkeypatch, *, sub_query_results, chunks, unchecked_questions=None):
         _load_hook(monkeypatch)
         from klai_kb_context_prompt import build_kb_context_prompt
         from klai_kb_confidence_policy import MULTI_QUESTION_FANOUT_GUARD_TEXT
@@ -175,6 +210,7 @@ class TestGroupedContext:
             low_confidence_open_text="OPEN-GUARD",
             multi_question_guard_text=MULTI_QUESTION_FANOUT_GUARD_TEXT,
             sub_query_results=sub_query_results,
+            unchecked_questions=unchecked_questions,
         )
 
     def test_groups_evidence_per_question_with_coverage_markers(self, monkeypatch):
@@ -210,6 +246,132 @@ class TestGroupedContext:
             chunks=[{"chunk_id": "c1", "text": "inhoud", "title": "Titel"}],
         )
         assert "[Question" not in prompt.context_block
+
+    def test_low_confidence_question_group_gets_extra_marker(self, monkeypatch):
+        """Fix 2: a question group with evidence but low/unknown confidence
+        gets an explicit per-question low-relevance marker right after its
+        evidence, not just the aggregate low-confidence guard."""
+        prompt = self._build(
+            monkeypatch,
+            sub_query_results=[
+                {
+                    "index": 1,
+                    "query": "Wat is de responstijd?",
+                    "evidence_count": 1,
+                    "confidence_band": "low",
+                },
+                {
+                    "index": 2,
+                    "query": "Wat is de SLA?",
+                    "evidence_count": 1,
+                    "confidence_band": "high",
+                },
+            ],
+            chunks=[
+                {
+                    "chunk_id": "c1",
+                    "text": "Responstijd tekst.",
+                    "title": "Responstijd",
+                    "sub_query_index": 1,
+                },
+                {
+                    "chunk_id": "c2",
+                    "text": "SLA tekst.",
+                    "title": "SLA",
+                    "sub_query_index": 2,
+                },
+            ],
+        )
+        block = prompt.context_block
+        assert "[Question 1: Wat is de responstijd?]" in block
+        low_marker = (
+            "[Low relevance for this question — cite only what is literally "
+            "in these chunks; do not derive or transfer values from them.]"
+        )
+        assert low_marker in block
+        # The marker follows question 1's evidence, not question 2's.
+        q1_pos = block.index("[Question 1:")
+        q2_pos = block.index("[Question 2:")
+        marker_pos = block.index(low_marker)
+        assert q1_pos < marker_pos < q2_pos
+
+    def test_unknown_confidence_also_gets_marker(self, monkeypatch):
+        prompt = self._build(
+            monkeypatch,
+            sub_query_results=[
+                {
+                    "index": 1,
+                    "query": "Wat is de responstijd?",
+                    "evidence_count": 1,
+                    "confidence_band": "unknown",
+                },
+            ],
+            chunks=[
+                {
+                    "chunk_id": "c1",
+                    "text": "Responstijd tekst.",
+                    "title": "Responstijd",
+                    "sub_query_index": 1,
+                },
+            ],
+        )
+        assert "[Low relevance for this question" in prompt.context_block
+
+    def test_high_confidence_question_group_has_no_marker(self, monkeypatch):
+        prompt = self._build(
+            monkeypatch,
+            sub_query_results=[
+                {
+                    "index": 1,
+                    "query": "Wat is de SLA?",
+                    "evidence_count": 1,
+                    "confidence_band": "high",
+                },
+            ],
+            chunks=[
+                {
+                    "chunk_id": "c1",
+                    "text": "SLA tekst.",
+                    "title": "SLA",
+                    "sub_query_index": 1,
+                },
+            ],
+        )
+        assert "[Low relevance for this question" not in prompt.context_block
+
+    def test_unchecked_questions_rendered_after_grouped_blocks(self, monkeypatch):
+        """Fix 1: questions beyond the fan-out cap are rendered with
+        continuous numbering picking up from the searched questions."""
+        prompt = self._build(
+            monkeypatch,
+            sub_query_results=[
+                {"index": 1, "query": "Vraag een?", "evidence_count": 1},
+                {"index": 2, "query": "Vraag twee?", "evidence_count": 0},
+            ],
+            chunks=[
+                {
+                    "chunk_id": "c1",
+                    "text": "Antwoord een.",
+                    "title": "Een",
+                    "sub_query_index": 1,
+                }
+            ],
+            unchecked_questions=["Vraag drie?", "Vraag vier?"],
+        )
+        block = prompt.context_block
+        assert "[Question 3: Vraag drie?]" in block
+        assert "[Question 4: Vraag vier?]" in block
+        not_searched_marker = (
+            "[This question was NOT separately searched (question limit "
+            "reached) — answer it only if the evidence above clearly covers "
+            "it; otherwise say you could not fully check it. Do NOT say it "
+            "is not in the knowledge base.]"
+        )
+        assert not_searched_marker in block
+        # Rendered after the grouped (searched) blocks.
+        q2_pos = block.index("[Question 2:")
+        q3_pos = block.index("[Question 3:")
+        assert q2_pos < q3_pos
 
 
 class TestActivityFooterSubQuestions:
@@ -338,3 +500,164 @@ class TestHookFanoutEndToEnd:
         meta = result["metadata"]["_klai_kb_meta"]
         assert meta["multi_question"] is True
         assert len(meta["sub_query_coverage"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_seventh_question_beyond_cap_is_surfaced_not_dropped(
+        self, monkeypatch, caplog
+    ):
+        """Fix 1: INCIDENT_MESSAGE has 7 questions; the 7th (beyond
+        MAX_SUB_QUESTIONS=6) must not be silently dropped — it is logged,
+        rendered in the prompt as unchecked, and carried in kb_meta."""
+        from tests.test_klai_knowledge_hook import (
+            _make_cache,
+            _make_resp,
+            _make_user_api_key,
+            _patch_http,
+        )
+
+        mod = _load_hook(monkeypatch)
+        caplog.set_level("WARNING", logger="klai_knowledge")
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache()
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": INCIDENT_MESSAGE}],
+        }
+        chunks = [
+            {
+                "text": "Meldingen worden bij een storing niet opnieuw aangeboden.",
+                "scope": "org",
+                "metadata": {"title": "Gespreksmeldingen"},
+                "source_url": "https://docs.klai.example/meldingen",
+                "chunk_id": "meldingen-1",
+                "reranker_score": 0.62,
+                "sub_query_index": 1,
+            }
+        ]
+        # One sub_results entry per sub_query actually sent (6), matching
+        # the real retrieval-api fan-out contract (1 SubQueryResult per
+        # sub_query index, success or failure).
+        sub_results = [
+            {"index": i, "query": f"vraag {i}?", "confidence_band": "medium", "evidence_count": 1}
+            for i in range(1, 7)
+        ]
+        retrieval_resp = _make_resp(
+            {
+                "chunks": chunks,
+                "retrieval_bypassed": False,
+                "confidence_band": "medium",
+                "sub_results": sub_results,
+            }
+        )
+        portal_resp = _make_resp(
+            {
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": True,
+                "kb_slugs_filter": None,
+                "kb_narrow": True,
+                "kb_pref_version": 12,
+                "zitadel_user_id": "300000000000000002",
+            }
+        )
+
+        with _patch_http(
+            monkeypatch, portal_resp=portal_resp, retrieval_resp=retrieval_resp
+        ) as mock_client:
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        retrieve_call = mock_client.post.call_args_list[-1]
+        sent_body = retrieve_call.kwargs.get("json") or retrieve_call.args[1]
+        assert len(sent_body["sub_queries"]) == 6
+
+        system_content = "\n".join(
+            m["content"] for m in result["messages"] if m.get("role") == "system"
+        )
+        assert (
+            "[Question 7: Hoe lang na een gesprek is de opname gemiddeld beschikbaar?]"
+            in system_content
+        )
+        assert "This question was NOT separately searched" in system_content
+
+        meta = result["metadata"]["_klai_kb_meta"]
+        assert meta["unchecked_questions"] == [
+            "Hoe lang na een gesprek is de opname gemiddeld beschikbaar?"
+        ]
+
+        assert "sub_questions_truncated" in caplog.text
+        assert "total_questions=7" in caplog.text
+        assert "searched=6" in caplog.text
+        assert "unchecked=1" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_six_or_fewer_questions_no_truncation_warning(
+        self, monkeypatch, caplog
+    ):
+        from tests.test_klai_knowledge_hook import (
+            _make_cache,
+            _make_resp,
+            _make_user_api_key,
+            _patch_http,
+        )
+
+        mod = _load_hook(monkeypatch)
+        caplog.set_level("WARNING", logger="klai_knowledge")
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache()
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Wat is de responstijd?\nWat is de SLA?",
+                }
+            ],
+        }
+        chunks = [
+            {
+                "text": "De responstijd is 4 uur.",
+                "scope": "org",
+                "metadata": {"title": "SLA"},
+                "source_url": "https://docs.klai.example/sla",
+                "chunk_id": "sla-1",
+                "reranker_score": 0.7,
+                "sub_query_index": 1,
+            }
+        ]
+        retrieval_resp = _make_resp(
+            {
+                "chunks": chunks,
+                "retrieval_bypassed": False,
+                "confidence_band": "medium",
+                "sub_results": [
+                    {"index": 1, "query": "Wat is de responstijd?", "evidence_count": 1},
+                    {"index": 2, "query": "Wat is de SLA?", "evidence_count": 0},
+                ],
+            }
+        )
+        portal_resp = _make_resp(
+            {
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": True,
+                "kb_slugs_filter": None,
+                "kb_narrow": True,
+                "kb_pref_version": 12,
+                "zitadel_user_id": "300000000000000002",
+            }
+        )
+
+        with _patch_http(
+            monkeypatch, portal_resp=portal_resp, retrieval_resp=retrieval_resp
+        ) as mock_client:
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        assert "sub_questions_truncated" not in caplog.text
+        meta = result["metadata"]["_klai_kb_meta"]
+        assert meta["unchecked_questions"] is None

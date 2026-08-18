@@ -60,13 +60,18 @@ KB_ANSWER_FORMAT_INSTRUCTION = (
 def _sub_query_grouped_context(
     context_chunks: list[dict[str, Any]],
     sub_query_results: list[dict] | None,
+    unchecked_questions: list[str] | None = None,
 ) -> str | None:
     """Render evidence grouped per sub-question, with explicit coverage notes.
 
     Returns ``None`` when there is no per-question retrieval info, so the
     single-query render path stays untouched. Questions without evidence and
     questions whose retrieval failed get distinct, actionable markers — the
-    model must never conflate "not found" with "could not check".
+    model must never conflate "not found" with "could not check". Questions
+    beyond the retrieval fan-out cap (``unchecked_questions``) are rendered
+    after the grouped blocks with continuous numbering picking up where the
+    searched questions left off, so the model never conflates a truncated
+    question with a searched-but-empty one.
     """
     if not sub_query_results:
         return None
@@ -98,12 +103,30 @@ def _sub_query_grouped_context(
         question_chunks = chunks_by_index.get(index) if isinstance(index, int) else None
         if question_chunks:
             rendered = render_evidence_context(question_chunks, include_source_urls=False)
-            blocks.append(f"{header}\n{rendered}")
+            block = f"{header}\n{rendered}"
+            if entry.get("confidence_band") in ("low", "unknown"):
+                block += (
+                    "\n[Low relevance for this question — cite only what is "
+                    "literally in these chunks; do not derive or transfer "
+                    "values from them.]"
+                )
+            blocks.append(block)
         else:
             blocks.append(
                 f"{header}\n[No knowledge-base evidence found for this "
                 "question — say plainly, in the user's language, that it is "
                 "not in the knowledge base.]"
+            )
+    if unchecked_questions:
+        start_index = len(entries) + 1
+        for offset, question in enumerate(unchecked_questions):
+            index = start_index + offset
+            header = f"[Question {index}: {question}]"
+            blocks.append(
+                f"{header}\n[This question was NOT separately searched "
+                "(question limit reached) — answer it only if the evidence "
+                "above clearly covers it; otherwise say you could not fully "
+                "check it. Do NOT say it is not in the knowledge base.]"
             )
     if ungrouped:
         rendered = render_evidence_context(ungrouped, include_source_urls=False)
@@ -133,6 +156,7 @@ def build_kb_context_prompt(
     low_confidence_open_text: str,
     multi_question_guard_text: str = "",
     sub_query_results: list[dict] | None = None,
+    unchecked_questions: list[str] | None = None,
 ) -> KbContextPrompt:
     """Build the chunks-present KB prompt block and its metadata side effects."""
     lines = [kb_chunks_present_header(kb_narrow), KB_ANSWER_FORMAT_INSTRUCTION]
@@ -153,7 +177,9 @@ def build_kb_context_prompt(
     )
     allowed_image_urls: set[str] = set()
 
-    grouped_block = _sub_query_grouped_context(context_chunks, sub_query_results)
+    grouped_block = _sub_query_grouped_context(
+        context_chunks, sub_query_results, unchecked_questions
+    )
     if grouped_block is not None:
         lines.append(grouped_block)
     else:

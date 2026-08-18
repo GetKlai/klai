@@ -55,6 +55,7 @@ from klai_kb_confidence_policy import (
     LOW_CONFIDENCE_INJECTION_DISABLED as _LOW_CONFIDENCE_INJECTION_DISABLED,
     LOW_CONFIDENCE_INJECTION_TEXT as _LOW_CONFIDENCE_INJECTION_TEXT,
     LOW_CONFIDENCE_OPEN_CONTEXT_TEXT as _LOW_CONFIDENCE_OPEN_CONTEXT_TEXT,
+    MAX_SUB_QUESTIONS as _MAX_SUB_QUESTIONS,
     MULTI_QUESTION_FANOUT_GUARD_TEXT as _MULTI_QUESTION_FANOUT_GUARD_TEXT,
     MULTI_QUESTION_GUARD_TEXT as _MULTI_QUESTION_GUARD_TEXT,
     has_direct_evidence_for_query as _has_direct_evidence_for_query,
@@ -245,6 +246,7 @@ __all__ = [
     "_MULTI_QUESTION_FANOUT_GUARD_TEXT",
     "_is_multi_question_query",
     "_split_sub_questions",
+    "_MAX_SUB_QUESTIONS",
     "_chunk_below_evidence_floor",
     "KLAI_KB_MIN_EVIDENCE_SCORE",
     "_META_QUERY_PATTERNS",
@@ -291,8 +293,11 @@ def _chunk_below_evidence_floor(chunk: dict) -> bool:
     Only reranker/final scores count: the raw retrieval ``score`` field uses a
     different scale (and defaults to 0.0 in several producers), so it must not
     drop chunks on its own. No score at all keeps the chunk (fail-open).
+    ``final_score`` is checked before ``reranker_score``: it is the
+    post-evidence-tier ranking truth when present and must win over a stale
+    pre-tier reranker score on the same chunk.
     """
-    for key in ("reranker_score", "final_score"):
+    for key in ("final_score", "reranker_score"):
         value = chunk.get(key)
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             return float(value) < KLAI_KB_MIN_EVIDENCE_SCORE
@@ -802,8 +807,23 @@ class KlaiKnowledgeHook(CustomLogger):
 
         # Multi-part messages: deterministic split into standalone
         # sub-questions; retrieval-api fans out one retrieval per question
-        # and returns per-question coverage (sub_results).
-        sub_questions = _split_sub_questions(query)
+        # and returns per-question coverage (sub_results). Questions beyond
+        # the fan-out cap are NOT dropped silently — they are surfaced to the
+        # model as unchecked (see unchecked_questions below) instead of
+        # being conflated with "not in the knowledge base".
+        all_sub_questions = _split_sub_questions(query)
+        sub_questions = all_sub_questions[:_MAX_SUB_QUESTIONS]
+        unchecked_questions = all_sub_questions[_MAX_SUB_QUESTIONS:]
+        if unchecked_questions:
+            logger.warning(
+                "sub_questions_truncated org_id=%s user_id=%s total_questions=%d "
+                "searched=%d unchecked=%d",
+                org_id,
+                user_id,
+                len(all_sub_questions),
+                len(sub_questions),
+                len(unchecked_questions),
+            )
         retrieve_body = _build_retrieve_body(
             rewritten_query=rewritten_query,
             raw_query=query,
@@ -1048,6 +1068,16 @@ class KlaiKnowledgeHook(CustomLogger):
             evidence_pack = _filter_evidence_pack_for_chunks(
                 evidence_pack, evidence_chunks
             )
+            if not evidence_chunks and isinstance(evidence_pack, dict):
+                # _filter_evidence_pack_for_chunks is shared with the LLM
+                # safety filter, which stamps "safety_filtered_all_sources"
+                # whenever it empties the sources list. That reason is wrong
+                # here — this branch dropped chunks for scoring below the
+                # relevance floor, not a safety block.
+                evidence_pack = {
+                    **evidence_pack,
+                    "no_citable_reason": "below_relevance_threshold",
+                }
         context_chunks = evidence_chunks
         safety_metadata = data.setdefault("metadata", {})
         if _llm_safety_enabled():
@@ -1302,6 +1332,7 @@ class KlaiKnowledgeHook(CustomLogger):
             if multi_question
             else "",
             sub_query_results=sub_query_results,
+            unchecked_questions=unchecked_questions or None,
         )
         if context_prompt.low_confidence_injection_applied:
             # NOTE: warning-level (not info) is deliberate. The litellm
@@ -1364,6 +1395,7 @@ class KlaiKnowledgeHook(CustomLogger):
             confidence_band=confidence_band,
             multi_question=multi_question,
             sub_query_coverage=sub_query_results,
+            unchecked_questions=unchecked_questions or None,
             original_stream=original_stream,
             render_mode=render_strategy.mode,
             retrieval_request_id=retrieval_request_id,

@@ -10,6 +10,7 @@ errors, never as "not in the knowledge base".
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -223,3 +224,116 @@ class TestRequestModelBounds:
     def test_sub_queries_optional_and_absent_by_default(self):
         req = RetrieveRequest(query="q", org_id="1")
         assert req.sub_queries is None
+
+    def test_sub_query_over_500_chars_is_rejected(self):
+        """Fix 7: each sub_queries entry is a standalone question, not a
+        pasted document — bounded independently of conversation_history."""
+        with pytest.raises(ValueError):
+            RetrieveRequest(
+                query="q",
+                org_id="1",
+                sub_queries=["a" * 501],
+            )
+
+    def test_sub_query_at_exactly_500_chars_is_accepted(self):
+        req = RetrieveRequest(
+            query="q",
+            org_id="1",
+            sub_queries=["a" * 500],
+        )
+        assert req.sub_queries == ["a" * 500]
+
+
+class TestSubQueryFanoutEmitsSingleEvent:
+    @pytest.mark.asyncio
+    async def test_emits_exactly_one_knowledge_queried_event(self, monkeypatch):
+        """Fix 3: one knowledge.queried product event for the ORIGINAL
+        question, not one per sub-question — the nested ``retrieve()`` calls
+        see ``klai_sub_query_internal=True`` and must skip their own emit."""
+        emitted: list[tuple[str, dict]] = []
+
+        def fake_emit_event(event_type, **kwargs):
+            emitted.append((event_type, kwargs))
+
+        monkeypatch.setattr(retrieve_module, "emit_event", fake_emit_event)
+
+        internal_flag_seen: list[bool] = []
+
+        async def fake_retrieve(sub_req, request, _auth=None):
+            internal_flag_seen.append(getattr(request.state, "klai_sub_query_internal", False))
+            chunk_id = "c-a" if "een" in sub_req.query else "c-b"
+            return _response(
+                "medium",
+                [_item("E1", chunk_id)],
+                [_source("S1", ["E1"])],
+            )
+
+        monkeypatch.setattr(retrieve_module, "retrieve", fake_retrieve)
+
+        request = MagicMock()
+        request.state = SimpleNamespace(
+            verified_caller=SimpleNamespace(org_id="org-1", user_id="user-1")
+        )
+
+        await retrieve_module._retrieve_sub_queries(
+            _request(["vraag een", "vraag twee"]), request, MagicMock()
+        )
+
+        # Both nested sub-question calls saw the internal-call flag set.
+        assert internal_flag_seen == [True, True]
+        # Flag is reset after the fan-out completes (try/finally).
+        assert request.state.klai_sub_query_internal is False
+
+        # Exactly one event for the merged original question — not 2.
+        assert len(emitted) == 1
+        event_type, kwargs = emitted[0]
+        assert event_type == "knowledge.queried"
+        assert kwargs["tenant_id"] == "org-1"
+        assert kwargs["user_id"] == "user-1"
+        assert kwargs["properties"]["had_results"] is True
+        assert kwargs["properties"]["result_count"] == 2
+
+    @pytest.mark.asyncio
+    async def test_skips_event_when_no_verified_identity(self, monkeypatch):
+        emitted: list[tuple[str, dict]] = []
+
+        def fake_emit_event(event_type, **kwargs):
+            emitted.append((event_type, kwargs))
+
+        monkeypatch.setattr(retrieve_module, "emit_event", fake_emit_event)
+
+        async def fake_retrieve(sub_req, request, _auth=None):
+            return _response("medium", [], [])
+
+        monkeypatch.setattr(retrieve_module, "retrieve", fake_retrieve)
+
+        request = MagicMock()
+        request.state = SimpleNamespace()  # no verified_caller / verified_tenant
+        request.url.path = "/retrieve"
+
+        await retrieve_module._retrieve_sub_queries(
+            _request(["vraag een", "vraag twee"]), request, MagicMock()
+        )
+
+        assert emitted == []
+
+
+class TestSubQueryTopKRespectsOne:
+    @pytest.mark.asyncio
+    async def test_top_k_one_is_not_bumped_to_two(self, monkeypatch):
+        """Fix 8: max(1, min(...)) — a caller explicitly asking for top_k=1
+        per sub-question must not be silently doubled to 2."""
+        captured = []
+
+        async def fake_retrieve(sub_req, request, _auth=None):
+            captured.append(sub_req)
+            return _response("medium", [], [])
+
+        monkeypatch.setattr(retrieve_module, "retrieve", fake_retrieve)
+        monkeypatch.setattr(retrieve_module.settings, "sub_query_top_k", 1)
+
+        await retrieve_module._retrieve_sub_queries(
+            _request(["vraag een", "vraag twee"]), MagicMock(), MagicMock()
+        )
+
+        assert all(sub_req.top_k == 1 for sub_req in captured)

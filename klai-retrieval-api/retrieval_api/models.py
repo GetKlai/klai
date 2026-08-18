@@ -8,6 +8,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 # content field. Longer strings are rejected with HTTP 422 at the Pydantic layer.
 _CONVERSATION_CONTENT_MAX_CHARS = 8_000
 
+# Sub-question fan-out: each entry must be a standalone question, not a
+# pasted document. Bounded independently of conversation_history's limit.
+_SUB_QUERY_MAX_CHARS = 500
+
 
 class PageContext(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -85,6 +89,22 @@ class RetrieveRequest(BaseModel):
                     f"{_CONVERSATION_CONTENT_MAX_CHARS} characters"
                 )
         return history
+
+    @field_validator("sub_queries")
+    @classmethod
+    def _validate_sub_query_content_length(cls, sub_queries: list[str] | None) -> list[str] | None:
+        """Reject any sub_queries entry exceeding ``_SUB_QUERY_MAX_CHARS``.
+
+        Mirrors ``_validate_conversation_content_length``: reject rather than
+        silently truncate, so an oversized entry always yields 422 instead of
+        a quietly clipped question.
+        """
+        if sub_queries is None:
+            return sub_queries
+        for idx, entry in enumerate(sub_queries):
+            if isinstance(entry, str) and len(entry.strip()) > _SUB_QUERY_MAX_CHARS:
+                raise ValueError(f"sub_queries[{idx}] exceeds {_SUB_QUERY_MAX_CHARS} characters")
+        return sub_queries
 
 
 class ChunkResult(BaseModel):

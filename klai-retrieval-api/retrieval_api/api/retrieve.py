@@ -170,7 +170,7 @@ async def _retrieve_sub_queries(
         if isinstance(query, str) and query.strip()
     ]
     t0 = time.perf_counter()
-    per_query_top_k = max(2, min(req.top_k, settings.sub_query_top_k))
+    per_query_top_k = max(1, min(req.top_k, settings.sub_query_top_k))
 
     async def _one(sub_query: str) -> RetrieveResponse:
         sub_req = req.model_copy(
@@ -186,9 +186,18 @@ async def _retrieve_sub_queries(
         )
         return await retrieve(sub_req, request, _auth=auth)
 
-    results = await asyncio.gather(
-        *[_one(query) for _, query in sub_queries], return_exceptions=True
-    )
+    # Each recursive ``retrieve()`` call below would otherwise emit its own
+    # knowledge.queried product event — 6 events for one user question. Mark
+    # the request as an internal sub-query call so the emit-site in
+    # ``retrieve()`` skips it; this function emits a single event for the
+    # original question after the fan-out completes (see below).
+    request.state.klai_sub_query_internal = True
+    try:
+        results = await asyncio.gather(
+            *[_one(query) for _, query in sub_queries], return_exceptions=True
+        )
+    finally:
+        request.state.klai_sub_query_internal = False
 
     sub_results: list[SubQueryResult] = []
     indexed_packs: list[tuple[int, EvidencePack | None]] = []
@@ -246,6 +255,43 @@ async def _retrieve_sub_queries(
         evidence_items=len(merged_pack.items),
         retrieval_ms=round(retrieval_ms, 1),
     )
+
+    # SPEC-GRAFANA-METRICS: knowledge.queried event for the ORIGINAL question
+    # — the per-sub-question emits were suppressed above. Mirrors the emit
+    # site in ``retrieve()`` exactly: same identity precedence, same
+    # properties shape.
+    verified = getattr(request.state, "verified_caller", None)
+    verified_tenant = getattr(request.state, "verified_tenant", None)
+    if verified is not None:
+        event_tenant_id = verified.org_id
+        event_user_id = verified.user_id
+    elif verified_tenant is not None:
+        event_tenant_id = verified_tenant.org_id
+        event_user_id = None
+    else:
+        event_tenant_id = None
+        event_user_id = None
+
+    if event_tenant_id is not None:
+        emit_event(
+            "knowledge.queried",
+            tenant_id=event_tenant_id,
+            user_id=event_user_id,
+            properties={
+                "scope": req.scope,
+                "kb_slugs": list(req.kb_slugs) if req.kb_slugs else [],
+                "had_results": len(merged_chunks) > 0,
+                "result_count": len(merged_chunks),
+            },
+        )
+    else:
+        logger.warning(
+            "product_event_skipped_no_identity",
+            event_type="knowledge.queried",
+            scope=req.scope,
+            path=request.url.path,
+        )
+
     return RetrieveResponse(
         query_resolved=req.query,
         retrieval_bypassed=False,
@@ -994,7 +1040,13 @@ async def retrieve(
         event_tenant_id = None
         event_user_id = None
 
-    if event_tenant_id is not None:
+    if getattr(request.state, "klai_sub_query_internal", False):
+        # This call is a sub-question leg of a fan-out request (see
+        # ``_retrieve_sub_queries``): the caller emits ONE knowledge.queried
+        # event for the original question after the fan-out completes, not
+        # one per sub-question.
+        pass
+    elif event_tenant_id is not None:
         emit_event(
             "knowledge.queried",
             tenant_id=event_tenant_id,

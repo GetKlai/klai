@@ -91,13 +91,24 @@ def is_multi_question_query(query: object) -> bool:
     return query.count("?") >= 2
 
 
-def split_sub_questions(query: object, max_questions: int = MAX_SUB_QUESTIONS) -> list[str]:
+def split_sub_questions(query: object, max_questions: int | None = None) -> list[str]:
     """Split a multi-part message into standalone sub-questions for retrieval.
 
     Deterministic on purpose (no LLM): pasted question lists put one question
     per line, so line-shaped questions win; inline prose falls back to
-    ``?``-terminated segments. Returns ``[]`` unless at least two usable
-    questions are found — single questions keep the normal retrieval path.
+    ``?``-terminated segments; a numbered/bulleted list with no ``?`` anywhere
+    in the message falls back to list-marker lines (e.g. a pasted procedure
+    written as imperative steps). The list-marker fallback only fires when NO
+    line in the message ends with ``?`` — a genuine mixed message (one real
+    question plus unrelated list lines) must never be split. Returns ``[]``
+    unless at least two usable questions are found — single questions keep
+    the normal retrieval path.
+
+    ``max_questions`` caps the returned list. ``None`` (the default) returns
+    every usable question found, uncapped: callers that need a bounded subset
+    for downstream fan-out (e.g. retrieval) must slice the result themselves
+    and keep the remainder visible instead of relying on this function to
+    silently drop them.
     """
     if not isinstance(query, str):
         return []
@@ -117,8 +128,23 @@ def split_sub_questions(query: object, max_questions: int = MAX_SUB_QUESTIONS) -
             if len(segment) >= _MIN_SUB_QUESTION_CHARS
         ]
     if len(questions) < 2:
+        any_question_mark_line = any(
+            line.strip().endswith("?") for line in query.splitlines()
+        )
+        if not any_question_mark_line:
+            list_marker_questions: list[str] = []
+            for line in query.splitlines():
+                raw = line.strip()
+                if not _LEADING_LIST_MARKER_RE.match(raw):
+                    continue
+                stripped = _LEADING_LIST_MARKER_RE.sub("", raw)
+                if len(stripped) >= _MIN_SUB_QUESTION_CHARS:
+                    list_marker_questions.append(stripped[-_MAX_SUB_QUESTION_CHARS:])
+            if len(list_marker_questions) >= 2:
+                questions = list_marker_questions
+    if len(questions) < 2:
         return []
-    return questions[:max_questions]
+    return questions if max_questions is None else questions[:max_questions]
 
 
 def low_confidence_query_tokens(query: object) -> set[str]:
