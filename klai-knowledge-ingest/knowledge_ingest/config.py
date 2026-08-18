@@ -234,6 +234,23 @@ class Settings(BaseSettings):
         default=3,
         validation_alias=AliasChoices("KLAI_CRAWL_ANTIBOT_STOP_MIN_COUNT"),
     )
+    # 2026-08-18 (Deel B, "a stop-signal should slow you down, not give up") —
+    # a single, explicit pause after ``crawl_site`` observes a RATE_LIMITED
+    # stop signal and lowers its in-job pacing, before the next (slower)
+    # batch goes out. Deliberately NOT the same value as
+    # ``crawl_sequential_recovery_cooldown_seconds`` (75s) — that cooldown
+    # is calibrated to crawl4ai's browser-pool recycle window (a *browser
+    # session* got flagged and needs a fresh one), a different failure class
+    # from a bulk-level 429 telling us to pace down. A plain rate-limit
+    # signal needs a brief breather, not a full session recycle — short
+    # enough that a temporarily-touchy site doesn't burn its whole crawl
+    # budget on pauses, long enough to be a real backoff rather than a
+    # no-op alongside the inter-chunk pacing gap _chunked_bulk_fetch already
+    # inserts from the (now lower) rate_limit itself.
+    crawl_rate_limit_slowdown_cooldown_seconds: float = Field(
+        default=10.0,
+        validation_alias=AliasChoices("KLAI_CRAWL_RATE_LIMIT_SLOWDOWN_COOLDOWN_SECONDS"),
+    )
     # LLM enrichment (contextual prefix + HyPE questions via LiteLLM proxy)
     litellm_url: str = "http://litellm:4000"
     litellm_api_key: str = ""

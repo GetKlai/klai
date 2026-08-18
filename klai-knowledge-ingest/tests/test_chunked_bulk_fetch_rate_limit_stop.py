@@ -242,11 +242,23 @@ async def test_observed_rate_limit_still_triggers_domain_rate_limit_lowering(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Regression guard for the interaction with
-    ``domain_rate_limit_control.count_rate_limit_observations``: even
-    though only ONE chunk's URL was actually rate-limited, that single real
-    observation must still appear in ``crawl_site``'s outcomes as
-    RATE_LIMITED — the NOT_FETCHED_RATE_LIMIT_STOP entries for the skipped
-    URLs must not silently replace it."""
+    ``domain_rate_limit_control.count_rate_limit_observations``: a real
+    RATE_LIMITED observation must always survive into ``crawl_site``'s
+    outcomes and be counted as congestion, however many chunks/retries it
+    takes to get there.
+
+    Deel B (2026-08-18, "a stop-signal should slow you down, not give up")
+    changed what happens to the URLs skipped by the stop signal: they are
+    no longer immediately abandoned as NOT_FETCHED_RATE_LIMIT_STOP — they
+    are retried, at a lowered pace, on a later batch. This fake models a
+    site that is consistently (but not permanently-unrecoverably) 429ing:
+    every URL it actually receives gets a real, observed RATE_LIMITED
+    result — so the retry succeeds at OBSERVING every URL, even though
+    every one of those observations is itself congestion. See
+    ``tests/test_crawl_rate_limit_slowdown.py`` for the dedicated give-up
+    (NOT_FETCHED_RATE_LIMIT_STOP after exhausting the retry budget) and
+    BLOCKED_ANTI_BOT (stop immediately, no retry) coverage.
+    """
 
     async def _fake_sitemap(_base: str) -> list[str]:
         return [
@@ -272,7 +284,12 @@ async def test_observed_rate_limit_still_triggers_domain_rate_limit_lowering(
     async def _fake_crawl_sync(
         _client: httpx.AsyncClient, payload: dict[str, Any]
     ) -> dict[str, Any]:
-        return {"results": [_rate_limited_page(payload["urls"][0])]}
+        # Every URL crawl4ai actually receives gets its own real 429 —
+        # unlike the earlier single-URL-only fake, this must hold across
+        # chunk sizes > 1 (Deel B's slowdown floor can raise the burst
+        # size relative to this test's deliberately tiny starting
+        # rate_limit; see MIN_DOMAIN_RATE_LIMIT).
+        return {"results": [_rate_limited_page(u) for u in payload["urls"]]}
 
     monkeypatch.setattr(crawl4ai_client, "_crawl_sync", _fake_crawl_sync)
 
@@ -284,15 +301,14 @@ async def test_observed_rate_limit_still_triggers_domain_rate_limit_lowering(
 
     by_url = {o["url"]: o["reason_code"] for o in outcomes}
     assert by_url["https://example.com/1"] == FetchReasonCode.RATE_LIMITED.value
-    assert by_url["https://example.com/2"] == FetchReasonCode.NOT_FETCHED_RATE_LIMIT_STOP.value
-    assert by_url["https://example.com/3"] == FetchReasonCode.NOT_FETCHED_RATE_LIMIT_STOP.value
+    assert by_url["https://example.com/2"] == FetchReasonCode.RATE_LIMITED.value
+    assert by_url["https://example.com/3"] == FetchReasonCode.RATE_LIMITED.value
+    assert FetchReasonCode.NOT_FETCHED_RATE_LIMIT_STOP.value not in by_url.values()
 
     # The congestion signal counted by domain_rate_limit_control fires on
-    # RATE_LIMITED / BLOCKED_ANTI_BOT — confirm the one real observation is
+    # RATE_LIMITED / BLOCKED_ANTI_BOT — confirm every real observation is
     # present and would still trip it. The seed page (fetched separately,
-    # SUCCESS) is the only clean observation; the two
-    # NOT_FETCHED_RATE_LIMIT_STOP skips must NOT count as additional clean
-    # or congestion signals.
+    # SUCCESS) is the only clean observation.
     from knowledge_ingest.domain_rate_limit_control import count_rate_limit_observations
 
     observation = count_rate_limit_observations(outcomes)
