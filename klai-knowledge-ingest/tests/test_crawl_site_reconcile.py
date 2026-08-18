@@ -1095,6 +1095,39 @@ def test_combine_bulk_responses_opaque_5xx_transport_error_all_http_5xx() -> Non
 
 
 # ---------------------------------------------------------------------------
+# _is_recoverable_bulk_failure (fix/bulk-timeout-scales-with-pacing) —
+# widens the old 5xx-only trigger (_is_bulk_5xx_error) to also cover a bulk
+# read-timeout, since both share the same "client-side cause is unknowable
+# from the transport response alone" property that makes a one-URL-at-a-time
+# retry simultaneously the mitigation and the diagnosis.
+# ---------------------------------------------------------------------------
+
+
+class TestIsRecoverableBulkFailure:
+    def test_5xx_status_error_is_recoverable(self) -> None:
+        assert crawl4ai_client._is_recoverable_bulk_failure(_opaque_bulk_500_http_status_error())
+
+    def test_4xx_status_error_is_not_recoverable(self) -> None:
+        request = httpx.Request("POST", "http://crawl4ai:11235/crawl")
+        response = httpx.Response(400, json={"detail": "Bad Request"}, request=request)
+        exc = httpx.HTTPStatusError("crawl4ai failed", request=request, response=response)
+        assert not crawl4ai_client._is_recoverable_bulk_failure(exc)
+
+    def test_read_timeout_is_recoverable(self) -> None:
+        assert crawl4ai_client._is_recoverable_bulk_failure(
+            httpx.ReadTimeout("simulated bulk timeout")
+        )
+
+    def test_connect_timeout_is_recoverable(self) -> None:
+        assert crawl4ai_client._is_recoverable_bulk_failure(
+            httpx.ConnectTimeout("simulated connect timeout")
+        )
+
+    def test_generic_exception_is_not_recoverable(self) -> None:
+        assert not crawl4ai_client._is_recoverable_bulk_failure(ValueError("boom"))
+
+
+# ---------------------------------------------------------------------------
 # crawl_site — sequential bulk-5xx recovery (2026-08-14, intermedia.com)
 # ---------------------------------------------------------------------------
 
@@ -1305,29 +1338,124 @@ async def test_crawl_site_no_sequential_recovery_on_bulk_4xx(
 
 
 @pytest.mark.asyncio
-async def test_crawl_site_no_sequential_recovery_on_bulk_timeout(
+async def test_crawl_site_recovers_batch_via_sequential_bulk_timeout_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A bulk transport timeout (not an HTTPStatusError at all) must NOT
-    trigger the sequential-recovery fallback — _is_bulk_5xx_error requires
-    an httpx.HTTPStatusError with a 5xx status, which a timeout is not."""
+    """A bulk transport read-timeout (not an HTTPStatusError at all) MUST
+    ALSO trigger the sequential-recovery fallback, exactly like a bulk 5xx
+    does — ``_is_recoverable_bulk_failure`` widens the old 5xx-only trigger
+    (``_is_bulk_5xx_error``) to include ``httpx.TimeoutException``.
+
+    Regression test for the 17-08 22:00 production run (intermedia.com,
+    rate_limit=0.5): ``crawl_sequential_recovery_started`` was 0 while 5
+    bulk chunks failed on read-timeout, so the real 429 signal crawl4ai
+    itself logged (254 occurrences in the container log) never reached
+    ``fetch_outcomes`` — every URL in a timed-out chunk was written off as
+    a bare ``timeout`` batch-wide, with no per-URL diagnosis attempted."""
 
     async def _fake_sitemap(_base: str) -> list[str]:
-        return ["https://example.com/page-a", "https://example.com/page-b"]
+        return [
+            "https://example.com/page-a",
+            "https://example.com/page-b",
+            "https://example.com/page-c",
+        ]
 
     monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _fake_sitemap)
     _patch_seed(monkeypatch, _seed("https://example.com"))
 
-    single_page_calls: list[str] = []
+    def _success_page(url: str) -> dict[str, Any]:
+        return {
+            "url": url,
+            "success": True,
+            "status_code": 200,
+            "html": "<html><body>Real page content, plenty of words here.</body></html>",
+            "markdown": "Real page content, plenty of words here.",
+            "links": {"internal": []},
+            "media": {},
+        }
 
     async def _fake_crawl_sync(
         _client: httpx.AsyncClient,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         urls = payload["urls"]
-        if len(urls) == 1:
-            single_page_calls.append(urls[0])
-        raise httpx.ReadTimeout("simulated bulk timeout")
+        if len(urls) > 1:
+            # The bulk batch request — always times out (the self-imposed
+            # pacing scenario: the chunk's own mean_delay exceeded the
+            # fixed httpx read timeout before a real result came back).
+            raise httpx.ReadTimeout("simulated bulk timeout")
+
+        # Sequential single-page recovery request.
+        (url,) = urls
+        if url == "https://example.com/page-b":
+            raise httpx.ReadTimeout("simulated per-url timeout")
+        return {"results": [_success_page(url)]}
+
+    monkeypatch.setattr(crawl4ai_client, "_crawl_sync", _fake_crawl_sync)
+
+    results, outcomes = await crawl4ai_client.crawl_site(
+        start_url="https://example.com",
+        max_pages=10,
+    )
+
+    by_url = {o["url"]: o for o in outcomes}
+    assert by_url["https://example.com/page-a"]["reason_code"] == FetchReasonCode.SUCCESS.value
+    assert by_url["https://example.com/page-b"]["reason_code"] == FetchReasonCode.TIMEOUT.value
+    assert by_url["https://example.com/page-c"]["reason_code"] == FetchReasonCode.SUCCESS.value
+
+    result_urls = {r.url for r in results}
+    assert "https://example.com/page-a" in result_urls
+    assert "https://example.com/page-c" in result_urls
+    assert "https://example.com/page-b" not in result_urls
+
+
+@pytest.mark.asyncio
+async def test_crawl_site_bulk_timeout_recovery_cap_marks_timeout_not_http_5xx(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When sequential recovery is triggered by a bulk TIMEOUT (not a 5xx)
+    and its budget runs out mid-batch, the abandoned URLs must be labelled
+    ``timeout`` — not the historical hardcoded ``http_5xx`` default, which
+    would misreport what was actually observed for a trigger that was never
+    a 5xx at all."""
+
+    async def _fake_sitemap(_base: str) -> list[str]:
+        return [
+            "https://example.com/page-a",
+            "https://example.com/page-b",
+            "https://example.com/page-c",
+        ]
+
+    monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _fake_sitemap)
+    _patch_seed(monkeypatch, _seed("https://example.com"))
+    # Force the cap to trip after the very first sequential retry.
+    monkeypatch.setattr(crawl4ai_client, "_MAX_SEQUENTIAL_RECOVERY", 1)
+
+    attempted_urls: list[str] = []
+
+    async def _fake_crawl_sync(
+        _client: httpx.AsyncClient,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        urls = payload["urls"]
+        if len(urls) > 1:
+            raise httpx.ReadTimeout("simulated bulk timeout")
+
+        (url,) = urls
+        attempted_urls.append(url)
+        return {
+            "results": [
+                {
+                    "url": url,
+                    "success": True,
+                    "status_code": 200,
+                    "html": "<html><body>Recovered page content, several words.</body></html>",
+                    "markdown": "Recovered page content, several words.",
+                    "links": {"internal": []},
+                    "media": {},
+                }
+            ]
+        }
 
     monkeypatch.setattr(crawl4ai_client, "_crawl_sync", _fake_crawl_sync)
 
@@ -1336,10 +1464,15 @@ async def test_crawl_site_no_sequential_recovery_on_bulk_timeout(
         max_pages=10,
     )
 
-    assert single_page_calls == []
-    by_url = {o["url"]: o for o in outcomes}
-    assert by_url["https://example.com/page-a"]["reason_code"] == FetchReasonCode.TIMEOUT.value
-    assert by_url["https://example.com/page-b"]["reason_code"] == FetchReasonCode.TIMEOUT.value
+    # Budget of 1: only the first URL in the batch is actually re-fetched.
+    assert attempted_urls == ["https://example.com/page-a"]
+
+    by_url = {o["url"]: o["reason_code"] for o in outcomes}
+    assert by_url["https://example.com/page-a"] == FetchReasonCode.SUCCESS.value
+    # Capped mid-batch by a TIMEOUT trigger — the abandoned URLs must carry
+    # the honest `timeout` label, not the 5xx-flavoured default.
+    assert by_url["https://example.com/page-b"] == FetchReasonCode.TIMEOUT.value
+    assert by_url["https://example.com/page-c"] == FetchReasonCode.TIMEOUT.value
 
 
 # ---------------------------------------------------------------------------
@@ -1673,11 +1806,18 @@ class TestClassifyFetchOutcomeRateLimitedWrapper:
 async def test_recovery_stops_immediately_on_rate_limited(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A confirmed rate-limit during sequential bulk-5xx recovery means the
+    """A confirmed rate-limit during sequential bulk recovery means the
     target site explicitly told us to back off. The recovery loop must stop
     after the FIRST 429 — no second attempt — and mark every remaining URL
-    in the batch RATE_LIMITED (not HTTP_5XX, the default abandon reason),
-    with the stop event logged exactly once."""
+    in the batch RATE_LIMITED (never the abandon-reason default, whatever
+    that default is), with the stop event logged exactly once.
+
+    Extended (fix/bulk-timeout-scales-with-pacing) to pass
+    ``trigger_reason_code=TIMEOUT`` explicitly: the RATE_LIMITED abandon
+    branch MUST win regardless of what triggered recovery (a bulk 5xx or a
+    bulk timeout) — a real 429 is always the more specific, more actionable
+    signal. This is the guard against the trigger_reason_code plumbing
+    accidentally leaking into the one branch that must never use it."""
     call_count = 0
 
     async def _fake_crawl_page_with_config(
@@ -1723,6 +1863,7 @@ async def test_recovery_stops_immediately_on_rate_limited(
             cookies=None,
             base_domain="example.com",
             recovery_budget=60,
+            trigger_reason_code=FetchReasonCode.TIMEOUT.value,
         )
 
     # Only the first URL was actually attempted over the network.
