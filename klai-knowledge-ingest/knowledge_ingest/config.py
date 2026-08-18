@@ -114,6 +114,22 @@ class Settings(BaseSettings):
         default=240.0,
         validation_alias=AliasChoices("KLAI_CRAWL_SEQUENTIAL_RECOVERY_TIMEOUT_SECONDS"),
     )
+    # Base component of the bulk-crawl httpx timeout (crawl4ai_client
+    # ._bulk_crawl_timeout_for_chunk / _chunked_bulk_fetch). Historically a
+    # fixed 300.0s covering fetch/render time only. Since PR #1034,
+    # `rate_limit` is translated into crawl4ai's own `mean_delay` pacing
+    # (build_crawl_config), so a chunk's minimum duration now also scales
+    # with `len(chunk_urls) * mean_delay` — that pacing component is added
+    # on top of this base at request time, never folded into the base
+    # itself. 300.0 default keeps behaviour unchanged for every caller that
+    # does not set rate_limit (2026-08-18 fix/bulk-timeout-scales-with-pacing,
+    # intermedia.com incident: 146 real crawl4ai-side 429s were recorded as
+    # `timeout` because the fixed 300.0s cut the request off before the
+    # chunk's own self-imposed delay had even elapsed).
+    crawl_bulk_base_timeout_seconds: float = Field(
+        default=300.0,
+        validation_alias=AliasChoices("KLAI_CRAWL_BULK_BASE_TIMEOUT_SECONDS"),
+    )
     # LLM enrichment (contextual prefix + HyPE questions via LiteLLM proxy)
     litellm_url: str = "http://litellm:4000"
     litellm_api_key: str = ""

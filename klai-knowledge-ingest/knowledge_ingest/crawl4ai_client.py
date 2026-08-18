@@ -646,8 +646,8 @@ def _classify_fetch_outcome(
         # production: crawl4ai's real bulk-request 500 body is opaque
         # (``{"error":"Internal server error","correlation_id":"..."}"``),
         # so the anti-bot cause was never diagnosable client-side. See
-        # ``_is_bulk_5xx_error`` for the cause-independent trigger that
-        # replaced this, and ``_is_antibot_block_error`` (kept only for
+        # ``_is_recoverable_bulk_failure`` for the cause-independent trigger
+        # that replaced this, and ``_is_antibot_block_error`` (kept only for
         # ``_is_minimal_content_antibot_error``) for the retired approach.
         if isinstance(error, httpx.HTTPStatusError):
             status_code = error.response.status_code
@@ -1196,8 +1196,8 @@ def _is_antibot_block_error(exc: BaseException) -> bool:
     its own docstring) still calls it; that call site was out of scope for
     the 2026-08-14 fix. Do NOT use this function for terminal-status or
     sequential-recovery decisions in ``crawl_site`` — see
-    :func:`_is_bulk_5xx_error` for the cause-independent replacement that
-    actually fires in production.
+    :func:`_is_recoverable_bulk_failure` for the cause-independent
+    replacement that actually fires in production.
     """
     if not isinstance(exc, httpx.HTTPStatusError) or exc.response.status_code != 500:
         return False
@@ -1222,27 +1222,62 @@ def _is_minimal_content_antibot_error(exc: Exception) -> bool:
     return "minimal_text" in body or "no_content_elements" in body or "0 chars visible" in body
 
 
-def _is_bulk_5xx_error(exc: BaseException) -> bool:
-    """True when a bulk-crawl transport failure is an HTTP 5xx from crawl4ai.
+def _is_recoverable_bulk_failure(exc: BaseException) -> bool:
+    """True when a bulk-crawl transport failure is worth a one-URL-at-a-time
+    sequential retry (see ``_recover_bulk_5xx_batch``) — cause-independent
+    trigger covering two cases that share the same property: the client-side
+    cause is UNKNOWABLE from the transport response alone, so the per-URL
+    retry is simultaneously the mitigation and the diagnosis.
 
-    Cause-independent replacement for the retired antibot-body-match
-    trigger. Evidence 2026-08-14 (intermedia.com): crawl4ai's bulk
-    ``arun_many`` endpoint fails the WHOLE concurrent batch with one 500
+    Case 1 — HTTP 5xx (originally the only trigger, named
+    ``_is_bulk_5xx_error``). Evidence 2026-08-14 (intermedia.com): crawl4ai's
+    bulk ``arun_many`` endpoint fails the WHOLE concurrent batch with one 500
     the moment ANY url in it hits an anti-bot challenge — but the response
     body is opaque
     (``{"error":"Internal server error","correlation_id":"188834187d7d"}"``),
-    never a diagnosable reason. The client-side cause of a bulk 500 is
-    therefore UNKNOWABLE from the transport response alone. Rather than
-    guess at the cause, ``crawl_site`` treats every bulk-level 5xx as
-    worth a one-URL-at-a-time sequential retry (see
-    ``_recover_bulk_5xx_batch``): the retry is simultaneously the
-    mitigation (some URLs recover — the same intermedia.com incident saw
+    never a diagnosable reason. ``crawl_site`` treats every bulk-level 5xx as
+    worth a one-URL-at-a-time sequential retry: the retry is simultaneously
+    the mitigation (some URLs recover — the same intermedia.com incident saw
     ``/products/unite`` succeed seconds after the bulk 500 while
-    ``/products/ai`` stayed blocked, via the same single-page path) and
-    the diagnosis (the per-URL retry result tells us the REAL per-URL
+    ``/products/ai`` stayed blocked, via the same single-page path) and the
+    diagnosis (the per-URL retry result tells us the REAL per-URL
     reason_code, honestly, instead of a guessed BLOCKED_ANTI_BOT).
+
+    Case 2 — ``httpx.TimeoutException`` (added 2026-08-18,
+    fix/bulk-timeout-scales-with-pacing). Since PR #1034, ``rate_limit`` is
+    translated into crawl4ai's own ``mean_delay`` pacing, so a bulk-request
+    read-timeout can now legitimately mean "the request was still waiting out
+    its own self-imposed delay when the client gave up" rather than a real
+    server failure. Evidence 2026-08-17 (intermedia.com, rate_limit=0.5): the
+    crawl4ai container log recorded 254 real ``HTTP 429 Too Many Requests``
+    responses, while ``fetch_outcomes`` recorded 146 ``timeout`` and 0
+    ``rate_limited`` — the fixed bulk httpx timeout fired before crawl4ai's
+    own 429 signal could come back, and because a timeout is not an
+    ``httpx.HTTPStatusError`` at all, the pre-fix ``_is_bulk_5xx_error``
+    check never triggered recovery for it — the whole chunk was written off
+    as a bare ``timeout`` batch-wide with no per-URL diagnosis attempted.
+    Same remedy as case 1: retry sequentially, and let the per-URL result
+    (including a genuine ``RATE_LIMITED``, which correctly stops the
+    recovery loop early — see the rate-limit branch in
+    ``_recover_bulk_5xx_batch``) tell us the honest reason instead of
+    guessing.
     """
-    return isinstance(exc, httpx.HTTPStatusError) and 500 <= exc.response.status_code < 600
+    if isinstance(exc, httpx.HTTPStatusError):
+        return 500 <= exc.response.status_code < 600
+    return isinstance(exc, httpx.TimeoutException)
+
+
+def _bulk_failure_trigger_reason_code(exc: BaseException) -> str:
+    """Honest default abandon-reason for ``_recover_bulk_5xx_batch``, matching
+    what ``crawl_site`` actually observed on the bulk request that triggered
+    recovery — never a guessed value. Only meaningful for exceptions that
+    pass ``_is_recoverable_bulk_failure``; every other transport failure is
+    classified directly by ``_classify_fetch_outcome`` without ever reaching
+    the sequential-recovery path.
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        return FetchReasonCode.HTTP_5XX.value
+    return FetchReasonCode.TIMEOUT.value
 
 
 def _status_code_from_exception(exc: BaseException) -> int | None:
@@ -1453,7 +1488,7 @@ async def crawl_site(
         )
         fetched_count += len(batch)
 
-        if transport_error is not None and _is_bulk_5xx_error(transport_error):
+        if transport_error is not None and _is_recoverable_bulk_failure(transport_error):
             # Escalation step 1: retry the SAME batch once with crawl4ai's
             # stealth mode + a randomised UA. Measured on intermedia.com
             # 2026-08-15: the plain bulk request 500s wholesale, the identical
@@ -1470,15 +1505,16 @@ async def crawl_site(
                 stealth=True,
             )
 
-        if transport_error is not None and _is_bulk_5xx_error(transport_error):
-            # crawl4ai's bulk endpoint failed the WHOLE batch with an
-            # opaque 5xx (evidence + budget: see _MAX_SEQUENTIAL_RECOVERY,
-            # _is_bulk_5xx_error). The client-side cause is unknowable from
-            # the transport response alone, so we don't guess it — recover
-            # what we can by retrying one URL at a time via the single-page
-            # path, which tells us the REAL per-URL reason_code, instead of
-            # writing off every URL in the batch as unknown_exception (or
-            # guessing blocked_anti_bot without evidence).
+        if transport_error is not None and _is_recoverable_bulk_failure(transport_error):
+            # crawl4ai's bulk endpoint failed the WHOLE batch with either an
+            # opaque 5xx or a read-timeout (evidence + budget: see
+            # _MAX_SEQUENTIAL_RECOVERY, _is_recoverable_bulk_failure). The
+            # client-side cause is unknowable from the transport response
+            # alone, so we don't guess it — recover what we can by retrying
+            # one URL at a time via the single-page path, which tells us the
+            # REAL per-URL reason_code, instead of writing off every URL in
+            # the batch as unknown_exception (or guessing blocked_anti_bot
+            # without evidence).
             (
                 batch_results,
                 link_source_results,
@@ -1491,12 +1527,16 @@ async def crawl_site(
                 base_domain=base_domain,
                 recovery_budget=sequential_recovery_budget,
                 deadline=sequential_recovery_deadline,
-                # Stealth already earned by two consecutive bulk 5xx; the
-                # per-URL retries get it too. Measured: with stealth a failure
-                # no longer poisons the session (3 of 5 succeeded back-to-back
-                # with no cooldown at all), which is exactly what the cooldown
-                # was working around.
+                # Stealth already earned by two consecutive bulk failures;
+                # the per-URL retries get it too. Measured: with stealth a
+                # failure no longer poisons the session (3 of 5 succeeded
+                # back-to-back with no cooldown at all), which is exactly
+                # what the cooldown was working around.
                 stealth=True,
+                # Honest abandon-reason if the recovery budget/deadline/
+                # breaker caps out mid-batch: whatever this trigger actually
+                # was (5xx or timeout), not a hardcoded 5xx-flavoured guess.
+                trigger_reason_code=_bulk_failure_trigger_reason_code(transport_error),
             )
             sequential_recovery_budget -= recovery_attempted
         else:
@@ -1729,24 +1769,29 @@ async def _recover_bulk_5xx_batch(
     recovery_budget: int,
     deadline: float | None = None,
     stealth: bool = False,
+    trigger_reason_code: str = FetchReasonCode.HTTP_5XX.value,
 ) -> tuple[list[CrawlResult], list[CrawlResult], list[FetchOutcome], int]:
     """Sequentially re-fetch a batch that failed WHOLESALE via bulk fetch.
 
     Called from ``crawl_site`` only when ``_chunked_bulk_fetch`` returned a
-    ``transport_error`` that is a bulk-level 5xx (see ``_is_bulk_5xx_error``
-    — the cause is unknowable from the transport response alone, so this
-    retry is both the mitigation and the diagnosis). Reuses the single-page
-    fetch path (``_crawl_page_with_config``, same one ``crawl_page`` uses)
-    one URL at a time instead of duplicating fetch logic — see module-level
-    comment on ``_MAX_SEQUENTIAL_RECOVERY`` for the supporting evidence.
+    ``transport_error`` that is a recoverable bulk-level failure — either a
+    5xx or a read-timeout (see ``_is_recoverable_bulk_failure`` — the cause
+    is unknowable from the transport response alone, so this retry is both
+    the mitigation and the diagnosis). Reuses the single-page fetch path
+    (``_crawl_page_with_config``, same one ``crawl_page`` uses) one URL at a
+    time instead of duplicating fetch logic — see module-level comment on
+    ``_MAX_SEQUENTIAL_RECOVERY`` for the supporting evidence.
 
     Bounded by ``recovery_budget`` (the crawl-job-wide remainder of
     ``_MAX_SEQUENTIAL_RECOVERY``). Once exhausted, remaining URLs in this
-    batch are marked ``HTTP_5XX`` — honestly, matching the actual signal we
-    have (the bulk request 5xx'd; we simply ran out of budget to verify
-    these particular URLs individually) rather than guessing
-    ``BLOCKED_ANTI_BOT`` without evidence — without a network call, and the
-    cap is logged once via ``crawl_bulk_5xx_recovery_capped``.
+    batch are marked with ``trigger_reason_code`` — honestly, matching the
+    actual signal we have (the bulk request failed with THIS reason; we
+    simply ran out of budget to verify these particular URLs individually)
+    rather than guessing ``BLOCKED_ANTI_BOT`` without evidence, and rather
+    than always defaulting to ``HTTP_5XX`` even when the trigger was a
+    timeout — without a network call, and the cap is logged once via
+    ``crawl_bulk_5xx_recovery_capped``. Defaults to ``HTTP_5XX`` for direct
+    callers (e.g. tests) that don't pass one explicitly.
 
     Returns ``(crawl_results, link_source_results, outcomes, attempted)``:
 
@@ -1788,8 +1833,15 @@ async def _recover_bulk_5xx_batch(
         max_seconds=time_budget,
     )
 
-    def _abandon_remaining(index: int, *, reason_code: str = FetchReasonCode.HTTP_5XX.value) -> int:
-        """Mark every not-yet-attempted URL with ``reason_code``; return how many."""
+    def _abandon_remaining(index: int, *, reason_code: str = trigger_reason_code) -> int:
+        """Mark every not-yet-attempted URL with ``reason_code``; return how many.
+
+        Default is ``trigger_reason_code`` — the honest reason recovery was
+        entered in the first place (HTTP_5XX or TIMEOUT). Callers override
+        it explicitly only for the RATE_LIMITED abandon branch below, which
+        is a strictly more specific and more actionable signal than the
+        trigger that started this batch's recovery.
+        """
         for leftover_url in urls[index:]:
             outcomes.append(
                 {
@@ -2115,11 +2167,51 @@ async def _recover_thin_bulk_results(
     return recovered
 
 
-# Single bulk-crawl request budget. crawl4ai's MemoryAdaptiveDispatcher
-# handles in-batch concurrency server-side; the client just waits for
-# the whole batch. Voys-scale Voys/support (~500 candidates) completes
-# well under 90s on the production container — tuned to give 5x headroom.
-_BULK_CRAWL_TIMEOUT = 5 * 60.0
+# Base bulk-crawl request budget — see settings.crawl_bulk_base_timeout_seconds
+# (config.py) for the tunable value and _bulk_crawl_timeout_for_chunk below
+# for how the chunk's own rate_limit pacing is added on top of it.
+#
+# crawl4ai's MemoryAdaptiveDispatcher handles in-batch concurrency
+# server-side; the client just waits for the whole batch. Voys-scale
+# Voys/support (~500 candidates) completes well under 90s on the production
+# container — tuned to give 5x headroom for fetch/render time.
+#
+# 2026-08-18 (fix/bulk-timeout-scales-with-pacing, intermedia.com incident
+# #2): this used to be the WHOLE timeout, fixed regardless of rate_limit.
+# Since PR #1034, ``rate_limit`` is translated into crawl4ai's own
+# ``mean_delay`` pacing (build_crawl_config) — crawl4ai's RateLimiter keeps
+# per-domain state and serialises starts globally, so on a single-domain
+# crawl a chunk's minimum duration is >= ``len(chunk_urls) * mean_delay``
+# regardless of ``semaphore_count``. A fixed timeout does not scale with
+# that self-imposed delay: at rate_limit=0.25 (mean_delay=4.0s) a 100-URL
+# chunk needs >= 400s of pure pacing alone, well past a fixed 300s.
+
+
+def _bulk_crawl_timeout_for_chunk(chunk_size: int, crawler_config: dict[str, Any]) -> float:
+    """httpx timeout for one bulk ``/crawl`` chunk request.
+
+    Invariant: we must never time out on vertraging die we zelf hebben
+    ingesteld (pacing WE imposed via ``rate_limit``). The historical fixed
+    ``settings.crawl_bulk_base_timeout_seconds`` (300.0 default) covers the
+    fetch/render headroom that has always been there; on top of it we add
+    exactly the pacing this chunk's ``mean_delay`` imposes —
+    ``chunk_size * mean_delay`` — because crawl4ai's RateLimiter serialises
+    request starts per-domain across the whole dispatcher regardless of
+    ``semaphore_count``, so that pacing directly determines the chunk's
+    minimum wall-clock duration.
+
+    ``mean_delay`` is read from ``crawler_config`` (set by
+    ``build_crawl_config`` when ``rate_limit`` is passed). When absent —
+    no rate_limit was configured for this crawl — there is no client-imposed
+    pacing to account for, so the timeout is exactly the base value,
+    unchanged from the historical fixed constant.
+    """
+    base = settings.crawl_bulk_base_timeout_seconds
+    mean_delay = crawler_config.get("mean_delay")
+    if mean_delay is None:
+        return base
+    return base + chunk_size * mean_delay
+
 
 # crawl4ai 0.8 server enforces ``List should have at most 100 items after
 # validation`` on POST /crawl ``urls``. The constant lives here so it can
@@ -2128,8 +2220,9 @@ _BULK_CRAWL_TIMEOUT = 5 * 60.0
 _BULK_CHUNK_SIZE = 100
 
 # Total budget (per crawl_site call) for sequential one-URL-at-a-time
-# recovery of a bulk batch that failed as a whole with an opaque 5xx (see
-# _recover_bulk_5xx_batch, _is_bulk_5xx_error). Evidence 2026-08-14
+# recovery of a bulk batch that failed as a whole with an opaque 5xx (or,
+# since 2026-08-18, a read-timeout — see _recover_bulk_5xx_batch,
+# _is_recoverable_bulk_failure). Evidence 2026-08-14
 # (intermedia.com): crawl4ai's bulk arun_many fails the ENTIRE concurrent
 # batch with one opaque 500
 # (``{"error":"Internal server error","correlation_id":"..."}"``, no
@@ -2359,6 +2452,11 @@ async def _chunked_bulk_fetch(
     Submitting more in one request returns 422. We chunk client-side and
     accumulate raw results; per-chunk transport failure is logged but the
     remaining chunks still ship — partial coverage beats zero coverage.
+
+    Each chunk's httpx timeout is computed from that chunk's own size and
+    pacing via ``_bulk_crawl_timeout_for_chunk`` — see that function's
+    docstring for the invariant this protects (never time out on pacing we
+    imposed on ourselves).
     """
     raw_results: list[dict[str, Any]] = []
     transport_error: BaseException | None = None
@@ -2373,8 +2471,9 @@ async def _chunked_bulk_fetch(
         bc = _build_browser_config_with_cookies(cookies, stealth=stealth)
         if bc:
             payload["browser_config"] = bc
+        chunk_timeout = _bulk_crawl_timeout_for_chunk(len(chunk_urls), crawler_config)
         try:
-            async with httpx.AsyncClient(timeout=_BULK_CRAWL_TIMEOUT) as client:
+            async with httpx.AsyncClient(timeout=chunk_timeout) as client:
                 data = await _crawl_sync(client, payload)
             raw_results.extend(_normalise_results_block(data))
         except Exception as exc:
