@@ -235,6 +235,44 @@ export function FeedbackMetaRow({
   )
 }
 
+function submissionChatContextLines(submission: PlatformFeedbackLinkedSubmission): string[] {
+  const conversations = submission.chat_context?.recent_conversations ?? []
+  if (!conversations.length) return []
+  return [
+    '   Recent chat conversations at report time (recency-based candidates; the report may concern an older conversation not listed here):',
+    ...conversations.map((conversation) => {
+      const title = (conversation.title || 'untitled').replace(/\s+/g, ' ')
+      const details = [
+        conversation.updated_at ? `last activity ${conversation.updated_at}` : null,
+        conversation.url,
+      ].filter(Boolean)
+      return `     - "${title}"${details.length ? ` (${details.join(', ')})` : ''}`
+    }),
+  ]
+}
+
+function buildSubmissionEvidence(
+  submissions: PlatformFeedbackLinkedSubmission[],
+  fmtDate: (s: string | null) => string,
+) {
+  if (!submissions.length) return 'No linked feedback evidence yet.'
+  return submissions
+    .map((submission, index) =>
+      [
+        `${index + 1}. ${submission.raw_text || '(empty)'}`,
+        `   Org: ${submission.org_name ?? submission.org_slug ?? 'unknown'}`,
+        `   Reporter: ${feedbackSubmissionReporterLabel(submission) || submission.user_id || 'unknown'}`,
+        `   Type/severity: ${[submission.feedback_type, submission.severity].filter(Boolean).join(' / ') || 'unknown'}`,
+        `   URL: ${submission.page_url || 'unknown'}`,
+        `   Route: ${submission.route_id || 'unknown'}`,
+        `   Locale/viewport: ${[submission.locale, submission.viewport].filter(Boolean).join(' / ') || 'unknown'}`,
+        `   Submitted: ${fmtDate(submission.created_at)}`,
+        ...submissionChatContextLines(submission),
+      ].join('\n'),
+    )
+    .join('\n\n')
+}
+
 export function buildFeedbackDebugInstructions(
   item: PlatformFeedbackItem,
   submissions: PlatformFeedbackLinkedSubmission[],
@@ -254,22 +292,7 @@ export function buildFeedbackDebugInstructions(
     `- Locales seen: ${locales.length ? locales.join(', ') : 'unknown'}`,
   ].join('\n')
 
-  const evidence = submissions.length
-    ? submissions
-        .map((submission, index) =>
-          [
-            `${index + 1}. ${submission.raw_text || '(empty)'}`,
-            `   Org: ${submission.org_name ?? submission.org_slug ?? 'unknown'}`,
-            `   Reporter: ${feedbackSubmissionReporterLabel(submission) || submission.user_id || 'unknown'}`,
-            `   Type/severity: ${[submission.feedback_type, submission.severity].filter(Boolean).join(' / ') || 'unknown'}`,
-            `   URL: ${submission.page_url || 'unknown'}`,
-            `   Route: ${submission.route_id || 'unknown'}`,
-            `   Locale/viewport: ${[submission.locale, submission.viewport].filter(Boolean).join(' / ') || 'unknown'}`,
-            `   Submitted: ${fmtDate(submission.created_at)}`,
-          ].join('\n'),
-        )
-        .join('\n\n')
-    : 'No linked feedback evidence yet.'
+  const evidence = buildSubmissionEvidence(submissions, fmtDate)
 
   return [
     'You are fixing a Klai production bug from the Platform feedback workflow.',
@@ -331,22 +354,7 @@ export function buildFeedbackFeatureInstructions(
     `- Locales seen: ${locales.length ? locales.join(', ') : 'unknown'}`,
   ].join('\n')
 
-  const evidence = submissions.length
-    ? submissions
-        .map((submission, index) =>
-          [
-            `${index + 1}. ${submission.raw_text || '(empty)'}`,
-            `   Org: ${submission.org_name ?? submission.org_slug ?? 'unknown'}`,
-            `   Reporter: ${feedbackSubmissionReporterLabel(submission) || submission.user_id || 'unknown'}`,
-            `   Type/severity: ${[submission.feedback_type, submission.severity].filter(Boolean).join(' / ') || 'unknown'}`,
-            `   URL: ${submission.page_url || 'unknown'}`,
-            `   Route: ${submission.route_id || 'unknown'}`,
-            `   Locale/viewport: ${[submission.locale, submission.viewport].filter(Boolean).join(' / ') || 'unknown'}`,
-            `   Submitted: ${fmtDate(submission.created_at)}`,
-          ].join('\n'),
-        )
-        .join('\n\n')
-    : 'No linked feedback evidence yet.'
+  const evidence = buildSubmissionEvidence(submissions, fmtDate)
 
   return [
     'You are implementing a Klai product feature request from the Platform feedback workflow.',

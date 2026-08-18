@@ -114,6 +114,7 @@ function submissionWithCandidate(): PlatformFeedbackSubmission {
     route_id: '/app/chat',
     locale: 'en',
     viewport: '1362x895',
+    chat_context: null,
     created_at: '2026-06-06T09:18:00Z',
     triage_suggestion: {
       classification: 'bug',
