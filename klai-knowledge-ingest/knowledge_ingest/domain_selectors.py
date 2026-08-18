@@ -9,7 +9,10 @@ Two independent concerns share ``knowledge.crawl_domains``:
   hit a rate-limit or anti-bot block, so the NEXT crawl starts already
   paced down instead of hitting the same wall again (2026-08-17,
   intermedia.com + support.ascendcloud.com incident — see
-  ``knowledge_ingest.adapters.crawler.run_crawl_job``).
+  ``knowledge_ingest.adapters.crawler.run_crawl_job``), PLUS the additive
+  recovery counters (``clean_streak``, ``last_congestion_at``) that let the
+  rate limit climb back up once the domain has behaved for a while (block
+  B follow-up — see ``knowledge_ingest.domain_rate_limit_control``).
 
 A row may carry either field, both, or neither — ``css_selector`` and
 ``selector_source`` are nullable so a rate-limit-only row (no selector ever
@@ -24,6 +27,8 @@ connection (which would not see the RLS GUC).
 from urllib.parse import urlparse
 
 import asyncpg
+
+from knowledge_ingest.domain_rate_limit_control import DomainRateLimitState
 
 # Ports that are implied by the scheme and therefore carry no distinguishing
 # information in the domain key — ``example.com:443`` (https) and
@@ -131,14 +136,19 @@ async def upsert_domain_selector(
     )
 
 
-async def get_domain_rate_limit(conn: asyncpg.Connection, domain: str, org_id: str) -> float | None:
-    """Return the stored lowered rate_limit (requests/second) for (domain,
-    org_id), or None when no override has been recorded — callers fall back
-    to their own default in that case.
+async def get_domain_rate_limit_state(
+    conn: asyncpg.Connection, domain: str, org_id: str
+) -> DomainRateLimitState:
+    """Return the full AIMD state for (domain, org_id) — see
+    ``knowledge_ingest.domain_rate_limit_control.DomainRateLimitState``.
+
+    No row for this (domain, org_id) is the same as a healthy domain with
+    no override: ``rate_limit=None, clean_streak=0, last_congestion_at=None``.
+    Callers fall back to their own default rate_limit in that case.
     """
     row = await conn.fetchrow(
         """
-        SELECT rate_limit
+        SELECT rate_limit, clean_streak, last_congestion_at
         FROM knowledge.crawl_domains
         WHERE domain = $1 AND org_id = $2
         """,
@@ -146,31 +156,53 @@ async def get_domain_rate_limit(conn: asyncpg.Connection, domain: str, org_id: s
         org_id,
     )
     if row is None:
-        return None
-    return row["rate_limit"]
+        return DomainRateLimitState(rate_limit=None, clean_streak=0, last_congestion_at=None)
+    return DomainRateLimitState(
+        rate_limit=row["rate_limit"],
+        clean_streak=row["clean_streak"],
+        last_congestion_at=row["last_congestion_at"],
+    )
 
 
-async def lower_domain_rate_limit(
+async def save_domain_rate_limit_state(
     conn: asyncpg.Connection,
     domain: str,
     org_id: str,
-    rate_limit: float,
+    state: DomainRateLimitState,
 ) -> None:
-    """Persist a lowered rate_limit (requests/second) for (domain, org_id).
+    """Persist the full AIMD state for (domain, org_id) in one write.
+
+    A single function owns the whole row update (rate_limit, clean_streak,
+    last_congestion_at together) rather than one function per field —
+    two functions independently updating the same row would need to agree
+    on each other's fields on every call, which is exactly the kind of
+    drift ``compute_domain_rate_limit_update`` is designed to prevent by
+    returning one coherent next-state object.
 
     Does not touch css_selector/selector_source (a separate concern — see
     module docstring); a fresh insert leaves them NULL, an update to an
     existing row leaves them untouched.
+
+    Callers MUST only invoke this when
+    ``domain_rate_limit_control.compute_domain_rate_limit_update`` returned
+    a non-``None`` state — a healthy domain with no stored override has
+    nothing to persist, and calling this unconditionally would create a
+    row for every domain ever crawled.
     """
     await conn.execute(
         """
-        INSERT INTO knowledge.crawl_domains (domain, org_id, rate_limit, created_at, updated_at)
-        VALUES ($1, $2, $3, now(), now())
+        INSERT INTO knowledge.crawl_domains
+            (domain, org_id, rate_limit, clean_streak, last_congestion_at, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, now(), now())
         ON CONFLICT (domain, org_id) DO UPDATE
-            SET rate_limit = EXCLUDED.rate_limit,
-                updated_at = now()
+            SET rate_limit         = EXCLUDED.rate_limit,
+                clean_streak       = EXCLUDED.clean_streak,
+                last_congestion_at = EXCLUDED.last_congestion_at,
+                updated_at         = now()
         """,
         domain,
         org_id,
-        rate_limit,
+        state.rate_limit,
+        state.clean_streak,
+        state.last_congestion_at,
     )

@@ -14,6 +14,7 @@ import hashlib
 import json
 import time
 from collections import Counter
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlparse
 
 import asyncpg
@@ -24,10 +25,14 @@ from klai_image_storage import ImageStore, download_and_upload_crawl_images
 from knowledge_ingest import pg_store, qdrant_store
 from knowledge_ingest.config import settings
 from knowledge_ingest.crawl4ai_client import CrawlResult, _canonicalise_url, crawl_site
+from knowledge_ingest.domain_rate_limit_control import (
+    compute_domain_rate_limit_update,
+    count_rate_limit_observations,
+)
 from knowledge_ingest.domain_selectors import (
     extract_domain,
-    get_domain_rate_limit,
-    lower_domain_rate_limit,
+    get_domain_rate_limit_state,
+    save_domain_rate_limit_state,
 )
 from knowledge_ingest.models import IngestRequest
 from knowledge_ingest.reason_codes import FETCH_REASON_VALUES, FetchReasonCode
@@ -472,17 +477,15 @@ async def _build_link_graph(
 
 _UNSET = object()  # sentinel: stored_hash not yet fetched from DB
 
-# 2026-08-17 (intermedia.com + support.ascendcloud.com incident): when a
-# crawl hits RATE_LIMITED or BLOCKED_ANTI_BOT, the NEXT crawl of that same
-# domain should start already paced down instead of walking into the same
-# wall again. Halving is a simple, explainable adjustment — no PID
-# controller, no multi-run trend analysis — and the floor keeps a very
-# touchy site making forward progress (1 request every 5s) instead of the
-# halving asymptoting toward zero over repeated bad runs.
-_MIN_DOMAIN_RATE_LIMIT = 0.2
-_RATE_LIMIT_LOWERING_TRIGGER_REASON_CODES = frozenset(
-    {FetchReasonCode.RATE_LIMITED.value, FetchReasonCode.BLOCKED_ANTI_BOT.value}
-)
+# 2026-08-17 (intermedia.com + support.ascendcloud.com incident), extended
+# 2026-08-18 with additive recovery (block B): a crawl that hits
+# RATE_LIMITED or BLOCKED_ANTI_BOT paces the NEXT crawl of that domain down
+# instead of walking into the same wall again, and a domain that has
+# behaved for a while gets its rate limit raised back up. The regelwet
+# (halve on congestion, floor, additive step, hysteresis) lives in
+# ``knowledge_ingest.domain_rate_limit_control`` as a pure function so it
+# is testable without a database; this module only wires observed outcomes
+# into it and persists the result.
 
 
 async def run_crawl_job(
@@ -528,8 +531,9 @@ async def run_crawl_job(
     (see ``build_crawl_config``'s docstring). If ``knowledge.crawl_domains``
     holds a previously-lowered rate for this domain (set after a prior
     RATE_LIMITED/BLOCKED_ANTI_BOT outcome — see
-    ``_RATE_LIMIT_LOWERING_TRIGGER_REASON_CODES`` below), that stored value
-    is used instead of this default.
+    ``knowledge_ingest.domain_rate_limit_control``), that stored value is
+    used instead of this default, and it climbs back toward this default
+    over subsequent clean crawls (same module).
 
     ``login_indicator_selector`` (SPEC-CRAWLER-004 Fase B / REQ-02.3) is
     injected into crawl4ai's wait_for and also re-checked on every returned
@@ -555,10 +559,11 @@ async def run_crawl_job(
         # 2026-08-17 (intermedia.com + support.ascendcloud.com incident): if
         # a PREVIOUS crawl of this domain got rate-limited or anti-bot
         # blocked, start this one already paced down instead of hitting the
-        # same wall again. See _RATE_LIMIT_LOWERING_TRIGGER_REASON_CODES
-        # below for where the stored value gets written.
+        # same wall again. See knowledge_ingest.domain_rate_limit_control
+        # for where the stored value gets written (and raised back up).
         domain = extract_domain(start_url)
-        stored_rate_limit = await get_domain_rate_limit(conn, domain, org_id)
+        domain_rate_limit_state = await get_domain_rate_limit_state(conn, domain, org_id)
+        stored_rate_limit = domain_rate_limit_state.rate_limit
         effective_rate_limit = stored_rate_limit if stored_rate_limit is not None else rate_limit
         if stored_rate_limit is not None:
             logger.info(
@@ -641,24 +646,43 @@ async def run_crawl_job(
                 pages=len(results),
             )
 
-        # 2026-08-17 (intermedia.com + support.ascendcloud.com incident):
-        # this crawl told us to back off — halve the rate for next time
-        # (floor _MIN_DOMAIN_RATE_LIMIT) instead of hitting the same wall
-        # again on the next sync. One halving per crawl job that actually
-        # saw the signal; no multi-run trend analysis.
-        if any(
-            outcome.get("reason_code") in _RATE_LIMIT_LOWERING_TRIGGER_REASON_CODES
-            for outcome in fetch_outcomes
-        ):
-            lowered_rate_limit = max(_MIN_DOMAIN_RATE_LIMIT, effective_rate_limit / 2)
-            await lower_domain_rate_limit(conn, domain, org_id, lowered_rate_limit)
-            logger.warning(
-                "crawl_domain_rate_limit_lowered",
-                job_id=job_id,
-                domain=domain,
-                previous_rate_limit=effective_rate_limit,
-                lowered_rate_limit=lowered_rate_limit,
-            )
+        # 2026-08-17 (intermedia.com + support.ascendcloud.com incident),
+        # extended 2026-08-18 (block B): fold this job's fetch_outcomes into
+        # the AIMD regelwet — halve on congestion (floor
+        # domain_rate_limit_control.MIN_DOMAIN_RATE_LIMIT), or raise one
+        # step once the domain has stayed clean past the recovery threshold
+        # AND the cooldown since the last congestion. ``updated_state`` is
+        # None when nothing needs writing (a healthy domain with no stored
+        # override stays untouched — see compute_domain_rate_limit_update).
+        rate_limit_observation = count_rate_limit_observations(fetch_outcomes)
+        updated_rate_limit_state = compute_domain_rate_limit_update(
+            domain_rate_limit_state,
+            had_congestion=rate_limit_observation.had_congestion,
+            clean_observations=rate_limit_observation.clean_count,
+            default_rate_limit=rate_limit,
+            step_up=settings.crawl_rate_limit_recovery_step,
+            recovery_threshold=settings.crawl_rate_limit_recovery_clean_threshold,
+            cooldown=timedelta(hours=settings.crawl_rate_limit_recovery_cooldown_hours),
+            now=datetime.now(UTC),
+        )
+        if updated_rate_limit_state is not None:
+            await save_domain_rate_limit_state(conn, domain, org_id, updated_rate_limit_state)
+            if rate_limit_observation.had_congestion:
+                logger.warning(
+                    "crawl_domain_rate_limit_lowered",
+                    job_id=job_id,
+                    domain=domain,
+                    previous_rate_limit=effective_rate_limit,
+                    lowered_rate_limit=updated_rate_limit_state.rate_limit,
+                )
+            elif updated_rate_limit_state.rate_limit != domain_rate_limit_state.rate_limit:
+                logger.info(
+                    "crawl_domain_rate_limit_raised",
+                    job_id=job_id,
+                    domain=domain,
+                    previous_rate_limit=domain_rate_limit_state.rate_limit,
+                    raised_rate_limit=updated_rate_limit_state.rate_limit,
+                )
 
         crawl_outcome_warning = _build_crawl_outcome_warning(
             fetch_outcomes,

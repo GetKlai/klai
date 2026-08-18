@@ -18,6 +18,7 @@ from knowledge_ingest.adapters.crawler import (
     run_crawl_job,
 )
 from knowledge_ingest.crawl4ai_client import CrawlResult
+from knowledge_ingest.domain_rate_limit_control import DomainRateLimitState
 from knowledge_ingest.utils.auth_wall_detector import AuthWallSignal
 
 
@@ -79,14 +80,19 @@ def _patch_crawler_externals(crawl_results: list[CrawlResult], ingest_side_effec
             "knowledge_ingest.adapters.crawler._ingest_crawl_result",
             new=AsyncMock(side_effect=ingest_side_effect),
         ),
-        # 2026-08-17 per-domain adaptive rate limit: no stored override, no
-        # signal to persist — not the concern of these auth-wall tests.
+        # 2026-08-17/08-18 per-domain adaptive rate limit: no stored
+        # override, no signal to persist — not the concern of these
+        # auth-wall tests.
         patch(
-            "knowledge_ingest.adapters.crawler.get_domain_rate_limit",
-            new=AsyncMock(return_value=None),
+            "knowledge_ingest.adapters.crawler.get_domain_rate_limit_state",
+            new=AsyncMock(
+                return_value=DomainRateLimitState(
+                    rate_limit=None, clean_streak=0, last_congestion_at=None
+                )
+            ),
         ),
         patch(
-            "knowledge_ingest.adapters.crawler.lower_domain_rate_limit",
+            "knowledge_ingest.adapters.crawler.save_domain_rate_limit_state",
             new=AsyncMock(return_value=None),
         ),
     ]
