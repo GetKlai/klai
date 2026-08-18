@@ -16,7 +16,13 @@ from knowledge_ingest.crawl4ai_client import CrawlResult
 
 
 def _make_mock_conn():
-    """SPEC-TI-003-FOLLOWUP-001: helpers take asyncpg.Connection directly."""
+    """SPEC-TI-003-FOLLOWUP-001: helpers take asyncpg.Connection directly.
+
+    ``fetch`` returning ``[]`` also matters for the content-length gate in
+    ``_ingest_crawl_result``: the default fixture text below (33 chars) is
+    inside the gate's soft zone, and with no cluster siblings returned it
+    is treated as unique short content and kept, not rejected.
+    """
     conn = MagicMock()
     conn.execute = AsyncMock(return_value=None)
     conn.executemany = AsyncMock(return_value=None)
