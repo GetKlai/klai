@@ -2522,3 +2522,50 @@ declares it. "Add setting X" is not a deliverable; "X changes behaviour Y,
 demonstrated by test Z" is.
 
 Reference: PRs #1034, #1036, #1037, #1039, #1040 (2026-08-17).
+
+### The external-API variant: accepted is not used
+
+A remote service accepting a field is not evidence that it acts on it. This is
+the same class as above, but the missing edge lives on the other side of an HTTP
+boundary where no linter can see it.
+
+On 2026-08-17 a crawler rate limit was translated into crawl4ai's
+`semaphore_count` and `mean_delay` and shipped. Verification went four layers
+deep: the value reaches the task, reaches the config builder, and
+`CrawlerRunConfig.load()` in the *running container* returns both fields intact.
+Every layer checked out. `arun_many` visibly reads both fields.
+
+It changed nothing. The REST server builds its **own** dispatcher
+(`/app/api.py:681`) and passes it explicitly, so the branch that reads those
+fields is never taken. The config object faithfully carried two values nobody
+would ever consult. Two further fixes were then built on the belief that the
+first one worked, and the whole chain — three merged PRs — rested on it.
+
+What made it invisible: the untrusted-config boundary accepts unknown or unused
+keys and returns HTTP 200. Every unit test asserting the *shape of the payload*
+stayed green. So did the integration path. The only thing that would have caught
+it is measuring the effect.
+
+**The check that settles it, in one line:** predict a number, then measure it.
+`mean_delay=2.0` across 8 URLs must take at least 16 seconds. It took 3.2. That
+single measurement is worth more than four layers of "the value is present
+here", and it costs less than one CI run.
+
+Apply it whenever behaviour depends on a field crossing into code you do not
+own:
+
+- Reading the library's source is necessary but not sufficient — confirm the
+  *branch you read* is the branch that executes. A caller passing an explicit
+  argument silently disables every `if x is None:` default beneath it.
+- Prefer an observable consequence (elapsed time, request count, log line,
+  concurrency) over the presence of a value. Presence is what a no-op looks like.
+- If the effect cannot be measured, say so in the PR rather than claiming the
+  wiring is proven. "The field arrives" and "the field is honoured" are
+  different claims.
+
+The fix that replaced it paces client-side, specifically because that is
+measurable without a network: a virtual clock in the tests asserts the observed
+cadence rather than the shape of a request. Verified in production at 5/5/2 URLs
+with 10.0s between chunk starts — the prediction, met exactly.
+
+Reference: PR #1052 (2026-08-18), retracting #1034 and most of #1050.
