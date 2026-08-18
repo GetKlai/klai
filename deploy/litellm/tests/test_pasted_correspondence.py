@@ -59,6 +59,14 @@ class TestDetector:
         )
         assert text_contains_pasted_correspondence(text) is True
 
+    def test_german_email_header_block_detected(self):
+        text = (
+            "Von: Kunde <kunde@example.de>\n"
+            "An: support@example.de\n"
+            "Betreff: Störung dringend\n"
+        )
+        assert text_contains_pasted_correspondence(text) is True
+
     def test_original_message_marker_alone_is_sufficient(self):
         assert (
             text_contains_pasted_correspondence(
@@ -167,6 +175,7 @@ class TestScopeBlockContract:
             "NOT a knowledge-base source",
             "never state that the knowledge base 'confirms'",
             "what should be verified first",
+            "Attribute each claim to the actual author",
         ],
     )
     def test_contract_phrase_present(self, phrase):
@@ -243,3 +252,45 @@ class TestFooterRendering:
         assert pasted_correspondence_activity_line("en").startswith(
             "- Pasted correspondence detected"
         )
+
+
+class TestStreamGuardEvidenceLabels:
+    """Sol review P1 (PR #1059): parenthesized evidence labels must be
+    withheld by the streaming guard so the flush-time cleaner can strip
+    them before the user sees them."""
+
+    def test_paren_evidence_label_is_withheld(self):
+        from klai_kb_citation_render import _pop_streaming_guard_text
+
+        safe, kept = _pop_streaming_guard_text(
+            "De kennisbank (E3) bevestigt dat dit zo werkt en nog veel meer",
+            final=False,
+        )
+        assert "(E3)" not in safe
+        assert kept.startswith("(E3)")
+
+    def test_evidence_word_paren_is_withheld(self):
+        from klai_kb_citation_render import _pop_streaming_guard_text
+
+        safe, kept = _pop_streaming_guard_text(
+            "Zie de toelichting (Evidence E12) verderop in dit antwoord tekst",
+            final=False,
+        )
+        assert "(Evidence" not in safe
+        assert kept.startswith("(Evidence")
+
+    def test_ordinary_parens_still_stream(self):
+        from klai_kb_citation_render import _pop_streaming_guard_text
+
+        text = "Dit werkt (zoals eerder uitgelegd) gewoon door en verder nog"
+        safe, kept = _pop_streaming_guard_text(text, final=False)
+        assert safe == text[: -len(kept)]
+        assert "(zoals eerder uitgelegd)" in safe
+
+    def test_final_flush_releases_buffer(self):
+        from klai_kb_citation_render import _pop_streaming_guard_text
+
+        text = "De kennisbank (E3) bevestigt"
+        safe, kept = _pop_streaming_guard_text(text, final=True)
+        assert safe == text
+        assert kept == ""

@@ -66,6 +66,7 @@ _PAREN_CITATION_RE = re.compile(r"\(\s*\d{1,3}(?:\s*[,;]\s*\d{1,3})*\s*\)")
 # Voys trunk incident (2026-08-17). Never user-facing vocabulary.
 _EVIDENCE_LABEL_RE = re.compile(
     r"\(\s*(?:Evidence\s+)?E\d{1,3}(?:\s*[,;]\s*E\d{1,3})*\s*\)"
+    r"|\[\s*(?:Evidence\s+)?E\d{1,3}(?:\s*[,;]\s*E\d{1,3})*\s*\]"
     r"|\bEvidence\s+E\d{1,3}\b"
 )
 _MALFORMED_NUMBER_URL_RE = re.compile(r"\b\d{1,3}\(https?://[^)\s]+\)")

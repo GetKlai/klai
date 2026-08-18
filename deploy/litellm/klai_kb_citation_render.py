@@ -732,7 +732,16 @@ def _citation_user_content_flags(kb_meta: dict[str, Any]) -> tuple[bool, bool]:
     )
 
 
+# Parenthesized internal evidence labels ("(E3)", "(Evidence E3)") stream out
+# before the end-of-stream cleaner can strip them — "(" is not a guard start,
+# unlike "[". Withhold from the earliest such opener so the flush-time
+# ``strip_model_citation_artifacts`` pass removes the label before the user
+# sees it (Sol review P1, PR #1059).
+_EVIDENCE_PAREN_GUARD_RE = re.compile(r"\((?:Evidence\b|E\d)")
+
+
 def _earliest_stream_guard_start(text: str) -> int:
+    evidence_match = _EVIDENCE_PAREN_GUARD_RE.search(text)
     starts = [
         idx
         for idx in (
@@ -740,6 +749,7 @@ def _earliest_stream_guard_start(text: str) -> int:
             text.find("["),
             text.find("http://"),
             text.find("https://"),
+            evidence_match.start() if evidence_match else -1,
         )
         if idx >= 0
     ]

@@ -7996,6 +7996,91 @@ class TestPastedCorrespondenceWiring:
             "[Pasted third-party correspondence]"
         )
 
+
+    @pytest.mark.asyncio
+    async def test_strict_zero_citable_with_pasted_email_is_not_refused(
+        self, monkeypatch
+    ):
+        """Sol review P1 (PR #1059): Strict + zero citable sources + a pasted
+        customer email must NOT hit the deterministic mock_response refusal —
+        analysing the pasted correspondence is the user's request, and
+        USER_PROVIDED_CONTENT_SCOPE promises pasted text stays usable."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature={"kb_narrow": True})
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": self._PASTE}],
+        }
+        # evidence_pack present → the strict zero-chunks branch that sets the
+        # deterministic mock_response refusal (klai_knowledge.py) is reached.
+        retrieval_resp = _make_resp(
+            {
+                "chunks": [],
+                "retrieval_bypassed": False,
+                "confidence_band": "unknown",
+                "evidence_pack": {"items": [], "no_citable_reason": "zero_results"},
+            }
+        )
+
+        with _patch_http(monkeypatch, retrieval_resp=retrieval_resp):
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        assert "mock_response" not in result, (
+            "Strict zero-citable with a pasted email must reach the model — "
+            "the deterministic refusal would hide the pasted correspondence "
+            "from analysis entirely"
+        )
+        meta = result["metadata"]["_klai_kb_meta"]
+        assert meta["user_provided_content_context"] is True
+        assert meta["pasted_correspondence_detected"] is True
+        system_msg = next(
+            (m for m in result["messages"] if m["role"] == "system"), None
+        )
+        assert system_msg is not None
+        assert "[Pasted third-party correspondence]" in system_msg["content"]
+
+    @pytest.mark.asyncio
+    async def test_strict_zero_citable_plain_question_still_refused(
+        self, monkeypatch
+    ):
+        """The pasted-email exception must not widen: a plain question in
+        Strict with zero citable sources keeps the deterministic refusal."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature={"kb_narrow": True})
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "Wat is het beleid voor opnames?"}
+            ],
+        }
+        retrieval_resp = _make_resp(
+            {
+                "chunks": [],
+                "retrieval_bypassed": False,
+                "confidence_band": "unknown",
+                "evidence_pack": {"items": [], "no_citable_reason": "zero_results"},
+            }
+        )
+
+        with _patch_http(monkeypatch, retrieval_resp=retrieval_resp):
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        meta = result["metadata"]["_klai_kb_meta"]
+        assert meta["user_provided_content_context"] is False
+        assert meta["pasted_correspondence_detected"] is False
+        assert "mock_response" in result, (
+            "plain Strict zero-citable question must keep the deterministic "
+            "refusal — the pasted-email exception may not widen it away"
+        )
+
     @pytest.mark.asyncio
     async def test_plain_question_does_not_get_contract(self, monkeypatch):
         mod = _load_hook(monkeypatch)

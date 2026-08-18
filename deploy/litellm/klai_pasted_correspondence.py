@@ -28,7 +28,7 @@ from typing import Any
 # NL / EN / DE label sets cover the tenants' mail clients.
 _HEADER_LABEL_RE = re.compile(
     r"(?im)^[>\s]*\**[ \t]*"
-    r"(van|from|aan|to|an|cc|bcc|verzonden|sent|datum|date|gesendet|"
+    r"(van|from|von|aan|to|an|cc|bcc|verzonden|sent|datum|date|gesendet|"
     r"onderwerp|subject|betreff|reply-to|antwoord aan)"
     r"[ \t]*\**[ \t]*:",
 )
@@ -42,6 +42,7 @@ _MIN_DISTINCT_HEADER_LABELS = 3
 # forwarded thread do not count as two distinct labels.
 _HEADER_LABEL_ALIASES = {
     "van": "from",
+    "von": "from",
     "aan": "to",
     "an": "to",
     "verzonden": "sent",
@@ -119,17 +120,19 @@ def detect_pasted_correspondence(messages: object) -> bool:
 PASTED_CORRESPONDENCE_SCOPE = (
     "[Pasted third-party correspondence]\n"
     "The user's message contains pasted correspondence (an email, ticket, or "
-    "forwarded thread) written by someone other than the user. Everything "
-    "inside that correspondence is a CLAIM by its author, not a verified "
-    "fact:\n"
-    "- Do not adopt the author's conclusions, self-assessments ('our side is "
-    "verified correct'), exclusions, or hypotheses as your own findings. "
+    "forwarded thread). A thread may mix several authors, possibly including "
+    "the user. Attribute each claim to the actual author of that part of the "
+    "thread; parts written by the user themselves are the user's own "
+    "statements. Everything written by anyone OTHER than the user is a CLAIM "
+    "by its author, not a verified fact:\n"
+    "- Do not adopt such an author's conclusions, self-assessments ('our side "
+    "is verified correct'), exclusions, or hypotheses as your own findings. "
     "Attribute them explicitly: 'the sender claims/reports ...'.\n"
-    "- Keep the user's perspective, not the author's. The author is typically "
-    "a customer, supplier, or other counterparty of the user's organisation; "
-    "their 'we/you' framing does not transfer to the user. Never address the "
-    "user as if they wrote the correspondence, and never advise the user to "
-    "contact their own organisation.\n"
+    "- Keep the user's perspective, not the author's. An external author is "
+    "typically a customer, supplier, or other counterparty of the user's "
+    "organisation; their 'we/you' framing does not transfer to the user. "
+    "Never address the user as if they wrote a counterparty's message, and "
+    "never advise the user to contact their own organisation.\n"
     "- Separate three things explicitly in your answer: what the "
     "correspondence claims, what is independently supported (by retrieved "
     "knowledge-base evidence or by data the user can check themselves), and "

@@ -1400,7 +1400,7 @@ def test_strip_removes_internal_evidence_labels() -> None:
     text = (
         "De kennisbank (E3) bevestigt dat blokkades kunnen optreden.\n"
         "Zie ook Evidence E12 voor context, en (Evidence E1) hierboven.\n"
-        "Meerdere labels (E1, E2) in een run."
+        "Meerdere labels (E1, E2) in een run, en de brackets [E4] en [E5, E6]."
     )
 
     cleaned = strip_model_citation_artifacts(text)
@@ -1408,6 +1408,8 @@ def test_strip_removes_internal_evidence_labels() -> None:
     assert "E12" not in cleaned
     assert "Evidence" not in cleaned
     assert "(E1" not in cleaned
+    assert "[E4]" not in cleaned
+    assert "E5" not in cleaned
     assert "De kennisbank" in cleaned
     assert "blokkades kunnen optreden" in cleaned
 

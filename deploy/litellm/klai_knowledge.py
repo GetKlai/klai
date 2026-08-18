@@ -406,8 +406,17 @@ class KlaiKnowledgeHook(CustomLogger):
         if not librechat_user_id:
             return data
 
-        user_provided_content_context = _has_user_provided_content_context(
-            messages, query
+        # Pasted third-party correspondence counts as user-provided content:
+        # USER_PROVIDED_CONTENT_SCOPE already promises that "text the user
+        # attached or pasted" is usable in every mode, and the deterministic
+        # detector gives us that signal for correspondence. Without this OR,
+        # Strict mode with zero citable sources refuses via mock_response and
+        # the model never sees the pasted email at all (Sol review P1,
+        # PR #1059).
+        pasted_correspondence = _detect_pasted_correspondence(messages)
+        user_provided_content_context = (
+            _has_user_provided_content_context(messages, query)
+            or pasted_correspondence
         )
         data["messages"] = messages
         if context_meta is not None:
@@ -514,11 +523,15 @@ class KlaiKnowledgeHook(CustomLogger):
         # Pasted third-party correspondence (Voys trunk incident, 2026-08-17):
         # a customer email pasted into chat was answered as verified fact,
         # with the model adopting the sender's we/you framing against the
-        # user's own organisation. Detection is code-side and deterministic;
-        # the model only receives the epistemic contract when the detector
-        # fires. Injected BEFORE the branch prefixes so every later
-        # ``_prepend_system_prefix`` stacks the branch foundation above it.
-        pasted_correspondence = _detect_pasted_correspondence(messages)
+        # user's own organisation. Detection is code-side and deterministic
+        # (computed above, before the safety/meta gates, so it also feeds
+        # user_provided_content_context); the model only receives the
+        # epistemic contract when the detector fires. Injected BEFORE the
+        # branch prefixes so every later ``_prepend_system_prefix`` stacks
+        # the branch foundation above it. Known limitation: trivial
+        # follow-up turns ("waarom?") return before this point and get no
+        # prompt injection at all — that is the pre-existing trivial-query
+        # contract (no grounded rules either), not specific to this block.
         if pasted_correspondence:
             _prepend_system_prefix(messages, _PASTED_CORRESPONDENCE_SCOPE)
             logger.info(
