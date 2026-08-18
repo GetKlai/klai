@@ -326,6 +326,92 @@ class TestClassifyFetchOutcome:
             == FetchReasonCode.BLOCKED_ANTI_BOT.value
         )
 
+    def test_404_with_structural_antibot_marker_classifies_http_4xx(self) -> None:
+        """2026-08-18 support.ascendcloud.com incident: a 404 (the site
+        genuinely doesn't have this page — it was a link built from
+        un-rendered template syntax) whose tiny error body trips crawl4ai's
+        STRUCTURAL anti-bot heuristic ("minimal_text on small page") must
+        classify honestly as HTTP_4XX, not BLOCKED_ANTI_BOT. A definitive
+        "this page doesn't exist" status code contradicts a heuristic guess
+        and must win. Exact production error_message."""
+        assert (
+            _classify_fetch_outcome(
+                {
+                    "success": False,
+                    "status_code": 404,
+                    "error_message": (
+                        "Blocked by anti-bot protection: Structural: minimal_text "
+                        "on small page (482 bytes, 42 chars visible)"
+                    ),
+                }
+            )
+            == FetchReasonCode.HTTP_4XX.value
+        )
+
+    def test_410_with_structural_antibot_marker_classifies_http_4xx(self) -> None:
+        """410 Gone is the same "definitely doesn't exist" signal as 404."""
+        assert (
+            _classify_fetch_outcome(
+                {
+                    "success": False,
+                    "status_code": 410,
+                    "error_message": (
+                        "Blocked by anti-bot protection: Structural: minimal_text "
+                        "on small page (200 bytes, 10 chars visible)"
+                    ),
+                }
+            )
+            == FetchReasonCode.HTTP_4XX.value
+        )
+
+    def test_403_with_concrete_antibot_marker_still_classifies_blocked_anti_bot(
+        self,
+    ) -> None:
+        """The sibling case that must NOT change: a 403 (a real anti-bot wall
+        commonly answers with 403) alongside a CONCRETE anti-bot observation
+        (a named challenge, not a structural guess) must keep classifying as
+        BLOCKED_ANTI_BOT — 401/403 are compatible with a block, unlike 404."""
+        assert (
+            _classify_fetch_outcome(
+                {
+                    "success": False,
+                    "status_code": 403,
+                    "error_message": "Blocked by anti-bot protection: Cloudflare JS challenge",
+                }
+            )
+            == FetchReasonCode.BLOCKED_ANTI_BOT.value
+        )
+
+    def test_401_with_concrete_antibot_marker_still_classifies_blocked_anti_bot(
+        self,
+    ) -> None:
+        assert (
+            _classify_fetch_outcome(
+                {
+                    "success": False,
+                    "status_code": 401,
+                    "error_message": "Blocked by anti-bot protection: Cloudflare JS challenge",
+                }
+            )
+            == FetchReasonCode.BLOCKED_ANTI_BOT.value
+        )
+
+    def test_429_with_antibot_marker_still_classifies_rate_limited(self) -> None:
+        """Existing behaviour that must survive the 404/410 override: the
+        429 check runs before the anti-bot marker check regardless of
+        status code, so this is unaffected by the fix — kept here as an
+        explicit regression guard next to the new 404/410/403/401 cases."""
+        assert (
+            _classify_fetch_outcome(
+                {
+                    "success": False,
+                    "status_code": 429,
+                    "error_message": "Blocked by anti-bot protection: HTTP 429 Too Many Requests",
+                }
+            )
+            == FetchReasonCode.RATE_LIMITED.value
+        )
+
     def test_unknown_falls_through_to_unknown_exception(self) -> None:
         assert (
             _classify_fetch_outcome({"success": False, "status_code": None, "error_message": ""})
