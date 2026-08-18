@@ -55,30 +55,23 @@ def _is_strict_refusal_answer(text: object, *, user_query: object) -> bool:
     if not isinstance(text, str) or not text.strip():
         return False
     answer = re.sub(r"\s+", " ", text).strip().casefold()
-    expected = (
-        re.sub(
-            r"\s+",
-            " ",
-            no_citable_sources_message(user_query),
-        )
-        .strip()
-        .casefold()
-    )
-    unavailable = (
-        re.sub(
-            r"\s+",
-            " ",
-            strict_kb_unavailable_message(user_query),
-        )
-        .strip()
-        .casefold()
-    )
-    return answer in {
-        expected,
-        unavailable,
+
+    def _normalise(message: str) -> str:
+        return re.sub(r"\s+", " ", message).strip().casefold()
+
+    # Compare against both the Open-mode-hint and bare variants: every path
+    # that generates this text now uses suggest_open_mode=True, but this
+    # check must stay robust to either shape (e.g. a bare mock_response
+    # value from a call site that predates the hint, or the mock_response
+    # text itself already having been through a partial normalisation).
+    expected = {
+        _normalise(no_citable_sources_message(user_query, suggest_open_mode=True)),
+        _normalise(no_citable_sources_message(user_query)),
+        _normalise(strict_kb_unavailable_message(user_query)),
         "dat staat niet in de kennisbank.",
         "dat staat niet in de kennisbank",
     }
+    return answer in expected
 
 
 def _citation_render_inputs(
@@ -156,7 +149,7 @@ def _render_kb_citation_content(
     strict_refusal = (
         no_citable_message.strip()
         if isinstance(no_citable_message, str) and no_citable_message.strip()
-        else no_citable_sources_message(user_query)
+        else no_citable_sources_message(user_query, suggest_open_mode=True)
     )
     if not trusted_sources:
         if kb_narrow:

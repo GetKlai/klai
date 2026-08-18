@@ -365,6 +365,19 @@ def render_evidence_context(
     include_source_urls: bool = False,
     max_chars: int | None = None,
 ) -> str:
+    """Render chunks as labeled evidence entries for an LLM prompt.
+
+    ``max_chars`` truncates by dropping WHOLE trailing entries — labels after
+    the cut are never shown to the model. ``evidence_label_ids`` does NOT know
+    about this truncation: it derives the label set from the full chunk list.
+    A caller that renders with ``max_chars`` and then strips the model's
+    answer using ``evidence_label_ids`` (directly or via
+    ``compose_answer_with_trusted_sources``) on the SAME chunk list would
+    silently treat never-rendered labels as legitimate. No current caller
+    combines the two (mechanically pinned by
+    deploy/litellm/tests/test_truncated_render_label_guard.py); if you need
+    both, pass the rendered subset of chunks to the label-consuming call.
+    """
     parts: list[str] = []
     total_chars = 0
     for item in evidence_chunks_from_chunks(chunks):
@@ -531,12 +544,26 @@ def _renumber_ordered_list_runs(text: str) -> str:
 def evidence_label_ids(evidence_chunks: list[dict] | None) -> set[str]:
     """Evidence ids that could appear as prompt labels for these chunks.
 
-    ``render_evidence_context`` labels chunks positionally (E1..En); evidence-
-    pack items may additionally carry explicit ``evidence_id`` values. Both
-    count as strippable labels.
+    ``render_evidence_context`` labels chunks positionally (E1..En) but skips
+    chunks with blank/whitespace-only text — so the E-number sequence can
+    have gaps relative to the original chunk list (e.g. a blank chunk at
+    position 1 means the first *rendered* label is "E2", not "E1"). Derive
+    the set from ``evidence_chunks_from_chunks``, which is the same skip
+    logic ``render_evidence_context`` uses, instead of a naive positional
+    range — otherwise a label that was never actually shown to the model
+    (like "E1" in that example) is wrongly treated as strippable, silently
+    hiding a hallucinated citation instead of letting it surface. Evidence-
+    pack items may additionally carry explicit ``evidence_id`` values; those
+    still count as strippable labels.
+
+    Known limitation: this function does NOT model ``render_evidence_context``'s
+    ``max_chars`` truncation (which drops whole trailing entries). Callers that
+    truncate the render must pass the rendered subset here, not the full list —
+    see render_evidence_context's docstring and the mechanical guard in
+    deploy/litellm/tests/test_truncated_render_label_guard.py.
     """
     chunks = [chunk for chunk in (evidence_chunks or []) if isinstance(chunk, dict)]
-    ids = {f"E{index}" for index in range(1, len(chunks) + 1)}
+    ids = {item.evidence_id for item in evidence_chunks_from_chunks(chunks)}
     for chunk in chunks:
         evidence_id = chunk.get("evidence_id")
         if isinstance(evidence_id, str) and evidence_id.strip():

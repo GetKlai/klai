@@ -326,6 +326,13 @@ services:
       - ./litellm/klai_litellm_response.py:/app/klai_litellm_response.py:ro
       - ./litellm/klai_chat_attachments.py:/app/klai_chat_attachments.py:ro
       - ./litellm/klai_pasted_correspondence.py:/app/klai_pasted_correspondence.py:ro
+      # SPEC-RAG-CORRESPONDENCE-DISTILL-001 REQ-6: pure eval-harness core
+      # (canary loading + chunk matching + pass-rate aggregation), imported
+      # by scripts/eval_pasted_correspondence_live.py. Not on any request
+      # path, but test_all_litellm_top_level_python_modules_are_mounted_in_compose
+      # requires every top-level module to be mounted so it can run inside
+      # the actual container (docker exec ... python scripts/eval_....py).
+      - ./litellm/klai_correspondence_eval.py:/app/klai_correspondence_eval.py:ro
       - ./litellm/custom_router.py:/app/custom_router.py:ro
       # SPEC-CHAT-GUARDRAILS-001: vendored package copy of klai-libs/llm-safety
       # (kept byte-identical via deploy/litellm/tests/test_klai_llm_safety_drift.py).
@@ -333,6 +340,13 @@ services:
       # next to klai_knowledge.py so ``import klai_llm_safety`` resolves
       # without a custom Dockerfile. Phase D plan: pip install in custom image.
       - ./litellm/klai_llm_safety:/app/klai_llm_safety:ro
+      # SPEC-RAG-CORRESPONDENCE-DISTILL-001: vendored package copy of
+      # klai-libs/llm-throttle (kept byte-identical via deploy/litellm/tests/
+      # test_klai_llm_throttle_drift.py). Same directory-mount pattern as
+      # klai_llm_safety above — shared rate limiter for the direct-to-Mistral
+      # calls in klai_kb_query_rewrite.py, extracted after the 2026-08-18
+      # uncoordinated-caller incident (see klai-libs/llm-throttle/README.md).
+      - ./litellm/klai_llm_throttle:/app/klai_llm_throttle:ro
       # SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10): vendored single-file
       # copy of klai-libs/chat-prompts (kept in sync via deploy/litellm/tests/
       # test_klai_chat_prompts_drift.py). Stock upstream image, no pip-install
@@ -353,6 +367,20 @@ services:
       # here so this stock upstream image imports the canonical package
       # without a custom Dockerfile.
       - ./litellm/klai_citations:/app/klai_citations:ro
+      # SPEC-RAG-CORRESPONDENCE-DISTILL-001 REQ-6: manually-invoked live eval
+      # script (docker exec klai-core-litellm-1 python scripts/eval_pasted_correspondence_live.py).
+      # Not on any request path — see klai_correspondence_eval.py mount above.
+      - ./litellm/scripts:/app/scripts:ro
+      # The canonical eval suite lives in klai-knowledge-ingest's tree — a
+      # different service, never rsynced to the host filesystem (that service
+      # deploys as a built image only, no source-tree sync). Vendored copy at
+      # deploy/litellm/eval_suites/chat.yaml (kept byte-identical via
+      # deploy/litellm/tests/test_chat_yaml_eval_suite_drift.py) is what this
+      # litellm-hook-deploy.yml already rsyncs wholesale, same vendoring
+      # pattern as klai_chat_prompts.py / klai_llm_throttle above. Mounted
+      # read-only at the path PASTED_CORRESPONDENCE_EVAL_SUITE / --suite
+      # defaults to.
+      - ./litellm/eval_suites/chat.yaml:/app/eval_suites/chat.yaml:ro
     environment:
       PYTHONPATH: /app
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}

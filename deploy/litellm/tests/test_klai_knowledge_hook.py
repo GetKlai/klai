@@ -5447,6 +5447,15 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         assert content.startswith(
             "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
         )
+        # Product decision (2026-08-18): the post-call renderer's own
+        # fallback refusal (no no_citable_message override) now suggests
+        # Open mode too — this is the exact text a Strict user got in the
+        # 2026-08-17 Voys production replay.
+        assert content.startswith(
+            "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare "
+            "kennisbronnen. Probeer het in Open-modus voor een antwoord op basis "
+            "van algemene kennis."
+        )
         assert "**Bronnen**" not in content
         assert "**Agent activiteit**" in content
         assert "- Citeerbaarheid: geen bruikbare bron geselecteerd" in content
@@ -8122,13 +8131,21 @@ class TestPastedCorrespondenceWiring:
 
 
     @pytest.mark.asyncio
-    async def test_strict_zero_citable_with_pasted_email_is_not_refused(
+    async def test_strict_zero_citable_with_pasted_email_still_refused(
         self, monkeypatch
     ):
-        """Sol review P1 (PR #1059): Strict + zero citable sources + a pasted
-        customer email must NOT hit the deterministic mock_response refusal —
-        analysing the pasted correspondence is the user's request, and
-        USER_PROVIDED_CONTENT_SCOPE promises pasted text stays usable."""
+        """Product decision (2026-08-18): Strict stays strictly KB-only, even
+        with a pasted customer email and zero citable sources — the
+        deterministic mock_response refusal fires exactly as it does for any
+        other Strict zero-citable question. An earlier revision special-cased
+        this (Sol review P1, PR #1059) to let the model analyse the pasted
+        mail instead, but _render_kb_citation_content unconditionally
+        replaces the answer with the same canned refusal whenever kb_narrow
+        and no trusted_sources, so that exception changed no user-visible
+        text and only wasted a model call. The epistemic contract still gets
+        injected into the prompt before the refusal short-circuits, and the
+        footer-driving flag still fires — both are conversation-wide and
+        independent of this refusal."""
         mod = _load_hook(monkeypatch)
         hook = mod.KlaiKnowledgeHook()
         cache = _make_cache(feature={"kb_narrow": True})
@@ -8153,19 +8170,22 @@ class TestPastedCorrespondenceWiring:
                 _make_user_api_key(), cache, data, "completion"
             )
 
-        assert "mock_response" not in result, (
-            "Strict zero-citable with a pasted email must reach the model — "
-            "the deterministic refusal would hide the pasted correspondence "
-            "from analysis entirely"
+        assert "mock_response" in result, (
+            "Strict + zero citable sources must keep the deterministic "
+            "refusal even when the user pasted an email — Strict is KB-only "
+            "by product agreement, no exception for pasted content"
         )
         meta = result["metadata"]["_klai_kb_meta"]
-        assert meta["user_provided_content_context"] is True
+        assert meta["user_provided_content_context"] is False
         assert meta["pasted_correspondence_detected"] is True
         system_msg = next(
             (m for m in result["messages"] if m["role"] == "system"), None
         )
         assert system_msg is not None
-        assert "[Pasted third-party correspondence]" in system_msg["content"]
+        assert "[Pasted third-party correspondence]" in system_msg["content"], (
+            "the contract is injected into the prompt regardless of the "
+            "refusal that follows — it drives the footer's transparency line"
+        )
 
     @pytest.mark.asyncio
     async def test_strict_zero_citable_plain_question_still_refused(
@@ -8205,6 +8225,46 @@ class TestPastedCorrespondenceWiring:
             "refusal — the pasted-email exception may not widen it away"
         )
 
+
+
+    @pytest.mark.asyncio
+    async def test_strict_zero_citable_plain_question_still_refused_with_open_hint(
+        self, monkeypatch
+    ):
+        """Product decision (2026-08-18): the canned Strict refusal now
+        suggests the user try Open mode — the model does not see the pasted
+        email at all when there is no user-provided content (attachments).
+        This is the mock_response short-circuit path."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature={"kb_narrow": True})
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "Wat is het beleid voor opnames?"}
+            ],
+        }
+        retrieval_resp = _make_resp(
+            {
+                "chunks": [],
+                "retrieval_bypassed": False,
+                "confidence_band": "unknown",
+                "evidence_pack": {"items": [], "no_citable_reason": "zero_results"},
+            }
+        )
+
+        with _patch_http(monkeypatch, retrieval_resp=retrieval_resp):
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        assert "mock_response" in result
+        assert result["mock_response"] == (
+            "Ik kan dit niet betrouwbaar beantwoorden op basis van de "
+            "beschikbare kennisbronnen. Probeer het in Open-modus voor een "
+            "antwoord op basis van algemene kennis."
+        )
 
     @pytest.mark.asyncio
     async def test_strict_refusal_returns_for_unrelated_question_after_old_email(
@@ -8301,6 +8361,78 @@ class TestPastedCorrespondenceWiring:
         assert not any(m.get("role") == "system" for m in result["messages"]), (
             "plain trivial turns must keep the zero-injection fast-path"
         )
+
+
+    @pytest.mark.asyncio
+    async def test_rewrite_and_classify_receives_pasted_correspondence_flag(
+        self, monkeypatch
+    ):
+        """SPEC-RAG-CORRESPONDENCE-DISTILL-001 REQ-1: the hook must pass
+        pasted_correspondence=<latest-turn detection> into the SAME call
+        site already used for coreference rewrite — no new call, no new
+        latency dimension."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature={"kb_narrow": False})
+
+        spy = AsyncMock(
+            return_value=(self._PASTE, [], {"was_changed": False, "rewrite_ms": 0})
+        )
+        monkeypatch.setattr(mod, "_rewrite_and_classify", spy)
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": self._PASTE}],
+        }
+        retrieval_resp = _make_resp(
+            {"chunks": [], "retrieval_bypassed": False, "confidence_band": "unknown"}
+        )
+
+        with _patch_http(monkeypatch, retrieval_resp=retrieval_resp):
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        assert spy.await_count == 1
+        _, kwargs = spy.await_args
+        assert spy.await_args.args[0] == self._PASTE
+        assert kwargs.get("pasted_correspondence") is True
+
+    @pytest.mark.asyncio
+    async def test_rewrite_and_classify_flag_false_for_plain_question(
+        self, monkeypatch
+    ):
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature={"kb_narrow": False})
+
+        spy = AsyncMock(
+            return_value=(
+                "Wat is het beleid voor opnames?",
+                [],
+                {"was_changed": False, "rewrite_ms": 0},
+            )
+        )
+        monkeypatch.setattr(mod, "_rewrite_and_classify", spy)
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {"role": "user", "content": "Wat is het beleid voor opnames?"}
+            ],
+        }
+        retrieval_resp = _make_resp(
+            {"chunks": [], "retrieval_bypassed": False, "confidence_band": "unknown"}
+        )
+
+        with _patch_http(monkeypatch, retrieval_resp=retrieval_resp):
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        assert spy.await_count == 1
+        _, kwargs = spy.await_args
+        assert kwargs.get("pasted_correspondence") is False
 
     @pytest.mark.asyncio
     async def test_plain_question_does_not_get_contract(self, monkeypatch):

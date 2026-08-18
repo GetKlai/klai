@@ -16,6 +16,7 @@ litellm is not installed locally (runs in Docker), so we mock the import.
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import json
 import sys
@@ -680,3 +681,175 @@ class TestFlattenTrees:
     def test_empty_dict_returns_empty_list(self, monkeypatch):
         hook = _load_hook(monkeypatch)
         assert hook._flatten_trees({}) == []
+
+
+# ---------------------------------------------------------------------------
+# SPEC-RAG-CORRESPONDENCE-DISTILL-001 — distillation for rewrite_and_classify
+# ---------------------------------------------------------------------------
+
+_PASTED_EMAIL_QUERY = (
+    "Wat denk jij dat er niet goed is?\n\n"
+    "Van: Klant <klant@example.nl>\n"
+    "Verzonden: vrijdag 14 augustus 2026 21:22\n"
+    "Aan: Support <support@example.nl>\n"
+    "Onderwerp: RE: storing URGENT\n\n"
+    "Uitgaand bellen faalt met SIP 404 Not Found na een geslaagde sessie-opzet."
+)
+
+
+class TestRewriteAndClassifyDistillation:
+    @pytest.mark.asyncio
+    async def test_prompt_unchanged_when_no_correspondence(self, monkeypatch):
+        """AC-3 equivalent for the classify prompt: default False sends the
+        pre-SPEC prompt shape unmodified."""
+        hook = _load_hook(monkeypatch)
+        transport = _MockTransport(
+            status_code=200,
+            json_body=_llm_json_response("Wat is SAML?", []),
+        )
+
+        await hook._rewrite_and_classify(
+            "Wat is SAML?", _HISTORY, _TREES_MULTI, _transport=transport
+        )
+
+        sent = json.loads(transport.requests[0].content)["messages"][0]["content"]
+        assert "distill" not in sent.lower()
+        assert "Conversation history (oldest → newest):" in sent
+
+    @pytest.mark.asyncio
+    async def test_prompt_includes_distillation_task_when_flagged(self, monkeypatch):
+        """REQ-2: the classify prompt gains the distillation instruction as
+        an additional numbered task, without disturbing tasks 1-3."""
+        hook = _load_hook(monkeypatch)
+        transport = _MockTransport(
+            status_code=200,
+            json_body=_llm_json_response(
+                "SIP 404 Not Found uitgaand bellen na sessie-opzet", []
+            ),
+        )
+
+        await hook._rewrite_and_classify(
+            _PASTED_EMAIL_QUERY,
+            [],
+            _TREES_MULTI,
+            pasted_correspondence=True,
+            _transport=transport,
+        )
+
+        sent = json.loads(transport.requests[0].content)["messages"][0]["content"]
+        assert "distill" in sent.lower()
+        assert "verbatim" in sent.lower()
+        assert "1. Rewrite the user's current question" in sent
+        assert "3. From the taxonomy below" in sent
+
+    @pytest.mark.asyncio
+    async def test_distillation_flag_threads_through_plain_fallback(self, monkeypatch):
+        """Empty taxonomy → falls back to plain rewrite_query; the flag must
+        still reach that call (no taxonomy in scope does not mean no
+        correspondence detected)."""
+        hook = _load_hook(monkeypatch)
+        transport = _MockTransport(
+            status_code=200,
+            json_body=_llm_text_response(
+                "SIP 404 Not Found uitgaand bellen na sessie-opzet"
+            ),
+        )
+
+        _rewritten, ids, meta = await hook._rewrite_and_classify(
+            _PASTED_EMAIL_QUERY,
+            [],
+            {},
+            pasted_correspondence=True,
+            _transport=transport,
+        )
+
+        sent = json.loads(transport.requests[0].content)["messages"][0]["content"]
+        assert "distill" in sent.lower()
+        assert meta["pasted_correspondence_detected"] is True
+        assert ids == []
+
+    @pytest.mark.asyncio
+    async def test_meta_carries_pasted_correspondence_flag(self, monkeypatch):
+        hook = _load_hook(monkeypatch)
+        transport = _MockTransport(
+            status_code=200,
+            json_body=_llm_json_response("Wat is SAML?", []),
+        )
+
+        _, _, meta_false = await hook._rewrite_and_classify(
+            "Wat is SAML?", _HISTORY, _TREES_MULTI, _transport=transport
+        )
+        assert meta_false["pasted_correspondence_detected"] is False
+
+        _, _, meta_true = await hook._rewrite_and_classify(
+            _PASTED_EMAIL_QUERY,
+            [],
+            _TREES_MULTI,
+            pasted_correspondence=True,
+            _transport=transport,
+        )
+        assert meta_true["pasted_correspondence_detected"] is True
+
+
+class TestRewriteAndClassifyThrottle:
+    """2026-08-18 uncoordinated-caller incident: the WITH-taxonomy branch has
+    its own direct Mistral call site (distinct from the plain-rewrite
+    fallback tested in test_query_rewrite.py) and must also acquire from the
+    shared throttle."""
+
+    @pytest.mark.asyncio
+    async def test_acquires_from_shared_throttle_before_calling_mistral(
+        self, monkeypatch
+    ):
+        hook = _load_hook(monkeypatch)
+        transport = _MockTransport(
+            status_code=200,
+            json_body=_llm_json_response("Wat is SAML?", []),
+        )
+
+        calls: list[str] = []
+        real_limiter = hook._direct_mistral_limiter()
+
+        async def _tracking_acquire():
+            calls.append("acquire")
+
+        monkeypatch.setattr(real_limiter, "acquire", _tracking_acquire)
+
+        await hook._rewrite_and_classify(
+            "Wat is SAML?", _HISTORY, _TREES_MULTI, _transport=transport
+        )
+
+        assert calls == ["acquire"]
+
+    @pytest.mark.asyncio
+    async def test_timeout_wraps_limiter_wait_and_falls_back(self, monkeypatch):
+        """review finding #1 (classify branch): the WITH-taxonomy call site
+        also goes through ``_post_to_mistral_throttled`` and must fail-open
+        within ``QUERY_REWRITE_TIMEOUT`` when the shared limiter blocks past
+        it — same contract as the plain-rewrite path in test_query_rewrite.py."""
+        hook = _load_hook(monkeypatch)
+        query_rewrite_module = sys.modules["klai_kb_query_rewrite"]
+        monkeypatch.setattr(query_rewrite_module, "QUERY_REWRITE_TIMEOUT", 0.05)
+
+        real_limiter = hook._direct_mistral_limiter()
+
+        async def _slow_acquire():
+            await asyncio.sleep(0.2)
+
+        monkeypatch.setattr(real_limiter, "acquire", _slow_acquire)
+
+        transport = _MockTransport(
+            status_code=200,
+            json_body=_llm_json_response("Wat is SAML?", []),
+        )
+
+        rewritten, ids, meta = await asyncio.wait_for(
+            hook._rewrite_and_classify(
+                "Wat is SAML?", _HISTORY, _TREES_MULTI, _transport=transport
+            ),
+            timeout=1.0,
+        )
+
+        assert rewritten == "Wat is SAML?"
+        assert ids == []
+        assert meta["skipped"] == "exception"

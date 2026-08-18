@@ -109,6 +109,7 @@ from klai_kb_query_rewrite import (
     TAXONOMY_ENABLED,
     _QUERY_REWRITE_PROMPT,
     _QUERY_REWRITE_AND_CLASSIFY_PROMPT,
+    direct_mistral_limiter as _direct_mistral_limiter,
     fetch_taxonomy_coverage as _fetch_taxonomy_coverage,
     fetch_taxonomy_trees as _fetch_taxonomy_trees,
     flatten_trees as _flatten_trees,
@@ -236,6 +237,7 @@ __all__ = [
     "_format_taxonomy_for_prompt",
     "_flatten_trees",
     "_rewrite_query",
+    "_direct_mistral_limiter",
     "_QUERY_REWRITE_PROMPT",
     "_QUERY_REWRITE_AND_CLASSIFY_PROMPT",
     "_LOW_CONFIDENCE_INJECTION_TEXT",
@@ -440,18 +442,22 @@ class KlaiKnowledgeHook(CustomLogger):
         if not librechat_user_id:
             return data
 
-        # Pasted correspondence counts as user-provided content:
-        # USER_PROVIDED_CONTENT_SCOPE already promises that "text the user
-        # attached or pasted" is usable in every mode. Without this OR,
-        # Strict mode with zero citable sources refuses via mock_response and
-        # the model never sees the pasted email at all (Sol review P1,
-        # PR #1059). LATEST-TURN ONLY: correspondence pasted in an earlier
-        # turn must not keep bypassing the deterministic Strict refusal for
-        # later, unrelated questions — the conversation-wide flag (computed
-        # at the trivial gate) drives only the prompt contract and footer.
-        user_provided_content_context = (
-            _has_user_provided_content_context(messages, query)
-            or _latest_user_turn_has_correspondence(messages)
+        # NOTE (product decision, 2026-08-18): pasted correspondence does
+        # NOT widen user_provided_content_context. An earlier revision OR'd
+        # detected correspondence in here so Strict + zero citable sources
+        # would let the model see and analyse a pasted email instead of
+        # refusing via mock_response (Sol review P1, PR #1059). That turned
+        # out to be a wash: _render_kb_citation_content unconditionally
+        # replaces the answer with the canned refusal whenever kb_narrow and
+        # no trusted_sources — regardless of allow_uncited_user_content — so
+        # the user-visible text is identical either way. The only effect of
+        # the OR was one wasted model call. Strict stays strictly KB-only,
+        # per the existing product agreement; pasted_correspondence still
+        # drives the epistemic contract injection and the footer line
+        # (conversation-wide, computed at the trivial gate above) regardless
+        # of this variable.
+        user_provided_content_context = _has_user_provided_content_context(
+            messages, query
         )
         data["messages"] = messages
         if context_meta is not None:
@@ -622,7 +628,9 @@ class KlaiKnowledgeHook(CustomLogger):
                 librechat_user_id,
                 chat_retrieval_policy.user_visible_failure_reason,
             )
-            data["mock_response"] = _no_citable_sources_message(query)
+            data["mock_response"] = _no_citable_sources_message(
+                query, suggest_open_mode=True
+            )
             return data
         if chat_retrieval_policy.prompt_mode == "general":
             _prepend_system_prefix(
@@ -746,11 +754,20 @@ class KlaiKnowledgeHook(CustomLogger):
         # Anti-hallucination guard inside _rewrite_and_classify filters IDs to
         # the union of all valid IDs across the provided KBs (REQ-4).
         # Fail-open: any failure returns (raw_query, [], meta_with_skip_reason).
+        # SPEC-RAG-CORRESPONDENCE-DISTILL-001 REQ-1: pasted_correspondence
+        # gates the distillation prompt-variant on the SAME call — latest-turn
+        # only (not the conversation-wide flag used for the epistemic contract
+        # + footer above), since this drives how THIS turn's query is built.
         (
             rewritten_query,
             classified_node_ids,
             rewrite_meta,
-        ) = await _rewrite_and_classify(query, conversation_history, trees_for_classify)
+        ) = await _rewrite_and_classify(
+            query,
+            conversation_history,
+            trees_for_classify,
+            pasted_correspondence=_latest_user_turn_has_correspondence(messages),
+        )
         # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-6: gate raw query content out of
         # the query_rewrite log line in 'off' / 'shadow' mode. Operators keep
         # full-shape diagnostics (timing, was_changed, skip reason) but never
@@ -780,7 +797,8 @@ class KlaiKnowledgeHook(CustomLogger):
             if telemetry_level == "full":
                 logger.info(
                     "query_rewrite org_id=%s user_id=%s raw_query=%r rewritten_query=%r "
-                    "rewrite_ms=%d was_changed=%s skipped=%s prompt_variant=%s",
+                    "rewrite_ms=%d was_changed=%s skipped=%s prompt_variant=%s "
+                    "pasted_correspondence_detected=%s",
                     org_id,
                     user_id,
                     query,
@@ -789,17 +807,20 @@ class KlaiKnowledgeHook(CustomLogger):
                     rewrite_meta.get("was_changed", False),
                     rewrite_meta.get("skipped", ""),
                     rewrite_meta.get("prompt_variant", ""),
+                    rewrite_meta.get("pasted_correspondence_detected", False),
                 )
             else:
                 logger.info(
                     "query_rewrite_metadata org_id=%s user_id=%s "
-                    "rewrite_ms=%d was_changed=%s skipped=%s prompt_variant=%s",
+                    "rewrite_ms=%d was_changed=%s skipped=%s prompt_variant=%s "
+                    "pasted_correspondence_detected=%s",
                     org_id,
                     user_id,
                     rewrite_meta.get("rewrite_ms", 0),
                     rewrite_meta.get("was_changed", False),
                     rewrite_meta.get("skipped", ""),
                     rewrite_meta.get("prompt_variant", ""),
+                    rewrite_meta.get("pasted_correspondence_detected", False),
                 )
         except Exception:
             # Logging itself must never abort the hook (REQ-2 fail-open).
@@ -1049,7 +1070,9 @@ class KlaiKnowledgeHook(CustomLogger):
                 kbs_with_results=kbs_with_results,
             )
             if kb_narrow and not user_provided_content_context:
-                data["mock_response"] = _no_citable_sources_message(query)
+                data["mock_response"] = _no_citable_sources_message(
+                    query, suggest_open_mode=True
+                )
             return data
         evidence_chunks = evidence_pack_items_as_chunks(evidence_pack)
         trusted_sources = trusted_sources_from_evidence_pack(evidence_pack)
@@ -1222,7 +1245,9 @@ class KlaiKnowledgeHook(CustomLogger):
                 kbs_in_scope=kbs_in_scope,
                 kbs_with_results=kbs_with_results,
             )
-            data["mock_response"] = _no_citable_sources_message(query)
+            data["mock_response"] = _no_citable_sources_message(
+                query, suggest_open_mode=True
+            )
             return data
 
         if not context_chunks:
@@ -1312,7 +1337,9 @@ class KlaiKnowledgeHook(CustomLogger):
                     )
                 )
                 if kb_narrow and not user_provided_content_context:
-                    data["mock_response"] = _no_citable_sources_message(query)
+                    data["mock_response"] = _no_citable_sources_message(
+                        query, suggest_open_mode=True
+                    )
             return data
 
         # SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10): English instructions
