@@ -899,12 +899,32 @@ def _with_evidence(
     """Merge evidence fields into an outcome dict — additive to the existing
     ``{url, reason_code, status_code, content_length}`` shape.
 
-    ``observed`` distinguishes a real per-URL fetch result (success, a
-    page-level failure, or a transport exception directly tied to sending a
-    request for THIS url — including a chunk-level bulk request that bundled
-    this URL with others) from a label assigned to a URL we never
-    individually sent (batch fallout with no matching response, abandoned on
-    budget/circuit-breaker/deadline, or a previous rate-limit stop signal).
+    ``observed`` answers one narrow question: for THIS url, did we get our
+    own individual result back, or is the outcome a label we assigned
+    without one?
+
+    ``True`` — a per-URL result exists for this exact URL: a page-level
+    response from a successfully transported bulk request (even a failed
+    one — 404, 500, ...), or a single-page fetch via
+    ``_crawl_page_with_config``/the seed path.
+
+    ``False`` — no per-URL result exists. This includes a chunk-level
+    transport failure attributed to every URL in that chunk: the CHUNK's
+    request genuinely failed, but that is one observation about the
+    request, not N observations about N URLs. Also false for anything we
+    never individually sent (budget/circuit-breaker/deadline abandonment,
+    a previous rate-limit stop signal) and for a bulk response with no
+    matching entry for this candidate.
+
+    Why this matters: the field exists so a question like "how many times
+    did intermedia.com actually give us a timeout?" has a real answer.
+    Counting a chunk of 20 URLs that failed together as 20 observations
+    inflates that count 20x — exactly the polluted-counter failure mode
+    this field was added to prevent. Do not "simplify" this to
+    `has an error is observed` without re-reading this comment; the whole
+    point is that a URL can have reason_code=TIMEOUT and evidence attached
+    while still being unobserved, because the evidence describes the
+    request, not a confirmed per-URL result.
     """
     outcome.update(evidence)
     outcome["observed"] = observed
@@ -2437,10 +2457,14 @@ def _outcome_for_failed_url(url: str, error: BaseException) -> FetchOutcome:
     """Outcome for a URL whose OWN chunk failed to transport (A2).
 
     Classified from THAT chunk's actual exception — never borrowed from a
-    different chunk's failure, and never a guess. ``observed=True``: the
-    chunk containing this URL was genuinely submitted over the network and
-    the exception is the real result of that attempt (even though the same
-    chunk-level exception is shared across every URL bundled in it).
+    different chunk's failure, and never a guess. ``observed=False``: the
+    exception is a genuine observation about the CHUNK's request (which may
+    have bundled many URLs), not a confirmed per-URL result — we do not
+    know whether the site would have failed this specific URL if it had
+    been sent alone. Attributing the chunk's single failure as `observed`
+    for every URL in it would inflate "how many times did this domain
+    actually fail" by the chunk size. See ``_with_evidence``'s docstring
+    for the full rationale.
     """
     outcome: FetchOutcome = {
         "url": url,
@@ -2448,7 +2472,7 @@ def _outcome_for_failed_url(url: str, error: BaseException) -> FetchOutcome:
         "status_code": _status_code_from_exception(error),
         "content_length": 0,
     }
-    return _with_evidence(outcome, _evidence_from_exception(error), observed=True)
+    return _with_evidence(outcome, _evidence_from_exception(error), observed=False)
 
 
 def _outcome_for_not_attempted_url(url: str) -> FetchOutcome:

@@ -34,6 +34,13 @@ def _http_status_error(*, status: int = 500, body: dict | None = None) -> httpx.
 
 # ---------------------------------------------------------------------------
 # _outcome_for_failed_url — a fetch that actually raised an exception
+#
+# The exception belongs to the CHUNK's transport request, not to any single
+# URL in it — a chunk can bundle many URLs, and one failed request does not
+# mean every one of those URLs was individually confirmed to fail. That is
+# exactly why ``observed`` is False here even though real evidence (type,
+# message, correlation_id) is attached: evidence and "confirmed per-URL
+# result" are independent axes. See ``_with_evidence``'s docstring.
 # ---------------------------------------------------------------------------
 
 
@@ -45,7 +52,9 @@ class TestOutcomeForFailedUrlPreservesExceptionEvidence:
         assert outcome["error_type"] == "httpx.ReadTimeout"
         assert outcome["error_message"] == "simulated read timeout after 90s"
         assert outcome["correlation_id"] is None
-        assert outcome["observed"] is True
+        # A chunk-level transport exception is real evidence about the
+        # request, but not a confirmed per-URL result — see class docstring.
+        assert outcome["observed"] is False
 
     def test_5xx_with_correlation_id_body_preserves_correlation_id(self) -> None:
         """2026-08-14 intermedia.com shape: opaque 500 body carrying only
@@ -61,14 +70,37 @@ class TestOutcomeForFailedUrlPreservesExceptionEvidence:
         assert outcome["correlation_id"] == "188834187d7d"
         assert outcome["error_message"] is not None
         assert "188834187d7d" in outcome["error_message"]
-        assert outcome["observed"] is True
+        assert outcome["observed"] is False
 
     def test_connection_error_preserves_exception_type(self) -> None:
         error = httpx.ConnectError("Connection refused")
         outcome = _outcome_for_failed_url("https://example.com/a", error)
 
         assert outcome["error_type"] == "httpx.ConnectError"
-        assert outcome["observed"] is True
+        assert outcome["observed"] is False
+
+    def test_chunk_transport_failure_attributed_to_multiple_urls_is_unobserved_for_each(
+        self,
+    ) -> None:
+        """A single chunk request bundling many URLs fails once — that is
+        ONE observation about the request, not N observations about N
+        URLs. Every URL in the chunk must report observed=False, so a
+        'how many times did this domain actually time out' count is not
+        inflated by chunk size. This is the exact scenario the review
+        flagged: without this, one failed request counted as a hundred
+        observations."""
+        chunk_urls = [f"https://example.com/page-{i}" for i in range(20)]
+        error = httpx.ReadTimeout("simulated chunk-wide timeout")
+
+        outcomes = [_outcome_for_failed_url(url, error) for url in chunk_urls]
+
+        assert len(outcomes) == 20
+        for outcome in outcomes:
+            assert outcome["observed"] is False
+            # Evidence is still attached per-URL — the exception is real,
+            # just not an individually-confirmed per-URL result.
+            assert outcome["error_type"] == "httpx.ReadTimeout"
+            assert outcome["reason_code"] == "timeout"
 
 
 # ---------------------------------------------------------------------------
