@@ -26,7 +26,7 @@ workflow:
         patterns:
             design_implementation:
                 description: Cross-layer feature implementation with UI/UX design
-                model: inherit
+                model: sonnet
                 roles:
                     - designer
                     - backend-dev
@@ -34,7 +34,7 @@ workflow:
                     - tester
             full_stack:
                 description: Full-stack implementation with quality gate
-                model: inherit
+                model: sonnet
                 roles:
                     - api-layer
                     - ui-layer
@@ -42,7 +42,7 @@ workflow:
                     - quality
             implementation:
                 description: Cross-layer feature implementation
-                model: inherit
+                model: sonnet
                 roles:
                     - backend-dev
                     - frontend-dev
@@ -56,14 +56,14 @@ workflow:
                     - hypothesis-3
             plan_research:
                 description: Parallel SPEC research and design
-                model: inherit
+                model: sonnet
                 roles:
                     - researcher
                     - analyst
                     - architect
             review:
                 description: Multi-perspective code review
-                model: inherit
+                model: sonnet
                 roles:
                     - security-reviewer
                     - perf-reviewer
@@ -80,7 +80,7 @@ workflow:
                 description: Solution design and architecture decisions
                 isolation: none
                 mode: plan
-                model: sonnet
+                model: opus
             designer:
                 description: UI/UX design with MCP design tools
                 isolation: worktree
@@ -100,7 +100,7 @@ workflow:
                 description: Code review and quality validation
                 isolation: none
                 mode: plan
-                model: haiku
+                model: sonnet
             tester:
                 description: Test creation and coverage validation
                 isolation: worktree
