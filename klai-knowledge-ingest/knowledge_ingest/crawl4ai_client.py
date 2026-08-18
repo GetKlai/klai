@@ -1366,15 +1366,23 @@ async def sample_linked_pages(
     if not candidates:
         return LinkedPageSample(0, 0)
 
-    raw_results, transport_error = await _chunked_bulk_fetch(
+    fetch = await _chunked_bulk_fetch(
         urls=candidates,
         crawler_config=build_crawl_config(selector),
         cookies=cookies,
     )
+    # Only candidates whose OWN chunk actually transported are worth
+    # combining — a candidate whose chunk failed or was never attempted
+    # (A1/A2) has no raw result to match against and must not be
+    # misclassified as UNKNOWN_EXCEPTION via a phantom "whole batch failed"
+    # transport_error the way the old single-error contract forced.
+    ok_candidates = [
+        c for c in candidates if c not in fetch.failed and c not in fetch.not_attempted
+    ]
     results, _outcomes = _combine_bulk_responses(
-        candidates=candidates,
-        raw_results=raw_results,
-        transport_error=transport_error,
+        candidates=ok_candidates,
+        raw_results=fetch.raw_results,
+        transport_error=None,
         base_domain=base_domain,
     )
     usable = sum(1 for r in results if r.word_count >= _THIN_CONTENT_WORD_COUNT)
@@ -1483,7 +1491,7 @@ async def crawl_site(
         if not batch:
             break
 
-        raw_results, transport_error = await _chunked_bulk_fetch(
+        fetch = await _chunked_bulk_fetch(
             urls=batch,
             crawler_config=crawler_config,
             cookies=cookies,
@@ -1491,48 +1499,78 @@ async def crawl_site(
         )
         fetched_count += len(batch)
 
-        if transport_error is not None and _is_recoverable_bulk_failure(transport_error):
-            # Escalation step 1: retry the SAME batch once with crawl4ai's
-            # stealth mode + a randomised UA. Measured on intermedia.com
-            # 2026-08-15: the plain bulk request 500s wholesale, the identical
-            # batch with stealth returns 200 with 5 of 6 pages — seconds, not
-            # the ~20 minutes the sequential path costs. Stealth is not the
-            # default because a randomised UA can change what a site serves,
-            # and every crawl that works today works without it; earning it
-            # via a failure keeps healthy sites untouched.
-            logger.info("crawl_bulk_5xx_stealth_retry", urls=len(batch))
-            raw_results, transport_error = await _chunked_bulk_fetch(
-                urls=batch,
+        # A1: URLs whose chunk was never even sent because an earlier chunk
+        # in THIS attempt already saw a RATE_LIMITED/BLOCKED_ANTI_BOT
+        # signal. Carried through the stealth retry below (which can ALSO
+        # stop early on its own chunking) — never retried, never counted
+        # as a failure.
+        not_attempted_urls: list[str] = list(fetch.not_attempted)
+
+        # A2: only the subset of `batch` whose OWN chunk failed to
+        # transport is worth a stealth retry — everything else already has
+        # a real per-URL result in fetch.raw_results (or was intentionally
+        # skipped above) and must not be re-fetched or reclassified.
+        retry_urls = [u for u, exc in fetch.failed.items() if _is_recoverable_bulk_failure(exc)]
+        if retry_urls:
+            # Escalation step 1: retry ONLY the still-failing subset with
+            # crawl4ai's stealth mode + a randomised UA. Measured on
+            # intermedia.com 2026-08-15: the plain bulk request 500s
+            # wholesale, the identical batch with stealth returns 200 with
+            # 5 of 6 pages — seconds, not the ~20 minutes the sequential
+            # path costs. Stealth is not the default because a randomised
+            # UA can change what a site serves, and every crawl that works
+            # today works without it; earning it via a failure keeps
+            # healthy sites untouched.
+            logger.info("crawl_bulk_5xx_stealth_retry", urls=len(retry_urls))
+            stealth_fetch = await _chunked_bulk_fetch(
+                urls=retry_urls,
                 crawler_config=crawler_config,
                 cookies=cookies,
                 stealth=True,
                 rate_limit=rate_limit,
             )
+            fetch.raw_results.extend(stealth_fetch.raw_results)
+            for retried_url in retry_urls:
+                fetch.failed.pop(retried_url, None)
+            fetch.failed.update(stealth_fetch.failed)
+            not_attempted_urls.extend(stealth_fetch.not_attempted)
 
-        if transport_error is not None and _is_recoverable_bulk_failure(transport_error):
-            # crawl4ai's bulk endpoint failed the WHOLE batch with either an
-            # opaque 5xx or a read-timeout (evidence + budget: see
-            # _MAX_SEQUENTIAL_RECOVERY, _is_recoverable_bulk_failure). The
-            # client-side cause is unknowable from the transport response
-            # alone, so we don't guess it — recover what we can by retrying
-            # one URL at a time via the single-page path, which tells us the
-            # REAL per-URL reason_code, instead of writing off every URL in
-            # the batch as unknown_exception (or guessing blocked_anti_bot
-            # without evidence).
+        recovered_results: list[CrawlResult] = []
+        recovered_link_source_results: list[CrawlResult] = []
+        recovered_outcomes: list[FetchOutcome] = []
+        sequential_recovery_urls: list[str] = []
+        recoverable_failed = {
+            u: exc for u, exc in fetch.failed.items() if _is_recoverable_bulk_failure(exc)
+        }
+        if recoverable_failed:
+            # crawl4ai's bulk endpoint still failed this subset after the
+            # stealth retry — either an opaque 5xx or a read-timeout
+            # (evidence + budget: see _MAX_SEQUENTIAL_RECOVERY,
+            # _is_recoverable_bulk_failure). The client-side cause is
+            # unknowable from the transport response alone, so we don't
+            # guess it — recover what we can by retrying one URL at a time
+            # via the single-page path, which tells us the REAL per-URL
+            # reason_code, instead of writing off every URL as
+            # unknown_exception (or guessing blocked_anti_bot without
+            # evidence). Only the URLs STILL unresolved go here — not the
+            # whole original batch (A2): everything the bulk path already
+            # resolved, successfully or via a non-recoverable failure, is
+            # never touched again.
             #
             # The deadline handed to this call is derived from the
             # job-wide time REMAINING, evaluated right now — not a
             # deadline fixed at crawl_site's start — so that only the time
             # this call itself spends recovering is ever charged against
             # the budget (see sequential_recovery_time_remaining above).
+            sequential_recovery_urls = list(recoverable_failed.keys())
             recovery_started_at = _recovery_monotonic()
             (
-                batch_results,
-                link_source_results,
-                batch_outcomes,
+                recovered_results,
+                recovered_link_source_results,
+                recovered_outcomes,
                 recovery_attempted,
             ) = await _recover_bulk_5xx_batch(
-                batch,
+                sequential_recovery_urls,
                 crawler_config=crawler_config,
                 cookies=cookies,
                 base_domain=base_domain,
@@ -1547,7 +1585,12 @@ async def crawl_site(
                 # Honest abandon-reason if the recovery budget/deadline/
                 # breaker caps out mid-batch: whatever this trigger actually
                 # was (5xx or timeout), not a hardcoded 5xx-flavoured guess.
-                trigger_reason_code=_bulk_failure_trigger_reason_code(transport_error),
+                # `recoverable_failed` may hold more than one distinct
+                # exception across its URLs (A2) — this picks the first
+                # one, in submission order, as the representative trigger.
+                trigger_reason_code=_bulk_failure_trigger_reason_code(
+                    next(iter(recoverable_failed.values()))
+                ),
             )
             sequential_recovery_budget -= recovery_attempted
             # Debit only the wall-clock time THIS call actually spent
@@ -1558,16 +1601,43 @@ async def crawl_site(
                 sequential_recovery_time_remaining - (_recovery_monotonic() - recovery_started_at),
                 0.0,
             )
-        else:
-            batch_results, batch_outcomes = _combine_bulk_responses(
-                candidates=batch,
-                raw_results=raw_results,
-                transport_error=transport_error,
-                base_domain=base_domain,
-            )
-            link_source_results = _crawl_results_from_raw_results(
-                raw_results, base_domain=base_domain
-            )
+            # These URLs' fate is now fully captured in recovered_outcomes
+            # (success, still-failed, or abandoned-mid-recovery) — remove
+            # them from fetch.failed so they are not ALSO reclassified
+            # below from their now-stale pre-recovery exception.
+            for recovered_url in sequential_recovery_urls:
+                fetch.failed.pop(recovered_url, None)
+
+        # Everything NOT sent to sequential recovery, not abandoned as
+        # not-attempted (A1), and not still failed (non-recoverable
+        # transport errors, e.g. DNS/connection/4xx-wrapper) has a real
+        # per-URL result sitting in fetch.raw_results.
+        excluded_from_combine = (
+            set(fetch.failed) | set(not_attempted_urls) | set(sequential_recovery_urls)
+        )
+        ok_urls = [u for u in batch if u not in excluded_from_combine]
+        batch_results, batch_outcomes = _combine_bulk_responses(
+            candidates=ok_urls,
+            raw_results=fetch.raw_results,
+            transport_error=None,
+            base_domain=base_domain,
+        )
+        link_source_results = _crawl_results_from_raw_results(
+            fetch.raw_results, base_domain=base_domain
+        )
+        # Non-recoverable failures (DNS/connection/4xx-wrapper errors etc.)
+        # never entered the stealth retry or sequential recovery —
+        # classify them directly from the exception that failed THEIR
+        # chunk (A2: each keeps its own exception, never borrowed).
+        for failed_url, failed_exc in fetch.failed.items():
+            batch_outcomes.append(_outcome_for_failed_url(failed_url, failed_exc))
+        # A1: URLs whose chunk was deliberately never sent.
+        for skipped_url in not_attempted_urls:
+            batch_outcomes.append(_outcome_for_not_attempted_url(skipped_url))
+
+        batch_results.extend(recovered_results)
+        batch_outcomes.extend(recovered_outcomes)
+        link_source_results.extend(recovered_link_source_results)
         # Preview↔ingest parity: the single-page preview recovers thin-but-rich
         # pages via a relaxed retry; do the same for BFS pages so site ingest
         # does not silently store them thin. Only when no selector is active
@@ -1857,10 +1927,11 @@ async def _recover_bulk_5xx_batch(
         """Mark every not-yet-attempted URL with ``reason_code``; return how many.
 
         Default is ``trigger_reason_code`` — the honest reason recovery was
-        entered in the first place (HTTP_5XX or TIMEOUT). Callers override
-        it explicitly only for the RATE_LIMITED abandon branch below, which
-        is a strictly more specific and more actionable signal than the
-        trigger that started this batch's recovery.
+        entered in the first place (HTTP_5XX or TIMEOUT). The RATE_LIMITED
+        abandon branch below overrides it with
+        ``NOT_FETCHED_RATE_LIMIT_STOP`` (A1) — never with RATE_LIMITED
+        itself, which stays reserved for the one URL that was actually
+        attempted and got that answer.
         """
         for leftover_url in urls[index:]:
             outcomes.append(
@@ -1969,8 +2040,18 @@ async def _recover_bulk_5xx_batch(
         # recovering pages. Stop this batch's recovery immediately rather
         # than burning the remaining budget/cooldown on attempts that will
         # only add to the 429 pressure.
+        #
+        # ``url`` itself keeps the real, observed RATE_LIMITED outcome
+        # appended above. The REST of the batch (index i+1 onward) was
+        # never attempted at all — labelling those with RATE_LIMITED too
+        # (the pre-A1 behaviour) inflates "how many times did this domain
+        # actually reject us" with URLs we deliberately chose not to ask.
+        # NOT_FETCHED_RATE_LIMIT_STOP keeps the one real observation
+        # distinct from every abandoned-without-a-network-call URL (A1).
         if reason_code == FetchReasonCode.RATE_LIMITED.value:
-            remaining = _abandon_remaining(i + 1, reason_code=FetchReasonCode.RATE_LIMITED.value)
+            remaining = _abandon_remaining(
+                i + 1, reason_code=FetchReasonCode.NOT_FETCHED_RATE_LIMIT_STOP.value
+            )
             still_failing += 1 + remaining
             logger.warning(
                 "crawl_sequential_recovery_rate_limited",
@@ -2118,6 +2199,38 @@ def _combine_bulk_responses(
     return crawl_results, outcomes
 
 
+def _outcome_for_failed_url(url: str, error: BaseException) -> FetchOutcome:
+    """Outcome for a URL whose OWN chunk failed to transport (A2).
+
+    Classified from THAT chunk's actual exception — never borrowed from a
+    different chunk's failure, and never a guess.
+    """
+    return {
+        "url": url,
+        "reason_code": _classify_fetch_outcome(None, error=error),
+        "status_code": _status_code_from_exception(error),
+        "content_length": 0,
+    }
+
+
+def _outcome_for_not_attempted_url(url: str) -> FetchOutcome:
+    """Outcome for a URL whose chunk was never even sent (A1).
+
+    An earlier chunk already observed RATE_LIMITED/BLOCKED_ANTI_BOT, so
+    ``_chunked_bulk_fetch`` stopped before this URL's chunk went out.
+    Deliberately NOT ``FetchReasonCode.RATE_LIMITED`` — that value stays
+    reserved for a URL we actually asked and got that answer from, so a
+    "how many times did this domain really reject us" count is not
+    inflated by URLs we chose not to send.
+    """
+    return {
+        "url": url,
+        "reason_code": FetchReasonCode.NOT_FETCHED_RATE_LIMIT_STOP.value,
+        "status_code": None,
+        "content_length": 0,
+    }
+
+
 async def _recover_thin_bulk_results(
     batch_results: list[CrawlResult],
     *,
@@ -2157,16 +2270,26 @@ async def _recover_thin_bulk_results(
         thin_count=len(thin_urls),
         batch_size=len(batch_results),
     )
-    relaxed_raw, relaxed_error = await _chunked_bulk_fetch(
+    relaxed_fetch = await _chunked_bulk_fetch(
         urls=thin_urls,
         crawler_config=_relax_seed_crawl_config(crawler_config),
         cookies=cookies,
         rate_limit=rate_limit,
     )
+    # Only the subset that actually transported can be compared against the
+    # strict result — a URL whose relaxed chunk failed or was never
+    # attempted (A1/A2) simply keeps its strict result below (no relaxed
+    # candidate found for it), rather than every candidate in this batch
+    # being treated as failed via a single shared transport_error.
+    relaxed_ok_urls = [
+        u
+        for u in thin_urls
+        if u not in relaxed_fetch.failed and u not in relaxed_fetch.not_attempted
+    ]
     relaxed_results, _ = _combine_bulk_responses(
-        candidates=thin_urls,
-        raw_results=relaxed_raw,
-        transport_error=relaxed_error,
+        candidates=relaxed_ok_urls,
+        raw_results=relaxed_fetch.raw_results,
+        transport_error=None,
         base_domain=base_domain,
     )
     relaxed_by_canonical = {_canonicalise_url(r.url): r for r in relaxed_results}
@@ -2495,6 +2618,62 @@ async def _bfs_deep_crawl(
     return crawl_results, None
 
 
+# Reason codes that mean "the target site just told us to back off" —
+# observed either as a per-URL page result inside an otherwise-successful
+# chunk, or as the whole chunk's own transport exception. Either shape MUST
+# stop ``_chunked_bulk_fetch`` from sending any further chunk (A1): sending
+# chunk 2..N after chunk 1 already saw this signal is precisely the
+# "ignore the 429, keep hammering" bug this fixes.
+_STOP_CHUNKING_REASON_CODES = frozenset(
+    {FetchReasonCode.RATE_LIMITED.value, FetchReasonCode.BLOCKED_ANTI_BOT.value}
+)
+
+
+@dataclass
+class ChunkedFetchResult:
+    """Per-chunk outcome of one ``_chunked_bulk_fetch`` call.
+
+    Replaces the old ``tuple[list[dict], BaseException | None]`` return
+    shape, which had two bugs (bulk-path defects block A):
+
+    - it kept only the LAST failing chunk's exception, silently discarding
+      the exception (and the honest cause) of every earlier failed chunk
+      (A2);
+    - a caller that saw ``transport_error is not None`` had no way to tell
+      "which URLs actually failed" from "which URLs already succeeded in
+      an earlier chunk" — so a retry had to redo the WHOLE batch, and a
+      combine step had to treat every candidate as failed even when most
+      of them had a perfectly good result sitting in ``raw_results``.
+
+    Attributes:
+        raw_results: flattened per-URL page dicts from every chunk that
+            transported successfully (an httpx-level 2xx bulk response).
+            A page dict here may still carry ``success: false`` at the
+            page level (404, 500, ...) — that is a normal per-URL outcome,
+            classified downstream by ``_classify_fetch_outcome``, not a
+            transport failure.
+        failed: URL -> the transport exception raised by ITS OWN chunk. A
+            dict (not a single ``transport_error``) so two different
+            chunks that both fail keep their own, distinct exceptions —
+            never the second silently overwriting the first (A2).
+        not_attempted: URLs belonging to chunks that were never submitted
+            at all because an earlier chunk's outcome (page-level
+            classification, or the chunk's own transport exception)
+            classified as RATE_LIMITED or BLOCKED_ANTI_BOT and the loop
+            stopped sending further chunks (A1, see ``stopped_early``).
+            These made ZERO network calls — kept out of ``failed`` so a
+            caller never conflates "the site rejected this URL" with "we
+            chose not to ask".
+        stopped_early: True when ``not_attempted`` is non-empty for the
+            reason described above.
+    """
+
+    raw_results: list[dict[str, Any]] = field(default_factory=list)
+    failed: dict[str, BaseException] = field(default_factory=dict)
+    not_attempted: list[str] = field(default_factory=list)
+    stopped_early: bool = False
+
+
 async def _chunked_bulk_fetch(
     *,
     urls: list[str],
@@ -2502,13 +2681,15 @@ async def _chunked_bulk_fetch(
     cookies: list[dict[str, Any]] | None,
     stealth: bool = False,
     rate_limit: float | None = None,
-) -> tuple[list[dict[str, Any]], BaseException | None]:
+) -> ChunkedFetchResult:
     """Submit ``urls`` to crawl4ai's bulk ``/crawl`` endpoint in chunks.
 
     crawl4ai 0.8 server enforces a 100-URL cap on the ``urls`` array.
     Submitting more in one request returns 422. We chunk client-side and
-    accumulate raw results; per-chunk transport failure is logged but the
-    remaining chunks still ship — partial coverage beats zero coverage.
+    accumulate raw results; per-chunk transport failure is recorded per URL
+    (see ``ChunkedFetchResult.failed``) but does not by itself stop the
+    remaining chunks from shipping — partial coverage beats zero coverage.
+    The one exception is a confirmed rate-limit/anti-bot signal — see below.
 
     ``rate_limit`` (requests/second, optional) additionally paces the
     chunks client-side. crawl4ai's server ignores our ``mean_delay`` /
@@ -2527,11 +2708,18 @@ async def _chunked_bulk_fetch(
     setting's docstring (config.py) for the margin it keeps over crawl4ai's
     server-side ``timeouts.batch_process``. The pacing gap above happens
     BEFORE a chunk's request starts, so it never eats into that timeout.
+
+    A1 (2026-08-18): once a chunk's outcome classifies as RATE_LIMITED or
+    BLOCKED_ANTI_BOT — either a per-URL page result within a successfully
+    transported chunk, or the chunk's own transport exception — every
+    later, not-yet-submitted chunk is skipped entirely instead of being
+    sent anyway. The chunk that produced the signal still fully completes
+    (its own request already went out; we cannot un-send it), only chunks
+    AFTER it are affected. See ``ChunkedFetchResult.not_attempted``.
     """
-    raw_results: list[dict[str, Any]] = []
-    transport_error: BaseException | None = None
+    result = ChunkedFetchResult()
     if not urls:
-        return raw_results, None
+        return result
     chunk_size = _burst_size_for(rate_limit)
     previous_chunk_start: float | None = None
     for chunk_start in range(0, len(urls), chunk_size):
@@ -2550,21 +2738,44 @@ async def _chunked_bulk_fetch(
         bc = _build_browser_config_with_cookies(cookies, stealth=stealth)
         if bc:
             payload["browser_config"] = bc
+
+        chunk_reason_codes: set[str] = set()
         try:
             async with httpx.AsyncClient(
                 timeout=settings.crawl_bulk_base_timeout_seconds
             ) as client:
                 data = await _crawl_sync(client, payload)
-            raw_results.extend(_normalise_results_block(data))
+            chunk_pages = _normalise_results_block(data)
+            result.raw_results.extend(chunk_pages)
+            for page in chunk_pages:
+                chunk_reason_codes.add(_classify_fetch_outcome(page))
         except Exception as exc:
-            transport_error = exc
+            for chunk_url in chunk_urls:
+                result.failed[chunk_url] = exc
+            chunk_reason_codes.add(_classify_fetch_outcome(None, error=exc))
             logger.warning(
                 "crawl_site_bulk_chunk_failed",
                 chunk_index=chunk_start // chunk_size,
                 chunk_size=len(chunk_urls),
                 error=str(exc),
             )
-    return raw_results, transport_error
+
+        if chunk_reason_codes & _STOP_CHUNKING_REASON_CODES:
+            remaining_urls = urls[chunk_start + chunk_size :]
+            if remaining_urls:
+                result.stopped_early = True
+                result.not_attempted = remaining_urls
+                logger.warning(
+                    "crawl_bulk_stopped_after_rate_limit_signal",
+                    sent_urls=chunk_start + len(chunk_urls),
+                    not_attempted_urls=len(remaining_urls),
+                    triggering_reason_codes=sorted(
+                        chunk_reason_codes & _STOP_CHUNKING_REASON_CODES
+                    ),
+                )
+            break
+
+    return result
 
 
 def _normalise_results_block(data: dict[str, Any]) -> list[dict[str, Any]]:

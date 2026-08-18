@@ -128,6 +128,12 @@ _FETCH_NON_FAILURE_REASON_CODES: frozenset[str] = frozenset(
         FetchReasonCode.NOT_FETCHED_DISCOVERY_LIMIT.value,
         FetchReasonCode.NOT_FETCHED_EXCLUDED.value,
         FetchReasonCode.NOT_FETCHED_DUPLICATE.value,
+        # 2026-08-18 (bulk-path defects block A / A1): a URL we deliberately
+        # never sent because an earlier chunk already told us to stop — a
+        # scheduling decision, not a fetch failure. Must NOT inflate
+        # fetch_failure_dominant the way the real RATE_LIMITED observation
+        # correctly does.
+        FetchReasonCode.NOT_FETCHED_RATE_LIMIT_STOP.value,
     }
 )
 _uncategorized_fetch_reason_codes = (

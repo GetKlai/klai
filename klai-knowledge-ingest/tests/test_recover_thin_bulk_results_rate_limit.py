@@ -31,10 +31,10 @@ async def test_recover_thin_bulk_results_forwards_rate_limit(
         cookies: list[dict[str, Any]] | None,
         stealth: bool = False,
         rate_limit: float | None = None,
-    ) -> tuple[list[dict[str, Any]], BaseException | None]:
+    ) -> crawl4ai_client.ChunkedFetchResult:
         seen_rate_limits.append(rate_limit)
-        return (
-            [
+        return crawl4ai_client.ChunkedFetchResult(
+            raw_results=[
                 {
                     "url": u,
                     "success": True,
@@ -45,8 +45,7 @@ async def test_recover_thin_bulk_results_forwards_rate_limit(
                     "media": {},
                 }
                 for u in urls
-            ],
-            None,
+            ]
         )
 
     monkeypatch.setattr(crawl4ai_client, "_chunked_bulk_fetch", _fake_chunked_bulk_fetch)

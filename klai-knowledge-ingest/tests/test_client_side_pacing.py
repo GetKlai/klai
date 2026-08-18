@@ -136,15 +136,15 @@ async def test_chunked_bulk_fetch_honours_rate_limit_cadence(
     num_urls = burst * 50
     urls = [f"https://example.com/p{i}" for i in range(num_urls)]
 
-    raw_results, transport_error = await _chunked_bulk_fetch(
+    fetch = await _chunked_bulk_fetch(
         urls=urls,
         crawler_config={},
         cookies=None,
         rate_limit=rate_limit,
     )
 
-    assert transport_error is None
-    assert len(raw_results) == num_urls
+    assert fetch.failed == {}
+    assert len(fetch.raw_results) == num_urls
 
     elapsed = clock.now
     assert elapsed > 0
@@ -246,15 +246,15 @@ async def test_no_rate_limit_means_no_behaviour_change(monkeypatch: pytest.Monke
     num_urls = 250  # spans 3 chunks at the historical fixed size of 100
     urls = [f"https://example.com/p{i}" for i in range(num_urls)]
 
-    raw_results, transport_error = await _chunked_bulk_fetch(
+    fetch = await _chunked_bulk_fetch(
         urls=urls,
         crawler_config={},
         cookies=None,
         rate_limit=None,
     )
 
-    assert transport_error is None
-    assert len(raw_results) == num_urls
+    assert fetch.failed == {}
+    assert len(fetch.raw_results) == num_urls
     assert calls == [100, 100, 50]
     assert clock.sleeps == []
     assert clock.now == 0.0

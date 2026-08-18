@@ -54,6 +54,15 @@ class FetchReasonCode(StrEnum):
     NOT_FETCHED_DISCOVERY_LIMIT = "not_fetched_discovery_limit"
     NOT_FETCHED_EXCLUDED = "not_fetched_excluded"
     NOT_FETCHED_DUPLICATE = "not_fetched_duplicate"
+    # 2026-08-18 (bulk-path defects block A / A1): a chunk earlier in the
+    # SAME bulk-fetch attempt (or the sequential-recovery loop) came back
+    # RATE_LIMITED or BLOCKED_ANTI_BOT, so every URL still queued behind it
+    # is deliberately never sent — not attempted, not observed, and
+    # therefore honestly distinct from RATE_LIMITED itself. Keeping this
+    # separate from RATE_LIMITED matters downstream: a domain-level
+    # "how many times did this site actually reject us" count must not be
+    # inflated by URLs we chose not to ask.
+    NOT_FETCHED_RATE_LIMIT_STOP = "not_fetched_rate_limit_stop"
     UNKNOWN_EXCEPTION = "unknown_exception"
     # 2026-08-14: distinguishes a Cloudflare/anti-bot JS-challenge block from
     # a generic unknown_exception. Additive and safe without a migration —

@@ -25,10 +25,54 @@ from urllib.parse import urlparse
 
 import asyncpg
 
+# Ports that are implied by the scheme and therefore carry no distinguishing
+# information in the domain key — ``example.com:443`` (https) and
+# ``example.com`` MUST collide onto the same rate-limit/selector row.
+_DEFAULT_PORTS_BY_SCHEME = {"http": "80", "https": "443"}
+
 
 def extract_domain(url: str) -> str:
-    """Return the netloc (hostname) of the given URL, e.g. 'help.example.com'."""
-    return urlparse(url).netloc
+    """Return a normalised domain key for ``url``, e.g. 'help.example.com'.
+
+    Used as the lookup/storage key for ``knowledge.crawl_domains`` (selector
+    + rate-limit persistence, see module docstring) — so two URLs that are
+    the SAME site to a human MUST produce the SAME key, or they silently
+    become two independent rate limits / selector rows.
+
+    Normalisation (all four independently observed as real-world variance
+    in crawl targets, none handled by a bare ``urlparse(url).netloc``):
+
+    - lowercase (``Example.com`` == ``example.com``)
+    - default port stripped when it matches the URL's scheme
+      (``example.com:443`` over https == ``example.com``) — a NON-default
+      port (``example.com:8080``) is kept, since that genuinely is a
+      different origin for rate-limiting purposes
+    - trailing dot stripped (``example.com.`` == ``example.com`` — a valid
+      absolute-DNS-name suffix that is otherwise a distinct string)
+    - IDNA-normalised for non-ASCII hostnames, so a Unicode domain and its
+      punycode form (``münchen.example`` vs ``xn--mnchen-3ya.example``)
+      collide onto the same key
+
+    No data migration ships with this change: production
+    ``knowledge.crawl_domains`` rows were audited and are already lowercase
+    with no port suffix, so a backfill would touch zero rows. See
+    docs/pitfalls or the SPEC changelog for the RLS reason a migration-time
+    UPDATE would be unsafe on this table regardless.
+    """
+    parsed = urlparse(url)
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+    if hostname:
+        try:
+            hostname = hostname.encode("idna").decode("ascii")
+        except UnicodeError:
+            # Not a valid IDNA hostname (e.g. already punycode, or contains
+            # characters idna can't encode) — keep the lowercased form
+            # rather than raising out of a pure key-derivation helper.
+            pass
+    port = parsed.port
+    if port is None or _DEFAULT_PORTS_BY_SCHEME.get(parsed.scheme) == str(port):
+        return hostname
+    return f"{hostname}:{port}"
 
 
 async def get_domain_selector(
