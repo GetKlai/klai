@@ -92,9 +92,9 @@ No second stamp is ever needed; only the initial baseline is.
 ## Refs
 
 - SPEC-INGEST-ALEMBIC-001 — the bootstrap SPEC
-- pitfall `alembic-stamped-past-skipped-migration` (HIGH) — the inverse
+- `.claude/rules/klai/infra/deploy.md` — why a stamped head is not schema proof, including the inverse
   failure mode (stamping past a migration that never actually ran)
-- pitfall `scribe-deploy-no-alembic` (HIGH) — the pre-existing class this
-  fix closes for knowledge-ingest
+- `.claude/rules/klai/infra/deploy.md` — the auto-migration class this fix
+  closes for knowledge-ingest
 - klai-portal/backend/CLAUDE.md "Deploy workflow" — same stamp-on-bootstrap
   pattern was used during portal-api's initial Alembic adoption

@@ -18,6 +18,19 @@ paths:
 
 **Prevention:** After any domain change, verify: `docker exec portal-api printenv FRONTEND_URL` matches `https://my.getklai.com`. Never derive the portal URL from Caddy wildcard config or Zitadel redirect URIs — check servers.md.
 
+## Callback allowlists enumerate host classes (CRIT)
+
+`app/api/auth.py::_validate_callback_url` is defense-in-depth against callback
+open redirects. Its allowlist must cover each legitimate class explicitly:
+localhost, bare apex, the configured frontend/login host, curated static system
+hosts, active tenant slugs, and approved per-tenant prefixes such as `chat-`.
+Never replace this with a suffix-only `*.domain` check.
+
+When a Zitadel redirect host class changes, update the validator and
+`tests/test_validate_callback_url.py` before registering the new redirect. Keep
+dynamic hosts derived from settings or the active-tenant source, and test both
+accepted representatives and rejected dangling/external hosts.
+
 ## SQLAlchemy + RLS (CRIT)
 - SQLAlchemy ORM adds implicit `RETURNING` to all inserts — breaks RLS tables with separate SELECT/INSERT policies.
 - Use `text()` raw SQL for inserts on RLS-protected tables where the inserting role differs from the reading role.
@@ -303,4 +316,3 @@ a confusing one.
 Frontend pattern (the modal): only attach the header when the user has gone
 through the typed-confirmation gate. Never attach by default. Test for
 header-absence in `data-test-id` assertions on the owner pad.
-

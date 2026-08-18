@@ -8,6 +8,31 @@ paths:
 ---
 # Knowledge Domain Patterns
 
+## asyncpg tenant GUCs are connection-local (HIGH)
+
+`app.current_org_id` belongs to one PostgreSQL connection, not an asyncpg pool. Code inside `tenant_scoped_connection(org_id)` must issue SQL through the yielded `conn`, or open its own scoped connection at the leaf. Holding one scoped connection while a nested helper calls `get_pool()` or `pool.acquire()` does not carry the GUC and fails against FORCE-RLS tables.
+
+Review every new knowledge-schema SQL path for connection threading. The current contract is implemented in `klai-knowledge-ingest/knowledge_ingest/db.py` and exercised by `tests/test_db_rls_wiring.py`.
+
+## Receiver changes require caller changes (CRIT)
+
+When an internal endpoint adds a required header, field, scope, or identity rule, find and update every active caller in the same change. Receiver-only tests prove only the receiver. For `/retrieve`, callers must send the exact identity headers expected by retrieval-api, including `X-Caller-Service` where required.
+
+Search the whole repository for endpoint literals and URL settings, then keep both:
+
+- caller-side tests that assert the outbound headers/body;
+- receiver-side contract tests using a real caller-shaped request.
+
+Do not silently convert authentication or contract failures into empty knowledge context. Preserve explicit logging and user-visible degradation where the calling surface provides it.
+
+## Shared adapter fields are cross-service contracts (HIGH)
+
+Before deleting or moving shared adapter types or fields such as `DocumentRef`,
+`ImageRef`, or `content_fingerprint`, search every producer and consumer across
+connector and knowledge-ingest. A field's original purpose does not establish
+its current ownership: sync, image upload, deduplication, and ingest paths may
+all depend on the same shape. Change producer and consumer tests together.
+
 ## chat system prompt — three locations, never duplicate (HIGH)
 
 System-prompt content for chat lives in **three** canonical files,

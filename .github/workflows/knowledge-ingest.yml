@@ -55,7 +55,7 @@ jobs:
           config: sgconfig.yml
           paths: klai-knowledge-ingest/knowledge_ingest/
 
-      # Pitfall: alembic-multi-pr-head-split (process-rules.md). Two PRs
+      # See .claude/rules/klai/infra/deploy.md. Two PRs
       # each adding a migration with the same down_revision both build
       # green individually but the second-merging one creates two
       # alembic heads, blocking `alembic upgrade head` at container
@@ -89,8 +89,7 @@ jobs:
             echo "Hotfix: rebase the second-merging migration's down_revision"
             echo "onto the first head, OR add a no-op merge migration with"
             echo "down_revision = (head_a, head_b). See"
-            echo ".claude/rules/klai/pitfalls/process-rules.md"
-            echo "(alembic-multi-pr-head-split)."
+            echo ".claude/rules/klai/infra/deploy.md"
             exit 1
           fi
           echo "OK — single alembic head"

@@ -32,7 +32,7 @@ worse answer than they expected.
 
    | Symptom | Likely cause | Fix |
    |---|---|---|
-   | `HTTP 400` body contains `missing_caller_service` | Caller stopped sending `X-Caller-Service` header (or a new caller was added without it). | See pitfalls → `retrieve-caller-service-header-mismatch`. Add the header in the caller; redeploy. |
+   | `HTTP 400` body contains `missing_caller_service` | Caller stopped sending `X-Caller-Service` header (or a new caller was added without it). | See `.claude/rules/klai/projects/knowledge.md`. Add the header in the caller; redeploy. |
    | `HTTP 400` body contains `unknown_caller_service` | Caller sent a `X-Caller-Service` value not in `klai_identity_assert.KNOWN_CALLER_SERVICES`. | Add the new service name to the lib + portal-api `identity_verifier.KNOWN_CALLER_SERVICES`. The contract test in portal-api will lock the two lists together. |
    | `HTTP 401` `invalid_jwt_audience` | Zitadel project / audience config drifted (Phase C-1 JWT path). Hook falls back to legacy `X-Internal-Secret` automatically. | If the fallback also fails: Zitadel project for retrieval-api is misconfigured. Re-check `KLAI_LITELLM_CLIENT_*` in SOPS. |
    | `HTTP 401` `invalid_internal_secret` | `RETRIEVAL_API_INTERNAL_SECRET` divergence between caller and receiver. | Compare SOPS env vars on both ends. Rotate secret if needed. |
@@ -93,4 +93,4 @@ no alert. After the fix, the failure log is at `error` level AND a
 user-visible notice is prepended to the system prompt AND this alert
 fires immediately.
 
-See pitfalls/process-rules.md → `retrieve-caller-service-header-mismatch`.
+See `.claude/rules/klai/projects/knowledge.md` for the maintained caller/receiver contract.

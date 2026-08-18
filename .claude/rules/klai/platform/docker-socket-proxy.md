@@ -24,7 +24,6 @@ network in `deploy/docker-compose.yml`:
 | `knowledge-ingest` | `routes/crawl.py::preview_crawl` + `crawl_url` accept a user URL and forward it to crawl4ai |
 | `crawl4ai` | Browser context fetches every URL submitted by knowledge-ingest and connector |
 | `klai-connector` | `SyncEngine._upload_images` → `klai_image_storage.pipeline._download_validate_upload` fetches adapter-extracted image URLs (Notion / Confluence / GitHub / Airtable) |
-| `klai-focus` / `research-api` | `app/services/docling.py::convert_url` forwards a user-supplied URL to docling-serve for content extraction |
 | `klai-knowledge-mcp` | Delegates search + ingest queries to retrieval-api + knowledge-ingest — same URL surface by transitive reach |
 | `retrieval-api` | Enrichment pipeline fetches external URLs during reranking / summary |
 | `scribe` / `scribe-api` | Accepts meeting audio URLs (`/transcribe` endpoint) and calls providers on the user's behalf |

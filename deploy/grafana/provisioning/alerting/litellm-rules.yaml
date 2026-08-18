@@ -15,7 +15,7 @@
 #
 # Pitfall avoidance:
 #   - UID stays well under the 40-char Grafana limit (see
-#     `pitfalls/process-rules.md#grafana-uid-40-char-limit`).
+#     `.claude/rules/klai/infra/observability.md`).
 #   - LogsQL pattern matches BOTH error variants emitted by the hook
 #     (HTTP error + generic exception).
 
@@ -95,8 +95,8 @@ groups:
                    _time:15m service:litellm "KlaiKnowledgeHook: retrieval"
                  Look at the message detail — common failure modes:
                    * `HTTP 400` body=`missing_caller_service` → header
-                     contract regression, see pitfalls →
-                     `retrieve-caller-service-header-mismatch`.
+                     contract regression; see
+                     `.claude/rules/klai/projects/knowledge.md`.
                    * `HTTP 401`/`403` invalid_jwt_audience → Zitadel
                      project/audience for retrieval-api drifted.
                    * `ConnectError`/`TimeoutError` → retrieval-api down or

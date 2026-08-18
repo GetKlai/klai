@@ -140,4 +140,5 @@ agent-browser --session "$SESSION" eval "
 ## See also
 
 - `lang/testing.md` — Playwright MCP workflow (canonical voor verify-flows)
-- `pitfalls/process-rules.md` — `playwright-mcp-config-cycle` (waarom we Playwright config niet aanraken)
+- Keep project Playwright MCP configuration stable during an application task;
+  configuration changes require their own scoped diagnosis and verification.

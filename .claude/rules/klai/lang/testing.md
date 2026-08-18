@@ -42,8 +42,8 @@ workspace profile is untouched.
   (macOS) and restart Claude Code, then log in once more by hand.
 - Grant permissions programmatically: `context.grantPermissions(['microphone'], { origin: '...' })`
 
-For the full reasoning + anti-patterns, see `playwright-mcp-config-cycle` in
-`.claude/rules/klai/pitfalls/process-rules.md`.
+Treat Playwright MCP configuration changes as a separate diagnostic task; do
+not rewrite the shared browser setup while verifying an application change.
 
 ## Browser console + GlitchTip
 - Check browser errors: `browser_console_messages({ level: 'error' })`

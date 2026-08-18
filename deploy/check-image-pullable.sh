@@ -33,6 +33,14 @@ FAIL=0
 PUBLIC_OK=0
 LOCAL_OK=0
 
+# Force Docker CLI registry requests through a clean configuration directory.
+# This prevents a developer's ~/.docker/config.json, credential helper, or CI
+# login from turning an anonymous-public check into an authenticated one.
+ANON_DOCKER_CONFIG=$(mktemp -d "${TMPDIR:-/tmp}/klai-anon-docker.XXXXXX")
+trap 'rm -rf "$ANON_DOCKER_CONFIG"' EXIT HUP INT TERM
+export DOCKER_CONFIG="$ANON_DOCKER_CONFIG"
+unset DOCKER_AUTH_CONFIG || true
+
 for F in $FILES; do
     [ -f "$F" ] || continue
 
@@ -51,10 +59,9 @@ for F in $FILES; do
                 ;;
         esac
 
-        # `docker manifest inspect` is anonymous-friendly for public
-        # repos and exits non-zero with stderr if the manifest is
-        # missing. Suppress stdout and stderr; only the exit code
-        # matters here.
+        # The clean DOCKER_CONFIG above guarantees this request cannot reuse
+        # workstation or CI registry credentials. Suppress output; only the
+        # anonymous registry result matters here.
         if docker manifest inspect "$REF" >/dev/null 2>&1; then
             PUBLIC_OK=$((PUBLIC_OK + 1))
             continue

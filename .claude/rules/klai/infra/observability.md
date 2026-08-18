@@ -9,7 +9,7 @@ Caddy generates `X-Request-ID` per request via `request_header`. Portal-api read
 (or generates UUID fallback) and propagates to downstream services via `get_trace_headers()`
 from `app.trace`. Downstream services bind it via `RequestContextMiddleware`.
 
-Chain: Caddy → portal-api → knowledge-ingest / retrieval-api / connector / scribe / mailer / research-api.
+Chain: Caddy → portal-api → knowledge-ingest / retrieval-api / connector / scribe / mailer.
 
 One `request_id:<uuid>` query in VictoriaLogs shows the full chain.
 
@@ -57,6 +57,18 @@ PostgreSQL queries (product_events), and alert inspection.
 `/etc/docker/daemon.json`: `max-size: 50m`, `max-file: 3`.
 Alloy captures real-time — rotation only affects local Docker cache.
 
+## Grafana provisioning UIDs and deletion
+
+Alert-rule and dashboard UIDs must be at most 40 characters. CI enforces this
+with `scripts/audit-alert-uid-length.sh`; do not rely on Grafana to reject an
+oversized UID only after deployment.
+
+The provisioning sync in `.github/workflows/deploy-compose.yml` uses `rsync`
+without `--delete`. Removing a file from git therefore does not remove a stale
+copy on the server. Treat server deletion as a separate, targeted production
+operation requiring approval, then verify Grafana provisioning and container
+health.
+
 ## Product events (SPEC-GRAFANA-METRICS)
 All user-facing actions emit to the `product_events` table in the `klai` database.
 Query via Grafana PostgreSQL datasource or direct SQL on the production server.
@@ -70,8 +82,6 @@ Query via Grafana PostgreSQL datasource or direct SQL on the production server.
 | `connector.connected` | portal-api | OAuth callback — first-time provider connection |
 | `connector.reconnected` | portal-api | OAuth callback — recovery from `auth_error` |
 | `connector.reconnect_failed` | portal-api | OAuth callback — reconnect attempt failed (`reason=consent_denied` or `reason=token_exchange_failed`; only emitted when the connector was already in `auth_error`) |
-| `notebook.created`, `notebook.opened` | research-api | notebooks endpoint (SQLAlchemy) |
-| `source.added` | research-api | sources endpoint (SQLAlchemy) |
 | `knowledge.queried` | retrieval-api | retrieve endpoint (asyncpg pool) |
 
 Useful queries:

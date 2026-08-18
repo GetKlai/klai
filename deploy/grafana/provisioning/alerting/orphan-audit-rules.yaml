@@ -35,8 +35,7 @@
 # (49+ chars) and crashed grafana on provisioning. The `spec-hyg-001-*`
 # abbreviation stays under the limit. Mechanical guard:
 # `scripts/audit-alert-uid-length.sh` runs in the alerting-check workflow
-# on every PR. See pitfall `grafana-uid-40-char-limit (HIGH)` in
-# process-rules.md.
+# on every PR. See .claude/rules/klai/infra/observability.md.
 
 apiVersion: 1
 

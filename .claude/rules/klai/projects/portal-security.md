@@ -75,6 +75,15 @@ explicit and auditable.
 - `portal_api` user is NOT table owner — cannot run `ALTER TABLE ENABLE ROW LEVEL SECURITY`.
 - Run RLS DDL directly as `klai` superuser via psql. Keep Alembic migration for code history.
 - Use `IF NOT EXISTS` in all policy/index creation to make migrations idempotent.
+- Put owner-only RLS DDL and DML on FORCE-RLS tables in `post_deploy_*.sql`; `portal_api` Alembic migrations may contain application-role-safe DDL only.
+- A Cat-A `WITH CHECK` policy rejects unscoped `UPDATE` and `INSERT` during Alembic. Prefer metadata-only `ADD COLUMN ... NOT NULL DEFAULT ...`; move per-row backfills to post-deploy SQL.
+
+## RLS helper ownership and policy shape
+
+- PostgreSQL cannot overload a function by return type alone. Keep differently typed tenant helpers schema-qualified or give them type/service-specific names. Current examples are `public._rls_current_org_id()`, `knowledge._rls_current_org_id()`, and connector's `_rls_current_org_text()`.
+- Cat-A auth-seed reads happen before tenant context exists. Keep their inline `NULLIF(current_setting(...), '')` policy shape aligned with `assert_portal_users_rls_ready()` in `app/core/database.py`.
+- Cat-D tables use the fail-loud helper. Do not copy a Cat-A policy to Cat-D or vice versa.
+- Apply and smoke-test the post-deploy RLS SQL before relying on code paths that require its target policy.
 
 ## RLS + SQLAlchemy
 

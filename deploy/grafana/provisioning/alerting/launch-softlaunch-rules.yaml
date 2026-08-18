@@ -157,8 +157,8 @@ groups:
           description: |
             The LiteLLM hook (klai_knowledge.py) failed to fetch KB context in
             the last 15 minutes. Users get answers from general knowledge only,
-            without the Klai Kennisbank chunks — see the pitfall
-            `retrieve-caller-service-header-mismatch` in process-rules.md.
+            without the Klai Kennisbank chunks. The maintained caller/receiver
+            contract is in `.claude/rules/klai/projects/knowledge.md`.
 
             Investigate (Grafana → Explore → VictoriaLogs):
               service:litellm AND level:error AND _msg:"retrieval"

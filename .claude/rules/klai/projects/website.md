@@ -6,7 +6,7 @@ paths: ["klai-website/**"]
 
 > Website-specific design patterns (USE side: warm, editorial, ivory/cream).
 > Shared brand DNA (colors, typography roles, rules): auto-loaded via `styleguide.md`.
-> Source of truth: `/Users/jantinedoornbos/Documents/Projects/klai-website/src/styles/global.css`
+> Source of truth: `klai-website/src/styles/global.css`
 
 ---
 

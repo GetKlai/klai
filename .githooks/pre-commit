@@ -7,9 +7,13 @@
 #   1. deploy/ image-tag validators — when compose files / image-tag scripts
 #      / VERSIONS.md change. Catches PR #269-class bugs (unpullable
 #      vexaai/* tags). See docs/retros/2026-05-03-vexa-transcription-tag.md.
-#   2. .trivyignore.yaml validator — when any **/.trivyignore.yaml is staged.
+#   2. env_file scope validator — when deploy Compose files or the validator
+#      are staged. Blocks literal bare .env references in every YAML form.
+#   3. .trivyignore.yaml validator — when any **/.trivyignore.yaml is staged.
 #      Enforces SPEC-CI-TRIVY-POLICY-001 REQ-5 (id + ≥40-char statement
 #      + expired_at within 12 months). See docs/runbooks/trivy-policy.md.
+#   4. Active agent knowledge — when rules, skills, or agent entrypoints change.
+#      Rejects retired paths and oversized unscoped rules.
 
 set -e
 
@@ -20,22 +24,33 @@ CHANGED=$(git diff --cached --name-only --diff-filter=ACM)
 if echo "$CHANGED" | grep -qE '^deploy/(docker-compose.*\.ya?ml|check-image-.*\.sh|VERSIONS\.md)$'; then
     echo "[pre-commit] deploy/ change detected — validating image tags..."
 
-    if [ -x deploy/check-image-tags.sh ]; then
+    if [ -f deploy/check-image-tags.sh ]; then
         sh deploy/check-image-tags.sh
     fi
 
-    if [ -x deploy/check-image-pullable.sh ]; then
-        # Only run pullable check if docker is available (skip silently otherwise
-        # so the hook works on machines without docker daemon access).
-        if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    if [ -f deploy/check-image-pullable.sh ]; then
+        # `docker manifest inspect` talks to the registry directly and does not
+        # need a running daemon. Skip only when the Docker CLI is absent.
+        if command -v docker >/dev/null 2>&1; then
             sh deploy/check-image-pullable.sh
         else
-            echo "[pre-commit] docker not available — skipping pullable check (CI will catch)."
+            echo "[pre-commit] docker CLI not available — skipping pullable check (CI will catch)."
         fi
     fi
 fi
 
-# ---- Trigger 2: .trivyignore.yaml validator ----
+# ---- Trigger 2: env_file scope validator ----
+
+if echo "$CHANGED" | grep -qE '^deploy/(docker-compose.*\.ya?ml|check-env-file-scope\.py)$'; then
+    echo "[pre-commit] deploy Compose change detected — validating env_file scope..."
+    ENV_SCOPE_FILES="deploy/docker-compose.yml"
+    [ -f deploy/docker-compose.gpu.yml ] && ENV_SCOPE_FILES="$ENV_SCOPE_FILES deploy/docker-compose.gpu.yml"
+    # Intentional word splitting: each existing Compose file is one argument.
+    # shellcheck disable=SC2086
+    python3 -B deploy/check-env-file-scope.py $ENV_SCOPE_FILES
+fi
+
+# ---- Trigger 3: .trivyignore.yaml validator ----
 
 if echo "$CHANGED" | grep -qE '(^|/)\.trivyignore\.ya?ml$'; then
     echo "[pre-commit] .trivyignore.yaml change detected — validating REQ-5 fields..."
@@ -45,6 +60,13 @@ if echo "$CHANGED" | grep -qE '(^|/)\.trivyignore\.ya?ml$'; then
     else
         echo "[pre-commit] WARN: scripts/validate-trivyignore.sh not found / not executable. Skipping (CI will catch)."
     fi
+fi
+
+# ---- Trigger 4: active agent knowledge ----
+
+if echo "$CHANGED" | grep -qE '^(AGENTS\.md|CLAUDE\.md|\.agents/skills/|\.claude/(agents|commands|rules)/|\.claude/settings\.json|klai-website/(AGENTS\.md|CLAUDE\.md|\.claude/)|scripts/check-agent-knowledge\.sh)'; then
+    echo "[pre-commit] agent configuration change detected — checking active knowledge..."
+    bash scripts/check-agent-knowledge.sh
 fi
 
 exit 0

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Klai Portal UI"
+  short_description: "Build consistent Klai portal interfaces"
+  default_prompt: "Use $klai-portal-ui to implement this portal UI change consistently."

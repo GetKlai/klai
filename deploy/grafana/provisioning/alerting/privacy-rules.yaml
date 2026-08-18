@@ -19,7 +19,7 @@
 #
 # Pitfall avoidance:
 #   - Both UIDs stay well under the 40-char Grafana limit (see
-#     `pitfalls/process-rules.md#grafana-uid-40-char-limit`).
+#     `.claude/rules/klai/infra/observability.md`).
 #   - R1 uses Postgres (portal-audit-log) because it's the source of
 #     truth for level changes. R2 uses Prometheus because that's where
 #     the drop counter lives.

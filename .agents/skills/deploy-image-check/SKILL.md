@@ -12,7 +12,7 @@ sh deploy/check-image-tags.sh        # tag FORM: pinned only
 sh deploy/check-image-pullable.sh    # tag EXISTENCE: manifest on registry
 ```
 
-They are wired into `.githooks/pre-commit` (local half) and the `deploy-compose.yml` CI workflow (CI half, runs before anything syncs to core-01).
+They are wired into `.githooks/pre-commit`. CI runs them in `deploy-compose.yml` before a core-01 sync and in `validate-gpu-compose.yml` for gpu-01 Compose changes. The GPU workflow validates only; it does not deploy.
 
 ## Rules the scripts enforce
 
@@ -27,7 +27,7 @@ Mutable tags (`latest`, `dev`, `staging`) and `-pending` placeholders fail the c
 
 ## The unauthenticated requirement
 
-The pullability check MUST run without a local registry login. `docker manifest inspect` is anonymous-friendly for public repos — that is the point: it verifies what the *servers* can pull anonymously. A local `docker login` can make private or team-scoped images resolve on your machine while the server's anonymous pull still fails, silently defeating the check. If you are logged in, log out (or use a clean environment) before trusting a green result.
+The script creates an empty temporary `DOCKER_CONFIG` and unsets `DOCKER_AUTH_CONFIG` before every manifest request. It therefore ignores workstation credential helpers and CI registry logins. Do not remove that isolation: the check must prove the image is publicly pullable, not merely pullable with a developer account.
 
 ## When a check fails
 

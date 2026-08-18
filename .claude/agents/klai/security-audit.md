@@ -177,12 +177,12 @@ Maintain a mental map. Flag deviations:
 
 | Secret | Services that hold it | Primary use |
 |---|---|---|
-| `INTERNAL_SECRET` | portal-api, mailer, knowledge-ingest, retrieval-api, connector, scribe, research-api, LibreChat patch env, LiteLLM hook env | Shared service-to-service bearer |
+| `INTERNAL_SECRET` | portal-api, mailer, knowledge-ingest, retrieval-api, connector, scribe, LibreChat patch env, LiteLLM hook env | Shared service-to-service bearer |
 | `ENCRYPTION_KEY` | portal-api | `connector.config` JSONB field encryption |
 | `PORTAL_SECRETS_KEY` | portal-api | Fernet key for session/pending cookies |
 | `SSO_COOKIE_KEY` | portal-api | Fernet key for `klai_sso` cookie |
 | `ZITADEL_PAT` | portal-api | User/org management via Zitadel admin API |
-| `DATABASE_URL` | portal-api, retrieval-api, knowledge-ingest, connector, research-api | Postgres with RLS |
+| `DATABASE_URL` | portal-api, retrieval-api, knowledge-ingest, connector | Postgres with RLS |
 | `MONEYBIRD_WEBHOOK_TOKEN` | portal-api | Billing webhook signature |
 | `WIDGET_JWT_SECRET` | portal-api | HS256 widget session tokens |
 | `VEXA_WEBHOOK_SECRET` | portal-api | Meeting bot webhook auth |

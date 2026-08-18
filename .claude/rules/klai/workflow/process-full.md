@@ -6,8 +6,8 @@ paths:
 ---
 # Process Pitfalls — Extended Reference
 
-> Full descriptions with root causes and sources.
-> Compact version (always loaded): `pitfalls/process-rules.md`
+> Historical extended process reference for specification work. Current technical
+> invariants live in the path-scoped domain rules that govern the affected code.
 
 ---
 
