@@ -77,6 +77,16 @@ AUTH_WALL_DETECTED_REASON = "auth_wall_detected"
 # error_summary" contract as the other *_REASON constants above.
 FETCH_FAILURE_DOMINANT_REASON = "fetch_failure_dominant"
 
+# SPEC-CRAWLER-FAILURE-EVIDENCE Deel B: ``pages_failed`` (incremented on
+# every ``_ingest_crawl_result`` exception) was tracked but never read —
+# a job where every fetched page's ingest raised (embedding provider down,
+# database gone, ...) still reported ``completed``. This guard is
+# deliberately narrow: it only fires on TOTAL ingest failure (zero pages
+# actually persisted despite at least one ingest attempt). See
+# ``decide_ingest_failure_terminal_status`` for why a ratio threshold is
+# NOT used here.
+INGEST_FAILURE_TOTAL_REASON = "ingest_failure_total"
+
 _NOT_FETCHED_REASON_PREFIX = "not_fetched_"
 
 # 2026-08-18 stop-the-bleeding fix, corrected same day after production
@@ -295,6 +305,63 @@ def decide_fetch_failure_terminal_status(
         "total_count": total_count,
         "top_reason_codes": dict(failure_counts.most_common(5)),
         "suggestion": _FETCH_FAILURE_SUGGESTION,
+    }
+    return ("failed_partial", summary)
+
+
+def decide_ingest_failure_terminal_status(
+    *,
+    pages_done: int,
+    pages_failed: int,
+) -> tuple[str, dict | None]:
+    """Pure decision function — sibling of :func:`decide_fetch_failure_terminal_status`.
+
+    ``pages_failed`` counts every ``_ingest_crawl_result`` exception
+    (embedding provider unreachable, database gone, a malformed document,
+    ...) in ``run_crawl_job``'s per-page ingest loop. Before this guard, the
+    counter was incremented and then never read again — a harness
+    reproduction confirmed one successful fetch whose ingest raised a bare
+    ``RuntimeError`` still finished with ``pages_done=0 pages_failed=1
+    status=completed``.
+
+    Scope, deliberately narrow: this fires ONLY when EVERY ingest attempt in
+    the job failed (``pages_done == 0 and pages_failed > 0``) — not a
+    trip-rate threshold. Two reasons:
+
+    1. A ratio threshold needs a documented, defensible cutoff — and this
+       codebase has direct evidence that guessing one is dangerous:
+       ``ingest_fetch_failure_dirty_trip_rate = 0.30`` meant a job with 29%
+       failures still reported healthy. Picking a new ratio without the
+       same calibration work (see ``decide_terminal_status``'s calibration
+       comment) would repeat that mistake instead of fixing it.
+    2. The full accounting this deserves — indexed / unchanged / rejected /
+       skipped / failed as distinct, countable outcomes — requires
+       ``_ingest_crawl_result`` to return an explicit result instead of
+       raising-or-not. That is out of scope for this fix; here we only make
+       the EXISTING counter count, so the status stops lying on a total
+       failure. Partial-failure tolerance is the next step, not this one.
+
+    Args:
+        pages_done: pages whose ingest completed without raising (existing
+            ``run_crawl_job`` counter — an early-return "unchanged"/"skipped"
+            page still counts as done; see the caller's docstring for that
+            pre-existing caveat, unchanged by this guard).
+        pages_failed: pages whose ingest raised (existing counter).
+
+    Returns:
+        ``(terminal_status, summary_dict_or_None)`` — same contract as
+        :func:`decide_fetch_failure_terminal_status`: ``("", None)`` when
+        the guard does not fire, so the caller falls through to its
+        existing terminal-status logic.
+    """
+    if pages_failed <= 0:
+        return ("", None)
+    if pages_done > 0:
+        return ("", None)
+    summary: dict = {
+        "reason": INGEST_FAILURE_TOTAL_REASON,
+        "pages_attempted": pages_done + pages_failed,
+        "pages_failed": pages_failed,
     }
     return ("failed_partial", summary)
 
@@ -858,9 +925,20 @@ async def run_crawl_job(
             threshold=settings.ingest_fetch_failure_dirty_trip_rate,
         )
 
+        # SPEC-CRAWLER-FAILURE-EVIDENCE Deel B: fetch succeeding is not the
+        # same as ingest succeeding — a fetch-failure trip-rate of 0% can
+        # still hide a job where every single ingest attempt raised (see
+        # decide_ingest_failure_terminal_status's docstring for the
+        # reproduction and why this is a total-failure guard, not a ratio).
+        ingest_failure_status, ingest_failure_summary = decide_ingest_failure_terminal_status(
+            pages_done=pages_done,
+            pages_failed=pages_failed,
+        )
+
         # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-04.2/04.3 — terminal status:
         # - failed_partial when REQ-4 dirty-content guard tripped (loud failure)
         # - failed_partial when the fetch-failure guard tripped (loud failure)
+        # - failed_partial when every ingest attempt failed (loud failure)
         # - failed_partial when 0 pages ingested AND >= 1 wall skipped
         # - completed otherwise
         #
@@ -870,7 +948,9 @@ async def run_crawl_job(
         # login-gated); a fetch-failure trip often means Klai could not
         # reach the site at all. The auth-wall summary is the more
         # actionable of the two when both signals are present, so it
-        # takes priority.
+        # takes priority. The ingest-failure guard sits right after the
+        # fetch-failure guard: both are "Klai reached the site but the job
+        # still produced nothing", just at a different pipeline stage.
         if dirty_status:
             terminal_status = dirty_status
             summary_payload = dirty_summary or {}
@@ -891,6 +971,19 @@ async def run_crawl_job(
         elif fetch_failure_status:
             terminal_status = fetch_failure_status
             summary_payload = fetch_failure_summary or {}
+            _attach_crawl_warning(summary_payload, crawl_outcome_warning)
+            summary_json = json.dumps(summary_payload)
+            await conn.execute(
+                "UPDATE knowledge.crawl_jobs SET status=$1, error_summary=$2::jsonb, "
+                "updated_at=$3 WHERE id=$4",
+                terminal_status,
+                summary_json,
+                int(time.time()),
+                job_id,
+            )
+        elif ingest_failure_status:
+            terminal_status = ingest_failure_status
+            summary_payload = ingest_failure_summary or {}
             _attach_crawl_warning(summary_payload, crawl_outcome_warning)
             summary_json = json.dumps(summary_payload)
             await conn.execute(
