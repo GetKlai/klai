@@ -1485,6 +1485,7 @@ async def crawl_site(
             urls=batch,
             crawler_config=crawler_config,
             cookies=cookies,
+            rate_limit=rate_limit,
         )
         fetched_count += len(batch)
 
@@ -1503,6 +1504,7 @@ async def crawl_site(
                 crawler_config=crawler_config,
                 cookies=cookies,
                 stealth=True,
+                rate_limit=rate_limit,
             )
 
         if transport_error is not None and _is_recoverable_bulk_failure(transport_error):
@@ -2219,6 +2221,47 @@ def _bulk_crawl_timeout_for_chunk(chunk_size: int, crawler_config: dict[str, Any
 # Discovered live on help.voys.nl (208 sitemap entries → 422 → 1 ingested).
 _BULK_CHUNK_SIZE = 100
 
+# Client-side pacing (2026-08-18, fix/client-side-crawl-pacing): measured
+# live against the running crawl4ai server that ``mean_delay`` /
+# ``semaphore_count`` on CrawlerRunConfig are silently ignored — the REST
+# server builds its own ``MemoryAdaptiveDispatcher`` (api.py) and passes
+# THAT to ``arun_many``, never reading our config. 8 URLs with
+# ``mean_delay=2.0`` finished in 3.2s instead of the predicted 16s, and
+# ``semaphore_count`` 1 vs 8 made no measurable difference. Separately, a
+# single bulk chunk IS one burst on the target site: 16 URLs in one request
+# completed within 330ms of each other. Real rate limiting can therefore
+# only happen client-side, via the two knobs we actually control: how many
+# URLs go in one request (the burst — see ``_burst_size_for``) and how long
+# we wait between requests (the gap — see ``_chunked_bulk_fetch``).
+#
+# ``_BURST_WINDOW_SECONDS`` is the size of that accounting window: how much
+# a site is allowed to receive within one window, at the requested
+# rate_limit. A larger window produces bigger bursts with longer pauses
+# between them (fewer HTTP round-trips, coarser pacing); a smaller window
+# is smoother traffic but costs more round-trips for the same rate.
+_BURST_WINDOW_SECONDS = 10.0
+
+
+def _burst_size_for(rate_limit: float | None) -> int:
+    """Translate a requests/second rate limit into a per-request burst size.
+
+    ``rate_limit is None`` means no client-side pacing was requested: keep
+    the historical fixed chunk size (``_BULK_CHUNK_SIZE``), so crawls
+    without a rate_limit are completely unaffected by this function.
+
+    Uses ``int(x + 0.5)``, deliberately NOT ``round()``. Python's
+    ``round()`` uses banker's rounding to the nearest even integer —
+    ``round(0.5) == 0`` and ``round(2.5) == 2`` — which already caused a
+    real bug in this codebase (``build_crawl_config``'s
+    ``semaphore_count = max(1, min(round(rate_limit), 8))`` collapsed
+    ``rate_limit=0.5`` down to 1 instead of the intended 2). Do not
+    reintroduce ``round()`` here.
+    """
+    if rate_limit is None:
+        return _BULK_CHUNK_SIZE
+    return max(1, min(_BULK_CHUNK_SIZE, int(rate_limit * _BURST_WINDOW_SECONDS + 0.5)))
+
+
 # Total budget (per crawl_site call) for sequential one-URL-at-a-time
 # recovery of a bulk batch that failed as a whole with an opaque 5xx (or,
 # since 2026-08-18, a read-timeout — see _recover_bulk_5xx_batch,
@@ -2255,6 +2298,14 @@ _CRAWL4AI_RATE_LIMIT_BACKOFF_CEILING_SECONDS = 3 * 60.0
 # take hours. Patch these, not asyncio/time, so nothing else is affected.
 _recovery_sleep = asyncio.sleep
 _recovery_monotonic = time.monotonic
+
+# Same indirection, dedicated to the client-side bulk-chunk pacing in
+# ``_chunked_bulk_fetch`` (see ``_burst_size_for`` above). Kept separate
+# from ``_recovery_sleep`` / ``_recovery_monotonic`` — they pace an
+# unrelated loop (sequential 5xx recovery) and patching one must not
+# silently affect the other.
+_pacing_sleep = asyncio.sleep
+_pacing_monotonic = time.monotonic
 
 # Server-side BFS deep crawl polling budget. /crawl/job is async — submit,
 # get task_id, poll status. Voys-support full-depth crawl (~500 pages
@@ -2445,13 +2496,26 @@ async def _chunked_bulk_fetch(
     crawler_config: dict[str, Any],
     cookies: list[dict[str, Any]] | None,
     stealth: bool = False,
+    rate_limit: float | None = None,
 ) -> tuple[list[dict[str, Any]], BaseException | None]:
-    """Submit ``urls`` to crawl4ai's bulk ``/crawl`` endpoint in chunks of 100.
+    """Submit ``urls`` to crawl4ai's bulk ``/crawl`` endpoint in chunks.
 
     crawl4ai 0.8 server enforces a 100-URL cap on the ``urls`` array.
     Submitting more in one request returns 422. We chunk client-side and
     accumulate raw results; per-chunk transport failure is logged but the
     remaining chunks still ship — partial coverage beats zero coverage.
+
+    ``rate_limit`` (requests/second, optional) additionally paces the
+    chunks client-side. crawl4ai's server ignores our ``mean_delay`` /
+    ``semaphore_count`` config (see ``_burst_size_for``'s docstring for the
+    measurement), so real rate limiting can only happen here: the chunk
+    size itself becomes the burst (``_burst_size_for``), and the gap
+    between the START of one chunk and the START of the next is held to
+    ``chunk_size / rate_limit`` seconds — crediting whatever time the
+    chunk's own request already consumed, so we never add avoidable
+    latency on top of a slow response. ``rate_limit is None`` disables all
+    pacing: chunk size reverts to the historical fixed ``_BULK_CHUNK_SIZE``
+    and no sleep is ever inserted, matching pre-pacing behaviour exactly.
 
     Each chunk's httpx timeout is computed from that chunk's own size and
     pacing via ``_bulk_crawl_timeout_for_chunk`` — see that function's
@@ -2462,8 +2526,17 @@ async def _chunked_bulk_fetch(
     transport_error: BaseException | None = None
     if not urls:
         return raw_results, None
-    for chunk_start in range(0, len(urls), _BULK_CHUNK_SIZE):
-        chunk_urls = urls[chunk_start : chunk_start + _BULK_CHUNK_SIZE]
+    chunk_size = _burst_size_for(rate_limit)
+    previous_chunk_start: float | None = None
+    for chunk_start in range(0, len(urls), chunk_size):
+        if rate_limit is not None and previous_chunk_start is not None:
+            gap_seconds = chunk_size / rate_limit
+            elapsed_since_previous_start = _pacing_monotonic() - previous_chunk_start
+            remaining = gap_seconds - elapsed_since_previous_start
+            if remaining > 0:
+                await _pacing_sleep(remaining)
+        previous_chunk_start = _pacing_monotonic()
+        chunk_urls = urls[chunk_start : chunk_start + chunk_size]
         payload: dict[str, Any] = {
             "urls": chunk_urls,
             "crawler_config": {"type": "CrawlerRunConfig", "params": crawler_config},
@@ -2480,7 +2553,7 @@ async def _chunked_bulk_fetch(
             transport_error = exc
             logger.warning(
                 "crawl_site_bulk_chunk_failed",
-                chunk_index=chunk_start // _BULK_CHUNK_SIZE,
+                chunk_index=chunk_start // chunk_size,
                 chunk_size=len(chunk_urls),
                 error=str(exc),
             )
