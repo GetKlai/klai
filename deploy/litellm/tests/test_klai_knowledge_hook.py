@@ -7930,3 +7930,98 @@ class TestMissingSecretRedisFeatureCache:
         assert feature["settings_unavailable"] is True
         redis_get.assert_awaited_once_with("user1", "org1")
         cls.assert_not_called()
+
+
+# ─── Pasted third-party correspondence wiring (Voys trunk incident 2026-08-17) ──
+
+
+class TestPastedCorrespondenceWiring:
+    """The detector lives in code; these tests pin that the hook actually
+    injects the epistemic contract when a user message contains pasted
+    correspondence — and does NOT dilute ordinary prompts when it doesn't."""
+
+    _PASTE = (
+        "Wat denk jij dat er niet goed is?\n\n"
+        "Van: Klant <klant@example.nl>\n"
+        "Verzonden: Vrijdag, 14 Augustus, 2026 21:22\n"
+        "Aan: Support <support@example.nl>\n"
+        "Onderwerp: RE: storing URGENT\n\n"
+        "Aan onze kant is alles geverifieerd correct."
+    )
+
+    def _general_mode_cache(self):
+        return _make_cache(
+            feature={
+                "enabled": True,
+                "kb_retrieval_enabled": True,
+                "kb_personal_enabled": False,
+                "kb_slugs_filter": [],
+                "kb_narrow": False,
+                "version": 0,
+                "zitadel_user_id": "300000000000000002",
+            }
+        )
+
+    @pytest.mark.asyncio
+    async def test_pasted_email_injects_epistemic_contract(self, monkeypatch):
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        data = {
+            "user": "u1" * 12,
+            "messages": [{"role": "user", "content": self._PASTE}],
+        }
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.get = AsyncMock(return_value=_make_resp({"instructions": []}))
+            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), self._general_mode_cache(), data, "completion"
+            )
+
+        system_msg = next((m for m in data["messages"] if m["role"] == "system"), None)
+        assert system_msg is not None
+        content = system_msg["content"]
+        assert "[Pasted third-party correspondence]" in content, (
+            "hook MUST inject the pasted-correspondence contract when a user "
+            "message contains an email-header block"
+        )
+        # The branch foundation prompt stacks ABOVE the contract: detection
+        # runs before branch dispatch, and later prepends insert on top.
+        assert content.index("general-purpose assistant") < content.index(
+            "[Pasted third-party correspondence]"
+        )
+
+    @pytest.mark.asyncio
+    async def test_plain_question_does_not_get_contract(self, monkeypatch):
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        data = {
+            "user": "u1" * 12,
+            "messages": [
+                {"role": "user", "content": "Wat is het beleid voor opnames?"}
+            ],
+        }
+
+        with patch("klai_knowledge.httpx.AsyncClient") as cls:
+            mc = AsyncMock()
+            mc.get = AsyncMock(return_value=_make_resp({"instructions": []}))
+            mc.post = AsyncMock(return_value=_make_resp({"chunks": []}))
+            mc.__aenter__ = AsyncMock(return_value=mc)
+            mc.__aexit__ = AsyncMock(return_value=None)
+            cls.return_value = mc
+
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), self._general_mode_cache(), data, "completion"
+            )
+
+        system_msg = next((m for m in data["messages"] if m["role"] == "system"), None)
+        assert system_msg is not None
+        assert "[Pasted third-party correspondence]" not in system_msg["content"], (
+            "the contract must ONLY appear when the detector fires — a "
+            "permanent prompt block would dilute every ordinary conversation"
+        )

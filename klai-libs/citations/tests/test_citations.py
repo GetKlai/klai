@@ -1386,3 +1386,39 @@ def test_strip_keeps_legitimate_agent_activity_explainer() -> None:
     )
     cleaned = strip_model_citation_artifacts(text)
     assert "This tab shows each retrieval step the agent performed." in cleaned
+
+
+def test_strip_removes_internal_evidence_labels() -> None:
+    """Internal "Evidence E<n>" prompt labels must never reach the user.
+
+    Regression (Voys trunk incident, 2026-08-17): the model wrote "de
+    kennisbank (E3) bevestigt dat ..." — parroting the internal evidence
+    label from the prompt context as if it were a citation.
+    """
+    from klai_citations import strip_model_citation_artifacts
+
+    text = (
+        "De kennisbank (E3) bevestigt dat blokkades kunnen optreden.\n"
+        "Zie ook Evidence E12 voor context, en (Evidence E1) hierboven.\n"
+        "Meerdere labels (E1, E2) in een run."
+    )
+
+    cleaned = strip_model_citation_artifacts(text)
+    assert "E3" not in cleaned
+    assert "E12" not in cleaned
+    assert "Evidence" not in cleaned
+    assert "(E1" not in cleaned
+    assert "De kennisbank" in cleaned
+    assert "blokkades kunnen optreden" in cleaned
+
+
+def test_strip_keeps_legitimate_e_number_words() -> None:
+    """Real-world tokens like E10 fuel or the E19 road must survive when not
+    parenthesized as a citation-style label."""
+    from klai_citations import strip_model_citation_artifacts
+
+    text = "De E19 richting Antwerpen; tank geen E10 in deze motor."
+
+    cleaned = strip_model_citation_artifacts(text)
+    assert "E19" in cleaned
+    assert "E10" in cleaned

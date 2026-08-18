@@ -23,6 +23,7 @@ KLAI_KB_MODULES = (
     "klai_kb_traceability",
     "klai_kb_urls",
     "klai_litellm_response",
+    "klai_pasted_correspondence",
 )
 
 

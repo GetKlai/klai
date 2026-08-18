@@ -26,6 +26,10 @@ from klai_litellm_response import (
     set_message_content,
     set_message_field,
 )
+from klai_pasted_correspondence import (
+    pasted_correspondence_activity_line,
+    pasted_correspondence_detected_from_meta,
+)
 
 _STREAM_LINK_GUARD_TAIL_CHARS = 16
 
@@ -493,6 +497,8 @@ def _has_visible_agent_activity(kb_meta: dict[str, Any] | None) -> bool:
         or _format_limited_label_list(kb_meta.get("kbs_with_results"))
         or _format_limited_label_list(kb_meta.get("kbs_used_as_sources"))
     )
+    if pasted_correspondence_detected_from_meta(kb_meta):
+        return True
     if bool(kb_meta.get("allow_uncited_user_content")):
         return bool(_format_limited_label_list(kb_meta.get("kbs_used_as_sources")))
     if has_kb_trace_labels:
@@ -658,6 +664,9 @@ def _format_visible_agent_activity(
             lines.append(
                 f"- Citability: no usable source selected ({no_citable_reason})."
             )
+
+    if pasted_correspondence_detected_from_meta(kb_meta):
+        lines.append(pasted_correspondence_activity_line(language))
 
     return "\n".join(lines)
 

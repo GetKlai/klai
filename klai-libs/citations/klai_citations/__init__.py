@@ -61,6 +61,13 @@ _ORDERED_LIST_LINE_RE = re.compile(r"^(\s*)(\d+)([.)])(\s+.+)$")
 _NUMERIC_MARKDOWN_CITATION_RE = re.compile(r"\[\s*\d{1,3}\s*\]\([^)]*\)")
 _BARE_BRACKET_CITATION_RE = re.compile(r"(?<!!)\[\s*\d{1,3}\s*\]")
 _PAREN_CITATION_RE = re.compile(r"\(\s*\d{1,3}(?:\s*[,;]\s*\d{1,3})*\s*\)")
+# Internal evidence labels ("Evidence E3" headers in the prompt context) that
+# the model parrots back — observed as "de kennisbank (E3) bevestigt" in the
+# Voys trunk incident (2026-08-17). Never user-facing vocabulary.
+_EVIDENCE_LABEL_RE = re.compile(
+    r"\(\s*(?:Evidence\s+)?E\d{1,3}(?:\s*[,;]\s*E\d{1,3})*\s*\)"
+    r"|\bEvidence\s+E\d{1,3}\b"
+)
 _MALFORMED_NUMBER_URL_RE = re.compile(r"\b\d{1,3}\(https?://[^)\s]+\)")
 _BARE_NUMBER_RUN_RE = re.compile(r"(?<![\w/])\b\d{1,3}(?:\s*[,;]\s*\d{1,3})+\b(?=(?:[.!?])?(?:\s|$))")
 _TOKEN_RE = re.compile(r"[a-z0-9À-ÿ][a-z0-9À-ÿ_-]{2,}", re.IGNORECASE)
@@ -560,6 +567,7 @@ def strip_model_citation_artifacts(
     cleaned = _MARKDOWN_LINK_RE.sub(r"\1", cleaned)
     cleaned = _BARE_BRACKET_CITATION_RE.sub("", cleaned)
     cleaned = _PAREN_CITATION_RE.sub("", cleaned)
+    cleaned = _EVIDENCE_LABEL_RE.sub("", cleaned)
     cleaned = _BARE_NUMBER_RUN_RE.sub("", cleaned)
     cleaned = _RAW_URL_RE.sub("", cleaned)
     # Trailing whitespace only — `\s+\n` would also swallow blank lines and
