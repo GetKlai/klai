@@ -45,6 +45,12 @@ class FetchReasonCode(StrEnum):
     NOT_FETCHED_DISCOVERY_LIMIT = "not_fetched_discovery_limit"
     NOT_FETCHED_EXCLUDED = "not_fetched_excluded"
     NOT_FETCHED_DUPLICATE = "not_fetched_duplicate"
+    # Mirror of knowledge-ingest's FetchReasonCode (bulk-path defects block
+    # A / A1, 2026-08-18) — the connector does not itself produce this
+    # value today, but the parity test (tests/test_reason_codes_parity.py)
+    # requires both copies to carry the same value set regardless of which
+    # side currently emits it.
+    NOT_FETCHED_RATE_LIMIT_STOP = "not_fetched_rate_limit_stop"
     UNKNOWN_EXCEPTION = "unknown_exception"
     # Mirror of knowledge-ingest's FetchReasonCode; the parity test
     # (tests/test_reason_codes_parity.py) keeps both copies in lockstep.

@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from knowledge_ingest.crawl4ai_client import (
+    ChunkedFetchResult,
     CrawlResult,
     _sample_candidates,
     sample_linked_pages,
@@ -146,7 +147,7 @@ async def test_sample_counts_only_pages_with_real_content() -> None:
     ]
     with patch(
         "knowledge_ingest.crawl4ai_client._chunked_bulk_fetch",
-        new=AsyncMock(return_value=(raw, None)),
+        new=AsyncMock(return_value=ChunkedFetchResult(raw_results=raw)),
     ):
         sample = await sample_linked_pages(seed, max_pages=3)
     assert sample.pages_crawled == 3
@@ -158,7 +159,9 @@ async def test_sample_issues_exactly_one_bulk_request() -> None:
     """The whole point: one parallel batch, no seed re-fetch, no sitemap probe."""
     seed = _seed(*[f"https://example.com/a/b/{i}" for i in range(5)])
     bulk = AsyncMock(
-        return_value=([_page(f"https://example.com/a/b/{i}", 900) for i in range(5)], None)
+        return_value=ChunkedFetchResult(
+            raw_results=[_page(f"https://example.com/a/b/{i}", 900) for i in range(5)]
+        )
     )
     with patch("knowledge_ingest.crawl4ai_client._chunked_bulk_fetch", new=bulk):
         await sample_linked_pages(seed, max_pages=5)
@@ -168,7 +171,7 @@ async def test_sample_issues_exactly_one_bulk_request() -> None:
 
 @pytest.mark.asyncio
 async def test_seed_without_links_costs_no_request() -> None:
-    bulk = AsyncMock(return_value=([], None))
+    bulk = AsyncMock(return_value=ChunkedFetchResult())
     with patch("knowledge_ingest.crawl4ai_client._chunked_bulk_fetch", new=bulk):
         sample = await sample_linked_pages(_seed(), max_pages=5)
     assert (sample.pages_crawled, sample.pages_usable) == (0, 0)
@@ -183,7 +186,7 @@ async def test_seed_with_only_template_links_costs_no_request() -> None:
         "https://example.com/euf/themes/standard/{{item.URL}}",
         "https://example.com/euf/themes/standard/{{item.SeoTitle}}",
     )
-    bulk = AsyncMock(return_value=([], None))
+    bulk = AsyncMock(return_value=ChunkedFetchResult())
     with patch("knowledge_ingest.crawl4ai_client._chunked_bulk_fetch", new=bulk):
         sample = await sample_linked_pages(seed, max_pages=5)
     assert (sample.pages_crawled, sample.pages_usable) == (0, 0)
@@ -200,7 +203,7 @@ async def test_failed_seed_yields_empty_sample() -> None:
         word_count=0,
         success=False,
     )
-    bulk = AsyncMock(return_value=([], None))
+    bulk = AsyncMock(return_value=ChunkedFetchResult())
     with patch("knowledge_ingest.crawl4ai_client._chunked_bulk_fetch", new=bulk):
         sample = await sample_linked_pages(dead, max_pages=5)
     assert (sample.pages_crawled, sample.pages_usable) == (0, 0)
@@ -213,7 +216,11 @@ async def test_transport_error_degrades_to_zero_sample() -> None:
     seed = _seed("https://example.com/a/b/1")
     with patch(
         "knowledge_ingest.crawl4ai_client._chunked_bulk_fetch",
-        new=AsyncMock(return_value=([], RuntimeError("crawl4ai down"))),
+        new=AsyncMock(
+            return_value=ChunkedFetchResult(
+                failed={"https://example.com/a/b/1": RuntimeError("crawl4ai down")}
+            )
+        ),
     ):
         sample = await sample_linked_pages(seed, max_pages=5)
     assert (sample.pages_crawled, sample.pages_usable) == (0, 0)

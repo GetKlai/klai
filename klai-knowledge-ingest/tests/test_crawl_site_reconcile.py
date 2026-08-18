@@ -614,7 +614,7 @@ async def test_crawl_site_frontier_fetches_listing_children(
         *,
         urls: list[str],
         **_kwargs: Any,
-    ) -> tuple[list[dict[str, Any]], BaseException | None]:
+    ) -> crawl4ai_client.ChunkedFetchResult:
         pages: list[dict[str, Any]] = []
         for url in urls:
             if url == "https://wiki.redcactus.cloud/nl/crm-software":
@@ -656,7 +656,7 @@ async def test_crawl_site_frontier_fetches_listing_children(
                         "media": {},
                     }
                 )
-        return pages, None
+        return crawl4ai_client.ChunkedFetchResult(raw_results=pages)
 
     monkeypatch.setattr(crawl4ai_client, "_chunked_bulk_fetch", _fake_bulk_fetch)
 
@@ -697,25 +697,27 @@ async def test_crawl_site_records_budget_exhausted_for_unfetched_frontier(
         *,
         urls: list[str],
         **_kwargs: Any,
-    ) -> tuple[list[dict[str, Any]], BaseException | None]:
+    ) -> crawl4ai_client.ChunkedFetchResult:
         assert urls == ["https://example.com/nl/crm-software"]
-        return [
-            {
-                "url": "https://example.com/nl/crm-software",
-                "success": True,
-                "status_code": 200,
-                "html": "<html>CRM listing</html>",
-                "markdown": "CRM listing",
-                "links": {
-                    "internal": [
-                        {"href": "https://example.com/nl/crm-software/zoho-bigin", "text": ""},
-                        {"href": "https://example.com/nl/crm-software/zoho-crm", "text": ""},
-                        {"href": "https://example.com/nl/crm-software/zoho-desk", "text": ""},
-                    ]
-                },
-                "media": {},
-            }
-        ], None
+        return crawl4ai_client.ChunkedFetchResult(
+            raw_results=[
+                {
+                    "url": "https://example.com/nl/crm-software",
+                    "success": True,
+                    "status_code": 200,
+                    "html": "<html>CRM listing</html>",
+                    "markdown": "CRM listing",
+                    "links": {
+                        "internal": [
+                            {"href": "https://example.com/nl/crm-software/zoho-bigin", "text": ""},
+                            {"href": "https://example.com/nl/crm-software/zoho-crm", "text": ""},
+                            {"href": "https://example.com/nl/crm-software/zoho-desk", "text": ""},
+                        ]
+                    },
+                    "media": {},
+                }
+            ]
+        )
 
     monkeypatch.setattr(crawl4ai_client, "_chunked_bulk_fetch", _fake_bulk_fetch)
 
@@ -1809,15 +1811,24 @@ async def test_recovery_stops_immediately_on_rate_limited(
     """A confirmed rate-limit during sequential bulk recovery means the
     target site explicitly told us to back off. The recovery loop must stop
     after the FIRST 429 — no second attempt — and mark every remaining URL
-    in the batch RATE_LIMITED (never the abandon-reason default, whatever
-    that default is), with the stop event logged exactly once.
+    in the batch as not-attempted (never the abandon-reason default,
+    whatever that default is), with the stop event logged exactly once.
 
     Extended (fix/bulk-timeout-scales-with-pacing) to pass
-    ``trigger_reason_code=TIMEOUT`` explicitly: the RATE_LIMITED abandon
-    branch MUST win regardless of what triggered recovery (a bulk 5xx or a
-    bulk timeout) — a real 429 is always the more specific, more actionable
-    signal. This is the guard against the trigger_reason_code plumbing
-    accidentally leaking into the one branch that must never use it."""
+    ``trigger_reason_code=TIMEOUT`` explicitly: the abandon branch MUST win
+    regardless of what triggered recovery (a bulk 5xx or a bulk timeout) —
+    a real 429 is always the more specific, more actionable signal. This is
+    the guard against the trigger_reason_code plumbing accidentally leaking
+    into the one branch that must never use it.
+
+    2026-08-18 (bulk-path defects block A / A1): the abandoned URLs (b, c)
+    used to be labelled RATE_LIMITED too, identically to the one URL (a)
+    that was ACTUALLY attempted and really got a 429 back. That inflates a
+    domain-level "how many times did this site really reject us" count
+    with URLs we chose not to even ask. Only ``a`` keeps RATE_LIMITED now;
+    ``b``/``c`` get ``NOT_FETCHED_RATE_LIMIT_STOP`` — this test previously
+    locked in the old, conflating behaviour and is updated here to lock in
+    the fix instead."""
     call_count = 0
 
     async def _fake_crawl_page_with_config(
@@ -1871,8 +1882,11 @@ async def test_recovery_stops_immediately_on_rate_limited(
     assert attempted == 1
 
     by_url = {o["url"]: o["reason_code"] for o in outcomes}
-    for u in urls:
-        assert by_url[u] == FetchReasonCode.RATE_LIMITED.value
+    # Only the URL actually attempted (and really rate-limited) keeps
+    # RATE_LIMITED; the rest were never sent at all.
+    assert by_url["https://example.com/a"] == FetchReasonCode.RATE_LIMITED.value
+    assert by_url["https://example.com/b"] == FetchReasonCode.NOT_FETCHED_RATE_LIMIT_STOP.value
+    assert by_url["https://example.com/c"] == FetchReasonCode.NOT_FETCHED_RATE_LIMIT_STOP.value
     assert crawl_results == []
     assert link_source_results == []
 
