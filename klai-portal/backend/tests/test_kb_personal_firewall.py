@@ -151,8 +151,6 @@ class TestRouteFirewallInvariant:
         org-scoped SELECT and the personal-firewall check; bypassing it skips
         both and re-introduces SPEC-PORTAL-KB-OWNERSHIP-001 P3.
         """
-        from fastapi.dependencies.utils import get_flat_dependant
-
         from app.api.dependencies import get_kb_with_access
         from app.main import app
 
@@ -184,8 +182,13 @@ class TestRouteFirewallInvariant:
             dependant = getattr(route, "dependant", None)
             if dependant is None:
                 continue
-            flat = get_flat_dependant(dependant)
-            call_chain = [d.call for d in flat.dependencies if d.call is not None]
+            dependencies = [dependant]
+            call_chain = []
+            while dependencies:
+                dependency = dependencies.pop()
+                if dependency.call is not None:
+                    call_chain.append(dependency.call)
+                dependencies.extend(dependency.dependencies)
             # Skip internal-only routes (X-Internal-Secret authenticated; no
             # `perms`/`get_caller` in the dep chain). These cannot use
             # `get_kb_with_access` because it depends on `get_caller`.
