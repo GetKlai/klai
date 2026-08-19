@@ -8463,3 +8463,149 @@ class TestPastedCorrespondenceWiring:
             "the contract must ONLY appear when the detector fires — a "
             "permanent prompt block would dilute every ordinary conversation"
         )
+
+    # ─── SPEC-RAG-CORRESPONDENCE-DISTILL-001 v0.7.0: sub-question fan-out
+    # must not run on raw pasted correspondence ────────────────────────
+
+    _PASTE_MULTI_Q = (
+        "Van: Klant <klant@example.nl>\n"
+        "Verzonden: Vrijdag, 14 Augustus, 2026 21:22\n"
+        "Aan: Support <support@example.nl>\n"
+        "Onderwerp: RE: storing URGENT\n\n"
+        "Wat denk jij dat er niet goed is?\n"
+        "Is de trunk uitgevallen?\n"
+        "Kunnen jullie dit vandaag nog oplossen?\n\n"
+        "Aan onze kant is alles geverifieerd correct."
+    )
+
+    @pytest.mark.asyncio
+    async def test_pasted_email_with_question_lines_sends_no_sub_queries(
+        self, monkeypatch
+    ):
+        """The distilled query IS the question when pasted correspondence is
+        detected on the latest turn: splitting the raw pasted email's '?'-
+        terminated lines into sub_queries produces noise fragment-legs, each
+        low-confidence, that drown the per-question coverage gate (2026-08-18
+        production replay of the 2026-08-17 Voys incident). The retrieve
+        body must therefore carry NO sub_queries at all."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature={"kb_narrow": False})
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": self._PASTE_MULTI_Q}],
+        }
+        retrieval_resp = _make_resp(
+            {
+                "chunks": [],
+                "retrieval_bypassed": False,
+                "confidence_band": "unknown",
+            }
+        )
+
+        with _patch_http(monkeypatch, retrieval_resp=retrieval_resp) as mock_client:
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        retrieve_call = mock_client.post.call_args_list[-1]
+        sent_body = retrieve_call.kwargs.get("json") or retrieve_call.args[1]
+        assert "sub_queries" not in sent_body, (
+            "pasted correspondence must skip _split_sub_questions entirely "
+            "— sub_queries must be absent (None), not merely empty"
+        )
+
+    @pytest.mark.asyncio
+    async def test_plain_multi_question_still_fans_out(self, monkeypatch):
+        """Regression guard: the correspondence-only gate must not widen to
+        ordinary multi-part messages — a plain (non-correspondence) message
+        with 2+ question lines still fans out into sub_queries."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature={"kb_narrow": False})
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        "Wat is de maximale responstijd?\n"
+                        "Worden meldingen opnieuw aangeboden bij een storing?"
+                    ),
+                }
+            ],
+        }
+        retrieval_resp = _make_resp(
+            {
+                "chunks": [],
+                "retrieval_bypassed": False,
+                "confidence_band": "unknown",
+            }
+        )
+
+        with _patch_http(monkeypatch, retrieval_resp=retrieval_resp) as mock_client:
+            await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        retrieve_call = mock_client.post.call_args_list[-1]
+        sent_body = retrieve_call.kwargs.get("json") or retrieve_call.args[1]
+        assert len(sent_body["sub_queries"]) >= 2
+
+    @pytest.mark.asyncio
+    async def test_pasted_correspondence_multi_question_flag_gated(self, monkeypatch):
+        """multi_question also drives the deterministic Strict low-confidence
+        refusal's suppression (``not multi_question`` gate) AND the
+        multi-part-question prompt guard text. Skipping the split alone
+        leaves sub_questions=[], but the raw pasted text still has >=2 '?'
+        marks, so ``_is_multi_question_query(query)`` on its own would keep
+        multi_question True and wrongly re-suppress the refusal / re-inject
+        the guard for a pasted email. multi_question must be gated False
+        whenever the latest turn is pasted correspondence."""
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature={"kb_narrow": True})
+
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": self._PASTE_MULTI_Q}],
+        }
+        # Score above the evidence floor (mirrors
+        # test_strict_multi_question_gets_guard_instead_of_blanket_refusal)
+        # so the chunk survives into context_chunks and this exercises the
+        # ``not multi_question`` branch guarding the deterministic Strict
+        # low-confidence refusal — not the separate zero-chunks refusal,
+        # which would fire regardless of multi_question.
+        weak_chunks = [
+            {
+                "text": "Tabel met supporttags per module.",
+                "scope": "org",
+                "metadata": {"title": "Using the right tags"},
+                "source_url": "https://docs.klai.example/tags",
+                "chunk_id": "junk-1",
+                "reranker_score": 0.55,
+            }
+        ]
+        retrieval_resp = _make_resp(
+            {
+                "chunks": weak_chunks,
+                "retrieval_bypassed": False,
+                "confidence_band": "low",
+            }
+        )
+
+        with _patch_http(monkeypatch, retrieval_resp=retrieval_resp):
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        assert result.get("mock_response"), (
+            "multi_question must be gated False for pasted correspondence — "
+            "otherwise the raw email's own '?' marks keep "
+            "_is_multi_question_query(query) True and wrongly suppress the "
+            "deterministic Strict low-confidence refusal"
+        )
+        meta = result["metadata"]["_klai_kb_meta"]
+        assert meta["pasted_correspondence_detected"] is True
