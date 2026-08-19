@@ -16,6 +16,7 @@ from app.adapters.airtable import AirtableAdapter
 from app.adapters.confluence import ConfluenceAdapter
 from app.adapters.github import GitHubAdapter
 from app.adapters.google_drive import GoogleDriveAdapter
+from app.adapters.json_feed import JsonFeedAdapter
 from app.adapters.ms_docs import MsDocsAdapter
 from app.adapters.notion import NotionAdapter
 from app.adapters.registry import AdapterRegistry
@@ -107,6 +108,7 @@ def create_app() -> FastAPI:
         registry.register("notion", NotionAdapter(settings))
         registry.register("airtable", AirtableAdapter(settings))
         registry.register("confluence", ConfluenceAdapter(settings))
+        registry.register("json_feed", JsonFeedAdapter())
         # Google Drive adapter — only registered when OAuth client is configured.
         if settings.google_drive_client_id:
             registry.register(

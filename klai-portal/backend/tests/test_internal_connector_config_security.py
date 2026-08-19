@@ -60,6 +60,10 @@ class TestInternalConnectorConfigSecurity:
                     "api_key": _PLACEHOLDER_TOKEN,
                 },
             ),
+            (
+                "json_feed",
+                {"url": f"https://data.example.com/feed.json?token={_PLACEHOLDER_TOKEN}"},
+            ),
         ],
     )
     @pytest.mark.asyncio
@@ -128,6 +132,38 @@ class TestInternalConnectorConfigSecurity:
                 "email": "admin@example.com",
             }
 
+    @pytest.mark.asyncio
+    async def test_encrypted_json_feed_url_is_merged_only_for_internal_consumer(self) -> None:
+        from app.api.internal import get_connector_config
+
+        connector = _connector(
+            connector_type="json_feed",
+            config={},
+            encrypted_credentials=b"ENCRYPTED",
+        )
+        db = AsyncMock()
+        db.get = AsyncMock(return_value=connector)
+        db.execute = AsyncMock(return_value=_row(connector))
+        saved_url = f"https://data.example.com/feed.json?token={_PLACEHOLDER_TOKEN}"
+
+        with (
+            patch("app.api.internal.settings") as mock_settings,
+            patch("app.api.internal.set_tenant", new=AsyncMock()),
+            patch("app.api.internal._audit_internal_call", new=AsyncMock()),
+            patch("app.api.internal.credential_store") as mock_store,
+        ):
+            mock_settings.internal_secret = _PLACEHOLDER_INTERNAL
+            mock_store.decrypt_credentials = AsyncMock(return_value={"url": saved_url})
+
+            result = await get_connector_config(
+                connector_id="conn-json-feed-1",
+                request=_request(),
+                db=db,
+            )
+
+        assert result.config == {"url": saved_url}
+        assert connector.config == {}
+
     @pytest.mark.parametrize(
         "connector_type,config",
         [
@@ -145,6 +181,7 @@ class TestInternalConnectorConfigSecurity:
                     "table_names": ["Customers"],
                 },
             ),
+            ("json_feed", {}),
         ],
     )
     @pytest.mark.asyncio

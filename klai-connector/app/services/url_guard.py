@@ -1,9 +1,9 @@
 """Connector-side load-time SSRF gate (SPEC-SEC-SSRF-001 REQ-8.4).
 
-Legacy rows in ``connector.connectors`` may have been persisted before
-the portal validators landed (REQ-2 / REQ-8). When a scheduled sync
-loads such a row and extracts its config, this module re-validates
-the user-supplied URL fields against the canonical klai-libs guard.
+Connector configuration may have been persisted before the portal
+validators landed (REQ-2 / REQ-8). When a sync loads configuration
+from the portal, this module re-validates the user-supplied URL fields
+against the canonical klai-libs guard.
 A stored ``base_url`` pointing at ``portal-api:8010`` or ``10.0.0.5``
 SHALL fail the sync run with a stable error code rather than fetch.
 
@@ -21,7 +21,9 @@ from typing import NoReturn
 
 from klai_image_storage.url_guard import (
     SsrfBlockedError,
+    ValidatedURL,
     validate_confluence_base_url,
+    validate_url_pinned,
     validate_url_pinned_sync,
 )
 
@@ -35,6 +37,7 @@ logger = get_logger(__name__)
 # rename without updating AC-9 / AC-21 fixtures in lock-step.
 SSRF_PERSISTED_ERROR = "ssrf_blocked_persisted_url"
 SSRF_PERSISTED_CONFLUENCE_ERROR = "ssrf_blocked_persisted_confluence_base_url"
+SSRF_PERSISTED_JSON_FEED_ERROR = "ssrf_blocked_persisted_json_feed_url"
 
 
 class PersistedUrlRejectedError(Exception):
@@ -139,10 +142,38 @@ def validate_confluence_base_url_strict(base_url: str, *, connector_id: str | No
         ) from exc
 
 
+async def validate_json_feed_url_strict(
+    url: str,
+    *,
+    connector_id: str | None = None,
+) -> ValidatedURL:
+    """Validate and pin a persisted JSON feed URL before every fetch."""
+    try:
+        return await validate_url_pinned(url, log_as=None)
+    except SsrfBlockedError as exc:
+        logger.warning(
+            "json_feed_url_blocked — %s",
+            exc,
+            extra={
+                "event": "json_feed_url_blocked",
+                "hostname": exc.hostname,
+                "reason": exc.reason,
+                "connector_id": connector_id,
+            },
+        )
+        raise PersistedUrlRejectedError(
+            error_code=SSRF_PERSISTED_JSON_FEED_ERROR,
+            hostname=exc.hostname,
+            message=str(exc),
+        ) from exc
+
+
 __all__ = [
     "SSRF_PERSISTED_CONFLUENCE_ERROR",
     "SSRF_PERSISTED_ERROR",
+    "SSRF_PERSISTED_JSON_FEED_ERROR",
     "PersistedUrlRejectedError",
     "validate_confluence_base_url_strict",
+    "validate_json_feed_url_strict",
     "validate_web_crawler_config_strict",
 ]

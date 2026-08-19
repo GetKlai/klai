@@ -22,6 +22,17 @@ class TestParseDocumentWithImages:
         assert result.text == "Hallo wereld"
 
     @patch("app.services.parser.partition")
+    def test_json_feed_uses_plain_text_path_without_element_reinterpretation(self, mock_partition):
+        """Customer JSON must remain data even when it resembles Unstructured elements."""
+        content = b'[{"type":"Title","text":"Support","custom_field":"must survive"}]'
+
+        result = parse_document_with_images(content, "feed.json")
+
+        assert result.text == content.decode("utf-8")
+        assert "custom_field" in result.text
+        mock_partition.assert_not_called()
+
+    @patch("app.services.parser.partition")
     def test_binary_format_extracts_text_and_images(self, mock_partition):
         """PDF/DOCX partitioning returns both text elements and Image elements."""
         text_elem = MagicMock()
@@ -92,6 +103,7 @@ class TestKnowledgeIngestClientImageUrls:
         # Access the internal payload building logic by inspecting what would be sent.
         # We test indirectly via the public method signature accepting image_urls.
         import inspect
+
         sig = inspect.signature(client.ingest_document)
         assert "image_urls" in sig.parameters
 

@@ -1,5 +1,5 @@
 import { render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/paraglide/messages', () => ({
   kb_status_probleem: () => 'Probleem',
@@ -32,7 +32,25 @@ function uploadSource(overrides: Partial<Source> = {}): Source {
   }
 }
 
+function connectorSource(overrides: Partial<Source> = {}): Source {
+  return {
+    kind: 'connector',
+    id: 'connector-1',
+    name: 'Example website',
+    type_label: 'Website',
+    connector_type: 'web_crawler',
+    items_count: 0,
+    chunks_count: 0,
+    status: 'running',
+    last_sync_at: '2026-08-19T12:00:00.000Z',
+    created_at: '2026-08-19T12:00:00.000Z',
+    ...overrides,
+  }
+}
+
 describe('StatusBadge', () => {
+  afterEach(() => vi.useRealTimers())
+
   it('shows a destructive Probleem badge for failed uploads instead of neutral Leeg', () => {
     // Regression: index_status='failed' uploads rendered the neutral "Leeg"
     // badge, so a permanently failed source went unnoticed for 8 days.
@@ -47,5 +65,26 @@ describe('StatusBadge', () => {
   it('still shows Klaar for synced uploads', () => {
     render(<StatusBadge source={uploadSource({ index_status: 'synced', chunks_count: 3 })} />)
     expect(screen.getByText('Klaar')).toBeTruthy()
+  })
+
+  it('shows an old running website crawl as busy instead of stuck', () => {
+    vi.setSystemTime(new Date('2026-08-19T13:00:00.000Z'))
+
+    render(<StatusBadge source={connectorSource()} />)
+
+    expect(screen.getByText('Bezig')).toBeTruthy()
+    expect(screen.getByText('60m')).toBeTruthy()
+    expect(screen.queryByText('Hangt al 60m')).toBeNull()
+  })
+
+  it('still shows an old pending upload as stuck', () => {
+    vi.setSystemTime(new Date('2026-08-19T13:00:00.000Z'))
+
+    render(<StatusBadge source={uploadSource({
+      index_status: 'pending',
+      created_at: '2026-08-19T12:00:00.000Z',
+    })} />)
+
+    expect(screen.getByText('Hangt al 60m')).toBeTruthy()
   })
 })

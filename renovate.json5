@@ -79,6 +79,45 @@
 
   packageRules: [
     {
+      description:
+        'Klai LibreChat is intentionally digest-only and has no latest tag. Its \
+        digest is produced by librechat-image-build.yml and enforced by the \
+        deploy digest guard, so Docker tag discovery is not applicable.',
+      matchManagers: ['docker-compose'],
+      matchDatasources: ['docker'],
+      matchPackageNames: ['ghcr.io/getklai/librechat'],
+      enabled: false,
+    },
+    {
+      description:
+        'Klai crawl4ai is built and tagged directly on the deployment host; \
+        there is no published GHCR package for Renovate to query.',
+      matchManagers: ['docker-compose'],
+      matchDatasources: ['docker'],
+      matchPackageNames: ['ghcr.io/getklai/crawl4ai'],
+      enabled: false,
+    },
+    {
+      description:
+        'Aqua blocks organization GitHub App tokens with its IP allowlist. Use \
+        the public Git transport so action digest updates remain discoverable.',
+      matchManagers: ['github-actions'],
+      matchPackageNames: ['aquasecurity/setup-trivy'],
+      overrideDatasource: 'git-tags',
+      overridePackageName: 'https://github.com/aquasecurity/setup-trivy.git',
+      minimumReleaseAge: '0 days',
+    },
+    {
+      description:
+        'Aqua blocks organization GitHub App tokens with its IP allowlist. Use \
+        the public Git transport for the Trivy version passed to setup-trivy.',
+      matchManagers: ['github-actions'],
+      matchPackageNames: ['aquasecurity/trivy'],
+      overrideDatasource: 'git-tags',
+      overridePackageName: 'https://github.com/aquasecurity/trivy.git',
+      minimumReleaseAge: '0 days',
+    },
+    {
       description: 'Auto-merge patch and minor updates once CI is green',
       matchUpdateTypes: ['patch', 'minor'],
       automerge: true,

@@ -1448,7 +1448,7 @@ async def _ingest_crawl_result(
     url: str,
     org_id: str,
     kb_slug: str,
-    stored: pg_store.PageHashes | None | object = _UNSET,
+    stored: pg_store.PageHashes | object | None = _UNSET,
     login_indicator_selector: str | None = None,
     authenticated_context: bool = False,
     connector_id: str | None = None,

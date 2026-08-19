@@ -51,11 +51,18 @@ jobs:
 
       - uses: actions/checkout@v7
 
+      - name: Validate Renovate configuration contracts
+        run: sh scripts/test-renovate-config.sh
+
       - uses: renovatebot/github-action@v46.2.2
         with:
           token: ${{ steps.app-token.outputs.token }}
         env:
           RENOVATE_REPOSITORIES: '["GetKlai/klai"]'
+          # Provision Docker hostRules for ghcr.io from the short-lived app
+          # token. The app installation has Packages: read; without this flag
+          # the Docker datasource still makes anonymous private-image lookups.
+          RENOVATE_X_GITHUB_HOST_RULES: 'true'
           # At info level a skipped update is indistinguishable from no update
           # at all — the 28-week no-op looked exactly like "nothing to do".
           LOG_LEVEL: ${{ inputs.logLevel || 'info' }}

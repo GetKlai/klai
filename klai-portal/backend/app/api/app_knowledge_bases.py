@@ -1085,6 +1085,7 @@ def _connector_type_label(connector_type: str) -> str:
         "web_crawler": "Website (pagina's)",
         "airtable": "Airtable",
         "confluence": "Confluence",
+        "json_feed": "JSON-feed",
         "mcp_connector": "MCP",
     }
     return mapping.get(connector_type, connector_type.replace("_", " ").title())

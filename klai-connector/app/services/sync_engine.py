@@ -402,6 +402,10 @@ class SyncEngine:
                             sync_run.cursor_state = {"ingested_refs": list(resume_ingested_refs)}
                             await session.commit()
 
+                    except PersistedUrlRejectedError:
+                        # Preserve the stable SSRF error contract when URL
+                        # revalidation fails immediately before the fetch.
+                        raise
                     except Exception as doc_err:
                         documents_failed += 1
                         error_details.append({"file": ref.path, "error": str(doc_err)})

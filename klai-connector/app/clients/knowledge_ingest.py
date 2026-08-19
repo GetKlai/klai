@@ -9,6 +9,8 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
+MAX_INGEST_CONTENT_CHARS = 500_000
+
 
 # @MX:NOTE: Web crawls must declare source_type="crawl" + source_domain so
 #   knowledge-ingest's compute_source_label() labels chunks with the actual
@@ -132,8 +134,15 @@ class KnowledgeIngestClient:
                 Without it, syncs to ``personal-{user}`` KBs return 403.
 
         Raises:
+            ValueError: If content exceeds the knowledge-ingest request contract.
             httpx.HTTPStatusError: If the ingest endpoint returns an error status.
         """
+        if len(content) > MAX_INGEST_CONTENT_CHARS:
+            raise ValueError(
+                f"Document produces {len(content)} characters of text; "
+                f"the ingest limit is {MAX_INGEST_CONTENT_CHARS} characters"
+            )
+
         # SPEC-SEC-INTERNAL-001 REQ-9.3: header is unconditional. The
         # constructor guard above ensures _internal_secret is non-empty.
         # SPEC-TI-003 AC-6: knowledge-ingest /ingest/v1/document calls
