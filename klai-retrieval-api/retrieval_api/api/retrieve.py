@@ -755,6 +755,7 @@ async def retrieve(
                 top_n=req.top_k,
                 max_per_source=settings.source_quota_max_per_source,
                 preferred_labels=router_selected,
+                preferred_kb_slugs=set(req.kb_slugs) if req.kb_slugs else None,
                 source_preference_boost=settings.source_preference_boost,
             )
         else:
@@ -799,6 +800,7 @@ async def retrieve(
                     top_n=req.top_k,
                     max_per_source=settings.source_quota_max_per_source,
                     preferred_labels=router_selected,
+                    preferred_kb_slugs=set(req.kb_slugs) if req.kb_slugs else None,
                     source_preference_boost=settings.source_preference_boost,
                 )
             ranking_shadow_preview = quality_boost(ranking_shadow_preview, contract_active=True)

@@ -26,6 +26,7 @@ def source_aware_select(
     top_n: int = 5,
     max_per_source: int = 2,
     preferred_labels: set[str] | None = None,
+    preferred_kb_slugs: set[str] | None = None,
     source_preference_boost: float = 0.05,
 ) -> tuple[list[dict], dict]:
     """Select top-N chunks with source-aware diversity.
@@ -51,17 +52,21 @@ def source_aware_select(
         }
 
     preferred = set(preferred_labels or ())
+    preferred_slugs = set(preferred_kb_slugs or ())
 
-    preference_applied = bool(
-        preferred and any(chunk.get("source_label") in preferred for chunk in reranked)
-    )
+    def is_preferred(chunk: dict) -> bool:
+        if chunk.get("source_label") not in preferred:
+            return False
+        return not preferred_slugs or chunk.get("kb_slug") in preferred_slugs
+
+    preference_applied = bool(preferred and any(is_preferred(chunk) for chunk in reranked))
 
     def base_score(chunk: dict) -> float:
         return ranking_score(chunk, "reranker_score", "score")
 
     def preference_score(chunk: dict) -> float:
         score = base_score(chunk)
-        if preference_applied and chunk.get("source_label") in preferred:
+        if preference_applied and is_preferred(chunk):
             return score + source_preference_boost
         return score
 
@@ -107,11 +112,11 @@ def source_aware_select(
 
     max_score_inversion = 0.0
     for index, earlier in enumerate(ranked):
-        if earlier.get("source_label") not in preferred:
+        if not is_preferred(earlier):
             continue
         earlier_score = base_score(earlier)
         for later in ranked[index + 1 :]:
-            if later.get("source_label") in preferred:
+            if is_preferred(later):
                 continue
             max_score_inversion = max(
                 max_score_inversion,

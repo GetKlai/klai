@@ -260,3 +260,21 @@ class TestComparisonOnlyPreference:
         assert meta["preference_applied"] is False
         assert meta["preferred_labels"] == []
         assert meta["suppressed_count"] == 0
+
+    def test_pinned_org_preference_does_not_boost_personal_chunk_with_same_label(self):
+        reranked = [
+            {**_chunk("personal", "notion", 0.59), "kb_slug": "personal-user-1"},
+            {**_chunk("other", "support", 0.60), "kb_slug": "support"},
+            {**_chunk("org", "notion", 0.58), "kb_slug": "sip"},
+        ]
+
+        selected, _ = source_aware_select(
+            reranked,
+            top_n=3,
+            max_per_source=3,
+            preferred_labels={"notion"},
+            preferred_kb_slugs={"sip"},
+            source_preference_boost=0.05,
+        )
+
+        assert [chunk["chunk_id"] for chunk in selected] == ["org", "other", "personal"]
