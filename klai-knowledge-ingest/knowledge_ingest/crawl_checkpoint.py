@@ -110,24 +110,31 @@ async def finish_crawl_execution(
     error: str | None = None,
     error_summary: str | None = None,
 ) -> None:
-    """Publish a terminal state only when this execution still owns the job."""
-    command = await conn.execute(
-        """
-        UPDATE knowledge.crawl_jobs
-        SET status=$1,
-            error=$2,
-            error_summary=$3::jsonb,
-            updated_at=extract(epoch FROM now())::bigint
-        WHERE id=$4 AND execution_generation=$5 AND status='running'
-        """,
-        status,
-        error,
-        error_summary,
-        job_id,
-        generation,
-    )
-    if command == "UPDATE 0":
-        raise CrawlExecutionSuperseded(job_id)
+    """Publish terminal state and discard resume payload atomically."""
+    async with conn.transaction():
+        command = await conn.execute(
+            """
+            UPDATE knowledge.crawl_jobs
+            SET status=$1,
+                error=$2,
+                error_summary=$3::jsonb,
+                runtime_checkpoint=NULL,
+                checkpoint_updated_at=NULL,
+                updated_at=extract(epoch FROM now())::bigint
+            WHERE id=$4 AND execution_generation=$5 AND status='running'
+            """,
+            status,
+            error,
+            error_summary,
+            job_id,
+            generation,
+        )
+        if command == "UPDATE 0":
+            raise CrawlExecutionSuperseded(job_id)
+        await conn.execute(
+            "DELETE FROM knowledge.crawl_job_frontier WHERE job_id=$1",
+            job_id,
+        )
 
 
 def _decode_json(value: Any) -> Any:

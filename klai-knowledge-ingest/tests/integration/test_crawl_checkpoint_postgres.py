@@ -17,6 +17,7 @@ from knowledge_ingest.crawl_checkpoint import (
     CrawlExecutionBusy,
     PostgresCrawlCheckpoint,
     claim_crawl_execution,
+    finish_crawl_execution,
 )
 
 _DSN = os.environ.get("CRAWL_CHECKPOINT_TEST_DSN")
@@ -178,6 +179,27 @@ async def test_interrupted_crawl_resumes_from_real_postgres_checkpoint(
         assert row["checkpoint_sequence"] >= 4
         assert row["recovery_count"] == 1
         assert row["frontier_count"] == 4
+
+        async with _connection_factory() as conn:
+            await finish_crawl_execution(
+                conn,
+                job_id,
+                second_generation,
+                status="completed",
+            )
+            terminal_row = await conn.fetchrow(
+                """
+                SELECT status, runtime_checkpoint,
+                       (SELECT count(*) FROM knowledge.crawl_job_frontier
+                        WHERE job_id=$1) AS frontier_count
+                FROM knowledge.crawl_jobs
+                WHERE id=$1
+                """,
+                job_id,
+            )
+        assert terminal_row["status"] == "completed"
+        assert terminal_row["runtime_checkpoint"] is None
+        assert terminal_row["frontier_count"] == 0
     finally:
         async with _connection_factory() as conn:
             await conn.execute("DELETE FROM knowledge.crawl_jobs WHERE id=$1", job_id)

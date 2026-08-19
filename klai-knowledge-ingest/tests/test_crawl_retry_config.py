@@ -40,7 +40,7 @@ def test_crawl_retries_shutdown_cancellation_and_busy_execution_lock(monkeypatch
 
     retry = app.task_kwargs[0]["retry"]
     assert app.task_kwargs[0]["queue"] == queues.CRAWL_JOBS
-    assert retry.kwargs["max_attempts"] == 20
+    assert retry.kwargs["max_attempts"] is None
     assert retry.kwargs["wait"] == 5
     assert tuple(retry.kwargs["retry_exceptions"]) == (
         asyncio.CancelledError,
@@ -82,3 +82,44 @@ async def test_crawl_task_does_not_pin_tenant_connection_for_whole_job(monkeypat
     )
 
     assert connection_depth == 0
+
+
+async def test_crawl_tasks_preserve_database_capacity_under_concurrency(monkeypatch) -> None:
+    app = _FakeApp()
+    active_connections = 0
+    peak_connections = 0
+
+    @asynccontextmanager
+    async def tenant_connection(_org_id: str):
+        nonlocal active_connections, peak_connections
+        active_connections += 1
+        peak_connections = max(peak_connections, active_connections)
+        try:
+            yield object()
+        finally:
+            active_connections -= 1
+
+    async def run_job(*, connection_factory, **_kwargs) -> None:
+        async with connection_factory() as _conn:
+            await asyncio.sleep(0.01)
+
+    monkeypatch.setattr(crawl_tasks, "tenant_scoped_connection", tenant_connection)
+    monkeypatch.setattr(
+        "knowledge_ingest.adapters.crawler.run_crawl_job", AsyncMock(side_effect=run_job)
+    )
+    crawl_tasks.register_crawl_tasks(app)
+
+    await asyncio.gather(
+        *(
+            app.task_functions[0](
+                job_id=f"job-{index}",
+                org_id="org-1",
+                kb_slug="kb-1",
+                start_url="https://example.com",
+                max_depth=2,
+            )
+            for index in range(8)
+        )
+    )
+
+    assert peak_connections == 4

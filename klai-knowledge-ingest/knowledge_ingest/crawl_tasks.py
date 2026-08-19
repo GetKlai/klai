@@ -3,12 +3,23 @@
 from __future__ import annotations
 
 import asyncio
-from functools import partial
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 from knowledge_ingest import queues
 from knowledge_ingest.crawl_checkpoint import CrawlExecutionBusy
 from knowledge_ingest.db import tenant_scoped_connection
+
+_CRAWL_DB_CONNECTION_LIMIT = 4
+_crawl_db_connection_slots = asyncio.Semaphore(_CRAWL_DB_CONNECTION_LIMIT)
+
+
+@asynccontextmanager
+async def _crawl_db_connection(org_id: str) -> AsyncIterator[Any]:
+    async with _crawl_db_connection_slots:
+        async with tenant_scoped_connection(org_id) as conn:
+            yield conn
 
 
 def register_crawl_tasks(procrastinate_app: Any) -> None:
@@ -26,7 +37,7 @@ def register_crawl_tasks(procrastinate_app: Any) -> None:
     @procrastinate_app.task(
         queue=queues.CRAWL_JOBS,
         retry=procrastinate.RetryStrategy(
-            max_attempts=20,
+            max_attempts=None,
             wait=5,
             retry_exceptions=(asyncio.CancelledError, CrawlExecutionBusy),
         ),
@@ -71,9 +82,9 @@ def register_crawl_tasks(procrastinate_app: Any) -> None:
 
         # Each database phase leases its own GUC-pinned connection. The crawl's
         # network waits therefore do not reserve one of the ten pool slots,
-        # while every knowledge.* query still sees the tenant context.
+        # while the crawl-wide limiter preserves capacity for other workloads.
         await run_crawl_job(
-            connection_factory=partial(tenant_scoped_connection, org_id),
+            connection_factory=lambda: _crawl_db_connection(org_id),
             job_id=job_id,
             org_id=org_id,
             kb_slug=kb_slug,
