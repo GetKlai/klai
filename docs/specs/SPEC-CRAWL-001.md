@@ -352,3 +352,92 @@ Then no stored selector is used (org-B gets the full pipeline)
 - [ ] No OpenAI/Anthropic model names in code -- only `klai-fast` alias
 - [ ] Error handling: LLM failure and invalid CSS selector gracefully handled
 - [ ] `CrawlPreviewRequest.org_id` added (optional for backwards compatibility)
+
+---
+
+## 11. Amendment: shared host pacing and safe domain-rate persistence
+
+**Added and implemented:** 2026-08-19
+
+### 11.1 Corrected identity contract
+
+The persisted `knowledge.crawl_domains` key and the live crawl-pacing key are
+deliberately different concepts:
+
+- `extract_domain(url)` remains the exact normalized storage key used for both
+  selectors and the existing org-scoped domain-rate state. It normalizes case,
+  IDNA, default ports, and trailing dots, but does **not** collapse apex and
+  `www` hosts. Changing this contract would silently merge selector rows and can
+  conflict with existing `(domain, org_id)` primary keys.
+- `crawl_gate_key(url)` is the process-local pacing identity. It applies the
+  same hostname and port normalization and then removes exactly one leading
+  `www.` label. It does not use a registrable-domain/Public-Suffix-List rule and
+  does not merge arbitrary subdomains.
+- The live host gate is shared across orgs because concurrent tenants still
+  consume the same external host capacity. Persisted selectors and rate state
+  remain org-scoped.
+
+### 11.2 Shared host gate
+
+**WHEN** two or more crawl operations target the same `crawl_gate_key`,
+**THEN** all target requests from those operations **shall** share one
+process-wide weighted pacing schedule.
+
+The pacing unit is target URLs, not Crawl4AI HTTP calls. A bulk request carrying
+`N` URLs consumes weight `N`. The effective rate is the lowest rate requested
+by any active session for the host. A rate reduction during a crawl applies to
+all subsequent grants and also recalculates subsequent burst sizes.
+
+The schedule shall be fair between waiters, cancellation-safe, and removed from
+the registry when its final active session and waiter leave. Apex and `www`
+variants share a gate; unrelated hosts do not.
+
+The gate is intentionally in memory. This is valid only while the FastAPI app
+and Procrastinate workers run in one Python process and knowledge-ingest has one
+replica. Multiple Uvicorn workers or replicas require a distributed limiter
+(for example Redis/GCRA) before rollout.
+
+### 11.3 Global Crawl4AI request cap
+
+Every knowledge-ingest `POST /crawl` request, including seed, bulk, recovery,
+preview, and DOM-summary requests, shall pass through one process-wide bounded
+semaphore. Its size is configurable and defaults to `1` so the service does not
+fill the shared Crawl4AI container with concurrent requests; klai-connector has
+its own independent caller and is not governed by this semaphore.
+
+The request cap is a service-side safety boundary, not a hard reservation of
+Crawl4AI page slots. The pinned Crawl4AI pool permits 40 concurrent pages and a
+single payload can contain multiple URLs.
+
+### 11.4 Conflict-safe domain-rate writes
+
+Domain-rate persistence shall use compare-and-swap semantics over
+`rate_limit`, `clean_streak`, and `last_congestion_at` rather than an
+unconditional stale-state overwrite.
+
+- A write succeeds normally only when the stored state still equals the state
+  from which the proposal was computed (`NULL` compared null-safely).
+- On conflict, congestion merges atomically toward the lowest of the current
+  and proposed rates, resets the clean streak, and preserves the newest
+  congestion timestamp.
+- A conflicting recovery or read-time decay never overwrites changed state; it
+  is deferred until a later crawl.
+- Concurrent congestion proposals derived from the same state produce one
+  lowering, not an accidental double-halving.
+
+This makes congestion monotonic over concurrent recovery: whichever operation
+reaches PostgreSQL first, their crossing ends at the lower proposed speed.
+
+### 11.5 Amendment acceptance criteria
+
+- **AC-10:** The two same-host crawls reproducing the 2026-08-18 09:27 incident
+  do not exceed their shared aggregate URL cadence.
+- **AC-11:** Crawls on different hosts use independent host schedules.
+- **AC-12:** `www.example.com` and `example.com` share live pacing while their
+  `extract_domain()` storage keys remain distinct.
+- **AC-13:** The configured global cap bounds concurrent Crawl4AI POSTs across
+  different domains and across seed/bulk/recovery paths.
+- **AC-14:** Concurrent lowering and recovery writes finish at the lower
+  proposal in both execution orders; decay cannot erase newer congestion.
+- **AC-15:** Existing circuit-breaker, cancellation, slowdown, retry, and
+  self-healing behavior remains covered by the full knowledge-ingest suite.

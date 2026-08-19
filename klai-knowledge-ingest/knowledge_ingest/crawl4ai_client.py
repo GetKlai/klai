@@ -13,7 +13,9 @@ import fnmatch
 import json
 import re
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from html import unescape
 from html.parser import HTMLParser
@@ -31,9 +33,20 @@ from knowledge_ingest.host_circuit_breaker import (
     HostCircuitBreakerState,
     evaluate_chunk,
 )
+from knowledge_ingest.host_pacing import (
+    HostGateRegistry,
+    HostPacingSession,
+    crawl_gate_key,
+)
 from knowledge_ingest.reason_codes import FetchReasonCode
 
 logger = structlog.get_logger()
+
+# Every POST /crawl path in this module funnels through _crawl_sync, so this
+# one semaphore also covers seeds, bulk batches, retries, previews, and DOM
+# summaries. It intentionally cannot coordinate klai-connector, which is a
+# separate caller of the shared Crawl4AI container.
+_crawl4ai_request_semaphore = asyncio.BoundedSemaphore(settings.crawl4ai_max_concurrent_requests)
 
 
 # ---------------------------------------------------------------------------
@@ -514,6 +527,9 @@ async def _fetch_sitemap_document(
     seen_sitemaps.add(canonical_sitemap)
 
     try:
+        pacing_session = _current_host_pacing_session.get()
+        if pacing_session is not None and pacing_session.key == crawl_gate_key(sitemap_url):
+            await pacing_session.acquire(1)
         resp = await client.get(sitemap_url, headers=_auth_headers())
         resp.raise_for_status()
     except Exception as exc:
@@ -1312,11 +1328,21 @@ async def _crawl_sync(
     POST /crawl is a synchronous endpoint — it blocks until crawling is
     complete and returns results directly (no task_id, no polling needed).
     """
-    resp = await client.post(
-        f"{settings.crawl4ai_api_url}/crawl",
-        json=payload,
-        headers=_auth_headers(),
-    )
+    pacing_session = _current_host_pacing_session.get()
+    payload_urls = payload.get("urls") or []
+    if (
+        pacing_session is not None
+        and not _host_pacing_already_reserved.get()
+        and payload_urls
+        and pacing_session.key == crawl_gate_key(payload_urls[0])
+    ):
+        await pacing_session.acquire(len(payload_urls))
+    async with _crawl4ai_request_semaphore:
+        resp = await client.post(
+            f"{settings.crawl4ai_api_url}/crawl",
+            json=payload,
+            headers=_auth_headers(),
+        )
     resp.raise_for_status()
     return resp.json()
 
@@ -1456,6 +1482,23 @@ def _build_browser_config_with_cookies(
 
 
 async def crawl_page(
+    url: str,
+    selector: str | None = None,
+    cookies: list[dict[str, Any]] | None = None,
+    retry_relaxed_on_thin: bool = False,
+    rate_limit: float | None = 2.0,
+) -> CrawlResult:
+    """Crawl one page while participating in the process-wide host schedule."""
+    async with _host_pacing_scope(url, rate_limit):
+        return await _crawl_page_in_host_scope(
+            url,
+            selector=selector,
+            cookies=cookies,
+            retry_relaxed_on_thin=retry_relaxed_on_thin,
+        )
+
+
+async def _crawl_page_in_host_scope(
     url: str,
     selector: str | None = None,
     cookies: list[dict[str, Any]] | None = None,
@@ -1952,6 +1995,7 @@ async def sample_linked_pages(
     selector: str | None = None,
     cookies: list[dict[str, Any]] | None = None,
     max_pages: int = 5,
+    rate_limit: float | None = 2.0,
 ) -> LinkedPageSample:
     """Fetch pages linked from ``seed`` and count how many carry real content.
 
@@ -1976,6 +2020,7 @@ async def sample_linked_pages(
         urls=candidates,
         crawler_config=build_crawl_config(selector),
         cookies=cookies,
+        rate_limit=rate_limit,
     )
     # Only candidates whose OWN chunk actually transported are worth
     # combining — a candidate whose chunk failed or was never attempted
@@ -2003,6 +2048,34 @@ async def sample_linked_pages(
 
 
 async def crawl_site(
+    start_url: str,
+    selector: str | None = None,
+    max_depth: int = 2,
+    max_pages: int = 200,
+    include_patterns: list[str] | None = None,
+    exclude_patterns: list[str] | None = None,
+    login_indicator_selector: str | None = None,
+    cookies: list[dict[str, Any]] | None = None,
+    rate_limit: float | None = None,
+    cancel_check: Callable[[], Awaitable[bool]] | None = None,
+) -> tuple[list[CrawlResult], list[FetchOutcome]]:
+    """Crawl one site through a host schedule shared by overlapping jobs."""
+    async with _host_pacing_scope(start_url, rate_limit):
+        return await _crawl_site_in_host_scope(
+            start_url=start_url,
+            selector=selector,
+            max_depth=max_depth,
+            max_pages=max_pages,
+            include_patterns=include_patterns,
+            exclude_patterns=exclude_patterns,
+            login_indicator_selector=login_indicator_selector,
+            cookies=cookies,
+            rate_limit=rate_limit,
+            cancel_check=cancel_check,
+        )
+
+
+async def _crawl_site_in_host_scope(
     start_url: str,
     selector: str | None = None,
     max_depth: int = 2,
@@ -2217,6 +2290,9 @@ async def crawl_site(
             elif consecutive_rate_limit_slowdowns < _MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS:
                 consecutive_rate_limit_slowdowns += 1
                 current_rate_limit = _lower_rate_limit_for_slowdown(current_rate_limit)
+                pacing_session = _current_host_pacing_session.get()
+                if pacing_session is not None:
+                    pacing_session.update_rate(current_rate_limit)
                 carried_over_urls = not_attempted_urls
                 not_attempted_urls = []
                 fetched_count -= len(carried_over_urls)
@@ -3213,6 +3289,34 @@ _recovery_monotonic = time.monotonic
 _pacing_sleep = asyncio.sleep
 _pacing_monotonic = time.monotonic
 
+# SPEC-CRAWL-001 amendment: one process-wide weighted schedule per target
+# host. The lambdas deliberately resolve the test-friendly clock indirections
+# at call time rather than capturing their initial values here.
+_host_gate_registry = HostGateRegistry(
+    monotonic=lambda: _pacing_monotonic(),
+    sleep=lambda seconds: _pacing_sleep(seconds),
+)
+_current_host_pacing_session: ContextVar[HostPacingSession | None] = ContextVar(
+    "current_host_pacing_session", default=None
+)
+_host_pacing_already_reserved: ContextVar[bool] = ContextVar(
+    "host_pacing_already_reserved", default=False
+)
+
+
+@asynccontextmanager
+async def _host_pacing_scope(
+    url: str, rate_limit: float | None
+) -> AsyncIterator[HostPacingSession]:
+    """Install one task-local session backed by the process-wide registry."""
+    async with _host_gate_registry.session(url, rate_limit) as session:
+        token = _current_host_pacing_session.set(session)
+        try:
+            yield session
+        finally:
+            _current_host_pacing_session.reset(token)
+
+
 # Deel B (2026-08-18, "a stop-signal should slow you down, not give up") —
 # same test-friendly indirection as the two pairs above, dedicated to the
 # explicit pause ``crawl_site`` takes after lowering its in-job rate_limit,
@@ -3574,6 +3678,39 @@ async def _chunked_bulk_fetch(
     rate_limit: float | None = None,
     cancel_check: Callable[[], Awaitable[bool]] | None = None,
 ) -> ChunkedFetchResult:
+    """Submit a bulk fetch through the process-wide gate for its target host."""
+    if not urls:
+        return ChunkedFetchResult()
+    current_session = _current_host_pacing_session.get()
+    if current_session is not None and current_session.key == crawl_gate_key(urls[0]):
+        return await _chunked_bulk_fetch_with_session(
+            urls=urls,
+            crawler_config=crawler_config,
+            cookies=cookies,
+            stealth=stealth,
+            cancel_check=cancel_check,
+            pacing_session=current_session,
+        )
+    async with _host_gate_registry.session(urls[0], rate_limit) as pacing_session:
+        return await _chunked_bulk_fetch_with_session(
+            urls=urls,
+            crawler_config=crawler_config,
+            cookies=cookies,
+            stealth=stealth,
+            cancel_check=cancel_check,
+            pacing_session=pacing_session,
+        )
+
+
+async def _chunked_bulk_fetch_with_session(
+    *,
+    urls: list[str],
+    crawler_config: dict[str, Any],
+    cookies: list[dict[str, Any]] | None,
+    stealth: bool = False,
+    cancel_check: Callable[[], Awaitable[bool]] | None = None,
+    pacing_session: HostPacingSession,
+) -> ChunkedFetchResult:
     """Submit ``urls`` to crawl4ai's bulk ``/crawl`` endpoint in chunks.
 
     crawl4ai 0.8 server enforces a 100-URL cap on the ``urls`` array.
@@ -3662,12 +3799,12 @@ async def _chunked_bulk_fetch(
     result = ChunkedFetchResult()
     if not urls:
         return result
-    chunk_size = _burst_size_for(rate_limit)
-    previous_chunk_start: float | None = None
     attempted_count = 0
     antibot_signal_count = 0
     breaker_state = HostCircuitBreakerState()
-    for chunk_start in range(0, len(urls), chunk_size):
+    chunk_start = 0
+    chunk_index = 0
+    while chunk_start < len(urls):
         if cancel_check is not None and await cancel_check():
             remaining_urls = urls[chunk_start:]
             result.stopped_early = True
@@ -3680,13 +3817,7 @@ async def _chunked_bulk_fetch(
                 not_attempted_urls=len(remaining_urls),
             )
             break
-        if rate_limit is not None and previous_chunk_start is not None:
-            gap_seconds = chunk_size / rate_limit
-            elapsed_since_previous_start = _pacing_monotonic() - previous_chunk_start
-            remaining = gap_seconds - elapsed_since_previous_start
-            if remaining > 0:
-                await _pacing_sleep(remaining)
-        previous_chunk_start = _pacing_monotonic()
+        chunk_size = await pacing_session.acquire(len(urls) - chunk_start)
         chunk_urls = urls[chunk_start : chunk_start + chunk_size]
         payload: dict[str, Any] = {
             "urls": chunk_urls,
@@ -3710,7 +3841,11 @@ async def _chunked_bulk_fetch(
             async with httpx.AsyncClient(
                 timeout=settings.crawl_bulk_base_timeout_seconds
             ) as client:
-                data = await _crawl_sync(client, payload)
+                reservation_token = _host_pacing_already_reserved.set(True)
+                try:
+                    data = await _crawl_sync(client, payload)
+                finally:
+                    _host_pacing_already_reserved.reset(reservation_token)
             chunk_pages = _normalise_results_block(data)
             result.raw_results.extend(chunk_pages)
             attempted_count += len(chunk_pages)
@@ -3741,7 +3876,7 @@ async def _chunked_bulk_fetch(
             chunk_reason_codes.add(_classify_fetch_outcome(None, error=exc))
             logger.warning(
                 "crawl_site_bulk_chunk_failed",
-                chunk_index=chunk_start // chunk_size,
+                chunk_index=chunk_index,
                 chunk_size=len(chunk_urls),
                 error=str(exc),
             )
@@ -3783,7 +3918,7 @@ async def _chunked_bulk_fetch(
             or breaker_tripped
         )
         if stop_triggered:
-            remaining_urls = urls[chunk_start + chunk_size :]
+            remaining_urls = urls[chunk_start + len(chunk_urls) :]
             if remaining_urls:
                 result.stopped_early = True
                 result.not_attempted = remaining_urls
@@ -3827,6 +3962,9 @@ async def _chunked_bulk_fetch(
                     circuit_breaker_verdict=(breaker_verdict.value if breaker_tripped else None),
                 )
             break
+
+        chunk_start += len(chunk_urls)
+        chunk_index += 1
 
     return result
 
@@ -3930,7 +4068,13 @@ def _build_candidate_set(
     return ordered
 
 
-async def crawl_dom_summary(url: str) -> list[dict] | None:
+async def crawl_dom_summary(url: str, rate_limit: float | None = 2.0) -> list[dict] | None:
+    """Extract a DOM summary while participating in the shared host schedule."""
+    async with _host_pacing_scope(url, rate_limit):
+        return await _crawl_dom_summary_in_host_scope(url)
+
+
+async def _crawl_dom_summary_in_host_scope(url: str) -> list[dict] | None:
     """Crawl a page with DOM extraction JS for AI selector detection.
 
     Injects JS that extracts a ranked DOM summary and captures it via

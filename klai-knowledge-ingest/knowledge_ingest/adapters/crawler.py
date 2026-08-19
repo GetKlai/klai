@@ -32,6 +32,7 @@ from knowledge_ingest.domain_rate_limit_control import (
     count_rate_limit_observations,
 )
 from knowledge_ingest.domain_selectors import (
+    DomainRateLimitWriteKind,
     extract_domain,
     get_domain_rate_limit_state,
     save_domain_rate_limit_state,
@@ -734,15 +735,34 @@ async def run_crawl_job(
             now=datetime.now(UTC),
         )
         if decayed_state != domain_rate_limit_state:
-            await save_domain_rate_limit_state(conn, domain, org_id, decayed_state)
-            logger.info(
-                "crawl_domain_rate_limit_decayed",
-                job_id=job_id,
-                domain=domain,
-                previous_rate_limit=domain_rate_limit_state.rate_limit,
-                previous_last_congestion_at=domain_rate_limit_state.last_congestion_at,
+            decay_applied = await save_domain_rate_limit_state(
+                conn,
+                domain,
+                org_id,
+                expected_state=domain_rate_limit_state,
+                state=decayed_state,
+                kind=DomainRateLimitWriteKind.DECAY,
+                default_rate_limit=rate_limit,
             )
-        domain_rate_limit_state = decayed_state
+            if decay_applied:
+                logger.info(
+                    "crawl_domain_rate_limit_decayed",
+                    job_id=job_id,
+                    domain=domain,
+                    previous_rate_limit=domain_rate_limit_state.rate_limit,
+                    previous_last_congestion_at=domain_rate_limit_state.last_congestion_at,
+                )
+                domain_rate_limit_state = decayed_state
+            else:
+                # A concurrent crawl changed the AIMD state after our read.
+                # Never let stale decay clear newer congestion; use the latest
+                # persisted value conservatively for this crawl instead.
+                domain_rate_limit_state = await get_domain_rate_limit_state(conn, domain, org_id)
+                logger.info(
+                    "crawl_domain_rate_limit_decay_conflict_deferred",
+                    job_id=job_id,
+                    domain=domain,
+                )
         stored_rate_limit = domain_rate_limit_state.rate_limit
         effective_rate_limit = stored_rate_limit if stored_rate_limit is not None else rate_limit
         if stored_rate_limit is not None:
@@ -867,8 +887,21 @@ async def run_crawl_job(
             now=datetime.now(UTC),
         )
         if updated_rate_limit_state is not None:
-            await save_domain_rate_limit_state(conn, domain, org_id, updated_rate_limit_state)
-            if congestion_verdict:
+            write_kind = (
+                DomainRateLimitWriteKind.CONGESTION
+                if congestion_verdict
+                else DomainRateLimitWriteKind.RECOVERY
+            )
+            update_applied = await save_domain_rate_limit_state(
+                conn,
+                domain,
+                org_id,
+                expected_state=domain_rate_limit_state,
+                state=updated_rate_limit_state,
+                kind=write_kind,
+                default_rate_limit=rate_limit,
+            )
+            if congestion_verdict and update_applied:
                 logger.warning(
                     "crawl_domain_rate_limit_lowered",
                     job_id=job_id,
@@ -876,13 +909,23 @@ async def run_crawl_job(
                     previous_rate_limit=effective_rate_limit,
                     lowered_rate_limit=updated_rate_limit_state.rate_limit,
                 )
-            elif updated_rate_limit_state.rate_limit != domain_rate_limit_state.rate_limit:
+            elif (
+                update_applied
+                and updated_rate_limit_state.rate_limit != domain_rate_limit_state.rate_limit
+            ):
                 logger.info(
                     "crawl_domain_rate_limit_raised",
                     job_id=job_id,
                     domain=domain,
                     previous_rate_limit=domain_rate_limit_state.rate_limit,
                     raised_rate_limit=updated_rate_limit_state.rate_limit,
+                )
+            elif not update_applied:
+                logger.info(
+                    "crawl_domain_rate_limit_update_conflict_deferred",
+                    job_id=job_id,
+                    domain=domain,
+                    write_kind=write_kind.value,
                 )
 
         crawl_outcome_warning = _build_crawl_outcome_warning(

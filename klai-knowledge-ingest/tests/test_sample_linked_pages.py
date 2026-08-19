@@ -167,6 +167,7 @@ async def test_sample_issues_exactly_one_bulk_request() -> None:
         await sample_linked_pages(seed, max_pages=5)
     assert bulk.await_count == 1
     assert len(bulk.await_args.kwargs["urls"]) == 5
+    assert bulk.await_args.kwargs["rate_limit"] == 2.0
 
 
 @pytest.mark.asyncio
