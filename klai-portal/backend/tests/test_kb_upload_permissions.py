@@ -35,13 +35,14 @@ def _make_org() -> MagicMock:
     return org
 
 
-def _make_kb() -> MagicMock:
+def _make_kb(*, owner_type: str = "org", default_org_role: str | None = "viewer") -> MagicMock:
     kb = MagicMock()
     kb.id = 42
     kb.slug = _KB_SLUG
     kb.org_id = _ORG_ID
     kb.created_by = _OWNER_USER_ID
-    kb.default_org_role = "viewer"
+    kb.owner_type = owner_type
+    kb.default_org_role = default_org_role
     return kb
 
 
@@ -619,6 +620,288 @@ async def test_delete_stale_done_upload_by_artifact_id_treats_ingest_404_as_succ
 
     assert result is None
     mock_delete.assert_awaited_once()
+    db.delete.assert_awaited_once_with(upload)
+    db.commit.assert_awaited()
+
+
+# ---------------------------------------------------------------------------
+# delete_kb_upload — kb_manager source-manage pad (2026-08-19)
+#
+# A kb_manager could already delete a CONNECTOR on an org KB it did not create
+# (require_connector_manage_access, Voys/Ascend fix 2026-08-14) but not the
+# upload sitting next to it in the same Sources list, because the upload's
+# delete forwarded user_id and knowledge-ingest rejected the cross-user delete.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_delete_upload_kb_manager_contributor_on_org_kb_passes_none_user_id() -> None:
+    """kb_manager with contributor access on an org KB deletes ANY upload.
+
+    Regression: previously user_id was forwarded, so knowledge-ingest 403'd
+    on a source uploaded by a colleague.
+    """
+    from app.api.app_knowledge_bases import delete_kb_upload
+
+    org = _make_org()
+    kb = _make_kb(default_org_role="contributor")
+    perms = make_perms(role="kb_manager", user_id="user-kb-manager", org_id=_ORG_ID)
+
+    with (
+        patch(
+            "app.api.app_knowledge_bases._load_org_or_500",
+            new=AsyncMock(return_value=org),
+        ),
+        patch(
+            "app.api.app_knowledge_bases._get_kb_or_404",
+            new=AsyncMock(return_value=kb),
+        ),
+        patch(
+            "app.api.app_knowledge_bases.get_user_role_for_kb",
+            new=AsyncMock(return_value="contributor"),
+        ),
+        patch(
+            "app.api.app_knowledge_bases.knowledge_ingest_client.delete_kb_upload",
+            new=AsyncMock(return_value=None),
+        ) as mock_delete,
+    ):
+        result = await delete_kb_upload(
+            kb_slug=_KB_SLUG,
+            upload_or_artifact_id=_ARTIFACT_ID,
+            perms=perms,
+            db=_make_db(),
+        )
+
+    assert result is None
+    mock_delete.assert_awaited_once_with(
+        org.zitadel_org_id,
+        kb.slug,
+        _ARTIFACT_ID,
+        user_id=None,  # cross-user delete allowed
+    )
+
+
+@pytest.mark.asyncio
+async def test_delete_upload_kb_manager_resolved_viewer_role_still_403() -> None:
+    """A resolved viewer KB-role still wins — the KB-role layer is preserved.
+
+    Note the resolver, not the grant, is what this pins. ``get_user_role_for_kb``
+    returns max(explicit grant, default_org_role), so on a KB with
+    ``default_org_role='contributor'`` an explicit viewer grant does NOT
+    resolve to viewer. That is a pre-existing property of the resolver shared
+    with connector CRUD, not something this gate can compensate for.
+    """
+    from app.api.app_knowledge_bases import delete_kb_upload
+
+    org = _make_org()
+    kb = _make_kb()
+    perms = make_perms(role="kb_manager", user_id="user-kb-manager", org_id=_ORG_ID)
+
+    with (
+        patch(
+            "app.api.app_knowledge_bases._load_org_or_500",
+            new=AsyncMock(return_value=org),
+        ),
+        patch(
+            "app.api.app_knowledge_bases._get_kb_or_404",
+            new=AsyncMock(return_value=kb),
+        ),
+        patch(
+            "app.api.app_knowledge_bases.get_user_role_for_kb",
+            new=AsyncMock(return_value="viewer"),
+        ),
+        patch(
+            "app.api.app_knowledge_bases.knowledge_ingest_client.delete_kb_upload",
+            new=AsyncMock(return_value=None),
+        ) as mock_delete,
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await delete_kb_upload(
+                kb_slug=_KB_SLUG,
+                upload_or_artifact_id=_ARTIFACT_ID,
+                perms=perms,
+                db=_make_db(),
+            )
+
+    assert exc_info.value.status_code == 403
+    mock_delete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_delete_upload_kb_manager_on_chat_seat_stays_own_uploads_only() -> None:
+    """Seat filtering applies: a kb_manager on a CHAT seat loses the widening.
+
+    ``app.core.seats.effective_capabilities`` drops KB_CONNECTORS_EXTERNAL for
+    (kb_manager, CHAT) — reachable via the PATCH /seat escape hatch. The gate
+    must read ``perms.effective_capabilities`` (what ``require_capability``
+    gates on), not re-derive capabilities from the profile role.
+    """
+    from app.api.app_knowledge_bases import delete_kb_upload
+
+    org = _make_org()
+    kb = _make_kb(default_org_role="contributor")
+    perms = make_perms(
+        role="kb_manager",
+        seat_type="chat",
+        user_id="user-kb-manager",
+        org_id=_ORG_ID,
+    )
+    assert "kb.connectors.external" not in perms.effective_capabilities
+
+    with (
+        patch(
+            "app.api.app_knowledge_bases._load_org_or_500",
+            new=AsyncMock(return_value=org),
+        ),
+        patch(
+            "app.api.app_knowledge_bases._get_kb_or_404",
+            new=AsyncMock(return_value=kb),
+        ),
+        patch(
+            "app.api.app_knowledge_bases.get_user_role_for_kb",
+            new=AsyncMock(return_value="contributor"),
+        ),
+        patch(
+            "app.api.app_knowledge_bases.knowledge_ingest_client.delete_kb_upload",
+            new=AsyncMock(return_value=None),
+        ) as mock_delete,
+    ):
+        await delete_kb_upload(
+            kb_slug=_KB_SLUG,
+            upload_or_artifact_id=_ARTIFACT_ID,
+            perms=perms,
+            db=_make_db(),
+        )
+
+    mock_delete.assert_awaited_once_with(
+        org.zitadel_org_id,
+        kb.slug,
+        _ARTIFACT_ID,
+        user_id="user-kb-manager",  # still ownership-scoped
+    )
+
+
+@pytest.mark.asyncio
+async def test_delete_upload_kb_manager_on_personal_kb_stays_own_uploads_only() -> None:
+    """Personal KBs get no kb_manager widening — owner_type='user' is excluded."""
+    from app.api.app_knowledge_bases import delete_kb_upload
+
+    org = _make_org()
+    kb = _make_kb(owner_type="user", default_org_role=None)
+    perms = make_perms(role="kb_manager", user_id="user-kb-manager", org_id=_ORG_ID)
+
+    with (
+        patch(
+            "app.api.app_knowledge_bases._load_org_or_500",
+            new=AsyncMock(return_value=org),
+        ),
+        patch(
+            "app.api.app_knowledge_bases._get_kb_or_404",
+            new=AsyncMock(return_value=kb),
+        ),
+        patch(
+            "app.api.app_knowledge_bases.get_user_role_for_kb",
+            new=AsyncMock(return_value="contributor"),
+        ),
+        patch(
+            "app.api.app_knowledge_bases.knowledge_ingest_client.delete_kb_upload",
+            new=AsyncMock(return_value=None),
+        ) as mock_delete,
+    ):
+        await delete_kb_upload(
+            kb_slug=_KB_SLUG,
+            upload_or_artifact_id=_ARTIFACT_ID,
+            perms=perms,
+            db=_make_db(),
+        )
+
+    mock_delete.assert_awaited_once_with(
+        org.zitadel_org_id,
+        kb.slug,
+        _ARTIFACT_ID,
+        user_id="user-kb-manager",  # still ownership-scoped
+    )
+
+
+@pytest.mark.asyncio
+async def test_delete_upload_company_profile_contributor_still_own_uploads_only() -> None:
+    """A company profile lacks KB_CONNECTORS_EXTERNAL — no widening for it."""
+    from app.api.app_knowledge_bases import delete_kb_upload
+
+    org = _make_org()
+    kb = _make_kb(default_org_role="contributor")
+    perms = make_perms(role="company", user_id=_USER_ID, org_id=_ORG_ID)
+
+    with (
+        patch(
+            "app.api.app_knowledge_bases._load_org_or_500",
+            new=AsyncMock(return_value=org),
+        ),
+        patch(
+            "app.api.app_knowledge_bases._get_kb_or_404",
+            new=AsyncMock(return_value=kb),
+        ),
+        patch(
+            "app.api.app_knowledge_bases.get_user_role_for_kb",
+            new=AsyncMock(return_value="contributor"),
+        ),
+        patch(
+            "app.api.app_knowledge_bases.knowledge_ingest_client.delete_kb_upload",
+            new=AsyncMock(return_value=None),
+        ) as mock_delete,
+    ):
+        await delete_kb_upload(
+            kb_slug=_KB_SLUG,
+            upload_or_artifact_id=_ARTIFACT_ID,
+            perms=perms,
+            db=_make_db(),
+        )
+
+    mock_delete.assert_awaited_once_with(
+        org.zitadel_org_id,
+        kb.slug,
+        _ARTIFACT_ID,
+        user_id=_USER_ID,
+    )
+
+
+@pytest.mark.asyncio
+async def test_delete_processing_upload_kb_manager_deletes_other_users_row() -> None:
+    """kb_manager may delete a colleague's still-processing kb_uploads row.
+
+    The in-flight branch has its own created_by check; it must follow the same
+    pad as the artifact branch or the two disagree mid-lifecycle.
+    """
+    from app.api.app_knowledge_bases import delete_kb_upload
+
+    org = _make_org()
+    kb = _make_kb(default_org_role="contributor")
+    perms = make_perms(role="kb_manager", user_id="user-kb-manager", org_id=_ORG_ID)
+    upload = _make_kb_upload(created_by=_USER_ID)  # someone else's upload
+    db = _make_db(kb_upload=upload)
+
+    with (
+        patch(
+            "app.api.app_knowledge_bases._load_org_or_500",
+            new=AsyncMock(return_value=org),
+        ),
+        patch(
+            "app.api.app_knowledge_bases._get_kb_or_404",
+            new=AsyncMock(return_value=kb),
+        ),
+        patch(
+            "app.api.app_knowledge_bases.get_user_role_for_kb",
+            new=AsyncMock(return_value="contributor"),
+        ),
+    ):
+        result = await delete_kb_upload(
+            kb_slug=_KB_SLUG,
+            upload_or_artifact_id=str(upload.id),
+            perms=perms,
+            db=db,
+        )
+
+    assert result is None
     db.delete.assert_awaited_once_with(upload)
     db.commit.assert_awaited()
 

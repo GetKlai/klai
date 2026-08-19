@@ -17,7 +17,13 @@ and auth-probe. Matrix under test:
 | platform admin                           | allowed                      | allowed     |
 | KB owner (explicit grant / creator)      | allowed                      | allowed     |
 | kb_manager, contributor via default      | allowed  (the fix)           | 403         |
-| kb_manager, explicit viewer grant        | 403 (KB-role layer wins)     | 403         |
+| kb_manager, resolved viewer KB-role      | 403 (KB-role layer wins)     | 403         |
+
+Caveat on that last row: ``get_user_role_for_kb`` returns
+max(explicit grant, default_org_role), so on a KB with
+``default_org_role='contributor'`` an explicit viewer grant does NOT resolve
+to viewer and therefore does not restrict. What is pinned below is the
+resolved role, not the grant.
 | company profile, contributor via default | 403 (no capability)          | 403         |
 """
 

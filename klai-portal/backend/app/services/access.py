@@ -237,6 +237,53 @@ async def get_user_role_for_kb(
     return max(roles, key=lambda r: role_rank.get(r, 0))
 
 
+def grants_kb_source_manage(
+    kb: PortalKnowledgeBase,
+    perms: object,
+    kb_role: str | None,
+) -> bool:
+    """Return True iff the caller may manage EVERY source on this KB.
+
+    "Manage every source" means: not restricted to the sources the caller
+    happens to have created. It is the owner-equivalent pad — the thing that
+    separates "may add my own upload" from "may remove the source someone
+    else added".
+
+    Pure predicate over an already-resolved ``kb_role`` (see
+    ``get_user_role_for_kb``) so callers that already paid for that query do
+    not issue a second one.
+
+    True when one of:
+      1. platform admin (existing bypass, unchanged);
+      2. KB-role resolves to owner (creator, explicit grant or group grant);
+      3. org-owned KB + KB-role contributor + effective capability
+         KB_CONNECTORS_EXTERNAL (kb_manager and above — NOT the basic
+         KB_CONNECTORS capability, which personal/company also hold for
+         url/upload types). A resolved *viewer* KB-role still restricts:
+         intersection with the KB-role layer is preserved.
+
+    Reads ``perms.effective_capabilities`` rather than re-deriving the
+    capability set from the profile role. That is the same source
+    ``require_capability`` gates on, so a (kb_manager, CHAT-seat) caller —
+    reachable via the ``PATCH /seat`` escape hatch, where
+    ``app.core.seats.effective_capabilities`` deliberately drops
+    KB_CONNECTORS_EXTERNAL — is denied here too. ``profiles.has_capability``
+    would have re-granted it by looking only at the role.
+
+    Personal KBs stay owner-only for non-platform-admins; the
+    ``get_kb_with_access`` route firewall already 404s other users'
+    personal KBs before this check runs.
+    """
+    from app.core.profiles import Capability
+
+    if getattr(perms, "is_platform_admin", False):
+        return True
+    if kb_role == "owner":
+        return True
+    effective_caps = getattr(perms, "effective_capabilities", frozenset())
+    return kb.owner_type == "org" and kb_role == "contributor" and Capability.KB_CONNECTORS_EXTERNAL in effective_caps
+
+
 async def require_connector_manage_access(
     kb: PortalKnowledgeBase,
     perms: object,
@@ -253,22 +300,11 @@ async def require_connector_manage_access(
     own. On a default_org_role=contributor KB that locked out every
     kb_manager except the KB creator (Voys/Ascend incident).
 
-    Allowed when one of:
-      1. platform admin (existing bypass, unchanged);
-      2. KB-role resolves to owner (creator, explicit grant or group grant);
-      3. org-owned KB + KB-role contributor + profile capability
-         KB_CONNECTORS_EXTERNAL (kb_manager and above — NOT the basic
-         KB_CONNECTORS capability, which personal/company also hold for
-         url/upload types). An explicit *viewer* grant still restricts:
-         intersection with the KB-role layer is preserved.
-
-    Personal KBs stay owner-only for non-platform-admins; the
-    ``get_kb_with_access`` route firewall already 404s other users'
-    personal KBs before this check runs.
+    The rule itself lives in ``grants_kb_source_manage`` — shared with the
+    upload-delete path so a kb_manager cannot remove a connector but be
+    stuck on the plain-text file sitting next to it in the same Sources list.
     """
     from fastapi import HTTPException, status
-
-    from app.core.profiles import Capability, has_capability
 
     if getattr(perms, "is_platform_admin", False):
         return
@@ -281,9 +317,7 @@ async def require_connector_manage_access(
         kb_org_id=kb.org_id,
         kb_created_by=kb.created_by,
     )
-    if role == "owner":
-        return
-    if kb.owner_type == "org" and role == "contributor" and has_capability(perms, Capability.KB_CONNECTORS_EXTERNAL):
+    if grants_kb_source_manage(kb, perms, role):
         return
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
