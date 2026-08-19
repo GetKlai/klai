@@ -14,7 +14,7 @@ logger = get_logger(__name__)
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 
 # Text-based formats that can be decoded directly without Unstructured
-_PLAIN_TEXT_SUFFIXES = {".md", ".txt", ".rst", ".csv"}
+_PLAIN_TEXT_SUFFIXES = {".md", ".txt", ".rst", ".csv", ".json"}
 
 
 def _infer_binary_suffix(content: bytes) -> str | None:

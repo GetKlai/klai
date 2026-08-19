@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import {
-  ArrowLeft, ChevronRight, Settings, ChevronDown, CheckCircle2, Loader2, Sparkles, Globe, FileText, Shield,
+  ArrowLeft, Braces, ChevronRight, Settings, ChevronDown, CheckCircle2, Loader2, Sparkles, Globe, FileText, Shield,
 } from 'lucide-react'
 import { SiGithub, SiNotion, SiGoogledrive, SiAirtable, SiConfluence } from '@icons-pack/react-simple-icons'
 import { Button } from '@/components/ui/button'
@@ -22,6 +22,7 @@ import type {
   ConfluenceConfig,
   ConnectorType,
   GitHubConfig,
+  JsonFeedConfig,
   NotionAddConfig,
   PreviewResult,
   WcStep,
@@ -51,6 +52,7 @@ const CONNECTOR_TYPES: {
   { type: 'ms_docs',      label: m.admin_connectors_type_ms_docs,       available: true,  Icon: FileText },
   { type: 'airtable',     label: m.admin_connectors_type_airtable,      available: true,  Icon: SiAirtable },
   { type: 'confluence',   label: m.admin_connectors_type_confluence,    available: true,  Icon: SiConfluence },
+  { type: 'json_feed',    label: m.admin_connectors_type_json_feed,     available: true,  Icon: Braces },
 ]
 
 // -- Route -------------------------------------------------------------------
@@ -98,6 +100,7 @@ function AddConnectorPage() {
   const [confluenceConfig, setConfluenceConfig] = useState<ConfluenceConfig>({
     base_url: '', email: '', api_token: '', space_keys: '',
   })
+  const [jsonFeedConfig, setJsonFeedConfig] = useState<JsonFeedConfig>({ url: '' })
   // ms_docs (SPEC-KB-MS-DOCS-001): optional site_url + drive_id - both empty = personal OneDrive
   const [msSiteUrl, setMsSiteUrl] = useState('')
   const [msDriveId, setMsDriveId] = useState('')
@@ -216,6 +219,9 @@ function AddConnectorPage() {
         config.api_token = confluenceConfig.api_token
         const keys = confluenceConfig.space_keys.split(',').map((s) => s.trim()).filter(Boolean)
         if (keys.length > 0) config.space_keys = keys
+      }
+      if (selectedType === 'json_feed') {
+        config.url = jsonFeedConfig.url.trim()
       }
       await apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/`, {
         method: 'POST',
@@ -377,7 +383,7 @@ function AddConnectorPage() {
       {/* Step indicator - shared component */}
       {(() => {
         const isSimple = selectedType === 'github' || selectedType === 'notion' || selectedType === 'google_drive' || selectedType === 'ms_docs'
-          || selectedType === 'airtable' || selectedType === 'confluence'
+          || selectedType === 'airtable' || selectedType === 'confluence' || selectedType === 'json_feed'
 
         const steps: StepItem[] = isSimple
           ? [
@@ -743,6 +749,34 @@ function AddConnectorPage() {
                 )}
                 <div className="flex gap-2 pt-1">
                   <Button type="submit" size="sm" disabled={createMutation.isPending || !name || !confluenceConfig.base_url || !confluenceConfig.email || !confluenceConfig.api_token}>
+                    {createMutation.isPending ? m.admin_connectors_create_submit_loading() : m.admin_connectors_create_submit()}
+                  </Button>
+                  <Button type="button" size="sm" variant="ghost" onClick={() => setSelectedType(null)}>
+                    {m.admin_connectors_webcrawler_back()}
+                  </Button>
+                </div>
+              </form>
+            )}
+
+            {/* Public JSON feed */}
+            {selectedType === 'json_feed' && (
+              <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate() }} className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="json-feed-name">{m.admin_connectors_field_name()}</Label>
+                  <Input id="json-feed-name" required placeholder={m.admin_connectors_field_name_placeholder()} value={name} onChange={(e) => setName(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="json-feed-url">{m.admin_connectors_json_feed_url_label()}</Label>
+                  <Input id="json-feed-url" type="url" required placeholder={m.admin_connectors_json_feed_url_hint()} value={jsonFeedConfig.url} onChange={(e) => setJsonFeedConfig({ url: e.target.value })} />
+                  <p className="text-xs text-gray-400">{m.admin_connectors_json_feed_help()}</p>
+                </div>
+                {createMutation.error && (
+                  <p className="text-sm text-[var(--color-destructive)]">
+                    {createMutation.error instanceof Error ? createMutation.error.message : m.admin_connectors_error_create_generic()}
+                  </p>
+                )}
+                <div className="flex gap-2 pt-1">
+                  <Button type="submit" size="sm" disabled={createMutation.isPending || !name || !jsonFeedConfig.url.trim()}>
                     {createMutation.isPending ? m.admin_connectors_create_submit_loading() : m.admin_connectors_create_submit()}
                   </Button>
                   <Button type="button" size="sm" variant="ghost" onClick={() => setSelectedType(null)}>

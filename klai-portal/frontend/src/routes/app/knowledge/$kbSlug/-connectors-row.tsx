@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react'
-import { AlertTriangle, FileText, Globe, Loader2 } from 'lucide-react'
+import { AlertTriangle, Braces, FileText, Globe, Loader2 } from 'lucide-react'
 import { SiGithub, SiGoogledrive, SiNotion } from '@icons-pack/react-simple-icons'
 import { Button } from '@/components/ui/button'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -18,6 +18,7 @@ const CONNECTOR_TYPE_MAP: Record<string, ConnectorTypeInfo> = {
   notion:       { label: m.admin_connectors_type_notion,       IconComponent: SiNotion },
   google_drive: { label: m.admin_connectors_type_google_drive, IconComponent: SiGoogledrive },
   ms_docs:      { label: m.admin_connectors_type_ms_docs,      IconComponent: FileText },
+  json_feed:    { label: m.admin_connectors_type_json_feed,    IconComponent: Braces },
 }
 
 /** OAuth-backed connector types that support the /api/oauth/{provider}/authorize reconnect flow.

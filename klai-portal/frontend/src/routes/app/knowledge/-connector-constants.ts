@@ -21,7 +21,7 @@ export const MARKDOWN_PROSE_CLASSES =
 // by the route's validateSearch to gate the deep-link.
 export const VALID_PRESELECT_TYPES = new Set<ConnectorType>([
   'github', 'notion', 'google_drive', 'google_docs', 'google_sheets', 'google_slides',
-  'airtable', 'confluence', 'ms_docs', 'web_crawler',
+  'airtable', 'confluence', 'json_feed', 'ms_docs', 'web_crawler',
 ])
 
 export function normalizeConnectorPreselectType(type?: ConnectorType): ConnectorType | undefined {
@@ -29,6 +29,11 @@ export function normalizeConnectorPreselectType(type?: ConnectorType): Connector
     return 'google_drive'
   }
   return type
+}
+
+export function jsonFeedConfigForUpdate(url: string): Record<string, string> {
+  const normalizedUrl = url.trim()
+  return normalizedUrl ? { url: normalizedUrl } : {}
 }
 
 // Valid `?step=` URL-param values for the edit-connector route. Used

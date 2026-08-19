@@ -98,6 +98,9 @@ class TestSensitiveFieldsMapping:
     def test_airtable_fields(self) -> None:
         assert SENSITIVE_FIELDS["airtable"] == ["api_key"]
 
+    def test_json_feed_fields(self) -> None:
+        assert SENSITIVE_FIELDS["json_feed"] == ["url"]
+
     def test_all_connector_types_present(self) -> None:
         assert set(SENSITIVE_FIELDS.keys()) == {
             "github",
@@ -107,6 +110,7 @@ class TestSensitiveFieldsMapping:
             "web_crawler",
             "confluence",
             "airtable",
+            "json_feed",
         }
 
 
@@ -237,6 +241,24 @@ class TestRoundTrip:
             assert blob is not None
             decrypted = await store.decrypt_credentials(org_id=8, encrypted_credentials=blob, db=db)
             assert decrypted == {"api_key": FAKE_TOKEN_A}
+
+    @pytest.mark.asyncio()
+    async def test_json_feed_url_roundtrip(self) -> None:
+        store = _make_store()
+        db = AsyncMock()
+        url = "https://data.example.com/feed.json?token=placeholder"
+        with patch.object(store, "get_or_create_dek", return_value=os.urandom(32)):
+            blob, stripped = await store.encrypt_credentials(
+                org_id=8,
+                connector_type="json_feed",
+                config={"url": url},
+                db=db,
+            )
+
+            assert stripped == {}
+            assert blob is not None
+            decrypted = await store.decrypt_credentials(org_id=8, encrypted_credentials=blob, db=db)
+            assert decrypted == {"url": url}
 
     @pytest.mark.asyncio()
     async def test_unknown_connector_type_is_passthrough(self) -> None:

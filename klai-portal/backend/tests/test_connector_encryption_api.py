@@ -93,6 +93,15 @@ class TestConnectorOutPlaintextSecretRejection:
         assert out.has_saved_credentials is True
         assert "cookies" not in out.config
 
+    def test_encrypted_json_feed_url_is_not_returned_by_public_api(self) -> None:
+        connector = self._make_connector("json_feed", {})
+        connector.encrypted_credentials = b"encrypted-placeholder"
+
+        out = _connector_out(connector)
+
+        assert out.config == {}
+        assert out.has_saved_credentials is True
+
 
 def test_cookie_names_from_credentials_returns_names_without_values() -> None:
     names = _cookie_names_from_credentials(
@@ -134,3 +143,23 @@ async def test_merge_saved_sensitive_credentials_fills_omitted_confluence_token(
         "space_keys": ["ENG"],
         "api_token": FAKE_TOKEN,
     }
+
+
+@pytest.mark.asyncio
+async def test_merge_saved_sensitive_credentials_preserves_omitted_json_feed_url() -> None:
+    connector = MagicMock()
+    connector.connector_type = "json_feed"
+    connector.encrypted_credentials = b"ENCRYPTED"
+    saved_url = "https://data.example.com/feed.json?token=placeholder"
+
+    with patch("app.api.connectors.credential_store") as mock_store:
+        mock_store.decrypt_credentials = AsyncMock(return_value={"url": saved_url})
+
+        merged = await _merge_saved_sensitive_credentials(
+            connector=connector,
+            config={},
+            org_id=77,
+            db=AsyncMock(),
+        )
+
+    assert merged == {"url": saved_url}
