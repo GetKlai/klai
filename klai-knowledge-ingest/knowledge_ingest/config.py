@@ -299,6 +299,28 @@ class Settings(BaseSettings):
         default=3,
         validation_alias=AliasChoices("KLAI_CRAWL_CIRCUIT_BREAKER_REFUSAL_COUNT"),
     )
+    # 2026-08-19 (onderdeel 3 — "slow down before you give up"): a failure
+    # ratio ABOVE crawl_circuit_breaker_failure_ratio (0.5) is dead-site
+    # territory and stays an immediate abort, unchanged. But a ratio between
+    # this threshold and that one used to do NOTHING — a crawl with, say, a
+    # 30% failure rate over a dozen attempts is not "fine" (the existing
+    # RATE_LIMITED-only slowdown never fires because nothing classified as a
+    # readable rate-limit signal) and is not "dead" either. It sat in a gap
+    # where the crawler kept hammering at full speed. crawl_circuit_breaker_
+    # slowdown_ratio (0.25) closes that gap: crossing it (still gated by the
+    # SAME crawl_circuit_breaker_min_attempts floor as the abort ratio, no
+    # separate knob invented for that) makes host_circuit_breaker.evaluate_
+    # chunk return BreakerVerdict.SLOWDOWN, which _chunked_bulk_fetch reports
+    # to crawl_site as a RATE_LIMITED-flavoured stop — reusing the EXISTING
+    # halve-rate/cooldown/give-up-after-N-halvings ladder
+    # (crawl_rate_limit_slowdown_cooldown_seconds, MIN_DOMAIN_RATE_LIMIT floor,
+    # _MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS in crawl4ai_client.py) instead of
+    # a second, parallel one. MUST stay below crawl_circuit_breaker_failure_
+    # ratio — see evaluate_chunk's docstring.
+    crawl_circuit_breaker_slowdown_ratio: float = Field(
+        default=0.25,
+        validation_alias=AliasChoices("KLAI_CRAWL_CIRCUIT_BREAKER_SLOWDOWN_RATIO"),
+    )
     # LLM enrichment (contextual prefix + HyPE questions via LiteLLM proxy)
     litellm_url: str = "http://litellm:4000"
     litellm_api_key: str = ""

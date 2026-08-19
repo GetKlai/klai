@@ -4,7 +4,9 @@ Onderdeel 2 of the 2026-08-19 intermedia.com "20 minutes, zero pages"
 fix — see the module docstring in host_circuit_breaker.py for the full
 rationale. Defaults used throughout mirror settings.py's:
 consecutive_failure_threshold=5, min_attempts_for_ratio=10,
-failure_ratio_threshold=0.5, refusal_threshold=3.
+failure_ratio_threshold=0.5, refusal_threshold=3,
+slowdown_ratio_threshold=0.25 (onderdeel 3, 2026-08-19 — the SLOWDOWN
+verdict added between CONTINUE and the two ABORT verdicts).
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ _DEFAULT_KWARGS = {
     "min_attempts_for_ratio": 10,
     "failure_ratio_threshold": 0.5,
     "refusal_threshold": 3,
+    "slowdown_ratio_threshold": 0.25,
 }
 
 
@@ -105,12 +108,18 @@ class TestFailureRatio:
         assert state.failed == 7
         assert verdict == BreakerVerdict.ABORT_PERSISTENT_FAILURE
 
-    def test_exactly_half_failed_does_not_abort(self) -> None:
-        """'meer dan de helft' (MORE than half) — exactly 50% must not trip."""
+    def test_exactly_half_failed_slows_down_but_does_not_abort(self) -> None:
+        """'meer dan de helft' (MORE than half) — exactly 50% must not ABORT.
+
+        Onderdeel 3 (2026-08-19): it now DOES cross the lower
+        slowdown_ratio_threshold (0.25), so the verdict is SLOWDOWN, not a
+        silent CONTINUE — the old assertion (CONTINUE) is no longer correct
+        once the ladder has a middle rung.
+        """
         observations = [_failure() for _ in range(5)] + [_success() for _ in range(5)]
         state, verdict = _run(observations)
         assert state.attempted == 10
-        assert verdict == BreakerVerdict.CONTINUE
+        assert verdict == BreakerVerdict.SLOWDOWN
 
 
 class TestRefusal:
@@ -153,6 +162,79 @@ class TestRefusal:
             ChunkObservation(attempted=1, failed=1, any_success=False, refused=1) for _ in range(5)
         ]
         _state, verdict = _run(observations)
+        assert verdict == BreakerVerdict.ABORT_REFUSAL
+
+
+class TestSlowdown:
+    """Onderdeel 3 (2026-08-19) — the gap between 'nothing reacts' and
+    'give up entirely': a failure ratio above slowdown_ratio_threshold
+    (0.25) but at or below failure_ratio_threshold (0.5) must SLOW DOWN,
+    not silently continue at full speed and not abort outright."""
+
+    def test_thirty_percent_ratio_over_twelve_attempts_slows_down_not_aborts(self) -> None:
+        """The exact gap this closes: a crawl where ~30% of attempts fail
+        (4/12 = 0.333) neither trips the old single ratio gate (not above
+        0.5) nor the consecutive-failure trigger (never 5 failures running,
+        by construction below), yet was previously hammered at full speed
+        for the rest of the crawl."""
+        observations = [_failure() for _ in range(4)] + [_success() for _ in range(8)]
+        state, verdict = _run(observations)
+        assert state.attempted == 12
+        assert state.failed == 4
+        assert verdict == BreakerVerdict.SLOWDOWN
+
+    def test_low_failure_ratio_does_not_slow_down(self) -> None:
+        """10% failed — comfortably under slowdown_ratio_threshold — must
+        just continue."""
+        observations = [_failure()] + [_success() for _ in range(9)]
+        state, verdict = _run(observations)
+        assert state.attempted == 10
+        assert state.failed == 1
+        assert verdict == BreakerVerdict.CONTINUE
+
+    def test_too_few_observations_never_slows_down_regardless_of_ratio(self) -> None:
+        """3/8 = 0.375 (comfortably inside the slowdown band) but only 8
+        attempts — below min_attempts_for_ratio (10) — so the ladder must
+        not react at all yet, same protection the abort ratio already had."""
+        observations = [_failure() for _ in range(3)] + [_success() for _ in range(5)]
+        state, verdict = _run(observations)
+        assert state.attempted == 8
+        assert state.failed == 3
+        assert verdict == BreakerVerdict.CONTINUE
+
+    def test_ratio_already_above_abort_threshold_goes_straight_to_abort_not_slowdown(self) -> None:
+        """When min_attempts_for_ratio is first reached with the ratio
+        ALREADY above failure_ratio_threshold, the verdict must be
+        ABORT_PERSISTENT_FAILURE directly — SLOWDOWN must never mask a
+        ratio that is already in dead-site territory."""
+        observations = [
+            _failure(),
+            _success(),
+            _failure(),
+            _success(),
+            _failure(),
+            _success(),
+            _failure(),
+            _success(),
+            _failure(),
+            _failure(),
+        ]
+        state, verdict = _run(observations)
+        assert state.attempted == 10
+        assert state.failed == 6
+        assert verdict == BreakerVerdict.ABORT_PERSISTENT_FAILURE
+
+    def test_refusal_aborts_even_when_ratio_is_only_in_the_slowdown_band(self) -> None:
+        """A refusal never downgrades to SLOWDOWN just because the
+        concurrent failure ratio happens to sit in the 25-50% band —
+        refusal is independent of, and takes priority over, the ratio
+        ladder entirely."""
+        observations = [
+            ChunkObservation(attempted=1, failed=1, any_success=False, refused=1) for _ in range(3)
+        ] + [_success() for _ in range(7)]
+        state, verdict = _run(observations)
+        assert state.attempted == 10
+        assert state.failed == 3
         assert verdict == BreakerVerdict.ABORT_REFUSAL
 
 

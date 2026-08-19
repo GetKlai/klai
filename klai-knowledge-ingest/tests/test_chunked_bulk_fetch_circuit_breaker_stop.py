@@ -122,6 +122,7 @@ async def test_five_consecutive_plain_5xx_chunks_stop_the_crawl(
     assert len(calls) == 5
     assert fetch.stopped_early is True
     assert fetch.circuit_breaker_triggered is True
+    assert fetch.circuit_breaker_slowdown_triggered is False
     assert fetch.not_attempted == urls[5:]
     assert fetch.not_attempted_reason_code == FetchReasonCode.NOT_FETCHED_CIRCUIT_BREAKER_STOP.value
     # Give-up semantics, same as a confirmed block — crawl_site must not
@@ -163,15 +164,25 @@ async def test_a_success_between_5xx_failures_prevents_the_stop(
 
 
 @pytest.mark.asyncio
-async def test_majority_failure_ratio_stops_the_crawl(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_fifty_percent_failure_ratio_triggers_slowdown_not_abort(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Alternating fail/success so the consecutive-streak keeps resetting
-    (never reaches 5), but the crawl-wide ratio crosses 50% once at least
-    10 URLs have been attempted — this isolates the ratio trigger from the
-    consecutive-failure trigger."""
+    (never reaches 5); the crawl-wide ratio reaches exactly 50% the moment
+    10 URLs have been attempted. 50% is NOT above failure_ratio_threshold
+    (0.5, 'meer dan de helft'), so this must not abort — but it IS above
+    the onderdeel-3 slowdown_ratio_threshold (0.25), so it must trip
+    SLOWDOWN, reported to crawl_site as a RATE_LIMITED-flavoured stop so
+    the retry-at-a-lower-rate ladder applies instead of giving up.
+
+    Renamed from the pre-onderdeel-3 test of the same scenario, which
+    asserted an immediate ABORT at 11 calls — the new lower rung in the
+    ladder now intervenes one call earlier, at the 10th, before the ratio
+    ever reaches the 11th attempt's 0.545."""
     _disable_real_pacing_sleep(monkeypatch)
     calls: list[list[str]] = []
-    # 11 urls: F,S,F,S,F,S,F,S,F,S,F — after url #11 (the 11th attempt),
-    # 6 of 11 have failed (0.545 > 0.5) with attempted=11 >= 10.
+    # 11 urls: F,S,F,S,F,S,F,S,F,S,F — attempted=10 (after the 10th call,
+    # a success) already has 5 of 10 failed (ratio exactly 0.5).
     pattern = [_server_error_page if i % 2 == 0 else _ok_page for i in range(11)]
 
     async def _fake_crawl_sync(_client: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -189,10 +200,18 @@ async def test_majority_failure_ratio_stops_the_crawl(monkeypatch: pytest.Monkey
         rate_limit=_ONE_URL_PER_CHUNK_RATE_LIMIT,
     )
 
-    assert len(calls) == 11
+    assert len(calls) == 10
     assert fetch.stopped_early is True
-    assert fetch.circuit_breaker_triggered is True
-    assert fetch.not_attempted == urls[11:]
+    # SLOWDOWN is NOT the give-up verdict — circuit_breaker_triggered stays
+    # False (it exclusively means "the breaker gave up"); the new, separate
+    # flag records the slowdown intervention instead.
+    assert fetch.circuit_breaker_triggered is False
+    assert fetch.circuit_breaker_slowdown_triggered is True
+    assert fetch.not_attempted == urls[10:]
+    # RATE_LIMITED, not BLOCKED_ANTI_BOT — crawl_site must retry these at a
+    # lower rate, not give up on them.
+    assert fetch.stop_trigger_reason_code == FetchReasonCode.RATE_LIMITED.value
+    assert fetch.not_attempted_reason_code == FetchReasonCode.NOT_FETCHED_RATE_LIMIT_STOP.value
 
 
 @pytest.mark.asyncio
@@ -221,8 +240,12 @@ async def test_three_refusals_stop_the_crawl_immediately(monkeypatch: pytest.Mon
     assert len(calls) == 5
     assert fetch.stopped_early is True
     assert fetch.circuit_breaker_triggered is True
+    assert fetch.circuit_breaker_slowdown_triggered is False
     assert fetch.not_attempted == urls[5:]
     assert fetch.not_attempted_reason_code == FetchReasonCode.NOT_FETCHED_CIRCUIT_BREAKER_STOP.value
+    # A refusal never slows down, it gives up — same give-up reason code as
+    # a confirmed block, never RATE_LIMITED.
+    assert fetch.stop_trigger_reason_code == FetchReasonCode.BLOCKED_ANTI_BOT.value
 
     # The three real REFUSED observations survive in raw_results, distinct
     # from the abandoned URLs — "how many times did this domain actually
