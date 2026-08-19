@@ -726,9 +726,10 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
     if req.source_domain:
         extra_payload["source_domain"] = req.source_domain
     enrichment_skip = enrichment_skip_reason(chunk_count=len(texts), extra_payload=extra_payload)
-    is_direct_file_upload = (
-        req.source_connector_id is None and req.source_type in {"file", "upload"}
-    )
+    is_direct_file_upload = req.source_connector_id is None and req.source_type in {
+        "file",
+        "upload",
+    }
     enrichment_pending = False
     if enrichment_skip is not None:
         extra_payload["llm_enrichment_skipped"] = True
