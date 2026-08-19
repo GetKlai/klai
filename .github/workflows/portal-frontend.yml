@@ -7,7 +7,9 @@ on:
       - 'klai-portal/frontend/**'
       - 'klai-widget/src/**'
       - 'klai-widget/package.json'
+      - 'klai-widget/package-lock.json'
       - 'klai-widget/vite.config.ts'
+      - 'klai-portal/.github/workflows/portal-frontend.yml'
       - '.github/workflows/portal-frontend.yml'
   pull_request:
     branches: [main]
@@ -15,7 +17,9 @@ on:
       - 'klai-portal/frontend/**'
       - 'klai-widget/src/**'
       - 'klai-widget/package.json'
+      - 'klai-widget/package-lock.json'
       - 'klai-widget/vite.config.ts'
+      - 'klai-portal/.github/workflows/portal-frontend.yml'
       - '.github/workflows/portal-frontend.yml'
 
 jobs:
