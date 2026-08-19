@@ -156,14 +156,44 @@ def classify_crawl_congestion(
 ) -> bool | None:
     """Percentage-based congestion verdict, not an event-based one.
 
-    Returns ``None`` ("no verdict — not enough data") when ``attempted_
-    count`` is below ``min_attempts``: a 3-page crawl with one rate-limit
-    signal says nothing trustworthy about whether the site is genuinely
-    congested. Returns ``True`` when ``congestion_count / attempted_count
-    >= ratio_threshold``, ``False`` otherwise. ``>=`` (not ``>``) so a
-    crawl landing EXACTLY on the threshold counts as congestion, matching
-    the "a quarter of attempts" framing this threshold is calibrated
-    against.
+    2026-08-19 (Sol review, same day as the initial ratio design): the
+    ``min_attempts`` gate is deliberately ASYMMETRIC, not a blanket "ignore
+    anything under N attempts" floor:
+
+    - A HIGH ratio is trusted regardless of ``attempted_count``, including
+      well under ``min_attempts``. A domain already sitting at (or near)
+      the floor that is STILL being rate-limited produces naturally SMALL
+      jobs — crawl4ai_client's own consecutive-slowdown give-up ladder
+      (``_MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS``) aborts the crawl after a
+      handful of chunks specifically so a blocked site isn't hammered
+      further. At the 0.2 req/s floor that is roughly 4 chunks of 2 URLs
+      plus the seed page — 9 real attempts, under the 10-attempt
+      ``min_attempts`` used elsewhere in this module. If ``min_attempts``
+      gated True as well as False, a domain that fails 8 of 9 attempts
+      would register NO verdict, ``last_congestion_at`` would never
+      refresh, and ``apply_domain_rate_limit_decay`` would eventually
+      un-throttle a domain that never stopped being congested — exactly
+      backwards from this module's purpose. A high ratio from a small
+      sample is strong evidence (the original Ascend bug was a LOW ratio
+      being over-trusted, not a high ratio from a small sample); requiring
+      a minimum sample size only makes sense for the "nothing bad
+      happened" conclusion, not the "something bad happened" one.
+    - A LOW ratio (or zero) still needs ``min_attempts`` real attempts, and
+      at least one ``SUCCESS`` (``observation.clean_count > 0``), before it
+      counts as genuine evidence the domain is healthy enough to raise.
+      Without the clean_count check, a crawl that fails every request for
+      an UNRELATED reason (DNS errors, 5xx, timeouts, refusals — none of
+      which are congestion signals) would read as "no congestion" and the
+      regelwet would raise the rate limit on a domain nothing was actually
+      proven to tolerate a faster pace.
+
+    Returns ``None`` ("no verdict — not enough data or no positive
+    evidence") in both of those low-confidence cases. Returns ``True`` when
+    ``congestion_count / attempted_count >= ratio_threshold`` (``>=``, not
+    ``>``, so a crawl landing EXACTLY on the threshold counts as
+    congestion — matching the "a quarter of attempts" framing this
+    threshold is calibrated against). Returns ``False`` only when the ratio
+    is low AND there is at least one real success to stand on.
 
     Callers pass ``settings.crawl_circuit_breaker_slowdown_ratio`` and
     ``settings.crawl_circuit_breaker_min_attempts`` — the SAME threshold
@@ -174,9 +204,14 @@ def classify_crawl_congestion(
     struggling, or is this noise?") at different granularities (per-chunk
     vs. per-completed-job).
     """
-    if observation.attempted_count < min_attempts:
+    if observation.attempted_count == 0:
         return None
-    return (observation.congestion_count / observation.attempted_count) >= ratio_threshold
+    ratio = observation.congestion_count / observation.attempted_count
+    if ratio >= ratio_threshold:
+        return True
+    if observation.attempted_count < min_attempts or observation.clean_count == 0:
+        return None
+    return False
 
 
 def compute_domain_rate_limit_update(

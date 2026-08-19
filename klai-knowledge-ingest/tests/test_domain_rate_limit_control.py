@@ -132,9 +132,11 @@ def test_a_quarter_of_attempts_rate_limited_counts_as_congestion() -> None:
 
 
 def test_too_few_attempts_returns_no_verdict_and_state_is_untouched() -> None:
-    """A high ratio on too little data (5 attempts, 4 congestion signals)
-    is not trustworthy evidence either way."""
-    verdict = _classify(congestion_count=4, clean_count=1, attempted_count=5)
+    """A LOW ratio on too little data (5 attempts, 1 congestion signal, 20%
+    — below the 25% threshold) is not trustworthy evidence of health
+    either way. See test_high_ratio_congestion_is_recognized_even_under_
+    the_min_attempts_floor for why a HIGH ratio is treated differently."""
+    verdict = _classify(congestion_count=1, clean_count=4, attempted_count=5)
     assert verdict is None
 
     # A None verdict is a true no-op — even a domain WITH a stored override
@@ -143,6 +145,33 @@ def test_too_few_attempts_returns_no_verdict_and_state_is_untouched() -> None:
     state = DomainRateLimitState(rate_limit=0.5, clean_streak=10, last_congestion_at=NOW)
     result = _update(state, had_congestion=verdict)
     assert result is None
+
+
+def test_high_ratio_congestion_is_recognized_even_under_the_min_attempts_floor() -> None:
+    """2026-08-19 (Sol review): a domain already at the rate-limit floor
+    that is STILL being congested produces a naturally SMALL job — crawl4ai_
+    client's own consecutive-slowdown give-up ladder aborts after roughly 4
+    chunks of 2 URLs plus the seed page (9 attempts) at the 0.2 req/s floor,
+    under the 10-attempt min_attempts. If min_attempts gated True as well as
+    False, this domain would get NO verdict, last_congestion_at would never
+    refresh, and apply_domain_rate_limit_decay would eventually un-throttle
+    a domain that never stopped being congested. A high ratio is trusted
+    regardless of sample size; only the "healthy" conclusion needs a real
+    sample."""
+    verdict = _classify(congestion_count=8, clean_count=1, attempted_count=9)
+    assert verdict is True
+
+
+def test_a_crawl_with_no_success_evidence_at_all_is_inconclusive_not_clean() -> None:
+    """2026-08-19 (Sol review): a crawl that fails every one of >= min_
+    attempts requests for reasons UNRELATED to rate-limiting (DNS errors,
+    5xx, timeouts, refusals) has a congestion ratio of 0 — but zero SUCCESS
+    observations is not evidence the domain tolerates a faster pace either.
+    Without this check, a domain that is simply down would still get its
+    rate limit raised, having proven nothing about whether it can sustain
+    that speed."""
+    verdict = _classify(congestion_count=0, clean_count=0, attempted_count=10)
+    assert verdict is None
 
 
 # ---------------------------------------------------------------------------
