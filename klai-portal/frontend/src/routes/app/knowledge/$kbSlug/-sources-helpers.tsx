@@ -59,9 +59,29 @@ function elapsedMinutes(iso: string | null | undefined): number | null {
 }
 
 export function shouldPollSource(source: Source): boolean {
-  if (mapSourceStatus(source) !== 'pending') return false
-  const minutes = elapsedMinutes(source.last_sync_at ?? source.created_at)
-  return minutes === null || minutes < STUCK_THRESHOLD_MINUTES
+  return mapSourceStatus(source) === 'pending'
+}
+
+/**
+ * Poll interval (ms) for the sources list, or `false` to stop polling.
+ *
+ * Polling must never fully stop while a source is 'pending' — a sync that
+ * outlives STUCK_THRESHOLD_MINUTES is still a real sync that will eventually
+ * complete, and the UI needs to notice. What changes at the threshold is only
+ * the cadence: fresh pending sources are polled quickly (4s) so a normal sync
+ * feels responsive; sources past the "stuck" threshold are polled slowly
+ * (30s) since a poll now is about eventually noticing completion, not
+ * immediacy. Sources without a usable timestamp are treated as fresh, since
+ * we can't tell how long they've been running.
+ */
+export function sourcesPollIntervalMs(sources: Source[]): number | false {
+  const pending = sources.filter((s) => mapSourceStatus(s) === 'pending')
+  if (pending.length === 0) return false
+  const anyFresh = pending.some((s) => {
+    const minutes = elapsedMinutes(s.last_sync_at ?? s.created_at)
+    return minutes === null || minutes < STUCK_THRESHOLD_MINUTES
+  })
+  return anyFresh ? 4000 : 30_000
 }
 
 /**
