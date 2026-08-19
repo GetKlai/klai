@@ -27,6 +27,29 @@ const affectedTanstackVersions = new Map([
 const lockfilePath = new URL("../package-lock.json", import.meta.url);
 const lockfileText = fs.readFileSync(lockfilePath, "utf8");
 const lockfile = JSON.parse(lockfileText);
+const packageJsonPath = new URL("../package.json", import.meta.url);
+const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+const pinnedTiptapVersion = packageJson.overrides?.["@tiptap/core"];
+
+const tiptapLockstepFailures = Object.entries(lockfile.packages ?? {})
+  .filter(([packagePath]) => /^node_modules\/@tiptap\/[^/]+$/.test(packagePath))
+  .flatMap(([packagePath, metadata]) => {
+    const packageName = packagePath.replace("node_modules/", "");
+    const overrideVersion = packageJson.overrides?.[packageName];
+    return overrideVersion === pinnedTiptapVersion && metadata.version === pinnedTiptapVersion
+      ? []
+      : [
+          `${packageName}: lock=${metadata.version ?? "missing"}, override=${overrideVersion ?? "missing"}, expected=${pinnedTiptapVersion ?? "missing"}`,
+        ];
+  });
+
+if (tiptapLockstepFailures.length > 0) {
+  console.error("Tiptap packages must stay on one exact version for BlockNote compatibility:");
+  for (const failure of tiptapLockstepFailures) {
+    console.error(`- ${failure}`);
+  }
+  process.exit(1);
+}
 
 function getInstalledVersion(packageName) {
   return lockfile.packages?.[`node_modules/${packageName}`]?.version ?? null;
