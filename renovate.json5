@@ -74,6 +74,7 @@
     enabled: true,
     schedule: ['at any time'],
     automerge: true,
+    rebaseWhen: 'conflicted',
     commitMessageAction: 'Refresh lock files',
   },
 
@@ -122,6 +123,11 @@
       matchUpdateTypes: ['patch', 'minor'],
       automerge: true,
       automergeStrategy: 'squash',
+      // main does not require branches to be current. Rebasing every remaining
+      // green PR after one automerge invalidates all of their checks and limits
+      // Renovate to one merge per run. Preserve passed CI unless Git reports an
+      // actual conflict; conflicting branches are still regenerated and tested.
+      rebaseWhen: 'conflicted',
     },
     {
       description: 'Group Docker images — require manual review',
