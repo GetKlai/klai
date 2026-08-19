@@ -47,6 +47,8 @@ from retrieval_api.services import coreference, evidence_tier, gate, graph_searc
 from retrieval_api.services.diversity import source_aware_select
 from retrieval_api.services.events import emit_event
 from retrieval_api.services.evidence_pack import (
+    DEFAULT_MAX_SOURCES,
+    MULTI_KB_MAX_SOURCES,
     build_evidence_pack,
     chunk_source_key,
     merge_evidence_packs,
@@ -107,11 +109,13 @@ _SHADOW_PREVIEW_KEYS = (
 )
 
 
-def _ranking_contract_snapshot(chunks: list[dict]) -> dict[str, list]:
+def _ranking_contract_snapshot(
+    chunks: list[dict], *, max_sources: int = DEFAULT_MAX_SOURCES
+) -> dict[str, list]:
     """Project a serving list onto the shadow-comparison shape (REQ-RANK-04).
 
     ``evidence_source_keys`` mirrors ``build_evidence_pack``'s source-slot
-    assignment exactly (first 3 DISTINCT source keys, URL-or-artifact) via
+    assignment exactly (first N DISTINCT source keys, URL-or-artifact) via
     the shared ``chunk_source_key`` helper — first-N raw source_urls would
     double-count multi-chunk sources and miss URL-less uploads.
     """
@@ -120,7 +124,7 @@ def _ranking_contract_snapshot(chunks: list[dict]) -> dict[str, list]:
         key = chunk_source_key(chunk)
         if key and key not in source_keys:
             source_keys.append(key)
-        if len(source_keys) >= 3:
+        if len(source_keys) >= max_sources:
             break
     return {
         "top5_chunk_ids": [chunk.get("chunk_id") for chunk in chunks[:5]],
@@ -384,6 +388,12 @@ async def retrieve(
             req = req.model_copy(update={"scope": "personal", "kb_slugs": None})
         elif req.kb_slugs is not None:
             req = req.model_copy(update={"kb_slugs": None})
+
+    evidence_max_sources = (
+        MULTI_KB_MAX_SOURCES
+        if len(set(req.kb_slugs or ())) > 1
+        else DEFAULT_MAX_SOURCES
+    )
 
     # SPEC-RAG-PERSONAL-SCOPE-001 REQ-8: structured observability event.
     # Fires once per request for scope=personal / scope=both so VictoriaLogs
@@ -854,8 +864,12 @@ async def retrieve(
         # pipeline — the ≥7-day shadow review compares real serving deltas.
         if ranking_shadow_preview is not None:
             decision_record["ranking_contract_shadow"] = {
-                "old": _ranking_contract_snapshot(serving),
-                "new": _ranking_contract_snapshot(ranking_shadow_preview),
+                "old": _ranking_contract_snapshot(
+                    serving, max_sources=evidence_max_sources
+                ),
+                "new": _ranking_contract_snapshot(
+                    ranking_shadow_preview, max_sources=evidence_max_sources
+                ),
             }
 
         # F3 phase 1 instrumentation: emit link-expansion contribution to
@@ -982,6 +996,7 @@ async def retrieve(
     evidence_pack = build_evidence_pack(
         chunks_out,
         query=evidence_query,
+        max_sources=evidence_max_sources,
     )
     decision_record["evidence_pack"] = {
         "item_count": len(evidence_pack.items),

@@ -40,6 +40,7 @@ class CorrespondenceCanary:
     id: str
     org_zitadel_id: str
     query: str
+    kb_slugs: list[str] = field(default_factory=list)
     expected_chunks: list[str] = field(default_factory=list)
     expected_answer_sections: list[str] = field(default_factory=list)
 
@@ -72,6 +73,7 @@ def load_pasted_correspondence_canaries(
                 id=entry["id"],
                 org_zitadel_id=str(entry["org_zitadel_id"]),
                 query=entry["query"],
+                kb_slugs=list(entry.get("kb_slugs") or []),
                 expected_chunks=list(entry.get("expected_chunks") or []),
                 expected_answer_sections=expected_answer_sections,
             )

@@ -236,7 +236,7 @@ async def test_run_one_sample_fails_when_answer_shape_fails(monkeypatch):
                 "items": [
                     {
                         "evidence_id": "E1",
-                        "title": "Production evidence",
+                        "title": "Expected marker",
                         "text": "selected body",
                     }
                 ]
@@ -265,9 +265,57 @@ async def test_run_one_sample_fails_when_answer_shape_fails(monkeypatch):
     assert skipped is None
     shape_check.assert_awaited_once()
     answer_chunks = shape_check.await_args.args[1]
-    assert answer_chunks[0]["title"] == "Production evidence"
+    assert answer_chunks[0]["title"] == "Expected marker"
     assert answer_chunks[0]["text"] == "selected body"
     assert shape_check.await_args.kwargs["confidence_band"] == "low"
+
+
+@pytest.mark.asyncio
+async def test_run_one_sample_fails_when_expected_chunk_does_not_reach_evidence_pack(
+    monkeypatch,
+):
+    """A raw top-5 hit is not a pass when the answer model never receives it."""
+    module = _load_script(monkeypatch)
+    monkeypatch.setattr(
+        module,
+        "rewrite_and_classify",
+        AsyncMock(return_value=("distilled", [], {"skipped": None})),
+    )
+    retrieval_response = _FakeResponse(
+        {
+            "chunks": [{"title": "Expected marker", "text": "raw body"}],
+            "confidence_band": "high",
+            "evidence_pack": {
+                "items": [
+                    {
+                        "evidence_id": "E1",
+                        "title": "Different selected source",
+                        "text": "selected body",
+                    }
+                ]
+            },
+        }
+    )
+    retrieve_mock = AsyncMock(return_value=retrieval_response)
+    monkeypatch.setattr(module, "retrieve", retrieve_mock)
+    monkeypatch.setattr(module, "_answer_shape_matches", AsyncMock(return_value=True))
+    canary = module.CorrespondenceCanary(
+        id="missing-from-evidence-pack",
+        org_zitadel_id="1",
+        query="From: A\nTo: B\nSubject: C\nBody",
+        kb_slugs=["support", "sip"],
+        expected_chunks=["Expected marker"],
+        expected_answer_sections=_ANSWER_SECTIONS,
+    )
+
+    retrieval_passed, contract_passed, _, _, skipped = await module._run_one_sample(
+        _FakeHttp(), canary
+    )
+
+    assert retrieval_passed is False
+    assert contract_passed is True
+    assert skipped is None
+    assert retrieve_mock.await_args.args[1]["kb_slugs"] == ["support", "sip"]
 
 
 @pytest.mark.asyncio

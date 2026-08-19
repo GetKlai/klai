@@ -151,6 +151,7 @@ class TestRetrieveEndpoint:
             request = {
                 **sample_retrieve_request,
                 "raw_query": sample_retrieve_request["query"],
+                "kb_slugs": ["support", "sip"],
             }
             resp = client.post("/retrieve", json=request)
 
@@ -165,6 +166,7 @@ class TestRetrieveEndpoint:
         assert mock_evidence_pack.call_args.kwargs["query"] == (
             "What is the refund policy?\nresolved query"
         )
+        assert mock_evidence_pack.call_args.kwargs["max_sources"] == 5
         assert data["metadata"]["candidates_retrieved"] == 1
         assert data["metadata"]["retrieval_ms"] > 0
         # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1: confidence_band must
