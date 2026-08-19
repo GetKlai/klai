@@ -251,6 +251,54 @@ class Settings(BaseSettings):
         default=10.0,
         validation_alias=AliasChoices("KLAI_CRAWL_RATE_LIMIT_SLOWDOWN_COOLDOWN_SECONDS"),
     )
+    # 2026-08-19 (host circuit breaker, knowledge_ingest.host_circuit_breaker)
+    # — the intermedia.com "20 minutes, zero pages" incident: neither the
+    # RATE_LIMITED immediate-stop nor the BLOCKED_ANTI_BOT ratio gate
+    # (crawl_antibot_stop_ratio/min_count above) reacts to a site that
+    # simply fails every request for an unrelated reason (5xx, timeout,
+    # unknown_exception) — none of those reason codes trip either existing
+    # mechanism. This breaker is a general-purpose, cause-independent
+    # backstop, evaluated once per bulk-fetch chunk (not per URL) so it can
+    # intervene within tens of seconds instead of the crawl's full page
+    # budget. See host_circuit_breaker.evaluate_chunk for the three
+    # triggers these four knobs configure.
+    #
+    # crawl_circuit_breaker_consecutive_failures: N whole-chunk failures in
+    # a row (any single success resets to zero) — 5 mirrors
+    # crawl_sequential_recovery_max_consecutive_failures's philosophy
+    # (give an intermittently-failing site room to recover) while still
+    # capping the damage of a truly dead site to a handful of chunks.
+    crawl_circuit_breaker_consecutive_failures: int = Field(
+        default=5,
+        validation_alias=AliasChoices("KLAI_CRAWL_CIRCUIT_BREAKER_CONSECUTIVE_FAILURES"),
+    )
+    # crawl_circuit_breaker_min_attempts: the ratio trigger below never
+    # fires before this many URLs have actually been attempted (crawl-wide,
+    # within ONE _chunked_bulk_fetch call) — protects small crawls from a
+    # noisy early ratio the same way crawl_antibot_stop_min_count does.
+    crawl_circuit_breaker_min_attempts: int = Field(
+        default=10,
+        validation_alias=AliasChoices("KLAI_CRAWL_CIRCUIT_BREAKER_MIN_ATTEMPTS"),
+    )
+    # crawl_circuit_breaker_failure_ratio: once min_attempts is reached,
+    # abort when MORE than this share of all attempted URLs failed. 0.5 —
+    # a site failing a genuine majority of requests is not intermittent
+    # trouble, it is broken or unreachable for the rest of the crawl too.
+    crawl_circuit_breaker_failure_ratio: float = Field(
+        default=0.5,
+        validation_alias=AliasChoices("KLAI_CRAWL_CIRCUIT_BREAKER_FAILURE_RATIO"),
+    )
+    # crawl_circuit_breaker_refusal_count: N observed REFUSED outcomes
+    # (FetchReasonCode.REFUSED — see reason_codes.py) abort immediately,
+    # never reset by an interleaved success. A refusal is the site telling
+    # us "no", not "not right now" — slowing down does not fix it, so this
+    # trigger is independent of (and does not wait for) the ratio/
+    # consecutive counters above. 3 mirrors crawl_antibot_stop_min_count's
+    # floor against a single stray misclassification.
+    crawl_circuit_breaker_refusal_count: int = Field(
+        default=3,
+        validation_alias=AliasChoices("KLAI_CRAWL_CIRCUIT_BREAKER_REFUSAL_COUNT"),
+    )
     # LLM enrichment (contextual prefix + HyPE questions via LiteLLM proxy)
     litellm_url: str = "http://litellm:4000"
     litellm_api_key: str = ""

@@ -71,6 +71,25 @@ class FetchReasonCode(StrEnum):
     # "Shape guard only"); validation of individual reason codes is
     # application-side only.
     BLOCKED_ANTI_BOT = "blocked_anti_bot"
+    # 2026-08-19 (intermedia.com / support.ascendcloud.com "weigering"
+    # incident): the site explicitly refuses automated access — a 403 (or
+    # any status) carrying a concrete refusal marker crawl4ai's own
+    # "blocked by anti-bot protection" detector does not surface (a
+    # ``cf-mitigated`` header, or "Just a moment"/"Attention
+    # Required"/"Access denied"/"challenge" in the body). Deliberately
+    # separate from BLOCKED_ANTI_BOT (crawl4ai's OWN detector output):
+    # BLOCKED_ANTI_BOT stays a congestion signal that lowers the domain's
+    # stored rate_limit (knowledge_ingest.domain_rate_limit_control), but a
+    # refusal is not fixed by going slower, so REFUSED is deliberately NOT
+    # in that congestion set — see the module comment there.
+    REFUSED = "refused"
+    # 2026-08-19 (host circuit breaker, knowledge_ingest.host_circuit_
+    # breaker): a URL abandoned because the breaker tripped (persistent
+    # failure or repeated refusal) partway through a
+    # ``_chunked_bulk_fetch`` call — distinct from
+    # NOT_FETCHED_RATE_LIMIT_STOP so "how many times did the breaker
+    # actually intervene" has an honest, uninflated answer.
+    NOT_FETCHED_CIRCUIT_BREAKER_STOP = "not_fetched_circuit_breaker_stop"
 
 
 class PersistSkipReason(StrEnum):
