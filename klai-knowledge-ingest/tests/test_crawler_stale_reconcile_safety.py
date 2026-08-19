@@ -26,6 +26,7 @@ import pytest
 
 from knowledge_ingest import link_graph
 from knowledge_ingest.crawl4ai_client import CrawlResult
+from tests.conftest import connection_factory_for
 
 
 def _make_mock_conn():
@@ -120,7 +121,7 @@ async def test_stale_reconcile_skipped_when_any_page_timed_out():
         from knowledge_ingest.adapters.crawler import run_crawl_job
 
         await run_crawl_job(
-            mock_conn,
+            connection_factory=connection_factory_for(mock_conn),
             job_id="job-1",
             org_id="org-1",
             kb_slug="docs",
@@ -173,7 +174,7 @@ async def test_stale_reconcile_still_runs_when_crawl_is_fully_fetched():
         from knowledge_ingest.adapters.crawler import run_crawl_job
 
         await run_crawl_job(
-            mock_conn,
+            connection_factory=connection_factory_for(mock_conn),
             job_id="job-1",
             org_id="org-1",
             kb_slug="klai-web-demo",

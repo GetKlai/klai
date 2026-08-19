@@ -16,6 +16,7 @@ mock connection so unit tests that exercise the FastAPI app via
 
 from __future__ import annotations
 
+import inspect
 import os
 import sys
 import types
@@ -157,6 +158,37 @@ def _make_mock_pool():
     # Expose the conn so tests can assert against it if needed.
     pool._mock_conn = conn  # type: ignore[attr-defined]
     return pool
+
+
+def connection_factory_for(conn):
+    """Adapt one test connection to the short-lived crawl connection seam."""
+
+    if not conn.__dict__.get("_crawl_fence_defaults_installed", False):
+        original_fetchval = conn.fetchval
+        original_fetchrow = conn.fetchrow
+
+        async def _fetchval(query, *args):
+            if "pg_try_advisory_lock" in query:
+                observed = original_fetchval(query, *args)
+                if inspect.isawaitable(observed):
+                    await observed
+                return True
+            return await original_fetchval(query, *args)
+
+        async def _fetchrow(query, *args):
+            if "RETURNING execution_generation" in query:
+                return {"execution_generation": 1}
+            return await original_fetchrow(query, *args)
+
+        conn.fetchval = AsyncMock(side_effect=_fetchval)
+        conn.fetchrow = AsyncMock(side_effect=_fetchrow)
+        conn._crawl_fence_defaults_installed = True
+
+    @asynccontextmanager
+    async def _acquire():
+        yield conn
+
+    return _acquire
 
 
 @pytest.fixture

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+from functools import partial
 from typing import Any
 
 from knowledge_ingest import queues
+from knowledge_ingest.crawl_checkpoint import CrawlExecutionBusy
 from knowledge_ingest.db import tenant_scoped_connection
 
 
@@ -26,7 +28,7 @@ def register_crawl_tasks(procrastinate_app: Any) -> None:
         retry=procrastinate.RetryStrategy(
             max_attempts=20,
             wait=5,
-            retry_exceptions=(asyncio.CancelledError,),
+            retry_exceptions=(asyncio.CancelledError, CrawlExecutionBusy),
         ),
     )
     async def run_crawl(
@@ -67,32 +69,27 @@ def register_crawl_tasks(procrastinate_app: Any) -> None:
 
         from knowledge_ingest.adapters.crawler import run_crawl_job
 
-        # SPEC-TI-003-FOLLOWUP-001 AC-1: pass the GUC-pinned connection down
-        # into run_crawl_job so every knowledge.* query inside (crawl_jobs
-        # progress updates, page hash dedup, link graph, ingest) sees the
-        # tenant context. The previous shape (``del _conn``) was the bug
-        # this SPEC-FOLLOWUP fixes -- pg_store.* would grab a different
-        # pool connection without the GUC, leaving RLS silently default-deny
-        # once SPEC-TI-011 lands FORCE.
-        async with tenant_scoped_connection(org_id) as conn:
-            await run_crawl_job(
-                conn,
-                job_id=job_id,
-                org_id=org_id,
-                kb_slug=kb_slug,
-                start_url=start_url,
-                discovery_seed_url=discovery_seed_url,
-                max_depth=max_depth,
-                max_pages=max_pages,
-                include_patterns=include_patterns,
-                exclude_patterns=exclude_patterns,
-                rate_limit=rate_limit,
-                content_selector=content_selector,
-                login_indicator_selector=login_indicator_selector,
-                cookies=cookies,
-                canary_url=canary_url,
-                canary_fingerprint=canary_fingerprint,
-                connector_id=connector_id,
-            )
+        # Each database phase leases its own GUC-pinned connection. The crawl's
+        # network waits therefore do not reserve one of the ten pool slots,
+        # while every knowledge.* query still sees the tenant context.
+        await run_crawl_job(
+            connection_factory=partial(tenant_scoped_connection, org_id),
+            job_id=job_id,
+            org_id=org_id,
+            kb_slug=kb_slug,
+            start_url=start_url,
+            discovery_seed_url=discovery_seed_url,
+            max_depth=max_depth,
+            max_pages=max_pages,
+            include_patterns=include_patterns,
+            exclude_patterns=exclude_patterns,
+            rate_limit=rate_limit,
+            content_selector=content_selector,
+            login_indicator_selector=login_indicator_selector,
+            cookies=cookies,
+            canary_url=canary_url,
+            canary_fingerprint=canary_fingerprint,
+            connector_id=connector_id,
+        )
 
     procrastinate_app.run_crawl = run_crawl  # type: ignore[attr-defined]

@@ -18,6 +18,7 @@ import pytest
 
 from knowledge_ingest.adapters.crawler import run_crawl_job
 from knowledge_ingest.crawl4ai_client import CrawlResult
+from tests.conftest import connection_factory_for
 
 HUB = "https://support.ascendcloud.com/"
 ARTICLE = "https://support.ascendcloud.com/app/articles/detail/a_id/16781"
@@ -61,7 +62,7 @@ async def _run(crawl_site_mock: AsyncMock, **kwargs) -> None:
         ),
     ):
         await run_crawl_job(
-            _mock_conn(),
+            connection_factory=connection_factory_for(_mock_conn()),
             job_id="job-1",
             org_id="org",
             kb_slug="support",
@@ -128,7 +129,7 @@ async def test_near_dead_primary_still_crawls_from_the_seed_and_merges() -> None
         ),
     ):
         await run_crawl_job(
-            _mock_conn(),
+            connection_factory=connection_factory_for(_mock_conn()),
             job_id="job-1",
             org_id="org",
             kb_slug="support",

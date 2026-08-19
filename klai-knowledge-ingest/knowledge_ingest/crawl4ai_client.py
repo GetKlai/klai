@@ -2251,8 +2251,11 @@ async def _crawl_site_in_host_scope(
     consecutive_rate_limit_slowdowns = int(
         restored.get("consecutive_rate_limit_slowdowns", 0) if restored else 0
     )
+    checkpointed_results = len(crawl_results)
+    checkpointed_outcomes = len(outcomes)
 
     async def save_checkpoint(*, complete: bool = False) -> None:
+        nonlocal checkpointed_results, checkpointed_outcomes
         if checkpoint is None:
             return
         await checkpoint.save(
@@ -2261,8 +2264,10 @@ async def _crawl_site_in_host_scope(
                 "start_url": start_url,
                 "complete": complete,
                 "ledger": ledger.snapshot(),
-                "results": [asdict(result) for result in crawl_results],
-                "outcomes": outcomes,
+                "results_delta": [
+                    asdict(result) for result in crawl_results[checkpointed_results:]
+                ],
+                "outcomes_delta": outcomes[checkpointed_outcomes:],
                 "fetched_count": fetched_count,
                 "sequential_recovery_budget": sequential_recovery_budget,
                 "sequential_recovery_time_remaining": sequential_recovery_time_remaining,
@@ -2270,6 +2275,8 @@ async def _crawl_site_in_host_scope(
                 "consecutive_rate_limit_slowdowns": consecutive_rate_limit_slowdowns,
             }
         )
+        checkpointed_results = len(crawl_results)
+        checkpointed_outcomes = len(outcomes)
 
     if restored is None:
         if checkpoint is not None:

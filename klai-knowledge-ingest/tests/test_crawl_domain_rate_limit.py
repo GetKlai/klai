@@ -51,6 +51,7 @@ from knowledge_ingest.crawl_checkpoint import CrawlExecutionSuperseded
 from knowledge_ingest.domain_rate_limit_control import DomainRateLimitState
 from knowledge_ingest.domain_selectors import DomainRateLimitWriteKind
 from knowledge_ingest.reason_codes import FetchReasonCode
+from tests.conftest import connection_factory_for
 
 START_URL = "https://intermedia.com/support"
 DOMAIN = "intermedia.com"
@@ -113,7 +114,7 @@ async def _run(
         ),
     ):
         await run_crawl_job(
-            actual_conn,
+            connection_factory=connection_factory_for(actual_conn),
             job_id="job-1",
             org_id="org-1",
             kb_slug="support",
@@ -211,6 +212,15 @@ async def test_aug_19_page_side_effects_hold_advisory_lock_until_progress_commit
         return None
 
     conn.execute = AsyncMock(side_effect=_execute)
+
+    async def _fetchval(query: str, *_args) -> bool | None:
+        nonlocal advisory_lock_depth
+        if "pg_try_advisory_lock" in query:
+            advisory_lock_depth += 1
+            return True
+        return None
+
+    conn.fetchval = AsyncMock(side_effect=_fetchval)
 
     async def _assert_fenced_ingest(*_args, **_kwargs) -> None:
         assert advisory_lock_depth > 0

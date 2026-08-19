@@ -36,8 +36,14 @@ def upgrade() -> None:
     )
     op.execute(
         """
+        ALTER TABLE knowledge.crawl_jobs
+          ADD CONSTRAINT crawl_jobs_id_org_id_key UNIQUE (id, org_id)
+        """
+    )
+    op.execute(
+        """
         CREATE TABLE IF NOT EXISTS knowledge.crawl_job_frontier (
-          job_id text NOT NULL REFERENCES knowledge.crawl_jobs(id) ON DELETE CASCADE,
+          job_id text NOT NULL,
           org_id text NOT NULL,
           crawl_scope text NOT NULL CHECK (crawl_scope IN ('primary', 'discovery_seed')),
           canonical_url text NOT NULL,
@@ -51,7 +57,10 @@ def upgrade() -> None:
           reason_code text,
           result jsonb CHECK (result IS NULL OR jsonb_typeof(result) = 'object'),
           outcome jsonb CHECK (outcome IS NULL OR jsonb_typeof(outcome) = 'object'),
-          PRIMARY KEY (job_id, crawl_scope, canonical_url)
+          PRIMARY KEY (job_id, crawl_scope, canonical_url),
+          CONSTRAINT crawl_job_frontier_job_tenant_fk
+            FOREIGN KEY (job_id, org_id)
+            REFERENCES knowledge.crawl_jobs(id, org_id) ON DELETE CASCADE
         )
         """
     )
@@ -59,25 +68,38 @@ def upgrade() -> None:
     op.execute("ALTER TABLE knowledge.crawl_job_frontier FORCE ROW LEVEL SECURITY")
     op.execute(
         """
-        DO $$
+        DO $migration$
         BEGIN
-          -- Existing installations already have the helper from the
-          -- superuser post-deploy bootstrap. Fresh databases intentionally
-          -- remain default-deny until that bootstrap runs after Alembic.
-          IF to_regprocedure('knowledge._rls_current_org_id()') IS NOT NULL THEN
-            CREATE POLICY tenant_isolation ON knowledge.crawl_job_frontier
-              AS RESTRICTIVE
-              USING (org_id = knowledge._rls_current_org_id())
-              WITH CHECK (org_id = knowledge._rls_current_org_id());
+          -- Existing installations get the stricter SECURITY DEFINER helper
+          -- from post-deploy SQL. A fresh database still needs a working,
+          -- default-deny policy before that optional hardening step runs.
+          IF to_regprocedure('knowledge._rls_current_org_id()') IS NULL THEN
+            EXECUTE $function$
+              CREATE FUNCTION knowledge._rls_current_org_id()
+                RETURNS text
+                LANGUAGE sql
+                STABLE
+                AS $body$
+                  SELECT NULLIF(current_setting('app.current_org_id', true), '')
+                $body$
+            $function$;
           END IF;
         END
-        $$
+        $migration$;
+
+        CREATE POLICY tenant_isolation ON knowledge.crawl_job_frontier
+          AS RESTRICTIVE
+          USING (org_id = knowledge._rls_current_org_id())
+          WITH CHECK (org_id = knowledge._rls_current_org_id())
         """
     )
 
 
 def downgrade() -> None:
     op.execute("DROP TABLE IF EXISTS knowledge.crawl_job_frontier")
+    op.execute(
+        "ALTER TABLE knowledge.crawl_jobs DROP CONSTRAINT IF EXISTS crawl_jobs_id_org_id_key"
+    )
     op.execute(
         "ALTER TABLE knowledge.crawl_jobs "
         "DROP CONSTRAINT IF EXISTS crawl_jobs_runtime_checkpoint_is_object"

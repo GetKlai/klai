@@ -71,7 +71,8 @@ while the public status remains `running`.
 `knowledge.crawl_jobs` gains:
 
 - `execution_generation bigint NOT NULL DEFAULT 0` — monotonically increasing
-  write fence;
+  write fence, advanced atomically by PostgreSQL (`generation + 1`), never from
+  a worker wall clock;
 - `checkpoint_sequence bigint NOT NULL DEFAULT 0` — committed fetch batches;
 - `checkpoint_updated_at timestamptz` — last durable forward progress;
 - `runtime_checkpoint jsonb` — small versioned crawl-loop state;
@@ -86,18 +87,29 @@ while the public status remains `running`.
   and queued/fetched/omitted state;
 - the fetch outcome and normalised `CrawlResult`, both JSONB;
 - crawl scope (`primary` or `discovery_seed`), with primary key
-  `(job_id, crawl_scope, canonical_url)` and an indexed `job_id` foreign key;
+  `(job_id, crawl_scope, canonical_url)` and a composite `(job_id, org_id)`
+  foreign key that binds a frontier row to the owning tenant;
 - forced tenant RLS matching `knowledge.crawl_jobs`.
 
 The checkpoint transaction is deliberately short: network work happens before
-the transaction; the transaction only upserts the in-memory ledger snapshot and
-advances the parent job sequence if the execution generation still matches.
+the transaction; the transaction only upserts frontier rows changed since the
+previous committed batch and advances the parent job sequence if the execution
+generation still matches. Each fetched page payload is stored once so a page
+whose fetch committed but whose ingest did not can resume without another
+request; prior batches are not serialised or rewritten on every checkpoint.
+
+Database connections are leased per bounded database phase. No pool connection
+is held across crawl4ai network fetches or between checkpoint batches. With the
+configured pool of ten and eight crawl workers, long crawls therefore do not
+reserve eight connections for their full runtime.
 
 Adapter-side effects use a session-level PostgreSQL advisory lock derived from
-the crawl ID. Claiming a new generation takes that same lock. This prevents a
-new attempt from overtaking an old attempt halfway through page ingest,
-progress persistence, or finalisation without wrapping network/Qdrant work in a
-long database transaction. PostgreSQL releases the lock automatically when a
+the crawl ID. Both claim and guarded side effects use the non-blocking
+`pg_try_advisory_lock`; contention raises a retryable `CrawlExecutionBusy`
+instead of waiting while occupying a pool connection. This prevents a new
+attempt from overtaking an old attempt halfway through page ingest, progress
+persistence, or finalisation without wrapping network/Qdrant work in a long
+database transaction. PostgreSQL also releases the lock automatically when a
 hard-killed worker loses its connection.
 
 ## 4. Recovery rules
@@ -116,8 +128,9 @@ hard-killed worker loses its connection.
   120-second stalled threshold.
 - A periodic recovery task uses Procrastinate's heartbeat-aware
   `get_stalled_jobs` and a queueing lock on a dedicated maintenance lane.
-- Every new crawl attempt atomically advances `execution_generation` before
-  network work; a retry from `running` also advances `recovery_count`.
+- Every new crawl attempt atomically advances `execution_generation` in the
+  database before network work; a retry from `running` also advances
+  `recovery_count`.
 - A retry restores the last frontier checkpoint under the new generation.
 - Recovery failure is loud and observable; it is not silently converted into
   success.
@@ -211,6 +224,10 @@ uv run alembic heads
 Fault-injection tests shall cover controlled cancellation, hard-loss recovery,
 checkpoint restoration, generation fencing, polling during ownerless recovery,
 durable cancellation, and at-most-once AIMD application.
+
+The checkpoint restoration and generation/lock contracts also run against a
+fresh PostgreSQL service in CI. Unit fakes remain useful for branch coverage,
+but are not accepted as the only proof for AC-3, AC-4, AC-5, or AC-9.
 
 Production proof after merge is a controlled Ascend crawl interrupted by a
 `knowledge-ingest` deployment. Intermedia is not the first durability canary,

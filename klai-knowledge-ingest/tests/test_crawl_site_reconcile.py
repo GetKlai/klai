@@ -42,13 +42,29 @@ class _MemoryCheckpoint:
         self.snapshot: dict[str, Any] | None = None
         self.saves = 0
         self.active_checks = 0
+        self.result_delta_sizes: list[int] = []
 
     async def load(self) -> dict[str, Any] | None:
         return copy.deepcopy(self.snapshot)
 
     async def save(self, snapshot: dict[str, Any]) -> None:
         self.saves += 1
-        self.snapshot = copy.deepcopy(snapshot)
+        result_delta = copy.deepcopy(snapshot.get("results_delta") or [])
+        outcome_delta = copy.deepcopy(snapshot.get("outcomes_delta") or [])
+        self.result_delta_sizes.append(len(result_delta))
+        previous_results = list((self.snapshot or {}).get("results") or [])
+        previous_outcomes = list((self.snapshot or {}).get("outcomes") or [])
+        self.snapshot = copy.deepcopy(
+            {
+                **{
+                    key: value
+                    for key, value in snapshot.items()
+                    if key not in {"results_delta", "outcomes_delta"}
+                },
+                "results": previous_results + result_delta,
+                "outcomes": previous_outcomes + outcome_delta,
+            }
+        )
 
     async def ensure_active(self) -> None:
         self.active_checks += 1
@@ -1098,6 +1114,8 @@ async def test_aug_19_deploy_retry_resumes_after_last_committed_batch(
     assert {result.url for result in results} == {"https://example.com", *urls}
     assert {outcome["url"] for outcome in outcomes} == {"https://example.com", *urls}
     assert checkpoint.active_checks >= 3
+    assert sum(checkpoint.result_delta_sizes) == 4
+    assert max(checkpoint.result_delta_sizes) <= 2
 
 
 @pytest.mark.asyncio

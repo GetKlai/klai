@@ -13,6 +13,7 @@ import pytest
 
 from knowledge_ingest import link_graph
 from knowledge_ingest.crawl4ai_client import CrawlResult
+from tests.conftest import connection_factory_for
 
 
 def _make_mock_pool() -> MagicMock:
@@ -194,7 +195,7 @@ async def test_run_crawl_job_populates_link_fields_on_every_page():
         from tests.test_crawl_registry_dedup import _make_mock_conn as _make_conn
 
         await run_crawl_job(
-            _make_conn(),
+            connection_factory=connection_factory_for(_make_conn()),
             job_id="job-test",
             org_id="org-1",
             kb_slug="docs",
@@ -309,7 +310,7 @@ async def test_run_crawl_job_no_post_crawl_link_counts_call():
             from tests.test_crawl_registry_dedup import _make_mock_conn as _make_conn
 
             await run_crawl_job(
-                _make_conn(),
+                connection_factory=connection_factory_for(_make_conn()),
                 job_id="job-test",
                 org_id="org-1",
                 kb_slug="docs",

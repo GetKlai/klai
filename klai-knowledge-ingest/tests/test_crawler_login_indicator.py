@@ -24,6 +24,7 @@ from knowledge_ingest.adapters.crawler import (
 )
 from knowledge_ingest.crawl4ai_client import CrawlResult, build_crawl_config
 from knowledge_ingest.utils.auth_wall_detector import AuthWallSignal
+from tests.conftest import connection_factory_for
 
 
 class TestBuildCrawlConfigWithLoginIndicator:
@@ -178,7 +179,7 @@ class TestRunCrawlJobAuthWall:
             ) as ingest_mock,
         ):
             await run_crawl_job(
-                mock_conn,
+                connection_factory=connection_factory_for(mock_conn),
                 job_id="job-1",
                 org_id="org",
                 kb_slug="support",
@@ -273,7 +274,7 @@ class TestRunCrawlJobAuthWall:
             ) as ingest_mock,
         ):
             await run_crawl_job(
-                mock_conn,
+                connection_factory=connection_factory_for(mock_conn),
                 job_id="job-1",
                 org_id="org",
                 kb_slug="support",
