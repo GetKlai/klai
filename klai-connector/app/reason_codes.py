@@ -62,6 +62,11 @@ class FetchReasonCode(StrEnum):
     # currently emits it.
     REFUSED = "refused"
     NOT_FETCHED_CIRCUIT_BREAKER_STOP = "not_fetched_circuit_breaker_stop"
+    # 2026-08-19 mirror (crawl-cancel, klai-knowledge-ingest
+    # crawl4ai_client.py) — the connector does not itself produce this
+    # value today, but the parity test requires both copies to carry the
+    # same value set regardless of which side currently emits it.
+    NOT_FETCHED_CANCELLED = "not_fetched_cancelled"
 
 
 class PersistSkipReason(StrEnum):

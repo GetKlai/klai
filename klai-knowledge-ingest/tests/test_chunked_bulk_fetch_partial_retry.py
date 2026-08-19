@@ -130,6 +130,7 @@ async def test_stealth_retry_only_resends_the_failed_subset(
         cookies: list[dict[str, Any]] | None,
         stealth: bool = False,
         rate_limit: float | None = None,
+        cancel_check: Any = None,
     ) -> ChunkedFetchResult:
         seen_url_sets.append(frozenset(urls))
         if not stealth:
@@ -196,6 +197,7 @@ async def test_first_attempts_successful_result_survives_into_final_results(
         cookies: list[dict[str, Any]] | None,
         stealth: bool = False,
         rate_limit: float | None = None,
+        cancel_check: Any = None,
     ) -> ChunkedFetchResult:
         if not stealth:
             return ChunkedFetchResult(
@@ -293,6 +295,7 @@ async def test_not_attempted_urls_never_enter_retry_or_recovery(
         cookies: list[dict[str, Any]] | None,
         stealth: bool = False,
         rate_limit: float | None = None,
+        cancel_check: Any = None,
     ) -> ChunkedFetchResult:
         calls.append({"urls": list(urls), "stealth": stealth})
         # Chunk 1 blocked, chunk 2 never attempted — no `failed` entry.

@@ -90,6 +90,16 @@ class FetchReasonCode(StrEnum):
     # NOT_FETCHED_RATE_LIMIT_STOP so "how many times did the breaker
     # actually intervene" has an honest, uninflated answer.
     NOT_FETCHED_CIRCUIT_BREAKER_STOP = "not_fetched_circuit_breaker_stop"
+    # 2026-08-19 (crawl-cancel): a URL abandoned because the operator
+    # requested cancellation (``POST .../crawl/sync/{job_id}/cancel``) —
+    # ``_chunked_bulk_fetch`` checks ``knowledge.crawl_jobs.cancel_requested``
+    # between chunks and stops sending further chunks the moment it flips
+    # true. Deliberately its own code, not NOT_FETCHED_RATE_LIMIT_STOP or
+    # NOT_FETCHED_CIRCUIT_BREAKER_STOP: those both mean "the site told us to
+    # stop"; this means "the operator told us to stop" — a different
+    # operator-facing story and a different terminal status
+    # (``crawl_jobs.status = 'cancelled'``, never a failure).
+    NOT_FETCHED_CANCELLED = "not_fetched_cancelled"
 
 
 class PersistSkipReason(StrEnum):

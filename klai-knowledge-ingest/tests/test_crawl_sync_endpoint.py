@@ -673,6 +673,74 @@ class TestCrawlSyncStatusEndpoint:
         assert update_calls == []
 
 
+class TestCrawlSyncCancelEndpoint:
+    """POST /ingest/v1/crawl/sync/{job_id}/cancel — crawl-cancel (2026-08-19).
+
+    Production incident: this endpoint returned 204 on a running crawl but
+    the crawl kept fetching pages for minutes afterward — it only signalled
+    Procrastinate's own (unread) ``abort_requested`` column. The fix sets
+    ``knowledge.crawl_jobs.cancel_requested``, which ``run_crawl_job`` polls
+    cooperatively between bulk-fetch chunks. These tests lock in the
+    endpoint's DB-write contract, not the crawl loop itself (see
+    test_crawl_cancel_chunked_fetch.py / test_crawl_cancel_terminal_status.py
+    for that).
+    """
+
+    def _cancel_requested_updates(self, pool: MagicMock) -> list:
+        return [
+            c for c in pool.execute.await_args_list if c.args and "cancel_requested" in c.args[0]
+        ]
+
+    def test_cancel_running_job_sets_cancel_requested_flag(self) -> None:
+        job_id = str(uuid.uuid4())
+        pool = _make_pool(
+            job_row={"status": "running"},
+            proc_row={"id": 999, "status": "doing"},
+        )
+        with _client_with_patches(pool) as (client, _defer):
+            resp = client.post(f"/ingest/v1/crawl/sync/{job_id}/cancel")
+        assert resp.status_code == 204
+
+        updates = self._cancel_requested_updates(pool)
+        assert updates, "expected an UPDATE ... SET cancel_requested=true call"
+        assert updates[0].args[1] == job_id
+
+    def test_cancel_pending_job_sets_cancel_requested_flag(self) -> None:
+        """A job that has not started running yet is also marked — the
+        endpoint must not assume 'running' is the only live state."""
+        job_id = str(uuid.uuid4())
+        pool = _make_pool(
+            job_row={"status": "pending"},
+            proc_row={"id": 1000, "status": "todo"},
+        )
+        with _client_with_patches(pool) as (client, _defer):
+            resp = client.post(f"/ingest/v1/crawl/sync/{job_id}/cancel")
+        assert resp.status_code == 204
+        assert self._cancel_requested_updates(pool)
+
+    def test_cancel_unknown_job_returns_404(self) -> None:
+        pool = _make_pool(job_row=None)
+        job_id = str(uuid.uuid4())
+        with _client_with_patches(pool) as (client, _defer):
+            resp = client.post(f"/ingest/v1/crawl/sync/{job_id}/cancel")
+        assert resp.status_code == 404
+        assert resp.json()["detail"] == "job_not_found"
+        assert self._cancel_requested_updates(pool) == []
+
+    def test_cancel_already_finished_job_is_noop(self) -> None:
+        """No live procrastinate row (already succeeded/failed/aborted) —
+        cancel is idempotent and must not touch crawl_jobs at all."""
+        job_id = str(uuid.uuid4())
+        pool = _make_pool(
+            job_row={"status": "completed"},
+            proc_row=None,
+        )
+        with _client_with_patches(pool) as (client, _defer):
+            resp = client.post(f"/ingest/v1/crawl/sync/{job_id}/cancel")
+        assert resp.status_code == 204
+        assert self._cancel_requested_updates(pool) == []
+
+
 class TestDecryptFromBlobs:
     """End-to-end guarantee for the shared lib's blob decrypt method."""
 

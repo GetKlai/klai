@@ -180,6 +180,11 @@ _FETCH_NON_FAILURE_REASON_CODES: frozenset[str] = frozenset(
         # 2026-08-19: same rationale — a URL the host circuit breaker
         # deliberately never sent, not a fetch failure.
         FetchReasonCode.NOT_FETCHED_CIRCUIT_BREAKER_STOP.value,
+        # 2026-08-19 (crawl-cancel): a URL deliberately never sent because
+        # the operator cancelled the job — a scheduling decision, not a
+        # fetch failure. Must not inflate fetch_failure_dominant, and must
+        # not trip failed_partial on a job the operator stopped on purpose.
+        FetchReasonCode.NOT_FETCHED_CANCELLED.value,
     }
 )
 _uncategorized_fetch_reason_codes = (
@@ -676,6 +681,15 @@ async def run_crawl_job(
     SPEC-TI-003-FOLLOWUP-001 AC-1: ``conn`` carries the RLS GUC from the
     caller's ``tenant_scoped_connection(org_id)`` block. Every knowledge.*
     statement below runs on this same connection.
+
+    2026-08-19 (crawl-cancel): ``POST .../crawl/sync/{job_id}/cancel`` sets
+    ``knowledge.crawl_jobs.cancel_requested``. ``crawl_site`` (and its
+    ``_chunked_bulk_fetch`` chunk loop) polls that flag between chunks via
+    the ``cancel_check`` closure below — this function is the only place
+    with the DB connection needed to read it, so it builds the closure and
+    hands it down rather than giving crawl4ai_client direct DB access.
+    Pages already fetched before cancellation are kept and ingested
+    normally; the terminal status becomes ``cancelled``, not a failure.
     """
     await _update_job(conn, job_id, status="running")
 
@@ -686,6 +700,9 @@ async def run_crawl_job(
     # populates crawl_jobs.error_summary (separate from `error`, which the
     # cookie-path AuthWallDetected handler still owns).
     auth_wall_pages: list[str] = []
+
+    async def cancel_check() -> bool:
+        return await _crawl_job_cancel_requested(conn, job_id)
 
     try:
         # 2026-08-17 (intermedia.com + support.ascendcloud.com incident): if
@@ -721,6 +738,17 @@ async def run_crawl_job(
             login_indicator_selector=login_indicator_selector,
             cookies=cookies,
             rate_limit=effective_rate_limit,
+            cancel_check=cancel_check,
+        )
+
+        # 2026-08-19 (crawl-cancel): detected purely from the reason code
+        # crawl_site attaches to every URL it stopped on for a cancel — no
+        # extra DB round-trip, and no race against a cancel that arrives
+        # after this crawl already finished on its own (crawl_site's return
+        # tuple stays 2-wide so every existing caller/test is unaffected).
+        job_cancelled = any(
+            outcome.get("reason_code") == FetchReasonCode.NOT_FETCHED_CANCELLED.value
+            for outcome in fetch_outcomes
         )
 
         # Validated-seed pass. A client-rendered homepage/hub can defeat the
@@ -740,7 +768,8 @@ async def run_crawl_job(
         # guaranteed to be ingested whenever it is fetchable.
         seed_canon = _canonicalise_url(discovery_seed_url) if discovery_seed_url else None
         if (
-            seed_canon is not None
+            not job_cancelled
+            and seed_canon is not None
             and seed_canon != _canonicalise_url(start_url)
             and seed_canon not in {_canonicalise_url(r.url) for r in results}
         ):
@@ -761,6 +790,7 @@ async def run_crawl_job(
                 login_indicator_selector=login_indicator_selector,
                 cookies=cookies,
                 rate_limit=effective_rate_limit,
+                cancel_check=cancel_check,
             )
             seen = {_canonicalise_url(r.url) for r in results}
             for seed_result in seed_results:
@@ -957,7 +987,16 @@ async def run_crawl_job(
         # takes priority. The ingest-failure guard sits right after the
         # fetch-failure guard: both are "Klai reached the site but the job
         # still produced nothing", just at a different pipeline stage.
-        if dirty_status:
+        if job_cancelled:
+            # 2026-08-19 (crawl-cancel): an operator cancel outranks every
+            # other terminal-status guard below. The user asked for this to
+            # stop — that is not a dirty-content trip, not a fetch-failure
+            # trip, not an ingest failure; it is intentional, and pages
+            # fetched before the cancel was observed are still ingested
+            # above (pages_done keeps whatever it already counted).
+            terminal_status = "cancelled"
+            await _update_job(conn, job_id, status=terminal_status)
+        elif dirty_status:
             terminal_status = dirty_status
             summary_payload = dirty_summary or {}
             # Preserve the existing wall-tracking diagnostics alongside the
@@ -1619,4 +1658,22 @@ async def _update_job(
         error,
         int(time.time()),
         job_id,
+    )
+
+
+async def _crawl_job_cancel_requested(conn: asyncpg.Connection, job_id: str) -> bool:
+    """Poll ``knowledge.crawl_jobs.cancel_requested`` for cooperative cancel.
+
+    Called from ``run_crawl_job``'s ``cancel_check`` closure, in turn called
+    by ``crawl4ai_client._chunked_bulk_fetch`` between chunks (never per
+    URL — see that function's docstring). A fresh read every call rather
+    than a cached flag: chunks are seconds apart, so the extra query is
+    cheap, and caching would mean a job started before a stale local
+    process picked up a cancel could never see it flip.
+    """
+    return bool(
+        await conn.fetchval(
+            "SELECT cancel_requested FROM knowledge.crawl_jobs WHERE id=$1",
+            job_id,
+        )
     )
