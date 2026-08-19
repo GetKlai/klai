@@ -32,6 +32,10 @@ from app.core.enums import SyncStatus
 from app.reason_codes import PersistSkipReason
 from app.services.portal_client import PortalConnectorConfig
 from app.services.sync_engine import SyncEngine
+from app.services.url_guard import (
+    SSRF_PERSISTED_JSON_FEED_ERROR,
+    PersistedUrlRejectedError,
+)
 
 
 def _portal_config() -> PortalConnectorConfig:
@@ -280,6 +284,70 @@ async def test_document_failure_marks_run_failed() -> None:
     kwargs = portal_client.report_sync_status.await_args.kwargs
     assert kwargs["sync_status"] == SyncStatus.FAILED
     assert kwargs["documents_failed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_fetch_time_ssrf_rejection_preserves_stable_error_code() -> None:
+    """A fetch-time DNS rejection must reach the dedicated persisted-URL handler."""
+    sync_run = MagicMock()
+    sync_run.status = SyncStatus.PENDING
+    sync_run.cursor_state = None
+    sync_run.error_details = None
+    sync_run.quality_status = None
+    sync_run.skip_reasons = {}
+
+    session_maker_mock, _session = _mock_session_maker(sync_run)
+    portal_config = PortalConnectorConfig(
+        connector_id="conn-json-feed",
+        kb_id=42,
+        kb_slug="support",
+        zitadel_org_id="org-test",
+        connector_type="json_feed",
+        config={"url": "https://data.example.com/feed.json"},
+        schedule=None,
+        is_enabled=True,
+    )
+    portal_client = MagicMock()
+    portal_client.get_connector_config = AsyncMock(return_value=portal_config)
+    portal_client.report_sync_status = AsyncMock()
+
+    adapter = MagicMock()
+    adapter.get_cursor_state = AsyncMock(return_value={})
+    adapter.list_documents = AsyncMock(return_value=[_short_doc_ref("/feed.json")])
+    adapter.fetch_document = AsyncMock(
+        side_effect=PersistedUrlRejectedError(
+            error_code=SSRF_PERSISTED_JSON_FEED_ERROR,
+            hostname="data.example.com",
+            message="blocked after DNS revalidation",
+        )
+    )
+    adapter.post_sync = AsyncMock(return_value=None)
+
+    registry = MagicMock()
+    registry.get = MagicMock(return_value=adapter)
+    engine = SyncEngine(
+        session_maker=session_maker_mock,
+        registry=registry,
+        ingest_client=MagicMock(),
+        portal_client=portal_client,
+        settings=MagicMock(),
+        image_store=None,
+        crawl_sync_client=MagicMock(),
+    )
+
+    await engine.run_sync(
+        uuid.UUID("88888888-8888-8888-8888-888888888888"),
+        uuid.UUID("99999999-9999-9999-9999-999999999999"),
+    )
+
+    assert sync_run.status == SyncStatus.FAILED
+    assert sync_run.error_details == [
+        {
+            "error": SSRF_PERSISTED_JSON_FEED_ERROR,
+            "hostname": "data.example.com",
+            "reason": "blocked after DNS revalidation",
+        }
+    ]
 
 
 @pytest.mark.asyncio

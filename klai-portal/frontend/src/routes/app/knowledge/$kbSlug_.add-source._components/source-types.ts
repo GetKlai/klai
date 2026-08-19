@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react'
-import { FileUp, Link2, Type, Globe, FileText } from 'lucide-react'
+import { Braces, FileUp, Link2, Type, Globe, FileText } from 'lucide-react'
 import {
   SiGithub,
   SiNotion,
@@ -19,6 +19,7 @@ export type ConnectorSourceType =
   | 'google_drive'
   | 'airtable'
   | 'confluence'
+  | 'json_feed'
   | 'ms_docs'
   | 'web_crawler'
 
@@ -109,6 +110,15 @@ export const SOURCE_TYPES: SourceTypeMeta[] = [
     Icon: SiConfluence,
     available: true,
     routeTo: (kbSlug) => `/app/knowledge/${kbSlug}/add-connector?type=confluence`,
+  },
+  {
+    type: 'json_feed',
+    group: 'connector',
+    label: m.admin_connectors_type_json_feed,
+    subtitle: m.knowledge_add_source_connector_subtitle_json_feed,
+    Icon: Braces,
+    available: true,
+    routeTo: (kbSlug) => `/app/knowledge/${kbSlug}/add-connector?type=json_feed`,
   },
   {
     type: 'ms_docs',

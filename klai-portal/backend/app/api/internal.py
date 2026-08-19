@@ -65,6 +65,7 @@ router = APIRouter(prefix="/internal", tags=["internal"])
 _REQUIRED_ENCRYPTED_CREDENTIAL_FIELDS: dict[str, set[str]] = {
     "confluence": {"api_token"},
     "airtable": {"api_key"},
+    "json_feed": {"url"},
 }
 
 

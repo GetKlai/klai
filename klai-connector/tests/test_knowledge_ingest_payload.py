@@ -3,7 +3,17 @@
 Focus: source_type / source_domain derivation for web_crawler (SPEC-KB-021).
 """
 
-from app.clients.knowledge_ingest import _build_payload
+from pathlib import Path
+from runpy import run_path
+from unittest.mock import AsyncMock
+
+import pytest
+
+from app.clients.knowledge_ingest import (
+    MAX_INGEST_CONTENT_CHARS,
+    KnowledgeIngestClient,
+    _build_payload,
+)
 
 
 def _base_kwargs(**overrides) -> dict:
@@ -118,3 +128,34 @@ class TestSenderEmailAndMentionedEmails:
         )
         assert "sender_email" not in payload.get("extra", {})
         assert "mentioned_emails" not in payload.get("extra", {})
+
+
+@pytest.mark.asyncio
+async def test_ingest_client_rejects_oversized_content_before_http_request() -> None:
+    client = KnowledgeIngestClient(base_url="http://knowledge-ingest:8100", internal_secret="placeholder-secret")
+    client._client.post = AsyncMock()
+
+    with pytest.raises(ValueError, match=r"ingest limit is 500000 characters"):
+        await client.ingest_document(
+            org_id="org-1",
+            kb_slug="support",
+            path="feed.json",
+            content="x" * (MAX_INGEST_CONTENT_CHARS + 1),
+            source_connector_id="connector-1",
+            source_ref="json-feed:connector-1",
+        )
+
+    client._client.post.assert_not_awaited()
+    await client.aclose()
+
+
+def test_client_content_limit_matches_knowledge_ingest_request_contract() -> None:
+    models_path = Path(__file__).parents[2] / "klai-knowledge-ingest" / "knowledge_ingest" / "models.py"
+    namespace = run_path(str(models_path))
+    ingest_request = namespace["IngestRequest"]
+    content_field = ingest_request.model_fields["content"]
+    downstream_limit = next(
+        metadata.max_length for metadata in content_field.metadata if getattr(metadata, "max_length", None) is not None
+    )
+
+    assert downstream_limit == MAX_INGEST_CONTENT_CHARS

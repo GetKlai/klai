@@ -23,6 +23,7 @@ export type StepDeepLink = 'auth' | 'selector'
 export type ConnectorType =
   | 'github' | 'web_crawler' | 'google_drive' | 'notion' | 'ms_docs'
   | 'airtable' | 'confluence'
+  | 'json_feed'
   | 'google_docs' | 'google_sheets' | 'google_slides'
 
 export type AuthProbeClassification =
@@ -97,6 +98,10 @@ export interface ConfluenceConfig {
   email: string
   api_token: string
   space_keys: string
+}
+
+export interface JsonFeedConfig {
+  url: string
 }
 
 export interface NotionAddConfig {

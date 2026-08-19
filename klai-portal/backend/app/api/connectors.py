@@ -7,7 +7,7 @@ from typing import Literal
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -239,6 +239,22 @@ class AirtableConfig(BaseModel):
         return self
 
 
+class JsonFeedConfig(BaseModel):
+    """Validated configuration for a public HTTPS JSON endpoint."""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+    url: str
+
+    @model_validator(mode="after")
+    def _validate_url(self) -> "JsonFeedConfig":
+        try:
+            validate_url_pinned_sync(self.url)
+        except SsrfBlockedError as exc:
+            raise ValueError(f"url: {exc}") from exc
+        return self
+
+
 # Connector-type -> pydantic config class. Adding a new entry wires
 # validation (including SSRF) into both create_connector and
 # update_connector without further per-endpoint code.
@@ -246,6 +262,7 @@ _CONFIG_SCHEMA: dict[str, type[BaseModel]] = {
     "web_crawler": WebcrawlerConfig,
     "confluence": ConfluenceConfig,
     "airtable": AirtableConfig,
+    "json_feed": JsonFeedConfig,
 }
 
 
@@ -290,6 +307,7 @@ ConnectorType = Literal[
     "google_docs",
     "google_sheets",
     "google_slides",
+    "json_feed",
 ]
 
 # Default content_type per connector_type (SPEC-EVIDENCE-001, R10)
@@ -307,6 +325,7 @@ CONTENT_TYPE_DEFAULTS: dict[str, str] = {
     "google_docs": "kb_article",
     "google_sheets": "kb_article",
     "google_slides": "kb_article",
+    "json_feed": "kb_article",
 }
 
 

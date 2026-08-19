@@ -29,6 +29,7 @@ import type {
   AuthProbeResult,
   ConfluenceConfig,
   GitHubConfig,
+  JsonFeedConfig,
   NotionEditConfig,
   PreviewResult,
   StepDeepLink,
@@ -37,6 +38,7 @@ import type {
 } from './-connector-types'
 import {
   isWithinBaseUrl,
+  jsonFeedConfigForUpdate,
   joinSeedUrl,
   MARKDOWN_PROSE_CLASSES,
   previewUrlOnDetailsAdvance,
@@ -146,6 +148,7 @@ function EditConnectorPage() {
   const [confluenceConfig, setConfluenceConfig] = useState<ConfluenceConfig>({
     base_url: '', email: '', api_token: '', space_keys: '',
   })
+  const [jsonFeedConfig, setJsonFeedConfig] = useState<JsonFeedConfig>({ url: '' })
 
   // -- Web crawler wizard state (SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-1) ----
   // SPEC D-1: deep-link via ?step=auth opens at auth-setup (pre-set requiresLogin=true),
@@ -338,6 +341,10 @@ function EditConnectorPage() {
         space_keys: (cfg.space_keys ?? []).join(', '),
       })
     }
+    if (connector.connector_type === 'json_feed') {
+      const cfg = connector.config as { url?: string }
+      setJsonFeedConfig({ url: String(cfg.url ?? '') })
+    }
   }, [connector?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const updateMutation = useMutation({
@@ -438,6 +445,9 @@ function EditConnectorPage() {
         if (confluenceConfig.api_token.trim()) config.api_token = confluenceConfig.api_token.trim()
         const keys = confluenceConfig.space_keys.split(',').map((s) => s.trim()).filter(Boolean)
         if (keys.length > 0) config.space_keys = keys
+      }
+      if (connector.connector_type === 'json_feed') {
+        Object.assign(config, jsonFeedConfigForUpdate(jsonFeedConfig.url))
       }
       await apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/${connectorId}`, {
         method: 'PATCH',
@@ -1498,8 +1508,46 @@ function EditConnectorPage() {
             </form>
           )}
 
+          {/* Public JSON feed */}
+          {connector?.connector_type === 'json_feed' && (
+            <form onSubmit={(e) => { e.preventDefault(); updateMutation.mutate() }} className="space-y-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-json-feed-name">{m.admin_connectors_field_name()}</Label>
+                <Input id="edit-json-feed-name" required value={name} onChange={(e) => setName(e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-json-feed-url">{m.admin_connectors_json_feed_url_label()}</Label>
+                <Input
+                  id="edit-json-feed-url"
+                  type="url"
+                  required={!connector.has_saved_credentials}
+                  placeholder={connector.has_saved_credentials
+                    ? m.admin_connectors_json_feed_url_saved_hint()
+                    : m.admin_connectors_json_feed_url_hint()}
+                  value={jsonFeedConfig.url}
+                  onChange={(e) => setJsonFeedConfig({ url: e.target.value })}
+                />
+                <p className="text-xs text-gray-400">
+                  {connector.has_saved_credentials
+                    ? m.admin_connectors_json_feed_url_saved_help()
+                    : m.admin_connectors_json_feed_help()}
+                </p>
+              </div>
+              {renderError()}
+              <div className="pt-2">
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={updateMutation.isPending || (!connector.has_saved_credentials && !jsonFeedConfig.url.trim())}
+                >
+                  {m.admin_connectors_save()}
+                </Button>
+              </div>
+            </form>
+          )}
+
           {/* Generic fallback for unsupported connector types */}
-          {connector && !['web_crawler', 'github', 'notion', 'google_drive', 'ms_docs', 'airtable', 'confluence', 'google_docs', 'google_sheets', 'google_slides'].includes(connector.connector_type) && (
+          {connector && !['web_crawler', 'github', 'notion', 'google_drive', 'ms_docs', 'airtable', 'confluence', 'json_feed', 'google_docs', 'google_sheets', 'google_slides'].includes(connector.connector_type) && (
             <form onSubmit={(e) => { e.preventDefault(); updateMutation.mutate() }} className="space-y-3">
               <div className="space-y-1.5">
                 <Label htmlFor="edit-conn-name">{m.admin_connectors_field_name()}</Label>

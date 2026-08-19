@@ -26,6 +26,7 @@ from pydantic import ValidationError
 
 from app.api.connectors import (
     ConfluenceConfig,
+    JsonFeedConfig,
     WebcrawlerConfig,
     _validate_connector_config,
 )
@@ -142,6 +143,21 @@ class TestConfluenceConfigSsrf:
         assert cfg.base_url.endswith(".atlassian.net")
 
 
+class TestJsonFeedConfigSsrf:
+    def test_valid_public_json_url_with_query_is_accepted(self) -> None:
+        with _patched_resolve("93.184.216.34"):
+            cfg = JsonFeedConfig(url="https://data.example.com/feed.json?token=value")
+        assert cfg.url.endswith("?token=value")
+
+    def test_private_json_url_is_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            JsonFeedConfig(url="https://10.0.0.5/feed.json")
+
+    def test_non_https_json_url_is_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            JsonFeedConfig(url="http://data.example.com/feed.json")
+
+
 # ---------------------------------------------------------------------------
 # _validate_connector_config dispatcher — integration with route handler
 # ---------------------------------------------------------------------------
@@ -187,6 +203,29 @@ class TestValidateConnectorConfig:
                 },
             )
         assert excinfo.value.status_code == 422
+
+    def test_json_feed_dispatch_invokes_validator(self) -> None:
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as excinfo:
+            _validate_connector_config(
+                "json_feed",
+                {"url": "https://portal-api:8010/feed.json"},
+            )
+        assert excinfo.value.status_code == 422
+
+    def test_json_feed_validation_error_does_not_echo_query_token(self) -> None:
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as excinfo:
+            _validate_connector_config(
+                "json_feed",
+                {"url": "https://10.0.0.5/feed.json?token=SUPERSECRET"},
+            )
+
+        assert excinfo.value.status_code == 422
+        assert "SUPERSECRET" not in str(excinfo.value.detail)
+        assert "input_value" not in str(excinfo.value.detail)
 
     def test_connector_type_without_config_schema_passes_through(self) -> None:
         """github has no portal-side user credential config surface today.
