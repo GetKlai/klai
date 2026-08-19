@@ -13,6 +13,7 @@ import fnmatch
 import json
 import re
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from html import unescape
 from html.parser import HTMLParser
@@ -2011,6 +2012,7 @@ async def crawl_site(
     login_indicator_selector: str | None = None,
     cookies: list[dict[str, Any]] | None = None,
     rate_limit: float | None = None,
+    cancel_check: Callable[[], Awaitable[bool]] | None = None,
 ) -> tuple[list[CrawlResult], list[FetchOutcome]]:
     """Crawl a site with a Klai-owned deterministic frontier.
 
@@ -2023,6 +2025,17 @@ async def crawl_site(
     mechanism, and ``build_crawl_config``'s docstring for why crawl4ai's own
     ``CrawlerRunConfig`` pacing knobs (``semaphore_count`` / ``mean_delay``)
     cannot do this: the REST server ignores them.
+
+    ``cancel_check`` (2026-08-19, crawl-cancel, optional): awaited between
+    ``_chunked_bulk_fetch`` chunks — never per URL — so an operator-requested
+    cancel takes effect within one chunk instead of never (the caller,
+    ``adapters.crawler.run_crawl_job``, has the DB connection needed to poll
+    ``knowledge.crawl_jobs.cancel_requested``; this function deliberately does
+    not get direct DB access). When it stops the crawl, every URL left in
+    that chunk's remainder gets ``FetchReasonCode.NOT_FETCHED_CANCELLED`` in
+    the returned ``outcomes`` — the caller detects cancellation by checking
+    for that reason code rather than a third return value, so every existing
+    caller of this function keeps working unchanged.
 
     Returns ``(crawl_results, outcomes)``:
     - ``crawl_results``: same-domain pages with non-empty markdown.
@@ -2113,6 +2126,7 @@ async def crawl_site(
             crawler_config=crawler_config,
             cookies=cookies,
             rate_limit=current_rate_limit,
+            cancel_check=cancel_check,
         )
         fetched_count += len(batch)
 
@@ -2133,7 +2147,7 @@ async def crawl_site(
         # a real per-URL result in fetch.raw_results (or was intentionally
         # skipped above) and must not be re-fetched or reclassified.
         retry_urls = [u for u, exc in fetch.failed.items() if _is_recoverable_bulk_failure(exc)]
-        if retry_urls:
+        if retry_urls and not fetch.cancelled:
             # Escalation step 1: retry ONLY the still-failing subset with
             # crawl4ai's stealth mode + a randomised UA. Measured on
             # intermedia.com 2026-08-15: the plain bulk request 500s
@@ -2150,7 +2164,10 @@ async def crawl_site(
                 cookies=cookies,
                 stealth=True,
                 rate_limit=current_rate_limit,
+                cancel_check=cancel_check,
             )
+            if stealth_fetch.cancelled:
+                fetch.cancelled = True
             fetch.raw_results.extend(stealth_fetch.raw_results)
             for retried_url in retry_urls:
                 fetch.failed.pop(retried_url, None)
@@ -2175,7 +2192,15 @@ async def crawl_site(
         # finally given up on too — see that constant's docstring.
         carried_over_urls: list[str] = []
         stop_crawl_after_this_batch = False
-        if not_attempted_urls:
+        if fetch.cancelled:
+            # 2026-08-19 (crawl-cancel): an operator cancel always wins —
+            # no slowdown-and-retry, no further chunks, no stealth/sequential
+            # recovery for anything still outstanding. not_attempted_urls
+            # already carries NOT_FETCHED_CANCELLED (set inside
+            # _chunked_bulk_fetch) and is finalised below exactly like any
+            # other early stop.
+            stop_crawl_after_this_batch = True
+        elif not_attempted_urls:
             if stop_trigger_reason_code == FetchReasonCode.BLOCKED_ANTI_BOT.value:
                 stop_crawl_after_this_batch = True
             elif consecutive_rate_limit_slowdowns < _MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS:
@@ -2212,7 +2237,7 @@ async def crawl_site(
         recoverable_failed = {
             u: exc for u, exc in fetch.failed.items() if _is_recoverable_bulk_failure(exc)
         }
-        if recoverable_failed:
+        if recoverable_failed and not fetch.cancelled:
             # crawl4ai's bulk endpoint still failed this subset after the
             # stealth retry — either an opaque 5xx or a read-timeout
             # (evidence + budget: see _MAX_SEQUENTIAL_RECOVERY,
@@ -2325,6 +2350,7 @@ async def crawl_site(
                 cookies=cookies,
                 base_domain=base_domain,
                 rate_limit=current_rate_limit,
+                cancel_check=cancel_check,
             )
         for outcome in batch_outcomes:
             ledger.mark_outcome(outcome)
@@ -2339,10 +2365,11 @@ async def crawl_site(
                 ledger.add_links_from_result(result, source_depth=source_depth)
 
         if stop_crawl_after_this_batch:
-            # BLOCKED_ANTI_BOT, or a RATE_LIMITED signal that survived
-            # _MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS halvings — further
-            # batches would either not help (a block) or keep paying a
-            # cooldown for no progress (an unrecoverable rate limit).
+            # BLOCKED_ANTI_BOT, a RATE_LIMITED signal that survived
+            # _MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS halvings, or an operator
+            # cancel (fetch.cancelled) — further batches would either not
+            # help (a block), keep paying a cooldown for no progress (an
+            # unrecoverable rate limit), or simply not be wanted (cancel).
             # Remaining queued URLs get their honest reason via
             # ledger.mark_unfetched below, same as any other early stop.
             break
@@ -2976,6 +3003,7 @@ async def _recover_thin_bulk_results(
     cookies: list[dict[str, Any]] | None,
     base_domain: str,
     rate_limit: float | None = None,
+    cancel_check: Callable[[], Awaitable[bool]] | None = None,
 ) -> list[CrawlResult]:
     """Re-crawl thin-but-rich-HTML bulk pages with the relaxed config.
 
@@ -3013,6 +3041,7 @@ async def _recover_thin_bulk_results(
         crawler_config=_relax_seed_crawl_config(crawler_config),
         cookies=cookies,
         rate_limit=rate_limit,
+        cancel_check=cancel_check,
     )
     # Only the subset that actually transported can be compared against the
     # strict result — a URL whose relaxed chunk failed or was never
@@ -3487,7 +3516,17 @@ class ChunkedFetchResult:
             RATE_LIMIT_STOP by default (existing behaviour, unchanged),
             or NOT_FETCHED_CIRCUIT_BREAKER_STOP when
             ``circuit_breaker_triggered`` is True, so "how many times did
-            the breaker actually intervene" has an honest answer.
+            the breaker actually intervene" has an honest answer. Set to
+            NOT_FETCHED_CANCELLED when ``cancelled`` is True (see below).
+        cancelled: True when ``cancel_check`` (2026-08-19, crawl-cancel)
+            returned True BEFORE a chunk was sent, so chunking stopped for
+            an operator-requested cancellation rather than any site-side
+            signal. Kept separate from ``circuit_breaker_triggered`` and
+            ``stop_trigger_reason_code`` (which stays None here) because
+            the caller's response is different: no rate-limit slowdown
+            retry, no give-up-and-mark-BLOCKED_ANTI_BOT — just stop, and
+            the crawl_job's terminal status becomes ``cancelled``, never a
+            failure.
     """
 
     raw_results: list[dict[str, Any]] = field(default_factory=list)
@@ -3497,6 +3536,7 @@ class ChunkedFetchResult:
     stop_trigger_reason_code: str | None = None
     circuit_breaker_triggered: bool = False
     not_attempted_reason_code: str = FetchReasonCode.NOT_FETCHED_RATE_LIMIT_STOP.value
+    cancelled: bool = False
 
 
 async def _chunked_bulk_fetch(
@@ -3506,6 +3546,7 @@ async def _chunked_bulk_fetch(
     cookies: list[dict[str, Any]] | None,
     stealth: bool = False,
     rate_limit: float | None = None,
+    cancel_check: Callable[[], Awaitable[bool]] | None = None,
 ) -> ChunkedFetchResult:
     """Submit ``urls`` to crawl4ai's bulk ``/crawl`` endpoint in chunks.
 
@@ -3562,6 +3603,20 @@ async def _chunked_bulk_fetch(
     chunk (never per URL), same as the anti-bot ratio tally above, so it
     can intervene within tens of seconds instead of the crawl's full page
     budget.
+
+    2026-08-19 (crawl-cancel): a FOURTH stop trigger, orthogonal to the
+    three above — operator-requested cancellation via ``POST
+    /ingest/v1/crawl/sync/{job_id}/cancel``. ``cancel_check`` (when given)
+    is awaited at the TOP of every loop iteration, BEFORE the pacing sleep
+    and before this chunk's request is built, so a cancellation is honoured
+    without ever sending one more request or waiting out one more pacing
+    gap. Checked once per chunk — same granularity as the breaker and the
+    anti-bot ratio gate, never per URL — which bounds reaction time to a
+    single chunk's own duration (seconds) instead of the crawl's full page
+    budget (previously: never, because nothing in this loop checked
+    cancellation at all — see ``knowledge.crawl_jobs.cancel_requested``
+    and ``adapters.crawler.run_crawl_job`` for where the flag is written
+    and polled).
     """
     result = ChunkedFetchResult()
     if not urls:
@@ -3572,6 +3627,18 @@ async def _chunked_bulk_fetch(
     antibot_signal_count = 0
     breaker_state = HostCircuitBreakerState()
     for chunk_start in range(0, len(urls), chunk_size):
+        if cancel_check is not None and await cancel_check():
+            remaining_urls = urls[chunk_start:]
+            result.stopped_early = True
+            result.not_attempted = remaining_urls
+            result.cancelled = True
+            result.not_attempted_reason_code = FetchReasonCode.NOT_FETCHED_CANCELLED.value
+            logger.info(
+                "crawl_bulk_stopped_cancelled",
+                sent_urls=chunk_start,
+                not_attempted_urls=len(remaining_urls),
+            )
+            break
         if rate_limit is not None and previous_chunk_start is not None:
             gap_seconds = chunk_size / rate_limit
             elapsed_since_previous_start = _pacing_monotonic() - previous_chunk_start

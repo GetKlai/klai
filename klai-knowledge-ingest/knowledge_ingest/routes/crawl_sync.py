@@ -391,6 +391,21 @@ async def crawl_sync_cancel(job_id: str) -> None:
     user-visible state (sync_run.status='failed') diverges from the data
     state (artifacts continue to accumulate after the failure).
 
+    2026-08-19 (crawl-cancel): this endpoint previously only called
+    Procrastinate's own ``cancel_job_by_id_async(abort=True)``, which sets
+    ``abort_requested`` on ``procrastinate_jobs`` — a signal the
+    ``run_crawl`` task never actually checked, so cancelling an in-flight
+    crawl was a silent no-op (verified in production: 204 returned, the
+    crawl kept fetching pages for minutes afterward). The fix is
+    cooperative cancellation via ``knowledge.crawl_jobs.cancel_requested``,
+    set below and polled by ``crawl_site``'s bulk-fetch loop between
+    chunks (``adapters.crawler.run_crawl_job`` builds the poll closure —
+    see its docstring). The Procrastinate-level abort call is kept
+    alongside it, not replaced: it still serves a job that has not started
+    running yet (status ``'todo'``), where it prevents the worker from
+    ever picking the job up at all — cheaper than relying on the new flag,
+    which only takes effect once ``run_crawl_job`` is already executing.
+
     Idempotent:
 
     * If the procrastinate task is already finished (succeeded / failed /
@@ -432,6 +447,20 @@ async def crawl_sync_cancel(job_id: str) -> None:
             crawl_status=crawl_row["status"],
         )
         return
+
+    # The task is still live (todo/doing) — mark it for cooperative
+    # cancellation. ``run_crawl_job`` polls this between bulk-fetch chunks
+    # and stops within one chunk once it flips true. Guarded to runnable
+    # statuses only so this never resurrects an already-terminal row (a
+    # narrow race against the running task finishing between the proc_row
+    # query above and this UPDATE is harmless: the flag would simply go
+    # unread).
+    await pool.execute(
+        "UPDATE knowledge.crawl_jobs SET cancel_requested=true, updated_at=$2 "
+        "WHERE id=$1 AND status IN ('pending', 'running')",
+        job_id,
+        int(time.time()),
+    )
 
     # Lazy import to keep procrastinate optional in test environments
     # where ENRICHMENT_ENABLED=false.

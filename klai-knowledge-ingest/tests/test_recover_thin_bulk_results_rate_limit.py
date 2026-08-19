@@ -31,6 +31,7 @@ async def test_recover_thin_bulk_results_forwards_rate_limit(
         cookies: list[dict[str, Any]] | None,
         stealth: bool = False,
         rate_limit: float | None = None,
+        cancel_check: Any = None,
     ) -> crawl4ai_client.ChunkedFetchResult:
         seen_rate_limits.append(rate_limit)
         return crawl4ai_client.ChunkedFetchResult(
