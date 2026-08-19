@@ -583,7 +583,7 @@ class KlaiKnowledgeHook(CustomLogger):
         # conversation contains correspondence.
         if pasted_correspondence:
             _prepend_system_prefix(messages, _PASTED_CORRESPONDENCE_SCOPE)
-            logger.info(
+            logger.warning(
                 "pasted_correspondence_detected org_id=%s user_id=%s",
                 org_id,
                 librechat_user_id,
@@ -788,11 +788,9 @@ class KlaiKnowledgeHook(CustomLogger):
         # see literal customer text.
         telemetry_level = feature.get("telemetry_level", "shadow")
         try:
-            # Guard-fire is warning-level on purpose: the info-level
-            # query_rewrite telemetry below does not reach VictoriaLogs in
-            # production, and an invisible guard cannot be monitored for
-            # hijacks or false positives. Dropped tokens are literal customer
-            # text → full-telemetry orgs only.
+            # Guard-fire is warning-level on purpose: decision telemetry must
+            # reach VictoriaLogs in production. Dropped tokens are literal
+            # customer text → full-telemetry orgs only.
             if rewrite_meta.get("skipped") == "destructive_rewrite":
                 dropped = rewrite_meta.get("dropped_salient_tokens", [])
                 logger.warning(
@@ -809,7 +807,7 @@ class KlaiKnowledgeHook(CustomLogger):
             # REQ-OBS-03: ``skipped`` IS the skip reason (empty when the
             # rewrite ran); ``prompt_variant`` distinguishes plain/classify.
             if telemetry_level == "full":
-                logger.info(
+                logger.warning(
                     "query_rewrite org_id=%s user_id=%s raw_query=%r rewritten_query=%r "
                     "rewrite_ms=%d was_changed=%s skipped=%s prompt_variant=%s "
                     "pasted_correspondence_detected=%s",
@@ -824,7 +822,7 @@ class KlaiKnowledgeHook(CustomLogger):
                     rewrite_meta.get("pasted_correspondence_detected", False),
                 )
             else:
-                logger.info(
+                logger.warning(
                     "query_rewrite_metadata org_id=%s user_id=%s "
                     "rewrite_ms=%d was_changed=%s skipped=%s prompt_variant=%s "
                     "pasted_correspondence_detected=%s",
@@ -889,7 +887,7 @@ class KlaiKnowledgeHook(CustomLogger):
         # distilled query as a search leg (production replay, 2026-08-18).
         if latest_turn_correspondence:
             all_sub_questions: list[str] = []
-            logger.info(
+            logger.warning(
                 "sub_question_split_skipped_pasted_correspondence org_id=%s user_id=%s",
                 org_id,
                 user_id,
@@ -1576,7 +1574,7 @@ class KlaiKnowledgeHook(CustomLogger):
         ):
             stats = _compose_non_streaming_kb_response(response, kb_meta)
             _log_kb_citation_render(logger, kb_meta, stats, stream=False)
-            logger.info(
+            logger.warning(
                 "KB injection: org=%s user=%s chunks=%d retrieval_ms=%d",
                 kb_meta["org_id"],
                 kb_meta["user_id"],

@@ -97,6 +97,7 @@ _SHADOW_PREVIEW_KEYS = (
     "source_url",
     "artifact_id",
     "source_label",
+    "kb_slug",
     "reranker_score",
     "score",
     "quality_score",
@@ -554,13 +555,8 @@ async def retrieve(
     # 3b. Query router — identifies relevant sources for post-rerank selection
     router_meta: dict = {"router_decision": None, "router_layer_used": "skipped"}
     router_selected: set[str] | None = None
-    if (
-        req.kb_slugs is None
-        and settings.router_enabled
-        and req.scope in ("org", "both")
-        and not bypassed
-    ):
-        source_label_catalog = await fetch_source_catalog(req.org_id)
+    if settings.router_enabled and req.scope in ("org", "both") and not bypassed:
+        source_label_catalog = await fetch_source_catalog(req.org_id, req.kb_slugs)
         if len(source_label_catalog) >= settings.router_min_source_label_count:
             routing = await route_to_sources(
                 query_resolved=query_resolved,
@@ -571,6 +567,7 @@ async def retrieve(
                 margin_dual=settings.router_margin_dual,
                 llm_fallback=settings.router_llm_fallback,
                 centroid_ttl_seconds=settings.router_centroid_ttl_seconds,
+                kb_slugs=req.kb_slugs,
             )
             if routing.selected_source_labels:
                 router_selected = set(routing.selected_source_labels)
@@ -753,19 +750,32 @@ async def retrieve(
 
         # 5b. Source-aware selection (SPEC-KB-021)
         # Replaces separate router + quota: uses reranker scores to decide.
+        # scope=both may retrieve the canonical personal KB alongside org KBs.
+        # A router preference is derived from the org source catalog, so it
+        # must never boost a personal chunk merely because the labels match.
+        excluded_preferred_kb_slugs = (
+            {personal_kb_slug(req.user_id)} if req.scope == "both" and req.user_id else None
+        )
         if settings.source_quota_enabled:
             reranked, source_meta = source_aware_select(
                 reranked,
-                query_resolved,
                 top_n=req.top_k,
                 max_per_source=settings.source_quota_max_per_source,
-                router_selected=router_selected,
+                preferred_labels=router_selected,
+                preferred_kb_slugs=set(req.kb_slugs) if req.kb_slugs else None,
+                excluded_preferred_kb_slugs=excluded_preferred_kb_slugs,
+                source_preference_boost=settings.source_preference_boost,
             )
         else:
             source_meta = {
                 "source_select_mode": "disabled",
                 "source_counts": {},
-                "mentioned_sources": [],
+                "preference_applied": False,
+                "preferred_labels": [],
+                "boost": settings.source_preference_boost,
+                "pack_without_preference": [],
+                "suppressed_count": 0,
+                "max_score_inversion": 0.0,
             }
         decision_record["source_select"] = source_meta
 
@@ -795,10 +805,12 @@ async def retrieve(
             if settings.source_quota_enabled:
                 ranking_shadow_preview, _ = source_aware_select(
                     ranking_shadow_preview,
-                    query_resolved,
                     top_n=req.top_k,
                     max_per_source=settings.source_quota_max_per_source,
-                    router_selected=router_selected,
+                    preferred_labels=router_selected,
+                    preferred_kb_slugs=set(req.kb_slugs) if req.kb_slugs else None,
+                    excluded_preferred_kb_slugs=excluded_preferred_kb_slugs,
+                    source_preference_boost=settings.source_preference_boost,
                 )
             ranking_shadow_preview = quality_boost(ranking_shadow_preview, contract_active=True)
 
@@ -951,7 +963,15 @@ async def retrieve(
             low_threshold=settings.confidence_band_low_threshold,
             reranker_enabled=settings.reranker_enabled,
         )
+        confidence_band_corroborated = _compute_confidence_band(
+            serving,
+            high_threshold=settings.confidence_band_high_threshold,
+            low_threshold=settings.confidence_band_low_threshold,
+            reranker_enabled=settings.reranker_enabled,
+            require_corroboration=True,
+        )
         decision_record["confidence_band"] = confidence_band
+        decision_record["confidence_band_corroborated"] = confidence_band_corroborated
         retrieval_confidence_band_total.labels(band=confidence_band, org_id=req.org_id).inc()
 
     evidence_query = (

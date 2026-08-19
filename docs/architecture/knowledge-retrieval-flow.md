@@ -81,11 +81,12 @@ User types a message (LibreChat | Partner API consumer | chat widget on external
         │         │    SPEC-RAG-CONTEXTUAL-001 — Anthropic-pattern contextual retrieval)
         │         ├── Apply taxonomy_node_ids filter (when classifier returned IDs
         │         │   AND in-scope KB has coverage)
-        │         ├── Source-aware selection (mentioned / diversify mode, SPEC-KB-021)
         │         ├── Reranking (cross-encoder scores each chunk against the query)
+        │         ├── Quality floor (remove explicitly degraded chunks)
+        │         ├── Source-aware selection (semantic preference + diversity, SPEC-KB-021)
+        │         ├── Quality score boost (feedback signals from Qdrant payload)
         │         ├── Parent expansion — expand each top-K child to its parent chunk
         │         │   text via parent_chunk_id (SPEC-RAG-PARENT-CHILD-001)
-        │         ├── Quality score boost (feedback signals from Qdrant payload)
         │         └── Return top-K chunks (parent text where expansion succeeded)
         │
         ├──▶ Write retrieval log to Redis (fire-and-forget, for feedback correlation)
@@ -532,8 +533,9 @@ Scope `"org"` or `"both"`:
 
 KB slug filter (when active):
 - `kb_slug IN [requested slugs]`
-- Exception: when scope is `"both"`, personal chunks (`user_id == request.user_id`)
-  bypass the slug filter and are always included
+- Exception: when scope is `"both"`, the requester's canonical personal KB slug is
+  allowed alongside the selected organization KB slugs. Other user-stamped chunks in
+  unselected KBs do not bypass the filter.
 
 **Parallel graph search:**
 FalkorDB/Graphiti runs a graph traversal in parallel with the Qdrant search, resolving
@@ -603,31 +605,107 @@ Timeout: 30 seconds. On failure, the top-K Qdrant results are returned unranked.
 
 ---
 
-### Step 5b: Quality score boost (SPEC-KB-015)
+### Step 5a: Quality floor (SPEC-INGEST-LOGIN-WALL-DETECT-001)
+
+**Simple:** Chunks explicitly degraded as login-walled or unusable are removed before
+they can consume a source-diversity slot.
+
+**Technical:** After reranking, `filter_quality_floor()` removes chunks whose numeric
+`quality_score` is below `KLAI_RETRIEVAL_QUALITY_FLOOR` (default `0.05`). Missing or
+non-numeric values use the neutral default `0.5`. One or two feedback votes remain in the
+cold-start window and are also treated as neutral; a single thumbs-down must not become a
+hard exclusion. The filter preserves candidate order and records the removed count in
+`quality_floor_filtered`.
+
+---
+
+### Step 5b: Source-aware selection (SPEC-KB-021)
+
+**Simple:** When an org has multiple knowledge bases, Klai ensures that the top-K results
+are not monopolized by a single source. This step enforces source diversity while allowing
+the semantic source router to apply a small, bounded preference to relevant sources.
+
+**Technical:** After reranking and the quality floor, `source_aware_select()` applies two
+ranking steps in sequence:
+
+**1. Bounded semantic preference:**
+- Source labels selected by the router receive a configurable additive score boost
+  (`SOURCE_PREFERENCE_BOOST`, default `0.05`). There is no query substring, keyword-map,
+  or stop-word matching in this path.
+- When the request pins `kb_slugs`, both the source label and the KB slug must match before
+  a chunk receives the boost. This prevents a personal chunk with a generic label from
+  inheriting an organization-KB preference in `scope=both` requests.
+- The original score-only pack is retained in decision metadata as the counterfactual;
+  suppression count and maximum score inversion quantify the preference's effect.
+
+**2. Diversity enforcement:**
+- Greedily select chunks by boosted score with a hard limit of `max_per_source` (default:
+  2) chunks per `source_label`. When a source hits its quota, skip to the next
+  highest-scoring chunk from a different source.
+- If fewer than `top_k` results remain after quota enforcement, fill remaining slots with
+  the highest-scoring chunks regardless of source. The same cap applies whether or not the
+  router supplied a preference.
+
+The `source_label` field (computed during ingestion, see
+[knowledge-ingest-flow.md — Source-label and source-aware enrichment](knowledge-ingest-flow.md#step-d5--source-label-and-source-aware-enrichment-spec-kb-021))
+is read from each chunk's Qdrant payload.
+
+**Router as a pre-search signal (SPEC-KB-021):**
+Before executing `hybrid_search`, organization-scoped requests with enough distinct source
+labels invoke a two-layer router. The source catalog and centroid reads are filtered by
+`org_id` and, when supplied, the pinned `kb_slugs`:
+
+| Layer | Method | Input |
+|-------|--------|-------|
+| Layer 1 | Semantic margin | Cosine similarity between `query_vector` and pre-computed centroids per source |
+| Layer 2 | LLM fallback | Optional, disabled by default; 500ms timeout when semantic routing abstains |
+
+The router's decision is **not** applied as a hard filter to the Qdrant query. Instead,
+it signals which sources *might* be relevant, and the selected labels are passed to
+`source_aware_select` as a bounded preference. The search still retrieves candidates from
+all in-scope sources; router influence is applied after reranking, not as a search filter.
+
+Router centroids are pre-computed as the mean vector of the top-10 chunk embeddings per
+source. They are cached in memory with a TTL (default: 10 minutes) and refreshed on-demand
+when the org's KB catalog changes (new KB added, description updated).
+
+**Decision record logging (SPEC-KB-021):**
+Every retrieval request logs the following to `RetrieveMetadata` for observability:
+- `source_select.source_select_mode`: "router" | "diversify" | "disabled" | "empty"
+- `source_select.preference_applied`, `preferred_labels`, `boost`,
+  `pack_without_preference`, `suppressed_count`, and `max_score_inversion`
+- `router.router_layer_used`: "semantic" | "llm" | "none" | "skipped"
+- `router.router_decision`: list of selected `source_label` values, or None
+- `router.router_margin`: cosine margin value from Layer 1, or None if it did not run
+- `source_select.source_counts`: dict mapping `source_label` to final chunk count
+
+These fields enable post-retrieval analysis: which sources does the router recommend vs.
+which the diversity algorithm selects vs. which actually end up in the top-K.
+
+The selected chunks then receive the feedback-based quality boost.
+
+---
+
+### Step 5c: Quality score boost (SPEC-KB-015)
 
 **Simple:** Chunks that users have previously rated helpful get a small ranking boost.
 Chunks rated unhelpful get a small penalty. This makes the knowledge base self-improving
 over time — popular, useful answers rise; outdated or irrelevant ones sink.
 
-**Technical:** After reranking, `quality_boost()` reads two payload fields from each Qdrant
-result:
+**Technical:** After source-aware selection, `quality_boost()` reads two payload fields
+from each selected chunk:
 
 - `quality_score` — running average of thumbs up/down signals, initialized at `0.5` (neutral)
 - `feedback_count` — total number of feedback events on this chunk
 
 ```python
-boosted_score = rrf_score * (1 + 0.2 * (quality_score - 0.5))
+boosted_score = base_rank_score * (1 + 0.2 * (quality_score - 0.5))
 ```
 
 The boost is only applied when `feedback_count >= 3` (cold-start guard). Below this
-threshold, chunks rank purely on retrieval score. The threshold is 3 rather than the
-statistically ideal 5–10 because Klai's per-org user pool is small; see SPEC-KB-015
-§Design notes for full rationale.
-
-At maximum signal (quality_score = 1.0 or 0.0), the adjustment is ±10% of the RRF score
-— intentionally conservative to avoid letting feedback dominate over semantic relevance.
-
-Results are re-sorted by the boosted score.
+threshold, chunks rank purely on retrieval score. At maximum signal (`quality_score` 1.0
+or 0.0), the adjustment is ±10% of the ranking score. Results are re-sorted when the
+active ranking contract applies a boost; shadow serving retains its legacy score ordering.
 
 **Feedback loop:** After the retrieval-api responds, the LiteLLM hook fires a retrieval
 log to `portal-api /internal/v1/retrieval-log` (fire-and-forget). This log is stored in
@@ -637,70 +715,8 @@ the retrieval log and updates the Qdrant payload. See
 [knowledge-ingest-flow.md — Self-learning feedback loop](knowledge-ingest-flow.md#self-learning-feedback-loop-spec-kb-015)
 for the full picture.
 
----
-
-### Step 5c: Source-aware selection (SPEC-KB-021)
-
-**Simple:** When an org has multiple knowledge bases, Klai ensures that the top-K results
-are not monopolized by a single source. This step enforces source diversity while respecting
-the user's query intent — if they explicitly mention a source by name, that source gets
-priority.
-
-**Technical:** After quality boost, `source_aware_select()` applies two filters in sequence:
-
-**1. Mention and gate detection:**
-- If the `query_resolved` contains a substring match (lowercase) of any `kb_slug` longer
-  than 3 characters, that source is "mentioned" and gets priority.
-- Alternatively, if the router (see below) has selected specific sources, those are
-  "selected" and get priority.
-
-**2. Diversity enforcement:**
-- If a source is mentioned or selected: allocate all remaining slots to chunks from that
-  source(s), sorted by reranker score descending.
-- Otherwise ("diversify" mode): greedily select chunks sorted by reranker score, with a
-  hard limit of `max_per_source` (default: 2) chunks per `source_label`. When a source hits
-  its quota, skip to the next highest-scoring chunk from a different source. If fewer than
-  `top_k` results remain after quota enforcement, fill remaining slots with the
-  highest-scoring chunks regardless of source (fallback fill).
-
-The `source_label` field (computed during ingestion, see
-[knowledge-ingest-flow.md — Source-label and source-aware enrichment](knowledge-ingest-flow.md#step-d5--source-label-and-source-aware-enrichment-spec-kb-021))
-is read from each chunk's Qdrant payload.
-
-**Router as a pre-search signal (SPEC-KB-021):**
-Before executing `hybrid_search`, if the user has not specified `kb_slugs` (i.e., they
-are not filtering manually) and the org has ≥ 4 knowledge bases, a three-layer router
-is invoked:
-
-| Layer | Method | Input |
-|-------|--------|-------|
-| Layer 1 | Keyword gate | Pre-computed `{brand_term → kb_slug}` map from KB name + description |
-| Layer 2 | Semantic margin | Cosine similarity between `query_vector` and pre-computed centroids per source |
-| Layer 3 | LLM fallback | (Optional) Route via `klai-fast` with 500ms timeout if Layer 1+2 are inconclusive |
-
-The router's decision is **not** applied as a hard filter to the Qdrant query. Instead,
-it signals which sources *might* be relevant, and is passed to `source_aware_select` as
-the `router_selected` parameter. The search still retrieves candidates from all sources;
-the router influence is applied in the diversity step, not the search step. This allows
-semantic relevance to trump router signal when appropriate.
-
-Router centroids are pre-computed as the mean vector of the top-10 chunk embeddings per
-source. They are cached in memory with a TTL (default: 10 minutes) and refreshed on-demand
-when the org's KB catalog changes (new KB added, description updated).
-
-**Decision record logging (SPEC-KB-021):**
-Every retrieval request logs the following to `RetrieveMetadata` for observability:
-- `source_aware_mode`: "mentioned" | "diversify" (which diversity strategy was used)
-- `router_layer_used`: "keyword" | "semantic" | "llm" | "skipped" (which layer fired, if any)
-- `router_decision`: list of selected `kb_slug` values, or None if no router selection
-- `router_margin`: cosine margin value from Layer 2, or None if Layer 2 didn't run
-- `quota_applied`: bool (whether source quota affected the final result)
-- `quota_per_source_counts`: dict mapping `kb_slug` to count of chunks in final result
-
-These fields enable post-retrieval analysis: which sources does the router recommend vs.
-which the diversity algorithm selects vs. which actually end up in the top-K.
-
-The final `top_k` chunks (default: 5) are returned to the LiteLLM hook.
+The final `top_k` chunks (default: 5) continue to parent expansion and are then returned
+to the LiteLLM hook.
 
 ---
 
@@ -1098,14 +1114,14 @@ snapshot: [docs/architecture/retrieval-improvements-roadmap.md](retrieval-improv
 | Coreference | `klai-retrieval-api/retrieval_api/services/coreference.py` | Pronoun resolution via `klai-fast` |
 | Embeddings | `klai-retrieval-api/retrieval_api/services/tei.py` | Dense + sparse embedding via BGE-M3 |
 | Qdrant search | `klai-retrieval-api/retrieval_api/services/search.py` | Hybrid three-leg RRF search |
-| Source-aware select | `klai-retrieval-api/retrieval_api/services/diversity.py` | `source_aware_select()` — `mentioned` / `diversify` mode + `STOP_WORDS`. Called from `retrieve.py` step 5c. |
+| Source-aware select | `klai-retrieval-api/retrieval_api/services/diversity.py` | `source_aware_select()` — bounded semantic source preference followed by per-label diversity. Called from `retrieve.py` step 5c. |
 | Evidence tier | `klai-retrieval-api/retrieval_api/services/evidence_tier.py` | `apply()` + `_order_for_llm()` U-shape; content_type / temporal / pagerank weights. Shadow-mode default. |
 | Parent text swap | `klai-retrieval-api/retrieval_api/services/parent_lookup.py` | SPEC-RAG-PARENT-CHILD-001 — batch-fetches `knowledge.parent_chunks` rows for chunks with `parent_chunk_id`. |
 | Quality boost | `klai-retrieval-api/retrieval_api/quality_boost.py` | SPEC-KB-015 — `feedback_count >= 3` cold-start gate, ±10% boost. |
 | Identity verify (portal) | `klai-portal/backend/app/services/identity_verifier.py` | `verify_identity_claim()` — JWT / membership / `partner:<key_id>` branches. |
 | Identity asserter (lib) | `klai-libs/identity-assert/klai_identity_assert/` | Consumer-side cache + retry around `/internal/identity/verify`. |
 | F2 audit ref | `.moai/audits/retrieval-coupling-2026-05-06/findings/F2-...md` | Why partner-key verification lives portal-side (not in retrieval-api). |
-| Router (signal) | `klai-retrieval-api/retrieval_api/services/router.py` | Keyword + semantic-centroid signal for source-aware select (SPEC-KB-021) |
+| Router (signal) | `klai-retrieval-api/retrieval_api/services/router.py` | Semantic-centroid signal with optional LLM fallback for source-aware select (SPEC-KB-021) |
 | Graph search | `klai-retrieval-api/retrieval_api/services/graph_search.py` | FalkorDB/Graphiti parallel traversal, RRF-merged with Qdrant results |
 | Reranker | `klai-retrieval-api/retrieval_api/services/reranker.py` | Cross-encoder reranking via BGE-reranker-v2-m3 on gpu-01 (Infinity) |
 | Retrieval gate | `klai-retrieval-api/retrieval_api/services/gate.py` | Cosine margin bypass check |

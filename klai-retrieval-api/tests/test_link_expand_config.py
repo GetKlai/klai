@@ -27,3 +27,16 @@ def test_link_expand_override(monkeypatch):
     s = cfg_mod.Settings()
     assert s.link_expand_enabled is False
     assert s.link_authority_boost == pytest.approx(0.10)
+
+
+def test_source_preference_boost_default():
+    from retrieval_api.config import Settings
+
+    assert Settings().source_preference_boost == pytest.approx(0.05)
+
+
+def test_source_preference_boost_env_override(monkeypatch):
+    monkeypatch.setenv("SOURCE_PREFERENCE_BOOST", "0.08")
+    from retrieval_api.config import Settings
+
+    assert Settings().source_preference_boost == pytest.approx(0.08)

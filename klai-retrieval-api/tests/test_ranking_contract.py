@@ -12,6 +12,7 @@ Covers the helpers that carry the contract:
 import pytest
 
 from retrieval_api.api.retrieve import (
+    _SHADOW_PREVIEW_KEYS,
     _ranking_contract_snapshot,
     _set_final_rank_scores,
 )
@@ -55,6 +56,18 @@ class TestSetFinalRankScores:
 
 
 class TestRankingContractSnapshot:
+    def test_shadow_preview_preserves_kb_scope_for_source_preference(self) -> None:
+        """Shadow replay must retain the tenant-safe source-preference key."""
+        chunk = {
+            "chunk_id": "c1",
+            "source_label": "Documentation",
+            "kb_slug": "pinned-org-kb",
+        }
+
+        preview = {key: chunk.get(key) for key in _SHADOW_PREVIEW_KEYS}
+
+        assert preview["kb_slug"] == "pinned-org-kb"
+
     def test_source_keys_are_distinct_and_capped_at_three(self) -> None:
         """Two chunks of the same source must occupy ONE source slot —
         first-N raw source_urls would double-count multi-chunk sources."""

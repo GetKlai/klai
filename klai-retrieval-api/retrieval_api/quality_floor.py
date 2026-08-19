@@ -17,8 +17,7 @@ because its boost only kicks in after ``feedback_count >= 3`` — meaning a
 brand-new degraded chunk has zero negative pull on its retrieval ranking.
 
 This filter is the actual exclusion mechanism for ``quality_score=0.0``
-chunks. Sits in the pipeline between source-aware-select and quality_boost
-so that:
+chunks. Sits in the pipeline between rerank and source-aware-select so that:
   1. Source quotas pick from clean candidates (no walled chunk burning a
      diversity slot).
   2. quality_boost only sees passing chunks.
