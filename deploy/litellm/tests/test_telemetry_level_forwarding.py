@@ -15,9 +15,11 @@ as the rest of the hook tests.
 
 # noqa: I001
 import importlib.util
+import logging
 import sys
 import types
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -178,7 +180,7 @@ async def test_query_rewrite_log_redacts_in_shadow_mode(monkeypatch, caplog):
         mc.__aexit__ = AsyncMock(return_value=None)
         cls.return_value = mc
 
-        with caplog.at_level("INFO"):
+        with caplog.at_level(logging.WARNING, logger="klai_knowledge"):
             await hook.async_pre_call_hook(
                 _make_user_api_key(), cache, data, "completion"
             )
@@ -215,7 +217,7 @@ async def test_query_rewrite_log_keeps_text_in_full_mode(monkeypatch, caplog):
         mc.__aexit__ = AsyncMock(return_value=None)
         cls.return_value = mc
 
-        with caplog.at_level("INFO"):
+        with caplog.at_level(logging.WARNING, logger="klai_knowledge"):
             await hook.async_pre_call_hook(
                 _make_user_api_key(), cache, data, "completion"
             )
@@ -227,3 +229,117 @@ async def test_query_rewrite_log_keeps_text_in_full_mode(monkeypatch, caplog):
     assert "query_rewrite" in rendered
     # Verify it's NOT the metadata-only variant (that's the redacted form).
     assert "query_rewrite_metadata" not in rendered
+    rewrite_record = next(
+        record
+        for record in caplog.records
+        if "query_rewrite org_id=" in record.getMessage()
+    )
+    assert rewrite_record.levelno == logging.WARNING
+
+
+@pytest.mark.asyncio
+async def test_shadow_decision_events_reach_warning_log_level(monkeypatch, caplog):
+    """SPEC-RAG-SOURCE-SELECTION-001 REQ-1: decision events emitted on the
+    pasted-correspondence path must survive the production WARNING filter.
+
+    Shadow telemetry intentionally exercises the metadata-only rewrite event
+    so the observability change cannot widen raw query logging.
+    """
+    mod = _load_hook(monkeypatch)
+    hook = mod.KlaiKnowledgeHook()
+    cache = _make_cache(feature_enabled=True, feature={"telemetry_level": "shadow"})
+    pasted_query = (
+        "Van: Klant <klant@example.nl>\n"
+        "Aan: Support <support@example.nl>\n"
+        "Onderwerp: storing\n\n"
+        "Waarom geeft de trunk een 404 Not Found?"
+    )
+    data = {
+        "user": "aabbcc112233445566778899",
+        "messages": [{"role": "user", "content": pasted_query}],
+    }
+    mock_resp = _make_resp({"chunks": [], "retrieval_bypassed": False})
+
+    with patch("klai_knowledge.httpx.AsyncClient") as cls:
+        mc = AsyncMock()
+        mc.post = AsyncMock(return_value=mock_resp)
+        mc.get = AsyncMock(return_value=_make_resp({"enabled": True}))
+        mc.__aenter__ = AsyncMock(return_value=mc)
+        mc.__aexit__ = AsyncMock(return_value=None)
+        cls.return_value = mc
+
+        caplog.set_level(logging.WARNING, logger="klai_knowledge")
+        await hook.async_pre_call_hook(
+            _make_user_api_key(), cache, data, "completion"
+        )
+
+    warning_messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "klai_knowledge" and record.levelno >= logging.WARNING
+    ]
+    rendered = " ".join(warning_messages)
+    assert "pasted_correspondence_detected org_id=" in rendered
+    assert "query_rewrite_metadata org_id=" in rendered
+    assert "sub_question_split_skipped_pasted_correspondence org_id=" in rendered
+    assert "klant@example.nl" not in rendered
+    assert "support@example.nl" not in rendered
+    assert "Waarom geeft de trunk een 404 Not Found?" not in rendered
+    assert pasted_query not in rendered
+
+
+@pytest.mark.asyncio
+async def test_kb_injection_summary_reaches_warning_log_level(monkeypatch, caplog):
+    """SPEC-RAG-SOURCE-SELECTION-001 REQ-1: the post-call KB injection
+    summary must survive the production WARNING filter.
+    """
+    mod = _load_hook(monkeypatch)
+    hook = mod.KlaiKnowledgeHook()
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(content="Gebruik de handleiding.")
+            )
+        ]
+    )
+    data = {
+        "metadata": {
+            "_klai_kb_meta": {
+                "org_id": "org123",
+                "user_id": "user123",
+                "chunks_injected": 1,
+                "retrieval_ms": 12,
+                "gate_bypassed": False,
+                "allowed_source_urls": ["https://docs.getklai.com/handleiding"],
+                "allowed_image_urls": [],
+                "trusted_sources": [
+                    {
+                        "label": "1",
+                        "title": "Handleiding",
+                        "url": "https://docs.getklai.com/handleiding",
+                    }
+                ],
+                "citation_chunks": [
+                    {
+                        "title": "Handleiding",
+                        "source_url": "https://docs.getklai.com/handleiding",
+                        "text": "Gebruik de handleiding.",
+                    }
+                ],
+            }
+        }
+    }
+
+    caplog.set_level(logging.WARNING, logger="klai_knowledge")
+    await hook.async_post_call_success_hook(data, None, response)
+
+    summary_record = next(
+        (
+            record
+            for record in caplog.records
+            if record.getMessage().startswith("KB injection: org=")
+        ),
+        None,
+    )
+    assert summary_record is not None
+    assert summary_record.levelno == logging.WARNING
