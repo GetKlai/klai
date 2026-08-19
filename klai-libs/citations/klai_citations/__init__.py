@@ -97,6 +97,11 @@ _ACTIVITY_HEADING_RE = re.compile(
 )
 _SOURCE_LIST_LINE_RE = re.compile(r"^\s*(?:\(\s*\d{1,3}\s*\)|\[\s*\d{1,3}\s*\]|\d{1,3}[.)])\s*(.+)$")
 _BULLET_LINE_RE = re.compile(r"^\s*[-*+•]\s+(.+?)\s*$")
+# A numbered line whose content is ENTIRELY one bold/italic-wrapped span
+# ("**Klai Handleiding**", optionally with trailing punctuation) — the shape
+# of a fabricated source-list entry. Inline emphasis inside prose does NOT
+# match; see _looks_like_source_list_line.
+_FULLY_EMPHASISED_LINE_RE = re.compile(r"^(?:\*{1,3}|_{1,3})[^*_]+(?:\*{1,3}|_{1,3})[.,;:!?]?$")
 _DEFAULT_MAX_SOURCES = 4
 _SIMPLE_ANSWER_SOURCE_TOKEN_LIMIT = 20
 _COMPLEX_ANSWER_SOURCE_TOKEN_LIMIT = 30
@@ -470,7 +475,15 @@ def _looks_like_source_list_line(line: str) -> bool:
     rest = match.group(1).strip()
     if _RAW_URL_RE.search(rest):
         return True
-    if "*" in rest or "http" in rest.lower():
+    # A fabricated source-list line is a bare bold-wrapped title
+    # ("1. **Klai Handleiding**"), not any numbered line that happens to
+    # contain inline bold. The previous `"*" in rest` check deleted whole
+    # numbered PROSE sections from bold-heavy model answers (Voys replay,
+    # 2026-08-18: "Vragen voor Voys" and a cause-list vanished wholesale,
+    # leaving dangling headings) — content loss far worse than an occasional
+    # surviving fake source line, which the footer-heading pass upstream
+    # already catches in its usual list shape.
+    if _FULLY_EMPHASISED_LINE_RE.match(rest) or "http" in rest.lower():
         return True
     return bool(re.search(r"\b(?:bron|source|stichting|privacy|policy|docs?)\b", rest, re.IGNORECASE))
 
