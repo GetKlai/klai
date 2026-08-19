@@ -726,6 +726,10 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
     if req.source_domain:
         extra_payload["source_domain"] = req.source_domain
     enrichment_skip = enrichment_skip_reason(chunk_count=len(texts), extra_payload=extra_payload)
+    is_direct_file_upload = (
+        req.source_connector_id is None and req.source_type in {"file", "upload"}
+    )
+    enrichment_pending = False
     if enrichment_skip is not None:
         extra_payload["llm_enrichment_skipped"] = True
         extra_payload["llm_enrichment_skip_reason"] = enrichment_skip
@@ -783,9 +787,10 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
         proc_app = enrichment_tasks.get_app()
         task_fn = (
             proc_app.enrich_document_interactive  # type: ignore[attr-defined]
-            if req.source_type == "upload"
+            if is_direct_file_upload
             else proc_app.enrich_document_bulk  # type: ignore[attr-defined]
         )
+        enrichment_pending = is_direct_file_upload
         try:
             from procrastinate.exceptions import AlreadyEnqueued
 
@@ -800,15 +805,16 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
                 org_id=req.org_id,
             )
 
-    updated = await pg_store.set_artifact_ingest_status(conn, artifact_id, req.org_id, "synced")
-    if updated is None:
-        logger.error(
-            "artifact_ingest_status_update_missing",
-            artifact_id=artifact_id,
-            org_id=req.org_id,
-            status="synced",
-        )
-        raise RuntimeError(f"artifact {artifact_id} was not updated to index_status=synced")
+    if not enrichment_pending:
+        updated = await pg_store.set_artifact_ingest_status(conn, artifact_id, req.org_id, "synced")
+        if updated is None:
+            logger.error(
+                "artifact_ingest_status_update_missing",
+                artifact_id=artifact_id,
+                org_id=req.org_id,
+                status="synced",
+            )
+            raise RuntimeError(f"artifact {artifact_id} was not updated to index_status=synced")
 
     # Graphiti episode ingest — queued via Procrastinate on graphiti-bulk (lowest priority).
     # The worker drains: ingest-kb → enrich-interactive → enrich-bulk → graphiti-bulk.
