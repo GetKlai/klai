@@ -27,7 +27,12 @@ from app.models.knowledge_bases import PortalGroupKBAccess, PortalKnowledgeBase,
 from app.models.portal import PortalUser
 from app.models.retrieval_gaps import PortalRetrievalGap
 from app.services import docs_client, knowledge_ingest_client
-from app.services.access import get_user_role_for_kb, is_personal_kb, require_connector_manage_access
+from app.services.access import (
+    get_user_role_for_kb,
+    grants_kb_source_manage,
+    is_personal_kb,
+    require_connector_manage_access,
+)
 from app.services.audit import log_event
 from app.services.connector_credentials import credential_store
 from app.services.kb_quota import assert_can_create_org_kb, assert_can_create_personal_kb
@@ -1540,9 +1545,10 @@ async def delete_kb_upload(
 ) -> None:
     """Delete a direct-upload from the KB, handling both lifecycle stages.
 
-    Owners may delete any upload.
-    Contributors may only delete their own uploads (ownership enforced by
-    knowledge-ingest via X-User-ID check for done artifacts; by created_by
+    Owners — and kb_manager+ on an org KB, see ``grants_kb_source_manage`` —
+    may delete any upload.
+    Plain contributors may only delete their own uploads (ownership enforced
+    by knowledge-ingest via X-User-ID check for done artifacts; by created_by
     check on the KBUpload row for in-flight uploads).
     Viewers get 403.
 
@@ -1578,20 +1584,25 @@ async def delete_kb_upload(
         kb_org_id=kb.org_id,
         kb_created_by=kb.created_by,
     )
-    if role not in ("contributor", "owner"):
+    # Same pad as connector CRUD: KB owner, platform admin, or kb_manager+
+    # holding contributor access on an org KB. Without this a kb_manager could
+    # delete the Notion connector but not the plain-text file listed under it,
+    # because the upload was created by a colleague.
+    manages_all_sources = grants_kb_source_manage(kb, perms, role)
+    if not manages_all_sources and role != "contributor":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Contributor or owner access required",
         )
 
-    # Contributors: pass user_id so knowledge-ingest enforces ownership.
-    # Owners: omit user_id to allow cross-user deletes.
-    caller_user_id = perms.user_id if role == "contributor" else None
+    # Plain contributors: pass user_id so knowledge-ingest enforces ownership.
+    # Source managers: omit user_id to allow cross-user deletes.
+    caller_user_id = None if manages_all_sources else perms.user_id
 
     async def delete_tracked_upload(upload: KBUpload) -> None:
         # Contributor ownership check for in-flight uploads — mirrors
         # knowledge-ingest's X-User-ID gate on the artifact-side delete.
-        if role == "contributor" and upload.created_by != perms.user_id:
+        if not manages_all_sources and upload.created_by != perms.user_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="you can only delete your own uploads",
