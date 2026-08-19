@@ -1521,3 +1521,46 @@ def test_evidence_label_ids_does_not_model_max_chars_truncation() -> None:
 
     # The divergence this test pins: E2 was never shown, yet is strippable.
     assert evidence_label_ids(chunks) == {"E1", "E2"}
+
+
+def test_numbered_prose_lines_with_inline_bold_survive_stripping() -> None:
+    """Regression (Voys replay, 2026-08-18): _looks_like_source_list_line
+    treated ANY numbered line containing '*' as a fabricated source-list
+    line and deleted it wholesale. Models write bold-heavy Dutch answers,
+    so entire numbered sections ("Vragen voor Voys", "Dit kan komen door:")
+    silently vanished from a grounded production answer, leaving dangling
+    headings and colons. A numbered PROSE line with inline bold is content,
+    not a source reference — only a line that is entirely a bold-wrapped
+    title (fabricated source-list shape) or carries a URL/source keyword
+    may be dropped."""
+    from klai_citations import strip_model_citation_artifacts
+
+    answer = (
+        "### Vragen voor Voys\n"
+        "De volgende vragen zijn essentieel:\n"
+        "1. Kunnen jullie in de **VGUA-logs** kijken naar dit Call-ID?\n"
+        "2. Staat er een **fraude- of beveiligingsblokkade** op het account?\n"
+        "3. Is er verschil in behandeling tussen bestemmingen?\n"
+    )
+
+    cleaned = strip_model_citation_artifacts(answer)
+
+    assert "1. Kunnen jullie in de **VGUA-logs** kijken naar dit Call-ID?" in cleaned
+    assert "2. Staat er een **fraude- of beveiligingsblokkade** op het account?" in cleaned
+    # Numbering intact: with lines 1-2 kept, the renumber pass no longer
+    # sees an isolated run starting at 3 and leaves the list untouched.
+    assert "3. Is er verschil in behandeling tussen bestemmingen?" in cleaned
+
+
+def test_fully_bold_numbered_title_line_still_stripped() -> None:
+    """The shape the '*' heuristic was FOR: a fabricated source list whose
+    numbered lines are entirely a bold-wrapped title. Still stripped."""
+    from klai_citations import strip_model_citation_artifacts
+
+    answer = "Zie de documentatie.\n1. **Klai Handleiding**\n2. **Voys Freedom Portal**\n"
+
+    cleaned = strip_model_citation_artifacts(answer)
+
+    assert "Klai Handleiding" not in cleaned
+    assert "Voys Freedom Portal" not in cleaned
+    assert "Zie de documentatie." in cleaned
