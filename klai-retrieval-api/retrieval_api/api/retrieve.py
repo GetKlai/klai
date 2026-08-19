@@ -97,6 +97,7 @@ _SHADOW_PREVIEW_KEYS = (
     "source_url",
     "artifact_id",
     "source_label",
+    "kb_slug",
     "reranker_score",
     "score",
     "quality_score",

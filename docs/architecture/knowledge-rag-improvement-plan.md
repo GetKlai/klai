@@ -120,7 +120,7 @@ Key files: `routes/ingest.py`, `pg_store.py`, `qdrant_store.py`, `enrichment.py`
 
 LibreChat / Partner API / widget → LiteLLM `KlaiKnowledgeHook` (`deploy/litellm/klai_knowledge.py` + `klai_kb_*` modules): trivial check → feature/scope lookup (30s/300s two-level cache) → taxonomy trees+coverage (Redis) → combined rewrite+classify in one `QUERY_REWRITE_MODEL` call → `retrieval-api /retrieve` (`api/retrieve.py::retrieve`):
 
-identity verify → coreference (skipped when caller pre-resolved) → dense+sparse embed → **gate (shadow)** → **router** (source labels; keyword/centroid layers, LLM layer dead) → Qdrant native RRF (`FusionQuery`, prefetch `max(candidates×4, 20)`; 2–5 legs + parallel Graphiti leg) → link expansion + authority boost → Infinity rerank (top 20) → quality boost (≥3 votes, ±10%) → source-aware select → parent expansion → **evidence-tier shadow scoring** → EvidencePack.
+identity verify → coreference (skipped when caller pre-resolved) → dense+sparse embed → **gate (shadow)** → **router** (semantic source-label centroids; optional LLM fallback disabled by default) → Qdrant native RRF (`FusionQuery`, prefetch `max(candidates×4, 20)`; 2–5 legs + parallel Graphiti leg) → link expansion + authority boost → Infinity rerank (top 20) → quality floor → source-aware select (bounded router preference + diversity) → quality boost (≥3 votes, ±10%) → parent expansion → **evidence-tier shadow scoring** → EvidencePack.
 
 ### Citation path **[doc]**
 

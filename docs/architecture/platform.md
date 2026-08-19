@@ -778,7 +778,7 @@ Legend: ✅ confirmed compatible | ⚠️ attention point | ❌ correction neede
 | 📋 Planned | Guardrail Rules | PII block/redact + keyword block/redact via klai-pii microservice (SPEC-CHAT-GUARDRAILS-001). |
 | ✅ Done | Two-phase web crawler | BFS discovery + extraction split (SPEC-CRAWL-002). Cookie auth, canary + login-indicator guard, SimHash-LSH dedup for >200 pages (SPEC-CRAWL-003), Layer A/B/C quality status. |
 | ✅ Done | Google Drive OAuth connector | SPEC-KB-025a. First OAuth-based connector. |
-| ✅ Done | Source-aware retrieval | `source_aware_select` replaces router+quota (SPEC-KB-021). Router-as-signal (keyword + semantic centroid). `source_label` Qdrant payload field enables Facet API. |
+| ✅ Done | Source-aware retrieval | `source_aware_select` applies a bounded semantic-router preference plus per-source diversity (SPEC-KB-021). `source_label` Qdrant payload field enables Facet API. |
 | ✅ Done | KB editor reliability | Full-UUID page URLs, BlockNote JSON persistence, client-owned SHA + promise queue, 409 auto-retry (SPEC-DOCS-001). |
 | ✅ Done | Dev environment | Parallel stack on `dev.getklai.com` with isolated LibreChat + LiteLLM. |
 | ✅ Done | Graph retrieval re-enabled | `GRAPHITI_ENABLED=true` on both `knowledge-ingest` and `retrieval-api` now that LLM + reranker dependencies run on gpu-01. Graph search leg rejoins Qdrant 3-leg RRF fusion. |
