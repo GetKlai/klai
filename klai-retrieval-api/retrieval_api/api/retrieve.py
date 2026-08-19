@@ -390,9 +390,7 @@ async def retrieve(
             req = req.model_copy(update={"kb_slugs": None})
 
     evidence_max_sources = (
-        MULTI_KB_MAX_SOURCES
-        if len(set(req.kb_slugs or ())) > 1
-        else DEFAULT_MAX_SOURCES
+        MULTI_KB_MAX_SOURCES if len(set(req.kb_slugs or ())) > 1 else DEFAULT_MAX_SOURCES
     )
 
     # SPEC-RAG-PERSONAL-SCOPE-001 REQ-8: structured observability event.
@@ -864,9 +862,7 @@ async def retrieve(
         # pipeline — the ≥7-day shadow review compares real serving deltas.
         if ranking_shadow_preview is not None:
             decision_record["ranking_contract_shadow"] = {
-                "old": _ranking_contract_snapshot(
-                    serving, max_sources=evidence_max_sources
-                ),
+                "old": _ranking_contract_snapshot(serving, max_sources=evidence_max_sources),
                 "new": _ranking_contract_snapshot(
                     ranking_shadow_preview, max_sources=evidence_max_sources
                 ),
