@@ -1,0 +1,25 @@
+[project]
+name = "klai-graphiti-compat"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "graphiti-core[falkordb]>=0.29,<0.30",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "RUF", "ARG"]
+ignore = ["E501"]  # Cypher literals must remain readable and byte-stable.
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

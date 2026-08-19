@@ -341,13 +341,6 @@ services:
       # next to klai_knowledge.py so ``import klai_llm_safety`` resolves
       # without a custom Dockerfile. Phase D plan: pip install in custom image.
       - ./litellm/klai_llm_safety:/app/klai_llm_safety:ro
-      # SPEC-RAG-CORRESPONDENCE-DISTILL-001: vendored package copy of
-      # klai-libs/llm-throttle (kept byte-identical via deploy/litellm/tests/
-      # test_klai_llm_throttle_drift.py). Same directory-mount pattern as
-      # klai_llm_safety above — shared rate limiter for the direct-to-Mistral
-      # calls in klai_kb_query_rewrite.py, extracted after the 2026-08-18
-      # uncoordinated-caller incident (see klai-libs/llm-throttle/README.md).
-      - ./litellm/klai_llm_throttle:/app/klai_llm_throttle:ro
       # SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10): vendored single-file
       # copy of klai-libs/chat-prompts (kept in sync via deploy/litellm/tests/
       # test_klai_chat_prompts_drift.py). Stock upstream image, no pip-install
@@ -378,7 +371,7 @@ services:
       # deploy/litellm/eval_suites/chat.yaml (kept byte-identical via
       # deploy/litellm/tests/test_chat_yaml_eval_suite_drift.py) is what this
       # litellm-hook-deploy.yml already rsyncs wholesale, same vendoring
-      # pattern as klai_chat_prompts.py / klai_llm_throttle above. Mounted
+      # pattern as klai_chat_prompts.py. Mounted
       # read-only at the path PASTED_CORRESPONDENCE_EVAL_SUITE / --suite
       # defaults to.
       - ./litellm/eval_suites/chat.yaml:/app/eval_suites/chat.yaml:ro

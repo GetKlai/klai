@@ -1,44 +1,27 @@
 # klai-llm-throttle
 
-Shared async token-bucket rate limiter for every direct or proxied LLM call
-Klai makes against a shared upstream budget (e.g. the `klai-fast` alias's
-45 rpm slice of Mistral's 100 rpm capacity).
+Shared async token-bucket rate limiter for direct LLM calls that cannot use
+LiteLLM's centrally enforced proxy quotas.
 
 ## Why this exists
 
-Klai has had this exact incident twice in two different services because the
-limiter lived inside one service and a second, independent caller elsewhere
-had no way to see or respect it:
+Klai introduced this package after knowledge-ingest bulk enrichment fired
+unthrottled direct `klai-fast` calls while Graphiti paced only its own calls.
+Combined they exceeded the service's upstream budget. The process-local shared
+bucket coordinates those direct calls inside knowledge-ingest.
 
-1. **knowledge-ingest** (2026-08-14): bulk enrichment fired unthrottled
-   `klai-fast` calls; Graphiti paced only its own calls. Combined they blew
-   through the 45 rpm alias budget — 641 `enrichment_llm_error` events in two
-   weeks. Fixed with a process-local shared token bucket
-   (`shared_klai_fast_limiter`).
-2. **deploy/litellm query-rewrite hook** (2026-08-18): the pasted-correspondence
-   distillation feature (SPEC-RAG-CORRESPONDENCE-DISTILL-001) calls Mistral
-   directly (`https://api.mistral.ai/v1/chat/completions`), bypassing the
-   litellm proxy's own rpm accounting entirely. This traffic was invisible to
-   knowledge-ingest's limiter (a different process, a different package) and
-   to litellm's own `klai-fast`/`klai-primary` router accounting. Result:
-   1000+ `RouterRateLimitError`/429 events in a single hour of real
-   production chat traffic.
-
-Both were the same bug: **a second, uncoordinated caller of a shared budget.**
-Fixing it a second time in a third bespoke copy would just create a third
-uncoordinated implementation. This package is the single, shared
-implementation both services import — one class, no duplication, easy to
-find the next time a third caller needs it.
+The LiteLLM query-rewrite hook deliberately does **not** use this package. It
+calls the local LiteLLM proxy with the `klai-fast` alias, so the proxy's RPM,
+TPM, retry and fallback policy applies to rewrite traffic together with all
+other proxied calls. Adding another process-local limiter there would recreate
+two independent views of one upstream budget.
 
 ## What this package does NOT do
 
-This is a **process-local** limiter. It does not coordinate across separate
-OS processes/containers (that would need a Redis-backed distributed limiter —
-a bigger lift, not justified while every current caller of a shared budget
-lives in a single process per service). Each service constructs its own
-`TokenBucketLimiter` instance, sized so that its own worst-case traffic stays
-under its slice of the real upstream budget with headroom for the other
-services sharing that same upstream capacity.
+This is a **process-local** limiter. It does not coordinate across separate OS
+processes or containers and it does not count prompt/completion tokens. Use it
+only when a workload must call a provider directly; prefer LiteLLM's central
+proxy quotas for proxied traffic.
 
 ## Usage
 

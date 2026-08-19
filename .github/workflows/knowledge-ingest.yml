@@ -9,6 +9,7 @@ on:
       - 'klai-libs/image-storage/**'
       - 'klai-libs/kb-slugs/**'
       - 'klai-libs/llm-throttle/**'
+      - 'klai-libs/graphiti-compat/**'
       - '.github/workflows/knowledge-ingest.yml'
   pull_request:
     branches: [main]
@@ -18,6 +19,7 @@ on:
       - 'klai-libs/image-storage/**'
       - 'klai-libs/kb-slugs/**'
       - 'klai-libs/llm-throttle/**'
+      - 'klai-libs/graphiti-compat/**'
       - '.github/workflows/knowledge-ingest.yml'
   workflow_dispatch:
 

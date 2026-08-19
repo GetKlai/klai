@@ -17,88 +17,33 @@ import time
 import httpx
 
 from klai_citations import (
-    is_followup_query as _is_followup_query,
     rewrite_preserves_subject as _rewrite_preserves_current_query,
     salient_tokens as _rewrite_salient_tokens,
 )
-from klai_llm_throttle import TokenBucketLimiter
 
 logger = logging.getLogger("klai_knowledge")
 
 QUERY_REWRITE_ENABLED = os.getenv("QUERY_REWRITE_ENABLED", "true").lower() == "true"
 QUERY_REWRITE_TIMEOUT = float(os.getenv("QUERY_REWRITE_TIMEOUT", "1.5"))
-QUERY_REWRITE_MODEL = os.getenv("QUERY_REWRITE_MODEL", "mistral-small-2603")
+QUERY_REWRITE_MODEL = os.getenv("QUERY_REWRITE_MODEL", "klai-fast")
 QUERY_REWRITE_HISTORY_TURNS = int(os.getenv("QUERY_REWRITE_HISTORY_TURNS", "4"))
-MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
-MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions"
-
-# 2026-08-18 incident: this module calls Mistral directly, bypassing the
-# litellm proxy's OWN rpm accounting for the klai-fast/klai-primary aliases
-# entirely (see klai-libs/llm-throttle/README.md for the full incident —
-# this was the SAME class of bug as the 2026-08-14 knowledge-ingest
-# incident, invisible to that fix because it lived in a different
-# process/package). Every direct Mistral call in this module MUST acquire
-# from this shared limiter first.
-#
-# Rate is a deliberately conservative STARTING point, not a precisely
-# derived figure. config.yaml pins klai-primary + klai-fast to rpm: 45 each
-# (90 rpm total) against mistral-small-2603's 100 RPM upstream cap — but
-# that 90 rpm is enforced by the LiteLLM router for calls THROUGH the proxy;
-# this module's direct-to-api.mistral.ai calls are invisible to it. A THIRD,
-# uncoordinated consumer of the same 100 rpm account cap must therefore stay
-# small: at the default below, worst case is 90 + 6 = 96 rpm, a 4 rpm margin.
-# litellm runs as a single container (no replicas in docker-compose.yml), so
-# this process-local bucket is the only consumer of this budget — no
-# multi-instance multiplication risk today. If that ever changes (replicas,
-# scaled deployment), this in-process bucket stops being a real ceiling and
-# needs a shared (e.g. Redis-backed) limiter instead. Tune via
-# DIRECT_MISTRAL_RATE_LIMIT_RPS/_BURST against the observed 429 rate
-# (Grafana "RAG Quality" panel / VictoriaLogs
-# `service:litellm AND "RouterRateLimitError"`) rather than assuming this
-# default is correct — it has not been load-tested against real production
-# volume.
-DIRECT_MISTRAL_RATE_LIMIT_RPS = float(os.getenv("DIRECT_MISTRAL_RATE_LIMIT_RPS", "0.1"))
-DIRECT_MISTRAL_RATE_LIMIT_BURST = float(
-    os.getenv("DIRECT_MISTRAL_RATE_LIMIT_BURST", "3")
+QUERY_REWRITE_API_KEY = os.getenv("LITELLM_MASTER_KEY", "")
+QUERY_REWRITE_URL = os.getenv(
+    "QUERY_REWRITE_URL", "http://127.0.0.1:4000/v1/chat/completions"
 )
 
-_direct_mistral_limiter_singleton: TokenBucketLimiter | None = None
 
-
-def direct_mistral_limiter() -> TokenBucketLimiter:
-    """Process-wide limiter for every direct (non-proxied) Mistral call in
-    this module. Lazy singleton — same pattern as
-    knowledge_ingest.llm_throttle.shared_klai_fast_limiter, sharing the same
-    underlying klai_llm_throttle.TokenBucketLimiter implementation.
-    """
-    global _direct_mistral_limiter_singleton
-    if _direct_mistral_limiter_singleton is None:
-        _direct_mistral_limiter_singleton = TokenBucketLimiter(
-            rate=DIRECT_MISTRAL_RATE_LIMIT_RPS,
-            capacity=DIRECT_MISTRAL_RATE_LIMIT_BURST,
-        )
-    return _direct_mistral_limiter_singleton
-
-
-async def _post_to_mistral_throttled(
+async def _post_to_rewrite_model(
     payload: dict,
     headers: dict,
     client_kwargs: dict,
     timeout: float,
 ) -> httpx.Response:
-    """Rate-limit acquire + HTTP POST, bounded by ONE total timeout.
-
-    Without this wrapper, ``acquire()`` can block past ``QUERY_REWRITE_TIMEOUT``
-    on its own (e.g. waiting out the token bucket under load), so the total
-    call time is unbounded even though ``client_kwargs["timeout"]`` only
-    bounds the HTTP leg. A timeout here is treated like any other rewrite
-    failure by the caller — fail-open to the raw query.
-    """
+    """Call the quota-owning LiteLLM proxy within one total timeout."""
 
     async def _call() -> httpx.Response:
-        await direct_mistral_limiter().acquire()
         async with httpx.AsyncClient(**client_kwargs) as client:
-            return await client.post(MISTRAL_API_URL, json=payload, headers=headers)
+            return await client.post(QUERY_REWRITE_URL, json=payload, headers=headers)
 
     return await asyncio.wait_for(_call(), timeout=timeout)
 
@@ -417,7 +362,7 @@ async def rewrite_query(
     if not history and not allow_empty_history:
         meta["skipped"] = "no_history"
         return raw_query, meta
-    if not MISTRAL_API_KEY:
+    if not QUERY_REWRITE_API_KEY:
         meta["skipped"] = "no_api_key"
         return raw_query, meta
 
@@ -435,9 +380,10 @@ async def rewrite_query(
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 200,
         "temperature": 0.0,
+        "metadata": {"_klai_openai_passthrough": True},
     }
     headers = {
-        "Authorization": f"Bearer {MISTRAL_API_KEY}",
+        "Authorization": f"Bearer {QUERY_REWRITE_API_KEY}",
         "Content-Type": "application/json",
     }
 
@@ -447,7 +393,7 @@ async def rewrite_query(
 
     t_start = time.monotonic()
     try:
-        resp = await _post_to_mistral_throttled(
+        resp = await _post_to_rewrite_model(
             payload, headers, client_kwargs, QUERY_REWRITE_TIMEOUT
         )
         resp.raise_for_status()
@@ -661,7 +607,7 @@ async def rewrite_and_classify(
     if not QUERY_REWRITE_ENABLED:
         meta["skipped"] = "disabled"
         return raw_query, [], meta
-    if not MISTRAL_API_KEY:
+    if not QUERY_REWRITE_API_KEY:
         meta["skipped"] = "no_api_key"
         return raw_query, [], meta
 
@@ -694,9 +640,10 @@ async def rewrite_and_classify(
         "max_tokens": 300,
         "temperature": 0.0,
         "response_format": {"type": "json_object"},
+        "metadata": {"_klai_openai_passthrough": True},
     }
     headers = {
-        "Authorization": f"Bearer {MISTRAL_API_KEY}",
+        "Authorization": f"Bearer {QUERY_REWRITE_API_KEY}",
         "Content-Type": "application/json",
     }
     client_kwargs: dict = {"timeout": QUERY_REWRITE_TIMEOUT}
@@ -706,7 +653,7 @@ async def rewrite_and_classify(
     valid_ids: set[int] = {int(n["id"]) for n in flat_tree}
     t_start = time.monotonic()
     try:
-        resp = await _post_to_mistral_throttled(
+        resp = await _post_to_rewrite_model(
             payload, headers, client_kwargs, QUERY_REWRITE_TIMEOUT
         )
         resp.raise_for_status()

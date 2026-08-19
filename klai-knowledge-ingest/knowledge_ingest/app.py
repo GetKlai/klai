@@ -24,9 +24,7 @@ from knowledge_ingest.routes import (
 setup_logging("knowledge-ingest")
 logger = structlog.get_logger()
 
-# Patch graphiti-core FalkorDB search before any Graphiti usage.
-# See: https://github.com/getzep/graphiti/issues/1272
-# Remove once graphiti-core >= 0.29 includes the fix.
+# Apply shared graphiti-core 0.29 compatibility and ingest-only deduplication.
 _apply_graphiti_patch()
 
 

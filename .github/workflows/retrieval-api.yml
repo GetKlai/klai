@@ -14,6 +14,7 @@ on:
       - 'klai-libs/citations/**'
       - 'klai-libs/service-auth/**'
       - 'klai-libs/llm-safety/**'
+      - 'klai-libs/graphiti-compat/**'
       - '.github/workflows/retrieval-api.yml'
   pull_request:
     branches: [main]
@@ -25,6 +26,7 @@ on:
       - 'klai-libs/citations/**'
       - 'klai-libs/service-auth/**'
       - 'klai-libs/llm-safety/**'
+      - 'klai-libs/graphiti-compat/**'
       - '.github/workflows/retrieval-api.yml'
   workflow_dispatch:
 

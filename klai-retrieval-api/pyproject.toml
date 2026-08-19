@@ -11,6 +11,7 @@ dependencies = [
     "qdrant-client>=1.12",
     "sse-starlette>=2.1",
     "graphiti-core[falkordb]>=0.29,<0.30",
+    "klai-graphiti-compat",
     "structlog>=25.0",
     "prometheus-client>=0.21",
     "asyncpg>=0.30",
@@ -48,6 +49,7 @@ klai-kb-slugs = { path = "../klai-libs/kb-slugs", editable = true }
 klai-citations = { path = "../klai-libs/citations", editable = true }
 klai-llm-safety = { path = "../klai-libs/llm-safety", editable = true }
 klai-service-auth = { path = "../klai-libs/service-auth", editable = true }
+klai-graphiti-compat = { path = "../klai-libs/graphiti-compat", editable = true }
 
 [project.optional-dependencies]
 dev = [

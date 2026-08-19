@@ -21,8 +21,12 @@ from graphiti_core.driver.falkordb_driver import FalkorDriver
 from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
 from graphiti_core.llm_client.config import LLMConfig
 from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
+from klai_graphiti_compat import apply_falkordb_compat
 
 from retrieval_api.config import settings
+
+# Patch the live Graphiti helper references before creating any client.
+apply_falkordb_compat()
 
 logger = structlog.get_logger()
 
@@ -61,6 +65,15 @@ def _get_graphiti() -> Graphiti:
             graph_driver=driver,
         )
     return _graphiti_client
+
+
+async def close() -> None:
+    """Close and clear the lazy Graphiti client during service shutdown."""
+    global _graphiti_client
+    client = _graphiti_client
+    _graphiti_client = None
+    if client is not None:
+        await client.close()
 
 
 async def search(query: str, org_id: str, top_k: int = 20) -> list[dict]:

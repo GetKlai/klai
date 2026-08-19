@@ -5,7 +5,8 @@
 the deploy workflow so ``deploy/litellm/scripts/eval_pasted_correspondence_live.py``
 can read it inside the litellm container without a cross-service mount into
 knowledge-ingest's source tree). Same class of drift risk as
-``test_klai_llm_throttle_drift.py`` — byte-identity must be enforced by a
+Shared eval-suite vendoring follows the same rule as other LiteLLM assets:
+byte-identity must be enforced by a
 test, not by hoping the sync workflow never misses a run.
 """
 

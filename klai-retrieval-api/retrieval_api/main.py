@@ -46,6 +46,7 @@ async def _warmup_reranker() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from retrieval_api.services.events import close_pool, init_pool
+    from retrieval_api.services.graph_search import close as close_graphiti
 
     logger.info(
         "retrieval-api starting | qdrant=%s tei=%s litellm=%s",
@@ -55,9 +56,14 @@ async def lifespan(app: FastAPI):
     )
     await init_pool()
     await _warmup_reranker()
-    yield
-    await close_pool()
-    logger.info("retrieval-api shutting down")
+    try:
+        yield
+    finally:
+        try:
+            await close_graphiti()
+        finally:
+            await close_pool()
+            logger.info("retrieval-api shutting down")
 
 
 app = FastAPI(title="retrieval-api", version="1.0.0", lifespan=lifespan)

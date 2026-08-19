@@ -341,3 +341,23 @@ def test_rrf_merge_fused_scores_pin_denominator():
     assert scores["shared"] == pytest.approx(2.0 / 61.0)
     # q_only: rank 1 in qdrant only -> 1/62
     assert scores["q_only"] == pytest.approx(1.0 / 62.0)
+
+
+@pytest.mark.asyncio
+async def test_close_closes_and_clears_graphiti_client(monkeypatch):
+    client = AsyncMock()
+    monkeypatch.setattr(graph_search, "_graphiti_client", client)
+
+    await graph_search.close()
+
+    client.close.assert_awaited_once_with()
+    assert graph_search._graphiti_client is None
+
+
+@pytest.mark.asyncio
+async def test_close_is_safe_before_client_initialization(monkeypatch):
+    monkeypatch.setattr(graph_search, "_graphiti_client", None)
+
+    await graph_search.close()
+
+    assert graph_search._graphiti_client is None

@@ -31,17 +31,10 @@ evidence for repeatable canaries and therefore does not call
 ``KlaiKnowledgeHook.async_pre_call_hook`` end to end. Hook wiring remains covered
 by the LiteLLM integration tests.
 
-Pacing (Sol delta-review Fix 4/5, 2026-08-18): this script is a SEPARATE
-process from the production litellm hook, so it gets its own tiny, dedicated
-slice of the direct-Mistral rate budget (default 0.05 rps / burst 1) rather
-than sharing the hook's process-local token bucket — two independent
-process-local buckets on the SAME upstream Mistral cap would otherwise risk
-exceeding it together. Samples are paced client-side (one sample every
-~20s at the default slice, before every sample except the very first in the
-whole run — not just per-canary) so the shared bucket always has a token by
-call time and the 1.5s-bounded rewrite-call acquire() never times out. Each
-sample's answer call then waits for the same limiter's next token. At the
-default slice, 3 canaries x 3 samples = 9 samples takes roughly 6 minutes.
+The script uses the same loopback LiteLLM proxy as production rewrite, so its
+tokens are included in the configured router budget and model fallback. A
+small operator-configurable delay remains between samples to avoid turning a
+manual eval into a traffic burst.
 
 A sample whose rewrite fell back to the raw query (limiter timeout, guard
 rejection, or any other ``meta["skipped"]`` reason) is not a real
@@ -55,12 +48,10 @@ full RAGAS judge pipeline in klai-knowledge-ingest's nightly eval harness
 running the actual ``chat.yaml`` suite through that harness.
 
 THIS SCRIPT CANNOT RUN IN STANDARD CI. It needs:
-  - Real Mistral quota (goes through the SAME shared direct_mistral_limiter()
-    token bucket as production, so it will not cause a 429 storm, but it DOES
-    consume real quota — do not loop this in a tight retry).
+  - Real model quota through the local LiteLLM proxy.
   - Network access to retrieval-api's Docker-internal hostname
     (KNOWLEDGE_RETRIEVE_URL, e.g. http://retrieval-api:8040/retrieve).
-  - RETRIEVAL_INTERNAL_SECRET / PORTAL_INTERNAL_SECRET and MISTRAL_API_KEY set.
+  - RETRIEVAL_INTERNAL_SECRET / PORTAL_INTERNAL_SECRET and LITELLM_MASTER_KEY set.
 
 This is the same constraint the existing knowledge-ingest RAGAS eval harness
 already has — it is designed for manual/server-side invocation, not local-
@@ -90,17 +81,6 @@ from pathlib import Path
 
 import httpx
 
-# Sol delta-review Fix 4: this script is a SEPARATE process from the
-# production litellm hook's own direct_mistral_limiter() token bucket.
-# Reserve a tiny, dedicated budget slice for this second process so a live
-# eval can never push the combined direct-Mistral traffic over the upstream
-# cap alongside the production hook's own bucket (90 router + 6 hook + 3
-# eval = 99 < ~100 rpm). setdefault: an operator override still wins. Must
-# run BEFORE klai_kb_query_rewrite is imported (below) since it reads these
-# env vars into module-level constants at import time.
-os.environ.setdefault("DIRECT_MISTRAL_RATE_LIMIT_RPS", "0.05")
-os.environ.setdefault("DIRECT_MISTRAL_RATE_LIMIT_BURST", "1")
-
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from klai_answer_epistemics import inspect_answer_epistemics
@@ -128,11 +108,9 @@ from klai_kb_llm_safety import (
 )
 from klai_kb_portal_client import retrieve, retrieve_headers
 from klai_kb_query_rewrite import (
-    DIRECT_MISTRAL_RATE_LIMIT_RPS,
-    MISTRAL_API_KEY,
-    MISTRAL_API_URL,
+    QUERY_REWRITE_API_KEY,
     QUERY_REWRITE_MODEL,
-    direct_mistral_limiter,
+    QUERY_REWRITE_URL,
     rewrite_and_classify,
     rewrite_decided,
 )
@@ -153,6 +131,9 @@ _RETRIEVE_TOP_K = 10
 _MATCH_WINDOW = 5  # AC-2: "present in top-5", not "anywhere in top-10"
 _RETRIEVE_TIMEOUT = 15.0
 _ANSWER_TIMEOUT = 45.0
+_EVAL_SAMPLE_DELAY_SECONDS = float(
+    os.getenv("PASTED_CORRESPONDENCE_EVAL_DELAY_SECONDS", "2.0")
+)
 KB_IMAGES_BASE_URL = os.getenv("KB_IMAGES_BASE_URL", "https://getklai.getklai.com")
 
 
@@ -192,15 +173,7 @@ def _production_safe_answer_chunks(
 
 
 class _SamplePacer:
-    """Client-side pacing for the shared, tiny per-process token bucket.
-
-    Sol delta-review Fix 4/5: sleeps ``delay_seconds`` before every sample
-    except the very first one across the ENTIRE run — not just per-canary,
-    since all canaries share the same underlying direct_mistral_limiter()
-    bucket. This keeps the bucket topped up by call time so the
-    1.5s-bounded rewrite-call acquire() never times out under this script's
-    own tight budget.
-    """
+    """Sleep before every sample except the first across the entire run."""
 
     def __init__(self, delay_seconds: float) -> None:
         self._delay_seconds = delay_seconds
@@ -269,14 +242,14 @@ async def _answer_shape_matches(
         ),
         "temperature": 0.0,
         "max_tokens": 1200,
+        "metadata": {"_klai_openai_passthrough": True},
     }
-    await direct_mistral_limiter().acquire()
     async with httpx.AsyncClient(timeout=_ANSWER_TIMEOUT) as answer_http:
         response = await answer_http.post(
-            MISTRAL_API_URL,
+            QUERY_REWRITE_URL,
             json=payload,
             headers={
-                "Authorization": f"Bearer {MISTRAL_API_KEY}",
+                "Authorization": f"Bearer {QUERY_REWRITE_API_KEY}",
                 "Content-Type": "application/json",
             },
         )
@@ -427,7 +400,7 @@ async def run(suite_path: Path, samples: int) -> list[dict]:
         )
         return []
 
-    pacer = _SamplePacer(delay_seconds=(1.0 / DIRECT_MISTRAL_RATE_LIMIT_RPS) + 1.0)
+    pacer = _SamplePacer(delay_seconds=_EVAL_SAMPLE_DELAY_SECONDS)
     async with httpx.AsyncClient(
         timeout=_RETRIEVE_TIMEOUT, headers=retrieve_headers()
     ) as http:

@@ -65,7 +65,7 @@ def _load_hook(monkeypatch, extra_env=None):
         "RETRIEVAL_INTERNAL_SECRET": "test-retrieval-secret",
         "KNOWLEDGE_RETRIEVE_URL": "http://retrieval-api:8040/retrieve",
         "PORTAL_API_URL": "http://portal-api:8000",
-        "MISTRAL_API_KEY": "test-mistral-key",
+        "LITELLM_MASTER_KEY": "test-litellm-key",
         "TAXONOMY_ENABLED": "true",
         "KLAI_TAXONOMY_COVERAGE_THRESHOLD": "0.30",
     }
@@ -243,7 +243,7 @@ class TestRewriteAndClassifySkips:
 
     @pytest.mark.asyncio
     async def test_skips_when_no_api_key(self, monkeypatch):
-        hook = _load_hook(monkeypatch, extra_env={"MISTRAL_API_KEY": ""})
+        hook = _load_hook(monkeypatch, extra_env={"LITELLM_MASTER_KEY": ""})
         rewritten, ids, meta = await hook._rewrite_and_classify(
             "Wat is SAML?", _HISTORY, _TREES_MULTI
         )
@@ -791,57 +791,37 @@ class TestRewriteAndClassifyDistillation:
         assert meta_true["pasted_correspondence_detected"] is True
 
 
-class TestRewriteAndClassifyThrottle:
-    """2026-08-18 uncoordinated-caller incident: the WITH-taxonomy branch has
-    its own direct Mistral call site (distinct from the plain-rewrite
-    fallback tested in test_query_rewrite.py) and must also acquire from the
-    shared throttle."""
+class TestRewriteAndClassifyProxy:
+    """The taxonomy branch uses the same centrally budgeted proxy contract."""
 
     @pytest.mark.asyncio
-    async def test_acquires_from_shared_throttle_before_calling_mistral(
-        self, monkeypatch
-    ):
+    async def test_uses_proxy_alias_and_internal_bypass(self, monkeypatch):
         hook = _load_hook(monkeypatch)
         transport = _MockTransport(
             status_code=200,
             json_body=_llm_json_response("Wat is SAML?", []),
         )
-
-        calls: list[str] = []
-        real_limiter = hook._direct_mistral_limiter()
-
-        async def _tracking_acquire():
-            calls.append("acquire")
-
-        monkeypatch.setattr(real_limiter, "acquire", _tracking_acquire)
 
         await hook._rewrite_and_classify(
             "Wat is SAML?", _HISTORY, _TREES_MULTI, _transport=transport
         )
 
-        assert calls == ["acquire"]
+        payload = json.loads(transport.requests[0].content)
+        assert payload["model"] == "klai-fast"
+        assert payload["metadata"]["_klai_openai_passthrough"] is True
 
     @pytest.mark.asyncio
-    async def test_timeout_wraps_limiter_wait_and_falls_back(self, monkeypatch):
-        """review finding #1 (classify branch): the WITH-taxonomy call site
-        also goes through ``_post_to_mistral_throttled`` and must fail-open
-        within ``QUERY_REWRITE_TIMEOUT`` when the shared limiter blocks past
-        it — same contract as the plain-rewrite path in test_query_rewrite.py."""
+    async def test_total_proxy_timeout_falls_back(self, monkeypatch):
         hook = _load_hook(monkeypatch)
         query_rewrite_module = sys.modules["klai_kb_query_rewrite"]
         monkeypatch.setattr(query_rewrite_module, "QUERY_REWRITE_TIMEOUT", 0.05)
 
-        real_limiter = hook._direct_mistral_limiter()
+        class SlowTransport(_MockTransport):
+            async def handle_async_request(self, request):
+                await asyncio.sleep(0.2)
+                return await super().handle_async_request(request)
 
-        async def _slow_acquire():
-            await asyncio.sleep(0.2)
-
-        monkeypatch.setattr(real_limiter, "acquire", _slow_acquire)
-
-        transport = _MockTransport(
-            status_code=200,
-            json_body=_llm_json_response("Wat is SAML?", []),
-        )
+        transport = SlowTransport(status_code=200, json_body=_llm_json_response("Wat is SAML?", []))
 
         rewritten, ids, meta = await asyncio.wait_for(
             hook._rewrite_and_classify(

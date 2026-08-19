@@ -43,7 +43,7 @@ def _load_hook(monkeypatch, extra_env=None):
         "RETRIEVAL_INTERNAL_SECRET": "test-retrieval-secret",
         "KNOWLEDGE_RETRIEVE_URL": "http://retrieval-api:8040/retrieve",
         "PORTAL_API_URL": "http://portal-api:8000",
-        "MISTRAL_API_KEY": "test-mistral-key",
+        "LITELLM_MASTER_KEY": "test-litellm-key",
     }
     if extra_env:
         env.update(extra_env)
@@ -61,10 +61,12 @@ class _MockTransport(httpx.AsyncBaseTransport):
     def __init__(self, status_code: int, json_body: dict | None = None) -> None:
         self._status_code = status_code
         self._json_body = json_body or {}
+        self.request: httpx.Request | None = None
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         import json
 
+        self.request = request
         return httpx.Response(
             status_code=self._status_code,
             headers={"content-type": "application/json"},
@@ -117,7 +119,7 @@ async def test_rewrite_query_skips_when_disabled(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_rewrite_query_skips_when_no_api_key(monkeypatch):
-    hook = _load_hook(monkeypatch, extra_env={"MISTRAL_API_KEY": ""})
+    hook = _load_hook(monkeypatch, extra_env={"LITELLM_MASTER_KEY": ""})
     rewritten, meta = await hook._rewrite_query("Wat zei hij?", _HISTORY_3_TURNS)
     assert rewritten == "Wat zei hij?"
     assert meta["skipped"] == "no_api_key"
@@ -684,34 +686,19 @@ async def test_rewrite_query_cleanup_skipped_when_guard_rejects(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Shared rate-limit throttle (2026-08-18 uncoordinated-caller incident)
+# Central LiteLLM rewrite routing
 # ---------------------------------------------------------------------------
 #
-# klai_kb_query_rewrite.py calls Mistral directly (bypassing the litellm
-# proxy's own klai-fast/klai-primary rpm accounting entirely). This traffic
-# was invisible to litellm's router AND to knowledge-ingest's independent
-# shared_klai_fast_limiter (a different process/package) — production saw
-# 1000+ RouterRateLimitError/429 events in a single hour. Fix: both direct
-# Mistral call sites (rewrite_query, rewrite_and_classify) must acquire from
-# a shared klai_llm_throttle.TokenBucketLimiter before every call.
+# Query rewrite must use the proxy's existing RPM/TPM accounting and model
+# fallback instead of maintaining a second, request-only provider limiter.
 
 
 @pytest.mark.asyncio
-async def test_rewrite_query_acquires_from_shared_throttle_before_calling_mistral(
-    monkeypatch,
-):
+async def test_rewrite_query_uses_proxy_quota_and_internal_bypass(monkeypatch):
     hook = _load_hook(monkeypatch)
     transport = _MockTransport(
         status_code=200, json_body=_ok_response("Wat is de status?")
     )
-
-    calls: list[str] = []
-    real_limiter = hook._direct_mistral_limiter()
-
-    async def _tracking_acquire():
-        calls.append("acquire")
-
-    monkeypatch.setattr(real_limiter, "acquire", _tracking_acquire)
 
     await hook._rewrite_query(
         "Wat is de status van de aanvraag?",
@@ -719,48 +706,29 @@ async def test_rewrite_query_acquires_from_shared_throttle_before_calling_mistra
         _transport=transport,
     )
 
-    assert calls == ["acquire"], (
-        "rewrite_query must acquire from the shared throttle exactly once "
-        "before its Mistral call"
-    )
+    assert transport.request is not None
+    assert str(transport.request.url) == "http://127.0.0.1:4000/v1/chat/completions"
+    assert transport.request.headers["authorization"] == "Bearer test-litellm-key"
+    payload = __import__("json").loads(transport.request.content)
+    assert payload["model"] == "klai-fast"
+    assert payload["metadata"]["_klai_openai_passthrough"] is True
 
 
 @pytest.mark.asyncio
-async def test_rewrite_and_classify_plain_fallback_acquires_from_shared_throttle(
-    monkeypatch,
-):
-    """The no-taxonomy fallback path (rewrite_and_classify -> rewrite_query)
-    must also be covered — it makes the SAME direct Mistral call."""
+async def test_rewrite_and_classify_plain_fallback_uses_same_proxy_contract(monkeypatch):
     hook = _load_hook(monkeypatch)
     transport = _MockTransport(
         status_code=200, json_body=_ok_response("Wat is SAML?")
     )
 
-    calls: list[str] = []
-    real_limiter = hook._direct_mistral_limiter()
-
-    async def _tracking_acquire():
-        calls.append("acquire")
-
-    monkeypatch.setattr(real_limiter, "acquire", _tracking_acquire)
-
     await hook._rewrite_and_classify(
         "Wat is SAML?", [], {}, _transport=transport
     )
 
-    assert calls == ["acquire"]
-
-
-def test_direct_mistral_limiter_is_a_singleton(monkeypatch):
-    hook = _load_hook(monkeypatch)
-    assert hook._direct_mistral_limiter() is hook._direct_mistral_limiter()
-
-
-def test_direct_mistral_limiter_is_a_token_bucket_limiter(monkeypatch):
-    from klai_llm_throttle import TokenBucketLimiter
-
-    hook = _load_hook(monkeypatch)
-    assert isinstance(hook._direct_mistral_limiter(), TokenBucketLimiter)
+    assert transport.request is not None
+    payload = __import__("json").loads(transport.request.content)
+    assert payload["model"] == "klai-fast"
+    assert payload["metadata"]["_klai_openai_passthrough"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -898,32 +866,22 @@ async def test_rewrite_query_cleanup_before_guard_never_returns_empty_query(
 
 
 # ---------------------------------------------------------------------------
-# Review #1 — limiter-wait bounded by QUERY_REWRITE_TIMEOUT
+# Total proxy call bounded by QUERY_REWRITE_TIMEOUT
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_rewrite_query_timeout_wraps_limiter_wait_and_falls_back(monkeypatch):
-    """review finding #1: without wrapping acquire() + the HTTP POST together
-    in asyncio.wait_for, a limiter-wait that blocks past QUERY_REWRITE_TIMEOUT
-    made the total call time unbounded even though the httpx client timeout
-    only covers the HTTP leg. A slow acquire() must now fail-open to the raw
-    query within QUERY_REWRITE_TIMEOUT, exactly like any other rewrite
-    failure."""
+async def test_rewrite_query_total_proxy_timeout_falls_back(monkeypatch):
     hook = _load_hook(monkeypatch)
     query_rewrite_module = sys.modules["klai_kb_query_rewrite"]
     monkeypatch.setattr(query_rewrite_module, "QUERY_REWRITE_TIMEOUT", 0.05)
 
-    real_limiter = hook._direct_mistral_limiter()
+    class SlowTransport(_MockTransport):
+        async def handle_async_request(self, request):
+            await asyncio.sleep(0.2)
+            return await super().handle_async_request(request)
 
-    async def _slow_acquire():
-        await asyncio.sleep(0.2)
-
-    monkeypatch.setattr(real_limiter, "acquire", _slow_acquire)
-
-    transport = _MockTransport(
-        status_code=200, json_body=_ok_response("Wat is de status?")
-    )
+    transport = SlowTransport(status_code=200, json_body=_ok_response("Wat is de status?"))
 
     rewritten, meta = await asyncio.wait_for(
         hook._rewrite_query(

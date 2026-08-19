@@ -1,6 +1,4 @@
-"""Unit tests for Sol delta-review Fix 4 (dedicated live-eval throttle
-budget) and Fix 5 (skipped samples must not count toward a canary's pass
-rate) in scripts/eval_pasted_correspondence_live.py.
+"""Unit tests for the pasted-correspondence live-eval orchestration.
 
 No network calls — httpx.AsyncClient / rewrite_and_classify / retrieve are
 never exercised for real here; running the actual distillation + retrieval
@@ -14,7 +12,6 @@ tests/test_correspondence_eval.py vs. the live script itself.
 from __future__ import annotations
 
 import importlib
-import os
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -36,22 +33,18 @@ def _load_script(monkeypatch, extra_env=None):
     """Import eval_pasted_correspondence_live fresh, with a controlled env.
 
     Mirrors test_query_rewrite.py's _load_hook pattern: reset the klai_kb_*
-    module cache (klai_kb_query_rewrite reads DIRECT_MISTRAL_RATE_LIMIT_RPS/
-    _BURST into module-level constants at import time, so a stale cached
-    import would silently keep an earlier test's env values) and set a
-    baseline env before (re)importing.
+    module cache and set a baseline env before (re)importing.
     """
     env = {
         "KNOWLEDGE_RETRIEVE_URL": "http://retrieval-api:8040/retrieve",
         "PORTAL_INTERNAL_SECRET": "test-portal-secret",
         "RETRIEVAL_INTERNAL_SECRET": "test-retrieval-secret",
-        "MISTRAL_API_KEY": "test-mistral-key",
+        "LITELLM_MASTER_KEY": "test-litellm-key",
     }
     if extra_env:
         env.update(extra_env)
-    for key in ("DIRECT_MISTRAL_RATE_LIMIT_RPS", "DIRECT_MISTRAL_RATE_LIMIT_BURST"):
-        if key not in env:
-            monkeypatch.delenv(key, raising=False)
+    if "PASTED_CORRESPONDENCE_EVAL_DELAY_SECONDS" not in env:
+        monkeypatch.delenv("PASTED_CORRESPONDENCE_EVAL_DELAY_SECONDS", raising=False)
     for k, v in env.items():
         monkeypatch.setenv(k, v)
 
@@ -66,30 +59,25 @@ def _load_script(monkeypatch, extra_env=None):
 
 
 # ---------------------------------------------------------------------------
-# Fix 4 — dedicated throttle budget for the second process
+# Central proxy pacing
 # ---------------------------------------------------------------------------
 
 
-def test_sets_dedicated_rate_limit_defaults_when_unconfigured(monkeypatch):
+def test_sets_small_sample_delay_by_default(monkeypatch):
     module = _load_script(monkeypatch)
 
-    assert os.environ["DIRECT_MISTRAL_RATE_LIMIT_RPS"] == "0.05"
-    assert os.environ["DIRECT_MISTRAL_RATE_LIMIT_BURST"] == "1"
-    assert module.DIRECT_MISTRAL_RATE_LIMIT_RPS == pytest.approx(0.05)
+    assert module._EVAL_SAMPLE_DELAY_SECONDS == pytest.approx(2.0)
 
 
-def test_operator_override_of_rate_limit_env_vars_wins(monkeypatch):
+def test_operator_override_of_sample_delay_wins(monkeypatch):
     module = _load_script(
         monkeypatch,
         extra_env={
-            "DIRECT_MISTRAL_RATE_LIMIT_RPS": "0.2",
-            "DIRECT_MISTRAL_RATE_LIMIT_BURST": "5",
+            "PASTED_CORRESPONDENCE_EVAL_DELAY_SECONDS": "0.2",
         },
     )
 
-    assert os.environ["DIRECT_MISTRAL_RATE_LIMIT_RPS"] == "0.2"
-    assert os.environ["DIRECT_MISTRAL_RATE_LIMIT_BURST"] == "5"
-    assert module.DIRECT_MISTRAL_RATE_LIMIT_RPS == pytest.approx(0.2)
+    assert module._EVAL_SAMPLE_DELAY_SECONDS == pytest.approx(0.2)
 
 
 # ---------------------------------------------------------------------------
@@ -162,9 +150,6 @@ async def test_answer_shape_eval_verifies_raw_model_contract(monkeypatch):
     client.__aenter__ = AsyncMock(return_value=client)
     client.__aexit__ = AsyncMock(return_value=None)
     monkeypatch.setattr(module.httpx, "AsyncClient", lambda **kwargs: client)
-    limiter = AsyncMock()
-    limiter.acquire = AsyncMock()
-    monkeypatch.setattr(module, "direct_mistral_limiter", lambda: limiter)
     canary = module.CorrespondenceCanary(
         id="shape",
         org_zitadel_id="1",
@@ -180,8 +165,10 @@ async def test_answer_shape_eval_verifies_raw_model_contract(monkeypatch):
     )
 
     assert matches is True
-    limiter.acquire.assert_awaited_once()
+    assert client.post.await_args.args[0] == "http://127.0.0.1:4000/v1/chat/completions"
+    assert client.post.await_args.kwargs["headers"]["Authorization"] == "Bearer test-litellm-key"
     payload = client.post.await_args.kwargs["json"]
+    assert payload["metadata"]["_klai_openai_passthrough"] is True
     assert "[[KLAI_CORRESPONDENCE_SENDER_STATEMENTS]]" in payload["messages"][0]["content"]
 
 
