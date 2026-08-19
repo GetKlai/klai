@@ -28,14 +28,20 @@ def _patch_procrastinate_exceptions(monkeypatch):
 
 
 def _make_mock_app(side_effect=None):
-    """Return a mock Procrastinate app whose enrich_document_bulk task can be configured."""
+    """Return a mock Procrastinate app with independently observable task lanes."""
     configured = MagicMock()
     configured.defer_async = AsyncMock(side_effect=side_effect)
     task_fn = MagicMock()
     task_fn.configure = MagicMock(return_value=configured)
 
+    interactive_configured = MagicMock()
+    interactive_configured.defer_async = AsyncMock(return_value=None)
+    interactive_task_fn = MagicMock()
+    interactive_task_fn.configure = MagicMock(return_value=interactive_configured)
+
     mock_app = MagicMock()
     mock_app.enrich_document_bulk = task_fn
+    mock_app.enrich_document_interactive = interactive_task_fn
     return mock_app, task_fn, configured
 
 
@@ -48,7 +54,7 @@ def _make_mock_conn() -> MagicMock:
     return conn
 
 
-def _base_patches(mock_app):
+def _base_patches(mock_app, *, enrichment_enabled: bool = True):
     """Return a context manager stack with all ingest_document dependencies mocked.
 
     SPEC-TI-003-FOLLOWUP-001: ingest_document now takes conn explicitly,
@@ -103,7 +109,7 @@ def _base_patches(mock_app):
                 "knowledge_ingest.routes.ingest.pg_store.set_artifact_ingest_status",
                 new_callable=AsyncMock,
                 return_value={"artifact_id": "art-test", "path": "doc.md"},
-            ),
+            ) as set_ingest_status,
             patch(
                 "knowledge_ingest.routes.ingest.qdrant_store.upsert_chunks",
                 new_callable=AsyncMock,
@@ -111,7 +117,7 @@ def _base_patches(mock_app):
             patch(
                 "knowledge_ingest.routes.ingest.org_config.is_enrichment_enabled",
                 new_callable=AsyncMock,
-                return_value=True,
+                return_value=enrichment_enabled,
             ),
             patch(
                 "knowledge_ingest.routes.ingest.kb_config.get_kb_visibility",
@@ -119,12 +125,17 @@ def _base_patches(mock_app):
                 return_value="internal",
             ),
             patch(
-                "knowledge_ingest.portal_client.fetch_taxonomy_nodes",
+                "knowledge_ingest.connector_state.connector_is_active",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch(
+                "knowledge_ingest.routes.ingest.fetch_taxonomy_nodes",
                 new_callable=AsyncMock,
                 return_value=[],
             ),
             patch(
-                "knowledge_ingest.content_labeler.generate_content_label",
+                "knowledge_ingest.routes.ingest.generate_content_label",
                 new_callable=AsyncMock,
                 return_value=[],
             ),
@@ -142,7 +153,7 @@ def _base_patches(mock_app):
             mock_settings.enrichment_enabled = True
             mock_settings.enrichment_max_chunks = 200
             mock_settings.taxonomy_centroid_match_threshold = 0.85
-            yield
+            yield types.SimpleNamespace(set_ingest_status=set_ingest_status)
 
     return _stack()
 
@@ -169,6 +180,133 @@ async def test_queueing_lock_uses_org_kb_path_and_artifact():
 
     assert result["status"] == "ok"
     task_fn.configure.assert_called_once_with(queueing_lock="org-1:my-kb:docs/page.md:art-test")
+
+
+@pytest.mark.asyncio
+async def test_direct_file_upload_uses_interactive_enrichment_lane():
+    """A user-uploaded file must not wait behind bulk connector enrichment."""
+    from knowledge_ingest.models import IngestRequest
+    from knowledge_ingest.routes.ingest import ingest_document
+
+    mock_app, bulk_task, _ = _make_mock_app()
+    conn = _make_mock_conn()
+    req = IngestRequest(
+        org_id="org-1",
+        kb_slug="my-kb",
+        path="uploads/colleague-report.md",
+        content="# Colleague report\n\nContent.",
+        source_type="file",
+        content_type="plain_text",
+    )
+
+    async with _base_patches(mock_app):
+        result = await ingest_document(conn, req)
+
+    assert result["status"] == "ok"
+    mock_app.enrich_document_interactive.configure.assert_called_once_with(
+        queueing_lock="org-1:my-kb:uploads/colleague-report.md:art-test"
+    )
+    bulk_task.configure.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_direct_file_upload_stays_pending_until_enrichment_finishes():
+    """Queued enrichment must remain visible instead of reporting a false sync."""
+    from knowledge_ingest.models import IngestRequest
+    from knowledge_ingest.routes.ingest import ingest_document
+
+    mock_app, _, _ = _make_mock_app()
+    conn = _make_mock_conn()
+    req = IngestRequest(
+        org_id="org-1",
+        kb_slug="my-kb",
+        path="uploads/colleague-report.md",
+        content="# Colleague report\n\nContent.",
+        source_type="file",
+        content_type="plain_text",
+    )
+
+    async with _base_patches(mock_app) as calls:
+        result = await ingest_document(conn, req)
+
+    assert result["status"] == "ok"
+    calls.set_ingest_status.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_direct_file_upload_is_synced_when_enrichment_is_disabled():
+    """Without a worker job, the completed raw index is the terminal state."""
+    from knowledge_ingest.models import IngestRequest
+    from knowledge_ingest.routes.ingest import ingest_document
+
+    mock_app, _, _ = _make_mock_app()
+    conn = _make_mock_conn()
+    req = IngestRequest(
+        org_id="org-1",
+        kb_slug="my-kb",
+        path="uploads/colleague-report.md",
+        content="# Colleague report\n\nContent.",
+        source_type="file",
+        content_type="plain_text",
+    )
+
+    async with _base_patches(mock_app, enrichment_enabled=False) as calls:
+        result = await ingest_document(conn, req)
+
+    assert result["status"] == "ok"
+    calls.set_ingest_status.assert_awaited_once_with(conn, "art-test", "org-1", "synced")
+
+
+@pytest.mark.asyncio
+async def test_direct_file_upload_stays_pending_when_enrichment_is_already_queued():
+    """A deduplicated live job still owns the final pending-to-synced transition."""
+    from knowledge_ingest.models import IngestRequest
+    from knowledge_ingest.routes.ingest import ingest_document
+
+    mock_app, _, _ = _make_mock_app()
+    mock_app.enrich_document_interactive.configure.return_value.defer_async.side_effect = (
+        _AlreadyEnqueued()
+    )
+    conn = _make_mock_conn()
+    req = IngestRequest(
+        org_id="org-1",
+        kb_slug="my-kb",
+        path="uploads/colleague-report.md",
+        content="# Colleague report\n\nContent.",
+        source_type="file",
+        content_type="plain_text",
+    )
+
+    async with _base_patches(mock_app) as calls:
+        result = await ingest_document(conn, req)
+
+    assert result["status"] == "ok"
+    calls.set_ingest_status.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_connector_ingest_still_finishes_raw_index_as_synced():
+    """Connector lifecycle remains owned by connector sync status, not enrichment."""
+    from knowledge_ingest.models import IngestRequest
+    from knowledge_ingest.routes.ingest import ingest_document
+
+    mock_app, _, _ = _make_mock_app()
+    conn = _make_mock_conn()
+    req = IngestRequest(
+        org_id="org-1",
+        kb_slug="my-kb",
+        path="connector/page.md",
+        content="# Connector page\n\nContent.",
+        source_type="file",
+        source_connector_id="connector-1",
+        content_type="plain_text",
+    )
+
+    async with _base_patches(mock_app) as calls:
+        result = await ingest_document(conn, req)
+
+    assert result["status"] == "ok"
+    calls.set_ingest_status.assert_awaited_once_with(conn, "art-test", "org-1", "synced")
 
 
 @pytest.mark.asyncio
