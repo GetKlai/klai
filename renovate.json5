@@ -90,6 +90,15 @@
     },
     {
       description:
+        'Klai crawl4ai is built and tagged directly on the deployment host; \
+        there is no published GHCR package for Renovate to query.',
+      matchManagers: ['docker-compose'],
+      matchDatasources: ['docker'],
+      matchPackageNames: ['ghcr.io/getklai/crawl4ai'],
+      enabled: false,
+    },
+    {
+      description:
         'Aqua blocks organization GitHub App tokens with its IP allowlist. Use \
         the public Git transport so action digest updates remain discoverable.',
       matchManagers: ['github-actions'],

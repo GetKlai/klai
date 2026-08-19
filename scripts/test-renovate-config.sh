@@ -24,6 +24,9 @@ assert_contains "$config" \
   "matchPackageNames: ['ghcr.io/getklai/librechat']" \
   'the digest-only Klai LibreChat image must have an explicit Renovate policy'
 assert_contains "$config" \
+  "matchPackageNames: ['ghcr.io/getklai/crawl4ai']" \
+  'the host-built crawl4ai image must not be queried as a published GHCR package'
+assert_contains "$config" \
   "matchPackageNames: ['aquasecurity/setup-trivy']" \
   'setup-trivy must have an IP-allowlist-safe lookup policy'
 assert_contains "$config" \
