@@ -300,7 +300,7 @@ async def test_finish_is_atomic_and_generation_fenced() -> None:
     delete_query, delete_args = conn.executed[-1]
     assert "execution_generation=$5" in update_query
     assert "status='running'" in update_query
-    assert "runtime_checkpoint=NULL" in update_query
+    assert "runtime_checkpoint='{}'::jsonb" in update_query
     assert args == ("completed", None, None, "job-1", 41)
     assert "DELETE FROM knowledge.crawl_job_frontier" in delete_query
     assert delete_args == ("job-1",)

@@ -118,7 +118,7 @@ async def finish_crawl_execution(
             SET status=$1,
                 error=$2,
                 error_summary=$3::jsonb,
-                runtime_checkpoint=NULL,
+                runtime_checkpoint='{}'::jsonb,
                 checkpoint_updated_at=NULL,
                 updated_at=extract(epoch FROM now())::bigint
             WHERE id=$4 AND execution_generation=$5 AND status='running'
