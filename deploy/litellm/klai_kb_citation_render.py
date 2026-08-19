@@ -9,14 +9,21 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from klai_answer_epistemics import (
+    inspect_answer_epistemics,
+    pop_answer_contract_stream_text,
+    strip_answer_contract_markers,
+)
 from klai_chat_prompts import DUTCH_QUERY_MARKERS, no_citable_sources_message
 from klai_citations import (
     compose_answer_with_trusted_sources,
     evidence_label_ids,
+    strip_injected_evidence_labels,
     strip_model_citation_artifacts,
 )
 from klai_kb_answer_policy import strict_kb_unavailable_message
 from klai_kb_chat_mode import prompt_mode_is_known, prompt_mode_is_strict
+
 # Cross-module reuse of a "private" helper is intentional here: the footer
 # echoes the same user/caller-controlled sub-question text that the prompt
 # builder echoes into the system prompt, and both call sites need the exact
@@ -54,6 +61,7 @@ class KbCitationRenderStats:
     rendered_messages: int = 0
     rendered_sources: int = 0
     no_citable_sources: bool = False
+    epistemics_measured: bool = False
     citation_decisions: list[dict[str, Any]] = field(default_factory=list)
 
     def merge(self, other: "KbCitationRenderStats") -> None:
@@ -61,6 +69,9 @@ class KbCitationRenderStats:
         self.rendered_messages += other.rendered_messages
         self.rendered_sources = max(self.rendered_sources, other.rendered_sources)
         self.no_citable_sources = self.no_citable_sources or other.no_citable_sources
+        self.epistemics_measured = (
+            self.epistemics_measured or other.epistemics_measured
+        )
         self.citation_decisions.extend(other.citation_decisions)
 
 
@@ -135,6 +146,7 @@ def _render_kb_citation_content(
     allow_uncited_user_content: bool = False,
     suppress_citations_for_user_content: bool = False,
     no_citable_message: object = None,
+    strip_correspondence_evidence_labels: bool = False,
 ) -> tuple[str, list[dict[str, str]], bool, dict[str, Any]]:
     """Render the model's answer with deterministic citations.
 
@@ -179,8 +191,16 @@ def _render_kb_citation_content(
                 },
             )
         if allow_uncited_user_content:
+            passthrough = (
+                strip_injected_evidence_labels(
+                    text,
+                    evidence_ids=evidence_label_ids(evidence_chunks),
+                )
+                if strip_correspondence_evidence_labels
+                else text
+            )
             return (
-                text,
+                passthrough,
                 [],
                 False,
                 {
@@ -192,8 +212,16 @@ def _render_kb_citation_content(
                 },
             )
         # Broad mode: keep model's answer, no citations appended.
+        passthrough = (
+            strip_injected_evidence_labels(
+                text,
+                evidence_ids=evidence_label_ids(evidence_chunks),
+            )
+            if strip_correspondence_evidence_labels
+            else text
+        )
         return (
-            text,
+            passthrough,
             [],
             False,
             {
@@ -218,8 +246,16 @@ def _render_kb_citation_content(
             },
         )
     if suppress_citations_for_user_content:
+        passthrough = (
+            strip_injected_evidence_labels(
+                text,
+                evidence_ids=evidence_label_ids(evidence_chunks),
+            )
+            if strip_correspondence_evidence_labels
+            else text
+        )
         return (
-            text,
+            passthrough,
             [],
             False,
             {
@@ -254,7 +290,15 @@ def _render_kb_citation_content(
         decision["no_citable_reason"] = (
             "selector_rejected_all_sources_broad_passthrough"
         )
-        return text, [], False, decision
+        passthrough = (
+            strip_injected_evidence_labels(
+                text,
+                evidence_ids=evidence_label_ids(evidence_chunks),
+            )
+            if strip_correspondence_evidence_labels
+            else text
+        )
+        return passthrough, [], False, decision
     return (
         composed.content,
         _prepend_primary_upload_source(
@@ -735,7 +779,28 @@ def log_kb_citation_render(
     *,
     stream: bool,
 ) -> None:
+    provenance = kb_meta.get("claim_provenance")
+    if not isinstance(provenance, dict):
+        provenance = {}
     if not stats.rendered_messages:
+        if not stats.epistemics_measured:
+            return
+        logger.warning(
+            "kb_answer_epistemics org_id=%s user_id=%s request_id=%s render_mode=%s stream=%s sender_only_tokens_in_answer=%s answer_tokens_unsupported_by_evidence=%s correspondence_detected=%s sender_only_tokens=%s answer_tokens_unsupported_by_evidence_values=%s answer_contract=%s",
+            kb_meta.get("org_id"),
+            kb_meta.get("user_id"),
+            kb_meta.get("request_id"),
+            kb_meta.get("render_mode"),
+            stream,
+            provenance.get("sender_only_tokens_in_answer"),
+            provenance.get("answer_tokens_unsupported_by_evidence"),
+            provenance.get("correspondence_detected"),
+            provenance.get("sender_only_tokens", "<redacted>"),
+            provenance.get(
+                "answer_tokens_unsupported_by_evidence_values", "<redacted>"
+            ),
+            kb_meta.get("answer_contract"),
+        )
         return
 
     event = (
@@ -754,8 +819,22 @@ def log_kb_citation_render(
             if isinstance(reason, str) and reason:
                 reason_counts[reason] = reason_counts.get(reason, 0) + 1
 
+    telemetry_level = kb_meta.get("telemetry_level")
+    citation_decisions = stats.citation_decisions
+    if telemetry_level != "full":
+        citation_decisions = [
+            {
+                key: value
+                for key, value in decision.items()
+                if key not in {"salient_query_tokens", "query_support_tokens"}
+            }
+            if isinstance(decision, dict)
+            else decision
+            for decision in stats.citation_decisions
+        ]
+
     logger.warning(
-        "%s org_id=%s user_id=%s request_id=%s render_mode=%s stream=%s rendered_messages=%d rendered_sources=%d chunks_injected=%s no_citable_reason=%s citation_reason_counts=%s citation_decisions=%s",
+        "%s org_id=%s user_id=%s request_id=%s render_mode=%s stream=%s rendered_messages=%d rendered_sources=%d chunks_injected=%s no_citable_reason=%s citation_reason_counts=%s citation_decisions=%s sender_only_tokens_in_answer=%s answer_tokens_unsupported_by_evidence=%s correspondence_detected=%s sender_only_tokens=%s answer_tokens_unsupported_by_evidence_values=%s answer_contract=%s",
         event,
         kb_meta.get("org_id"),
         kb_meta.get("user_id"),
@@ -767,8 +846,54 @@ def log_kb_citation_render(
         kb_meta.get("chunks_injected"),
         kb_meta.get("no_citable_reason"),
         reason_counts,
-        stats.citation_decisions,
+        citation_decisions,
+        provenance.get("sender_only_tokens_in_answer"),
+        provenance.get("answer_tokens_unsupported_by_evidence"),
+        provenance.get("correspondence_detected"),
+        provenance.get("sender_only_tokens", "<redacted>"),
+        provenance.get(
+            "answer_tokens_unsupported_by_evidence_values", "<redacted>"
+        ),
+        kb_meta.get("answer_contract"),
     )
+
+
+def _record_answer_epistemics(
+    answer: str,
+    kb_meta: dict[str, Any],
+    evidence_chunks: list[dict],
+) -> str:
+    """Record measurement-only answer telemetry; never block rendering."""
+    try:
+        correspondence_detected = bool(
+            kb_meta.get("pasted_correspondence_detected")
+        )
+        latest_turn_detected = kb_meta.get(
+            "latest_turn_pasted_correspondence_detected"
+        )
+        if latest_turn_detected is None:
+            latest_turn_detected = correspondence_detected
+        inspection = inspect_answer_epistemics(
+            answer,
+            user_turn=kb_meta.get("user_query"),
+            evidence_chunks=evidence_chunks,
+            correspondence_detected=correspondence_detected,
+            telemetry_level=kb_meta.get("telemetry_level"),
+            latest_turn_correspondence_detected=bool(latest_turn_detected),
+        )
+        provenance = inspection.get("claim_provenance")
+        if isinstance(provenance, dict):
+            kb_meta["claim_provenance"] = provenance
+        answer_contract = inspection.get("answer_contract")
+        if isinstance(answer_contract, dict):
+            kb_meta["answer_contract"] = answer_contract
+        if correspondence_detected:
+            return strip_answer_contract_markers(answer)
+    except Exception:  # noqa: BLE001 - telemetry is explicitly fail-open
+        if correspondence_detected:
+            return strip_answer_contract_markers(answer)
+        return answer
+    return answer
 
 
 def _remember_citation_decision(
@@ -798,7 +923,8 @@ def _citation_user_content_flags(kb_meta: dict[str, Any]) -> tuple[bool, bool]:
 # streaming normally; the 16-char tail holdback covers labels split across
 # stream deltas.
 _EVIDENCE_STREAM_GUARD_RE = re.compile(
-    r"\(\s*(?:[Ee]vidence\s+)?E\d|\b[Ee]vidence\s+E\d"
+    r"\(\s*(?:evidence\s+)?e\d|\bevidence\s+e\d",
+    re.IGNORECASE,
 )
 
 
@@ -889,18 +1015,21 @@ def compose_non_streaming_kb_response(
     allowed_image_urls, citation_chunks, trusted_sources = _citation_render_inputs(
         kb_meta
     )
+    correspondence_detected = bool(kb_meta.get("pasted_correspondence_detected"))
     force_no_citable = bool(kb_meta.get("no_citable_sources"))
     has_visible_activity = _has_visible_agent_activity(kb_meta)
+    allow_uncited_user_content, suppress_user_content_citations = (
+        _citation_user_content_flags(kb_meta)
+    )
     if (
         not citation_chunks
         and not trusted_sources
         and not force_no_citable
         and not has_visible_activity
+        and not correspondence_detected
+        and not suppress_user_content_citations
     ):
         return stats
-    allow_uncited_user_content, suppress_user_content_citations = (
-        _citation_user_content_flags(kb_meta)
-    )
 
     for choice in get_response_choices(response):
         message = get_choice_message(choice, "message")
@@ -908,9 +1037,13 @@ def compose_non_streaming_kb_response(
             continue
         content = get_message_content(message)
         if isinstance(content, str):
+            inspected_content = _record_answer_epistemics(
+                content, kb_meta, citation_chunks
+            )
+            stats.epistemics_measured = True
             rendered_content, sources, no_citable_sources, decision = (
                 _render_kb_citation_content(
-                    content,
+                    inspected_content,
                     allowed_image_urls=allowed_image_urls,
                     user_query=kb_meta.get("user_query"),
                     trusted_sources=trusted_sources,
@@ -920,6 +1053,9 @@ def compose_non_streaming_kb_response(
                     allow_uncited_user_content=allow_uncited_user_content,
                     suppress_citations_for_user_content=suppress_user_content_citations,
                     no_citable_message=kb_meta.get("no_citable_message"),
+                    strip_correspondence_evidence_labels=bool(
+                        kb_meta.get("pasted_correspondence_detected")
+                    ),
                 )
             )
             if (
@@ -961,28 +1097,37 @@ def compose_streaming_kb_response(
     allowed_image_urls, citation_chunks, trusted_sources = _citation_render_inputs(
         kb_meta
     )
+    correspondence_detected = bool(kb_meta.get("pasted_correspondence_detected"))
     force_no_citable = bool(kb_meta.get("no_citable_sources"))
     has_visible_activity = _has_visible_agent_activity(kb_meta)
+    allow_uncited_user_content, suppress_user_content_citations = (
+        _citation_user_content_flags(kb_meta)
+    )
     if (
         not citation_chunks
         and not trusted_sources
         and not force_no_citable
         and not has_visible_activity
+        and not correspondence_detected
+        and not suppress_user_content_citations
     ):
         return stats
     if kb_meta.get("_citation_stream_sources_appended"):
         return stats
 
     kb_narrow = _kb_meta_is_strict(kb_meta)
-    allow_uncited_user_content, suppress_user_content_citations = (
-        _citation_user_content_flags(kb_meta)
-    )
     strict_no_sources = (
         not trusted_sources
         and (force_no_citable or kb_narrow)
     )
-    if not trusted_sources and not strict_no_sources and not has_visible_activity:
-        return stats
+    telemetry_only_stream = bool(
+        citation_chunks
+        and not trusted_sources
+        and not strict_no_sources
+        and not has_visible_activity
+        and not correspondence_detected
+        and not suppress_user_content_citations
+    )
 
     should_flush = flush_stream
 
@@ -991,8 +1136,23 @@ def compose_streaming_kb_response(
         if delta is None:
             continue
         content = get_message_content(delta)
-        should_flush = should_flush or bool(get_choice_finish_reason(choice))
-        if strict_no_sources:
+        has_finish_reason = bool(get_choice_finish_reason(choice))
+        should_flush = should_flush or has_finish_reason
+        if telemetry_only_stream:
+            if isinstance(content, str) and content:
+                parts = kb_meta.setdefault("_citation_stream_full_parts", [])
+                parts.append(content)
+            if should_flush:
+                full_text = "".join(
+                    part
+                    for part in kb_meta.get("_citation_stream_full_parts", [])
+                    if isinstance(part, str)
+                )
+                _record_answer_epistemics(full_text, kb_meta, citation_chunks)
+                kb_meta["_citation_stream_full_parts"] = []
+                stats.epistemics_measured = True
+            continue
+        if strict_no_sources or suppress_user_content_citations:
             if isinstance(content, str) and content:
                 buffered = kb_meta.get("_citation_stream_guard_buffer") or ""
                 kb_meta["_citation_stream_guard_buffer"] = buffered + content
@@ -1000,9 +1160,15 @@ def compose_streaming_kb_response(
                 stats.mutated_messages += 1
             if not should_flush:
                 continue
+            inspected_content = _record_answer_epistemics(
+                kb_meta.get("_citation_stream_guard_buffer") or "",
+                kb_meta,
+                citation_chunks,
+            )
+            stats.epistemics_measured = True
             rendered_content, sources, no_citable_sources, decision = (
                 _render_kb_citation_content(
-                    kb_meta.get("_citation_stream_guard_buffer") or "",
+                    inspected_content,
                     allowed_image_urls=allowed_image_urls,
                     user_query=kb_meta.get("user_query"),
                     trusted_sources=trusted_sources,
@@ -1012,6 +1178,9 @@ def compose_streaming_kb_response(
                     allow_uncited_user_content=allow_uncited_user_content,
                     suppress_citations_for_user_content=suppress_user_content_citations,
                     no_citable_message=kb_meta.get("no_citable_message"),
+                    strip_correspondence_evidence_labels=bool(
+                        kb_meta.get("pasted_correspondence_detected")
+                    ),
                 )
             )
             _remember_citation_decision(
@@ -1035,10 +1204,25 @@ def compose_streaming_kb_response(
             return stats
 
         stream_buffer = kb_meta.get("_citation_stream_guard_buffer") or ""
-        if isinstance(content, str) and content:
+        content_for_render = content
+        if correspondence_detected:
+            if isinstance(content, str) and content:
+                raw_parts = kb_meta.setdefault(
+                    "_answer_contract_stream_raw_parts", []
+                )
+                raw_parts.append(content)
+            marker_buffer = kb_meta.get("_answer_contract_stream_buffer") or ""
+            marker_input = marker_buffer + (
+                content if isinstance(content, str) else ""
+            )
+            content_for_render, marker_buffer = pop_answer_contract_stream_text(
+                marker_input, final=should_flush
+            )
+            kb_meta["_answer_contract_stream_buffer"] = marker_buffer
+        if isinstance(content_for_render, str) and content_for_render:
             full_parts = kb_meta.setdefault("_citation_stream_full_parts", [])
-            full_parts.append(content)
-            stream_buffer += content
+            full_parts.append(content_for_render)
+            stream_buffer += content_for_render
         safe_text, stream_buffer = _pop_streaming_guard_text(
             stream_buffer, final=should_flush
         )
@@ -1062,6 +1246,17 @@ def compose_streaming_kb_response(
             for part in kb_meta.get("_citation_stream_emitted_parts", [])
             if isinstance(part, str)
         )
+        raw_full_text = (
+            "".join(
+                part
+                for part in kb_meta.get("_answer_contract_stream_raw_parts", [])
+                if isinstance(part, str)
+            )
+            if correspondence_detected
+            else full_text
+        )
+        _record_answer_epistemics(raw_full_text, kb_meta, citation_chunks)
+        stats.epistemics_measured = True
         rendered_content, sources, no_citable_sources, decision = (
             _render_kb_citation_content(
                 full_text,
@@ -1074,6 +1269,9 @@ def compose_streaming_kb_response(
                 allow_uncited_user_content=allow_uncited_user_content,
                 suppress_citations_for_user_content=suppress_user_content_citations,
                 no_citable_message=kb_meta.get("no_citable_message"),
+                strip_correspondence_evidence_labels=bool(
+                    kb_meta.get("pasted_correspondence_detected")
+                ),
             )
         )
         tail = remove_already_streamed_prefix(rendered_content, emitted_text)
@@ -1120,6 +1318,8 @@ def compose_streaming_kb_response(
         kb_meta["_citation_stream_guard_buffer"] = ""
         kb_meta["_citation_stream_full_parts"] = []
         kb_meta["_citation_stream_emitted_parts"] = []
+        kb_meta["_answer_contract_stream_buffer"] = ""
+        kb_meta["_answer_contract_stream_raw_parts"] = []
         stats.mutated_messages += 1
         stats.rendered_messages += 1
         stats.rendered_sources = len(sources)

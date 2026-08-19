@@ -8128,6 +8128,49 @@ class TestPastedCorrespondenceWiring:
         assert content.index("general-purpose assistant") < content.index(
             "[Pasted third-party correspondence]"
         )
+        meta = data["metadata"]["_klai_kb_meta"]
+        assert meta["pasted_correspondence_detected"] is True
+        assert meta["render_mode"] is not None
+
+        response = {
+            "choices": [
+                {
+                    "message": {
+                        "content": (
+                            "[[KLAI_CORRESPONDENCE_SENDER_STATEMENTS]]\nSender.\n"
+                            "[[KLAI_CORRESPONDENCE_KB_EVIDENCE]]\nNo evidence.\n"
+                            "[[KLAI_CORRESPONDENCE_OPEN_QUESTIONS]]\nOpen.\n"
+                            "[[KLAI_CORRESPONDENCE_VERIFY_FIRST]]\nVerify."
+                        )
+                    }
+                }
+            ]
+        }
+        await hook.async_post_call_success_hook(data, _make_user_api_key(), response)
+        rendered = response["choices"][0]["message"]["content"]
+        assert "KLAI_CORRESPONDENCE" not in rendered
+
+    @pytest.mark.asyncio
+    async def test_pasted_email_gate_bypass_still_runs_marker_strip(self, monkeypatch):
+        mod = _load_hook(monkeypatch)
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": self._PASTE}],
+            "stream": True,
+        }
+        retrieval_resp = _make_resp({"chunks": [], "retrieval_bypassed": True})
+
+        with _patch_http(monkeypatch, retrieval_resp=retrieval_resp):
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        meta = result["metadata"]["_klai_kb_meta"]
+        assert meta["gate_bypassed"] is True
+        assert meta["render_mode"] is not None
+        assert meta["user_query"] == self._PASTE
 
 
     @pytest.mark.asyncio

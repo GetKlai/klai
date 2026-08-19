@@ -222,6 +222,8 @@ class KbAnswerPolicy:
         org_id: object,
         user_id: object,
         retrieval_ms: int,
+        telemetry_level: object = "shadow",
+        latest_turn_pasted_correspondence_detected: bool = False,
         user_query: object = None,
         chunks_injected: int = 0,
         chunk_ids: list | None = None,
@@ -254,6 +256,10 @@ class KbAnswerPolicy:
             "org_id": org_id,
             "user_id": user_id,
             "user_query": user_query,
+            "telemetry_level": telemetry_level,
+            "latest_turn_pasted_correspondence_detected": bool(
+                latest_turn_pasted_correspondence_detected
+            ),
             "kb_narrow": self.kb_narrow,
             "chunks_injected": chunks_injected,
             "chunk_ids": chunk_ids if chunk_ids is not None else [],

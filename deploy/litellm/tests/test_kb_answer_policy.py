@@ -81,6 +81,8 @@ _EXPECTED_KEYS = {
     "org_id",
     "user_id",
     "user_query",
+    "telemetry_level",
+    "latest_turn_pasted_correspondence_detected",
     "kb_narrow",
     "chunks_injected",
     "chunk_ids",

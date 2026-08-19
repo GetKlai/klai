@@ -13,6 +13,7 @@ import pytest
 from klai_pasted_correspondence import (
     PASTED_CORRESPONDENCE_SCOPE,
     detect_pasted_correspondence,
+    extract_pasted_correspondence_text,
     pasted_correspondence_activity_line,
     pasted_correspondence_detected_from_meta,
     text_contains_pasted_correspondence,
@@ -50,6 +51,31 @@ class TestDetector:
 
     def test_english_email_header_block_detected(self):
         assert text_contains_pasted_correspondence(_ENGLISH_HEADER_PASTE) is True
+
+    def test_extract_excludes_leading_user_instruction(self):
+        extracted = extract_pasted_correspondence_text(_ENGLISH_HEADER_PASTE)
+
+        assert extracted.startswith("From: John Doe")
+        assert "Please have a look" not in extracted
+        assert "Everything on our side" in extracted
+
+    def test_extract_prefers_anchored_headers_over_inline_instruction_label(self):
+        text = (
+            "Compare this to: our incident policy.\n\n"
+            "From: John Doe <john@example.com>\n"
+            "Sent: Friday, August 14, 2026 9:22 PM\n"
+            "To: support@example.com\n"
+            "Subject: Outbound calls failing\n\n"
+            "Everything on our side is configured correctly."
+        )
+
+        extracted = extract_pasted_correspondence_text(text, assume_detected=True)
+
+        assert extracted.startswith("From: John Doe")
+        assert "Compare this to" not in extracted
+
+    def test_extract_returns_empty_for_plain_question(self):
+        assert extract_pasted_correspondence_text("What does SIP 404 mean?") == ""
 
     def test_bold_markdown_headers_detected(self):
         text = (
@@ -162,24 +188,29 @@ class TestDetector:
 
 
 class TestScopeBlockContract:
-    """Drift gate: weakening the contract wording must fail CI."""
+    """Drift gate for the machine-verifiable four-section answer shape."""
 
     @pytest.mark.parametrize(
         "phrase",
         [
-            "[Pasted third-party correspondence]",
-            "CLAIM by its author",
-            "the sender claims/reports",
-            "their 'we/you' framing does not transfer to the user",
-            "never advise the user to contact their own organisation",
-            "NOT a knowledge-base source",
-            "never state that the knowledge base 'confirms'",
-            "what should be verified first",
-            "Attribute each claim to the actual author",
+            "[[KLAI_CORRESPONDENCE_SENDER_STATEMENTS]]",
+            "[[KLAI_CORRESPONDENCE_KB_EVIDENCE]]",
+            "[[KLAI_CORRESPONDENCE_OPEN_QUESTIONS]]",
+            "[[KLAI_CORRESPONDENCE_VERIFY_FIRST]]",
+            "exactly four sections",
+            "matching internal evidence label",
+            "sole exception to the general no-citation-marker instruction",
+            "Attribute every statement to its actual author",
+            "remains open",
         ],
     )
     def test_contract_phrase_present(self, phrase):
         assert phrase in PASTED_CORRESPONDENCE_SCOPE
+
+    def test_contract_defines_no_ranked_cause_or_conclusion_slot(self):
+        lowered = PASTED_CORRESPONDENCE_SCOPE.casefold()
+        assert "most likely cause" not in lowered
+        assert "conclusion section" not in lowered
 
 
 class TestPolicyAndMetaPropagation:

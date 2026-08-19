@@ -76,9 +76,10 @@ _PAREN_CITATION_RE = re.compile(r"\(\s*\d{1,3}(?:\s*[,;]\s*\d{1,3})*\s*\)")
 _EVIDENCE_LABEL_RE = re.compile(
     r"\(\s*(?:[Ee]vidence\s+)?E\d{1,3}(?:\s*[,;]\s*E\d{1,3})*\s*\)"
     r"|\[\s*(?:[Ee]vidence\s+)?E\d{1,3}(?:\s*[,;]\s*E\d{1,3})*\s*\]"
-    r"|\b[Ee]vidence\s+E\d{1,3}\b"
+    r"|\b[Ee]vidence\s+E\d{1,3}\b",
+    re.IGNORECASE,
 )
-_EVIDENCE_ID_TOKEN_RE = re.compile(r"E\d{1,3}")
+_EVIDENCE_ID_TOKEN_RE = re.compile(r"E\d{1,3}", re.IGNORECASE)
 _MALFORMED_NUMBER_URL_RE = re.compile(r"\b\d{1,3}\(https?://[^)\s]+\)")
 _BARE_NUMBER_RUN_RE = re.compile(r"(?<![\w/])\b\d{1,3}(?:\s*[,;]\s*\d{1,3})+\b(?=(?:[.!?])?(?:\s|$))")
 _TOKEN_RE = re.compile(r"[a-z0-9À-ÿ][a-z0-9À-ÿ_-]{2,}", re.IGNORECASE)
@@ -641,15 +642,7 @@ def strip_model_citation_artifacts(
     cleaned = _MARKDOWN_LINK_RE.sub(r"\1", cleaned)
     cleaned = _BARE_BRACKET_CITATION_RE.sub("", cleaned)
     cleaned = _PAREN_CITATION_RE.sub("", cleaned)
-    if evidence_ids:
-
-        def _strip_injected_evidence_label(match: re.Match[str]) -> str:
-            tokens = _EVIDENCE_ID_TOKEN_RE.findall(match.group(0))
-            if tokens and all(token in evidence_ids for token in tokens):
-                return ""
-            return match.group(0)
-
-        cleaned = _EVIDENCE_LABEL_RE.sub(_strip_injected_evidence_label, cleaned)
+    cleaned = strip_injected_evidence_labels(cleaned, evidence_ids=evidence_ids)
     cleaned = _BARE_NUMBER_RUN_RE.sub("", cleaned)
     cleaned = _RAW_URL_RE.sub("", cleaned)
     # Trailing whitespace only — `\s+\n` would also swallow blank lines and
@@ -662,6 +655,35 @@ def strip_model_citation_artifacts(
     for placeholder, image_markdown in image_placeholders.items():
         cleaned = cleaned.replace(placeholder, image_markdown)
     return cleaned.strip()
+
+
+def strip_injected_evidence_labels(
+    text: str, *, evidence_ids: set[str] | None = None
+) -> str:
+    """Remove only prompt-internal evidence labels, preserving answer content."""
+    if not evidence_ids:
+        return text
+    normalised_evidence_ids = {evidence_id.upper() for evidence_id in evidence_ids}
+
+    removable_spans: list[tuple[int, int]] = []
+    for match in _EVIDENCE_LABEL_RE.finditer(text):
+        tokens = _EVIDENCE_ID_TOKEN_RE.findall(match.group(0))
+        if tokens and all(token.upper() in normalised_evidence_ids for token in tokens):
+            start, end = match.span()
+            if start > 0 and text[start - 1] in " \t" and (
+                end == len(text) or text[end] in " \t.,;:!?"
+            ):
+                start -= 1
+            elif (
+                start == 0 or text[start - 1] in "\r\n"
+            ) and end < len(text) and text[end] in " \t":
+                end += 1
+            removable_spans.append((start, end))
+
+    cleaned = text
+    for start, end in reversed(removable_spans):
+        cleaned = cleaned[:start] + cleaned[end:]
+    return cleaned
 
 
 def _tokens(text: str) -> set[str]:
@@ -1514,6 +1536,7 @@ __all__ = [
     "rewrite_preserves_subject",
     "salient_tokens",
     "source_url_key",
+    "strip_injected_evidence_labels",
     "strip_model_citation_artifacts",
     "trusted_sources_from_evidence_pack",
 ]

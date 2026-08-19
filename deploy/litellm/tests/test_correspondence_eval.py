@@ -16,9 +16,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from klai_correspondence_eval import (
     CorrespondenceCanary,
+    answer_shape_matches_expectation,
     chunk_matches_expected,
     load_pasted_correspondence_canaries,
     summarize_canary_samples,
@@ -62,6 +62,31 @@ class TestLoadPastedCorrespondenceCanaries:
             "Gebruiker/toestel bestaat niet, of extensie niet gevonden"
         ]
 
+    def test_answer_shape_expectations_cover_positive_and_negative_canaries(self):
+        canaries = load_pasted_correspondence_canaries(_CHAT_YAML)
+        by_id = {canary.id: canary for canary in canaries}
+
+        expected_sections = [
+            "sender_statements",
+            "kb_evidence",
+            "open_questions",
+            "verify_first",
+        ]
+        assert (
+            by_id["chat-pasted-correspondence-incident-shape"].expected_answer_sections
+            == expected_sections
+        )
+        assert (
+            by_id["chat-pasted-correspondence-short-ticket"].expected_answer_sections
+            == expected_sections
+        )
+        assert (
+            by_id[
+                "chat-pasted-correspondence-control-plain-question"
+            ].expected_answer_sections
+            == []
+        )
+
     def test_missing_file_raises_file_not_found(self, tmp_path: Path):
         with pytest.raises(FileNotFoundError):
             load_pasted_correspondence_canaries(tmp_path / "does-not-exist.yaml")
@@ -81,6 +106,7 @@ class TestLoadPastedCorrespondenceCanaries:
             "    org_zitadel_id: '1'\n"
             "    query: relevant\n"
             "    expected_chunks: ['some chunk marker']\n"
+            "    expected_answer_sections: []\n"
             "    mix: pasted_correspondence\n",
             encoding="utf-8",
         )
@@ -103,15 +129,35 @@ class TestLoadPastedCorrespondenceCanaries:
             "    org_zitadel_id: '1'\n"
             "    query: relevant\n"
             "    expected_chunks: ['some chunk marker']\n"
+            "    expected_answer_sections: []\n"
             "    mix: pasted_correspondence\n"
             "  - id: missing-expected-chunks\n"
             "    org_zitadel_id: '1'\n"
             "    query: relevant\n"
+            "    expected_answer_sections: []\n"
             "    mix: pasted_correspondence\n",
             encoding="utf-8",
         )
 
         with pytest.raises(ValueError, match="missing-expected-chunks"):
+            load_pasted_correspondence_canaries(suite)
+
+    def test_canary_without_answer_shape_assertion_raises_value_error(
+        self, tmp_path: Path
+    ):
+        suite = tmp_path / "mini.yaml"
+        suite.write_text(
+            "suite: mini\n"
+            "queries:\n"
+            "  - id: missing-shape-assertion\n"
+            "    org_zitadel_id: '1'\n"
+            "    query: relevant\n"
+            "    expected_chunks: ['some chunk marker']\n"
+            "    mix: pasted_correspondence\n",
+            encoding="utf-8",
+        )
+
+        with pytest.raises(ValueError, match="missing-shape-assertion"):
             load_pasted_correspondence_canaries(suite)
 
 
@@ -177,3 +223,45 @@ class TestCorrespondenceCanaryDataclass:
             id="x", org_zitadel_id="1", query="q", expected_chunks=[]
         )
         assert canary.expected_chunks == []
+
+
+class TestAnswerShapeExpectation:
+    def test_positive_canary_requires_satisfied_contract(self):
+        canary = CorrespondenceCanary(
+            id="x",
+            org_zitadel_id="1",
+            query="q",
+            expected_chunks=["marker"],
+            expected_answer_sections=[
+                "sender_statements",
+                "kb_evidence",
+                "open_questions",
+                "verify_first",
+            ],
+        )
+
+        assert answer_shape_matches_expectation(
+            canary, {"answer_contract": {"satisfied": True}}
+        )
+        assert not answer_shape_matches_expectation(
+            canary, {"answer_contract": {"satisfied": False}}
+        )
+
+    def test_negative_control_requires_contract_to_be_absent(self):
+        canary = CorrespondenceCanary(
+            id="control",
+            org_zitadel_id="1",
+            query="q",
+            expected_chunks=["marker"],
+            expected_answer_sections=[],
+        )
+
+        assert answer_shape_matches_expectation(canary, {})
+        assert not answer_shape_matches_expectation(
+            canary, {"answer_contract": {"satisfied": True}}
+        )
+        assert not answer_shape_matches_expectation(
+            canary,
+            {},
+            raw_answer="[[KLAI_CORRESPONDENCE_SENDER_STATEMENTS]] leaked",
+        )

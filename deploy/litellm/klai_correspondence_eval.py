@@ -27,6 +27,12 @@ from typing import Any
 import yaml
 
 _MIN_BODY_CANARY_CHARS = 16
+_ANSWER_CONTRACT_SECTIONS = [
+    "sender_statements",
+    "kb_evidence",
+    "open_questions",
+    "verify_first",
+]
 
 
 @dataclass(frozen=True)
@@ -35,6 +41,7 @@ class CorrespondenceCanary:
     org_zitadel_id: str
     query: str
     expected_chunks: list[str] = field(default_factory=list)
+    expected_answer_sections: list[str] = field(default_factory=list)
 
 
 def load_pasted_correspondence_canaries(
@@ -49,12 +56,24 @@ def load_pasted_correspondence_canaries(
     for entry in data.get("queries", []):
         if entry.get("mix") != "pasted_correspondence":
             continue
+        if "expected_answer_sections" not in entry:
+            raise ValueError(
+                "pasted_correspondence canary missing expected_answer_sections: "
+                f"{entry.get('id')}"
+            )
+        expected_answer_sections = list(entry.get("expected_answer_sections") or [])
+        if expected_answer_sections not in ([], _ANSWER_CONTRACT_SECTIONS):
+            raise ValueError(
+                "pasted_correspondence canary has invalid expected_answer_sections: "
+                f"{entry.get('id')}={expected_answer_sections}"
+            )
         canaries.append(
             CorrespondenceCanary(
                 id=entry["id"],
                 org_zitadel_id=str(entry["org_zitadel_id"]),
                 query=entry["query"],
                 expected_chunks=list(entry.get("expected_chunks") or []),
+                expected_answer_sections=expected_answer_sections,
             )
         )
 
@@ -71,6 +90,19 @@ def load_pasted_correspondence_canaries(
         )
 
     return canaries
+
+
+def answer_shape_matches_expectation(
+    canary: CorrespondenceCanary,
+    inspection: dict[str, Any],
+    *,
+    raw_answer: str = "",
+) -> bool:
+    """Evaluate the canary's structural answer assertion without phrase lists."""
+    contract = inspection.get("answer_contract")
+    if not canary.expected_answer_sections:
+        return contract is None and "[[KLAI_CORRESPONDENCE_" not in raw_answer.upper()
+    return isinstance(contract, dict) and contract.get("satisfied") is True
 
 
 def _chunk_fields(chunk: dict[str, Any]) -> tuple[str, str]:

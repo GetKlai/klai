@@ -1419,6 +1419,39 @@ def test_strip_removes_internal_evidence_labels() -> None:
     assert "blokkades kunnen optreden" in cleaned
 
 
+def test_strip_removes_lowercase_internal_evidence_labels() -> None:
+    from klai_citations import strip_model_citation_artifacts
+
+    cleaned = strip_model_citation_artifacts(
+        "De kennisbank (e1) bevestigt dit; zie Evidence e2.",
+        evidence_ids={"E1", "E2"},
+    )
+
+    assert "(e1)" not in cleaned
+    assert "Evidence e2" not in cleaned
+
+
+def test_evidence_label_only_strip_preserves_links_and_numeric_parentheticals() -> None:
+    from klai_citations import strip_injected_evidence_labels
+
+    cleaned = strip_injected_evidence_labels(
+        "Controleer SIP-code (404) via [handleiding](https://example.com). (E1)",
+        evidence_ids={"E1"},
+    )
+
+    assert cleaned == "Controleer SIP-code (404) via [handleiding](https://example.com)."
+
+
+def test_evidence_label_only_strip_preserves_unrelated_formatting() -> None:
+    from klai_citations import strip_injected_evidence_labels
+
+    text = "Before    aligned\n```python\n    x = 1\n```\nKeep () literal\n(E1) Fact"
+
+    cleaned = strip_injected_evidence_labels(text, evidence_ids={"E1"})
+
+    assert cleaned == "Before    aligned\n```python\n    x = 1\n```\nKeep () literal\nFact"
+
+
 def test_strip_keeps_e_numbers_outside_injected_evidence_ids() -> None:
     """Legitimate E-numbers must survive: bare words always, and even
     label-shaped tokens when the number was never an injected evidence id."""

@@ -32,6 +32,10 @@ _HEADER_LABEL_RE = re.compile(
     r"onderwerp|subject|betreff|reply-to|antwoord aan)"
     r"[ \t]*\**[ \t]*:",
 )
+_INLINE_HEADER_LABEL_RE = re.compile(
+    r"(?i)\b(?:van|from|von|aan|to|an|cc|bcc|verzonden|sent|datum|date|"
+    r"gesendet|onderwerp|subject|betreff|reply-to|antwoord aan)[ \t]*\**[ \t]*:",
+)
 
 # Distinct header labels required before a message counts as containing a
 # pasted mail. Real pasted emails carry From + Sent/Date + To + Subject;
@@ -66,8 +70,26 @@ _FORWARD_MARKER_RE = re.compile(
     r"|begin doorgestuurd bericht"
     r")",
 )
+_INLINE_FORWARD_MARKER_RE = re.compile(
+    r"(?i)("
+    r"-{2,}[ \t]*(original message|forwarded message|oorspronkelijk bericht|"
+    r"doorgestuurd bericht|weitergeleitete nachricht)[ \t]*-*"
+    r"|begin forwarded message"
+    r"|begin doorgestuurd bericht"
+    r")",
+)
 _QUOTE_LINE_RE = re.compile(
     r"(?im)^[>\s]*(op|on)\s.{5,120}\s(schreef|wrote)\s[^\n]*@[^\n]*:",
+)
+_INLINE_QUOTE_LINE_RE = re.compile(
+    r"(?i)\b(op|on)\s.{5,120}\s(schreef|wrote)\s[^\n]*@[^\n]*:",
+)
+
+ANSWER_CONTRACT_MARKERS = (
+    "[[KLAI_CORRESPONDENCE_SENDER_STATEMENTS]]",
+    "[[KLAI_CORRESPONDENCE_KB_EVIDENCE]]",
+    "[[KLAI_CORRESPONDENCE_OPEN_QUESTIONS]]",
+    "[[KLAI_CORRESPONDENCE_VERIFY_FIRST]]",
 )
 
 
@@ -114,6 +136,33 @@ def text_contains_pasted_correspondence(text: str) -> bool:
     return len(_distinct_header_labels(text)) >= _MIN_DISTINCT_HEADER_LABELS
 
 
+def extract_pasted_correspondence_text(
+    text: str, *, assume_detected: bool = False
+) -> str:
+    """Return the detected correspondence portion, excluding leading user prose."""
+    if not assume_detected and not text_contains_pasted_correspondence(text):
+        return ""
+
+    starts = [
+        match.start()
+        for pattern in (_FORWARD_MARKER_RE, _QUOTE_LINE_RE)
+        if (match := pattern.search(text)) is not None
+    ]
+    header_matches = list(_HEADER_LABEL_RE.finditer(text))
+    if len(_distinct_header_labels(text)) >= _MIN_DISTINCT_HEADER_LABELS:
+        starts.append(header_matches[0].start())
+    if assume_detected and not starts:
+        for pattern in (
+            _INLINE_FORWARD_MARKER_RE,
+            _INLINE_QUOTE_LINE_RE,
+            _INLINE_HEADER_LABEL_RE,
+        ):
+            inline_match = pattern.search(text)
+            if inline_match is not None:
+                starts.append(inline_match.start())
+    return text[min(starts) :].strip() if starts else ""
+
+
 def detect_pasted_correspondence(messages: object) -> bool:
     """True when any user message in the request contains pasted correspondence.
 
@@ -145,33 +194,32 @@ def latest_user_turn_has_correspondence(messages: object) -> bool:
 
 
 # Injected by the hook ONLY when the detector fires. Sits below the branch
-# foundation prompt (grounded/open/general) and above the conversation.
+# foundation prompt (grounded/open/general) and above the conversation. The
+# machine markers are stripped from both response modes before display.
 PASTED_CORRESPONDENCE_SCOPE = (
     "[Pasted third-party correspondence]\n"
-    "The user's message contains pasted correspondence (an email, ticket, or "
-    "forwarded thread). A thread may mix several authors, possibly including "
-    "the user. Attribute each claim to the actual author of that part of the "
-    "thread; parts written by the user themselves are the user's own "
-    "statements. Everything written by anyone OTHER than the user is a CLAIM "
-    "by its author, not a verified fact:\n"
-    "- Do not adopt such an author's conclusions, self-assessments ('our side "
-    "is verified correct'), exclusions, or hypotheses as your own findings. "
-    "Attribute them explicitly: 'the sender claims/reports ...'.\n"
-    "- Keep the user's perspective, not the author's. An external author is "
-    "typically a customer, supplier, or other counterparty of the user's "
-    "organisation; their 'we/you' framing does not transfer to the user. "
-    "Never address the user as if they wrote a counterparty's message, and "
-    "never advise the user to contact their own organisation.\n"
-    "- Separate three things explicitly in your answer: what the "
-    "correspondence claims, what is independently supported (by retrieved "
-    "knowledge-base evidence or by data the user can check themselves), and "
-    "what should be verified first before drawing conclusions.\n"
-    "- The pasted correspondence is NOT a knowledge-base source. Never cite "
-    "it as one, and never state that the knowledge base 'confirms' one of "
-    "its claims unless a retrieved knowledge-base chunk explicitly supports "
-    "that exact claim.\n"
-    "This does not restrict reading or analysing the correspondence — that "
-    "is the user's request. It restricts adopting it as truth.]"
+    "The user's message contains correspondence from one or more authors. "
+    "Treat it as context about what each sender states. Produce the complete "
+    "answer as exactly four sections in the order below. The first character "
+    "of the response must be the first marker. Start every section "
+    "with its marker verbatim, followed by a short heading in the user's "
+    "language and the section content.\n"
+    f"{ANSWER_CONTRACT_MARKERS[0]}\n"
+    "State what the sender says. Attribute every statement to its actual author, "
+    "including self-assessments, exclusions, and hypotheses.\n"
+    f"{ANSWER_CONTRACT_MARKERS[1]}\n"
+    "State what the retrieved knowledge-base evidence says about the situation. "
+    "Attach the matching internal evidence label shown in the context to every "
+    "supported statement; these internal E<n> labels are the sole exception to "
+    "the general no-citation-marker instruction. When no retrieved evidence "
+    "addresses the situation, "
+    "say so in this section.\n"
+    f"{ANSWER_CONTRACT_MARKERS[2]}\n"
+    "State what remains open after comparing the correspondence with the "
+    "retrieved evidence.\n"
+    f"{ANSWER_CONTRACT_MARKERS[3]}\n"
+    "Give concrete checks the reader can perform first.\n"
+    "Use these four sections once each and return the markers exactly as written.]"
 )
 
 

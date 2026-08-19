@@ -420,6 +420,7 @@ queries:
     reference_answer: "Een 404 Not Found die pas na een geslaagde sessie-opzet (183 Session Progress) optreedt, wijst op een routerings- of belmachtigingscontrole die na de initiele sessie-opzet wordt uitgevoerd — niet per se op een klantconfiguratiefout. Het antwoord moet de SIP-responscode 404 duiden (gebruiker/toestel niet gevonden of niet toegewezen) op basis van de kennisbank, niet de conclusie van de afzender (bijv. een fraudehypothese) als vaststaand feit overnemen."
     expected_topics: [sip, 404, trunk, voip, responscode]
     expected_chunks: ["Gebruiker/toestel bestaat niet, of extensie niet gevonden"]
+    expected_answer_sections: [sender_statements, kb_evidence, open_questions, verify_first]
     mix: pasted_correspondence
 
   - id: chat-pasted-correspondence-short-ticket
@@ -438,6 +439,7 @@ queries:
     reference_answer: "Een SIP 403 Forbidden bij registratie duidt meestal op onjuiste credentials of een IP dat niet is toegestaan bij de trunk-provider, ongeacht dat de klant meldt dat de credentials kloppen — het antwoord moet dit als te verifieren mogelijke oorzaak noemen, niet de klantbewering zonder meer overnemen."
     expected_topics: [sip, 403, forbidden, registratie]
     expected_chunks: ["Verkeerde credentials of IP niet toegestaan"]
+    expected_answer_sections: [sender_statements, kb_evidence, open_questions, verify_first]
     mix: pasted_correspondence
 
   - id: chat-pasted-correspondence-control-plain-question
@@ -447,6 +449,7 @@ queries:
     reference_answer: "Leg uit dat een SIP 404 Not Found betekent dat de gebelde gebruiker of het toestel niet gevonden is of niet is toegewezen, op basis van de kennisbank."
     expected_topics: [sip, 404, responscode]
     expected_chunks: ["Gebruiker/toestel bestaat niet, of extensie niet gevonden"]
+    expected_answer_sections: []
     mix: pasted_correspondence
     # Negative-class control (REQ-6): a plain short question with NO pasted
     # correspondence. Proves the distillation prompt-variant does not fire

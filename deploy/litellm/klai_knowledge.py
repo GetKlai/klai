@@ -343,6 +343,48 @@ def _select_kb_render_strategy(original_stream: object) -> KbCitationRenderStrat
     )
 
 
+def _attach_correspondence_render_meta(
+    data: dict[str, Any],
+    *,
+    prompt_mode: object,
+    state: str,
+    org_id: object,
+    user_id: object,
+    user_query: object,
+    telemetry_level: object,
+    latest_turn_correspondence: bool,
+    user_provided_content_context: bool,
+) -> None:
+    """Ensure model routes carrying the contract always run the strip pass."""
+    original_stream = data.get("stream")
+    render_strategy = _select_kb_render_strategy(original_stream)
+    if render_strategy.force_non_streaming:
+        data["stream"] = False
+    data.setdefault("metadata", {})["_klai_kb_meta"] = {
+        "org_id": org_id,
+        "user_id": user_id,
+        "user_query": user_query,
+        "telemetry_level": telemetry_level,
+        "latest_turn_pasted_correspondence_detected": bool(
+            latest_turn_correspondence
+        ),
+        "chunks_injected": 0,
+        "citation_chunks": [],
+        "trusted_sources": [],
+        "original_stream": original_stream,
+        "render_mode": render_strategy.mode,
+        "retrieval_ms": 0,
+        "gate_bypassed": False,
+        "answer_policy_state": state,
+        "chat_retrieval_prompt_mode": prompt_mode,
+        "answer_policy_mode": "open",
+        "user_provided_content_context": user_provided_content_context,
+        "allow_uncited_user_content": user_provided_content_context,
+        "suppress_kb_citations": False,
+        "pasted_correspondence_detected": True,
+    }
+
+
 _KLAI_CONTEXT_ORCHESTRATOR = KlaiContextOrchestrator()
 
 # @MX:NOTE: classify_gap, fire_gap_event, fire_retrieval_log moved to
@@ -431,6 +473,7 @@ class KlaiKnowledgeHook(CustomLogger):
         # correspondence is still in the model's context and follow-ups are
         # exactly where the sender's claims get re-adopted as facts.
         pasted_correspondence = _detect_pasted_correspondence(messages)
+        latest_turn_correspondence = _latest_user_turn_has_correspondence(messages)
         if _is_trivial(query) and not pasted_correspondence:
             return data
 
@@ -606,6 +649,7 @@ class KlaiKnowledgeHook(CustomLogger):
             return data
 
         chat_retrieval_policy = _resolve_chat_retrieval_policy(feature)
+        telemetry_level = feature.get("telemetry_level", "shadow")
 
         # Strict mode (kb_narrow=True) is KB-only. The web-search tool is a
         # LibreChat affordance the KB hook does not otherwise gate; strip it
@@ -651,6 +695,18 @@ class KlaiKnowledgeHook(CustomLogger):
             )
             _append_final_language_reminder(messages, include_kb_reminder=False)
             data["messages"] = messages
+            if pasted_correspondence:
+                _attach_correspondence_render_meta(
+                    data,
+                    prompt_mode=chat_retrieval_policy.prompt_mode,
+                    state="general",
+                    org_id=org_id,
+                    user_id=chat_retrieval_policy.user_id or librechat_user_id,
+                    user_query=query,
+                    telemetry_level=telemetry_level,
+                    latest_turn_correspondence=latest_turn_correspondence,
+                    user_provided_content_context=user_provided_content_context,
+                )
             return data
         if _prompt_mode_is_unavailable(chat_retrieval_policy.prompt_mode):
             failure_reason = (
@@ -691,6 +747,18 @@ class KlaiKnowledgeHook(CustomLogger):
             _prepend_system_prefix(messages, prefix)
             _append_final_language_reminder(messages, include_kb_reminder=False)
             data["messages"] = messages
+            if pasted_correspondence:
+                _attach_correspondence_render_meta(
+                    data,
+                    prompt_mode=chat_retrieval_policy.prompt_mode,
+                    state="retrieval_unavailable",
+                    org_id=org_id,
+                    user_id=chat_retrieval_policy.user_id or librechat_user_id,
+                    user_query=query,
+                    telemetry_level=telemetry_level,
+                    latest_turn_correspondence=latest_turn_correspondence,
+                    user_provided_content_context=user_provided_content_context,
+                )
             return data
 
         # SPEC-SEC-IDENTITY-ASSERT-001 follow-up: retrieval-api forwards
@@ -771,7 +839,6 @@ class KlaiKnowledgeHook(CustomLogger):
         # sub-question fan-out and the multi_question answer-instruction
         # flag: a pasted email IS the distilled query's source text, not a
         # list of independent questions to split and fan out.
-        latest_turn_correspondence = _latest_user_turn_has_correspondence(messages)
         (
             rewritten_query,
             classified_node_ids,
@@ -786,7 +853,6 @@ class KlaiKnowledgeHook(CustomLogger):
         # the query_rewrite log line in 'off' / 'shadow' mode. Operators keep
         # full-shape diagnostics (timing, was_changed, skip reason) but never
         # see literal customer text.
-        telemetry_level = feature.get("telemetry_level", "shadow")
         try:
             # Guard-fire is warning-level on purpose: decision telemetry must
             # reach VictoriaLogs in production. Dropped tokens are literal
@@ -987,6 +1053,8 @@ class KlaiKnowledgeHook(CustomLogger):
             data.setdefault("metadata", {})["_klai_kb_meta"] = answer_policy.to_kb_meta(
                 org_id=org_id,
                 user_id=user_id,
+                telemetry_level=telemetry_level,
+                latest_turn_pasted_correspondence_detected=latest_turn_correspondence,
                 user_query=query,
                 retrieval_ms=int((time.monotonic() - t0) * 1000),
                 no_citable_sources=bool(kb_narrow),
@@ -1036,6 +1104,8 @@ class KlaiKnowledgeHook(CustomLogger):
             data.setdefault("metadata", {})["_klai_kb_meta"] = answer_policy.to_kb_meta(
                 org_id=org_id,
                 user_id=user_id,
+                telemetry_level=telemetry_level,
+                latest_turn_pasted_correspondence_detected=latest_turn_correspondence,
                 user_query=query,
                 retrieval_ms=retrieval_ms,
                 no_citable_sources=True,
@@ -1070,7 +1140,7 @@ class KlaiKnowledgeHook(CustomLogger):
             # be verified against the real hook flow, not a hand-built
             # kb_meta in a test.
             render_mode = None
-            if unchecked_questions:
+            if unchecked_questions or pasted_correspondence:
                 original_stream = data.get("stream")
                 render_strategy = _select_kb_render_strategy(original_stream)
                 if render_strategy.force_non_streaming:
@@ -1085,6 +1155,9 @@ class KlaiKnowledgeHook(CustomLogger):
             data.setdefault("metadata", {})["_klai_kb_meta"] = answer_policy.to_kb_meta(
                 org_id=org_id,
                 user_id=user_id,
+                telemetry_level=telemetry_level,
+                latest_turn_pasted_correspondence_detected=latest_turn_correspondence,
+                user_query=query,
                 retrieval_ms=retrieval_ms,
                 gate_bypassed=True,
                 retrieval_request_id=retrieval_request_id,
@@ -1124,6 +1197,8 @@ class KlaiKnowledgeHook(CustomLogger):
             data.setdefault("metadata", {})["_klai_kb_meta"] = answer_policy.to_kb_meta(
                 org_id=org_id,
                 user_id=user_id,
+                telemetry_level=telemetry_level,
+                latest_turn_pasted_correspondence_detected=latest_turn_correspondence,
                 user_query=query,
                 retrieval_ms=retrieval_ms,
                 confidence_band=result.get("confidence_band"),
@@ -1347,6 +1422,8 @@ class KlaiKnowledgeHook(CustomLogger):
             data.setdefault("metadata", {})["_klai_kb_meta"] = answer_policy.to_kb_meta(
                 org_id=org_id,
                 user_id=user_id,
+                telemetry_level=telemetry_level,
+                latest_turn_pasted_correspondence_detected=latest_turn_correspondence,
                 user_query=query,
                 retrieval_ms=retrieval_ms,
                 chunks_injected=len(context_chunks),
@@ -1425,6 +1502,8 @@ class KlaiKnowledgeHook(CustomLogger):
                     answer_policy.to_kb_meta(
                         org_id=org_id,
                         user_id=user_id,
+                        telemetry_level=telemetry_level,
+                        latest_turn_pasted_correspondence_detected=latest_turn_correspondence,
                         user_query=query,
                         retrieval_ms=retrieval_ms,
                         evidence_pack=evidence_pack
@@ -1538,6 +1617,8 @@ class KlaiKnowledgeHook(CustomLogger):
         data.setdefault("metadata", {})["_klai_kb_meta"] = answer_policy.to_kb_meta(
             org_id=org_id,
             user_id=user_id,
+            telemetry_level=telemetry_level,
+            latest_turn_pasted_correspondence_detected=latest_turn_correspondence,
             user_query=query,
             retrieval_ms=retrieval_ms,
             chunks_injected=len(context_chunks),
@@ -1570,7 +1651,9 @@ class KlaiKnowledgeHook(CustomLogger):
     async def async_post_call_success_hook(self, data, user_api_key_dict, response):
         kb_meta = data.get("metadata", {}).get("_klai_kb_meta")
         if kb_meta and (
-            not kb_meta.get("gate_bypassed") or kb_meta.get("unchecked_questions")
+            not kb_meta.get("gate_bypassed")
+            or kb_meta.get("unchecked_questions")
+            or kb_meta.get("pasted_correspondence_detected")
         ):
             stats = _compose_non_streaming_kb_response(response, kb_meta)
             _log_kb_citation_render(logger, kb_meta, stats, stream=False)
@@ -1589,7 +1672,11 @@ class KlaiKnowledgeHook(CustomLogger):
         kb_meta = request_data.get("metadata", {}).get("_klai_kb_meta")
         if (
             not kb_meta
-            or (kb_meta.get("gate_bypassed") and not kb_meta.get("unchecked_questions"))
+            or (
+                kb_meta.get("gate_bypassed")
+                and not kb_meta.get("unchecked_questions")
+                and not kb_meta.get("pasted_correspondence_detected")
+            )
             or not _is_streaming_kb_render_mode(kb_meta.get("render_mode"))
         ):
             async for item in response:
@@ -1599,16 +1686,14 @@ class KlaiKnowledgeHook(CustomLogger):
         pending_item = None
         async for item in response:
             if pending_item is not None:
+                stats = _compose_streaming_kb_response(pending_item, kb_meta)
+                _log_kb_citation_render(logger, kb_meta, stats, stream=True)
+                footer_item = _split_if_rendered_stop_item(pending_item, stats)
+                if footer_item is not None:
+                    yield footer_item
                 yield pending_item
             pending_item = item
-            stats = _compose_streaming_kb_response(item, kb_meta)
-            _log_kb_citation_render(logger, kb_meta, stats, stream=True)
-            footer_item = _split_if_rendered_stop_item(item, stats)
-            if footer_item is not None:
-                yield footer_item
-        if pending_item is not None and not kb_meta.get(
-            "_citation_stream_sources_appended"
-        ):
+        if pending_item is not None:
             stats = _compose_streaming_kb_response(
                 pending_item, kb_meta, flush_stream=True
             )

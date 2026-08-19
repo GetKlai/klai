@@ -33,8 +33,9 @@ GROUNDED_ANCHORS=(
 )
 
 # Set 2 — LiteLLM-hook prefix anchors (canonical homes:
-# deploy/litellm/klai_kb_answer_policy.py and
-# deploy/litellm/klai_kb_context_prompt.py).
+# deploy/litellm/klai_kb_answer_policy.py,
+# deploy/litellm/klai_kb_context_prompt.py, and
+# deploy/litellm/klai_kb_system_prompt.py).
 #
 # Phase 4 (REQ-10) rewrote these blocks from NL-only to English-prefixed
 # multilingual instructions. The model receives English instructions but
@@ -78,7 +79,7 @@ GROUNDED_ALLOWED='^(klai-libs/chat-prompts/|deploy/litellm/klai_chat_prompts\.py
 #   - this script
 #   - SPEC + klai rules + docs (they describe what the hook says)
 #   - LiteLLM hook tests
-HOOK_ALLOWED='^(deploy/litellm/klai_knowledge\.py|deploy/litellm/klai_kb_answer_policy\.py|deploy/litellm/klai_kb_context_prompt\.py|deploy/litellm/test_|deploy/litellm/tests/|klai-libs/chat-prompts/|docs/specs/|scripts/lint-no-duplicate-chat-prompt\.sh|\.claude/rules/klai/|docs/architecture/|docs/runbooks/|docs/retros/|docs/audit-|docs/research/kb-chat-system-prompts\.md)'
+HOOK_ALLOWED='^(deploy/litellm/klai_knowledge\.py|deploy/litellm/klai_kb_answer_policy\.py|deploy/litellm/klai_kb_context_prompt\.py|deploy/litellm/klai_kb_system_prompt\.py|deploy/litellm/test_|deploy/litellm/tests/|klai-libs/chat-prompts/|docs/specs/|scripts/lint-no-duplicate-chat-prompt\.sh|\.claude/rules/klai/|docs/architecture/|docs/runbooks/|docs/retros/|docs/audit-|docs/research/kb-chat-system-prompts\.md)'
 
 # Excludes for traversal speed + correctness. These are paths we never
 # want to scan (build artefacts, vendored deps).
