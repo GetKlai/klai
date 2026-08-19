@@ -23,16 +23,35 @@ minutes):
   not twenty) — see ``ChunkObservation``. A single success anywhere resets
   the counter to zero.
 - Ratio: once at least ``min_attempts_for_ratio`` URLs have been attempted
-  (crawl-wide, within ONE ``_chunked_bulk_fetch`` call), abort once MORE
-  than ``failure_ratio_threshold`` of them failed. Unlike the consecutive
-  trigger, this one counts real per-URL attempts/failures, not
-  chunk-as-one-observation.
+  (crawl-wide, within ONE ``_chunked_bulk_fetch`` call), this is now a
+  TWO-STEP LADDER instead of a single abort-or-nothing gate (2026-08-19,
+  onderdeel 3 — the "20 minutes, zero pages" incident's actual trigger was
+  crawl4ai wrapping a 429 in an opaque 500, so the failure REASON was
+  unreadable but the failure RATE was known — 100%. The rate should have
+  driven a response even though the reason didn't):
+
+  - once the ratio exceeds ``slowdown_ratio_threshold``, verdict is
+    SLOWDOWN — not an abort. The caller (``crawl4ai_client._chunked_bulk_
+    fetch``) reuses the EXISTING RATE_LIMITED-flavoured stop-and-retry
+    path (``crawl_site``'s Deel B halving/cooldown/give-up-after-N-
+    halvings ladder) for this verdict too, so a persistently high ratio
+    that never recovers still gives up eventually — via the SAME
+    ``_MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS`` cap, not a second one.
+  - once the ratio exceeds ``failure_ratio_threshold`` (unchanged, the
+    original single gate), verdict is ABORT_PERSISTENT_FAILURE — give up
+    immediately, same as before. This threshold MUST stay above
+    ``slowdown_ratio_threshold`` (checked first) so a genuinely dead site
+    is never mistaken for merely a "go slower" case.
+
+  Unlike the consecutive trigger, this one counts real per-URL
+  attempts/failures, not chunk-as-one-observation.
 - Refusal: ``refusal_threshold`` observed REFUSED outcomes (see
   ``knowledge_ingest.reason_codes.FetchReasonCode.REFUSED``) abort
   immediately. The site is explicitly refusing automated access — slowing
   down does not fix that, unlike real rate-limiting — so this counter is
-  never reset by an interleaved success and is checked independently of
-  the other two.
+  never reset by an interleaved success, is checked independently of (and
+  before) the other two, and NEVER downgrades to SLOWDOWN regardless of
+  the concurrent failure ratio.
 
 Pure function, no I/O, no wall clock — every caller-observable value is a
 parameter, matching ``domain_rate_limit_control.compute_domain_rate_limit_
@@ -49,9 +68,16 @@ from enum import StrEnum
 
 
 class BreakerVerdict(StrEnum):
-    """The three outcomes ``evaluate_chunk`` can return."""
+    """The four outcomes ``evaluate_chunk`` can return.
+
+    SLOWDOWN sits between CONTINUE and the two ABORT verdicts: the failure
+    ratio is elevated enough to warrant pacing down, but not (yet) high
+    enough to justify giving up. See the module docstring's "Ratio" bullet
+    for the full ladder and how the caller is expected to treat each verdict.
+    """
 
     CONTINUE = "continue"
+    SLOWDOWN = "slowdown"
     ABORT_PERSISTENT_FAILURE = "abort_persistent_failure"
     ABORT_REFUSAL = "abort_refusal"
 
@@ -98,13 +124,24 @@ def evaluate_chunk(
     min_attempts_for_ratio: int,
     failure_ratio_threshold: float,
     refusal_threshold: int,
+    slowdown_ratio_threshold: float,
 ) -> tuple[HostCircuitBreakerState, BreakerVerdict]:
-    """Fold ``observation`` into ``state`` and decide continue vs. abort.
+    """Fold ``observation`` into ``state`` and decide continue/slowdown/abort.
 
     Refusal is checked first — it is never undone by a success in the same
-    or an earlier chunk, unlike the consecutive-failure streak. Either the
-    consecutive-failure trigger or the ratio trigger is independently
-    sufficient to abort once refusal does not already apply.
+    or an earlier chunk, unlike the consecutive-failure streak, and it NEVER
+    downgrades to SLOWDOWN: a refusal is not a pacing problem. Consecutive
+    failures abort next — an intermittently-failing site never reaches
+    ``min_attempts_for_ratio`` worth of runway before this trips, so it is
+    checked before the ratio ladder, not after.
+
+    The ratio ladder itself checks the higher (abort) threshold before the
+    lower (slowdown) one, so a ratio that already exceeds
+    ``failure_ratio_threshold`` the very first time ``min_attempts_for_ratio``
+    is reached goes straight to ABORT_PERSISTENT_FAILURE — it is never
+    reported as SLOWDOWN first. Callers MUST pass
+    ``slowdown_ratio_threshold < failure_ratio_threshold``; this function
+    does not itself validate the ordering.
     """
     new_state = HostCircuitBreakerState(
         consecutive_failures=(0 if observation.any_success else state.consecutive_failures + 1),
@@ -119,10 +156,11 @@ def evaluate_chunk(
     if new_state.consecutive_failures >= consecutive_failure_threshold:
         return new_state, BreakerVerdict.ABORT_PERSISTENT_FAILURE
 
-    if (
-        new_state.attempted >= min_attempts_for_ratio
-        and new_state.failed / new_state.attempted > failure_ratio_threshold
-    ):
-        return new_state, BreakerVerdict.ABORT_PERSISTENT_FAILURE
+    if new_state.attempted >= min_attempts_for_ratio:
+        failure_ratio = new_state.failed / new_state.attempted
+        if failure_ratio > failure_ratio_threshold:
+            return new_state, BreakerVerdict.ABORT_PERSISTENT_FAILURE
+        if failure_ratio > slowdown_ratio_threshold:
+            return new_state, BreakerVerdict.SLOWDOWN
 
     return new_state, BreakerVerdict.CONTINUE

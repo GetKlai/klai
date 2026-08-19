@@ -2190,6 +2190,17 @@ async def crawl_site(
         # behaviour, immediately. A site that keeps rate-limiting through
         # ``_MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS`` halvings in a row is
         # finally given up on too — see that constant's docstring.
+        #
+        # 2026-08-19 (onderdeel 3): ``stop_trigger_reason_code`` here is also
+        # RATE_LIMITED when the host circuit breaker's own ratio ladder
+        # (``host_circuit_breaker.BreakerVerdict.SLOWDOWN``) is what stopped
+        # ``_chunked_bulk_fetch`` — a failure rate for an UNREADABLE reason
+        # (crawl4ai wrapping a 429 in an opaque 500 is the incident that
+        # motivated this) gets the exact same slow-down-then-give-up ladder
+        # as a genuine, readable RATE_LIMITED signal. This branch has no
+        # breaker-specific logic — it cannot tell the two apart, and does
+        # not need to (``fetch.circuit_breaker_slowdown_triggered`` carries
+        # that distinction for logging/observability only).
         carried_over_urls: list[str] = []
         stop_crawl_after_this_batch = False
         if fetch.cancelled:
@@ -3507,17 +3518,31 @@ class ChunkedFetchResult:
             will not help", the same give-up semantics as a confirmed
             block.
         circuit_breaker_triggered: True when
-            ``knowledge_ingest.host_circuit_breaker`` (onderdeel 2, the
-            general-purpose "everything is failing" backstop — see that
-            module's docstring) is why chunking stopped, as opposed to the
-            RATE_LIMITED/BLOCKED_ANTI_BOT triggers above.
+            ``knowledge_ingest.host_circuit_breaker`` returned an ABORT
+            verdict (persistent failure or repeated refusal — onderdeel 2,
+            the general-purpose "everything is failing" backstop) and is why
+            chunking stopped, as opposed to the RATE_LIMITED/BLOCKED_ANTI_BOT
+            triggers above. Give-up semantics — unchanged by onderdeel 3
+            below.
+        circuit_breaker_slowdown_triggered: True when the breaker instead
+            returned BreakerVerdict.SLOWDOWN (onderdeel 3, 2026-08-19 — a
+            failure ratio between ``crawl_circuit_breaker_slowdown_ratio``
+            and ``crawl_circuit_breaker_failure_ratio``, see config.py).
+            Deliberately a SEPARATE flag from ``circuit_breaker_triggered``
+            — this one gets RATE_LIMITED-flavoured retry-at-a-lower-rate
+            treatment in ``crawl_site``, not give-up treatment, so a caller
+            must not conflate the two when counting "how many times did the
+            breaker give up" vs. "how many times did the breaker just ask
+            for less speed".
         not_attempted_reason_code: the FetchReasonCode value ``crawl_site``
             should use for every URL in ``not_attempted`` — NOT_FETCHED_
-            RATE_LIMIT_STOP by default (existing behaviour, unchanged),
-            or NOT_FETCHED_CIRCUIT_BREAKER_STOP when
-            ``circuit_breaker_triggered`` is True, so "how many times did
-            the breaker actually intervene" has an honest answer. Set to
-            NOT_FETCHED_CANCELLED when ``cancelled`` is True (see below).
+            RATE_LIMIT_STOP by default (existing behaviour, unchanged; also
+            what a SLOWDOWN verdict leaves this as, since those URLs are
+            expected to be retried, not abandoned), or NOT_FETCHED_CIRCUIT_
+            BREAKER_STOP when ``circuit_breaker_triggered`` (an ABORT
+            verdict) is True, so "how many times did the breaker actually
+            give up" has an honest answer. Set to NOT_FETCHED_CANCELLED when
+            ``cancelled`` is True (see below).
         cancelled: True when ``cancel_check`` (2026-08-19, crawl-cancel)
             returned True BEFORE a chunk was sent, so chunking stopped for
             an operator-requested cancellation rather than any site-side
@@ -3535,6 +3560,7 @@ class ChunkedFetchResult:
     stopped_early: bool = False
     stop_trigger_reason_code: str | None = None
     circuit_breaker_triggered: bool = False
+    circuit_breaker_slowdown_triggered: bool = False
     not_attempted_reason_code: str = FetchReasonCode.NOT_FETCHED_RATE_LIMIT_STOP.value
     cancelled: bool = False
 
@@ -3603,6 +3629,21 @@ async def _chunked_bulk_fetch(
     chunk (never per URL), same as the anti-bot ratio tally above, so it
     can intervene within tens of seconds instead of the crawl's full page
     budget.
+
+    2026-08-19 (onderdeel 3 — "slow down before you give up"): the breaker's
+    ratio trigger is a two-step ladder, not abort-or-nothing (see
+    ``host_circuit_breaker.evaluate_chunk``'s docstring). A
+    ``BreakerVerdict.SLOWDOWN`` verdict is treated exactly like a genuine
+    RATE_LIMITED page signal below — ``stop_trigger_reason_code`` is set to
+    RATE_LIMITED, not BLOCKED_ANTI_BOT, so ``crawl_site`` retries the
+    abandoned URLs at a halved rate (Deel B) instead of giving up on them.
+    Only ``BreakerVerdict.ABORT_PERSISTENT_FAILURE``/``ABORT_REFUSAL`` keep
+    the give-up treatment. This reuses ``crawl_site``'s existing halving/
+    cooldown/``_MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS`` give-up ladder
+    unchanged — no second slowdown mechanism exists, so a chunk that is
+    simultaneously flagged by the real RATE_LIMITED page-signal AND this
+    breaker verdict still produces exactly ONE ``stop_trigger_reason_code``
+    and is halved at most once per ``crawl_site`` batch.
 
     2026-08-19 (crawl-cancel): a FOURTH stop trigger, orthogonal to the
     three above — operator-requested cancellation via ``POST
@@ -3722,8 +3763,17 @@ async def _chunked_bulk_fetch(
             min_attempts_for_ratio=settings.crawl_circuit_breaker_min_attempts,
             failure_ratio_threshold=settings.crawl_circuit_breaker_failure_ratio,
             refusal_threshold=settings.crawl_circuit_breaker_refusal_count,
+            slowdown_ratio_threshold=settings.crawl_circuit_breaker_slowdown_ratio,
         )
-        breaker_tripped = breaker_verdict != BreakerVerdict.CONTINUE
+        # onderdeel 3: ABORT_* keeps the pre-existing give-up semantics;
+        # SLOWDOWN is a new, separate trip that gets RATE_LIMITED-flavoured
+        # retry treatment below instead — see this function's docstring.
+        breaker_abort_tripped = breaker_verdict in (
+            BreakerVerdict.ABORT_PERSISTENT_FAILURE,
+            BreakerVerdict.ABORT_REFUSAL,
+        )
+        breaker_slowdown_tripped = breaker_verdict == BreakerVerdict.SLOWDOWN
+        breaker_tripped = breaker_abort_tripped or breaker_slowdown_tripped
         stop_triggered = (
             bool(chunk_reason_codes & _STOP_CHUNKING_REASON_CODES)
             or (
@@ -3748,21 +3798,25 @@ async def _chunked_bulk_fetch(
                 # never crossed ``crawl_antibot_stop_ratio`` while RATE_LIMITED
                 # is what actually triggered ``stop_triggered`` above; using
                 # the unfiltered set would misreport that stop as a block.
-                # 2026-08-19: the host circuit breaker's verdict (either
-                # persistent-failure or refusal) gets the SAME give-up
+                # 2026-08-19: the host circuit breaker's ABORT verdict
+                # (persistent-failure or refusal) gets the SAME give-up
                 # treatment as BLOCKED_ANTI_BOT — neither is fixed by
-                # slowing down.
+                # slowing down. Its SLOWDOWN verdict (onderdeel 3) is
+                # deliberately NOT in this condition — it falls through to
+                # RATE_LIMITED below, same as a genuine 429.
                 result.stop_trigger_reason_code = (
                     FetchReasonCode.BLOCKED_ANTI_BOT.value
-                    if breaker_tripped
+                    if breaker_abort_tripped
                     or FetchReasonCode.BLOCKED_ANTI_BOT.value in triggering_reason_codes
                     else FetchReasonCode.RATE_LIMITED.value
                 )
-                if breaker_tripped:
+                if breaker_abort_tripped:
                     result.circuit_breaker_triggered = True
                     result.not_attempted_reason_code = (
                         FetchReasonCode.NOT_FETCHED_CIRCUIT_BREAKER_STOP.value
                     )
+                elif breaker_slowdown_tripped:
+                    result.circuit_breaker_slowdown_triggered = True
                 logger.warning(
                     "crawl_bulk_stopped_after_rate_limit_signal",
                     sent_urls=chunk_start + len(chunk_urls),
