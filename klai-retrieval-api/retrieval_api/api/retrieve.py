@@ -750,6 +750,14 @@ async def retrieve(
 
         # 5b. Source-aware selection (SPEC-KB-021)
         # Replaces separate router + quota: uses reranker scores to decide.
+        # scope=both may retrieve the canonical personal KB alongside org KBs.
+        # A router preference is derived from the org source catalog, so it
+        # must never boost a personal chunk merely because the labels match.
+        excluded_preferred_kb_slugs = (
+            {personal_kb_slug(req.user_id)}
+            if req.scope == "both" and req.user_id
+            else None
+        )
         if settings.source_quota_enabled:
             reranked, source_meta = source_aware_select(
                 reranked,
@@ -757,6 +765,7 @@ async def retrieve(
                 max_per_source=settings.source_quota_max_per_source,
                 preferred_labels=router_selected,
                 preferred_kb_slugs=set(req.kb_slugs) if req.kb_slugs else None,
+                excluded_preferred_kb_slugs=excluded_preferred_kb_slugs,
                 source_preference_boost=settings.source_preference_boost,
             )
         else:
@@ -802,6 +811,7 @@ async def retrieve(
                     max_per_source=settings.source_quota_max_per_source,
                     preferred_labels=router_selected,
                     preferred_kb_slugs=set(req.kb_slugs) if req.kb_slugs else None,
+                    excluded_preferred_kb_slugs=excluded_preferred_kb_slugs,
                     source_preference_boost=settings.source_preference_boost,
                 )
             ranking_shadow_preview = quality_boost(ranking_shadow_preview, contract_active=True)

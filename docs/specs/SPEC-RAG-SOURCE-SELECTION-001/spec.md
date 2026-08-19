@@ -1,6 +1,6 @@
 ---
 id: SPEC-RAG-SOURCE-SELECTION-001
-version: "0.1.0"
+version: "0.1.1"
 status: draft
 created: 2026-08-19
 updated: 2026-08-19
@@ -20,6 +20,7 @@ roadmap: docs/architecture/retrieval-improvements-roadmap.md
 
 | Version | Date       | Author       | Change        |
 |---------|------------|--------------|---------------|
+| 0.1.1   | 2026-08-19 | Codex | Review clarification: the chat suite keeps only the retrieval-testable brand-token canary; the single-strong-hit confidence contract is proved through the retrieval decision record. A one-chunk served pack deliberately remains `medium` in shadow and must be analysed separately before enforcement. |
 | 0.1.0   | 2026-08-19 | Mark Vletter | Initial draft. Written after a production trace of the 2026-08-19 Voys trunk conversation (`request_id=d83d2c14-c2bb-4557-91a1-5831fa9a5a78`) showed the shipped correspondence distillation working correctly while the answer was still wrong, because source selection narrowed the evidence pack on the tenant's own brand name. Four phases, ordered by impact and by dependency. Implementation is delegated (Codex/Sol); this document is the complete, self-contained brief. |
 
 ---
@@ -198,8 +199,10 @@ afterthought.
 
 **Eval**
 
-- New canaries in `klai-knowledge-ingest/knowledge_ingest/eval/suites/chat.yaml`
-  covering the brand-token false positive and the single-strong-hit band case.
+- A retrieval-testable brand-token canary in
+  `klai-knowledge-ingest/knowledge_ingest/eval/suites/chat.yaml`.
+- The single-strong-hit band case is asserted on `retrieval_decision_record`; an empty
+  `expected_chunks` list is not a RAGAS canary and therefore must not be presented as one.
 
 ### Out of scope
 
@@ -349,6 +352,9 @@ A single chunk at or above the threshold with no second supporting chunk yields 
 `medium`.
 
 `low` and `unknown` semantics are unchanged. `medium` remains the residual bucket.
+This includes a served pack containing exactly one strong chunk: it deliberately remains
+`medium` in shadow. The later enforcement decision must report one-chunk packs separately,
+rather than silently treating the shadow contract as already approved for serving.
 
 #### REQ-9 — shadow before enforcement (ubiquitous)
 
@@ -403,6 +409,7 @@ enforcement in the same PR is out of scope.
 | `β = 0.05` is wrong for the actual reranker score distribution | high | low | Explicitly declared an untested starting point. Env-tunable, validated by AC-8, and bounded by REQ-3 so a wrong value cannot reproduce the original failure class — only weaken or strengthen a tiebreak |
 | Cold centroid cache adds latency on the pinned-KB path, which previously skipped the router entirely | medium | medium | 10-chunk sample per label, ≤50 labels, 600 s TTL. NFR sets a 100 ms p95 ceiling. If exceeded, warm the cache on catalogue build rather than relax the ceiling |
 | Cache key omits `kb_slugs` and serves a catalogue from the wrong scope | medium | high | Called out explicitly in REQ-6. AC-7 tests it. Tenant-isolation-adjacent: a wrong cache key across orgs would be a cross-tenant leak, so `/klai:tenant-review` is mandatory on this PR |
+| Router catalogues and centroids are organisation-scoped, not user-visibility-scoped | low | medium | Serving-time Qdrant filters remain authoritative, so inaccessible chunks cannot enter the response. A broader per-user router geometry redesign is intentionally deferred; it needs an explicit cache-cardinality and private-KB routing contract rather than a partial change in this SPEC |
 | Corroboration requirement raises the Strict abstain rate and users see more refusals | medium | high | Exactly why REQ-9 mandates shadow-first. Enforcement is a separate decision with AC-11 data behind it |
 | Phase 2 lands before Phase 1 and a routing regression reproduces the demotion bug | low | high | Phase ordering is a hard requirement, not a preference: Phase 1's bound is what makes Phase 2 safe to get wrong. Enforce via PR sequencing |
 

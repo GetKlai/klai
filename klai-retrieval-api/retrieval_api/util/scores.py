@@ -19,9 +19,9 @@ from __future__ import annotations
 def ranking_score(chunk: dict, *fallback_keys: str) -> float:
     """Return ``final_rank_score`` when present, else the first numeric fallback.
 
-    ``fallback_keys`` is each call site's PRE-contract sort key chain (e.g.
-    ``("score",)`` for the diversity sort, ``("reranker_score", "score")``
-    for the boost re-sorts) so shadow mode reproduces the legacy ordering
+    ``fallback_keys`` is each call site's PRE-contract sort key chain (for
+    example ``("reranker_score", "score")`` for diversity and boost re-sorts)
+    so shadow mode reproduces the legacy ordering
     exactly. isinstance-based on purpose: a legitimate ``0.0`` score must
     sort as 0.0, not fall through like the old ``or``-chains did.
     """

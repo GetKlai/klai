@@ -7,6 +7,8 @@ import pytest
 from retrieval_api.services.router import (
     KBEntry,
     _catalog_cache,
+    _centroid_cache,
+    clear_catalog_cache,
     clear_centroid_cache,
     fetch_source_catalog,
     layer2_semantic,
@@ -17,10 +19,10 @@ from retrieval_api.services.router import (
 @pytest.fixture(autouse=True)
 def _clear_cache():
     clear_centroid_cache()
-    _catalog_cache.clear()
+    clear_catalog_cache()
     yield
     clear_centroid_cache()
-    _catalog_cache.clear()
+    clear_catalog_cache()
 
 
 CATALOG = [
@@ -209,3 +211,53 @@ class TestSourceCatalogScope:
         assert pinned_conditions["kb_slug"].any == ["sip"]
         assert ("org-1", ("sip",)) in _catalog_cache
         assert ("org-1", None) in _catalog_cache
+
+    @pytest.mark.asyncio
+    async def test_transient_facet_failure_is_not_cached(self):
+        mock_client = AsyncMock()
+        mock_client.facet.side_effect = [
+            RuntimeError("temporary qdrant failure"),
+            SimpleNamespace(hits=[SimpleNamespace(value="notion")]),
+        ]
+
+        with patch("retrieval_api.services.search._get_client", return_value=mock_client):
+            assert await fetch_source_catalog("org-1") == []
+            recovered = await fetch_source_catalog("org-1")
+
+        assert [entry.source_label for entry in recovered] == ["notion"]
+        assert mock_client.facet.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_router_caches_are_bounded(self, monkeypatch):
+        monkeypatch.setattr("retrieval_api.services.router._ROUTER_CACHE_MAX_ENTRIES", 2)
+        mock_client = AsyncMock()
+        mock_client.facet.return_value = SimpleNamespace(hits=[])
+
+        with patch("retrieval_api.services.search._get_client", return_value=mock_client):
+            for org_id in ("org-1", "org-2", "org-3"):
+                await fetch_source_catalog(org_id)
+
+        async def compute(catalog, org_id):
+            return {"notion": [1.0, 0.0]}
+
+        catalog = [KBEntry(source_label="notion", name="Notion")]
+        for org_id in ("org-1", "org-2", "org-3"):
+            await route_to_sources(
+                "query",
+                [1.0, 0.0],
+                org_id,
+                catalog,
+                compute_centroid_fn=compute,
+            )
+
+        assert len(_catalog_cache) <= 2
+        assert len(_centroid_cache) <= 2
+
+    def test_catalog_cache_can_be_cleared_per_org(self):
+        _catalog_cache[("org-1", None)] = ([], 1.0)
+        _catalog_cache[("org-2", None)] = ([], 1.0)
+
+        clear_catalog_cache("org-1")
+
+        assert ("org-1", None) not in _catalog_cache
+        assert ("org-2", None) in _catalog_cache

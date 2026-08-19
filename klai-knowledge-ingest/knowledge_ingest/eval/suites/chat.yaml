@@ -1,7 +1,7 @@
 suite: chat
 description: |
   Conversational queries against Voys's support KB. Style mirrors how a Voys CS-medewerker
-  would phrase a question to klai's chat. 42 queries with a curated mix:
+  would phrase a question to klai's chat. 41 queries with a curated mix:
     - 9 easy-lookup (regression canaries; expected_chunks populated)
     - 9 vague-pronoun (query-rewrite targets)
     - 6 multi-doc synthesis (parent-child targets)
@@ -9,7 +9,7 @@ description: |
     - 2 edge cases (mixed-language + malformed)
     - 7 brand-bridging queries
     - 3 pasted-correspondence queries
-    - 2 source-selection queries
+    - 1 source-selection query
   All queries target tenant Voys (org_zitadel_id 368884765035593759).
 queries:
   # --- Easy-lookup canaries (9) — should always score ~1.0 ---
@@ -357,7 +357,7 @@ queries:
     expected_topics: [zoom, integratie]
     mix: brand_bridging
 
-  # --- Source-selection canaries (2) — SPEC-RAG-SOURCE-SELECTION-001 ---
+  # --- Source-selection canary — SPEC-RAG-SOURCE-SELECTION-001 ---
   - id: chat-source-selection-brand-token-404
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
@@ -365,15 +365,6 @@ queries:
     reference_answer: "Leg uit dat SIP 404 Not Found betekent dat de gebelde gebruiker, het toestel of de extensie niet gevonden of niet toegewezen is. Het woord Voys mag de evidence-selectie niet beperken tot help.voys.nl als een beter scorende bron de responscode verklaart."
     expected_topics: [voys, sip, 404, trunk, responscode]
     expected_chunks: ["Gebruiker/toestel bestaat niet, of extensie niet gevonden"]
-    mix: source_selection
-
-  - id: chat-source-selection-single-strong-hit
-    org_zitadel_id: "368884765035593759"
-    user_zitadel_id: null
-    query: "Ondersteunt Voys de fictieve QuasarDesk PBX-koppeling?"
-    reference_answer: "De kennisbank bevat geen betrouwbare informatie over een QuasarDesk PBX-koppeling. Een enkel sterk lijkend algemeen integratiedocument is onvoldoende bevestiging; het antwoord moet de onzekerheid benoemen en om verificatie of meer context vragen."
-    expected_topics: [onbekend, integratie, pbx]
-    expected_chunks: []
     mix: source_selection
 
   # --- Pasted-correspondence canaries (3) — SPEC-RAG-CORRESPONDENCE-DISTILL-001 ---

@@ -27,6 +27,7 @@ def source_aware_select(
     max_per_source: int = 2,
     preferred_labels: set[str] | None = None,
     preferred_kb_slugs: set[str] | None = None,
+    excluded_preferred_kb_slugs: set[str] | None = None,
     source_preference_boost: float = 0.05,
 ) -> tuple[list[dict], dict]:
     """Select top-N chunks with source-aware diversity.
@@ -53,9 +54,12 @@ def source_aware_select(
 
     preferred = set(preferred_labels or ())
     preferred_slugs = set(preferred_kb_slugs or ())
+    excluded_preferred_slugs = set(excluded_preferred_kb_slugs or ())
 
     def is_preferred(chunk: dict) -> bool:
         if chunk.get("source_label") not in preferred:
+            return False
+        if chunk.get("kb_slug") in excluded_preferred_slugs:
             return False
         return not preferred_slugs or chunk.get("kb_slug") in preferred_slugs
 
@@ -141,11 +145,3 @@ def source_aware_select(
         "suppressed_count": suppressed_count,
         "max_score_inversion": max_score_inversion,
     }
-
-
-def _count_sources(chunks: list[dict]) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for c in chunks:
-        label = c.get("source_label") or _UNKNOWN
-        counts[label] = counts.get(label, 0) + 1
-    return counts

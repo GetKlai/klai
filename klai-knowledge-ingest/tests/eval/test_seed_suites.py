@@ -14,7 +14,8 @@ SHIPPED_SUITES = ["chat", "knowledge_org"]
 # The curated mix per suite. The chat suite gained 7 brand-bridging canaries in
 # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 (REQ-7, commit b9c1d1229) and 3
 # pasted-correspondence canaries in SPEC-RAG-CORRESPONDENCE-DISTILL-001
-# (REQ-6), plus 2 source-selection canaries in SPEC-RAG-SOURCE-SELECTION-001.
+# (REQ-6), plus 1 retrieval-testable source-selection canary in
+# SPEC-RAG-SOURCE-SELECTION-001.
 # knowledge_org keeps the original Unit-4 mix. Each suite's expected mix is
 # therefore distinct.
 EXPECTED_MIX_BY_SUITE = {
@@ -25,7 +26,7 @@ EXPECTED_MIX_BY_SUITE = {
         "long_tail": 4,
         "edge_case": 2,
         "brand_bridging": 7,
-        "source_selection": 2,
+        "source_selection": 1,
         "pasted_correspondence": 3,
     },
     "knowledge_org": {
@@ -38,7 +39,7 @@ EXPECTED_MIX_BY_SUITE = {
 }
 EXPECTED_QUERIES_BY_SUITE = {
     name: sum(mix.values()) for name, mix in EXPECTED_MIX_BY_SUITE.items()
-}  # chat: 42, knowledge_org: 30
+}  # chat: 41, knowledge_org: 30
 # Real Voys tenant org id used by every query in both shipped suites.
 VOYS_ORG_ID = "368884765035593759"
 
@@ -56,7 +57,7 @@ def test_shipped_suite_loads_without_validation_error(shipped_suite: Suite) -> N
 
 
 def test_shipped_suite_query_count(shipped_suite: Suite) -> None:
-    """Each shipped suite carries its curated query count (chat: 42, knowledge_org: 30)."""
+    """Each shipped suite carries its curated query count (chat: 41, knowledge_org: 30)."""
     assert len(shipped_suite.queries) == EXPECTED_QUERIES_BY_SUITE[shipped_suite.name]
 
 
@@ -111,7 +112,7 @@ def test_easy_lookup_canaries_have_expected_chunks(shipped_suite: Suite) -> None
         )
 
 
-def test_chat_source_selection_canaries_cover_required_failure_shapes() -> None:
+def test_chat_source_selection_canary_is_retrieval_testable() -> None:
     suite = load_suite(SUITES_DIR / "chat.yaml", require_reference_answer=True)
     by_id = {query.id: query for query in suite.queries}
 
@@ -121,10 +122,11 @@ def test_chat_source_selection_canaries_cover_required_failure_shapes() -> None:
         "Gebruiker/toestel bestaat niet, of extensie niet gevonden"
     ]
 
-    single_strong_hit = by_id["chat-source-selection-single-strong-hit"]
-    assert "QuasarDesk" in single_strong_hit.query
-    assert single_strong_hit.expected_chunks == []
-    assert "onvoldoende bevestiging" in single_strong_hit.reference_answer
+    source_selection = [
+        query for query in suite.queries if query.id.startswith("chat-source-selection-")
+    ]
+    assert source_selection == [brand_token]
+    assert all(query.expected_chunks for query in source_selection)
 
 
 def test_invalid_yaml_raises_validation_error(tmp_path: Path) -> None:

@@ -324,3 +324,21 @@ class TestComparisonOnlyPreference:
         )
 
         assert [chunk["chunk_id"] for chunk in selected] == ["org", "other", "personal"]
+
+    def test_unpinned_both_scope_preference_excludes_personal_kb(self):
+        reranked = [
+            {**_chunk("personal", "notion", 0.59), "kb_slug": "personal-user-1"},
+            {**_chunk("other", "support", 0.60), "kb_slug": "support"},
+            {**_chunk("org", "notion", 0.58), "kb_slug": "engineering"},
+        ]
+
+        selected, _ = source_aware_select(
+            reranked,
+            top_n=3,
+            max_per_source=3,
+            preferred_labels={"notion"},
+            excluded_preferred_kb_slugs={"personal-user-1"},
+            source_preference_boost=0.05,
+        )
+
+        assert [chunk["chunk_id"] for chunk in selected] == ["org", "other", "personal"]

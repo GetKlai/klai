@@ -9,11 +9,28 @@ from retrieval_api.config import settings
 
 logger = structlog.get_logger()
 
+_ROUTER_CACHE_MAX_ENTRIES = 256
+
 
 # ---------------------------------------------------------------------------
 # Source catalog cache: {(org_id, kb_slug_scope): (catalog, timestamp)}
 # ---------------------------------------------------------------------------
 _catalog_cache: dict[tuple[str, tuple[str, ...] | None], tuple[list[KBEntry], float]] = {}
+
+
+def _prune_cache(cache: dict, *, ttl_seconds: int, now: float) -> None:
+    """Drop expired entries."""
+    for key in [key for key, (_, timestamp) in cache.items() if now - timestamp >= ttl_seconds]:
+        cache.pop(key, None)
+
+
+def _make_cache_room(cache: dict) -> None:
+    """Evict oldest entries before inserting a new tenant/scope key."""
+    overflow = len(cache) - _ROUTER_CACHE_MAX_ENTRIES + 1
+    if overflow > 0:
+        oldest = sorted(cache, key=lambda key: cache[key][1])[:overflow]
+        for key in oldest:
+            cache.pop(key, None)
 
 
 async def fetch_source_catalog(org_id: str, kb_slugs: list[str] | None = None) -> list[KBEntry]:
@@ -26,8 +43,10 @@ async def fetch_source_catalog(org_id: str, kb_slugs: list[str] | None = None) -
     """
     kb_scope = tuple(sorted(set(kb_slugs))) if kb_slugs else None
     cache_key = (org_id, kb_scope)
+    now = time.monotonic()
+    _prune_cache(_catalog_cache, ttl_seconds=settings.router_centroid_ttl_seconds, now=now)
     cached = _catalog_cache.get(cache_key)
-    if cached and (time.monotonic() - cached[1]) < settings.router_centroid_ttl_seconds:
+    if cached:
         return cached[0]
 
     from qdrant_client.models import FieldCondition, Filter, MatchAny, MatchValue
@@ -57,8 +76,9 @@ async def fetch_source_catalog(org_id: str, kb_slugs: list[str] | None = None) -
         # SPEC-SEC-HYGIENE-001 REQ-43.3: exc_info=True preserves the
         # traceback that the previous `error=str(exc)` dropped (TRY401).
         logger.warning("router_facet_failed", org_id=org_id, exc_info=True)
-        entries = []
+        return []
 
+    _make_cache_room(_catalog_cache)
     _catalog_cache[cache_key] = (entries, time.monotonic())
     logger.info(
         "router_catalog_built",
@@ -231,8 +251,10 @@ async def route_to_sources(
     kb_scope = tuple(sorted(set(kb_slugs))) if kb_slugs else None
     catalog_scope = tuple(sorted(entry.source_label for entry in source_label_catalog))
     cache_key = (org_id, kb_scope, catalog_scope)
+    now = time.monotonic()
+    _prune_cache(_centroid_cache, ttl_seconds=centroid_ttl_seconds, now=now)
     cached = _centroid_cache.get(cache_key)
-    if cached and (time.monotonic() - cached[1]) < centroid_ttl_seconds:
+    if cached:
         centroids = cached[0]
         cache_hit = True
 
@@ -241,6 +263,7 @@ async def route_to_sources(
             centroids = await compute_centroid_fn(source_label_catalog, org_id)
         else:
             centroids = await _default_compute_centroids(source_label_catalog, org_id, kb_slugs)
+        _make_cache_room(_centroid_cache)
         _centroid_cache[cache_key] = (centroids, time.monotonic())
 
     if centroids:
@@ -291,3 +314,12 @@ def clear_centroid_cache(org_id: str | None = None) -> None:
             _centroid_cache.pop(cache_key, None)
     else:
         _centroid_cache.clear()
+
+
+def clear_catalog_cache(org_id: str | None = None) -> None:
+    """Clear source catalog cache. For testing and cache invalidation."""
+    if org_id:
+        for cache_key in [key for key in _catalog_cache if key[0] == org_id]:
+            _catalog_cache.pop(cache_key, None)
+    else:
+        _catalog_cache.clear()
