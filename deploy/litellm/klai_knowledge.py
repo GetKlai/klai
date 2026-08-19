@@ -767,6 +767,11 @@ class KlaiKnowledgeHook(CustomLogger):
         # gates the distillation prompt-variant on the SAME call — latest-turn
         # only (not the conversation-wide flag used for the epistemic contract
         # + footer above), since this drives how THIS turn's query is built.
+        # Computed once and reused below (v0.7.0) to also gate the
+        # sub-question fan-out and the multi_question answer-instruction
+        # flag: a pasted email IS the distilled query's source text, not a
+        # list of independent questions to split and fan out.
+        latest_turn_correspondence = _latest_user_turn_has_correspondence(messages)
         (
             rewritten_query,
             classified_node_ids,
@@ -775,7 +780,7 @@ class KlaiKnowledgeHook(CustomLogger):
             query,
             conversation_history,
             trees_for_classify,
-            pasted_correspondence=_latest_user_turn_has_correspondence(messages),
+            pasted_correspondence=latest_turn_correspondence,
         )
         # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-6: gate raw query content out of
         # the query_rewrite log line in 'off' / 'shadow' mode. Operators keep
@@ -874,7 +879,23 @@ class KlaiKnowledgeHook(CustomLogger):
         # the fan-out cap are NOT dropped silently — they are surfaced to the
         # model as unchecked (see unchecked_questions below) instead of
         # being conflated with "not in the knowledge base".
-        all_sub_questions = _split_sub_questions(query)
+        #
+        # SPEC-RAG-CORRESPONDENCE-DISTILL-001 v0.7.0: skip the split entirely
+        # when the latest user turn is pasted correspondence. The distilled
+        # query IS the question — splitting the raw pasted email's '?'-
+        # terminated lines (headers, signature, several distinct questions in
+        # the thread) produces noise fragment-legs, each low-confidence, that
+        # drown the per-question coverage gate instead of ever using the
+        # distilled query as a search leg (production replay, 2026-08-18).
+        if latest_turn_correspondence:
+            all_sub_questions: list[str] = []
+            logger.info(
+                "sub_question_split_skipped_pasted_correspondence org_id=%s user_id=%s",
+                org_id,
+                user_id,
+            )
+        else:
+            all_sub_questions = _split_sub_questions(query)
         sub_questions = all_sub_questions[:_MAX_SUB_QUESTIONS]
         unchecked_questions = all_sub_questions[_MAX_SUB_QUESTIONS:]
         if unchecked_questions:
@@ -1230,7 +1251,18 @@ class KlaiKnowledgeHook(CustomLogger):
         # Multi-part messages: an aggregate low-confidence refusal would also
         # swallow the questions the chunks DO cover. Suppress the deterministic
         # refusal and force per-question coverage judgement in the context.
-        multi_question = bool(sub_questions) or _is_multi_question_query(query)
+        #
+        # SPEC-RAG-CORRESPONDENCE-DISTILL-001 v0.7.0: gated off for pasted
+        # correspondence too. sub_questions is already [] in that case (see
+        # above), but the raw pasted email text still contains multiple '?'
+        # marks, so _is_multi_question_query(query) on the raw text would
+        # otherwise still evaluate True — re-suppressing the deterministic
+        # Strict low-confidence refusal and re-injecting the "multi-part
+        # question" answer guard for what is really a single distilled
+        # question.
+        multi_question = (not latest_turn_correspondence) and (
+            bool(sub_questions) or _is_multi_question_query(query)
+        )
         raw_sub_results = result.get("sub_results")
         sub_query_results: list[dict] | None = (
             [entry for entry in raw_sub_results if isinstance(entry, dict)]
