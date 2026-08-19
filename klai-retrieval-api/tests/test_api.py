@@ -184,6 +184,8 @@ class TestRetrieveEndpoint:
         assert "https://docs.getklai.com/refunds" in decision_attrs
         assert "Refund policy" in decision_attrs
         assert "top_item_chunk_ids" in decision_attrs
+        assert decision_record.msg["confidence_band"] == "high"
+        assert decision_record.msg["confidence_band_corroborated"] == "medium"
 
     def test_retrieve_passes_effective_telemetry_level_to_coreference(
         self, client, sample_retrieve_request

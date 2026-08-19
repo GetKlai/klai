@@ -952,7 +952,15 @@ async def retrieve(
             low_threshold=settings.confidence_band_low_threshold,
             reranker_enabled=settings.reranker_enabled,
         )
+        confidence_band_corroborated = _compute_confidence_band(
+            serving,
+            high_threshold=settings.confidence_band_high_threshold,
+            low_threshold=settings.confidence_band_low_threshold,
+            reranker_enabled=settings.reranker_enabled,
+            require_corroboration=True,
+        )
         decision_record["confidence_band"] = confidence_band
+        decision_record["confidence_band_corroborated"] = confidence_band_corroborated
         retrieval_confidence_band_total.labels(band=confidence_band, org_id=req.org_id).inc()
 
     evidence_query = (
