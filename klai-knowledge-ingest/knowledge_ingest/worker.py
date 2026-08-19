@@ -232,7 +232,7 @@ class WorkerLifecycle:
                     # Unexpected. Log with traceback but do not re-raise —
                     # shutdown must continue so db.close_pool() runs and the
                     # container exits cleanly.
-                    logger.exception(
+                    logger.error(
                         "procrastinate_worker_shutdown_error",
                         worker=task.get_name(),
                         exc_info=(type(result), result, result.__traceback__),
