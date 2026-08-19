@@ -554,13 +554,8 @@ async def retrieve(
     # 3b. Query router — identifies relevant sources for post-rerank selection
     router_meta: dict = {"router_decision": None, "router_layer_used": "skipped"}
     router_selected: set[str] | None = None
-    if (
-        req.kb_slugs is None
-        and settings.router_enabled
-        and req.scope in ("org", "both")
-        and not bypassed
-    ):
-        source_label_catalog = await fetch_source_catalog(req.org_id)
+    if settings.router_enabled and req.scope in ("org", "both") and not bypassed:
+        source_label_catalog = await fetch_source_catalog(req.org_id, req.kb_slugs)
         if len(source_label_catalog) >= settings.router_min_source_label_count:
             routing = await route_to_sources(
                 query_resolved=query_resolved,
@@ -571,6 +566,7 @@ async def retrieve(
                 margin_dual=settings.router_margin_dual,
                 llm_fallback=settings.router_llm_fallback,
                 centroid_ttl_seconds=settings.router_centroid_ttl_seconds,
+                kb_slugs=req.kb_slugs,
             )
             if routing.selected_source_labels:
                 router_selected = set(routing.selected_source_labels)
@@ -756,17 +752,15 @@ async def retrieve(
         if settings.source_quota_enabled:
             reranked, source_meta = source_aware_select(
                 reranked,
-                query_resolved,
                 top_n=req.top_k,
                 max_per_source=settings.source_quota_max_per_source,
-                router_selected=router_selected,
+                preferred_labels=router_selected,
                 source_preference_boost=settings.source_preference_boost,
             )
         else:
             source_meta = {
                 "source_select_mode": "disabled",
                 "source_counts": {},
-                "mentioned_sources": [],
                 "preference_applied": False,
                 "preferred_labels": [],
                 "boost": settings.source_preference_boost,
@@ -802,10 +796,9 @@ async def retrieve(
             if settings.source_quota_enabled:
                 ranking_shadow_preview, _ = source_aware_select(
                     ranking_shadow_preview,
-                    query_resolved,
                     top_n=req.top_k,
                     max_per_source=settings.source_quota_max_per_source,
-                    router_selected=router_selected,
+                    preferred_labels=router_selected,
                     source_preference_boost=settings.source_preference_boost,
                 )
             ranking_shadow_preview = quality_boost(ranking_shadow_preview, contract_active=True)

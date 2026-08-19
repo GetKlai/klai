@@ -5,14 +5,12 @@ diversity.  Replaces the separate router (pre-search) + quota (post-rerank)
 with one function that uses the actual reranker scores to decide.
 
 Logic:
-- If the query mentions a specific source → give that source all slots
-- If scores are spread across sources → diversify (max N per source)
-- Scores decide, not pre-computed centroids or label embeddings
+- Semantic router labels receive a bounded additive score boost
+- Scores remain authoritative outside that bounded tiebreak
+- Selected chunks are diversified with a per-source cap
 """
 
 from __future__ import annotations
-
-import re
 
 import structlog
 
@@ -22,81 +20,12 @@ logger = structlog.get_logger()
 
 _UNKNOWN = "_unknown"
 
-# Common words that appear in source labels but are too generic for matching.
-# Shared with router.py (imported there).
-STOP_WORDS: set[str] = {
-    "help",
-    "docs",
-    "wiki",
-    "info",
-    "data",
-    "page",
-    "site",
-    "team",
-    "voor",
-    "over",
-    "alle",
-    "deze",
-    "onze",
-    "meer",
-    "door",
-    "naar",
-    "with",
-    "from",
-    "that",
-    "this",
-    "your",
-    "about",
-    "what",
-    "will",
-    "documentatie",
-    "interne",
-    "externe",
-    "handleiding",
-    "informatie",
-    "helpcenter",
-    "helpdesk",
-    "support",
-    "klant",
-    "intern",
-    "kennis",
-}
-
-
-def _detect_mentioned_sources(
-    reranked: list[dict],
-    query_resolved: str,
-) -> set[str]:
-    """Detect which source_labels are explicitly mentioned in the query.
-
-    Splits each label on separators, filters stop words and short tokens,
-    checks substring match in query.  Returns all matching labels.
-    """
-    query_lower = query_resolved.lower()
-    mentioned: set[str] = set()
-
-    seen: set[str] = set()
-    for chunk in reranked:
-        label = chunk.get("source_label") or _UNKNOWN
-        if label in seen or label == _UNKNOWN or len(label) <= 3:
-            continue
-        seen.add(label)
-
-        tokens = [
-            t for t in re.split(r"[-./:]", label.lower()) if len(t) > 3 and t not in STOP_WORDS
-        ]
-        if any(token in query_lower for token in tokens):
-            mentioned.add(label)
-
-    return mentioned
-
 
 def source_aware_select(
     reranked: list[dict],
-    query_resolved: str,
     top_n: int = 5,
     max_per_source: int = 2,
-    router_selected: set[str] | None = None,
+    preferred_labels: set[str] | None = None,
     source_preference_boost: float = 0.05,
 ) -> tuple[list[dict], dict]:
     """Select top-N chunks with source-aware diversity.
@@ -113,7 +42,6 @@ def source_aware_select(
         return [], {
             "source_select_mode": "empty",
             "source_counts": {},
-            "mentioned_sources": [],
             "preference_applied": False,
             "preferred_labels": [],
             "boost": source_preference_boost,
@@ -122,14 +50,10 @@ def source_aware_select(
             "max_score_inversion": 0.0,
         }
 
-    # Step 1: detect preferred sources — from query keywords AND router decision
-    keyword_mentioned = _detect_mentioned_sources(reranked, query_resolved)
-    mentioned = set(keyword_mentioned)
-    if router_selected:
-        mentioned = mentioned | router_selected
+    preferred = set(preferred_labels or ())
 
     preference_applied = bool(
-        mentioned and any(chunk.get("source_label") in mentioned for chunk in reranked)
+        preferred and any(chunk.get("source_label") in preferred for chunk in reranked)
     )
 
     def base_score(chunk: dict) -> float:
@@ -137,7 +61,7 @@ def source_aware_select(
 
     def preference_score(chunk: dict) -> float:
         score = base_score(chunk)
-        if preference_applied and chunk.get("source_label") in mentioned:
+        if preference_applied and chunk.get("source_label") in preferred:
             return score + source_preference_boost
         return score
 
@@ -183,22 +107,18 @@ def source_aware_select(
 
     max_score_inversion = 0.0
     for index, earlier in enumerate(ranked):
-        if earlier.get("source_label") not in mentioned:
+        if earlier.get("source_label") not in preferred:
             continue
         earlier_score = base_score(earlier)
         for later in ranked[index + 1 :]:
-            if later.get("source_label") in mentioned:
+            if later.get("source_label") in preferred:
                 continue
             max_score_inversion = max(
                 max_score_inversion,
                 base_score(later) - earlier_score,
             )
 
-    mode = "diversify"
-    if preference_applied:
-        mode = "router" if router_selected and not keyword_mentioned else "mentioned"
-        if router_selected and keyword_mentioned:
-            mode = "keyword+router"
+    mode = "router" if preference_applied else "diversify"
 
     logger.debug(
         "source_aware_select",
@@ -209,9 +129,8 @@ def source_aware_select(
     return selected, {
         "source_select_mode": mode,
         "source_counts": dict(per_source),
-        "mentioned_sources": sorted(mentioned),
         "preference_applied": preference_applied,
-        "preferred_labels": sorted(mentioned),
+        "preferred_labels": sorted(preferred),
         "boost": source_preference_boost,
         "pack_without_preference": without_ids,
         "suppressed_count": suppressed_count,
