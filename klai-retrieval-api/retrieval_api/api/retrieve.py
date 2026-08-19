@@ -754,9 +754,7 @@ async def retrieve(
         # A router preference is derived from the org source catalog, so it
         # must never boost a personal chunk merely because the labels match.
         excluded_preferred_kb_slugs = (
-            {personal_kb_slug(req.user_id)}
-            if req.scope == "both" and req.user_id
-            else None
+            {personal_kb_slug(req.user_id)} if req.scope == "both" and req.user_id else None
         )
         if settings.source_quota_enabled:
             reranked, source_meta = source_aware_select(

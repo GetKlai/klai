@@ -29,14 +29,10 @@ def _query_substring_comparisons(source: str) -> list[int]:
         return "source_label" in lowered or lowered in {"label", "token", "term", "keyword"}
 
     query_names = {
-        node.id
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Name) and is_query_name(node.id)
+        node.id for node in ast.walk(tree) if isinstance(node, ast.Name) and is_query_name(node.id)
     }
     source_names = {
-        node.id
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Name) and is_source_name(node.id)
+        node.id for node in ast.walk(tree) if isinstance(node, ast.Name) and is_source_name(node.id)
     }
     assignments = [node for node in ast.walk(tree) if isinstance(node, ast.Assign)]
     for _ in assignments:
