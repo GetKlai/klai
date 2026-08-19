@@ -33,6 +33,8 @@ dependencies = [
     "minio>=7.2",
     "filetype>=1.2",
     "ragas>=0.4.3",
+    # Ragas 0.4.3 still imports the Vertex AI integration removed in 0.4.2.
+    "langchain-community<0.4.2",
     "lingua-language-detector>=2.2.0",
     # SPEC-INGEST-LOGIN-WALL-DETECT-002: vectorised SimHash bit-arithmetic
     # in knowledge_ingest.utils.content_fingerprint. Already transitively
