@@ -198,7 +198,7 @@ async def test_interrupted_crawl_resumes_from_real_postgres_checkpoint(
                 job_id,
             )
         assert terminal_row["status"] == "completed"
-        assert terminal_row["runtime_checkpoint"] == {}
+        assert json.loads(terminal_row["runtime_checkpoint"]) == {}
         assert terminal_row["frontier_count"] == 0
     finally:
         async with _connection_factory() as conn:
