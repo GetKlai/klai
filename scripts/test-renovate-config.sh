@@ -47,6 +47,14 @@ assert_contains "$config" \
 assert_contains "$config" \
   "minimumReleaseAge: '0 days'" \
   'Aqua Git-tag lookups without timestamps must not remain pending forever'
+assert_contains "$config" \
+  "rebaseWhen: 'conflicted'" \
+  'automerge updates must not invalidate green CI merely because main advanced'
+rebase_when_conflicted_count=$(grep -Fc "rebaseWhen: 'conflicted'" "$config")
+if [ "$rebase_when_conflicted_count" -ne 2 ]; then
+  echo 'FAIL: lockfile and patch/minor automerge must both rebase only on conflicts' >&2
+  exit 1
+fi
 
 # Main requires a GitHub Actions check named `quality`. Every Renovate update
 # that is eligible for automerge must therefore trigger a real validation job
