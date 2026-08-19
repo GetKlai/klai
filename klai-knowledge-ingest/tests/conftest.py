@@ -307,6 +307,27 @@ def _no_real_recovery_cooldown(monkeypatch):
     monkeypatch.setattr(_crawl_mod, "_recovery_sleep", _instant)
 
 
+@pytest.fixture(autouse=True)
+def _no_real_rate_limit_slowdown_cooldown(monkeypatch):
+    """Never sleep the production rate-limit-slowdown cooldown in tests.
+
+    ``crawl4ai_client.crawl_site`` waits
+    ``crawl_rate_limit_slowdown_cooldown_seconds`` (10s in production)
+    after lowering its in-job rate_limit, before resuming with the next
+    (slower) batch — see Deel B ("a stop-signal should slow you down, not
+    give up"). Same rationale as ``_no_real_recovery_cooldown`` above:
+    honouring that for real in the suite would multiply runtime for every
+    test that exercises a RATE_LIMITED stop signal. Tests that assert ON
+    the cooldown patch this themselves with a recorder.
+    """
+    import knowledge_ingest.crawl4ai_client as _crawl_mod
+
+    async def _instant(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(_crawl_mod, "_slowdown_sleep", _instant)
+
+
 @pytest.fixture
 def client(mock_pool):
     """Test client with auth middleware.

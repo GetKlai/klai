@@ -295,10 +295,16 @@ async def test_not_attempted_urls_never_enter_retry_or_recovery(
         rate_limit: float | None = None,
     ) -> ChunkedFetchResult:
         calls.append({"urls": list(urls), "stealth": stealth})
-        # Chunk 1 rate-limited, chunk 2 never attempted — no `failed` entry.
+        # Chunk 1 blocked, chunk 2 never attempted — no `failed` entry.
+        # BLOCKED_ANTI_BOT (not RATE_LIMITED) so crawl_site stops
+        # immediately rather than retrying at a lower rate (Deel B) — this
+        # test is about the retry/recovery-path exclusion, not the
+        # slowdown-vs-stop decision itself (see
+        # tests/test_crawl_rate_limit_slowdown.py for that).
         return ChunkedFetchResult(
             not_attempted=["https://example.com/2"],
             stopped_early=True,
+            stop_trigger_reason_code=FetchReasonCode.BLOCKED_ANTI_BOT.value,
         )
 
     monkeypatch.setattr(crawl4ai_client, "_chunked_bulk_fetch", _fake_chunked_bulk_fetch)

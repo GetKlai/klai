@@ -23,6 +23,7 @@ import httpx
 import structlog
 
 from knowledge_ingest.config import settings
+from knowledge_ingest.domain_rate_limit_control import MIN_DOMAIN_RATE_LIMIT
 from knowledge_ingest.reason_codes import FetchReasonCode
 
 logger = structlog.get_logger()
@@ -1935,6 +1936,18 @@ async def crawl_site(
     sequential_recovery_budget = _MAX_SEQUENTIAL_RECOVERY
     sequential_recovery_time_remaining = settings.crawl_sequential_recovery_max_seconds
 
+    # Deel B (2026-08-18) — the in-job rate_limit actually used for the NEXT
+    # ``_chunked_bulk_fetch`` call. Starts at the caller's ``rate_limit`` and
+    # only ever moves DOWN, via ``_lower_rate_limit_for_slowdown``, after an
+    # observed RATE_LIMITED stop signal — never persisted, never raised back
+    # up within this call (the persisted domain-level AIMD controller in
+    # ``domain_rate_limit_control`` owns raising it back up, once, after the
+    # job completes, for the NEXT crawl). ``consecutive_rate_limit_slowdowns``
+    # bounds how many times in a row that can happen before giving up — see
+    # ``_MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS``.
+    current_rate_limit = rate_limit
+    consecutive_rate_limit_slowdowns = 0
+
     start_result = await _fetch_seed_page(
         start_url=start_url,
         crawler_config=crawler_config,
@@ -1960,7 +1973,7 @@ async def crawl_site(
             urls=batch,
             crawler_config=crawler_config,
             cookies=cookies,
-            rate_limit=rate_limit,
+            rate_limit=current_rate_limit,
         )
         fetched_count += len(batch)
 
@@ -1970,6 +1983,7 @@ async def crawl_site(
         # stop early on its own chunking) — never retried, never counted
         # as a failure.
         not_attempted_urls: list[str] = list(fetch.not_attempted)
+        stop_trigger_reason_code = fetch.stop_trigger_reason_code
 
         # A2: only the subset of `batch` whose OWN chunk failed to
         # transport is worth a stealth retry — everything else already has
@@ -1992,13 +2006,59 @@ async def crawl_site(
                 crawler_config=crawler_config,
                 cookies=cookies,
                 stealth=True,
-                rate_limit=rate_limit,
+                rate_limit=current_rate_limit,
             )
             fetch.raw_results.extend(stealth_fetch.raw_results)
             for retried_url in retry_urls:
                 fetch.failed.pop(retried_url, None)
             fetch.failed.update(stealth_fetch.failed)
             not_attempted_urls.extend(stealth_fetch.not_attempted)
+            if stealth_fetch.stop_trigger_reason_code == FetchReasonCode.BLOCKED_ANTI_BOT.value:
+                stop_trigger_reason_code = FetchReasonCode.BLOCKED_ANTI_BOT.value
+            elif stop_trigger_reason_code is None:
+                stop_trigger_reason_code = stealth_fetch.stop_trigger_reason_code
+
+        # Deel B (2026-08-18, "a stop-signal should slow you down, not give
+        # up") — a RATE_LIMITED stop means "you're going too fast", not
+        # "give up on these URLs forever". They are left QUEUED in the
+        # ledger (never finalised as not_fetched below) so a LATER batch in
+        # this same job retries them, at a lowered ``current_rate_limit``,
+        # after a short cooldown. BLOCKED_ANTI_BOT is the opposite: no rate
+        # exists that fixes a block, so it keeps the old stop-and-give-up
+        # behaviour, immediately. A site that keeps rate-limiting through
+        # ``_MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS`` halvings in a row is
+        # finally given up on too — see that constant's docstring.
+        carried_over_urls: list[str] = []
+        stop_crawl_after_this_batch = False
+        if not_attempted_urls:
+            if stop_trigger_reason_code == FetchReasonCode.BLOCKED_ANTI_BOT.value:
+                stop_crawl_after_this_batch = True
+            elif consecutive_rate_limit_slowdowns < _MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS:
+                consecutive_rate_limit_slowdowns += 1
+                current_rate_limit = _lower_rate_limit_for_slowdown(current_rate_limit)
+                carried_over_urls = not_attempted_urls
+                not_attempted_urls = []
+                fetched_count -= len(carried_over_urls)
+                logger.warning(
+                    "crawl_rate_limit_slowdown_retry",
+                    carried_over_urls=len(carried_over_urls),
+                    new_rate_limit=current_rate_limit,
+                    slowdown_count=consecutive_rate_limit_slowdowns,
+                )
+                await _slowdown_sleep(settings.crawl_rate_limit_slowdown_cooldown_seconds)
+            else:
+                stop_crawl_after_this_batch = True
+                logger.warning(
+                    "crawl_rate_limit_slowdown_exhausted",
+                    max_slowdowns=_MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS,
+                    abandoned_urls=len(not_attempted_urls),
+                )
+        elif consecutive_rate_limit_slowdowns:
+            # A clean batch (no stop signal at all) proves the site
+            # recovered — give a LATER rate-limit hit in this job a fresh
+            # budget instead of counting toward the give-up threshold
+            # forever.
+            consecutive_rate_limit_slowdowns = 0
 
         recovered_results: list[CrawlResult] = []
         recovered_link_source_results: list[CrawlResult] = []
@@ -2074,11 +2134,15 @@ async def crawl_site(
                 fetch.failed.pop(recovered_url, None)
 
         # Everything NOT sent to sequential recovery, not abandoned as
-        # not-attempted (A1), and not still failed (non-recoverable
-        # transport errors, e.g. DNS/connection/4xx-wrapper) has a real
-        # per-URL result sitting in fetch.raw_results.
+        # not-attempted (A1), not carried over for a slower retry (Deel B),
+        # and not still failed (non-recoverable transport errors, e.g.
+        # DNS/connection/4xx-wrapper) has a real per-URL result sitting in
+        # fetch.raw_results.
         excluded_from_combine = (
-            set(fetch.failed) | set(not_attempted_urls) | set(sequential_recovery_urls)
+            set(fetch.failed)
+            | set(not_attempted_urls)
+            | set(sequential_recovery_urls)
+            | set(carried_over_urls)
         )
         ok_urls = [u for u in batch if u not in excluded_from_combine]
         batch_results, batch_outcomes = _combine_bulk_responses(
@@ -2113,7 +2177,7 @@ async def crawl_site(
                 crawler_config=crawler_config,
                 cookies=cookies,
                 base_domain=base_domain,
-                rate_limit=rate_limit,
+                rate_limit=current_rate_limit,
             )
         for outcome in batch_outcomes:
             ledger.mark_outcome(outcome)
@@ -2126,6 +2190,15 @@ async def crawl_site(
             source_depth = ledger.depth_for_url(result.url)
             if source_depth is not None and source_depth < max_depth:
                 ledger.add_links_from_result(result, source_depth=source_depth)
+
+        if stop_crawl_after_this_batch:
+            # BLOCKED_ANTI_BOT, or a RATE_LIMITED signal that survived
+            # _MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS halvings — further
+            # batches would either not help (a block) or keep paying a
+            # cooldown for no progress (an unrecoverable rate limit).
+            # Remaining queued URLs get their honest reason via
+            # ledger.mark_unfetched below, same as any other early stop.
+            break
 
     ledger.mark_unfetched(fetched_count=fetched_count, max_pages=max_pages)
     omitted_outcomes = ledger.omitted_outcomes()
@@ -2947,6 +3020,56 @@ _recovery_monotonic = time.monotonic
 _pacing_sleep = asyncio.sleep
 _pacing_monotonic = time.monotonic
 
+# Deel B (2026-08-18, "a stop-signal should slow you down, not give up") —
+# same test-friendly indirection as the two pairs above, dedicated to the
+# explicit pause ``crawl_site`` takes after lowering its in-job rate_limit,
+# before resuming with the next (slower) batch.
+_slowdown_sleep = asyncio.sleep
+
+# How many times, in a row, ``crawl_site`` will halve its rate_limit and
+# retry the URLs a RATE_LIMITED stop skipped before giving up on them.
+# Mirrors the domain-level AIMD controller's philosophy (halving is
+# reversible, giving up permanently is not) but bounded: a site that is
+# STILL rate-limiting us after three halvings (e.g. 2.0 -> 1.0 -> 0.5 ->
+# 0.25 req/s, hitting MIN_DOMAIN_RATE_LIMIT's floor) is not being slow —
+# something else is wrong (an aggressive WAF, not simple throttling), and
+# burning the rest of the crawl-job's time budget on ever-smaller batches
+# would just replace the old "hammer at full speed" bug with a new
+# "hammer at a snail's pace forever" one. Resets to 0 whenever a batch
+# completes with no stop signal at all, so a site that recovers gets a
+# fresh three attempts if it later relapses, rather than accumulating
+# toward the limit across unrelated incidents in the same job.
+_MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS = 3
+
+# Seed rate_limit when a RATE_LIMITED signal is observed on a crawl that
+# was started with no explicit rate_limit at all (``rate_limit=None`` —
+# unpaced, full speed). Matches the value the only production caller
+# (``routes/crawl_sync.py``) already passes for every ordinary crawl, so
+# "start pacing because the site just complained" begins from the same
+# baseline a normal crawl would have used anyway, rather than an
+# arbitrary new number.
+_UNPACED_SLOWDOWN_STARTING_RATE_LIMIT = 2.0
+
+
+def _lower_rate_limit_for_slowdown(current_rate_limit: float | None) -> float:
+    """Halve ``current_rate_limit`` after an observed RATE_LIMITED stop.
+
+    Reuses ``domain_rate_limit_control.MIN_DOMAIN_RATE_LIMIT`` as the floor
+    instead of inventing a second, arbitrary one — keeps this ephemeral,
+    in-job backoff consistent with the persisted domain-level halving that
+    already uses that floor. This one is NEVER persisted: it only affects
+    the rest of THIS ``crawl_site`` call, and the domain-level controller
+    (applied once, after the job completes, for the NEXT crawl) is
+    untouched and unaffected — see ``compute_domain_rate_limit_update``.
+    """
+    baseline = (
+        current_rate_limit
+        if current_rate_limit is not None
+        else _UNPACED_SLOWDOWN_STARTING_RATE_LIMIT
+    )
+    return max(MIN_DOMAIN_RATE_LIMIT, baseline / 2)
+
+
 # Server-side BFS deep crawl polling budget. /crawl/job is async — submit,
 # get task_id, poll status. Voys-support full-depth crawl (~500 pages
 # across 3 levels) completes well under 30 minutes; the cap is a safety
@@ -3189,12 +3312,21 @@ class ChunkedFetchResult:
             chose not to ask".
         stopped_early: True when ``not_attempted`` is non-empty for the
             reason described above.
+        stop_trigger_reason_code: which of ``_STOP_CHUNKING_REASON_CODES``
+            actually caused ``stopped_early`` — ``None`` when
+            ``stopped_early`` is False. Lets a caller (``crawl_site``,
+            Deel B) tell "the site asked us to slow down" (RATE_LIMITED)
+            apart from "the site blocked us outright" (BLOCKED_ANTI_BOT):
+            slowing down helps the former and does nothing for the
+            latter. BLOCKED_ANTI_BOT wins when a single chunk somehow
+            observes both (a block is the more severe signal).
     """
 
     raw_results: list[dict[str, Any]] = field(default_factory=list)
     failed: dict[str, BaseException] = field(default_factory=dict)
     not_attempted: list[str] = field(default_factory=list)
     stopped_early: bool = False
+    stop_trigger_reason_code: str | None = None
 
 
 async def _chunked_bulk_fetch(
@@ -3324,6 +3456,19 @@ async def _chunked_bulk_fetch(
                 triggering_reason_codes = set(chunk_reason_codes & _STOP_CHUNKING_REASON_CODES)
                 if antibot_ratio_exceeded:
                     triggering_reason_codes.add(FetchReasonCode.BLOCKED_ANTI_BOT.value)
+                # Deel B (2026-08-18): a single reason code for crawl_site's
+                # slowdown-vs-give-up branch. Derived from
+                # ``triggering_reason_codes`` (the codes that actually
+                # caused this stop) rather than the raw ``chunk_reason_codes``
+                # — a chunk can carry a BLOCKED_ANTI_BOT-classified page that
+                # never crossed ``crawl_antibot_stop_ratio`` while RATE_LIMITED
+                # is what actually triggered ``stop_triggered`` above; using
+                # the unfiltered set would misreport that stop as a block.
+                result.stop_trigger_reason_code = (
+                    FetchReasonCode.BLOCKED_ANTI_BOT.value
+                    if FetchReasonCode.BLOCKED_ANTI_BOT.value in triggering_reason_codes
+                    else FetchReasonCode.RATE_LIMITED.value
+                )
                 logger.warning(
                     "crawl_bulk_stopped_after_rate_limit_signal",
                     sent_urls=chunk_start + len(chunk_urls),
