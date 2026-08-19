@@ -93,9 +93,8 @@ def stub_procrastinate(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_lifecycle_starts_three_workers(stub_procrastinate):
-    """SPEC-WORKER-LANES-001 REQ-1 + interactive lane: I/O, interactive and
-    LLM workers start in parallel."""
+async def test_lifecycle_starts_four_workers(stub_procrastinate):
+    """The three work lanes plus an unstarvable maintenance lane start."""
     from knowledge_ingest.worker import WorkerLifecycle
 
     async with WorkerLifecycle.start(postgres_dsn="postgresql+asyncpg://u:p@h:5432/d"):
@@ -105,7 +104,45 @@ async def test_lifecycle_starts_three_workers(stub_procrastinate):
         await asyncio.sleep(0)
 
     calls = stub_procrastinate["run_worker_calls"]
-    assert len(calls) == 3, f"expected 3 worker calls (I/O + interactive + LLM), got {len(calls)}"
+    assert len(calls) == 4, (
+        f"expected 4 worker calls (I/O + interactive + LLM + maintenance), got {len(calls)}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_all_workers_bound_shutdown_and_share_stalled_timeout(stub_procrastinate):
+    """A deploy must abort/requeue work before Compose's 90-second hard kill."""
+    from knowledge_ingest.worker import WorkerLifecycle
+
+    async with WorkerLifecycle.start(postgres_dsn="postgresql+asyncpg://u:p@h:5432/d"):
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+    calls = stub_procrastinate["run_worker_calls"]
+    assert len(calls) == 4
+    assert {call["shutdown_graceful_timeout"] for call in calls} == {
+        WorkerLifecycle.SHUTDOWN_GRACEFUL_TIMEOUT_SECONDS
+    }
+    assert {call["stalled_worker_timeout"] for call in calls} == {
+        WorkerLifecycle.STALLED_WORKER_TIMEOUT_SECONDS
+    }
+
+
+@pytest.mark.asyncio
+async def test_maintenance_worker_has_dedicated_single_slot(stub_procrastinate):
+    """Zombie recovery cannot queue behind eight long-running crawls."""
+    from knowledge_ingest.worker import WorkerLifecycle
+
+    async with WorkerLifecycle.start(postgres_dsn="postgresql+asyncpg://u:p@h:5432/d"):
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+    call = next(
+        item
+        for item in stub_procrastinate["run_worker_calls"]
+        if tuple(item["queues"]) == tuple(queues.MAINTENANCE_QUEUES)
+    )
+    assert call["concurrency"] == 1
 
 
 @pytest.mark.asyncio
@@ -210,4 +247,4 @@ async def test_zombie_recovery_failure_does_not_block_workers(stub_procrastinate
         await asyncio.sleep(0)
 
     # Workers still started despite the recovery failure.
-    assert len(stub_procrastinate["run_worker_calls"]) == 3
+    assert len(stub_procrastinate["run_worker_calls"]) == 4

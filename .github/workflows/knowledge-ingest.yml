@@ -84,8 +84,51 @@ jobs:
       - name: Test (pytest)
         run: uv run --frozen --extra dev pytest -q --tb=short -n auto
 
+  durability-postgres:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: klai-knowledge-ingest
+    services:
+      postgres:
+        image: postgres:17.10-alpine
+        env:
+          POSTGRES_USER: klai
+          POSTGRES_PASSWORD: klai
+          POSTGRES_DB: checkpoint_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U klai -d checkpoint_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://klai:klai@localhost:5432/checkpoint_test
+      CRAWL_CHECKPOINT_TEST_DSN: postgresql://klai:klai@localhost:5432/checkpoint_test
+      KNOWLEDGE_INGEST_SECRET: test-secret-value-123
+      PORTAL_INTERNAL_TOKEN: test-portal-internal-token-456
+      GITEA_WEBHOOK_SECRET: test-gitea-webhook-secret-789
+      ENRICHMENT_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.3"
+          python-version: "3.12"
+          enable-cache: true
+      - name: Prepare Alembic version schema
+        run: psql "$CRAWL_CHECKPOINT_TEST_DSN" -v ON_ERROR_STOP=1 -c "CREATE SCHEMA knowledge"
+      - name: Migrate fresh PostgreSQL
+        run: uv run --frozen --extra dev alembic upgrade head
+      - name: Test durable crawl recovery against PostgreSQL
+        run: >-
+          uv run --frozen --extra dev pytest
+          tests/integration/test_crawl_checkpoint_postgres.py
+          -q --tb=short
+
   build-push:
-    needs: quality
+    needs: [quality, durability-postgres]
     runs-on: ubuntu-latest
 
     steps:

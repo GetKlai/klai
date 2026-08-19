@@ -103,6 +103,10 @@ ignore = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+markers = [
+    "postgres: requires a disposable real PostgreSQL database",
+    "no_mock_db_helpers: exercise real database helpers",
+]
 
 [dependency-groups]
 dev = [

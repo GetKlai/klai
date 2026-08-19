@@ -6,17 +6,18 @@ and prunes their rows on the next worker startup. The FK
 sets `worker_id = NULL` on jobs whose owning worker disappeared.
 
 But procrastinate does NOT reset those jobs — their status stays `doing` forever.
-On every container kill (Docker SIGKILL after the 10s default `stop_grace_period`)
-that happens mid-LLM-call, one or more graphiti/enrich jobs become permanent zombies.
+On every hard container kill that happens mid-task, one or more jobs can become
+permanent zombies.
 After enough deploys the worker concurrency slots fill up and enrichment stalls.
 
 This module fills the gap: at lifespan startup, it prunes stalled worker rows
 and retries every job in `doing` status whose owner is gone.
 
-Safe to run because every task this worker handles is idempotent:
+Safe to run because every task this worker handles is retry-safe:
 - ``ingest_graphiti_episode`` dedups via Episode UUID
 - ``enrich_document_bulk`` dedups via content_hash + artifact_id
 - ``connector_purge_task`` is fully idempotent by design (SPEC-CONNECTOR-DELETE-LIFECYCLE-001)
+- ``run_crawl`` resumes from a generation-fenced durable checkpoint
 
 See SPEC-PROCRASTINATE-ZOMBIE-001.
 """
@@ -39,35 +40,25 @@ STALLED_WORKER_TIMEOUT_SECONDS = 120.0
 async def recover_zombie_jobs(proc_app: Any) -> dict[str, int]:
     """Reset jobs orphaned by dead workers back to ``todo``.
 
-    Two-step:
-    1. Prune stalled worker rows (heartbeat older than STALLED_WORKER_TIMEOUT_SECONDS).
-       FK CASCADE sets ``worker_id = NULL`` on each orphaned job.
-    2. Retry every job still in ``doing`` with ``worker_id IS NULL``.
+    Use Procrastinate's heartbeat-aware stalled-job query directly. This
+    catches both already-pruned ownerless jobs and jobs whose worker row still
+    exists but whose heartbeat expired after this container started.
 
     Returns counts for observability/tests.
     """
-    pruned_workers = await proc_app.job_manager.prune_stalled_workers(
-        STALLED_WORKER_TIMEOUT_SECONDS
+    jobs = list(
+        await proc_app.job_manager.get_stalled_jobs(
+            seconds_since_heartbeat=STALLED_WORKER_TIMEOUT_SECONDS
+        )
     )
-    pruned_count = len(pruned_workers)
-    if pruned_count:
-        logger.info("procrastinate_pruned_stalled_workers", count=pruned_count)
-
-    rows = await proc_app.connector.execute_query_all_async(
-        query="""
-            SELECT id, queue_name, task_name
-            FROM procrastinate_jobs
-            WHERE status = 'doing' AND worker_id IS NULL
-        """,
-    )
-    if not rows:
+    if not jobs:
         logger.info("procrastinate_zombie_recovery_clean")
-        return {"workers_pruned": pruned_count, "jobs_retried": 0}
+        return {"jobs_retried": 0}
 
     retry_at = datetime.datetime.now(datetime.UTC)
     retried = 0
-    for row in rows:
-        job_id = row["id"]
+    for job in jobs:
+        job_id = job.id
         try:
             await proc_app.job_manager.retry_job_by_id_async(job_id=job_id, retry_at=retry_at)
             retried += 1
@@ -75,14 +66,36 @@ async def recover_zombie_jobs(proc_app: Any) -> dict[str, int]:
             logger.exception(
                 "procrastinate_zombie_retry_failed",
                 job_id=job_id,
-                queue=row.get("queue_name"),
-                task=row.get("task_name"),
+                queue=job.queue,
+                task=job.task_name,
             )
 
     logger.info(
         "procrastinate_zombies_retried",
-        workers_pruned=pruned_count,
         jobs_retried=retried,
-        jobs_total=len(rows),
+        jobs_total=len(jobs),
     )
-    return {"workers_pruned": pruned_count, "jobs_retried": retried}
+    return {"jobs_retried": retried}
+
+
+def register_zombie_recovery_task(procrastinate_app: Any) -> None:
+    """Register the minute-level recovery pass on an unstarvable queue."""
+    import procrastinate
+
+    from knowledge_ingest import queues
+
+    @procrastinate_app.periodic(
+        cron="* * * * *",
+        periodic_id="stalled-job-recovery",
+    )
+    @procrastinate_app.task(
+        name="knowledge_ingest.zombie_recovery.recover_stalled_jobs_periodic",
+        queue=queues.MAINTENANCE,
+        retry=procrastinate.RetryStrategy(max_attempts=1),
+        queueing_lock="stalled-job-recovery",
+    )
+    async def recover_stalled_jobs_periodic(timestamp: int) -> dict[str, int]:
+        logger.info("procrastinate_zombie_recovery_periodic_fired", deferrer_ts=timestamp)
+        return await recover_zombie_jobs(procrastinate_app)
+
+    procrastinate_app.recover_stalled_jobs_periodic = recover_stalled_jobs_periodic

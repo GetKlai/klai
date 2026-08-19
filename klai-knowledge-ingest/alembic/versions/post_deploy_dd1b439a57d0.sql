@@ -51,6 +51,12 @@ CREATE POLICY tenant_isolation ON knowledge.crawl_jobs
   USING (org_id = knowledge._rls_current_org_id())
   WITH CHECK (org_id = knowledge._rls_current_org_id());
 
+DROP POLICY IF EXISTS tenant_isolation ON knowledge.crawl_job_frontier;
+CREATE POLICY tenant_isolation ON knowledge.crawl_job_frontier
+  AS RESTRICTIVE
+  USING (org_id = knowledge._rls_current_org_id())
+  WITH CHECK (org_id = knowledge._rls_current_org_id());
+
 DROP POLICY IF EXISTS tenant_isolation ON knowledge.crawled_pages;
 CREATE POLICY tenant_isolation ON knowledge.crawled_pages
   AS RESTRICTIVE

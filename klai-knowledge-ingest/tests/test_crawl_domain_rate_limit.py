@@ -42,11 +42,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from knowledge_ingest.adapters.crawler import run_crawl_job
+from knowledge_ingest.adapters.crawler import (
+    _apply_domain_rate_limit_effect_once,
+    run_crawl_job,
+)
 from knowledge_ingest.crawl4ai_client import CrawlResult
+from knowledge_ingest.crawl_checkpoint import CrawlExecutionSuperseded
 from knowledge_ingest.domain_rate_limit_control import DomainRateLimitState
 from knowledge_ingest.domain_selectors import DomainRateLimitWriteKind
 from knowledge_ingest.reason_codes import FetchReasonCode
+from tests.conftest import connection_factory_for
 
 START_URL = "https://intermedia.com/support"
 DOMAIN = "intermedia.com"
@@ -80,7 +85,11 @@ async def _run(
     get_state_mock: AsyncMock,
     save_state_mock: AsyncMock,
     rate_limit: float = 2.0,
-) -> None:
+    conn: MagicMock | None = None,
+    ingest_mock: AsyncMock | None = None,
+) -> MagicMock:
+    actual_conn = conn or _mock_conn()
+    actual_ingest = ingest_mock or AsyncMock(return_value=None)
     with (
         patch("knowledge_ingest.adapters.crawler.crawl_site", new=crawl_site_mock),
         patch(
@@ -101,17 +110,18 @@ async def _run(
         ),
         patch(
             "knowledge_ingest.adapters.crawler._ingest_crawl_result",
-            new=AsyncMock(return_value=None),
+            new=actual_ingest,
         ),
     ):
         await run_crawl_job(
-            _mock_conn(),
+            connection_factory=connection_factory_for(actual_conn),
             job_id="job-1",
             org_id="org-1",
             kb_slug="support",
             start_url=START_URL,
             rate_limit=rate_limit,
         )
+    return actual_conn
 
 
 def _outcomes(*reason_codes: str) -> list[dict]:
@@ -124,6 +134,115 @@ def _outcomes(*reason_codes: str) -> list[dict]:
         }
         for i, reason_code in enumerate(reason_codes)
     ]
+
+
+@pytest.mark.asyncio
+async def test_aug_19_replayed_crawl_applies_rate_limit_effect_once() -> None:
+    conn = _mock_conn()
+    conn.execute = AsyncMock(side_effect=["UPDATE 1", "UPDATE 0"])
+    conn.fetchrow = AsyncMock(
+        return_value={
+            "execution_generation": 123,
+            "status": "running",
+            "rate_limit_effect_applied": True,
+        }
+    )
+    save_state = AsyncMock(return_value=True)
+    outcomes = _outcomes(*([FetchReasonCode.RATE_LIMITED.value] * 10))
+
+    with patch(
+        "knowledge_ingest.adapters.crawler.save_domain_rate_limit_state",
+        new=save_state,
+    ):
+        for _attempt in range(2):
+            await _apply_domain_rate_limit_effect_once(
+                conn,
+                job_id="job-1",
+                org_id="org-1",
+                domain=DOMAIN,
+                execution_generation=123,
+                fetch_outcomes=outcomes,
+                domain_rate_limit_state=_NO_OVERRIDE,
+                effective_rate_limit=2.0,
+                default_rate_limit=2.0,
+            )
+
+    save_state.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_aug_19_stale_aimd_attempt_stops_on_generation_miss() -> None:
+    conn = _mock_conn()
+    conn.execute = AsyncMock(return_value="UPDATE 0")
+    conn.fetchrow = AsyncMock(
+        return_value={
+            "execution_generation": 124,
+            "status": "running",
+            "rate_limit_effect_applied": False,
+        }
+    )
+
+    with pytest.raises(CrawlExecutionSuperseded):
+        await _apply_domain_rate_limit_effect_once(
+            conn,
+            job_id="job-1",
+            org_id="org-1",
+            domain=DOMAIN,
+            execution_generation=123,
+            fetch_outcomes=_outcomes(FetchReasonCode.SUCCESS.value),
+            domain_rate_limit_state=_NO_OVERRIDE,
+            effective_rate_limit=2.0,
+            default_rate_limit=2.0,
+        )
+
+
+@pytest.mark.asyncio
+async def test_aug_19_page_side_effects_hold_advisory_lock_until_progress_commit() -> None:
+    conn = _mock_conn()
+    advisory_lock_depth = 0
+
+    async def _execute(query: str, *_args) -> str | None:
+        nonlocal advisory_lock_depth
+        if "pg_advisory_lock(" in query:
+            advisory_lock_depth += 1
+            return "SELECT 1"
+        if "pg_advisory_unlock(" in query:
+            advisory_lock_depth -= 1
+            return "SELECT 1"
+        return None
+
+    conn.execute = AsyncMock(side_effect=_execute)
+
+    async def _fetchval(query: str, *_args) -> bool | None:
+        nonlocal advisory_lock_depth
+        if "pg_try_advisory_lock" in query:
+            advisory_lock_depth += 1
+            return True
+        return None
+
+    conn.fetchval = AsyncMock(side_effect=_fetchval)
+
+    async def _assert_fenced_ingest(*_args, **_kwargs) -> None:
+        assert advisory_lock_depth > 0
+
+    await _run(
+        crawl_site_mock=AsyncMock(
+            return_value=([_page(START_URL)], _outcomes(FetchReasonCode.SUCCESS.value))
+        ),
+        get_state_mock=AsyncMock(return_value=_NO_OVERRIDE),
+        save_state_mock=AsyncMock(return_value=True),
+        conn=conn,
+        ingest_mock=AsyncMock(side_effect=_assert_fenced_ingest),
+    )
+
+    progress_query = next(
+        call.args[0]
+        for call in conn.execute.await_args_list
+        if call.args and "SET pages_done" in call.args[0]
+    )
+    assert "execution_generation" in progress_query
+    assert "status='running'" in progress_query
+    assert advisory_lock_depth == 0
 
 
 @pytest.mark.asyncio

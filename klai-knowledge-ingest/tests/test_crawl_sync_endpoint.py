@@ -608,8 +608,8 @@ class TestCrawlSyncStatusEndpoint:
         assert resp.status_code == 404
         assert resp.json()["detail"] == "job_not_found"
 
-    def test_orphaned_running_job_is_failed_on_read(self) -> None:
-        """A running crawl whose worker disappeared must not stay running forever."""
+    def test_aug_19_ownerless_running_job_remains_recoverable_on_status_read(self) -> None:
+        """Polling must not terminalise work that the stalled-job reaper can resume."""
         pool = _make_pool(
             job_row={
                 "status": "running",
@@ -628,19 +628,17 @@ class TestCrawlSyncStatusEndpoint:
         assert resp.status_code == 200
         body = resp.json()
         assert body["job_id"] == job_id
-        assert body["status"] == "failed"
+        assert body["status"] == "running"
         assert body["pages_total"] == 117
         assert body["pages_done"] == 37
-        assert body["error"] == "crawl_worker_lost"
+        assert body["error"] is None
 
         update_calls = [
             c
             for c in pool.execute.await_args_list
             if c.args and "UPDATE knowledge.crawl_jobs" in c.args[0]
         ]
-        assert update_calls
-        assert update_calls[0].args[1] == job_id
-        assert update_calls[0].args[2] == "crawl_worker_lost"
+        assert update_calls == []
 
     def test_active_running_job_is_not_failed_on_read(self) -> None:
         """A live worker-owned crawl remains running until the worker closes it."""

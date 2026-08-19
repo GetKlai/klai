@@ -20,6 +20,7 @@ from knowledge_ingest.adapters.crawler import (
 from knowledge_ingest.crawl4ai_client import CrawlResult
 from knowledge_ingest.domain_rate_limit_control import DomainRateLimitState
 from knowledge_ingest.utils.auth_wall_detector import AuthWallSignal
+from tests.conftest import connection_factory_for
 
 
 def _result(url: str, *, success: bool = True) -> CrawlResult:
@@ -132,7 +133,7 @@ class TestBFSContinuity:
             p.start()
         try:
             await run_crawl_job(
-                conn=patched_pool,
+                connection_factory=connection_factory_for(patched_pool),
                 job_id="job-bfs-1",
                 org_id="100000000000000002",
                 kb_slug="support",
@@ -195,7 +196,7 @@ class TestErrorSummaryWritten:
             p.start()
         try:
             await run_crawl_job(
-                conn=patched_pool,
+                connection_factory=connection_factory_for(patched_pool),
                 job_id="job-summary-1",
                 org_id="100000000000000002",
                 kb_slug="support",
@@ -253,7 +254,7 @@ class TestFailedPartial:
             p.start()
         try:
             await run_crawl_job(
-                conn=patched_pool,
+                connection_factory=connection_factory_for(patched_pool),
                 job_id="job-fp-1",
                 org_id="100000000000000002",
                 kb_slug="support",
@@ -295,7 +296,7 @@ class TestFailedPartial:
             p.start()
         try:
             await run_crawl_job(
-                conn=patched_pool,
+                connection_factory=connection_factory_for(patched_pool),
                 job_id="job-mixed-1",
                 org_id="100000000000000002",
                 kb_slug="support",
@@ -341,7 +342,7 @@ class TestAuthenticatedHaltUnchanged:
             p.start()
         try:
             await run_crawl_job(
-                conn=patched_pool,
+                connection_factory=connection_factory_for(patched_pool),
                 job_id="job-authwall-1",
                 org_id="100000000000000002",
                 kb_slug="support",
@@ -366,5 +367,8 @@ class TestAuthenticatedHaltUnchanged:
         assert any("auth_wall_detected" in a for a in terminal_args), (
             f"expected error containing auth_wall_detected; got {terminal_args}"
         )
-        # And it must NOT have written error_summary (different code path).
-        assert _find_error_summary_call(patched_pool.execute) is None
+        # The atomic terminal write clears any stale summary from an older
+        # execution; this selector-based failure uses ``error`` instead.
+        summary_call = _find_error_summary_call(patched_pool.execute)
+        assert summary_call is not None
+        assert summary_call.args[3] is None

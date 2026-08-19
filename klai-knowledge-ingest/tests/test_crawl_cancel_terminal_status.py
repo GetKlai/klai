@@ -22,9 +22,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from knowledge_ingest import link_graph
-from knowledge_ingest.adapters.crawler import run_crawl_job
+from knowledge_ingest.adapters.crawler import _update_job, run_crawl_job
 from knowledge_ingest.crawl4ai_client import CrawlResult
 from knowledge_ingest.reason_codes import FetchReasonCode
+from tests.conftest import connection_factory_for
 
 
 def _make_mock_conn():
@@ -61,6 +62,17 @@ def _last_status_call(mock_conn: MagicMock) -> str | None:
     if not status_calls:
         return None
     return status_calls[-1].args[1]
+
+
+@pytest.mark.asyncio
+async def test_cancel_before_claim_cannot_overwrite_a_terminal_job() -> None:
+    conn = _make_mock_conn()
+
+    await _update_job(conn, "job-1")
+
+    query = conn.execute.await_args.args[0]
+    assert "cancel_requested=true" in query
+    assert "status IN ('pending', 'running')" in query
 
 
 @pytest.mark.asyncio
@@ -115,7 +127,7 @@ async def test_cancelled_mid_crawl_reports_status_cancelled_not_failed() -> None
         mock_pg.list_stale_connector_artifact_paths = AsyncMock(return_value=[])
 
         await run_crawl_job(
-            mock_conn,
+            connection_factory=connection_factory_for(mock_conn),
             job_id="job-1",
             org_id="org-1",
             kb_slug="docs",
@@ -165,7 +177,7 @@ async def test_cancellation_skips_discovery_seed_retry() -> None:
         mock_pg.list_stale_connector_artifact_paths = AsyncMock(return_value=[])
 
         await run_crawl_job(
-            mock_conn,
+            connection_factory=connection_factory_for(mock_conn),
             job_id="job-1",
             org_id="org-1",
             kb_slug="docs",
@@ -224,7 +236,7 @@ async def test_no_cancellation_reason_code_still_reports_completed() -> None:
         mock_pg.list_stale_connector_artifact_paths = AsyncMock(return_value=[])
 
         await run_crawl_job(
-            mock_conn,
+            connection_factory=connection_factory_for(mock_conn),
             job_id="job-1",
             org_id="org-1",
             kb_slug="docs",

@@ -13,6 +13,7 @@ import pytest
 
 from knowledge_ingest import link_graph
 from knowledge_ingest.crawl4ai_client import CrawlResult
+from tests.conftest import connection_factory_for
 
 
 def _make_mock_conn():
@@ -246,7 +247,7 @@ async def test_run_crawl_job_calls_build_link_graph_before_ingest():
         from knowledge_ingest.adapters.crawler import run_crawl_job
 
         await run_crawl_job(
-            mock_conn,
+            connection_factory=connection_factory_for(mock_conn),
             job_id="job-1",
             org_id="org-1",
             kb_slug="docs",
@@ -314,7 +315,7 @@ async def test_run_crawl_job_retires_stale_connector_artifacts():
         from knowledge_ingest.adapters.crawler import run_crawl_job
 
         await run_crawl_job(
-            mock_conn,
+            connection_factory=connection_factory_for(mock_conn),
             job_id="job-1",
             org_id="org-1",
             kb_slug="klai-web-demo",
@@ -356,9 +357,9 @@ async def test_run_crawl_job_does_not_fail_when_stale_vector_delete_fails():
 
     with (
         patch(
-            "knowledge_ingest.adapters.crawler._update_job",
+            "knowledge_ingest.adapters.crawler.finish_crawl_execution",
             new_callable=AsyncMock,
-        ) as mock_update_job,
+        ) as mock_finish_execution,
         patch("knowledge_ingest.adapters.crawler.pg_store") as mock_pg,
         patch(
             "knowledge_ingest.adapters.crawler.qdrant_store.delete_document",
@@ -399,7 +400,7 @@ async def test_run_crawl_job_does_not_fail_when_stale_vector_delete_fails():
         from knowledge_ingest.adapters.crawler import run_crawl_job
 
         await run_crawl_job(
-            mock_conn,
+            connection_factory=connection_factory_for(mock_conn),
             job_id="job-1",
             org_id="org-1",
             kb_slug="klai-web-demo",
@@ -415,4 +416,9 @@ async def test_run_crawl_job_does_not_fail_when_stale_vector_delete_fails():
         "https://getklai.com/",
     )
     mock_pg.soft_delete_stale_connector_artifacts.assert_not_awaited()
-    assert any(call.kwargs.get("status") == "completed" for call in mock_update_job.await_args_list)
+    mock_finish_execution.assert_awaited_once()
+    assert mock_finish_execution.await_args.args[:2] == (mock_conn, "job-1")
+    assert mock_finish_execution.await_args.kwargs == {
+        "status": "completed",
+        "error_summary": None,
+    }

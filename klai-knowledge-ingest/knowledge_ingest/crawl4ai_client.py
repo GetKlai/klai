@@ -16,10 +16,10 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from html import unescape
 from html.parser import HTMLParser
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 from urllib.parse import unquote, urldefrag, urlparse, urlunparse
 
 import httpx
@@ -56,6 +56,17 @@ _crawl4ai_request_semaphore = asyncio.BoundedSemaphore(settings.crawl4ai_max_con
 # ---------------------------------------------------------------------------
 
 FetchOutcome = dict[str, Any]
+
+
+class CrawlCheckpoint(Protocol):
+    """Durable seam used by ``crawl_site`` at committed batch boundaries."""
+
+    async def load(self) -> dict[str, Any] | None: ...
+
+    async def save(self, snapshot: dict[str, Any]) -> None: ...
+
+    async def ensure_active(self) -> None: ...
+
 
 # ---------------------------------------------------------------------------
 # JS scripts — single source of truth for content filtering
@@ -128,6 +139,10 @@ class CrawlResult:
     html: str
     word_count: int
     success: bool
+    # Candidate URL that produced this result. It differs from ``url`` after
+    # a redirect and lets durable checkpoints attach the response to the
+    # correct frontier row without changing ingest's final-URL semantics.
+    requested_url: str | None = None
     links: dict[str, list[dict]] = field(default_factory=dict)
     # SPEC-CRAWLER-004 Fase A: crawl4ai populates ``media.images`` with dicts
     # shaped like ``{"src": "...", "alt": "...", "score": N}``. Other keys
@@ -190,6 +205,7 @@ _PRIORITY_LISTING_CHILD = 25
 _PRIORITY_PAGE_LINK = 50
 _LISTING_LINK_THRESHOLD = 50
 _THIN_CONTENT_WORD_COUNT = 100
+_CHECKPOINT_BATCH_SIZE = 8
 
 # 2026-08-18 (intermedia.com incident) — a website crawl exists to fetch
 # HTML pages, not documents. crawl4ai's browser tries to *navigate* to
@@ -1416,6 +1432,7 @@ def _extract_result(url: str, page: dict[str, Any]) -> CrawlResult:
         html=page.get("html", ""),
         word_count=len(text.split()),
         success=page.get("success", True),
+        requested_url=url,
         links=page.get("links", {}),
         media=page.get("media") or {},
         error_message=page.get("error_message"),
@@ -1635,6 +1652,37 @@ class CrawlLedger:
     @property
     def discovered_count(self) -> int:
         return len(self._by_canonical)
+
+    def snapshot(self) -> list[dict[str, Any]]:
+        """Return a JSON-shaped copy in deterministic discovery order."""
+        return [
+            asdict(item)
+            for item in sorted(self._by_canonical.values(), key=lambda item: item.order)
+        ]
+
+    @classmethod
+    def from_snapshot(
+        cls,
+        *,
+        start_url: str,
+        base_domain: str,
+        include_patterns: list[str] | None,
+        exclude_patterns: list[str] | None,
+        max_depth: int,
+        rows: list[dict[str, Any]],
+    ) -> CrawlLedger:
+        ledger = cls(
+            start_url=start_url,
+            base_domain=base_domain,
+            include_patterns=include_patterns,
+            exclude_patterns=exclude_patterns,
+            max_depth=max_depth,
+        )
+        for row in rows:
+            item = DiscoveredUrl(**row)
+            ledger._by_canonical[item.canonical_url] = item
+            ledger._order = max(ledger._order, item.order)
+        return ledger
 
     def add_start(self) -> None:
         self.add(
@@ -2058,6 +2106,7 @@ async def crawl_site(
     cookies: list[dict[str, Any]] | None = None,
     rate_limit: float | None = None,
     cancel_check: Callable[[], Awaitable[bool]] | None = None,
+    checkpoint: CrawlCheckpoint | None = None,
 ) -> tuple[list[CrawlResult], list[FetchOutcome]]:
     """Crawl one site through a host schedule shared by overlapping jobs."""
     async with _host_pacing_scope(start_url, rate_limit):
@@ -2072,6 +2121,7 @@ async def crawl_site(
             cookies=cookies,
             rate_limit=rate_limit,
             cancel_check=cancel_check,
+            checkpoint=checkpoint,
         )
 
 
@@ -2086,6 +2136,7 @@ async def _crawl_site_in_host_scope(
     cookies: list[dict[str, Any]] | None = None,
     rate_limit: float | None = None,
     cancel_check: Callable[[], Awaitable[bool]] | None = None,
+    checkpoint: CrawlCheckpoint | None = None,
 ) -> tuple[list[CrawlResult], list[FetchOutcome]]:
     """Crawl a site with a Klai-owned deterministic frontier.
 
@@ -2123,21 +2174,36 @@ async def _crawl_site_in_host_scope(
         selector,
         login_indicator_selector=login_indicator_selector,
     )
-    ledger = CrawlLedger(
-        start_url=start_url,
-        base_domain=base_domain,
-        include_patterns=include_patterns,
-        exclude_patterns=exclude_patterns,
-        max_depth=max_depth,
-    )
-    ledger.add_start()
-
-    sitemap_urls = await _fetch_sitemap_urls(start_url)
-    ledger.add_sitemap_urls(sitemap_urls)
-
-    crawl_results: list[CrawlResult] = []
-    outcomes: list[FetchOutcome] = []
-    fetched_count = 0
+    restored = await checkpoint.load() if checkpoint is not None else None
+    if restored is not None:
+        if restored.get("version") != 1 or restored.get("start_url") != start_url:
+            raise ValueError("crawl checkpoint does not match this crawl")
+        ledger = CrawlLedger.from_snapshot(
+            start_url=start_url,
+            base_domain=base_domain,
+            include_patterns=include_patterns,
+            exclude_patterns=exclude_patterns,
+            max_depth=max_depth,
+            rows=list(restored.get("ledger") or []),
+        )
+        crawl_results = [CrawlResult(**row) for row in restored.get("results") or []]
+        outcomes = list(restored.get("outcomes") or [])
+        fetched_count = int(restored.get("fetched_count") or 0)
+        if restored.get("complete"):
+            await checkpoint.ensure_active()
+            return crawl_results, outcomes
+    else:
+        ledger = CrawlLedger(
+            start_url=start_url,
+            base_domain=base_domain,
+            include_patterns=include_patterns,
+            exclude_patterns=exclude_patterns,
+            max_depth=max_depth,
+        )
+        ledger.add_start()
+        crawl_results = []
+        outcomes = []
+        fetched_count = 0
     # Crawl-job-wide budgets for the bulk-5xx sequential-recovery fallback
     # (see _recover_bulk_5xx_batch / _MAX_SEQUENTIAL_RECOVERY). BOTH are
     # shared across every batch iteration below, not reset per batch — a
@@ -2158,8 +2224,19 @@ async def _crawl_site_in_host_scope(
     # therefore derived from this remaining budget immediately before that
     # call, and the remaining budget is debited only by the wall-clock time
     # that specific call actually consumed.
-    sequential_recovery_budget = _MAX_SEQUENTIAL_RECOVERY
-    sequential_recovery_time_remaining = settings.crawl_sequential_recovery_max_seconds
+    sequential_recovery_budget = int(
+        restored.get("sequential_recovery_budget", _MAX_SEQUENTIAL_RECOVERY)
+        if restored
+        else _MAX_SEQUENTIAL_RECOVERY
+    )
+    sequential_recovery_time_remaining = float(
+        restored.get(
+            "sequential_recovery_time_remaining",
+            settings.crawl_sequential_recovery_max_seconds,
+        )
+        if restored
+        else settings.crawl_sequential_recovery_max_seconds
+    )
 
     # Deel B (2026-08-18) — the in-job rate_limit actually used for the NEXT
     # ``_chunked_bulk_fetch`` call. Starts at the caller's ``rate_limit`` and
@@ -2170,29 +2247,76 @@ async def _crawl_site_in_host_scope(
     # job completes, for the NEXT crawl). ``consecutive_rate_limit_slowdowns``
     # bounds how many times in a row that can happen before giving up — see
     # ``_MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS``.
-    current_rate_limit = rate_limit
-    consecutive_rate_limit_slowdowns = 0
-
-    start_result = await _fetch_seed_page(
-        start_url=start_url,
-        crawler_config=crawler_config,
-        cookies=cookies,
+    current_rate_limit = restored.get("current_rate_limit", rate_limit) if restored else rate_limit
+    consecutive_rate_limit_slowdowns = int(
+        restored.get("consecutive_rate_limit_slowdowns", 0) if restored else 0
     )
-    start_outcome = _build_outcome_from_result(start_url, start_result)
-    ledger.mark_outcome(start_outcome)
-    outcomes.append(start_outcome)
-    fetched_count += 1
-    if _result_is_ingestable(
-        start_result, base_domain=base_domain
-    ) and not _is_non_content_listing_page(start_result):
-        crawl_results.append(start_result)
-    if start_result.success:
-        ledger.add_links_from_result(start_result, source_depth=0)
+    checkpointed_results = len(crawl_results)
+    checkpointed_outcomes = len(outcomes)
+
+    async def save_checkpoint(*, complete: bool = False) -> None:
+        nonlocal checkpointed_results, checkpointed_outcomes
+        if checkpoint is None:
+            return
+        await checkpoint.save(
+            {
+                "version": 1,
+                "start_url": start_url,
+                "complete": complete,
+                "ledger": ledger.snapshot(),
+                "results_delta": [
+                    asdict(result) for result in crawl_results[checkpointed_results:]
+                ],
+                "outcomes_delta": outcomes[checkpointed_outcomes:],
+                "fetched_count": fetched_count,
+                "sequential_recovery_budget": sequential_recovery_budget,
+                "sequential_recovery_time_remaining": sequential_recovery_time_remaining,
+                "current_rate_limit": current_rate_limit,
+                "consecutive_rate_limit_slowdowns": consecutive_rate_limit_slowdowns,
+            }
+        )
+        checkpointed_results = len(crawl_results)
+        checkpointed_outcomes = len(outcomes)
+
+    if restored is None:
+        if checkpoint is not None:
+            await checkpoint.ensure_active()
+        if cancel_check is not None and await cancel_check():
+            return [], [
+                _outcome_for_not_attempted_url(
+                    start_url,
+                    reason_code=FetchReasonCode.NOT_FETCHED_CANCELLED.value,
+                )
+            ]
+        sitemap_urls = await _fetch_sitemap_urls(start_url)
+        ledger.add_sitemap_urls(sitemap_urls)
+        start_result = await _fetch_seed_page(
+            start_url=start_url,
+            crawler_config=crawler_config,
+            cookies=cookies,
+        )
+        start_outcome = _build_outcome_from_result(start_url, start_result)
+        ledger.mark_outcome(start_outcome)
+        outcomes.append(start_outcome)
+        fetched_count += 1
+        if _result_is_ingestable(
+            start_result, base_domain=base_domain
+        ) and not _is_non_content_listing_page(start_result):
+            crawl_results.append(start_result)
+        if start_result.success:
+            ledger.add_links_from_result(start_result, source_depth=0)
+        await save_checkpoint()
 
     while fetched_count < max_pages:
-        batch = ledger.next_batch(remaining_budget=max_pages - fetched_count)
+        remaining_budget = max_pages - fetched_count
+        if checkpoint is not None:
+            remaining_budget = min(remaining_budget, _CHECKPOINT_BATCH_SIZE)
+        batch = ledger.next_batch(remaining_budget=remaining_budget)
         if not batch:
             break
+
+        if checkpoint is not None:
+            await checkpoint.ensure_active()
 
         fetch = await _chunked_bulk_fetch(
             urls=batch,
@@ -2451,6 +2575,8 @@ async def _crawl_site_in_host_scope(
             if source_depth is not None and source_depth < max_depth:
                 ledger.add_links_from_result(result, source_depth=source_depth)
 
+        await save_checkpoint()
+
         if stop_crawl_after_this_batch:
             # BLOCKED_ANTI_BOT, a RATE_LIMITED signal that survived
             # _MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS halvings, or an operator
@@ -2464,6 +2590,7 @@ async def _crawl_site_in_host_scope(
     ledger.mark_unfetched(fetched_count=fetched_count, max_pages=max_pages)
     omitted_outcomes = ledger.omitted_outcomes()
     outcomes.extend(omitted_outcomes)
+    await save_checkpoint(complete=True)
 
     success_count = sum(1 for o in outcomes if o["reason_code"] == FetchReasonCode.SUCCESS.value)
     logger.info(

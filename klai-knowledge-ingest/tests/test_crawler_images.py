@@ -12,12 +12,25 @@ import hashlib
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
+import klai_image_storage.url_guard as image_url_guard
 import pytest
 from klai_image_storage import (
     ImageStore,
     ImageUploadResult,
     download_and_upload_crawl_images,
 )
+
+
+@pytest.fixture(autouse=True)
+def _stable_public_dns(monkeypatch: pytest.MonkeyPatch):
+    image_url_guard._reset_dns_cache()
+    monkeypatch.setattr(
+        image_url_guard,
+        "_resolve_blocking",
+        lambda _hostname: ("93.184.216.34",),
+    )
+    yield
+    image_url_guard._reset_dns_cache()
 
 
 def _png_bytes(payload: bytes = b"one") -> bytes:

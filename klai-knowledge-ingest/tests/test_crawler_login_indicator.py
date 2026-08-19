@@ -24,6 +24,7 @@ from knowledge_ingest.adapters.crawler import (
 )
 from knowledge_ingest.crawl4ai_client import CrawlResult, build_crawl_config
 from knowledge_ingest.utils.auth_wall_detector import AuthWallSignal
+from tests.conftest import connection_factory_for
 
 
 class TestBuildCrawlConfigWithLoginIndicator:
@@ -178,7 +179,7 @@ class TestRunCrawlJobAuthWall:
             ) as ingest_mock,
         ):
             await run_crawl_job(
-                mock_conn,
+                connection_factory=connection_factory_for(mock_conn),
                 job_id="job-1",
                 org_id="org",
                 kb_slug="support",
@@ -206,7 +207,7 @@ class TestRunCrawlJobAuthWall:
         failed_updates = [
             c
             for c in update_calls
-            if len(c.args) >= 3
+            if len(c.args) >= 4
             and isinstance(c.args[0], str)
             and "UPDATE knowledge.crawl_jobs" in c.args[0]
             and "status=$1" in c.args[0]
@@ -273,7 +274,7 @@ class TestRunCrawlJobAuthWall:
             ) as ingest_mock,
         ):
             await run_crawl_job(
-                mock_conn,
+                connection_factory=connection_factory_for(mock_conn),
                 job_id="job-1",
                 org_id="org",
                 kb_slug="support",
@@ -301,10 +302,10 @@ class TestRunCrawlJobAuthWall:
             and "UPDATE knowledge.crawl_jobs" in c.args[0]
             and "status=$1" in c.args[0]
             and c.args[1] == "failed_partial"
-            and isinstance(c.args[2], str)
+            and isinstance(c.args[3], str)
         ]
         assert terminal_updates
-        summary = terminal_updates[-1].args[2]
+        summary = terminal_updates[-1].args[3]
         assert '"reason": "auth_wall_detected"' in summary
         assert '"reason": "crawl_budget_exhausted"' in summary
         assert "Refresh the saved cookies" in summary

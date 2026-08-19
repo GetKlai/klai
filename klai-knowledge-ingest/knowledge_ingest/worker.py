@@ -11,8 +11,7 @@ async task worker correctly:
 * Open the connection pool.
 * Run zombie recovery (SPEC-PROCRASTINATE-ZOMBIE-001) before starting the
   worker so jobs orphaned by a previous container kill get retried.
-* Start the worker subscribed to ``queues.ALL_QUEUES`` (single source
-  of truth — SPEC-INGEST-QUEUE-SEPARATION-001).
+* Start one worker per queue lane, including an unstarvable maintenance lane.
 * On shutdown: cancel the worker task and close the connection pool.
 
 Why a class instead of a free async function:
@@ -87,11 +86,17 @@ class WorkerLifecycle:
     # concurrent users while keeping extra LLM pressure negligible next to
     # the bulk lane's 4 slots.
     INTERACTIVE_CONCURRENCY: int = 2
+    MAINTENANCE_CONCURRENCY: int = 1
+    # Compose allows 90 seconds before SIGKILL. Give Procrastinate enough
+    # time to persist a retry while still leaving a wide process-shutdown
+    # margin for FastAPI and the connector pool.
+    SHUTDOWN_GRACEFUL_TIMEOUT_SECONDS: float = 20.0
+    STALLED_WORKER_TIMEOUT_SECONDS: float = 120.0
 
     def __init__(self, *, postgres_dsn: str) -> None:
         self.postgres_dsn = postgres_dsn
         self.proc_app: Any | None = None
-        # SPEC-WORKER-LANES-001: two procrastinate workers, one per lane.
+        # SPEC-WORKER-LANES-001: one Procrastinate worker per lane.
         # Both share the same App + connector pool, but subscribe to disjoint
         # queue sets and have independent concurrency semaphores. This is the
         # only way to give I/O work latency guarantees while LLM work runs at
@@ -100,6 +105,7 @@ class WorkerLifecycle:
         self._io_worker_task: asyncio.Task | None = None
         self._interactive_worker_task: asyncio.Task | None = None
         self._llm_worker_task: asyncio.Task | None = None
+        self._maintenance_worker_task: asyncio.Task | None = None
         self._stack = AsyncExitStack()
 
     @classmethod
@@ -137,20 +143,30 @@ class WorkerLifecycle:
         except Exception:
             logger.exception("procrastinate_zombie_recovery_failed")
 
-        # SPEC-WORKER-LANES-001: start two workers in parallel, each
-        # subscribed to one lane only. This is what gives I/O work latency
+        # SPEC-WORKER-LANES-001: start lane workers in parallel. This gives I/O work latency
         # independence from LLM work — no FIFO across lanes, no concurrency
         # competition. A single worker subscribed to ALL_QUEUES (the previous
         # design) would still let a backlog of LLM jobs starve I/O work
         # because procrastinate fetches the oldest todo across the worker's
         # queue set, regardless of queue identity.
-        from knowledge_ingest.queues import INTERACTIVE_QUEUES, IO_QUEUES, LLM_QUEUES
+        from knowledge_ingest.queues import (
+            INTERACTIVE_QUEUES,
+            IO_QUEUES,
+            LLM_QUEUES,
+            MAINTENANCE_QUEUES,
+        )
+
+        common_worker_options = {
+            "install_signal_handlers": False,
+            "shutdown_graceful_timeout": self.SHUTDOWN_GRACEFUL_TIMEOUT_SECONDS,
+            "stalled_worker_timeout": self.STALLED_WORKER_TIMEOUT_SECONDS,
+        }
 
         self._io_worker_task = asyncio.create_task(
             self.proc_app.run_worker_async(
                 queues=IO_QUEUES,
                 concurrency=self.IO_CONCURRENCY,
-                install_signal_handlers=False,
+                **common_worker_options,
             ),
             name="procrastinate-worker-io",
         )
@@ -158,7 +174,7 @@ class WorkerLifecycle:
             self.proc_app.run_worker_async(
                 queues=INTERACTIVE_QUEUES,
                 concurrency=self.INTERACTIVE_CONCURRENCY,
-                install_signal_handlers=False,
+                **common_worker_options,
             ),
             name="procrastinate-worker-interactive",
         )
@@ -166,9 +182,17 @@ class WorkerLifecycle:
             self.proc_app.run_worker_async(
                 queues=LLM_QUEUES,
                 concurrency=self.LLM_CONCURRENCY,
-                install_signal_handlers=False,
+                **common_worker_options,
             ),
             name="procrastinate-worker-llm",
+        )
+        self._maintenance_worker_task = asyncio.create_task(
+            self.proc_app.run_worker_async(
+                queues=MAINTENANCE_QUEUES,
+                concurrency=self.MAINTENANCE_CONCURRENCY,
+                **common_worker_options,
+            ),
+            name="procrastinate-worker-maintenance",
         )
         logger.info(
             "procrastinate_workers_started",
@@ -178,14 +202,21 @@ class WorkerLifecycle:
             interactive_concurrency=self.INTERACTIVE_CONCURRENCY,
             llm_queues=LLM_QUEUES,
             llm_concurrency=self.LLM_CONCURRENCY,
+            maintenance_queues=MAINTENANCE_QUEUES,
+            maintenance_concurrency=self.MAINTENANCE_CONCURRENCY,
         )
         return self
 
     async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
-        # Cancel both lane workers in parallel and wait for them to exit.
+        # Cancel all lane workers in parallel and wait for them to exit.
         worker_tasks = [
             t
-            for t in (self._io_worker_task, self._interactive_worker_task, self._llm_worker_task)
+            for t in (
+                self._io_worker_task,
+                self._interactive_worker_task,
+                self._llm_worker_task,
+                self._maintenance_worker_task,
+            )
             if t is not None
         ]
         if worker_tasks:

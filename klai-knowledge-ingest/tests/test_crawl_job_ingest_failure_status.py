@@ -23,6 +23,7 @@ import pytest
 
 from knowledge_ingest import link_graph
 from knowledge_ingest.crawl4ai_client import CrawlResult
+from tests.conftest import connection_factory_for
 
 
 def _make_mock_conn():
@@ -103,7 +104,7 @@ async def test_job_with_total_ingest_failure_is_not_reported_completed() -> None
         from knowledge_ingest.adapters.crawler import run_crawl_job
 
         await run_crawl_job(
-            mock_conn,
+            connection_factory=connection_factory_for(mock_conn),
             job_id="job-1",
             org_id="org-1",
             kb_slug="docs",
@@ -161,7 +162,7 @@ async def test_job_with_all_ingests_succeeding_is_still_completed() -> None:
         from knowledge_ingest.adapters.crawler import run_crawl_job
 
         await run_crawl_job(
-            mock_conn,
+            connection_factory=connection_factory_for(mock_conn),
             job_id="job-1",
             org_id="org-1",
             kb_slug="docs",
