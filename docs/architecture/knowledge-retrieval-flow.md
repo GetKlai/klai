@@ -82,6 +82,7 @@ User types a message (LibreChat | Partner API consumer | chat widget on external
         │         ├── Apply taxonomy_node_ids filter (when classifier returned IDs
         │         │   AND in-scope KB has coverage)
         │         ├── Reranking (cross-encoder scores each chunk against the query)
+        │         ├── Quality floor (remove explicitly degraded chunks)
         │         ├── Source-aware selection (semantic preference + diversity, SPEC-KB-021)
         │         ├── Quality score boost (feedback signals from Qdrant payload)
         │         ├── Parent expansion — expand each top-K child to its parent chunk
@@ -532,8 +533,9 @@ Scope `"org"` or `"both"`:
 
 KB slug filter (when active):
 - `kb_slug IN [requested slugs]`
-- Exception: when scope is `"both"`, personal chunks (`user_id == request.user_id`)
-  bypass the slug filter and are always included
+- Exception: when scope is `"both"`, the requester's canonical personal KB slug is
+  allowed alongside the selected organization KB slugs. Other user-stamped chunks in
+  unselected KBs do not bypass the filter.
 
 **Parallel graph search:**
 FalkorDB/Graphiti runs a graph traversal in parallel with the Qdrant search, resolving
@@ -603,43 +605,21 @@ Timeout: 30 seconds. On failure, the top-K Qdrant results are returned unranked.
 
 ---
 
-### Step 5b: Quality score boost (SPEC-KB-015)
+### Step 5a: Quality floor (SPEC-INGEST-LOGIN-WALL-DETECT-001)
 
-**Simple:** Chunks that users have previously rated helpful get a small ranking boost.
-Chunks rated unhelpful get a small penalty. This makes the knowledge base self-improving
-over time — popular, useful answers rise; outdated or irrelevant ones sink.
+**Simple:** Chunks explicitly degraded as login-walled or unusable are removed before
+they can consume a source-diversity slot.
 
-**Technical:** After reranking, `quality_boost()` reads two payload fields from each Qdrant
-result:
-
-- `quality_score` — running average of thumbs up/down signals, initialized at `0.5` (neutral)
-- `feedback_count` — total number of feedback events on this chunk
-
-```python
-boosted_score = rrf_score * (1 + 0.2 * (quality_score - 0.5))
-```
-
-The boost is only applied when `feedback_count >= 3` (cold-start guard). Below this
-threshold, chunks rank purely on retrieval score. The threshold is 3 rather than the
-statistically ideal 5–10 because Klai's per-org user pool is small; see SPEC-KB-015
-§Design notes for full rationale.
-
-At maximum signal (quality_score = 1.0 or 0.0), the adjustment is ±10% of the RRF score
-— intentionally conservative to avoid letting feedback dominate over semantic relevance.
-
-Results are re-sorted by the boosted score.
-
-**Feedback loop:** After the retrieval-api responds, the LiteLLM hook fires a retrieval
-log to `portal-api /internal/v1/retrieval-log` (fire-and-forget). This log is stored in
-Redis (1-hour TTL). When the user later clicks 👍 or 👎 on the AI response, LibreChat
-forwards the feedback to `portal-api /internal/v1/kb-feedback`, which correlates it with
-the retrieval log and updates the Qdrant payload. See
-[knowledge-ingest-flow.md — Self-learning feedback loop](knowledge-ingest-flow.md#self-learning-feedback-loop-spec-kb-015)
-for the full picture.
+**Technical:** After reranking, `filter_quality_floor()` removes chunks whose numeric
+`quality_score` is below `KLAI_RETRIEVAL_QUALITY_FLOOR` (default `0.05`). Missing or
+non-numeric values use the neutral default `0.5`. One or two feedback votes remain in the
+cold-start window and are also treated as neutral; a single thumbs-down must not become a
+hard exclusion. The filter preserves candidate order and records the removed count in
+`quality_floor_filtered`.
 
 ---
 
-### Step 5c: Source-aware selection (SPEC-KB-021)
+### Step 5b: Source-aware selection (SPEC-KB-021)
 
 **Simple:** When an org has multiple knowledge bases, Klai ensures that the top-K results
 are not monopolized by a single source. This step enforces source diversity while allowing
@@ -702,7 +682,41 @@ Every retrieval request logs the following to `RetrieveMetadata` for observabili
 These fields enable post-retrieval analysis: which sources does the router recommend vs.
 which the diversity algorithm selects vs. which actually end up in the top-K.
 
-The final `top_k` chunks (default: 5) are returned to the LiteLLM hook.
+The selected chunks then receive the feedback-based quality boost.
+
+---
+
+### Step 5c: Quality score boost (SPEC-KB-015)
+
+**Simple:** Chunks that users have previously rated helpful get a small ranking boost.
+Chunks rated unhelpful get a small penalty. This makes the knowledge base self-improving
+over time — popular, useful answers rise; outdated or irrelevant ones sink.
+
+**Technical:** After source-aware selection, `quality_boost()` reads two payload fields
+from each selected chunk:
+
+- `quality_score` — running average of thumbs up/down signals, initialized at `0.5` (neutral)
+- `feedback_count` — total number of feedback events on this chunk
+
+```python
+boosted_score = base_rank_score * (1 + 0.2 * (quality_score - 0.5))
+```
+
+The boost is only applied when `feedback_count >= 3` (cold-start guard). Below this
+threshold, chunks rank purely on retrieval score. At maximum signal (`quality_score` 1.0
+or 0.0), the adjustment is ±10% of the ranking score. Results are re-sorted when the
+active ranking contract applies a boost; shadow serving retains its legacy score ordering.
+
+**Feedback loop:** After the retrieval-api responds, the LiteLLM hook fires a retrieval
+log to `portal-api /internal/v1/retrieval-log` (fire-and-forget). This log is stored in
+Redis (1-hour TTL). When the user later clicks 👍 or 👎 on the AI response, LibreChat
+forwards the feedback to `portal-api /internal/v1/kb-feedback`, which correlates it with
+the retrieval log and updates the Qdrant payload. See
+[knowledge-ingest-flow.md — Self-learning feedback loop](knowledge-ingest-flow.md#self-learning-feedback-loop-spec-kb-015)
+for the full picture.
+
+The final `top_k` chunks (default: 5) continue to parent expansion and are then returned
+to the LiteLLM hook.
 
 ---
 
