@@ -1,5 +1,6 @@
 """Static integrity checks for the durable crawl checkpoint migration."""
 
+import ast
 from pathlib import Path
 
 MIGRATION = (
@@ -16,3 +17,18 @@ def test_frontier_fk_binds_job_and_tenant_together() -> None:
 def test_fresh_database_always_gets_a_frontier_tenant_policy() -> None:
     assert "IF to_regprocedure('knowledge._rls_current_org_id()') IS NOT NULL" not in MIGRATION
     assert "CREATE POLICY tenant_isolation ON knowledge.crawl_job_frontier" in MIGRATION
+
+
+def test_each_asyncpg_migration_execute_contains_one_statement() -> None:
+    tree = ast.parse(MIGRATION)
+    statements = [
+        call.args[0].value
+        for call in ast.walk(tree)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "execute"
+        and call.args
+        and isinstance(call.args[0], ast.Constant)
+        and isinstance(call.args[0].value, str)
+    ]
+    assert all(not ("DO $migration$" in sql and "CREATE POLICY" in sql) for sql in statements)

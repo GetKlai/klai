@@ -84,9 +84,12 @@ def upgrade() -> None:
                 $body$
             $function$;
           END IF;
-        END
-        $migration$;
-
+        END;
+        $migration$
+        """
+    )
+    op.execute(
+        """
         CREATE POLICY tenant_isolation ON knowledge.crawl_job_frontier
           AS RESTRICTIVE
           USING (org_id = knowledge._rls_current_org_id())
