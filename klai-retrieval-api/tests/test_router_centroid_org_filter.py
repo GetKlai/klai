@@ -183,6 +183,26 @@ class TestCentroidsFilterByOrg:
                 "Each scroll filter must also have a source_label FieldCondition"
             )
 
+    @pytest.mark.asyncio
+    async def test_pinned_kb_scope_is_present_beside_org_filter(self):
+        mock_client = AsyncMock()
+        mock_client.scroll.return_value = ([], None)
+
+        with patch("retrieval_api.services.search._get_client", return_value=mock_client):
+            await _default_compute_centroids(
+                [KBEntry(source_label="shared-domain", name="Shared")],
+                "org-a",
+                ["sip"],
+            )
+
+        conditions = {
+            condition.key: condition.match
+            for condition in mock_client.scroll.await_args.kwargs["scroll_filter"].must
+        }
+        assert conditions["org_id"].value == "org-a"
+        assert conditions["source_label"].value == "shared-domain"
+        assert conditions["kb_slug"].any == ["sip"]
+
 
 # ---------------------------------------------------------------------------
 # AC-4: Cache is keyed per org — two orgs must not share a cache entry
@@ -240,6 +260,35 @@ class TestCentroidCacheKeyedByOrg:
             f"Compute must be called once per org; got call_log={call_log}"
         )
         assert decision_a2.cache_hit is True, "Second call for org-a should be a cache hit"
+
+    @pytest.mark.asyncio
+    async def test_centroid_cache_isolated_by_catalog_scope(self):
+        call_log: list[tuple[str, ...]] = []
+
+        async def tracking_compute(catalog, org_id: str):
+            labels = tuple(entry.source_label for entry in catalog)
+            call_log.append(labels)
+            return {label: [1.0, 0.0] for label in labels}
+
+        await route_to_sources(
+            "query",
+            [1.0, 0.0],
+            "org-a",
+            [KBEntry(source_label="sip", name="SIP")],
+            compute_centroid_fn=tracking_compute,
+            kb_slugs=["sip"],
+        )
+        decision = await route_to_sources(
+            "query",
+            [1.0, 0.0],
+            "org-a",
+            [KBEntry(source_label="sip", name="SIP")],
+            compute_centroid_fn=tracking_compute,
+            kb_slugs=["support"],
+        )
+
+        assert call_log == [("sip",), ("sip",)]
+        assert decision.cache_hit is False
 
     @pytest.mark.asyncio
     async def test_different_orgs_get_different_centroids(self):

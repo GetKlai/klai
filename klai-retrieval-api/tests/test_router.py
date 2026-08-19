@@ -1,12 +1,16 @@
 import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from retrieval_api.services.router import (
     KBEntry,
-    _build_keyword_map,
+    _catalog_cache,
+    _centroid_cache,
+    clear_catalog_cache,
     clear_centroid_cache,
-    layer1_keyword,
+    fetch_source_catalog,
     layer2_semantic,
     route_to_sources,
 )
@@ -15,8 +19,10 @@ from retrieval_api.services.router import (
 @pytest.fixture(autouse=True)
 def _clear_cache():
     clear_centroid_cache()
+    clear_catalog_cache()
     yield
     clear_centroid_cache()
+    clear_catalog_cache()
 
 
 CATALOG = [
@@ -38,64 +44,6 @@ CATALOG = [
     ),
     KBEntry(source_label="notion-internal", name="Notion Wiki", description="Interne bedrijfswiki"),
 ]
-
-
-class TestBuildKeywordMap:
-    def test_splits_source_label_on_separators(self):
-        kmap = _build_keyword_map(CATALOG)
-        assert "mitel" in kmap
-        assert "help.mitel.nl" in kmap["mitel"]
-
-    def test_includes_name_words(self):
-        kmap = _build_keyword_map(CATALOG)
-        assert "voys" in kmap
-        assert "help.voys.nl" in kmap["voys"]
-
-    def test_skips_short_tokens(self):
-        kmap = _build_keyword_map(CATALOG)
-        assert "nl" not in kmap  # too short (2 chars)
-
-    def test_no_description_words_in_map(self):
-        """Description words should NOT be in keyword map (too generic)."""
-        kmap = _build_keyword_map(CATALOG)
-        # "documentatie" is in Mitel's description but should be filtered
-        assert "documentatie" not in kmap
-
-    def test_stop_words_filtered(self):
-        """Generic words like 'help', 'docs', 'wiki' should not be routing tokens."""
-        kmap = _build_keyword_map(CATALOG)
-        assert "help" not in kmap
-        assert "wiki" not in kmap
-
-    def test_collision_maps_to_both_sources(self):
-        """Two sources sharing a token should both be in the set."""
-        catalog = [
-            KBEntry(source_label="mitel-helpcenter", name="Mitel HC"),
-            KBEntry(source_label="mitel-wiki", name="Mitel Wiki"),
-        ]
-        kmap = _build_keyword_map(catalog)
-        assert "mitel" in kmap
-        assert "mitel-helpcenter" in kmap["mitel"]
-        assert "mitel-wiki" in kmap["mitel"]
-
-
-class TestLayer1Keyword:
-    def test_matches_brand_in_query(self):
-        kmap = _build_keyword_map(CATALOG)
-        result = layer1_keyword("hoe configureer ik mitel voip", kmap)
-        assert result is not None
-        assert "help.mitel.nl" in result
-
-    def test_no_match_returns_none(self):
-        kmap = _build_keyword_map(CATALOG)
-        result = layer1_keyword("hoe maak ik een gebruiker aan", kmap)
-        assert result is None
-
-    def test_multiple_brands_matched(self):
-        kmap = _build_keyword_map(CATALOG)
-        result = layer1_keyword("verschil tussen mitel en ascend", kmap)
-        assert result is not None
-        assert len(result) >= 2
 
 
 class TestLayer2Semantic:
@@ -140,15 +88,23 @@ class TestLayer2Semantic:
 
 class TestRouteToSources:
     @pytest.mark.asyncio
-    async def test_layer1_keyword_hit(self):
+    async def test_brand_name_does_not_override_semantic_abstention(self):
+        async def near_tie_centroids(catalog, org_id):
+            return {
+                "help.mitel.nl": [1.0, 0.0],
+                "help.voys.nl": [0.999, 0.001],
+                "redcactus-wiki": [0.998, 0.002],
+            }
+
         decision = await route_to_sources(
             "hoe configureer ik mitel voip",
-            query_vector=[0.5, 0.5],
+            query_vector=[1.0, 0.0],
             org_id="org-1",
-            source_label_catalog=CATALOG,
+            source_label_catalog=CATALOG[:3],
+            compute_centroid_fn=near_tie_centroids,
         )
-        assert decision.layer_used == "keyword"
-        assert "help.mitel.nl" in decision.selected_source_labels
+        assert decision.layer_used == "none"
+        assert decision.selected_source_labels is None
 
     @pytest.mark.asyncio
     async def test_layer2_with_compute_fn(self):
@@ -161,9 +117,9 @@ class TestRouteToSources:
                 "notion-internal": [0.2, 0.5, 0.3],
             }
 
-        # Query close to mitel
+        # Query close to Mitel; semantic similarity is the only routing signal.
         decision = await route_to_sources(
-            "hoe werkt een pbx systeem",  # no keyword match
+            "hoe werkt een pbx systeem",
             query_vector=[0.95, 0.1, 0.05],
             org_id="org-1",
             source_label_catalog=CATALOG,
@@ -174,19 +130,6 @@ class TestRouteToSources:
         assert "help.mitel.nl" in decision.selected_source_labels
 
     @pytest.mark.asyncio
-    async def test_user_override_skips_router(self):
-        """Router must NOT be called when user sets kb_slugs.
-        This is enforced at retrieve.py level, but we test the invariant here."""
-        # The router itself always runs when called — the skip is in retrieve.py
-        decision = await route_to_sources(
-            "anything",
-            query_vector=[0.5, 0.5],
-            org_id="org-1",
-            source_label_catalog=CATALOG,
-        )
-        # Router always returns a decision when called
-        assert decision is not None
-
     @pytest.mark.asyncio
     async def test_layer3_timeout_failopen(self):
         async def slow_llm(query, catalog):
@@ -249,3 +192,72 @@ class TestRouteToSources:
         )
         assert decision.selected_source_labels is None
         assert decision.layer_used == "none"
+
+
+class TestSourceCatalogScope:
+    @pytest.mark.asyncio
+    async def test_pinned_kb_filter_and_cache_key_are_scoped(self):
+        mock_client = AsyncMock()
+        mock_client.facet.return_value = SimpleNamespace(hits=[])
+
+        with patch("retrieval_api.services.search._get_client", return_value=mock_client):
+            await fetch_source_catalog("org-1", ["sip"])
+            await fetch_source_catalog("org-1")
+
+        assert mock_client.facet.await_count == 2
+        pinned_filter = mock_client.facet.await_args_list[0].kwargs["facet_filter"]
+        pinned_conditions = {condition.key: condition.match for condition in pinned_filter.must}
+        assert pinned_conditions["org_id"].value == "org-1"
+        assert pinned_conditions["kb_slug"].any == ["sip"]
+        assert ("org-1", ("sip",)) in _catalog_cache
+        assert ("org-1", None) in _catalog_cache
+
+    @pytest.mark.asyncio
+    async def test_transient_facet_failure_is_not_cached(self):
+        mock_client = AsyncMock()
+        mock_client.facet.side_effect = [
+            RuntimeError("temporary qdrant failure"),
+            SimpleNamespace(hits=[SimpleNamespace(value="notion")]),
+        ]
+
+        with patch("retrieval_api.services.search._get_client", return_value=mock_client):
+            assert await fetch_source_catalog("org-1") == []
+            recovered = await fetch_source_catalog("org-1")
+
+        assert [entry.source_label for entry in recovered] == ["notion"]
+        assert mock_client.facet.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_router_caches_are_bounded(self, monkeypatch):
+        monkeypatch.setattr("retrieval_api.services.router._ROUTER_CACHE_MAX_ENTRIES", 2)
+        mock_client = AsyncMock()
+        mock_client.facet.return_value = SimpleNamespace(hits=[])
+
+        with patch("retrieval_api.services.search._get_client", return_value=mock_client):
+            for org_id in ("org-1", "org-2", "org-3"):
+                await fetch_source_catalog(org_id)
+
+        async def compute(catalog, org_id):
+            return {"notion": [1.0, 0.0]}
+
+        catalog = [KBEntry(source_label="notion", name="Notion")]
+        for org_id in ("org-1", "org-2", "org-3"):
+            await route_to_sources(
+                "query",
+                [1.0, 0.0],
+                org_id,
+                catalog,
+                compute_centroid_fn=compute,
+            )
+
+        assert len(_catalog_cache) <= 2
+        assert len(_centroid_cache) <= 2
+
+    def test_catalog_cache_can_be_cleared_per_org(self):
+        _catalog_cache[("org-1", None)] = ([], 1.0)
+        _catalog_cache[("org-2", None)] = ([], 1.0)
+
+        clear_catalog_cache("org-1")
+
+        assert ("org-1", None) not in _catalog_cache
+        assert ("org-2", None) in _catalog_cache

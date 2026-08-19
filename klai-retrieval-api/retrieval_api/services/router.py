@@ -6,38 +6,58 @@ from dataclasses import dataclass
 import structlog
 
 from retrieval_api.config import settings
-from retrieval_api.services.diversity import STOP_WORDS
 
 logger = structlog.get_logger()
 
+_ROUTER_CACHE_MAX_ENTRIES = 256
+
 
 # ---------------------------------------------------------------------------
-# Source catalog cache: {org_id: (catalog, timestamp)}
+# Source catalog cache: {(org_id, kb_slug_scope): (catalog, timestamp)}
 # ---------------------------------------------------------------------------
-_catalog_cache: dict[str, tuple[list[KBEntry], float]] = {}
+_catalog_cache: dict[tuple[str, tuple[str, ...] | None], tuple[list[KBEntry], float]] = {}
 
 
-async def fetch_source_catalog(org_id: str) -> list[KBEntry]:
+def _prune_cache(cache: dict, *, ttl_seconds: int, now: float) -> None:
+    """Drop expired entries."""
+    for key in [key for key, (_, timestamp) in cache.items() if now - timestamp >= ttl_seconds]:
+        cache.pop(key, None)
+
+
+def _make_cache_room(cache: dict) -> None:
+    """Evict oldest entries before inserting a new tenant/scope key."""
+    overflow = len(cache) - _ROUTER_CACHE_MAX_ENTRIES + 1
+    if overflow > 0:
+        oldest = sorted(cache, key=lambda key: cache[key][1])[:overflow]
+        for key in oldest:
+            cache.pop(key, None)
+
+
+async def fetch_source_catalog(org_id: str, kb_slugs: list[str] | None = None) -> list[KBEntry]:
     """Fetch distinct source_labels for an org from Qdrant via the Facet API.
 
     Single call — returns unique source_label values with counts.
     Requires a keyword index on source_label (created by ensure_collection).
-    Cached per org for router_centroid_ttl_seconds.
+    When the request pins knowledge bases, the catalog contains only source
+    labels from those KBs. Cached per org and KB scope.
     """
-    cached = _catalog_cache.get(org_id)
-    if cached and (time.monotonic() - cached[1]) < settings.router_centroid_ttl_seconds:
+    kb_scope = tuple(sorted(set(kb_slugs))) if kb_slugs else None
+    cache_key = (org_id, kb_scope)
+    now = time.monotonic()
+    _prune_cache(_catalog_cache, ttl_seconds=settings.router_centroid_ttl_seconds, now=now)
+    cached = _catalog_cache.get(cache_key)
+    if cached:
         return cached[0]
 
-    from qdrant_client.models import FieldCondition, Filter, MatchValue
+    from qdrant_client.models import FieldCondition, Filter, MatchAny, MatchValue
 
     from retrieval_api.services.search import _get_client
 
     client = _get_client()
-    facet_filter = Filter(
-        must=[
-            FieldCondition(key="org_id", match=MatchValue(value=org_id)),
-        ]
-    )
+    must = [FieldCondition(key="org_id", match=MatchValue(value=org_id))]
+    if kb_scope:
+        must.append(FieldCondition(key="kb_slug", match=MatchAny(any=list(kb_scope))))
+    facet_filter = Filter(must=must)
 
     try:
         result = await client.facet(
@@ -56,10 +76,16 @@ async def fetch_source_catalog(org_id: str) -> list[KBEntry]:
         # SPEC-SEC-HYGIENE-001 REQ-43.3: exc_info=True preserves the
         # traceback that the previous `error=str(exc)` dropped (TRY401).
         logger.warning("router_facet_failed", org_id=org_id, exc_info=True)
-        entries = []
+        return []
 
-    _catalog_cache[org_id] = (entries, time.monotonic())
-    logger.info("router_catalog_built", org_id=org_id, source_labels=len(entries))
+    _make_cache_room(_catalog_cache)
+    _catalog_cache[cache_key] = (entries, time.monotonic())
+    logger.info(
+        "router_catalog_built",
+        org_id=org_id,
+        kb_slugs=list(kb_scope) if kb_scope else None,
+        source_labels=len(entries),
+    )
     return entries
 
 
@@ -77,53 +103,16 @@ class RoutingDecision:
     """Result of the query router."""
 
     selected_source_labels: list[str] | None  # None = no filter (search all)
-    layer_used: str  # "keyword" | "semantic" | "llm" | "none"
+    layer_used: str  # "semantic" | "llm" | "none"
     margin: float | None = None
     cache_hit: bool = False
 
 
-# Centroid cache: {org_id: (centroids_dict, timestamp)}
-_centroid_cache: dict[str, tuple[dict[str, list[float]], float]] = {}
-
-
-def _build_keyword_map(catalog: list[KBEntry]) -> dict[str, set[str]]:
-    """Build {term -> set of source_labels} map from catalog entries.
-
-    Only uses source_label and name tokens — NOT description words, because
-    descriptions contain too many generic terms that cause false-positive routing.
-    Filters out stop words.
-    """
-    keyword_map: dict[str, set[str]] = {}
-    for entry in catalog:
-        tokens: set[str] = set()
-        # Split source_label on separators
-        for sep_char in "-./: ":
-            for part in entry.source_label.split(sep_char):
-                if len(part) > 3:
-                    tokens.add(part.lower())
-        # Also split name (but NOT description — too many generic words)
-        if entry.name:
-            for word in entry.name.lower().split():
-                if len(word) > 3:
-                    tokens.add(word)
-
-        for token in tokens:
-            if token in STOP_WORDS:
-                continue
-            if token not in keyword_map:
-                keyword_map[token] = set()
-            keyword_map[token].add(entry.source_label)
-    return keyword_map
-
-
-def layer1_keyword(query_resolved: str, keyword_map: dict[str, set[str]]) -> list[str] | None:
-    """Layer 1: exact keyword matching. Returns matched source_labels or None."""
-    query_lower = query_resolved.lower()
-    matched: set[str] = set()
-    for term, source_labels in keyword_map.items():
-        if term in query_lower:
-            matched.update(source_labels)
-    return sorted(matched) if matched else None
+# Centroid cache: {(org_id, kb_slug_scope, catalog_labels): (centroids_dict, timestamp)}
+_centroid_cache: dict[
+    tuple[str, tuple[str, ...] | None, tuple[str, ...]],
+    tuple[dict[str, list[float]], float],
+] = {}
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
@@ -176,6 +165,7 @@ def layer2_semantic(
 async def _default_compute_centroids(
     catalog: list[KBEntry],
     org_id: str,
+    kb_slugs: list[str] | None = None,
 ) -> dict[str, list[float]]:
     """Compute centroids from actual chunk vectors per source_label in Qdrant.
 
@@ -187,12 +177,13 @@ async def _default_compute_centroids(
     # to prevent cross-tenant centroid contamination from common source_labels
     # (Notion, Confluence, GitHub, Slack, Web).
     """
-    from qdrant_client.models import FieldCondition, Filter, MatchValue
+    from qdrant_client.models import FieldCondition, Filter, MatchAny, MatchValue
 
     from retrieval_api.services.search import _get_client
 
     client = _get_client()
     centroids: dict[str, list[float]] = {}
+    kb_scope = sorted(set(kb_slugs)) if kb_slugs else None
 
     for entry in catalog:
         try:
@@ -200,16 +191,15 @@ async def _default_compute_centroids(
             # audit-tenant-isolation-2026-05-05 finding B-1: filter MUST include org_id
             # to prevent cross-tenant centroid contamination from common source_labels
             # (Notion, Confluence, GitHub, Slack, Web).
+            must = [
+                FieldCondition(key="source_label", match=MatchValue(value=entry.source_label)),
+                FieldCondition(key="org_id", match=MatchValue(value=org_id)),
+            ]
+            if kb_scope:
+                must.append(FieldCondition(key="kb_slug", match=MatchAny(any=kb_scope)))
             points, _ = await client.scroll(
                 collection_name=settings.qdrant_collection,
-                scroll_filter=Filter(
-                    must=[
-                        FieldCondition(
-                            key="source_label", match=MatchValue(value=entry.source_label)
-                        ),
-                        FieldCondition(key="org_id", match=MatchValue(value=org_id)),
-                    ]
-                ),
+                scroll_filter=Filter(must=must),
                 limit=10,
                 with_payload=False,
                 with_vectors=["vector_chunk"],
@@ -243,39 +233,38 @@ async def route_to_sources(
     margin_dual: float = 0.08,
     llm_fallback: bool = False,
     centroid_ttl_seconds: int = 600,
+    kb_slugs: list[str] | None = None,
     # Centroid computation function injected for testability
     compute_centroid_fn=None,
     # LLM function injected for testability
     llm_fn=None,
 ) -> RoutingDecision:
-    """Three-layer query router.
+    """Two-layer query router.
 
-    Layer 1: Keyword matching (< 1ms)
-    Layer 2: Semantic margin (5-20ms with cache)
-    Layer 3: LLM fallback (500ms timeout, default OFF)
+    Layer 1: Semantic margin (5-20ms with cache)
+    Layer 2: LLM fallback (500ms timeout, default OFF)
     """
-    # Layer 1: keyword
-    keyword_map = _build_keyword_map(source_label_catalog)
-    matched = layer1_keyword(query_resolved, keyword_map)
-    if matched:
-        return RoutingDecision(
-            selected_source_labels=matched,
-            layer_used="keyword",
-        )
-
-    # Layer 2: semantic margin
+    # Layer 1: semantic margin
     # Check centroid cache
     cache_hit = False
     centroids: dict[str, list[float]] | None = None
-    cached = _centroid_cache.get(org_id)
-    if cached and (time.monotonic() - cached[1]) < centroid_ttl_seconds:
+    kb_scope = tuple(sorted(set(kb_slugs))) if kb_slugs else None
+    catalog_scope = tuple(sorted(entry.source_label for entry in source_label_catalog))
+    cache_key = (org_id, kb_scope, catalog_scope)
+    now = time.monotonic()
+    _prune_cache(_centroid_cache, ttl_seconds=centroid_ttl_seconds, now=now)
+    cached = _centroid_cache.get(cache_key)
+    if cached:
         centroids = cached[0]
         cache_hit = True
 
     if centroids is None:
-        fn = compute_centroid_fn or _default_compute_centroids
-        centroids = await fn(source_label_catalog, org_id)
-        _centroid_cache[org_id] = (centroids, time.monotonic())
+        if compute_centroid_fn:
+            centroids = await compute_centroid_fn(source_label_catalog, org_id)
+        else:
+            centroids = await _default_compute_centroids(source_label_catalog, org_id, kb_slugs)
+        _make_cache_room(_centroid_cache)
+        _centroid_cache[cache_key] = (centroids, time.monotonic())
 
     if centroids:
         selected, margin = layer2_semantic(query_vector, centroids, margin_single, margin_dual)
@@ -287,7 +276,7 @@ async def route_to_sources(
                 cache_hit=cache_hit,
             )
 
-    # Layer 3: LLM fallback (default OFF)
+    # Layer 2: LLM fallback (default OFF)
     if llm_fallback and llm_fn:
         try:
             import asyncio
@@ -321,6 +310,16 @@ async def route_to_sources(
 def clear_centroid_cache(org_id: str | None = None) -> None:
     """Clear centroid cache. For testing and cache invalidation."""
     if org_id:
-        _centroid_cache.pop(org_id, None)
+        for cache_key in [key for key in _centroid_cache if key[0] == org_id]:
+            _centroid_cache.pop(cache_key, None)
     else:
         _centroid_cache.clear()
+
+
+def clear_catalog_cache(org_id: str | None = None) -> None:
+    """Clear source catalog cache. For testing and cache invalidation."""
+    if org_id:
+        for cache_key in [key for key in _catalog_cache if key[0] == org_id]:
+            _catalog_cache.pop(cache_key, None)
+    else:
+        _catalog_cache.clear()

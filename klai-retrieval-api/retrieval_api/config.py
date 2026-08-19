@@ -67,6 +67,7 @@ class Settings(BaseSettings):
     # Source-aware selection (SPEC-KB-021)
     source_quota_enabled: bool = True
     source_quota_max_per_source: int = 2
+    source_preference_boost: float = 0.05
 
     # SPEC-RAG-EVIDENCE-INTEGRITY-001 REQ-RANK-04 — ranking-contract rollout
     # flag. "shadow" (default) serves the pre-contract behavior byte-identical

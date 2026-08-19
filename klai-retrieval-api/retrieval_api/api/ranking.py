@@ -23,6 +23,7 @@ def _compute_confidence_band(
     high_threshold: float,
     low_threshold: float,
     reranker_enabled: bool,
+    require_corroboration: bool = False,
 ) -> ConfidenceBand:
     """SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1: bucket the served result by
     the max post-rerank ranking score. Driven by the litellm-hook
@@ -39,7 +40,8 @@ def _compute_confidence_band(
     Returns:
         - ``unknown`` when reranker is disabled, every chunk's reranker_score
           is None (fallback path), or the served list is empty
-        - ``high`` when max ≥ high_threshold
+        - ``high`` when max ≥ high_threshold; when corroboration is required,
+          at least two scores must meet that threshold
         - ``low`` when max < low_threshold
         - ``medium`` otherwise
 
@@ -57,7 +59,9 @@ def _compute_confidence_band(
     if not valid_scores:
         return "unknown"
     max_score = max(valid_scores)
-    if max_score >= high_threshold:
+    if max_score >= high_threshold and (
+        not require_corroboration or sum(score >= high_threshold for score in valid_scores) >= 2
+    ):
         return "high"
     if max_score < low_threshold:
         return "low"

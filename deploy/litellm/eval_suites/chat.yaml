@@ -1,12 +1,15 @@
 suite: chat
 description: |
   Conversational queries against Voys's support KB. Style mirrors how a Voys CS-medewerker
-  would phrase a question to klai's chat. 30 queries with a curated mix:
+  would phrase a question to klai's chat. 41 queries with a curated mix:
     - 9 easy-lookup (regression canaries; expected_chunks populated)
     - 9 vague-pronoun (query-rewrite targets)
     - 6 multi-doc synthesis (parent-child targets)
     - 4 long-tail (recall test)
     - 2 edge cases (mixed-language + malformed)
+    - 7 brand-bridging queries
+    - 3 pasted-correspondence queries
+    - 1 source-selection query
   All queries target tenant Voys (org_zitadel_id 368884765035593759).
 queries:
   # --- Easy-lookup canaries (9) — should always score ~1.0 ---
@@ -353,6 +356,16 @@ queries:
     reference_answer: "Als de KB geen specifieke Zoom-koppeling met Voys bevat, moet het antwoord geen integratie verzinnen en vragen om nadere context of verwijzen naar bekende integratieopties."
     expected_topics: [zoom, integratie]
     mix: brand_bridging
+
+  # --- Source-selection canary — SPEC-RAG-SOURCE-SELECTION-001 ---
+  - id: chat-source-selection-brand-token-404
+    org_zitadel_id: "368884765035593759"
+    user_zitadel_id: null
+    query: "Voys trunk: wat betekent een SIP 404 Not Found?"
+    reference_answer: "Leg uit dat SIP 404 Not Found betekent dat de gebelde gebruiker, het toestel of de extensie niet gevonden of niet toegewezen is. Het woord Voys mag de evidence-selectie niet beperken tot help.voys.nl als een beter scorende bron de responscode verklaart."
+    expected_topics: [voys, sip, 404, trunk, responscode]
+    expected_chunks: ["Gebruiker/toestel bestaat niet, of extensie niet gevonden"]
+    mix: source_selection
 
   # --- Pasted-correspondence canaries (3) — SPEC-RAG-CORRESPONDENCE-DISTILL-001 ---
   # Reproduces the 2026-08-17 Voys production incident (conversation ID
