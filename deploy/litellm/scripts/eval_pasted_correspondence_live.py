@@ -19,8 +19,9 @@ API-level retries/routing):
      exercised for real rather than bypassed.
   3. Retrieve with ``coreference_resolved=rewrite_decided(meta)``, matching
      ``klai_knowledge.py``'s own retrieve-body construction.
-  4. Match expected_chunks markers ONLY within the top-5 results — AC-2's
-     literal bar ("present in top-5"), not "anywhere in top-10".
+  4. Match expected_chunks markers within the top-5 results AND the production
+     evidence pack. A retrieved chunk cannot pass when the answer model never
+     receives it.
   5. Ask the production answer model with a prompt assembled from the canonical
      branch, correspondence, context, and language helpers, then verify the raw
      answer with the same deterministic contract inspector as the hook.
@@ -324,6 +325,8 @@ async def _run_one_sample(
         "org_id": canary.org_zitadel_id,
         "top_k": _RETRIEVE_TOP_K,
     }
+    if canary.kb_slugs:
+        body["kb_slugs"] = canary.kb_slugs
     resp = await retrieve(http, body)
     resp.raise_for_status()
     retrieval_payload = resp.json()
@@ -342,6 +345,7 @@ async def _run_one_sample(
 
     all_matched = all(
         any(chunk_matches_expected(expected, chunk) for chunk in retrieval_match_chunks)
+        and any(chunk_matches_expected(expected, chunk) for chunk in answer_chunks)
         for expected in canary.expected_chunks
     )
     answer_shape_ok = await _answer_shape_matches(

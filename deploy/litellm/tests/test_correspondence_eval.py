@@ -58,6 +58,7 @@ class TestLoadPastedCorrespondenceCanaries:
         by_id = {c.id: c for c in canaries}
 
         incident = by_id["chat-pasted-correspondence-incident-shape"]
+        assert incident.kb_slugs == ["support", "sip"]
         assert incident.expected_chunks == [
             "Gebruiker/toestel bestaat niet, of extensie niet gevonden"
         ]

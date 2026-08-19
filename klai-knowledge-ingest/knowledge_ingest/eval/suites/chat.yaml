@@ -376,6 +376,7 @@ queries:
   - id: chat-pasted-correspondence-incident-shape
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
+    kb_slugs: [support, sip]
     query: |
       Kan ik je 2 emails geven over een voip-trunk die niet goed ingesteld
       staat. Ik wil weten wat jij denkt dat er niet goed is. De uitgaande

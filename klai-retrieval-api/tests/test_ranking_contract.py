@@ -95,6 +95,16 @@ class TestRankingContractSnapshot:
         assert snapshot["evidence_source_keys"][0] == "artifact:doc-123"
         assert len(snapshot["evidence_source_keys"]) == 2
 
+    def test_multi_kb_snapshot_can_track_five_evidence_sources(self) -> None:
+        chunks = [
+            {"chunk_id": f"c{index}", "source_url": f"https://example.com/{index}"}
+            for index in range(1, 7)
+        ]
+
+        snapshot = _ranking_contract_snapshot(chunks, max_sources=5)
+
+        assert len(snapshot["evidence_source_keys"]) == 5
+
 
 class TestRankingContractModeSetting:
     def test_default_is_shadow(self, monkeypatch: pytest.MonkeyPatch) -> None:

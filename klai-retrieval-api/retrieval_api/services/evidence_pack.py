@@ -8,7 +8,8 @@ from klai_citations import normalise_source_url, source_url_key
 
 from retrieval_api.models import ChunkResult, EvidenceItem, EvidencePack, EvidenceSource
 
-_DEFAULT_MAX_SOURCES = 3
+DEFAULT_MAX_SOURCES = 3
+MULTI_KB_MAX_SOURCES = 5
 
 
 def _chunk_value(chunk: ChunkResult | dict[str, Any], key: str) -> Any:
@@ -145,7 +146,7 @@ def build_evidence_pack(
     chunks: list[ChunkResult | dict[str, Any]],
     *,
     query: str | None = None,
-    max_sources: int = _DEFAULT_MAX_SOURCES,
+    max_sources: int = DEFAULT_MAX_SOURCES,
     min_relevance_score: float | None = None,
 ) -> EvidencePack:
     """Return the citable evidence and source set for a retrieval result.
