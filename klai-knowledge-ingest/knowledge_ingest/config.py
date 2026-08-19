@@ -363,6 +363,16 @@ class Settings(BaseSettings):
     # Crawl4AI REST API (shared Docker container)
     crawl4ai_api_url: str = "http://crawl4ai:11235"
     crawl4ai_api_key: str = ""
+    # SPEC-CRAWL-001 amendment: knowledge-ingest shares Crawl4AI's global
+    # 40-page browser pool with klai-connector. One in-flight request keeps
+    # this service conservative while still leaving the container available
+    # to the independent connector caller. This is request concurrency, not a
+    # hard reservation of page slots inside a multi-URL payload.
+    crawl4ai_max_concurrent_requests: int = Field(
+        default=1,
+        ge=1,
+        validation_alias=AliasChoices("KLAI_CRAWL4AI_MAX_CONCURRENT_REQUESTS"),
+    )
     # Graphiti / FalkorDB knowledge graph
     falkordb_host: str = "falkordb"
     falkordb_port: int = 6379

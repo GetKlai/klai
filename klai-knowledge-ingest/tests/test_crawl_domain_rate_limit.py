@@ -45,6 +45,7 @@ import pytest
 from knowledge_ingest.adapters.crawler import run_crawl_job
 from knowledge_ingest.crawl4ai_client import CrawlResult
 from knowledge_ingest.domain_rate_limit_control import DomainRateLimitState
+from knowledge_ingest.domain_selectors import DomainRateLimitWriteKind
 from knowledge_ingest.reason_codes import FetchReasonCode
 
 START_URL = "https://intermedia.com/support"
@@ -142,7 +143,7 @@ async def test_rate_limited_outcome_lowers_the_domain_rate_limit() -> None:
         )
     )
     get_state = AsyncMock(return_value=_NO_OVERRIDE)  # no prior override
-    save_state = AsyncMock(return_value=None)
+    save_state = AsyncMock(return_value=True)
 
     await _run(
         crawl_site_mock=crawl_site,
@@ -155,7 +156,9 @@ async def test_rate_limited_outcome_lowers_the_domain_rate_limit() -> None:
     args = save_state.await_args
     assert args.args[1] == DOMAIN
     assert args.args[2] == "org-1"
-    new_state = args.args[3]
+    assert args.kwargs["expected_state"] == _NO_OVERRIDE
+    assert args.kwargs["kind"] is DomainRateLimitWriteKind.CONGESTION
+    new_state = args.kwargs["state"]
     assert new_state.rate_limit == pytest.approx(1.0)  # 2.0 / 2
     assert new_state.clean_streak == 0
     assert new_state.last_congestion_at is not None
@@ -179,7 +182,7 @@ async def test_blocked_anti_bot_outcome_also_lowers_the_domain_rate_limit() -> N
         )
     )
     get_state = AsyncMock(return_value=_NO_OVERRIDE)
-    save_state = AsyncMock(return_value=None)
+    save_state = AsyncMock(return_value=True)
 
     await _run(
         crawl_site_mock=crawl_site,
@@ -201,7 +204,7 @@ async def test_healthy_crawl_with_no_override_does_not_touch_the_domain_rate_lim
         return_value=([_page(START_URL)], _outcomes(*([FetchReasonCode.SUCCESS.value] * 10)))
     )
     get_state = AsyncMock(return_value=_NO_OVERRIDE)
-    save_state = AsyncMock(return_value=None)
+    save_state = AsyncMock(return_value=True)
 
     await _run(
         crawl_site_mock=crawl_site,
@@ -232,7 +235,7 @@ async def test_a_previously_lowered_rate_is_applied_on_the_next_crawl() -> None:
             last_congestion_at=datetime.now(UTC) - timedelta(hours=1),
         )
     )
-    save_state = AsyncMock(return_value=None)
+    save_state = AsyncMock(return_value=True)
 
     await _run(
         crawl_site_mock=crawl_site,
@@ -267,7 +270,7 @@ async def test_lowering_never_goes_below_the_floor() -> None:
             last_congestion_at=datetime.now(UTC) - timedelta(hours=1),
         )
     )
-    save_state = AsyncMock(return_value=None)
+    save_state = AsyncMock(return_value=True)
 
     await _run(
         crawl_site_mock=crawl_site,
@@ -277,7 +280,8 @@ async def test_lowering_never_goes_below_the_floor() -> None:
     )
 
     save_state.assert_awaited_once()
-    assert save_state.await_args.args[3].rate_limit == pytest.approx(0.2)  # floor, not 0.15
+    assert save_state.await_args.kwargs["state"].rate_limit == pytest.approx(0.2)
+    assert save_state.await_args.kwargs["kind"] is DomainRateLimitWriteKind.CONGESTION
 
 
 @pytest.mark.asyncio
@@ -298,7 +302,7 @@ async def test_a_clean_crawl_past_cooldown_raises_one_step_and_persists() -> Non
             last_congestion_at=datetime.now(UTC) - timedelta(hours=48),
         )
     )
-    save_state = AsyncMock(return_value=None)
+    save_state = AsyncMock(return_value=True)
 
     await _run(
         crawl_site_mock=crawl_site,
@@ -308,7 +312,8 @@ async def test_a_clean_crawl_past_cooldown_raises_one_step_and_persists() -> Non
     )
 
     save_state.assert_awaited_once()
-    new_state = save_state.await_args.args[3]
+    new_state = save_state.await_args.kwargs["state"]
+    assert save_state.await_args.kwargs["kind"] is DomainRateLimitWriteKind.RECOVERY
     assert new_state.rate_limit == pytest.approx(1.0)  # 0.5 + (2.0 * 0.25) step
     # Incremented, not reset — only congestion or a full override-clear
     # reset clean_streak; a partial raise carries it forward.
@@ -331,7 +336,7 @@ async def test_a_clean_job_within_cooldown_does_not_raise_despite_a_large_streak
             last_congestion_at=datetime.now(UTC) - timedelta(hours=1),
         )
     )
-    save_state = AsyncMock(return_value=None)
+    save_state = AsyncMock(return_value=True)
 
     await _run(
         crawl_site_mock=crawl_site,
@@ -341,7 +346,7 @@ async def test_a_clean_job_within_cooldown_does_not_raise_despite_a_large_streak
     )
 
     save_state.assert_awaited_once()
-    new_state = save_state.await_args.args[3]
+    new_state = save_state.await_args.kwargs["state"]
     assert new_state.rate_limit == pytest.approx(0.5)  # unchanged — still throttled
     assert new_state.clean_streak == 61  # 60 stored + 1 SUCCESS this job
 
@@ -363,7 +368,7 @@ async def test_a_stored_override_with_no_congestion_timestamp_decays_before_the_
     get_state = AsyncMock(
         return_value=DomainRateLimitState(rate_limit=0.5, clean_streak=0, last_congestion_at=None)
     )
-    save_state = AsyncMock(return_value=None)
+    save_state = AsyncMock(return_value=True)
 
     await _run(
         crawl_site_mock=crawl_site,
@@ -375,5 +380,9 @@ async def test_a_stored_override_with_no_congestion_timestamp_decays_before_the_
     crawl_site.assert_awaited_once()
     assert crawl_site.await_args.kwargs["rate_limit"] == 2.0  # decay cleared the stale override
 
-    decay_persisted = any(call.args[3].rate_limit is None for call in save_state.await_args_list)
+    decay_persisted = any(
+        call.kwargs["state"].rate_limit is None
+        and call.kwargs["kind"] is DomainRateLimitWriteKind.DECAY
+        for call in save_state.await_args_list
+    )
     assert decay_persisted

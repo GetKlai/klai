@@ -24,6 +24,7 @@ tenant_scoped_connection(org_id) block instead of acquiring a fresh pool
 connection (which would not see the RLS GUC).
 """
 
+from enum import StrEnum
 from urllib.parse import urlparse
 
 import asyncpg
@@ -34,6 +35,14 @@ from knowledge_ingest.domain_rate_limit_control import DomainRateLimitState
 # information in the domain key — ``example.com:443`` (https) and
 # ``example.com`` MUST collide onto the same rate-limit/selector row.
 _DEFAULT_PORTS_BY_SCHEME = {"http": "80", "https": "443"}
+
+
+class DomainRateLimitWriteKind(StrEnum):
+    """Conflict policy for one persisted domain-rate transition."""
+
+    CONGESTION = "congestion"
+    RECOVERY = "recovery"
+    DECAY = "decay"
 
 
 def extract_domain(url: str) -> str:
@@ -168,16 +177,21 @@ async def save_domain_rate_limit_state(
     conn: asyncpg.Connection,
     domain: str,
     org_id: str,
+    *,
+    expected_state: DomainRateLimitState,
     state: DomainRateLimitState,
-) -> None:
-    """Persist the full AIMD state for (domain, org_id) in one write.
+    kind: DomainRateLimitWriteKind,
+    default_rate_limit: float,
+) -> bool:
+    """Atomically persist one AIMD transition without losing congestion.
 
-    A single function owns the whole row update (rate_limit, clean_streak,
-    last_congestion_at together) rather than one function per field —
-    two functions independently updating the same row would need to agree
-    on each other's fields on every call, which is exactly the kind of
-    drift ``compute_domain_rate_limit_update`` is designed to prevent by
-    returning one coherent next-state object.
+    Recovery and decay are compare-and-swap writes over the complete state;
+    if another crawl changed any field since ``expected_state`` was read,
+    they are conservatively deferred. Congestion is monotonic: on conflict
+    the statement keeps the lowest current/proposed rate, resets the clean
+    streak, and preserves the newest congestion timestamp. Two congestion
+    proposals computed from the same state therefore lower once rather than
+    accidentally halving twice.
 
     Does not touch css_selector/selector_source (a separate concern — see
     module docstring); a fresh insert leaves them NULL, an update to an
@@ -189,20 +203,53 @@ async def save_domain_rate_limit_state(
     nothing to persist, and calling this unconditionally would create a
     row for every domain ever crawled.
     """
-    await conn.execute(
+    row = await conn.fetchrow(
         """
-        INSERT INTO knowledge.crawl_domains
+        INSERT INTO knowledge.crawl_domains AS crawl_domains
             (domain, org_id, rate_limit, clean_streak, last_congestion_at, created_at, updated_at)
         VALUES ($1, $2, $3, $4, $5, now(), now())
         ON CONFLICT (domain, org_id) DO UPDATE
-            SET rate_limit         = EXCLUDED.rate_limit,
-                clean_streak       = EXCLUDED.clean_streak,
-                last_congestion_at = EXCLUDED.last_congestion_at,
+            SET rate_limit = CASE
+                    WHEN $10::boolean THEN LEAST(
+                        COALESCE(crawl_domains.rate_limit, $9),
+                        EXCLUDED.rate_limit
+                    )
+                    ELSE EXCLUDED.rate_limit
+                END,
+                clean_streak = CASE
+                    WHEN $10::boolean THEN 0
+                    ELSE EXCLUDED.clean_streak
+                END,
+                last_congestion_at = CASE
+                    WHEN $10::boolean THEN CASE
+                        WHEN crawl_domains.last_congestion_at IS NULL
+                            THEN EXCLUDED.last_congestion_at
+                        WHEN EXCLUDED.last_congestion_at IS NULL
+                            THEN crawl_domains.last_congestion_at
+                        ELSE GREATEST(
+                            crawl_domains.last_congestion_at,
+                            EXCLUDED.last_congestion_at
+                        )
+                    END
+                    ELSE EXCLUDED.last_congestion_at
+                END,
                 updated_at         = now()
+        WHERE $10::boolean OR (
+            crawl_domains.rate_limit IS NOT DISTINCT FROM $6
+            AND crawl_domains.clean_streak = $7
+            AND crawl_domains.last_congestion_at IS NOT DISTINCT FROM $8
+        )
+        RETURNING rate_limit, clean_streak, last_congestion_at
         """,
         domain,
         org_id,
         state.rate_limit,
         state.clean_streak,
         state.last_congestion_at,
+        expected_state.rate_limit,
+        expected_state.clean_streak,
+        expected_state.last_congestion_at,
+        default_rate_limit,
+        kind is DomainRateLimitWriteKind.CONGESTION,
     )
+    return row is not None
