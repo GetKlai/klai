@@ -760,12 +760,19 @@ async def retrieve(
                 top_n=req.top_k,
                 max_per_source=settings.source_quota_max_per_source,
                 router_selected=router_selected,
+                source_preference_boost=settings.source_preference_boost,
             )
         else:
             source_meta = {
                 "source_select_mode": "disabled",
                 "source_counts": {},
                 "mentioned_sources": [],
+                "preference_applied": False,
+                "preferred_labels": [],
+                "boost": settings.source_preference_boost,
+                "pack_without_preference": [],
+                "suppressed_count": 0,
+                "max_score_inversion": 0.0,
             }
         decision_record["source_select"] = source_meta
 
@@ -799,6 +806,7 @@ async def retrieve(
                     top_n=req.top_k,
                     max_per_source=settings.source_quota_max_per_source,
                     router_selected=router_selected,
+                    source_preference_boost=settings.source_preference_boost,
                 )
             ranking_shadow_preview = quality_boost(ranking_shadow_preview, contract_active=True)
 

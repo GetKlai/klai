@@ -97,15 +97,14 @@ def source_aware_select(
     top_n: int = 5,
     max_per_source: int = 2,
     router_selected: set[str] | None = None,
+    source_preference_boost: float = 0.05,
 ) -> tuple[list[dict], dict]:
     """Select top-N chunks with source-aware diversity.
 
     Uses reranker scores + optional router signal for source selection.
 
-    Behaviour:
-    1. If query mentions specific source(s): those sources get all slots.
-       The reranker already scored them highest if they're relevant.
-    2. Otherwise: greedy select with per-source cap, fallback fill if needed.
+    Preferred sources receive a bounded additive ranking boost. Selection then
+    uses the same per-source diversity cap for every source.
 
     Returns:
         (selected_chunks, metadata_dict)
@@ -115,86 +114,108 @@ def source_aware_select(
             "source_select_mode": "empty",
             "source_counts": {},
             "mentioned_sources": [],
+            "preference_applied": False,
+            "preferred_labels": [],
+            "boost": source_preference_boost,
+            "pack_without_preference": [],
+            "suppressed_count": 0,
+            "max_score_inversion": 0.0,
         }
 
-    # Step 1: detect relevant sources — from query keywords AND router decision
-    mentioned = _detect_mentioned_sources(reranked, query_resolved)
+    # Step 1: detect preferred sources — from query keywords AND router decision
+    keyword_mentioned = _detect_mentioned_sources(reranked, query_resolved)
+    mentioned = set(keyword_mentioned)
     if router_selected:
         mentioned = mentioned | router_selected
 
-    if mentioned:
-        # Query is source-specific → give mentioned sources all slots.
-        # Still sorted by the retrieval pipeline's final ranking score.
-        from_mentioned = [c for c in reranked if c.get("source_label") in mentioned]
-        selected = from_mentioned[:top_n]
+    preference_applied = bool(
+        mentioned and any(chunk.get("source_label") in mentioned for chunk in reranked)
+    )
 
-        # If mentioned sources don't fill top_n, add others
-        if len(selected) < top_n:
-            others = [c for c in reranked if c.get("source_label") not in mentioned]
-            selected.extend(others[: top_n - len(selected)])
+    def base_score(chunk: dict) -> float:
+        return ranking_score(chunk, "reranker_score", "score")
 
-        counts = _count_sources(selected)
-        logger.debug(
-            "source_aware_select",
-            mode="mentioned",
-            mentioned=sorted(mentioned),
-            selected=len(selected),
-            source_counts=counts,
-        )
-        # Distinguish keyword-only, router-only, or both
-        keyword_mentioned = _detect_mentioned_sources(reranked, query_resolved)
-        mode = "mentioned"
-        if router_selected and keyword_mentioned:
-            mode = "keyword+router"
-        elif router_selected:
-            mode = "router"
+    def preference_score(chunk: dict) -> float:
+        score = base_score(chunk)
+        if preference_applied and chunk.get("source_label") in mentioned:
+            return score + source_preference_boost
+        return score
 
-        return selected, {
-            "source_select_mode": mode,
-            "source_counts": counts,
-            "mentioned_sources": sorted(mentioned),
-        }
+    base_ranked = sorted(reranked, key=base_score, reverse=True)
+    ranked = sorted(reranked, key=preference_score, reverse=True)
 
-    # Step 2: no specific source mentioned → diversify with per-source cap
-    per_source: dict[str, int] = {}
-    selected: list[dict] = []
-    leftover: list[dict] = []
+    def select_diverse(
+        ranked_chunks: list[dict],
+        score_fn,
+    ) -> tuple[list[dict], dict[str, int]]:
+        per_source: dict[str, int] = {}
+        selected: list[dict] = []
+        leftover: list[dict] = []
 
-    for chunk in reranked:
-        if len(selected) == top_n:
-            break
-        label = chunk.get("source_label") or _UNKNOWN
-        count = per_source.get(label, 0)
-        if count < max_per_source:
-            selected.append(chunk)
-            per_source[label] = count + 1
-        else:
-            leftover.append(chunk)
-
-    # Fallback: fill remaining slots from leftover in score order
-    if len(selected) < top_n:
-        for chunk in leftover:
+        for chunk in ranked_chunks:
             if len(selected) == top_n:
                 break
-            selected.append(chunk)
             label = chunk.get("source_label") or _UNKNOWN
-            per_source[label] = per_source.get(label, 0) + 1
+            count = per_source.get(label, 0)
+            if count < max_per_source:
+                selected.append(chunk)
+                per_source[label] = count + 1
+            else:
+                leftover.append(chunk)
 
-    # Legacy fallback key is the raw ``score`` — the pre-contract diversify
-    # sort. ``final_rank_score`` is only present when the ranking contract
-    # is active (REQ-RANK-01), so shadow mode keeps the old ordering.
-    selected.sort(key=lambda c: ranking_score(c, "score"), reverse=True)
+        if len(selected) < top_n:
+            for chunk in leftover:
+                if len(selected) == top_n:
+                    break
+                selected.append(chunk)
+                label = chunk.get("source_label") or _UNKNOWN
+                per_source[label] = per_source.get(label, 0) + 1
+
+        selected.sort(key=score_fn, reverse=True)
+        return selected, per_source
+
+    selected_without_preference, _ = select_diverse(base_ranked, base_score)
+    selected, per_source = select_diverse(ranked, preference_score)
+
+    without_ids = [str(chunk.get("chunk_id") or "") for chunk in selected_without_preference]
+    selected_ids = {str(chunk.get("chunk_id") or "") for chunk in selected}
+    suppressed_count = len(set(without_ids) - selected_ids)
+
+    max_score_inversion = 0.0
+    for index, earlier in enumerate(ranked):
+        if earlier.get("source_label") not in mentioned:
+            continue
+        earlier_score = base_score(earlier)
+        for later in ranked[index + 1 :]:
+            if later.get("source_label") in mentioned:
+                continue
+            max_score_inversion = max(
+                max_score_inversion,
+                base_score(later) - earlier_score,
+            )
+
+    mode = "diversify"
+    if preference_applied:
+        mode = "router" if router_selected and not keyword_mentioned else "mentioned"
+        if router_selected and keyword_mentioned:
+            mode = "keyword+router"
 
     logger.debug(
         "source_aware_select",
-        mode="diversify",
+        mode=mode,
         selected=len(selected),
         source_counts=per_source,
     )
     return selected, {
-        "source_select_mode": "diversify",
+        "source_select_mode": mode,
         "source_counts": dict(per_source),
-        "mentioned_sources": [],
+        "mentioned_sources": sorted(mentioned),
+        "preference_applied": preference_applied,
+        "preferred_labels": sorted(mentioned),
+        "boost": source_preference_boost,
+        "pack_without_preference": without_ids,
+        "suppressed_count": suppressed_count,
+        "max_score_inversion": max_score_inversion,
     }
 
 

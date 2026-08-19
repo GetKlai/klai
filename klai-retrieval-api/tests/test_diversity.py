@@ -4,6 +4,10 @@ source_aware_select() replaces the separate router + quota with one post-rerank
 step that uses actual reranker scores to decide source distribution.
 """
 
+import random
+
+import pytest
+
 from retrieval_api.services.diversity import source_aware_select
 
 
@@ -11,6 +15,7 @@ def _chunk(chunk_id: str, source_label: str | None, score: float) -> dict:
     return {
         "chunk_id": chunk_id,
         "source_label": source_label,
+        "reranker_score": score,
         "score": score,
         "text": f"c-{chunk_id}",
     }
@@ -193,12 +198,7 @@ class TestRouterIntegration:
         assert "ascend-help" in meta["mentioned_sources"]
 
     def test_router_signal_respected_even_with_low_scores(self):
-        """Router says 'mitel' but reranker gives mitel low scores → router signal wins.
-
-        This is correct: the router made a deliberate decision based on semantic
-        analysis. source_aware_select trusts that signal and gives mitel priority.
-        The reranker scores still order chunks within the selected set.
-        """
+        """A router preference is a tiebreak, not permission to erase score gaps."""
         reranked = [
             _chunk("v1", "help.voys.nl", 0.95),
             _chunk("v2", "help.voys.nl", 0.90),
@@ -214,9 +214,9 @@ class TestRouterIntegration:
             router_selected={"mitel-help"},
         )
         assert meta["source_select_mode"] == "router"
-        # Mitel chunks come first (router-selected), voys fills remainder
         mitel_ids = [c["chunk_id"] for c in selected if c["source_label"] == "mitel-help"]
-        assert len(mitel_ids) == 2
+        assert mitel_ids == ["m1"]
+        assert [chunk["chunk_id"] for chunk in selected[:2]] == ["v1", "v2"]
         assert len(selected) == 3
 
 
@@ -237,3 +237,104 @@ class TestMetadata:
         _, meta = source_aware_select(reranked, "query", top_n=3, max_per_source=2)
         assert meta["source_counts"]["src-a"] == 2
         assert meta["source_counts"]["src-b"] == 1
+
+
+class TestBoundedPreference:
+    def test_preference_cannot_invert_a_score_gap_larger_than_boost(self):
+        reranked = [
+            _chunk("strong", "other", 0.66),
+            _chunk("weak", "preferred", 0.28),
+        ]
+
+        selected, meta = source_aware_select(
+            reranked,
+            "query",
+            top_n=2,
+            max_per_source=2,
+            router_selected={"preferred"},
+            source_preference_boost=0.05,
+        )
+
+        assert [chunk["chunk_id"] for chunk in selected] == ["strong", "weak"]
+        assert meta["preference_applied"] is True
+        assert meta["preferred_labels"] == ["preferred"]
+        assert meta["boost"] == 0.05
+
+    def test_preference_never_inverts_a_gap_larger_than_boost(self):
+        rng = random.Random(20260819)  # noqa: S311 - deterministic property test data
+        boost = 0.05
+
+        for case in range(250):
+            chunks = [
+                _chunk(
+                    f"{case}-{index}",
+                    "preferred" if rng.random() < 0.5 else "other",
+                    rng.random(),
+                )
+                for index in range(rng.randint(2, 20))
+            ]
+            selected, _ = source_aware_select(
+                chunks,
+                "query",
+                top_n=len(chunks),
+                max_per_source=len(chunks),
+                router_selected={"preferred"},
+                source_preference_boost=boost,
+            )
+            position = {chunk["chunk_id"]: index for index, chunk in enumerate(selected)}
+
+            for higher in chunks:
+                for lower in chunks:
+                    if higher["reranker_score"] > lower["reranker_score"] + boost:
+                        assert position[higher["chunk_id"]] < position[lower["chunk_id"]]
+
+    def test_counterfactual_reports_no_suppression_for_incident_score_shape(self):
+        reranked = [
+            _chunk("help-strong", "help.voys.nl", 0.866),
+            _chunk("notion-gold", "notion", 0.658),
+            _chunk("support-gold", "support", 0.616),
+            _chunk("help-weak", "help.voys.nl", 0.280),
+            _chunk("help-weaker", "help.voys.nl", 0.208),
+        ]
+
+        selected, meta = source_aware_select(
+            reranked,
+            "Voys trunk 404 Not Found",
+            top_n=3,
+            max_per_source=3,
+            router_selected={"help.voys.nl"},
+            source_preference_boost=0.05,
+        )
+
+        assert [chunk["chunk_id"] for chunk in selected] == [
+            "help-strong",
+            "notion-gold",
+            "support-gold",
+        ]
+        assert meta["pack_without_preference"] == [
+            "help-strong",
+            "notion-gold",
+            "support-gold",
+        ]
+        assert meta["suppressed_count"] == 0
+        assert meta["max_score_inversion"] == 0.0
+
+    def test_counterfactual_reports_displacement_and_inversion_gap(self):
+        reranked = [
+            _chunk("unpreferred", "other", 0.61),
+            _chunk("preferred", "preferred", 0.58),
+        ]
+
+        selected, meta = source_aware_select(
+            reranked,
+            "query",
+            top_n=1,
+            max_per_source=1,
+            router_selected={"preferred"},
+            source_preference_boost=0.05,
+        )
+
+        assert [chunk["chunk_id"] for chunk in selected] == ["preferred"]
+        assert meta["pack_without_preference"] == ["unpreferred"]
+        assert meta["suppressed_count"] == 1
+        assert meta["max_score_inversion"] == pytest.approx(0.03)
