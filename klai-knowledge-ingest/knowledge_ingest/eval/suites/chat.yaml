@@ -368,56 +368,132 @@ queries:
     mix: source_selection
 
   # --- Pasted-correspondence canaries (3) — SPEC-RAG-CORRESPONDENCE-DISTILL-001 ---
-  # Reproduces the 2026-08-17 Voys production incident (conversation ID
-  # known internally; redacted from this public repo): a support agent pasted a long,
-  # noisy customer email (headers, CC list, names, dates, signature) asking
-  # about a VoIP trunk failing with SIP 404 Not Found after a successful
-  # session setup. The raw pasted text as a retrieval query diluted the
-  # embedding signal enough that the correct KB article never surfaced
-  # (root-caused live against production retrieval-api the same session —
-  # see the SPEC's "Empirical findings"). All entities below are FICTIONAL
-  # (no real customer names, companies, trunk numbers, Call-IDs, or IPs) —
-  # only the technical shape (SIP 404 after 183 Session Progress) is real.
+  # PII-redacted replay of the complete 2026-08-17 production input. The
+  # technical scenario and sender claims are preserved; customer identifiers,
+  # addresses, numbers, Call-IDs, IPs, and the private legacy domain are
+  # placeholders. The input contains the fresh follow-up plus the earlier
+  # forwarded email that the user asked Klai to analyse together.
   - id: chat-pasted-correspondence-incident-shape
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
     query: |
-      Wat denk jij dat er niet goed is?
+      Kan ik je 2 emails geven over een voip-trunk die niet goed ingesteld
+      staat. Ik wil weten wat jij denkt dat er niet goed is. De uitgaande
+      gesprekken werken dus niet en de inkomende wel.
 
-      Van: J. Voorbeeld <j.voorbeeld@example-klant.nl>
-      Verzonden: donderdag 13 augustus 2026 16:40
-      Aan: Support <support@example-klant.nl>
-      CC: collega@example-klant.nl
-      Onderwerp: RE: storing uitgaand bellen URGENT
+      Dit is een aanvulling op de eerder mail van afgelopen vrijdagmiddag.
+      # Briefing telefoongesprek Voys — trunk <TRUNK_ID> (17 augustus 2026)
 
-      Beste support,
+      ## Kort de situatie
+      Trunk <TRUNK_ID> (server-IP <SERVER_IP>). Inkomend bellen werkt
+      betrouwbaar. Uitgaand bellen faalt al een week. Twee eerdere problemen
+      zijn opgelost (encryptie-instelling en een verouderde interne
+      domeinverwijzing), maar er is een nieuw, nog onopgelost probleem:
+      uitgaande gesprekken eindigen met SIP 404 Not Found en Q.850 cause 1.
 
-      Bedankt voor de tip van gisteren. We hebben de encryptie-instelling
-      op onze trunk aangepast zoals geadviseerd. Het oude foutbeeld is weg,
-      maar we lopen nu tegen iets nieuws aan.
+      ## Verse test, enkele minuten voor dit gesprek
+      - **Call-ID:** <CALL_ID_A>
+      - **Tijdstip:** 17 augustus 2026, 06:57:01–06:57:09 UTC
+      - **Van:** toestel 300, naar <DIALED_NUMBER> (verstuurd als
+        <INTERNATIONAL_NUMBER>, internationaal formaat)
+      - **Via:** ha.voys.nl, backend server <BACKEND_IP>
 
-      Verse testtrace van zojuist:
-      - Call-ID: aa11bb22cc33dd44ee55ff66@203.0.113.42:5160
-      - Tijdstip: 13 augustus 2026, 14:02 UTC
-      - Van toestel 210 naar 0698765432 (internationaal 31698765432)
+      **Verloop:**
+      1. INVITE → 407 Proxy Authentication Required (normale eerste challenge)
+      2. Tweede INVITE met correcte Proxy-Authorization → geaccepteerd
+      3. **183 Session Progress** terug, mét volledig werkende media (codec
+         PCMA) — sessie dus succesvol opgezet
+      4. Vrijwel direct daarna: **404 Not Found** met Reason:
+         Q.850;cause=1 (unallocated number)
+      5. Lokaal: `DIALSTATUS=CHANUNAVAIL`, `HANGUPCAUSE=1`
+
+      Dit is exact hetzelfde patroon als in eerdere meldingen — nu bevestigd
+      op het nieuwe, officieel geadviseerde `ha.voys.nl`.
+
+      ## Wat we zelf al hebben getest en uitgesloten
+      - Codec-volgorde (PCMA eerst) — correct
+      - Nummerformaat (internationaal) — correct
+      - Versleuteling — uitgezet zoals door Voys geadviseerd; dit loste het
+        eerdere 488-probleem op
+      - Hostname — overgestapt van `sipproxy.voipgrid.nl` naar `ha.voys.nl`,
+        plus DNS SRV-lookup aan — geen verschil
+      - Beltoegangen in het Freedom-portaal — 5 van 5 geselecteerd, niets
+        geblokkeerd
+
+      ## Resterende hypothese
+      Voys' eigen documentatie noemt een fraudedetectiesysteem dat een trunk
+      kan beperken bij verdacht belverkeer. Gezien alle wijzigingen en
+      herhaalde testgesprekken deze week zou dat een gedeeltelijke, mogelijk
+      onzichtbare beperking op account <ACCOUNT_ID> kunnen verklaren.
+
+      ## Vragen om te stellen
+      1. Kunnen jullie in de VGUA-logs kijken naar Call-ID <CALL_ID_A>?
+      2. Staat er een fraude- of beveiligingsgerelateerde restrictie op
+         account <ACCOUNT_ID>?
+      3. Is er verschil in behandeling tussen een Nederlands mobiel nummer en
+         andere nummers?
+      4. Is er iets op accountniveau dat na de eerdere storing niet correct is
+         teruggezet?
+
+      Van: Klant <klant@example.invalid>
+      Verzonden: Vrijdag, 14 Augustus, 20:22
+      Aan: Voys support <support@example.invalid>
+      CC: Beheer <beheer@example.invalid>
+      Onderwerp: RE: klant@example.invalid URGENT
+
+      Beste Voys support,
+
+      Bedankt voor de tip — je had helemaal gelijk. Op het Freedom-portaal
+      (Beheer → VoIP-trunks → trunk <TRUNK_ID>) stond "Versleuteling
+      forceren" nog aan, met transportprotocol niet op UDP. We hebben dit
+      aangepast: versleuteling uit, protocol UDP. Aan onze kant hebben we
+      daarnaast een resterend configuratieprobleem gevonden en opgelost (een
+      verouderde interne verwijzing naar ons oude TLS-domein
+      `<LEGACY_TLS_DOMAIN>`, die per abuis nog in actieve SIP-berichten
+      terechtkwam ondanks correcte instellingen — dit hebben we verholpen met
+      een herstart van onze Asterisk-service).
+
+      Het resultaat: de oude `488 Not Acceptable Here` treedt niet meer op. We
+      komen nu voor het eerst voorbij de sessie-opzet.
+
+      Helaas loopt het gesprek alsnog vast, op een nieuwe en specifiekere
+      manier. Verse trace van een testgesprek met volledig schone configuratie
+      (correct domein `sipproxy.voipgrid.nl`, correcte authenticatie, correcte
+      codec-volgorde, internationaal nummerformaat):
+
+      - **Call-ID:** <CALL_ID_B>
+      - **Tijdstip:** 14 augustus 2026, 18:54:46 UTC
+      - **Gebeld nummer (in INVITE):** <INTERNATIONAL_NUMBER>
 
       Verloop:
-      1. INVITE -> 407 Proxy Authentication Required (normaal)
-      2. Tweede INVITE met correcte Proxy-Authorization -> geaccepteerd
-      3. 183 Session Progress terug, met volledig werkende media (codec
-         PCMA) -- sessie dus succesvol opgezet
-      4. Vrijwel direct daarna: 404 Not Found, header Reason:
-         Q.850;cause=1 (unallocated number)
-      5. Lokaal: DIALSTATUS=CHANUNAVAIL, HANGUPCAUSE=1
 
-      Aan onze kant is alles geverifieerd correct: domein, authenticatie,
-      codec-volgorde, nummerformaat. We zien geen resterende punten aan
-      onze kant om nog aan te passen. Kunnen jullie kijken wat dit
-      veroorzaakt?
+      1. INVITE → 407 Proxy Authentication Required → correct beantwoord met
+         Proxy-Authorization.
+      2. **183 Session Progress** terugontvangen, mét een volledig onderhandelde
+         SDP (jullie kant koos PCMA). De sessie werd dus daadwerkelijk opgezet
+         en geaccepteerd.
+      3. Vrijwel direct daarna, zonder duidelijke aanleiding: **404 Not Found**
+         met `Reason: Q.850;cause=1`.
 
-      Groet,
-      J. Voorbeeld
-    reference_answer: "Een 404 Not Found die pas na een geslaagde sessie-opzet (183 Session Progress) optreedt, wijst op een routerings- of belmachtigingscontrole die na de initiele sessie-opzet wordt uitgevoerd — niet per se op een klantconfiguratiefout. Het antwoord moet de SIP-responscode 404 duiden (gebruiker/toestel niet gevonden of niet toegewezen) op basis van de kennisbank, niet de conclusie van de afzender (bijv. een fraudehypothese) als vaststaand feit overnemen."
+      Dit vinden we opvallend: een werkelijk ongeldig nummer zou naar onze
+      verwachting niet eerst een 183 met succesvolle media-onderhandeling
+      opleveren en dán pas als "onbekend nummer" worden afgewezen. Dat patroon
+      doet vermoeden dat er ergens in jullie routerings- of belmachtiging-logica
+      voor dit account (<ACCOUNT_ID>) of specifiek voor
+      dit type bestemming een controle faalt die pas ná de initiële
+      sessie-opzet wordt uitgevoerd.
+
+      Aan onze kant is op dit moment alles geverifieerd correct: domein,
+      authenticatie, codec-volgorde, nummerformaat en de eerdere
+      versleutelings-instelling. We zien dan ook geen resterende punten aan
+      onze kant om nog aan te passen. Zouden jullie in de logs van `VGUA`
+      kunnen kijken naar Call-ID <CALL_ID_B> om te zien welke controle deze
+      404 veroorzaakt?
+
+      We staan klaar voor een nieuw testgesprek op een specifiek tijdstip als
+      dat handig is. Ik heb nu ook het label URGENT eraan gehangen omdat het al
+      lang gaande is dat we niet uit kunnen bellen.
+    reference_answer: "Scheid de twee afzenderclaims van de kennisbank: de afzender zegt dat de klantconfiguratie is uitgesloten en vermoedt een fraude-, routerings- of belmachtigingsblokkade, maar geen van die oorzaken is vastgesteld. De kennisbank duidt SIP 404 / Q.850 cause 1 als een gebruiker, toestel, extensie of nummer dat niet bestaat of niet is toegewezen. Een eerdere 183 bewijst niet welke latere controle de 404 veroorzaakt. Controleer daarom eerst het exact gekozen en toegewezen nummer en de routering, en laat Voys daarna de twee Call-IDs en eventuele accountrestricties controleren. Rangschik geen onbewezen oorzaak en sluit een klantconfiguratiefout niet uit."
     expected_topics: [sip, 404, trunk, voip, responscode]
     expected_chunks: ["Gebruiker/toestel bestaat niet, of extensie niet gevonden"]
     expected_answer_sections: [sender_statements, kb_evidence, open_questions, verify_first]
