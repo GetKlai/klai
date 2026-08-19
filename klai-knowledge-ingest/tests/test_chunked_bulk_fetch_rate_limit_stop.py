@@ -312,5 +312,5 @@ async def test_observed_rate_limit_still_triggers_domain_rate_limit_lowering(
     from knowledge_ingest.domain_rate_limit_control import count_rate_limit_observations
 
     observation = count_rate_limit_observations(outcomes)
-    assert observation.had_congestion is True
+    assert observation.congestion_count == 3
     assert observation.clean_count == 1  # the seed page only

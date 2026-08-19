@@ -147,33 +147,41 @@ class Settings(BaseSettings):
     # rate-limit controller (knowledge_ingest.domain_rate_limit_control).
     # A domain that hit RATE_LIMITED/BLOCKED_ANTI_BOT once should not stay
     # throttled forever — but raising too eagerly just repeats the
-    # incident, so all three knobs below are deliberately conservative.
+    # incident, so the knobs below are deliberately conservative.
     #
-    # crawl_rate_limit_recovery_step: fixed additive step (req/s) applied
-    # per ELIGIBLE job — never more than one step, regardless of how far
-    # past the threshold the clean streak has grown.
-    crawl_rate_limit_recovery_step: float = Field(
-        default=0.2,
-        validation_alias=AliasChoices("KLAI_CRAWL_RATE_LIMIT_RECOVERY_STEP"),
-    )
-    # crawl_rate_limit_recovery_clean_threshold: clean (SUCCESS) observations
-    # required before a step is even considered. 50 is roughly one
-    # successful crawl of a small site, so in practice this is at most one
-    # step per day for a domain that crawls daily. From the 0.2 floor back
-    # to a 2.0 default that is 9 steps ~= 9 days — deliberately slow: too
-    # fast repeats the incident, and this is background work where a day
-    # of extra caution is not a real cost.
-    crawl_rate_limit_recovery_clean_threshold: int = Field(
-        default=50,
-        validation_alias=AliasChoices("KLAI_CRAWL_RATE_LIMIT_RECOVERY_CLEAN_THRESHOLD"),
+    # 2026-08-19: replaced the fixed-step/observation-count design with an
+    # evidence-scaled one — see domain_rate_limit_control's module
+    # docstring for the full rationale (congestion-as-ratio, evidence-
+    # scaled recovery, time-based decay).
+    #
+    # crawl_rate_limit_recovery_step_fraction: the additive step now scales
+    # to the domain's OWN default rate limit instead of a fixed absolute
+    # value, so a site with a low default and a site with a high default
+    # both recover in a comparable number of clean crawls. At the default
+    # 2.0 req/s and this 0.25 fraction, the step is 0.5 req/s, so a domain
+    # at the 0.2 floor reaches (or clears past) the default in exactly 4
+    # clean crawls past cooldown: 0.2 -> 0.7 -> 1.2 -> 1.7 -> cleared.
+    crawl_rate_limit_recovery_step_fraction: float = Field(
+        default=0.25,
+        validation_alias=AliasChoices("KLAI_CRAWL_RATE_LIMIT_RECOVERY_STEP_FRACTION"),
     )
     # crawl_rate_limit_recovery_cooldown_hours: minimum time since the last
-    # congestion signal before a raise is allowed, even if the clean
-    # threshold is already met — the hysteresis that stops a single good
-    # crawl right after a bad one from immediately undoing the backoff.
+    # congestion signal before a raise is allowed — the hysteresis that
+    # stops a single good crawl right after a bad one from immediately
+    # undoing the backoff.
     crawl_rate_limit_recovery_cooldown_hours: float = Field(
         default=24.0,
         validation_alias=AliasChoices("KLAI_CRAWL_RATE_LIMIT_RECOVERY_COOLDOWN_HOURS"),
+    )
+    # crawl_rate_limit_decay_after_days: a stored rate-limit override with no
+    # congestion signal in this many days reverts to the default even
+    # without a fresh crawl (applied at read time in adapters/crawler.py via
+    # domain_rate_limit_control.apply_domain_rate_limit_decay) — a
+    # punishment stops being defensible once its evidence is this stale.
+    # 7 days is a starting proposal, tunable via env without a code change.
+    crawl_rate_limit_decay_after_days: float = Field(
+        default=7.0,
+        validation_alias=AliasChoices("KLAI_CRAWL_RATE_LIMIT_DECAY_AFTER_DAYS"),
     )
     # httpx timeout for one bulk `/crawl` chunk request
     # (crawl4ai_client._chunked_bulk_fetch). With client-side pacing

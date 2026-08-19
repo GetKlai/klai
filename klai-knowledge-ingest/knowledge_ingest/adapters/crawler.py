@@ -26,6 +26,8 @@ from knowledge_ingest import pg_store, qdrant_store
 from knowledge_ingest.config import settings
 from knowledge_ingest.crawl4ai_client import CrawlResult, _canonicalise_url, crawl_site
 from knowledge_ingest.domain_rate_limit_control import (
+    apply_domain_rate_limit_decay,
+    classify_crawl_congestion,
     compute_domain_rate_limit_update,
     count_rate_limit_observations,
 )
@@ -623,6 +625,14 @@ _UNSET = object()  # sentinel: stored_hash not yet fetched from DB
 # ``knowledge_ingest.domain_rate_limit_control`` as a pure function so it
 # is testable without a database; this module only wires observed outcomes
 # into it and persists the result.
+#
+# 2026-08-19: congestion is now a ratio verdict (classify_crawl_congestion)
+# instead of a single-signal event, the recovery step scales to the
+# domain's own default rate limit (step_fraction) instead of a fixed
+# absolute step, and a stored override with no recent congestion evidence
+# decays back to the default at READ time (apply_domain_rate_limit_decay),
+# before the next crawl even starts. See domain_rate_limit_control's module
+# docstring for the full rationale.
 
 
 async def run_crawl_job(
@@ -690,6 +700,12 @@ async def run_crawl_job(
     hands it down rather than giving crawl4ai_client direct DB access.
     Pages already fetched before cancellation are kept and ingested
     normally; the terminal status becomes ``cancelled``, not a failure.
+
+    2026-08-19: before the stored rate-limit override is used, it is first
+    passed through ``domain_rate_limit_control.apply_domain_rate_limit_
+    decay`` — a stored override with no congestion evidence in the
+    configured decay window is cleared before this crawl starts, not just
+    on some future clean crawl.
     """
     await _update_job(conn, job_id, status="running")
 
@@ -712,6 +728,21 @@ async def run_crawl_job(
         # for where the stored value gets written (and raised back up).
         domain = extract_domain(start_url)
         domain_rate_limit_state = await get_domain_rate_limit_state(conn, domain, org_id)
+        decayed_state = apply_domain_rate_limit_decay(
+            domain_rate_limit_state,
+            decay_after=timedelta(days=settings.crawl_rate_limit_decay_after_days),
+            now=datetime.now(UTC),
+        )
+        if decayed_state != domain_rate_limit_state:
+            await save_domain_rate_limit_state(conn, domain, org_id, decayed_state)
+            logger.info(
+                "crawl_domain_rate_limit_decayed",
+                job_id=job_id,
+                domain=domain,
+                previous_rate_limit=domain_rate_limit_state.rate_limit,
+                previous_last_congestion_at=domain_rate_limit_state.last_congestion_at,
+            )
+        domain_rate_limit_state = decayed_state
         stored_rate_limit = domain_rate_limit_state.rate_limit
         effective_rate_limit = stored_rate_limit if stored_rate_limit is not None else rate_limit
         if stored_rate_limit is not None:
@@ -809,27 +840,35 @@ async def run_crawl_job(
             )
 
         # 2026-08-17 (intermedia.com + support.ascendcloud.com incident),
-        # extended 2026-08-18 (block B): fold this job's fetch_outcomes into
-        # the AIMD regelwet — halve on congestion (floor
+        # extended 2026-08-18 (block B) and 2026-08-19 (ratio-based
+        # congestion + evidence-scaled recovery): fold this job's
+        # fetch_outcomes into the AIMD regelwet — halve on congestion (floor
         # domain_rate_limit_control.MIN_DOMAIN_RATE_LIMIT), or raise one
-        # step once the domain has stayed clean past the recovery threshold
-        # AND the cooldown since the last congestion. ``updated_state`` is
-        # None when nothing needs writing (a healthy domain with no stored
-        # override stays untouched — see compute_domain_rate_limit_update).
+        # step (scaled to this domain's own default rate limit) once a
+        # definitive non-congested verdict is reached AND the cooldown
+        # since the last congestion has elapsed. ``congestion_verdict`` is
+        # None when the job did not attempt enough URLs to judge either way
+        # (classify_crawl_congestion), in which case ``updated_state`` is
+        # also None — a true no-op, not a reset. ``updated_state`` is
+        # likewise None when nothing needs writing for a healthy domain
+        # with no stored override (see compute_domain_rate_limit_update).
         rate_limit_observation = count_rate_limit_observations(fetch_outcomes)
+        congestion_verdict = classify_crawl_congestion(
+            rate_limit_observation,
+            ratio_threshold=settings.crawl_circuit_breaker_slowdown_ratio,
+            min_attempts=settings.crawl_circuit_breaker_min_attempts,
+        )
         updated_rate_limit_state = compute_domain_rate_limit_update(
             domain_rate_limit_state,
-            had_congestion=rate_limit_observation.had_congestion,
-            clean_observations=rate_limit_observation.clean_count,
+            had_congestion=congestion_verdict,
             default_rate_limit=rate_limit,
-            step_up=settings.crawl_rate_limit_recovery_step,
-            recovery_threshold=settings.crawl_rate_limit_recovery_clean_threshold,
+            step_fraction=settings.crawl_rate_limit_recovery_step_fraction,
             cooldown=timedelta(hours=settings.crawl_rate_limit_recovery_cooldown_hours),
             now=datetime.now(UTC),
         )
         if updated_rate_limit_state is not None:
             await save_domain_rate_limit_state(conn, domain, org_id, updated_rate_limit_state)
-            if rate_limit_observation.had_congestion:
+            if congestion_verdict:
                 logger.warning(
                     "crawl_domain_rate_limit_lowered",
                     job_id=job_id,

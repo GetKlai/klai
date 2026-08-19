@@ -8,23 +8,63 @@ crawl of that domain starts already paced down. That is half of an AIMD
 decrease with no additive increase. A domain that had one bad crawl stays
 throttled forever, because nothing ever raises the limit back up.
 
-This module adds the missing half: additive increase, with hysteresis so
-a single good crawl right after a bad one does not immediately erase the
-backoff (that would just repeat the incident). The regelwet
-(``compute_domain_rate_limit_update``) is a pure function — no database,
-no wall clock, every time-dependent value is a parameter — so every edge
-case is testable without a Postgres connection. Persistence is a separate,
-thin concern in ``knowledge_ingest.domain_selectors``.
+2026-08-18 (block B) added the missing half: additive increase, with
+hysteresis so a single good crawl right after a bad one does not
+immediately erase the backoff (that would just repeat the incident).
+
+2026-08-19 (support.ascendcloud.com / www.intermedia.com follow-up) fixed
+three problems in that first cut:
+
+1. Congestion used to be detected as "any single RATE_LIMITED/
+   BLOCKED_ANTI_BOT signal in a job" — an event, not a ratio. A crawl of
+   support.ascendcloud.com with 457 SUCCESS and exactly one
+   ``blocked_anti_bot`` signal out of ~475 real attempts got treated as
+   full congestion and reset all recovery progress, even though the crawl
+   was overwhelmingly clean. Congestion is now a ratio decision
+   (``classify_crawl_congestion``), reusing the SAME threshold/minimum
+   ``knowledge_ingest.host_circuit_breaker`` already uses for its
+   per-chunk SLOWDOWN verdict — both mechanisms answer "is this site
+   actually struggling, or is this noise?" at different granularities.
+2. Recovery required accumulating 50 clean *page-level* observations
+   before a single fixed 0.2 req/s step applied. A domain rarely sees 50
+   clean pages in one job, so recovery essentially never fired, and even
+   when it did, the fixed floor-to-default distance needed 9 steps ~= 9
+   days. Recovery is now evidence-scaled per job, not observation-counted:
+   one job with a definitive non-congested verdict (see
+   ``classify_crawl_congestion``) is itself sufficient to raise one step,
+   and the step is a fraction of the domain's own default rate limit
+   (``compute_domain_rate_limit_update``'s ``step_fraction``) so it clears
+   the floor-to-default distance in a handful of clean crawls regardless
+   of what the default happens to be.
+3. A punishment had no expiry. A domain with a stored low ``rate_limit``
+   and no recent congestion evidence — including the production edge
+   case, ``last_congestion_at IS NULL`` while ``rate_limit`` is lowered
+   (www.intermedia.com is in exactly this state today, from the
+   2026-08-17 halving-only fix that predates the ``last_congestion_at``
+   column) — stayed throttled forever unless it happened to get crawled
+   again and accumulate a fresh streak. ``apply_domain_rate_limit_decay``
+   is the fix: applied at READ time, before a crawl even starts, a stored
+   override with no congestion evidence in the configured window reverts
+   fully to the default.
+
+The regelwet (``compute_domain_rate_limit_update``) stays a pure function —
+no database, no wall clock, every time-dependent value is a parameter — so
+every edge case is testable without a Postgres connection. Persistence is a
+separate, thin concern in ``knowledge_ingest.domain_selectors``.
 
 Counting rule (the part most likely to be "simplified" away by a future
 change — see ``count_rate_limit_observations``): only ``SUCCESS`` is a
 clean observation, and only ``RATE_LIMITED`` / ``BLOCKED_ANTI_BOT`` is a
-congestion observation. Everything else (timeouts, 5xx, the
-``NOT_FETCHED_*`` family, ``non_content_listing_page``) is neither. A
-timeout says nothing about whether the site is rate-limiting us, and a URL
-we chose not to send (``NOT_FETCHED_RATE_LIMIT_STOP``) says nothing about
-anything — counting it either way would inflate or deflate the very signal
-this controller reacts to.
+congestion observation. ``REFUSED`` counts toward ``attempted_count`` (the
+site really did respond) but never toward ``congestion_count`` — a refusal
+is not fixed by going slower, so it dilutes the ratio rather than
+inflating it. Everything else (timeouts, 5xx, the ``NOT_FETCHED_*``
+family, ``non_content_listing_page``) is excluded even from
+``attempted_count`` — a timeout says nothing about whether the site is
+rate-limiting us, and a URL we chose not to send
+(``NOT_FETCHED_RATE_LIMIT_STOP`` and siblings) says nothing about anything
+— counting it either way would inflate or deflate the very signal this
+controller reacts to.
 """
 
 from __future__ import annotations
@@ -41,6 +81,12 @@ MIN_DOMAIN_RATE_LIMIT = 0.2
 
 _CONGESTION_REASON_CODES = frozenset(
     {FetchReasonCode.RATE_LIMITED.value, FetchReasonCode.BLOCKED_ANTI_BOT.value}
+)
+
+# URLs that were never actually sent — not an attempt, not a signal either
+# way. See the module docstring's counting-rule paragraph.
+_NOT_FETCHED_REASON_CODES = frozenset(
+    code.value for code in FetchReasonCode if code.value.startswith("not_fetched_")
 )
 
 
@@ -62,68 +108,158 @@ class DomainRateLimitState:
 
 @dataclass(frozen=True)
 class RateLimitObservation:
-    """What this crawl job actually observed, reduced to the two facts the
-    regelwet needs. See the module docstring for the counting rule."""
+    """Raw counts reduced from one job's fetch_outcomes.
 
-    had_congestion: bool
+    ``congestion_count`` and ``clean_count`` are diagnostic; ``attempted_
+    count`` is the ratio denominator ``classify_crawl_congestion`` needs.
+    See ``count_rate_limit_observations`` for exactly which reason codes
+    count toward which field.
+    """
+
+    congestion_count: int
     clean_count: int
+    attempted_count: int
 
 
 def count_rate_limit_observations(fetch_outcomes: list[dict]) -> RateLimitObservation:
-    """Reduce a job's ``fetch_outcomes`` to (had_congestion, clean_count).
+    """Reduce a job's ``fetch_outcomes`` to raw congestion/clean/attempted counts.
 
     See the module docstring's "Counting rule" section — this is
     deliberately narrow. Do not broaden it to count timeouts, 5xx, or
-    ``NOT_FETCHED_*`` as either signal; none of them observe whether the
+    ``NOT_FETCHED_*`` toward any field; none of them observe whether the
     site is rate-limiting us.
     """
-    had_congestion = False
+    congestion_count = 0
     clean_count = 0
+    attempted_count = 0
     for outcome in fetch_outcomes:
         reason = outcome.get("reason_code")
+        if reason in _NOT_FETCHED_REASON_CODES:
+            continue  # never sent — not an attempt, not a signal either way
+        attempted_count += 1
         if reason in _CONGESTION_REASON_CODES:
-            had_congestion = True
+            congestion_count += 1
         elif reason == FetchReasonCode.SUCCESS.value:
             clean_count += 1
-    return RateLimitObservation(had_congestion=had_congestion, clean_count=clean_count)
+    return RateLimitObservation(
+        congestion_count=congestion_count,
+        clean_count=clean_count,
+        attempted_count=attempted_count,
+    )
+
+
+def classify_crawl_congestion(
+    observation: RateLimitObservation,
+    *,
+    ratio_threshold: float,
+    min_attempts: int,
+) -> bool | None:
+    """Percentage-based congestion verdict, not an event-based one.
+
+    2026-08-19 (Sol review, same day as the initial ratio design): the
+    ``min_attempts`` gate is deliberately ASYMMETRIC, not a blanket "ignore
+    anything under N attempts" floor:
+
+    - A HIGH ratio is trusted regardless of ``attempted_count``, including
+      well under ``min_attempts``. A domain already sitting at (or near)
+      the floor that is STILL being rate-limited produces naturally SMALL
+      jobs — crawl4ai_client's own consecutive-slowdown give-up ladder
+      (``_MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS``) aborts the crawl after a
+      handful of chunks specifically so a blocked site isn't hammered
+      further. At the 0.2 req/s floor that is roughly 4 chunks of 2 URLs
+      plus the seed page — 9 real attempts, under the 10-attempt
+      ``min_attempts`` used elsewhere in this module. If ``min_attempts``
+      gated True as well as False, a domain that fails 8 of 9 attempts
+      would register NO verdict, ``last_congestion_at`` would never
+      refresh, and ``apply_domain_rate_limit_decay`` would eventually
+      un-throttle a domain that never stopped being congested — exactly
+      backwards from this module's purpose. A high ratio from a small
+      sample is strong evidence (the original Ascend bug was a LOW ratio
+      being over-trusted, not a high ratio from a small sample); requiring
+      a minimum sample size only makes sense for the "nothing bad
+      happened" conclusion, not the "something bad happened" one.
+    - A LOW ratio (or zero) still needs ``min_attempts`` real attempts, and
+      at least one ``SUCCESS`` (``observation.clean_count > 0``), before it
+      counts as genuine evidence the domain is healthy enough to raise.
+      Without the clean_count check, a crawl that fails every request for
+      an UNRELATED reason (DNS errors, 5xx, timeouts, refusals — none of
+      which are congestion signals) would read as "no congestion" and the
+      regelwet would raise the rate limit on a domain nothing was actually
+      proven to tolerate a faster pace.
+
+    Returns ``None`` ("no verdict — not enough data or no positive
+    evidence") in both of those low-confidence cases. Returns ``True`` when
+    ``congestion_count / attempted_count >= ratio_threshold`` (``>=``, not
+    ``>``, so a crawl landing EXACTLY on the threshold counts as
+    congestion — matching the "a quarter of attempts" framing this
+    threshold is calibrated against). Returns ``False`` only when the ratio
+    is low AND there is at least one real success to stand on.
+
+    Callers pass ``settings.crawl_circuit_breaker_slowdown_ratio`` and
+    ``settings.crawl_circuit_breaker_min_attempts`` — the SAME threshold
+    and minimum ``knowledge_ingest.host_circuit_breaker`` already uses for
+    its per-chunk SLOWDOWN verdict (see that module), not a second
+    independently tunable pair. Reusing them is deliberate: both
+    mechanisms answer the same underlying question ("is this site actually
+    struggling, or is this noise?") at different granularities (per-chunk
+    vs. per-completed-job).
+    """
+    if observation.attempted_count == 0:
+        return None
+    ratio = observation.congestion_count / observation.attempted_count
+    if ratio >= ratio_threshold:
+        return True
+    if observation.attempted_count < min_attempts or observation.clean_count == 0:
+        return None
+    return False
 
 
 def compute_domain_rate_limit_update(
     state: DomainRateLimitState,
     *,
-    had_congestion: bool,
-    clean_observations: int,
+    had_congestion: bool | None,
     default_rate_limit: float,
-    step_up: float,
-    recovery_threshold: int,
+    step_fraction: float,
     cooldown: timedelta,
     now: datetime,
 ) -> DomainRateLimitState | None:
-    """The regelwet: additive up, multiplicative down, with hysteresis.
+    """The regelwet: additive up, multiplicative down, no observation-count
+    threshold — one non-congested crawl (see ``classify_crawl_congestion``)
+    is itself sufficient evidence to raise, gated only by the cooldown
+    since the last congestion.
 
-    Returns the new state to persist, or ``None`` when nothing should be
-    written at all — a healthy domain with no stored override and no
-    congestion this job stays untouched, so ``knowledge.crawl_domains``
-    never gains a row for a site that was never a problem.
+    ``had_congestion=None`` means the calling job did not produce enough
+    attempts to judge either way (see ``classify_crawl_congestion``) — this
+    function is then a strict no-op regardless of what is currently
+    stored: returns ``None``, meaning "nothing to persist, leave the row
+    exactly as is". This is why a 3-page crawl can no longer wipe out a
+    domain's recovery progress the way the old event-based design could.
 
-    Congestion (``had_congestion``) always wins over any clean observations
-    in the SAME job — halve from whatever rate was actually in effect this
-    run (the stored override if any, else the job's own default), reset
-    the clean streak to zero, and record ``now`` as the last congestion.
+    ``had_congestion=True`` always wins — halve from whatever rate was
+    actually in effect this run (the stored override if any, else the
+    job's own default), floor at ``MIN_DOMAIN_RATE_LIMIT``, reset
+    ``clean_streak`` to 0, and record ``now`` as the last congestion.
 
-    Otherwise, accumulate the clean streak. Only raise when ALL of:
-      - an override is actually stored (nothing to recover otherwise),
-      - the accumulated streak has reached ``recovery_threshold``, and
-      - the cooldown since the last congestion has elapsed (or there was
-        never a recorded congestion for this stored override).
-    The raise is always exactly one step (``step_up``), never scaled by how
-    far past the threshold the streak has grown — a single fixed step per
-    eligible job, capped at ``default_rate_limit``. Once the raise would
-    reach or exceed the default, the override is cleared entirely
-    (``rate_limit=None``) rather than storing the default value, and the
-    streak/congestion-timestamp reset with it — the domain falls back to
-    the normal (no-override) path and the table stays clean.
+    ``had_congestion=False``: if nothing is stored (``state.rate_limit is
+    None``), there is nothing to recover — return ``None`` (do not create a
+    row for a healthy domain). Otherwise this clean crawl always
+    increments ``clean_streak`` by exactly 1 (a running "consecutive clean
+    crawls since last congestion" counter, purely informational — it no
+    longer gates anything). If the cooldown since ``last_congestion_at``
+    has NOT elapsed, return the unchanged ``rate_limit`` with the
+    incremented streak (hysteresis — a clean crawl right after a bad one
+    does not undo the backoff). If the cooldown HAS elapsed (or there was
+    never a recorded congestion), raise by exactly one step:
+    ``step = default_rate_limit * step_fraction``. If the raised value
+    would reach or exceed ``default_rate_limit``, clear the override
+    entirely (``rate_limit=None``, ``clean_streak=0``,
+    ``last_congestion_at=None``) instead of storing a value at/above the
+    default — the domain falls back to the normal no-override path and the
+    table stays clean.
     """
+    if had_congestion is None:
+        return None
+
     if had_congestion:
         effective_rate_limit = (
             state.rate_limit if state.rate_limit is not None else default_rate_limit
@@ -135,21 +271,55 @@ def compute_domain_rate_limit_update(
         # Nothing to recover — do not start tracking a healthy domain.
         return None
 
-    new_streak = state.clean_streak + clean_observations
+    new_streak = state.clean_streak + 1
     cooldown_elapsed = (
         state.last_congestion_at is None or now - state.last_congestion_at >= cooldown
     )
 
-    if new_streak >= recovery_threshold and cooldown_elapsed:
-        raised = min(default_rate_limit, state.rate_limit + step_up)
-        if raised >= default_rate_limit:
-            return DomainRateLimitState(rate_limit=None, clean_streak=0, last_congestion_at=None)
+    if not cooldown_elapsed:
         return DomainRateLimitState(
-            rate_limit=raised, clean_streak=0, last_congestion_at=state.last_congestion_at
+            rate_limit=state.rate_limit,
+            clean_streak=new_streak,
+            last_congestion_at=state.last_congestion_at,
         )
 
+    step = default_rate_limit * step_fraction
+    raised = min(default_rate_limit, state.rate_limit + step)
+    if raised >= default_rate_limit:
+        return DomainRateLimitState(rate_limit=None, clean_streak=0, last_congestion_at=None)
     return DomainRateLimitState(
-        rate_limit=state.rate_limit,
-        clean_streak=new_streak,
-        last_congestion_at=state.last_congestion_at,
+        rate_limit=raised, clean_streak=new_streak, last_congestion_at=state.last_congestion_at
     )
+
+
+def apply_domain_rate_limit_decay(
+    state: DomainRateLimitState,
+    *,
+    decay_after: timedelta,
+    now: datetime,
+) -> DomainRateLimitState:
+    """Time-based decay, applied at READ time before a crawl even starts
+    (see ``adapters/crawler.py``) — a stored override with no congestion
+    evidence in the last ``decay_after`` window is no more trustworthy than
+    an unknown domain, so it reverts FULLY to the default (override
+    cleared, not stepped down gradually) rather than waiting for a fresh
+    clean crawl to earn its way back.
+
+    A domain with ``rate_limit`` stored but ``last_congestion_at IS NULL``
+    is treated the SAME as evidence that has already expired, not as
+    evidence that never needs to expire: a punishment with no timestamp is
+    a punishment with no evidence for it, and clearing it immediately (on
+    the very next read, regardless of ``decay_after``) is the only
+    defensible reading — this is exactly the state www.intermedia.com is
+    in on production today (rate_limit lowered from the original
+    2026-08-17 halving-only fix, before ``last_congestion_at`` existed as
+    a column).
+
+    Pure function — no DB, no wall clock, ``now`` is a parameter like
+    everywhere else in this module.
+    """
+    if state.rate_limit is None:
+        return state
+    if state.last_congestion_at is None or now - state.last_congestion_at >= decay_after:
+        return DomainRateLimitState(rate_limit=None, clean_streak=0, last_congestion_at=None)
+    return state
