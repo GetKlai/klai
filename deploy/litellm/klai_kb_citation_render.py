@@ -785,7 +785,9 @@ def log_kb_citation_render(
     if not stats.rendered_messages:
         if not stats.epistemics_measured:
             return
-        logger.warning(
+        # Semgrep reads the contract's "tokens" field names as credentials;
+        # values are redacted unless privacy mode is explicitly "full".
+        logger.warning(  # nosemgrep
             "kb_answer_epistemics org_id=%s user_id=%s request_id=%s render_mode=%s stream=%s sender_only_tokens_in_answer=%s answer_tokens_unsupported_by_evidence=%s correspondence_detected=%s sender_only_tokens=%s answer_tokens_unsupported_by_evidence_values=%s answer_contract=%s",
             kb_meta.get("org_id"),
             kb_meta.get("user_id"),
@@ -833,7 +835,9 @@ def log_kb_citation_render(
             for decision in stats.citation_decisions
         ]
 
-    logger.warning(
+    # Semgrep reads the contract's "tokens" field names as credentials;
+    # values are redacted unless privacy mode is explicitly "full".
+    logger.warning(  # nosemgrep
         "%s org_id=%s user_id=%s request_id=%s render_mode=%s stream=%s rendered_messages=%d rendered_sources=%d chunks_injected=%s no_citable_reason=%s citation_reason_counts=%s citation_decisions=%s sender_only_tokens_in_answer=%s answer_tokens_unsupported_by_evidence=%s correspondence_detected=%s sender_only_tokens=%s answer_tokens_unsupported_by_evidence_values=%s answer_contract=%s",
         event,
         kb_meta.get("org_id"),
