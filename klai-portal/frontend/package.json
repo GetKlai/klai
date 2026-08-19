@@ -61,7 +61,17 @@
   },
   "overrides": {
     "@tiptap/core": "3.29.2",
+    "@tiptap/extension-bold": "3.29.2",
+    "@tiptap/extension-bubble-menu": "3.29.2",
+    "@tiptap/extension-code": "3.29.2",
+    "@tiptap/extension-floating-menu": "3.29.2",
+    "@tiptap/extension-italic": "3.29.2",
+    "@tiptap/extension-strike": "3.29.2",
+    "@tiptap/extension-text": "3.29.2",
+    "@tiptap/extension-underline": "3.29.2",
+    "@tiptap/extensions": "3.29.2",
     "@tiptap/pm": "3.29.2",
+    "@tiptap/react": "3.29.2",
     "nanoid": "^3.3.18"
   },
   "devDependencies": {
