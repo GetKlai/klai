@@ -246,7 +246,9 @@ rows. A unit test asserting the log level is required but is not sufficient evid
 
 **WHEN** a set of preferred source labels is available, **THE selection SHALL** apply a
 bounded additive boost `β` to the ranking score of chunks belonging to those labels, and
-**SHALL NOT** allocate slots by source.
+**SHALL NOT** allocate extra or guaranteed slots based on preferred status. The existing
+per-source diversity cap remains unchanged and applies equally to preferred and
+non-preferred labels.
 
 The boosted value is derived from the same field `ranking_score()` already uses
 (`final_rank_score` when the ranking contract is active, `reranker_score` otherwise) so
@@ -258,15 +260,19 @@ eval run is what validates or replaces it.
 
 #### REQ-3 — rank inversion is bounded by construction (ubiquitous)
 
-**THE selection SHALL** guarantee that no chunk is ranked below another whose unboosted
-ranking score is more than `β` higher.
+**THE source-preference step SHALL** guarantee that it does not rank or displace a chunk
+below another whose unboosted ranking score is more than `β` lower.
 
 This is a property of REQ-2's bounded additive form, not additional runtime logic: an
 additive boost capped at `β` cannot move a chunk past one scoring more than `β` above it.
 The requirement exists so it is **tested as an invariant** rather than assumed, and so any
 future source-preference mechanism inherits the bound.
 
-A property test SHALL assert this over randomised score/label distributions.
+A property test SHALL assert this over randomised score/label distributions. It SHALL
+also compare the served pack with `β=0` against `β>0` while the production diversity cap
+is enabled, so any displacement caused by preference remains bounded. Diversity may
+independently select a lower-scoring label in both packs; that pre-existing, symmetric
+cap behaviour is not a preference-caused inversion.
 
 #### REQ-4 — the counterfactual is logged (ubiquitous)
 
@@ -299,8 +305,10 @@ Concretely, delete:
 - the Layer-1 branch in `route_to_sources` (`router.py:257-264`)
 - `diversity.py:27-63` `STOP_WORDS`
 
-`STOP_WORDS` has exactly two consumers (`diversity.py:86` and `router.py:111`), both
-removed here — verified 2026-08-19 by repository-wide grep. Confirm again before deleting.
+The retrieval source-selection `STOP_WORDS` constant has exactly two consumers
+(`diversity.py:86` and `router.py:111`), both removed here — verified 2026-08-19 by
+repository-wide grep. Unrelated stop-word lists outside retrieval source selection are
+not part of this requirement.
 
 `RoutingDecision.layer_used` loses the `"keyword"` value. Update its docstring and every
 consumer, including the `router_layer_used` telemetry field and its tests.
@@ -377,9 +385,9 @@ enforcement in the same PR is out of scope.
 |-------|------|-------------------|
 | AC-1 | After Phase 0 deploy, LogsQL for each event name in REQ-1 over a 1h window with real chat traffic | ≥1 row per event name; raw query text absent for orgs whose `telemetry_level` is not `full` |
 | AC-2 | Unit: `source_aware_select` with two labels, chunk A (label X) at 0.66 and chunk B (label Y) at 0.28, preference on Y | A still ranks above B; B is not promoted past A |
-| AC-3 | Property test over randomised (score, label) sets with preference on a random label | No chunk ranks below another whose unboosted score is more than `β` higher — REQ-3 invariant holds for all generated cases |
+| AC-3 | Property test over randomised (score, label) sets with preference on a random label, including the production diversity cap | No preference-caused reorder or `β=0` → `β>0` pack displacement exceeds `β`; the independent diversity-cap outcome may differ from pure score order in both packs |
 | AC-4 | Replay of the incident shape: query containing the tenant brand token, chunks split across `help.voys.nl` and another label | `suppressed_count == 0`; chunks at 0.658/0.616 present in the served pack |
-| AC-5 | Repository grep after Phase 2 | Zero occurrences of `_detect_mentioned_sources`, `layer1_keyword`, `_build_keyword_map`, `STOP_WORDS`; drift-guard test present and failing on a deliberately reintroduced substring match |
+| AC-5 | Retrieval source-selection grep after Phase 2 | Zero occurrences of `_detect_mentioned_sources`, `layer1_keyword`, `_build_keyword_map`, or `STOP_WORDS` in `retrieval_api/services/{diversity,router}.py`; drift-guard test present and failing on a deliberately reintroduced substring match |
 | AC-6 | Unit: `route_to_sources` on a catalogue whose labels are all semantically similar (Voys-shaped) | Returns `selected_source_labels=None`, `layer_used="none"` — abstains rather than committing |
 | AC-7 | Unit: `fetch_source_catalog` with `kb_slugs=["sip"]` | Facet filter carries both `org_id` and `kb_slug`; cache key differs from the unscoped call |
 | AC-8 | Full `chat.yaml` suite before vs. after Phase 2 | Aggregate `context_recall` MUST NOT decrease; aggregate `context_precision` MUST NOT decrease by more than 0.02. Per-canary deltas reported in the PR body regardless of outcome |

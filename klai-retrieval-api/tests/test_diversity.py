@@ -157,7 +157,7 @@ class TestBoundedPreference:
         assert meta["preferred_labels"] == ["preferred"]
         assert meta["boost"] == 0.05
 
-    def test_preference_never_inverts_a_gap_larger_than_boost(self):
+    def test_preference_never_inverts_a_gap_larger_than_boost_without_diversity(self):
         rng = random.Random(20260819)  # noqa: S311 - deterministic property test data
         boost = 0.05
 
@@ -183,6 +183,52 @@ class TestBoundedPreference:
                 for lower in chunks:
                     if higher["reranker_score"] > lower["reranker_score"] + boost:
                         assert position[higher["chunk_id"]] < position[lower["chunk_id"]]
+
+    def test_preference_displacement_is_bounded_with_production_diversity_cap(self):
+        rng = random.Random(20260820)  # noqa: S311 - deterministic property test data
+        boost = 0.05
+        labels = ("preferred", "other-a", "other-b")
+
+        for case in range(250):
+            chunks = [
+                _chunk(
+                    f"{case}-{index}",
+                    rng.choice(labels),
+                    rng.random(),
+                )
+                for index in range(rng.randint(3, 20))
+            ]
+            top_n = rng.randint(1, len(chunks))
+            baseline, _ = source_aware_select(
+                chunks,
+                top_n=top_n,
+                max_per_source=2,
+                source_preference_boost=boost,
+            )
+            preferred, _ = source_aware_select(
+                chunks,
+                top_n=top_n,
+                max_per_source=2,
+                preferred_labels={"preferred"},
+                source_preference_boost=boost,
+            )
+
+            baseline_ids = {chunk["chunk_id"] for chunk in baseline}
+            preferred_ids = {chunk["chunk_id"] for chunk in preferred}
+            suppressed = sorted(
+                (chunk for chunk in baseline if chunk["chunk_id"] not in preferred_ids),
+                key=lambda chunk: chunk["reranker_score"],
+                reverse=True,
+            )
+            promoted = sorted(
+                (chunk for chunk in preferred if chunk["chunk_id"] not in baseline_ids),
+                key=lambda chunk: chunk["reranker_score"],
+                reverse=True,
+            )
+
+            assert len(suppressed) == len(promoted)
+            for displaced, replacement in zip(suppressed, promoted, strict=True):
+                assert displaced["reranker_score"] <= replacement["reranker_score"] + boost + 1e-12
 
     def test_counterfactual_reports_no_suppression_for_incident_score_shape(self):
         reranked = [
