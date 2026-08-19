@@ -14,10 +14,11 @@ import * as m from '@/paraglide/messages'
 import type { Source } from './-sources-types'
 
 /**
- * Threshold (minutes) after which a 'pending' source is considered stuck.
+ * Threshold (minutes) after which a pending upload is considered stuck.
  * Below this we just show "Bezig sinds Xm" as informational; at/above it
  * the badge flips to a warning ("Hangt al Xm") so the user knows to retry.
  *
+ * Connectors are excluded because long crawls can legitimately exceed it.
  * This is a frontend-only indicator, not enforcement: the backend reaper
  * (knowledge-ingest `stale_pending_artifact_reaper`) auto-fails artifacts
  * stuck in 'pending' for over 30 minutes, running every 15 minutes. This
@@ -126,13 +127,16 @@ export function StatusBadge({ source }: { source: Source }) {
     )
   }
 
-  // Stale-indicator for sources stuck in 'pending'. last_sync_at is the
-  // best signal of "when did this attempt start" — falls back to created_at
-  // for sources that have never completed a sync yet (the common case for
-  // the bug this fixes: a freshly-added URL that never finished ingesting).
+  // Only uploads have a backend reaper that turns stale pending work into a
+  // failure. Website crawls can legitimately run longer than this threshold,
+  // so elapsed time alone must not present them as stuck.
   if (status === 'pending') {
     const minutes = elapsedMinutes(source.last_sync_at ?? source.created_at)
-    if (minutes !== null && minutes >= STUCK_THRESHOLD_MINUTES) {
+    if (
+      source.kind === 'upload'
+      && minutes !== null
+      && minutes >= STUCK_THRESHOLD_MINUTES
+    ) {
       return (
         <Badge
           variant="destructive"
