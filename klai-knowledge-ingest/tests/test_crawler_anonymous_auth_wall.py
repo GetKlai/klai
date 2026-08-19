@@ -366,5 +366,8 @@ class TestAuthenticatedHaltUnchanged:
         assert any("auth_wall_detected" in a for a in terminal_args), (
             f"expected error containing auth_wall_detected; got {terminal_args}"
         )
-        # And it must NOT have written error_summary (different code path).
-        assert _find_error_summary_call(patched_pool.execute) is None
+        # The atomic terminal write clears any stale summary from an older
+        # execution; this selector-based failure uses ``error`` instead.
+        summary_call = _find_error_summary_call(patched_pool.execute)
+        assert summary_call is not None
+        assert summary_call.args[3] is None

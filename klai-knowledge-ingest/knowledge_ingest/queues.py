@@ -67,6 +67,9 @@ REBUILD_KB = "rebuild-kb"
 """Operator-triggered KB rebuild backfill (SPEC-RAG-REBUILD-KB-001).
 LLM-bound: many per-artifact enrichment calls; runs on the LLM lane."""
 
+MAINTENANCE = "maintenance"
+"""Short control-plane jobs that must not queue behind customer work."""
+
 
 # --- Worker lanes -----------------------------------------------------------
 #
@@ -110,6 +113,9 @@ LLM_QUEUES: list[str] = [
 ]
 """Throughput-bound LLM work — bounded by upstream rate limit."""
 
-ALL_QUEUES: list[str] = IO_QUEUES + INTERACTIVE_QUEUES + LLM_QUEUES
+MAINTENANCE_QUEUES: list[str] = [MAINTENANCE]
+"""Recovery/control work with a dedicated worker slot."""
+
+ALL_QUEUES: list[str] = IO_QUEUES + INTERACTIVE_QUEUES + LLM_QUEUES + MAINTENANCE_QUEUES
 """Union of all lanes. Tests pin that every declared constant is in exactly
 one lane and that ALL_QUEUES contains every constant."""

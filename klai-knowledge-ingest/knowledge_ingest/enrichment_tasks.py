@@ -120,6 +120,10 @@ def init_app(connector: Any) -> Any:
 
     register_consistency_reconcile_task(_procrastinate_app)
 
+    from knowledge_ingest.zombie_recovery import register_zombie_recovery_task
+
+    register_zombie_recovery_task(_procrastinate_app)
+
     return _procrastinate_app
 
 

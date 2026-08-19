@@ -206,7 +206,7 @@ class TestRunCrawlJobAuthWall:
         failed_updates = [
             c
             for c in update_calls
-            if len(c.args) >= 3
+            if len(c.args) >= 4
             and isinstance(c.args[0], str)
             and "UPDATE knowledge.crawl_jobs" in c.args[0]
             and "status=$1" in c.args[0]
@@ -301,10 +301,10 @@ class TestRunCrawlJobAuthWall:
             and "UPDATE knowledge.crawl_jobs" in c.args[0]
             and "status=$1" in c.args[0]
             and c.args[1] == "failed_partial"
-            and isinstance(c.args[2], str)
+            and isinstance(c.args[3], str)
         ]
         assert terminal_updates
-        summary = terminal_updates[-1].args[2]
+        summary = terminal_updates[-1].args[3]
         assert '"reason": "auth_wall_detected"' in summary
         assert '"reason": "crawl_budget_exhausted"' in summary
         assert "Refresh the saved cookies" in summary

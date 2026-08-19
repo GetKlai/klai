@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from knowledge_ingest import queues
@@ -10,6 +11,7 @@ from knowledge_ingest.db import tenant_scoped_connection
 
 def register_crawl_tasks(procrastinate_app: Any) -> None:
     """Register crawl tasks on the Procrastinate app. Called from enrichment_tasks.init_app()."""
+
     import procrastinate
 
     # SPEC-INGEST-QUEUE-SEPARATION-001: ``run_crawl`` lives on its own
@@ -20,7 +22,12 @@ def register_crawl_tasks(procrastinate_app: Any) -> None:
     # I/O-bound (httpx + crawl4ai), enrichment is LLM-bound — different
     # workloads belong on different queues.
     @procrastinate_app.task(
-        queue=queues.CRAWL_JOBS, retry=procrastinate.RetryStrategy(max_attempts=1)
+        queue=queues.CRAWL_JOBS,
+        retry=procrastinate.RetryStrategy(
+            max_attempts=20,
+            wait=5,
+            retry_exceptions=(asyncio.CancelledError,),
+        ),
     )
     async def run_crawl(
         job_id: str,

@@ -25,7 +25,17 @@ from klai_image_storage import ImageStore, download_and_upload_crawl_images
 from knowledge_ingest import pg_store, qdrant_store
 from knowledge_ingest.config import settings
 from knowledge_ingest.crawl4ai_client import CrawlResult, _canonicalise_url, crawl_site
+from knowledge_ingest.crawl_checkpoint import (
+    CrawlExecutionCancelled,
+    CrawlExecutionSuperseded,
+    PostgresCrawlCheckpoint,
+    claim_crawl_execution,
+    ensure_crawl_execution_active,
+    finish_crawl_execution,
+    guard_crawl_execution,
+)
 from knowledge_ingest.domain_rate_limit_control import (
+    DomainRateLimitState,
     apply_domain_rate_limit_decay,
     classify_crawl_congestion,
     compute_domain_rate_limit_update,
@@ -636,6 +646,105 @@ _UNSET = object()  # sentinel: stored_hash not yet fetched from DB
 # docstring for the full rationale.
 
 
+async def _apply_domain_rate_limit_effect_once(
+    conn: asyncpg.Connection,
+    *,
+    job_id: str,
+    org_id: str,
+    domain: str,
+    execution_generation: int,
+    fetch_outcomes: list[dict],
+    domain_rate_limit_state: DomainRateLimitState,
+    effective_rate_limit: float,
+    default_rate_limit: float,
+) -> None:
+    """Apply this crawl's AIMD observation atomically with its replay marker."""
+    async with conn.transaction():
+        command = await conn.execute(
+            """
+            UPDATE knowledge.crawl_jobs
+            SET rate_limit_effect_applied=true
+            WHERE id=$1 AND execution_generation=$2
+              AND status='running' AND rate_limit_effect_applied=false
+            """,
+            job_id,
+            execution_generation,
+        )
+        if command == "UPDATE 0":
+            row = await conn.fetchrow(
+                """
+                SELECT execution_generation, status, rate_limit_effect_applied
+                FROM knowledge.crawl_jobs
+                WHERE id=$1
+                """,
+                job_id,
+            )
+            if (
+                row is not None
+                and int(row["execution_generation"]) == execution_generation
+                and row["status"] == "running"
+                and row["rate_limit_effect_applied"]
+            ):
+                logger.info("crawl_domain_rate_limit_effect_already_applied", job_id=job_id)
+                return
+            raise CrawlExecutionSuperseded(job_id)
+
+        observation = count_rate_limit_observations(fetch_outcomes)
+        congestion_verdict = classify_crawl_congestion(
+            observation,
+            ratio_threshold=settings.crawl_circuit_breaker_slowdown_ratio,
+            min_attempts=settings.crawl_circuit_breaker_min_attempts,
+        )
+        updated_state = compute_domain_rate_limit_update(
+            domain_rate_limit_state,
+            had_congestion=congestion_verdict,
+            default_rate_limit=default_rate_limit,
+            step_fraction=settings.crawl_rate_limit_recovery_step_fraction,
+            cooldown=timedelta(hours=settings.crawl_rate_limit_recovery_cooldown_hours),
+            now=datetime.now(UTC),
+        )
+        if updated_state is None:
+            return
+
+        write_kind = (
+            DomainRateLimitWriteKind.CONGESTION
+            if congestion_verdict
+            else DomainRateLimitWriteKind.RECOVERY
+        )
+        update_applied = await save_domain_rate_limit_state(
+            conn,
+            domain,
+            org_id,
+            expected_state=domain_rate_limit_state,
+            state=updated_state,
+            kind=write_kind,
+            default_rate_limit=default_rate_limit,
+        )
+        if congestion_verdict and update_applied:
+            logger.warning(
+                "crawl_domain_rate_limit_lowered",
+                job_id=job_id,
+                domain=domain,
+                previous_rate_limit=effective_rate_limit,
+                lowered_rate_limit=updated_state.rate_limit,
+            )
+        elif update_applied and updated_state.rate_limit != domain_rate_limit_state.rate_limit:
+            logger.info(
+                "crawl_domain_rate_limit_raised",
+                job_id=job_id,
+                domain=domain,
+                previous_rate_limit=domain_rate_limit_state.rate_limit,
+                raised_rate_limit=updated_state.rate_limit,
+            )
+        elif not update_applied:
+            logger.info(
+                "crawl_domain_rate_limit_update_conflict_deferred",
+                job_id=job_id,
+                domain=domain,
+                write_kind=write_kind.value,
+            )
+
+
 async def run_crawl_job(
     conn: asyncpg.Connection,
     job_id: str,
@@ -708,7 +817,43 @@ async def run_crawl_job(
     configured decay window is cleared before this crawl starts, not just
     on some future clean crawl.
     """
-    await _update_job(conn, job_id, status="running")
+    try:
+        execution_generation = await claim_crawl_execution(conn, job_id)
+    except CrawlExecutionCancelled:
+        await _update_job(conn, job_id, status="cancelled")
+        return
+    except CrawlExecutionSuperseded:
+        logger.info("crawl_execution_not_runnable", job_id=job_id)
+        return
+
+    primary_checkpoint = PostgresCrawlCheckpoint(
+        conn,
+        job_id=job_id,
+        org_id=org_id,
+        scope="primary",
+        generation=execution_generation,
+    )
+
+    async def finish_if_current(
+        *, status: str, error: str | None = None, error_summary: str | None = None
+    ) -> None:
+        """Publish an error/cancel outcome unless recovery already took ownership."""
+        try:
+            await finish_crawl_execution(
+                conn,
+                job_id,
+                execution_generation,
+                status=status,
+                error=error,
+                error_summary=error_summary,
+            )
+        except CrawlExecutionSuperseded:
+            logger.info(
+                "crawl_terminal_write_superseded",
+                job_id=job_id,
+                execution_generation=execution_generation,
+                attempted_status=status,
+            )
 
     pages_done = 0
     pages_failed = 0
@@ -790,6 +935,7 @@ async def run_crawl_job(
             cookies=cookies,
             rate_limit=effective_rate_limit,
             cancel_check=cancel_check,
+            checkpoint=primary_checkpoint,
         )
 
         # 2026-08-19 (crawl-cancel): detected purely from the reason code
@@ -842,6 +988,13 @@ async def run_crawl_job(
                 cookies=cookies,
                 rate_limit=effective_rate_limit,
                 cancel_check=cancel_check,
+                checkpoint=PostgresCrawlCheckpoint(
+                    conn,
+                    job_id=job_id,
+                    org_id=org_id,
+                    scope="discovery_seed",
+                    generation=execution_generation,
+                ),
             )
             seen = {_canonicalise_url(r.url) for r in results}
             for seed_result in seed_results:
@@ -859,6 +1012,8 @@ async def run_crawl_job(
                 pages=len(results),
             )
 
+        await ensure_crawl_execution_active(conn, job_id, execution_generation)
+
         # 2026-08-17 (intermedia.com + support.ascendcloud.com incident),
         # extended 2026-08-18 (block B) and 2026-08-19 (ratio-based
         # congestion + evidence-scaled recovery): fold this job's
@@ -872,61 +1027,17 @@ async def run_crawl_job(
         # also None — a true no-op, not a reset. ``updated_state`` is
         # likewise None when nothing needs writing for a healthy domain
         # with no stored override (see compute_domain_rate_limit_update).
-        rate_limit_observation = count_rate_limit_observations(fetch_outcomes)
-        congestion_verdict = classify_crawl_congestion(
-            rate_limit_observation,
-            ratio_threshold=settings.crawl_circuit_breaker_slowdown_ratio,
-            min_attempts=settings.crawl_circuit_breaker_min_attempts,
-        )
-        updated_rate_limit_state = compute_domain_rate_limit_update(
-            domain_rate_limit_state,
-            had_congestion=congestion_verdict,
+        await _apply_domain_rate_limit_effect_once(
+            conn,
+            job_id=job_id,
+            org_id=org_id,
+            domain=domain,
+            execution_generation=execution_generation,
+            fetch_outcomes=fetch_outcomes,
+            domain_rate_limit_state=domain_rate_limit_state,
+            effective_rate_limit=effective_rate_limit,
             default_rate_limit=rate_limit,
-            step_fraction=settings.crawl_rate_limit_recovery_step_fraction,
-            cooldown=timedelta(hours=settings.crawl_rate_limit_recovery_cooldown_hours),
-            now=datetime.now(UTC),
         )
-        if updated_rate_limit_state is not None:
-            write_kind = (
-                DomainRateLimitWriteKind.CONGESTION
-                if congestion_verdict
-                else DomainRateLimitWriteKind.RECOVERY
-            )
-            update_applied = await save_domain_rate_limit_state(
-                conn,
-                domain,
-                org_id,
-                expected_state=domain_rate_limit_state,
-                state=updated_rate_limit_state,
-                kind=write_kind,
-                default_rate_limit=rate_limit,
-            )
-            if congestion_verdict and update_applied:
-                logger.warning(
-                    "crawl_domain_rate_limit_lowered",
-                    job_id=job_id,
-                    domain=domain,
-                    previous_rate_limit=effective_rate_limit,
-                    lowered_rate_limit=updated_rate_limit_state.rate_limit,
-                )
-            elif (
-                update_applied
-                and updated_rate_limit_state.rate_limit != domain_rate_limit_state.rate_limit
-            ):
-                logger.info(
-                    "crawl_domain_rate_limit_raised",
-                    job_id=job_id,
-                    domain=domain,
-                    previous_rate_limit=domain_rate_limit_state.rate_limit,
-                    raised_rate_limit=updated_rate_limit_state.rate_limit,
-                )
-            elif not update_applied:
-                logger.info(
-                    "crawl_domain_rate_limit_update_conflict_deferred",
-                    job_id=job_id,
-                    domain=domain,
-                    write_kind=write_kind.value,
-                )
 
         crawl_outcome_warning = _build_crawl_outcome_warning(
             fetch_outcomes,
@@ -943,19 +1054,23 @@ async def run_crawl_job(
         # the page-count rollup. ``pages_total`` keeps its existing semantics
         # ("how many CrawlResults reached the ingest loop"); the JSONB
         # ``fetch_outcomes`` is the per-candidate breakdown.
-        await conn.execute(
-            "UPDATE knowledge.crawl_jobs "
-            "SET pages_total=$1, fetch_outcomes=$2::jsonb, updated_at=$3 "
-            "WHERE id=$4",
-            len(results),
-            json.dumps(fetch_outcomes),
-            int(time.time()),
-            job_id,
-        )
+        async with guard_crawl_execution(conn, job_id, execution_generation):
+            # A recovered worker cannot supersede this attempt between the
+            # generation check and these idempotent writes.
+            await conn.execute(
+                "UPDATE knowledge.crawl_jobs "
+                "SET pages_total=$1, fetch_outcomes=$2::jsonb, updated_at=$3 "
+                "WHERE id=$4 AND execution_generation=$5 AND status='running'",
+                len(results),
+                json.dumps(fetch_outcomes),
+                int(time.time()),
+                job_id,
+                execution_generation,
+            )
 
-        # SPEC-CRAWLER-005 Fase 1: build link graph BEFORE per-page ingest so
-        # late pages don't read an empty graph. REQ-01.1.
-        await _build_link_graph(conn, results, org_id, kb_slug)
+            # SPEC-CRAWLER-005 Fase 1: build link graph BEFORE per-page ingest so
+            # late pages don't read an empty graph. REQ-01.1.
+            await _build_link_graph(conn, results, org_id, kb_slug)
 
         # Batch-fetch all known content hashes in a single query
         urls = [r.url for r in results]
@@ -967,56 +1082,62 @@ async def run_crawl_job(
             # crawl4ai returns success=False when the injected wait_for times
             # out on the login selector; surfacing that as AuthWallDetected
             # gives us a single structured failure per sync.
-            if login_indicator_selector and not result.success:
-                raise AuthWallDetected(login_indicator_selector)
-            try:
-                await _ingest_crawl_result(
-                    conn,
-                    result,
-                    url,
-                    org_id,
-                    kb_slug,
-                    stored=known_hashes.get(url),
-                    login_indicator_selector=login_indicator_selector,
-                    authenticated_context=bool(cookies or login_indicator_selector),
-                    connector_id=connector_id,
-                )
-                pages_done += 1
-            except AuthWallDetected:
-                # Halt the whole BFS — downstream handler in the except block
-                # writes the job row; do not keep ingesting follow-up pages.
-                raise
-            except AnonymousAuthWallDetected as wall_exc:
-                # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-04.1 — per-page wall,
-                # NOT a session-wide failure. Record + continue BFS so sibling
-                # URLs (which may be public) still ingest.
-                auth_wall_pages.append(wall_exc.url)
-                # 2026-08-18 stop-the-bleeding fix: was "crawl_page_login_wall".
-                # The event name asserted the presumed CAUSE (a login wall)
-                # rather than the actual OBSERVATION (near-duplicate content
-                # cluster). On 2026-08-18 this misdirected a live
-                # investigation for an hour — the operator saw "login wall"
-                # in the logs and went looking for credentials, when the
-                # real cause was 13 identical OpenAPI-parser error pages.
-                # Behaviour is unchanged: the page is still skipped, BFS
-                # still continues (REQ-04.1).
-                logger.info(
-                    "crawl_page_template_cluster_skipped",
-                    url=url,
-                    job_id=job_id,
-                    pattern=wall_exc.signal.pattern,
-                    evidence=wall_exc.signal.evidence,
-                )
-            except Exception as exc:
-                logger.warning("crawl_page_failed", url=url, job_id=job_id, error=str(exc))
-                pages_failed += 1
+            async with guard_crawl_execution(conn, job_id, execution_generation):
+                # The session advisory lock prevents a newer attempt from
+                # claiming the job until this page's independently committed
+                # side effects and progress update have finished.
+                if login_indicator_selector and not result.success:
+                    raise AuthWallDetected(login_indicator_selector)
+                try:
+                    await _ingest_crawl_result(
+                        conn,
+                        result,
+                        url,
+                        org_id,
+                        kb_slug,
+                        stored=known_hashes.get(url),
+                        login_indicator_selector=login_indicator_selector,
+                        authenticated_context=bool(cookies or login_indicator_selector),
+                        connector_id=connector_id,
+                    )
+                    pages_done += 1
+                except AuthWallDetected:
+                    # Halt the whole BFS — downstream handler in the except block
+                    # writes the job row; do not keep ingesting follow-up pages.
+                    raise
+                except AnonymousAuthWallDetected as wall_exc:
+                    # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-04.1 — per-page wall,
+                    # NOT a session-wide failure. Record + continue BFS so sibling
+                    # URLs (which may be public) still ingest.
+                    auth_wall_pages.append(wall_exc.url)
+                    # 2026-08-18 stop-the-bleeding fix: was "crawl_page_login_wall".
+                    # The event name asserted the presumed CAUSE (a login wall)
+                    # rather than the actual OBSERVATION (near-duplicate content
+                    # cluster). On 2026-08-18 this misdirected a live
+                    # investigation for an hour — the operator saw "login wall"
+                    # in the logs and went looking for credentials, when the
+                    # real cause was 13 identical OpenAPI-parser error pages.
+                    # Behaviour is unchanged: the page is still skipped, BFS
+                    # still continues (REQ-04.1).
+                    logger.info(
+                        "crawl_page_template_cluster_skipped",
+                        url=url,
+                        job_id=job_id,
+                        pattern=wall_exc.signal.pattern,
+                        evidence=wall_exc.signal.evidence,
+                    )
+                except Exception as exc:
+                    logger.warning("crawl_page_failed", url=url, job_id=job_id, error=str(exc))
+                    pages_failed += 1
 
-            await conn.execute(
-                "UPDATE knowledge.crawl_jobs SET pages_done=$1, updated_at=$2 WHERE id=$3",
-                pages_done,
-                int(time.time()),
-                job_id,
-            )
+                await conn.execute(
+                    "UPDATE knowledge.crawl_jobs SET pages_done=$1, updated_at=$2 "
+                    "WHERE id=$3 AND execution_generation=$4 AND status='running'",
+                    pages_done,
+                    int(time.time()),
+                    job_id,
+                    execution_generation,
+                )
 
         # SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-4 — dirty-content guard.
         # Evaluate FIRST: if too many pages classified as auth-walled while
@@ -1069,6 +1190,7 @@ async def run_crawl_job(
         # takes priority. The ingest-failure guard sits right after the
         # fetch-failure guard: both are "Klai reached the site but the job
         # still produced nothing", just at a different pipeline stage.
+        summary_json: str | None = None
         if job_cancelled:
             # 2026-08-19 (crawl-cancel): an operator cancel outranks every
             # other terminal-status guard below. The user asked for this to
@@ -1077,7 +1199,6 @@ async def run_crawl_job(
             # fetched before the cancel was observed are still ingested
             # above (pages_done keeps whatever it already counted).
             terminal_status = "cancelled"
-            await _update_job(conn, job_id, status=terminal_status)
         elif dirty_status:
             terminal_status = dirty_status
             summary_payload = dirty_summary or {}
@@ -1087,40 +1208,16 @@ async def run_crawl_job(
             summary_payload.setdefault("sample_urls", auth_wall_pages[:10])
             _attach_crawl_warning(summary_payload, crawl_outcome_warning)
             summary_json = json.dumps(summary_payload)
-            await conn.execute(
-                "UPDATE knowledge.crawl_jobs SET status=$1, error_summary=$2::jsonb, "
-                "updated_at=$3 WHERE id=$4",
-                terminal_status,
-                summary_json,
-                int(time.time()),
-                job_id,
-            )
         elif fetch_failure_status:
             terminal_status = fetch_failure_status
             summary_payload = fetch_failure_summary or {}
             _attach_crawl_warning(summary_payload, crawl_outcome_warning)
             summary_json = json.dumps(summary_payload)
-            await conn.execute(
-                "UPDATE knowledge.crawl_jobs SET status=$1, error_summary=$2::jsonb, "
-                "updated_at=$3 WHERE id=$4",
-                terminal_status,
-                summary_json,
-                int(time.time()),
-                job_id,
-            )
         elif ingest_failure_status:
             terminal_status = ingest_failure_status
             summary_payload = ingest_failure_summary or {}
             _attach_crawl_warning(summary_payload, crawl_outcome_warning)
             summary_json = json.dumps(summary_payload)
-            await conn.execute(
-                "UPDATE knowledge.crawl_jobs SET status=$1, error_summary=$2::jsonb, "
-                "updated_at=$3 WHERE id=$4",
-                terminal_status,
-                summary_json,
-                int(time.time()),
-                job_id,
-            )
         elif auth_wall_pages and (cookies or login_indicator_selector):
             terminal_status = "failed_partial"
             summary_json = json.dumps(
@@ -1134,14 +1231,6 @@ async def run_crawl_job(
                     crawl_outcome_warning,
                 )
             )
-            await conn.execute(
-                "UPDATE knowledge.crawl_jobs SET status=$1, error_summary=$2::jsonb, "
-                "updated_at=$3 WHERE id=$4",
-                terminal_status,
-                summary_json,
-                int(time.time()),
-                job_id,
-            )
         elif _crawl_warning_terminal_status(crawl_outcome_warning):
             terminal_status = _crawl_warning_terminal_status(crawl_outcome_warning)
             summary_payload = dict(crawl_outcome_warning or {})
@@ -1149,14 +1238,6 @@ async def run_crawl_job(
                 summary_payload["login_walls_skipped"] = len(auth_wall_pages)
                 summary_payload["sample_urls"] = auth_wall_pages[:10]
             summary_json = json.dumps(summary_payload)
-            await conn.execute(
-                "UPDATE knowledge.crawl_jobs SET status=$1, error_summary=$2::jsonb, "
-                "updated_at=$3 WHERE id=$4",
-                terminal_status,
-                summary_json,
-                int(time.time()),
-                job_id,
-            )
         elif auth_wall_pages and pages_done == 0:
             terminal_status = "failed_partial"
             summary_json = json.dumps(
@@ -1167,14 +1248,6 @@ async def run_crawl_job(
                     },
                     crawl_outcome_warning,
                 )
-            )
-            await conn.execute(
-                "UPDATE knowledge.crawl_jobs SET status=$1, error_summary=$2::jsonb, "
-                "updated_at=$3 WHERE id=$4",
-                terminal_status,
-                summary_json,
-                int(time.time()),
-                job_id,
             )
         elif auth_wall_pages:
             terminal_status = "completed"
@@ -1187,92 +1260,90 @@ async def run_crawl_job(
                     crawl_outcome_warning,
                 )
             )
-            await conn.execute(
-                "UPDATE knowledge.crawl_jobs SET status=$1, error_summary=$2::jsonb, "
-                "updated_at=$3 WHERE id=$4",
-                terminal_status,
-                summary_json,
-                int(time.time()),
-                job_id,
-            )
         elif crawl_outcome_warning:
             terminal_status = "completed"
-            await conn.execute(
-                "UPDATE knowledge.crawl_jobs SET status=$1, error_summary=$2::jsonb, "
-                "updated_at=$3 WHERE id=$4",
-                terminal_status,
-                json.dumps(crawl_outcome_warning),
-                int(time.time()),
-                job_id,
-            )
+            summary_json = json.dumps(crawl_outcome_warning)
         else:
             terminal_status = "completed"
-            await _update_job(conn, job_id, status=terminal_status)
 
-        if connector_id and terminal_status == "completed" and pages_done > 0:
-            if not _crawl_fully_fetched(fetch_outcomes):
-                skip_reason_counts = Counter(
-                    reason
-                    for outcome in fetch_outcomes
-                    if (reason := str(outcome.get("reason_code") or ""))
-                    in _FETCH_FAILURE_REASON_CODES
-                    or reason.startswith(_NOT_FETCHED_REASON_PREFIX)
-                )
-                logger.info(
-                    "crawl_connector_stale_reconcile_skipped",
-                    job_id=job_id,
-                    connector_id=connector_id,
-                    kb_slug=kb_slug,
-                    reason="incomplete_crawl",
-                    skip_reason_counts=dict(skip_reason_counts),
-                )
-            else:
-                current_urls = [result.url for result in results]
-                stale_paths = await pg_store.list_stale_connector_artifact_paths(
-                    conn,
-                    org_id=org_id,
-                    kb_slug=kb_slug,
-                    connector_id=connector_id,
-                    current_paths=current_urls,
-                )
-                if stale_paths:
-                    stale_paths_deleted: list[str] = []
-                    for path in stale_paths:
-                        try:
-                            await qdrant_store.delete_document(org_id, kb_slug, path)
-                        except Exception as exc:
-                            logger.warning(
-                                "crawl_connector_stale_vector_delete_failed",
+        async with guard_crawl_execution(conn, job_id, execution_generation):
+            # Serialize all completion side effects with recovery. This keeps
+            # a superseded attempt from deleting connector artifacts or
+            # enqueueing follow-up work after a newer generation has started.
+            if connector_id and terminal_status == "completed" and pages_done > 0:
+                if not _crawl_fully_fetched(fetch_outcomes):
+                    skip_reason_counts = Counter(
+                        reason
+                        for outcome in fetch_outcomes
+                        if (reason := str(outcome.get("reason_code") or ""))
+                        in _FETCH_FAILURE_REASON_CODES
+                        or reason.startswith(_NOT_FETCHED_REASON_PREFIX)
+                    )
+                    logger.info(
+                        "crawl_connector_stale_reconcile_skipped",
+                        job_id=job_id,
+                        connector_id=connector_id,
+                        kb_slug=kb_slug,
+                        reason="incomplete_crawl",
+                        skip_reason_counts=dict(skip_reason_counts),
+                    )
+                else:
+                    current_urls = [result.url for result in results]
+                    stale_paths = await pg_store.list_stale_connector_artifact_paths(
+                        conn,
+                        org_id=org_id,
+                        kb_slug=kb_slug,
+                        connector_id=connector_id,
+                        current_paths=current_urls,
+                    )
+                    if stale_paths:
+                        stale_paths_deleted: list[str] = []
+                        for path in stale_paths:
+                            try:
+                                await qdrant_store.delete_document(org_id, kb_slug, path)
+                            except Exception as exc:
+                                logger.warning(
+                                    "crawl_connector_stale_vector_delete_failed",
+                                    job_id=job_id,
+                                    connector_id=connector_id,
+                                    kb_slug=kb_slug,
+                                    path=path,
+                                    error=str(exc),
+                                )
+                            else:
+                                stale_paths_deleted.append(path)
+                        if stale_paths_deleted:
+                            retired_count = await pg_store.soft_delete_stale_connector_artifacts(
+                                conn,
+                                org_id=org_id,
+                                kb_slug=kb_slug,
+                                connector_id=connector_id,
+                                stale_paths=stale_paths_deleted,
+                            )
+                            logger.info(
+                                "crawl_connector_stale_artifacts_retired",
                                 job_id=job_id,
                                 connector_id=connector_id,
                                 kb_slug=kb_slug,
-                                path=path,
-                                error=str(exc),
+                                retired_count=retired_count,
                             )
-                        else:
-                            stale_paths_deleted.append(path)
-                    if stale_paths_deleted:
-                        retired_count = await pg_store.soft_delete_stale_connector_artifacts(
-                            conn,
-                            org_id=org_id,
-                            kb_slug=kb_slug,
-                            connector_id=connector_id,
-                            stale_paths=stale_paths_deleted,
-                        )
-                        logger.info(
-                            "crawl_connector_stale_artifacts_retired",
-                            job_id=job_id,
-                            connector_id=connector_id,
-                            kb_slug=kb_slug,
-                            retired_count=retired_count,
-                        )
 
-        if terminal_status == "completed" and pages_done > 0:
-            await _enqueue_taxonomy_backfill_after_crawl(
-                org_id=org_id,
-                kb_slug=kb_slug,
-                job_id=job_id,
-                pages_done=pages_done,
+            if terminal_status == "completed" and pages_done > 0:
+                await _enqueue_taxonomy_backfill_after_crawl(
+                    org_id=org_id,
+                    kb_slug=kb_slug,
+                    job_id=job_id,
+                    pages_done=pages_done,
+                )
+
+            # Publish every terminal outcome in the same fenced transaction.
+            # A deploy before commit leaves the row recoverable as running.
+            await finish_crawl_execution(
+                conn,
+                job_id,
+                execution_generation,
+                status=terminal_status,
+                error_summary=summary_json,
             )
 
         logger.info(
@@ -1284,6 +1355,14 @@ async def run_crawl_job(
             status=terminal_status,
         )
 
+    except CrawlExecutionSuperseded:
+        logger.info(
+            "crawl_execution_superseded",
+            job_id=job_id,
+            execution_generation=execution_generation,
+        )
+    except CrawlExecutionCancelled:
+        await finish_if_current(status="cancelled")
     except AuthWallDetected as exc:
         # SPEC-CRAWLER-004 REQ-02.3: one structured error per sync, no artifacts.
         logger.error(
@@ -1292,10 +1371,10 @@ async def run_crawl_job(
             selector=exc.selector,
             pages_ingested=pages_done,
         )
-        await _update_job(conn, job_id, status="failed", error=str(exc))
+        await finish_if_current(status="failed", error=str(exc))
     except Exception as exc:
         logger.exception("crawl_job_error", job_id=job_id, error=str(exc))
-        await _update_job(conn, job_id, status="failed", error=str(exc))
+        await finish_if_current(status="failed", error=str(exc))
 
 
 async def _enqueue_taxonomy_backfill_after_crawl(

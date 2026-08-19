@@ -79,15 +79,17 @@ def test_lanes_partition_all_queues():
     io = set(queues.IO_QUEUES)
     interactive = set(queues.INTERACTIVE_QUEUES)
     llm = set(queues.LLM_QUEUES)
+    maintenance = set(queues.MAINTENANCE_QUEUES)
     all_q = set(queues.ALL_QUEUES)
 
     assert io & llm == set(), f"queue belongs to both I/O and LLM lanes: {io & llm}"
     assert io & interactive == set(), f"queue in both I/O and interactive: {io & interactive}"
     assert interactive & llm == set(), f"queue in both interactive and LLM: {interactive & llm}"
-    assert io | interactive | llm == all_q, (
+    assert maintenance.isdisjoint(io | interactive | llm)
+    assert io | interactive | llm | maintenance == all_q, (
         f"lanes do not cover ALL_QUEUES.\n"
-        f"  in ALL_QUEUES but not in any lane: {all_q - (io | interactive | llm)}\n"
-        f"  in lanes but not in ALL_QUEUES: {(io | interactive | llm) - all_q}"
+        f"  in ALL_QUEUES but not in any lane: {all_q - (io | interactive | llm | maintenance)}\n"
+        f"  in lanes but not in ALL_QUEUES: {(io | interactive | llm | maintenance) - all_q}"
     )
 
 
@@ -98,7 +100,9 @@ def test_all_queues_is_lanes_concatenated_in_order():
     Order matters because ``test_all_queues_contains_every_string_constant``
     + downstream tests rely on the union being deterministic.
     """
-    assert queues.ALL_QUEUES == queues.IO_QUEUES + queues.INTERACTIVE_QUEUES + queues.LLM_QUEUES
+    assert queues.ALL_QUEUES == (
+        queues.IO_QUEUES + queues.INTERACTIVE_QUEUES + queues.LLM_QUEUES + queues.MAINTENANCE_QUEUES
+    )
 
 
 def test_enrich_interactive_has_its_own_lane():

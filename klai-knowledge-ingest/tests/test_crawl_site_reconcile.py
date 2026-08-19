@@ -15,6 +15,8 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
+import copy
 import inspect
 from typing import Any
 from unittest.mock import patch
@@ -33,6 +35,24 @@ from knowledge_ingest.crawl4ai_client import (
     _fetch_sitemap_document,
 )
 from knowledge_ingest.reason_codes import FetchReasonCode
+
+
+class _MemoryCheckpoint:
+    def __init__(self) -> None:
+        self.snapshot: dict[str, Any] | None = None
+        self.saves = 0
+        self.active_checks = 0
+
+    async def load(self) -> dict[str, Any] | None:
+        return copy.deepcopy(self.snapshot)
+
+    async def save(self, snapshot: dict[str, Any]) -> None:
+        self.saves += 1
+        self.snapshot = copy.deepcopy(snapshot)
+
+    async def ensure_active(self) -> None:
+        self.active_checks += 1
+
 
 # ---------------------------------------------------------------------------
 # _canonicalise_url
@@ -1014,6 +1034,70 @@ async def test_crawl_site_frontier_fetches_listing_children(
         "https://wiki.redcactus.cloud/nl/crm-software/zoho-crm",
         "https://wiki.redcactus.cloud/nl/crm-software/zoho-desk",
     }.issubset({result.url for result in results})
+
+
+@pytest.mark.asyncio
+async def test_aug_19_deploy_retry_resumes_after_last_committed_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Committed URLs are not fetched again; only the interrupted batch repeats."""
+    urls = [f"https://example.com/page-{index}" for index in range(1, 4)]
+
+    async def _fake_sitemap(_base: str) -> list[str]:
+        return urls
+
+    monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _fake_sitemap)
+    monkeypatch.setattr(crawl4ai_client, "_CHECKPOINT_BATCH_SIZE", 2)
+    _patch_seed(monkeypatch, _seed("https://example.com"))
+
+    requested: list[str] = []
+    calls = 0
+
+    async def _fake_bulk_fetch(
+        *, urls: list[str], **_kwargs: Any
+    ) -> crawl4ai_client.ChunkedFetchResult:
+        nonlocal calls
+        calls += 1
+        requested.extend(urls)
+        if calls == 2:
+            raise asyncio.CancelledError
+        return crawl4ai_client.ChunkedFetchResult(
+            raw_results=[
+                {
+                    "url": url,
+                    "success": True,
+                    "status_code": 200,
+                    "html": f"<html>{url}</html>",
+                    "markdown": url,
+                    "links": {"internal": []},
+                    "media": {},
+                }
+                for url in urls
+            ]
+        )
+
+    monkeypatch.setattr(crawl4ai_client, "_chunked_bulk_fetch", _fake_bulk_fetch)
+    checkpoint = _MemoryCheckpoint()
+
+    with pytest.raises(asyncio.CancelledError):
+        await crawl4ai_client.crawl_site(
+            start_url="https://example.com",
+            max_pages=4,
+            checkpoint=checkpoint,
+        )
+
+    results, outcomes = await crawl4ai_client.crawl_site(
+        start_url="https://example.com",
+        max_pages=4,
+        checkpoint=checkpoint,
+    )
+
+    assert requested.count(urls[0]) == 1
+    assert requested.count(urls[1]) == 1
+    assert requested.count(urls[2]) == 2
+    assert {result.url for result in results} == {"https://example.com", *urls}
+    assert {outcome["url"] for outcome in outcomes} == {"https://example.com", *urls}
+    assert checkpoint.active_checks >= 3
 
 
 @pytest.mark.asyncio
