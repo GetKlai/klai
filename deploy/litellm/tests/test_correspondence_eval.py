@@ -53,7 +53,7 @@ class TestLoadPastedCorrespondenceCanaries:
             assert canary.org_zitadel_id == "368884765035593759"
             assert canary.query.strip()
 
-    def test_incident_shape_canary_has_expected_chunks(self):
+    def test_incident_canary_replays_sender_claims_and_expected_chunks(self):
         canaries = load_pasted_correspondence_canaries(_CHAT_YAML)
         by_id = {c.id: c for c in canaries}
 
@@ -61,6 +61,15 @@ class TestLoadPastedCorrespondenceCanaries:
         assert incident.expected_chunks == [
             "Gebruiker/toestel bestaat niet, of extensie niet gevonden"
         ]
+        for claim in (
+            "fraudedetectiesysteem",
+            "5 van 5 geselecteerd",
+            "alles geverifieerd correct",
+            "routerings- of belmachtiging-logica",
+            "<CALL_ID_A>",
+            "<CALL_ID_B>",
+        ):
+            assert claim in incident.query
 
     def test_answer_shape_expectations_cover_positive_and_negative_canaries(self):
         canaries = load_pasted_correspondence_canaries(_CHAT_YAML)

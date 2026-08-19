@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
+  Braces,
   File,
   FileText,
   Globe,
@@ -193,6 +194,7 @@ export function SourceIcon({ source }: { source: Source }) {
     if (t === 'google_drive') return <SiGoogledrive className="h-4 w-4" />
     if (t === 'airtable') return <SiAirtable className="h-4 w-4" />
     if (t === 'confluence') return <SiConfluence className="h-4 w-4" />
+    if (t === 'json_feed') return <Braces className="h-4 w-4" />
     if (t === 'web_crawler') return <Globe className="h-4 w-4" />
     if (t === 'ms_docs') return <FileText className="h-4 w-4" />
     return <Zap className="h-4 w-4" />

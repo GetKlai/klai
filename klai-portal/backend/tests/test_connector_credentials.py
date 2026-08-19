@@ -98,6 +98,9 @@ class TestSensitiveFieldsMapping:
     def test_airtable_fields(self) -> None:
         assert SENSITIVE_FIELDS["airtable"] == ["api_key"]
 
+    def test_json_feed_fields(self) -> None:
+        assert SENSITIVE_FIELDS["json_feed"] == ["url"]
+
     def test_all_connector_types_present(self) -> None:
         assert set(SENSITIVE_FIELDS.keys()) == {
             "github",
@@ -107,6 +110,7 @@ class TestSensitiveFieldsMapping:
             "web_crawler",
             "confluence",
             "airtable",
+            "json_feed",
         }
 
 

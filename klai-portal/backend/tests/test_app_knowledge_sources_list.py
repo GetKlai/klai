@@ -41,6 +41,7 @@ def test_connector_type_label_known_types() -> None:
     assert _connector_type_label("web_crawler") == "Website (pagina's)"
     assert _connector_type_label("airtable") == "Airtable"
     assert _connector_type_label("confluence") == "Confluence"
+    assert _connector_type_label("json_feed") == "JSON-feed"
     assert _connector_type_label("mcp_connector") == "MCP"
 
 

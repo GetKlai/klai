@@ -96,6 +96,7 @@ ignore = ["B008"]  # Depends() in FastAPI endpoint defaults is standard pattern
 "app/adapters/base.py" = ["ARG002"]
 "app/adapters/confluence.py" = ["ARG002"]
 "app/adapters/github.py" = ["ARG002"]
+"app/adapters/json_feed.py" = ["ARG002"]
 "app/adapters/notion.py" = ["ARG002"]
 
 [tool.pyright]

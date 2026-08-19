@@ -10,7 +10,29 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { isWithinBaseUrl, joinSeedUrl, previewUrlOnDetailsAdvance } from '../-connector-constants'
+import {
+  isWithinBaseUrl,
+  joinSeedUrl,
+  jsonFeedConfigForUpdate,
+  previewUrlOnDetailsAdvance,
+  VALID_PRESELECT_TYPES,
+} from '../-connector-constants'
+
+describe('JSON feed routing and secret-preserving edits', () => {
+  it('accepts json_feed as an add-connector deep link', () => {
+    expect(VALID_PRESELECT_TYPES.has('json_feed')).toBe(true)
+  })
+
+  it('omits a blank URL so the backend preserves the encrypted saved URL', () => {
+    expect(jsonFeedConfigForUpdate('   ')).toEqual({})
+  })
+
+  it('sends a replacement URL when the user enters one', () => {
+    expect(jsonFeedConfigForUpdate('  https://data.example.com/feed.json?token=new  ')).toEqual({
+      url: 'https://data.example.com/feed.json?token=new',
+    })
+  })
+})
 
 describe('joinSeedUrl', () => {
   it('combines clean base + path with single slash', () => {

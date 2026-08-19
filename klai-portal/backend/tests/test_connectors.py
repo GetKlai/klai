@@ -1,6 +1,9 @@
 """Tests for connector content_type field (SPEC-EVIDENCE-001, R10)."""
 
 from datetime import UTC
+from pathlib import Path
+from runpy import run_path
+from typing import get_args
 
 import pytest
 from pydantic import ValidationError
@@ -141,6 +144,7 @@ class TestContentTypeDefaults:
             "google_docs",
             "google_sheets",
             "google_slides",
+            "json_feed",
         }
         assert set(CONTENT_TYPE_DEFAULTS.keys()) == expected_types
 
@@ -203,6 +207,15 @@ class TestConnectorTypeLiteral:
             config={},
         )
         assert req.connector_type == "confluence"
+
+    def test_create_connector_accepts_json_feed(self):
+        """ConnectorCreateRequest accepts connector_type='json_feed'."""
+        req = ConnectorCreateRequest(
+            name="Prices feed",
+            connector_type="json_feed",
+            config={"url": "https://data.example.com/prices.json"},
+        )
+        assert req.connector_type == "json_feed"
 
     def test_create_connector_accepts_google_docs(self):
         """ConnectorCreateRequest accepts connector_type='google_docs'."""
@@ -300,7 +313,7 @@ class TestContentTypeDefaultsExtended:
         """All five new connector types have entries in CONTENT_TYPE_DEFAULTS."""
         from app.api.connectors import CONTENT_TYPE_DEFAULTS
 
-        new_types = {"airtable", "confluence", "google_docs", "google_sheets", "google_slides"}
+        new_types = {"airtable", "confluence", "google_docs", "google_sheets", "google_slides", "json_feed"}
         for connector_type in new_types:
             assert connector_type in CONTENT_TYPE_DEFAULTS, (
                 f"Missing CONTENT_TYPE_DEFAULTS entry for '{connector_type}'"
@@ -321,5 +334,16 @@ class TestContentTypeDefaultsExtended:
             "google_docs",
             "google_sheets",
             "google_slides",
+            "json_feed",
         }
         assert expected_types.issubset(set(CONTENT_TYPE_DEFAULTS.keys()))
+
+    def test_database_constraint_matches_connector_type_literal(self):
+        from app.api.connectors import ConnectorType
+
+        migration = run_path(
+            str(Path(__file__).parents[1] / "alembic/versions/9bf37c021a4e_add_json_feed_connector_type.py")
+        )
+
+        assert set(migration["CONNECTOR_TYPES_AFTER"]) == set(get_args(ConnectorType))
+        assert "json_feed" not in migration["CONNECTOR_TYPES_BEFORE"]

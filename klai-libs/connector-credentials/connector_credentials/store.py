@@ -52,6 +52,7 @@ SENSITIVE_FIELDS: dict[str, list[str]] = {
     "web_crawler": ["auth_headers", "cookies"],
     "confluence": ["api_token"],
     "airtable": ["api_key"],
+    "json_feed": ["url"],
 }
 
 
