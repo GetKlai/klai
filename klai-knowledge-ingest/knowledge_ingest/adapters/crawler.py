@@ -157,6 +157,9 @@ _FETCH_FAILURE_REASON_CODES: frozenset[str] = frozenset(
         FetchReasonCode.RATE_LIMITED.value,
         FetchReasonCode.UNKNOWN_EXCEPTION.value,
         FetchReasonCode.BLOCKED_ANTI_BOT.value,
+        # 2026-08-19: the site explicitly refused automated access — a
+        # real fetch failure, same as an anti-bot block.
+        FetchReasonCode.REFUSED.value,
     }
 )
 _FETCH_NON_FAILURE_REASON_CODES: frozenset[str] = frozenset(
@@ -174,6 +177,9 @@ _FETCH_NON_FAILURE_REASON_CODES: frozenset[str] = frozenset(
         # fetch_failure_dominant the way the real RATE_LIMITED observation
         # correctly does.
         FetchReasonCode.NOT_FETCHED_RATE_LIMIT_STOP.value,
+        # 2026-08-19: same rationale — a URL the host circuit breaker
+        # deliberately never sent, not a fetch failure.
+        FetchReasonCode.NOT_FETCHED_CIRCUIT_BREAKER_STOP.value,
     }
 )
 _uncategorized_fetch_reason_codes = (

@@ -24,6 +24,12 @@ import structlog
 
 from knowledge_ingest.config import settings
 from knowledge_ingest.domain_rate_limit_control import MIN_DOMAIN_RATE_LIMIT
+from knowledge_ingest.host_circuit_breaker import (
+    BreakerVerdict,
+    ChunkObservation,
+    HostCircuitBreakerState,
+    evaluate_chunk,
+)
 from knowledge_ingest.reason_codes import FetchReasonCode
 
 logger = structlog.get_logger()
@@ -845,6 +851,102 @@ def _status_contradicts_structural_anti_bot_guess(status: Any) -> bool:
     return 500 <= status < 600
 
 
+# ---------------------------------------------------------------------------
+# 2026-08-19 (intermedia.com / support.ascendcloud.com "weigering" incident)
+#
+# A rate-limit signal was previously derived purely from the HTTP status
+# code (429), which misses crawl4ai wrapping a real 429 inside a DIFFERENT
+# transport status (its bulk endpoint's opaque 500 wrapper) or inside a
+# response header (``Retry-After``) instead of the body. These two helpers
+# judge status + error text + response headers TOGETHER, in one place, so
+# every caller (the raised-exception path and the page-result dict path)
+# sees the same signal regardless of which of the three carries it.
+#
+# ``_is_refused_signal`` is a SEPARATE, narrower concept: the site is not
+# asking us to slow down, it is refusing automated access outright (a
+# Cloudflare/anti-bot challenge or deny page). Deliberately checked ONLY on
+# the page-result (dict) path — see
+# ``test_antibot_marker_500_transport_error_also_classifies_http_5xx`` in
+# test_crawl_site_reconcile.py: crawl4ai's real bulk-request 500 body is
+# opaque (2026-08-14), so body-text markers are not a reliable signal on
+# the raised-exception path and must not be trusted there. It is also
+# deliberately independent of ``_is_concrete_anti_bot_detection`` /
+# the "blocked by anti-bot protection" prefix below: those stay
+# BLOCKED_ANTI_BOT (crawl4ai's OWN detector output, a congestion signal
+# that lowers the domain's stored rate_limit — see
+# domain_rate_limit_control.py). This produces a DIFFERENT reason code
+# (FetchReasonCode.REFUSED) precisely so a refusal does NOT feed that
+# congestion signal — no rate fixes a site that refuses us outright.
+# ---------------------------------------------------------------------------
+
+
+def _find_header(headers: Any, name: str) -> str | None:
+    """Case-insensitive header lookup.
+
+    Accepts ``httpx.Headers`` (from a raised ``HTTPStatusError`` — already
+    case-insensitive natively) or a plain ``dict[str, str]`` (crawl4ai's
+    page-result ``response_headers``, not guaranteed to be lower-cased).
+    """
+    if not headers:
+        return None
+    getter = getattr(headers, "get", None)
+    if not callable(getter):
+        return None
+    value = getter(name)
+    if value is not None or not isinstance(headers, dict):
+        return value
+    lname = name.lower()
+    for key, val in headers.items():
+        if key.lower() == lname:
+            return val
+    return None
+
+
+def _is_rate_limit_signal(*, status: Any, err_msg: str, headers: Any) -> bool:
+    """True when status, error text, or headers indicate rate-limiting —
+    regardless of which of the three actually carries the signal. See the
+    module comment above for why a single status-code check is not enough
+    (crawl4ai's bulk endpoint can wrap a real 429 inside an opaque 500)."""
+    if status == 429:
+        return True
+    if "429" in err_msg or "too many requests" in err_msg:
+        return True
+    return _find_header(headers, "retry-after") is not None
+
+
+# Onderdeel 1 (2026-08-19) — concrete refusal markers, independent of
+# crawl4ai's own "blocked by anti-bot protection" prefix. "challenge" is
+# deliberately broad (a real Cloudflare/DataDome interstitial's title or
+# body commonly contains it) — checked AFTER the existing Tier-1 vendor
+# markers (``_is_concrete_anti_bot_detection``) in ``_classify_fetch_outcome``
+# so an already-covered case (e.g. "Cloudflare JS challenge") keeps
+# classifying BLOCKED_ANTI_BOT, never REFUSED.
+_REFUSAL_TEXT_MARKERS = frozenset(
+    {
+        "just a moment",
+        "attention required",
+        "access denied",
+        "challenge",
+    }
+)
+
+
+def _has_refusal_text_marker(text: str) -> bool:
+    return any(marker in text for marker in _REFUSAL_TEXT_MARKERS)
+
+
+def _is_refused_signal(*, err_msg: str, headers: Any) -> bool:
+    """True when a concrete signal shows the site refuses automated access
+    outright. Status-independent by design: a challenge/deny page can be
+    served with 200, 403, or another status — unlike rate-limiting, no
+    bare status code alone is trusted as a refusal signal (a plain 403
+    with no marker stays AUTH_ERROR, the historically calibrated
+    auth-wall signal — see test_auth_codes_classify_auth_error)."""
+    if _find_header(headers, "cf-mitigated") is not None:
+        return True
+    return _has_refusal_text_marker(err_msg)
+
+
 def _classify_fetch_outcome(
     page_result: dict[str, Any] | None,
     *,
@@ -870,23 +972,26 @@ def _classify_fetch_outcome(
         # ``_is_minimal_content_antibot_error``) for the retired approach.
         if isinstance(error, httpx.HTTPStatusError):
             status_code = error.response.status_code
-            # 2026-08-17 (intermedia.com rate-limit incident): crawl4ai can
-            # wrap a target-site 429 inside its own wrapper status/body —
-            # e.g. "Blocked by anti-bot protection: HTTP 429 Too Many
-            # Requests" — regardless of the wrapper's own transport status
-            # code. Checked before the status-code branches below so a
-            # rate-limit signal is honoured even when the wrapper reports a
-            # different status, and drives the sequential-recovery breaker
-            # (see _recover_bulk_5xx_batch) to stop instead of continuing
-            # to hammer a site that already told us to back off. This is
-            # narrower than the retired generic anti-bot body match above
-            # (which never fired in production) — it only matches the
-            # specific 429 / "too many requests" signal, not any anti-bot
-            # wording.
+            # 2026-08-17 (intermedia.com rate-limit incident), extended
+            # 2026-08-19: crawl4ai can wrap a target-site 429 inside its
+            # own wrapper status/body — e.g. "Blocked by anti-bot
+            # protection: HTTP 429 Too Many Requests" — regardless of the
+            # wrapper's own transport status code, or signal it purely via
+            # a ``Retry-After`` response header. Checked before the
+            # status-code branches below so a rate-limit signal is
+            # honoured no matter which of the three carries it, and drives
+            # the sequential-recovery breaker (see _recover_bulk_5xx_batch)
+            # to stop instead of continuing to hammer a site that already
+            # told us to back off. Deliberately NOT extended to also check
+            # for a refusal marker here (cf-mitigated/challenge/...) — see
+            # the module comment above ``_is_refused_signal``: crawl4ai's
+            # real bulk-request 500 body is opaque, so a body-text marker
+            # on THIS path is not trustworthy the way it is on the
+            # page-result dict path below.
             body = error.response.text.lower()
-            if "429" in body or "too many requests" in body:
-                return FetchReasonCode.RATE_LIMITED.value
-            if status_code == 429:
+            if _is_rate_limit_signal(
+                status=status_code, err_msg=body, headers=error.response.headers
+            ):
                 return FetchReasonCode.RATE_LIMITED.value
             if status_code in (401, 403):
                 return FetchReasonCode.AUTH_ERROR.value
@@ -911,15 +1016,18 @@ def _classify_fetch_outcome(
 
     status = page_result.get("status_code")
     err_msg = (page_result.get("error_message") or "").lower()
+    headers = page_result.get("response_headers")
 
-    # 2026-08-17 (intermedia.com rate-limit incident): crawl4ai wraps a real
-    # 429 inside the SAME "Blocked by anti-bot protection: ..." prefix used
-    # for genuine anti-bot challenges — e.g. "Blocked by anti-bot
-    # protection: HTTP 429 Too Many Requests". Checked BEFORE the generic
-    # anti-bot marker below so a rate-limit signal drives the
-    # sequential-recovery breaker (see _recover_bulk_5xx_batch) instead of
-    # being treated as an ordinary anti-bot block worth retrying.
-    if "429" in err_msg or "too many requests" in err_msg:
+    # 2026-08-17 (intermedia.com rate-limit incident), extended 2026-08-19:
+    # crawl4ai wraps a real 429 inside the SAME "Blocked by anti-bot
+    # protection: ..." prefix used for genuine anti-bot challenges — e.g.
+    # "Blocked by anti-bot protection: HTTP 429 Too Many Requests" — or
+    # signals it purely via status 429 or a ``Retry-After`` header. Checked
+    # BEFORE the generic anti-bot marker below so a rate-limit signal
+    # drives the sequential-recovery breaker (see _recover_bulk_5xx_batch)
+    # instead of being treated as an ordinary anti-bot block worth
+    # retrying.
+    if _is_rate_limit_signal(status=status, err_msg=err_msg, headers=headers):
         return FetchReasonCode.RATE_LIMITED.value
 
     # Checked before the status-code branches: crawl4ai can return HTTP 200
@@ -943,6 +1051,18 @@ def _classify_fetch_outcome(
         or not _status_contradicts_structural_anti_bot_guess(status)
     ):
         return FetchReasonCode.BLOCKED_ANTI_BOT.value
+
+    # Onderdeel 1/3 (2026-08-19, "weigering"): a concrete refusal signal
+    # crawl4ai's own detector did not surface via the prefix above — a
+    # cf-mitigated header, or "Just a moment"/"Attention Required"/"Access
+    # denied"/"challenge" in the body. Checked AFTER the branch above so a
+    # case already covered by a Tier-1 vendor marker (e.g. "Cloudflare JS
+    # challenge") keeps classifying BLOCKED_ANTI_BOT, never REFUSED — see
+    # the module comment above _is_refused_signal for why the two reason
+    # codes are kept separate (only BLOCKED_ANTI_BOT feeds the domain
+    # rate-limit congestion signal).
+    if _is_refused_signal(err_msg=err_msg, headers=headers):
+        return FetchReasonCode.REFUSED.value
 
     if status == 429:
         return FetchReasonCode.RATE_LIMITED.value
@@ -1006,6 +1126,11 @@ _NO_EVIDENCE: dict[str, Any] = {
     "error_type": None,
     "error_message": None,
     "correlation_id": None,
+    # 2026-08-19 (onderdeel 1): a Retry-After header, surfaced onto the
+    # outcome when present — see _is_rate_limit_signal's module comment.
+    # No backoff logic reads this yet; it is deliberately just delivered
+    # here for a future caller to use.
+    "retry_after": None,
 }
 
 
@@ -1064,18 +1189,26 @@ def _raw_error_text(error: BaseException) -> str:
     return str(error)
 
 
-def _evidence_from_exception_text(*, error_type: str | None, raw_text: str) -> dict[str, Any]:
+def _evidence_from_exception_text(
+    *, error_type: str | None, raw_text: str, retry_after: str | None = None
+) -> dict[str, Any]:
     return {
         "error_type": error_type,
         "error_message": _truncate_error_message(raw_text) if raw_text else None,
         "correlation_id": _extract_correlation_id(raw_text) if raw_text else None,
+        "retry_after": retry_after,
     }
 
 
 def _evidence_from_exception(error: BaseException) -> dict[str, Any]:
     """Evidence bundle for a fetch whose Python exception is directly in hand."""
+    retry_after = (
+        _find_header(error.response.headers, "retry-after")
+        if isinstance(error, httpx.HTTPStatusError)
+        else None
+    )
     return _evidence_from_exception_text(
-        error_type=_error_type_name(error), raw_text=_raw_error_text(error)
+        error_type=_error_type_name(error), raw_text=_raw_error_text(error), retry_after=retry_after
     )
 
 
@@ -1091,16 +1224,19 @@ def _evidence_from_page_result(
     if not page_result or page_result.get("success"):
         return dict(_NO_EVIDENCE)
     raw_text = str(page_result.get("error_message") or "")
+    retry_after = _find_header(page_result.get("response_headers"), "retry-after")
     if not raw_text:
         return {
             "error_type": f"crawl4ai:{reason_code}",
             "error_message": None,
             "correlation_id": None,
+            "retry_after": retry_after,
         }
     return {
         "error_type": f"crawl4ai:{reason_code}",
         "error_message": _truncate_error_message(raw_text),
         "correlation_id": _extract_correlation_id(raw_text),
+        "retry_after": retry_after,
     }
 
 
@@ -1118,10 +1254,13 @@ def _evidence_for_crawl_result(result: CrawlResult, *, reason_code: str) -> dict
         return dict(_NO_EVIDENCE)
     if result.raw_error_text is not None:
         return _evidence_from_exception_text(
-            error_type=result.error_type, raw_text=result.raw_error_text
+            error_type=result.error_type,
+            raw_text=result.raw_error_text,
+            retry_after=_find_header(result.response_headers, "retry-after"),
         )
     return _evidence_from_page_result(
-        {"error_message": result.error_message or ""}, reason_code=reason_code
+        {"error_message": result.error_message or "", "response_headers": result.response_headers},
+        reason_code=reason_code,
     )
 
 
@@ -1984,6 +2123,10 @@ async def crawl_site(
         # as a failure.
         not_attempted_urls: list[str] = list(fetch.not_attempted)
         stop_trigger_reason_code = fetch.stop_trigger_reason_code
+        # 2026-08-19: which FetchReasonCode ``crawl_site`` should use for
+        # ``not_attempted_urls`` when it finalises them below — mirrors
+        # ``stop_trigger_reason_code``'s own merge with the stealth retry.
+        not_attempted_reason_code = fetch.not_attempted_reason_code
 
         # A2: only the subset of `batch` whose OWN chunk failed to
         # transport is worth a stealth retry — everything else already has
@@ -2017,6 +2160,8 @@ async def crawl_site(
                 stop_trigger_reason_code = FetchReasonCode.BLOCKED_ANTI_BOT.value
             elif stop_trigger_reason_code is None:
                 stop_trigger_reason_code = stealth_fetch.stop_trigger_reason_code
+            if stealth_fetch.not_attempted:
+                not_attempted_reason_code = stealth_fetch.not_attempted_reason_code
 
         # Deel B (2026-08-18, "a stop-signal should slow you down, not give
         # up") — a RATE_LIMITED stop means "you're going too fast", not
@@ -2162,7 +2307,9 @@ async def crawl_site(
             batch_outcomes.append(_outcome_for_failed_url(failed_url, failed_exc))
         # A1: URLs whose chunk was deliberately never sent.
         for skipped_url in not_attempted_urls:
-            batch_outcomes.append(_outcome_for_not_attempted_url(skipped_url))
+            batch_outcomes.append(
+                _outcome_for_not_attempted_url(skipped_url, reason_code=not_attempted_reason_code)
+            )
 
         batch_results.extend(recovered_results)
         batch_outcomes.extend(recovered_outcomes)
@@ -2795,21 +2942,27 @@ def _outcome_for_failed_url(url: str, error: BaseException) -> FetchOutcome:
     return _with_evidence(outcome, _evidence_from_exception(error), observed=False)
 
 
-def _outcome_for_not_attempted_url(url: str) -> FetchOutcome:
+def _outcome_for_not_attempted_url(
+    url: str,
+    *,
+    reason_code: str = FetchReasonCode.NOT_FETCHED_RATE_LIMIT_STOP.value,
+) -> FetchOutcome:
     """Outcome for a URL whose chunk was never even sent (A1).
 
-    An earlier chunk already observed RATE_LIMITED/BLOCKED_ANTI_BOT, so
-    ``_chunked_bulk_fetch`` stopped before this URL's chunk went out.
-    Deliberately NOT ``FetchReasonCode.RATE_LIMITED`` — that value stays
-    reserved for a URL we actually asked and got that answer from, so a
-    "how many times did this domain really reject us" count is not
-    inflated by URLs we chose not to send. ``observed=False``: no network
-    call was ever made for this URL, so there is nothing to report as
-    evidence.
+    An earlier chunk already observed RATE_LIMITED/BLOCKED_ANTI_BOT, or the
+    host circuit breaker tripped (2026-08-19 — see ``ChunkedFetchResult.
+    not_attempted_reason_code``), so ``_chunked_bulk_fetch`` stopped before
+    this URL's chunk went out. ``reason_code`` is deliberately NOT
+    ``FetchReasonCode.RATE_LIMITED`` (the default) or ``REFUSED`` — those
+    values stay reserved for a URL we actually asked and got that answer
+    from, so a "how many times did this domain really reject us" count is
+    not inflated by URLs we chose not to send. ``observed=False``: no
+    network call was ever made for this URL, so there is nothing to
+    report as evidence.
     """
     outcome: FetchOutcome = {
         "url": url,
-        "reason_code": FetchReasonCode.NOT_FETCHED_RATE_LIMIT_STOP.value,
+        "reason_code": reason_code,
         "status_code": None,
         "content_length": 0,
     }
@@ -3319,7 +3472,22 @@ class ChunkedFetchResult:
             apart from "the site blocked us outright" (BLOCKED_ANTI_BOT):
             slowing down helps the former and does nothing for the
             latter. BLOCKED_ANTI_BOT wins when a single chunk somehow
-            observes both (a block is the more severe signal).
+            observes both (a block is the more severe signal). Also set
+            to BLOCKED_ANTI_BOT when ``circuit_breaker_triggered`` is True
+            (see below) — both breaker verdicts mean "further attempts
+            will not help", the same give-up semantics as a confirmed
+            block.
+        circuit_breaker_triggered: True when
+            ``knowledge_ingest.host_circuit_breaker`` (onderdeel 2, the
+            general-purpose "everything is failing" backstop — see that
+            module's docstring) is why chunking stopped, as opposed to the
+            RATE_LIMITED/BLOCKED_ANTI_BOT triggers above.
+        not_attempted_reason_code: the FetchReasonCode value ``crawl_site``
+            should use for every URL in ``not_attempted`` — NOT_FETCHED_
+            RATE_LIMIT_STOP by default (existing behaviour, unchanged),
+            or NOT_FETCHED_CIRCUIT_BREAKER_STOP when
+            ``circuit_breaker_triggered`` is True, so "how many times did
+            the breaker actually intervene" has an honest answer.
     """
 
     raw_results: list[dict[str, Any]] = field(default_factory=list)
@@ -3327,6 +3495,8 @@ class ChunkedFetchResult:
     not_attempted: list[str] = field(default_factory=list)
     stopped_early: bool = False
     stop_trigger_reason_code: str | None = None
+    circuit_breaker_triggered: bool = False
+    not_attempted_reason_code: str = FetchReasonCode.NOT_FETCHED_RATE_LIMIT_STOP.value
 
 
 async def _chunked_bulk_fetch(
@@ -3383,6 +3553,15 @@ async def _chunked_bulk_fetch(
     ``settings.crawl_antibot_stop_ratio`` (share of attempted URLs so far)
     are met. See config.py for the production evidence behind both
     defaults (0.25 / 3).
+
+    2026-08-19 (host circuit breaker, onderdeel 2 — see
+    ``knowledge_ingest.host_circuit_breaker``): a THIRD, independent stop
+    trigger for the case neither RATE_LIMITED nor the BLOCKED_ANTI_BOT
+    ratio gate reacts to — a site that fails every request for an
+    unrelated reason (5xx, timeout, unknown_exception). Evaluated once per
+    chunk (never per URL), same as the anti-bot ratio tally above, so it
+    can intervene within tens of seconds instead of the crawl's full page
+    budget.
     """
     result = ChunkedFetchResult()
     if not urls:
@@ -3391,6 +3570,7 @@ async def _chunked_bulk_fetch(
     previous_chunk_start: float | None = None
     attempted_count = 0
     antibot_signal_count = 0
+    breaker_state = HostCircuitBreakerState()
     for chunk_start in range(0, len(urls), chunk_size):
         if rate_limit is not None and previous_chunk_start is not None:
             gap_seconds = chunk_size / rate_limit
@@ -3409,6 +3589,15 @@ async def _chunked_bulk_fetch(
             payload["browser_config"] = bc
 
         chunk_reason_codes: set[str] = set()
+        # Fed to host_circuit_breaker.evaluate_chunk below — a whole-chunk
+        # transport exception counts every URL it covered (attempted AND
+        # failed), but is still ONE observation for the consecutive-streak
+        # (see that module's docstring); a transported chunk counts each
+        # page's own outcome independently.
+        chunk_attempted = 0
+        chunk_failed = 0
+        chunk_any_success = False
+        chunk_refused = 0
         try:
             async with httpx.AsyncClient(
                 timeout=settings.crawl_bulk_base_timeout_seconds
@@ -3417,21 +3606,30 @@ async def _chunked_bulk_fetch(
             chunk_pages = _normalise_results_block(data)
             result.raw_results.extend(chunk_pages)
             attempted_count += len(chunk_pages)
+            chunk_attempted = len(chunk_pages)
             for page in chunk_pages:
                 page_reason_code = _classify_fetch_outcome(page)
                 chunk_reason_codes.add(page_reason_code)
-                if page_reason_code == FetchReasonCode.BLOCKED_ANTI_BOT.value:
-                    antibot_signal_count += 1
+                if page_reason_code == FetchReasonCode.SUCCESS.value:
+                    chunk_any_success = True
+                else:
+                    chunk_failed += 1
+                    if page_reason_code == FetchReasonCode.BLOCKED_ANTI_BOT.value:
+                        antibot_signal_count += 1
+                    elif page_reason_code == FetchReasonCode.REFUSED.value:
+                        chunk_refused += 1
         except Exception as exc:
             # A chunk-level transport exception can never itself classify
-            # BLOCKED_ANTI_BOT (see _classify_fetch_outcome's error branch:
-            # it never checks the "blocked by anti-bot protection" body
-            # marker) — attempted_count still advances by the whole chunk
-            # (a network call WAS made for every URL in it), but the
-            # anti-bot tally is untouched here.
+            # BLOCKED_ANTI_BOT or REFUSED (see _classify_fetch_outcome's
+            # error branch, which never checks anti-bot/refusal body
+            # markers on the raised-exception path) — attempted_count
+            # still advances by the whole chunk (a network call WAS made
+            # for every URL in it), but neither tally is touched here.
             for chunk_url in chunk_urls:
                 result.failed[chunk_url] = exc
             attempted_count += len(chunk_urls)
+            chunk_attempted = len(chunk_urls)
+            chunk_failed = len(chunk_urls)
             chunk_reason_codes.add(_classify_fetch_outcome(None, error=exc))
             logger.warning(
                 "crawl_site_bulk_chunk_failed",
@@ -3445,8 +3643,27 @@ async def _chunked_bulk_fetch(
             and attempted_count > 0
             and (antibot_signal_count / attempted_count) >= settings.crawl_antibot_stop_ratio
         )
-        stop_triggered = bool(chunk_reason_codes & _STOP_CHUNKING_REASON_CODES) or (
-            FetchReasonCode.BLOCKED_ANTI_BOT.value in chunk_reason_codes and antibot_ratio_exceeded
+        breaker_state, breaker_verdict = evaluate_chunk(
+            breaker_state,
+            ChunkObservation(
+                attempted=chunk_attempted,
+                failed=chunk_failed,
+                any_success=chunk_any_success,
+                refused=chunk_refused,
+            ),
+            consecutive_failure_threshold=settings.crawl_circuit_breaker_consecutive_failures,
+            min_attempts_for_ratio=settings.crawl_circuit_breaker_min_attempts,
+            failure_ratio_threshold=settings.crawl_circuit_breaker_failure_ratio,
+            refusal_threshold=settings.crawl_circuit_breaker_refusal_count,
+        )
+        breaker_tripped = breaker_verdict != BreakerVerdict.CONTINUE
+        stop_triggered = (
+            bool(chunk_reason_codes & _STOP_CHUNKING_REASON_CODES)
+            or (
+                FetchReasonCode.BLOCKED_ANTI_BOT.value in chunk_reason_codes
+                and antibot_ratio_exceeded
+            )
+            or breaker_tripped
         )
         if stop_triggered:
             remaining_urls = urls[chunk_start + chunk_size :]
@@ -3464,11 +3681,21 @@ async def _chunked_bulk_fetch(
                 # never crossed ``crawl_antibot_stop_ratio`` while RATE_LIMITED
                 # is what actually triggered ``stop_triggered`` above; using
                 # the unfiltered set would misreport that stop as a block.
+                # 2026-08-19: the host circuit breaker's verdict (either
+                # persistent-failure or refusal) gets the SAME give-up
+                # treatment as BLOCKED_ANTI_BOT — neither is fixed by
+                # slowing down.
                 result.stop_trigger_reason_code = (
                     FetchReasonCode.BLOCKED_ANTI_BOT.value
-                    if FetchReasonCode.BLOCKED_ANTI_BOT.value in triggering_reason_codes
+                    if breaker_tripped
+                    or FetchReasonCode.BLOCKED_ANTI_BOT.value in triggering_reason_codes
                     else FetchReasonCode.RATE_LIMITED.value
                 )
+                if breaker_tripped:
+                    result.circuit_breaker_triggered = True
+                    result.not_attempted_reason_code = (
+                        FetchReasonCode.NOT_FETCHED_CIRCUIT_BREAKER_STOP.value
+                    )
                 logger.warning(
                     "crawl_bulk_stopped_after_rate_limit_signal",
                     sent_urls=chunk_start + len(chunk_urls),
@@ -3476,6 +3703,7 @@ async def _chunked_bulk_fetch(
                     triggering_reason_codes=sorted(triggering_reason_codes),
                     antibot_signal_count=antibot_signal_count,
                     antibot_attempted_count=attempted_count,
+                    circuit_breaker_verdict=(breaker_verdict.value if breaker_tripped else None),
                 )
             break
 

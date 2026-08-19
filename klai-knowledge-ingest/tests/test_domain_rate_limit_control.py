@@ -231,6 +231,23 @@ def test_count_rate_limit_observations_blocked_anti_bot_is_congestion() -> None:
     assert result.clean_count == 0
 
 
+def test_count_rate_limit_observations_refused_is_not_congestion() -> None:
+    """2026-08-19 (onderdeel 3, intermedia.com / support.ascendcloud.com
+    "weigering" incident): a REFUSED outcome (the site explicitly refuses
+    automated access — see reason_codes.py) must NOT lower the domain's
+    stored rate_limit. Slowing down does not fix a refusal, unlike real
+    429 congestion — the support.ascendcloud.com incident's rate got
+    halved all the way to the floor for exactly this reason before this
+    fix. REFUSED counts toward neither congestion nor a clean run, same
+    treatment as a timeout or a 5xx."""
+    outcomes = [{"url": "https://example.com/a", "reason_code": "refused"}]
+
+    result = count_rate_limit_observations(outcomes)
+
+    assert result.had_congestion is False
+    assert result.clean_count == 0
+
+
 def test_count_rate_limit_observations_success_is_clean() -> None:
     outcomes = [
         {"url": "https://example.com/a", "reason_code": "success"},

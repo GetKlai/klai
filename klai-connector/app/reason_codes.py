@@ -55,6 +55,13 @@ class FetchReasonCode(StrEnum):
     # Mirror of knowledge-ingest's FetchReasonCode; the parity test
     # (tests/test_reason_codes_parity.py) keeps both copies in lockstep.
     BLOCKED_ANTI_BOT = "blocked_anti_bot"
+    # 2026-08-19 mirror (weigering/refusal + host circuit breaker fix,
+    # klai-knowledge-ingest crawl4ai_client.py) — the connector does not
+    # itself produce these values today, but the parity test requires both
+    # copies to carry the same value set regardless of which side
+    # currently emits it.
+    REFUSED = "refused"
+    NOT_FETCHED_CIRCUIT_BREAKER_STOP = "not_fetched_circuit_breaker_stop"
 
 
 class PersistSkipReason(StrEnum):

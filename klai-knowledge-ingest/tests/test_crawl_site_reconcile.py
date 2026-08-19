@@ -438,6 +438,136 @@ class TestClassifyFetchOutcome:
         )
 
 
+class TestClassifyFetchOutcomeRateLimitAndRefusal:
+    """2026-08-19 (intermedia.com incident #3 / support.ascendcloud.com) —
+    onderdeel 1: one place judges the WHOLE response (status + error text
+    + headers) for rate-limiting and refusal signals, regardless of which
+    of the three actually carries the signal."""
+
+    def test_opaque_500_wrapping_429_text_classifies_rate_limited(self) -> None:
+        """The exact regression from this morning's crawl4ai container log:
+
+            server - ERROR - server error 500 [cid=635f89a6]: Crawl request
+            failed: Blocked by anti-bot protection: HTTP 429 Too Many Requests
+
+        A bulk chunk transport failure whose response carries status 500
+        and this exact body text must still classify RATE_LIMITED, not
+        HTTP_5XX — this is the signal that should trip the sequential-
+        recovery breaker and the host circuit breaker's refusal-vs-
+        congestion distinction, not just get counted as an ordinary
+        server error."""
+        request = httpx.Request("POST", "http://crawl4ai:11235/crawl")
+        response = httpx.Response(
+            500,
+            text="Crawl request failed: Blocked by anti-bot protection: HTTP 429 Too Many Requests",
+            request=request,
+        )
+        exc = httpx.HTTPStatusError("crawl4ai failed", request=request, response=response)
+        assert _classify_fetch_outcome(None, error=exc) == FetchReasonCode.RATE_LIMITED.value
+
+    def test_retry_after_header_alone_classifies_rate_limited(self) -> None:
+        """A Retry-After header is a rate-limit signal even with no 429
+        text anywhere and a non-429 status."""
+        assert (
+            _classify_fetch_outcome(
+                {
+                    "success": False,
+                    "status_code": 503,
+                    "error_message": "Service Unavailable",
+                    "response_headers": {"Retry-After": "30"},
+                }
+            )
+            == FetchReasonCode.RATE_LIMITED.value
+        )
+
+    def test_403_with_cf_mitigated_header_classifies_refused_not_rate_limited(self) -> None:
+        assert (
+            _classify_fetch_outcome(
+                {
+                    "success": False,
+                    "status_code": 403,
+                    "error_message": "Forbidden",
+                    "response_headers": {"cf-mitigated": "challenge"},
+                }
+            )
+            == FetchReasonCode.REFUSED.value
+        )
+
+    def test_just_a_moment_body_text_classifies_refused(self) -> None:
+        assert (
+            _classify_fetch_outcome(
+                {
+                    "success": False,
+                    "status_code": 200,
+                    "error_message": "Just a moment...",
+                }
+            )
+            == FetchReasonCode.REFUSED.value
+        )
+
+    def test_attention_required_body_text_classifies_refused(self) -> None:
+        assert (
+            _classify_fetch_outcome(
+                {
+                    "success": False,
+                    "status_code": 403,
+                    "error_message": "Attention Required! | Cloudflare",
+                }
+            )
+            == FetchReasonCode.REFUSED.value
+        )
+
+    def test_access_denied_body_text_classifies_refused(self) -> None:
+        assert (
+            _classify_fetch_outcome(
+                {"success": False, "status_code": 403, "error_message": "Access Denied"}
+            )
+            == FetchReasonCode.REFUSED.value
+        )
+
+    def test_bare_403_with_no_marker_still_classifies_auth_error(self) -> None:
+        """Existing, deliberately calibrated behaviour that must NOT change:
+        a plain 403 with no concrete refusal marker stays AUTH_ERROR (a
+        real auth wall commonly answers with a bare 403 too) — see
+        test_auth_codes_classify_auth_error above."""
+        assert (
+            _classify_fetch_outcome({"success": False, "status_code": 403})
+            == FetchReasonCode.AUTH_ERROR.value
+        )
+
+    def test_404_with_no_marker_stays_http_4xx(self) -> None:
+        assert (
+            _classify_fetch_outcome({"success": False, "status_code": 404})
+            == FetchReasonCode.HTTP_4XX.value
+        )
+
+    def test_concrete_antibot_marker_still_wins_over_new_refused_code(self) -> None:
+        """A Tier-1 vendor marker (e.g. "Cloudflare JS challenge", which
+        contains the substring "challenge") must keep classifying
+        BLOCKED_ANTI_BOT, never the new REFUSED code — the existing
+        concrete-detection branch is checked first."""
+        assert (
+            _classify_fetch_outcome(
+                {
+                    "success": False,
+                    "status_code": 403,
+                    "error_message": "Blocked by anti-bot protection: Cloudflare JS challenge",
+                }
+            )
+            == FetchReasonCode.BLOCKED_ANTI_BOT.value
+        )
+
+    def test_refusal_marker_on_raised_exception_path_does_not_classify_refused(self) -> None:
+        """Mirrors test_antibot_marker_500_transport_error_also_classifies_
+        http_5xx below: crawl4ai's real bulk-500 body is opaque, so a
+        refusal-marker body match is only trusted on the page-result dict
+        path, never on the raised-exception path."""
+        request = httpx.Request("POST", "http://crawl4ai:11235/crawl")
+        response = httpx.Response(403, text="Access Denied", request=request)
+        exc = httpx.HTTPStatusError("crawl4ai failed", request=request, response=response)
+        assert _classify_fetch_outcome(None, error=exc) == FetchReasonCode.AUTH_ERROR.value
+
+
 class TestClassifyFetchOutcomeStructuralGuessVsStatusCode:
     """2026-08-18 — production audit of 100 historical BLOCKED_ANTI_BOT
     outcomes: 91 carried a status code that itself contradicts a block
@@ -710,6 +840,7 @@ async def test_crawl_site_bulk_transport_failure_records_one_outcome_per_candida
     # Shape sanity — all required keys present on every outcome.
     # SPEC-CRAWLER-FAILURE-EVIDENCE added error_type/error_message/
     # correlation_id/observed, additive to the original four.
+    # 2026-08-19 (onderdeel 1) added retry_after, additive again.
     for outcome in outcomes:
         assert set(outcome.keys()) == {
             "url",
@@ -720,6 +851,7 @@ async def test_crawl_site_bulk_transport_failure_records_one_outcome_per_candida
             "error_message",
             "correlation_id",
             "observed",
+            "retry_after",
         }
 
 
