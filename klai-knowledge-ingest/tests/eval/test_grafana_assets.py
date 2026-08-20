@@ -22,8 +22,8 @@ def test_dashboard_json_syntactically_valid() -> None:
     assert parsed["title"] == "RAG quality (RAGAS metrics)"
 
 
-def test_dashboard_has_four_metric_panels_plus_failure_panel() -> None:
-    """Dashboard ships 4 RAGAS metric panels + 1 failure-row panel + 1 low-confidence panel.
+def test_dashboard_has_expected_quality_and_runtime_panels() -> None:
+    """Dashboard ships the RAGAS, failure, confidence, and citation-rescue panels.
 
     The "Low-Confidence" Prometheus panel was added in
     SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 (REQ-8, commit b9c1d1229) to surface
@@ -31,7 +31,7 @@ def test_dashboard_has_four_metric_panels_plus_failure_panel() -> None:
     """
     parsed = json.loads(DASHBOARD_PATH.read_text(encoding="utf-8"))
     panels = parsed["panels"]
-    assert len(panels) == 6
+    assert len(panels) == 7
     titles = {p["title"] for p in panels}
     expected_metrics = {
         "Context precision (7-day moving average)",
@@ -40,6 +40,7 @@ def test_dashboard_has_four_metric_panels_plus_failure_panel() -> None:
         "Answer relevance (7-day moving average)",
         "Failed-row count per nightly run (NULL metrics)",
         "Low-Confidence",
+        "Citation rescue events",
     }
     assert titles == expected_metrics
 
