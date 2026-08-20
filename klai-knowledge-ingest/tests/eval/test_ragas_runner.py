@@ -328,6 +328,7 @@ async def test_expected_chunks_canary_fails_when_missing():
         org_zitadel_id="org-1",
         expected_topics=["bubble"],
         expected_chunks=["Bubble troubleshoot"],
+        kb_slugs=["support", "sip"],
     )
     mock_suite = Suite(name="chat", description="", queries=[query])
     rows: list[dict] = []
@@ -353,7 +354,7 @@ async def test_expected_chunks_canary_fails_when_missing():
                     total_tokens=10,
                 )
             ),
-        ),
+        ) as mock_retrieve,
         patch("knowledge_ingest.eval.judge_client.generate_answer", AsyncMock()) as mock_answer,
         patch("knowledge_ingest.eval.judge_client.evaluate_query", AsyncMock()) as mock_metrics,
         patch(
@@ -384,3 +385,9 @@ async def test_expected_chunks_canary_fails_when_missing():
     assert "canary_failed: missing expected_chunks: Bubble troubleshoot" in row["meta"]["errors"]
     mock_answer.assert_not_awaited()
     mock_metrics.assert_not_awaited()
+    mock_retrieve.assert_awaited_once_with(
+        query="Waar staat Bubble troubleshoot?",
+        org_zitadel_id="org-1",
+        user_zitadel_id=None,
+        kb_slugs=["support", "sip"],
+    )

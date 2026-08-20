@@ -1,11 +1,9 @@
 """Tests for klai_llm_throttle.TokenBucketLimiter.
 
-Extracted from knowledge_ingest/llm_throttle.py (2026-08-14 incident fix)
-into a shared package after the SAME class of bug recurred in a second,
-independent service (deploy/litellm/klai_kb_query_rewrite.py, 2026-08-18) —
-a direct-to-Mistral caller with no shared rate accounting, invisible to the
-first fix because it lived in a different process/package entirely. See the
-package README for the full incident history.
+Extracted from knowledge_ingest/llm_throttle.py during the 2026-08-14
+incident fix. The former direct-Mistral LiteLLM consumer was removed; the
+knowledge-ingest service is now the package's only runtime consumer. See the
+package README for the incident history.
 """
 
 from __future__ import annotations

@@ -103,6 +103,10 @@ search_tools:
       api_base: os.environ/SEARXNG_API_BASE
 
 router_settings:
+  # LiteLLM v1.96.2 filters to the lowest deployment order before applying
+  # simple-shuffle, then advances on any failure except context-window and
+  # content-policy errors, which follow their dedicated fallback paths.
+  # Behavioral coverage: tests/test_litellm_mistral_failover.py.
   routing_strategy: simple-shuffle
   # klai-primary and klai-fast share the same upstream Mistral Small quota.
   # If that pool hits TPM/RPM limits, fall back to Mistral Medium instead of

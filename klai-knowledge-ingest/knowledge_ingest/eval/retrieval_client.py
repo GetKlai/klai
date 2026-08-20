@@ -57,6 +57,7 @@ async def retrieve_chunks(
     org_zitadel_id: str,
     user_zitadel_id: str | None,
     *,
+    kb_slugs: list[str] | None = None,
     _transport: httpx.AsyncBaseTransport | None = None,
 ) -> RetrievalResult | RetrievalFailure:
     """Call /retrieve on klai-retrieval-api and return chunks or a failure record.
@@ -69,6 +70,8 @@ async def retrieve_chunks(
         Tenant identifier used for scoped retrieval.
     user_zitadel_id:
         Optional user identifier; ``None`` for org-only scope.
+    kb_slugs:
+        Optional knowledge-base scope pinned by the evaluation suite.
     _transport:
         Optional httpx transport override — used in tests to inject mock responses
         without spinning up a real HTTP server.
@@ -87,6 +90,7 @@ async def retrieve_chunks(
         "org_id": org_zitadel_id,
         "user_id": user_zitadel_id,
         "conversation_history": [],
+        "kb_slugs": kb_slugs,
     }
 
     t0 = time.monotonic()

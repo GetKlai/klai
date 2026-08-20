@@ -11,6 +11,7 @@ Coverage:
 
 from __future__ import annotations
 
+import json
 from unittest.mock import patch
 
 import httpx
@@ -39,11 +40,12 @@ class _MockTransport(httpx.AsyncBaseTransport):
         self._status_code = status_code
         self._json_body = json_body or {}
         self._raise_exc = raise_exc
+        self.last_request: httpx.Request | None = None
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        self.last_request = request
         if self._raise_exc is not None:
             raise self._raise_exc
-        import json
 
         content = json.dumps(self._json_body).encode()
         return httpx.Response(
@@ -80,6 +82,7 @@ async def test_retrieve_success_returns_chunks() -> None:
             query="Hoe troubleshoot ik Bubble?",
             org_zitadel_id="111",
             user_zitadel_id=None,
+            kb_slugs=["support", "sip"],
             _transport=transport,
         )
 
@@ -87,6 +90,8 @@ async def test_retrieve_success_returns_chunks() -> None:
     assert len(result.chunks) == 2
     assert result.chunks[0]["id"] == "c1"
     assert result.retrieval_ms >= 0
+    assert transport.last_request is not None
+    assert json.loads(transport.last_request.content)["kb_slugs"] == ["support", "sip"]
 
 
 # ---------------------------------------------------------------------------
