@@ -347,6 +347,12 @@ services:
       # requires every top-level module to be mounted so it can run inside
       # the actual container (docker exec ... python scripts/eval_pii_restore_live.py).
       - ./litellm/klai_pii_restore_eval.py:/app/klai_pii_restore_eval.py:ro
+      # SPEC-PRIVACY-MISTRAL-PII-001 Phase 2 (REQ-5, REQ-6): read-only PII
+      # observer, registered as the last entry in config.yaml's
+      # litellm_settings.callbacks. On the request path (unlike the two
+      # eval-harness mounts above), but never blocks or fails it — see
+      # klai_pii_observe.py's module docstring.
+      - ./litellm/klai_pii_observe.py:/app/klai_pii_observe.py:ro
       - ./litellm/custom_router.py:/app/custom_router.py:ro
       # SPEC-CHAT-GUARDRAILS-001: vendored package copy of klai-libs/llm-safety
       # (kept byte-identical via deploy/litellm/tests/test_klai_llm_safety_drift.py).

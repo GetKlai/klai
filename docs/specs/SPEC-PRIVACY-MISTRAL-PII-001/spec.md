@@ -1,6 +1,6 @@
 ---
 id: SPEC-PRIVACY-MISTRAL-PII-001
-version: "0.3.0"
+version: "0.4.1"
 status: draft
 created: 2026-08-20
 updated: 2026-08-20
@@ -17,6 +17,8 @@ roadmap: docs/architecture/knowledge-rag-improvement-plan.md
 
 | Version | Date       | Author       | Change |
 |---------|------------|--------------|--------|
+| 0.4.1   | 2026-08-20 | Mark Vletter | REQ-6 tightened after the Phase 2 delta review. The language label is now derived from the latest user turn rather than the whole payload — the KB context block is English-structured by design and dwarfs the question, so detecting on combined text would have labelled a Dutch question `en` on essentially every RAG request and quietly invalidated REQ-2's per-language comparison. Records the honest limitation that the observer uses a stopword heuristic rather than the canonical lingua detector, because `lingua-language-detector` is not in the stock litellm image, with the escalation path if Phase 2 data proves too noisy. |
+| 0.4.0   | 2026-08-20 | Mark Vletter | REQ-5 corrected before it was built. It specified the native guardrail in `mode: "logging_only"` as the shadow-measurement mechanism; that mode masks what goes to **observability** and sends the payload to the provider **unmasked** — inverted for our purpose, and LiteLLM's Presidio guardrail has no detect-only mode at all. Phase 2 is now a read-only observer callback (`klai_pii_observe.py`) that calls the analyzer, emits REQ-6's counts, returns the payload unchanged, never calls the anonymizer, runs out of band so it cannot add latency or fail a request, and is deleted by the Phase 3 PR. The Phase 0 experiment guardrail stays registered so the REQ-0a/REQ-0b harness remains runnable. Also records what Phase 0 and Phase 1 actually shipped: both merged (`d55d6adeb`, `d2aa35fd2`), nine recognizers verified loaded across en/nl/de on core-01 with spaCy disabled per language, and the Phase 0 harness still **unrun**. |
 | 0.3.0   | 2026-08-20 | Mark Vletter | Language-agnosticism corrected. 0.2.0's REQ-2 pinned `presidio_language: "nl"` and dismissed mixed traffic as a known limitation — wrong for a product that ships a language detector, language-neutral KB context, and per-language correctness monitoring (SPEC-RAG-MULTILINGUAL-CHAT-001). REQ-2 now makes detection language-agnostic **by construction**: every REQ-3 entity is regex-plus-checksum and therefore jurisdiction-specific rather than language-specific, registered across all languages; `PERSON` is the only language-sensitive entity and uses multilingual GLiNER instead of a per-language spaCy pipeline. Net effect is a simplification — no spaCy model is loaded at all, which also removes the per-language model matrix and the memory it would cost. Phase 2 telemetry now carries detected language so per-language recall is measured, not assumed. Phase 0 keeps the stock English engine as an explicit, bounded exception because it measures the restore mechanism, not detection quality. |
 | 0.2.0   | 2026-08-20 | Mark Vletter | Reversibility reinstated after correcting a misread. 0.1.0 excluded reversible pseudonymisation because `output_parse_pii` "does not un-mask streaming" — that bug (#22821) is **Anthropic-native-specific and closed**, and we route Mistral over the OpenAI-compatible path, so it never applied to us. Decision is now hybrid: irreversible for the never-return set (`SECRET`, `NL_BSN`), reversible for the set the drafting use case needs back (names, phone, email, IBAN, KvK, BTW, postcode). Adds Phase 0 (REQ-0a, REQ-0b) — prove the restore path on `v1.96.2` and measure Dutch token-survival rate **before** building the recognizer pack, since the remaining uncertainty (#6247, closed as stale) is not answerable by reading. Adds REQ-11: the placeholder map is request-scoped and never persisted, because a shared map is the one failure mode that is worse than masking. GLiNER moves from shadow-only to viable, on the reasoning that restore makes precision non-binding. Adds a Deployment section: two CPU services on core-01, no secrets, no GPU. |
 | 0.1.0   | 2026-08-20 | Mark Vletter | Initial draft. Answers two questions: are Presidio + GLiNER still the right tools in August 2026, and how do we wire them into the calls that go to Mistral. Research re-run 2026-08-20; the earlier architecture note (`klai-knowledge-architecture.md:1661`) named the right framework but predates three facts that change the implementation: Presidio ships **no Dutch recognizers at all**, LiteLLM has since gained a **native Presidio guardrail** that removes the need for custom hook code, and its reversible `output_parse_pii` path is **broken on streaming**, which decides pseudonymisation versus anonymisation for us. |
@@ -32,8 +34,10 @@ once, in the `litellm` service block (`deploy/docker-compose.yml:388-389`). No s
 a provider key of its own and no code calls `api.mistral.ai` directly.
 
 This SPEC puts PII removal on that boundary using Presidio, deployed as two self-hosted
-containers and wired in through **LiteLLM's native Presidio guardrail** rather than custom
-hook code. It adds the Dutch recognizer pack that Presidio does not ship, and it splits
+containers. Enforcement (Phase 3) rides on **LiteLLM's native Presidio guardrail** rather
+than custom hook code; measurement (Phase 2) needs a small read-only observer, because the
+native guardrail has no detect-only mode — see REQ-5. It adds the Dutch recognizer pack that
+Presidio does not ship, and it splits
 handling by intent: credentials and BSN are removed and never restored, while names, phone
 numbers and account identifiers are tokenised on the way out and restored on the way back —
 so drafting an email still works while Mistral never receives the real values.
@@ -148,6 +152,7 @@ supported path, it covers the two cases our own hook misses, and it is less code
 - A Klai Dutch recognizer pack: BSN, KvK, BTW, postcode — plus credentials.
 - LiteLLM guardrail configuration with `default_on: true`.
 - A round-trip harness proving the restore path and measuring Dutch token survival (Phase 0).
+- A read-only observer for Phase 2 measurement, removed again by Phase 3.
 - Shadow-then-enforce rollout, per-entity and per-org policy.
 - Reversible restore for the return set; irreversible for the never-return set.
 - GLiNER as the NER engine for `PERSON`, gated on REQ-0b's survival rate.
@@ -302,25 +307,67 @@ through. Matching only the header leaves the key material in the payload.
 
 ### Phase 2 — measure before changing anything
 
-#### REQ-5 — the guardrail runs on every request, in logging-only mode (ubiquitous)
+#### REQ-5 — measurement runs on every request through a read-only observer (ubiquitous)
 
-**THE LiteLLM configuration SHALL** register the Presidio guardrail with
-`mode: "logging_only"` and **`default_on: true`**, so it evaluates every request without the
-caller opting in.
+**Correction (0.4.0).** Earlier versions of this requirement specified the native guardrail
+with `mode: "logging_only"` and `default_on: true`. That does not do what it sounds like.
+LiteLLM's `logging_only` means *"only apply PII masking before logging to Langfuse, etc. Not
+on the actual llm api request / response"* — it masks what reaches **observability** and
+sends the payload to the provider **unmasked**. For our purpose that is exactly inverted: it
+would leave provider egress untouched (the status quo) while blinding the one place we want
+counts. LiteLLM's Presidio guardrail has **no** detect-only mode; all four modes either mask
+or block.
 
-`default_on` is the coverage mechanism and the reason no custom callback is needed. It also
-covers the two paths Klai's own hook skips — see the Motivation.
+**THE Phase 2 implementation SHALL** therefore be a read-only observer:
+`deploy/litellm/klai_pii_observe.py`, a `CustomLogger` registered in `callbacks:` alongside
+the existing hooks.
 
-**WHILE** in `logging_only`, **THE guardrail SHALL NOT** modify any payload.
+**IT SHALL** call the analyzer's `/analyze` endpoint with the outbound payload and emit the
+telemetry in REQ-6. **IT SHALL** return the payload **unchanged**, and **SHALL NOT** call the
+anonymizer at all.
+
+**IT SHALL NOT** honour `_klai_openai_passthrough`, `org_id` absence, or any other early
+return — the two blind spots in `KlaiKnowledgeHook` named in the Motivation are precisely
+what Phase 2 needs to see.
+
+**IT SHALL** run **out of band** of the response path: the measurement call **SHALL NOT**
+add latency to the user's request, and a failure or timeout in it **SHALL NOT** fail the
+request. Phase 2 changes nothing, so it must not be able to break anything either. This is
+the deliberate inverse of REQ-10, which applies to enforcement.
+
+**THE observer SHALL** be deleted in the Phase 3 PR. It exists to answer REQ-8's activation
+question; once the native guardrail enforces, a second path evaluating the same payload is
+duplicate machinery, and `clean over clever, no parallel old+new` applies.
+
+The Phase 0 experiment guardrail (`presidio-pii-phase0`, opt-in, no `default_on`) stays
+registered and unchanged so the REQ-0a/REQ-0b harness remains runnable.
 
 #### REQ-6 — detections are recorded without recording the values (ubiquitous)
 
-**THE Phase 2 telemetry SHALL** emit, per request: `org_id`, `call_type`, model alias, and a
-count per entity type.
+**THE Phase 2 telemetry SHALL** emit, per request: `org_id`, `call_type`, model alias, the
+detected language (REQ-2), and a count per entity type.
 
 **IT SHALL NOT** emit matched values, surrounding text, character offsets, or a hash of a
 matched value. A hash of a BSN is a BSN: the search space is nine digits and brute-forcing it
 is trivial.
+
+**THE language label SHALL** be derived from the latest **user turn**, not the whole payload.
+The KB context block is deliberately English-structured (SPEC-RAG-MULTILINGUAL-CHAT-001) and
+usually dwarfs the question, so detecting on the combined text would label a Dutch question
+`en` on essentially every RAG request. A language field that is wrong is worse than absent,
+because REQ-2's per-language recall comparison would silently rest on it. The PII scan itself
+still covers the full payload — only the label is narrowed.
+
+**Known limitation, recorded rather than hidden.** The observer uses a local stopword
+heuristic, not the canonical lingua detector in
+`klai-retrieval-api/retrieval_api/util/language_detect.py`. `lingua-language-detector` is a
+dependency of retrieval-api and knowledge-ingest but **not** of the litellm container, which
+runs the stock `ghcr.io/berriai/litellm` image with bind-mounted modules — importing it would
+mean building and maintaining a custom litellm image, which is disproportionate for a
+telemetry label in a phase that is deleted again by Phase 3. The heuristic returns an explicit
+unknown rather than guessing on a tie. **IF** Phase 2 data shows the language dimension is too
+noisy to support REQ-9's gating decision, **THEN** the correct response is a custom litellm
+image with the canonical detector — not tuning the word lists.
 
 Recording that a BSN was found, without recording which, is what accountability needs.
 Storing the value to prove it was removed moves the exposure into the log store — and that
@@ -526,7 +573,7 @@ Three PRs, in order.
 |----|-------|-------|-------------------|
 | 0 | 0 | `deploy/docker-compose.yml` (stock Presidio only), `deploy/litellm/config.yaml` (guardrail, temporary), harness script | AC-0a through AC-0f. **Merges first and its result is written into this SPEC before PR 1 starts** |
 | 1 | 1 | `deploy/presidio/` (recognizer pack image + registry config), compose update | AC-1 through AC-6 |
-| 2 | 2 | `deploy/litellm/config.yaml` (guardrail, `logging_only`, `default_on`), telemetry | AC-7, AC-8, AC-9, AC-10, AC-13 (Phase 2 half) |
+| 2 | 2 | `deploy/litellm/klai_pii_observe.py` (new, read-only observer), `deploy/litellm/config.yaml` (callback registration), compose bind-mount | AC-7, AC-8, AC-9, AC-10, AC-13 (Phase 2 half) |
 | 3 | 3 | `deploy/litellm/config.yaml` (`pre_call`, `pii_entities_config`), org policy column, migration, `docs/privacy/` update | AC-11, AC-12, AC-13, AC-15 + `/klai:tenant-review` |
 
 Rules for the implementer:
