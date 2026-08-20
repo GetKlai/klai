@@ -67,6 +67,36 @@ describe('StepConfirm submit gate', () => {
     ).toBe(true)
   })
 
+  // Regression: errorKey is only cleared on submit, so a denial that outlived
+  // its scope disabled the very button that clears it. Switching to a personal
+  // KB after an org denial left the wizard dead until a page reload.
+  it('re-enables submit when the user switches scope after an org denial', () => {
+    const button = renderConfirm({
+      data: { ...personalForm, ownerType: 'user' },
+      errorKey: 'org_not_allowed',
+    })
+
+    expect(button.disabled).toBe(false)
+  })
+
+  it('drops the org denial message once the scope is personal', () => {
+    renderConfirm({
+      data: { ...personalForm, ownerType: 'user' },
+      errorKey: 'org_not_allowed',
+    })
+
+    expect(screen.queryByText(/organisatie-kennisbanken|organisation knowledge bases/i)).toBeNull()
+  })
+
+  it('re-enables submit when the user switches to org after a personal quota denial', () => {
+    const button = renderConfirm({
+      data: { ...personalForm, ownerType: 'org' },
+      errorKey: 'personal_quota',
+    })
+
+    expect(button.disabled).toBe(false)
+  })
+
   it('stays enabled after a generic failure, which is retryable', () => {
     expect(renderConfirm({ errorKey: 'generic' }).disabled).toBe(false)
   })
