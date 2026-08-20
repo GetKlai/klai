@@ -9,6 +9,7 @@ export function StepConfirm({
   isPending,
   errorKey,
   canCreateKB,
+  isQuotaLoading,
   onSubmit,
   onEditSlug,
 }: {
@@ -16,9 +17,16 @@ export function StepConfirm({
   isPending: boolean
   errorKey: WizardErrorKey
   canCreateKB: boolean
+  /** Quota still resolving — block submit without claiming the limit is hit. */
+  isQuotaLoading: boolean
   onSubmit: () => void
   onEditSlug: () => void
 }) {
+  const personalQuotaReached = data.ownerType === 'user' && !isQuotaLoading && !canCreateKB
+  // These two 403s are permanent for the current role/plan, so re-submitting
+  // can only produce the same denial. The cached KB list may still be stale
+  // below the cap, which is why this does not rely on `personalQuotaReached`.
+  const permanentlyDenied = errorKey === 'org_not_allowed' || errorKey === 'personal_quota'
   const visibilityLabel =
     data.visibilityMode === 'public'
       ? m.knowledge_sharing_visibility_public()
@@ -115,18 +123,31 @@ export function StepConfirm({
           </Button>
         </div>
       )}
+      {errorKey === 'org_not_allowed' && (
+        <p className="text-sm text-[var(--color-destructive)]">
+          {m.knowledge_new_error_org_not_allowed()}
+        </p>
+      )}
+      {errorKey === 'personal_quota' && (
+        <p className="text-sm text-[var(--color-destructive)]">
+          {m.kb_limit_tooltip_kb_count()}
+        </p>
+      )}
       {errorKey === 'generic' && (
         <p className="text-sm text-[var(--color-destructive)]">{m.knowledge_new_error()}</p>
       )}
 
-      {data.ownerType === 'user' && !canCreateKB && (
+      {personalQuotaReached && (
         <p className="text-sm text-gray-400 opacity-70">
           {m.kb_limit_tooltip_kb_count()}
         </p>
       )}
 
       <div className="flex justify-end pt-2">
-        <Button onClick={onSubmit} disabled={isPending || (data.ownerType === 'user' && !canCreateKB)}>
+        <Button
+          onClick={onSubmit}
+          disabled={isPending || isQuotaLoading || personalQuotaReached || permanentlyDenied}
+        >
           {m.knowledge_wizard_create_button()}
         </Button>
       </div>

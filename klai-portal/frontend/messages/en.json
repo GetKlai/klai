@@ -784,6 +784,7 @@
   "knowledge_new_cancel": "Cancel",
   "knowledge_new_slug_conflict": "This slug already exists in your organisation",
   "knowledge_new_error": "Creation failed. Please try again.",
+  "knowledge_new_error_org_not_allowed": "Organisation knowledge bases are not available for your role or plan. Create a personal knowledge base, or ask an admin to upgrade.",
   "knowledge_detail_tab_docs": "Docs",
   "knowledge_detail_tab_sources": "Sources",
   "knowledge_detail_tab_stats": "Stats",

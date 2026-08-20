@@ -31,6 +31,7 @@ function makeUser(effective_role: string): CurrentUser {
     products: [],
     isAdmin: effective_role === 'admin',
     isGroupAdmin: effective_role === 'group_manager',
+    canCreateOrgKB: false,
     capabilities: [],
     effective_capabilities: [],
     effective_role,

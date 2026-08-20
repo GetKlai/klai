@@ -67,6 +67,13 @@ class MeResponse(BaseModel):
     effective_role: str = "personal"
     effective_capabilities: list[str] = []
     org_found: bool = False
+    # The two KB gates ``app/services/kb_quota.py`` enforces on
+    # ``POST /api/app/knowledge-bases``. Not derivable from ``capabilities``:
+    # those intersect role with ``portal_users.seat_type``, while these read
+    # the org-level ``portal_orgs.plan``. ``null`` = unlimited; the defaults
+    # are fail-closed for callers without an org.
+    can_create_org_kbs: bool = False
+    max_personal_kbs_per_user: int | None = 0
     # SPEC-PORTAL-EXTENSIONS-UNIFY-001 Phase 3: expose the gating state to
     # the frontend so /admin/index.tsx can filter tiles per tenant and
     # /admin/settings can render the read-only status list. Platform-admin
@@ -132,6 +139,8 @@ async def me(
     _capabilities: list[str] = []
     _products: list[str] = []
     org_found: bool = False
+    can_create_org_kbs: bool = False
+    max_personal_kbs_per_user: int | None = 0
     # SPEC-SEC-IDENTITY-ASSERT-002 REQ-5: org_id is sourced from
     # portal_users + portal_orgs membership, NOT the JWT
     # urn:zitadel:iam:user:resourceowner:id claim (Klai BFF never requests
@@ -176,6 +185,8 @@ async def me(
         _eff_role = perms.effective_role.value
         _capabilities = sorted(c.value for c in perms.effective_capabilities)
         _products = sorted(perms.effective_products)
+        can_create_org_kbs = perms.effective_kb_limits.can_create_org_kbs
+        max_personal_kbs_per_user = perms.effective_kb_limits.max_personal_kbs_per_user
 
     # Check whether the user has any MFA method enrolled
     mfa_enrolled = False
@@ -206,6 +217,8 @@ async def me(
         effective_role=_eff_role,
         effective_capabilities=_capabilities,
         org_found=org_found,
+        can_create_org_kbs=can_create_org_kbs,
+        max_personal_kbs_per_user=max_personal_kbs_per_user,
         is_platform_admin=perms.is_platform_admin if perms is not None else False,
         platform_unlocked_features=sorted(perms.platform_unlocked_features) if perms is not None else [],
     )

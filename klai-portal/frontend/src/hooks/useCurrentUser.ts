@@ -23,12 +23,28 @@ interface MeResponse {
   // SPEC-PORTAL-PROFILES-001 Phase 1: five-rung role ladder and effective capabilities.
   effective_role?: string
   effective_capabilities?: string[]
+  // Whether POST /api/app/knowledge-bases will accept owner_type="org" for
+  // this caller (profile AND plan must allow it). Deliberately not derivable
+  // from `capabilities`: those are seat-derived and `hasCapability` short-
+  // circuits to true for admins, while this gate reads the org plan.
+  // Optional so a frontend bundle can outlive an older backend; absent is
+  // treated as "not allowed" (fail closed).
+  can_create_org_kbs?: boolean
+  // Effective personal-KB cap, mirroring effective_kb_limits(role, plan).
+  // `null` means unlimited; absent means an older backend, which callers treat
+  // as the most restrictive paid tier.
+  max_personal_kbs_per_user?: number | null
   requires_2fa_setup?: boolean
 }
 
 export interface CurrentUser extends MeResponse {
   isAdmin: boolean
   isGroupAdmin: boolean
+  /**
+   * True when the backend will accept `owner_type: "org"` on KB creation.
+   * Fail-closed: an older backend that omits the field reads as false.
+   */
+  canCreateOrgKB: boolean
   /** Returns true when the user has the given KB capability OR is admin. */
   hasCapability: (cap: string) => boolean
 }
@@ -51,6 +67,7 @@ export function useCurrentUser() {
         effective_capabilities: me.effective_capabilities ?? [],
         isAdmin,
         isGroupAdmin: me.portal_role === 'group-admin',
+        canCreateOrgKB: me.can_create_org_kbs === true,
         hasCapability: (cap: string) => isAdmin || (me.capabilities ?? []).includes(cap),
       } satisfies CurrentUser
     },

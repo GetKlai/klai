@@ -67,8 +67,43 @@ export function buildCreateKnowledgeBasePayload(
   }
 }
 
+/** Structured `detail.error_code` values raised by app/services/kb_quota.py. */
+const QUOTA_ERROR_KEYS: Record<string, WizardErrorKey> = {
+  kb_quota_org_kb_not_allowed: 'org_not_allowed',
+  kb_quota_personal_kb_exceeded: 'personal_quota',
+}
+
+function readErrorCode(detail: string): string | undefined {
+  try {
+    const parsed = JSON.parse(detail) as { error_code?: unknown }
+    return typeof parsed.error_code === 'string' ? parsed.error_code : undefined
+  } catch {
+    // `detail` is a plain string, not the JSON-stringified detail object.
+    return undefined
+  }
+}
+
+/**
+ * Force the personal scope when the backend would refuse an org KB. Derived
+ * per render because `/api/me` resolves after mount. `visibilityMode` resets
+ * too, otherwise a "public" pick from the org steps lands on a personal KB.
+ */
+export function resolveWizardOwnerScope(
+  form: WizardData,
+  canCreateOrgKB: boolean
+): WizardData {
+  if (canCreateOrgKB || form.ownerType === 'user') return form
+  return { ...form, ownerType: 'user', visibilityMode: 'org' }
+}
+
 export function getCreateKnowledgeBaseErrorKey(error: Error): WizardErrorKey {
-  return error instanceof ApiError && error.status === 409 ? 'conflict' : 'generic'
+  if (!(error instanceof ApiError)) return 'generic'
+  if (error.status === 409) return 'conflict'
+  if (error.status === 403) {
+    const code = readErrorCode(error.detail)
+    if (code && QUOTA_ERROR_KEYS[code]) return QUOTA_ERROR_KEYS[code]
+  }
+  return 'generic'
 }
 
 export function useKnowledgeWizardMembers({

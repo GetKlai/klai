@@ -13,6 +13,7 @@ import { StepConfirm } from './new._components/-StepConfirm'
 import { StepName } from './new._components/-StepName'
 import { StepPermissions } from './new._components/-StepPermissions'
 import {
+  resolveWizardOwnerScope,
   useCreateKnowledgeBaseMutation,
   useKnowledgeWizardMembers,
 } from './new._wizard-hooks'
@@ -30,23 +31,32 @@ function NewKnowledgeBasePage() {
   const auth = useAuth()
   const navigate = useNavigate()
   const { user } = useCurrentUser()
-  const { canCreateKB } = useKBQuota()
+  const { canCreateKB, isLoading: isQuotaLoading } = useKBQuota()
 
-  const isLimitedPlan = user ? !user.hasCapability('kb.connectors') : false
-  const [step, setStep] = useState<Step>(1)
+  // Mirrors the org-KB gate the create endpoint enforces. Resolves after
+  // mount, so it starts out unknown.
+  const isEntitlementLoaded = user !== undefined
+  const canCreateOrgKB = user?.canCreateOrgKB === true
+  const [rawStep, setStep] = useState<Step>(1)
   const [errorKey, setErrorKey] = useState<WizardErrorKey>(null)
 
-  const [data, setData] = useState<WizardData>({
+  const [form, setForm] = useState<WizardData>({
     name: '',
     slug: '',
     slugManuallyEdited: false,
     description: '',
-    ownerType: isLimitedPlan ? 'user' : 'org',
+    ownerType: 'org',
     visibilityMode: 'org',
     allowContribute: true,
     initialGroups: [],
     initialUsers: [],
   })
+
+  const data = resolveWizardOwnerScope(form, canCreateOrgKB)
+  const isPersonal = data.ownerType === 'user'
+  // The personal flow only has steps 1 and 4; keep the indicator and the
+  // rendered step in agreement if the scope drops while on an org-only step.
+  const step: Step = isPersonal && rawStep > 1 ? 4 : rawStep
 
   const { groups, users } = useKnowledgeWizardMembers({
     isAuthenticated: auth.isAuthenticated,
@@ -59,7 +69,6 @@ function NewKnowledgeBasePage() {
     onErrorKey: setErrorKey,
   })
 
-  const isPersonal = data.ownerType === 'user'
   const step1Valid = data.name.trim() !== '' && data.slug.trim() !== ''
   const step3Valid =
     data.visibilityMode !== 'restricted' ||
@@ -83,7 +92,9 @@ function NewKnowledgeBasePage() {
   }
 
   function canAdvance(): boolean {
-    if (step === 1) return step1Valid
+    // Leaving step 1 picks the flow (2 personal steps vs 4 org), so wait for
+    // the entitlement instead of committing to the fail-closed default.
+    if (step === 1) return isEntitlementLoaded && step1Valid
     if (step === 2) return true
     if (step === 3) return step3Valid
     return true
@@ -119,16 +130,16 @@ function NewKnowledgeBasePage() {
         {step === 1 && (
           <StepName
             data={data}
-            setData={setData}
+            setData={setForm}
             errorKey={errorKey}
-            isLimitedPlan={isLimitedPlan}
+            canCreateOrgKB={canCreateOrgKB}
           />
         )}
-        {step === 2 && <StepAccess data={data} setData={setData} />}
+        {step === 2 && <StepAccess data={data} setData={setForm} />}
         {step === 3 && (
           <StepPermissions
             data={data}
-            setData={setData}
+            setData={setForm}
             groups={groups}
             users={users}
           />
@@ -139,6 +150,7 @@ function NewKnowledgeBasePage() {
             isPending={isPending}
             errorKey={errorKey}
             canCreateKB={canCreateKB}
+            isQuotaLoading={isQuotaLoading}
             onSubmit={() => {
               setErrorKey(null)
               mutate()
