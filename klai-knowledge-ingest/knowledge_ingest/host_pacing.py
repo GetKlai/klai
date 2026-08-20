@@ -9,15 +9,71 @@ distributed limiter before rollout.
 from __future__ import annotations
 
 import asyncio
+import os
+import sys
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
 from knowledge_ingest.domain_selectors import extract_domain
 
 _BURST_WINDOW_SECONDS = 10.0
+# crawl4ai 0.8 rejects POST /crawl payloads containing more than 100 URLs.
+# Keep that transport ceiling next to the burst calculation that enforces it;
+# raise it only in lock-step with a verified crawl4ai schema relaxation.
 _MAX_BURST_SIZE = 100
+
+
+def ensure_single_process_host_pacing(
+    *,
+    environ: Mapping[str, str] | None = None,
+    argv: Sequence[str] | None = None,
+) -> None:
+    """Refuse startup when an in-memory host gate would be process-local.
+
+    Resolve worker count with Uvicorn's precedence: the last explicit
+    ``--workers`` flag, then ``UVICORN_WORKERS``, then ``WEB_CONCURRENCY``.
+    Replicas cannot be detected from inside one container; deployment
+    configuration must keep replicas at one until this registry is replaced
+    by a distributed limiter.
+    """
+    active_environ = os.environ if environ is None else environ
+    active_argv = sys.argv if argv is None else argv
+    configured_worker: tuple[str, str] | None = None
+
+    for index, argument in enumerate(active_argv):
+        if argument.startswith("--workers="):
+            configured_worker = ("--workers", argument.split("=", 1)[1])
+        elif argument == "--workers":
+            value = active_argv[index + 1] if index + 1 < len(active_argv) else ""
+            configured_worker = ("--workers", value)
+
+    if configured_worker is None:
+        for name in ("UVICORN_WORKERS", "WEB_CONCURRENCY"):
+            value = active_environ.get(name)
+            if value:
+                configured_worker = (name, value)
+                break
+
+    if configured_worker is None:
+        return
+
+    source, raw_value = configured_worker
+    try:
+        worker_count = int(raw_value)
+    except ValueError as exc:
+        raise RuntimeError(
+            "Host pacing requires single-process knowledge-ingest; "
+            f"cannot verify {source}={raw_value!r} as a worker count."
+        ) from exc
+    if worker_count > 1:
+        rendered = f"{source}={raw_value}" if source != "--workers" else f"--workers={raw_value}"
+        raise RuntimeError(
+            "Host pacing requires single-process knowledge-ingest; "
+            f"detected {rendered}. Use exactly one web worker until "
+            "HostGateRegistry has a distributed backend."
+        )
 
 
 def crawl_gate_key(url: str) -> str:

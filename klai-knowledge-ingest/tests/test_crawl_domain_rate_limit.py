@@ -24,29 +24,28 @@ punishment has gone stale, should not stay throttled forever.
   (``domain_selectors.save_domain_rate_limit_state``) — unless the
   regelwet says nothing needs persisting.
 
-These tests mock ``crawl_site`` entirely — the crawl4ai wiring itself is
-covered by tests/test_build_crawl_config.py and
-tests/test_crawl_site_reconcile.py. The pure regelwet itself (hysteresis,
-floor, ceiling, table-cleanliness edge cases, decay) is covered
-exhaustively, without any mocking, in
-tests/test_domain_rate_limit_control.py. Here the concern is purely the
-wiring: does run_crawl_job read the stored state, decay it correctly, feed
-the right observations into the regelwet, and persist exactly what the
-regelwet returned.
+Most tests mock ``crawl_site`` to isolate adapter wiring. The Deel B
+regression deliberately keeps the real ``crawl_site`` state machine and
+mocks only its network/checkpoint boundaries, proving that every in-job
+halving reaches persistence. The pure regelwet itself (hysteresis, floor,
+ceiling, table-cleanliness edge cases, decay) is covered exhaustively,
+without mocking, in tests/test_domain_rate_limit_control.py.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from knowledge_ingest import crawl4ai_client
 from knowledge_ingest.adapters.crawler import (
     _apply_domain_rate_limit_effect_once,
     run_crawl_job,
 )
-from knowledge_ingest.crawl4ai_client import CrawlResult
+from knowledge_ingest.crawl4ai_client import ChunkedFetchResult, CrawlResult
 from knowledge_ingest.crawl_checkpoint import CrawlExecutionSuperseded
 from knowledge_ingest.domain_rate_limit_control import DomainRateLimitState
 from knowledge_ingest.domain_selectors import DomainRateLimitWriteKind
@@ -281,6 +280,127 @@ async def test_rate_limited_outcome_lowers_the_domain_rate_limit() -> None:
     assert new_state.rate_limit == pytest.approx(1.0)  # 2.0 / 2
     assert new_state.clean_streak == 0
     assert new_state.last_congestion_at is not None
+
+
+@pytest.mark.asyncio
+async def test_in_job_slowdown_rate_is_persisted_for_the_next_crawl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The persisted rate must include every halving performed by Deel B."""
+    urls = [f"https://intermedia.com/support/{index}" for index in range(5)]
+
+    async def _fake_seed(*, start_url: str, **_kwargs: Any) -> CrawlResult:
+        return CrawlResult(
+            url=start_url,
+            fit_markdown="Seed content",
+            raw_markdown="Seed content",
+            html="<html></html>",
+            word_count=2,
+            success=True,
+            links={"internal": [{"href": url, "text": ""} for url in urls]},
+        )
+
+    async def _no_sitemap(_start_url: str) -> list[str]:
+        return []
+
+    observed_rates: list[float | None] = []
+
+    async def _fake_bulk_fetch(
+        *, urls: list[str], rate_limit: float | None, **_kwargs: Any
+    ) -> ChunkedFetchResult:
+        observed_rates.append(rate_limit)
+        if len(observed_rates) <= 3:
+            return ChunkedFetchResult(
+                raw_results=[
+                    {
+                        "url": urls[0],
+                        "success": False,
+                        "status_code": 429,
+                        "error_message": "Too Many Requests",
+                        "markdown": "",
+                        "html": "",
+                    }
+                ],
+                not_attempted=urls[1:],
+                stopped_early=True,
+                stop_trigger_reason_code=FetchReasonCode.RATE_LIMITED.value,
+            )
+        return ChunkedFetchResult(
+            raw_results=[
+                {
+                    "url": url,
+                    "success": True,
+                    "status_code": 200,
+                    "markdown": "Recovered content",
+                    "html": "<html></html>",
+                    "links": {"internal": []},
+                }
+                for url in urls
+            ]
+        )
+
+    async def _no_sleep(_seconds: float) -> None:
+        return None
+
+    class _NoopCheckpoint:
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            pass
+
+        async def load(self) -> None:
+            return None
+
+        async def save(self, _snapshot: dict[str, Any]) -> None:
+            return None
+
+        async def ensure_active(self) -> None:
+            return None
+
+    monkeypatch.setattr(crawl4ai_client, "_fetch_seed_page", _fake_seed)
+    monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _no_sitemap)
+    monkeypatch.setattr(crawl4ai_client, "_chunked_bulk_fetch", _fake_bulk_fetch)
+    monkeypatch.setattr(crawl4ai_client, "_slowdown_sleep", _no_sleep)
+
+    conn = _mock_conn()
+    get_state = AsyncMock(return_value=_NO_OVERRIDE)
+    save_state = AsyncMock(return_value=True)
+    with (
+        patch(
+            "knowledge_ingest.adapters.crawler.PostgresCrawlCheckpoint",
+            new=_NoopCheckpoint,
+        ),
+        patch(
+            "knowledge_ingest.adapters.crawler.get_domain_rate_limit_state",
+            new=get_state,
+        ),
+        patch(
+            "knowledge_ingest.adapters.crawler.save_domain_rate_limit_state",
+            new=save_state,
+        ),
+        patch(
+            "knowledge_ingest.adapters.crawler.pg_store.get_crawled_page_hashes",
+            new=AsyncMock(return_value={}),
+        ),
+        patch(
+            "knowledge_ingest.adapters.crawler._build_link_graph",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "knowledge_ingest.adapters.crawler._ingest_crawl_result",
+            new=AsyncMock(return_value=None),
+        ),
+    ):
+        await run_crawl_job(
+            connection_factory=connection_factory_for(conn),
+            job_id="job-1",
+            org_id="org-1",
+            kb_slug="support",
+            start_url=START_URL,
+            rate_limit=2.0,
+        )
+
+    assert observed_rates == [2.0, 1.0, 0.5, 0.25]
+    persisted_state = save_state.await_args.kwargs["state"]
+    assert persisted_state.rate_limit == pytest.approx(0.25)
 
 
 @pytest.mark.asyncio

@@ -5,10 +5,10 @@ Four un-rendered-template-syntax links (see
 each 404'd with a tiny error body. crawl4ai's structural anti-bot heuristic
 misread each one as ``blocked_anti_bot`` (see
 ``tests/test_crawl_site_reconcile.py::TestClassifyFetchOutcome`` for the
-classification-level fix), and because BLOCKED_ANTI_BOT is a
-``_STOP_CHUNKING_REASON_CODES`` member, ``_chunked_bulk_fetch`` stopped
-sending further chunks after the FIRST such 404 — 192 real pages were never
-even attempted.
+classification-level fix). At the time, BLOCKED_ANTI_BOT unconditionally
+stopped chunking, so the FIRST such 404 prevented 192 real pages from being
+attempted. Since 2026-08-18 it stops only through the crawl-wide ratio+floor
+gate.
 
 This test proves the actual incident is fixed, not just its two
 contributing symptoms in isolation: four exact-production-shape 404 pages,
@@ -27,7 +27,7 @@ from knowledge_ingest import crawl4ai_client
 from knowledge_ingest.crawl4ai_client import _chunked_bulk_fetch
 from knowledge_ingest.reason_codes import FetchReasonCode
 
-# _burst_size_for(0.05) == max(1, min(100, int(0.05 * 10 + 0.5))) == 1 — one
+# At 0.05 req/s, the host gate's 10-second window allows one URL per request — one
 # URL per chunk, so each URL below produces its own distinct HTTP request
 # (matches the pattern in test_chunked_bulk_fetch_rate_limit_stop.py).
 _ONE_URL_PER_CHUNK_RATE_LIMIT = 0.05

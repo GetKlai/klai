@@ -173,6 +173,13 @@ class CrawlResult:
     raw_error_text: str | None = None
 
 
+@dataclass
+class CrawlRateLimitState:
+    """Mutable handoff of the rate actually in effect when ``crawl_site`` ends."""
+
+    current_rate_limit: float | None
+
+
 DiscoverySourceKind = Literal["start", "sitemap", "page_link"]
 DiscoveryStatus = Literal["queued", "fetched", "omitted"]
 
@@ -308,9 +315,11 @@ def _url_has_non_html_extension(url: str) -> bool:
 # what the site's HTML attribute contained, un-rendered placeholder syntax
 # included. Such a link is never a real page: fetching it 404s with a tiny
 # error body, and crawl4ai's structural anti-bot heuristic then misreads the
-# small page as a block (see ``_classify_fetch_outcome``), which — because
-# BLOCKED_ANTI_BOT stops the rest of the crawl (``_STOP_CHUNKING_REASON_CODES``)
-# — aborted 192 real pages over four bogus template links in production.
+# small page as a block (see ``_classify_fetch_outcome``). At the time,
+# BLOCKED_ANTI_BOT unconditionally stopped chunking, so four bogus template
+# links aborted 192 real pages in production. Since 2026-08-18 anti-bot stops
+# use a crawl-wide ratio+floor gate instead; filtering bogus URLs remains the
+# correct way to keep them out of both the ratio and the network path.
 #
 # Checked against both the raw URL and its percent-decoded form: some sites'
 # JS builds the href through something like ``encodeURIComponent`` before
@@ -418,8 +427,8 @@ def build_crawl_config(
     difference. Both keys pass crawl4ai's untrusted-config boundary
     (HTTP 200), which is why the original fix looked like it worked in
     testing — the server silently accepts and discards them. Real pacing
-    happens client-side in ``_chunked_bulk_fetch`` (burst size via
-    ``_burst_size_for`` + inter-chunk sleep), not here.
+    happens client-side through ``host_pacing.HostGateRegistry`` and
+    ``HostPacingSession.acquire``, not here.
     """
     md_gen: dict[str, Any] = {
         "type": "DefaultMarkdownGenerator",
@@ -2107,8 +2116,33 @@ async def crawl_site(
     rate_limit: float | None = None,
     cancel_check: Callable[[], Awaitable[bool]] | None = None,
     checkpoint: CrawlCheckpoint | None = None,
+    rate_limit_state: CrawlRateLimitState | None = None,
 ) -> tuple[list[CrawlResult], list[FetchOutcome]]:
-    """Crawl one site through a host schedule shared by overlapping jobs."""
+    """Crawl one site through a host schedule shared by overlapping jobs.
+
+    A filtered seed is never fetched. Unlike a filtered discovered link, the
+    caller explicitly supplied the seed, so return ``not_fetched_excluded``
+    with a ``filter_reason`` instead of silently dropping it. This makes the
+    invalid job input visible without introducing a second reason-code enum.
+    """
+    filter_reason: str | None = None
+    if _url_has_non_html_extension(start_url):
+        filter_reason = "non_html_extension"
+    elif _url_has_unrendered_template_syntax(start_url):
+        filter_reason = "unrendered_template_syntax"
+    if filter_reason is not None:
+        logger.warning(
+            "crawl_seed_url_filtered",
+            start_url=start_url,
+            filter_reason=filter_reason,
+        )
+        outcome = _outcome_for_not_attempted_url(
+            start_url,
+            reason_code=FetchReasonCode.NOT_FETCHED_EXCLUDED.value,
+        )
+        outcome["filter_reason"] = filter_reason
+        return [], [outcome]
+
     async with _host_pacing_scope(start_url, rate_limit):
         return await _crawl_site_in_host_scope(
             start_url=start_url,
@@ -2122,6 +2156,7 @@ async def crawl_site(
             rate_limit=rate_limit,
             cancel_check=cancel_check,
             checkpoint=checkpoint,
+            rate_limit_state=rate_limit_state,
         )
 
 
@@ -2137,6 +2172,7 @@ async def _crawl_site_in_host_scope(
     rate_limit: float | None = None,
     cancel_check: Callable[[], Awaitable[bool]] | None = None,
     checkpoint: CrawlCheckpoint | None = None,
+    rate_limit_state: CrawlRateLimitState | None = None,
 ) -> tuple[list[CrawlResult], list[FetchOutcome]]:
     """Crawl a site with a Klai-owned deterministic frontier.
 
@@ -2145,8 +2181,8 @@ async def _crawl_site_in_host_scope(
     ``not_fetched_*`` outcome, so page-budget/depth limits fail loudly.
 
     ``rate_limit`` (requests/second, optional) paces the bulk-fetch chunks
-    client-side — see ``_chunked_bulk_fetch`` / ``_burst_size_for`` for the
-    mechanism, and ``build_crawl_config``'s docstring for why crawl4ai's own
+    client-side — see ``host_pacing.HostGateRegistry`` for the mechanism,
+    and ``build_crawl_config``'s docstring for why crawl4ai's own
     ``CrawlerRunConfig`` pacing knobs (``semaphore_count`` / ``mean_delay``)
     cannot do this: the REST server ignores them.
 
@@ -2175,6 +2211,15 @@ async def _crawl_site_in_host_scope(
         login_indicator_selector=login_indicator_selector,
     )
     restored = await checkpoint.load() if checkpoint is not None else None
+    current_rate_limit = restored.get("current_rate_limit", rate_limit) if restored else rate_limit
+    if rate_limit_state is not None:
+        rate_limit_state.current_rate_limit = current_rate_limit
+    pacing_session = _current_host_pacing_session.get()
+    if pacing_session is not None and current_rate_limit != rate_limit:
+        # ``crawl_site`` opens the host gate before loading its checkpoint.
+        # Keep the live traffic schedule aligned with the restored slowdown,
+        # not only the mutable state handed back to the adapter.
+        pacing_session.update_rate(current_rate_limit)
     if restored is not None:
         if restored.get("version") != 1 or restored.get("start_url") != start_url:
             raise ValueError("crawl checkpoint does not match this crawl")
@@ -2241,13 +2286,14 @@ async def _crawl_site_in_host_scope(
     # Deel B (2026-08-18) — the in-job rate_limit actually used for the NEXT
     # ``_chunked_bulk_fetch`` call. Starts at the caller's ``rate_limit`` and
     # only ever moves DOWN, via ``_lower_rate_limit_for_slowdown``, after an
-    # observed RATE_LIMITED stop signal — never persisted, never raised back
-    # up within this call (the persisted domain-level AIMD controller in
-    # ``domain_rate_limit_control`` owns raising it back up, once, after the
-    # job completes, for the NEXT crawl). ``consecutive_rate_limit_slowdowns``
+    # observed RATE_LIMITED stop signal — never raised back up within this
+    # call. The final value is handed to the adapter through
+    # ``rate_limit_state`` and clamps the persisted AIMD congestion result, so
+    # the NEXT crawl starts at the rate this one actually reached. The
+    # domain-level controller still owns later additive recovery.
+    # ``consecutive_rate_limit_slowdowns``
     # bounds how many times in a row that can happen before giving up — see
     # ``_MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS``.
-    current_rate_limit = restored.get("current_rate_limit", rate_limit) if restored else rate_limit
     consecutive_rate_limit_slowdowns = int(
         restored.get("consecutive_rate_limit_slowdowns", 0) if restored else 0
     )
@@ -2414,6 +2460,8 @@ async def _crawl_site_in_host_scope(
             elif consecutive_rate_limit_slowdowns < _MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS:
                 consecutive_rate_limit_slowdowns += 1
                 current_rate_limit = _lower_rate_limit_for_slowdown(current_rate_limit)
+                if rate_limit_state is not None:
+                    rate_limit_state.current_rate_limit = current_rate_limit
                 pacing_session = _current_host_pacing_session.get()
                 if pacing_session is not None:
                     pacing_session.update_rate(current_rate_limit)
@@ -3319,15 +3367,8 @@ async def _recover_thin_bulk_results(
 # belief that crawl4ai's own RateLimiter enforced our ``rate_limit``
 # server-side. Measured 2026-08-18 (see build_crawl_config's docstring):
 # it does not — ``mean_delay``/``semaphore_count`` are silently ignored by
-# the REST server. That formula is removed; pacing lives entirely in
-# ``_chunked_bulk_fetch`` now.
-
-
-# crawl4ai 0.8 server enforces ``List should have at most 100 items after
-# validation`` on POST /crawl ``urls``. The constant lives here so it can
-# be raised in lock-step with any future crawl4ai schema relaxation.
-# Discovered live on help.voys.nl (208 sitemap entries → 422 → 1 ingested).
-_BULK_CHUNK_SIZE = 100
+# the REST server. That formula is removed; pacing lives in
+# ``host_pacing.HostGateRegistry`` now.
 
 # Client-side pacing (2026-08-18, fix/client-side-crawl-pacing): measured
 # live against the running crawl4ai server that ``mean_delay`` /
@@ -3337,37 +3378,9 @@ _BULK_CHUNK_SIZE = 100
 # ``mean_delay=2.0`` finished in 3.2s instead of the predicted 16s, and
 # ``semaphore_count`` 1 vs 8 made no measurable difference. Separately, a
 # single bulk chunk IS one burst on the target site: 16 URLs in one request
-# completed within 330ms of each other. Real rate limiting can therefore
-# only happen client-side, via the two knobs we actually control: how many
-# URLs go in one request (the burst — see ``_burst_size_for``) and how long
-# we wait between requests (the gap — see ``_chunked_bulk_fetch``).
-#
-# ``_BURST_WINDOW_SECONDS`` is the size of that accounting window: how much
-# a site is allowed to receive within one window, at the requested
-# rate_limit. A larger window produces bigger bursts with longer pauses
-# between them (fewer HTTP round-trips, coarser pacing); a smaller window
-# is smoother traffic but costs more round-trips for the same rate.
-_BURST_WINDOW_SECONDS = 10.0
-
-
-def _burst_size_for(rate_limit: float | None) -> int:
-    """Translate a requests/second rate limit into a per-request burst size.
-
-    ``rate_limit is None`` means no client-side pacing was requested: keep
-    the historical fixed chunk size (``_BULK_CHUNK_SIZE``), so crawls
-    without a rate_limit are completely unaffected by this function.
-
-    Uses ``int(x + 0.5)``, deliberately NOT ``round()``. Python's
-    ``round()`` uses banker's rounding to the nearest even integer —
-    ``round(0.5) == 0`` and ``round(2.5) == 2`` — which already caused a
-    real bug in this codebase (``build_crawl_config``'s
-    ``semaphore_count = max(1, min(round(rate_limit), 8))`` collapsed
-    ``rate_limit=0.5`` down to 1 instead of the intended 2). Do not
-    reintroduce ``round()`` here.
-    """
-    if rate_limit is None:
-        return _BULK_CHUNK_SIZE
-    return max(1, min(_BULK_CHUNK_SIZE, int(rate_limit * _BURST_WINDOW_SECONDS + 0.5)))
+# completed within 330ms of each other. Real rate limiting therefore happens
+# client-side through ``host_pacing.HostGateRegistry``. That module is the
+# single owner of burst sizing and the gap between weighted requests.
 
 
 # Total budget (per crawl_site call) for sequential one-URL-at-a-time
@@ -3408,8 +3421,8 @@ _CRAWL4AI_RATE_LIMIT_BACKOFF_CEILING_SECONDS = 3 * 60.0
 _recovery_sleep = asyncio.sleep
 _recovery_monotonic = time.monotonic
 
-# Same indirection, dedicated to the client-side bulk-chunk pacing in
-# ``_chunked_bulk_fetch`` (see ``_burst_size_for`` above). Kept separate
+# Same indirection, dedicated to the client-side host pacing used by
+# ``_chunked_bulk_fetch``. Kept separate
 # from ``_recovery_sleep`` / ``_recovery_monotonic`` — they pace an
 # unrelated loop (sequential 5xx recovery) and patching one must not
 # silently affect the other.
@@ -3479,12 +3492,11 @@ def _lower_rate_limit_for_slowdown(current_rate_limit: float | None) -> float:
     """Halve ``current_rate_limit`` after an observed RATE_LIMITED stop.
 
     Reuses ``domain_rate_limit_control.MIN_DOMAIN_RATE_LIMIT`` as the floor
-    instead of inventing a second, arbitrary one — keeps this ephemeral,
-    in-job backoff consistent with the persisted domain-level halving that
-    already uses that floor. This one is NEVER persisted: it only affects
-    the rest of THIS ``crawl_site`` call, and the domain-level controller
-    (applied once, after the job completes, for the NEXT crawl) is
-    untouched and unaffected — see ``compute_domain_rate_limit_update``.
+    instead of inventing a second, arbitrary one — keeps this in-job backoff
+    consistent with the persisted domain-level halving that already uses that
+    floor. ``crawl_site`` hands the final value back through
+    ``CrawlRateLimitState``; the adapter uses it as an upper cap on the
+    normal congestion update without applying a second halving.
     """
     baseline = (
         current_rate_limit
@@ -3695,6 +3707,52 @@ async def _bfs_deep_crawl(
 # (config.py) for the production evidence and the replacement, crawl-wide
 # ratio+floor gate applied further down in this function.
 _STOP_CHUNKING_REASON_CODES = frozenset({FetchReasonCode.RATE_LIMITED.value})
+_NON_STOP_CHUNKING_REASON_CODES = frozenset(
+    {
+        FetchReasonCode.SUCCESS.value,
+        FetchReasonCode.HTTP_4XX.value,
+        FetchReasonCode.HTTP_5XX.value,
+        FetchReasonCode.TIMEOUT.value,
+        FetchReasonCode.DNS_ERROR.value,
+        FetchReasonCode.CONNECTION_ERROR.value,
+        FetchReasonCode.AUTH_ERROR.value,
+        FetchReasonCode.PARSE_ERROR.value,
+        FetchReasonCode.NON_CONTENT_LISTING_PAGE.value,
+        FetchReasonCode.NOT_FETCHED_BUDGET_EXHAUSTED.value,
+        FetchReasonCode.NOT_FETCHED_DEPTH_LIMIT.value,
+        FetchReasonCode.NOT_FETCHED_DISCOVERY_LIMIT.value,
+        FetchReasonCode.NOT_FETCHED_EXCLUDED.value,
+        FetchReasonCode.NOT_FETCHED_DUPLICATE.value,
+        FetchReasonCode.NOT_FETCHED_RATE_LIMIT_STOP.value,
+        FetchReasonCode.UNKNOWN_EXCEPTION.value,
+        # BLOCKED_ANTI_BOT only stops through the separate crawl-wide ratio
+        # gate; one occurrence is deliberately not an unconditional stop.
+        FetchReasonCode.BLOCKED_ANTI_BOT.value,
+        FetchReasonCode.REFUSED.value,
+        FetchReasonCode.NOT_FETCHED_CIRCUIT_BREAKER_STOP.value,
+        FetchReasonCode.NOT_FETCHED_CANCELLED.value,
+    }
+)
+_overlapping_stop_chunking_reason_codes = (
+    _STOP_CHUNKING_REASON_CODES & _NON_STOP_CHUNKING_REASON_CODES
+)
+if _overlapping_stop_chunking_reason_codes:  # pragma: no cover - import-time guard
+    raise RuntimeError(
+        "FetchReasonCode values overlap the stop-chunking/non-stop-chunking "
+        f"classification: {sorted(_overlapping_stop_chunking_reason_codes)}."
+    )
+_uncategorized_stop_chunking_reason_codes = (
+    {reason.value for reason in FetchReasonCode}
+    - _STOP_CHUNKING_REASON_CODES
+    - _NON_STOP_CHUNKING_REASON_CODES
+)
+if _uncategorized_stop_chunking_reason_codes:  # pragma: no cover - import-time guard
+    raise RuntimeError(
+        "FetchReasonCode values missing from the stop-chunking/non-stop-chunking "
+        f"classification: {sorted(_uncategorized_stop_chunking_reason_codes)}. "
+        "Add each to _STOP_CHUNKING_REASON_CODES or "
+        "_NON_STOP_CHUNKING_REASON_CODES in knowledge_ingest/crawl4ai_client.py."
+    )
 
 
 @dataclass
@@ -3736,18 +3794,13 @@ class ChunkedFetchResult:
             chose not to ask".
         stopped_early: True when ``not_attempted`` is non-empty for the
             reason described above.
-        stop_trigger_reason_code: which of ``_STOP_CHUNKING_REASON_CODES``
-            actually caused ``stopped_early`` — ``None`` when
-            ``stopped_early`` is False. Lets a caller (``crawl_site``,
-            Deel B) tell "the site asked us to slow down" (RATE_LIMITED)
-            apart from "the site blocked us outright" (BLOCKED_ANTI_BOT):
-            slowing down helps the former and does nothing for the
-            latter. BLOCKED_ANTI_BOT wins when a single chunk somehow
-            observes both (a block is the more severe signal). Also set
-            to BLOCKED_ANTI_BOT when ``circuit_breaker_triggered`` is True
-            (see below) — both breaker verdicts mean "further attempts
-            will not help", the same give-up semantics as a confirmed
-            block.
+        stop_trigger_reason_code: which stop policy actually caused
+            ``stopped_early`` — the unconditional RATE_LIMITED set, the
+            crawl-wide BLOCKED_ANTI_BOT ratio gate, or the circuit breaker;
+            ``None`` when ``stopped_early`` is False. Lets a caller
+            (``crawl_site``, Deel B) distinguish slowdown from give-up.
+            BLOCKED_ANTI_BOT wins when a chunk observes both signals, and
+            is also used for an aborting circuit-breaker verdict.
         circuit_breaker_triggered: True when
             ``knowledge_ingest.host_circuit_breaker`` returned an ABORT
             verdict (persistent failure or repeated refusal — onderdeel 2,
@@ -3847,17 +3900,12 @@ async def _chunked_bulk_fetch_with_session(
     remaining chunks from shipping — partial coverage beats zero coverage.
     The one exception is a confirmed rate-limit/anti-bot signal — see below.
 
-    ``rate_limit`` (requests/second, optional) additionally paces the
-    chunks client-side. crawl4ai's server ignores our ``mean_delay`` /
-    ``semaphore_count`` config (see ``_burst_size_for``'s docstring for the
-    measurement), so real rate limiting can only happen here: the chunk
-    size itself becomes the burst (``_burst_size_for``), and the gap
-    between the START of one chunk and the START of the next is held to
-    ``chunk_size / rate_limit`` seconds — crediting whatever time the
-    chunk's own request already consumed, so we never add avoidable
-    latency on top of a slow response. ``rate_limit is None`` disables all
-    pacing: chunk size reverts to the historical fixed ``_BULK_CHUNK_SIZE``
-    and no sleep is ever inserted, matching pre-pacing behaviour exactly.
+    ``pacing_session`` additionally paces the chunks client-side. crawl4ai's
+    server ignores our ``mean_delay`` / ``semaphore_count`` config, so
+    ``host_pacing.HostGateRegistry`` owns the real weighted-burst schedule.
+    ``HostPacingSession.acquire`` returns the allowed chunk size after
+    enforcing the gap from the prior request; an unpaced session retains the
+    historical chunk size.
 
     Each chunk request uses the fixed
     ``settings.crawl_bulk_base_timeout_seconds`` httpx timeout — see that

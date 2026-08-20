@@ -9,10 +9,11 @@ framework's JS never ran, or crawl4ai captured the DOM before it mounted):
 
 That is never a real page. Fetching it 404s with a tiny error body, and
 crawl4ai's structural anti-bot heuristic (``_classify_fetch_outcome``)
-misreads the small page as a block, which — because BLOCKED_ANTI_BOT is a
-``_STOP_CHUNKING_REASON_CODES`` member — aborted the rest of that crawl:
-four template-syntax URLs cost 192 real pages that were never even
-attempted (production incident, 2026-08-18).
+misreads the small page as a block. At the time, BLOCKED_ANTI_BOT
+unconditionally stopped chunking, so four template-syntax URLs cost 192
+real pages that were never attempted (production incident, 2026-08-18).
+Anti-bot stops now use a crawl-wide ratio+floor gate, but these bogus URLs
+still must not consume requests or distort that ratio.
 
 These URLs are filtered at the frontier (``CrawlLedger.add``), before a
 single network request is made — same mechanism and same contract as
@@ -30,12 +31,14 @@ from typing import Any
 
 import pytest
 
+from knowledge_ingest import crawl4ai_client
 from knowledge_ingest.adapters.crawler import (
     _build_crawl_outcome_warning,
     _crawl_fully_fetched,
     decide_fetch_failure_terminal_status,
 )
-from knowledge_ingest.crawl4ai_client import CrawlLedger
+from knowledge_ingest.crawl4ai_client import CrawlLedger, CrawlResult
+from knowledge_ingest.reason_codes import FetchReasonCode
 
 # The exact production URL (2026-08-18, support.ascendcloud.com).
 _PRODUCTION_TEMPLATE_URL = (
@@ -143,13 +146,18 @@ def test_real_url_next_to_a_template_url_is_still_added() -> None:
 
 def test_a_crawl_with_only_skipped_template_urls_is_not_failed_partial() -> None:
     """The valkuil: a URL we deliberately never wanted to crawl is not
-    'incomplete coverage'. Since the excluded URL never produces an
-    outcome at all (see the ledger-level tests above), the existing
-    not_fetched_* / failure-ratio guards downstream must see a perfectly
-    clean, fully-fetched crawl — mirrors
+    'incomplete coverage'. A filtered start URL produces an explicit outcome,
+    so downstream coverage guards must ignore that deliberate exclusion — mirrors
     test_a_skipped_pdf_does_not_mark_the_crawl_failed_partial in
     test_crawl_frontier_document_extensions.py."""
     fetch_outcomes = [
+        {
+            "url": "https://support.ascendcloud.com/{{article.url}}",
+            "reason_code": "not_fetched_excluded",
+            "status_code": None,
+            "content_length": 0,
+            "filter_reason": "unrendered_template_syntax",
+        },
         {
             "url": "https://support.ascendcloud.com",
             "reason_code": "success",
@@ -172,3 +180,37 @@ def test_a_crawl_with_only_skipped_template_urls_is_not_failed_partial() -> None
     )
     assert status == ""
     assert summary is None
+
+
+@pytest.mark.asyncio
+async def test_template_start_url_is_reported_without_being_fetched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fetched: list[str] = []
+
+    async def _fake_seed(*, start_url: str, **_kwargs: Any) -> CrawlResult:
+        fetched.append(start_url)
+        return CrawlResult(
+            url=start_url,
+            fit_markdown="Template content",
+            raw_markdown="Template content",
+            html="<html></html>",
+            word_count=2,
+            success=True,
+        )
+
+    async def _no_sitemap(_base: str) -> list[str]:
+        return []
+
+    monkeypatch.setattr(crawl4ai_client, "_fetch_seed_page", _fake_seed)
+    monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _no_sitemap)
+
+    results, outcomes = await crawl4ai_client.crawl_site(
+        start_url=_PRODUCTION_TEMPLATE_URL,
+    )
+
+    assert fetched == []
+    assert results == []
+    assert outcomes[0]["url"] == _PRODUCTION_TEMPLATE_URL
+    assert outcomes[0]["reason_code"] == FetchReasonCode.NOT_FETCHED_EXCLUDED.value
+    assert outcomes[0]["filter_reason"] == "unrendered_template_syntax"

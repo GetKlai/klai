@@ -33,7 +33,7 @@ from knowledge_ingest.config import settings
 from knowledge_ingest.crawl4ai_client import _chunked_bulk_fetch
 
 # Same derivation as test_chunked_bulk_fetch_rate_limit_stop.py:
-# _burst_size_for(0.05) == max(1, min(100, int(0.05 * 10 + 0.5))) == 1 — one
+# At 0.05 req/s, the host gate's 10-second window allows one URL per request — one
 # URL per chunk, so N urls produce N distinct HTTP requests we can fail
 # independently and observe the running crawl-wide tally accumulate.
 _ONE_URL_PER_CHUNK_RATE_LIMIT = 0.05
@@ -109,9 +109,8 @@ async def test_four_antibot_signals_on_400_plus_pages_does_not_stop(
 
     monkeypatch.setattr(crawl4ai_client, "_crawl_sync", _fake_crawl_sync)
 
-    # rate_limit=None -> fixed _BULK_CHUNK_SIZE (100) chunking, no pacing
-    # sleep is ever invoked (see _chunked_bulk_fetch: the inter-chunk sleep
-    # is gated on `rate_limit is not None`).
+    # rate_limit=None -> HostGateRegistry's 100-URL transport ceiling, with
+    # no pacing sleep between grants.
     fetch = await _chunked_bulk_fetch(urls=urls, crawler_config={}, cookies=None)
 
     # Every URL was actually requested — nothing skipped.

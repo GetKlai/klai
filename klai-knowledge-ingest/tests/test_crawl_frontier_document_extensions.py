@@ -46,6 +46,7 @@ from knowledge_ingest.adapters.crawler import (
     decide_fetch_failure_terminal_status,
 )
 from knowledge_ingest.crawl4ai_client import CrawlLedger, CrawlResult
+from knowledge_ingest.reason_codes import FetchReasonCode
 
 
 def _ledger(**overrides: Any) -> CrawlLedger:
@@ -220,13 +221,52 @@ async def test_crawl_site_never_submits_pdf_links_to_crawl4ai(
     assert any(r.url == "https://example.com/products/widget" for r in results)
 
 
+@pytest.mark.asyncio
+async def test_pdf_start_url_is_reported_without_being_fetched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_url = "https://example.com/manual.pdf"
+    fetched: list[str] = []
+
+    async def _fake_seed(*, start_url: str, **_kwargs: Any) -> CrawlResult:
+        fetched.append(start_url)
+        return CrawlResult(
+            url=start_url,
+            fit_markdown="PDF content",
+            raw_markdown="PDF content",
+            html="<html></html>",
+            word_count=2,
+            success=True,
+        )
+
+    async def _no_sitemap(_base: str) -> list[str]:
+        return []
+
+    monkeypatch.setattr(crawl4ai_client, "_fetch_seed_page", _fake_seed)
+    monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _no_sitemap)
+
+    results, outcomes = await crawl4ai_client.crawl_site(start_url=start_url)
+
+    assert fetched == []
+    assert results == []
+    assert outcomes[0]["url"] == start_url
+    assert outcomes[0]["reason_code"] == FetchReasonCode.NOT_FETCHED_EXCLUDED.value
+    assert outcomes[0]["filter_reason"] == "non_html_extension"
+
+
 def test_a_skipped_pdf_does_not_mark_the_crawl_failed_partial() -> None:
     """The valkuil: a URL we deliberately never wanted to crawl is not
-    'incomplete coverage'. Since the excluded URL never produces an
-    outcome at all (see the ledger-level tests above), the existing
-    not_fetched_* / failure-ratio guards downstream must see a perfectly
-    clean, fully-fetched crawl."""
+    'incomplete coverage'. A filtered start URL does produce an explicit
+    outcome, so downstream coverage guards must distinguish that deliberate
+    exclusion from an unfinished frontier."""
     fetch_outcomes = [
+        {
+            "url": "https://example.com/manual.pdf",
+            "reason_code": "not_fetched_excluded",
+            "status_code": None,
+            "content_length": 0,
+            "filter_reason": "non_html_extension",
+        },
         {
             "url": "https://example.com",
             "reason_code": "success",
@@ -249,3 +289,21 @@ def test_a_skipped_pdf_does_not_mark_the_crawl_failed_partial() -> None:
     )
     assert status == ""
     assert summary is None
+
+
+def test_a_filtered_seed_without_any_success_still_fails_loudly() -> None:
+    warning = _build_crawl_outcome_warning(
+        [
+            {
+                "url": "https://example.com/manual.pdf",
+                "reason_code": "not_fetched_excluded",
+                "status_code": None,
+                "content_length": 0,
+                "filter_reason": "non_html_extension",
+            }
+        ],
+        max_pages=200,
+    )
+
+    assert warning is not None
+    assert warning["reason"] == "crawl_fetch_failed"

@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from knowledge_ingest import db, kb_config, org_config, qdrant_store
 from knowledge_ingest._patch_graphiti import apply as _apply_graphiti_patch
 from knowledge_ingest.config import settings
+from knowledge_ingest.host_pacing import ensure_single_process_host_pacing
 from knowledge_ingest.logging_setup import RequestContextMiddleware, setup_logging
 from knowledge_ingest.middleware.auth import InternalSecretMiddleware
 from knowledge_ingest.routes import (
@@ -30,6 +31,7 @@ _apply_graphiti_patch()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: ARG001 — FastAPI lifespan contract requires this param
+    ensure_single_process_host_pacing()
     logger.info("starting_knowledge_ingest_service")
     await qdrant_store.ensure_collection()
     logger.info("qdrant_collection_ready")

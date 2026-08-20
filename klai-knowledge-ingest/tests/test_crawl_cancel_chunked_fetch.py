@@ -28,7 +28,7 @@ from knowledge_ingest import crawl4ai_client
 from knowledge_ingest.crawl4ai_client import _chunked_bulk_fetch
 from knowledge_ingest.reason_codes import FetchReasonCode
 
-# _burst_size_for(0.5) == max(1, min(100, int(0.5 * 10 + 0.5))) == 5 — five
+# At 0.5 req/s, the host gate's 10-second window allows five URLs per request — five
 # URLs per chunk, so 20 URLs produce exactly four chunks.
 _FIVE_URLS_PER_CHUNK_RATE_LIMIT = 0.5
 

@@ -88,6 +88,48 @@ async def test_empty_primary_falls_back_to_discovery_seed() -> None:
 
 
 @pytest.mark.asyncio
+async def test_discovery_seed_inherits_primary_in_job_slowdown() -> None:
+    """A same-host seed retry must not restart at the pre-slowdown rate."""
+
+    async def _crawl_side_effect(**kwargs):
+        if kwargs["start_url"] == HUB:
+            kwargs["rate_limit_state"].current_rate_limit = 0.5
+            return [], []
+        return [_page(ARTICLE)], []
+
+    crawl_site = AsyncMock(side_effect=_crawl_side_effect)
+    await _run(crawl_site, discovery_seed_url=ARTICLE, rate_limit=2.0)
+
+    seed_call = crawl_site.await_args_list[1].kwargs
+    assert seed_call["rate_limit"] == 0.5
+    assert seed_call["rate_limit_state"].current_rate_limit == 0.5
+
+
+@pytest.mark.asyncio
+async def test_primary_and_seed_slowdowns_persist_the_lowest_rate() -> None:
+    """Persistence receives the lowest rate reached across both crawl passes."""
+
+    async def _crawl_side_effect(**kwargs):
+        state = kwargs["rate_limit_state"]
+        if kwargs["start_url"] == HUB:
+            state.current_rate_limit = 0.5
+            return [], []
+        assert state.current_rate_limit == 0.5
+        state.current_rate_limit = 0.25
+        return [_page(ARTICLE)], []
+
+    rate_effect = AsyncMock(return_value=None)
+    crawl_site = AsyncMock(side_effect=_crawl_side_effect)
+    with patch(
+        "knowledge_ingest.adapters.crawler._apply_domain_rate_limit_effect_once",
+        new=rate_effect,
+    ):
+        await _run(crawl_site, discovery_seed_url=ARTICLE, rate_limit=2.0)
+
+    assert rate_effect.await_args.kwargs["final_rate_limit"] == 0.25
+
+
+@pytest.mark.asyncio
 async def test_primary_that_reached_the_seed_skips_the_seed_pass() -> None:
     """A healthy site whose BFS reached the seed page pays for one crawl only."""
     crawl_site = AsyncMock(return_value=([_page(HUB + "a"), _page(ARTICLE)], []))
