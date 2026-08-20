@@ -15,12 +15,13 @@ export function StepName({
   data,
   setData,
   errorKey,
-  isLimitedPlan,
+  canCreateOrgKB,
 }: {
   data: WizardData
   setData: WizardDataSetter
   errorKey: WizardErrorKey
-  isLimitedPlan: boolean
+  /** Hides the scope picker when the backend would refuse an org-scoped KB. */
+  canCreateOrgKB: boolean
 }) {
   function handleNameChange(value: string) {
     setData((prev) => ({
@@ -44,7 +45,7 @@ export function StepName({
         {m.knowledge_wizard_title_step1()}
       </p>
 
-      {!isLimitedPlan && (
+      {canCreateOrgKB && (
         <div className="flex flex-col gap-1.5">
           <Label>{m.knowledge_new_scope_label()}</Label>
           <div className="grid grid-cols-2 gap-3">

@@ -784,6 +784,7 @@
   "knowledge_new_cancel": "Annuleren",
   "knowledge_new_slug_conflict": "Deze slug bestaat al in jouw organisatie",
   "knowledge_new_error": "Aanmaken mislukt. Probeer opnieuw.",
+  "knowledge_new_error_org_not_allowed": "Organisatie-kennisbanken zijn niet beschikbaar voor jouw rol of abonnement. Maak een persoonlijke kennisbank of vraag een beheerder om een upgrade.",
   "knowledge_detail_tab_docs": "Documenten",
   "knowledge_detail_tab_sources": "Bronnen",
   "knowledge_detail_tab_stats": "Statistieken",
