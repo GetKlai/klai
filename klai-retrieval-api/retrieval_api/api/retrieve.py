@@ -24,6 +24,7 @@ from retrieval_api.config import settings
 from retrieval_api.metrics import (
     quality_floor_filtered_total,
     retrieval_chunks_total,
+    retrieval_confidence_band_corroborated_total,
     retrieval_confidence_band_total,
     retrieval_graph_top_k_total,
     retrieval_link_expand_top_k_total,
@@ -983,6 +984,13 @@ async def retrieve(
         decision_record["confidence_band"] = confidence_band
         decision_record["confidence_band_corroborated"] = confidence_band_corroborated
         retrieval_confidence_band_total.labels(band=confidence_band, org_id=req.org_id).inc()
+        retrieval_confidence_band_corroborated_total.labels(
+            band=confidence_band_corroborated, org_id=req.org_id
+        ).inc()
+        # TODO(2026-08-22): Evaluate the 48h corroboration shadow window and
+        # decide to promote or remove this signal + metric. Do not leave it in
+        # indefinite shadow like the gate_shadow_mode/evidence_shadow_mode precedent.
+        # Compare primary vs shadow bands in Grafana's RAG quality Low-Confidence panel.
 
     evidence_query = (
         f"{req.raw_query}\n{query_resolved}"

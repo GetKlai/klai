@@ -100,6 +100,11 @@ retrieval_confidence_band_total = Counter(
     "Retrieval responses bucketed by reranker-score confidence band",
     ["band", "org_id"],
 )
+retrieval_confidence_band_corroborated_total = Counter(
+    "retrieval_confidence_band_corroborated_total",
+    "Shadow retrieval responses bucketed by corroborated confidence band",
+    ["band", "org_id"],
+)
 
 # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-3 / REQ-8 — link-expansion
 # survival rate. ``hit`` = at least one expanded chunk made the served

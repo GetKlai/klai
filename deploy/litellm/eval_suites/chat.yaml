@@ -503,6 +503,7 @@ queries:
   - id: chat-pasted-correspondence-short-ticket
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
+    kb_slugs: [support, sip]
     query: |
       Kun je hier naar kijken?
 
@@ -522,10 +523,15 @@ queries:
   - id: chat-pasted-correspondence-control-plain-question
     org_zitadel_id: "368884765035593759"
     user_zitadel_id: null
+    # Pin this control to the same curated corpus slice as the positive SIP
+    # canary. The exact answer-bearing heading below must occur in both the
+    # retrieval window and evidence pack; a sibling heading or filename is
+    # deliberately not enough.
+    kb_slugs: [support, sip]
     query: "Wat betekent een SIP 404 Not Found?"
     reference_answer: "Leg uit dat een SIP 404 Not Found betekent dat de gebelde gebruiker of het toestel niet gevonden is of niet is toegewezen, op basis van de kennisbank."
     expected_topics: [sip, 404, responscode]
-    expected_chunks: ["08_algemene_sip_instellingen.md"]
+    expected_chunks: ["Gebruiker/toestel bestaat niet, of extensie niet gevonden"]
     expected_answer_sections: []
     mix: pasted_correspondence
     # Negative-class control (REQ-6): a plain short question with NO pasted

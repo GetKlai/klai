@@ -10,13 +10,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 LITELLM_DIR = REPO_ROOT / "deploy" / "litellm"
 COMPOSE_FILE = REPO_ROOT / "deploy" / "docker-compose.yml"
 COMPOSE_UP_SCRIPT = REPO_ROOT / "deploy" / "scripts" / "compose-up.sh"
 DEPLOY_COMPOSE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "deploy-compose.yml"
-LITELLM_DEPLOY_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "litellm-hook-deploy.yml"
+LITELLM_DEPLOY_WORKFLOW = (
+    REPO_ROOT / ".github" / "workflows" / "litellm-hook-deploy.yml"
+)
 
 
 def test_all_litellm_top_level_python_modules_are_mounted_in_compose():
@@ -43,4 +44,7 @@ def test_litellm_prisma_migrations_are_preflight_gated():
     assert '[[ "$SERVICE" == "litellm" ]]' in compose_up_text
     assert '[[ -z "$SERVICE" || "$SERVICE" == "litellm" ]]' not in compose_up_text
     assert "- 'deploy/docker-compose.yml'" in litellm_deploy_text
-    assert "grep -vx 'litellm'" in deploy_compose_text
+    assert "awk '$0 != \"litellm\"'" in deploy_compose_text
+    assert "no env-drift services resolved; refusing an all-services compose up" in (
+        deploy_compose_text
+    )

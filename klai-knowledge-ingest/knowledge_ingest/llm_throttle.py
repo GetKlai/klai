@@ -35,13 +35,11 @@ Usage::
 module POSTs to ``chat/completions`` without referencing this limiter.
 
 ``TokenBucketLimiter`` itself lives in the shared ``klai_llm_throttle``
-package (klai-libs/llm-throttle), not here — the SAME class of bug (an
-uncoordinated direct caller of this shared budget) recurred in a second,
-independent service (``deploy/litellm/klai_kb_query_rewrite.py``,
-2026-08-18) precisely because the fix lived only inside this
-knowledge-ingest-local module. This module now only owns the
-knowledge-ingest-specific singleton wiring (its own settings, its own
-lazy-init getter); the reusable rate-limiting logic is shared.
+package (klai-libs/llm-throttle), not here. The former direct-Mistral
+LiteLLM consumer now routes through the proxy and no longer imports this
+package, leaving knowledge-ingest as its only runtime consumer. This module
+owns the knowledge-ingest-specific singleton wiring (its own settings and
+lazy-init getter).
 """
 
 from __future__ import annotations

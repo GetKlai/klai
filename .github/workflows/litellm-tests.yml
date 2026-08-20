@@ -11,6 +11,9 @@ on:
     branches: [main]
     paths:
       - 'deploy/litellm/**'
+      # The behavioral failover tests execute against the LiteLLM version
+      # pinned by the production image in this Compose file.
+      - 'deploy/docker-compose.yml'
       - 'klai-libs/citations/**'
       - 'klai-libs/service-auth/**'
       # chat-prompts is compared byte-for-byte against the vendored
@@ -21,6 +24,7 @@ on:
   pull_request:
     paths:
       - 'deploy/litellm/**'
+      - 'deploy/docker-compose.yml'
       - 'klai-libs/citations/**'
       - 'klai-libs/service-auth/**'
       - 'klai-libs/chat-prompts/**'
@@ -44,7 +48,7 @@ jobs:
         run: >
           uv run --no-project --python 3.13
           --with pytest --with pytest-asyncio --with httpx --with structlog
-          --with pyyaml
+          --with pyyaml --with litellm==1.96.2
           --with ../../klai-libs/citations
           --with ../../klai-libs/service-auth
           python -m pytest tests/ -q --tb=short

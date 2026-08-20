@@ -222,7 +222,8 @@ def test_well_formed_contract_is_verified_and_markers_are_stripped():
     assert all(marker not in rendered for marker in _MARKERS)
 
 
-def test_known_section_suffix_recovers_misspelled_internal_prefix():
+def test_known_section_suffix_recovers_misspelled_internal_prefix(caplog):
+    caplog.set_level("INFO", logger="klai_answer_epistemics")
     answer = _contract_answer().replace(
         "[[KLAI_CORRESPONDENCE_SENDER_STATEMENTS]]",
         "[[KLAI_CORRESPONSE_SENDER_STATEMENTS]]",
@@ -238,7 +239,33 @@ def test_known_section_suffix_recovers_misspelled_internal_prefix():
     rendered = strip_answer_contract_markers(answer)
 
     assert result["answer_contract"]["satisfied"] is True
+    assert result["answer_contract"]["normalized_marker_count"] == 1
     assert "[[KLAI_" not in rendered
+    drift_records = [
+        record
+        for record in caplog.records
+        if "answer_contract_marker_normalized" in record.getMessage()
+    ]
+    assert len(drift_records) == 1
+    assert drift_records[0].levelname == "WARNING"
+    assert drift_records[0].normalized_marker_count == 1
+
+
+def test_canonical_section_markers_do_not_emit_drift_event(caplog):
+    caplog.set_level("INFO", logger="klai_answer_epistemics")
+
+    inspect_answer_epistemics(
+        _contract_answer(),
+        user_turn=_INCIDENT_QUERY,
+        evidence_chunks=_EVIDENCE,
+        correspondence_detected=True,
+        telemetry_level="shadow",
+    )
+
+    assert not any(
+        "answer_contract_marker_normalized" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 def test_missing_section_is_observed_without_rewriting_answer_prose():
@@ -349,8 +376,10 @@ def test_non_correspondence_marker_like_text_is_byte_identical():
 
 
 def test_multipart_correspondence_keeps_part_boundary_for_sender_tokens():
-    user_turn = "Please analyse this: ---------- Forwarded message ---------- " \
+    user_turn = (
+        "Please analyse this: ---------- Forwarded message ---------- "
         "Sender-only hypothesis"
+    )
 
     result = inspect_answer_epistemics(
         "Sender-only hypothesis",
@@ -389,9 +418,7 @@ def test_correspondence_suppressed_stream_strips_markers_and_evidence_labels():
         suppress_kb_citations=True,
     )
     item = {
-        "choices": [
-            {"delta": {"content": _contract_answer()}, "finish_reason": "stop"}
-        ]
+        "choices": [{"delta": {"content": _contract_answer()}, "finish_reason": "stop"}]
     }
 
     compose_streaming_kb_response(item, kb_meta, flush_stream=True)
@@ -506,9 +533,7 @@ def test_open_stream_without_trusted_sources_is_unchanged_but_measured(caplog):
 def test_correspondence_stream_without_trusted_sources_strips_internal_tokens():
     kb_meta = _grounded_meta(trusted_sources=[])
     answer = _contract_answer()
-    item = {
-        "choices": [{"delta": {"content": answer}, "finish_reason": "stop"}]
-    }
+    item = {"choices": [{"delta": {"content": answer}, "finish_reason": "stop"}]}
 
     compose_streaming_kb_response(item, kb_meta, flush_stream=True)
 
@@ -524,9 +549,7 @@ def test_correspondence_stream_without_evidence_still_strips_markers():
         "De kennisbank zegt dat 404 een onbekend toestel kan betekenen (E1).",
         "De kennisbank bevat geen bewijs over deze situatie.",
     )
-    item = {
-        "choices": [{"delta": {"content": answer}, "finish_reason": "stop"}]
-    }
+    item = {"choices": [{"delta": {"content": answer}, "finish_reason": "stop"}]}
 
     compose_streaming_kb_response(item, kb_meta, flush_stream=True)
 

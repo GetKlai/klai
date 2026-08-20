@@ -139,6 +139,7 @@ async def run_evaluation(suite: str, variant: str | None = None) -> dict:
             query=query.query,
             org_zitadel_id=query.org_zitadel_id,
             user_zitadel_id=query.user_zitadel_id,
+            kb_slugs=query.kb_slugs,
         )
 
         if isinstance(retrieval, RetrievalFailure):

@@ -134,11 +134,36 @@ def test_load_handles_optional_fields(tmp_path: Path) -> None:
     q = suite.queries[0]
     # expected_chunks must default to [] not None
     assert q.expected_chunks == []
+    assert q.kb_slugs is None
     assert q.reference_answer is None
     # user_zitadel_id can be None
     assert q.user_zitadel_id is None
     # org_zitadel_id is a required field
     assert q.org_zitadel_id == "222"
+
+
+def test_load_preserves_retrieval_scope(tmp_path: Path) -> None:
+    """A suite query's corpus pin is available to the evaluation runner."""
+    suite_file = tmp_path / "scoped.yaml"
+    suite_file.write_text(
+        textwrap.dedent(
+            """\
+            suite: scoped
+            queries:
+              - id: scoped-q-1
+                org_zitadel_id: "222"
+                query: "What does SIP 404 mean?"
+                kb_slugs: [support, sip]
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    from knowledge_ingest.eval.suite_loader import load_suite
+
+    suite = load_suite(suite_file)
+
+    assert suite.queries[0].kb_slugs == ["support", "sip"]
 
 
 def test_load_strict_requires_reference_answer(tmp_path: Path) -> None:

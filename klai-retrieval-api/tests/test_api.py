@@ -49,7 +49,12 @@ class TestRetrieveEndpoint:
         """Happy path: mock all external calls, verify response structure."""
         import logging
 
+        from retrieval_api.metrics import retrieval_confidence_band_corroborated_total
+
         caplog.set_level(logging.INFO)
+        corroborated_before = retrieval_confidence_band_corroborated_total.labels(
+            band="medium", org_id=sample_retrieve_request["org_id"]
+        )._value.get()  # type: ignore[attr-defined]
 
         with (
             patch(
@@ -188,6 +193,10 @@ class TestRetrieveEndpoint:
         assert "top_item_chunk_ids" in decision_attrs
         assert decision_record.msg["confidence_band"] == "high"
         assert decision_record.msg["confidence_band_corroborated"] == "medium"
+        corroborated_after = retrieval_confidence_band_corroborated_total.labels(
+            band="medium", org_id=sample_retrieve_request["org_id"]
+        )._value.get()  # type: ignore[attr-defined]
+        assert corroborated_after == corroborated_before + 1
 
     def test_retrieve_passes_effective_telemetry_level_to_coreference(
         self, client, sample_retrieve_request

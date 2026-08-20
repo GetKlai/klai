@@ -31,6 +31,7 @@ class SuiteQuery:
     reference_answer: str | None = None
     expected_topics: list[str] = field(default_factory=list)
     expected_chunks: list[str] = field(default_factory=list)
+    kb_slugs: list[str] | None = None
 
 
 @dataclass
@@ -103,6 +104,7 @@ def load_suite(path: Path, *, require_reference_answer: bool = False) -> Suite:
                 reference_answer=reference_answer,
                 expected_topics=list(q.get("expected_topics") or []),
                 expected_chunks=list(q.get("expected_chunks") or []),
+                kb_slugs=list(q["kb_slugs"]) if q.get("kb_slugs") is not None else None,
             )
         )
 

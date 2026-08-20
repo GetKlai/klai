@@ -16,6 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+
 from klai_correspondence_eval import (
     CorrespondenceCanary,
     answer_shape_matches_expectation,
@@ -90,15 +91,21 @@ class TestLoadPastedCorrespondenceCanaries:
             by_id["chat-pasted-correspondence-short-ticket"].expected_answer_sections
             == expected_sections
         )
+        assert by_id["chat-pasted-correspondence-short-ticket"].kb_slugs == [
+            "support",
+            "sip",
+        ]
         assert (
             by_id[
                 "chat-pasted-correspondence-control-plain-question"
             ].expected_answer_sections
             == []
         )
-        assert by_id[
-            "chat-pasted-correspondence-control-plain-question"
-        ].expected_chunks == ["08_algemene_sip_instellingen.md"]
+        control = by_id["chat-pasted-correspondence-control-plain-question"]
+        assert control.kb_slugs == ["support", "sip"]
+        assert control.expected_chunks == [
+            "Gebruiker/toestel bestaat niet, of extensie niet gevonden"
+        ]
 
     def test_missing_file_raises_file_not_found(self, tmp_path: Path):
         with pytest.raises(FileNotFoundError):

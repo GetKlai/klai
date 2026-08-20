@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
 from klai_citations import evidence_chunks_from_chunks, extract_salient_query_tokens
+
 from klai_pasted_correspondence import (
     ANSWER_CONTRACT_MARKERS,
     extract_pasted_correspondence_text,
 )
+
+logger = logging.getLogger(__name__)
 
 _EVIDENCE_TOKEN_FIELDS = (
     "title",
@@ -43,12 +47,25 @@ _KNOWN_SECTION_MARKER_RE = re.compile(
 )
 
 
-def _normalize_known_section_markers(answer: str) -> str:
+def _normalize_known_section_markers(answer: str) -> tuple[str, int]:
     """Canonicalize known sections while leaving unknown markers observable."""
-    return _KNOWN_SECTION_MARKER_RE.sub(
-        lambda match: _ANSWER_CONTRACT_MARKERS_BY_SUFFIX[match.group(1).upper()],
-        answer,
-    )
+    normalized_marker_count = 0
+
+    def _canonical_marker(match: re.Match[str]) -> str:
+        nonlocal normalized_marker_count
+        canonical = _ANSWER_CONTRACT_MARKERS_BY_SUFFIX[match.group(1).upper()]
+        if match.group(0) != canonical:
+            normalized_marker_count += 1
+        return canonical
+
+    normalized = _KNOWN_SECTION_MARKER_RE.sub(_canonical_marker, answer)
+    if normalized_marker_count:
+        logger.warning(
+            "answer_contract_marker_normalized normalized_marker_count=%d",
+            normalized_marker_count,
+            extra={"normalized_marker_count": normalized_marker_count},
+        )
+    return normalized, normalized_marker_count
 
 
 def _evidence_tokens(evidence_chunks: list[dict]) -> set[str]:
@@ -104,9 +121,15 @@ def inspect_answer_epistemics(
 
     result: dict[str, Any] = {"claim_provenance": provenance}
     if correspondence_detected:
-        result["answer_contract"] = _verify_answer_contract(
-            _normalize_known_section_markers(answer), evidence_chunks
+        normalized_answer, normalized_marker_count = _normalize_known_section_markers(
+            answer
         )
+        answer_contract = _verify_answer_contract(normalized_answer, evidence_chunks)
+        if normalized_marker_count:
+            # This travels with the existing request-correlated epistemics log,
+            # while the dedicated warning above remains useful as a drift counter.
+            answer_contract["normalized_marker_count"] = normalized_marker_count
+        result["answer_contract"] = answer_contract
     return result
 
 
