@@ -19,9 +19,10 @@ API-level retries/routing):
      exercised for real rather than bypassed.
   3. Retrieve with ``coreference_resolved=rewrite_decided(meta)``, matching
      ``klai_knowledge.py``'s own retrieve-body construction.
-  4. Match expected_chunks markers within the top-5 results AND the production
-     evidence pack. A retrieved chunk cannot pass when the answer model never
-     receives it.
+  4. Match expected_chunks markers within the production evidence pack. This
+     is the answer-visible retrieval contract; hybrid graph facts can outrank
+     the canonical source in the raw list while evidence selection still sends
+     that exact source to the answer model.
   5. Ask the production answer model with a prompt assembled from the canonical
      branch, correspondence, context, and language helpers, then verify the raw
      answer with the same deterministic contract inspector as the hook.
@@ -41,11 +42,11 @@ rejection, or any other ``meta["skipped"]`` reason) is not a real
 distillation attempt and is excluded from the canary's pass rate — see
 ``_run_one_sample`` / ``_run_canary`` below.
 
-Scope note: this proves AC-2 (top-5 presence + repeated-sample pass rate).
-It does NOT compute AC-6's ``context_precision`` metric — that requires the
+Scope note: this proves answer-visible evidence presence plus the
+repeated-sample pass rate. It does NOT prove the legacy raw top-5 AC-2
+criterion or compute AC-6's ``context_precision`` metric — that requires the
 full RAGAS judge pipeline in klai-knowledge-ingest's nightly eval harness
-(``knowledge_ingest/eval/ragas_runner.py``). Closing AC-6 fully still means
-running the actual ``chat.yaml`` suite through that harness.
+(``knowledge_ingest/eval/ragas_runner.py``).
 
 THIS SCRIPT CANNOT RUN IN STANDARD CI. It needs:
   - Real model quota through the local LiteLLM proxy.
@@ -83,8 +84,9 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from klai_answer_epistemics import inspect_answer_epistemics
 from klai_citations import evidence_pack_items_as_chunks
+
+from klai_answer_epistemics import inspect_answer_epistemics
 from klai_correspondence_eval import (
     CorrespondenceCanary,
     answer_shape_matches_expectation,
@@ -128,7 +130,6 @@ _DEFAULT_SUITE = Path(
     os.environ.get("PASTED_CORRESPONDENCE_EVAL_SUITE", "/app/eval_suites/chat.yaml")
 )
 _RETRIEVE_TOP_K = 10
-_MATCH_WINDOW = 5  # AC-2: "present in top-5", not "anywhere in top-10"
 _RETRIEVE_TIMEOUT = 15.0
 _ANSWER_TIMEOUT = 45.0
 _EVAL_SAMPLE_DELAY_SECONDS = float(
@@ -305,9 +306,6 @@ async def _run_one_sample(
     retrieval_payload = resp.json()
     if not isinstance(retrieval_payload, dict):
         raise TypeError("retrieval eval returned a non-object payload")
-    raw_chunks = retrieval_payload.get("chunks")
-    raw_chunks = raw_chunks if isinstance(raw_chunks, list) else []
-    retrieval_match_chunks = raw_chunks[:_MATCH_WINDOW]
     evidence_pack = retrieval_payload.get("evidence_pack")
     if not isinstance(evidence_pack, dict):
         raise TypeError("retrieval eval response is missing the production evidence_pack")
@@ -317,8 +315,7 @@ async def _run_one_sample(
     )
 
     all_matched = all(
-        any(chunk_matches_expected(expected, chunk) for chunk in retrieval_match_chunks)
-        and any(chunk_matches_expected(expected, chunk) for chunk in answer_chunks)
+        any(chunk_matches_expected(expected, chunk) for chunk in answer_chunks)
         for expected in canary.expected_chunks
     )
     answer_shape_ok = await _answer_shape_matches(

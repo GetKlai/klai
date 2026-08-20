@@ -306,6 +306,57 @@ async def test_run_one_sample_fails_when_expected_chunk_does_not_reach_evidence_
 
 
 @pytest.mark.asyncio
+async def test_run_one_sample_passes_when_expected_chunk_reaches_production_evidence_pack(
+    monkeypatch,
+):
+    """The answer-visible evidence pack is the production retrieval contract."""
+    module = _load_script(monkeypatch)
+    monkeypatch.setattr(
+        module,
+        "rewrite_and_classify",
+        AsyncMock(return_value=("distilled", [], {"skipped": None})),
+    )
+    retrieval_response = _FakeResponse(
+        {
+            "chunks": [
+                {"title": f"Relevant graph fact {index}", "text": "SIP 404 fact"}
+                for index in range(5)
+            ]
+            + [
+                {"title": "Another source", "text": "other body"},
+                {"title": "Expected marker", "text": "canonical source body"},
+            ],
+            "confidence_band": "high",
+            "evidence_pack": {
+                "items": [
+                    {
+                        "evidence_id": "E1",
+                        "title": "Expected marker",
+                        "text": "canonical source body",
+                    }
+                ]
+            },
+        }
+    )
+    monkeypatch.setattr(module, "retrieve", AsyncMock(return_value=retrieval_response))
+    monkeypatch.setattr(module, "_answer_shape_matches", AsyncMock(return_value=True))
+    canary = module.CorrespondenceCanary(
+        id="answer-visible-evidence",
+        org_zitadel_id="1",
+        query="What does SIP 404 mean?",
+        expected_chunks=["Expected marker"],
+    )
+
+    retrieval_passed, contract_passed, _, _, skipped = await module._run_one_sample(
+        _FakeHttp(), canary
+    )
+
+    assert retrieval_passed is True
+    assert contract_passed is True
+    assert skipped is None
+
+
+@pytest.mark.asyncio
 async def test_run_one_sample_skips_before_retrieval_and_answer(monkeypatch):
     module = _load_script(monkeypatch)
     monkeypatch.setattr(
