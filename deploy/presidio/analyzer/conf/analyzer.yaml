@@ -1,0 +1,108 @@
+# Unified ANALYZER_CONF_FILE for the Klai-layered presidio-analyzer image
+# (SPEC-PRIVACY-MISTRAL-PII-001 Phase 1). Loaded by the stock app.py via the
+# ANALYZER_CONF_FILE env var (see ../Dockerfile) — no changes to app.py itself.
+#
+# REQ-2: detection is language-agnostic by construction. `supported_languages`
+# below is the set of languages the analyzer's /analyze endpoint accepts. Every
+# entity in the `recognizer_registry` section that omits its own
+# `supported_languages` gets ONE INSTANCE PER LANGUAGE IN THIS LIST
+# automatically (Presidio's own recognizer-loader behavior — see
+# recognizers_loader_utils.py's `_get_recognizer_languages`, and compare with
+# how the stock default_recognizers.yaml declares CreditCardRecognizer for
+# multiple languages). None of Klai's REQ-3 entities are scoped to `nl` for
+# this reason: a BSN in an English sentence is still a BSN, and this list is
+# what the "registered across all languages" claim is actually implemented as.
+#
+# Three languages ship in this PR (en, nl, de) — enough to prove the mechanism
+# (the language-agnosticism test covers all three). Extending coverage to the
+# rest of the six languages klai-retrieval-api's language detector already
+# serves (nl, en, de, fr, pt, es —
+# klai-retrieval-api/retrieval_api/util/language_detect.py) is a one-line
+# addition to this list, not a code change — REQ-2's own framing ("adding a
+# jurisdiction later is adding a recognizer, not a language pipeline") applies
+# equally to adding a language here.
+supported_languages:
+  - en
+  - nl
+  - de
+
+default_score_threshold: 0
+
+# REQ-2: no spaCy model is loaded. `model_name: "blank"` is a Klai sentinel
+# understood by the SpacyNlpEngine.load() patch in sitecustomize.py — it
+# requests spacy.blank(lang) (tokenizer only, no trained weights, no NER, no
+# download) instead of a trained pipeline. See sitecustomize.py's module
+# docstring for why this needs a patch on this pinned presidio-analyzer
+# version rather than being reachable from config alone.
+nlp_configuration:
+  nlp_engine_name: spacy
+  models:
+    - lang_code: en
+      model_name: blank
+    - lang_code: nl
+      model_name: blank
+    - lang_code: de
+      model_name: blank
+
+recognizer_registry:
+  # global_regex_flags intentionally omitted — the registry-wide default
+  # (regex.IGNORECASE | regex.MULTILINE | regex.DOTALL, see
+  # presidio_analyzer/pattern_recognizer.py) already gives the SECRET
+  # recognizer's PEM pattern the DOTALL behaviour it needs to span a
+  # multi-line key block up to the matching END marker (REQ-4).
+  recognizers:
+    # Presidio auto-adds a SpacyRecognizer (NER-based) per language if the
+    # registry doesn't declare one explicitly (see
+    # RecognizerRegistryProvider.__update_based_on_nlp_recognizer_conf). Left
+    # alone, that would register PERSON/LOCATION/ORGANIZATION/DATE_TIME as
+    # "supported" even though the blank pipeline (REQ-2 — no spaCy model) has
+    # no NER component and would never actually produce a match. Disabling it
+    # explicitly keeps /supportedentities honest about what this pack (Phase
+    # 1: regex + checksum only) actually detects. PERSON is GLiNER's job in a
+    # later phase (REQ-9), not a silently-registered no-op recognizer here.
+    - name: SpacyRecognizer
+      type: predefined
+      enabled: false
+
+    # --- Klai pack (REQ-3, REQ-4) — Python classes, klai_pii_recognizers.py ---
+    # No `supported_languages:` override on any of these five: they inherit
+    # the file-level `supported_languages` above, which is exactly the
+    # "registered across all languages" mechanism REQ-2 asks for.
+    - name: NLBSNRecognizer
+      type: predefined
+
+    - name: NLKvKRecognizer
+      type: predefined
+
+    - name: NLBTWRecognizer
+      type: predefined
+
+    - name: NLPostcodeRecognizer
+      type: predefined
+
+    - name: SecretRecognizer
+      type: predefined
+
+    # --- Stock built-ins, enabled not rewritten (REQ-3) ---
+    # IBAN_CODE (mod-97) and CREDIT_CARD (Luhn) already have checksums in
+    # Presidio; EMAIL_ADDRESS and PHONE_NUMBER are format/library-based.
+    # Writing Klai-specific versions of these would be a defect, not a
+    # feature — REQ-3's table is explicit that only NL_BSN/NL_KVK/NL_BTW/
+    # NL_POSTCODE/SECRET are "new".
+    - name: CreditCardRecognizer
+      type: predefined
+
+    - name: IbanRecognizer
+      type: predefined
+
+    - name: EmailRecognizer
+      type: predefined
+
+    # PhoneRecognizer's own DEFAULT_SUPPORTED_REGIONS is
+    # (US, UK, DE, FE, IL, IN, CA, BR) — NL is not in it. REQ-3 explicitly
+    # calls for "phone with region NL", so it is set here rather than left
+    # to the class default.
+    - name: PhoneRecognizer
+      type: predefined
+      supported_regions:
+        - NL

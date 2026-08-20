@@ -444,19 +444,34 @@ services:
       - net-postgres
       - net-redis
 
-  # ─── PII minimisation (Presidio) — SPEC-PRIVACY-MISTRAL-PII-001 Phase 0 ──
-  # Stock Presidio only — no Klai Dutch recognizer pack yet (that is Phase 1,
-  # REQ-3). These two containers exist so the Phase 0 round-trip harness
-  # (deploy/litellm/scripts/eval_pii_restore_live.py) has something to call
-  # while proving whether `output_parse_pii` restores masked values
-  # correctly on LiteLLM v1.96.2 (REQ-0a) and measuring Dutch token-survival
-  # rate (REQ-0b). Digest-pinned per REQ-1: ghcr.io/data-privacy-stack/
-  # presidio-*, NEVER mcr.microsoft.com (those tags are frozen post-
-  # transition and receive no updates). `inference` network only — no Caddy
-  # route, no published port; both services accept arbitrary text and have
-  # no authentication of their own. Neither takes a secret, so this adds no
-  # `env_file` scope and no `SECRETS_MATRIX.md` entry.
+  # ─── PII minimisation (Presidio) — SPEC-PRIVACY-MISTRAL-PII-001 ─────────
+  # Phase 1 (REQ-3, REQ-4): presidio-analyzer now runs Klai's own image,
+  # `deploy/presidio/analyzer/` — the stock ghcr.io/data-privacy-stack
+  # analyzer (still the FROM base, still digest-pinned there per REQ-1;
+  # NEVER mcr.microsoft.com, those tags are frozen post-transition) layered
+  # with the Dutch/credential recognizer pack (klai_pii_recognizers.py) and
+  # a language-agnostic registry config (conf/analyzer.yaml — en/nl/de,
+  # extensible per REQ-2's own framing). Built + pushed by
+  # .github/workflows/presidio-analyzer-image-build.yml, same pattern as
+  # ghcr.io/getklai/librechat.
+  # `inference` network only — no Caddy route, no published port; both
+  # services accept arbitrary text and have no authentication of their own.
+  # Neither takes a secret, so this adds no `env_file` scope and no
+  # `SECRETS_MATRIX.md` entry.
   presidio-analyzer:
+    # PLACEHOLDER DIGEST — deploy/presidio/analyzer-image-build.yml has not
+    # run against this change yet (it runs on push to `main`; this PR does
+    # not push or deploy). Replace with the real digest from that workflow's
+    # step summary. Bootstrap ordering: presidio-analyzer-image-build.yml
+    # only PUBLISHES on a push to `main`, so the Klai image does not exist
+    # until the PR carrying its Dockerfile has merged. This service therefore
+    # still runs the STOCK image, and a follow-up PR flips it to
+    # ghcr.io/getklai/presidio-analyzer@sha256:<real digest> together with
+    # the 512M limit below. A placeholder digest is not an acceptable interim
+    # state — check-klai-presidio-digest.sh rejects one, because nothing else
+    # in CI would (check-image-pullable.sh matches `image:tag` form only and
+    # is blind to every digest-pinned reference), and it would deploy an
+    # unpullable image to core-01.
     image: ghcr.io/data-privacy-stack/presidio-analyzer@sha256:286e3fa7f3a7426e775e8564fe1870f1ba8f999d3ab8bbb8cc46a44355d9d6e9
     restart: unless-stopped
     networks:
@@ -464,26 +479,25 @@ services:
     deploy:
       resources:
         limits:
-          # PROVISIONAL. The SPEC's Deployment section requires the
-          # measured resident size under load from the server before these
-          # are final ("Memory sizing is a gate, not an estimate" —
-          # docs/specs/SPEC-PRIVACY-MISTRAL-PII-001/spec.md). NOT measured
-          # from a running container — no container has run yet at PR-write
-          # time. Sized instead from the SPEC's own NFR note (spaCy-backed
-          # configs measured 80-250ms/request in the community vs.
-          # single-digit ms regex-only) plus the stock image's default
-          # `en_core_web_lg` spaCy model footprint and headroom for
-          # concurrent requests.
+          # Measured, not estimated: `docker stats` against this exact image
+          # (built locally from deploy/presidio/analyzer/Dockerfile, 3
+          # languages loaded — en/nl/de) showed ~257MiB steady-state after
+          # startup plus light request traffic (30 sequential /analyze
+          # calls exercising every REQ-3/REQ-4 entity). That is the number
+          # REQ-2's "no spaCy model" claim is supposed to buy: no
+          # `en_core_web_lg`/`nl_core_news_lg` (560MB+ each) is loaded —
+          # every configured language uses `spacy.blank()` (tokenizer-only,
+          # no trained weights; see sitecustomize.py). 512M gives ~2x
+          # headroom over the measured steady-state for concurrent-request
+          # growth without re-inflating toward the old provisional 2G.
           #
-          # NOTE: merging this to `main` DOES start these containers —
-          # `deploy-compose.yml` runs `docker compose up -d
-          # --remove-orphans` for every non-litellm service on every
-          # docker-compose.yml push, so these provisional limits land on
-          # core-01 as soon as this PR merges, not just when Phase 1 does.
-          # Pull the actual resident size from the server
-          # (`docker stats presidio-analyzer presidio-anonymizer
-          # --no-stream`) shortly after merge and revise these numbers —
-          # do not wait for Phase 1 to true them up.
+          # NOT YET APPLIED: while this service still runs the STOCK image
+          # (see the image comment above), en_core_web_lg IS loaded, so 512M
+          # would OOM it. The limit drops to 512M in the same follow-up PR
+          # that flips the image — the two changes are one unit and must not
+          # be split. core-01 runs 78 services, so revise again from
+          # `docker stats presidio-analyzer --no-stream` once the Klai image
+          # runs on the server under real traffic.
           cpus: '1'
           memory: 2G
 
