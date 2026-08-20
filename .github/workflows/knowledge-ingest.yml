@@ -1,17 +1,8 @@
 name: Build and push knowledge-ingest
 
 on:
+  workflow_call:
   push:
-    branches: [main]
-    paths:
-      - 'klai-knowledge-ingest/**'
-      - 'klai-libs/connector-credentials/**'
-      - 'klai-libs/image-storage/**'
-      - 'klai-libs/kb-slugs/**'
-      - 'klai-libs/llm-throttle/**'
-      - 'klai-libs/graphiti-compat/**'
-      - '.github/workflows/knowledge-ingest.yml'
-  pull_request:
     branches: [main]
     paths:
       - 'klai-knowledge-ingest/**'

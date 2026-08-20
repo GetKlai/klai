@@ -1026,7 +1026,7 @@ snapshot: [docs/architecture/retrieval-improvements-roadmap.md](retrieval-improv
 | Quality boost | `klai-retrieval-api/retrieval_api/quality_boost.py` | SPEC-KB-015 — `feedback_count >= 3` cold-start gate, ±10% boost. |
 | Identity verify (portal) | `klai-portal/backend/app/services/identity_verifier.py` | `verify_identity_claim()` — JWT / membership / `partner:<key_id>` branches. |
 | Identity asserter (lib) | `klai-libs/identity-assert/klai_identity_assert/` | Consumer-side cache + retry around `/internal/identity/verify`. |
-| F2 audit ref | `.moai/audits/retrieval-coupling-2026-05-06/findings/F2-...md` | Why partner-key verification lives portal-side (not in retrieval-api). |
+| F2 audit ref | `retrieval-coupling-2026-05-06` finding F2 (historical — audit removed in repo cleanup 2026-08-18) | Why partner-key verification lives portal-side (not in retrieval-api). |
 | Router (signal) | `klai-retrieval-api/retrieval_api/services/router.py` | Semantic-centroid signal with optional LLM fallback for source-aware select (SPEC-KB-021) |
 | Graph search | `klai-retrieval-api/retrieval_api/services/graph_search.py` | FalkorDB/Graphiti parallel traversal, RRF-merged with Qdrant results |
 | Reranker | `klai-retrieval-api/retrieval_api/services/reranker.py` | Cross-encoder reranking via BGE-reranker-v2-m3 on gpu-01 (Infinity) |

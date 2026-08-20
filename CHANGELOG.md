@@ -1,5 +1,8 @@
 # Changelog
 
+> Historical provenance note (2026-08-20): `.moai` paths in older entries are
+> retained verbatim; the `.moai` tree was removed in the 2026-08-18 repo cleanup.
+
 ## [Unreleased] — 2026-05-13 — SPEC-PORTAL-PRICING-PER-USER-001 v0.5.x: Per-user accounts, profile-derived account type
 
 Klai's billing axis is now per-user: each user has an **account type** (`chat` €28/mo or `knowledge` €68/mo, matching [getklai.com/pricing](https://getklai.com/pricing)) and a **role / profile** kept as two orthogonal columns on `portal_users`. The invite UI shows only the Profile dropdown — account type is derived live via `suggest_seat(role)` and rendered as a read-only badge with `role="status"` + `aria-live="polite"`. Admin-support flow (`PATCH /api/admin/users/{id}`) still accepts an explicit `seat_type` so a customer's billing intent can override a role's default. The legacy `viewer` tier has been dropped — it never appeared on the marketing page.
@@ -32,7 +35,7 @@ Klai's billing axis is now per-user: each user has an **account type** (`chat` �
 
 This SPEC shipped as v0.1.0 → v0.5.1 across one week. The most consequential pivot was v0.5.0: after Phases 1-6 shipped, Mark inspected the live invite UI and asked to drop the viewer tier (not on the marketing page) AND collapse the seat selector into a Profile-derived badge. The pivot LOOKS like the v0.1.0 `PROFILE_TIER` shape that v0.2.0 labelled an anti-pattern — but the two are structurally different: v0.5.x keeps `seat_type` + `role` as orthogonal columns (admin override still possible via PATCH endpoint); only the invite UI simplifies. The architecture note in SPEC HISTORY row 0.5.0 documents the distinction.
 
-Phase 5b — Moneybird per-seat subscription mutation — is tracked separately in SPEC-PORTAL-MONEYBIRD-PER-SEAT-001 (historical — SPEC removed in repo cleanup 2026-08-18) (`needs-research`; Q1-Q5 open). Until per-tenant billing is flipped on, the breakdown endpoint is display-only and customers still pay the legacy `org.plan × org.seats` invoice.
+Phase 5b — Moneybird per-seat subscription mutation — is tracked separately in [SPEC-PORTAL-MONEYBIRD-PER-SEAT-001](.moai/specs/SPEC-PORTAL-MONEYBIRD-PER-SEAT-001/spec.md) (`needs-research`; Q1-Q5 open). Until per-tenant billing is flipped on, the breakdown endpoint is display-only and customers still pay the legacy `org.plan × org.seats` invoice.
 
 ### Verification (prod, Voys tenant, Google SSO)
 
@@ -111,9 +114,8 @@ languages.
   `docs/retros/2026-05-07-litellm-restart-vs-recreate.md` (incident retro),
   `.claude/rules/klai/pitfalls/process-rules.md`
   (`docker-compose-restart-vs-recreate` CRIT entry),
-  SPEC-LITELLM-CUSTOM-IMAGE-001 (historical — SPEC removed in repo cleanup 2026-08-18),
-  a follow-up SPEC for a custom litellm Dockerfile + path-A telemetry +
-  vendored-files removal.
+  `.moai/specs/SPEC-LITELLM-CUSTOM-IMAGE-001/` (follow-up SPEC for custom
+  litellm Dockerfile + path-A telemetry + vendored-files removal).
 
 ### Changed
 

@@ -1,5 +1,8 @@
 # Audit Tenant Isolation 2026-05-05/06 — Results
 
+> Historische provenance-notitie (2026-08-20): `.moai`-paden in dit rapport
+> blijven ongewijzigd; de `.moai`-tree is verwijderd bij de repo-opruiming van 2026-08-18.
+
 **Datum:** 2026-05-06 (vroeg-ochtend), na een nacht autonoom werken in jouw opdracht.
 **Status:** 11 PRs open, allemaal afkomstig van de audit. Het meeste werk is klaar; resterend werk is omschreven onderaan.
 
@@ -20,7 +23,7 @@ De standards-doc is de bron-van-waarheid voor alle vervolgwerk: Cat-D RLS patter
 
 ### SPECs
 
-10 historische SPEC-TI-* SPECs (één per cluster; removed in repo cleanup 2026-08-18). De index was SPEC-TI-INDEX.
+10 SPECs in `.moai/specs/SPEC-TI-*` (één per cluster). Index: `.moai/specs/SPEC-TI-INDEX.md`.
 
 ### PRs
 
@@ -172,7 +175,7 @@ Beide hebben `build-push: fail`. Deze stap is na de quality-stap, dus quality is
 
 - **`reports/audit-tenant-isolation-2026-05-05/report.md`** — alle 33 findings met code-anchors. Gebruik als referentie bij review.
 - **`reports/audit-tenant-isolation-2026-05-05/standards.md`** — bron-van-waarheid voor RLS-pattern, sessie-helpers, etc. Hier ga je naar terug bij elke vervolg-vraag "hoe doen we X?".
-- **SPEC-TI-INDEX** (historical — SPEC removed in repo cleanup 2026-08-18) — overzicht van alle SPECs + PR-mappings.
+- **`.moai/specs/SPEC-TI-INDEX.md`** — overzicht van alle SPECs + PR-mappings.
 
 ## Beslissingen die ik autonoom heb gemaakt
 

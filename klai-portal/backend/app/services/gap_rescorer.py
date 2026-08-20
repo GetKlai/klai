@@ -120,8 +120,8 @@ async def rescore_open_gaps(
     # Use the dedicated retrieval_api_internal_secret rotation
     # boundary (REQ-6.1) — falls back to internal_secret for
     # backwards-compat with envs that haven't split the secret yet.
-    # Audit reference: .moai/audits/retrieval-coupling-2026-05-06/
-    # findings/F1-gap-rescorer-bearer-auth.md
+    # Audit reference: retrieval-coupling-2026-05-06 finding F1, gap-rescorer
+    # bearer auth (historical — audit removed in repo cleanup 2026-08-18).
     retrieval_secret = settings.retrieval_api_internal_secret or settings.internal_secret
     headers = {
         "X-Internal-Secret": retrieval_secret,

@@ -450,7 +450,7 @@ goedgekeurde lokale handmatige run.
 
 ## 13. Cross-referenties
 
-- Test-pyramid foundation: `.claude/skills/moai/moai-ref-testing-pyramid/`
+- Test-pyramid foundation: `moai-ref-testing-pyramid` (historical — skill removed in repo cleanup 2026-08-18)
 - Container-hygiene + label-conventie: SPEC-INFRA-CONTAINER-HYGIENE-001 (historical — SPEC removed in repo cleanup 2026-08-18)
 - Tenant-delete (blocker fase 2): zie nieuwe sessie met
   `SPEC-INFRA-TENANT-DELETE-001` prompt

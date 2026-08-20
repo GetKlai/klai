@@ -14,14 +14,7 @@ name: Validate .trivyignore.yaml
 # PR adding a future ignore-entry), so we need an independent guard.
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - '**/.trivyignore.yaml'
-      - '**/.trivyignore.yml'
-      - 'scripts/validate-trivyignore.sh'
-      - 'scripts/_validate_trivyignore.py'
-      - '.github/workflows/validate-trivyignore.yml'
+  workflow_call:
   push:
     branches: [main]
     paths:

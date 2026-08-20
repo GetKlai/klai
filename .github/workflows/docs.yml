@@ -1,12 +1,8 @@
 name: Build and deploy docs
 
 on:
+  workflow_call:
   push:
-    branches: [main]
-    paths:
-      - 'klai-docs/**'
-      - '.github/workflows/docs.yml'
-  pull_request:
     branches: [main]
     paths:
       - 'klai-docs/**'
