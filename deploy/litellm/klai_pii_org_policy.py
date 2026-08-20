@@ -107,6 +107,13 @@ async def resolve_org_entity_policy(org_id: Any) -> frozenset[str]:
         return cached
 
     if not PORTAL_INTERNAL_SECRET:
+        # The rule below matches the word "SECRET" in the FORMAT STRING, not a
+        # logged value — only org_id is interpolated, and the message says the
+        # secret is ABSENT. Documented false-positive class in
+        # .claude/rules/klai/infra/deploy.md ("Semgrep false positives on
+        # OAuth log messages"), whose prescribed fix is this annotation.
+        # The nosemgrep comment must be the line IMMEDIATELY before the match.
+        # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
         logger.warning(
             "pii_org_policy_no_secret org_id=%s — PORTAL_INTERNAL_SECRET not set, "
             "fail-closed to no optional entities",
