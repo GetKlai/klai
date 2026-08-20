@@ -19,7 +19,7 @@ import tempfile
 
 import pytest
 
-from knowledge_ingest.crawl4ai_client import build_crawl_config
+from knowledge_ingest.crawl4ai_config import build_crawl_config
 
 
 def test_selector_goes_to_target_elements_not_css_selector() -> None:

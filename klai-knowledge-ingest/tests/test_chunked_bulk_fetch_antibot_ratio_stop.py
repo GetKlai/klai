@@ -163,6 +163,8 @@ async def test_majority_blocked_crawl_stops_early(
     assert fetch.stopped_early is True
     assert fetch.not_attempted == urls[8:]
     assert len(fetch.raw_results) == 8
+    assert fetch.stop_trigger_reason_code == "blocked_anti_bot"
+    assert fetch.circuit_breaker_triggered is False
 
 
 @pytest.mark.asyncio

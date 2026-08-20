@@ -250,15 +250,15 @@ class PostgresCrawlCheckpoint:
         return snapshot
 
     async def save(self, snapshot: dict[str, Any]) -> None:
-        from knowledge_ingest.crawl4ai_client import _canonicalise_url
+        from knowledge_ingest.crawl_url_policy import canonicalise_url
 
         ledger = list(snapshot.get("ledger") or [])
         results_by_url = {
-            _canonicalise_url(str(result.get("requested_url") or result["url"])): result
+            canonicalise_url(str(result.get("requested_url") or result["url"])): result
             for result in snapshot.get("results_delta") or []
         }
         outcomes_by_url = {
-            _canonicalise_url(str(outcome["url"])): outcome
+            canonicalise_url(str(outcome["url"])): outcome
             for outcome in snapshot.get("outcomes_delta") or []
         }
         frontier_rows_by_url: dict[str, tuple[Any, ...]] = {}

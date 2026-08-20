@@ -2427,7 +2427,7 @@ async def test_crawl_site_rate_limit_never_reaches_crawl4ai_payload_as_pacing_ke
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Guard against reintroduction, at the ``crawl_site`` integration level
-    (sibling to the unit-level guard in ``test_build_crawl_config.py``).
+    (sibling to the unit-level guard in ``test_crawl4ai_config.py``).
 
     2026-08-17/18: an earlier fix believed ``crawl_site(rate_limit=...)``
     needed to reach the ``POST /crawl`` payload's ``crawler_config`` params
@@ -2435,7 +2435,7 @@ async def test_crawl_site_rate_limit_never_reaches_crawl4ai_payload_as_pacing_ke
     crawl4ai's REST server ignores both — it builds its own dispatcher (see
     ``build_crawl_config``'s docstring). Real pacing for ``rate_limit`` is
     client-side, in ``_chunked_bulk_fetch`` (covered by
-    ``tests/test_client_side_pacing.py``), and must never leak into the
+    ``tests/test_chunked_bulk_fetch_pacing.py``), and must never leak into the
     crawler_config payload sent to the server.
     """
 
@@ -2489,7 +2489,7 @@ async def test_crawl_site_rate_limit_never_reaches_crawl4ai_payload_as_pacing_ke
 class _RecoveryClock:
     """A monotonic clock for ``_recovery_monotonic`` driven by test code.
 
-    Unlike ``_pacing_monotonic`` (see test_client_side_pacing.py's
+    Unlike ``_pacing_monotonic`` (see test_chunked_bulk_fetch_pacing.py's
     ``_VirtualClock``), nothing in ``_recover_bulk_5xx_batch`` advances this
     clock automatically except the (patched) cooldown sleep — callers
     advance ``.now`` directly to simulate wall-clock time consumed by other

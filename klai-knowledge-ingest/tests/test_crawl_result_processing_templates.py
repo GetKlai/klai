@@ -9,8 +9,8 @@ be ingested as document content.
 
 from __future__ import annotations
 
-from knowledge_ingest.crawl4ai_client import (
-    _extract_result,
+from knowledge_ingest.crawl_result_processing import (
+    extract_result,
     strip_unrendered_template_lines,
 )
 
@@ -63,7 +63,7 @@ def test_extract_result_cleans_and_recounts() -> None:
         "html": "<html></html>",
         "success": True,
     }
-    result = _extract_result("https://example.com/hub", page)
+    result = extract_result("https://example.com/hub", page)
     assert "{{item.Name}}" not in result.fit_markdown
     assert "{{item.Name}}" not in result.raw_markdown
     # word_count is computed AFTER cleaning, so token junk no longer pads a

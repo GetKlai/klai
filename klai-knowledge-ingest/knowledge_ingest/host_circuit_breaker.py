@@ -2,8 +2,8 @@
 
 2026-08-19 (intermedia.com incident #3 — "20 minutes, zero pages"): a
 RATE_LIMITED signal already stops ``_chunked_bulk_fetch`` immediately (see
-``crawl4ai_client._STOP_CHUNKING_REASON_CODES``), and a BLOCKED_ANTI_BOT
-signal stops it once a crawl-wide ratio+floor gate trips
+``crawl4ai_client._STOP_CHUNKING_REASON_CODES``), while this breaker stops a
+BLOCKED_ANTI_BOT signal only once its crawl-wide ratio+floor gate trips
 (``settings.crawl_antibot_stop_ratio`` / ``crawl_antibot_stop_min_count``).
 Neither mechanism reacts to "everything is failing" in general — a site
 that 500s, times out, or DNS-fails on every request keeps getting hammered
@@ -11,7 +11,7 @@ for the crawl's full page budget, because none of those individual reason
 codes is RATE_LIMITED or BLOCKED_ANTI_BOT. That gap is what let the morning
 crawl of intermedia.com burn ~20 minutes and ingest zero pages.
 
-This module is the missing general-purpose breaker: three independent
+This module owns four independent
 triggers, evaluated once per bulk-fetch CHUNK (never per URL — see
 ``crawl4ai_client._chunked_bulk_fetch``'s docstring for why per-chunk
 granularity is what lets this intervene within tens of seconds instead of
@@ -45,12 +45,17 @@ minutes):
 
   Unlike the consecutive trigger, this one counts real per-URL
   attempts/failures, not chunk-as-one-observation.
+- Anti-bot: once both ``antibot_min_count`` BLOCKED_ANTI_BOT outcomes and
+  ``antibot_ratio_threshold`` of all attempted URLs are reached, abort with
+  the dedicated ``ABORT_ANTI_BOT`` verdict. Keeping this cumulative ratio in
+  the same state machine prevents the bulk-fetch caller from maintaining a
+  second, parallel stop policy.
 - Refusal: ``refusal_threshold`` observed REFUSED outcomes (see
   ``knowledge_ingest.reason_codes.FetchReasonCode.REFUSED``) abort
   immediately. The site is explicitly refusing automated access — slowing
   down does not fix that, unlike real rate-limiting — so this counter is
   never reset by an interleaved success, is checked independently of (and
-  before) the other two, and NEVER downgrades to SLOWDOWN regardless of
+  before) the other triggers, and NEVER downgrades to SLOWDOWN regardless of
   the concurrent failure ratio.
 
 Pure function, no I/O, no wall clock — every caller-observable value is a
@@ -68,9 +73,9 @@ from enum import StrEnum
 
 
 class BreakerVerdict(StrEnum):
-    """The four outcomes ``evaluate_chunk`` can return.
+    """The outcomes ``evaluate_chunk`` can return.
 
-    SLOWDOWN sits between CONTINUE and the two ABORT verdicts: the failure
+    SLOWDOWN sits between CONTINUE and the ABORT verdicts: the failure
     ratio is elevated enough to warrant pacing down, but not (yet) high
     enough to justify giving up. See the module docstring's "Ratio" bullet
     for the full ladder and how the caller is expected to treat each verdict.
@@ -79,6 +84,7 @@ class BreakerVerdict(StrEnum):
     CONTINUE = "continue"
     SLOWDOWN = "slowdown"
     ABORT_PERSISTENT_FAILURE = "abort_persistent_failure"
+    ABORT_ANTI_BOT = "abort_anti_bot"
     ABORT_REFUSAL = "abort_refusal"
 
 
@@ -91,12 +97,12 @@ class HostCircuitBreakerState:
     attempted: int = 0
     failed: int = 0
     refused: int = 0
+    blocked_antibot: int = 0
 
 
 @dataclass(frozen=True)
 class ChunkObservation:
-    """What ONE chunk contributed, reduced to the four facts the breaker
-    needs.
+    """What one chunk contributed to the breaker counters.
 
     ``attempted``/``failed`` are real per-URL counts — a whole-chunk
     transport failure counts every URL it covered (the request really was
@@ -104,8 +110,9 @@ class ChunkObservation:
     ``crawl4ai_client._chunked_bulk_fetch`` already accounts chunk-level
     transport exceptions against ``failed``/``not_attempted``.
 
-    ``any_success`` and ``refused`` drive the consecutive-streak and
-    refusal-count respectively — see the module docstring for why a
+    ``any_success``, ``refused`` and ``blocked_antibot`` drive the
+    consecutive streak and the two reason-specific counters respectively.
+    See the module docstring for why a
     wholly-failed chunk is still only ONE observation for the streak
     regardless of ``attempted``.
     """
@@ -114,6 +121,7 @@ class ChunkObservation:
     failed: int
     any_success: bool
     refused: int
+    blocked_antibot: int = 0
 
 
 def evaluate_chunk(
@@ -125,13 +133,16 @@ def evaluate_chunk(
     failure_ratio_threshold: float,
     refusal_threshold: int,
     slowdown_ratio_threshold: float,
+    antibot_ratio_threshold: float,
+    antibot_min_count: int,
 ) -> tuple[HostCircuitBreakerState, BreakerVerdict]:
     """Fold ``observation`` into ``state`` and decide continue/slowdown/abort.
 
     Refusal is checked first — it is never undone by a success in the same
     or an earlier chunk, unlike the consecutive-failure streak, and it NEVER
-    downgrades to SLOWDOWN: a refusal is not a pacing problem. Consecutive
-    failures abort next — an intermittently-failing site never reaches
+    downgrades to SLOWDOWN: a refusal is not a pacing problem. The specific
+    anti-bot floor+ratio verdict is checked next, before the generic failure
+    decisions. Consecutive failures then abort — an intermittently-failing site never reaches
     ``min_attempts_for_ratio`` worth of runway before this trips, so it is
     checked before the ratio ladder, not after.
 
@@ -148,10 +159,18 @@ def evaluate_chunk(
         attempted=state.attempted + observation.attempted,
         failed=state.failed + observation.failed,
         refused=state.refused + observation.refused,
+        blocked_antibot=state.blocked_antibot + observation.blocked_antibot,
     )
 
     if new_state.refused >= refusal_threshold:
         return new_state, BreakerVerdict.ABORT_REFUSAL
+
+    if (
+        new_state.blocked_antibot >= antibot_min_count
+        and new_state.attempted > 0
+        and new_state.blocked_antibot / new_state.attempted >= antibot_ratio_threshold
+    ):
+        return new_state, BreakerVerdict.ABORT_ANTI_BOT
 
     if new_state.consecutive_failures >= consecutive_failure_threshold:
         return new_state, BreakerVerdict.ABORT_PERSISTENT_FAILURE
