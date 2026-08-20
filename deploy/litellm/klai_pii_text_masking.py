@@ -84,13 +84,38 @@ class MaskResult:
     masked_entity_types: tuple[str, ...]
 
 
-def _select_non_overlapping(spans: list[DetectedSpan]) -> list[DetectedSpan]:
+def _select_non_overlapping(
+    spans: list[DetectedSpan],
+    never_restore_entities: frozenset[str] = frozenset(),
+) -> list[DetectedSpan]:
     """Greedy interval selection: highest score wins each contested region.
+
+    Drops any span that OVERLAPS one already accepted, not merely one
+    contained in it. Containment alone is not enough: NL_BSN [20:29] score
+    1.00 sits inside NL_BTW [18:32] score 0.70, and a JWT span sits inside
+    a Bearer span with a HIGHER score, so a containment-only rule would
+    accept both and back-to-front substitution would corrupt the text.
+
+    Never-restore entities win exact ties. NL_BSN and NL_KVK can produce a
+    byte-identical span with an identical score — an 8-digit KvK number
+    that also passes the padded elfproef — and without this the winner
+    depends on the analyzer's result ordering. Ties must not decide whether
+    a value lands in the restore map, so the entity that is never restored
+    takes precedence.
 
     Returns the accepted spans sorted by ``start`` ascending — the order
     both instance-numbering and substitution need.
     """
-    ordered = sorted(spans, key=lambda s: (-s.score, -(s.end - s.start), s.start))
+    ordered = sorted(
+        spans,
+        key=lambda s: (
+            -s.score,
+            -(s.end - s.start),
+            s.entity_type not in never_restore_entities,
+            s.start,
+            s.entity_type,
+        ),
+    )
     accepted: list[DetectedSpan] = []
     for span in ordered:
         overlaps = any(span.start < a.end and a.start < span.end for a in accepted)
@@ -122,7 +147,7 @@ def mask_text(
     whether the two occurrences happen to be the same text.
     """
     candidates = [s for s in spans if s.entity_type in enabled_entities]
-    selected = _select_non_overlapping(candidates)
+    selected = _select_non_overlapping(candidates, never_restore_entities)
     if not selected:
         return MaskResult(text, {}, ())
 

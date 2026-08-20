@@ -408,3 +408,76 @@ def test_detected_span_rejects_invalid_bounds():
         DetectedSpan(entity_type="PERSON", start=5, end=5, score=0.9)
     with pytest.raises(ValueError):
         DetectedSpan(entity_type="PERSON", start=-1, end=5, score=0.9)
+
+
+# ---------------------------------------------------------------------------
+# System-review H1/H2 (2026-08-20) — overlap is not only containment
+# ---------------------------------------------------------------------------
+def test_overlap_not_merely_containment_higher_score_inside_lower():
+    """NL_BSN [20:29] score 1.00 sits INSIDE NL_BTW [18:32] score 0.70.
+
+    A containment-only rule takes the BSN first (higher score), then finds
+    the BTW span is not contained in it and takes that too — two overlapping
+    substitutions, corrupted output. The selection must drop any OVERLAP.
+    """
+    from klai_pii_text_masking import DetectedSpan, mask_text
+
+    text = "Ons BTW-nummer is NL123456782B01."
+    spans = [
+        DetectedSpan(entity_type="NL_BSN", start=20, end=29, score=1.00),
+        DetectedSpan(entity_type="NL_BTW", start=18, end=32, score=0.70),
+    ]
+    result = mask_text(
+        text,
+        spans,
+        enabled_entities=frozenset({"NL_BSN", "NL_BTW"}),
+        never_restore_entities=frozenset({"NL_BSN"}),
+        instance_counters={},
+    )
+    assert result.masked_text.count("<") == 1, result.masked_text
+    assert "<NL_BSN_1>" in result.masked_text
+    assert "NL_BTW" not in result.masked_text
+    assert result.masked_text.startswith("Ons BTW-nummer is ")
+
+
+def test_nested_same_entity_higher_score_inside_lower():
+    """A JWT span sits inside a Bearer span with a HIGHER score."""
+    from klai_pii_text_masking import DetectedSpan, mask_text
+
+    text = "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.dBjftJeZ4CV"
+    spans = [
+        DetectedSpan(entity_type="SECRET", start=15, end=len(text), score=0.85),
+        DetectedSpan(entity_type="SECRET", start=22, end=len(text), score=0.90),
+    ]
+    result = mask_text(
+        text,
+        spans,
+        enabled_entities=frozenset({"SECRET"}),
+        never_restore_entities=frozenset({"SECRET"}),
+        instance_counters={},
+    )
+    assert result.masked_text.count("<SECRET_") == 1, result.masked_text
+    assert "eyJhbGci" not in result.masked_text
+
+
+def test_identical_span_and_score_never_restore_entity_wins():
+    """An 8-digit KvK that also passes the padded elfproef yields NL_BSN and
+    NL_KVK at the same span with the same score. Ties must not decide whether
+    a value lands in the restore map, so the never-restore entity wins."""
+    from klai_pii_text_masking import DetectedSpan, mask_text
+
+    text = "Ons KvK-nummer is 10000008 en dat klopt."
+    spans = [
+        DetectedSpan(entity_type="NL_KVK", start=18, end=26, score=1.00),
+        DetectedSpan(entity_type="NL_BSN", start=18, end=26, score=1.00),
+    ]
+    for ordering in (spans, list(reversed(spans))):
+        result = mask_text(
+            text,
+            list(ordering),
+            enabled_entities=frozenset({"NL_BSN", "NL_KVK"}),
+            never_restore_entities=frozenset({"NL_BSN"}),
+            instance_counters={},
+        )
+        assert "<NL_BSN_1>" in result.masked_text, result.masked_text
+        assert result.restore_map == {}, "a never-restore value must not be restorable"

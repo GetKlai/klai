@@ -1,6 +1,6 @@
 ---
 id: SPEC-PRIVACY-MISTRAL-PII-001
-version: "0.7.0"
+version: "0.8.0"
 status: draft
 created: 2026-08-20
 updated: 2026-08-20
@@ -17,6 +17,7 @@ roadmap: docs/architecture/knowledge-rag-improvement-plan.md
 
 | Version | Date       | Author       | Change |
 |---------|------------|--------------|--------|
+| 0.8.0   | 2026-08-20 | Mark Vletter | **System review of the merged stack** — the first review of the pieces together rather than each PR alone, and it found what per-diff review structurally cannot. REQ-8's overlap rule was wrong: it said "drop any span *contained* in one already taken", derived from the single IBAN⊃PHONE example, but the recogniser set produces pairs where the higher-scoring span sits INSIDE the lower-scoring one (`NL_BSN` 1.00 inside `NL_BTW` 0.70; a JWT span inside a Bearer span). A containment-only rule accepts both and corrupts the text. Now: drop any **overlap**, and never-restore entities win exact ties, because `NL_BSN` and `NL_KVK` can produce a byte-identical span with an identical score and a tie must not decide whether a value becomes restorable. The Phase 3 implementation already dropped overlaps — the defect was in this document, not the code. Three irreversible-false-positive fixes shipped alongside: 8-digit BSN now needs context (9.1% of `YYYYMMDD` dates passed the elfproef and were destroyed unrestorably), the `Bearer` pattern is anchored to an `Authorization:` header (it matched two words of ordinary Dutch prose), and the postcode letter pair is case-sensitive again (registry `IGNORECASE` made `2026 en` a postcode). A1 marked partly falsified. |
 | 0.7.0   | 2026-08-20 | Mark Vletter | Maintenance pass — the SPEC is a working document, not a record of what we once believed. Adds a **Status** table (per-phase state with the commit that proves it) so this doubles as the progress overview, plus a short "what this SPEC got wrong, and how it was caught" table: three of four errors were found by measuring, not reading, and two had already been written down as confident conclusions. Removed three claims that are now false: that the LiteLLM integration is configuration rather than code (REQ-5 and REQ-0a each measured otherwise), that `PHONE_NUMBER` is a stock built-in enabled via a YAML region key (the loader drops it — it is `NLPhoneRecognizer` now), and assumption A6 (struck through with the real root cause and the fixing commits). Re-validated every `file:line` anchor **semantically**, not just for range: the `MISTRAL_API_KEY` anchor had drifted from 388-389 to 421-422 as compose grew, still pointing inside the file and therefore passing a naive check while being wrong. |
 | 0.6.0   | 2026-08-20 | Mark Vletter | **Measurement gates removed; build-then-observe instead.** Klai's current traffic volume is far too low to produce a statistically meaningful 30-day, three-tenant, hand-annotated sample, so requiring one was not caution — it was a stall dressed as rigour. The workflow is: build on stated assumptions, ship, watch it in practice, correct. Every assumption that replaced a measurement is written down under "Assumptions" so it can be checked against reality rather than forgotten. Phase 3's design is also settled: REQ-0a proved the native restore path unusable for streaming, so Klai owns mask, map and restore end to end, keyed by `litellm_call_id` in process memory. Everything ships behind `KLAI_PII_ENFORCE`, default **off**, so Phase 3 can land, deploy and be exercised in production while inert — activation stays a separate, deliberate flip. |
 | 0.5.0   | 2026-08-20 | Mark Vletter | **Phase 0 ran on core-01 and answered both questions.** REQ-0a is negative for streaming: `output_parse_pii` restores correctly non-streaming but returns an empty token map on the streaming path — the second failure shape in litellm#6247, still live on v1.96.2, and NOT the Anthropic-native bug 0.2.0 dismissed from reading. Both Klai chat paths stream, so REQ-8's restore moves to our own post-call hooks. REQ-0b: the verbatim-token instruction takes `PHONE_NUMBER` survival from 58.3% to 95.8%, so it is mandatory rather than advisory. Two gaps the run exposed: six of thirty Dutch phone numbers were never detected despite `supported_regions: [NL]` (a detection gap, separate from survival), and `PERSON` is **unmeasurable** today because REQ-2 disables SpacyRecognizer and GLiNER is not deployed — so REQ-0b's PERSON half must be re-run after REQ-9, and PERSON must not be enabled before that. |
@@ -480,7 +481,7 @@ each with what would falsify it.
 
 | # | Assumption | Basis | What falsifies it |
 |---|---|---|---|
-| A1 | The elfproef reduces false BSN matches to roughly 1 in 11 of nine-digit runs | Arithmetic property of the checksum, not a measurement on our corpus | A tenant reporting order numbers being masked. Phase 2 counts show the rate |
+| A1 | The elfproef reduces false BSN matches to roughly 1 in 11 of **nine**-digit runs | Arithmetic property of the checksum | **Partly falsified 2026-08-20.** The recogniser also accepted **eight**-digit runs, which is the shape of a `YYYYMMDD` date: 365 of 4018 dates in 2020-2030 (9.1%) pass the padded elfproef. Since `NL_BSN` is masked for every org and never restored, `Factuurdatum 20200201` was destroyed with no way back. Nine digits now stands on the checksum alone; eight requires a BSN context word |
 | A2 | Typed, numbered placeholders survive the model well enough to be useful, given the verbatim instruction | Measured for `PHONE_NUMBER` (95.8%), assumed to generalise to `IBAN`, `EMAIL`, `KVK`, `BTW`, `POSTCODE` — all shorter and more literal than a phone number | Any of those entities showing survival below 95% once enabled |
 | A3 | `PERSON` behaves worse than the other entities and needs its own evidence | Names are inflected in Dutch, the others are not | A GLiNER-era re-run showing `PERSON` ≥95% |
 | A4 | An in-process map keyed by `litellm_call_id` is sufficient isolation | The id is a per-request UUID generated by LiteLLM | A collision, or a restore writing one request's value into another's output. AC-0e-style concurrency test guards it |
@@ -553,8 +554,21 @@ PHONE_NUMBER [25:37] score=0.40   <- fully inside the IBAN span
 Substituting naively corrupts the text: replace the IBAN first and the phone offsets are
 stale; replace the phone first and the IBAN no longer matches its own span. **THE
 implementation SHALL** substitute from the **end of the string backwards** so earlier offsets
-stay valid, and **SHALL** drop any span contained in a span already taken, preferring the
-higher score and, on a tie, the longer span. This overlap predates the Phase 1 deployment —
+stay valid, and **SHALL** drop any span that **overlaps** one already taken — not merely one
+*contained* in it. Containment alone is not sufficient, and the earlier wording of this
+requirement was wrong: the deployed recogniser set produces pairs where the higher-scoring
+span sits INSIDE the lower-scoring one, so a containment-only rule accepts both.
+
+```
+Ons BTW-nummer is NL123456782B01.
+NL_BSN [20:29] score 1.00   <- higher score, inside
+NL_BTW [18:32] score 0.70
+```
+
+Selection order is: higher score, then longer span, then **never-restore entity wins** — an
+8-digit KvK that also passes the padded elfproef produces `NL_BSN` and `NL_KVK` at a
+byte-identical span with an identical score, and a tie must not decide whether a value lands
+in the restore map. This overlap predates the Phase 1 deployment —
 it is a property of running several recognisers over one text, not a regression — and it
 needs a regression test using exactly the IBAN case above.
 
