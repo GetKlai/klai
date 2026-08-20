@@ -234,7 +234,7 @@ class Settings(BaseSettings):
     # with one signal is already 33%, comfortably above the 25% ratio
     # above, yet a single stray signal is exactly the noise this fix
     # exists to stop reacting to. Requiring at least 3 confirmed signals
-    # before the ratio gate can fire means a crawl under ~12 pages
+    # before the breaker's ratio decision can fire means a crawl under ~12 pages
     # (3 / 0.25) needs to see MOST of its pages blocked before stopping —
     # deliberately conservative for small sites, where losing even a
     # handful of pages to a false stop is proportionally expensive.
@@ -261,15 +261,15 @@ class Settings(BaseSettings):
     )
     # 2026-08-19 (host circuit breaker, knowledge_ingest.host_circuit_breaker)
     # — the intermedia.com "20 minutes, zero pages" incident: neither the
-    # RATE_LIMITED immediate-stop nor the BLOCKED_ANTI_BOT ratio gate
+    # RATE_LIMITED immediate-stop nor the BLOCKED_ANTI_BOT ratio decision
     # (crawl_antibot_stop_ratio/min_count above) reacts to a site that
     # simply fails every request for an unrelated reason (5xx, timeout,
     # unknown_exception) — none of those reason codes trip either existing
     # mechanism. This breaker is a general-purpose, cause-independent
     # backstop, evaluated once per bulk-fetch chunk (not per URL) so it can
     # intervene within tens of seconds instead of the crawl's full page
-    # budget. See host_circuit_breaker.evaluate_chunk for the three
-    # triggers these four knobs configure.
+    # budget. The anti-bot settings above feed the same evaluator; the knobs
+    # below configure its general failure and refusal decisions.
     #
     # crawl_circuit_breaker_consecutive_failures: N whole-chunk failures in
     # a row (any single success resets to zero) — 5 mirrors

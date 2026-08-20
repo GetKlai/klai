@@ -201,7 +201,7 @@ async def test_no_stop_when_no_chunk_observes_rate_limit(
     # Real inter-chunk pacing sleeps would otherwise cost real wall-clock
     # time here (three chunks over the small burst size used to force
     # multi-chunk behaviour) — same virtual-clock pattern as
-    # test_client_side_pacing.py, this test asserts on chunking, not pacing.
+    # test_chunked_bulk_fetch_pacing.py, this test asserts on chunking, not pacing.
     monkeypatch.setattr(crawl4ai_client, "_pacing_monotonic", lambda: 0.0)
 
     async def _no_sleep(_seconds: float) -> None:

@@ -24,17 +24,29 @@ _DEFAULT_KWARGS = {
     "failure_ratio_threshold": 0.5,
     "refusal_threshold": 3,
     "slowdown_ratio_threshold": 0.25,
+    "antibot_ratio_threshold": 0.25,
+    "antibot_min_count": 3,
 }
 
 
-def _failure(*, attempted: int = 1, refused: int = 0) -> ChunkObservation:
+def _failure(*, attempted: int = 1, refused: int = 0, blocked_antibot: int = 0) -> ChunkObservation:
     return ChunkObservation(
-        attempted=attempted, failed=attempted, any_success=False, refused=refused
+        attempted=attempted,
+        failed=attempted,
+        any_success=False,
+        refused=refused,
+        blocked_antibot=blocked_antibot,
     )
 
 
 def _success(*, attempted: int = 1) -> ChunkObservation:
-    return ChunkObservation(attempted=attempted, failed=0, any_success=True, refused=0)
+    return ChunkObservation(
+        attempted=attempted,
+        failed=0,
+        any_success=True,
+        refused=0,
+        blocked_antibot=0,
+    )
 
 
 def _run(observations: list[ChunkObservation]) -> tuple[HostCircuitBreakerState, BreakerVerdict]:
@@ -125,7 +137,14 @@ class TestFailureRatio:
 class TestRefusal:
     def test_three_refusals_aborts_immediately(self) -> None:
         observations = [
-            ChunkObservation(attempted=1, failed=1, any_success=False, refused=1) for _ in range(3)
+            ChunkObservation(
+                attempted=1,
+                failed=1,
+                any_success=False,
+                refused=1,
+                blocked_antibot=0,
+            )
+            for _ in range(3)
         ]
         _state, verdict = _run(observations)
         assert verdict == BreakerVerdict.ABORT_REFUSAL
@@ -134,11 +153,29 @@ class TestRefusal:
         """A refusal is never undone by a success — unlike the consecutive
         streak, the refusal counter is monotonic."""
         observations = [
-            ChunkObservation(attempted=1, failed=1, any_success=False, refused=1),
+            ChunkObservation(
+                attempted=1,
+                failed=1,
+                any_success=False,
+                refused=1,
+                blocked_antibot=0,
+            ),
             _success(),
-            ChunkObservation(attempted=1, failed=1, any_success=False, refused=1),
+            ChunkObservation(
+                attempted=1,
+                failed=1,
+                any_success=False,
+                refused=1,
+                blocked_antibot=0,
+            ),
             _success(),
-            ChunkObservation(attempted=1, failed=1, any_success=False, refused=1),
+            ChunkObservation(
+                attempted=1,
+                failed=1,
+                any_success=False,
+                refused=1,
+                blocked_antibot=0,
+            ),
         ]
         state, verdict = _run(observations)
         assert state.refused == 3
@@ -149,7 +186,14 @@ class TestRefusal:
 
     def test_two_refusals_does_not_abort(self) -> None:
         observations = [
-            ChunkObservation(attempted=1, failed=1, any_success=False, refused=1) for _ in range(2)
+            ChunkObservation(
+                attempted=1,
+                failed=1,
+                any_success=False,
+                refused=1,
+                blocked_antibot=0,
+            )
+            for _ in range(2)
         ]
         _state, verdict = _run(observations)
         assert verdict == BreakerVerdict.CONTINUE
@@ -159,7 +203,14 @@ class TestRefusal:
         crossed by the same observation, the more specific ABORT_REFUSAL
         verdict wins."""
         observations = [
-            ChunkObservation(attempted=1, failed=1, any_success=False, refused=1) for _ in range(5)
+            ChunkObservation(
+                attempted=1,
+                failed=1,
+                any_success=False,
+                refused=1,
+                blocked_antibot=0,
+            )
+            for _ in range(5)
         ]
         _state, verdict = _run(observations)
         assert verdict == BreakerVerdict.ABORT_REFUSAL
@@ -230,7 +281,14 @@ class TestSlowdown:
         refusal is independent of, and takes priority over, the ratio
         ladder entirely."""
         observations = [
-            ChunkObservation(attempted=1, failed=1, any_success=False, refused=1) for _ in range(3)
+            ChunkObservation(
+                attempted=1,
+                failed=1,
+                any_success=False,
+                refused=1,
+                blocked_antibot=0,
+            )
+            for _ in range(3)
         ] + [_success() for _ in range(7)]
         state, verdict = _run(observations)
         assert state.attempted == 10
@@ -249,3 +307,61 @@ class TestContinue:
         assert state.attempted == 0
         assert state.failed == 0
         assert state.refused == 0
+        assert state.blocked_antibot == 0
+
+
+class TestAntibotRatio:
+    def test_floor_and_ratio_are_accumulated_by_the_breaker(self) -> None:
+        state = HostCircuitBreakerState()
+        observations = [
+            _success(attempted=5),
+            _failure(blocked_antibot=1),
+            _failure(blocked_antibot=1),
+        ]
+        for observation in observations:
+            state, verdict = evaluate_chunk(state, observation, **_DEFAULT_KWARGS)
+
+        assert state.attempted == 7
+        assert state.blocked_antibot == 2
+        assert verdict != BreakerVerdict.ABORT_ANTI_BOT
+
+        state, verdict = evaluate_chunk(
+            state,
+            _failure(blocked_antibot=1),
+            **_DEFAULT_KWARGS,
+        )
+
+        assert state.attempted == 8
+        assert state.blocked_antibot == 3
+        assert verdict == BreakerVerdict.ABORT_ANTI_BOT
+
+    def test_refusal_verdict_takes_priority_over_antibot(self) -> None:
+        _state, verdict = evaluate_chunk(
+            HostCircuitBreakerState(),
+            ChunkObservation(
+                attempted=3,
+                failed=3,
+                any_success=False,
+                refused=3,
+                blocked_antibot=3,
+            ),
+            **_DEFAULT_KWARGS,
+        )
+
+        assert verdict == BreakerVerdict.ABORT_REFUSAL
+
+    def test_exact_antibot_ratio_threshold_aborts(self) -> None:
+        state, verdict = evaluate_chunk(
+            HostCircuitBreakerState(),
+            ChunkObservation(
+                attempted=12,
+                failed=3,
+                any_success=True,
+                refused=0,
+                blocked_antibot=3,
+            ),
+            **_DEFAULT_KWARGS,
+        )
+
+        assert state.blocked_antibot == 3
+        assert verdict == BreakerVerdict.ABORT_ANTI_BOT

@@ -8,7 +8,6 @@ the crawl4ai package (or a local Chromium install) as a dependency.
 from __future__ import annotations
 
 import asyncio
-import copy
 import fnmatch
 import json
 import re
@@ -16,16 +15,64 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict
 from html import unescape
-from html.parser import HTMLParser
-from typing import Any, Literal, Protocol
-from urllib.parse import unquote, urldefrag, urlparse, urlunparse
+from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 import structlog
 
 from knowledge_ingest.config import settings
+from knowledge_ingest.crawl4ai_config import (
+    build_crawl_config,
+)
+from knowledge_ingest.crawl4ai_config import (
+    relax_seed_crawl_config as _relax_seed_crawl_config,
+)
+from knowledge_ingest.crawl4ai_types import (
+    ChunkedFetchResult,
+    CrawlCheckpoint,
+    CrawlRateLimitState,
+    CrawlResult,
+    DiscoveredUrl,
+    DiscoverySourceKind,
+    FetchOutcome,
+    LinkedPageSample,
+)
+from knowledge_ingest.crawl_result_processing import (
+    THIN_CONTENT_WORD_COUNT as _THIN_CONTENT_WORD_COUNT,
+)
+from knowledge_ingest.crawl_result_processing import (
+    extract_result as _extract_result,
+)
+from knowledge_ingest.crawl_result_processing import (
+    html_text_word_count as _html_text_word_count,
+)
+from knowledge_ingest.crawl_result_processing import (
+    should_retry_relaxed_for_thin_content as _should_retry_relaxed_for_thin_content,
+)
+from knowledge_ingest.crawl_url_policy import (
+    canonicalise_url as _canonicalise_url,
+)
+from knowledge_ingest.crawl_url_policy import (
+    coerce_same_site_url_to_base_host as _coerce_same_site_url_to_base_host,
+)
+from knowledge_ingest.crawl_url_policy import (
+    same_site_domain as _same_site_domain,
+)
+from knowledge_ingest.crawl_url_policy import (
+    url_has_non_html_extension as _url_has_non_html_extension,
+)
+from knowledge_ingest.crawl_url_policy import (
+    url_has_unrendered_template_syntax as _url_has_unrendered_template_syntax,
+)
+from knowledge_ingest.crawl_url_policy import (
+    url_matches_include_patterns as _url_matches_include_patterns,
+)
+from knowledge_ingest.crawl_url_policy import (
+    url_matches_patterns as _url_matches_patterns,
+)
 from knowledge_ingest.domain_rate_limit_control import MIN_DOMAIN_RATE_LIMIT
 from knowledge_ingest.host_circuit_breaker import (
     BreakerVerdict,
@@ -49,436 +96,13 @@ logger = structlog.get_logger()
 _crawl4ai_request_semaphore = asyncio.BoundedSemaphore(settings.crawl4ai_max_concurrent_requests)
 
 
-# ---------------------------------------------------------------------------
-# Shape of the per-URL outcome captured for crawl_jobs.fetch_outcomes JSONB.
-# Keys match the migration shape: {"url", "reason_code", "status_code",
-# "content_length"}. ``reason_code`` MUST be a FetchReasonCode value.
-# ---------------------------------------------------------------------------
-
-FetchOutcome = dict[str, Any]
-
-
-class CrawlCheckpoint(Protocol):
-    """Durable seam used by ``crawl_site`` at committed batch boundaries."""
-
-    async def load(self) -> dict[str, Any] | None: ...
-
-    async def save(self, snapshot: dict[str, Any]) -> None: ...
-
-    async def ensure_active(self) -> None: ...
-
-
-# ---------------------------------------------------------------------------
-# JS scripts — single source of truth for content filtering
-# ---------------------------------------------------------------------------
-
-# crawl4ai >= 0.9 rejects ``js_code`` / ``js_code_before_wait`` on every
-# network request (the untrusted-config boundary that fixes CVE-2026-57572),
-# with no trusted-caller escape hatch. ``wait_for`` JS remains allowlisted,
-# so the one-time DOM preparation that used to live in those fields now runs
-# inside the wait_for predicate: the first poll mutates the DOM (guarded by a
-# dataset marker so repeated polling never re-runs it), later polls evaluate
-# readiness after a 300ms settle — preserving the old js_code sleep that let
-# expanded toggles render. If upstream ever locks down wait_for JS too, the
-# fallback is computing these steps server-side from the returned HTML.
-
-# Strip nav chrome so the word-count condition fires only when article
-# content is present. Semantic selectors only — never class/id substring
-# selectors (see pitfalls/backend.md).
-JS_PREP_REMOVE_CHROME = (
-    "['nav','header','footer','aside',"
-    "'[role=\"navigation\"]','[role=\"banner\"]','[role=\"contentinfo\"]',"
-    "'[role=\"complementary\"]','[role=\"search\"]'"
-    "].forEach(sel => document.querySelectorAll(sel).forEach(el => el.remove()));"
-)
-
-# Open collapsed toggles (Notion / <details>) so lazy content renders.
-JS_PREP_EXPAND_TOGGLES = (
-    "document.querySelectorAll('details:not([open])')"
-    ".forEach(d => d.setAttribute('open', ''));"
-    "document.querySelectorAll('.notion-toggle__summary, "
-    '[data-block-type="toggle"] > *:first-child\')'
-    ".forEach(s => s.click());"
-)
-
-
-def build_wait_for(
-    *,
-    strip_chrome: bool,
-    ready_condition: str,
-) -> str:
-    """Compose the crawl4ai ``wait_for`` predicate with one-time DOM prep.
-
-    ``ready_condition`` is a JS boolean expression evaluated on every poll
-    after the prep + 300ms settle. The prep block runs exactly once per page
-    (``data-klai-prep-ts`` marker on <html>).
-    """
-    prep = (JS_PREP_REMOVE_CHROME if strip_chrome else "") + JS_PREP_EXPAND_TOGGLES
-    return (
-        "js:() => {"
-        " const d = document.documentElement.dataset;"
-        " if (!d.klaiPrepTs) { " + prep + " d.klaiPrepTs = String(Date.now()); return false; }"
-        " if (Date.now() - Number(d.klaiPrepTs) < 300) return false;"
-        " return " + ready_condition + ";"
-        " }"
-    )
-
-
-# ---------------------------------------------------------------------------
-# Result dataclass
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class CrawlResult:
-    """Normalised result from a single-page crawl."""
-
-    url: str
-    fit_markdown: str
-    raw_markdown: str
-    html: str
-    word_count: int
-    success: bool
-    # Candidate URL that produced this result. It differs from ``url`` after
-    # a redirect and lets durable checkpoints attach the response to the
-    # correct frontier row without changing ingest's final-URL semantics.
-    requested_url: str | None = None
-    links: dict[str, list[dict]] = field(default_factory=dict)
-    # SPEC-CRAWLER-004 Fase A: crawl4ai populates ``media.images`` with dicts
-    # shaped like ``{"src": "...", "alt": "...", "score": N}``. Other keys
-    # (``videos``, ``audios``) exist but knowledge-ingest currently ignores them.
-    media: dict[str, list[dict]] = field(default_factory=dict)
-    error_message: str | None = None
-    metadata: dict[str, Any] | None = None
-    response_headers: dict[str, str] | None = None
-    # 2026-08-14: the real HTTP status code behind a failed fetch, when
-    # known — either from crawl4ai's page-result shape (``page["status_code"]``)
-    # or from a raised ``httpx.HTTPStatusError`` (see
-    # ``_status_code_from_exception``). Lets downstream classification
-    # (``_classify_fetch_outcome``) map a failure to HTTP_4XX/HTTP_5XX
-    # honestly instead of falling through to UNKNOWN_EXCEPTION — see the
-    # bulk-5xx sequential-recovery rework in ``crawl_site`` / adapters/crawler.py.
-    status_code: int | None = None
-    # 2026-08-18 (SPEC-CRAWLER-FAILURE-EVIDENCE): populated ONLY by the
-    # single-page fetch paths (``_fetch_seed_page`` / ``_crawl_page_with_config``)
-    # when they catch a raised Python exception, BEFORE it is collapsed into
-    # the bare ``str(exc)`` stored in ``error_message`` above. Lets the
-    # fetch_outcomes evidence builder (``_evidence_for_crawl_result``) recover
-    # the real exception type + response body (which may carry crawl4ai's
-    # ``correlation_id``) instead of only the flattened string. Both additive
-    # and None for every other CrawlResult (success, page-level failure with
-    # no raised exception, bulk-path results) — never read outside the
-    # evidence builder.
-    error_type: str | None = None
-    raw_error_text: str | None = None
-
-
-@dataclass
-class CrawlRateLimitState:
-    """Mutable handoff of the rate actually in effect when ``crawl_site`` ends."""
-
-    current_rate_limit: float | None
-
-
-DiscoverySourceKind = Literal["start", "sitemap", "page_link"]
-DiscoveryStatus = Literal["queued", "fetched", "omitted"]
-
-
-@dataclass
-class DiscoveredUrl:
-    """One URL in Klai's crawl frontier ledger.
-
-    Crawl4AI renders pages and extracts links; Klai owns the crawl plan.
-    The ledger lets us explain every in-scope discovered URL as fetched or
-    deliberately omitted instead of silently losing URLs inside a third-party
-    BFS frontier.
-    """
-
-    url: str
-    canonical_url: str
-    depth: int
-    discovered_from: str | None
-    source_kind: DiscoverySourceKind
-    priority: int
-    order: int
-    status: DiscoveryStatus = "queued"
-    reason_code: str | None = None
-
-
 _PRIORITY_START = 0
 _PRIORITY_SITEMAP = 10
 _PRIORITY_SECTION_ROOT = 20
 _PRIORITY_LISTING_CHILD = 25
 _PRIORITY_PAGE_LINK = 50
 _LISTING_LINK_THRESHOLD = 50
-_THIN_CONTENT_WORD_COUNT = 100
 _CHECKPOINT_BATCH_SIZE = 8
-
-# 2026-08-18 (intermedia.com incident) — a website crawl exists to fetch
-# HTML pages, not documents. crawl4ai's browser tries to *navigate* to
-# every discovered same-domain link; pointed at a PDF (or any other
-# document/archive/media/binary), the browser starts a download instead
-# of rendering and the request fails.
-#
-# This is NOT about a bad URL poisoning a whole bulk chunk — measured
-# directly against the running crawl4ai container (2026-08-18): a PDF
-# submitted together with a good URL in one bulk ``/crawl`` request comes
-# back HTTP 200 with two results, the PDF's own ``success: false`` and an
-# error message, the good page fetched normally. crawl4ai's REST API
-# dispatches bulk requests to ``crawler.arun_many``, which isolates
-# failures per URL — exactly as it should. A single-URL request is a
-# different code path (``crawler.arun``, chosen by crawl4ai's own
-# ``api.py`` whenever ``len(urls) == 1``) that does NOT isolate the
-# failure and returns a bare HTTP 500 instead.
-#
-# That single-URL path is exactly what the sequential-recovery route
-# (``_recover_bulk_5xx_batch``) and the seed fetch (``_fetch_seed_page``)
-# use — one URL at a time, each attempt preceded by a real
-# ``crawl_sequential_recovery_cooldown_seconds`` (75s) wait and counted
-# against the crawl-job-wide ``_MAX_SEQUENTIAL_RECOVERY`` budget. A PDF
-# can never become fetchable HTML no matter how many times or how slowly
-# it is retried, so letting one reach that route wastes a guaranteed-to-
-# fail 75-second attempt and a budget slot that a genuinely recoverable
-# HTML page (a real transient 5xx or timeout) needed instead.
-#
-# This is also not a workaround for a crawler limitation: Klai already
-# has a dedicated document connector for exactly this content class. The
-# web crawler's job is web pages; PDFs, spreadsheets, archives and media
-# belong to that other connector, not to this one's frontier. Filtering
-# them out here, before a single network request is made, costs nothing
-# and is deterministic — unlike a HEAD request or content-type sniff.
-_NON_HTML_PATH_EXTENSIONS = frozenset(
-    {
-        # documents
-        "pdf",
-        "doc",
-        "docx",
-        "xls",
-        "xlsx",
-        "ppt",
-        "pptx",
-        "odt",
-        # archives
-        "zip",
-        "tar",
-        "gz",
-        "rar",
-        "7z",
-        # media
-        "jpg",
-        "jpeg",
-        "png",
-        "gif",
-        "svg",
-        "webp",
-        "ico",
-        "mp4",
-        "mp3",
-        "avi",
-        "mov",
-        "wav",
-        # binaries
-        "exe",
-        "dmg",
-        "pkg",
-        "deb",
-    }
-)
-
-
-def _url_has_non_html_extension(url: str) -> bool:
-    """True when ``url``'s PATH (query params ignored) ends in a
-    document/archive/media/binary extension — see
-    ``_NON_HTML_PATH_EXTENSIONS`` above.
-
-    ``.../rapport.pdf?download=1`` matches: only ``urlparse(url).path`` is
-    inspected, so a query string can never hide the extension or trigger a
-    false positive on a path segment that merely contains a dot.
-    """
-    last_segment = urlparse(url).path.rsplit("/", 1)[-1]
-    if "." not in last_segment:
-        return False
-    extension = last_segment.rsplit(".", 1)[-1].lower()
-    return extension in _NON_HTML_PATH_EXTENSIONS
-
-
-# 2026-08-18 (support.ascendcloud.com incident) — a site's client-side
-# templating framework can end up in the crawled HTML with its interpolation
-# syntax never rendered, e.g. a search-results widget emitting:
-#
-#   .../themes/standard/{{item.SearchResultURL != '' ?+item.SearchResultURL+...}}
-#
-# crawl4ai extracts ``<a href>`` via lxml's raw attribute text (see the
-# vendored crawl4ai 0.9.2 ``normalize_url``/``normalize_url_for_deep_crawl``,
-# both of which explicitly avoid ``quote(unquote())`` so the path is passed
-# through byte-for-byte) — so a URL reaching ``CrawlLedger.add`` is exactly
-# what the site's HTML attribute contained, un-rendered placeholder syntax
-# included. Such a link is never a real page: fetching it 404s with a tiny
-# error body, and crawl4ai's structural anti-bot heuristic then misreads the
-# small page as a block (see ``_classify_fetch_outcome``). At the time,
-# BLOCKED_ANTI_BOT unconditionally stopped chunking, so four bogus template
-# links aborted 192 real pages in production. Since 2026-08-18 anti-bot stops
-# use a crawl-wide ratio+floor gate instead; filtering bogus URLs remains the
-# correct way to keep them out of both the ratio and the network path.
-#
-# Checked against both the raw URL and its percent-decoded form: some sites'
-# JS builds the href through something like ``encodeURIComponent`` before
-# writing it into the HTML source, so the placeholder syntax can arrive
-# percent-encoded (``%7B%7B`` for ``{{``) instead of literal. ``unquote`` is
-# safe to call unconditionally — a URL with no percent-escapes round-trips
-# unchanged.
-_TEMPLATE_PLACEHOLDER_PATTERNS = (
-    "{{",  # Handlebars / Angular / Vue interpolation (open)
-    "}}",  # Handlebars / Angular / Vue interpolation (close)
-    "${",  # JavaScript template literal
-    "<%",  # ERB / JSP / ASP (open)
-    "%>",  # ERB / JSP / ASP (close)
-    "{%",  # Jinja / Django / Liquid tag (open)
-    "%}",  # Jinja / Django / Liquid tag (close)
-)
-
-
-def _url_has_unrendered_template_syntax(url: str) -> bool:
-    """True when ``url`` still contains un-rendered client-side template
-    placeholder syntax — see ``_TEMPLATE_PLACEHOLDER_PATTERNS`` above.
-
-    Checked against the URL as-is AND its percent-decoded form, since it is
-    not guaranteed which one a given site's HTML delivers into
-    ``result.links`` — see the module comment above.
-    """
-    decoded = unquote(url)
-    return any(pattern in url or pattern in decoded for pattern in _TEMPLATE_PLACEHOLDER_PATTERNS)
-
-
-class _HTMLTextCounter(HTMLParser):
-    """Cheap rendered-HTML text signal for deciding whether a crawl was over-pruned."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._skip_depth = 0
-        self.parts: list[str] = []
-
-    def handle_starttag(
-        self,
-        tag: str,
-        attrs: list[tuple[str, str | None]],  # noqa: ARG002 — stdlib HTMLParser override signature
-    ) -> None:
-        if tag.lower() in {"script", "style", "noscript", "template", "svg"}:
-            self._skip_depth += 1
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag.lower() in {"script", "style", "noscript", "template", "svg"} and self._skip_depth:
-            self._skip_depth -= 1
-
-    def handle_data(self, data: str) -> None:
-        if self._skip_depth == 0:
-            self.parts.append(data)
-
-
-def _html_text_word_count(html: str) -> int:
-    if not html:
-        return 0
-    parser = _HTMLTextCounter()
-    try:
-        parser.feed(html)
-    except Exception:
-        return 0
-    return len(unescape(" ".join(parser.parts)).split())
-
-
-def _should_retry_relaxed_for_thin_content(result: CrawlResult) -> bool:
-    return (
-        result.success
-        and result.word_count < _THIN_CONTENT_WORD_COUNT
-        and _html_text_word_count(result.html) >= _THIN_CONTENT_WORD_COUNT
-    )
-
-
-# ---------------------------------------------------------------------------
-# Config builder
-# ---------------------------------------------------------------------------
-
-
-def build_crawl_config(
-    selector: str | None,
-    login_indicator_selector: str | None = None,
-) -> dict[str, Any]:
-    """Build a CrawlerRunConfig-compatible JSON payload.
-
-    Pipeline switching (SPEC-CRAWL-001 / R-1):
-    - No selector  → full pipeline (JS chrome removal, excluded_tags, PruningContentFilter)
-    - Selector      → trusted pipeline (no JS removal, no excluded_tags, PruningContentFilter)
-
-    Login indicator (SPEC-CRAWLER-004 Fase B / REQ-02.3):
-    - When *login_indicator_selector* is set, the caller's base ``wait_for``
-      is negated with ``&& !document.querySelector('<selector>')``. If the
-      selector matches, the page never satisfies ``wait_for`` and crawl4ai
-      returns ``success=False`` after ``page_timeout``. The caller can then
-      treat that failure as an auth-wall event.
-
-    No rate-limiting knobs (2026-08-18, corrected after a 2026-08-17 fix
-    attempt that added ``semaphore_count`` + ``mean_delay`` here believing
-    they were real crawl4ai-enforced pacing). Measured live against the
-    running crawl4ai REST server (``/app/api.py:681``): it builds its OWN
-    ``MemoryAdaptiveDispatcher`` and passes THAT to ``arun_many`` — it never
-    reads ``semaphore_count`` or ``mean_delay`` off ``CrawlerRunConfig``.
-    8 URLs configured with ``mean_delay=2.0`` finished in 3.2s instead of
-    the predicted 16s, and ``semaphore_count`` 1 vs 8 made no measurable
-    difference. Both keys pass crawl4ai's untrusted-config boundary
-    (HTTP 200), which is why the original fix looked like it worked in
-    testing — the server silently accepts and discards them. Real pacing
-    happens client-side through ``host_pacing.HostGateRegistry`` and
-    ``HostPacingSession.acquire``, not here.
-    """
-    md_gen: dict[str, Any] = {
-        "type": "DefaultMarkdownGenerator",
-        "params": {
-            "content_filter": {
-                "type": "PruningContentFilter",
-                "params": {"threshold": 0.45, "threshold_type": "dynamic"},
-            },
-            "options": {"type": "dict", "value": {"ignore_links": False, "body_width": 0}},
-        },
-    }
-
-    ready_condition = "(document.body.innerText.trim().split(/\\s+/).length > 50)"
-    if login_indicator_selector:
-        # Escape quotes/backslashes to prevent JS injection from a stored selector.
-        selector_escaped = login_indicator_selector.replace("\\", "\\\\").replace("'", "\\'")
-        # Negate: page is only "ready" when base condition is met AND the
-        # login indicator is NOT present. When the indicator IS present the
-        # wait_for times out and crawl4ai returns success=False.
-        ready_condition += f" && !document.querySelector('{selector_escaped}')"
-
-    params: dict[str, Any] = {
-        "cache_mode": "bypass",
-        "word_count_threshold": 10,
-        # Chrome stripping runs inside wait_for's one-time prep (0.9's
-        # untrusted-config boundary forbids js_code_before_wait), and only in
-        # the no-selector pipeline — with a selector the caller vouches for
-        # the content scope, matching the old trusted-pipeline behaviour.
-        "wait_for": build_wait_for(strip_chrome=selector is None, ready_condition=ready_condition),
-        "remove_consent_popups": True,
-        "remove_overlay_elements": True,
-        "page_timeout": 30000,
-        "markdown_generator": md_gen,
-    }
-
-    if selector:
-        # Use target_elements instead of css_selector so BFS link discovery still
-        # sees the full page DOM. css_selector shrinks the raw HTML before any
-        # processing, which also hides sidebar/nav links from BFS — breaking
-        # site crawls on wikis where the main <nav> holds all category links
-        # (e.g. wiki.redcactus.cloud /nl/ pages = 1 instead of 30+).
-        # target_elements only narrows the markdown/extraction pass; the BFS
-        # strategy still discovers links from the full HTML.
-        params["target_elements"] = [selector]
-        params["excluded_tags"] = []
-    else:
-        # Chrome stripping itself lives in wait_for's prep (see build_wait_for).
-        params["excluded_tags"] = ["nav", "footer", "header", "aside", "script", "style"]
-
-    return params
 
 
 # ---------------------------------------------------------------------------
@@ -596,65 +220,6 @@ def _parse_sitemap_locs(xml_text: str) -> tuple[str, list[str]]:
     kind = "sitemapindex" if root_name == "sitemapindex" else "urlset"
     locs = [unescape(u.strip()) for u in re.findall(r"<loc>\s*(.*?)\s*</loc>", xml_text or "")]
     return kind, [u for u in locs if u]
-
-
-# SPEC-INGEST-RECONCILE-001 — URL canonicalisation for set-union dedup.
-# Trailing slash + fragment + scheme/host casing are common false-negatives
-# in the previous "exact-string match" supplement loop dedup (Bug A defect 3).
-def _canonicalise_url(url: str) -> str:
-    """Normalise a URL for set-union dedup.
-
-    - Lowercase scheme + host
-    - Strip URL fragment (#section)
-    - Strip trailing slash from path (but keep root "/" as-is)
-
-    Query string is preserved — different ?foo=bar variants are
-    different pages by convention.
-    """
-    if not url:
-        return url
-    defragged, _ = urldefrag(url)
-    parsed = urlparse(defragged)
-    path = parsed.path or "/"
-    if len(path) > 1 and path.endswith("/"):
-        path = path.rstrip("/")
-    return urlunparse(
-        (
-            parsed.scheme.lower(),
-            parsed.netloc.lower(),
-            path,
-            parsed.params,
-            parsed.query,
-            "",  # fragment
-        )
-    )
-
-
-def _host_key(host: str) -> str:
-    """Return a comparison key that treats apex and www as the same site."""
-    host = (host or "").lower()
-    return host[4:] if host.startswith("www.") else host
-
-
-def _same_site_domain(host: str, base_domain: str) -> bool:
-    return _host_key(host) == _host_key(base_domain)
-
-
-def _coerce_same_site_url_to_base_host(url: str, base_domain: str) -> str:
-    """Use the connector's configured host for apex/www sitemap variants."""
-    parsed = urlparse(url)
-    if not _same_site_domain(parsed.netloc.lower(), base_domain):
-        return url
-    return urlunparse(
-        (
-            parsed.scheme,
-            base_domain,
-            parsed.path,
-            parsed.params,
-            parsed.query,
-            parsed.fragment,
-        )
-    )
 
 
 _ARTICLE_OG_TYPES = {"article"}
@@ -1372,85 +937,6 @@ async def _crawl_sync(
     return resp.json()
 
 
-# Unrendered client-side template token: ``{{item.Name}}``, ``{{ x }}``.
-# Left behind by AngularJS/Vue/Handlebars pages whose app failed to render
-# in the crawler browser — the tokens are markup residue, never content.
-_MUSTACHE_TOKEN_RE = re.compile(r"\{\{[^{}]*\}\}")
-_MD_LINK_URL_RE = re.compile(r"\]\([^)]*\)")
-
-
-def strip_unrendered_template_lines(markdown: str) -> str:
-    """Drop lines that are (almost) entirely unrendered ``{{...}}`` tokens.
-
-    Conservative by design: a line is removed only when, after taking out
-    template tokens and markdown link URLs, at most two words remain — i.e.
-    the line carries no prose of its own. Lines with real prose that merely
-    mention a token are kept UNCHANGED (think documentation about
-    templating), as is everything inside fenced code blocks.
-
-    Keep in sync with the same-named helper in
-    ``klai-portal/backend/app/services/source_extractors/url.py``.
-    """
-    if "{{" not in markdown:
-        return markdown
-    kept: list[str] = []
-    in_fence = False
-    for line in markdown.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("```") or stripped.startswith("~~~"):
-            in_fence = not in_fence
-            kept.append(line)
-            continue
-        if in_fence or "{{" not in line:
-            kept.append(line)
-            continue
-        # Words that remain once tokens and link URLs are gone — the text a
-        # human would actually read on this line.
-        remainder = _MUSTACHE_TOKEN_RE.sub(" ", _MD_LINK_URL_RE.sub("]", line))
-        words = re.findall(r"\w+", remainder, flags=re.UNICODE)
-        if len(words) <= 2:
-            continue
-        kept.append(line)
-    return "\n".join(kept)
-
-
-def _extract_result(url: str, page: dict[str, Any]) -> CrawlResult:
-    """Parse a single page result from the REST API response."""
-    md = page.get("markdown", "")
-    if isinstance(md, dict):
-        fit = md.get("fit_markdown", "") or ""
-        raw = md.get("raw_markdown", "") or ""
-    else:
-        fit = ""
-        raw = md or ""
-
-    md_v2 = page.get("markdown_v2", {})
-    if not fit:
-        fit = md_v2.get("fit_markdown", "") or ""
-    if not raw:
-        raw = md_v2.get("raw_markdown", "") or ""
-
-    fit = strip_unrendered_template_lines(fit)
-    raw = strip_unrendered_template_lines(raw)
-
-    text = fit or raw
-    return CrawlResult(
-        url=page.get("url", url),
-        fit_markdown=fit,
-        raw_markdown=raw,
-        html=page.get("html", ""),
-        word_count=len(text.split()),
-        success=page.get("success", True),
-        requested_url=url,
-        links=page.get("links", {}),
-        media=page.get("media") or {},
-        error_message=page.get("error_message"),
-        metadata=page.get("metadata"),
-        response_headers=page.get("response_headers"),
-        status_code=page.get("status_code"),
-    )
-
-
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -1981,26 +1467,6 @@ def _status_code_from_exception(exc: BaseException) -> int | None:
     if isinstance(exc, httpx.HTTPStatusError):
         return exc.response.status_code
     return None
-
-
-def _relax_seed_crawl_config(crawler_config: dict[str, Any]) -> dict[str, Any]:
-    relaxed = copy.deepcopy(crawler_config)
-    # Some personal/portfolio sites put real content in <header>. If strict
-    # chrome stripping leaves no visible text, retry the seed before treating
-    # the page as anti-bot. Chrome stripping lives inside wait_for's prep, so
-    # dropping wait_for drops the stripping with it.
-    relaxed.pop("wait_for", None)
-    if relaxed.get("excluded_tags"):
-        relaxed["excluded_tags"] = ["script", "style"]
-    return relaxed
-
-
-@dataclass
-class LinkedPageSample:
-    """Outcome of sampling pages linked from an already-crawled page."""
-
-    pages_crawled: int
-    pages_usable: int
 
 
 def _is_unrendered_template_href(url: str) -> bool:
@@ -3514,51 +2980,6 @@ _DEEP_POLL_INTERVAL = 5.0  # seconds between status polls
 _MAX_DEEP_POLL = 30 * 60  # max total seconds (30 minutes)
 
 
-def _url_matches_include_patterns(u: str, include_patterns: list[str] | None) -> bool:
-    """Filter URL against include_patterns using crawl4ai URLPatternFilter semantics.
-
-    A pattern like ``/nl/*`` is a prefix glob (fnmatch on the URL path), NOT a
-    substring. Plain substring match made ``/nl/*`` literally never match
-    because no URL contains the asterisk — observed live on
-    wiki.redcactus.cloud (29 BFS-discovered URLs, 0 retained as candidates →
-    1 page ingested instead of ~150). Two contracts honoured:
-
-      * Patterns containing ``*`` or ``?`` ⇒ ``fnmatch`` against the URL path
-        (matches the old crawl4ai URLPatternFilter contract)
-      * Plain patterns (no wildcard) ⇒ substring match on the URL —
-        matches the original "simple substring" intent for legacy callers
-    """
-    if not include_patterns:
-        return True
-    path_with_query = urlparse(u).path
-    for p in include_patterns:
-        if "*" in p or "?" in p:
-            if fnmatch.fnmatch(path_with_query, p):
-                return True
-        elif p in u:
-            return True
-    return False
-
-
-def _url_matches_patterns(u: str, patterns: list[str] | None) -> bool:
-    """Return whether ``u`` matches any path/URL pattern.
-
-    Wildcard patterns use fnmatch against the URL path, matching
-    crawl4ai's URLPatternFilter semantics. Plain patterns keep the
-    legacy substring-on-URL behaviour.
-    """
-    if not patterns:
-        return False
-    path_with_query = urlparse(u).path
-    for p in patterns:
-        if "*" in p or "?" in p:
-            if fnmatch.fnmatch(path_with_query, p):
-                return True
-        elif p in u:
-            return True
-    return False
-
-
 async def _bfs_deep_crawl(
     *,
     start_url: str,
@@ -3704,8 +3125,8 @@ async def _bfs_deep_crawl(
 # never checks the "blocked by anti-bot protection" marker), and a single
 # such signal is exactly the disproportionate trigger this fix removes —
 # see ``crawl_antibot_stop_ratio`` / ``crawl_antibot_stop_min_count``
-# (config.py) for the production evidence and the replacement, crawl-wide
-# ratio+floor gate applied further down in this function.
+# (config.py) for the production evidence and the replacement crawl-wide
+# ratio+floor decision owned by ``host_circuit_breaker.evaluate_chunk``.
 _STOP_CHUNKING_REASON_CODES = frozenset({FetchReasonCode.RATE_LIMITED.value})
 _NON_STOP_CHUNKING_REASON_CODES = frozenset(
     {
@@ -3725,8 +3146,8 @@ _NON_STOP_CHUNKING_REASON_CODES = frozenset(
         FetchReasonCode.NOT_FETCHED_DUPLICATE.value,
         FetchReasonCode.NOT_FETCHED_RATE_LIMIT_STOP.value,
         FetchReasonCode.UNKNOWN_EXCEPTION.value,
-        # BLOCKED_ANTI_BOT only stops through the separate crawl-wide ratio
-        # gate; one occurrence is deliberately not an unconditional stop.
+        # BLOCKED_ANTI_BOT only stops through the breaker's crawl-wide ratio
+        # decision; one occurrence is deliberately not an unconditional stop.
         FetchReasonCode.BLOCKED_ANTI_BOT.value,
         FetchReasonCode.REFUSED.value,
         FetchReasonCode.NOT_FETCHED_CIRCUIT_BREAKER_STOP.value,
@@ -3753,100 +3174,6 @@ if _uncategorized_stop_chunking_reason_codes:  # pragma: no cover - import-time 
         "Add each to _STOP_CHUNKING_REASON_CODES or "
         "_NON_STOP_CHUNKING_REASON_CODES in knowledge_ingest/crawl4ai_client.py."
     )
-
-
-@dataclass
-class ChunkedFetchResult:
-    """Per-chunk outcome of one ``_chunked_bulk_fetch`` call.
-
-    Replaces the old ``tuple[list[dict], BaseException | None]`` return
-    shape, which had two bugs (bulk-path defects block A):
-
-    - it kept only the LAST failing chunk's exception, silently discarding
-      the exception (and the honest cause) of every earlier failed chunk
-      (A2);
-    - a caller that saw ``transport_error is not None`` had no way to tell
-      "which URLs actually failed" from "which URLs already succeeded in
-      an earlier chunk" — so a retry had to redo the WHOLE batch, and a
-      combine step had to treat every candidate as failed even when most
-      of them had a perfectly good result sitting in ``raw_results``.
-
-    Attributes:
-        raw_results: flattened per-URL page dicts from every chunk that
-            transported successfully (an httpx-level 2xx bulk response).
-            A page dict here may still carry ``success: false`` at the
-            page level (404, 500, ...) — that is a normal per-URL outcome,
-            classified downstream by ``_classify_fetch_outcome``, not a
-            transport failure.
-        failed: URL -> the transport exception raised by ITS OWN chunk. A
-            dict (not a single ``transport_error``) so two different
-            chunks that both fail keep their own, distinct exceptions —
-            never the second silently overwriting the first (A2).
-        not_attempted: URLs belonging to chunks that were never submitted
-            at all because an earlier chunk's outcome (page-level
-            classification, or the chunk's own transport exception)
-            classified as RATE_LIMITED — or the crawl-wide BLOCKED_ANTI_BOT
-            ratio crossed its threshold (see ``crawl_antibot_stop_ratio`` /
-            ``crawl_antibot_stop_min_count``, config.py) — and the loop
-            stopped sending further chunks (A1, see ``stopped_early``).
-            These made ZERO network calls — kept out of ``failed`` so a
-            caller never conflates "the site rejected this URL" with "we
-            chose not to ask".
-        stopped_early: True when ``not_attempted`` is non-empty for the
-            reason described above.
-        stop_trigger_reason_code: which stop policy actually caused
-            ``stopped_early`` — the unconditional RATE_LIMITED set, the
-            crawl-wide BLOCKED_ANTI_BOT ratio gate, or the circuit breaker;
-            ``None`` when ``stopped_early`` is False. Lets a caller
-            (``crawl_site``, Deel B) distinguish slowdown from give-up.
-            BLOCKED_ANTI_BOT wins when a chunk observes both signals, and
-            is also used for an aborting circuit-breaker verdict.
-        circuit_breaker_triggered: True when
-            ``knowledge_ingest.host_circuit_breaker`` returned an ABORT
-            verdict (persistent failure or repeated refusal — onderdeel 2,
-            the general-purpose "everything is failing" backstop) and is why
-            chunking stopped, as opposed to the RATE_LIMITED/BLOCKED_ANTI_BOT
-            triggers above. Give-up semantics — unchanged by onderdeel 3
-            below.
-        circuit_breaker_slowdown_triggered: True when the breaker instead
-            returned BreakerVerdict.SLOWDOWN (onderdeel 3, 2026-08-19 — a
-            failure ratio between ``crawl_circuit_breaker_slowdown_ratio``
-            and ``crawl_circuit_breaker_failure_ratio``, see config.py).
-            Deliberately a SEPARATE flag from ``circuit_breaker_triggered``
-            — this one gets RATE_LIMITED-flavoured retry-at-a-lower-rate
-            treatment in ``crawl_site``, not give-up treatment, so a caller
-            must not conflate the two when counting "how many times did the
-            breaker give up" vs. "how many times did the breaker just ask
-            for less speed".
-        not_attempted_reason_code: the FetchReasonCode value ``crawl_site``
-            should use for every URL in ``not_attempted`` — NOT_FETCHED_
-            RATE_LIMIT_STOP by default (existing behaviour, unchanged; also
-            what a SLOWDOWN verdict leaves this as, since those URLs are
-            expected to be retried, not abandoned), or NOT_FETCHED_CIRCUIT_
-            BREAKER_STOP when ``circuit_breaker_triggered`` (an ABORT
-            verdict) is True, so "how many times did the breaker actually
-            give up" has an honest answer. Set to NOT_FETCHED_CANCELLED when
-            ``cancelled`` is True (see below).
-        cancelled: True when ``cancel_check`` (2026-08-19, crawl-cancel)
-            returned True BEFORE a chunk was sent, so chunking stopped for
-            an operator-requested cancellation rather than any site-side
-            signal. Kept separate from ``circuit_breaker_triggered`` and
-            ``stop_trigger_reason_code`` (which stays None here) because
-            the caller's response is different: no rate-limit slowdown
-            retry, no give-up-and-mark-BLOCKED_ANTI_BOT — just stop, and
-            the crawl_job's terminal status becomes ``cancelled``, never a
-            failure.
-    """
-
-    raw_results: list[dict[str, Any]] = field(default_factory=list)
-    failed: dict[str, BaseException] = field(default_factory=dict)
-    not_attempted: list[str] = field(default_factory=list)
-    stopped_early: bool = False
-    stop_trigger_reason_code: str | None = None
-    circuit_breaker_triggered: bool = False
-    circuit_breaker_slowdown_triggered: bool = False
-    not_attempted_reason_code: str = FetchReasonCode.NOT_FETCHED_RATE_LIMIT_STOP.value
-    cancelled: bool = False
 
 
 async def _chunked_bulk_fetch(
@@ -3922,9 +3249,9 @@ async def _chunked_bulk_fetch_with_session(
     See ``ChunkedFetchResult.not_attempted``.
 
     2026-08-18 (antibot-classification-and-threshold): BLOCKED_ANTI_BOT is
-    a SEPARATE, ratio-gated trigger, not an immediate stop like
-    RATE_LIMITED. A running tally of anti-bot signals and total attempted
-    URLs is kept across every chunk processed by THIS call (crawl-wide,
+    a ratio-gated trigger, not an immediate stop like RATE_LIMITED. The
+    host circuit breaker keeps the running anti-bot and attempted counts
+    across every chunk processed by THIS call (crawl-wide,
     not per-chunk — a 1-URL chunk that itself classifies BLOCKED_ANTI_BOT
     is trivially 100% locally, which is meaningless in isolation).
     Chunking stops only once BOTH ``settings.crawl_antibot_stop_min_count``
@@ -3934,8 +3261,9 @@ async def _chunked_bulk_fetch_with_session(
     defaults (0.25 / 3).
 
     2026-08-19 (host circuit breaker, onderdeel 2 — see
-    ``knowledge_ingest.host_circuit_breaker``): a THIRD, independent stop
-    trigger for the case neither RATE_LIMITED nor the BLOCKED_ANTI_BOT
+    ``knowledge_ingest.host_circuit_breaker``): the same state machine has
+    an independent stop trigger for the case neither RATE_LIMITED nor the
+    BLOCKED_ANTI_BOT
     ratio gate reacts to — a site that fails every request for an
     unrelated reason (5xx, timeout, unknown_exception). Evaluated once per
     chunk (never per URL), same as the anti-bot ratio tally above, so it
@@ -3949,7 +3277,7 @@ async def _chunked_bulk_fetch_with_session(
     RATE_LIMITED page signal below — ``stop_trigger_reason_code`` is set to
     RATE_LIMITED, not BLOCKED_ANTI_BOT, so ``crawl_site`` retries the
     abandoned URLs at a halved rate (Deel B) instead of giving up on them.
-    Only ``BreakerVerdict.ABORT_PERSISTENT_FAILURE``/``ABORT_REFUSAL`` keep
+    ``BreakerVerdict.ABORT_ANTI_BOT`` and the two general ABORT verdicts keep
     the give-up treatment. This reuses ``crawl_site``'s existing halving/
     cooldown/``_MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS`` give-up ladder
     unchanged — no second slowdown mechanism exists, so a chunk that is
@@ -3964,7 +3292,7 @@ async def _chunked_bulk_fetch_with_session(
     and before this chunk's request is built, so a cancellation is honoured
     without ever sending one more request or waiting out one more pacing
     gap. Checked once per chunk — same granularity as the breaker and the
-    anti-bot ratio gate, never per URL — which bounds reaction time to a
+    anti-bot ratio decision, never per URL — which bounds reaction time to a
     single chunk's own duration (seconds) instead of the crawl's full page
     budget (previously: never, because nothing in this loop checked
     cancellation at all — see ``knowledge.crawl_jobs.cancel_requested``
@@ -3974,8 +3302,6 @@ async def _chunked_bulk_fetch_with_session(
     result = ChunkedFetchResult()
     if not urls:
         return result
-    attempted_count = 0
-    antibot_signal_count = 0
     breaker_state = HostCircuitBreakerState()
     chunk_start = 0
     chunk_index = 0
@@ -4012,6 +3338,7 @@ async def _chunked_bulk_fetch_with_session(
         chunk_failed = 0
         chunk_any_success = False
         chunk_refused = 0
+        chunk_blocked_antibot = 0
         try:
             async with httpx.AsyncClient(
                 timeout=settings.crawl_bulk_base_timeout_seconds
@@ -4023,7 +3350,6 @@ async def _chunked_bulk_fetch_with_session(
                     _host_pacing_already_reserved.reset(reservation_token)
             chunk_pages = _normalise_results_block(data)
             result.raw_results.extend(chunk_pages)
-            attempted_count += len(chunk_pages)
             chunk_attempted = len(chunk_pages)
             for page in chunk_pages:
                 page_reason_code = _classify_fetch_outcome(page)
@@ -4033,19 +3359,18 @@ async def _chunked_bulk_fetch_with_session(
                 else:
                     chunk_failed += 1
                     if page_reason_code == FetchReasonCode.BLOCKED_ANTI_BOT.value:
-                        antibot_signal_count += 1
+                        chunk_blocked_antibot += 1
                     elif page_reason_code == FetchReasonCode.REFUSED.value:
                         chunk_refused += 1
         except Exception as exc:
             # A chunk-level transport exception can never itself classify
             # BLOCKED_ANTI_BOT or REFUSED (see _classify_fetch_outcome's
             # error branch, which never checks anti-bot/refusal body
-            # markers on the raised-exception path) — attempted_count
-            # still advances by the whole chunk (a network call WAS made
-            # for every URL in it), but neither tally is touched here.
+            # markers on the raised-exception path). The breaker still counts
+            # every URL in the chunk as attempted and failed (a network call
+            # WAS made for every one), but neither specific tally advances.
             for chunk_url in chunk_urls:
                 result.failed[chunk_url] = exc
-            attempted_count += len(chunk_urls)
             chunk_attempted = len(chunk_urls)
             chunk_failed = len(chunk_urls)
             chunk_reason_codes.add(_classify_fetch_outcome(None, error=exc))
@@ -4056,11 +3381,6 @@ async def _chunked_bulk_fetch_with_session(
                 error=str(exc),
             )
 
-        antibot_ratio_exceeded = (
-            antibot_signal_count >= settings.crawl_antibot_stop_min_count
-            and attempted_count > 0
-            and (antibot_signal_count / attempted_count) >= settings.crawl_antibot_stop_ratio
-        )
         breaker_state, breaker_verdict = evaluate_chunk(
             breaker_state,
             ChunkObservation(
@@ -4068,12 +3388,15 @@ async def _chunked_bulk_fetch_with_session(
                 failed=chunk_failed,
                 any_success=chunk_any_success,
                 refused=chunk_refused,
+                blocked_antibot=chunk_blocked_antibot,
             ),
             consecutive_failure_threshold=settings.crawl_circuit_breaker_consecutive_failures,
             min_attempts_for_ratio=settings.crawl_circuit_breaker_min_attempts,
             failure_ratio_threshold=settings.crawl_circuit_breaker_failure_ratio,
             refusal_threshold=settings.crawl_circuit_breaker_refusal_count,
             slowdown_ratio_threshold=settings.crawl_circuit_breaker_slowdown_ratio,
+            antibot_ratio_threshold=settings.crawl_antibot_stop_ratio,
+            antibot_min_count=settings.crawl_antibot_stop_min_count,
         )
         # onderdeel 3: ABORT_* keeps the pre-existing give-up semantics;
         # SLOWDOWN is a new, separate trip that gets RATE_LIMITED-flavoured
@@ -4082,23 +3405,17 @@ async def _chunked_bulk_fetch_with_session(
             BreakerVerdict.ABORT_PERSISTENT_FAILURE,
             BreakerVerdict.ABORT_REFUSAL,
         )
+        antibot_abort_tripped = breaker_verdict == BreakerVerdict.ABORT_ANTI_BOT
         breaker_slowdown_tripped = breaker_verdict == BreakerVerdict.SLOWDOWN
-        breaker_tripped = breaker_abort_tripped or breaker_slowdown_tripped
-        stop_triggered = (
-            bool(chunk_reason_codes & _STOP_CHUNKING_REASON_CODES)
-            or (
-                FetchReasonCode.BLOCKED_ANTI_BOT.value in chunk_reason_codes
-                and antibot_ratio_exceeded
-            )
-            or breaker_tripped
-        )
+        breaker_tripped = breaker_abort_tripped or antibot_abort_tripped or breaker_slowdown_tripped
+        stop_triggered = bool(chunk_reason_codes & _STOP_CHUNKING_REASON_CODES) or breaker_tripped
         if stop_triggered:
             remaining_urls = urls[chunk_start + len(chunk_urls) :]
             if remaining_urls:
                 result.stopped_early = True
                 result.not_attempted = remaining_urls
                 triggering_reason_codes = set(chunk_reason_codes & _STOP_CHUNKING_REASON_CODES)
-                if antibot_ratio_exceeded:
+                if antibot_abort_tripped:
                     triggering_reason_codes.add(FetchReasonCode.BLOCKED_ANTI_BOT.value)
                 # Deel B (2026-08-18): a single reason code for crawl_site's
                 # slowdown-vs-give-up branch. Derived from
@@ -4117,6 +3434,7 @@ async def _chunked_bulk_fetch_with_session(
                 result.stop_trigger_reason_code = (
                     FetchReasonCode.BLOCKED_ANTI_BOT.value
                     if breaker_abort_tripped
+                    or antibot_abort_tripped
                     or FetchReasonCode.BLOCKED_ANTI_BOT.value in triggering_reason_codes
                     else FetchReasonCode.RATE_LIMITED.value
                 )
@@ -4132,8 +3450,8 @@ async def _chunked_bulk_fetch_with_session(
                     sent_urls=chunk_start + len(chunk_urls),
                     not_attempted_urls=len(remaining_urls),
                     triggering_reason_codes=sorted(triggering_reason_codes),
-                    antibot_signal_count=antibot_signal_count,
-                    antibot_attempted_count=attempted_count,
+                    antibot_signal_count=breaker_state.blocked_antibot,
+                    antibot_attempted_count=breaker_state.attempted,
                     circuit_breaker_verdict=(breaker_verdict.value if breaker_tripped else None),
                 )
             break
