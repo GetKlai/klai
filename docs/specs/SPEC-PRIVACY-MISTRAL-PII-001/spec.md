@@ -1,6 +1,6 @@
 ---
 id: SPEC-PRIVACY-MISTRAL-PII-001
-version: "0.6.0"
+version: "0.7.0"
 status: draft
 created: 2026-08-20
 updated: 2026-08-20
@@ -17,6 +17,7 @@ roadmap: docs/architecture/knowledge-rag-improvement-plan.md
 
 | Version | Date       | Author       | Change |
 |---------|------------|--------------|--------|
+| 0.7.0   | 2026-08-20 | Mark Vletter | Maintenance pass — the SPEC is a working document, not a record of what we once believed. Adds a **Status** table (per-phase state with the commit that proves it) so this doubles as the progress overview, plus a short "what this SPEC got wrong, and how it was caught" table: three of four errors were found by measuring, not reading, and two had already been written down as confident conclusions. Removed three claims that are now false: that the LiteLLM integration is configuration rather than code (REQ-5 and REQ-0a each measured otherwise), that `PHONE_NUMBER` is a stock built-in enabled via a YAML region key (the loader drops it — it is `NLPhoneRecognizer` now), and assumption A6 (struck through with the real root cause and the fixing commits). Re-validated every `file:line` anchor **semantically**, not just for range: the `MISTRAL_API_KEY` anchor had drifted from 388-389 to 421-422 as compose grew, still pointing inside the file and therefore passing a naive check while being wrong. |
 | 0.6.0   | 2026-08-20 | Mark Vletter | **Measurement gates removed; build-then-observe instead.** Klai's current traffic volume is far too low to produce a statistically meaningful 30-day, three-tenant, hand-annotated sample, so requiring one was not caution — it was a stall dressed as rigour. The workflow is: build on stated assumptions, ship, watch it in practice, correct. Every assumption that replaced a measurement is written down under "Assumptions" so it can be checked against reality rather than forgotten. Phase 3's design is also settled: REQ-0a proved the native restore path unusable for streaming, so Klai owns mask, map and restore end to end, keyed by `litellm_call_id` in process memory. Everything ships behind `KLAI_PII_ENFORCE`, default **off**, so Phase 3 can land, deploy and be exercised in production while inert — activation stays a separate, deliberate flip. |
 | 0.5.0   | 2026-08-20 | Mark Vletter | **Phase 0 ran on core-01 and answered both questions.** REQ-0a is negative for streaming: `output_parse_pii` restores correctly non-streaming but returns an empty token map on the streaming path — the second failure shape in litellm#6247, still live on v1.96.2, and NOT the Anthropic-native bug 0.2.0 dismissed from reading. Both Klai chat paths stream, so REQ-8's restore moves to our own post-call hooks. REQ-0b: the verbatim-token instruction takes `PHONE_NUMBER` survival from 58.3% to 95.8%, so it is mandatory rather than advisory. Two gaps the run exposed: six of thirty Dutch phone numbers were never detected despite `supported_regions: [NL]` (a detection gap, separate from survival), and `PERSON` is **unmeasurable** today because REQ-2 disables SpacyRecognizer and GLiNER is not deployed — so REQ-0b's PERSON half must be re-run after REQ-9, and PERSON must not be enabled before that. |
 | 0.4.1   | 2026-08-20 | Mark Vletter | REQ-6 tightened after the Phase 2 delta review. The language label is now derived from the latest user turn rather than the whole payload — the KB context block is English-structured by design and dwarfs the question, so detecting on combined text would have labelled a Dutch question `en` on essentially every RAG request and quietly invalidated REQ-2's per-language comparison. Records the honest limitation that the observer uses a stopword heuristic rather than the canonical lingua detector, because `lingua-language-detector` is not in the stock litellm image, with the escalation path if Phase 2 data proves too noisy. |
@@ -32,7 +33,7 @@ roadmap: docs/architecture/knowledge-rag-improvement-plan.md
 ## Summary
 
 Every LLM call in the platform leaves through one container: `MISTRAL_API_KEY` is declared
-once, in the `litellm` service block (`deploy/docker-compose.yml:388-389`). No service holds
+once, in the `litellm` service block (`deploy/docker-compose.yml:421-422`). No service holds
 a provider key of its own and no code calls `api.mistral.ai` directly.
 
 This SPEC puts PII removal on that boundary using Presidio, deployed as two self-hosted
@@ -47,6 +48,43 @@ so drafting an email still works while Mistral never receives the real values.
 
 Nothing here touches PII at rest, and nothing here depends on that work.
 
+## Status — 2026-08-20
+
+**Maintenance rule.** Update this document whenever a phase lands, a measurement lands, or a
+claim in it turns out to be false — and *delete* what is no longer true rather than layering
+a correction on top. A SPEC that records what we used to believe is worse than no SPEC,
+because it is read as current. Re-check `file:line` anchors semantically when you touch it: a
+line number can stay inside the file and still point at the wrong thing, which is how the
+`MISTRAL_API_KEY` anchor silently drifted by 33 lines.
+
+Kept current as each phase lands. If this table disagrees with the requirement text below,
+the table is right and the text is stale — say so rather than working around it.
+
+| Phase | State | Evidence |
+|---|---|---|
+| **0** — prove the restore path | **Done, answered** | Ran on core-01. `output_parse_pii` restores non-streaming, returns an **empty map on streaming**. Verbatim-token instruction takes `PHONE_NUMBER` survival 58.3% → 95.8%. See the RESULT block under Phase 0 |
+| **1** — recognizer pack | **Live** | `d55d6adeb`, `d2aa35fd2`. Nine recognizers loaded across en/nl/de, spaCy disabled per language, verified in production logs. Rotterdam fix `4af66f4e0` + `b5b592051`, verified live |
+| **2** — read-only observer | **Live, measuring** | `c6dd946e4`. Real `pii_observed` events in VictoriaLogs, including `org_id=None` requests the existing hook skips. Changes no payload |
+| **3** — mask + restore | **In build, inert** | Behind `KLAI_PII_ENFORCE`, default off. Klai owns mask/map/restore because Phase 0 measured the native path unusable for streaming |
+| **4** — `PERSON` via GLiNER | **Blocked, deliberately** | No PERSON detector is deployed at all (REQ-2 disables SpacyRecognizer). REQ-0b's PERSON half is unmeasurable until GLiNER lands |
+
+**Nothing is being masked today.** The guardrail has no `default_on` and enforcement is off,
+so production payloads reach Mistral unchanged. Phases 1 and 2 detect and count; they do not
+alter.
+
+### What this SPEC got wrong, and how it was caught
+
+Recorded because the pattern matters more than the individual errors: **three of the four
+were caught by measuring, not by reading**, and two of them had already been written down as
+confident conclusions.
+
+| Claim | Reality | Caught by |
+|---|---|---|
+| `presidio_language: "nl"` is the right approach (0.2.0) | Wrong for a language-agnostic product; detection is jurisdiction-specific and needs no language at all | Review of the product's own multilingual contract |
+| Streaming restore is fine on our path (0.2.0) | Empty token map on streaming, still live on v1.96.2 | The Phase 0 run |
+| `logging_only` is a shadow-measurement mode (0.4.0) | It masks observability and sends the payload **unmasked** to the provider | Reading the docs before building |
+| Six undetected phone numbers are a format gap (A6) | The YAML region key was silently ignored; Dutch detection worked by accident | Introspecting the running container |
+
 ## Motivation
 
 ### Are the previously chosen tools still the right ones?
@@ -58,7 +96,7 @@ note was written now does most of the work for us.
 
 | Tool | Verdict | Evidence |
 |---|---|---|
-| **Presidio** | **Adopt** as the framework | MIT. Moved from Microsoft to the independent Data Privacy Stack org in 2026, actively maintained; images now `ghcr.io/data-privacy-stack/presidio-*`, the old `mcr.microsoft.com` tags are frozen. Decisive for us: LiteLLM ships a **native** Presidio guardrail, so the integration is configuration rather than code |
+| **Presidio** | **Adopt** as the framework | MIT. Moved from Microsoft to the independent Data Privacy Stack org in 2026, actively maintained; images now `ghcr.io/data-privacy-stack/presidio-*`, the old `mcr.microsoft.com` tags are frozen. LiteLLM ships a native Presidio guardrail, but **the integration turned out to be code, not configuration** — its `logging_only` mode is inverted for measurement (REQ-5) and its restore path returns an empty token map on streaming (REQ-0a). Presidio itself is still the right framework; the LiteLLM glue is ours |
 | **Presidio's default detection** | **Do not rely on it** | REDACT (25 languages, [arXiv:2606.19881](https://arxiv.org/abs/2606.19881), 18 Jun 2026) measures the rule-based detector at F1 0.195 overall and **recall 0.07 on the highest-sensitivity categories**. The framework is good; the stock recognizers are not a control |
 | **Dutch coverage** | **Must be built** | Presidio's `default_recognizers.yaml` ships 73 recognizers with country packs for DE, ES, IT, PL, FI, SE, UK, US, AU, IN, ZA, KR, TH, TR, CA, NG, PH — **and nothing for the Netherlands**. `nl` is not in `supported_languages`. There is no BSN, KvK or BTW recognizer to enable. A June 2026 release added a German pack and a Philippine TIN; still no Dutch |
 | **GLiNER `gliner_multi_pii-v1`** | **Adopt for names, gated** | License verified directly on the model card: **apache-2.0** — commercially usable. REDACT F1 0.320, better than Presidio's default but with a documented high-recall/low-precision profile. Presidio supports it as a pluggable NER engine |
@@ -68,7 +106,10 @@ note was written now does most of the work for us.
 
 So: **Presidio as the framework, a Klai-supplied Dutch recognizer pack as the substance,
 GLiNER behind a gate for names.** The 2026 delta versus the original note is that the
-integration is now configuration, and that the Dutch gap is explicit rather than assumed.
+Dutch gap is explicit rather than assumed. The other 2026 delta — that LiteLLM's native
+guardrail would make this pure configuration — **did not survive contact**: REQ-5 and REQ-0a
+each measured it doing something other than what its documentation implies, so Klai owns the
+observer, the mask, the map and the restore.
 
 ### Pseudonymisation or anonymisation?
 
@@ -87,7 +128,7 @@ is specific to the **Anthropic native** path — where response chunks arrive as
 rather than `ModelResponseStream` objects, so the unmasking iterator never fires — and it is
 **closed**, fixed by PR #30028. The OpenAI-compatible path was never affected. Klai routes
 `mistral/mistral-small-2603` (`deploy/litellm/config.yaml:5-8`) over that path on LiteLLM
-`v1.96.2` (`deploy/docker-compose.yml:304`).
+`v1.96.2` (`deploy/docker-compose.yml:309`).
 
 What remains genuinely uncertain is the older
 [#6247](https://github.com/BerriAI/litellm/issues/6247): corrupted token maps
@@ -340,7 +381,8 @@ indistinguishable from a successful restore. This exception ends with Phase 1.
 | `NL_POSTCODE` | `1234 AB` shape | `shield_compliance.py:38` |
 | `IBAN_CODE` | mod-97 | **built-in**, enable rather than write |
 | `CREDIT_CARD` | Luhn | **built-in**, enable rather than write |
-| `EMAIL_ADDRESS`, `PHONE_NUMBER` | built-in; phone with region `NL` | **built-in**, enable rather than write |
+| `EMAIL_ADDRESS` | shape | **built-in**, enable rather than write |
+| `PHONE_NUMBER` | libphonenumber, regions NL + BE prepended to the stock list | `NLPhoneRecognizer` — a subclass, **not** a YAML `supported_regions:` key, which the registry loader silently drops (see ~~A6~~) |
 
 **THE checksum-validated recognizers SHALL** be Python `PatternRecognizer` subclasses
 overriding `validate_result()`, not YAML entries. Presidio's YAML registry can express a
@@ -443,7 +485,7 @@ each with what would falsify it.
 | A3 | `PERSON` behaves worse than the other entities and needs its own evidence | Names are inflected in Dutch, the others are not | A GLiNER-era re-run showing `PERSON` ≥95% |
 | A4 | An in-process map keyed by `litellm_call_id` is sufficient isolation | The id is a per-request UUID generated by LiteLLM | A collision, or a restore writing one request's value into another's output. AC-0e-style concurrency test guards it |
 | A5 | Enforcement adds under 60 ms p95 | Regex plus checksums, no model, one in-cluster hop | The NFR's own measurement once enabled |
-| A6 | The six undetected Dutch phone numbers in the Phase 0 run are a format-coverage gap, not a systemic recogniser failure | `supported_regions: [NL]` is set and 24 of 30 were detected | Investigation showing the recogniser mis-handles a common Dutch format |
+| ~~A6~~ | ~~The six undetected Dutch phone numbers are a format-coverage gap~~ | — | **FALSIFIED and fixed, 2026-08-20.** Introspecting the running analyzer showed `PhoneRecognizer lang=nl regions=('US','UK','DE',…)`: the YAML `supported_regions:` key is silently dropped on a `type: predefined` entry, so Dutch detection ran on Presidio's defaults and worked only because most Dutch numbers also parse as valid German ones. Rotterdam's `010` has no German equivalent and was never detected. Fixed by `NLPhoneRecognizer` (`4af66f4e0`), digest pinned (`b5b592051`), verified live |
 
 An assumption that turns out wrong here costs one flag flip, not a redesign — which is the
 point of shipping it off by default.
@@ -708,7 +750,7 @@ Rules for the implementer:
 
 Source references:
 
-- `deploy/docker-compose.yml:303,388-389` — litellm service block, sole provider key
+- `deploy/docker-compose.yml:308,421-422` — litellm service block, sole provider key
 - `deploy/litellm/config.yaml:5-80,91-95,126-128` — Mistral model list, self-hosted embedder, callbacks
 - `deploy/litellm/klai_knowledge.py:423-427,481-483` — hook entry and the two early returns
 - `deploy/litellm/klai_kb_query_rewrite.py` — sets `_klai_openai_passthrough`
