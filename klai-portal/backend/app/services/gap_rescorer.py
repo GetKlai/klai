@@ -19,6 +19,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.models.portal import PortalOrg
 from app.models.retrieval_gaps import PortalRetrievalGap
 from app.services.gap_classification import classify_gap
 from app.trace import get_trace_headers
@@ -38,13 +39,19 @@ def _open_gap_queries_stmt(org_id: int, kb_slug: str | None, cutoff: datetime):
             PortalRetrievalGap.query_text.label("query_text"),
             PortalRetrievalGap.gap_type.label("gap_type"),
             func.max(PortalRetrievalGap.occurred_at).label("last_occurred"),
+            PortalOrg.telemetry_level.label("telemetry_level"),
         )
+        .join(PortalOrg, PortalOrg.id == PortalRetrievalGap.org_id)
         .where(
             PortalRetrievalGap.org_id == org_id,
             PortalRetrievalGap.resolved_at.is_(None),
             PortalRetrievalGap.occurred_at >= cutoff,
         )
-        .group_by(PortalRetrievalGap.query_text, PortalRetrievalGap.gap_type)
+        .group_by(
+            PortalRetrievalGap.query_text,
+            PortalRetrievalGap.gap_type,
+            PortalOrg.telemetry_level,
+        )
         .order_by(func.max(PortalRetrievalGap.occurred_at).desc())
         .limit(MAX_QUERIES_PER_TRIGGER)
     )
@@ -140,13 +147,16 @@ async def rescore_open_gaps(
                     logger.warning(
                         "gap_rescorer: retrieval API returned %s for query=%r -- skipping",
                         resp.status_code,
-                        row.query_text[:60],
+                        row.query_text[:60] if row.telemetry_level == "full" else "<redacted>",
                     )
                     continue
                 chunks = resp.json().get("chunks", [])
             except Exception as exc:
                 logger.warning(
-                    "gap_rescorer: retrieval API error for query=%r: %s", row.query_text[:60], exc, exc_info=True
+                    "gap_rescorer: retrieval API error for query=%r: %s",
+                    row.query_text[:60] if row.telemetry_level == "full" else "<redacted>",
+                    exc,
+                    exc_info=True,
                 )
                 continue
 
@@ -165,7 +175,7 @@ async def rescore_open_gaps(
                 resolved_count += 1
                 logger.info(
                     "gap_rescorer: resolved gap query=%r org_id=%s",
-                    row.query_text[:60],
+                    row.query_text[:60] if row.telemetry_level == "full" else "<redacted>",
                     org_id,
                 )
 

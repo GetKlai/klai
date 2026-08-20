@@ -29,6 +29,7 @@ These tests guard those three points:
 from __future__ import annotations
 
 import importlib
+import logging
 import sys
 import types
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -285,6 +286,27 @@ async def test_meta_query_injects_meta_prompt_and_skips_retrieval(monkeypatch):
     assert "knowledge base chunks provided" not in sys_content, (
         "GROUNDED prompt leaked into the meta-question path"
     )
+
+
+@pytest.mark.asyncio
+async def test_meta_query_log_does_not_persist_query_text(monkeypatch, caplog):
+    """Meta-query detection remains observable without persisting chat text."""
+    mod = _load_hook(monkeypatch)
+    hook = mod.KlaiKnowledgeHook()
+    query = "what can I do here?"
+    data = {
+        "user": "aabbcc112233445566778899",
+        "messages": [{"role": "user", "content": query}],
+    }
+
+    with caplog.at_level(logging.INFO, logger="klai_knowledge"):
+        await hook.async_pre_call_hook(
+            _make_user_api_key(), _make_cache(), data, "completion"
+        )
+
+    rendered = " ".join(record.getMessage() for record in caplog.records)
+    assert "meta_query_detected" in rendered
+    assert query not in rendered
 
 
 @pytest.mark.asyncio
