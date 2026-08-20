@@ -10,6 +10,7 @@ from klai_answer_epistemics import (
     strip_answer_contract_markers,
 )
 from klai_kb_citation_render import (
+    KbCitationRenderStats,
     _render_kb_citation_content,
     compose_non_streaming_kb_response,
     compose_streaming_kb_response,
@@ -159,6 +160,34 @@ def test_structured_log_emits_counts_but_redacts_token_values(caplog):
     assert "correspondence_detected=True" in caplog.text
     assert "sender_only_tokens=<redacted>" in caplog.text
     assert "fraudeblokkade" not in caplog.text
+
+
+def test_citation_rescue_application_emits_actionable_event(caplog):
+    stats = KbCitationRenderStats(
+        rendered_messages=1,
+        rendered_sources=2,
+        citation_decisions=[
+            {
+                "selected": [
+                    {"reason": "supported"},
+                    {"reason": "rescued"},
+                ],
+                "rejected": [],
+            }
+        ],
+    )
+    kb_meta = _grounded_meta()
+
+    with caplog.at_level(logging.WARNING):
+        log_kb_citation_render(
+            logging.getLogger("test-citation-rescue"),
+            kb_meta,
+            stats,
+            stream=False,
+        )
+
+    assert "citation_rescue_applied" in caplog.text
+    assert "rescued_sources=1" in caplog.text
 
 
 def test_grounded_answer_logs_epistemics_when_no_citation_is_rendered(caplog):

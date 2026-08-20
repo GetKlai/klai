@@ -1564,6 +1564,28 @@ def _compose_backend_managed_answer(
     return composed.content, sources, decision
 
 
+def _count_citation_rescues(decision: dict[str, Any]) -> int:
+    """Count applied rescues across the separate KB and web trust tiers."""
+    count = sum(
+        1 for entry in decision.get("selected", []) if isinstance(entry, dict) and entry.get("reason") == "rescued"
+    )
+    web_decision = decision.get("web")
+    if isinstance(web_decision, dict):
+        count += _count_citation_rescues(web_decision)
+    return count
+
+
+def _log_citation_rescues(decision: dict[str, Any], *, org_id: int | str | None) -> None:
+    """Emit one dashboardable event when active rescue exposed extra sources."""
+    rescued_sources = _count_citation_rescues(decision)
+    if rescued_sources:
+        logger.info(
+            "citation_rescue_applied",
+            org_id=org_id,
+            rescued_sources=rescued_sources,
+        )
+
+
 def _renumber_sources(sources: list[dict]) -> list[dict]:
     """Give a merged KB+web source list a single contiguous label sequence."""
     for index, source in enumerate(sources, start=1):
@@ -1671,6 +1693,7 @@ async def _chat_completion_streaming_with_composed_citations(
         selected_count=len(sources),
         decision=decision,
     )
+    _log_citation_rescues(decision, org_id=org_id)
     if citation_chunks:
         yield _sse_activity_delta(
             [
@@ -2088,6 +2111,7 @@ async def chat_completion_non_streaming(
                     selected_count=len(sources),
                     decision=decision,
                 )
+                _log_citation_rescues(decision, org_id=org_id)
                 message["content"] = rendered_content
                 message["sources"] = sources
         stripped_links = 0

@@ -367,6 +367,15 @@ Enforcement is a separate, later change, gated on a shadow-period comparison of 
 the two disagree and what that would have done to the Strict abstain rate. Flipping
 enforcement in the same PR is out of scope.
 
+> **Resolution 2026-08-20:** REQ-8/9 were decommissioned after production verification.
+> The candidate changed only `high` to `medium`, while every current downstream policy
+> reacts exclusively to `low`/`unknown`; it therefore had no behavioral outcome to
+> evaluate. It also counted two high-scoring chunks rather than independent sources, so
+> “corroborated” overstated the signal. The shadow field, metric, dashboard series, and
+> helper branch were removed instead of leaving an ownerless experiment running.
+> The gate and evidence-tier precedents were disabled in the same audit; citation rescue
+> graduated to active behavior.
+
 ## Non-Functional Requirements
 
 - **Latency**: Phase 2 adds the router to the pinned-KB path. Layer 2 is 5–20 ms with a
@@ -397,9 +406,9 @@ enforcement in the same PR is out of scope.
 | AC-6 | Unit: `route_to_sources` on a catalogue whose labels are all semantically similar (Voys-shaped) | Returns `selected_source_labels=None`, `layer_used="none"` — abstains rather than committing |
 | AC-7 | Unit: `fetch_source_catalog` with `kb_slugs=["sip"]` | Facet filter carries both `org_id` and `kb_slug`; cache key differs from the unscoped call |
 | AC-8 | Full `chat.yaml` suite before vs. after Phase 2 | Aggregate `context_recall` MUST NOT decrease; aggregate `context_precision` MUST NOT decrease by more than 0.02. Per-canary deltas reported in the PR body regardless of outcome |
-| AC-9 | Unit: `_compute_confidence_band` with scores `[0.87, 0.28, 0.21]` | `confidence_band_corroborated == "medium"`; `confidence_band` (old) still `high` in shadow |
-| AC-10 | Unit: same function with `[0.87, 0.72, 0.21]` | `confidence_band_corroborated == "high"` |
-| AC-11 | Post-deploy, 48h of `retrieval_decision_record` | `suppressed_count` distribution reported; disagreement rate between the two bands reported. Both are inputs to the enforcement decision deferred by REQ-9 |
+| AC-9 | Historical; decommissioned 2026-08-20 | Candidate had no downstream behavioral effect |
+| AC-10 | Historical; decommissioned 2026-08-20 | Candidate did not establish independent-source corroboration |
+| AC-11 | Historical; decommissioned 2026-08-20 | The observed band disagreement could not change current serving policy, so no enforcement decision remained |
 
 ## Risks and Mitigations
 

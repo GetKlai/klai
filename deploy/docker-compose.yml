@@ -410,7 +410,8 @@ services:
       # thresholds for klai_citations (path A). Portal-api carries the SAME
       # three vars for path B; keep them in sync or the two chat surfaces
       # show diverging citations for identical KB answers.
-      CITATION_RESCUE_MODE: ${CITATION_RESCUE_MODE:-shadow}
+      # Graduated 2026-08-20 after 25 unique production shadow cases over 23 days.
+      CITATION_RESCUE_MODE: ${CITATION_RESCUE_MODE:-active}
       RESCUE_ANSWER_SCORE_THRESHOLD: ${RESCUE_ANSWER_SCORE_THRESHOLD:-19}
       RESCUE_RETRIEVAL_RATIO: ${RESCUE_RETRIEVAL_RATIO:-0.4}
     depends_on:
@@ -821,7 +822,8 @@ services:
       # SPEC-RAG-EVIDENCE-INTEGRITY-001 REQ-CIT — citation-rescue config
       # for klai_citations on path B (widget/partner chat). Mirrors the
       # litellm block (path A); keep the two in sync.
-      CITATION_RESCUE_MODE: ${CITATION_RESCUE_MODE:-shadow}
+      # Keep path B aligned with the graduated LiteLLM citation behavior.
+      CITATION_RESCUE_MODE: ${CITATION_RESCUE_MODE:-active}
       RESCUE_ANSWER_SCORE_THRESHOLD: ${RESCUE_ANSWER_SCORE_THRESHOLD:-19}
       RESCUE_RETRIEVAL_RATIO: ${RESCUE_RETRIEVAL_RATIO:-0.4}
       # ─── Mailer (notifications, onboarding drip) ────────────────
@@ -1246,6 +1248,12 @@ services:
       GRAPHITI_LLM_MODEL: ${GRAPHITI_LLM_MODEL:-klai-fast}
       RERANKER_ENABLED: "true"
       RERANKER_TIMEOUT: "60.0"
+      # The gate's 30d shadow run produced 3 unique would-bypass decisions
+      # (~0.07%), all low-confidence. Keep it off: risk exceeds saved work.
+      RETRIEVAL_GATE_ENABLED: "false"
+      # Evidence-tier shadow ordering changed ranks but never measured answer
+      # quality. Stop paying deepcopy/scoring cost on every request.
+      EVIDENCE_SHADOW_MODE: "disabled"
       OPENAI_API_KEY: "dummy"
       SPARSE_SIDECAR_URL: http://172.18.0.1:8001
       PORTAL_EVENTS_HOST: postgres

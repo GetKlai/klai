@@ -18,13 +18,13 @@ class Settings(BaseSettings):
     litellm_url: str = "http://litellm:4000"
     litellm_api_key: str = ""
 
-    retrieval_gate_enabled: bool = True
+    # Disabled after 30d of production shadow data: only 3 unique would-bypass
+    # decisions across ~4.5k requests (0.07%), all on low-confidence retrievals.
+    # That negligible saving does not justify the risk of dropping all KB context.
+    retrieval_gate_enabled: bool = False
     retrieval_gate_threshold: float = 0.1
-    # Shadow mode (default ON): the gate computes + logs its bypass decision
-    # (gate_would_bypass) but never acts on it, so retrieval always runs. A
-    # wrong bypass silently drops all citations, so the gate stays in shadow
-    # until production data confirms the reference corpus only catches non-KB
-    # queries. Set to False to go live.
+    # When explicitly enabled for evaluation, shadow mode computes + logs the
+    # bypass decision without acting. Production keeps the gate disabled.
     retrieval_gate_shadow: bool = True
     retrieval_candidates: int = 60
     reranker_candidates: int = 20  # top-N from retrieval sent to reranker (CPU budget)
@@ -70,11 +70,9 @@ class Settings(BaseSettings):
     source_preference_boost: float = 0.05
 
     # SPEC-RAG-EVIDENCE-INTEGRITY-001 REQ-RANK-04 — ranking-contract rollout
-    # flag. "shadow" (default) serves the pre-contract behavior byte-identical
-    # and logs old/new orderings in the decision record; "active" serves by
-    # the post-rerank ``final_rank_score`` contract. Flip via the
-    # RANKING_CONTRACT_MODE env var after ≥7 days of shadow-diff review.
-    ranking_contract_mode: str = "shadow"
+    # flag. The contract graduated to "active" on 2026-07-08 after its shadow
+    # review. "shadow" remains an explicit rollback/evaluation mode only.
+    ranking_contract_mode: str = "active"
 
     # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-07 — defence-in-depth floor.
     # Chunks with ``quality_score < retrieval_quality_floor`` are removed

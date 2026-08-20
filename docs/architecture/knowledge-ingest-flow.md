@@ -17,8 +17,7 @@
 > naming); the per-chunk `chunk_type` classification was **removed** 2026-06-08
 > (GAP-INGEST-02 closed); `org_id` ships `is_tenant=True` for new collections (existing
 > collections need the one-time upgrade script); the Part-6 assertion-mode status table
-> was refreshed (payload + retrieval response are done; weighting is shadow-gated, no
-> longer flat).
+> was refreshed (payload + retrieval response are done; production weighting is disabled).
 >
 > For the research backing these design decisions, see
 > [knowledge-system-fundamentals.md](../research/knowledge-system-fundamentals.md).
@@ -1376,7 +1375,7 @@ rarely be reached in practice. See SPEC-KB-015 §Design notes for full rationale
 |---|---|
 | MCP read tools (full semantic surface) | `search_knowledge` is live; `related_concepts` / `belief_evolution` / `provenance_chain` / `recent` are not (GAP-MCP-01) |
 | Transcript → gap-candidate arm | scribe transcripts are ingested as documents, but emit no gap events; only low-confidence chat retrieval feeds the gap registry (GAP-LOOP-05) |
-| Assertion mode active in retrieval | `_assertion_weight` now reads a conservative profile (factual/procedural 1.00 … hypothesis 0.90) but remains **shadow-gated** (`EVIDENCE_SHADOW_MODE=true`) — measured, never served. Go-live deferred to SPEC-EVIDENCE-002; the deciding evidence-tier A/B from SPEC-EVIDENCE-001-FOLLOWUP-001 has not been built (GAP-EVID-01, updated 2026-06-11) |
+| Assertion mode active in retrieval | Not active. `EVIDENCE_SHADOW_MODE=disabled` since 2026-08-20 because the unbuilt paired A/B meant production order diffs could not measure answer quality. |
 | ~~Content profile chunk sizes wired to chunker~~ | Fixed 2026-03-31: `chunk_tokens_max` from profile now passed to `chunker.py` (`tokens * 4` → chars) |
 | ~~Docling migration for binary parsing~~ | **Shipped** (SPEC-KB-FILE-UPLOAD-001): portal uploads stream to docling-serve's async queue and submit pre-chunked. Unstructured.io is now connector-only. |
 | Self-maintaining taxonomy (periodic re-cluster) | No periodic re-clustering task is registered — bootstrap is manual-only (GAP-TAX-01) |
@@ -1411,13 +1410,12 @@ axes (alongside provenance type and synthesis depth) described in the architectu
 | HyPE/LLM classification | Not built — enrichment does not classify assertion mode (value comes from author frontmatter or connector hint only) |
 | Qdrant payload | **Done** (corrected 2026-06-11) — `assertion_mode` is in `_ALLOWED_METADATA_FIELDS` (`qdrant_store.py:450`) and written from `extra_payload` at ingest |
 | Retrieval API response | **Done** (corrected 2026-06-11) — read back from the payload in `search.py:339,414` and exposed on the chunk model (`models.py:91`) |
-| Evidence-tier weighting | **Shadow-gated** — conservative profile in `evidence_tier.py` (`factual`/`procedural` 1.00, `quoted` 0.98, `unknown` 0.97, `belief` 0.95, `hypothesis` 0.90); computed + logged, never served while `EVIDENCE_SHADOW_MODE=true`. Go-live: SPEC-EVIDENCE-002. |
+| Evidence-tier weighting | **Disabled in production** — the conservative profile remains available for explicit evaluation, but `EVIDENCE_SHADOW_MODE=disabled` performs no per-request scoring. |
 
-**Summary (updated 2026-06-11):** Storage, ingest parsing, Qdrant payload, and retrieval
+**Summary (updated 2026-08-20):** Storage, ingest parsing, Qdrant payload, and retrieval
 response all carry `assertion_mode` end-to-end. The consumption side computes
-conservative weights in evidence-tier scoring but serves nothing yet — everything is
-shadow-gated pending SPEC-EVIDENCE-002 (and the never-run SPEC-EVIDENCE-001-FOLLOWUP-001
-A/B, see GAP-EVID-01).
+conservative weights only in explicitly requested evaluation runs; production scoring is
+disabled after the required paired A/B was never built (see GAP-EVID-01).
 
 ### Industry landscape
 

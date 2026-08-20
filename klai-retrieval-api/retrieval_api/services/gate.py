@@ -122,16 +122,13 @@ async def should_bypass(query_vector: list[float]) -> tuple[bool, float | None]:
 async def evaluate(query_vector: list[float]) -> GateDecision:
     """Compute the gate recommendation and apply shadow-mode policy.
 
-    A wrong bypass silently drops every citation (the user gets a
-    model-only answer with no sources), so the gate runs in shadow by
-    default: ``would_bypass`` is computed and logged, but ``bypassed`` is
-    forced ``False`` so retrieval always runs. Keep shadow on until the
-    production ``gate_would_bypass`` rate confirms the reference corpus
-    only fires on non-KB queries, then set ``retrieval_gate_shadow`` to
-    ``False`` to go live.
+    The gate is disabled by default after its 30-day production shadow run
+    found negligible potential savings (3 unique recommendations across
+    roughly 4,500 requests). Explicit evaluation can still enable it; shadow
+    mode then records recommendations without acting on them.
     """
     would_bypass, margin = await should_bypass(query_vector)
-    shadow = settings.retrieval_gate_shadow
+    shadow = settings.retrieval_gate_enabled and settings.retrieval_gate_shadow
     return GateDecision(
         would_bypass=would_bypass,
         bypassed=would_bypass and not shadow,

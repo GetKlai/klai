@@ -57,10 +57,10 @@ dead-man alert, and two actionable items:
 | Gap | Backlog claim | Actual state 2026-06-11 |
 |---|---|---|
 | `GAP-TEMPORAL-01` | retrieval filters on never-written `invalid_at` | **Fixed on the serving path** (re-verified 2026-06-11): `search.py:71-112` has a dual-contract `must_not` over `invalid_at`/`valid_until`/`valid_at`/`valid_from`, with a passing integration test (`test_search.py:129-218`). The retro's open question is **answered**: both `qdrant_store.upsert_chunks` and `upsert_enriched_chunks` delete all points for `(org, kb, path)` before upserting — same-path re-ingest leaves no stale points (the random `uuid4` point IDs are harmless; delete-by-path-filter is the mechanism, not overwrite-by-ID). Temporal hygiene is now also covered in code: replacement ingests link the just-closed PG artifact row via `superseded_by`, and `valid_from`/`valid_until` get Qdrant integer payload indexes. Remaining risk: a failed Qdrant delete after PG commit is silent divergence (→ H1 / GAP-SYNC-01). |
-| `GAP-RETR-01` | gate inert, reference file missing | `gate_reference.jsonl` **exists** (16-line generic stub) and the gate runs in **shadow mode** (`retrieval_gate_shadow=True`, `config.py:28`), logging `gate_would_bypass` per request; strict mode skips the gate by design (`gate_skipped_reason=strict_mode`, `retrieve.py:213-220`). Blocker is now corpus quality, not existence. |
+| `GAP-RETR-01` | gate inert, reference file missing | **Resolved flags-off 2026-08-20:** the 16-line stub's 30-day shadow run yielded 3 unique would-bypass decisions across ~4.5k requests, all low-confidence. `RETRIEVAL_GATE_ENABLED=false`; no production shadow compute. |
 | `GAP-TENANCY-01` | `is_tenant` missing | Code sets `is_tenant=True` for **new** collections (`qdrant_store.py:85-102`); the existing prod collection awaits a one-time online migration via `scripts/upgrade_org_id_tenant_index.py`. |
 | `GAP-INGEST-02` | `chunk_type` classified but never read | **Resolved by removal** on 2026-06-08 (`enrichment.py:10-14`, rationale in `docs/research/chunk-type-retrieval-value.md`). Close the gap. ⚠️ The v1 plan's "chunk_type serving experiment" (its quick win #5 and theme 7) is based on this stale claim and has been **dropped** from the merged plan. |
-| `GAP-EVID-01` | assertion-mode weight is constant 1.00 | `_assertion_weight` now returns profile weights (factual/procedural 1.00, hypothesis 0.90, unknown 0.97; `evidence_tier.py:130-145`) — still shadow-gated, **and the RAGAS A/B from SPEC-EVIDENCE-001-FOLLOWUP-001 was never built** (no `evidence_tier_full` / `evidence_tier_temporal_only` variant anywhere in the eval code; only `baseline` is used). The 30-day decision deadline has lapsed. |
+| `GAP-EVID-01` | assertion-mode weight is constant 1.00 | **Resolved flags-off 2026-08-20:** weights exist, but the online shadow had no answer-quality outcome. `EVIDENCE_SHADOW_MODE=disabled` stops per-request scoring; explicit modes remain for controlled evaluation only. |
 
 All other gaps (`LOOP-*`, `PROV-*`, `SYNC-01`, `TAX-*`, `MCP-01`, `PRIV-01`, `EVAL-01/02`, `ROUTE-*`) were re-confirmed today exactly as described **[code ✓]**.
 
@@ -120,7 +120,7 @@ Key files: `routes/ingest.py`, `pg_store.py`, `qdrant_store.py`, `enrichment.py`
 
 LibreChat / Partner API / widget → LiteLLM `KlaiKnowledgeHook` (`deploy/litellm/klai_knowledge.py` + `klai_kb_*` modules): trivial check → feature/scope lookup (30s/300s two-level cache) → taxonomy trees+coverage (Redis) → combined rewrite+classify in one `QUERY_REWRITE_MODEL` call → `retrieval-api /retrieve` (`api/retrieve.py::retrieve`):
 
-identity verify → coreference (skipped when caller pre-resolved) → dense+sparse embed → **gate (shadow)** → **router** (semantic source-label centroids; optional LLM fallback disabled by default) → Qdrant native RRF (`FusionQuery`, prefetch `max(candidates×4, 20)`; 2–5 legs + parallel Graphiti leg) → link expansion + authority boost → Infinity rerank (top 20) → quality floor → source-aware select (bounded router preference + diversity) → quality boost (≥3 votes, ±10%) → parent expansion → **evidence-tier shadow scoring** → EvidencePack.
+identity verify → coreference (skipped when caller pre-resolved) → dense+sparse embed → **gate disabled** → **router** (semantic source-label centroids; optional LLM fallback disabled by default) → Qdrant native RRF (`FusionQuery`, prefetch `max(candidates×4, 20)`; 2–5 legs + parallel Graphiti leg) → link expansion + authority boost → Infinity rerank (top 20) → quality floor → source-aware select (bounded router preference + diversity) → quality boost (≥3 votes, ±10%) → parent expansion → **evidence-tier disabled** → EvidencePack.
 
 ### Citation path **[doc]**
 
@@ -192,10 +192,9 @@ scribe-api `POST /v1/transcriptions/{id}/ingest` (`transcribe.py::ingest_transcr
 
 ### Theme B — Retrieval gate / routing / latency
 
-#### B1. Gate: corpus + shadow evaluation + controlled activation (remainder of GAP-RETR-01)
+#### B1. Gate: closed as not worth activating (GAP-RETR-01)
 
-- **Problem:** gate runs shadow with a 16-line generic stub corpus; bypass never happens, so every trivial query pays embed + 5-leg + rerank (GPU + 300–500ms).
-- **Target:** (1) generate the full corpus (script: 200 queries, 100 no-retrieval + 100 retrieval-needed, 6 languages NL/EN/DE/FR/PT/ES), versioned (corpus version field — v1); (2) 1–2 weeks of `gate_would_bypass` telemetry vs real queries, **per-tenant and per-language false-bypass metrics** (v1 — adopted; multilingual mismatch is a real failure mode); (3) only then `retrieval_gate_shadow=false`. Strict mode stays gate-free (already enforced).
+- **Decision (2026-08-20):** disabled, not activated. Thirty days produced 3 unique recommendations across ~4,500 requests (~0.07%), all low-confidence. Building a 1,200-query corpus and false-bypass review process for that saving is not proportionate.
 - **Research [online]:** training-free gating evidence: TARG (logit-margin on draft prefix) reaches 70–90% fewer retrievals at matched EM/F1 ([arXiv:2511.09803](https://arxiv.org/abs/2511.09803)); production frameworks (LangGraph/LlamaIndex) default to a cheap structured-output LLM router. For Klai, the embedding-margin gate is fine as v1; a later upgrade can piggyback a `needs_retrieval` field on the existing rewrite call (zero extra roundtrip).
 - **Code:** `services/gate.py`, `scripts/generate_gate_reference.py`, `data/gate_reference.jsonl`, deploy step that ships the corpus. Tests: existing `test_gate.py` (8) + corpus snapshot tests, NL/EN trivial-bypass expectations, strict-never-bypasses (v1 list — adopted).
 - **Failure modes:** false bypass in open mode = silently no KB context → manual review of a 50-query would-bypass sample before activation; corpus overfit to generic assistant tasks (v1).
@@ -301,15 +300,14 @@ The chat path already sends `taxonomy_node_ids` when coverage exists (SPEC-RAG-T
 
 ### Theme G — Evidence scoring / assertion mode
 
-#### G1. Force the shadow-mode decision (SPEC-EVIDENCE-001-FOLLOWUP-001, lapsed)
+#### G1. Evidence-tier decision — CLOSED flags-off 2026-08-20
 
-- **Problem:** shadow running >2 months, `deepcopy+apply()` CPU per request, decision A/B never built **[code ✓]**.
-- **Target:** (1) D1/D2 first; (2) implement the `evidence_tier_full` / `evidence_tier_temporal_only` variants (retrieval-api must accept a variant parameter or per-run env); (3) 7 nights, Wilcoxon, decide per the four predefined outcomes (activate staged 5/50/100% / temporal-only / decommission / flags-off). **Activation criteria (merged, v1):** unknown-fraction acceptable, per-content-type lift positive, canaries don't regress, ≥+0.02 on precision AND faithfulness at p<0.05. If nobody runs the A/B: **flags-off as default** — the honest minimal outcome that stops the CPU cost.
-- **Effort: M.** Dependency: D1/D2.
+- **Decision:** flags-off. Production no longer pays `deepcopy+apply()` per request.
+  The implementation remains available only for explicit controlled evaluation.
 
 #### G2. Assertion-mode activation (GAP-EVID-01/02) — DEFER
 
-Plumbing is ready (profile weights exist, shadow-gated). Activation is SPEC-EVIDENCE-002 with its own research preconditions (3-group taxonomy, max spread 0.20, never user-facing labels, label-quality audit first — frontmatter-authored assertion labels are inconsistent, v1). **Effort at activation: S; the calibration is the work.**
+Plumbing is ready (profile weights exist, production disabled). Activation is SPEC-EVIDENCE-002 with its own research preconditions (3-group taxonomy, max spread 0.20, never user-facing labels, label-quality audit first — frontmatter-authored assertion labels are inconsistent, v1). **Effort at activation: S; the calibration is the work.**
 
 #### chunk_type — closed
 

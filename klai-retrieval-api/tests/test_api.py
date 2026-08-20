@@ -49,12 +49,7 @@ class TestRetrieveEndpoint:
         """Happy path: mock all external calls, verify response structure."""
         import logging
 
-        from retrieval_api.metrics import retrieval_confidence_band_corroborated_total
-
         caplog.set_level(logging.INFO)
-        corroborated_before = retrieval_confidence_band_corroborated_total.labels(
-            band="medium", org_id=sample_retrieve_request["org_id"]
-        )._value.get()  # type: ignore[attr-defined]
 
         with (
             patch(
@@ -192,11 +187,7 @@ class TestRetrieveEndpoint:
         assert "Refund policy" in decision_attrs
         assert "top_item_chunk_ids" in decision_attrs
         assert decision_record.msg["confidence_band"] == "high"
-        assert decision_record.msg["confidence_band_corroborated"] == "medium"
-        corroborated_after = retrieval_confidence_band_corroborated_total.labels(
-            band="medium", org_id=sample_retrieve_request["org_id"]
-        )._value.get()  # type: ignore[attr-defined]
-        assert corroborated_after == corroborated_before + 1
+        assert "confidence_band_corroborated" not in decision_record.msg
 
     def test_retrieve_passes_effective_telemetry_level_to_coreference(
         self, client, sample_retrieve_request
@@ -988,7 +979,7 @@ class TestLinkExpandInstrumentation:
 
     def test_link_expanded_flag_survives_evidence_tier_deep_copy(self):
         """The instrumentation tag MUST survive `copy.deepcopy(reranked)`
-        inside ``evidence_tier.apply`` so that when EVIDENCE_SHADOW_MODE=false
+        inside ``evidence_tier.apply`` so that when EVIDENCE_SHADOW_MODE=active
         flips on (per SPEC-EVIDENCE-001-FOLLOWUP-001) the deep-copied scored
         chunks STILL carry the flag for ``decision_record.link_expand``.
 

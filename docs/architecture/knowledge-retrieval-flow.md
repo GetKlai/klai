@@ -8,16 +8,19 @@
 >
 > Places where this doc describes a *more capable* design than the code currently implements (the retrieval gate, the router LLM fallback) carry an **Intended vs. current** callout pointing to [`product-gaps-backlog.md`](product-gaps-backlog.md).
 >
+> **2026-08-20 experiment resolution:** the retrieval gate is disabled after 30 days
+> produced only 3 unique would-bypass decisions across roughly 4,500 requests (all
+> low-confidence); evidence-tier production shadow computation is also disabled because
+> order diffs did not measure answer quality. The calibrated citation-rescue rule is active.
+>
 > **2026-06-11 corrections (per-claim source re-verification):** (1) the retrieval gate
-> now ships a reference file (16-line stub) and runs in **shadow mode** by default
-> (`retrieval_gate_shadow=True`) — it logs `gate_would_bypass` but never acts; (2) the
+> ships a 16-line reference stub; (2) the
 > temporal filter is **dual-contract** (legacy `valid_at`/`invalid_at` + current
 > `valid_from`/`valid_until`) — the 2026-06-08 field-mismatch bug is fixed on the
 > serving path; (3) RRF fusion is Qdrant-native (`FusionQuery(fusion=RRF)`) with
 > prefetch `max(candidates × 4, 20)` — there is no hand-rolled `k=60` formula in code;
-> (4) evidence-tier assertion-mode weights are no longer flat 1.00 (conservative
-> profile, still shadow-gated), and the SPEC-EVIDENCE-001-FOLLOWUP-001 deciding A/B has
-> **not** been built — its 30-day deadline lapsed.
+> (4) evidence-tier assertion-mode weights are no longer flat 1.00, but production
+> scoring is now disabled because the required paired A/B was never built.
 >
 > For how knowledge is *stored* (ingestion, chunking, embedding), see
 > [knowledge-ingest-flow.md](knowledge-ingest-flow.md).
@@ -449,25 +452,14 @@ hook receives `retrieval_bypassed: true` and injects nothing into the model's co
 When bypassed, the metadata `gate_bypassed: true` is attached to the request so
 downstream hooks can observe the decision.
 
-> **Intended vs. current ([`GAP-RETR-01`](product-gaps-backlog.md), updated 2026-06-11).**
-> The gate above describes the *intended* behaviour. In production it still never
-> bypasses, but for different reasons than the original gap claimed:
+> **Resolution 2026-08-20.** The gate above is retained for explicit evaluation but is
+> disabled in production (`RETRIEVAL_GATE_ENABLED=false`). Its 30-day shadow run emitted
+> only 3 unique would-bypass decisions across roughly 4,500 requests (~0.07%), all with
+> low retrieval confidence. The negligible saving does not justify the risk of silently
+> dropping all KB context. The 16-line corpus remains an insufficient activation basis.
 >
-> 1. **Shadow mode is the default** (`retrieval_gate_shadow=True` in `config.py`): the
->    gate computes and logs its decision (`gate_would_bypass`, `gate_margin` in the
->    decision record) but `bypassed` is forced `false`. Deliberate: a wrong bypass
->    silently drops all KB context, so the gate stays in shadow until production data
->    confirms the corpus only catches non-KB queries.
-> 2. **The reference corpus is a 16-line stub** (`retrieval_api/data/gate_reference.jsonl`:
->    meta-title / translate / summarize queries in NL+EN), not the 200-query ×
->    6-language corpus that `scripts/generate_gate_reference.py` generates.
-> 3. **Strict KB mode skips the gate entirely by design** — `retrieve.py` sets
+> **Strict KB mode skips the gate entirely by design** — `retrieve.py` sets
 >    `gate_skipped_reason=strict_mode` so a strict request always runs retrieval.
->
-> Closing the gap = generate + commit the full corpus, analyze 1–2 weeks of
-> `gate_would_bypass` telemetry (false-bypass rate per language/tenant), then set
-> `retrieval_gate_shadow=false`. Gate logic itself is tested (`tests/test_gate.py`,
-> incl. shadow-mode cases).
 
 ---
 
@@ -754,13 +746,11 @@ knowledge_ingest/rebuild_tasks.py`.
 
 ---
 
-### Step 6: Evidence tier scoring (shadow mode)
+### Step 6: Evidence tier scoring (production disabled)
 
-**Simple:** A work-in-progress layer that re-weights results by source quality, recency,
-and graph centrality before optionally reordering for the LLM. It runs silently today —
-the weighted scores are computed and logged, but the flat reranker order is what gets
-served. A nightly RAGAS A/B will decide whether to activate it, recalibrate, or
-decommission.
+**Simple:** An evaluation-only layer that can re-weight results by source quality,
+recency, and graph centrality. Production skips the calculation and serves the flat
+reranker order because the earlier online shadow did not measure answer quality.
 
 **Technical:** Implemented in
 [`evidence_tier.apply()`](../../klai-retrieval-api/retrieval_api/services/evidence_tier.py).
@@ -790,10 +780,11 @@ showed >30% performance degradation when the strongest evidence sat in the middl
 the prompt. Whether this still holds for modern frontier LLMs is part of what the
 RAGAS A/B will measure.
 
-**Shadow-mode contract:** `EVIDENCE_SHADOW_MODE=true` (default) computes the
-weighted/U-shape order, logs both orders side-by-side as `shadow_eval`, and serves the
-**flat reranker order**. The CPU cost (`copy.deepcopy(reranked) + apply()`) is paid on
-every request.
+**Production contract (resolved 2026-08-20):** `EVIDENCE_SHADOW_MODE=disabled` serves
+the flat reranker order and does not run `copy.deepcopy + apply`. The preceding 30-day
+shadow run changed the top ordering in 2,186/8,946 logged runs, but captured no paired
+answer-quality outcome and therefore could not determine whether those changes helped.
+`shadow` and `active` remain explicit evaluation modes; neither is the production default.
 
 **Activation path (SPEC-EVIDENCE-001-FOLLOWUP-001):** the shadow mode has been the
 default since 2026-03-30. RAGAS infrastructure landed 2026-05-05 (#369). The follow-up
@@ -810,13 +801,11 @@ The RAGAS A/B uses three `RAG_EVAL_VARIANT` values (`baseline`, `evidence_tier_f
 `evidence_tier_temporal_only`) over 7 consecutive days. Decision criteria: ≥+0.02 on
 RAGAS Context Precision AND Faithfulness with Wilcoxon `p<0.05` against baseline.
 
-> **Status 2026-06-11: the A/B was never built and the deadline lapsed.** The eval
+> **Status 2026-08-20: retained-flags-off was selected.** The eval
 > harness reads `RAG_EVAL_VARIANT` but only `baseline` exists — there is no
 > `evidence_tier_full` / `evidence_tier_temporal_only` code path anywhere in
-> `knowledge_ingest/eval/`. Meanwhile the shadow `copy.deepcopy + apply()` CPU cost is
-> paid on every `/retrieve` request. The pending decision (activate / temporal-only /
-> decommission / flags-off) is tracked as Phase 0 work in
-> [`knowledge-rag-improvement-plan.md`](knowledge-rag-improvement-plan.md).
+> `knowledge_ingest/eval/`. Production therefore stopped the inconclusive shadow CPU
+> cost instead of leaving an ownerless experiment running.
 
 ---
 
@@ -1013,12 +1002,12 @@ Trailing punctuation and whitespace are ignored. "Ok!" and "Oké." are both triv
 | `KNOWLEDGE_RETRIEVE_TIMEOUT` | `3.0` | Retrieval API timeout (seconds) |
 | `KLAI_GAP_SOFT_THRESHOLD` | `0.4` | Reranker score below which gap is "soft" |
 | `KLAI_GAP_DENSE_THRESHOLD` | `0.35` | Dense score fallback for gap detection |
-| `RETRIEVAL_GATE_ENABLED` | `true` | Enable/disable the retrieval gate |
+| `RETRIEVAL_GATE_ENABLED` | `false` | Gate disabled after negligible 30-day shadow yield; enable only for explicit evaluation. |
 | `RETRIEVAL_GATE_THRESHOLD` | `0.1` | Cosine margin threshold for gate bypass |
-| `RETRIEVAL_GATE_SHADOW` | `true` | Shadow mode: gate computes + logs `gate_would_bypass` but never acts. Set `false` to go live (only after corpus + telemetry validation — see GAP-RETR-01). |
+| `RETRIEVAL_GATE_SHADOW` | `true` | Applies only when the disabled gate is explicitly enabled for evaluation; records recommendations without acting. |
 | `retrieval_candidates` | `60` | Raw candidates fetched from Qdrant |
 | `reranker_candidates` | `20` | Top-N sent to cross-encoder |
-| `EVIDENCE_SHADOW_MODE` | `true` | Compute weighted score + U-shape order, log as `shadow_eval`, serve flat reranker order. Activation gated by SPEC-EVIDENCE-001-FOLLOWUP-001 (RAGAS A/B + 30-day deadline). |
+| `EVIDENCE_SHADOW_MODE` | `disabled` | Production skips evidence-tier computation. Explicit `shadow`/`active` modes are evaluation-only. |
 | `EVIDENCE_CONTENT_TYPE_ENABLED` | `true` | Per-dimension flag for content_type weights. |
 | `EVIDENCE_TEMPORAL_DECAY_ENABLED` | `true` | Per-dimension flag for temporal decay. |
 | `EVIDENCE_PAGERANK_ENABLED` | `true` | Per-dimension flag for entity_pagerank_max boost. |

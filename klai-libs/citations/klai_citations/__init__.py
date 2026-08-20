@@ -623,9 +623,9 @@ def strip_model_citation_artifacts(
     kept_lines: list[str] = []
     skipping_footer_section = False
     for index, line in enumerate(lines):
-        if (
-            _SOURCE_HEADING_RE.match(line) or _ACTIVITY_HEADING_RE.match(line)
-        ) and _heading_starts_footer_section(lines, index):
+        if (_SOURCE_HEADING_RE.match(line) or _ACTIVITY_HEADING_RE.match(line)) and _heading_starts_footer_section(
+            lines, index
+        ):
             skipping_footer_section = True
             continue
         if skipping_footer_section:
@@ -657,9 +657,7 @@ def strip_model_citation_artifacts(
     return cleaned.strip()
 
 
-def strip_injected_evidence_labels(
-    text: str, *, evidence_ids: set[str] | None = None
-) -> str:
+def strip_injected_evidence_labels(text: str, *, evidence_ids: set[str] | None = None) -> str:
     """Remove only prompt-internal evidence labels, preserving answer content."""
     if not evidence_ids:
         return text
@@ -670,13 +668,9 @@ def strip_injected_evidence_labels(
         tokens = _EVIDENCE_ID_TOKEN_RE.findall(match.group(0))
         if tokens and all(token.upper() in normalised_evidence_ids for token in tokens):
             start, end = match.span()
-            if start > 0 and text[start - 1] in " \t" and (
-                end == len(text) or text[end] in " \t.,;:!?"
-            ):
+            if start > 0 and text[start - 1] in " \t" and (end == len(text) or text[end] in " \t.,;:!?"):
                 start -= 1
-            elif (
-                start == 0 or text[start - 1] in "\r\n"
-            ) and end < len(text) and text[end] in " \t":
+            elif (start == 0 or text[start - 1] in "\r\n") and end < len(text) and text[end] in " \t":
                 end += 1
             removable_spans.append((start, end))
 
@@ -779,10 +773,10 @@ def _resolve_rescue_settings(
     retrieval_ratio: float | None = None,
 ) -> _RescueSettings:
     if mode is None:
-        mode = os.getenv("CITATION_RESCUE_MODE", "shadow")
+        mode = os.getenv("CITATION_RESCUE_MODE", "active")
     mode = mode.strip().lower()
     if mode not in {"shadow", "active"}:
-        mode = "shadow"
+        raise ValueError(f"invalid citation rescue mode: {mode!r}; require 'shadow' or 'active'")
     if answer_score_threshold is None:
         answer_score_threshold = _env_float(
             "RESCUE_ANSWER_SCORE_THRESHOLD",
