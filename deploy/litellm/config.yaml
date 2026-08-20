@@ -126,6 +126,16 @@ litellm_settings:
   callbacks:
     - klai_knowledge.klai_knowledge_hook
     - custom_router.token_router
+    # SPEC-PRIVACY-MISTRAL-PII-001 Phase 2 (REQ-5, REQ-6): read-only PII
+    # observer. Registered LAST so it sees the outbound payload after KB
+    # context injection and router upgrade/downgrade, not the original
+    # request. Calls presidio-analyzer's /analyze out of band (never
+    # awaited by any hook), returns the payload unchanged, never calls
+    # the anonymizer, and emits org_id/call_type/model/language/entity
+    # counts only — no matched values, offsets, or hashes (REQ-6). Does
+    # NOT honour `_klai_openai_passthrough` or missing org_id — see
+    # klai_pii_observe.py's module docstring. Deleted in the Phase 3 PR.
+    - klai_pii_observe.klai_pii_observer
 
 # SPEC-PRIVACY-MISTRAL-PII-001 Phase 0 (REQ-0a/REQ-0b) — TEMPORARY,
 # EXPERIMENTAL, NOT the production control.
