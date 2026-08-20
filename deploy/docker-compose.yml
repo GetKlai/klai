@@ -15,7 +15,12 @@ networks:
   inference:
     driver: bridge
     name: klai-inference
-    internal: true   # no outbound internet — only LiteLLM <-> Ollama
+    # no outbound internet — LiteLLM <-> Ollama, and (SPEC-PRIVACY-MISTRAL-PII-001
+    # Phase 0) LiteLLM <-> presidio-analyzer/presidio-anonymizer. Both Presidio
+    # services accept arbitrary text and have no auth of their own, so this
+    # `internal: true` network is the isolation boundary — no Caddy route,
+    # no published port, unreachable from outside the Docker network.
+    internal: true
   monitoring:
     driver: bridge
     name: klai-monitoring
@@ -334,6 +339,14 @@ services:
       # requires every top-level module to be mounted so it can run inside
       # the actual container (docker exec ... python scripts/eval_....py).
       - ./litellm/klai_correspondence_eval.py:/app/klai_correspondence_eval.py:ro
+      # SPEC-PRIVACY-MISTRAL-PII-001 Phase 0 (REQ-0a/REQ-0b): pure eval-
+      # harness core (restore-outcome + token-survival classification,
+      # Dutch drafting-prompt corpus), imported by
+      # scripts/eval_pii_restore_live.py. Not on any request path, but
+      # test_all_litellm_top_level_python_modules_are_mounted_in_compose
+      # requires every top-level module to be mounted so it can run inside
+      # the actual container (docker exec ... python scripts/eval_pii_restore_live.py).
+      - ./litellm/klai_pii_restore_eval.py:/app/klai_pii_restore_eval.py:ro
       - ./litellm/custom_router.py:/app/custom_router.py:ro
       # SPEC-CHAT-GUARDRAILS-001: vendored package copy of klai-libs/llm-safety
       # (kept byte-identical via deploy/litellm/tests/test_klai_llm_safety_drift.py).
@@ -414,6 +427,13 @@ services:
       CITATION_RESCUE_MODE: ${CITATION_RESCUE_MODE:-active}
       RESCUE_ANSWER_SCORE_THRESHOLD: ${RESCUE_ANSWER_SCORE_THRESHOLD:-19}
       RESCUE_RETRIEVAL_RATIO: ${RESCUE_RETRIEVAL_RATIO:-0.4}
+      # SPEC-PRIVACY-MISTRAL-PII-001 Phase 0 — where the native Presidio
+      # guardrail (see litellm/config.yaml `guardrails:` block) reaches the
+      # two stock containers below. Internal service names + port 3000,
+      # which is both images' documented default listen port. No secret —
+      # neither container has auth of its own.
+      PRESIDIO_ANALYZER_API_BASE: http://presidio-analyzer:3000
+      PRESIDIO_ANONYMIZER_API_BASE: http://presidio-anonymizer:3000
     depends_on:
       postgres:
         condition: service_healthy
@@ -424,6 +444,77 @@ services:
       - inference
       - net-postgres
       - net-redis
+
+  # ─── PII minimisation (Presidio) — SPEC-PRIVACY-MISTRAL-PII-001 ─────────
+  # Phase 1 (REQ-3, REQ-4): presidio-analyzer now runs Klai's own image,
+  # `deploy/presidio/analyzer/` — the stock ghcr.io/data-privacy-stack
+  # analyzer (still the FROM base, still digest-pinned there per REQ-1;
+  # NEVER mcr.microsoft.com, those tags are frozen post-transition) layered
+  # with the Dutch/credential recognizer pack (klai_pii_recognizers.py) and
+  # a language-agnostic registry config (conf/analyzer.yaml — en/nl/de,
+  # extensible per REQ-2's own framing). Built + pushed by
+  # .github/workflows/presidio-analyzer-image-build.yml, same pattern as
+  # ghcr.io/getklai/librechat.
+  # `inference` network only — no Caddy route, no published port; both
+  # services accept arbitrary text and have no authentication of their own.
+  # Neither takes a secret, so this adds no `env_file` scope and no
+  # `SECRETS_MATRIX.md` entry.
+  presidio-analyzer:
+    # PLACEHOLDER DIGEST — deploy/presidio/analyzer-image-build.yml has not
+    # run against this change yet (it runs on push to `main`; this PR does
+    # not push or deploy). Replace with the real digest from that workflow's
+    # step summary. Bootstrap ordering: presidio-analyzer-image-build.yml
+    # only PUBLISHES on a push to `main`, so the Klai image does not exist
+    # until the PR carrying its Dockerfile has merged. This service therefore
+    # still runs the STOCK image, and a follow-up PR flips it to
+    # ghcr.io/getklai/presidio-analyzer@sha256:<real digest> together with
+    # the 512M limit below. A placeholder digest is not an acceptable interim
+    # state — check-klai-presidio-digest.sh rejects one, because nothing else
+    # in CI would (check-image-pullable.sh matches `image:tag` form only and
+    # is blind to every digest-pinned reference), and it would deploy an
+    # unpullable image to core-01.
+    image: ghcr.io/data-privacy-stack/presidio-analyzer@sha256:286e3fa7f3a7426e775e8564fe1870f1ba8f999d3ab8bbb8cc46a44355d9d6e9
+    restart: unless-stopped
+    networks:
+      - inference
+    deploy:
+      resources:
+        limits:
+          # Measured, not estimated: `docker stats` against this exact image
+          # (built locally from deploy/presidio/analyzer/Dockerfile, 3
+          # languages loaded — en/nl/de) showed ~257MiB steady-state after
+          # startup plus light request traffic (30 sequential /analyze
+          # calls exercising every REQ-3/REQ-4 entity). That is the number
+          # REQ-2's "no spaCy model" claim is supposed to buy: no
+          # `en_core_web_lg`/`nl_core_news_lg` (560MB+ each) is loaded —
+          # every configured language uses `spacy.blank()` (tokenizer-only,
+          # no trained weights; see sitecustomize.py). 512M gives ~2x
+          # headroom over the measured steady-state for concurrent-request
+          # growth without re-inflating toward the old provisional 2G.
+          #
+          # NOT YET APPLIED: while this service still runs the STOCK image
+          # (see the image comment above), en_core_web_lg IS loaded, so 512M
+          # would OOM it. The limit drops to 512M in the same follow-up PR
+          # that flips the image — the two changes are one unit and must not
+          # be split. core-01 runs 78 services, so revise again from
+          # `docker stats presidio-analyzer --no-stream` once the Klai image
+          # runs on the server under real traffic.
+          cpus: '1'
+          memory: 2G
+
+  presidio-anonymizer:
+    image: ghcr.io/data-privacy-stack/presidio-anonymizer@sha256:a10a12a2a613d13cf29d3ad3641e3258444dd8c90403dd644a0a114c472c2483
+    restart: unless-stopped
+    networks:
+      - inference
+    deploy:
+      resources:
+        limits:
+          # PROVISIONAL — see presidio-analyzer comment above. No NLP model
+          # loaded here (pure text substitution against the analyzer's
+          # already-computed spans), so sized much smaller.
+          cpus: '0.5'
+          memory: 512M
 
   # ─── LibreChat (tenant: getklai) ─────────────────────────────────────────
   librechat-getklai:

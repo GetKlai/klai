@@ -1,0 +1,131 @@
+name: Build Klai presidio-analyzer image
+
+# SPEC-PRIVACY-MISTRAL-PII-001 Phase 1 (REQ-3, REQ-4).
+#
+# Builds ghcr.io/getklai/presidio-analyzer:<base-version>-klai.<n>-<sha> — the
+# stock ghcr.io/data-privacy-stack/presidio-analyzer image (digest-pinned in
+# the FROM line of deploy/presidio/analyzer/Dockerfile) layered with Klai's
+# Dutch/credential recognizer pack (deploy/presidio/analyzer/
+# klai_pii_recognizers.py, sitecustomize.py, conf/analyzer.yaml). Mirrors
+# .github/workflows/librechat-image-build.yml's shape: build+validate on every
+# push/PR touching the pack, push only on merge to main, refuse to overwrite
+# an existing tag (a tag that can move is not something a canary — or a
+# core-01 service — can be rolled back to), print the digest so
+# deploy/docker-compose.yml can be pinned to it.
+#
+# On pull_request the image is built (and its unit tests run against it) but
+# never pushed.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/presidio/analyzer/**'
+      - '.github/workflows/presidio-analyzer-image-build.yml'
+  pull_request:
+    paths:
+      - 'deploy/presidio/analyzer/**'
+      - '.github/workflows/presidio-analyzer-image-build.yml'
+  workflow_dispatch:
+    inputs:
+      patch_revision:
+        description: 'Klai patch revision suffix (the <n> in -klai.<n>)'
+        type: string
+        default: '1'
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  # The presidio-analyzer version baked into the Dockerfile's FROM digest —
+  # kept as a human label on the tag; the digest (not this tag) is what
+  # deploy/docker-compose.yml actually pins.
+  BASE_PRESIDIO_VERSION: '2.2.362'
+  DEFAULT_PATCH_REVISION: '1'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Resolve build parameters
+        id: params
+        run: |
+          set -euo pipefail
+          rev="${{ inputs.patch_revision || env.DEFAULT_PATCH_REVISION }}"
+          echo "patch_revision=$rev" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/getklai/presidio-analyzer:${BASE_PRESIDIO_VERSION}-klai.${rev}-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@v4
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build
+        working-directory: deploy/presidio/analyzer
+        run: |
+          set -euo pipefail
+          docker build -t '${{ steps.params.outputs.image }}' .
+
+      # AC-1 through AC-6: run the recognizer-pack unit tests against the
+      # image we just built (not just against a local pip install), so a
+      # passing build actually proves the pack that ships is the pack that
+      # was tested. test_deployment_constraints.py is excluded here — it
+      # reads deploy/docker-compose.yml and the Dockerfile from the repo
+      # tree, which is not what is mounted into the container; it runs
+      # against the checkout directly in the next step instead.
+      - name: Test recognizer pack against the built image
+        working-directory: deploy/presidio
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint sh \
+            -v "$(pwd)/tests":/klai-tests:ro \
+            '${{ steps.params.outputs.image }}' \
+            -c "python3 -m pip install --quiet pytest && \
+                python3 -m pytest /klai-tests -q --tb=short \
+                  --ignore=/klai-tests/test_deployment_constraints.py"
+
+      # Pure text-file checks (compose image pinning, Dockerfile FROM) —
+      # needs the repo checkout, not the container.
+      - name: Test deployment wiring (compose + Dockerfile)
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet pytest
+          python3 -m pytest deploy/presidio/tests/test_deployment_constraints.py -q --tb=short
+
+      # A tag that can be overwritten cannot be rolled back to. Refuse to
+      # replace an existing tag with different content rather than silently
+      # moving it (same defect class as the 2026-08-14 LibreChat incident).
+      - name: Refuse to overwrite an existing tag
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          image='${{ steps.params.outputs.image }}'
+          if docker manifest inspect "$image" >/dev/null 2>&1; then
+            echo "::error::$image already exists in the registry."
+            echo "::error::Tags are immutable here. Bump patch_revision instead of moving a tag deploy/docker-compose.yml may be pinned to."
+            exit 1
+          fi
+          echo "$image is free."
+
+      - name: Push
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          image='${{ steps.params.outputs.image }}'
+          docker push "$image"
+          digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$image")
+          echo "Pushed $image"
+          echo "Pin by DIGEST, never by tag: $digest"
+          {
+            echo "### Klai presidio-analyzer image"
+            echo ""
+            echo "- tag: \`$image\`"
+            echo "- digest: \`$digest\`"
+            echo ""
+            echo "Pin deploy/docker-compose.yml's presidio-analyzer service to this digest."
+          } >> "$GITHUB_STEP_SUMMARY"

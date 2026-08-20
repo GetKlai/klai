@@ -16,6 +16,7 @@ on:
       - 'deploy/check-image-pullable.sh'          # public self-host image pullability guard
       - 'deploy/check-image-tags.sh'              # compose image tag policy guard
       - 'deploy/check-klai-librechat-digest.sh'   # Klai LibreChat image must be digest-pinned
+      - 'deploy/check-klai-presidio-digest.sh'    # Klai presidio-analyzer image must be digest-pinned
       - 'deploy/scripts/**'                       # Public-safe deploy scripts; operator health scripts live in klai-infra
       - 'scripts/smoke-docker-socket-proxy.sh'    # SPEC-SEC-024 M4.3 — smoke-test
       - '.github/workflows/deploy-compose.yml'
@@ -45,7 +46,7 @@ jobs:
         run: |
           set -e
           chmod +x deploy/check-image-tags.sh deploy/check-image-pullable.sh \
-                   deploy/check-klai-librechat-digest.sh
+                   deploy/check-klai-librechat-digest.sh deploy/check-klai-presidio-digest.sh
           sh deploy/check-image-tags.sh
           sh deploy/check-image-pullable.sh
           # The Klai LibreChat image must be pinned by digest: on 2026-08-14 the
@@ -53,6 +54,12 @@ jobs:
           # tag-pinned canary could not be rolled back to what it ran.
           sh deploy/scripts/tests/check-klai-librechat-digest.test.sh
           sh deploy/check-klai-librechat-digest.sh
+          # Same rule, same reason, for the Klai presidio-analyzer image
+          # (SPEC-PRIVACY-MISTRAL-PII-001 Phase 1). Format-only: this does
+          # NOT prove the digest is real/pullable — see
+          # deploy/check-klai-presidio-digest.sh's own header comment.
+          sh deploy/scripts/tests/check-klai-presidio-digest.test.sh
+          sh deploy/check-klai-presidio-digest.sh
           sh deploy/librechat/check-patch-drift.sh
           # compose-up.sh decides whether a deploy counts as successful, for
           # every service. This job is the only thing that installs it on
