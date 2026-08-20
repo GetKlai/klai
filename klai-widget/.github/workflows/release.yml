@@ -38,7 +38,7 @@ jobs:
         run: node scripts/check-bundle-size.mjs
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: klai-chat-js
           path: klai-widget/dist/klai-chat.js
