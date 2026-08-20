@@ -25,6 +25,12 @@ KLAI_KB_MODULES = (
     "klai_litellm_response",
     "klai_pasted_correspondence",
     "klai_pii_observe",
+    "klai_pii_entities",
+    "klai_pii_map_store",
+    "klai_pii_text_masking",
+    "klai_pii_org_policy",
+    "klai_pii_enforce",
+    "klai_pii_restore_eval",
 )
 
 

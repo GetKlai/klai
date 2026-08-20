@@ -134,8 +134,28 @@ litellm_settings:
     # the anonymizer, and emits org_id/call_type/model/language/entity
     # counts only — no matched values, offsets, or hashes (REQ-6). Does
     # NOT honour `_klai_openai_passthrough` or missing org_id — see
-    # klai_pii_observe.py's module docstring. Deleted in the Phase 3 PR.
+    # klai_pii_observe.py's module docstring. NOT deleted by this PR despite
+    # REQ-5's own instruction to remove it in the Phase 3 PR: this PR's hard
+    # constraint is "add new modules, do not modify or delete existing
+    # ones". Flagged as a deliberate deviation from the SPEC's own text in
+    # the implementation report rather than silently actioned.
     - klai_pii_observe.klai_pii_observer
+    # SPEC-PRIVACY-MISTRAL-PII-001 Phase 3 (REQ-7 through REQ-11): mask/map/
+    # restore PII on the Mistral call path. Shipped INERT — gated behind
+    # KLAI_PII_ENFORCE, default OFF (unset/false), so this PR reaches
+    # production changing nothing until the flag is deliberately flipped.
+    # Registered LAST (after klai_pii_observe) for two independent reasons,
+    # both verified against the installed litellm==1.96.2 source and
+    # documented in klai_pii_enforce.py's module docstring:
+    #   1. async_post_call_streaming_iterator_hook / async_post_call_
+    #      success_hook: last-registered is outermost / applied last, so
+    #      its output is what the client actually receives.
+    #   2. async_pre_call_hook runs callbacks in strict registration order,
+    #      each seeing the previous one's mutated `data`. Masking AFTER
+    #      klai_pii_observe keeps Phase 2's telemetry measuring the
+    #      pre-mask payload even once enforcement is enabled for individual
+    #      orgs, rather than measuring its own placeholders.
+    - klai_pii_enforce.klai_pii_enforcer
 
 # SPEC-PRIVACY-MISTRAL-PII-001 Phase 0 (REQ-0a/REQ-0b) — TEMPORARY,
 # EXPERIMENTAL, NOT the production control.
