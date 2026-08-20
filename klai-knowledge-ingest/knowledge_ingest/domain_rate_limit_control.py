@@ -82,6 +82,47 @@ MIN_DOMAIN_RATE_LIMIT = 0.2
 _CONGESTION_REASON_CODES = frozenset(
     {FetchReasonCode.RATE_LIMITED.value, FetchReasonCode.BLOCKED_ANTI_BOT.value}
 )
+_NON_CONGESTION_REASON_CODES = frozenset(
+    {
+        FetchReasonCode.SUCCESS.value,
+        FetchReasonCode.HTTP_4XX.value,
+        FetchReasonCode.HTTP_5XX.value,
+        FetchReasonCode.TIMEOUT.value,
+        FetchReasonCode.DNS_ERROR.value,
+        FetchReasonCode.CONNECTION_ERROR.value,
+        FetchReasonCode.AUTH_ERROR.value,
+        FetchReasonCode.PARSE_ERROR.value,
+        FetchReasonCode.NON_CONTENT_LISTING_PAGE.value,
+        FetchReasonCode.NOT_FETCHED_BUDGET_EXHAUSTED.value,
+        FetchReasonCode.NOT_FETCHED_DEPTH_LIMIT.value,
+        FetchReasonCode.NOT_FETCHED_DISCOVERY_LIMIT.value,
+        FetchReasonCode.NOT_FETCHED_EXCLUDED.value,
+        FetchReasonCode.NOT_FETCHED_DUPLICATE.value,
+        FetchReasonCode.NOT_FETCHED_RATE_LIMIT_STOP.value,
+        FetchReasonCode.UNKNOWN_EXCEPTION.value,
+        FetchReasonCode.REFUSED.value,
+        FetchReasonCode.NOT_FETCHED_CIRCUIT_BREAKER_STOP.value,
+        FetchReasonCode.NOT_FETCHED_CANCELLED.value,
+    }
+)
+_overlapping_congestion_reason_codes = _CONGESTION_REASON_CODES & _NON_CONGESTION_REASON_CODES
+if _overlapping_congestion_reason_codes:  # pragma: no cover - import-time guard
+    raise RuntimeError(
+        "FetchReasonCode values overlap the congestion/non-congestion "
+        f"classification: {sorted(_overlapping_congestion_reason_codes)}."
+    )
+_uncategorized_congestion_reason_codes = (
+    {reason.value for reason in FetchReasonCode}
+    - _CONGESTION_REASON_CODES
+    - _NON_CONGESTION_REASON_CODES
+)
+if _uncategorized_congestion_reason_codes:  # pragma: no cover - import-time guard
+    raise RuntimeError(
+        "FetchReasonCode values missing from the congestion/non-congestion "
+        f"classification: {sorted(_uncategorized_congestion_reason_codes)}. "
+        "Add each to _CONGESTION_REASON_CODES or _NON_CONGESTION_REASON_CODES "
+        "in knowledge_ingest/domain_rate_limit_control.py."
+    )
 
 # URLs that were never actually sent — not an attempt, not a signal either
 # way. See the module docstring's counting-rule paragraph.

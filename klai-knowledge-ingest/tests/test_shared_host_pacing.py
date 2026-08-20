@@ -4,13 +4,72 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
 
-from knowledge_ingest import crawl4ai_client
+from knowledge_ingest import crawl4ai_client, host_pacing
 from knowledge_ingest.domain_selectors import extract_domain
 from knowledge_ingest.host_pacing import HostGateRegistry, crawl_gate_key
+
+
+def test_multi_worker_environment_is_rejected() -> None:
+    with pytest.raises(RuntimeError, match=r"single-process.*WEB_CONCURRENCY=2"):
+        host_pacing.ensure_single_process_host_pacing(
+            environ={"WEB_CONCURRENCY": "2"},
+            argv=["uvicorn", "knowledge_ingest.app:app"],
+        )
+
+
+def test_multi_worker_uvicorn_argument_is_rejected() -> None:
+    with pytest.raises(RuntimeError, match=r"single-process.*--workers=3"):
+        host_pacing.ensure_single_process_host_pacing(
+            environ={},
+            argv=["uvicorn", "knowledge_ingest.app:app", "--workers=3"],
+        )
+
+
+def test_single_worker_configuration_is_allowed() -> None:
+    host_pacing.ensure_single_process_host_pacing(
+        environ={"WEB_CONCURRENCY": "1", "UVICORN_WORKERS": "1"},
+        argv=["uvicorn", "knowledge_ingest.app:app", "--workers", "1"],
+    )
+
+
+def test_explicit_single_worker_argument_overrides_environment_defaults() -> None:
+    host_pacing.ensure_single_process_host_pacing(
+        environ={"WEB_CONCURRENCY": "3", "UVICORN_WORKERS": "2"},
+        argv=["uvicorn", "knowledge_ingest.app:app", "--workers", "1"],
+    )
+
+
+def test_uvicorn_worker_environment_overrides_web_concurrency() -> None:
+    host_pacing.ensure_single_process_host_pacing(
+        environ={"WEB_CONCURRENCY": "3", "UVICORN_WORKERS": "1"},
+        argv=["uvicorn", "knowledge_ingest.app:app"],
+    )
+
+
+@pytest.mark.asyncio
+async def test_service_startup_rejects_multi_worker_mode_before_external_initialization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from knowledge_ingest import app as app_module
+
+    ensure_collection = AsyncMock(return_value=None)
+    get_pool = AsyncMock(return_value=object())
+    monkeypatch.setenv("WEB_CONCURRENCY", "2")
+    monkeypatch.setattr(app_module.qdrant_store, "ensure_collection", ensure_collection)
+    monkeypatch.setattr(app_module.db, "get_pool", get_pool)
+    monkeypatch.setattr(app_module.settings, "enrichment_enabled", False)
+
+    with pytest.raises(RuntimeError, match=r"single-process.*WEB_CONCURRENCY=2"):
+        async with app_module.lifespan(app_module.app):
+            pass
+
+    ensure_collection.assert_not_awaited()
+    get_pool.assert_not_awaited()
 
 
 class _VirtualClock:
@@ -87,6 +146,69 @@ async def test_lower_active_rate_controls_future_burst_and_repays_previous_burst
     # The previous 20-URL burst is charged against the newly effective
     # 0.2 URL/s rate before another request may start.
     assert clock.now == 100.0
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_restored_rate_controls_the_active_crawl_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A resumed crawl must pace traffic at its checkpointed slowdown rate."""
+    start_url = "https://example.com/"
+    ledger = crawl4ai_client.CrawlLedger(
+        start_url=start_url,
+        base_domain="example.com",
+        include_patterns=None,
+        exclude_patterns=None,
+        max_depth=1,
+    )
+    ledger.add_start()
+    ledger.add_sitemap_urls(["https://example.com/a", "https://example.com/b"])
+
+    class _Checkpoint:
+        async def load(self) -> dict[str, Any]:
+            return {
+                "version": 1,
+                "start_url": start_url,
+                "complete": False,
+                "ledger": ledger.snapshot(),
+                "results": [],
+                "outcomes": [],
+                "fetched_count": 0,
+                "current_rate_limit": 0.2,
+                "consecutive_rate_limit_slowdowns": 1,
+            }
+
+        async def ensure_active(self) -> None:
+            return None
+
+        async def save(self, _state: dict[str, Any]) -> None:
+            return None
+
+    clock = _VirtualClock()
+    registry = HostGateRegistry(monotonic=clock.monotonic, sleep=clock.sleep)
+    request_sizes: list[int] = []
+
+    async def crawl_sync(_client: httpx.AsyncClient, payload: dict[str, Any]) -> dict[str, Any]:
+        request_sizes.append(len(payload["urls"]))
+        return {
+            "results": [
+                {"url": url, "success": True, "markdown": "content", "links": {}}
+                for url in payload["urls"]
+            ]
+        }
+
+    monkeypatch.setattr(crawl4ai_client, "_host_gate_registry", registry)
+    monkeypatch.setattr(crawl4ai_client, "_crawl_sync", crawl_sync)
+
+    await crawl4ai_client.crawl_site(
+        start_url=start_url,
+        max_depth=1,
+        max_pages=3,
+        rate_limit=2.0,
+        checkpoint=_Checkpoint(),
+    )
+
+    assert request_sizes == [2, 1]
 
 
 @pytest.mark.asyncio

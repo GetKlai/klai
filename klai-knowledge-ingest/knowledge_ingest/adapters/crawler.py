@@ -24,7 +24,12 @@ from klai_image_storage import ImageStore, download_and_upload_crawl_images
 
 from knowledge_ingest import pg_store, qdrant_store
 from knowledge_ingest.config import settings
-from knowledge_ingest.crawl4ai_client import CrawlResult, _canonicalise_url, crawl_site
+from knowledge_ingest.crawl4ai_client import (
+    CrawlRateLimitState,
+    CrawlResult,
+    _canonicalise_url,
+    crawl_site,
+)
 from knowledge_ingest.crawl_checkpoint import (
     ConnectionFactory,
     CrawlExecutionBusy,
@@ -422,6 +427,7 @@ def _build_crawl_outcome_warning(
         outcome
         for outcome in fetch_outcomes
         if str(outcome.get("reason_code") or "").startswith(_NOT_FETCHED_REASON_PREFIX)
+        and not _outcome_is_deliberately_filtered(outcome)
     ]
     if not omitted:
         return None
@@ -443,6 +449,13 @@ def _build_crawl_outcome_warning(
     }
 
 
+def _outcome_is_deliberately_filtered(outcome: dict) -> bool:
+    """Return whether a not-fetched outcome records an intentional URL filter."""
+    return outcome.get("reason_code") == FetchReasonCode.NOT_FETCHED_EXCLUDED.value and bool(
+        outcome.get("filter_reason")
+    )
+
+
 def _crawl_fully_fetched(fetch_outcomes: list[dict]) -> bool:
     """True only when every discovered candidate URL was actually fetched.
 
@@ -460,8 +473,9 @@ def _crawl_fully_fetched(fetch_outcomes: list[dict]) -> bool:
 
     Reconciliation may only run when every discovered URL was demonstrably
     resolved (``success`` or ``non_content_listing_page``) — never on a
-    real fetch failure, and never on a deliberately-unfetched
-    ``not_fetched_*`` scheduling omission (budget/depth/exclude/duplicate).
+    real fetch failure, and never on an unresolved ``not_fetched_*`` scheduling
+    omission (budget/depth/exclude/duplicate). An explicit filtered-seed outcome
+    is resolved by policy and therefore does not block reconciliation.
     This is intentionally conservative: a crawl with any incompleteness at
     all skips reconciliation entirely rather than trying to distinguish
     "gone" from "not reached this run" — the more precise three-way split
@@ -469,6 +483,8 @@ def _crawl_fully_fetched(fetch_outcomes: list[dict]) -> bool:
     follow-up.
     """
     for outcome in fetch_outcomes:
+        if _outcome_is_deliberately_filtered(outcome):
+            continue
         reason = str(outcome.get("reason_code") or "")
         if reason in _FETCH_FAILURE_REASON_CODES:
             return False
@@ -659,8 +675,16 @@ async def _apply_domain_rate_limit_effect_once(
     domain_rate_limit_state: DomainRateLimitState,
     effective_rate_limit: float,
     default_rate_limit: float,
+    final_rate_limit: float | None = None,
 ) -> None:
-    """Apply this crawl's AIMD observation atomically with its replay marker."""
+    """Apply this crawl's AIMD observation atomically with its replay marker.
+
+    Deel B already halves the live rate in response to this job's congestion.
+    For a congested crawl, persist the lower of the normal AIMD result and
+    that final live rate. This carries the actual pacing state into the next
+    crawl without halving it a second time for the same observations. Clean
+    crawls do not use this clamp, so additive recovery remains possible.
+    """
     async with conn.transaction():
         command = await conn.execute(
             """
@@ -707,6 +731,17 @@ async def _apply_domain_rate_limit_effect_once(
         )
         if updated_state is None:
             return
+        if (
+            congestion_verdict
+            and final_rate_limit is not None
+            and updated_state.rate_limit is not None
+            and final_rate_limit < updated_state.rate_limit
+        ):
+            updated_state = DomainRateLimitState(
+                rate_limit=final_rate_limit,
+                clean_streak=updated_state.clean_streak,
+                last_congestion_at=updated_state.last_congestion_at,
+            )
 
         write_kind = (
             DomainRateLimitWriteKind.CONGESTION
@@ -933,6 +968,7 @@ async def run_crawl_job(
         # one entry per discovered candidate URL — written to
         # ``crawl_jobs.fetch_outcomes`` so operators can answer "where did
         # the missing pages go?" without log forensics.
+        crawl_rate_limit_state = CrawlRateLimitState(effective_rate_limit)
         results, fetch_outcomes = await crawl_site(
             start_url=start_url,
             selector=content_selector,
@@ -945,6 +981,7 @@ async def run_crawl_job(
             rate_limit=effective_rate_limit,
             cancel_check=cancel_check,
             checkpoint=primary_checkpoint,
+            rate_limit_state=crawl_rate_limit_state,
         )
 
         # 2026-08-19 (crawl-cancel): detected purely from the reason code
@@ -986,6 +1023,8 @@ async def run_crawl_job(
                 discovery_seed_url=discovery_seed_url,
                 primary_pages=len(results),
             )
+            seed_starting_rate_limit = crawl_rate_limit_state.current_rate_limit
+            seed_rate_limit_state = CrawlRateLimitState(seed_starting_rate_limit)
             seed_results, seed_outcomes = await crawl_site(
                 start_url=discovery_seed_url,
                 selector=content_selector,
@@ -995,7 +1034,7 @@ async def run_crawl_job(
                 exclude_patterns=exclude_patterns,
                 login_indicator_selector=login_indicator_selector,
                 cookies=cookies,
-                rate_limit=effective_rate_limit,
+                rate_limit=seed_starting_rate_limit,
                 cancel_check=cancel_check,
                 checkpoint=PostgresCrawlCheckpoint(
                     connection_factory,
@@ -1004,7 +1043,14 @@ async def run_crawl_job(
                     scope="discovery_seed",
                     generation=execution_generation,
                 ),
+                rate_limit_state=seed_rate_limit_state,
             )
+            if seed_rate_limit_state.current_rate_limit is not None and (
+                crawl_rate_limit_state.current_rate_limit is None
+                or seed_rate_limit_state.current_rate_limit
+                < crawl_rate_limit_state.current_rate_limit
+            ):
+                crawl_rate_limit_state.current_rate_limit = seed_rate_limit_state.current_rate_limit
             seen = {_canonicalise_url(r.url) for r in results}
             for seed_result in seed_results:
                 canon = _canonicalise_url(seed_result.url)
@@ -1047,6 +1093,7 @@ async def run_crawl_job(
                 domain_rate_limit_state=domain_rate_limit_state,
                 effective_rate_limit=effective_rate_limit,
                 default_rate_limit=rate_limit,
+                final_rate_limit=crawl_rate_limit_state.current_rate_limit,
             )
 
         crawl_outcome_warning = _build_crawl_outcome_warning(

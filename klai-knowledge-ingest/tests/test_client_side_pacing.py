@@ -19,39 +19,6 @@ import httpx
 import pytest
 
 from knowledge_ingest import crawl4ai_client
-from knowledge_ingest.crawl4ai_client import _burst_size_for, _chunked_bulk_fetch
-
-# ---------------------------------------------------------------------------
-# A. _burst_size_for — pure function, no mocking needed
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("rate_limit", "expected_burst"),
-    [
-        (None, 100),
-        (2.0, 20),
-        (1.0, 10),
-        (0.5, 5),
-        (0.25, 3),
-        # Bankers-rounding regression guard: round(0.5) == 0 and
-        # round(2.5) == 2 in Python. int(x + 0.5) must NOT collapse these.
-        (0.05, 1),  # 0.05 * 10 + 0.5 = 1.0 -> int() = 1, never 0
-    ],
-)
-def test_burst_size_for_expected_values(rate_limit: float | None, expected_burst: int) -> None:
-    assert _burst_size_for(rate_limit) == expected_burst
-
-
-def test_burst_size_for_never_exceeds_bulk_chunk_size() -> None:
-    """crawl4ai's server 422s on more than 100 URLs per request regardless
-    of how permissive rate_limit is."""
-    assert _burst_size_for(1000.0) == crawl4ai_client._BULK_CHUNK_SIZE
-
-
-def test_burst_size_for_never_drops_below_one() -> None:
-    assert _burst_size_for(0.0001) == 1
-
 
 # ---------------------------------------------------------------------------
 # Test doubles for _chunked_bulk_fetch's pacing clock/sleep, mirroring the
@@ -129,14 +96,13 @@ async def test_chunked_bulk_fetch_honours_rate_limit_cadence(
     clock = _install_virtual_clock(monkeypatch)
     monkeypatch.setattr(crawl4ai_client, "_crawl_sync", _fake_crawl_sync_factory(clock))
 
-    burst = _burst_size_for(rate_limit)
     # Enough chunks that the fencepost effect (N chunks only have N-1 gaps
     # between them, so a handful of chunks measures slightly above nominal)
     # washes out within the margin below.
-    num_urls = burst * 50
+    num_urls = 1000
     urls = [f"https://example.com/p{i}" for i in range(num_urls)]
 
-    fetch = await _chunked_bulk_fetch(
+    fetch = await crawl4ai_client._chunked_bulk_fetch(
         urls=urls,
         crawler_config={},
         cookies=None,
@@ -163,7 +129,7 @@ async def test_slow_chunk_is_not_further_delayed(monkeypatch: pytest.MonkeyPatch
     than the required gap, no additional sleep must be inserted."""
     clock = _install_virtual_clock(monkeypatch)
     rate_limit = 1.0
-    burst = _burst_size_for(rate_limit)  # 10 -> gap = 10s
+    burst = 10
     gap = burst / rate_limit
     # Chunk itself "takes" longer than the gap.
     monkeypatch.setattr(
@@ -174,7 +140,7 @@ async def test_slow_chunk_is_not_further_delayed(monkeypatch: pytest.MonkeyPatch
 
     urls = [f"https://example.com/p{i}" for i in range(burst * 2)]
 
-    await _chunked_bulk_fetch(
+    await crawl4ai_client._chunked_bulk_fetch(
         urls=urls,
         crawler_config={},
         cookies=None,
@@ -192,7 +158,7 @@ async def test_fast_chunk_sleeps_exactly_the_remaining_gap(
     exactly the difference — not the full gap again."""
     clock = _install_virtual_clock(monkeypatch)
     rate_limit = 1.0
-    burst = _burst_size_for(rate_limit)  # 10 -> gap = 10s
+    burst = 10
     gap = burst / rate_limit
     chunk_duration = 2.0
     monkeypatch.setattr(
@@ -203,7 +169,7 @@ async def test_fast_chunk_sleeps_exactly_the_remaining_gap(
 
     urls = [f"https://example.com/p{i}" for i in range(burst * 2)]
 
-    await _chunked_bulk_fetch(
+    await crawl4ai_client._chunked_bulk_fetch(
         urls=urls,
         crawler_config={},
         cookies=None,
@@ -246,7 +212,7 @@ async def test_no_rate_limit_means_no_behaviour_change(monkeypatch: pytest.Monke
     num_urls = 250  # spans 3 chunks at the historical fixed size of 100
     urls = [f"https://example.com/p{i}" for i in range(num_urls)]
 
-    fetch = await _chunked_bulk_fetch(
+    fetch = await crawl4ai_client._chunked_bulk_fetch(
         urls=urls,
         crawler_config={},
         cookies=None,
@@ -291,10 +257,10 @@ async def test_no_request_exceeds_the_computed_burst_size(
     monkeypatch.setattr(crawl4ai_client, "_crawl_sync", _fake_crawl_sync)
 
     rate_limit = 0.25
-    expected_burst = _burst_size_for(rate_limit)
+    expected_burst = 3
     urls = [f"https://example.com/p{i}" for i in range(expected_burst * 4 + 1)]
 
-    await _chunked_bulk_fetch(
+    await crawl4ai_client._chunked_bulk_fetch(
         urls=urls,
         crawler_config={},
         cookies=None,
