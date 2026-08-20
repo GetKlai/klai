@@ -26,7 +26,14 @@ export function StepConfirm({
   // These two 403s are permanent for the current role/plan, so re-submitting
   // can only produce the same denial. The cached KB list may still be stale
   // below the cap, which is why this does not rely on `personalQuotaReached`.
-  const permanentlyDenied = errorKey === 'org_not_allowed' || errorKey === 'personal_quota'
+  //
+  // Each denial applies only to the scope it was raised for. `errorKey` is
+  // cleared on submit, so a denial that outlived its scope would disable the
+  // very button that clears it — switching to a personal KB after an org
+  // denial left the wizard dead until a page reload.
+  const orgDenied = errorKey === 'org_not_allowed' && data.ownerType === 'org'
+  const personalDenied = errorKey === 'personal_quota' && data.ownerType === 'user'
+  const permanentlyDenied = orgDenied || personalDenied
   const visibilityLabel =
     data.visibilityMode === 'public'
       ? m.knowledge_sharing_visibility_public()
@@ -123,12 +130,12 @@ export function StepConfirm({
           </Button>
         </div>
       )}
-      {errorKey === 'org_not_allowed' && (
+      {orgDenied && (
         <p className="text-sm text-[var(--color-destructive)]">
           {m.knowledge_new_error_org_not_allowed()}
         </p>
       )}
-      {errorKey === 'personal_quota' && (
+      {personalDenied && (
         <p className="text-sm text-[var(--color-destructive)]">
           {m.kb_limit_tooltip_kb_count()}
         </p>
