@@ -463,17 +463,12 @@ services:
     # PLACEHOLDER DIGEST — deploy/presidio/analyzer-image-build.yml has not
     # run against this change yet (it runs on push to `main`; this PR does
     # not push or deploy). Replace with the real digest from that workflow's
-    # step summary. Bootstrap ordering: presidio-analyzer-image-build.yml
-    # only PUBLISHES on a push to `main`, so the Klai image does not exist
-    # until the PR carrying its Dockerfile has merged. This service therefore
-    # still runs the STOCK image, and a follow-up PR flips it to
-    # ghcr.io/getklai/presidio-analyzer@sha256:<real digest> together with
-    # the 512M limit below. A placeholder digest is not an acceptable interim
-    # state — check-klai-presidio-digest.sh rejects one, because nothing else
-    # in CI would (check-image-pullable.sh matches `image:tag` form only and
-    # is blind to every digest-pinned reference), and it would deploy an
-    # unpullable image to core-01.
-    image: ghcr.io/data-privacy-stack/presidio-analyzer@sha256:286e3fa7f3a7426e775e8564fe1870f1ba8f999d3ab8bbb8cc46a44355d9d6e9
+    # step summary. Bootstrap complete: presidio-analyzer-image-build.yml
+    # published this digest from d55d6adeb (tag 2.2.362-klai.1-d55d6adeb0ec),
+    # built FROM the same ghcr.io/data-privacy-stack digest Phase 0 pinned.
+    # This is where REQ-3's Dutch recognizers (BSN/KvK/BTW/postcode) and
+    # REQ-4's SECRET recognizer actually enter the request path.
+    image: ghcr.io/getklai/presidio-analyzer@sha256:fff95b8413f97708ce192ae1bf9e6418bcd14423ff4e0ec4a79f5ea172eed268
     restart: unless-stopped
     networks:
       - inference
@@ -492,15 +487,13 @@ services:
           # headroom over the measured steady-state for concurrent-request
           # growth without re-inflating toward the old provisional 2G.
           #
-          # NOT YET APPLIED: while this service still runs the STOCK image
-          # (see the image comment above), en_core_web_lg IS loaded, so 512M
-          # would OOM it. The limit drops to 512M in the same follow-up PR
-          # that flips the image — the two changes are one unit and must not
-          # be split. core-01 runs 78 services, so revise again from
-          # `docker stats presidio-analyzer --no-stream` once the Klai image
-          # runs on the server under real traffic.
+          # Applied together with the image above — the two are one unit: the
+          # stock image loads en_core_web_lg and would OOM at 512M. core-01
+          # runs 78 services, so revise again from
+          # `docker stats presidio-analyzer --no-stream` once this runs on the
+          # server under real traffic.
           cpus: '1'
-          memory: 2G
+          memory: 512M
 
   presidio-anonymizer:
     image: ghcr.io/data-privacy-stack/presidio-anonymizer@sha256:a10a12a2a613d13cf29d3ad3641e3258444dd8c90403dd644a0a114c472c2483
