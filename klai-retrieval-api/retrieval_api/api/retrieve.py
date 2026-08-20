@@ -24,7 +24,6 @@ from retrieval_api.config import settings
 from retrieval_api.metrics import (
     quality_floor_filtered_total,
     retrieval_chunks_total,
-    retrieval_confidence_band_corroborated_total,
     retrieval_confidence_band_total,
     retrieval_graph_top_k_total,
     retrieval_link_expand_top_k_total,
@@ -512,13 +511,14 @@ async def retrieve(
 
     # 3. Gate check. Strict KB mode must never skip retrieval: a wrong bypass
     # would turn "answer only from selected KBs" into a plain model answer.
-    # Shadow mode (default) computes + logs the decision but never acts on it.
+    # When explicitly enabled in shadow mode, the gate logs its decision but
+    # never acts on it. Production leaves the low-yield gate disabled.
     if req.kb_narrow:
         gate_decision = gate.GateDecision(
             would_bypass=False,
             bypassed=False,
             margin=None,
-            shadow=settings.retrieval_gate_shadow,
+            shadow=settings.retrieval_gate_enabled and settings.retrieval_gate_shadow,
         )
         decision_record["gate_skipped_reason"] = "strict_mode"
     else:
@@ -823,23 +823,37 @@ async def retrieve(
                 )
             ranking_shadow_preview = quality_boost(ranking_shadow_preview, contract_active=True)
 
-        # @MX:NOTE: [AUTO] Shadow mode (R9): runs evidence scoring on every
-        # request but serves flat results. Diffs logged as shadow_eval to
-        # VictoriaLogs for offline analysis.
-        # @MX:NOTE: Set EVIDENCE_SHADOW_MODE=false to activate evidence-tier
-        # scoring for users.
-        # @MX:SPEC: SPEC-EVIDENCE-001 R9. Disable shadow mode after RAGAS
-        # validation confirms improvement.
+        # Evidence-tier was disabled in production on 2026-08-20: its online
+        # shadow changed ordering but never measured answer quality, so it
+        # could not select a winner. Explicit shadow/active modes remain for
+        # controlled evaluation runs; disabled pays no deepcopy/scoring cost.
         # 6. Evidence tier scoring + U-shape ordering (SPEC-EVIDENCE-001, R7)
-        shadow_mode = os.environ.get("EVIDENCE_SHADOW_MODE", "true").lower() in (
-            "true",
-            "1",
-            "yes",
-        )
-        decision_record["evidence_shadow_mode"] = shadow_mode
-        scored = evidence_tier.apply(copy.deepcopy(reranked))
+        evidence_mode_raw = os.environ.get("EVIDENCE_SHADOW_MODE", "disabled").strip().lower()
+        evidence_mode = {
+            "disabled": "disabled",
+            "off": "disabled",
+            "shadow": "shadow",
+            "true": "shadow",
+            "1": "shadow",
+            "yes": "shadow",
+            "active": "active",
+            "false": "active",
+            "0": "active",
+            "no": "active",
+        }.get(evidence_mode_raw)
+        if evidence_mode is None:
+            raise RuntimeError(
+                "invalid EVIDENCE_SHADOW_MODE: "
+                f"{evidence_mode_raw!r}; require disabled, shadow, or active"
+            )
+        decision_record["evidence_tier_mode"] = evidence_mode
 
-        if shadow_mode:
+        if evidence_mode == "disabled":
+            serving = reranked
+        else:
+            scored = evidence_tier.apply(copy.deepcopy(reranked))
+
+        if evidence_mode == "shadow":
             # R9: Log shadow results but serve original flat scoring
             logger.info(
                 "shadow_eval",
@@ -855,7 +869,7 @@ async def retrieve(
                 ],
             )
             serving = reranked
-        else:
+        elif evidence_mode == "active":
             serving = scored
 
         # REQ-RANK-04 shadow diff: "old" is the ACTUAL served list (this
@@ -974,23 +988,8 @@ async def retrieve(
             low_threshold=settings.confidence_band_low_threshold,
             reranker_enabled=settings.reranker_enabled,
         )
-        confidence_band_corroborated = _compute_confidence_band(
-            serving,
-            high_threshold=settings.confidence_band_high_threshold,
-            low_threshold=settings.confidence_band_low_threshold,
-            reranker_enabled=settings.reranker_enabled,
-            require_corroboration=True,
-        )
         decision_record["confidence_band"] = confidence_band
-        decision_record["confidence_band_corroborated"] = confidence_band_corroborated
         retrieval_confidence_band_total.labels(band=confidence_band, org_id=req.org_id).inc()
-        retrieval_confidence_band_corroborated_total.labels(
-            band=confidence_band_corroborated, org_id=req.org_id
-        ).inc()
-        # TODO(2026-08-22): Evaluate the 48h corroboration shadow window and
-        # decide to promote or remove this signal + metric. Do not leave it in
-        # indefinite shadow like the gate_shadow_mode/evidence_shadow_mode precedent.
-        # Compare primary vs shadow bands in Grafana's RAG quality Low-Confidence panel.
 
     evidence_query = (
         f"{req.raw_query}\n{query_resolved}"

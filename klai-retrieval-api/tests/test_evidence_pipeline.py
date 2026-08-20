@@ -5,12 +5,14 @@ from __future__ import annotations
 import os
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 
 class TestEvidenceTierInPipeline:
     """Verify evidence_tier.apply() is called after reranking."""
 
-    def test_retrieve_calls_evidence_tier(self, client, sample_retrieve_request):
-        """evidence_tier.apply() is called in the retrieve pipeline (R7)."""
+    def test_active_mode_applies_and_invalid_mode_fails_loud(self, client, sample_retrieve_request):
+        """Active mode applies scoring; an unknown mode cannot silently fallback."""
         reranked_chunk = {
             "chunk_id": "c1",
             "text": "policy text",
@@ -75,11 +77,17 @@ class TestEvidenceTierInPipeline:
 
             resp = client.post("/retrieve", json=sample_retrieve_request)
 
+            os.environ["EVIDENCE_SHADOW_MODE"] = "bogus"
+            with pytest.raises(RuntimeError, match="invalid EVIDENCE_SHADOW_MODE"):
+                client.post("/retrieve", json=sample_retrieve_request)
+
         assert resp.status_code == 200
         mock_apply.assert_called_once()
 
-    def test_shadow_mode_serves_flat_scoring(self, client, sample_retrieve_request):
-        """Shadow mode: serves flat scoring, logs evidence results (R9)."""
+    def test_disabled_mode_serves_flat_scoring_without_shadow_compute(
+        self, client, sample_retrieve_request
+    ):
+        """Disabled mode pays no production CPU cost for an inconclusive experiment."""
         reranked_chunk = {
             "chunk_id": "c1",
             "text": "policy text",
@@ -126,13 +134,17 @@ class TestEvidenceTierInPipeline:
                 new_callable=AsyncMock,
                 return_value=[reranked_chunk],
             ),
-            patch.dict(os.environ, {"EVIDENCE_SHADOW_MODE": "true"}),
+            patch(
+                "retrieval_api.api.retrieve.evidence_tier.apply",
+                return_value=[{**reranked_chunk, "final_score": 0.95}],
+            ) as mock_apply,
+            patch.dict(os.environ, {"EVIDENCE_SHADOW_MODE": "disabled"}),
         ):
             resp = client.post("/retrieve", json=sample_retrieve_request)
 
         assert resp.status_code == 200
         data = resp.json()
-        # In shadow mode, the served chunks should NOT have final_score
-        # because we serve the original reranked results
+        # Disabled mode serves the original reranked results.
         chunk = data["chunks"][0]
         assert chunk["final_score"] is None or chunk.get("evidence_tier_metadata") is None
+        mock_apply.assert_not_called()

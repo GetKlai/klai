@@ -7,8 +7,9 @@ Feature flags (environment variables):
 - EVIDENCE_CONTENT_TYPE_ENABLED (default: true)
 - EVIDENCE_TEMPORAL_DECAY_ENABLED (default: true)
 - EVIDENCE_ASSERTION_MODE_ENABLED (default: true; conservative 0.10-spread weights,
-  shadow-gated — computed and logged for measurement, never changes served ordering
-  while EVIDENCE_SHADOW_MODE=true. See docs/research/assertion-modes/assertion-mode-weights.md.)
+  available for explicit offline evaluation. Production sets
+  EVIDENCE_SHADOW_MODE=disabled and pays no scoring/deep-copy cost. See
+  docs/research/assertion-modes/assertion-mode-weights.md.)
 """
 
 from __future__ import annotations
@@ -53,8 +54,8 @@ DEFAULT_EVIDENCE_PROFILE: EvidenceProfile = {
     # Conservative profile (spread 0.10, within the safe range for an ~85%
     # classifier) per docs/research/assertion-modes/assertion-mode-weights.md §6.1.
     # unknown=0.97 ("benefit of the doubt"; never penalize absent metadata).
-    # Shadow-gated: only affects served order once EVIDENCE_SHADOW_MODE=false,
-    # which should NOT happen until assertion_mode is LLM-derived (not author
+    # Evaluation-only: production keeps EVIDENCE_SHADOW_MODE=disabled. Active
+    # serving should NOT happen until assertion_mode is LLM-derived (not author
     # frontmatter) and the unknown-fraction is measured (research §8-9).
     "assertion_mode_weights": {
         "factual": 1.00,
@@ -124,8 +125,8 @@ def _pagerank_weight(pagerank_max: float | None) -> float:
 
 
 # @MX:NOTE: [AUTO] assertion_mode now applies the conservative weight table from
-# @MX:NOTE: DEFAULT_EVIDENCE_PROFILE, but stays shadow-gated at the retrieve.py caller
-# @MX:NOTE: (EVIDENCE_SHADOW_MODE=true) so it is measured, not served.
+# @MX:NOTE: DEFAULT_EVIDENCE_PROFILE; production disables the retrieve.py caller
+# @MX:NOTE: (EVIDENCE_SHADOW_MODE=disabled) after an inconclusive shadow run.
 # @MX:SPEC: SPEC-EVIDENCE-002 — go-live preconditions in
 # @MX:SPEC: docs/research/assertion-modes/assertion-mode-weights.md §8-9.
 def _assertion_weight(assertion_mode: str | None, profile: EvidenceProfile) -> float:

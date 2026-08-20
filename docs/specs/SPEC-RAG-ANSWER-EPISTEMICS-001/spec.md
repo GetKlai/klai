@@ -281,12 +281,10 @@ degradation notice — is specified in v0.2 of this SPEC, gated on:
 
 - the REQ-4 violation rate over a real traffic window;
 - the REQ-1 provenance distribution;
-- the SPEC-RAG-SOURCE-SELECTION-001 REQ-9 band-disagreement data, since a stricter band
-  may remove much of the pressure on its own.
+- any future confidence-policy change that has a real downstream behavioral effect.
 
-Shipping measurement before enforcement is the same discipline the sibling SPEC applies
-to the confidence band, and the same one already used by `gate_shadow_mode`,
-`evidence_shadow_mode`, and `citation_rescue_mode`.
+The 2026-08-20 shadow audit removed the earlier corroborated-band dependency because its
+`high` → `medium` change affected no current policy and did not measure independent sources.
 
 ## Non-Functional Requirements
 

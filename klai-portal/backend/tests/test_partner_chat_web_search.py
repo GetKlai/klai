@@ -289,6 +289,35 @@ def test_compose_keeps_kb_and_web_as_separate_tiers():
     assert [s["label"] for s in sources] == [str(i) for i in range(1, len(sources) + 1)]
 
 
+def test_count_citation_rescues_includes_web_tier() -> None:
+    from app.services.partner_chat import _count_citation_rescues
+
+    decision = {
+        "selected": [{"reason": "rescued"}, {"reason": "supported"}],
+        "web": {"selected": [{"reason": "rescued"}]},
+    }
+
+    assert _count_citation_rescues(decision) == 2
+
+
+def test_log_citation_rescues_emits_one_actionable_event() -> None:
+    from app.services import partner_chat
+
+    decision = {
+        "selected": [{"reason": "rescued"}],
+        "web": {"selected": [{"reason": "rescued"}]},
+    }
+
+    with patch.object(partner_chat.logger, "info") as log_info:
+        partner_chat._log_citation_rescues(decision, org_id="org-42")
+
+    log_info.assert_called_once_with(
+        "citation_rescue_applied",
+        org_id="org-42",
+        rescued_sources=2,
+    )
+
+
 def test_compose_web_only_not_refused():
     from app.services.partner_chat import _compose_backend_managed_answer
 

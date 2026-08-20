@@ -25,11 +25,11 @@ os.environ.setdefault("RATE_LIMIT_RPM", "600")
 # `_auto_allow_identity_assert` below.
 os.environ.setdefault("PORTAL_API_URL", "http://portal-api.test.local:8010")
 os.environ.setdefault("PORTAL_INTERNAL_SECRET", "test-portal-internal-secret")
-# Production defaults ``retrieval_gate_shadow`` to True (compute + log the gate
-# decision but never act on it). The pipeline tests force a bypass — patching
+# The production gate is disabled after its 30d shadow run. Pipeline tests that
+# exercise the legacy bypass contract patch
 # ``gate.should_bypass`` -> (True, ...) to skip the heavy qdrant/rerank path —
 # which only takes effect when the gate ACTS. Run the suite with the gate in
-# acting mode; shadow-suppression itself is covered explicitly in test_gate.py.
+# acting mode; the disabled production default is covered in test_gate.py.
 os.environ.setdefault("RETRIEVAL_GATE_SHADOW", "false")
 
 import pytest

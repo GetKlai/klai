@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from retrieval_api.config import Settings
 from retrieval_api.services import gate
 
 
@@ -18,6 +19,11 @@ def reset_gate_cache():
 
 
 class TestGate:
+    def test_gate_is_disabled_by_default(self, monkeypatch):
+        """The unvalidated classifier must not run in production by default."""
+        monkeypatch.delenv("RETRIEVAL_GATE_ENABLED", raising=False)
+        assert Settings().retrieval_gate_enabled is False
+
     @pytest.mark.asyncio
     async def test_gate_disabled_returns_false(self):
         """When gate is disabled, always returns (False, None)."""
@@ -25,6 +31,17 @@ class TestGate:
             bypass, margin = await gate.should_bypass([0.1, 0.2, 0.3])
             assert bypass is False
             assert margin is None
+
+    @pytest.mark.asyncio
+    async def test_gate_disabled_is_not_reported_as_shadow(self):
+        """Flags-off means no experiment is reported in decision telemetry."""
+        with (
+            patch.object(gate.settings, "retrieval_gate_enabled", False),
+            patch.object(gate.settings, "retrieval_gate_shadow", True),
+        ):
+            decision = await gate.evaluate([0.1, 0.2, 0.3])
+
+        assert decision.shadow is False
 
     @pytest.mark.asyncio
     async def test_no_reference_file_returns_false(self):

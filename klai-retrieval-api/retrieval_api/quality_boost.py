@@ -9,7 +9,7 @@ Missing fields default to quality_score=0.5, feedback_count=0 (no boost).
 SPEC-RAG-EVIDENCE-INTEGRITY-001 REQ-RANK-03: behavior is mode-dependent via
 ``contract_active``.
 
-- ``contract_active=False`` (ranking-contract shadow, the default): the exact
+- ``contract_active=False`` (explicit ranking-contract shadow mode): the exact
   pre-contract behavior — boost mutates the raw ``score`` and the list is
   ALWAYS re-sorted by ``score``. Byte-identical serving per REQ-RANK-04.
 - ``contract_active=True``: boost mutates ``final_rank_score`` (the single

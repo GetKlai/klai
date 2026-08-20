@@ -145,49 +145,6 @@ def test_band_handles_int_score() -> None:
     assert band == "high"
 
 
-def test_corroborated_band_caps_single_strong_hit_at_medium() -> None:
-    chunks = [
-        {"reranker_score": 0.87},
-        {"reranker_score": 0.28},
-        {"reranker_score": 0.21},
-    ]
-
-    authoritative = _compute_confidence_band(
-        chunks,
-        high_threshold=0.60,
-        low_threshold=0.30,
-        reranker_enabled=True,
-    )
-    corroborated = _compute_confidence_band(
-        chunks,
-        high_threshold=0.60,
-        low_threshold=0.30,
-        reranker_enabled=True,
-        require_corroboration=True,
-    )
-
-    assert authoritative == "high"
-    assert corroborated == "medium"
-
-
-def test_corroborated_band_is_high_with_two_strong_hits() -> None:
-    chunks = [
-        {"reranker_score": 0.87},
-        {"reranker_score": 0.72},
-        {"reranker_score": 0.21},
-    ]
-
-    corroborated = _compute_confidence_band(
-        chunks,
-        high_threshold=0.60,
-        low_threshold=0.30,
-        reranker_enabled=True,
-        require_corroboration=True,
-    )
-
-    assert corroborated == "high"
-
-
 # ---------------------------------------------------------------------------
 # REQ-3 — _apply_link_expand_boost
 # ---------------------------------------------------------------------------

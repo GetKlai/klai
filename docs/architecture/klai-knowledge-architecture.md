@@ -10,7 +10,7 @@
 >
 > *2026-06-08 (doc-vs-code drift audit): §0 infra table corrected (gpu-01 models, Graphiti live, PG schema populated, gap inbox live, Mistral stack). Several sections that described a richer design than the code now carry an **Intended vs. current** callout pointing to [`product-gaps-backlog.md`](product-gaps-backlog.md) — notably §8 gap detection (GAP-LOOP-*), §6 taxonomy (GAP-TAX-*), §3.3/§5 provenance (GAP-PROV-*), §7.4/§3.2 evidence weighting (GAP-EVID-*), §5.1 multitenancy (GAP-TENANCY-01), §9.2 MCP read tools (GAP-MCP-01), §10 personal-knowledge enrichment (GAP-PRIV-01). The temporal-validity filter has a field-name bug — see [the retro](../retros/2026-06-08-temporal-filter-field-mismatch.md).*
 >
-> *2026-06-11 (per-claim re-verification): the temporal field-name bug is **fixed** on the serving path (dual-contract filter + delete-then-upsert; see §5.2 callout and the retro addendum); `is_tenant=True` now ships for new collections (existing collection needs the one-time upgrade script — §5.1 callout); evidence-tier assertion weights are no longer flat (conservative profile, shadow-gated — §7.4 callout); GAP-INGEST-02 (`chunk_type`) was closed by removal. Refreshed gap states: [`product-gaps-backlog.md`](product-gaps-backlog.md); improvement plan: [`knowledge-rag-improvement-plan.md`](knowledge-rag-improvement-plan.md).*
+> *2026-08-20 (experiment resolution): evidence-tier scoring is disabled in production after its online order diff lacked a paired answer-quality outcome; the calibrated citation-rescue rule is active. The temporal and ingest corrections from the 2026-06-11 re-verification remain in force. Refreshed gap states: [`product-gaps-backlog.md`](product-gaps-backlog.md); improvement plan: [`knowledge-rag-improvement-plan.md`](knowledge-rag-improvement-plan.md).*
 
 ---
 
@@ -821,9 +821,9 @@ Step 5: Cross-encoder reranking
   Top 5 chunks selected for context injection
   │
   ▼
-Step 6: Evidence tier scoring (shadow mode)
-  Adjusts scores by content_type weight + temporal decay
-  Currently logs only — does not reorder results (EVIDENCE_SHADOW_MODE=true)
+Step 6: Evidence tier scoring (disabled in production)
+  Available for controlled evaluation; flat reranker order is served
+  without shadow computation (EVIDENCE_SHADOW_MODE=disabled)
   │
   ▼
 System message injection → model
@@ -847,11 +847,11 @@ Bi-encoder retrieval (top-20) → Cross-encoder reranking (top-5) → LLM classi
 
 The cross-encoder reads query + document together and assesses relevance at claim level, not topic level. This is what distinguishes "Windows vs. Mac" when the topic is the same but the coverage is not.
 
-### 7.4 Evidence-weighted scoring [LIVE — shadow mode]
+### 7.4 Evidence-weighted scoring [EVALUATION-ONLY — production disabled]
 
-> Research backing: [Evidence-Weighted Knowledge Retrieval: Research Synthesis](../research/README.md). Activation track: [`SPEC-EVIDENCE-001-FOLLOWUP-001`](../../.moai/specs/SPEC-EVIDENCE-001-FOLLOWUP-001/spec.md). User-facing flow: [knowledge-retrieval-flow.md § Evidence tier scoring](knowledge-retrieval-flow.md#step-6-evidence-tier-scoring-shadow-mode).
+> Research backing: [Evidence-Weighted Knowledge Retrieval: Research Synthesis](../research/README.md). Activation track: [`SPEC-EVIDENCE-001-FOLLOWUP-001`](../../.moai/specs/SPEC-EVIDENCE-001-FOLLOWUP-001/spec.md). User-facing flow: [knowledge-retrieval-flow.md § Evidence tier scoring](knowledge-retrieval-flow.md#step-6-evidence-tier-scoring-production-disabled).
 
-Evidence-weighted scoring runs in Step 6 of the retrieval pipeline. Currently in shadow mode (`EVIDENCE_SHADOW_MODE=true`): scores are computed and logged but do not reorder results. This is a **post-retrieval scoring adjustment**, not a replacement for semantic search.
+Evidence-weighted scoring is available in Step 6 of the retrieval pipeline for explicit evaluation. Production uses `EVIDENCE_SHADOW_MODE=disabled`, so scores are not computed and the flat reranker order is served. This is a **post-retrieval scoring adjustment**, not a replacement for semantic search.
 
 **Four scoring dimensions (multiplicative, each per-dimension feature-flagged):**
 
@@ -860,20 +860,19 @@ Evidence-weighted scoring runs in Step 6 of the retrieval pipeline. Currently in
 | Content type | `content_type` (kb_article, pdf_document, web_crawl, ...) | Per-type weight, see table below | `EVIDENCE_CONTENT_TYPE_ENABLED` (default `true`) |
 | Temporal decay | `ingested_at` age | Step function across <30d / 30-180d / 180-365d / >365d brackets | `EVIDENCE_TEMPORAL_DECAY_ENABLED` (default `true`) |
 | PageRank | `entity_pagerank_max` from FalkorDB | `1 + 0.20 * log1p(pagerank * 100)` — capped ~+25% | `EVIDENCE_PAGERANK_ENABLED` (default `true`) |
-| Assertion mode | `assertion_mode` (factual, procedural, ...) | **Conservative profile** (factual/procedural 1.00, quoted 0.98, unknown 0.97, belief 0.95, hypothesis 0.90) — go-live via `SPEC-EVIDENCE-002` | `EVIDENCE_ASSERTION_MODE_ENABLED` (default `true`; shadow mode keeps it measured-not-served) |
+| Assertion mode | `assertion_mode` (factual, procedural, ...) | **Conservative profile** (factual/procedural 1.00, quoted 0.98, unknown 0.97, belief 0.95, hypothesis 0.90) — go-live via `SPEC-EVIDENCE-002` | `EVIDENCE_ASSERTION_MODE_ENABLED` (only evaluated when evidence-tier mode is explicitly enabled) |
 
-> **Intended vs. current (GAP-EVID-01/02, updated 2026-06-11).** The whole evidence-tier
-> remains shadow-mode (`EVIDENCE_SHADOW_MODE=true`: weighted order is computed and
-> logged as `shadow_eval`, the flat reranker order is served). Two corrections to the
-> earlier callout:
+> **Resolution (GAP-EVID-01/02, updated 2026-08-20).** The evidence-tier is flags-off
+> (`EVIDENCE_SHADOW_MODE=disabled`). Its 30-day online shadow changed order in
+> 2,186/8,946 logged runs but captured no paired answer-quality outcome, so it could not
+> establish an improvement and the per-request `deepcopy + apply()` cost was stopped.
 > - `_assertion_weight()` no longer returns a constant: it reads the conservative
 >   profile above from `DEFAULT_EVIDENCE_PROFILE` (`evidence_tier.py:43-67,125-148`;
 >   spread 0.10 per the weights research, unmapped modes fall back to `unknown`).
->   Still measured-not-served while shadow mode is on.
+>   It remains available for controlled evaluation.
 > - The deciding RAGAS A/B (SPEC-EVIDENCE-001-FOLLOWUP-001 variants
 >   `evidence_tier_full` / `evidence_tier_temporal_only`) was **never built** — the eval
->   harness only knows `baseline` — and the SPEC's 30-day decision deadline has lapsed
->   while the shadow `deepcopy + apply()` CPU cost is paid per request.
+>   harness only knows `baseline`; that is why the flags-off terminal state was selected.
 >
 > The 3-into-5 epistemic grouping from §3.2 (assertion / speculation / procedure) is
 > still **not implemented anywhere**. content_type / temporal / pagerank are real
@@ -898,7 +897,7 @@ final_score = reranker_score × content_type_weight × assertion_mode_weight × 
 | `web_crawl` | 0.65 |
 | `unknown` (fallback) | 0.55 |
 
-**Activation track (post-audit, SPEC-EVIDENCE-001-FOLLOWUP-001):** the shadow mode has been the default since 2026-03-30. The follow-up SPEC sets a 30-day deadline to choose one of four terminal states using a 7-day RAGAS A/B (`baseline` vs. `evidence_tier_full` vs. `evidence_tier_temporal_only`):
+**Resolved activation track (SPEC-EVIDENCE-001-FOLLOWUP-001):** the shadow mode ran from 2026-03-30 through 2026-08-20. The follow-up SPEC defined four terminal states:
 
 1. **Activate** — staged 5%/50%/100% rollout with auto-revert on quality regression
 2. **Activate temporal-only** — narrow rollout of the dimension with strongest theoretical justification
@@ -907,7 +906,10 @@ final_score = reranker_score × content_type_weight × assertion_mode_weight × 
 
 Decision criteria: ≥+0.02 mean uplift on RAGAS Context Precision **and** Faithfulness with Wilcoxon paired `p<0.05` against baseline on the 50-curated query subset.
 
-**Assertion mode weight activation** is governed by a separate SPEC (`SPEC-EVIDENCE-002`) — it remains flat-1.00 in V1 even after the FOLLOWUP-001 decision because the multiplicative compounding risk (4 dimensions at ~85% classifier accuracy → 48% chance of misclassification per chunk) demands its own calibration cycle. See [Assertion Mode Weights research](../research/assertion-modes/assertion-mode-weights.md).
+The required paired A/B was never implemented, so no uplift could be proven. Terminal
+state 4 (retain-flags-off) is active; there is no production shadow experiment.
+
+**Assertion mode weight activation** is governed by a separate SPEC (`SPEC-EVIDENCE-002`) — it remains inactive in production because the multiplicative compounding risk (4 dimensions at ~85% classifier accuracy → 48% chance of misclassification per chunk) demands its own calibration cycle. See [Assertion Mode Weights research](../research/assertion-modes/assertion-mode-weights.md).
 
 **Corroboration scoring: deferred.** Cross-source corroboration requires three prerequisites not yet met: near-duplicate detection (SemHash), source-level grouping, and entity resolution validation (>90% precision, >85% recall). See [Corroboration Scoring research](../research/corroboration/corroboration-scoring.md).
 

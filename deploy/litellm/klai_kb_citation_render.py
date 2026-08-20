@@ -64,14 +64,12 @@ class KbCitationRenderStats:
     epistemics_measured: bool = False
     citation_decisions: list[dict[str, Any]] = field(default_factory=list)
 
-    def merge(self, other: "KbCitationRenderStats") -> None:
+    def merge(self, other: KbCitationRenderStats) -> None:
         self.mutated_messages += other.mutated_messages
         self.rendered_messages += other.rendered_messages
         self.rendered_sources = max(self.rendered_sources, other.rendered_sources)
         self.no_citable_sources = self.no_citable_sources or other.no_citable_sources
-        self.epistemics_measured = (
-            self.epistemics_measured or other.epistemics_measured
-        )
+        self.epistemics_measured = self.epistemics_measured or other.epistemics_measured
         self.citation_decisions.extend(other.citation_decisions)
 
 
@@ -486,7 +484,9 @@ def _format_kb_scope_text(kb_meta: dict[str, Any], *, language: str = "nl") -> s
             else "all organization knowledge bases"
         )
     if scope_mode == "personal":
-        return "persoonlijke kennisbank" if language == "nl" else "personal knowledge base"
+        return (
+            "persoonlijke kennisbank" if language == "nl" else "personal knowledge base"
+        )
     return ""
 
 
@@ -682,7 +682,9 @@ def _format_visible_agent_activity(
 
     kb_scope_text = _format_kb_scope_text(kb_meta, language=language)
     if kb_scope_text:
-        label = "Kennisbanken in scope" if language == "nl" else "Knowledge bases in scope"
+        label = (
+            "Kennisbanken in scope" if language == "nl" else "Knowledge bases in scope"
+        )
         lines.append(f"- {label}: {kb_scope_text}.")
 
     kbs_with_results = _format_limited_label_list(
@@ -751,7 +753,11 @@ def _format_visible_agent_activity(
 
     if isinstance(confidence_band, str) and confidence_band:
         if sources:
-            suffix = "bronfragmenten gekoppeld" if language == "nl" else "source chunks linked"
+            suffix = (
+                "bronfragmenten gekoppeld"
+                if language == "nl"
+                else "source chunks linked"
+            )
             lines.append(f"- Retrieval score: {confidence_band}; {suffix}.")
         else:
             lines.append(f"- Retrieval score: {confidence_band}.")
@@ -814,12 +820,23 @@ def log_kb_citation_render(
     for decision in stats.citation_decisions:
         if not isinstance(decision, dict):
             continue
-        for entry in (decision.get("rejected") or []) + (decision.get("selected") or []):
+        for entry in (decision.get("rejected") or []) + (
+            decision.get("selected") or []
+        ):
             if not isinstance(entry, dict):
                 continue
             reason = entry.get("reason")
             if isinstance(reason, str) and reason:
                 reason_counts[reason] = reason_counts.get(reason, 0) + 1
+    rescued_sources = reason_counts.get("rescued", 0)
+
+    if rescued_sources:
+        logger.warning(
+            "citation_rescue_applied org_id=%s request_id=%s rescued_sources=%d",
+            kb_meta.get("org_id"),
+            kb_meta.get("request_id"),
+            rescued_sources,
+        )
 
     telemetry_level = kb_meta.get("telemetry_level")
     citation_decisions = stats.citation_decisions
@@ -855,9 +872,7 @@ def log_kb_citation_render(
         provenance.get("answer_tokens_unsupported_by_evidence"),
         provenance.get("correspondence_detected"),
         provenance.get("sender_only_tokens", "<redacted>"),
-        provenance.get(
-            "answer_tokens_unsupported_by_evidence_values", "<redacted>"
-        ),
+        provenance.get("answer_tokens_unsupported_by_evidence_values", "<redacted>"),
         kb_meta.get("answer_contract"),
     )
 
@@ -869,12 +884,8 @@ def _record_answer_epistemics(
 ) -> str:
     """Record measurement-only answer telemetry; never block rendering."""
     try:
-        correspondence_detected = bool(
-            kb_meta.get("pasted_correspondence_detected")
-        )
-        latest_turn_detected = kb_meta.get(
-            "latest_turn_pasted_correspondence_detected"
-        )
+        correspondence_detected = bool(kb_meta.get("pasted_correspondence_detected"))
+        latest_turn_detected = kb_meta.get("latest_turn_pasted_correspondence_detected")
         if latest_turn_detected is None:
             latest_turn_detected = correspondence_detected
         inspection = inspect_answer_epistemics(
@@ -1120,10 +1131,7 @@ def compose_streaming_kb_response(
         return stats
 
     kb_narrow = _kb_meta_is_strict(kb_meta)
-    strict_no_sources = (
-        not trusted_sources
-        and (force_no_citable or kb_narrow)
-    )
+    strict_no_sources = not trusted_sources and (force_no_citable or kb_narrow)
     telemetry_only_stream = bool(
         citation_chunks
         and not trusted_sources
@@ -1211,14 +1219,10 @@ def compose_streaming_kb_response(
         content_for_render = content
         if correspondence_detected:
             if isinstance(content, str) and content:
-                raw_parts = kb_meta.setdefault(
-                    "_answer_contract_stream_raw_parts", []
-                )
+                raw_parts = kb_meta.setdefault("_answer_contract_stream_raw_parts", [])
                 raw_parts.append(content)
             marker_buffer = kb_meta.get("_answer_contract_stream_buffer") or ""
-            marker_input = marker_buffer + (
-                content if isinstance(content, str) else ""
-            )
+            marker_input = marker_buffer + (content if isinstance(content, str) else "")
             content_for_render, marker_buffer = pop_answer_contract_stream_text(
                 marker_input, final=should_flush
             )

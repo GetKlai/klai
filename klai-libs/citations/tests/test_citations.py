@@ -1,3 +1,5 @@
+import pytest
+
 from klai_citations import (
     CitationSource,
     _select_supported_sources_with_decision,
@@ -52,6 +54,7 @@ def test_supported_source_decision_labels_keep_ratio_overflow() -> None:
         _decision_sources(),
         query_text="hubspot freedom",
         max_sources=4,
+        rescue_mode="shadow",
     )
 
     assert [source.title for source in selected] == ["Alpha"]
@@ -106,6 +109,33 @@ def test_citation_rescue_active_selects_with_rescued_reason(monkeypatch) -> None
     assert decision["selected"][1]["reason"] == "rescued"
     assert decision["selected"][1]["would_rescue"] is True
     assert len(selected) <= 4
+
+
+def test_citation_rescue_is_active_by_default(monkeypatch) -> None:
+    """The calibrated rescue rule is production behavior, not a shadow experiment."""
+    monkeypatch.delenv("CITATION_RESCUE_MODE", raising=False)
+
+    selected, decision = _select_supported_sources_with_decision(
+        _long_answer(),
+        _decision_sources(),
+        query_text="hubspot freedom",
+        max_sources=4,
+    )
+
+    assert [source.title for source in selected] == ["Alpha", "Beta"]
+    assert decision["citation_rescue_mode"] == "active"
+    assert decision["selected"][1]["reason"] == "rescued"
+
+
+def test_citation_rescue_rejects_invalid_mode() -> None:
+    with pytest.raises(ValueError, match="invalid citation rescue mode"):
+        _select_supported_sources_with_decision(
+            _long_answer(),
+            _decision_sources(),
+            query_text="hubspot freedom",
+            max_sources=4,
+            rescue_mode="bogus",
+        )
 
 
 def test_citation_rescue_mode_via_parameter_overrides_env(monkeypatch) -> None:
@@ -1457,14 +1487,9 @@ def test_strip_keeps_e_numbers_outside_injected_evidence_ids() -> None:
     label-shaped tokens when the number was never an injected evidence id."""
     from klai_citations import strip_model_citation_artifacts
 
-    text = (
-        "De E19 richting Antwerpen (E19) is dicht; tank geen E10.\n"
-        "Foutcode (E42) staat los van de kennisbank."
-    )
+    text = "De E19 richting Antwerpen (E19) is dicht; tank geen E10.\nFoutcode (E42) staat los van de kennisbank."
 
-    cleaned = strip_model_citation_artifacts(
-        text, evidence_ids={"E1", "E2", "E3"}
-    )
+    cleaned = strip_model_citation_artifacts(text, evidence_ids={"E1", "E2", "E3"})
     assert "E19" in cleaned
     assert "(E19)" in cleaned
     assert "E10" in cleaned

@@ -170,7 +170,7 @@ async def run_baseline(
 
     # Disable all evidence tier dimensions for baseline
     env_overrides = {
-        "EVIDENCE_SHADOW_MODE": "false",
+        "EVIDENCE_SHADOW_MODE": "active",
         "EVIDENCE_CONTENT_TYPE_ENABLED": "false",
         "EVIDENCE_TEMPORAL_DECAY_ENABLED": "false",
         "EVIDENCE_ASSERTION_MODE_ENABLED": "false",
@@ -235,7 +235,7 @@ async def run_evidence_tier(
 
     # Enable evidence tier with specified dimensions
     dim_config = config.get("dimensions", {})
-    env_overrides = {"EVIDENCE_SHADOW_MODE": "false"}
+    env_overrides = {"EVIDENCE_SHADOW_MODE": "active"}
 
     if dimensions is not None:
         for dim_name, enabled in dimensions.items():

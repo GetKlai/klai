@@ -107,9 +107,9 @@ class TestRankingContractSnapshot:
 
 
 class TestRankingContractModeSetting:
-    def test_default_is_shadow(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_default_is_active(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("RANKING_CONTRACT_MODE", raising=False)
-        assert Settings().ranking_contract_mode == "shadow"
+        assert Settings().ranking_contract_mode == "active"
 
     def test_active_is_normalized(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("RANKING_CONTRACT_MODE", " Active ")

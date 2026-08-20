@@ -1,12 +1,10 @@
 # Product Gaps Backlog — where the docs describe more than the code does
 
 > Created 2026-06-08 from a doc-vs-code drift audit of `docs/architecture/`.
-> **Updated 2026-06-11** after per-gap re-verification against source: five entries
-> shifted — `GAP-TEMPORAL-01` is fixed on the serving path (filter + delete-then-upsert),
-> `GAP-RETR-01` and `GAP-TENANCY-01` are partially closed (shadow gate + stub corpus;
-> `is_tenant` for new collections, existing collection needs the one-time upgrade script),
-> `GAP-EVID-01` shifted (conservative weights exist, shadow-gated; the deciding A/B was
-> never built), and `GAP-INGEST-02` is **closed by removal**. See
+> **Updated 2026-08-20** after the production experiment audit: `GAP-RETR-01` and
+> `GAP-EVID-01` are closed flags-off; `GAP-TEMPORAL-01` remains fixed;
+> `GAP-TENANCY-01` still needs its existing-collection upgrade; and `GAP-INGEST-02`
+> remains closed by removal. See
 > [`knowledge-rag-improvement-plan.md`](knowledge-rag-improvement-plan.md) for the plan
 > built on this refreshed state.
 > This file captures **Type-B drift**: places where an architecture document
@@ -64,9 +62,9 @@ History: [`docs/retros/2026-06-08-temporal-filter-field-mismatch.md`](../retros/
 
 | Gap | One-liner (state per 2026-06-11) | Verif |
 |---|---|---|
-| `GAP-RETR-01` | Gate now runs in **shadow mode** with a 16-line stub corpus → never bypasses in practice; remaining work = generate the full 200-query corpus + analyze `gate_would_bypass` telemetry + activate | ✓✓ 06-11 |
+| `GAP-RETR-01` | **CLOSED flags-off 2026-08-20** — 30d shadow yielded 3 unique recommendations/~4.5k requests; gate disabled | ✓ 08-20 |
 | `GAP-TENANCY-01` | `is_tenant=True` ships for **new** collections; the existing prod collection still needs the one-time online upgrade (`scripts/upgrade_org_id_tenant_index.py`) | ✓✓ 06-11 |
-| `GAP-EVID-01` | Assertion-mode weights are no longer flat (conservative profile, shadow-gated); the deciding RAGAS A/B (SPEC-EVIDENCE-001-FOLLOWUP-001) was **never built** and its 30-day deadline lapsed | ✓✓ 06-11 |
+| `GAP-EVID-01` | **CLOSED flags-off 2026-08-20** — no paired answer-quality A/B existed; production scoring disabled | ✓ 08-20 |
 | `GAP-MCP-01` | MCP `search_knowledge` hardcodes `scope: "both"` (no org-only / personal-only / type / time filters) | ✓✓ |
 | ~~`GAP-INGEST-02`~~ | **CLOSED** — `chunk_type` classification removed 2026-06-08 (`enrichment.py`, rationale in `docs/research/chunk-type-retrieval-value.md`) | ✓✓ 06-11 |
 | ~~`GAP-TEMPORAL-01`~~ | **FIXED** on the serving path — dual-contract filter + delete-then-upsert; see section above | ✓✓ 06-11 |
@@ -221,20 +219,19 @@ is a threshold classifier writing an exact-string event log to Postgres.
 
 ## Cluster 3 — Epistemic / evidence scoring (§3.2, §7.4)
 
-### GAP-EVID-01 — Assertion-mode weights exist but the deciding A/B was never run  ·  S  ·  ✓✓ (updated 2026-06-11)
+### GAP-EVID-01 — Resolved flags-off  ·  ✓ (updated 2026-08-20)
 - **Intended (§7.4):** assertion-mode is one of four multiplicative scoring
   dimensions (`final = reranker × content_type × assertion_mode × temporal ×
   pagerank`) with its own default-true flag.
-- **Reality (2026-06-11):** `_assertion_weight()` now reads a **conservative
+- **Resolution:** `_assertion_weight()` reads a **conservative
   profile** from `DEFAULT_EVIDENCE_PROFILE["assertion_mode_weights"]`
   (factual/procedural 1.00, hypothesis 0.90, unknown 0.97 — spread 0.10 per the
-  weights research). Everything stays **shadow-gated** (`EVIDENCE_SHADOW_MODE=true`):
-  computed and logged, never served. The real gap has moved: the RAGAS A/B that
+  weights research). The required RAGAS A/B
   SPEC-EVIDENCE-001-FOLLOWUP-001 requires to decide activate / temporal-only /
   decommission / flags-off (variants `evidence_tier_full`,
   `evidence_tier_temporal_only`) **does not exist in the eval harness** — only
-  `baseline` is ever used — and the SPEC's 30-day deadline has lapsed while the
-  shadow `deepcopy + apply()` CPU cost is paid on every request.
+  `baseline` is ever used. Production now uses `EVIDENCE_SHADOW_MODE=disabled`, so the
+  flat reranker stays authoritative and no shadow CPU cost is paid.
 - **Evidence:** `klai-retrieval-api/retrieval_api/services/evidence_tier.py:43-67,125-148`;
   `klai-knowledge-ingest/knowledge_ingest/eval/ragas_runner.py:38-51` (variant env
   read, no evidence_tier variants defined anywhere).
@@ -286,21 +283,15 @@ is a threshold classifier writing an exact-string event log to Postgres.
 
 ## Cluster 5 — Retrieval gate & routing
 
-### GAP-RETR-01 — Gate in shadow mode with a stub corpus  ·  S  ·  ✓✓ (updated 2026-06-11)
+### GAP-RETR-01 — Closed flags-off  ·  ✓ (updated 2026-08-20)
 - **Intended (knowledge-retrieval-flow §Gate):** a semantic gate that skips KB
   lookup for general-knowledge queries (`RETRIEVAL_GATE_ENABLED=true`).
-- **Reality (2026-06-11):** materially better than the 06-08 claim, but still
-  not bypassing in practice. `data/gate_reference.jsonl` **exists** — a 16-line
-  stub of meta/utility queries (titles, translate, summarize in NL/EN), not the
-  200-query × 6-language corpus `scripts/generate_gate_reference.py` produces.
-  The gate now also runs in **shadow mode by default**
-  (`retrieval_gate_shadow=True`, `config.py`): it computes and logs
-  `gate_would_bypass` per request but never acts. Strict KB mode skips the gate
-  entirely by design (`gate_skipped_reason=strict_mode`, `retrieve.py`).
-- **Why it matters:** every query still pays the full embed + multi-leg + rerank
-  pipeline. Closing the gap = (1) generate + commit the full corpus, (2) analyze
-  1–2 weeks of `gate_would_bypass` telemetry (false-bypass rate per language),
-  (3) flip `retrieval_gate_shadow=false`.
+- **Resolution:** the 16-line stub's 30-day production shadow run yielded only
+  3 unique would-bypass decisions across roughly 4,500 requests (~0.07%), all
+  with low retrieval confidence. That saving does not justify either the
+  false-bypass risk or building/maintaining a 1,200-query multilingual corpus.
+  Production now sets `RETRIEVAL_GATE_ENABLED=false`; explicit evaluation can
+  still enable the retained implementation.
 - **Evidence:** `klai-retrieval-api/retrieval_api/services/gate.py`;
   `retrieval_api/config.py:21-28`; `retrieval_api/data/gate_reference.jsonl`
   (16 lines); `retrieve.py` strict-mode gate block; `tests/test_gate.py`
@@ -455,12 +446,12 @@ is a threshold classifier writing an exact-string event log to Postgres.
 | GAP-PROV-01 | provenance DAG/entities | L | ⊙ | knowledge-architecture §3,§5 |
 | GAP-PROV-02 | derived_from/confidence | L | · | knowledge-architecture §3 |
 | GAP-SYNC-01 | dual-store outbox | L | ⊙ | knowledge-architecture §5 |
-| GAP-EVID-01 | evidence-tier A/B never run (weights exist, shadow-gated) | S/M | ✓✓ | knowledge-architecture §7.4 |
+| ~~GAP-EVID-01~~ | evidence-tier — **CLOSED flags-off 2026-08-20** | — | ✓ | knowledge-architecture §7.4 |
 | GAP-EVID-02 | 3-into-5 grouping | M | ✓ | knowledge-architecture §3.2 |
 | GAP-TAX-01 | taxonomy re-cluster | M | ✓✓ | knowledge-architecture §6 |
 | GAP-TAX-02 | binary coverage | M | · | knowledge-architecture §6 |
 | GAP-TAX-03 | taxonomy write-only | L | · | knowledge-architecture §6 / roadmap |
-| GAP-RETR-01 | gate shadow-mode + stub corpus (activation pending) | S | ✓✓ | knowledge-retrieval-flow |
+| ~~GAP-RETR-01~~ | retrieval gate — **CLOSED flags-off 2026-08-20** | — | ✓ | knowledge-retrieval-flow |
 | GAP-ROUTE-01 | complexity router | L | ✓✓ | platform |
 | GAP-ROUTE-02 | medium tier unused | M | ✓ | platform |
 | GAP-ROUTE-03 | router LLM fallback | M | · | knowledge-retrieval-flow |
