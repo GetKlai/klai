@@ -96,6 +96,9 @@ class TestLoadPastedCorrespondenceCanaries:
             ].expected_answer_sections
             == []
         )
+        assert by_id[
+            "chat-pasted-correspondence-control-plain-question"
+        ].expected_chunks == ["SIP-responscodes"]
 
     def test_missing_file_raises_file_not_found(self, tmp_path: Path):
         with pytest.raises(FileNotFoundError):

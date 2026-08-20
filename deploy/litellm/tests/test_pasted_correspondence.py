@@ -199,6 +199,8 @@ class TestScopeBlockContract:
             "[[KLAI_CORRESPONDENCE_VERIFY_FIRST]]",
             "exactly four sections",
             "matching internal evidence label",
+            "using exactly `(E<n>)`",
+            "do not use `E1:` or `[E1]`",
             "sole exception to the general no-citation-marker instruction",
             "Attribute every statement to its actual author",
             "remains open",

@@ -222,6 +222,25 @@ def test_well_formed_contract_is_verified_and_markers_are_stripped():
     assert all(marker not in rendered for marker in _MARKERS)
 
 
+def test_known_section_suffix_recovers_misspelled_internal_prefix():
+    answer = _contract_answer().replace(
+        "[[KLAI_CORRESPONDENCE_SENDER_STATEMENTS]]",
+        "[[KLAI_CORRESPONSE_SENDER_STATEMENTS]]",
+    )
+
+    result = inspect_answer_epistemics(
+        answer,
+        user_turn=_INCIDENT_QUERY,
+        evidence_chunks=_EVIDENCE,
+        correspondence_detected=True,
+        telemetry_level="shadow",
+    )
+    rendered = strip_answer_contract_markers(answer)
+
+    assert result["answer_contract"]["satisfied"] is True
+    assert "[[KLAI_" not in rendered
+
+
 def test_missing_section_is_observed_without_rewriting_answer_prose():
     answer = _contract_answer(order=(0, 1, 3))
 
@@ -429,6 +448,32 @@ def test_streaming_contract_markers_split_across_deltas_never_leak():
     assert all(marker not in rendered for marker in _MARKERS)
     assert "fraudeblokkade" in rendered
     assert "Controleer eerst het gekozen nummer." in rendered
+    assert kb_meta["answer_contract"]["satisfied"] is True
+
+
+def test_streaming_misspelled_internal_marker_never_leaks():
+    answer = _contract_answer().replace(
+        "[[KLAI_CORRESPONDENCE_SENDER_STATEMENTS]]",
+        "[[KLAI_CORRESPONSE_SENDER_STATEMENTS]]",
+    )
+    split_at = answer.index("SENDER_STATEMENTS") - 2
+    kb_meta = _grounded_meta()
+    visible_parts: list[str] = []
+
+    for index, part in enumerate((answer[:split_at], answer[split_at:])):
+        item = {
+            "choices": [
+                {
+                    "delta": {"content": part},
+                    "finish_reason": "stop" if index == 1 else None,
+                }
+            ]
+        }
+        compose_streaming_kb_response(item, kb_meta, flush_stream=index == 1)
+        visible_parts.append(item["choices"][0]["delta"]["content"])
+
+    rendered = "".join(visible_parts)
+    assert "[[KLAI_" not in rendered
     assert kb_meta["answer_contract"]["satisfied"] is True
 
 

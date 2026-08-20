@@ -525,7 +525,7 @@ queries:
     query: "Wat betekent een SIP 404 Not Found?"
     reference_answer: "Leg uit dat een SIP 404 Not Found betekent dat de gebelde gebruiker of het toestel niet gevonden is of niet is toegewezen, op basis van de kennisbank."
     expected_topics: [sip, 404, responscode]
-    expected_chunks: ["Gebruiker/toestel bestaat niet, of extensie niet gevonden"]
+    expected_chunks: ["SIP-responscodes"]
     expected_answer_sections: []
     mix: pasted_correspondence
     # Negative-class control (REQ-6): a plain short question with NO pasted

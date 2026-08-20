@@ -26,13 +26,29 @@ _STRIPPABLE_EVIDENCE_LABEL_RE = re.compile(
     re.IGNORECASE,
 )
 _EVIDENCE_ID_TOKEN_RE = re.compile(r"E\d{1,3}", re.IGNORECASE)
-_ANSWER_CONTRACT_MARKER_RE = re.compile(
-    r"\[\[KLAI_CORRESPONDENCE_[A-Z_]+\]\]", re.IGNORECASE
-)
+_ANSWER_CONTRACT_MARKER_RE = re.compile(r"\[\[KLAI_[A-Z_]+\]\]", re.IGNORECASE)
 _ANSWER_CONTRACT_PARTIAL_MARKER_RE = re.compile(
-    r"(\[\[KLAI_CORRESPONDENCE_[A-Z_]*(?:\]?)?)$", re.IGNORECASE
+    r"(\[\[KLAI_[A-Z_]*(?:\]?)?)$", re.IGNORECASE
 )
-_ANSWER_CONTRACT_PREFIX = "[[KLAI_CORRESPONDENCE_"
+_ANSWER_CONTRACT_PREFIX = "[[KLAI_"
+_ANSWER_CONTRACT_MARKERS_BY_SUFFIX = {
+    marker[len("[[KLAI_CORRESPONDENCE_") : -2]: marker
+    for marker in ANSWER_CONTRACT_MARKERS
+}
+_KNOWN_SECTION_MARKER_RE = re.compile(
+    r"\[\[KLAI_[A-Z_]*("
+    + "|".join(re.escape(suffix) for suffix in _ANSWER_CONTRACT_MARKERS_BY_SUFFIX)
+    + r")\]\]",
+    re.IGNORECASE,
+)
+
+
+def _normalize_known_section_markers(answer: str) -> str:
+    """Canonicalize known sections while leaving unknown markers observable."""
+    return _KNOWN_SECTION_MARKER_RE.sub(
+        lambda match: _ANSWER_CONTRACT_MARKERS_BY_SUFFIX[match.group(1).upper()],
+        answer,
+    )
 
 
 def _evidence_tokens(evidence_chunks: list[dict]) -> set[str]:
@@ -88,7 +104,9 @@ def inspect_answer_epistemics(
 
     result: dict[str, Any] = {"claim_provenance": provenance}
     if correspondence_detected:
-        result["answer_contract"] = _verify_answer_contract(answer, evidence_chunks)
+        result["answer_contract"] = _verify_answer_contract(
+            _normalize_known_section_markers(answer), evidence_chunks
+        )
     return result
 
 
