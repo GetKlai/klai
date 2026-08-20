@@ -98,11 +98,9 @@ recognizer_registry:
     - name: EmailRecognizer
       type: predefined
 
-    # PhoneRecognizer's own DEFAULT_SUPPORTED_REGIONS is
-    # (US, UK, DE, FE, IL, IN, CA, BR) — NL is not in it. REQ-3 explicitly
-    # calls for "phone with region NL", so it is set here rather than left
-    # to the class default.
-    - name: PhoneRecognizer
+    # NLPhoneRecognizer, not the stock PhoneRecognizer: a `supported_regions:`
+    # key here is silently dropped by the registry loader and never reaches the
+    # constructor, so the stock entry ran on Presidio's defaults (no NL) and
+    # missed Rotterdam's 010 range entirely. The region list lives in the class.
+    - name: NLPhoneRecognizer
       type: predefined
-      supported_regions:
-        - NL

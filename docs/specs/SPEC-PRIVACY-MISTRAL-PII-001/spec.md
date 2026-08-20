@@ -1,6 +1,6 @@
 ---
 id: SPEC-PRIVACY-MISTRAL-PII-001
-version: "0.5.0"
+version: "0.6.0"
 status: draft
 created: 2026-08-20
 updated: 2026-08-20
@@ -17,6 +17,7 @@ roadmap: docs/architecture/knowledge-rag-improvement-plan.md
 
 | Version | Date       | Author       | Change |
 |---------|------------|--------------|--------|
+| 0.6.0   | 2026-08-20 | Mark Vletter | **Measurement gates removed; build-then-observe instead.** Klai's current traffic volume is far too low to produce a statistically meaningful 30-day, three-tenant, hand-annotated sample, so requiring one was not caution — it was a stall dressed as rigour. The workflow is: build on stated assumptions, ship, watch it in practice, correct. Every assumption that replaced a measurement is written down under "Assumptions" so it can be checked against reality rather than forgotten. Phase 3's design is also settled: REQ-0a proved the native restore path unusable for streaming, so Klai owns mask, map and restore end to end, keyed by `litellm_call_id` in process memory. Everything ships behind `KLAI_PII_ENFORCE`, default **off**, so Phase 3 can land, deploy and be exercised in production while inert — activation stays a separate, deliberate flip. |
 | 0.5.0   | 2026-08-20 | Mark Vletter | **Phase 0 ran on core-01 and answered both questions.** REQ-0a is negative for streaming: `output_parse_pii` restores correctly non-streaming but returns an empty token map on the streaming path — the second failure shape in litellm#6247, still live on v1.96.2, and NOT the Anthropic-native bug 0.2.0 dismissed from reading. Both Klai chat paths stream, so REQ-8's restore moves to our own post-call hooks. REQ-0b: the verbatim-token instruction takes `PHONE_NUMBER` survival from 58.3% to 95.8%, so it is mandatory rather than advisory. Two gaps the run exposed: six of thirty Dutch phone numbers were never detected despite `supported_regions: [NL]` (a detection gap, separate from survival), and `PERSON` is **unmeasurable** today because REQ-2 disables SpacyRecognizer and GLiNER is not deployed — so REQ-0b's PERSON half must be re-run after REQ-9, and PERSON must not be enabled before that. |
 | 0.4.1   | 2026-08-20 | Mark Vletter | REQ-6 tightened after the Phase 2 delta review. The language label is now derived from the latest user turn rather than the whole payload — the KB context block is English-structured by design and dwarfs the question, so detecting on combined text would have labelled a Dutch question `en` on essentially every RAG request and quietly invalidated REQ-2's per-language comparison. Records the honest limitation that the observer uses a stopword heuristic rather than the canonical lingua detector, because `lingua-language-detector` is not in the stock litellm image, with the escalation path if Phase 2 data proves too noisy. |
 | 0.4.0   | 2026-08-20 | Mark Vletter | REQ-5 corrected before it was built. It specified the native guardrail in `mode: "logging_only"` as the shadow-measurement mechanism; that mode masks what goes to **observability** and sends the payload to the provider **unmasked** — inverted for our purpose, and LiteLLM's Presidio guardrail has no detect-only mode at all. Phase 2 is now a read-only observer callback (`klai_pii_observe.py`) that calls the analyzer, emits REQ-6's counts, returns the payload unchanged, never calls the anonymizer, runs out of band so it cannot add latency or fail a request, and is deleted by the Phase 3 PR. The Phase 0 experiment guardrail stays registered so the REQ-0a/REQ-0b harness remains runnable. Also records what Phase 0 and Phase 1 actually shipped: both merged (`d55d6adeb`, `d2aa35fd2`), nine recognizers verified loaded across en/nl/de on core-01 with spaCy disabled per language, and the Phase 0 harness still **unrun**. |
@@ -35,10 +36,11 @@ once, in the `litellm` service block (`deploy/docker-compose.yml:388-389`). No s
 a provider key of its own and no code calls `api.mistral.ai` directly.
 
 This SPEC puts PII removal on that boundary using Presidio, deployed as two self-hosted
-containers. Enforcement (Phase 3) rides on **LiteLLM's native Presidio guardrail** rather
-than custom hook code; measurement (Phase 2) needs a small read-only observer, because the
-native guardrail has no detect-only mode — see REQ-5. It adds the Dutch recognizer pack that
-Presidio does not ship, and it splits
+containers. Klai owns the wiring: measurement (Phase 2) needs a read-only observer because
+the native guardrail has no detect-only mode (REQ-5), and enforcement (Phase 3) owns mask,
+map and restore end to end because REQ-0a **measured** the native restore path returning an
+empty token map on streaming — which is every Klai chat request. It adds the Dutch
+recognizer pack that Presidio does not ship, and it splits
 handling by intent: credentials and BSN are removed and never restored, while names, phone
 numbers and account identifiers are tokenised on the way out and restored on the way back —
 so drafting an email still works while Mistral never receives the real values.
@@ -427,6 +429,25 @@ Recording that a BSN was found, without recording which, is what accountability 
 Storing the value to prove it was removed moves the exposure into the log store — and that
 store has 30-day retention.
 
+## Assumptions
+
+Klai's traffic volume is too low for a 30-day, three-tenant, annotated sample to mean
+anything. Requiring one was a stall dressed as rigour. The workflow is build → ship →
+observe → correct, so the things a measurement would have settled are stated here instead,
+each with what would falsify it.
+
+| # | Assumption | Basis | What falsifies it |
+|---|---|---|---|
+| A1 | The elfproef reduces false BSN matches to roughly 1 in 11 of nine-digit runs | Arithmetic property of the checksum, not a measurement on our corpus | A tenant reporting order numbers being masked. Phase 2 counts show the rate |
+| A2 | Typed, numbered placeholders survive the model well enough to be useful, given the verbatim instruction | Measured for `PHONE_NUMBER` (95.8%), assumed to generalise to `IBAN`, `EMAIL`, `KVK`, `BTW`, `POSTCODE` — all shorter and more literal than a phone number | Any of those entities showing survival below 95% once enabled |
+| A3 | `PERSON` behaves worse than the other entities and needs its own evidence | Names are inflected in Dutch, the others are not | A GLiNER-era re-run showing `PERSON` ≥95% |
+| A4 | An in-process map keyed by `litellm_call_id` is sufficient isolation | The id is a per-request UUID generated by LiteLLM | A collision, or a restore writing one request's value into another's output. AC-0e-style concurrency test guards it |
+| A5 | Enforcement adds under 60 ms p95 | Regex plus checksums, no model, one in-cluster hop | The NFR's own measurement once enabled |
+| A6 | The six undetected Dutch phone numbers in the Phase 0 run are a format-coverage gap, not a systemic recogniser failure | `supported_regions: [NL]` is set and 24 of 30 were detected | Investigation showing the recogniser mis-handles a common Dutch format |
+
+An assumption that turns out wrong here costs one flag flip, not a redesign — which is the
+point of shipping it off by default.
+
 ### Phase 3 — enforce
 
 #### REQ-7 — the policy is per entity, and two entries are not negotiable (state-driven)
@@ -477,11 +498,46 @@ least the longest possible placeholder length when matching across streamed chun
 placeholder split as `<PERS` + `ON_1>` across a chunk boundary that is emitted unrestored is
 a defect, and **SHALL** have a regression test.
 
+**THE masking step SHALL** resolve **overlapping spans** before substituting. Presidio
+returns them and does not deduplicate across entity types. Measured on the deployed analyzer,
+2026-08-20:
+
+```
+Betaal op IBAN NL91 ABNA 0417 1643 00 graag.
+IBAN_CODE    [15:37] score=1.00
+PHONE_NUMBER [25:37] score=0.40   <- fully inside the IBAN span
+```
+
+Substituting naively corrupts the text: replace the IBAN first and the phone offsets are
+stale; replace the phone first and the IBAN no longer matches its own span. **THE
+implementation SHALL** substitute from the **end of the string backwards** so earlier offsets
+stay valid, and **SHALL** drop any span contained in a span already taken, preferring the
+higher score and, on a tie, the longer span. This overlap predates the Phase 1 deployment —
+it is a property of running several recognisers over one text, not a regression — and it
+needs a regression test using exactly the IBAN case above.
+
 #### REQ-11 — the placeholder map is request-scoped and never persisted (ubiquitous)
 
 **THE map** from placeholder to original value **SHALL** live only for the lifetime of the
 request that created it, **SHALL** be keyed such that it cannot be reached by another
 request, and **SHALL NOT** be written to Redis, Postgres, disk, or any log.
+
+**Concretely.** The native guardrail stores its map in `request_data["metadata"]["pii_tokens"]`,
+and REQ-0a measured that this does not survive to the streaming response hook — that is
+exactly why streaming restore returned `empty_map`. Klai therefore owns the map: a
+**process-local dict keyed by `litellm_call_id`** (a per-request UUID that LiteLLM puts in
+`request_data`, and which the `aim` and `cato_networks` guardrails already read in their own
+streaming iterator hooks).
+
+**THE entry SHALL** be deleted when the stream ends, on the success path and on the error
+path alike. **A TTL sweep SHALL** additionally drop entries older than a bounded age, because
+a client that disconnects mid-stream never reaches either path and would otherwise leak the
+entry — a leak that is both a memory growth problem and a privacy problem, since the entry
+holds real values.
+
+**THE store SHALL** be bounded in size, and **SHALL** drop oldest-first when full rather than
+grow without limit. Losing a map degrades one response to visible placeholders; an unbounded
+map degrades the process.
 
 This is the one way reversibility can fail worse than masking: a map reachable across
 requests restores one tenant's personal data into another tenant's output. Everything else in
@@ -568,7 +624,7 @@ safe to assert.
 | AC-11 | Phase 3: BSN with an empty org policy | Replaced with `<NL_BSN>` anyway |
 | AC-12 | Phase 3: IBAN with empty org policy, then with `IBAN_CODE` enabled | Untouched, then `<IBAN_CODE>` |
 | AC-13 | Phase 3: analyzer container stopped, then a chat request | Request errors; no unminimised payload reaches Mistral. Same test in Phase 2 config: request succeeds |
-| AC-14 | Phase 2 output after 30 days across ≥3 tenants | Per-entity detection rate per 1000 requests, split by chat versus ingest callers, plus a hand-annotated false-positive rate over ≥100 flagged payloads |
+| AC-14 | Phase 2 output over whatever window exists when Phase 3 is ready | Per-entity detection rate and per-language split reported as an input, not a gate. At current volume this is directional only, and the SPEC says so rather than implying significance it cannot have |
 | AC-15 | Streaming chat request in Phase 3 with a BSN in the user turn | Model receives `<NL_BSN>`; response streams normally; the BSN is **not** restored |
 | AC-16 | Phase 3 drafting request: "schrijf een mail aan Jan de Vries, 06-12345678" with `PERSON` and `PHONE_NUMBER` enabled | Mistral receives `<PERSON_1>` and `<PHONE_NUMBER_1>`; the delivered draft contains the real name and number |
 | AC-17 | Same request with two different people | Two distinct placeholders; both restored to the correct respective values, not the same one twice |
@@ -578,10 +634,10 @@ safe to assert.
 | Risk | Likelihood | Impact | Mitigation |
 |------|------------|--------|------------|
 | GLiNER blows the latency budget on CPU | medium | medium | It is the only model in the path. Every other REQ-3 entity is regex-plus-checksum and unaffected, so the documented response is to disable `PERSON` and ship the rest |
-| Over-detection: a nine-digit order number read as a BSN | medium | medium | The elfproef makes an accidental match roughly 1 in 11. AC-14's annotated sample measures the real rate before Phase 3 enforces anything |
+| Over-detection: a nine-digit order number read as a BSN | medium | medium | The elfproef makes an accidental match roughly 1 in 11 — an assumption, not a measurement (see Assumptions). Bounded in practice because enforcement ships off by default and the first activation is per-org, so a bad rate shows on one tenant, not all |
 | A tenant genuinely needs a BSN to reach the model | low | medium | REQ-7's audited statutory-basis exception. If there is no statutory basis, the correct outcome is that it does not reach the model |
 | `PERSON` recall varies by language even with multilingual GLiNER | medium | medium | REQ-2 requires Phase 2 telemetry to carry detected language so this is measured per language rather than assumed uniform. A material gap gates REQ-9, and the checksum entities are unaffected either way |
-| Fail-closed turns a Presidio outage into a chat outage | low | high | Phase 2 fails open and gives the containers 30 days of production exposure before they can reject anything. Bounded by the 60 ms NFR |
+| Fail-closed turns a Presidio outage into a chat outage | low | high | Enforcement ships behind `KLAI_PII_ENFORCE`, default off, so the code runs in production inert before it can reject anything. Bounded by the 60 ms NFR, and the flag is the rollback |
 | Presidio's upstream governance move stalls and the project goes quiet | low | medium | MIT-licensed and self-hosted; a frozen dependency stays working. Our recognizer pack is our own code and portable |
 | Someone re-proposes Piiranha because it supports Dutch | medium | low | Rejected in the Motivation with the licence quoted, so the answer is on file |
 
@@ -643,8 +699,10 @@ Rules for the implementer:
   prove `default_on` covers what our own hook does not. Paste the failure output in the PR
   body.
 - Do not add PII logic to `KlaiKnowledgeHook`. The Motivation explains why.
-- PR 3 does not merge until AC-14 exists. Phase 2's whole purpose is that the enforcement
-  decision is taken on data.
+- PR 3 merges with `KLAI_PII_ENFORCE` **off**. It is expected to reach production inert:
+  that is what makes the activation a one-line, reversible decision instead of a deploy.
+- Do not gate the merge on accumulating Phase 2 data. Volume is too low for it to be
+  meaningful, and the assumptions it would have replaced are written down instead.
 
 ## Sources
 

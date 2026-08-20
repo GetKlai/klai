@@ -276,3 +276,56 @@ class TestLanguageAgnosticism:
             results = rec.analyze(text, ["IBAN_CODE"])
             by_lang[lang] = [(r.start, r.end, r.score) for r in results]
         assert len(set(tuple(v) for v in by_lang.values())) == 1, by_lang
+
+
+# ---------------------------------------------------------------------------
+# NL_PHONE — the region list must actually reach the recognizer
+# ---------------------------------------------------------------------------
+class TestNLPhoneRecognizer:
+    """Regression for a LIVE bug found by introspecting the running container.
+
+    `supported_regions:` on a `type: predefined` YAML entry is silently
+    dropped by Presidio's registry loader, so the deployed PhoneRecognizer ran
+    with DEFAULT_SUPPORTED_REGIONS — which has no NL. Dutch numbers were being
+    detected only because most of them also parse as valid German ones;
+    Rotterdam's 010 range has no German equivalent and was never detected in
+    any format.
+    """
+
+    def test_nl_and_be_are_in_the_region_list(self):
+        from klai_pii_recognizers import NLPhoneRecognizer
+
+        rec = NLPhoneRecognizer()
+        assert "NL" in rec.supported_regions
+        assert "BE" in rec.supported_regions
+
+    def test_stock_regions_are_retained_not_replaced(self):
+        """Narrowing to NL alone would trade one detection gap for another —
+        a tenant's documents legitimately contain foreign numbers."""
+        from presidio_analyzer.predefined_recognizers import PhoneRecognizer
+
+        from klai_pii_recognizers import NLPhoneRecognizer
+
+        rec = NLPhoneRecognizer()
+        for region in PhoneRecognizer.DEFAULT_SUPPORTED_REGIONS:
+            assert region in rec.supported_regions, region
+
+    @pytest.mark.parametrize(
+        "number",
+        [
+            "010-7654321",   # Rotterdam — the format that was never detected
+            "010-2345678",
+            "0107654321",
+            "010 7654321",
+            "020-1234567",
+            "06-12345678",
+            "+31 6 12345678",
+        ],
+    )
+    def test_dutch_numbers_detected(self, number):
+        from klai_pii_recognizers import NLPhoneRecognizer
+
+        rec = NLPhoneRecognizer()
+        text = f"Bel mij op {number} alsjeblieft."
+        results = rec.analyze(text, entities=["PHONE_NUMBER"], nlp_artifacts=None)
+        assert results, f"{number} not detected"

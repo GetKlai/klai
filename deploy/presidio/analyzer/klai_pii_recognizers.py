@@ -31,6 +31,7 @@ from __future__ import annotations
 from typing import List, Optional
 
 from presidio_analyzer import EntityRecognizer, Pattern, PatternRecognizer, RecognizerResult
+from presidio_analyzer.predefined_recognizers import PhoneRecognizer
 
 # ---------------------------------------------------------------------------
 # NL_BSN — elfproef (weighted sum mod 11)
@@ -279,3 +280,40 @@ KLAI_RECOGNIZER_CLASSES = (
     NLPostcodeRecognizer,
     SecretRecognizer,
 )
+
+
+# ---------------------------------------------------------------------------
+# NL_PHONE — stock PhoneRecognizer with regions that actually apply
+# ---------------------------------------------------------------------------
+# REQ-3 calls for "phone with region NL". The YAML registry silently drops a
+# `supported_regions:` key on a `type: predefined` entry — it never reaches
+# PhoneRecognizer.__init__ — so the deployed recognizer ran with Presidio's
+# DEFAULT_SUPPORTED_REGIONS instead:
+#
+#     PhoneRecognizer lang=nl regions=('US','UK','DE','FE','IL','IN','CA','BR')
+#
+# (verified by introspecting the running container, 2026-08-20). NL is absent
+# from that list, so Dutch phone detection was working *by accident*: most
+# Dutch numbers happen to also parse as valid German ones. Rotterdam's 010
+# range has no German equivalent, so `010-7654321` was never detected in any
+# format — which is what the Phase 0 run surfaced as six undetected numbers.
+#
+# Subclassing is how the other Klai recognizers already reach the registry, and
+# it puts the region list somewhere a YAML loader cannot quietly ignore.
+#
+# The stock defaults are kept alongside NL and BE rather than replaced: Klai is
+# language-agnostic and a tenant's documents legitimately contain foreign
+# numbers, so narrowing to NL alone would trade one detection gap for another.
+class NLPhoneRecognizer(PhoneRecognizer):
+    """PhoneRecognizer with NL (and BE) in the region list.
+
+    Neighbouring-country numbers are realistic in Dutch SMB correspondence, so
+    BE is included; the stock regions are retained so this can only ever detect
+    more than the recognizer it replaces, never less.
+    """
+
+    KLAI_SUPPORTED_REGIONS = ("NL", "BE") + PhoneRecognizer.DEFAULT_SUPPORTED_REGIONS
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("supported_regions", self.KLAI_SUPPORTED_REGIONS)
+        super().__init__(**kwargs)
