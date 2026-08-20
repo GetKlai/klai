@@ -25,13 +25,6 @@ os.environ.setdefault("RATE_LIMIT_RPM", "600")
 # `_auto_allow_identity_assert` below.
 os.environ.setdefault("PORTAL_API_URL", "http://portal-api.test.local:8010")
 os.environ.setdefault("PORTAL_INTERNAL_SECRET", "test-portal-internal-secret")
-# The production gate is disabled after its 30d shadow run. Pipeline tests that
-# exercise the legacy bypass contract patch
-# ``gate.should_bypass`` -> (True, ...) to skip the heavy qdrant/rerank path —
-# which only takes effect when the gate ACTS. Run the suite with the gate in
-# acting mode; the disabled production default is covered in test_gate.py.
-os.environ.setdefault("RETRIEVAL_GATE_SHADOW", "false")
-
 import pytest
 from fastapi.testclient import TestClient
 from klai_identity_assert import VerifyResult

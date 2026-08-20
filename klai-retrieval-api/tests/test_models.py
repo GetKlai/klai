@@ -100,4 +100,3 @@ class TestRetrieveResponse:
             ),
         )
         assert resp.metadata.rerank_ms is None
-        assert resp.metadata.gate_margin is None

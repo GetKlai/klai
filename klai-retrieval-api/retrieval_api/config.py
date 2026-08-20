@@ -18,14 +18,6 @@ class Settings(BaseSettings):
     litellm_url: str = "http://litellm:4000"
     litellm_api_key: str = ""
 
-    # Disabled after 30d of production shadow data: only 3 unique would-bypass
-    # decisions across ~4.5k requests (0.07%), all on low-confidence retrievals.
-    # That negligible saving does not justify the risk of dropping all KB context.
-    retrieval_gate_enabled: bool = False
-    retrieval_gate_threshold: float = 0.1
-    # When explicitly enabled for evaluation, shadow mode computes + logs the
-    # bypass decision without acting. Production keeps the gate disabled.
-    retrieval_gate_shadow: bool = True
     retrieval_candidates: int = 60
     reranker_candidates: int = 20  # top-N from retrieval sent to reranker (CPU budget)
     # Multi-part fan-out: chunks served per sub-question. Keeps the merged

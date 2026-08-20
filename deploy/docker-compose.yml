@@ -1248,12 +1248,6 @@ services:
       GRAPHITI_LLM_MODEL: ${GRAPHITI_LLM_MODEL:-klai-fast}
       RERANKER_ENABLED: "true"
       RERANKER_TIMEOUT: "60.0"
-      # The gate's 30d shadow run produced 3 unique would-bypass decisions
-      # (~0.07%), all low-confidence. Keep it off: risk exceeds saved work.
-      RETRIEVAL_GATE_ENABLED: "false"
-      # Evidence-tier shadow ordering changed ranks but never measured answer
-      # quality. Stop paying deepcopy/scoring cost on every request.
-      EVIDENCE_SHADOW_MODE: "disabled"
       OPENAI_API_KEY: "dummy"
       SPARSE_SIDECAR_URL: http://172.18.0.1:8001
       PORTAL_EVENTS_HOST: postgres

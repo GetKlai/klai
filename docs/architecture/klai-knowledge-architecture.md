@@ -10,7 +10,7 @@
 >
 > *2026-06-08 (doc-vs-code drift audit): §0 infra table corrected (gpu-01 models, Graphiti live, PG schema populated, gap inbox live, Mistral stack). Several sections that described a richer design than the code now carry an **Intended vs. current** callout pointing to [`product-gaps-backlog.md`](product-gaps-backlog.md) — notably §8 gap detection (GAP-LOOP-*), §6 taxonomy (GAP-TAX-*), §3.3/§5 provenance (GAP-PROV-*), §7.4/§3.2 evidence weighting (GAP-EVID-*), §5.1 multitenancy (GAP-TENANCY-01), §9.2 MCP read tools (GAP-MCP-01), §10 personal-knowledge enrichment (GAP-PRIV-01). The temporal-validity filter has a field-name bug — see [the retro](../retros/2026-06-08-temporal-filter-field-mismatch.md).*
 >
-> *2026-08-20 (experiment resolution): evidence-tier scoring is disabled in production after its online order diff lacked a paired answer-quality outcome; the calibrated citation-rescue rule is active. The temporal and ingest corrections from the 2026-06-11 re-verification remain in force. Refreshed gap states: [`product-gaps-backlog.md`](product-gaps-backlog.md); improvement plan: [`knowledge-rag-improvement-plan.md`](knowledge-rag-improvement-plan.md).*
+> *2026-08-20 (experiment resolution): evidence-tier scoring and the low-yield retrieval gate were decommissioned and removed. Evidence-tier changed 2,186/8,946 shadow orderings without a paired answer-quality outcome; the gate recommended only 3/≈4,500 bypasses, all low-confidence. The calibrated citation-rescue rule and graduated ranking contract remain active. Refreshed gap states: [`product-gaps-backlog.md`](product-gaps-backlog.md).*
 
 ---
 
@@ -805,8 +805,8 @@ Step 2: Parallel embeddings
   computed in parallel
   │
   ▼
-Step 3: Retrieval gate
-  Trivial check: skip retrieval if < 8 chars or matches greeting/ack regex
+Step 3: Mandatory retrieval
+  Every knowledge-enabled request proceeds to search
   │
   ▼
 Step 4: Hybrid search in Qdrant (3-leg RRF)
@@ -821,9 +821,7 @@ Step 5: Cross-encoder reranking
   Top 5 chunks selected for context injection
   │
   ▼
-Step 6: Evidence tier scoring (disabled in production)
-  Available for controlled evaluation; flat reranker order is served
-  without shadow computation (EVIDENCE_SHADOW_MODE=disabled)
+Step 6: Serve the graduated post-rerank ordering contract
   │
   ▼
 System message injection → model
@@ -847,69 +845,15 @@ Bi-encoder retrieval (top-20) → Cross-encoder reranking (top-5) → LLM classi
 
 The cross-encoder reads query + document together and assesses relevance at claim level, not topic level. This is what distinguishes "Windows vs. Mac" when the topic is the same but the coverage is not.
 
-### 7.4 Evidence-weighted scoring [EVALUATION-ONLY — production disabled]
+### 7.4 Evidence-weighted scoring [DECOMMISSIONED]
 
-> Research backing: [Evidence-Weighted Knowledge Retrieval: Research Synthesis](../research/README.md). Activation track: [`SPEC-EVIDENCE-001-FOLLOWUP-001`](../../.moai/specs/SPEC-EVIDENCE-001-FOLLOWUP-001/spec.md). User-facing flow: [knowledge-retrieval-flow.md § Evidence tier scoring](knowledge-retrieval-flow.md#step-6-evidence-tier-scoring-production-disabled).
-
-Evidence-weighted scoring is available in Step 6 of the retrieval pipeline for explicit evaluation. Production uses `EVIDENCE_SHADOW_MODE=disabled`, so scores are not computed and the flat reranker order is served. This is a **post-retrieval scoring adjustment**, not a replacement for semantic search.
-
-**Four scoring dimensions (multiplicative, each per-dimension feature-flagged):**
-
-| Dimension | Signal | V1 approach | Feature flag |
-|---|---|---|---|
-| Content type | `content_type` (kb_article, pdf_document, web_crawl, ...) | Per-type weight, see table below | `EVIDENCE_CONTENT_TYPE_ENABLED` (default `true`) |
-| Temporal decay | `ingested_at` age | Step function across <30d / 30-180d / 180-365d / >365d brackets | `EVIDENCE_TEMPORAL_DECAY_ENABLED` (default `true`) |
-| PageRank | `entity_pagerank_max` from FalkorDB | `1 + 0.20 * log1p(pagerank * 100)` — capped ~+25% | `EVIDENCE_PAGERANK_ENABLED` (default `true`) |
-| Assertion mode | `assertion_mode` (factual, procedural, ...) | **Conservative profile** (factual/procedural 1.00, quoted 0.98, unknown 0.97, belief 0.95, hypothesis 0.90) — go-live via `SPEC-EVIDENCE-002` | `EVIDENCE_ASSERTION_MODE_ENABLED` (only evaluated when evidence-tier mode is explicitly enabled) |
-
-> **Resolution (GAP-EVID-01/02, updated 2026-08-20).** The evidence-tier is flags-off
-> (`EVIDENCE_SHADOW_MODE=disabled`). Its 30-day online shadow changed order in
-> 2,186/8,946 logged runs but captured no paired answer-quality outcome, so it could not
-> establish an improvement and the per-request `deepcopy + apply()` cost was stopped.
-> - `_assertion_weight()` no longer returns a constant: it reads the conservative
->   profile above from `DEFAULT_EVIDENCE_PROFILE` (`evidence_tier.py:43-67,125-148`;
->   spread 0.10 per the weights research, unmapped modes fall back to `unknown`).
->   It remains available for controlled evaluation.
-> - The deciding RAGAS A/B (SPEC-EVIDENCE-001-FOLLOWUP-001 variants
->   `evidence_tier_full` / `evidence_tier_temporal_only`) was **never built** — the eval
->   harness only knows `baseline`; that is why the flags-off terminal state was selected.
->
-> The 3-into-5 epistemic grouping from §3.2 (assertion / speculation / procedure) is
-> still **not implemented anywhere**. content_type / temporal / pagerank are real
-> multipliers (also shadow-served).
-
-After scoring, chunks are reordered into a **U-shape** (strongest at position 0, second-strongest at the last position, mid-strength clustered in the middle) per Liu et al. 2023 "Lost in the Middle" ([arXiv:2307.03172](https://arxiv.org/abs/2307.03172)).
-
-**Formula:**
-
-```
-final_score = reranker_score × content_type_weight × assertion_mode_weight × temporal_decay × pagerank_weight
-```
-
-**Content type weights (production defaults):**
-
-| Content type | Weight |
-|---|---|
-| `kb_article` | 1.00 |
-| `pdf_document` | 0.90 |
-| `meeting_transcript`, `1on1_transcript` | 0.80 |
-| `graph_edge` (Graphiti facts) | 0.70 |
-| `web_crawl` | 0.65 |
-| `unknown` (fallback) | 0.55 |
-
-**Resolved activation track (SPEC-EVIDENCE-001-FOLLOWUP-001):** the shadow mode ran from 2026-03-30 through 2026-08-20. The follow-up SPEC defined four terminal states:
-
-1. **Activate** — staged 5%/50%/100% rollout with auto-revert on quality regression
-2. **Activate temporal-only** — narrow rollout of the dimension with strongest theoretical justification
-3. **Decommission** — remove `evidence_tier.apply()` + payload fields, free up CPU
-4. **Retain-flags-off** — `EVIDENCE_SHADOW_MODE=disabled` becomes the new default, code preserved
-
-Decision criteria: ≥+0.02 mean uplift on RAGAS Context Precision **and** Faithfulness with Wilcoxon paired `p<0.05` against baseline on the 50-curated query subset.
-
-The required paired A/B was never implemented, so no uplift could be proven. Terminal
-state 4 (retain-flags-off) is active; there is no production shadow experiment.
-
-**Assertion mode weight activation** is governed by a separate SPEC (`SPEC-EVIDENCE-002`) — it remains inactive in production because the multiplicative compounding risk (4 dimensions at ~85% classifier accuracy → 48% chance of misclassification per chunk) demands its own calibration cycle. See [Assertion Mode Weights research](../research/assertion-modes/assertion-mode-weights.md).
+The former evidence-tier layer multiplied reranker scores by content type, assertion
+mode, age and PageRank, then applied U-shaped prompt ordering. Its 30-day shadow changed
+2,186 of 8,946 orderings but recorded no paired answer-quality outcome, so no benefit
+could be established. On 2026-08-20 the runtime, flags, response metadata, dedicated
+tests and offline comparison harness were removed. The graduated ranking contract is
+the sole production ordering contract. Historical rationale remains under
+[`docs/research/`](../research/README.md); it is not an activation plan.
 
 **Corroboration scoring: deferred.** Cross-source corroboration requires three prerequisites not yet met: near-duplicate detection (SemHash), source-level grouping, and entity resolution validation (>90% precision, >85% recall). See [Corroboration Scoring research](../research/corroboration/corroboration-scoring.md).
 

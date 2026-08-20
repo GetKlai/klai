@@ -100,12 +100,9 @@ def _response(
     band: str | None,
     items: list[EvidenceItem],
     sources: list[EvidenceSource],
-    *,
-    retrieval_bypassed: bool = False,
 ) -> RetrieveResponse:
     return RetrieveResponse(
         query_resolved="q",
-        retrieval_bypassed=retrieval_bypassed,
         chunks=[
             ChunkResult(chunk_id=item.chunk_id, text=item.text, score=item.score) for item in items
         ],
@@ -216,98 +213,6 @@ class TestRetrieveSubQueries:
                 _request(["vraag een", "vraag twee"]), MagicMock(), MagicMock()
             )
         assert exc.value.status_code == 502
-
-    @pytest.mark.asyncio
-    async def test_sub_query_carries_retrieval_bypassed_flag(self, monkeypatch):
-        """Fix B: a gate-bypassed sub-question (Open mode, gate decided no KB
-        lookup needed) must be distinguishable from a genuinely empty
-        result — never conflated with 'not in the knowledge base'."""
-
-        async def fake_retrieve(sub_req, request, _auth=None):
-            if sub_req.query == "meta vraag":
-                return _response("unknown", [], [], retrieval_bypassed=True)
-            return _response("medium", [_item("E1", "c1")], [_source("S1", ["E1"])])
-
-        monkeypatch.setattr(retrieve_module, "retrieve", fake_retrieve)
-
-        result = await retrieve_module._retrieve_sub_queries(
-            _request(["gewone vraag", "meta vraag"]), MagicMock(), MagicMock()
-        )
-
-        assert result.sub_results[0].retrieval_bypassed is False
-        assert result.sub_results[1].retrieval_bypassed is True
-
-    @pytest.mark.asyncio
-    async def test_parent_retrieval_bypassed_true_when_all_sub_queries_bypassed(self, monkeypatch):
-        """Round-3 Fix 3: the merged RetrieveResponse's own retrieval_bypassed
-        must aggregate the sub-responses instead of being hardcoded False —
-        a fully gate-skipped fan-out (Open mode, no sub-question needed KB
-        lookup) must report bypassed=True at the parent level too."""
-
-        async def fake_retrieve(sub_req, request, _auth=None):
-            return _response("unknown", [], [], retrieval_bypassed=True)
-
-        monkeypatch.setattr(retrieve_module, "retrieve", fake_retrieve)
-
-        result = await retrieve_module._retrieve_sub_queries(
-            _request(["vraag een", "vraag twee"]), MagicMock(), MagicMock()
-        )
-
-        assert result.retrieval_bypassed is True
-
-    @pytest.mark.asyncio
-    async def test_parent_retrieval_bypassed_false_when_mixed(self, monkeypatch):
-        async def fake_retrieve(sub_req, request, _auth=None):
-            bypassed = sub_req.query == "meta vraag"
-            return _response(
-                "unknown" if bypassed else "medium", [], [], retrieval_bypassed=bypassed
-            )
-
-        monkeypatch.setattr(retrieve_module, "retrieve", fake_retrieve)
-
-        result = await retrieve_module._retrieve_sub_queries(
-            _request(["gewone vraag", "meta vraag"]), MagicMock(), MagicMock()
-        )
-
-        assert result.retrieval_bypassed is False
-
-    @pytest.mark.asyncio
-    async def test_parent_retrieval_bypassed_false_when_none_bypassed(self, monkeypatch):
-        async def fake_retrieve(sub_req, request, _auth=None):
-            return _response("medium", [], [], retrieval_bypassed=False)
-
-        monkeypatch.setattr(retrieve_module, "retrieve", fake_retrieve)
-
-        result = await retrieve_module._retrieve_sub_queries(
-            _request(["vraag een", "vraag twee"]), MagicMock(), MagicMock()
-        )
-
-        assert result.retrieval_bypassed is False
-
-    @pytest.mark.asyncio
-    async def test_parent_retrieval_bypassed_false_when_one_sub_query_failed(self, monkeypatch):
-        """Round-4 fix: a failed sub-question must block the aggregate
-        bypass, even when the only SUCCESSFUL sub-response was itself
-        gate-bypassed. The litellm hook treats retrieval_bypassed=True as
-        an early-return 'gate bypassed' branch that never reaches
-        sub_query_coverage/unchecked_questions — so a bypassed=True here
-        would make the failed sub-question silently vanish from what the
-        user sees instead of surfacing as 'could not check this one'."""
-
-        async def fake_retrieve(sub_req, request, _auth=None):
-            if sub_req.query == "kapotte vraag":
-                raise RuntimeError("down")
-            return _response("unknown", [], [], retrieval_bypassed=True)
-
-        monkeypatch.setattr(retrieve_module, "retrieve", fake_retrieve)
-
-        result = await retrieve_module._retrieve_sub_queries(
-            _request(["goede vraag", "kapotte vraag"]), MagicMock(), MagicMock()
-        )
-
-        # One sub-question failed — the aggregate must stay False even
-        # though the sole successful sub-response was bypassed.
-        assert result.retrieval_bypassed is False
 
 
 class TestSubQueryFourXXPassthrough:
@@ -646,9 +551,19 @@ class TestSubQuerySharesRawQueryRRFLeg:
                 return_value=None,
             ),
             patch(
-                "retrieval_api.api.retrieve.gate.should_bypass",
+                "retrieval_api.api.retrieve.search.hybrid_search",
                 new_callable=AsyncMock,
-                return_value=(True, 0.9),
+                return_value=[],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.graph_search.search",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.fetch_source_catalog",
+                new_callable=AsyncMock,
+                return_value=[],
             ),
         ):
             resp = client.post(
@@ -701,9 +616,19 @@ class TestSubQuerySharesRawQueryRRFLeg:
                 return_value=None,
             ),
             patch(
-                "retrieval_api.api.retrieve.gate.should_bypass",
+                "retrieval_api.api.retrieve.search.hybrid_search",
                 new_callable=AsyncMock,
-                return_value=(True, 0.9),
+                return_value=[],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.graph_search.search",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.fetch_source_catalog",
+                new_callable=AsyncMock,
+                return_value=[],
             ),
         ):
             resp = client.post(

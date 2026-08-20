@@ -45,7 +45,6 @@ ENV UV_COMPILE_BYTECODE=1 \
 RUN uv pip install --system -e .
 
 COPY --chown=app:app klai-retrieval-api/retrieval_api retrieval_api
-COPY --chown=app:app klai-retrieval-api/scripts scripts
 # SPEC-SEC-WEBHOOK-001 REQ-6: shared uvicorn launcher (Caddy IP resolution +
 # --proxy-headers). Copied from repo root scripts/ directory.
 COPY --chown=app:app scripts/uvicorn-launch.sh /app/scripts/uvicorn-launch.sh

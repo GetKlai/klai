@@ -203,8 +203,8 @@ Als er een KB-scope is:
 - De hook vereist `zitadel_user_id`. Zonder die ID faalt de hook luid.
 - De request body bevat `query`, `raw_query`, `org_id`, `user_id`, `scope`,
   `top_k`, `conversation_history`, `telemetry_level`, en `kb_narrow`.
-- `kb_narrow=true` gaat mee naar retrieval-api zodat Strict niet door de
-  retrieval gate kan worden gebypasst.
+- `kb_narrow=true` gaat mee naar retrieval-api voor de Strict-answerpolicy;
+  retrieval zelf is in alle modi verplicht.
 
 Bronnen:
 
@@ -225,11 +225,9 @@ Daarna loopt de pipeline:
 
 1. Coreference rewrite.
 2. Dense en sparse embeddings.
-3. Gate check. In Strict (`kb_narrow=true`) wordt de gate overgeslagen en gaat
-   retrieval altijd door.
-4. Optionele source router als `kb_slugs is None`, router aan staat, scope
-   `org` of `both` is, en er geen gate bypass is.
-5. Qdrant hybrid search met vector_chunk, vector_questions en optioneel
+3. Optionele source router als `kb_slugs is None`, router aan staat en scope
+   `org` of `both` is.
+4. Qdrant hybrid search met vector_chunk, vector_questions en optioneel
    vector_sparse via RRF.
 6. Optioneel Graphiti search en RRF merge.
 7. Link expansion via `links_to`.
@@ -239,11 +237,10 @@ Daarna loopt de pipeline:
 11. Quality floor filter.
 12. Source-aware selection.
 13. Feedback quality boost.
-14. Evidence-tier shadow of active ordering.
-15. Parent-text lookup.
-16. `ChunkResult` output.
-17. Confidence band.
-18. `EvidencePack`.
+14. Parent-text lookup.
+15. `ChunkResult` output.
+16. Confidence band.
+17. `EvidencePack`.
 
 Bronnen:
 
@@ -316,8 +313,9 @@ Bronnen:
 
 Als retrieval terugkomt:
 
-- `retrieval_bypassed=true`: de hook injecteert alleen de mode prompt en zet
-  `_klai_kb_meta.gate_bypassed=true`; post-call citation rendering slaat over.
+- Een legacy `retrieval_bypassed=true`-antwoord van een oudere retrieval-api wordt
+  tijdens rolling deploys nog defensief afgehandeld. De huidige retrieval-api kan dit
+  niet produceren.
 - Missing `evidence_pack`: de hook faalt dicht voor bronfallback. Er worden
   geen raw chunk citations opgebouwd.
 - Zero chunks: Strict krijgt een expliciete "niet in de kennisbank" instructie;
@@ -455,4 +453,3 @@ Belangrijkste codepaden:
 - Qdrant filters/search: `klai-retrieval-api/retrieval_api/services/search.py`
 - EvidencePack builder: `klai-retrieval-api/retrieval_api/services/evidence_pack.py`
 - Shared citation engine: `klai-libs/citations/klai_citations/__init__.py`
-

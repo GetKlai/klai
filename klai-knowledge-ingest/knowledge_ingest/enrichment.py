@@ -10,8 +10,8 @@ Questions are used for vector_questions (depth 0-1 only) and stored in payload.
 Note: the per-chunk ``chunk_type`` classification was removed 2026-06-08
 (docs/research/chunk-type-retrieval-value.md) — it was an LLM-classified label
 that no retrieval consumer read, and dropping it also removes the strict-Literal
-validation retry round-trip per chunk. Document-level ``content_type`` (consumed
-by retrieval_api.services.evidence_tier) is unaffected.
+validation retry round-trip per chunk. Document-level ``content_type`` remains
+available in retrieval responses and evidence packs.
 """
 
 import asyncio

@@ -57,10 +57,10 @@ dead-man alert, and two actionable items:
 | Gap | Backlog claim | Actual state 2026-06-11 |
 |---|---|---|
 | `GAP-TEMPORAL-01` | retrieval filters on never-written `invalid_at` | **Fixed on the serving path** (re-verified 2026-06-11): `search.py:71-112` has a dual-contract `must_not` over `invalid_at`/`valid_until`/`valid_at`/`valid_from`, with a passing integration test (`test_search.py:129-218`). The retro's open question is **answered**: both `qdrant_store.upsert_chunks` and `upsert_enriched_chunks` delete all points for `(org, kb, path)` before upserting — same-path re-ingest leaves no stale points (the random `uuid4` point IDs are harmless; delete-by-path-filter is the mechanism, not overwrite-by-ID). Temporal hygiene is now also covered in code: replacement ingests link the just-closed PG artifact row via `superseded_by`, and `valid_from`/`valid_until` get Qdrant integer payload indexes. Remaining risk: a failed Qdrant delete after PG commit is silent divergence (→ H1 / GAP-SYNC-01). |
-| `GAP-RETR-01` | gate inert, reference file missing | **Resolved flags-off 2026-08-20:** the 16-line stub's 30-day shadow run yielded 3 unique would-bypass decisions across ~4.5k requests, all low-confidence. `RETRIEVAL_GATE_ENABLED=false`; no production shadow compute. |
+| `GAP-RETR-01` | gate inert, reference file missing | **Resolved by removal 2026-08-20:** the 16-line stub's 30-day shadow run yielded 3 unique would-bypass decisions across ~4.5k requests, all low-confidence. Runtime, corpus, generator, flags and telemetry were removed. |
 | `GAP-TENANCY-01` | `is_tenant` missing | Code sets `is_tenant=True` for **new** collections (`qdrant_store.py:85-102`); the existing prod collection awaits a one-time online migration via `scripts/upgrade_org_id_tenant_index.py`. |
 | `GAP-INGEST-02` | `chunk_type` classified but never read | **Resolved by removal** on 2026-06-08 (`enrichment.py:10-14`, rationale in `docs/research/chunk-type-retrieval-value.md`). Close the gap. ⚠️ The v1 plan's "chunk_type serving experiment" (its quick win #5 and theme 7) is based on this stale claim and has been **dropped** from the merged plan. |
-| `GAP-EVID-01` | assertion-mode weight is constant 1.00 | **Resolved flags-off 2026-08-20:** weights exist, but the online shadow had no answer-quality outcome. `EVIDENCE_SHADOW_MODE=disabled` stops per-request scoring; explicit modes remain for controlled evaluation only. |
+| `GAP-EVID-01` | assertion-mode weight is constant 1.00 | **Resolved by removal 2026-08-20:** 2,186/8,946 shadow orderings changed without a paired answer-quality outcome. Runtime, flags, payload fields and dedicated comparison harness were removed. |
 
 All other gaps (`LOOP-*`, `PROV-*`, `SYNC-01`, `TAX-*`, `MCP-01`, `PRIV-01`, `EVAL-01/02`, `ROUTE-*`) were re-confirmed today exactly as described **[code ✓]**.
 
@@ -72,15 +72,15 @@ All other gaps (`LOOP-*`, `PROV-*`, `SYNC-01`, `TAX-*`, `MCP-01`, `PRIV-01`, `EV
 
 ### Top 5 we SHOULD do
 
-1. **Fix evaluation first (GAP-EVAL-01 + 02) — code slice landed, live baseline pending.** The 2026-06-11 patch requires `reference_answer` for scored suite runs, removes the implicit topic-label fallback, and hard-fails `expected_chunks` canaries before fuzzy scoring. Every activation decision (evidence tier, gate, taxonomy, Tier-3) still gates on these numbers, so the next operational step is live canary verification + recapturing `baseline-v5`.
+1. **Keep the general retrieval evaluation trustworthy (GAP-EVAL-01 + 02).** The 2026-06-11 patch requires `reference_answer` for scored suite runs, removes the implicit topic-label fallback, and hard-fails `expected_chunks` canaries before fuzzy scoring. The retired gate/evidence experiments are no longer evaluation targets.
 2. **Temporal correctness is now mostly closed; keep the consistency guard next.** Re-verification (2026-06-11) showed the serving path is safe: dual-contract filter + delete-then-upsert inside both Qdrant upsert functions. The follow-up slice now links superseded PG artifacts, adds temporal payload indexes, and tests same-path re-ingest cleanup. The remaining material risk is dual-store divergence if Qdrant delete/upsert fails after PG state changes (#4).
-3. **Force the evidence-tier shadow-mode decision.** Shadow has been running since March, pays `deepcopy + apply()` CPU on every request, and the FOLLOWUP-001 deadline passed without the A/B ever being built **[code ✓]**. Activate / temporal-only / decommission / flags-off — but decide.
+3. **Evidence-tier decision completed:** decommissioned; no further activation or shadow work.
 4. **PG↔Qdrant consistency watch (light GAP-SYNC-01) — code slice landed.** Not the outbox yet: the nightly read-only reconciliation count + alert now exists. Next step is to inspect the first production baseline before deciding whether H2 outbox work is justified.
 5. **Run the Qdrant `is_tenant` migration** on the existing collection (script exists; Qdrant supports zero-downtime online reindex — [Qdrant FAQ](https://qdrant.tech/documentation/faq/qdrant-fundamentals/) **[online]**). This is the recall/scale guarantee the single-collection decision was built on.
 
 ### Top 5 quick wins (S, close to config)
 
-1. **Generate the full gate corpus** (`scripts/generate_gate_reference.py`, 200 queries, 6 languages) + analyze 1–2 weeks of `gate_would_bypass` shadow telemetry before activation.
+1. **Retrieval gate decision completed:** decommissioned; do not regenerate a corpus or restart shadow telemetry without a new product requirement.
 2. ~~**Eval canary hit/miss check**~~ — landed 2026-06-11: hard-fail before aggregate RAGAS scoring + `rag_eval_canary_dropped` alert. Live canary debug still needed before trusting the HIGH alert.
 3. **Backlog/doc refresh** (section 0).
 4. **MCP `search_knowledge` parameters** — `scope`, `kb_slugs`, `content_type`, `time_range`, `top_k` instead of hardcoded `scope:"both"` (`main.py:1103`).
@@ -89,7 +89,7 @@ All other gaps (`LOOP-*`, `PROV-*`, `SYNC-01`, `TAX-*`, `MCP-01`, `PRIV-01`, `EV
 ### Top 3 to DEFER
 
 1. **GraphRAG community summaries / agentic query decomposition** — literature confirms GraphRAG often underperforms vanilla RAG on simple fact retrieval ([arXiv:2506.05690](https://arxiv.org/abs/2506.05690) **[online]**); roadmap correctly says: only after 4 weeks of production traces, picked by dominant failure mode.
-2. **Assertion-mode activation (SPEC-EVIDENCE-002) + corroboration scoring** — own research: flat weights until calibration data exists; 4 multiplicative dimensions at ~85% accuracy ⇒ 48% chance of ≥1 misclassification per chunk **[doc]**. Evidence-tier base decision (G1) first.
+2. **Assertion-mode weighting and corroboration scoring** — do not activate: their only ranking consumer was the decommissioned evidence-tier layer. Assertion-mode remains document metadata, not a retrieval weight.
 3. **Full dual-store outbox + autonomous taxonomy self-maintenance** — both L/XL; the light variants (read-only reconciliation, re-cluster *proposals* with human gate) capture most value at a fraction of the risk. Cross-org federation (GAP-FED-01) stays explicitly out of scope.
 
 ---
@@ -120,7 +120,7 @@ Key files: `routes/ingest.py`, `pg_store.py`, `qdrant_store.py`, `enrichment.py`
 
 LibreChat / Partner API / widget → LiteLLM `KlaiKnowledgeHook` (`deploy/litellm/klai_knowledge.py` + `klai_kb_*` modules): trivial check → feature/scope lookup (30s/300s two-level cache) → taxonomy trees+coverage (Redis) → combined rewrite+classify in one `QUERY_REWRITE_MODEL` call → `retrieval-api /retrieve` (`api/retrieve.py::retrieve`):
 
-identity verify → coreference (skipped when caller pre-resolved) → dense+sparse embed → **gate disabled** → **router** (semantic source-label centroids; optional LLM fallback disabled by default) → Qdrant native RRF (`FusionQuery`, prefetch `max(candidates×4, 20)`; 2–5 legs + parallel Graphiti leg) → link expansion + authority boost → Infinity rerank (top 20) → quality floor → source-aware select (bounded router preference + diversity) → quality boost (≥3 votes, ±10%) → parent expansion → **evidence-tier disabled** → EvidencePack.
+identity verify → coreference (skipped when caller pre-resolved) → dense+sparse embed → **router** (semantic source-label centroids; optional LLM fallback disabled by default) → Qdrant native RRF (`FusionQuery`, prefetch `max(candidates×4, 20)`; 2–5 legs + parallel Graphiti leg) → link expansion + authority boost → Infinity rerank (top 20) → quality floor → source-aware select (bounded router preference + diversity) → quality boost (≥3 votes, ±10%) → parent expansion → EvidencePack.
 
 ### Citation path **[doc]**
 
@@ -194,9 +194,9 @@ scribe-api `POST /v1/transcriptions/{id}/ingest` (`transcribe.py::ingest_transcr
 
 #### B1. Gate: closed as not worth activating (GAP-RETR-01)
 
-- **Decision (2026-08-20):** disabled, not activated. Thirty days produced 3 unique recommendations across ~4,500 requests (~0.07%), all low-confidence. Building a 1,200-query corpus and false-bypass review process for that saving is not proportionate.
+- **Decision (2026-08-20):** decommissioned and removed. Thirty days produced 3 unique recommendations across ~4,500 requests (~0.07%), all low-confidence. Building a larger corpus and false-bypass review process for that saving is not proportionate.
 - **Research [online]:** training-free gating evidence: TARG (logit-margin on draft prefix) reaches 70–90% fewer retrievals at matched EM/F1 ([arXiv:2511.09803](https://arxiv.org/abs/2511.09803)); production frameworks (LangGraph/LlamaIndex) default to a cheap structured-output LLM router. For Klai, the embedding-margin gate is fine as v1; a later upgrade can piggyback a `needs_retrieval` field on the existing rewrite call (zero extra roundtrip).
-- **Code:** `services/gate.py`, `scripts/generate_gate_reference.py`, `data/gate_reference.jsonl`, deploy step that ships the corpus. Tests: existing `test_gate.py` (8) + corpus snapshot tests, NL/EN trivial-bypass expectations, strict-never-bypasses (v1 list — adopted).
+- **Removed code:** `services/gate.py`, its reference corpus/generator, flags, telemetry and dedicated tests. Retrieval is now mandatory.
 - **Failure modes:** false bypass in open mode = silently no KB context → manual review of a 50-query would-bypass sample before activation; corpus overfit to generic assistant tasks (v1).
 - **Effort: S (corpus+telemetry), M (activation incl. analysis).** Confidence: high.
 
@@ -245,7 +245,9 @@ Every payload key used in filters must have an index — unindexed filter fields
 
 #### D3. Hook-path eval mode
 
-The harness bypasses the LiteLLM hook, so rewrite/taxonomy/gate are unmeasurable **[doc]**. Add a second eval mode through LiteLLM `/v1/chat/completions` (eval-org team key) so the full chain is measured; weekly instead of nightly (cost). Store `retrieval path` (direct vs hook) with each result row (v1). This also unlocks gate and evidence-tier A/Bs on the real route. **Effort: M.**
+The harness bypasses the LiteLLM hook, so rewrite/taxonomy behaviour is unmeasurable
+**[doc]**. A future full-chain evaluation can go through LiteLLM
+`/v1/chat/completions`; it is not needed for the retired gate/evidence systems.
 
 ### Theme E — Self-improving gap loop (flagship)
 
@@ -300,14 +302,15 @@ The chat path already sends `taxonomy_node_ids` when coverage exists (SPEC-RAG-T
 
 ### Theme G — Evidence scoring / assertion mode
 
-#### G1. Evidence-tier decision — CLOSED flags-off 2026-08-20
+#### G1. Evidence-tier decision — CLOSED by removal 2026-08-20
 
-- **Decision:** flags-off. Production no longer pays `deepcopy+apply()` per request.
-  The implementation remains available only for explicit controlled evaluation.
+- **Decision:** decommissioned. Production no longer pays `deepcopy+apply()` per request;
+  no alternate implementation or evaluation mode remains.
 
-#### G2. Assertion-mode activation (GAP-EVID-01/02) — DEFER
+#### G2. Assertion-mode retrieval weighting — CLOSED with G1
 
-Plumbing is ready (profile weights exist, production disabled). Activation is SPEC-EVIDENCE-002 with its own research preconditions (3-group taxonomy, max spread 0.20, never user-facing labels, label-quality audit first — frontmatter-authored assertion labels are inconsistent, v1). **Effort at activation: S; the calibration is the work.**
+Assertion mode remains document metadata exposed in the knowledge UI and API. Its
+retrieval-weight consumer was removed with evidence-tier; there is no pending activation.
 
 #### chunk_type — closed
 
@@ -385,7 +388,7 @@ conceptually (v1) — keep. **Effort: M–L / deferred.**
 | 0.3 | Eval: ~~reference answers + suite schema~~ landed; source review + **new baseline-v5** pending | S–M | D1 |
 | 0.4 | Eval: ~~canary hard-fail + alert~~ landed; live canary debug pending | S | D2 |
 | 0.5 | ~~PG↔Qdrant reconciliation count~~ landed 2026-06-11: nightly read-only shadow job + `pg_qdrant_reconcile_failed` alert | M | H1 |
-| 0.6 | Evidence-tier: build + run the A/B → decide (or flags-off) | M | G1 |
+| 0.6 | Evidence-tier decision | — | Closed by removal (G1) |
 | 0.7 | GAP-PRIV-01 policy decision on the agenda (decision, not code) | — | J |
 | 0.8 | ~~Qdrant tenant-index status verifier~~ landed 2026-06-11: `ensure_collection` logs `qdrant_org_id_tenant_index_status` (warning + remediation hint when the prod collection still has a plain keyword index); test `test_qdrant_org_id_index_reports_tenant_status` | S | C1 |
 
@@ -447,9 +450,6 @@ pytest klai-portal/backend/tests -k "gap"
 docker exec klai-core-knowledge-ingest-1 \
   python -m knowledge_ingest.eval --suite chat --variant <name>
 
-# gate corpus
-python klai-retrieval-api/scripts/generate_gate_reference.py
-
 # migration hygiene (multi-PR head split pitfall)
 alembic heads   # must be 1, per service
 ```
@@ -471,11 +471,14 @@ New named tests (merged v1+v2):
 
 ### RAGAS variants
 
-`baseline-v5` (after D1 — new zero point) → `evidence_tier_full`, `evidence_tier_temporal_only` (G1: 7 nights, Wilcoxon p<0.05, ≥+0.02 precision AND faithfulness) → `gate_active_v1` (B1) → taxonomy on/off (F3 pilot) → hook-path vs direct (D3) → strict vs open mode → NL/EN splits. Canary metric (D2) runs in **every** variant.
+`baseline-v5` (after D1 — new zero point) → taxonomy on/off (F3 pilot) → hook-path
+vs direct (D3) → strict vs open mode → NL/EN splits. Canary metric (D2) runs in
+every retained variant.
 
 ### Logs / metrics (VictoriaLogs / Grafana)
 
-- Retrieval: `retrieval_decision_record` — `gate_would_bypass`/`gate_bypassed`/`gate_margin` (per language/tenant), `router_layer_used`, `expanded_in_top_k`, `confidence_band`, `shadow_eval` order-diffs; new p50/p95-per-step panel.
+- Retrieval: `retrieval_decision_record` — `router_layer_used`, `expanded_in_top_k`,
+  `confidence_band`; new p50/p95-per-step panel.
 - Ingest: `ingest_complete`, `enrichment_enqueue_skipped` (will carry the personal carve-out reason), `enrichment_complete`, `enrichment_infra_failed`, `graphiti_episode_started`, `graphiti_aborted_artifact_missing`.
 - Consistency: `pg_qdrant_reconcile` event + `pg_qdrant_reconcile_failed` alert on discrepancy > 0 / job error + `pg_qdrant_reconcile_missing` dead-man alert; Qdrant payload schema snapshot for `org_id.is_tenant`; embedding-queue depth/age/dead-letters once H2 lands.
 - Gap loop: dedup merge rate, judge verdict distribution, editor accept/dismiss rate, reopened rate, transcript-arm candidates per transcript + PII-redaction hit rate.
@@ -519,7 +522,10 @@ For production-affecting retrieval changes: pick request IDs → VictoriaLogs `r
 
 **Needs online research:** done — see §6 with verified URLs and the explicit not-verified list.
 
-**Needs product/legal decision:** GAP-PRIV-01 (keep carve-out vs amend doc + legal basis; plus cleanup of already-enriched personal content); transcript→gap per-tenant opt-in, retention, redaction policy, and user-visible disclosure; accepting evidence-tier "flags-off" if nobody runs the A/B; editorial workflow ownership for the gap inbox.
+**Needs product/legal decision:** GAP-PRIV-01 (keep carve-out vs amend doc + legal basis;
+plus cleanup of already-enriched personal content); transcript→gap per-tenant opt-in,
+retention, redaction policy, and user-visible disclosure; editorial workflow ownership
+for the gap inbox.
 
 **Not verified:** live Qdrant payload schema / server version on core-01; live gate shadow false-bypass rate; live tenant telemetry levels; production RAGAS results beyond the documented 2026-05-05 snapshot. *(Resolved since v2 first draft: re-ingest delete behavior — both upsert paths delete-by-path before upserting **[code ✓ 2026-06-11]**; the "scribe-api summarizes before ingest" doc claim — falsified, the full transcript text is ingested (`knowledge_adapter.ingest_scribe_transcript` sends `full_text`); both corrections are now reflected in the architecture docs.)*
 

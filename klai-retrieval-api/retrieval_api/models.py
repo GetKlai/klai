@@ -121,8 +121,6 @@ class ChunkResult(BaseModel):
     invalid_at: str | None = None
     ingested_at: int | None = None
     assertion_mode: str | None = None
-    final_score: float | None = None
-    evidence_tier_metadata: dict | None = None
     source_ref: str | None = None  # Notion page UUID, URL, or repo path
     source_connector_id: str | None = None  # Connector that produced this chunk
     source_url: str | None = None  # Canonical URL for this source
@@ -184,7 +182,6 @@ class RetrieveMetadata(BaseModel):
     reranked_to: int
     retrieval_ms: float
     rerank_ms: float | None = None
-    gate_margin: float | None = None
     graph_results_count: int = 0
     graph_search_ms: float | None = None
 
@@ -202,21 +199,20 @@ class SubQueryResult(BaseModel):
     # Set when this sub-question's retrieval failed; consumers must present
     # the question as "could not be checked", never as "not in the KB".
     error: str | None = None
-    # True when the gate decided no KB lookup was needed for this specific
-    # sub-question (Open mode). Consumers must present this as "answer per
-    # mode rules", never as "not in the KB" or "could not be checked".
+    # Rolling-compatibility field for callers deployed before the retrieval
+    # gate was retired. New retrieval-api responses always leave it false.
     retrieval_bypassed: bool = False
 
 
 class RetrieveResponse(BaseModel):
     query_resolved: str
-    retrieval_bypassed: bool
+    # Rolling-compatibility field; the retired gate means this is always false.
+    retrieval_bypassed: bool = False
     chunks: list[ChunkResult]
     metadata: RetrieveMetadata
     # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1: max(reranker_scores) over the
     # served chunks mapped to a band. Consumed by the litellm-hook to decide
     # whether to inject the anti-hallucination instruction (REQ-2).
-    # ``None`` only on retrieval-bypass (gate) paths; otherwise always set.
     confidence_band: ConfidenceBand | None = None
     # Deterministic citation contract. Downstream clients should render sources
     # only from this pack; ``chunks`` remains for compatibility/debugging.

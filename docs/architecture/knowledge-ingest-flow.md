@@ -593,8 +593,8 @@ ensuring the embedding captures that these are domain-specific terms, not univer
 > generated here was deleted — it was an LLM-classified label no retrieval consumer
 > ever read, and dropping it also removed a strict-Literal validation retry round-trip
 > per chunk. Rationale: `docs/research/chunk-type-retrieval-value.md`. The
-> *document*-level `content_type` (kb_article / pdf_document / meeting_transcript / …),
-> which evidence-tier scoring consumes, is unaffected.
+> *document*-level `content_type` (kb_article / pdf_document / meeting_transcript / …)
+> remains response and evidence-pack metadata.
 
 **Fail-loudly enrichment:** If the LLM call in Step A fails or returns invalid JSON, the
 system raises `EnrichmentError` and does not retry silently. The Procrastinate task queue
@@ -926,7 +926,8 @@ User sends message
     Optional: kb_slugs=[...] if kb_slugs_filter is set (restricts to named org KBs only)
   → Gap detection (SPEC-KB-014): classify result as hard (no chunks) or soft (all scores < 0.4)
     If gap detected: fire-and-forget POST to /internal/v1/gap-events
-  → If retrieval_bypassed=true: skip injection, set _klai_kb_meta (gate_bypassed=true)
+  → Legacy rolling-deploy response retrieval_bypassed=true: fail safely; current
+    retrieval-api never emits this state
   → Inject chunks as system message prefix with [org] / [persoonlijk] labels
   → Set data["_klai_kb_meta"] for downstream hooks (custom_router uses this)
   → Model gets the augmented request
@@ -1375,7 +1376,7 @@ rarely be reached in practice. See SPEC-KB-015 §Design notes for full rationale
 |---|---|
 | MCP read tools (full semantic surface) | `search_knowledge` is live; `related_concepts` / `belief_evolution` / `provenance_chain` / `recent` are not (GAP-MCP-01) |
 | Transcript → gap-candidate arm | scribe transcripts are ingested as documents, but emit no gap events; only low-confidence chat retrieval feeds the gap registry (GAP-LOOP-05) |
-| Assertion mode active in retrieval | Not active. `EVIDENCE_SHADOW_MODE=disabled` since 2026-08-20 because the unbuilt paired A/B meant production order diffs could not measure answer quality. |
+| Assertion mode active in retrieval | No. Its evidence-tier consumer was removed on 2026-08-20; it remains document metadata only. |
 | ~~Content profile chunk sizes wired to chunker~~ | Fixed 2026-03-31: `chunk_tokens_max` from profile now passed to `chunker.py` (`tokens * 4` → chars) |
 | ~~Docling migration for binary parsing~~ | **Shipped** (SPEC-KB-FILE-UPLOAD-001): portal uploads stream to docling-serve's async queue and submit pre-chunked. Unstructured.io is now connector-only. |
 | Self-maintaining taxonomy (periodic re-cluster) | No periodic re-clustering task is registered — bootstrap is manual-only (GAP-TAX-01) |
@@ -1410,7 +1411,7 @@ axes (alongside provenance type and synthesis depth) described in the architectu
 | HyPE/LLM classification | Not built — enrichment does not classify assertion mode (value comes from author frontmatter or connector hint only) |
 | Qdrant payload | **Done** (corrected 2026-06-11) — `assertion_mode` is in `_ALLOWED_METADATA_FIELDS` (`qdrant_store.py:450`) and written from `extra_payload` at ingest |
 | Retrieval API response | **Done** (corrected 2026-06-11) — read back from the payload in `search.py:339,414` and exposed on the chunk model (`models.py:91`) |
-| Evidence-tier weighting | **Disabled in production** — the conservative profile remains available for explicit evaluation, but `EVIDENCE_SHADOW_MODE=disabled` performs no per-request scoring. |
+| Evidence-tier weighting | **Removed 2026-08-20** — no runtime scorer, activation flags or dedicated comparison harness remain. |
 
 **Summary (updated 2026-08-20):** Storage, ingest parsing, Qdrant payload, and retrieval
 response all carry `assertion_mode` end-to-end. The consumption side computes
@@ -1549,20 +1550,15 @@ The [evidence-weighted knowledge research programme](../research/README.md) inve
 
 **Evaluation protocol before activating weights:** 150 test queries (50 curated + 100 RAGAS-synthetic), Context Precision + NDCG@10 + Faithfulness metrics, Wilcoxon signed-rank paired tests, shadow scoring before cutover. See [RAG Evaluation Framework](../research/evaluation/rag-evaluation-framework.md).
 
-> **The existing evidence-tier scoring** (content_type / temporal_decay / pagerank
-> weights, U-shape ordering) shipped in shadow mode in March 2026 and is governed by
-> a separate activation track — `SPEC-EVIDENCE-001-FOLLOWUP-001` (audit
-> retrieval-coupling-2026-05-06). That SPEC sets a 30-day deadline to either activate
-> (5%/50%/100% staged rollout), activate `evidence_tier_temporal_only`, decommission,
-> or move to `EVIDENCE_SHADOW_MODE=disabled`. The `RAG_EVAL_VARIANT` mechanism from
-> `SPEC-RAG-EVAL-001` (#369) is what runs the A/B. See
-> [knowledge-retrieval-flow.md § Evidence tier scoring](knowledge-retrieval-flow.md#step-6-evidence-tier-scoring-shadow-mode).
-> The assertion-mode activation discussed in this section is the *next* dimension on
-> top of that — its own gating by `SPEC-EVIDENCE-002` is independent.
+> **Resolution 2026-08-20:** evidence-tier scoring and its assertion-mode weighting
+> were decommissioned. The shadow changed order but did not measure answer quality.
+> Assertion mode remains descriptive document metadata; this section records historical
+> research, not a pending activation plan.
 
 ### Remaining open questions
 
-1. **Does assertion mode improve retrieval on Klai's data?** Still untested. The research confirms the concept is plausible by analogy but the specific combination is novel. Needs the A/B evaluation described above.
+1. **Could assertion mode ever improve retrieval on Klai's data?** Unknown and no longer
+   scheduled; answering it would require a new product requirement and end-to-end test.
 
 2. **Does the 3-category taxonomy fit Klai's content mix?** Needs a 200-sample evaluation.
    Hand-label 200 chunks, measure inter-annotator agreement. If below 80%, the categories
