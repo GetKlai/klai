@@ -25,7 +25,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
-  quality:
+  quality-docs:
     runs-on: ubuntu-latest
 
     steps:
@@ -50,7 +50,7 @@ jobs:
         working-directory: klai-docs
 
   build-and-push:
-    needs: quality
+    needs: quality-docs
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
 

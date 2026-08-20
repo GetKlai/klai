@@ -100,4 +100,4 @@ Mitigation against this class: when a wrapper exists between us and a tool we de
 
 - `.claude/rules/klai/infra/deploy.md` § Trivy scanning — current canonical reference
 - `docs/runbooks/trivy-policy.md` — recipes for adding ignores, rotating expired entries, smoke-testing the gate
-- `.moai/specs/SPEC-CI-TRIVY-POLICY-001/` — original SPEC, plan, acceptance scenarios
+- SPEC-CI-TRIVY-POLICY-001 (historical — SPEC removed in repo cleanup 2026-08-18) — original SPEC, plan, acceptance scenarios

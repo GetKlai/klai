@@ -39,8 +39,8 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
-  quality:
-    name: quality
+  quality-trivyignore:
+    name: quality-trivyignore
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

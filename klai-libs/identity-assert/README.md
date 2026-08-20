@@ -1,7 +1,7 @@
 # klai-identity-assert
 
 Shared identity-assertion helper for Klai service-to-service calls.
-Implements [SPEC-SEC-IDENTITY-ASSERT-001](../../.moai/specs/SPEC-SEC-IDENTITY-ASSERT-001/spec.md)
+Implements SPEC-SEC-IDENTITY-ASSERT-001 (historical — SPEC removed in repo cleanup 2026-08-18)
 REQ-7.
 
 ## Why this exists
@@ -107,7 +107,7 @@ Stable codes returned in `VerifyResult.reason` on deny:
 
 - **Library side** (this package): per-process LRU, 60 s TTL, in-memory
   only. Verified results are cached; denials never are. Privacy-bound:
-  the cache is per-consumer-process. See [REQ-7.2 + research §2.4](../../.moai/specs/SPEC-SEC-IDENTITY-ASSERT-001/research.md).
+  the cache is per-consumer-process. See SPEC-SEC-IDENTITY-ASSERT-001 REQ-7.2 and research §2.4 (historical — SPEC removed in repo cleanup 2026-08-18).
 - **Portal side**: Redis-backed cache, 60 s TTL, keyed on
   `(caller_service, claimed_user_id, claimed_org_id, evidence)`.
 
@@ -126,8 +126,8 @@ The library MUST refuse operations under degraded conditions:
 - Caller passed an unknown `caller_service` → `library_misconfigured`
 
 This is the deliberate inverse of the SPEC-SEC-005 rate limiter (which
-fails open). An auth-class control fails closed. See [SPEC §11
-"Risks & Mitigations"](../../.moai/specs/SPEC-SEC-IDENTITY-ASSERT-001/spec.md#risks--mitigations).
+fails open). An auth-class control fails closed. See SPEC-SEC-IDENTITY-ASSERT-001
+§11 "Risks & Mitigations" (historical — SPEC removed in repo cleanup 2026-08-18).
 
 ## Migration: before / after
 

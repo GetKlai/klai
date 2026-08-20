@@ -207,7 +207,7 @@ Internal references:
 - [deploy/litellm/klai_kb_query_rewrite.py](deploy/litellm/klai_kb_query_rewrite.py) — `rewrite_query`, `rewrite_and_classify`, `_apply_rewrite_guard`, `_QUERY_REWRITE_PROMPT`, `_QUERY_REWRITE_AND_CLASSIFY_PROMPT`: all requirements land here.
 - [deploy/litellm/klai_knowledge.py](deploy/litellm/klai_knowledge.py) — call site for REQ-1.
 - [deploy/litellm/klai_pasted_correspondence.py](deploy/litellm/klai_pasted_correspondence.py) — `latest_user_turn_has_correspondence`, the detector this SPEC's flag reuses (PR #1059).
-- [.moai/specs/SPEC-RAG-QUERY-REWRITE-001/spec.md](.moai/specs/SPEC-RAG-QUERY-REWRITE-001/spec.md) — original rewrite-call SPEC this extends.
-- [.moai/specs/SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001/spec.md](.moai/specs/SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001/spec.md) — REQ-5 brand-bridging: direct precedent for a conditional prompt-variant on the same call site; also the low-confidence gate this SPEC reduces unnecessary triggering of.
+- SPEC-RAG-QUERY-REWRITE-001 (historical — SPEC removed in repo cleanup 2026-08-18) — original rewrite-call SPEC this extends.
+- SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 (historical — SPEC removed in repo cleanup 2026-08-18) — REQ-5 brand-bridging: direct precedent for a conditional prompt-variant on the same call site; also the low-confidence gate this SPEC reduces unnecessary triggering of.
 - [klai-knowledge-ingest/knowledge_ingest/eval/suites/chat.yaml](klai-knowledge-ingest/knowledge_ingest/eval/suites/chat.yaml) — REQ-6 destination.
 - Production replay evidence: retrieval-api `/retrieve` direct queries against org `368884765035593759`, 2026-08-18 (this session) — see AC-1/AC-2.

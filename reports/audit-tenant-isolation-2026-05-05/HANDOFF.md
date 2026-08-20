@@ -79,7 +79,7 @@ Beide hebben `quality: pass` maar `build-push: fail`. Inspecteer met `gh run vie
 
 ### Stap C: #381, #382 hervatten vanuit clean main
 
-Branches zijn vervuild. Beste actie: nieuwe branches aanmaken vanuit current main (waar #373 al op staat) en de fixes opnieuw cherry-picken of opnieuw schrijven. De SPEC-files in `.moai/specs/SPEC-TI-010-CLEANUP-BATCH/` blijven geldig — gebruik die als referentie.
+Branches zijn vervuild. Beste actie: nieuwe branches aanmaken vanuit current main (waar #373 al op staat) en de fixes opnieuw cherry-picken of opnieuw schrijven. SPEC-TI-010-CLEANUP-BATCH was destijds de referentie (historical — SPEC removed in repo cleanup 2026-08-18).
 
 ```bash
 # Voor #381 (Redis hygiene):

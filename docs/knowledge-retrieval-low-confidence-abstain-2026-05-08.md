@@ -233,7 +233,7 @@ These were out of scope for the merge gate; depend on production traces:
 
 ## Forward links (out of scope for this work, but adjacent)
 
-- **Privacy / retention work** (just starting, 2026-05-08): three-mode telemetry config per tenant (`off` / `shadow` / `full`), 7-day default retention on query-text in VictoriaLogs, embeddings-as-shadow-values for system improvement without raw query storage. Will land as `SPEC-PRIVACY-QUERY-SHADOW-001` (or similar) — see in-progress audit at `.moai/specs/SPEC-PRIVACY-*` once written.
+- **Privacy / retention work** (just starting, 2026-05-08): three-mode telemetry config per tenant (`off` / `shadow` / `full`), 7-day default retention on query-text in VictoriaLogs, embeddings-as-shadow-values for system improvement without raw query storage. Was planned as `SPEC-PRIVACY-QUERY-SHADOW-001` (historical — SPEC removed in repo cleanup 2026-08-18).
 - **Tier 3 roadmap** (deferred until 4 weeks of production traces, per `retrieval-improvements-roadmap.md`):
   - HyDE if short-tech-query precision plateaus
   - GraphRAG community summaries if cross-doc synthesis demand emerges
@@ -244,7 +244,7 @@ These were out of scope for the merge gate; depend on production traces:
 
 ## Process notes (for future SPEC-authors)
 
-- `Read existing roadmap docs before proposing in the same domain.` Klai has explicit roadmap files (`docs/architecture/*-roadmap.md`) that list shipped state with PR numbers. A 5-second `ls .moai/specs/ | grep <DOMAIN>` and a single `cat docs/architecture/<domain>-roadmap.md` would have prevented an early proposal of 4 SPECs that were already shipped. Now codified as `spec-scope-without-roadmap-check (MED)` pitfall.
+- `Read existing roadmap docs before proposing in the same domain.` Klai has explicit roadmap files (`docs/architecture/*-roadmap.md`) that list shipped state with PR numbers. A 5-second search through the historical SPEC index plus a single `cat docs/architecture/<domain>-roadmap.md` would have prevented an early proposal of 4 SPECs that were already shipped. The former SPEC index was removed in repo cleanup 2026-08-18. This is now codified as `spec-scope-without-roadmap-check (MED)` pitfall.
 - `Distinguish SPEC-work from runbook-work.` Enabling already-built features for a tenant (e.g. taxonomy curation for Voys) is a runbook-action, not a SPEC. SPECs are for new code, new behavior, new architecture, new dependencies.
 - `Pre-existing test failures on main are a useful audit signal.` While shipping #516, two tests were red — investigation revealed a pre-existing mock-fixture gap unrelated to the SPEC. #517 fixed it in passing. Don't ignore pre-existing reds in services you're already touching; if the fix is small, take it.
 
@@ -334,4 +334,4 @@ operational surface area for marginal gain.
 
 **Last updated**: 2026-05-08 06:00 UTC by Mark + AI pair-session
 **Status**: live in production on `klai-core` (core-01); awaiting first 7-day production-traces window for AC-6 + post-deploy delta measurements
-**2026-05-08 supplement**: entity_names follow-up shipped (#519/#520/#522), Graphiti NER coverage SPEC drafted (`.moai/specs/SPEC-RAG-GRAPHITI-NER-COVERAGE-001/`).
+**2026-05-08 supplement**: entity_names follow-up shipped (#519/#520/#522), Graphiti NER coverage SPEC-RAG-GRAPHITI-NER-COVERAGE-001 drafted (historical — SPEC removed in repo cleanup 2026-08-18).

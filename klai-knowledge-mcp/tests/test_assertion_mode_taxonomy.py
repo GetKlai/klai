@@ -3,7 +3,7 @@
 The 6-value vocabulary uses the original DB-flavoured names + ``unknown``,
 matching the live ``artifacts_assertion_mode_check`` constraint and the
 ``VALID_ASSERTION_MODES`` set in ``klai-knowledge-ingest``. See the
-Realignment Note in ``.moai/specs/SPEC-TAXONOMY-001/spec.md`` for why
+Realignment Note in SPEC-TAXONOMY-001 (historical — SPEC removed in repo cleanup 2026-08-18) for why
 DD-1's ``fact/claim/speculation`` rename was reverted.
 
 Identity verification (SPEC-SEC-IDENTITY-ASSERT-001 REQ-2) sits in front of

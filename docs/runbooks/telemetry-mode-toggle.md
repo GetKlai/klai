@@ -141,7 +141,7 @@ Privacy posture review checklist for the on-call rotation, weekly:
 
 ## Background / why the modes exist
 
-See `.moai/specs/SPEC-PRIVACY-QUERY-SHADOW-001/` for the full SPEC,
-research notes, and acceptance criteria. Key context: GDPR Article
+The modes were defined by SPEC-PRIVACY-QUERY-SHADOW-001
+(historical — SPEC removed in repo cleanup 2026-08-18). Key context: GDPR Article
 5(1)(c) data minimization. Default `shadow` lets Klai do operational
 quality monitoring without persisting customer-facing query text.

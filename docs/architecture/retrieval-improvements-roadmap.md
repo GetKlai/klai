@@ -109,16 +109,16 @@ All five SPECs in Tier 1 + Tier 2 shipped on 2026-05-05. The measured deltas abo
 
 | SPEC | Scope | PRs | Status |
 |---|---|---|---|
-| [SPEC-RAG-EVAL-001](../../.moai/specs/SPEC-RAG-EVAL-001/spec.md) | RAGAS evaluation harness; variant-tagged metrics on representative query set | #303, #306, #308, #312, #321, **#350**, **#358**, **#359** | **SHIPPED** |
-| [SPEC-RAG-CONTEXTUAL-001](../../.moai/specs/SPEC-RAG-CONTEXTUAL-001/spec.md) | Anthropic-pattern contextual retrieval — per-document summary + context_prefix per chunk | **#329**, **#347** (document_text persist + lingua langdetect) | **SHIPPED** |
-| [SPEC-RAG-QUERY-REWRITE-001](../../.moai/specs/SPEC-RAG-QUERY-REWRITE-001/spec.md) | LiteLLM-hook rewrite via klai-fast, combined into a single LLM call with the taxonomy classifier (REQ-5: zero added roundtrip) | **#334** | **SHIPPED** (hook-level — not measured by current eval harness) |
+| SPEC-RAG-EVAL-001 (historical — SPEC removed in repo cleanup 2026-08-18) | RAGAS evaluation harness; variant-tagged metrics on representative query set | #303, #306, #308, #312, #321, **#350**, **#358**, **#359** | **SHIPPED** |
+| SPEC-RAG-CONTEXTUAL-001 (historical — SPEC removed in repo cleanup 2026-08-18) | Anthropic-pattern contextual retrieval — per-document summary + context_prefix per chunk | **#329**, **#347** (document_text persist + lingua langdetect) | **SHIPPED** |
+| SPEC-RAG-QUERY-REWRITE-001 (historical — SPEC removed in repo cleanup 2026-08-18) | LiteLLM-hook rewrite via klai-fast, combined into a single LLM call with the taxonomy classifier (REQ-5: zero added roundtrip) | **#334** | **SHIPPED** (hook-level — not measured by current eval harness) |
 
 ### Tier 2 (gated on Tier 1 metrics — landed in the same window because the architecture made parallel work safe)
 
 | SPEC | Scope | PRs | Status |
 |---|---|---|---|
-| [SPEC-RAG-PARENT-CHILD-001](../../.moai/specs/SPEC-RAG-PARENT-CHILD-001/spec.md) | Parent-child chunking + retrieval-api parent expansion | **#338**, **#357** (rebuild_kb thread parent_chunk_id into Qdrant) | **SHIPPED** |
-| [SPEC-RAG-TAXONOMY-001](../../.moai/specs/SPEC-RAG-TAXONOMY-001/spec.md) | Query-time taxonomy classifier + retrieval filter + binary coverage fallback, multi-KB | **#340**, **#349** (multi-KB + Redis cache + SQL bug fix) | **SHIPPED** (hook-level — only narrows when KB has nodes; Voys has 0 today) |
+| SPEC-RAG-PARENT-CHILD-001 (historical — SPEC removed in repo cleanup 2026-08-18) | Parent-child chunking + retrieval-api parent expansion | **#338**, **#357** (rebuild_kb thread parent_chunk_id into Qdrant) | **SHIPPED** |
+| SPEC-RAG-TAXONOMY-001 (historical — SPEC removed in repo cleanup 2026-08-18) | Query-time taxonomy classifier + retrieval filter + binary coverage fallback, multi-KB | **#340**, **#349** (multi-KB + Redis cache + SQL bug fix) | **SHIPPED** (hook-level — only narrows when KB has nodes; Voys has 0 today) |
 
 Plus the rebuild_kb operator backfill (SPEC-RAG-REBUILD-KB-001 #341 + #345 reconstruction-from-Qdrant + **#357** parent_chunk_id threading) so legacy artifacts on Voys could be brought onto the new pipeline without re-fetching from source.
 

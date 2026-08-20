@@ -4,7 +4,7 @@
 > `mfa_check_failed_fail_open_burst`
 > (`deploy/grafana/provisioning/alerting/portal-mfa-rules.yaml`).
 >
-> SPEC: [SPEC-SEC-MFA-001](../../.moai/specs/SPEC-SEC-MFA-001/spec.md)
+> SPEC-SEC-MFA-001 (historical — SPEC removed in repo cleanup 2026-08-18)
 
 ## What this signal means
 
@@ -170,7 +170,7 @@ request_id:<uuid>
 
 ## Related
 
-- [SPEC-SEC-MFA-001](../../.moai/specs/SPEC-SEC-MFA-001/spec.md) — fail-closed
+- SPEC-SEC-MFA-001 (historical — SPEC removed in repo cleanup 2026-08-18) — fail-closed
   semantics and event schema.
 - [`klai-portal/backend/app/api/auth.py`](../../klai-portal/backend/app/api/auth.py)
   — `_emit_mfa_check_failed`, `_resolve_and_enforce_mfa`, refactored

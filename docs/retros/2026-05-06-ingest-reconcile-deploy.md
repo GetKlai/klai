@@ -177,7 +177,7 @@ auth-walled connector to onboard.
 
 ## Related
 
-- SPEC: `.moai/specs/SPEC-INGEST-RECONCILE-001/spec.md` (status: shipped)
+- SPEC-INGEST-RECONCILE-001 (historical — SPEC removed in repo cleanup 2026-08-18; status: shipped)
 - PRs: [#440](https://github.com/GetKlai/klai/pull/440),
   [#443](https://github.com/GetKlai/klai/pull/443),
   [#444](https://github.com/GetKlai/klai/pull/444),

@@ -1,7 +1,7 @@
 [Unit]
 Description=Klai weekly orphan-audit (containers, images, volumes, Caddy upstreams)
 Documentation=https://github.com/GetKlai/klai/blob/main/.claude/rules/klai/infra/container-hygiene.md
-Documentation=https://github.com/GetKlai/klai/blob/main/.moai/specs/SPEC-INFRA-CONTAINER-HYGIENE-001/spec.md
+# SPEC-INFRA-CONTAINER-HYGIENE-001 (historical — SPEC removed in repo cleanup 2026-08-18)
 After=docker.service
 Requires=docker.service
 

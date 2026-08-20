@@ -114,5 +114,5 @@ groups:
             klai-docker-authz/app/policy.py needs a reviewed change. Do NOT widen
             it to unblock a deploy without understanding why the shape changed.
 
-            The proven escalation this service blocks is recorded in
-            .moai/specs/SPEC-SEC-DOCKER-AUTHZ-001/spec.md.
+            The proven escalation this service blocks was recorded in
+            SPEC-SEC-DOCKER-AUTHZ-001 (historical — SPEC removed in repo cleanup 2026-08-18).
