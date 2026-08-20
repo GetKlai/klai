@@ -3,6 +3,7 @@
 Pure unit tests -- no real DB or HTTP calls. All async sessions and httpx are mocked.
 """
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -22,6 +23,8 @@ def test_rescore_gap_query_uses_grouped_recent_ordering() -> None:
 
     assert "SELECT DISTINCT" not in compiled
     assert "max(portal_retrieval_gaps.occurred_at)" in compiled
+    assert "JOIN portal_orgs" in compiled
+    assert "portal_orgs.telemetry_level" in compiled
     assert "GROUP BY portal_retrieval_gaps.query_text, portal_retrieval_gaps.gap_type" in compiled
     assert "ORDER BY max(portal_retrieval_gaps.occurred_at) DESC" in compiled
 
@@ -258,6 +261,53 @@ async def test_rescore_skips_on_retrieval_error() -> None:
 
     assert result == 0
     mock_db.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("telemetry_level", "query_visible"),
+    [("off", False), ("shadow", False), ("full", True)],
+)
+async def test_rescore_query_log_respects_telemetry_level(
+    caplog,
+    telemetry_level: str,
+    query_visible: bool,
+) -> None:
+    """Background re-scoring only logs stored query text in full telemetry."""
+    from app.services.gap_rescorer import rescore_open_gaps
+
+    secret_query = "PRIVATE_CUSTOMER_QUERY_7f3c"
+    mock_row = MagicMock(query_text=secret_query, gap_type="hard")
+    mock_row.telemetry_level = telemetry_level
+    mock_result = MagicMock()
+    mock_result.all.return_value = [mock_row]
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock(return_value=mock_result)
+    mock_db.commit = AsyncMock()
+
+    mock_response = MagicMock(is_success=False, status_code=500)
+    with (
+        patch("app.services.gap_rescorer.settings") as mock_settings,
+        patch("app.services.gap_rescorer.httpx.AsyncClient") as mock_client_cls,
+    ):
+        mock_settings.knowledge_retrieve_url = "http://test-retrieve:8000"
+        mock_settings.internal_secret = ""
+        mock_client = AsyncMock()
+        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with caplog.at_level(logging.INFO, logger="app.services.gap_rescorer"):
+            await rescore_open_gaps(
+                org_id=1,
+                zitadel_org_id="z1",
+                kb_slug=None,
+                db=mock_db,
+            )
+
+    rendered = " ".join(record.getMessage() for record in caplog.records)
+    assert "gap_rescorer: retrieval API returned" in rendered
+    assert (secret_query in rendered) is query_visible
 
 
 @pytest.mark.asyncio

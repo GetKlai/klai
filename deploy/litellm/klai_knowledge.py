@@ -604,10 +604,9 @@ class KlaiKnowledgeHook(CustomLogger):
             _append_final_language_reminder(messages, include_kb_reminder=False)
             data["messages"] = messages
             logger.info(
-                "meta_query_detected org_id=%s user_id=%s query=%r",
+                "meta_query_detected org_id=%s user_id=%s",
                 org_id,
                 librechat_user_id,
-                query[:80],
             )
             return data
 
