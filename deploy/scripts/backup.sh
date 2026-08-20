@@ -682,9 +682,13 @@ main() {
     kuma_push up "OK - $(artifact_size "${BACKUP_DIR}")"
   fi
 
-  CURRENT_STEP="local retention"
-  if ! local_retention; then
-    log "Local retention failed (non-fatal; backup artifacts were already produced)"
+  if [ ${#FAILED_STEPS[@]} -gt 0 ]; then
+    log "Local retention skipped because this backup has failed steps"
+  else
+    CURRENT_STEP="local retention"
+    if ! local_retention; then
+      log "Local retention failed (non-fatal; backup artifacts were already produced)"
+    fi
   fi
 
   CURRENT_STEP="summary"
