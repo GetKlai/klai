@@ -24,6 +24,7 @@ set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 SCRIPT="$REPO_ROOT/deploy/scripts/harden-docker-user.sh"
+WORKFLOW="$REPO_ROOT/.github/workflows/deploy-compose.yml"
 FAIL=0
 
 run_script() {
@@ -58,7 +59,11 @@ exit 0
 STUB
     chmod +x "$tmp/docker" "$tmp/iptables" "$tmp/iptables-save"
 
-    PATH="$tmp:$PATH" bash "$SCRIPT" eth0 >"$tmp/out" 2>"$tmp/err" || true
+    # Redirect persistence into the fixture directory while preserving every
+    # executable branch of the production script.
+    sed "s|/etc/iptables/rules.v4|$tmp/rules.v4|g" "$SCRIPT" \
+        | PATH="$tmp:$PATH" bash -s -- eth0 >"$tmp/out" 2>"$tmp/err"
+    LAST_RC=$?
     cat "$tmp/calls.log" 2>/dev/null > "$tmp/calls.final"
     LAST_OUT="$(cat "$tmp/out" "$tmp/err" 2>/dev/null)"
     LAST_CALLS="$(cat "$tmp/calls.final" 2>/dev/null)"
@@ -73,6 +78,9 @@ check() {
 echo "── bot host-isolation guard ──"
 
 run_script "172.29.0.0/16"
+
+check "a resolved network and pin exit successfully" \
+    test "$LAST_RC" -eq 0
 
 check "subnet comes from Docker, not a literal" \
     bash -c 'echo "$0" | grep -q -- "-s 172.29.0.0/16"' "$LAST_CALLS"
@@ -100,8 +108,17 @@ check "the exception is inserted after the DROP, so it lands above it" \
       acc=$(echo "$0" | grep -n -- "-I INPUT 1 -s 172.29.0.10 -p tcp --dport 8000" | tail -1 | cut -d: -f1)
       [ -n "$drop" ] && [ -n "$acc" ] && [ "$acc" -gt "$drop" ]' "$LAST_CALLS"
 
+check "established host-initiated connections are accepted above the DROP" \
+    bash -c '
+      drop=$(echo "$0" | grep -n -- "-I INPUT 1 -s 172.29.0.0/16 -j DROP" | tail -1 | cut -d: -f1)
+      established=$(echo "$0" | grep -n -- "-I INPUT 1 -s 172.29.0.0/16 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT" | tail -1 | cut -d: -f1)
+      [ -n "$drop" ] && [ -n "$established" ] && [ "$established" -gt "$drop" ]' "$LAST_CALLS"
+
 check "existing rules are cleared first, so re-runs do not stack" \
     bash -c 'echo "$0" | grep -q -- "-D INPUT -s 172.29.0.0/16 -j DROP"' "$LAST_CALLS"
+
+check "the established-connection rule is cleared first on re-run" \
+    bash -c 'echo "$0" | grep -q -- "-D INPUT -s 172.29.0.0/16 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT"' "$LAST_CALLS"
 
 # Network gone: the script must say so rather than quietly leaving bots exposed.
 run_script ""
@@ -111,6 +128,9 @@ check "a missing bot network produces no INPUT rules" \
 
 check "a missing bot network warns loudly" \
     bash -c 'echo "$0" | grep -qi "WARNING.*not found"' "$LAST_OUT"
+
+check "a missing bot network fails the firewall unit" \
+    test "$LAST_RC" -ne 0
 
 # The pin disappearing must fail CLOSED: deny stays, exception is not installed,
 # and it says so. Silently widening back to the subnet would undo the whole point.
@@ -126,6 +146,85 @@ check "a missing pin installs NO exception (fails closed)" \
 
 check "a missing pin warns loudly" \
     bash -c 'echo "$0" | grep -qi "WARNING.*transcription"' "$LAST_OUT"
+
+check "a missing pin fails the firewall unit" \
+    test "$LAST_RC" -ne 0
+
+# Execute the real tail of the embedded deploy script with boundary commands
+# stubbed. This catches ordering and exit-code bugs without SSH or Docker.
+run_workflow_tail() {
+    local scenario="$1"
+    local tmp; tmp="$(mktemp -d)"
+
+    awk '
+      /echo "::group::SPEC-MCP-RETRIEVAL-001 follow-up/ { capture=1 }
+      capture && /# SPEC-SEC-024 M4.3 — non-blocking post-deploy smoke-test/ { exit }
+      capture { sub(/^            /, ""); print }
+    ' "$WORKFLOW" | sed 's|cd /opt/klai|cd "$WORK_DIR"|' >"$tmp/workflow-tail.sh"
+
+    cat >"$tmp/docker" <<'STUB'
+#!/usr/bin/env bash
+case "$*" in
+  "compose config --services")
+    case "$SCENARIO" in
+      config_fail) printf 'portal\nlitellm\n'; exit 23 ;;
+      empty)       printf 'litellm\n'; exit 0 ;;
+      *)           printf 'portal\nlitellm\n'; exit 0 ;;
+    esac
+    ;;
+  compose\ up\ -d\ --remove-orphans*)
+    echo "compose-up $*" >>"$CALLS"
+    [ "$SCENARIO" = compose_fail ] && exit 42
+    exit 0
+    ;;
+esac
+exit 0
+STUB
+    cat >"$tmp/sudo" <<'STUB'
+#!/usr/bin/env bash
+echo "sudo $*" >>"$CALLS"
+exit 0
+STUB
+    cat >"$tmp/systemctl" <<'STUB'
+#!/usr/bin/env bash
+echo "systemctl $*" >>"$CALLS"
+exit 0
+STUB
+    chmod +x "$tmp/docker" "$tmp/sudo" "$tmp/systemctl"
+
+    set +e
+    PATH="$tmp:$PATH" SCENARIO="$scenario" CALLS="$tmp/calls" WORK_DIR="$tmp" \
+        bash -e "$tmp/workflow-tail.sh" >"$tmp/out" 2>&1
+    WORKFLOW_RC=$?
+    set -e
+    WORKFLOW_OUT="$(cat "$tmp/out")"
+    WORKFLOW_CALLS="$(cat "$tmp/calls" 2>/dev/null || true)"
+    rm -rf "$tmp"
+}
+
+run_workflow_tail config_fail
+check "a compose-config pipeline failure aborts before compose up" \
+    test "$WORKFLOW_RC" -eq 23
+check "a compose-config failure cannot trigger an all-services recreate" \
+    bash -c '! grep -q "compose-up" <<<"$0"' "$WORKFLOW_CALLS"
+
+run_workflow_tail empty
+check "an empty env-drift service list fails loudly" \
+    bash -c '[ "$1" -ne 0 ] && grep -qi "no env-drift services" <<<"$0"' "$WORKFLOW_OUT" "$WORKFLOW_RC"
+check "an empty service list never reaches compose up" \
+    bash -c '! grep -q "compose-up" <<<"$0"' "$WORKFLOW_CALLS"
+
+run_workflow_tail compose_fail
+check "a failed main compose retains its original exit code" \
+    test "$WORKFLOW_RC" -eq 42
+check "a failed main compose still re-applies the firewall exactly once" \
+    bash -c '[ "$(grep -c "^sudo systemctl restart klai-harden-firewall.service$" <<<"$0")" -eq 1 ]' "$WORKFLOW_CALLS"
+check "the env-drift compose call still excludes litellm" \
+    bash -c 'grep -q "compose-up .* portal" <<<"$0" && ! grep -q "compose-up .* litellm" <<<"$0"' "$WORKFLOW_CALLS"
+
+run_workflow_tail success
+check "a successful main compose re-applies the firewall exactly once" \
+    bash -c '[ "$1" -eq 0 ] && [ "$(grep -c "^sudo systemctl restart klai-harden-firewall.service$" <<<"$0")" -eq 1 ]' "$WORKFLOW_CALLS" "$WORKFLOW_RC"
 
 echo "──────────────────────────────"
 if [ "$FAIL" -eq 0 ]; then

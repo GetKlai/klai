@@ -54,6 +54,18 @@ f=$(fixture Dockerfile.debian_missing \
     'COPY app app')
 run_guard "$f"; check "debian base without the upgrade -> fail" 1 "$rc"
 
+for base in node:22 python:3.12 postgres:16 golang:1.25; do
+    f=$(fixture "Dockerfile.plain-${base%%:*}" \
+        "FROM $base" \
+        'RUN echo shipped-without-security-updates')
+    run_guard "$f"; check "plain Debian-family base $base without apt upgrade -> fail" 1 "$rc"
+done
+
+f=$(fixture Dockerfile.plain_debian_ok \
+    'FROM node:22' \
+    'RUN apt-get update && apt-get upgrade -y --no-install-recommends')
+run_guard "$f"; check "plain Debian-family base with apt upgrade -> pass" 0 "$rc"
+
 f=$(fixture Dockerfile.alpine_ok \
     'FROM node:22-alpine' \
     'RUN apk update && apk upgrade --no-cache')
@@ -110,6 +122,17 @@ if grep -q "skip" "$work/out"; then
     echo "  ok     says it skipped rather than passing silently"
 else
     echo "  FAIL   skipped without saying so"
+    failures=$((failures + 1))
+fi
+
+f=$(fixture Dockerfile.unknown \
+    'FROM vendor/custom-runtime:1.0' \
+    'RUN echo unknown-package-manager')
+run_guard "$f"; check "unclassifiable base -> fail loudly" 1 "$rc"
+if grep -q "cannot classify" "$work/out"; then
+    echo "  ok     explains that the base needs classification or an allow-list entry"
+else
+    echo "  FAIL   unclassifiable base failed without an actionable reason"
     failures=$((failures + 1))
 fi
 

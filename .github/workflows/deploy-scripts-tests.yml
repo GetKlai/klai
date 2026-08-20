@@ -18,6 +18,7 @@ on:
   pull_request:
     paths:
       - 'deploy/scripts/**'
+      - '.github/workflows/deploy-compose.yml'
       - 'deploy/librechat/tests/**'
       - '**/Dockerfile'
       - '**/Dockerfile.*'
@@ -28,6 +29,7 @@ on:
     branches: [main]
     paths:
       - 'deploy/scripts/**'
+      - '.github/workflows/deploy-compose.yml'
       - 'deploy/librechat/tests/**'
       - '**/Dockerfile'
       - '**/Dockerfile.*'
@@ -82,6 +84,9 @@ jobs:
 
       - name: bot host-isolation suite (SPEC-SEC-022)
         run: bash deploy/scripts/tests/harden-docker-user-bot-isolation.test.sh
+
+      - name: backup retention suite
+        run: bash deploy/scripts/tests/backup-retention.test.sh
 
       - name: container-hygiene preflight suite
         run: bash .claude/hooks/klai/tests/container-hygiene-preflight.test.sh

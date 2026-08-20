@@ -64,10 +64,10 @@ POSTGRES_CONTAINER = "klai-core-postgres-1"
 # Rules known to be blind, keyed by uid. An entry does NOT make a rule work --
 # it records that we looked, understood, and chose not to fix it in that change.
 #
-# Empty, and worth keeping that way. The one entry this started with
+# Currently empty. The one entry this started with
 # (spec-priv-001-tenant-stuck-full) was retired on 2026-08-17 by giving the rule
-# a superuser-owned view over the telemetry transitions it needs, rather than by
-# writing a better excuse.
+# a superuser-owned view over the telemetry transitions it needs. Future entries
+# are permitted only while they satisfy the validation below.
 #
 # The shape mirrors .trivyignore.yaml deliberately, because that file solved the
 # harder half of this problem: an exception with only a reason lives forever, so
@@ -291,16 +291,17 @@ def main(argv: list[str]) -> int:
         print("report success on an empty check.")
         return 2
 
+    problems = _validate_allowlist({uid for _f, uid, _s in rules})
+    if problems:
+        print("ERROR: KNOWN_BLIND is not valid:", file=sys.stderr)
+        for problem in problems:
+            print(f"  - {problem}", file=sys.stderr)
+        return 1
+
     if plan_only:
         for _file, uid, raw_sql in rules:
             for rel in referenced_relations(raw_sql):
                 print(f"{uid}\t{rel}")
-        problems = _validate_allowlist({uid for _f, uid, _s in rules})
-        if problems:
-            print("ERROR: KNOWN_BLIND is not valid:", file=sys.stderr)
-            for problem in problems:
-                print(f"  - {problem}", file=sys.stderr)
-            return 1
         return 0
 
     exit_code = 0

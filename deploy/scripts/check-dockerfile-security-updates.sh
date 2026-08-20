@@ -109,9 +109,19 @@ for file in "${files[@]}"; do
         *slim*|*debian*|*ubuntu*|*bookworm*|*trixie*|*bullseye*)
             want='apt-get upgrade'
             ;;
-        *)
-            echo "  skip  $file (base '$base' is neither Debian- nor Alpine-based)"
+        node:*|*/node:*|python:*|*/python:*|postgres:*|*/postgres:*|golang:*|*/golang:*)
+            # The unsuffixed official tags currently default to Debian. Keep
+            # them explicit so a plain `node:22` cannot bypass the guard.
+            want='apt-get upgrade'
+            ;;
+        scratch)
+            echo "  skip  $file (scratch has no OS package manager)"
             skipped=$((skipped + 1))
+            continue
+            ;;
+        *)
+            echo "  FAIL  $file — cannot classify base '$base'; add an explicit allow-list entry with a reason if it cannot be patched" >&2
+            failures=$((failures + 1))
             continue
             ;;
     esac

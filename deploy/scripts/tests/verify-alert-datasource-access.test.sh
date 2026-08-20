@@ -86,21 +86,15 @@ else
   bad "expected exit 2, got $rc: $(cat "$TMP/out2")"
 fi
 
-# ── 3. The allowlist is empty, and its validator rejects rot ──────────────
+# ── 3. Every allowlist entry is valid, and its validator rejects rot ───────
 # KNOWN_BLIND records rules we know are blind. Two ways it goes bad: an entry
 # whose rule no longer exists (a lie), and an entry nobody ever revisits (a
 # permanent exception wearing a reason). Both must fail CI.
 echo "3. KNOWN_BLIND hygiene"
-if "$PYTHON" -c "
-import pathlib, sys
-src = pathlib.Path('$SCRIPT').read_text()
-ns = {}
-exec(compile(src.split('def _validate_allowlist')[0], 'chk', 'exec'), ns)
-sys.exit(0 if ns['KNOWN_BLIND'] == {} else 1)
-" 2>/dev/null; then
-  ok "allowlist is empty (every rule reads its own data)"
+if plan "$REPO_ROOT/deploy/grafana/provisioning/alerting" >/dev/null; then
+  ok "all current exemptions pass live-uid, statement and expiry validation"
 else
-  bad "allowlist is non-empty -- each entry needs a live uid, a >=40-char statement and a future expired_at"
+  bad "one or more current exemptions are malformed, expired or stale"
 fi
 
 # Drive the validator directly with hostile entries; building fixture YAML for
@@ -154,6 +148,44 @@ if [ "$rc" -eq 0 ]; then
   ok "accepts a well-formed exemption"
 else
   bad "a live uid with a long statement and a near-future expiry should pass"
+fi
+
+# The deploy invokes the checker without --plan. Keep that real mode behind the
+# same validator; otherwise CI can validate exemptions while production ignores
+# an entry that expired between review and deploy.
+mkdir -p "$TMP/runtime"
+cat >"$TMP/runtime/rules.yaml" <<'YAML'
+apiVersion: 1
+groups:
+  - name: runtime
+    rules:
+      - uid: live-rule
+        data:
+          - model:
+              datasource:
+                type: postgres
+              rawSql: SELECT count(*) FROM live_table
+YAML
+cat >"$TMP/run.py" <<'PY'
+import json, pathlib, sys
+src = pathlib.Path(sys.argv[1]).read_text()
+ns = {}
+exec(compile(src, "chk", "exec"), ns)
+ns["KNOWN_BLIND"].clear()
+ns["KNOWN_BLIND"].update(json.loads(sys.argv[3]))
+ns["_check_rule"] = lambda _uid, _sql: []
+sys.exit(ns["main"](["chk", sys.argv[2]]))
+PY
+
+set +e
+out="$($PYTHON "$TMP/run.py" "$SCRIPT" "$TMP/runtime" \
+  "{\"live-rule\": {\"statement\": \"$LONG\", \"expired_at\": \"$PAST\"}}" 2>&1)"
+rc=$?
+set -e
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -qi "expired on"; then
+  ok "real run mode rejects an expired exemption before datasource checks"
+else
+  bad "real run mode should reject an expired exemption (rc=$rc): $out"
 fi
 
 # ── 4. Schema-qualified names and aliases survive extraction ──────────────

@@ -85,39 +85,42 @@ BOTS_NET="${BOTS_NET:-vexa12-bots}"
 BOTS_CIDR="$(docker network inspect "$BOTS_NET" \
     --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}' 2>/dev/null || true)"
 
-if [ -n "$BOTS_CIDR" ]; then
-    echo ""
-    echo "Restricting $BOTS_NET ($BOTS_CIDR) → host ..."
-
-    MEETING_API_IP="$(docker inspect klai-core-vexa12-meeting-api-1 \
-        --format '{{range $k,$v := .NetworkSettings.Networks}}{{if eq $k "vexa12-bots"}}{{$v.IPAddress}}{{end}}{{end}}' \
-        2>/dev/null || true)"
-
-    # Idempotent: the unit re-runs on every boot and after every deploy. Clear the
-    # whole-subnet form too — it is what this script installed before the pin
-    # existed, and leaving it behind would keep every bot excepted.
-    while iptables -D INPUT -s "$BOTS_CIDR" -p tcp --dport 8000 -j ACCEPT 2>/dev/null; do :; done
-    [ -n "$MEETING_API_IP" ] && \
-        while iptables -D INPUT -s "$MEETING_API_IP" -p tcp --dport 8000 -j ACCEPT 2>/dev/null; do :; done
-    while iptables -D INPUT -s "$BOTS_CIDR" -j DROP 2>/dev/null; do :; done
-
-    # Order matters: the exception has to sit above the deny.
-    iptables -I INPUT 1 -s "$BOTS_CIDR" -j DROP
-    if [ -n "$MEETING_API_IP" ]; then
-        iptables -I INPUT 1 -s "$MEETING_API_IP" -p tcp --dport 8000 -j ACCEPT
-        echo "  transcription exception: $MEETING_API_IP only"
-    else
-        echo "  WARNING: vexa12-meeting-api has no vexa12-bots address — transcription" >&2
-        echo "           exception NOT installed. Meetings will fail until this resolves." >&2
-    fi
-
-    echo "Done. INPUT rules for $BOTS_CIDR:"
-    iptables -L INPUT -n --line-numbers | grep -E "^(num|[0-9]+ .*${BOTS_CIDR//./\\.})" || true
-else
+if [ -z "$BOTS_CIDR" ]; then
     echo ""
     echo "WARNING: docker network '$BOTS_NET' not found — host-isolation rules NOT applied." >&2
     echo "         Bots can reach every host-bound port until this is resolved." >&2
+    exit 1
 fi
+
+echo ""
+echo "Restricting $BOTS_NET ($BOTS_CIDR) → host ..."
+
+MEETING_API_IP="$(docker inspect klai-core-vexa12-meeting-api-1 \
+    --format '{{range $k,$v := .NetworkSettings.Networks}}{{if eq $k "vexa12-bots"}}{{$v.IPAddress}}{{end}}{{end}}' \
+    2>/dev/null || true)"
+
+# Idempotent: the unit re-runs on every boot and after every deploy. Clear the
+# whole-subnet form too — it is what this script installed before the pin
+# existed, and leaving it behind would keep every bot excepted.
+while iptables -D INPUT -s "$BOTS_CIDR" -p tcp --dport 8000 -j ACCEPT 2>/dev/null; do :; done
+[ -n "$MEETING_API_IP" ] && \
+    while iptables -D INPUT -s "$MEETING_API_IP" -p tcp --dport 8000 -j ACCEPT 2>/dev/null; do :; done
+while iptables -D INPUT -s "$BOTS_CIDR" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null; do :; done
+while iptables -D INPUT -s "$BOTS_CIDR" -j DROP 2>/dev/null; do :; done
+
+# Rules are inserted at position 1, so later inserts land above earlier ones.
+iptables -I INPUT 1 -s "$BOTS_CIDR" -j DROP
+iptables -I INPUT 1 -s "$BOTS_CIDR" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+if [ -z "$MEETING_API_IP" ]; then
+    echo "  WARNING: vexa12-meeting-api has no vexa12-bots address — transcription" >&2
+    echo "           exception NOT installed. Meetings will fail until this resolves." >&2
+    exit 1
+fi
+iptables -I INPUT 1 -s "$MEETING_API_IP" -p tcp --dport 8000 -j ACCEPT
+echo "  transcription exception: $MEETING_API_IP only"
+
+echo "Done. INPUT rules for $BOTS_CIDR:"
+iptables -L INPUT -n --line-numbers | grep -E "^(num|[0-9]+ .*${BOTS_CIDR//./\\.})" || true
 
 echo ""
 echo "Persisting rules to /etc/iptables/rules.v4 ..."
