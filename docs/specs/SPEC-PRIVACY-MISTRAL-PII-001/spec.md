@@ -498,6 +498,24 @@ least the longest possible placeholder length when matching across streamed chun
 placeholder split as `<PERS` + `ON_1>` across a chunk boundary that is emitted unrestored is
 a defect, and **SHALL** have a regression test.
 
+**THE masking step SHALL** resolve **overlapping spans** before substituting. Presidio
+returns them and does not deduplicate across entity types. Measured on the deployed analyzer,
+2026-08-20:
+
+```
+Betaal op IBAN NL91 ABNA 0417 1643 00 graag.
+IBAN_CODE    [15:37] score=1.00
+PHONE_NUMBER [25:37] score=0.40   <- fully inside the IBAN span
+```
+
+Substituting naively corrupts the text: replace the IBAN first and the phone offsets are
+stale; replace the phone first and the IBAN no longer matches its own span. **THE
+implementation SHALL** substitute from the **end of the string backwards** so earlier offsets
+stay valid, and **SHALL** drop any span contained in a span already taken, preferring the
+higher score and, on a tie, the longer span. This overlap predates the Phase 1 deployment —
+it is a property of running several recognisers over one text, not a regression — and it
+needs a regression test using exactly the IBAN case above.
+
 #### REQ-11 — the placeholder map is request-scoped and never persisted (ubiquitous)
 
 **THE map** from placeholder to original value **SHALL** live only for the lifetime of the
