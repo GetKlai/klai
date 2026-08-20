@@ -127,6 +127,54 @@ litellm_settings:
     - klai_knowledge.klai_knowledge_hook
     - custom_router.token_router
 
+# SPEC-PRIVACY-MISTRAL-PII-001 Phase 0 (REQ-0a/REQ-0b) — TEMPORARY,
+# EXPERIMENTAL, NOT the production control.
+#
+# This registers the native Presidio guardrail so the Phase 0 round-trip
+# harness (deploy/litellm/scripts/eval_pii_restore_live.py) can prove
+# whether `output_parse_pii` restores masked values correctly on this
+# LiteLLM version (v1.96.2) — both streaming and non-streaming — and
+# measure Dutch token-survival rate, BEFORE any recognizer work (REQ-3,
+# Phase 1) begins. Stock entities only (PERSON, PHONE_NUMBER,
+# EMAIL_ADDRESS) — no Dutch recognizer pack exists yet.
+#
+# `default_on` is deliberately ABSENT (defaults to false): this guardrail
+# does NOT run on production traffic. The harness opts in per-request via
+# `"guardrails": ["presidio-pii-phase0"]` in the request body. Turning this
+# on for everyone is Phase 2 (REQ-5, `logging_only` + `default_on: true`)
+# and Phase 3 (REQ-7, enforcement) — separate PRs, gated on this
+# experiment's result being written back into the SPEC.
+#
+# MUST NOT be left enabled by default after the Phase 0 experiment
+# concludes. If REQ-0a's answer is negative (restore does not survive on
+# this version), delete this block rather than leave it dangling —
+# REQ-8's fallback is the KlaiKnowledgeHook streaming-iterator path, not
+# this guardrail.
+guardrails:
+  - guardrail_name: "presidio-pii-phase0"
+    litellm_params:
+      guardrail: presidio
+      mode: "pre_call"
+      output_parse_pii: true
+      # REQ-2 (Dutch NLP engine, nl_core_news_lg) is Phase 1 work. Presidio
+      # does not support "nl" as a request language at all yet (SPEC
+      # Motivation: "nl is not in supported_languages") — "en" is the only
+      # option stock Presidio offers today. A name/phone the (English)
+      # analyzer never detects is never masked into a placeholder at all,
+      # and from the client-visible response alone a verbatim echo of the
+      # unmasked original would look identical to a successful restore.
+      # The harness closes this at measurement time rather than assuming
+      # it away: scripts/eval_pii_restore_live.py calls the analyzer's own
+      # /analyze endpoint directly before scoring any round trip, and
+      # reports an undetected entity in its own not_masked bucket. See
+      # klai_pii_restore_eval.py's module docstring ("Detection
+      # precondition").
+      presidio_language: "en"
+      pii_entities_config:
+        PERSON: "MASK"
+        PHONE_NUMBER: "MASK"
+        EMAIL_ADDRESS: "MASK"
+
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
   database_url: os.environ/DATABASE_URL
