@@ -1,6 +1,6 @@
 ---
 id: SPEC-PRIVACY-MISTRAL-PII-001
-version: "0.4.1"
+version: "0.5.0"
 status: draft
 created: 2026-08-20
 updated: 2026-08-20
@@ -17,6 +17,7 @@ roadmap: docs/architecture/knowledge-rag-improvement-plan.md
 
 | Version | Date       | Author       | Change |
 |---------|------------|--------------|--------|
+| 0.5.0   | 2026-08-20 | Mark Vletter | **Phase 0 ran on core-01 and answered both questions.** REQ-0a is negative for streaming: `output_parse_pii` restores correctly non-streaming but returns an empty token map on the streaming path — the second failure shape in litellm#6247, still live on v1.96.2, and NOT the Anthropic-native bug 0.2.0 dismissed from reading. Both Klai chat paths stream, so REQ-8's restore moves to our own post-call hooks. REQ-0b: the verbatim-token instruction takes `PHONE_NUMBER` survival from 58.3% to 95.8%, so it is mandatory rather than advisory. Two gaps the run exposed: six of thirty Dutch phone numbers were never detected despite `supported_regions: [NL]` (a detection gap, separate from survival), and `PERSON` is **unmeasurable** today because REQ-2 disables SpacyRecognizer and GLiNER is not deployed — so REQ-0b's PERSON half must be re-run after REQ-9, and PERSON must not be enabled before that. |
 | 0.4.1   | 2026-08-20 | Mark Vletter | REQ-6 tightened after the Phase 2 delta review. The language label is now derived from the latest user turn rather than the whole payload — the KB context block is English-structured by design and dwarfs the question, so detecting on combined text would have labelled a Dutch question `en` on essentially every RAG request and quietly invalidated REQ-2's per-language comparison. Records the honest limitation that the observer uses a stopword heuristic rather than the canonical lingua detector, because `lingua-language-detector` is not in the stock litellm image, with the escalation path if Phase 2 data proves too noisy. |
 | 0.4.0   | 2026-08-20 | Mark Vletter | REQ-5 corrected before it was built. It specified the native guardrail in `mode: "logging_only"` as the shadow-measurement mechanism; that mode masks what goes to **observability** and sends the payload to the provider **unmasked** — inverted for our purpose, and LiteLLM's Presidio guardrail has no detect-only mode at all. Phase 2 is now a read-only observer callback (`klai_pii_observe.py`) that calls the analyzer, emits REQ-6's counts, returns the payload unchanged, never calls the anonymizer, runs out of band so it cannot add latency or fail a request, and is deleted by the Phase 3 PR. The Phase 0 experiment guardrail stays registered so the REQ-0a/REQ-0b harness remains runnable. Also records what Phase 0 and Phase 1 actually shipped: both merged (`d55d6adeb`, `d2aa35fd2`), nine recognizers verified loaded across en/nl/de on core-01 with spaCy disabled per language, and the Phase 0 harness still **unrun**. |
 | 0.3.0   | 2026-08-20 | Mark Vletter | Language-agnosticism corrected. 0.2.0's REQ-2 pinned `presidio_language: "nl"` and dismissed mixed traffic as a known limitation — wrong for a product that ships a language detector, language-neutral KB context, and per-language correctness monitoring (SPEC-RAG-MULTILINGUAL-CHAT-001). REQ-2 now makes detection language-agnostic **by construction**: every REQ-3 entity is regex-plus-checksum and therefore jurisdiction-specific rather than language-specific, registered across all languages; `PERSON` is the only language-sensitive entity and uses multilingual GLiNER instead of a per-language spaCy pipeline. Net effect is a simplification — no spaCy model is loaded at all, which also removes the per-language model matrix and the memory it would cost. Phase 2 telemetry now carries detected language so per-language recall is measured, not assumed. Phase 0 keeps the stock English engine as an explicit, bounded exception because it measures the restore mechanism, not detection quality. |
@@ -173,6 +174,59 @@ supported path, it covers the two cases our own hook misses, and it is less code
 ## Functional Requirements (EARS)
 
 ### Phase 0 — settle the reversibility question with a measurement
+
+#### RESULT — measured on core-01, 2026-08-20
+
+Run: `docker exec klai-core-litellm-1 python scripts/eval_pii_restore_live.py`, against
+LiteLLM `v1.96.2`, `klai-fast` (`mistral-small-2603`), analyzer image
+`ghcr.io/getklai/presidio-analyzer@sha256:fff95b84…`. Script exit code 1 — it refuses to
+report a pass on incomplete data.
+
+**REQ-0a — restore works non-streaming, fails streaming.**
+
+| Path | Entity | Outcome |
+|---|---|---|
+| non-streaming | `PHONE_NUMBER` | `exact_match` |
+| non-streaming | `EMAIL_ADDRESS` | `exact_match` |
+| **streaming** | `PHONE_NUMBER` | **`empty_map`** |
+| **streaming** | `EMAIL_ADDRESS` | **`empty_map`** |
+| both | `PERSON` | `not_masked` — inconclusive, see below |
+
+This is the second failure shape in [#6247](https://github.com/BerriAI/litellm/issues/6247)
+— the map does not survive from the pre-call hook to the post-call hook — and it is still
+live on `v1.96.2`. It is **not** the Anthropic-native SSE-bytes bug (#22821, closed), which
+genuinely does not apply to us. 0.2.0 of this SPEC concluded from reading that streaming
+restore was fine for our path. That conclusion was wrong, and only the measurement showed it.
+
+**Consequence, per REQ-0a's own conditional:** both Klai chat paths stream, so REQ-8's
+reversible restore **SHALL** be implemented in
+`async_post_call_streaming_iterator_hook` / `async_post_call_success_hook`
+(`klai_knowledge.py:1667-1703` is the working precedent), not via `output_parse_pii`. The
+native flag may still be used for genuinely non-streaming callers; it must not be relied on
+for chat.
+
+**REQ-0b — the verbatim-token instruction roughly doubles survival.**
+
+| Entity | Condition | Survived | Verdict |
+|---|---|---|---|
+| `PHONE_NUMBER` | with instruction | 23/24 — **95.8%** | at the bar |
+| `PHONE_NUMBER` | without instruction | 14/24 — **58.3%** | far below |
+| `PERSON` | both | 0/0 (`not_masked` ×30) | **unmeasurable today** |
+
+The instruction is therefore **mandatory**, not advisory: without it, roughly two in five
+phone numbers would come back mangled or missing.
+
+`PHONE_NUMBER` also showed `not_masked=6` of 30 despite `PhoneRecognizer` being configured
+with `supported_regions: [NL]`. Six Dutch numbers in the corpus were not detected at all —
+a **detection** gap distinct from the survival question, and an input to REQ-9's tuning.
+
+**A sequencing defect in this SPEC, exposed by the run.** REQ-0b gates `PERSON` enforcement
+on a survival rate ≥95%, but REQ-2 disables `SpacyRecognizer`
+(`deploy/presidio/analyzer/conf/analyzer.yaml:63-65`) and GLiNER (REQ-9) is not deployed, so
+**no PERSON detector exists** and the rate cannot be produced. `not_masked=30` is the
+designed behaviour, not a failure. **THE `PERSON` half of REQ-0b SHALL** therefore be re-run
+after REQ-9 lands, and `PERSON` **SHALL NOT** be enabled in REQ-7's policy before that
+re-run exists.
 
 #### REQ-0a — the restore path is proven on our version before anything is built on it (event-driven)
 
@@ -406,8 +460,12 @@ email must not collapse into one token, or the restore writes the same name twic
 keeps the sentence intact and tells the model what kind of thing was removed, which is what
 stops it inventing a value to fill the gap.
 
-**THE return set** (REQ-7) **SHALL** be restored in the response, on both the streaming and
-non-streaming paths, by whichever mechanism REQ-0 established.
+**THE return set** (REQ-7) **SHALL** be restored in the response on both the streaming and
+non-streaming paths. REQ-0a's measurement settled which mechanism: `output_parse_pii`
+restores correctly non-streaming but yields an **empty token map on streaming**, and both
+chat paths stream — so the restore **SHALL** be implemented in
+`async_post_call_streaming_iterator_hook` / `async_post_call_success_hook`, using the
+buffered chunk-rewrite pattern already working at `klai_knowledge.py:1667-1703`.
 
 **THE never-return set** (`SECRET`, `NL_BSN`) **SHALL NOT** be restored under any
 configuration. If the native path cannot restore selectively per entity type, the never-return
