@@ -34,7 +34,7 @@ step_latency_seconds = Histogram(
 retrieval_requests_total = Counter(
     "klai_retrieval_requests_total",
     "Total retrieval requests",
-    ["scope", "bypassed"],
+    ["scope"],
 )
 
 retrieval_chunks_total = Histogram(

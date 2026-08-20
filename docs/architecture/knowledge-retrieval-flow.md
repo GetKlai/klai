@@ -6,21 +6,22 @@
 > **2026-06-08 update.** Two large changes landed since 2026-05-06 and are reflected below:
 > (1) `deploy/litellm/klai_knowledge.py` was decomposed (commit `dd4225695`, 1614→~1250 lines) into ~15 sibling `klai_kb_*.py` modules + a `klai_llm_safety/` package; this doc references `klai_knowledge.py` as the hook entrypoint and the new modules where a specific responsibility moved. (2) `klai-retrieval-api/retrieve.py` was decomposed (commit `91e8db29b`, 929→759 lines) into `retrieval_api/api/{retrieve,ranking,page_context,...}.py`. A **Strict / Open KB-only answer-policy** layer (6 prompt modes, fail-closed) also shipped — see the new section in Part 1.
 >
-> Places where this doc describes a *more capable* design than the code currently implements (the retrieval gate, the router LLM fallback) carry an **Intended vs. current** callout pointing to [`product-gaps-backlog.md`](product-gaps-backlog.md).
+> Places where this doc describes a *more capable* design than the code currently implements (such as the router LLM fallback) carry an **Intended vs. current** callout pointing to [`product-gaps-backlog.md`](product-gaps-backlog.md).
 >
-> **2026-08-20 experiment resolution:** the retrieval gate is disabled after 30 days
+> **2026-08-20 experiment resolution:** the retrieval gate was removed after 30 days
 > produced only 3 unique would-bypass decisions across roughly 4,500 requests (all
-> low-confidence); evidence-tier production shadow computation is also disabled because
-> order diffs did not measure answer quality. The calibrated citation-rescue rule is active.
+> low-confidence). Evidence-tier scoring was also removed: 2,186 of 8,946 shadow runs
+> changed ordering, but no paired answer-quality outcome existed to establish a benefit.
+> The calibrated citation-rescue rule and the graduated ranking contract remain active.
 >
-> **2026-06-11 corrections (per-claim source re-verification):** (1) the retrieval gate
-> ships a 16-line reference stub; (2) the
+> **2026-06-11 corrections (per-claim source re-verification):** (1) the retired retrieval
+> gate shipped a 16-line reference stub; (2) the
 > temporal filter is **dual-contract** (legacy `valid_at`/`invalid_at` + current
 > `valid_from`/`valid_until`) — the 2026-06-08 field-mismatch bug is fixed on the
 > serving path; (3) RRF fusion is Qdrant-native (`FusionQuery(fusion=RRF)`) with
 > prefetch `max(candidates × 4, 20)` — there is no hand-rolled `k=60` formula in code;
-> (4) evidence-tier assertion-mode weights are no longer flat 1.00, but production
-> scoring is now disabled because the required paired A/B was never built.
+> (4) the retired evidence-tier experiment had non-flat assertion-mode weights, but no
+> valid paired A/B was ever built.
 >
 > For how knowledge is *stored* (ingestion, chunking, embedding), see
 > [knowledge-ingest-flow.md](knowledge-ingest-flow.md).
@@ -78,7 +79,6 @@ User types a message (LibreChat | Partner API consumer | chat widget on external
         │         │
         │         ├── Coreference resolution (retrieval-api side, internal pronoun pass)
         │         ├── Generate embeddings (dense + sparse, parallel)
-        │         ├── Retrieval gate (is KB retrieval even needed?)
         │         ├── Hybrid vector search in Qdrant (3-leg RRF) + parallel graph search (FalkorDB)
         │         │   (chunks carry document_summary + context_prefix from
         │         │    SPEC-RAG-CONTEXTUAL-001 — Anthropic-pattern contextual retrieval)
@@ -249,7 +249,7 @@ The model reads it as a hard constraint on how to use the provided context.
 
 > **`kb_narrow` is the surface of a deeper answer-policy.** Narrow/broad is no longer
 > just a header-text swap. It feeds a Strict/Open answer-policy state machine (6 prompt
-> modes) that, in strict mode, never bypasses the retrieval gate, strips web-search tool
+> modes) that, in strict mode, always runs retrieval, strips web-search tool
 > content, and emits a deterministic refusal when there is no citable evidence or chat
 > settings are unreachable. See the new **Strict / Open answer policy** section below.
 
@@ -295,8 +295,7 @@ rather than only a header swap. The mode is resolved per request and recorded in
 The **strict-mode contract** (commits `f45d98eeb`, `318cad715`, `2ba0f5740`,
 `947603eea`, `2a1bf209e`):
 
-- The retrieval gate is **never** bypassed in strict mode (`retrieve.py` sets
-  `gate_skipped_reason=strict_mode` so a strict request always runs retrieval).
+- Retrieval is mandatory in every mode; the retired gate can no longer skip it.
 - Web-search tool content is **stripped** from context so the answer cannot leak from
   the web in strict mode.
 - When retrieval returns no citable evidence, the hook emits a **deterministic refusal**
@@ -430,36 +429,13 @@ timeout), retrieval continues with dense-only search.
 
 ---
 
-### Step 3: The retrieval gate
+### Step 3: Mandatory retrieval
 
-**Simple:** Not every question needs a knowledge base lookup. "How do I write a for-loop
-in Python?" has nothing to do with your company documents. The gate detects this and
-skips retrieval entirely — saving latency and not polluting the model's context with
-irrelevant chunks.
-
-**Technical:** The gate compares the query's dense vector against a set of reference
-vectors loaded from `data/gate_reference.jsonl` (queries that are known to need
-retrieval). It computes:
-
-```
-margin = cosine_similarity(query, top_1_reference) - cosine_similarity(query, top_2_reference)
-```
-
-If `margin > 0.1` (configurable via `RETRIEVAL_GATE_THRESHOLD`), the query is too
-distinct from any known retrieval-worthy query pattern, and retrieval is bypassed. The
-hook receives `retrieval_bypassed: true` and injects nothing into the model's context.
-
-When bypassed, the metadata `gate_bypassed: true` is attached to the request so
-downstream hooks can observe the decision.
-
-> **Resolution 2026-08-20.** The gate above is retained for explicit evaluation but is
-> disabled in production (`RETRIEVAL_GATE_ENABLED=false`). Its 30-day shadow run emitted
-> only 3 unique would-bypass decisions across roughly 4,500 requests (~0.07%), all with
-> low retrieval confidence. The negligible saving does not justify the risk of silently
-> dropping all KB context. The 16-line corpus remains an insufficient activation basis.
->
-> **Strict KB mode skips the gate entirely by design** — `retrieve.py` sets
->    `gate_skipped_reason=strict_mode` so a strict request always runs retrieval.
+Every knowledge-enabled request proceeds to search. The former cosine-margin retrieval
+gate was decommissioned on 2026-08-20 after recommending bypass for only 3 of roughly
+4,500 requests (~0.07%), all of them low-confidence cases where dropping KB context was
+most risky. Its runtime, reference corpus, generator, flags, telemetry and dedicated
+tests were removed; there is no alternate bypass path to operate or monitor.
 
 ---
 
@@ -746,66 +722,15 @@ knowledge_ingest/rebuild_tasks.py`.
 
 ---
 
-### Step 6: Evidence tier scoring (production disabled)
+### Step 6: Serve the post-rerank order
 
-**Simple:** An evaluation-only layer that can re-weight results by source quality,
-recency, and graph centrality. Production skips the calculation and serves the flat
-reranker order because the earlier online shadow did not measure answer quality.
-
-**Technical:** Implemented in
-[`evidence_tier.apply()`](../../klai-retrieval-api/retrieval_api/services/evidence_tier.py).
-Each chunk is multiplied by four weights along independent dimensions, gated by
-per-dimension feature flags:
-
-```
-final_score = reranker_score
-            * content_type_weight       # EVIDENCE_CONTENT_TYPE_ENABLED
-            * assertion_mode_weight     # EVIDENCE_ASSERTION_MODE_ENABLED (flat 1.00 in v1)
-            * temporal_decay            # EVIDENCE_TEMPORAL_DECAY_ENABLED
-            * pagerank_weight           # EVIDENCE_PAGERANK_ENABLED
-```
-
-| Weight | Source | Default values |
-|---|---|---|
-| `content_type_weight` | Per-chunk `content_type` payload (set at ingest) | `kb_article=1.00`, `pdf_document=0.90`, `meeting_transcript=0.80`, `1on1_transcript=0.80`, `graph_edge=0.70`, `web_crawl=0.65`, `unknown=0.55` |
-| `assertion_mode_weight` | Per-chunk `assertion_mode` payload | Conservative profile (no longer flat): `factual`/`procedural` = 1.00, `quoted` = 0.98, `unknown` = 0.97, `belief` = 0.95, `hypothesis` = 0.90 (spread 0.10 per the weights research; unmapped modes fall back to `unknown` — never penalize absent metadata). Shadow-gated like the rest; SPEC-EVIDENCE-002 governs go-live (preconditions: LLM-derived labels, measured unknown-fraction). |
-| `temporal_decay` | Chunk `ingested_at` age | `<30d=1.00`, `30-180d=0.95`, `180-365d=0.90`, `>365d=0.85` |
-| `pagerank_weight` | Per-chunk `entity_pagerank_max` from FalkorDB | `1 + 0.20 * log1p(pagerank * 100)` — capped ~+25% for hub entities |
-
-After scoring, chunks are reordered into a **U-shape** (`_order_for_llm`): strongest
-chunk at position 0, second-strongest at the last position, mid-strength chunks
-clustered in the middle. This mitigates "Lost in the Middle" (Liu et al. 2023,
-[arXiv:2307.03172](https://arxiv.org/abs/2307.03172)) — long-context LLMs historically
-showed >30% performance degradation when the strongest evidence sat in the middle of
-the prompt. Whether this still holds for modern frontier LLMs is part of what the
-RAGAS A/B will measure.
-
-**Production contract (resolved 2026-08-20):** `EVIDENCE_SHADOW_MODE=disabled` serves
-the flat reranker order and does not run `copy.deepcopy + apply`. The preceding 30-day
-shadow run changed the top ordering in 2,186/8,946 logged runs, but captured no paired
-answer-quality outcome and therefore could not determine whether those changes helped.
-`shadow` and `active` remain explicit evaluation modes; neither is the production default.
-
-**Activation path (SPEC-EVIDENCE-001-FOLLOWUP-001):** the shadow mode has been the
-default since 2026-03-30. RAGAS infrastructure landed 2026-05-05 (#369). The follow-up
-SPEC sets a 30-day deadline to either:
-
-1. Activate (5%/50%/100% staged rollout with auto-revert on quality regression),
-2. Activate `evidence_tier_temporal_only` (temporal decay isolated; the dimension with
-   the strongest theoretical justification),
-3. Decommission entirely (remove the `evidence_tier.apply()` call + payload fields), or
-4. Retain-flags-off (`EVIDENCE_SHADOW_MODE=disabled` becomes the new default — stops
-   the shadow CPU cost while preserving code for future revival).
-
-The RAGAS A/B uses three `RAG_EVAL_VARIANT` values (`baseline`, `evidence_tier_full`,
-`evidence_tier_temporal_only`) over 7 consecutive days. Decision criteria: ≥+0.02 on
-RAGAS Context Precision AND Faithfulness with Wilcoxon `p<0.05` against baseline.
-
-> **Status 2026-08-20: retained-flags-off was selected.** The eval
-> harness reads `RAG_EVAL_VARIANT` but only `baseline` exists — there is no
-> `evidence_tier_full` / `evidence_tier_temporal_only` code path anywhere in
-> `knowledge_ingest/eval/`. Production therefore stopped the inconclusive shadow CPU
-> cost instead of leaving an ownerless experiment running.
+The post-rerank pipeline produces the single serving order. The former evidence-tier
+experiment multiplied reranker scores by content type, assertion mode, age and PageRank,
+then applied U-shaped prompt ordering. Its shadow changed ordering in 2,186 of 8,946
+logged runs but recorded no paired answer-quality outcome, so it could not establish a
+better result. The runtime, feature flags, response metadata and dedicated offline
+comparison harness were removed on 2026-08-20. The already-graduated ranking contract
+remains the authoritative production ordering.
 
 ---
 
@@ -1002,15 +927,8 @@ Trailing punctuation and whitespace are ignored. "Ok!" and "Oké." are both triv
 | `KNOWLEDGE_RETRIEVE_TIMEOUT` | `3.0` | Retrieval API timeout (seconds) |
 | `KLAI_GAP_SOFT_THRESHOLD` | `0.4` | Reranker score below which gap is "soft" |
 | `KLAI_GAP_DENSE_THRESHOLD` | `0.35` | Dense score fallback for gap detection |
-| `RETRIEVAL_GATE_ENABLED` | `false` | Gate disabled after negligible 30-day shadow yield; enable only for explicit evaluation. |
-| `RETRIEVAL_GATE_THRESHOLD` | `0.1` | Cosine margin threshold for gate bypass |
-| `RETRIEVAL_GATE_SHADOW` | `true` | Applies only when the disabled gate is explicitly enabled for evaluation; records recommendations without acting. |
 | `retrieval_candidates` | `60` | Raw candidates fetched from Qdrant |
 | `reranker_candidates` | `20` | Top-N sent to cross-encoder |
-| `EVIDENCE_SHADOW_MODE` | `disabled` | Production skips evidence-tier computation. Explicit `shadow`/`active` modes are evaluation-only. |
-| `EVIDENCE_CONTENT_TYPE_ENABLED` | `true` | Per-dimension flag for content_type weights. |
-| `EVIDENCE_TEMPORAL_DECAY_ENABLED` | `true` | Per-dimension flag for temporal decay. |
-| `EVIDENCE_PAGERANK_ENABLED` | `true` | Per-dimension flag for entity_pagerank_max boost. |
 | `link_expand_enabled` | `true` | 1-hop link expansion + authority boost (SPEC-CRAWLER-003). |
 | `link_expand_seed_k` | `10` | Top-N raw chunks whose `links_to` payload is mined. |
 | `link_expand_max_urls` | `30` | Cap on URLs collected from seed chunks per request. |
@@ -1104,7 +1022,6 @@ snapshot: [docs/architecture/retrieval-improvements-roadmap.md](retrieval-improv
 | Embeddings | `klai-retrieval-api/retrieval_api/services/tei.py` | Dense + sparse embedding via BGE-M3 |
 | Qdrant search | `klai-retrieval-api/retrieval_api/services/search.py` | Hybrid three-leg RRF search |
 | Source-aware select | `klai-retrieval-api/retrieval_api/services/diversity.py` | `source_aware_select()` — bounded semantic source preference followed by per-label diversity. Called from `retrieve.py` step 5c. |
-| Evidence tier | `klai-retrieval-api/retrieval_api/services/evidence_tier.py` | `apply()` + `_order_for_llm()` U-shape; content_type / temporal / pagerank weights. Shadow-mode default. |
 | Parent text swap | `klai-retrieval-api/retrieval_api/services/parent_lookup.py` | SPEC-RAG-PARENT-CHILD-001 — batch-fetches `knowledge.parent_chunks` rows for chunks with `parent_chunk_id`. |
 | Quality boost | `klai-retrieval-api/retrieval_api/quality_boost.py` | SPEC-KB-015 — `feedback_count >= 3` cold-start gate, ±10% boost. |
 | Identity verify (portal) | `klai-portal/backend/app/services/identity_verifier.py` | `verify_identity_claim()` — JWT / membership / `partner:<key_id>` branches. |
@@ -1113,7 +1030,6 @@ snapshot: [docs/architecture/retrieval-improvements-roadmap.md](retrieval-improv
 | Router (signal) | `klai-retrieval-api/retrieval_api/services/router.py` | Semantic-centroid signal with optional LLM fallback for source-aware select (SPEC-KB-021) |
 | Graph search | `klai-retrieval-api/retrieval_api/services/graph_search.py` | FalkorDB/Graphiti parallel traversal, RRF-merged with Qdrant results |
 | Reranker | `klai-retrieval-api/retrieval_api/services/reranker.py` | Cross-encoder reranking via BGE-reranker-v2-m3 on gpu-01 (Infinity) |
-| Retrieval gate | `klai-retrieval-api/retrieval_api/services/gate.py` | Cosine margin bypass check |
 | Partner API auth | `klai-portal/backend/app/api/partner_dependencies.py` | `get_partner_key` — branches on token shape (`pk_live_*` → SHA-256 lookup; else JWT decode) |
 | Widget auth | `klai-portal/backend/app/services/widget_auth.py` | `generate_session_token` — HS256 JWT signed with `WIDGET_JWT_SECRET`, 1h TTL |
 | Widget admin | `klai-portal/backend/app/api/admin_widgets.py` | CRUD on `widgets` table (SPEC-WIDGET-002) |

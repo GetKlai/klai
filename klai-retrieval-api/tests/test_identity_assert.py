@@ -17,6 +17,7 @@ Acceptance coverage:
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -24,11 +25,30 @@ from fastapi.testclient import TestClient
 from klai_identity_assert import VerifyResult
 
 
-def _patch_retrieval_pipeline_to_bypass():
-    """Stack of patches that short-circuit the heavy retrieval pipeline so
-    the test focuses on the auth/identity layer. Mirrors the legacy pattern
-    in test_auth.py's admin-bypass test.
-    """
+@contextmanager
+def _empty_search_pipeline():
+    with (
+        patch(
+            "retrieval_api.api.retrieve.search.hybrid_search",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "retrieval_api.api.retrieve.graph_search.search",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "retrieval_api.api.retrieve.fetch_source_catalog",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+    ):
+        yield
+
+
+def _patch_retrieval_pipeline_to_empty_results():
+    """Patches that isolate auth/identity tests from retrieval services."""
     return [
         patch(
             "retrieval_api.api.retrieve.coreference.resolve",
@@ -45,11 +65,7 @@ def _patch_retrieval_pipeline_to_bypass():
             new_callable=AsyncMock,
             return_value=None,
         ),
-        patch(
-            "retrieval_api.api.retrieve.gate.should_bypass",
-            new_callable=AsyncMock,
-            return_value=(True, 0.5),
-        ),
+        _empty_search_pipeline(),
     ]
 
 
@@ -242,10 +258,10 @@ class TestPortalAllowProceeds:
         )
 
         with (
-            _patch_retrieval_pipeline_to_bypass()[0],
-            _patch_retrieval_pipeline_to_bypass()[1],
-            _patch_retrieval_pipeline_to_bypass()[2],
-            _patch_retrieval_pipeline_to_bypass()[3],
+            _patch_retrieval_pipeline_to_empty_results()[0],
+            _patch_retrieval_pipeline_to_empty_results()[1],
+            _patch_retrieval_pipeline_to_empty_results()[2],
+            _patch_retrieval_pipeline_to_empty_results()[3],
         ):
             resp = app_client.post(
                 "/retrieve",
@@ -310,10 +326,10 @@ class TestEmitEventUsesVerifiedTuple:
         monkeypatch.setattr("retrieval_api.api.retrieve.emit_event", _capture_emit)
 
         with (
-            _patch_retrieval_pipeline_to_bypass()[0],
-            _patch_retrieval_pipeline_to_bypass()[1],
-            _patch_retrieval_pipeline_to_bypass()[2],
-            _patch_retrieval_pipeline_to_bypass()[3],
+            _patch_retrieval_pipeline_to_empty_results()[0],
+            _patch_retrieval_pipeline_to_empty_results()[1],
+            _patch_retrieval_pipeline_to_empty_results()[2],
+            _patch_retrieval_pipeline_to_empty_results()[3],
         ):
             resp = app_client.post(
                 "/retrieve",
@@ -411,10 +427,10 @@ class TestEmitEventUsesVerifiedTuple:
         monkeypatch.setattr("retrieval_api.api.retrieve.emit_event", _capture_emit)
 
         with (
-            _patch_retrieval_pipeline_to_bypass()[0],
-            _patch_retrieval_pipeline_to_bypass()[1],
-            _patch_retrieval_pipeline_to_bypass()[2],
-            _patch_retrieval_pipeline_to_bypass()[3],
+            _patch_retrieval_pipeline_to_empty_results()[0],
+            _patch_retrieval_pipeline_to_empty_results()[1],
+            _patch_retrieval_pipeline_to_empty_results()[2],
+            _patch_retrieval_pipeline_to_empty_results()[3],
         ):
             resp = app_client.post(
                 "/retrieve",
@@ -516,10 +532,10 @@ class TestPartnerSyntheticIdentity:
         )
 
         with (
-            _patch_retrieval_pipeline_to_bypass()[0],
-            _patch_retrieval_pipeline_to_bypass()[1],
-            _patch_retrieval_pipeline_to_bypass()[2],
-            _patch_retrieval_pipeline_to_bypass()[3],
+            _patch_retrieval_pipeline_to_empty_results()[0],
+            _patch_retrieval_pipeline_to_empty_results()[1],
+            _patch_retrieval_pipeline_to_empty_results()[2],
+            _patch_retrieval_pipeline_to_empty_results()[3],
         ):
             resp = app_client.post(
                 "/retrieve",
@@ -576,10 +592,10 @@ class TestPartnerSyntheticIdentity:
         )
 
         with (
-            _patch_retrieval_pipeline_to_bypass()[0],
-            _patch_retrieval_pipeline_to_bypass()[1],
-            _patch_retrieval_pipeline_to_bypass()[2],
-            _patch_retrieval_pipeline_to_bypass()[3],
+            _patch_retrieval_pipeline_to_empty_results()[0],
+            _patch_retrieval_pipeline_to_empty_results()[1],
+            _patch_retrieval_pipeline_to_empty_results()[2],
+            _patch_retrieval_pipeline_to_empty_results()[3],
         ):
             resp = app_client.post(
                 "/retrieve",
@@ -617,10 +633,10 @@ class TestPartnerSyntheticIdentity:
         )
 
         with (
-            _patch_retrieval_pipeline_to_bypass()[0],
-            _patch_retrieval_pipeline_to_bypass()[1],
-            _patch_retrieval_pipeline_to_bypass()[2],
-            _patch_retrieval_pipeline_to_bypass()[3],
+            _patch_retrieval_pipeline_to_empty_results()[0],
+            _patch_retrieval_pipeline_to_empty_results()[1],
+            _patch_retrieval_pipeline_to_empty_results()[2],
+            _patch_retrieval_pipeline_to_empty_results()[3],
         ):
             resp = app_client.post(
                 "/retrieve",

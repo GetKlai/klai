@@ -358,10 +358,9 @@ The most consequential finding: adding contextual metadata at storage time reduc
 
 Fully automated extraction produces 20–45% errors on standard business documents. The hybrid approach: 90% of documents are processed automatically; only the 10–15% where the system itself has low confidence are flagged for human review. Near-human quality at 500× less effort.
 
-**In Klai:** evidence-tier scoring is disabled in production after an inconclusive
-online shadow run: it changed retrieval order but had no paired answer-quality outcome.
-The implementation remains available for controlled evaluation. Full hybrid review is
-a Phase 3 target — tracked in `klai-knowledge-architecture.md §7.4`.
+**In Klai:** evidence-tier scoring was removed after an inconclusive online shadow run:
+it changed retrieval order but had no paired answer-quality outcome. Full hybrid review
+remains a separate Phase 3 concept — it is not implemented by a shadow scorer.
 
 ### Three storage layers — each wins at something different
 

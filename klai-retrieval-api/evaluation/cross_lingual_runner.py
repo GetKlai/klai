@@ -18,11 +18,10 @@ The runner intentionally does NOT use RAGAS or any LLM-as-judge — it
 only checks one thing per query: did the response come back in the
 language of the query? That is what REQ-05 gates on.
 
-Citation correctness, faithfulness, and answer-relevance are covered
-by the existing eval-suite (eval_runner.py + RAGAS); they're not
-re-implemented here. After a Phase-2 merge, the operator runs both
-this script (cross-lingual gate) and eval_runner.py (regression on
-existing metrics) before declaring the gate satisfied.
+Citation correctness, faithfulness, and answer-relevance are covered by
+the knowledge-ingest RAGAS suites; they're not re-implemented here. After
+a Phase-2 merge, the operator runs this script and the relevant RAGAS suite
+before declaring the language gate satisfied.
 """
 
 from __future__ import annotations

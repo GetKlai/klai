@@ -267,9 +267,7 @@ class TestEvidenceScoreFloor:
         )
 
     def test_final_score_wins_over_reranker_score(self, monkeypatch) -> None:
-        """Fix 4: final_score (post-evidence-tier ranking truth) is checked
-        BEFORE reranker_score — a stale high reranker_score on a chunk whose
-        final_score dropped below the floor must not resurrect it."""
+        """A backward-compatible final_score is checked before reranker_score."""
         klai_knowledge = _load_hook(monkeypatch)
         assert klai_knowledge._chunk_below_evidence_floor(
             {"chunk_id": "c1", "final_score": 0.1, "reranker_score": 0.9}

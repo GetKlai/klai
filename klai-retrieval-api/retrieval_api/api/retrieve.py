@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import copy
 import math
-import os
 import time
 import uuid
 
@@ -43,7 +41,7 @@ from retrieval_api.models import (
 )
 from retrieval_api.quality_boost import quality_boost
 from retrieval_api.quality_floor import filter_quality_floor
-from retrieval_api.services import coreference, evidence_tier, gate, graph_search, reranker, search
+from retrieval_api.services import coreference, graph_search, reranker, search
 from retrieval_api.services.diversity import source_aware_select
 from retrieval_api.services.events import emit_event
 from retrieval_api.services.evidence_pack import (
@@ -162,7 +160,7 @@ async def _retrieve_sub_queries(
     """Fan out one full retrieval per sub-question and merge the results.
 
     Each sub-question runs the complete single-query pipeline (embedding,
-    gate, search, rerank, evidence pack) via a recursive ``retrieve`` call,
+    search, rerank, evidence pack) via a recursive ``retrieve`` call,
     so per-sub-question decision records, metrics, and identity verification
     all behave exactly like a normal request. The merge namespaces evidence
     ids per question (``merge_evidence_packs``) and reports per-question
@@ -234,7 +232,6 @@ async def _retrieve_sub_queries(
     candidates_total = 0
     reranked_total = 0
     failures = 0
-    successful_bypassed_flags: list[bool] = []
     for (index, query), result in zip(sub_queries, results, strict=True):
         if isinstance(result, BaseException):
             # A 4xx from a sub-call is an auth/validation failure of the
@@ -258,14 +255,12 @@ async def _retrieve_sub_queries(
         pack = result.evidence_pack
         evidence_count = len(pack.items) if pack is not None else 0
         indexed_packs.append((index, pack))
-        successful_bypassed_flags.append(result.retrieval_bypassed)
         sub_results.append(
             SubQueryResult(
                 index=index,
                 query=query,
                 confidence_band=result.confidence_band,
                 evidence_count=evidence_count,
-                retrieval_bypassed=result.retrieval_bypassed,
             )
         )
         candidates_total += result.metadata.candidates_retrieved
@@ -282,22 +277,6 @@ async def _retrieve_sub_queries(
     covered_bands = [sub.confidence_band for sub in sub_results if sub.confidence_band is not None]
     overall_band = (
         max(covered_bands, key=lambda band: _BAND_RANK.get(band, 0)) if covered_bands else "unknown"
-    )
-    # Aggregate retrieval_bypassed: True only when there are ZERO failures
-    # AND at least one successful sub-response AND every successful
-    # sub-response was gate-bypassed. The failures==0 guard matters even
-    # though a mix of "some bypassed, some failed" still has
-    # bool(successful_bypassed_flags) and all(...) both true — without it,
-    # a partially-failed fan-out (e.g. 1 bypassed success + 1 error) would
-    # report bypassed=True at the parent level. The litellm hook treats
-    # retrieval_bypassed=True as an early-return "gate bypassed" branch that
-    # never reaches sub_query_coverage/unchecked_questions, so that failed
-    # sub-question would silently vanish from what the user sees instead of
-    # surfacing as "could not check this one". All-failures (failures ==
-    # len(sub_queries)) is already unreachable here — that branch raises 502
-    # above — so this guard only affects the partial-failure case.
-    all_bypassed = (
-        failures == 0 and bool(successful_bypassed_flags) and all(successful_bypassed_flags)
     )
     merged_pack = merge_evidence_packs(indexed_packs)
     retrieval_ms = (time.perf_counter() - t0) * 1000
@@ -348,7 +327,7 @@ async def _retrieve_sub_queries(
 
     return RetrieveResponse(
         query_resolved=req.query,
-        retrieval_bypassed=all_bypassed,
+        retrieval_bypassed=False,
         chunks=merged_chunks,
         metadata=RetrieveMetadata(
             candidates_retrieved=candidates_total,
@@ -509,29 +488,6 @@ async def retrieve(
     decision_record["embedding_ms"] = round(embed_ms, 1)
     decision_record["raw_query_leg_applied"] = raw_query is not None
 
-    # 3. Gate check. Strict KB mode must never skip retrieval: a wrong bypass
-    # would turn "answer only from selected KBs" into a plain model answer.
-    # When explicitly enabled in shadow mode, the gate logs its decision but
-    # never acts on it. Production leaves the low-yield gate disabled.
-    if req.kb_narrow:
-        gate_decision = gate.GateDecision(
-            would_bypass=False,
-            bypassed=False,
-            margin=None,
-            shadow=settings.retrieval_gate_enabled and settings.retrieval_gate_shadow,
-        )
-        decision_record["gate_skipped_reason"] = "strict_mode"
-    else:
-        gate_decision = await gate.evaluate(query_vector)
-
-    bypassed = gate_decision.bypassed
-    gate_margin = gate_decision.margin
-    decision_record["gate_margin"] = round(gate_margin, 4) if gate_margin is not None else None
-    decision_record["gate_would_bypass"] = gate_decision.would_bypass
-    decision_record["gate_shadow_mode"] = gate_decision.shadow
-    decision_record["gate_bypassed"] = bypassed
-    decision_record["gate_ms"] = round((time.perf_counter() - t0) * 1000, 1)
-
     chunks_out: list[ChunkResult] = []
     candidates_retrieved = 0
     reranked_to = 0
@@ -548,23 +504,16 @@ async def retrieve(
     # decision_record can measure link-expansion's contribution to
     # the served top-k. Without this, we cannot tell whether the
     # expanded chunks ever survive the reranker + source-select +
-    # quality-boost + evidence-tier passes — i.e. whether the
+    # quality-boost pass — i.e. whether the
     # extra Qdrant scroll-call buys anything in practice.
     link_expand_seed_chunk_ids: set[str] = set()
     link_expand_candidate_urls = 0
-    # Default-empty serving lists so the bypassed=True path doesn't leave
-    # ``serving`` and ``expanded_in_top_k_ids`` unbound. Pyright cannot
-    # trace the if-bypassed/else-bypassed mutual exclusion across the
-    # two read sites further down (line ~542 + ~555) — initializing
-    # here is cleaner than scattered `# type: ignore` comments and makes
-    # the bypass path's downstream code defensively correct anyway.
-    serving: list[dict] = []
     expanded_in_top_k_ids: list[str] = []
 
     # 3b. Query router — identifies relevant sources for post-rerank selection
     router_meta: dict = {"router_decision": None, "router_layer_used": "skipped"}
     router_selected: set[str] | None = None
-    if settings.router_enabled and req.scope in ("org", "both") and not bypassed:
+    if settings.router_enabled and req.scope in ("org", "both"):
         source_label_catalog = await fetch_source_catalog(req.org_id, req.kb_slugs)
         if len(source_label_catalog) >= settings.router_min_source_label_count:
             routing = await route_to_sources(
@@ -588,186 +537,229 @@ async def retrieve(
             }
     decision_record["router"] = router_meta
 
-    if not bypassed:
-        # 4. Search — Qdrant + Graphiti in parallel (AC-5)
-        t_qdrant = time.perf_counter()
-        qdrant_coro = search.hybrid_search(
-            query_vector,
-            req,
-            settings.retrieval_candidates,
-            sparse_vector,
-            raw_query_vector=raw_query_vector,
-            raw_sparse_vector=raw_sparse_vector,
-        )
+    # 4. Search — Qdrant + Graphiti in parallel (AC-5)
+    t_qdrant = time.perf_counter()
+    qdrant_coro = search.hybrid_search(
+        query_vector,
+        req,
+        settings.retrieval_candidates,
+        sparse_vector,
+        raw_query_vector=raw_query_vector,
+        raw_sparse_vector=raw_sparse_vector,
+    )
 
-        graph_task: asyncio.Task[list[dict]] | None = None
-        t_graph: float | None = None
-        if settings.graphiti_enabled:
-            t_graph = time.perf_counter()
-            graph_task = asyncio.create_task(
-                graph_search.search(query_resolved, req.org_id, top_k=20)
-            )
+    graph_task: asyncio.Task[list[dict]] | None = None
+    t_graph: float | None = None
+    if settings.graphiti_enabled:
+        t_graph = time.perf_counter()
+        graph_task = asyncio.create_task(graph_search.search(query_resolved, req.org_id, top_k=20))
 
-        raw_results = await qdrant_coro
-        qdrant_ms = (time.perf_counter() - t_qdrant) * 1000
-        step_latency_seconds.labels(step="qdrant").observe(time.perf_counter() - t_qdrant)
-        decision_record["search_ms"] = round(qdrant_ms, 1)
+    raw_results = await qdrant_coro
+    qdrant_ms = (time.perf_counter() - t_qdrant) * 1000
+    step_latency_seconds.labels(step="qdrant").observe(time.perf_counter() - t_qdrant)
+    decision_record["search_ms"] = round(qdrant_ms, 1)
 
-        if graph_task is not None and t_graph is not None:
-            try:
-                graph_results = await graph_task
-                graph_search_ms = (time.perf_counter() - t_graph) * 1000
-                step_latency_seconds.labels(step="graph").observe(graph_search_ms / 1000)
-                graph_results_count = len(graph_results)
-                if graph_results:
-                    graph_candidate_ids = {r["chunk_id"] for r in graph_results}
-                    raw_results = _rrf_merge(raw_results, graph_results)
-            except Exception:
-                # SPEC-SEC-HYGIENE-001 REQ-43.3: exc_info=True preserves the
-                # traceback that the previous `error=str(exc)` dropped (TRY401).
-                logger.warning("Graph search task failed", exc_info=True)
+    if graph_task is not None and t_graph is not None:
+        try:
+            graph_results = await graph_task
+            graph_search_ms = (time.perf_counter() - t_graph) * 1000
+            step_latency_seconds.labels(step="graph").observe(graph_search_ms / 1000)
+            graph_results_count = len(graph_results)
+            if graph_results:
+                graph_candidate_ids = {r["chunk_id"] for r in graph_results}
+                raw_results = _rrf_merge(raw_results, graph_results)
+        except Exception:
+            # SPEC-SEC-HYGIENE-001 REQ-43.3: exc_info=True preserves the
+            # traceback that the previous `error=str(exc)` dropped (TRY401).
+            logger.warning("Graph search task failed", exc_info=True)
 
-        candidates_retrieved = len(raw_results)
-        decision_record["search_candidates_count"] = candidates_retrieved
+    candidates_retrieved = len(raw_results)
+    decision_record["search_candidates_count"] = candidates_retrieved
 
-        # 4b. Link expansion (SPEC-CRAWLER-003 R14-R16)
-        if settings.link_expand_enabled and raw_results:
-            t_expand = time.perf_counter()
-            seed_chunks = raw_results[: settings.link_expand_seed_k]
-            candidate_urls: list[str] = []
-            seen_urls: set[str] = set()
-            for chunk in seed_chunks:
-                for url in payload_list(chunk, "links_to"):
-                    if url not in seen_urls:
-                        seen_urls.add(url)
-                        candidate_urls.append(url)
-                    if len(candidate_urls) >= settings.link_expand_max_urls:
-                        break
+    # 4b. Link expansion (SPEC-CRAWLER-003 R14-R16)
+    if settings.link_expand_enabled and raw_results:
+        t_expand = time.perf_counter()
+        seed_chunks = raw_results[: settings.link_expand_seed_k]
+        candidate_urls: list[str] = []
+        seen_urls: set[str] = set()
+        for chunk in seed_chunks:
+            for url in payload_list(chunk, "links_to"):
+                if url not in seen_urls:
+                    seen_urls.add(url)
+                    candidate_urls.append(url)
                 if len(candidate_urls) >= settings.link_expand_max_urls:
                     break
+            if len(candidate_urls) >= settings.link_expand_max_urls:
+                break
 
-            # F3 phase 1: capture seed chunk_ids before expansion so we can
-            # measure later how many of the served top-k were original-seed
-            # vs newly-expanded vs neither.
-            link_expand_seed_chunk_ids = {c["chunk_id"] for c in seed_chunks}
-            link_expand_candidate_urls = len(candidate_urls)
+        # F3 phase 1: capture seed chunk_ids before expansion so we can
+        # measure later how many of the served top-k were original-seed
+        # vs newly-expanded vs neither.
+        link_expand_seed_chunk_ids = {c["chunk_id"] for c in seed_chunks}
+        link_expand_candidate_urls = len(candidate_urls)
 
-            if candidate_urls:
-                expansion_chunks = await search.fetch_chunks_by_urls(
-                    candidate_urls, req, settings.link_expand_candidates
-                )
-                existing_ids = {r["chunk_id"] for r in raw_results}
-                new_chunks = [c for c in expansion_chunks if c["chunk_id"] not in existing_ids]
-                link_expand_count = len(new_chunks)
-                # F3 phase 1: tag the expansion chunks. Underscore prefix
-                # keeps the field internal — Pydantic ChunkResult ignores
-                # unknown fields by default and the build loop only reads
-                # explicit keys, so this never leaks to the response body.
-                for c in new_chunks:
-                    c["_link_expanded"] = True
-                raw_results = raw_results + new_chunks
-
-            link_expand_ms = (time.perf_counter() - t_expand) * 1000
-            step_latency_seconds.labels(step="link_expand").observe(link_expand_ms / 1000)
-            logger.debug(
-                "link_expand",
-                seed_k=len(seed_chunks),
-                candidate_urls=len(candidate_urls),
-                new_chunks=link_expand_count,
+        if candidate_urls:
+            expansion_chunks = await search.fetch_chunks_by_urls(
+                candidate_urls, req, settings.link_expand_candidates
             )
+            existing_ids = {r["chunk_id"] for r in raw_results}
+            new_chunks = [c for c in expansion_chunks if c["chunk_id"] not in existing_ids]
+            link_expand_count = len(new_chunks)
+            # F3 phase 1: tag the expansion chunks. Underscore prefix
+            # keeps the field internal — Pydantic ChunkResult ignores
+            # unknown fields by default and the build loop only reads
+            # explicit keys, so this never leaks to the response body.
+            for c in new_chunks:
+                c["_link_expanded"] = True
+            raw_results = raw_results + new_chunks
 
-        # 4c. Authority boost (SPEC-CRAWLER-003 R17), retained only for
-        # ranking-contract shadow comparison. Active mode serves by the
-        # post-rerank final_rank_score contract instead.
-        if ranking_contract_mode == "shadow" and settings.link_expand_enabled and raw_results:
-            for r in raw_results:
-                incoming = r.get("incoming_link_count") or 0
-                if incoming > 0:
-                    r["score"] = r["score"] + settings.link_authority_boost * math.log(1 + incoming)
-
-        raw_results, page_context_candidate_boosted = _apply_page_context_boost(
-            raw_results,
-            page_context,
-            mark=False,
+        link_expand_ms = (time.perf_counter() - t_expand) * 1000
+        step_latency_seconds.labels(step="link_expand").observe(link_expand_ms / 1000)
+        logger.debug(
+            "link_expand",
+            seed_k=len(seed_chunks),
+            candidate_urls=len(candidate_urls),
+            new_chunks=link_expand_count,
         )
-        decision_record["page_context_candidates_boosted"] = page_context_candidate_boosted
 
-        # 5. Rerank (skip when reranker disabled)
-        if raw_results and settings.reranker_enabled:
-            t_rerank = time.perf_counter()
-            rerank_input = raw_results[: settings.reranker_candidates]
-            rerank_top_n = min(len(rerank_input), max(req.top_k, req.top_k * 3))
-            reranked = await reranker.rerank(query_resolved, rerank_input, rerank_top_n)
-            rerank_ms = (time.perf_counter() - t_rerank) * 1000
-            step_latency_seconds.labels(step="rerank").observe(rerank_ms / 1000)
-            reranked_to = len(reranked)
-            decision_record["rerank_ms"] = round(rerank_ms, 1)
-            decision_record["reranker_scores_top5"] = [
-                r.get("reranker_score") or r.get("score", 0) for r in reranked[:5]
-            ]
-        else:
-            reranked = raw_results[: req.top_k]
-            reranked_to = len(reranked)
+    # 4c. Authority boost (SPEC-CRAWLER-003 R17), retained only for
+    # ranking-contract shadow comparison. Active mode serves by the
+    # post-rerank final_rank_score contract instead.
+    if ranking_contract_mode == "shadow" and settings.link_expand_enabled and raw_results:
+        for r in raw_results:
+            incoming = r.get("incoming_link_count") or 0
+            if incoming > 0:
+                r["score"] = r["score"] + settings.link_authority_boost * math.log(1 + incoming)
 
-        # REQ-RANK-01/04: in active mode every serving chunk gets the single
-        # ranking truth; in shadow mode the field stays ABSENT on serving
-        # chunks (downstream sorts then use their pre-contract keys) and a
-        # slim preview copy replays the active pipeline for the shadow diff.
-        ranking_shadow_preview: list[dict] | None = None
-        if ranking_contract_mode == "active":
-            _set_final_rank_scores(reranked)
-        else:
-            ranking_shadow_preview = [
-                {key: chunk.get(key) for key in _SHADOW_PREVIEW_KEYS} for chunk in reranked
-            ]
-            _set_final_rank_scores(ranking_shadow_preview)
+    raw_results, page_context_candidate_boosted = _apply_page_context_boost(
+        raw_results,
+        page_context,
+        mark=False,
+    )
+    decision_record["page_context_candidates_boosted"] = page_context_candidate_boosted
 
-        # 5a-ter. SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-3 — link-expand
-        # reranker boost. Applied AFTER rerank and BEFORE quality-floor so
-        # expanded chunks get a fair shot at surviving source-aware-select.
-        # Default boost=1.00 is a no-op until operator tunes the env var.
-        reranked = _apply_link_expand_boost(
+    # 5. Rerank (skip when reranker disabled)
+    if raw_results and settings.reranker_enabled:
+        t_rerank = time.perf_counter()
+        rerank_input = raw_results[: settings.reranker_candidates]
+        rerank_top_n = min(len(rerank_input), max(req.top_k, req.top_k * 3))
+        reranked = await reranker.rerank(query_resolved, rerank_input, rerank_top_n)
+        rerank_ms = (time.perf_counter() - t_rerank) * 1000
+        step_latency_seconds.labels(step="rerank").observe(rerank_ms / 1000)
+        reranked_to = len(reranked)
+        decision_record["rerank_ms"] = round(rerank_ms, 1)
+        decision_record["reranker_scores_top5"] = [
+            r.get("reranker_score") or r.get("score", 0) for r in reranked[:5]
+        ]
+    else:
+        reranked = raw_results[: req.top_k]
+        reranked_to = len(reranked)
+
+    # REQ-RANK-01/04: in active mode every serving chunk gets the single
+    # ranking truth; in shadow mode the field stays ABSENT on serving
+    # chunks (downstream sorts then use their pre-contract keys) and a
+    # slim preview copy replays the active pipeline for the shadow diff.
+    ranking_shadow_preview: list[dict] | None = None
+    if ranking_contract_mode == "active":
+        _set_final_rank_scores(reranked)
+    else:
+        ranking_shadow_preview = [
+            {key: chunk.get(key) for key in _SHADOW_PREVIEW_KEYS} for chunk in reranked
+        ]
+        _set_final_rank_scores(ranking_shadow_preview)
+
+    # 5a-ter. SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-3 — link-expand
+    # reranker boost. Applied AFTER rerank and BEFORE quality-floor so
+    # expanded chunks get a fair shot at surviving source-aware-select.
+    # Default boost=1.00 is a no-op until operator tunes the env var.
+    reranked = _apply_link_expand_boost(
+        reranked,
+        boost=settings.link_expand_score_boost,
+        enabled=settings.link_expand_enabled,
+    )
+    if settings.reranker_enabled:
+        reranked, page_context_boosted = _apply_page_context_boost(
             reranked,
+            page_context,
+        )
+    else:
+        page_context_boosted = page_context_candidate_boosted
+    decision_record["page_context_boosted"] = page_context_boosted
+
+    # 5a-bis. Quality-floor filter (SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-07).
+    # Removes chunks explicitly degraded to quality_score=0.0 BEFORE the
+    # source-quota algorithm picks candidates — otherwise a walled chunk
+    # could burn a diversity slot. The default floor (0.05) cannot
+    # accidentally filter neutral 0.5 chunks; an operator must set the
+    # threshold > 0.5 explicitly.
+    reranked, quality_floor_filtered = filter_quality_floor(
+        reranked, floor=settings.retrieval_quality_floor
+    )
+    decision_record["quality_floor_filtered"] = quality_floor_filtered
+    if quality_floor_filtered > 0:
+        # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-08 — labelled by org_id so
+        # per-tenant pollution is visible in Grafana. Only increment on
+        # non-zero to keep metric cardinality predictable for tenants
+        # whose chunks never trip the floor.
+        quality_floor_filtered_total.labels(org_id=req.org_id).inc(quality_floor_filtered)
+
+    # 5b. Source-aware selection (SPEC-KB-021)
+    # Replaces separate router + quota: uses reranker scores to decide.
+    # scope=both may retrieve the canonical personal KB alongside org KBs.
+    # A router preference is derived from the org source catalog, so it
+    # must never boost a personal chunk merely because the labels match.
+    excluded_preferred_kb_slugs = (
+        {personal_kb_slug(req.user_id)} if req.scope == "both" and req.user_id else None
+    )
+    if settings.source_quota_enabled:
+        reranked, source_meta = source_aware_select(
+            reranked,
+            top_n=req.top_k,
+            max_per_source=settings.source_quota_max_per_source,
+            preferred_labels=router_selected,
+            preferred_kb_slugs=set(req.kb_slugs) if req.kb_slugs else None,
+            excluded_preferred_kb_slugs=excluded_preferred_kb_slugs,
+            source_preference_boost=settings.source_preference_boost,
+        )
+    else:
+        source_meta = {
+            "source_select_mode": "disabled",
+            "source_counts": {},
+            "preference_applied": False,
+            "preferred_labels": [],
+            "boost": settings.source_preference_boost,
+            "pack_without_preference": [],
+            "suppressed_count": 0,
+            "max_score_inversion": 0.0,
+        }
+    decision_record["source_select"] = source_meta
+
+    # 5c. Quality score boost (SPEC-KB-015 REQ-KB-015-19,20,21)
+    reranked = quality_boost(reranked, contract_active=ranking_contract_mode == "active")
+    decision_record["quality_boost_applied"] = any(
+        r.get("feedback_count", 0) >= 3 for r in reranked
+    )
+    if ranking_shadow_preview is not None:
+        # REQ-RANK-04 shadow diff: replay the FULL post-rerank pipeline
+        # (same steps, same settings) on the preview so "new" is what
+        # active mode would actually serve — not a partial projection.
+        # "old" is captured from the real ``serving`` list further down.
+        ranking_shadow_preview = _apply_link_expand_boost(
+            ranking_shadow_preview,
             boost=settings.link_expand_score_boost,
             enabled=settings.link_expand_enabled,
         )
         if settings.reranker_enabled:
-            reranked, page_context_boosted = _apply_page_context_boost(
-                reranked,
+            ranking_shadow_preview, _ = _apply_page_context_boost(
+                ranking_shadow_preview,
                 page_context,
             )
-        else:
-            page_context_boosted = page_context_candidate_boosted
-        decision_record["page_context_boosted"] = page_context_boosted
-
-        # 5a-bis. Quality-floor filter (SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-07).
-        # Removes chunks explicitly degraded to quality_score=0.0 BEFORE the
-        # source-quota algorithm picks candidates — otherwise a walled chunk
-        # could burn a diversity slot. The default floor (0.05) cannot
-        # accidentally filter neutral 0.5 chunks; an operator must set the
-        # threshold > 0.5 explicitly.
-        reranked, quality_floor_filtered = filter_quality_floor(
-            reranked, floor=settings.retrieval_quality_floor
-        )
-        decision_record["quality_floor_filtered"] = quality_floor_filtered
-        if quality_floor_filtered > 0:
-            # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-08 — labelled by org_id so
-            # per-tenant pollution is visible in Grafana. Only increment on
-            # non-zero to keep metric cardinality predictable for tenants
-            # whose chunks never trip the floor.
-            quality_floor_filtered_total.labels(org_id=req.org_id).inc(quality_floor_filtered)
-
-        # 5b. Source-aware selection (SPEC-KB-021)
-        # Replaces separate router + quota: uses reranker scores to decide.
-        # scope=both may retrieve the canonical personal KB alongside org KBs.
-        # A router preference is derived from the org source catalog, so it
-        # must never boost a personal chunk merely because the labels match.
-        excluded_preferred_kb_slugs = (
-            {personal_kb_slug(req.user_id)} if req.scope == "both" and req.user_id else None
+        ranking_shadow_preview, _ = filter_quality_floor(
+            ranking_shadow_preview, floor=settings.retrieval_quality_floor
         )
         if settings.source_quota_enabled:
-            reranked, source_meta = source_aware_select(
-                reranked,
+            ranking_shadow_preview, _ = source_aware_select(
+                ranking_shadow_preview,
                 top_n=req.top_k,
                 max_per_source=settings.source_quota_max_per_source,
                 preferred_labels=router_selected,
@@ -775,221 +767,122 @@ async def retrieve(
                 excluded_preferred_kb_slugs=excluded_preferred_kb_slugs,
                 source_preference_boost=settings.source_preference_boost,
             )
-        else:
-            source_meta = {
-                "source_select_mode": "disabled",
-                "source_counts": {},
-                "preference_applied": False,
-                "preferred_labels": [],
-                "boost": settings.source_preference_boost,
-                "pack_without_preference": [],
-                "suppressed_count": 0,
-                "max_score_inversion": 0.0,
-            }
-        decision_record["source_select"] = source_meta
+        ranking_shadow_preview = quality_boost(ranking_shadow_preview, contract_active=True)
 
-        # 5c. Quality score boost (SPEC-KB-015 REQ-KB-015-19,20,21)
-        reranked = quality_boost(reranked, contract_active=ranking_contract_mode == "active")
-        decision_record["quality_boost_applied"] = any(
-            r.get("feedback_count", 0) >= 3 for r in reranked
-        )
-        if ranking_shadow_preview is not None:
-            # REQ-RANK-04 shadow diff: replay the FULL post-rerank pipeline
-            # (same steps, same settings) on the preview so "new" is what
-            # active mode would actually serve — not a partial projection.
-            # "old" is captured from the real ``serving`` list further down.
-            ranking_shadow_preview = _apply_link_expand_boost(
-                ranking_shadow_preview,
-                boost=settings.link_expand_score_boost,
-                enabled=settings.link_expand_enabled,
-            )
-            if settings.reranker_enabled:
-                ranking_shadow_preview, _ = _apply_page_context_boost(
-                    ranking_shadow_preview,
-                    page_context,
-                )
-            ranking_shadow_preview, _ = filter_quality_floor(
-                ranking_shadow_preview, floor=settings.retrieval_quality_floor
-            )
-            if settings.source_quota_enabled:
-                ranking_shadow_preview, _ = source_aware_select(
-                    ranking_shadow_preview,
-                    top_n=req.top_k,
-                    max_per_source=settings.source_quota_max_per_source,
-                    preferred_labels=router_selected,
-                    preferred_kb_slugs=set(req.kb_slugs) if req.kb_slugs else None,
-                    excluded_preferred_kb_slugs=excluded_preferred_kb_slugs,
-                    source_preference_boost=settings.source_preference_boost,
-                )
-            ranking_shadow_preview = quality_boost(ranking_shadow_preview, contract_active=True)
+    # 6. Serve the post-rerank pipeline order. The retired evidence-tier
+    # experiment no longer has an environment-controlled alternate order.
+    serving = reranked
 
-        # Evidence-tier was disabled in production on 2026-08-20: its online
-        # shadow changed ordering but never measured answer quality, so it
-        # could not select a winner. Explicit shadow/active modes remain for
-        # controlled evaluation runs; disabled pays no deepcopy/scoring cost.
-        # 6. Evidence tier scoring + U-shape ordering (SPEC-EVIDENCE-001, R7)
-        evidence_mode_raw = os.environ.get("EVIDENCE_SHADOW_MODE", "disabled").strip().lower()
-        evidence_mode = {
-            "disabled": "disabled",
-            "off": "disabled",
-            "shadow": "shadow",
-            "true": "shadow",
-            "1": "shadow",
-            "yes": "shadow",
-            "active": "active",
-            "false": "active",
-            "0": "active",
-            "no": "active",
-        }.get(evidence_mode_raw)
-        if evidence_mode is None:
-            raise RuntimeError(
-                "invalid EVIDENCE_SHADOW_MODE: "
-                f"{evidence_mode_raw!r}; require disabled, shadow, or active"
-            )
-        decision_record["evidence_tier_mode"] = evidence_mode
-
-        if evidence_mode == "disabled":
-            serving = reranked
-        else:
-            scored = evidence_tier.apply(copy.deepcopy(reranked))
-
-        if evidence_mode == "shadow":
-            # R9: Log shadow results but serve original flat scoring
-            logger.info(
-                "shadow_eval",
-                flat_top_chunk_ids=[c["chunk_id"] for c in reranked[:5]],
-                evidence_top_chunk_ids=[c["chunk_id"] for c in scored[:5]],
-                score_deltas=[
-                    round(
-                        scored[i].get("final_score", 0)
-                        - (reranked[i].get("reranker_score") or reranked[i]["score"]),
-                        4,
-                    )
-                    for i in range(min(5, len(reranked)))
-                ],
-            )
-            serving = reranked
-        elif evidence_mode == "active":
-            serving = scored
-
-        # REQ-RANK-04 shadow diff: "old" is the ACTUAL served list (this
-        # request's response), "new" is the replayed active-contract
-        # pipeline — the ≥7-day shadow review compares real serving deltas.
-        if ranking_shadow_preview is not None:
-            decision_record["ranking_contract_shadow"] = {
-                "old": _ranking_contract_snapshot(serving, max_sources=evidence_max_sources),
-                "new": _ranking_contract_snapshot(
-                    ranking_shadow_preview, max_sources=evidence_max_sources
-                ),
-            }
-
-        # F3 phase 1 instrumentation: emit link-expansion contribution to
-        # the served top-k. Lets us answer "did the extra Qdrant scroll
-        # ever produce a chunk that beat the reranker top-k cut-off?"
-        # before deciding on phase 2 (RRF migration vs disable).
-        # Audit ref: .moai/audits/retrieval-coupling-2026-05-06/findings/
-        # F3-link-expansion-dead-weight.md
-        expanded_in_top_k_ids = [r["chunk_id"] for r in serving if r.get("_link_expanded")]
-        seed_in_top_k_ids = [
-            r["chunk_id"] for r in serving if r["chunk_id"] in link_expand_seed_chunk_ids
-        ]
-        decision_record["link_expand"] = {
-            "enabled": settings.link_expand_enabled,
-            "seed_k": len(link_expand_seed_chunk_ids),
-            "candidate_urls": link_expand_candidate_urls,
-            "expanded_added": link_expand_count,
-            "expanded_in_top_k": len(expanded_in_top_k_ids),
-            "expanded_top_k_chunk_ids": expanded_in_top_k_ids,
-            "seed_in_top_k": len(seed_in_top_k_ids),
-            "served_top_k": len(serving),
+    # REQ-RANK-04 shadow diff: "old" is the ACTUAL served list (this
+    # request's response), "new" is the replayed active-contract
+    # pipeline — the ≥7-day shadow review compares real serving deltas.
+    if ranking_shadow_preview is not None:
+        decision_record["ranking_contract_shadow"] = {
+            "old": _ranking_contract_snapshot(serving, max_sources=evidence_max_sources),
+            "new": _ranking_contract_snapshot(
+                ranking_shadow_preview, max_sources=evidence_max_sources
+            ),
         }
 
-        # Issue #71 measurement gate: before adding any custom graph traversal,
-        # prove whether the current Graphiti graph leg contributes to served
-        # top-K at all. This is intentionally observability-only.
-        graph_in_top_k_ids = [
-            r["chunk_id"] for r in serving if r["chunk_id"] in graph_candidate_ids
-        ]
-        decision_record["graph_search"] = {
-            "enabled": settings.graphiti_enabled,
-            "candidates_returned": graph_results_count,
-            "graph_in_top_k": len(graph_in_top_k_ids),
-            "graph_top_k_chunk_ids": graph_in_top_k_ids,
-            "served_top_k": len(serving),
-        }
+    # F3 phase 1 instrumentation: emit link-expansion contribution to
+    # the served top-k. Lets us answer "did the extra Qdrant scroll
+    # ever produce a chunk that beat the reranker top-k cut-off?"
+    # before deciding on phase 2 (RRF migration vs disable).
+    # Audit ref: .moai/audits/retrieval-coupling-2026-05-06/findings/
+    # F3-link-expansion-dead-weight.md
+    expanded_in_top_k_ids = [r["chunk_id"] for r in serving if r.get("_link_expanded")]
+    seed_in_top_k_ids = [
+        r["chunk_id"] for r in serving if r["chunk_id"] in link_expand_seed_chunk_ids
+    ]
+    decision_record["link_expand"] = {
+        "enabled": settings.link_expand_enabled,
+        "seed_k": len(link_expand_seed_chunk_ids),
+        "candidate_urls": link_expand_candidate_urls,
+        "expanded_added": link_expand_count,
+        "expanded_in_top_k": len(expanded_in_top_k_ids),
+        "expanded_top_k_chunk_ids": expanded_in_top_k_ids,
+        "seed_in_top_k": len(seed_in_top_k_ids),
+        "served_top_k": len(serving),
+    }
 
-        # 6b. SPEC-RAG-PARENT-CHILD-001: swap child text for the parent's
-        # broader-context text. Fetched in one batch query against
-        # knowledge.parent_chunks. Children with no parent_chunk_id (legacy
-        # ingests) keep their own text — REQ-3 fall-through.
-        from retrieval_api.services import parent_lookup
+    # Issue #71 measurement gate: before adding any custom graph traversal,
+    # prove whether the current Graphiti graph leg contributes to served
+    # top-K at all. This is intentionally observability-only.
+    graph_in_top_k_ids = [r["chunk_id"] for r in serving if r["chunk_id"] in graph_candidate_ids]
+    decision_record["graph_search"] = {
+        "enabled": settings.graphiti_enabled,
+        "candidates_returned": graph_results_count,
+        "graph_in_top_k": len(graph_in_top_k_ids),
+        "graph_top_k_chunk_ids": graph_in_top_k_ids,
+        "served_top_k": len(serving),
+    }
 
-        parent_id_per_serving: list[int | None] = [r.get("parent_chunk_id") for r in serving]
-        parent_text_by_id = await parent_lookup.fetch_parents(
-            pid for pid in parent_id_per_serving if pid is not None
-        )
+    # 6b. SPEC-RAG-PARENT-CHILD-001: swap child text for the parent's
+    # broader-context text. Fetched in one batch query against
+    # knowledge.parent_chunks. Children with no parent_chunk_id (legacy
+    # ingests) keep their own text — REQ-3 fall-through.
+    from retrieval_api.services import parent_lookup
 
-        # 7. Build ChunkResult objects (with parent-text swap when available)
-        chunks_out = []
-        for r in serving:
-            pid = r.get("parent_chunk_id")
-            if pid is not None and pid in parent_text_by_id:
-                display_text = parent_text_by_id[pid]
-                is_parent = True
-            else:
-                display_text = r["text"]
-                is_parent = False
-            chunks_out.append(
-                ChunkResult(
-                    chunk_id=r["chunk_id"],
-                    artifact_id=r.get("artifact_id"),
-                    content_type=r.get("content_type"),
-                    text=display_text,
-                    context_prefix=r.get("context_prefix"),
-                    heading_path=r.get("heading_path"),
-                    score=r.get("final_rank_score", r["score"])
-                    if ranking_contract_mode == "active"
-                    else r["score"],
-                    reranker_score=r.get("reranker_score"),
-                    scope=r.get("scope"),
-                    valid_at=r.get("valid_at"),
-                    invalid_at=r.get("invalid_at"),
-                    ingested_at=r.get("ingested_at"),
-                    assertion_mode=r.get("assertion_mode"),
-                    final_score=r.get("final_score"),
-                    evidence_tier_metadata=r.get("evidence_tier_metadata"),
-                    source_ref=r.get("source_ref"),
-                    source_connector_id=r.get("source_connector_id"),
-                    source_url=r.get("source_url"),
-                    kb_slug=r.get("kb_slug"),
-                    source_label=r.get("source_label"),
-                    title=r.get("title"),
-                    original_filename=r.get("original_filename"),
-                    image_urls=payload_list(r, "image_urls") or None,
-                    entity_names=payload_list(r, "entity_names") or None,
-                    is_parent_text=is_parent,
-                )
+    parent_id_per_serving: list[int | None] = [r.get("parent_chunk_id") for r in serving]
+    parent_text_by_id = await parent_lookup.fetch_parents(
+        pid for pid in parent_id_per_serving if pid is not None
+    )
+
+    # 7. Build ChunkResult objects (with parent-text swap when available)
+    chunks_out = []
+    for r in serving:
+        pid = r.get("parent_chunk_id")
+        if pid is not None and pid in parent_text_by_id:
+            display_text = parent_text_by_id[pid]
+            is_parent = True
+        else:
+            display_text = r["text"]
+            is_parent = False
+        chunks_out.append(
+            ChunkResult(
+                chunk_id=r["chunk_id"],
+                artifact_id=r.get("artifact_id"),
+                content_type=r.get("content_type"),
+                text=display_text,
+                context_prefix=r.get("context_prefix"),
+                heading_path=r.get("heading_path"),
+                score=r.get("final_rank_score", r["score"])
+                if ranking_contract_mode == "active"
+                else r["score"],
+                reranker_score=r.get("reranker_score"),
+                scope=r.get("scope"),
+                valid_at=r.get("valid_at"),
+                invalid_at=r.get("invalid_at"),
+                ingested_at=r.get("ingested_at"),
+                assertion_mode=r.get("assertion_mode"),
+                source_ref=r.get("source_ref"),
+                source_connector_id=r.get("source_connector_id"),
+                source_url=r.get("source_url"),
+                kb_slug=r.get("kb_slug"),
+                source_label=r.get("source_label"),
+                title=r.get("title"),
+                original_filename=r.get("original_filename"),
+                image_urls=payload_list(r, "image_urls") or None,
+                entity_names=payload_list(r, "entity_names") or None,
+                is_parent_text=is_parent,
             )
+        )
 
     retrieval_ms = (time.perf_counter() - t0) * 1000
     step_latency_seconds.labels(step="total").observe(retrieval_ms / 1000)
-    retrieval_requests_total.labels(scope=req.scope, bypassed=str(bypassed).lower()).inc()
+    retrieval_requests_total.labels(scope=req.scope).inc()
     retrieval_chunks_total.labels(scope=req.scope).observe(len(chunks_out))
 
     # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1 — confidence band on the
-    # served chunks. Bypass paths (gate) get None; retrieval paths always
-    # report a band so downstream consumers (litellm-hook REQ-2) can decide.
-    if bypassed:
-        confidence_band: ConfidenceBand | None = None
-    else:
-        confidence_band = _compute_confidence_band(
-            serving,
-            high_threshold=settings.confidence_band_high_threshold,
-            low_threshold=settings.confidence_band_low_threshold,
-            reranker_enabled=settings.reranker_enabled,
-        )
-        decision_record["confidence_band"] = confidence_band
-        retrieval_confidence_band_total.labels(band=confidence_band, org_id=req.org_id).inc()
+    # served chunks so downstream consumers can decide how strongly to answer.
+    confidence_band: ConfidenceBand = _compute_confidence_band(
+        serving,
+        high_threshold=settings.confidence_band_high_threshold,
+        low_threshold=settings.confidence_band_low_threshold,
+        reranker_enabled=settings.reranker_enabled,
+    )
+    decision_record["confidence_band"] = confidence_band
+    retrieval_confidence_band_total.labels(band=confidence_band, org_id=req.org_id).inc()
 
     evidence_query = (
         f"{req.raw_query}\n{query_resolved}"
@@ -1016,14 +909,14 @@ async def retrieve(
     # outcome counter. Only count when link-expand actually contributed
     # candidates (link_expand_count > 0). Hit = at least one expanded chunk
     # survived to the served top-K; miss = none did.
-    if not bypassed and link_expand_count > 0:
+    if link_expand_count > 0:
         outcome = "hit" if expanded_in_top_k_ids else "miss"
         retrieval_link_expand_top_k_total.labels(outcome=outcome, org_id=req.org_id).inc()
 
     # Issue #71: only count requests where Graphiti returned candidates. Empty
     # graph searches are measured by graph_results_count and should not dilute
     # the contribution ratio.
-    if not bypassed and graph_results_count > 0:
+    if graph_results_count > 0:
         outcome = "hit" if graph_in_top_k_ids else "miss"
         retrieval_graph_top_k_total.labels(outcome=outcome, org_id=req.org_id).inc()
 
@@ -1112,8 +1005,6 @@ async def retrieve(
         rerank_ms=round(rerank_ms, 1) if rerank_ms is not None else None,
         link_expand_ms=round(link_expand_ms, 1) if link_expand_ms is not None else None,
         link_expand_count=link_expand_count,
-        gate_margin=round(gate_margin, 4) if gate_margin is not None else None,
-        retrieval_bypassed=bypassed,
     )
 
     # SPEC-GRAFANA-METRICS: knowledge.queried event.
@@ -1167,14 +1058,15 @@ async def retrieve(
 
     return RetrieveResponse(
         query_resolved=query_resolved,
-        retrieval_bypassed=bypassed,
+        # Compatibility field for rolling callers; the retired gate means this
+        # service can no longer produce a bypassed retrieval response.
+        retrieval_bypassed=False,
         chunks=chunks_out,
         metadata=RetrieveMetadata(
             candidates_retrieved=candidates_retrieved,
             reranked_to=reranked_to,
             retrieval_ms=round(retrieval_ms, 1),
             rerank_ms=round(rerank_ms, 1) if rerank_ms is not None else None,
-            gate_margin=round(gate_margin, 4) if gate_margin is not None else None,
             graph_results_count=graph_results_count,
             graph_search_ms=round(graph_search_ms, 1) if graph_search_ms is not None else None,
         ),

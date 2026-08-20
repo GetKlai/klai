@@ -360,8 +360,8 @@ rather than silently treating the shadow contract as already approved for servin
 
 **THE new band SHALL** first ship computed-but-not-acted-upon, emitting both
 `confidence_band` (old, authoritative) and `confidence_band_corroborated` (new, shadow) on
-the decision record — the same shadow pattern already used by `gate_shadow_mode`,
-`evidence_shadow_mode`, and `citation_rescue_mode`.
+the decision record — the same shadow pattern previously used by the now-retired gate
+and evidence-tier experiments, and by the citation-rescue rollout.
 
 Enforcement is a separate, later change, gated on a shadow-period comparison of how often
 the two disagree and what that would have done to the Strict abstain rate. Flipping
@@ -373,7 +373,7 @@ enforcement in the same PR is out of scope.
 > evaluate. It also counted two high-scoring chunks rather than independent sources, so
 > “corroborated” overstated the signal. The shadow field, metric, dashboard series, and
 > helper branch were removed instead of leaving an ownerless experiment running.
-> The gate and evidence-tier precedents were disabled in the same audit; citation rescue
+> The gate and evidence-tier precedents were removed in the same audit; citation rescue
 > graduated to active behavior.
 
 ## Non-Functional Requirements

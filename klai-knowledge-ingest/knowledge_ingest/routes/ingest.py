@@ -691,12 +691,10 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
         extra_payload["source_ref"] = req.source_ref
     if req.content_type != "unknown":
         extra_payload["content_type"] = req.content_type
-    # Evidence tier metadata (SPEC-EVIDENCE-001, R4)
-    extra_payload["assertion_mode"] = kf["assertion_mode"]
     # Merge adapter extra metadata
     if req.extra:
         extra_payload.update(req.extra)
-    # Canonical evidence/profile fields are derived by ingest, not adapter extra.
+    # Canonical knowledge-profile fields are derived by ingest, not adapter extra.
     extra_payload["assertion_mode"] = kf["assertion_mode"]
     extra_payload["source_knowledge_profile"] = source_profile.profile_name
     extra_payload["allowed_assertion_modes"] = list(source_profile.allowed_assertion_modes)

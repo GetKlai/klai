@@ -298,9 +298,8 @@ def _chunk_below_evidence_floor(chunk: dict) -> bool:
     Only reranker/final scores count: the raw retrieval ``score`` field uses a
     different scale (and defaults to 0.0 in several producers), so it must not
     drop chunks on its own. No score at all keeps the chunk (fail-open).
-    ``final_score`` is checked before ``reranker_score``: it is the
-    post-evidence-tier ranking truth when present and must win over a stale
-    pre-tier reranker score on the same chunk.
+    ``final_score`` is checked before ``reranker_score`` for backward-compatible
+    responses that already carry a post-ranking score.
     """
     for key in ("final_score", "reranker_score"):
         value = chunk.get(key)
@@ -1118,8 +1117,8 @@ class KlaiKnowledgeHook(CustomLogger):
             data["mock_response"] = _strict_kb_unavailable_message(query)
             return data
 
-        # If the retrieval-gate determined no KB context is needed, skip injection.
-        # Multilingual foundation still applies — REQ-10.
+        # Rolling-deploy compatibility for responses from a pre-removal
+        # retrieval-api. New retrieval-api versions cannot emit True here.
         if result.get("retrieval_bypassed"):
             _prepend_system_prefix(
                 messages, _compose_kb_mode_chat_prefix(kb_narrow, templates_block)

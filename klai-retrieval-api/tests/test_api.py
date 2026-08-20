@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from retrieval_api.services.evidence_pack import build_evidence_pack
-from retrieval_api.services.gate import GateDecision
 
 
 class TestRetrieveEndpoint:
@@ -66,11 +65,6 @@ class TestRetrieveEndpoint:
                 "retrieval_api.api.retrieve.embed_sparse",
                 new_callable=AsyncMock,
                 return_value=None,
-            ),
-            patch(
-                "retrieval_api.api.retrieve.gate.should_bypass",
-                new_callable=AsyncMock,
-                return_value=(False, 0.05),
             ),
             patch(
                 "retrieval_api.api.retrieve.search.hybrid_search",
@@ -220,11 +214,6 @@ class TestRetrieveEndpoint:
                 return_value=None,
             ),
             patch(
-                "retrieval_api.api.retrieve.gate.should_bypass",
-                new_callable=AsyncMock,
-                return_value=(False, 0.05),
-            ),
-            patch(
                 "retrieval_api.api.retrieve.search.hybrid_search",
                 new_callable=AsyncMock,
                 return_value=[],
@@ -293,11 +282,6 @@ class TestRetrieveEndpoint:
                 "retrieval_api.api.retrieve.embed_sparse",
                 new_callable=AsyncMock,
                 return_value=None,
-            ),
-            patch(
-                "retrieval_api.api.retrieve.gate.should_bypass",
-                new_callable=AsyncMock,
-                return_value=(False, 0.05),
             ),
             patch(
                 "retrieval_api.api.retrieve.search.hybrid_search",
@@ -400,11 +384,6 @@ class TestConfidenceBandEndToEnd:
                 return_value=None,
             ),
             patch(
-                "retrieval_api.api.retrieve.gate.should_bypass",
-                new_callable=AsyncMock,
-                return_value=(False, 0.05),
-            ),
-            patch(
                 "retrieval_api.api.retrieve.search.hybrid_search",
                 new_callable=AsyncMock,
                 return_value=[chunk_payload],
@@ -476,11 +455,6 @@ class TestConfidenceBandEndToEnd:
                 return_value=None,
             ),
             patch(
-                "retrieval_api.api.retrieve.gate.should_bypass",
-                new_callable=AsyncMock,
-                return_value=(False, 0.05),
-            ),
-            patch(
                 "retrieval_api.api.retrieve.search.hybrid_search",
                 new_callable=AsyncMock,
                 return_value=[chunk_payload],
@@ -508,11 +482,8 @@ class TestConfidenceBandEndToEnd:
         assert resp.status_code == 200
         assert resp.json()["confidence_band"] == "unknown"
 
-    def test_band_none_on_bypass(self, client, sample_retrieve_request):
-        """Gate-bypassed retrieval (smalltalk / out-of-scope query) does
-        not run rerank, so band is ``None`` (not ``unknown``). The hook
-        treats None as "no signal — leave injection untouched".
-        """
+    def test_kb_narrow_attempts_retrieval(self, client, sample_retrieve_request):
+        """Strict KB mode runs the same mandatory retrieval path."""
         with (
             patch(
                 "retrieval_api.api.retrieve.coreference.resolve",
@@ -529,59 +500,6 @@ class TestConfidenceBandEndToEnd:
                 new_callable=AsyncMock,
                 return_value=None,
             ),
-            patch(
-                "retrieval_api.api.retrieve.gate.should_bypass",
-                new_callable=AsyncMock,
-                return_value=(True, 0.5),  # gate bypasses retrieval
-            ),
-            patch("retrieval_api.api.retrieve.settings") as mock_settings,
-        ):
-            mock_settings.reranker_enabled = True
-            mock_settings.retrieval_candidates = 60
-            mock_settings.reranker_candidates = 20
-            mock_settings.graphiti_enabled = False
-            mock_settings.link_expand_enabled = True
-            mock_settings.link_expand_seed_k = 10
-            mock_settings.link_expand_max_urls = 30
-            mock_settings.link_expand_candidates = 20
-            mock_settings.link_authority_boost = 0.05
-            mock_settings.source_quota_enabled = True
-            mock_settings.source_quota_max_per_source = 2
-            mock_settings.router_enabled = False
-            mock_settings.retrieval_quality_floor = 0.05
-            mock_settings.confidence_band_high_threshold = 0.60
-            mock_settings.confidence_band_low_threshold = 0.30
-            mock_settings.link_expand_score_boost = 1.00
-            resp = client.post("/retrieve", json=sample_retrieve_request)
-
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["retrieval_bypassed"] is True
-        assert data["confidence_band"] is None
-
-    def test_strict_mode_skips_gate_and_attempts_retrieval(self, client, sample_retrieve_request):
-        """Strict mode must not let the retrieval gate bypass KB lookup."""
-        with (
-            patch(
-                "retrieval_api.api.retrieve.coreference.resolve",
-                new_callable=AsyncMock,
-                return_value=sample_retrieve_request["query"],
-            ),
-            patch(
-                "retrieval_api.api.retrieve.embed_single",
-                new_callable=AsyncMock,
-                return_value=[0.1] * 1024,
-            ),
-            patch(
-                "retrieval_api.api.retrieve.embed_sparse",
-                new_callable=AsyncMock,
-                return_value=None,
-            ),
-            patch(
-                "retrieval_api.api.retrieve.gate.should_bypass",
-                new_callable=AsyncMock,
-                return_value=(True, 0.5),
-            ) as mock_gate,
             patch(
                 "retrieval_api.api.retrieve.search.hybrid_search",
                 new_callable=AsyncMock,
@@ -613,7 +531,6 @@ class TestConfidenceBandEndToEnd:
         assert resp.status_code == 200
         data = resp.json()
         assert data["retrieval_bypassed"] is False
-        mock_gate.assert_not_awaited()
         mock_search.assert_awaited_once()
 
 
@@ -635,11 +552,6 @@ class TestGraphMetadata:
                 "retrieval_api.api.retrieve.embed_sparse",
                 new_callable=AsyncMock,
                 return_value=None,
-            ),
-            patch(
-                "retrieval_api.api.retrieve.gate.should_bypass",
-                new_callable=AsyncMock,
-                return_value=(False, 0.1),
             ),
             patch(
                 "retrieval_api.api.retrieve.search.hybrid_search",
@@ -715,11 +627,6 @@ class TestGraphMetadata:
                 "retrieval_api.api.retrieve.embed_sparse",
                 new_callable=AsyncMock,
                 return_value=None,
-            ),
-            patch(
-                "retrieval_api.api.retrieve.gate.evaluate",
-                new_callable=AsyncMock,
-                return_value=GateDecision(False, False, 0.1, True),
             ),
             patch(
                 "retrieval_api.api.retrieve.search.hybrid_search",
@@ -825,11 +732,6 @@ class TestLinkExpandInstrumentation:
                 return_value=None,
             ),
             patch(
-                "retrieval_api.api.retrieve.gate.should_bypass",
-                new_callable=AsyncMock,
-                return_value=(False, 0.1),
-            ),
-            patch(
                 "retrieval_api.api.retrieve.search.hybrid_search",
                 new_callable=AsyncMock,
                 return_value=[seed_chunk],
@@ -911,11 +813,6 @@ class TestLinkExpandInstrumentation:
                 return_value=None,
             ),
             patch(
-                "retrieval_api.api.retrieve.gate.should_bypass",
-                new_callable=AsyncMock,
-                return_value=(False, 0.1),
-            ),
-            patch(
                 "retrieval_api.api.retrieve.search.hybrid_search",
                 new_callable=AsyncMock,
                 return_value=[],
@@ -977,56 +874,6 @@ class TestLinkExpandInstrumentation:
                 f"Record attrs: {rec.__dict__}"
             )
 
-    def test_link_expanded_flag_survives_evidence_tier_deep_copy(self):
-        """The instrumentation tag MUST survive `copy.deepcopy(reranked)`
-        inside ``evidence_tier.apply`` so that when EVIDENCE_SHADOW_MODE=active
-        flips on (per SPEC-EVIDENCE-001-FOLLOWUP-001) the deep-copied scored
-        chunks STILL carry the flag for ``decision_record.link_expand``.
-
-        This is a contract test on Python semantics — `copy.deepcopy` of a
-        dict preserves all keys, and `evidence_tier.apply` mutates in place
-        without stripping unknown fields. Pinned here so a future refactor
-        of evidence_tier (e.g. switch to a typed constructor that drops
-        unknown keys) doesn't silently break F3 instrumentation in the
-        post-shadow-mode world.
-        """
-        import copy
-
-        from retrieval_api.services.evidence_tier import apply
-
-        original = [
-            {
-                "chunk_id": "expanded-1",
-                "text": "expanded chunk",
-                "score": 0.5,
-                "reranker_score": 0.8,
-                "content_type": "kb_article",
-                "ingested_at": None,
-                "assertion_mode": None,
-                "_link_expanded": True,
-            },
-            {
-                "chunk_id": "seed-1",
-                "text": "seed chunk",
-                "score": 0.9,
-                "reranker_score": 0.95,
-                "content_type": "kb_article",
-                "ingested_at": None,
-                "assertion_mode": None,
-            },
-        ]
-        # Simulate the retrieve.py pattern: deepcopy then apply scoring.
-        scored = apply(copy.deepcopy(original))
-
-        flagged = [c for c in scored if c.get("_link_expanded") is True]
-        assert len(flagged) == 1, (
-            f"_link_expanded flag dropped after deepcopy + evidence_tier.apply: "
-            f"{[c.get('chunk_id') for c in scored]}. F3 instrumentation broken."
-        )
-        assert flagged[0]["chunk_id"] == "expanded-1"
-        # Original list MUST be untouched (deepcopy guarantee).
-        assert "final_score" not in original[0], "deepcopy was lost — apply mutated input"
-
 
 class TestHealthEndpoint:
     def test_health_all_ok(self, client):
@@ -1078,53 +925,11 @@ class TestChatEndpoint:
         return_value="resolved query",
     )
     @patch("retrieval_api.api.chat.embed_single", new_callable=AsyncMock, return_value=[0.1, 0.2])
-    @patch(
-        "retrieval_api.api.chat.gate.should_bypass",
-        new_callable=AsyncMock,
-        return_value=(True, 0.5),
-    )
-    def test_chat_bypass_path(self, mock_gate, mock_embed, mock_coref, client):
-        """Gate bypass returns done event with retrieval_bypassed=True."""
-        import json as _json
-
-        with client.stream(
-            "POST",
-            "/chat",
-            json={
-                "query": "hello",
-                "org_id": "org-1",
-                "scope": "org",
-            },
-        ) as resp:
-            assert resp.status_code == 200
-            events = []
-            for line in resp.iter_lines():
-                if line.startswith("data: "):
-                    events.append(_json.loads(line[6:]))
-
-        assert len(events) >= 1
-        done = events[-1]
-        assert done["type"] == "done"
-        assert done["retrieval_bypassed"] is True
-        assert done["citations"] == []
-        assert done["query_resolved"] == "resolved query"
-
-    @patch(
-        "retrieval_api.api.chat.coreference.resolve",
-        new_callable=AsyncMock,
-        return_value="resolved query",
-    )
-    @patch("retrieval_api.api.chat.embed_single", new_callable=AsyncMock, return_value=[0.1, 0.2])
-    @patch(
-        "retrieval_api.api.chat.gate.should_bypass",
-        new_callable=AsyncMock,
-        return_value=(False, 0.05),
-    )
     @patch("retrieval_api.api.chat.search.hybrid_search", new_callable=AsyncMock)
     @patch("retrieval_api.api.chat.reranker.rerank", new_callable=AsyncMock)
     @patch("retrieval_api.api.chat.synthesis.synthesize")
     def test_chat_happy_path(
-        self, mock_synth, mock_rerank, mock_search, mock_gate, mock_embed, mock_coref, client
+        self, mock_synth, mock_rerank, mock_search, mock_embed, mock_coref, client
     ):
         """Full pipeline: search, rerank, synthesize -- verify token + done events."""
         import json as _json

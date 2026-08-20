@@ -219,33 +219,22 @@ is a threshold classifier writing an exact-string event log to Postgres.
 
 ## Cluster 3 — Epistemic / evidence scoring (§3.2, §7.4)
 
-### GAP-EVID-01 — Resolved flags-off  ·  ✓ (updated 2026-08-20)
+### GAP-EVID-01 — Resolved by removal  ·  ✓ (updated 2026-08-20)
 - **Intended (§7.4):** assertion-mode is one of four multiplicative scoring
   dimensions (`final = reranker × content_type × assertion_mode × temporal ×
   pagerank`) with its own default-true flag.
-- **Resolution:** `_assertion_weight()` reads a **conservative
-  profile** from `DEFAULT_EVIDENCE_PROFILE["assertion_mode_weights"]`
-  (factual/procedural 1.00, hypothesis 0.90, unknown 0.97 — spread 0.10 per the
-  weights research). The required RAGAS A/B
-  SPEC-EVIDENCE-001-FOLLOWUP-001 requires to decide activate / temporal-only /
-  decommission / flags-off (variants `evidence_tier_full`,
-  `evidence_tier_temporal_only`) **does not exist in the eval harness** — only
-  `baseline` is ever used. Production now uses `EVIDENCE_SHADOW_MODE=disabled`, so the
-  flat reranker stays authoritative and no shadow CPU cost is paid.
-- **Evidence:** `klai-retrieval-api/retrieval_api/services/evidence_tier.py:43-67,125-148`;
-  `klai-knowledge-ingest/knowledge_ingest/eval/ragas_runner.py:38-51` (variant env
-  read, no evidence_tier variants defined anywhere).
+- **Resolution:** the shadow changed 2,186/8,946 orderings but captured no paired
+  answer-quality outcome. The runtime, flags, response metadata, dedicated tests and
+  invalid standalone comparison harness were removed. Assertion mode remains document
+  metadata but no longer affects retrieval order.
 
-### GAP-EVID-02 — 3-into-5 epistemic grouping unbuilt  ·  M  ·  ✓
+### GAP-EVID-02 — Closed with evidence-tier removal  ·  —  ·  ✓
 - **Intended (§3.2):** the 5 epistemic values collapse to 3 groups
   (assertion / speculation / procedure) for scoring, with `unknown` neutral.
 - **Reality:** no such grouping exists anywhere in code; assertion-mode is a
   pass-through with no effect on ranked order.
-- **Why it matters:** surfacing verified facts above speculation is what makes
-  "AI serves claims, cites sources" trustworthy. Today a hypothesis chunk and a
-  factual chunk compete on identical footing.
-- **Evidence:** `evidence_tier.py:113-116`; no grouping in
-  `taxonomy_classifier.py` / `taxonomy_lookup.py`.
+- **Resolution:** no grouping will be added without a new product requirement; its only
+  planned consumer was the decommissioned evidence-tier scorer.
 
 ## Cluster 4 — Taxonomy (§6)
 
@@ -283,19 +272,15 @@ is a threshold classifier writing an exact-string event log to Postgres.
 
 ## Cluster 5 — Retrieval gate & routing
 
-### GAP-RETR-01 — Closed flags-off  ·  ✓ (updated 2026-08-20)
+### GAP-RETR-01 — Closed by removal  ·  ✓ (updated 2026-08-20)
 - **Intended (knowledge-retrieval-flow §Gate):** a semantic gate that skips KB
   lookup for general-knowledge queries (`RETRIEVAL_GATE_ENABLED=true`).
 - **Resolution:** the 16-line stub's 30-day production shadow run yielded only
   3 unique would-bypass decisions across roughly 4,500 requests (~0.07%), all
   with low retrieval confidence. That saving does not justify either the
   false-bypass risk or building/maintaining a 1,200-query multilingual corpus.
-  Production now sets `RETRIEVAL_GATE_ENABLED=false`; explicit evaluation can
-  still enable the retained implementation.
-- **Evidence:** `klai-retrieval-api/retrieval_api/services/gate.py`;
-  `retrieval_api/config.py:21-28`; `retrieval_api/data/gate_reference.jsonl`
-  (16 lines); `retrieve.py` strict-mode gate block; `tests/test_gate.py`
-  (incl. shadow-mode tests).
+  Runtime, corpus, generator, flags, telemetry and dedicated tests were removed;
+  retrieval is mandatory for every knowledge-enabled request.
 
 ### GAP-ROUTE-01 — "Complexity Router" is a 3-signal heuristic  ·  L  ·  ✓✓
 - **Intended (platform.md):** LiteLLM's native Complexity Router scoring every
@@ -423,7 +408,7 @@ is a threshold classifier writing an exact-string event log to Postgres.
 - **Resolution:** the classification was **removed** on 2026-06-08 — the gap was
   closed by deleting the cost, not by wiring a consumer. Rationale recorded in
   `docs/research/chunk-type-retrieval-value.md`. Document-level `content_type`
-  (consumed by evidence-tier) is unaffected.
+  remains response/evidence metadata.
 - **If revisited:** any future chunk-type-aware retrieval SPEC should start from
   that research doc, not from re-adding the label speculatively.
 - **Evidence:** `klai-knowledge-ingest/knowledge_ingest/enrichment.py:10-15`
@@ -446,12 +431,12 @@ is a threshold classifier writing an exact-string event log to Postgres.
 | GAP-PROV-01 | provenance DAG/entities | L | ⊙ | knowledge-architecture §3,§5 |
 | GAP-PROV-02 | derived_from/confidence | L | · | knowledge-architecture §3 |
 | GAP-SYNC-01 | dual-store outbox | L | ⊙ | knowledge-architecture §5 |
-| ~~GAP-EVID-01~~ | evidence-tier — **CLOSED flags-off 2026-08-20** | — | ✓ | knowledge-architecture §7.4 |
-| GAP-EVID-02 | 3-into-5 grouping | M | ✓ | knowledge-architecture §3.2 |
+| ~~GAP-EVID-01~~ | evidence-tier — **CLOSED by removal 2026-08-20** | — | ✓ | knowledge-architecture §7.4 |
+| ~~GAP-EVID-02~~ | 3-into-5 grouping — **CLOSED with evidence-tier removal** | — | ✓ | knowledge-architecture §3.2 |
 | GAP-TAX-01 | taxonomy re-cluster | M | ✓✓ | knowledge-architecture §6 |
 | GAP-TAX-02 | binary coverage | M | · | knowledge-architecture §6 |
 | GAP-TAX-03 | taxonomy write-only | L | · | knowledge-architecture §6 / roadmap |
-| ~~GAP-RETR-01~~ | retrieval gate — **CLOSED flags-off 2026-08-20** | — | ✓ | knowledge-retrieval-flow |
+| ~~GAP-RETR-01~~ | retrieval gate — **CLOSED by removal 2026-08-20** | — | ✓ | knowledge-retrieval-flow |
 | GAP-ROUTE-01 | complexity router | L | ✓✓ | platform |
 | GAP-ROUTE-02 | medium tier unused | M | ✓ | platform |
 | GAP-ROUTE-03 | router LLM fallback | M | · | knowledge-retrieval-flow |

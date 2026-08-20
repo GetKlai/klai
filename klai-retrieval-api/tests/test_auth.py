@@ -68,6 +68,29 @@ def _patch_jwt(payload: dict, error: str | None = None):
     )
 
 
+@pytest.fixture(autouse=True)
+def _empty_retrieval_pipeline():
+    """Keep successful auth tests off external retrieval dependencies."""
+    with (
+        patch(
+            "retrieval_api.api.retrieve.search.hybrid_search",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "retrieval_api.api.retrieve.graph_search.search",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "retrieval_api.api.retrieve.fetch_source_catalog",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+    ):
+        yield
+
+
 # --------------------------------------------------------------------------- #
 # REQ-1.1 — Startup validator
 # --------------------------------------------------------------------------- #
@@ -204,11 +227,6 @@ class TestInternalSecretPath:
                 new_callable=AsyncMock,
                 return_value=None,
             ),
-            patch(
-                "retrieval_api.api.retrieve.gate.should_bypass",
-                new_callable=AsyncMock,
-                return_value=(True, 0.5),
-            ),
         ):
             resp = client.post("/retrieve", json=sample_retrieve_request)
         assert resp.status_code == 200
@@ -260,11 +278,6 @@ class TestJwtPath:
                 "retrieval_api.api.retrieve.embed_sparse",
                 new_callable=AsyncMock,
                 return_value=None,
-            ),
-            patch(
-                "retrieval_api.api.retrieve.gate.should_bypass",
-                new_callable=AsyncMock,
-                return_value=(True, 0.5),
             ),
         ):
             # SPEC-SEC-IDENTITY-ASSERT-003 REQ-1.3: JWT path now requires
@@ -435,11 +448,6 @@ class TestCrossUserOrgGuard:
                 new_callable=AsyncMock,
                 return_value=None,
             ),
-            patch(
-                "retrieval_api.api.retrieve.gate.should_bypass",
-                new_callable=AsyncMock,
-                return_value=(True, 0.5),
-            ),
         ):
             resp = client.post(
                 "/retrieve",
@@ -489,11 +497,6 @@ class TestCrossUserOrgGuard:
                 "retrieval_api.api.retrieve.embed_sparse",
                 new_callable=AsyncMock,
                 return_value=None,
-            ),
-            patch(
-                "retrieval_api.api.retrieve.gate.should_bypass",
-                new_callable=AsyncMock,
-                return_value=(True, 0.5),
             ),
         ):
             resp = client.post(
@@ -610,11 +613,6 @@ class TestCrossUserOrgGuard:
                 new_callable=AsyncMock,
                 return_value=None,
             ),
-            patch(
-                "retrieval_api.api.retrieve.gate.should_bypass",
-                new_callable=AsyncMock,
-                return_value=(True, 0.5),
-            ),
         ):
             # Arbitrary org_id / user_id — internal caller is authoritative.
             resp = client.post(
@@ -708,11 +706,6 @@ class TestBounds:
                 "retrieval_api.api.retrieve.embed_sparse",
                 new_callable=AsyncMock,
                 return_value=None,
-            ),
-            patch(
-                "retrieval_api.api.retrieve.gate.should_bypass",
-                new_callable=AsyncMock,
-                return_value=(True, 0.5),
             ),
         ):
             resp = client.post("/retrieve", json=sample_retrieve_request)
@@ -821,11 +814,6 @@ class TestSpec003JwtWithoutResourceowner:
                 "retrieval_api.api.retrieve.embed_sparse",
                 new_callable=AsyncMock,
                 return_value=None,
-            ),
-            patch(
-                "retrieval_api.api.retrieve.gate.should_bypass",
-                new_callable=AsyncMock,
-                return_value=(True, 0.5),
             ),
         ):
             resp = client.post(

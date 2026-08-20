@@ -12,7 +12,7 @@ from sse_starlette.sse import EventSourceResponse
 from retrieval_api.config import settings
 from retrieval_api.middleware.auth import verify_body_identity
 from retrieval_api.models import RetrieveRequest
-from retrieval_api.services import coreference, gate, reranker, search, synthesis
+from retrieval_api.services import coreference, reranker, search, synthesis
 from retrieval_api.services.evidence_pack import build_evidence_pack
 from retrieval_api.services.tei import embed_single
 
@@ -42,27 +42,10 @@ async def chat(req: RetrieveRequest, request: Request) -> EventSourceResponse:
         # 2. Embed resolved query
         query_vector = await embed_single(query_resolved)
 
-        # 3. Gate check (shadow-aware: computes the decision but only acts on
-        # it when retrieval_gate_shadow is off — a wrong bypass silently drops
-        # all citations).
-        gate_decision = await gate.evaluate(query_vector)
-        gate_margin = gate_decision.margin
-
-        if gate_decision.bypassed:
-            # Stream a bypass done event with no tokens
-            done_event = {
-                "type": "done",
-                "citations": [],
-                "retrieval_bypassed": True,
-                "query_resolved": query_resolved,
-            }
-            yield json.dumps(done_event)
-            return
-
-        # 4. Search
+        # 3. Search
         raw_results = await search.hybrid_search(query_vector, req, settings.retrieval_candidates)
 
-        # 5. Rerank
+        # 4. Rerank
         if raw_results:
             reranked = await reranker.rerank(query_resolved, raw_results, req.top_k)
         else:
@@ -83,12 +66,11 @@ async def chat(req: RetrieveRequest, request: Request) -> EventSourceResponse:
                 "top_k": req.top_k,
                 "candidates_retrieved": len(raw_results),
                 "retrieval_ms": round(retrieval_ms, 1),
-                "gate_margin": round(gate_margin, 4) if gate_margin is not None else None,
                 "retrieval_bypassed": False,
             },
         )
 
-        # 6. Stream synthesis
+        # 5. Stream synthesis
         async for item in synthesis.synthesize(
             query_resolved,
             reranked,
