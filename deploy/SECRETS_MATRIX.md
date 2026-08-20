@@ -87,6 +87,8 @@ details in the private infra repo.
 | `MAILER_PORTAL_API_URL` | klai-mailer | Portal API base URL for locale lookup. Falls back to code default http://portal-api:8010 when unset. Mapped to `PORTAL_API_URL` in-container. |
 | `MONGO_ROOT_PASSWORD` | portal-api | MongoDB root password for per-tenant LibreChat database provisioning. |
 | `MONGO_ROOT_USERNAME` | portal-api | MongoDB root username (non-secret but kept here for pairing with the password). |
+| `MISTRAL_API_KEY` | litellm | Primary Mistral key for the subscription workspace. |
+| `MISTRAL_API_KEY_BACKUP` | litellm | PAYG Mistral key used only after the primary deployment fails. |
 | `PORTAL_API_BFF_SESSION_KEY` | portal-api | Fernet key for BFF session records at rest in Redis (SPEC-AUTH-008). Mapped to `BFF_SESSION_KEY` in-container. |
 | `PORTAL_API_DB_PASSWORD` | portal-api | Portal's PostgreSQL password; interpolated into `DATABASE_URL`. |
 | `PORTAL_API_ENCRYPTION_KEY` | portal-api | KEK for the two-tier connector credential hierarchy (SPEC-KB-020). Mapped to `ENCRYPTION_KEY` in-container. |
