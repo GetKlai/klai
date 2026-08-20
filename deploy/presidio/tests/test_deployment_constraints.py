@@ -6,8 +6,6 @@ text files already in the repo.
 from __future__ import annotations
 
 import re
-
-import pytest
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -31,19 +29,6 @@ def _service_block(compose_text: str, service: str) -> str:
     return "\n".join(lines[start:end])
 
 
-_BOOTSTRAP_PENDING = pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Bootstrap ordering: presidio-analyzer-image-build.yml only publishes on a "
-        "push to main, so ghcr.io/getklai/presidio-analyzer does not exist until the "
-        "PR carrying its Dockerfile has merged. Compose therefore still runs the "
-        "stock image at the stock 2G limit. strict=True is the point: the moment the "
-        "follow-up PR flips image and limit together, these XPASS and CI fails until "
-        "this marker is deleted — so the target state cannot be forgotten."
-    ),
-)
-
-
 class TestComposeImagePinning:
     """AC-2: both containers pinned by digest, both from
     ghcr.io/data-privacy-stack — neither from mcr.microsoft.com. Phase 1
@@ -51,7 +36,6 @@ class TestComposeImagePinning:
     FROM the ghcr.io/data-privacy-stack digest (checked via the Dockerfile,
     not the compose file, for that service)."""
 
-    @_BOOTSTRAP_PENDING
     def test_presidio_analyzer_uses_klai_image_pinned_by_digest(self):
         text = _COMPOSE_FILE.read_text()
         block = _service_block(text, "presidio-analyzer")
@@ -78,7 +62,6 @@ class TestComposeImagePinning:
         assert "ports:" not in block
         assert re.search(r"networks:\s*\n\s*- inference\b", block), block
 
-    @_BOOTSTRAP_PENDING
     def test_presidio_analyzer_has_explicit_resource_limits(self):
         text = _COMPOSE_FILE.read_text()
         block = _service_block(text, "presidio-analyzer")
