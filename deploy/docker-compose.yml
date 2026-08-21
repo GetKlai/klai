@@ -1606,7 +1606,9 @@ services:
   # image is an env value, not a compose service, so `compose up` does not fetch it
   # either. Run on core-01:
   #     docker pull vexaai/vexa-bot:v0.12.22
-  # Enforced by scripts/check-vexa12-deploy-preconditions.sh.
+  # Checked — not enforced — by scripts/check-vexa12-deploy-preconditions.sh,
+  # which is an operator command run by hand over SSH. No pipeline runs it, so
+  # nothing stops a deploy that skipped the pull.
   # ══════════════════════════════════════════════════════════════════════════
 
   # ─── Vexa 0.12 Redis (bot state, pub/sub, streams) ──────────────────────

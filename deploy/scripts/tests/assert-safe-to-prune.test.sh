@@ -115,6 +115,39 @@ printf '/librechat-acme\t%s.bak\n' "$case_dir/dst/gone.cjs" >"$case_dir/mounts.t
 run_guard
 check "does not treat a longer path as a match" 0 "$rc"
 
+# 8. Docker unreachable: refuse, do not assume nothing is mounted.
+#    Without KLAI_MOUNT_PAIRS_FILE the guard asks Docker itself. A daemon that
+#    does not answer used to yield an empty mount list, which reads exactly like
+#    "nothing is mounted" -- so the guard would wave through the delete it exists
+#    to block. These two cases pin the difference between "Docker said zero" and
+#    "Docker said nothing".
+stub_dir="$work/stub"
+mkdir -p "$stub_dir"
+printf '#!/bin/sh\necho "Cannot connect to the Docker daemon" >&2\nexit 1\n' >"$stub_dir/docker"
+chmod +x "$stub_dir/docker"
+
+new_case docker_down
+printf 'gone\n' >"$case_dir/dst/gone.cjs"
+set +e
+PATH="$stub_dir:$PATH" sh "$guard" "$case_dir/src" "$case_dir/dst" >"$case_dir/out" 2>&1
+rc=$?
+set -e
+check "refuses to prune when Docker cannot be reached" 1 "$rc"
+grep -q 'REFUSING TO PRUNE' "$case_dir/out" || {
+    echo "  FAIL docker-down case does not say why it refused"
+    failures=$((failures + 1))
+}
+
+# 9. Docker reachable and genuinely idle: that IS a real zero, so allow.
+printf '#!/bin/sh\nexit 0\n' >"$stub_dir/docker"
+new_case docker_idle
+printf 'gone\n' >"$case_dir/dst/gone.cjs"
+set +e
+PATH="$stub_dir:$PATH" sh "$guard" "$case_dir/src" "$case_dir/dst" >"$case_dir/out" 2>&1
+rc=$?
+set -e
+check "allows the prune when Docker reports no running containers" 0 "$rc"
+
 if [ "$failures" -ne 0 ]; then
     echo "$failures check(s) failed"
     exit 1

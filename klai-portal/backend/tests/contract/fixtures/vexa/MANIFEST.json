@@ -17,6 +17,6 @@
     "golden/Envelope.bot-failed.json": "core/meetings/contracts/webhook.v1/golden/Envelope.bot-failed.json",
     "golden/SignatureHeaders.signed.json": "core/meetings/contracts/webhook.v1/golden/SignatureHeaders.signed.json"
   },
-  "deployed_version": "0.10.6.3.14",
-  "_deployed_note": "Klai production currently runs 0.10.6.3.14. These fixtures are from the 0.12.22 TARGET. api.v1 is sealed hash-equal across both lines (upstream CI-enforced), so the call-surface tests are valid against production today AND against the migration target."
+  "deployed_version": "0.12.22",
+  "_deployed_note": "Klai production runs 0.12.22 (PR #914, 2026-08-14), the same tag these fixtures are vendored from \u2014 so the call-surface tests now check production against its own contract. They were vendored while production still ran 0.10.6.3.14 and were valid then too, because api.v1 is sealed hash-equal across both lines (upstream CI-enforced). Keep this field in step with deploy/docker-compose.yml: a stale value here silently changes what a green run means."
 }

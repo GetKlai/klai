@@ -39,14 +39,28 @@ dst_dir="$2"
 
 if [ -n "${KLAI_MOUNT_PAIRS_FILE:-}" ]; then
     mount_pairs=$(cat "$KLAI_MOUNT_PAIRS_FILE")
-elif running_ids=$(docker ps -q) && [ -n "$running_ids" ]; then
-    # .Name carries a leading slash; the awk below strips it.
-    mount_pairs=$(
-        echo "$running_ids" | xargs docker inspect \
-            --format '{{$name := .Name}}{{range .Mounts}}{{$name}}{{"\t"}}{{.Source}}{{"\n"}}{{end}}'
-    )
 else
-    mount_pairs=""
+    # "docker said no containers" and "docker did not answer" are NOT the same
+    # thing, and collapsing them is how a guard stops guarding: an unreachable
+    # daemon would yield an empty mount list, nothing would look mounted, and
+    # the --delete this script exists to block would proceed. Fail closed on a
+    # failure, stay silent on a genuine zero.
+    if ! running_ids=$(docker ps -q); then
+        echo "REFUSING TO PRUNE: cannot list running containers." >&2
+        echo "  This guard blocks deletion of files that a running container still" >&2
+        echo "  bind-mounts. Without Docker it cannot know, and guessing 'nothing is" >&2
+        echo "  mounted' is the 2026-08-14 incident. Fix the daemon and re-run." >&2
+        exit 1
+    fi
+    if [ -n "$running_ids" ]; then
+        # .Name carries a leading slash; the awk below strips it.
+        mount_pairs=$(
+            echo "$running_ids" | xargs docker inspect \
+                --format '{{$name := .Name}}{{range .Mounts}}{{$name}}{{"\t"}}{{.Source}}{{"\n"}}{{end}}'
+        )
+    else
+        mount_pairs=""
+    fi
 fi
 
 blocked=""
