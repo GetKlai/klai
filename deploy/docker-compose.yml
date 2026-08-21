@@ -1411,7 +1411,7 @@ services:
   # ─── Klai Docs ────────────────────────────────────────────────────────────
 
   gitea:
-    image: gitea/gitea:1.27.1
+    image: gitea/gitea:1.27.2
     restart: unless-stopped
     environment:
       USER_UID: 1000
@@ -1817,7 +1817,7 @@ services:
   # The previous /data mount was cosmetic and caused total graph loss on 2026-04-19
   # when the container was recreated during the falkordb:latest -> v4.18.1 pin (5d12587e).
   falkordb:
-    image: falkordb/falkordb:v4.20.2
+    image: falkordb/falkordb:v4.20.3
     restart: unless-stopped
     ports:
       - "127.0.0.1:6380:6379"
