@@ -1845,7 +1845,8 @@ async def retrieve_context(
     synthetic identity). Without this, ``knowledge.queried`` events for
     partner traffic are silently dropped via the
     ``product_event_skipped_no_identity`` warning branch in retrieve.py.
-    Audit ref: .moai/audits/retrieval-coupling-2026-05-06/findings/F2-...md.
+    Audit ref: retrieval-coupling-2026-05-06 finding F2
+    (historical — audit removed in repo cleanup 2026-08-18).
     """
     cleaned_page_context = _clean_page_context(page_context)
     # Extract original system message if present. It remains the generation

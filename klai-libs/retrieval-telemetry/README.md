@@ -64,6 +64,6 @@ another) and is small enough to live inline in each.
 
 ## Reference
 
-- SPEC-MCP-RETRIEVAL-001 (`.moai/specs/SPEC-MCP-RETRIEVAL-001/`)
+- SPEC-MCP-RETRIEVAL-001 (historical — SPEC removed in repo cleanup 2026-08-18)
 - SPEC-KB-015 (retrieval log)
 - SPEC-KB-014 (gap detection)

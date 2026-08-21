@@ -1,14 +1,8 @@
 name: Build and push klai-mailer
 
 on:
+  workflow_call:
   push:
-    branches: [main]
-    paths:
-      - 'klai-mailer/**'
-      - 'klai-libs/log-utils/**'
-      - 'klai-libs/webhook-replay/**'
-      - '.github/workflows/klai-mailer.yml'
-  pull_request:
     branches: [main]
     paths:
       - 'klai-mailer/**'
@@ -40,7 +34,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           python-version: "3.12"
           enable-cache: true

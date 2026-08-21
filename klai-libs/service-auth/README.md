@@ -42,7 +42,7 @@ async with httpx.AsyncClient() as c:
 
 ## Why this exists
 
-See SPEC-SEC-SERVICE-AUTH-001 in `.moai/specs/`. Short version: the previous shared
+See SPEC-SEC-SERVICE-AUTH-001 (historical — SPEC removed in repo cleanup 2026-08-18). Short version: the previous shared
 `X-Internal-Secret` pattern drifted in production (2026-05-01 incident: silent KB
 augmentation failure on Voys tenant), has no caller identity for audit, and gives
 no per-endpoint authorization.

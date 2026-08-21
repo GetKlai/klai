@@ -54,7 +54,7 @@ jobs:
           yq --version
           jq --version
 
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@v10.0.1
 
       - name: Run volume audit
         run: bash scripts/audit-compose-volumes.sh

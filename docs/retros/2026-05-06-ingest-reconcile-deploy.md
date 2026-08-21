@@ -1,5 +1,8 @@
 # SPEC-INGEST-RECONCILE-001 deploy retrospective — 2026-05-06
 
+> Historical provenance note (2026-08-20): `.moai` paths in this retrospective
+> are retained verbatim; the `.moai` tree was removed in the 2026-08-18 repo cleanup.
+
 > Two production blockers surfaced during the same-day deploy of
 > SPEC-INGEST-RECONCILE-001. Both were caught by the post-merge container
 > restart loop on `core-01` rather than by CI. This retro captures the

@@ -1,14 +1,8 @@
 name: Build and push klai-connector
 
 on:
+  workflow_call:
   push:
-    branches: [main]
-    paths:
-      - 'klai-connector/**'
-      - 'klai-libs/connector-credentials/**'
-      - 'klai-libs/image-storage/**'
-      - '.github/workflows/klai-connector.yml'
-  pull_request:
     branches: [main]
     paths:
       - 'klai-connector/**'
@@ -41,7 +35,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           python-version: "3.12"
 

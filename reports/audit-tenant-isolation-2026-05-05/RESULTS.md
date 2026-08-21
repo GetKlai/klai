@@ -1,5 +1,8 @@
 # Audit Tenant Isolation 2026-05-05/06 — Results
 
+> Historische provenance-notitie (2026-08-20): `.moai`-paden in dit rapport
+> blijven ongewijzigd; de `.moai`-tree is verwijderd bij de repo-opruiming van 2026-08-18.
+
 **Datum:** 2026-05-06 (vroeg-ochtend), na een nacht autonoom werken in jouw opdracht.
 **Status:** 11 PRs open, allemaal afkomstig van de audit. Het meeste werk is klaar; resterend werk is omschreven onderaan.
 

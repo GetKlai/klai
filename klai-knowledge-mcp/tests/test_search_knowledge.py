@@ -1,7 +1,7 @@
 """SPEC-MCP-RETRIEVAL-001 Phase 3: search_knowledge MCP tool tests.
 
 Covers all 14 testcases T-1..T-14 from
-``.moai/specs/SPEC-MCP-RETRIEVAL-001/plan.md`` § "Test matrix".
+SPEC-MCP-RETRIEVAL-001 § "Test matrix" (historical — SPEC removed in repo cleanup 2026-08-18).
 
 The tool is a thin wrapper around retrieval-api ``/retrieve`` that:
   - identifies the caller via the existing dispatcher (LibreChat or OAuth)

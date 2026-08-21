@@ -1,17 +1,8 @@
 name: Build and push knowledge-ingest
 
 on:
+  workflow_call:
   push:
-    branches: [main]
-    paths:
-      - 'klai-knowledge-ingest/**'
-      - 'klai-libs/connector-credentials/**'
-      - 'klai-libs/image-storage/**'
-      - 'klai-libs/kb-slugs/**'
-      - 'klai-libs/llm-throttle/**'
-      - 'klai-libs/graphiti-compat/**'
-      - '.github/workflows/knowledge-ingest.yml'
-  pull_request:
     branches: [main]
     paths:
       - 'klai-knowledge-ingest/**'
@@ -46,7 +37,7 @@ jobs:
         working-directory: klai-knowledge-ingest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           version: "0.12.3"
           python-version: "3.12"
@@ -114,7 +105,7 @@ jobs:
       ENRICHMENT_ENABLED: "false"
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           version: "0.12.3"
           python-version: "3.12"
@@ -170,7 +161,7 @@ jobs:
       # in lockstep with the version that runs at container entrypoint
       # rather than drifting against a hardcoded pin.
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           version: "0.12.3"
           enable-cache: true

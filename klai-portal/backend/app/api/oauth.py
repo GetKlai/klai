@@ -495,7 +495,7 @@ async def callback_provider(
     state: str = Query(...),
     code: str | None = Query(None, description="Authorization code from provider (absent if user denied consent)"),
     error: str | None = Query(None, description="OAuth error code (e.g. 'access_denied' when user denies consent)"),
-    error_description: str | None = Query(None, description="Human-readable error detail from provider"),  # noqa: ARG001  # TODO: doorgegeven maar ongebruikt — zie rapport (ruff ARG audit)
+    error_description: str | None = Query(None, description="Human-readable error detail from provider"),  # noqa: ARG001 — provider callback contract accepts this optional field; the error code drives the redirect
     klai_oauth_state: str | None = Cookie(default=None),
     user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),

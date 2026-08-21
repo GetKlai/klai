@@ -1,13 +1,8 @@
 name: Build and push klai-docker-authz
 
 on:
+  workflow_call:
   push:
-    branches: [main]
-    paths:
-      - 'klai-docker-authz/**'
-      - 'klai-libs/log-utils/**'
-      - '.github/workflows/klai-docker-authz.yml'
-  pull_request:
     branches: [main]
     paths:
       - 'klai-docker-authz/**'
@@ -38,7 +33,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           python-version: "3.12"
           enable-cache: true

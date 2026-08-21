@@ -104,7 +104,8 @@ async def test_rescore_marks_resolved_when_no_longer_gap() -> None:
     # when Bearer is taken. So gap_rescorer MUST use X-Internal-Secret.
     assert post_headers.get("X-Internal-Secret") == "retrieval-test-secret", (
         "X-Internal-Secret header missing or wrong value — would 401 in prod. "
-        "See .moai/audits/retrieval-coupling-2026-05-06/findings/F1-...md."
+        "See retrieval-coupling-2026-05-06 finding F1 "
+        "(historical audit removed in repo cleanup 2026-08-18)."
     )
     assert "Authorization" not in post_headers, (
         "Authorization header MUST NOT be set on retrieval-api calls — the "

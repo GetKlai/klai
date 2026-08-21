@@ -1,4 +1,4 @@
-"""SPEC-INGEST-LOGIN-WALL-DETECT-002 Phase C -- crawler ingest integration.
+"""Login-wall SimHash detection crawler ingest integration.
 
 Verifies the v2-specific control flow inside ``_ingest_crawl_result``:
 

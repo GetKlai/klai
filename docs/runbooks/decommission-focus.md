@@ -15,7 +15,6 @@ emitting a compliance event.
 - The SPEC-DECOMM-FOCUS-001 PR is merged into `main` and deployed.
 - The klai-infra PR (separate; removes SOPS env vars and updates SERVERS.md)
   is also merged.
-- You have read [.moai/specs/SPEC-DECOMM-FOCUS-001/](../../.moai/specs/SPEC-DECOMM-FOCUS-001/).
 
 ## Out-of-band pre-checks
 
@@ -170,12 +169,9 @@ ssh core-01 "docker ps --format '{{.Names}}' | wc -l"
 
 ## After this runbook
 
-1. Update `.moai/specs/SPEC-DECOMM-FOCUS-001/spec.md` `status: approved` →
-   `status: implemented` and append a HISTORY entry with today's date and
-   the merge commit SHAs (one for the main repo, one for klai-infra).
-2. Confirm in your next async update / standup that the cleanup has
+1. Confirm in your next async update / standup that the cleanup has
    landed.
-3. If the production retention event from Step 4 is the only one for this
+2. If the production retention event from Step 4 is the only one for this
    tenant, you can reasonably consider the residual Focus data closed
    from a compliance standpoint.
 

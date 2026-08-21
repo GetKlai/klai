@@ -44,7 +44,7 @@ jobs:
       #     automerge should be gating on.
       - name: Mint a token for the Klai Renovate app
         id: app-token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.RENOVATE_APP_ID }}
           private-key: ${{ secrets.RENOVATE_PRIVATE_KEY }}

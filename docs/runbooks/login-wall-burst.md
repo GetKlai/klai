@@ -2,7 +2,7 @@
 
 **Alert**: `login_wall_burst`
 **Severity**: warning
-**Spec**: [SPEC-INGEST-LOGIN-WALL-DETECT-001](../../.moai/specs/SPEC-INGEST-LOGIN-WALL-DETECT-001/spec.md)
+**Spec**: SPEC-INGEST-LOGIN-WALL-DETECT-001 (historical — SPEC removed in repo cleanup 2026-08-18)
 
 ## What this means
 
@@ -54,9 +54,9 @@ If a single `org_id` accounts for > 80% of detections:
 - New tenant + high rate = their first crawl is hitting login-walls. Likely
   causes:
   1. **Source site requires login** but their connector was set up without
-     cookies. Configure cookies via the existing connector wizard
-     ([SPEC-CRAWLER-004](../../.moai/specs/SPEC-CRAWLER-004/spec.md) cookie
-     path) and re-crawl.
+     cookies. Configure cookies via the existing connector wizard's
+     SPEC-CRAWLER-004 cookie path (historical — SPEC removed in repo cleanup
+     2026-08-18) and re-crawl.
   2. **Stale crawl that already-walled pages were re-fetched**. Run the
      backfill CLI to clean them out:
      ```bash

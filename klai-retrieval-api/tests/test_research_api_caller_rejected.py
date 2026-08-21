@@ -14,7 +14,7 @@ contract.
 See:
 - ``.claude/rules/klai/pitfalls/process-rules.md`` →
   ``retrieve-caller-service-header-mismatch``
-- ``.moai/specs/SPEC-DECOMM-FOCUS-001/spec.md`` D4
+- SPEC-DECOMM-FOCUS-001 D4 (historical — SPEC removed in repo cleanup 2026-08-18)
 """
 
 from __future__ import annotations

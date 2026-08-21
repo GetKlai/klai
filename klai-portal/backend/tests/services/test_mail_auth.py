@@ -1,6 +1,6 @@
 """Tests for ``app.services.mail_auth`` — SPEC-SEC-IMAP-001.
 
-Covers AC-1..AC-9 from ``.moai/specs/SPEC-SEC-IMAP-001/acceptance.md``.
+Covers AC-1..AC-9 from SPEC-SEC-IMAP-001 (historical — SPEC removed in repo cleanup 2026-08-18).
 AC-7, AC-10, AC-11 are exercised at the listener layer (``test_imap_listener``).
 
 Strategy:

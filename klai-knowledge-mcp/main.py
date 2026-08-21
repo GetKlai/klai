@@ -130,7 +130,7 @@ _KB_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 # the system default for content with no epistemic classification — keeps
 # untagged content out of the (future) feit-boost in retrieval scoring
 # (DD-2 in spec.md). See the Realignment Note in
-# .moai/specs/SPEC-TAXONOMY-001/spec.md.
+# SPEC-TAXONOMY-001 (historical — SPEC removed in repo cleanup 2026-08-18).
 AssertionMode = Literal["factual", "belief", "hypothesis", "procedural", "quoted", "unknown"]
 VALID_ASSERTION_MODES: frozenset[str] = frozenset(get_args(AssertionMode))
 

@@ -1,12 +1,8 @@
 name: Build and push scribe-api
 
 on:
+  workflow_call:
   push:
-    branches: [main]
-    paths:
-      - 'klai-scribe/scribe-api/**'
-      - '.github/workflows/scribe-api.yml'
-  pull_request:
     branches: [main]
     paths:
       - 'klai-scribe/scribe-api/**'
@@ -36,7 +32,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           python-version: "3.12"
           enable-cache: true

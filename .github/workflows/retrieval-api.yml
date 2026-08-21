@@ -1,6 +1,7 @@
 name: Build and push retrieval-api
 
 on:
+  workflow_call:
   push:
     branches: [main]
     paths:
@@ -8,18 +9,6 @@ on:
       # SPEC-SEC-IDENTITY-ASSERT-001 Phase D: retrieval-api consumes
       # klai-libs as path-deps; library updates retrigger
       # this image build.
-      - 'klai-libs/identity-assert/**'
-      - 'klai-libs/chat-prompts/**'
-      - 'klai-libs/kb-slugs/**'
-      - 'klai-libs/citations/**'
-      - 'klai-libs/service-auth/**'
-      - 'klai-libs/llm-safety/**'
-      - 'klai-libs/graphiti-compat/**'
-      - '.github/workflows/retrieval-api.yml'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'klai-retrieval-api/**'
       - 'klai-libs/identity-assert/**'
       - 'klai-libs/chat-prompts/**'
       - 'klai-libs/kb-slugs/**'
@@ -46,10 +35,9 @@ jobs:
   # services (Redis/Qdrant/TEI/FalkorDB/portal) are mocked, so no service
   # containers are needed.
   #
-  # Named `quality` deliberately: that is the required status check on main.
-  # Until 2026-08-14 this job was called `tests`, so the required check never
-  # appeared on a retrieval-api-only PR and the branch protection was
-  # decorative here — every merge went through admin bypass.
+  # The always-running Required quality workflow calls this workflow for
+  # affected PRs and aggregates this job into the single required `quality`
+  # context. Pushes to main still run this workflow directly.
   quality:
     runs-on: ubuntu-latest
     defaults:
@@ -57,7 +45,7 @@ jobs:
         working-directory: klai-retrieval-api
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           python-version: "3.13"
       # Dependency vulnerability gate — see knowledge-ingest.yml for the

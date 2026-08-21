@@ -1,6 +1,6 @@
 -- Migration: 014_rag_eval_results.sql
 -- SPEC-RAG-EVAL-001 — store nightly RAGAS metrics per query/suite/variant.
--- See .moai/specs/SPEC-RAG-EVAL-001/spec.md
+-- SPEC-RAG-EVAL-001 (historical — SPEC removed in repo cleanup 2026-08-18)
 
 CREATE TABLE IF NOT EXISTS knowledge.rag_eval_results (
   id                BIGSERIAL PRIMARY KEY,

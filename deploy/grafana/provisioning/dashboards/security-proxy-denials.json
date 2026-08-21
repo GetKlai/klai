@@ -13,18 +13,12 @@
       }
     ]
   },
-  "description": "SPEC-SEC-024 — visualise docker-socket-proxy 403 denials by service with deploy annotations.",
+  "description": "SPEC-SEC-024 (historical — SPEC removed in repo cleanup 2026-08-18) — visualise docker-socket-proxy 403 denials by service with deploy annotations.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
   "id": null,
   "links": [
-    {
-      "title": "SPEC-SEC-024",
-      "url": "https://github.com/GetKlai/klai/blob/main/.moai/specs/SPEC-SEC-024/spec.md",
-      "type": "link",
-      "icon": "external link"
-    },
     {
       "title": "docker-socket-proxy pitfall",
       "url": "https://github.com/GetKlai/klai/blob/main/.claude/rules/klai/platform/docker-socket-proxy.md",
