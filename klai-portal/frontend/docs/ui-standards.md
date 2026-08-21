@@ -19,6 +19,22 @@ rule, `/dev/ui` is the rendered proof. When you add or change a shared UI
 component, update both — a new tone, state, or variant must appear in the
 catalog and be described here in the same change.
 
+## What Is Enforced (and what is not)
+
+Most of this document is prose you are trusted to follow. Three parts are not:
+
+| Check | Where | Fails on |
+|---|---|---|
+| `klai/no-hardcoded-brand-color` | `eslint-rules/`, runs in `npm run lint` | A hex in `className` that equals a token in `index.css`. Use `bg-[var(--color-rl-dark)]`. Third-party brand marks (Google, HubSpot) never match, by design |
+| `klai/no-window-confirm` | `eslint-rules/`, runs in `npm run lint` | `window.confirm` / `alert` / `prompt`. Use `InlineDeleteConfirm` or `AlertDialog` |
+| Component table completeness | `tests/design/ui-standards-coverage.test.ts` | A module in `src/components/ui/` missing from the table below, or a table row whose module no longer exists |
+
+Everything else in this file is unenforced on purpose. Notably, raw
+`<button>` outside `components/ui/` is discouraged here but not linted: there
+are ~100 legitimate uses (disclosure toggles, custom rows) and a rule that
+noisy gets switched off. Do not add enforcement for a pattern you have not
+first counted.
+
 ## Component Library Reference
 
 All shared UI lives in `src/components/ui/`. The base is **shadcn/ui**
@@ -64,6 +80,7 @@ Build pages from these; never hand-roll a raw `<button>`, `<input>`,
 | `dropdown-menu` `popover` `command` | Menus, popovers, command/combobox | Yes |
 | `multi-select` | Multi-value select | Yes |
 | `tooltip` | Hover/focus tooltips (used by `row-action`) | Yes |
+| `LocaleSwitcher` | NL/EN language toggle (`LocaleSwitcher`). Navigates to the sibling locale URL on `/nl/…` and `/en/…` routes, and updates locale state only elsewhere. Used on the unauthenticated routes (login, signup, verify) | Yes |
 | `sonner` | Toasts (`toast()` feedback) | Yes |
 | `card` | Framed repeated items / stat blocks | Yes |
 | `conversation` | Message timeline + composer + panel (`ConversationTimeline`, `ConversationComposer`, `ConversationPanel`): sender-grouped bubbles, day separators, quiet system lines, Cmd/Enter send, inline edit of own messages, back-right header. Shared by account "Mijn meldingen" + "Berichten" and the platform-admin messages tab | Yes |
