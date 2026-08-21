@@ -457,18 +457,26 @@ services:
       # SPEC-PRIVACY-MISTRAL-PII-001 Phase 3 (REQ-7): the single switch that
       # keeps klai_pii_enforce.py inert. Default OFF/unset — with it off,
       # masking/restore never runs at all (no analyzer call, no map entry).
-      # Flipping this to "true" is the entire activation decision; it is
-      # NOT part of this PR's scope to turn on.
-      KLAI_PII_ENFORCE: ${KLAI_PII_ENFORCE:-false}
+      # ACTIVATED 2026-08-21 for Voys only (see the allowlist below).
+      # Verified end-to-end against real Mistral calls before flipping:
+      # masking, non-streaming restore, AND streaming restore — the last is
+      # the path LibreChat uses and the one we had to build ourselves
+      # because LiteLLM's own returns an empty token map on streaming
+      # (REQ-0a). Rollback is reverting this line.
+      KLAI_PII_ENFORCE: ${KLAI_PII_ENFORCE:-true}
       # Activation hardening (see klai_pii_enforce.py's `_org_is_enforced`):
       # comma-separated org_id allowlist. KLAI_PII_ENFORCE alone applies to
       # every tenant identically the moment it flips; this lets the FIRST
       # activation be exactly one org. Empty/unset means enforce for NO org
       # even if KLAI_PII_ENFORCE is "true" — the safe reading, not "every
       # org" — so turning enforcement on for anyone is a deliberate
-      # two-variable action, never a single flag flip. NOT part of this
-      # PR's scope to populate.
-      KLAI_PII_ENFORCE_ORG_IDS: ${KLAI_PII_ENFORCE_ORG_IDS:-}
+      # two-variable action, never a single flag flip.
+      #
+      # 368884765035593759 = Voys (portal_orgs.id 8). First and currently
+      # ONLY activated tenant. Every other org takes the same early-return
+      # path it did yesterday, which is what makes this reversible per
+      # tenant rather than platform-wide.
+      KLAI_PII_ENFORCE_ORG_IDS: ${KLAI_PII_ENFORCE_ORG_IDS:-368884765035593759}
     depends_on:
       postgres:
         condition: service_healthy
