@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { WidgetToggleCard } from '@/features/widgets/components/WidgetToggleCard'
+import { WIDGET_DEFAULT_PRIMARY_COLOR } from '@/features/widgets/config/appearance'
 import * as m from '@/paraglide/messages'
 import type { WidgetDetailResponse, WidgetConfig } from '../../-types'
 import { useUpdateWidget } from '../../-hooks'
@@ -26,7 +27,7 @@ export function AppearanceTab({ widget }: Props) {
   const config = widget.widget_config
 
   const [welcome, setWelcome] = useState(config.welcome_message)
-  const [primaryColor, setPrimaryColor] = useState(config.primary_color || '#fcaa2d')
+  const [primaryColor, setPrimaryColor] = useState(config.primary_color || WIDGET_DEFAULT_PRIMARY_COLOR)
   const [theme, setTheme] = useState<'light' | 'dark'>(config.theme || 'light')
   const [startersRaw, setStartersRaw] = useState((config.conversation_starters ?? []).join('\n'))
   const [showSources, setShowSources] = useState(config.show_sources ?? true)
@@ -37,7 +38,7 @@ export function AppearanceTab({ widget }: Props) {
 
   useEffect(() => {
     setWelcome(config.welcome_message)
-    setPrimaryColor(config.primary_color || '#fcaa2d')
+    setPrimaryColor(config.primary_color || WIDGET_DEFAULT_PRIMARY_COLOR)
     setTheme(config.theme || 'light')
     setStartersRaw((config.conversation_starters ?? []).join('\n'))
     setShowSources(config.show_sources ?? true)
@@ -51,7 +52,7 @@ export function AppearanceTab({ widget }: Props) {
 
   const isDirty =
     welcome.trim() !== config.welcome_message ||
-    primaryColor !== (config.primary_color || '#fcaa2d') ||
+    primaryColor !== (config.primary_color || WIDGET_DEFAULT_PRIMARY_COLOR) ||
     theme !== (config.theme || 'light') ||
     JSON.stringify(starters) !== JSON.stringify(config.conversation_starters ?? []) ||
     showSources !== (config.show_sources ?? true) ||

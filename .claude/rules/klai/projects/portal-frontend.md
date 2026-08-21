@@ -20,7 +20,7 @@ Shared brand DNA and tokens:
 
 - `.claude/rules/klai/design/styleguide.md` is shared brand guidance.
 - `.claude/rules/klai/design/tokens.md` is shared token/logo guidance.
-- Website-specific patterns stay in `.claude/rules/klai/design/website-patterns.md`.
+- Website-specific patterns stay in `.claude/rules/klai/projects/website.md`.
 - Portal-specific UI patterns stay in `klai-portal/frontend/docs/ui-standards.md`.
 
 Do not copy portal admin/app patterns into the website, and do not copy

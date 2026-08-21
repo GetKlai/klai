@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ArrowUp, ChevronDown, MessageSquare, Pencil, Share2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
+import { WIDGET_DEFAULT_PRIMARY_COLOR } from '@/features/widgets/config/appearance'
 import * as m from '@/paraglide/messages'
 
 export interface WidgetChatSurfaceProps {
@@ -125,7 +126,7 @@ export function WidgetChatSurface({
   welcomeMessage = '',
   conversationStarters = [],
   hideDisclaimer = false,
-  primaryColor = '#fcaa2d',
+  primaryColor = WIDGET_DEFAULT_PRIMARY_COLOR,
   theme = 'light',
   showSources = true,
   showMeta = false,
@@ -311,10 +312,10 @@ export function WidgetChatSurface({
   return (
     <div
       data-widget-chat-surface
-      className={`fixed inset-0 z-[60] flex flex-col ${isDark ? 'bg-[#191918] text-[#fffef2]' : 'bg-white text-gray-900'}`}
+      className={`fixed inset-0 z-[60] flex flex-col ${isDark ? 'bg-[var(--color-rl-dark)] text-[var(--color-rl-bg)]' : 'bg-white text-gray-900'}`}
       style={{ height: '100vh' }}
     >
-      <div className={`flex h-14 shrink-0 items-center justify-between border-b px-4 sm:px-6 ${isDark ? 'border-white/10 bg-[#191918]' : 'border-gray-200 bg-white'}`}>
+      <div className={`flex h-14 shrink-0 items-center justify-between border-b px-4 sm:px-6 ${isDark ? 'border-white/10 bg-[var(--color-rl-dark)]' : 'border-gray-200 bg-white'}`}>
         <div className="flex min-w-0 items-center gap-3">
           <div
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
@@ -323,8 +324,8 @@ export function WidgetChatSurface({
             <MessageSquare className="h-4 w-4 text-white" strokeWidth={1.75} />
           </div>
           <div className="min-w-0">
-            <h2 className={`truncate text-sm font-display-medium leading-none ${isDark ? 'text-[#fffef2]' : 'text-gray-900'}`}>{botName}</h2>
-            <p className={`mt-0.5 flex items-center gap-1 text-[11px] leading-none ${isDark ? 'text-[#fffef2]/50' : 'text-gray-400'}`}>
+            <h2 className={`truncate text-sm font-display-medium leading-none ${isDark ? 'text-[var(--color-rl-bg)]' : 'text-gray-900'}`}>{botName}</h2>
+            <p className={`mt-0.5 flex items-center gap-1 text-[11px] leading-none ${isDark ? 'text-[var(--color-rl-bg)]/50' : 'text-gray-400'}`}>
               <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--color-success)]" />
               {m.widget_chat_status_online()}
             </p>
@@ -362,7 +363,7 @@ export function WidgetChatSurface({
               size="icon"
               onClick={onClose}
               aria-label={m.widget_chat_close()}
-              className={`ml-1 h-8 w-8 ${isDark ? 'text-[#fffef2]/55' : 'text-gray-400'}`}
+              className={`ml-1 h-8 w-8 ${isDark ? 'text-[var(--color-rl-bg)]/55' : 'text-gray-400'}`}
             >
               <X className="h-4 w-4" />
             </Button>
@@ -370,7 +371,7 @@ export function WidgetChatSurface({
         </div>
       </div>
 
-      <div className={`flex-1 overflow-y-auto ${isDark ? 'bg-[#191918]' : 'bg-white'}`}>
+      <div className={`flex-1 overflow-y-auto ${isDark ? 'bg-[var(--color-rl-dark)]' : 'bg-white'}`}>
         <div className={`mx-auto max-w-3xl px-4 sm:px-6 ${messages.length === 0 ? 'h-full flex flex-col' : 'py-6'}`}>
           {messages.length === 0 ? (
             <div className="flex flex-1 flex-col items-center justify-center px-4 pb-8 text-center">
@@ -380,8 +381,8 @@ export function WidgetChatSurface({
               >
                 <MessageSquare className="h-8 w-8" style={{ color: primaryColor }} strokeWidth={1.5} />
               </div>
-              <h3 className={`text-lg font-semibold ${isDark ? 'text-[#fffef2]' : 'text-gray-900'}`}>{botName}</h3>
-              <p className={`mt-1 max-w-md text-sm ${isDark ? 'text-[#fffef2]/65' : 'text-gray-500'}`}>
+              <h3 className={`text-lg font-semibold ${isDark ? 'text-[var(--color-rl-bg)]' : 'text-gray-900'}`}>{botName}</h3>
+              <p className={`mt-1 max-w-md text-sm ${isDark ? 'text-[var(--color-rl-bg)]/65' : 'text-gray-500'}`}>
                 {welcomeMessage || description || m.widget_chat_default_empty_state()}
               </p>
               {starters.length > 0 && (
@@ -392,7 +393,7 @@ export function WidgetChatSurface({
                       type="button"
                       variant="secondary"
                       onClick={() => void sendMessage(starter)}
-                      className={`h-auto rounded-xl px-4 py-2.5 text-[13px] ${isDark ? 'bg-white/10 text-[#fffef2] hover:bg-white/15' : 'bg-[var(--color-rl-cream)] text-gray-700 hover:bg-[var(--color-rl-cream)]/70'}`}
+                      className={`h-auto rounded-xl px-4 py-2.5 text-[13px] ${isDark ? 'bg-white/10 text-[var(--color-rl-bg)] hover:bg-white/15' : 'bg-[var(--color-rl-cream)] text-gray-700 hover:bg-[var(--color-rl-cream)]/70'}`}
                     >
                       {starter}
                     </Button>
@@ -422,11 +423,11 @@ export function WidgetChatSurface({
         </div>
       </div>
 
-      <div className={`shrink-0 ${isDark ? 'bg-[#191918]' : 'bg-white'}`}>
+      <div className={`shrink-0 ${isDark ? 'bg-[var(--color-rl-dark)]' : 'bg-white'}`}>
         <div className="mx-auto max-w-3xl px-4 pb-4 pt-2 sm:px-6">
           {collectUserInfo && (
             <div className="mb-3">
-              <p className={`mb-2 text-xs ${isDark ? 'text-[#fffef2]/55' : 'text-gray-400'}`}>
+              <p className={`mb-2 text-xs ${isDark ? 'text-[var(--color-rl-bg)]/55' : 'text-gray-400'}`}>
                 {m.widget_chat_user_info_help()}
               </p>
               <div className="grid gap-2 sm:grid-cols-2">
@@ -436,7 +437,7 @@ export function WidgetChatSurface({
                   value={visitorName}
                   onChange={(e) => setVisitorName(e.target.value)}
                   placeholder={m.widget_chat_user_info_name()}
-                  className={`min-w-0 rounded-xl border px-3 py-2 text-sm outline-none transition-colors focus:border-gray-300 ${isDark ? 'border-white/10 bg-white/5 text-[#fffef2] placeholder:text-[#fffef2]/35' : 'border-gray-200 bg-white text-gray-900 placeholder:text-gray-400'}`}
+                  className={`min-w-0 rounded-xl border px-3 py-2 text-sm outline-none transition-colors focus:border-gray-300 ${isDark ? 'border-white/10 bg-white/5 text-[var(--color-rl-bg)] placeholder:text-[var(--color-rl-bg)]/35' : 'border-gray-200 bg-white text-gray-900 placeholder:text-gray-400'}`}
                 />
                 <input
                   type="email"
@@ -444,7 +445,7 @@ export function WidgetChatSurface({
                   value={visitorEmail}
                   onChange={(e) => setVisitorEmail(e.target.value)}
                   placeholder={m.widget_chat_user_info_email()}
-                  className={`min-w-0 rounded-xl border px-3 py-2 text-sm outline-none transition-colors focus:border-gray-300 ${isDark ? 'border-white/10 bg-white/5 text-[#fffef2] placeholder:text-[#fffef2]/35' : 'border-gray-200 bg-white text-gray-900 placeholder:text-gray-400'}`}
+                  className={`min-w-0 rounded-xl border px-3 py-2 text-sm outline-none transition-colors focus:border-gray-300 ${isDark ? 'border-white/10 bg-white/5 text-[var(--color-rl-bg)] placeholder:text-[var(--color-rl-bg)]/35' : 'border-gray-200 bg-white text-gray-900 placeholder:text-gray-400'}`}
                 />
               </div>
             </div>
@@ -467,7 +468,7 @@ export function WidgetChatSurface({
               placeholder={m.widget_chat_input_placeholder()}
               rows={1}
               disabled={isStreaming}
-              className={`max-h-40 min-h-[28px] flex-1 resize-none border-0 bg-transparent px-0 py-1.5 text-[15px] leading-6 focus:ring-0 ${isDark ? 'text-[#fffef2] placeholder:text-[#fffef2]/35' : 'text-gray-900'}`}
+              className={`max-h-40 min-h-[28px] flex-1 resize-none border-0 bg-transparent px-0 py-1.5 text-[15px] leading-6 focus:ring-0 ${isDark ? 'text-[var(--color-rl-bg)] placeholder:text-[var(--color-rl-bg)]/35' : 'text-gray-900'}`}
             />
             <Button
               type="submit"
@@ -485,7 +486,7 @@ export function WidgetChatSurface({
             </Button>
           </form>
           {!hideDisclaimer && (
-            <p className={`mt-2.5 text-center text-[11px] ${isDark ? 'text-[#fffef2]/45' : 'text-gray-400'}`}>
+            <p className={`mt-2.5 text-center text-[11px] ${isDark ? 'text-[var(--color-rl-bg)]/45' : 'text-gray-400'}`}>
               {m.widget_ai_disclaimer()}
             </p>
           )}
@@ -543,7 +544,7 @@ function MessageBubble({
           <MessageSquare className="h-4 w-4" style={{ color: primaryColor }} strokeWidth={2} />
         </div>
         <div className="min-w-0 flex-1">
-          <div className={`whitespace-pre-line break-words text-[14px] leading-[1.75] ${isDark ? 'text-[#fffef2]' : 'text-gray-900'}`}>
+          <div className={`whitespace-pre-line break-words text-[14px] leading-[1.75] ${isDark ? 'text-[var(--color-rl-bg)]' : 'text-gray-900'}`}>
             {message.content || (isStreaming && isLast ? '…' : '')}
           </div>
           <SourceDetails message={message} showSources={showSources} showMeta={showMeta} isDark={isDark} />
@@ -557,7 +558,7 @@ function MessageBubble({
       {message.content ? (
         <div>
           <div className={`max-w-[75%] rounded-2xl rounded-bl-md px-4 py-2.5 ${isDark ? 'bg-white/10' : 'bg-[var(--color-rl-cream)]'}`}>
-            <div className={`whitespace-pre-line break-words text-[14px] leading-[1.6] ${isDark ? 'text-[#fffef2]' : 'text-gray-900'}`}>
+            <div className={`whitespace-pre-line break-words text-[14px] leading-[1.6] ${isDark ? 'text-[var(--color-rl-bg)]' : 'text-gray-900'}`}>
               {message.content}
             </div>
           </div>
@@ -598,10 +599,10 @@ function SourceDetails({
     <div className="mt-2 max-w-xl space-y-1.5">
       {showSources && sources.length > 0 && (
         <details className={`group rounded-xl border ${isDark ? 'border-white/10 bg-white/[0.04]' : 'border-gray-200 bg-gray-50/70'}`}>
-          <summary className={`flex min-h-9 cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs ${isDark ? 'text-[#fffef2]/60 hover:text-[#fffef2]' : 'text-gray-500 hover:text-gray-900'} [&::-webkit-details-marker]:hidden`}>
+          <summary className={`flex min-h-9 cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs ${isDark ? 'text-[var(--color-rl-bg)]/60 hover:text-[var(--color-rl-bg)]' : 'text-gray-500 hover:text-gray-900'} [&::-webkit-details-marker]:hidden`}>
             <ChevronDown className="h-3.5 w-3.5 shrink-0 -rotate-90 transition-transform group-open:rotate-0" strokeWidth={2} />
             <span className="min-w-0 flex-1 font-medium">{m.widget_chat_sources_label()}</span>
-            <span className={isDark ? 'text-[#fffef2]/40' : 'text-gray-400'}>{sourceCountLabel}</span>
+            <span className={isDark ? 'text-[var(--color-rl-bg)]/40' : 'text-gray-400'}>{sourceCountLabel}</span>
           </summary>
           <ol className="space-y-1 px-3 pb-3">
             {sources.map((source) => (
@@ -611,7 +612,7 @@ function SourceDetails({
                     href={source.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className={`inline-flex max-w-full items-center gap-2 rounded-full border px-2.5 py-1.5 text-xs no-underline transition-colors ${isDark ? 'border-white/10 bg-white/5 text-[#fffef2] hover:bg-white/10' : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'}`}
+                    className={`inline-flex max-w-full items-center gap-2 rounded-full border px-2.5 py-1.5 text-xs no-underline transition-colors ${isDark ? 'border-white/10 bg-white/5 text-[var(--color-rl-bg)] hover:bg-white/10' : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'}`}
                   >
                     <span
                       className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-white"
@@ -622,7 +623,7 @@ function SourceDetails({
                     <span className="truncate">{source.title}</span>
                   </a>
                 ) : (
-                  <span className={`inline-flex max-w-full items-center gap-2 rounded-full border px-2.5 py-1.5 text-xs ${isDark ? 'border-white/10 bg-white/5 text-[#fffef2]/70' : 'border-gray-200 bg-white text-gray-600'}`}>
+                  <span className={`inline-flex max-w-full items-center gap-2 rounded-full border px-2.5 py-1.5 text-xs ${isDark ? 'border-white/10 bg-white/5 text-[var(--color-rl-bg)]/70' : 'border-gray-200 bg-white text-gray-600'}`}>
                     <span
                       className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-white"
                       style={{ backgroundColor: 'var(--color-rl-dark)' }}
@@ -639,14 +640,14 @@ function SourceDetails({
       )}
       {showMeta && (
         <details className={`group rounded-xl border ${isDark ? 'border-white/10 bg-white/[0.03]' : 'border-gray-200 bg-gray-50/50'}`}>
-          <summary className={`flex min-h-9 cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs ${isDark ? 'text-[#fffef2]/55 hover:text-[#fffef2]' : 'text-gray-500 hover:text-gray-900'} [&::-webkit-details-marker]:hidden`}>
+          <summary className={`flex min-h-9 cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs ${isDark ? 'text-[var(--color-rl-bg)]/55 hover:text-[var(--color-rl-bg)]' : 'text-gray-500 hover:text-gray-900'} [&::-webkit-details-marker]:hidden`}>
             <ChevronDown className="h-3.5 w-3.5 shrink-0 -rotate-90 transition-transform group-open:rotate-0" strokeWidth={2} />
             <span className="min-w-0 flex-1 font-medium">Agent activiteit</span>
-            <span className={isDark ? 'text-[#fffef2]/40' : 'text-gray-400'}>
+            <span className={isDark ? 'text-[var(--color-rl-bg)]/40' : 'text-gray-400'}>
               {activity.length > 0 ? activityCountLabel : sourceCountLabel}
             </span>
           </summary>
-          <div className={`space-y-2 px-3 pb-3 text-[11px] leading-relaxed ${isDark ? 'text-[#fffef2]/55' : 'text-gray-500'}`}>
+          <div className={`space-y-2 px-3 pb-3 text-[11px] leading-relaxed ${isDark ? 'text-[var(--color-rl-bg)]/55' : 'text-gray-500'}`}>
             {sources.length > 0 && (
               <p>
                 {sources.length === 1
@@ -658,9 +659,9 @@ function SourceDetails({
               <ol className="space-y-1.5">
                 {activity.map((item) => (
                   <li key={item.step} className="flex gap-2">
-                    <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${isDark ? 'bg-[#fffef2]/35' : 'bg-gray-300'}`} />
+                    <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${isDark ? 'bg-[var(--color-rl-bg)]/35' : 'bg-gray-300'}`} />
                     <span className="min-w-0">
-                      <span className={isDark ? 'font-medium text-[#fffef2]/75' : 'font-medium text-gray-700'}>{item.label}</span>
+                      <span className={isDark ? 'font-medium text-[var(--color-rl-bg)]/75' : 'font-medium text-gray-700'}>{item.label}</span>
                       {item.detail && <span> {item.detail}</span>}
                     </span>
                   </li>

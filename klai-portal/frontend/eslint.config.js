@@ -6,6 +6,8 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 import noDirectKbQuerykey from './eslint-rules/no-direct-kb-querykey.js'
 import noCrossRouteImport from './eslint-rules/no-cross-route-import.js'
+import noHardcodedBrandColor from './eslint-rules/no-hardcoded-brand-color.js'
+import noWindowConfirm from './eslint-rules/no-window-confirm.js'
 
 export default defineConfig([
   globalIgnores([
@@ -23,6 +25,8 @@ export default defineConfig([
         rules: {
           'no-direct-kb-querykey': noDirectKbQuerykey,
           'no-cross-route-import': noCrossRouteImport,
+          'no-hardcoded-brand-color': noHardcodedBrandColor,
+          'no-window-confirm': noWindowConfirm,
         },
       },
     },
@@ -44,6 +48,8 @@ export default defineConfig([
       'no-console': ['error', { allow: ['warn', 'error'] }],
       'klai/no-direct-kb-querykey': 'error',
       'klai/no-cross-route-import': 'error',
+      'klai/no-hardcoded-brand-color': 'error',
+      'klai/no-window-confirm': 'error',
       // TanStack Router uses async functions in route config (beforeLoad, loader)
       '@typescript-eslint/no-misused-promises': [
         'error',

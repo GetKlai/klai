@@ -1,4 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { WIDGET_DEFAULT_PRIMARY_COLOR } from '@/features/widgets/config/appearance'
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { AlertTriangle, ArrowLeft, ArrowRight, Loader2 } from 'lucide-react'
@@ -70,7 +71,7 @@ const INITIAL_FORM: FormState = {
   system_prompt: '',
   page_context_enabled: false,
   kb_ids: [],
-  primary_color: '#fcaa2d',
+  primary_color: WIDGET_DEFAULT_PRIMARY_COLOR,
   theme: 'light',
   welcome_message: '',
   starters_raw: '',
