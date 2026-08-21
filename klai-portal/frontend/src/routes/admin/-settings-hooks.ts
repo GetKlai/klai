@@ -13,6 +13,11 @@ export type OrgSettings = {
   auto_accept_same_domain: boolean
   primary_domain: string | null
   telemetry_level: TelemetryLevel
+  // SPEC-PRIVACY-PII-POLICY-ADMIN-001 — the org's opted-in PII masking
+  // entity set (REQ-7's return-set entity type strings). Read via
+  // GET /api/admin/settings, written via PATCH /api/orgs/me/pii-entities
+  // (a separate endpoint — see usePiiEntitiesMutation).
+  pii_masked_entities: string[]
 }
 
 // SPEC-PORTAL-EXTENSIONS-UNIFY-001 - extensions API shape (i18n-clean:
@@ -120,6 +125,29 @@ export function useTelemetryLevelMutation(onSaved: () => void) {
       adminLogger.info('Telemetry level changed', { telemetry_level: data.telemetry_level })
       queryClient.setQueryData(adminSettingsQueryKey, (prev: OrgSettings | undefined) =>
         prev ? { ...prev, telemetry_level: data.telemetry_level } : prev,
+      )
+      onSaved()
+    },
+  })
+}
+
+// SPEC-PRIVACY-PII-POLICY-ADMIN-001 PR1 — tenant PII entity policy write path.
+// PATCH /api/orgs/me/pii-entities, not /api/admin/settings: REQ-1 copies the
+// platform-unlocks shape (its own endpoint, full-set replacement) rather than
+// folding this into the general settings PATCH.
+export function usePiiEntitiesMutation(onSaved: () => void) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (entities: string[]) =>
+      apiFetch<{ entities: string[] }>('/api/orgs/me/pii-entities', {
+        method: 'PATCH',
+        body: JSON.stringify({ entities }),
+      }),
+    onSuccess: (data) => {
+      adminLogger.info('PII masked entities changed', { pii_masked_entities: data.entities })
+      queryClient.setQueryData(adminSettingsQueryKey, (prev: OrgSettings | undefined) =>
+        prev ? { ...prev, pii_masked_entities: data.entities } : prev,
       )
       onSaved()
     },

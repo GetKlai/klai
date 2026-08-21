@@ -571,6 +571,11 @@ the detection ends:
    provider sees it. State it, rather than letting an unchecked box imply names are handled.
 2. **Addresses are detected by postcode and city, not by street.** An address written without
    a postcode is not detected.
+
+   *The copy tracks what is live, not what this spec plans.* `NL_CITY` (D5) is not built yet,
+   so the shipped line reads "by postcode, not by street name". Widen it to include city in the
+   same change that lands the recogniser — a limitations list that overstates detection is the
+   one failure this requirement exists to prevent.
 3. **Detection covers structured identifiers** — numbers, codes, formats. It is not a general
    understanding of what is sensitive.
 4. **The context around a masked value stays.** Masking a BSN in *"the BSN of the customer
@@ -595,7 +600,7 @@ rests on, in either direction.
 
 **THE page SHALL** state the same things to a tenant admin and to Klai staff.
 
-#### REQ-12 —#### REQ-12 — platform UI extends the existing console (ubiquitous)
+#### REQ-12 — platform UI extends the existing console (ubiquitous)
 
 **THE platform surface SHALL** live under `/admin/platform`, gated by
 `require_platform_admin()`, as a route rather than a drawer — `ui-standards.md` forbids sheets
