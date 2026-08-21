@@ -370,3 +370,30 @@ class TestStableDocumentResolution:
         assert legacy["title"] == "Oud artikel"
         assert modern["title"] == "De Webphone"
         assert modern["artifact_id"] == "artifact-current"
+
+    def test_a_healed_edge_prefers_its_document_episode(self):
+        """Regression (Sol review, high): existing edges must heal on re-ingest.
+
+        An edge accumulates episodes as later ingests re-confirm the same
+        fact, and the pre-rollout artifact-id episode stays FIRST. Taking the
+        first name that resolves would keep choosing the superseded id, so no
+        existing edge would ever pick up its new document key — defeating the
+        healing this change is built on.
+        """
+        converted = graph_search._convert_results(
+            [_edge("e1", ["ep-old", "ep-new"])],
+            10,
+            {"ep-old": "artifact-superseded", "ep-new": "doc:support:webphone"},
+        )
+        assert converted[0]["graph_kb_slug"] == "support"
+        assert converted[0]["graph_path"] == "webphone"
+        assert converted[0]["artifact_id"] is None
+
+    def test_edge_with_only_legacy_episodes_is_unchanged(self):
+        converted = graph_search._convert_results(
+            [_edge("e1", ["ep-a", "ep-b"])],
+            10,
+            {"ep-a": "artifact-one", "ep-b": "artifact-two"},
+        )
+        assert converted[0]["artifact_id"] == "artifact-one"
+        assert converted[0]["graph_kb_slug"] is None

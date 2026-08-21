@@ -14,6 +14,8 @@ shared lib is the coordination point.
 
 from __future__ import annotations
 
+from urllib.parse import quote, unquote
+
 __all__ = ["episode_name", "parse_episode_name", "personal_kb_slug"]
 
 
@@ -62,8 +64,19 @@ def episode_name(kb_slug: str, path: str) -> str:
 
     Stamped by knowledge-ingest at episode creation and parsed back by
     retrieval-api when it resolves a graph fact to its source document.
+
+    ``kb_slug`` is percent-encoded so the encoding stays reversible. Nothing
+    validates the slug shape — ``IngestRequest.kb_slug`` is a bare ``str`` —
+    so a slug containing ``:`` would otherwise split in the wrong place, the
+    document lookup would silently never match, and (because a document-key
+    edge only receives its artifact_id from that lookup) the fact would drop
+    out of the evidence pack entirely. Encoding at the boundary is cheaper
+    than trusting every caller.
+
+    ``path`` needs no encoding: it is the final segment, so it may contain
+    colons freely.
     """
-    return f"{_EPISODE_NAME_PREFIX}:{kb_slug}:{path}"
+    return f"{_EPISODE_NAME_PREFIX}:{quote(kb_slug, safe='')}:{path}"
 
 
 def parse_episode_name(name: str) -> tuple[str, str] | None:
@@ -71,15 +84,14 @@ def parse_episode_name(name: str) -> tuple[str, str] | None:
 
     None means the episode predates SPEC-RAG-GRAPH-CITE-002 and is still named
     after its artifact_id; callers fall back to resolving that instead. Split
-    with maxsplit=2 because a path may legitimately contain colons while a
-    kb_slug may not.
+    with maxsplit=2 so the path keeps any colons it contains.
     """
     if not name:
         return None
     parts = name.split(":", 2)
     if len(parts) != 3 or parts[0] != _EPISODE_NAME_PREFIX:
         return None
-    kb_slug, path = parts[1], parts[2]
+    kb_slug, path = unquote(parts[1]), parts[2]
     if not kb_slug or not path:
         return None
     return kb_slug, path

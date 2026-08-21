@@ -260,16 +260,23 @@ def _convert_results(
             score = base
 
         uid = str(getattr(r, "uuid", i))
-        source_name = None
-        for episode_uuid in _episode_uuids(r):
-            source_name = (episode_artifacts or {}).get(episode_uuid)
-            if source_name:
-                break
-        document = parse_episode_name(source_name or "")
+        # Prefer a document-key episode over a legacy artifact-id one. An edge
+        # accumulates episodes as later ingests re-confirm the same fact, and
+        # the pre-rollout episode stays FIRST in that list — taking whichever
+        # name resolves first would therefore keep picking the superseded
+        # artifact_id and no existing edge would ever heal. Choosing by scheme
+        # instead of by position removes the ordering assumption entirely.
+        names = [
+            name
+            for episode_uuid in _episode_uuids(r)
+            if (name := (episode_artifacts or {}).get(episode_uuid))
+        ]
+        document = next((parsed for name in names if (parsed := parse_episode_name(name))), None)
+        source_name = None if document else next(iter(names), None)
         # A doc-key edge gets its artifact_id from the CURRENT version at
         # label time; a legacy edge carries the (possibly superseded) id it
         # was named after, which keeps it citable exactly as it is today.
-        artifact_id = None if document else source_name
+        artifact_id = source_name
         converted.append(
             {
                 "chunk_id": f"graph:{uid}",

@@ -1,5 +1,3 @@
-
-
 def test_episode_name_round_trips():
     from klai_kb_slugs import episode_name, parse_episode_name
 
@@ -28,3 +26,23 @@ def test_legacy_artifact_id_names_are_not_parsed():
     assert parse_episode_name("") is None
     assert parse_episode_name("doc:support") is None
     assert parse_episode_name("doc::path") is None
+
+
+def test_episode_name_survives_a_colon_in_the_kb_slug():
+    """Regression (Sol review): IngestRequest.kb_slug has no shape validation.
+
+    Without encoding, episode_name("team:blue", "page") parses back as
+    ("team", "blue:page"), the document lookup never matches, and because a
+    document-key edge gets its artifact_id from that lookup the fact stops
+    being citable at all — silent and total for the affected KB.
+    """
+    from klai_kb_slugs import episode_name, parse_episode_name
+
+    assert parse_episode_name(episode_name("team:blue", "page")) == ("team:blue", "page")
+
+
+def test_episode_name_survives_other_awkward_slugs():
+    from klai_kb_slugs import episode_name, parse_episode_name
+
+    for slug in ("team/blue", "team blue", "team%3Ablue", "persoonlijk-123"):
+        assert parse_episode_name(episode_name(slug, "a/b:c.md")) == (slug, "a/b:c.md")
