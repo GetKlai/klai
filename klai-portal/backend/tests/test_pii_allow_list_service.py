@@ -133,7 +133,7 @@ class TestRegexSafety:
         ],
     )
     def test_nested_quantifier_rejected(self, pattern: str) -> None:
-        with pytest.raises(PiiAllowListError, match="nested quantifier"):
+        with pytest.raises(PiiAllowListError, match="catastrophic backtracking"):
             validate_allow_list([{"value": pattern, "match": "regex"}])
 
     @pytest.mark.parametrize(
@@ -213,3 +213,25 @@ class TestSanitizeStoredEntries:
         stored = [{"value": "Best", "match": "exact", "note": 123}]
         result = sanitize_stored_entries(stored)
         assert result == [{"value": "Best", "match": "exact", "note": None}]
+
+
+def test_rejects_quantifier_over_alternation():
+    """`(a|aa)+` backtracks exponentially without nesting one quantifier in another.
+
+    The nested-quantifier walk alone reported these safe, which made the
+    validator's contract wider than its docstring claimed. Found by review,
+    2026-08-21.
+    """
+    for pattern in ("^(a|aa)+$", "^(a|b|ab)*$", "(cat|category)+"):
+        with pytest.raises(PiiAllowListError):
+            validate_allow_list([{"value": pattern, "match": "regex"}])
+
+
+def test_allows_alternation_that_is_not_quantified():
+    """Rejecting the risky shape must not cost the ordinary one.
+
+    A tenant excluding two brand names writes `acme|globex`; that is an
+    alternation with no repetition over it and cannot blow up.
+    """
+    result = validate_allow_list([{"value": "acme|globex", "match": "regex"}])
+    assert result[0]["value"] == "acme|globex"

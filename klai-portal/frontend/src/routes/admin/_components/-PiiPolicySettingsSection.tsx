@@ -115,11 +115,16 @@ export function PiiPolicySettingsSection({
     setTimeout(() => setSavedEntities(false), 2500)
   })
 
+  // Depend on the entity list's content, not on `settings` — TanStack Query
+  // hands back a fresh object on every refetch, so an object-identity dep
+  // resets staged choices whenever any OTHER section on this tab saves.
+  const serverEntities = settings?.pii_masked_entities
+  const serverEntitiesKey = serverEntities ? [...serverEntities].sort().join(',') : null
   useEffect(() => {
-    if (settings) {
-      setStagedEntities(new Set(settings.pii_masked_entities))
+    if (serverEntitiesKey !== null) {
+      setStagedEntities(new Set(serverEntitiesKey ? serverEntitiesKey.split(',') : []))
     }
-  }, [settings])
+  }, [serverEntitiesKey])
 
   const groups: PiiGroupConfig[] = [
     {

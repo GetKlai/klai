@@ -508,7 +508,37 @@ the two SHALL** be made on the condition-3 measurement, not by assuming the mode
 
 ### Phase 4 — custom entities and preview
 
+#### REQ-14 — the allow-list SHALL NOT be able to unmask a locked entity (unwanted-behaviour)
+
+An allow-list entry is stored as `{value, match, note}` with **no entity-type
+scoping**, and Presidio's `allow_list` applies globally across every recogniser.
+So the obvious enforcement wiring — hand the tenant's list to one `analyze` call
+— lets an entry containing a BSN or a credential suppress `NL_BSN` and `SECRET`.
+Those are exactly the two categories D4 puts in the platform floor and the
+settings page tells the admin cannot be switched off, with reasons. A guarantee
+the mechanism can quietly break is worse than no guarantee.
+
+Nothing consumes the list yet, so this is not currently reachable. It becomes
+reachable the moment enforcement is wired, which is why it is a requirement and
+not a backlog note.
+
+**THE locked entity set SHALL** be resolved in a path the allow-list cannot
+reach — a separate `analyze` call without `allow_list`, unioned with the
+allow-list-filtered result — rather than by filtering the list's contents.
+Filtering contents is a denylist over attacker-shaped input; a separate pass is
+structural.
+
+**AND a test SHALL** assert that an allow-list entry whose value is a valid BSN
+does not prevent that BSN from being masked. Enforcement SHALL NOT land without it.
+
 #### REQ-9 — user-supplied patterns run in a safety envelope (ubiquitous)
+
+> Note, 2026-08-21: the stored-pattern validator is a usability filter, not the
+> safety boundary. Its parse-tree heuristic rejects a quantifier over a
+> quantifier and (since review) a quantifier over an alternation, but no
+> tree-shape heuristic is complete. The boundary is the linear-time engine this
+> requirement mandates at match time; do not let the validator's existence
+> argue the engine choice down.
 
 Tenant-defined regex is the most dangerous surface in this SPEC. **IT SHALL**:
 

@@ -87,6 +87,36 @@ def _contains_repeat_node(subpattern: Any) -> bool:
     return False
 
 
+def _contains_branch_node(subpattern: Any) -> bool:
+    """True if an alternation appears anywhere inside ``subpattern``.
+
+    A quantifier over an alternation whose arms can match the same input --
+    ``(a|aa)+``, ``(a|b|ab)*`` -- backtracks exponentially without ever
+    nesting one quantifier inside another, so ``_has_nested_quantifier``
+    alone reports it safe. Deciding whether the arms actually overlap is
+    the hard part; we do not try. An allow-list entry is a customer term or
+    identifier, where alternation-under-repetition has no legitimate use,
+    so rejecting the shape outright costs nothing we want.
+    """
+    for op, av in subpattern:
+        opname = op.name
+        if opname == "BRANCH":
+            return True
+        if opname == "SUBPATTERN":
+            _, _, _, sub = av
+            if _contains_branch_node(sub):
+                return True
+        elif opname in _REPEAT_OPCODES:
+            _, _, sub = av
+            if _contains_branch_node(sub):
+                return True
+        elif opname in _WRAPPED_SUBPATTERN_OPCODES:
+            _, sub = av
+            if _contains_branch_node(sub):
+                return True
+    return False
+
+
 def _has_nested_quantifier(subpattern: Any) -> bool:
     """True if any repeat node's body itself contains another repeat node.
 
@@ -97,7 +127,11 @@ def _has_nested_quantifier(subpattern: Any) -> bool:
         opname = op.name
         if opname in _REPEAT_OPCODES:
             _, _, sub = av
-            if _contains_repeat_node(sub) or _has_nested_quantifier(sub):
+            if (
+                _contains_repeat_node(sub)
+                or _contains_branch_node(sub)
+                or _has_nested_quantifier(sub)
+            ):
                 return True
         elif opname == "SUBPATTERN":
             _, _, _, sub = av
@@ -138,7 +172,8 @@ def _validate_regex_pattern(pattern: str) -> None:
 
     if unsafe:
         raise PiiAllowListError(
-            "pattern rejected: nested quantifier shape (e.g. '(a+)+') risks catastrophic backtracking"
+            "pattern rejected: quantifier over a quantifier or over an alternation "
+            "(e.g. '(a+)+', '(a|aa)+') risks catastrophic backtracking"
         )
 
 
