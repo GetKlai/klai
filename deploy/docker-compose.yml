@@ -494,7 +494,7 @@ services:
     # built FROM the same ghcr.io/data-privacy-stack digest Phase 0 pinned.
     # This is where REQ-3's Dutch recognizers (BSN/KvK/BTW/postcode) and
     # REQ-4's SECRET recognizer actually enter the request path.
-    image: ghcr.io/getklai/presidio-analyzer@sha256:4a213d91feaf4febfa402b6fea1e8094afd37b325a96ecf7faf393e9c8a347a7
+    image: ghcr.io/getklai/presidio-analyzer@sha256:47151487c449f8762a3d9760279514f9bbfc3b312d2d731c12761465bd27e003
     restart: unless-stopped
     networks:
       - inference
