@@ -73,6 +73,60 @@ class TestArtifactDisplayMetadata:
         assert meta["artifact-abc"]["source_url"] == "https://help.voys.nl/nummerbehoud-aanvragen"
 
     @pytest.mark.asyncio
+    async def test_a_large_document_cannot_starve_a_small_one(self):
+        """Regression (Sol review, high): every artifact must resolve.
+
+        A single wider scroll is not grouped by artifact, so a document with
+        hundreds of chunks can fill the whole page and leave a one-chunk
+        document unresolved — whose citation then falls back to the truncated
+        fact this whole function exists to replace. One limit=1 lookup per
+        artifact makes that impossible rather than unlikely.
+        """
+        mock_client = AsyncMock()
+
+        async def _scroll(*_args, **kwargs):
+            rendered = repr(kwargs["scroll_filter"])
+            assert kwargs["limit"] == 1, "one row per artifact, never a shared page"
+            if "big-doc" in rendered:
+                return [_point("big-doc", title="Groot handboek")], None
+            if "small-doc" in rendered:
+                return [_point("small-doc", title="Losse notitie")], None
+            return [], None
+
+        mock_client.scroll.side_effect = _scroll
+
+        with patch.object(search, "_get_client", return_value=mock_client):
+            req = RetrieveRequest(query="q", org_id="org-1", scope="org")
+            meta = await search.fetch_artifact_display_metadata(["big-doc", "small-doc"], req)
+
+        assert meta["big-doc"]["title"] == "Groot handboek"
+        assert meta["small-doc"]["title"] == "Losse notitie"
+
+    @pytest.mark.asyncio
+    async def test_one_unresolved_artifact_does_not_lose_the_others(self):
+        mock_client = AsyncMock()
+
+        async def _scroll(*_args, **kwargs):
+            if "good" in repr(kwargs["scroll_filter"]):
+                return [_point("good", title="Wel gevonden")], None
+            raise RuntimeError("qdrant blip")
+
+        mock_client.scroll.side_effect = _scroll
+
+        with patch.object(search, "_get_client", return_value=mock_client):
+            req = RetrieveRequest(query="q", org_id="org-1", scope="org")
+            meta = await search.fetch_artifact_display_metadata(["good", "bad"], req)
+
+        assert meta == {
+            "good": {
+                "title": "Wel gevonden",
+                "source_url": None,
+                "source_label": None,
+                "original_filename": None,
+            }
+        }
+
+    @pytest.mark.asyncio
     async def test_lookup_is_tenant_scoped(self):
         """TENANT ISOLATION: a title can be as sensitive as the text.
 

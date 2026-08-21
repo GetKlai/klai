@@ -112,9 +112,10 @@ def _temporal_validity_filter() -> Filter:
     )
 
 
-# One chunk per artifact is enough for title/source_url; a small multiplier
-# absorbs the fact that scroll returns chunks, not artifacts.
-_ARTIFACT_METADATA_CHUNKS_PER_ARTIFACT = 3
+# Graphiti returns at most 10 edges per query, so this bound is well above
+# the real fan-out; it exists so a pathological result set cannot turn
+# label resolution into an unbounded burst of Qdrant reads.
+_ARTIFACT_METADATA_MAX = 20
 _ARTIFACT_METADATA_TIMEOUT = 2.0
 
 
@@ -442,6 +443,44 @@ async def fetch_chunks_by_urls(
     ]
 
 
+async def _fetch_one_artifact_metadata(
+    artifact_id: str,
+    request: RetrieveRequest,
+) -> tuple[str, dict[str, str | None]] | None:
+    """Fetch the display fields of ONE artifact. Returns None when unresolved."""
+    client = _get_client()
+    artifact_filter = Filter(
+        must=[
+            *_scope_filter(request),
+            FieldCondition(key="artifact_id", match=MatchValue(value=artifact_id)),
+            _temporal_validity_filter(),
+        ]
+    )
+    try:
+        result, _ = await asyncio.wait_for(
+            client.scroll(
+                collection_name=settings.qdrant_collection,
+                scroll_filter=artifact_filter,
+                limit=1,
+                with_payload=True,
+                with_vectors=False,
+            ),
+            timeout=_ARTIFACT_METADATA_TIMEOUT,
+        )
+    except Exception:
+        logger.warning("artifact_display_metadata_failed", artifact_id=artifact_id, exc_info=True)
+        return None
+    if not result:
+        return None
+    payload = result[0].payload
+    return artifact_id, {
+        "title": payload.get("title"),
+        "source_url": payload.get("source_url"),
+        "source_label": payload.get("source_label"),
+        "original_filename": payload.get("original_filename"),
+    }
+
+
 async def fetch_artifact_display_metadata(
     artifact_ids: list[str],
     request: RetrieveRequest,
@@ -454,53 +493,38 @@ async def fetch_artifact_display_metadata(
     list shows a truncated fact instead of the document — which defeats the
     point of citing it at all.
 
+    One bounded lookup PER artifact rather than a single wider scroll. A
+    scroll is not grouped, so one large document can fill the whole page and
+    starve a one-chunk document of its label — the very defect this function
+    exists to fix, reappearing for any mix of document sizes. Per-artifact
+    lookups make that impossible instead of unlikely; they are limit=1 reads
+    on an indexed field and run concurrently.
+
     Scoped through ``_scope_filter`` like every other read here. That is not
     ceremony: a title alone can be sensitive, so the visibility rules that
     keep private chunks out of a scope must also keep their titles out of a
     source list.
 
-    Fail-open: an empty mapping costs labels, never the graph results.
+    Fail-open: an unresolved artifact costs a label, never the graph result.
     """
     unique_ids = sorted({aid for aid in artifact_ids if aid})
     if not unique_ids:
         return {}
 
-    client = _get_client()
-    artifact_filter = Filter(
-        must=[
-            *_scope_filter(request),
-            FieldCondition(key="artifact_id", match=MatchAny(any=unique_ids)),
-            _temporal_validity_filter(),
-        ]
-    )
-
-    try:
-        result, _ = await asyncio.wait_for(
-            client.scroll(
-                collection_name=settings.qdrant_collection,
-                scroll_filter=artifact_filter,
-                limit=len(unique_ids) * _ARTIFACT_METADATA_CHUNKS_PER_ARTIFACT,
-                with_payload=True,
-                with_vectors=False,
-            ),
-            timeout=_ARTIFACT_METADATA_TIMEOUT,
+    if len(unique_ids) > _ARTIFACT_METADATA_MAX:
+        # No silent caps: say what was dropped rather than let the tail
+        # quietly render as truncated facts.
+        logger.warning(
+            "artifact_display_metadata_truncated",
+            requested=len(unique_ids),
+            resolved=_ARTIFACT_METADATA_MAX,
         )
-    except Exception:
-        logger.warning("artifact_display_metadata_failed", exc_info=True)
-        return {}
+        unique_ids = unique_ids[:_ARTIFACT_METADATA_MAX]
 
-    metadata: dict[str, dict[str, str | None]] = {}
-    for point in result:
-        artifact_id = point.payload.get("artifact_id")
-        if not artifact_id or artifact_id in metadata:
-            continue
-        metadata[artifact_id] = {
-            "title": point.payload.get("title"),
-            "source_url": point.payload.get("source_url"),
-            "source_label": point.payload.get("source_label"),
-            "original_filename": point.payload.get("original_filename"),
-        }
-    return metadata
+    resolved = await asyncio.gather(
+        *(_fetch_one_artifact_metadata(aid, request) for aid in unique_ids)
+    )
+    return {aid: meta for entry in resolved if entry for aid, meta in [entry]}
 
 
 async def hybrid_search(
