@@ -157,18 +157,31 @@ async def set_my_org_pii_entities(
     org.pii_masked_entities = new_entities  # type: ignore[assignment]
     await db.commit()
 
-    await log_event(
-        org_id=perms.org_id,
-        actor=perms.user_id,
-        action="pii_masked_entities_changed",
-        resource_type="portal_org",
-        resource_id=str(perms.org_id),
-        details={
-            "previous_entities": previous,
-            "new_entities": new_entities,
-            "operator_kind": "tenant_admin",
-        },
-    )
+    audit_details = {
+        "previous_entities": previous,
+        "new_entities": new_entities,
+        "operator_kind": "tenant_admin",
+    }
+    try:
+        await log_event(
+            org_id=perms.org_id,
+            actor=perms.user_id,
+            action="pii_masked_entities_changed",
+            resource_type="portal_org",
+            resource_id=str(perms.org_id),
+            details=audit_details,
+        )
+    except Exception:
+        # The commit above already landed, and log_event owns its own
+        # session, so raising here would 500 a caller whose change DID
+        # persist -- inviting a retry that writes a second audit row for
+        # one change. Same contract as telemetry_level.set_telemetry_level:
+        # fire-and-forget, but never silent.
+        logger.warning(
+            "pii_masked_entities_audit_log_failed",
+            extra={"org_id": perms.org_id, **audit_details},
+            exc_info=True,
+        )
 
     logger.info(
         "pii_masked_entities_updated",
@@ -233,18 +246,31 @@ async def set_my_org_pii_allow_list(
     org.pii_allow_list = validated  # type: ignore[assignment]
     await db.commit()
 
-    await log_event(
-        org_id=perms.org_id,
-        actor=perms.user_id,
-        action="pii_allow_list_changed",
-        resource_type="portal_org",
-        resource_id=str(perms.org_id),
-        details={
-            "previous_entries": previous,
-            "new_entries": validated,
-            "operator_kind": "tenant_admin",
-        },
-    )
+    audit_details = {
+        "previous_entries": previous,
+        "new_entries": validated,
+        "operator_kind": "tenant_admin",
+    }
+    try:
+        await log_event(
+            org_id=perms.org_id,
+            actor=perms.user_id,
+            action="pii_allow_list_changed",
+            resource_type="portal_org",
+            resource_id=str(perms.org_id),
+            details=audit_details,
+        )
+    except Exception:
+        # The commit above already landed, and log_event owns its own
+        # session, so raising here would 500 a caller whose change DID
+        # persist -- inviting a retry that writes a second audit row for
+        # one change. Same contract as telemetry_level.set_telemetry_level:
+        # fire-and-forget, but never silent.
+        logger.warning(
+            "pii_allow_list_audit_log_failed",
+            extra={"org_id": perms.org_id, "previous_count": len(previous), "new_count": len(validated)},
+            exc_info=True,
+        )
 
     logger.info(
         "pii_allow_list_updated",

@@ -322,3 +322,53 @@ class TestSetPiiAllowList:
 
         assert org_a.pii_allow_list == [{"value": "Best", "match": "exact", "note": None}]
         assert org_b.pii_allow_list == [{"value": "Ede", "match": "exact", "note": None}]
+
+
+class TestAuditFailureDoesNotLoseTheWrite:
+    """A failing audit write must not 500 a change that already committed.
+
+    ``log_event`` owns its own session and commits independently, so the
+    policy change is durable by the time it runs. Raising here would report
+    failure for a write that succeeded, and the caller's natural retry would
+    then log a second audit row for one change. Mirrors the contract in
+    ``telemetry_level.set_telemetry_level``.
+    """
+
+    @pytest.mark.asyncio
+    async def test_entities_write_survives_audit_failure(self) -> None:
+        from app.api.orgs import PiiEntitiesUpdate, set_my_org_pii_entities
+
+        org = _make_org(org_id=42)
+        db = _make_db_async()
+        db.get = AsyncMock(return_value=org)
+        perms = make_perms(role="admin", user_id="zit-user-1", org_id=42)
+
+        with patch("app.api.orgs.log_event", new_callable=AsyncMock) as audit:
+            audit.side_effect = RuntimeError("audit backend down")
+            out = await set_my_org_pii_entities(
+                PiiEntitiesUpdate(entities=["IBAN_CODE"]), perms=perms, db=db
+            )
+
+        assert out.entities == ["IBAN_CODE"]
+        assert org.pii_masked_entities == ["IBAN_CODE"]
+        db.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_allow_list_write_survives_audit_failure(self) -> None:
+        from app.api.orgs import PiiAllowListUpdate, set_my_org_pii_allow_list
+
+        org = _make_org(org_id=42)
+        db = _make_db_async()
+        db.get = AsyncMock(return_value=org)
+        perms = make_perms(role="admin", user_id="zit-user-1", org_id=42)
+
+        with patch("app.api.orgs.log_event", new_callable=AsyncMock) as audit:
+            audit.side_effect = RuntimeError("audit backend down")
+            out = await set_my_org_pii_allow_list(
+                PiiAllowListUpdate(entries=[{"value": "acme", "match": "exact"}]),
+                perms=perms,
+                db=db,
+            )
+
+        assert out.entries[0].value == "acme"
+        db.commit.assert_awaited_once()
