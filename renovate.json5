@@ -202,5 +202,30 @@
       matchPackageNames: ['python'],
       allowedVersions: '<3.14',
     },
+    {
+      description:
+        'langchain-community: pinned below 0.4.2 — ragas 0.4.3 imports \
+        langchain_community.chat_models.vertexai at ragas/llms/base.py:12, \
+        and 0.4.2 removed that submodule as part of the langchain-community \
+        sunset. Widening the bound makes every `from ragas.llms import \
+        llm_factory` raise ModuleNotFoundError, taking the whole RAG-eval \
+        harness with it (proven by PR #1100, which failed exactly there). \
+        Lift only when ragas stops importing the Vertex AI integration.',
+      matchPackageNames: ['langchain-community'],
+      allowedVersions: '<0.4.2',
+    },
+    {
+      description:
+        'atlassian-python-api: pinned below 5 — v5 split Confluence into \
+        Cloud/Server clients and the Cloud client no longer exposes \
+        get_page_by_id, which is what ConfluenceAdapter.fetch_document() \
+        calls. Verified against 5.0.3: Confluence(url=..., cloud=True) \
+        .get_page_by_id raises AttributeError. The only Confluence test \
+        patches the SDK class, so CI cannot catch this — a lock refresh \
+        alone would ship a broken connector. Lift together with a v5 \
+        migration of the adapter. Tracking: GetKlai/klai#1137',
+      matchPackageNames: ['atlassian-python-api'],
+      allowedVersions: '<5',
+    },
   ],
 }
