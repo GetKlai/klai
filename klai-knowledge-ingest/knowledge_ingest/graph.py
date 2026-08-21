@@ -268,6 +268,48 @@ async def _update_edge_weights(
     return updated
 
 
+async def rename_episodes_to_document_keys(
+    org_id: str, renames: dict[str, list[str]]
+) -> int:
+    """Point existing episodes at their DOCUMENT instead of an artifact version.
+
+    ``renames`` maps a stable episode name (``doc:<kb_slug>:<path>``) to the
+    episode uuids that should carry it.
+
+    SPEC-RAG-GRAPH-CITE-002 makes ingest write this name, but that only helps
+    documents that get ingested again — and content_hash dedup means an
+    unchanged page is never re-ingested, so an existing edge would keep its
+    artifact-version name forever and its citations would stay unresolvable.
+
+    This is a metadata rename, not a re-extraction: no LLM calls, no entity
+    work, nothing drawn from the shared klai-fast budget. Idempotent, so a
+    partially completed run can simply be repeated.
+
+    Several versions of one document legitimately end up sharing a name. That
+    is fine — the name is a pointer, and retrieval resolves it against the
+    CURRENT version in Qdrant.
+    """
+    if not settings.graphiti_enabled or not renames:
+        return 0
+    graphiti = _get_graphiti()
+    driver = graphiti.driver.clone(org_id)
+    renamed = 0
+    for name, uuids in renames.items():
+        if not uuids:
+            continue
+        result = await driver.execute_query(
+            "MATCH (e:Episodic) WHERE e.uuid IN $uuids SET e.name = $name RETURN count(e) AS n",
+            uuids=uuids,
+            name=name,
+        )
+        if result is not None:
+            records, _, _ = result
+            if records:
+                renamed += records[0].get("n", 0)
+    logger.info("graph_episodes_renamed", org_id=org_id, documents=len(renames), episodes=renamed)
+    return renamed
+
+
 async def delete_kb_episodes(org_id: str, episode_ids: list[str]) -> None:
     """Delete FalkorDB nodes for a set of episodes within an org's graph.
 
