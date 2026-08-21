@@ -649,6 +649,18 @@ class TestGraphMetadata:
                 new_callable=AsyncMock,
                 return_value=[graph_chunk],
             ),
+            patch(
+                "retrieval_api.api.retrieve.search.fetch_artifact_display_metadata",
+                new_callable=AsyncMock,
+                return_value={
+                    "artifact-abc": {
+                        "title": "Nummerbehoud aanvragen",
+                        "source_url": "https://help.voys.nl/nummerbehoud-aanvragen",
+                        "source_label": "help.voys.nl",
+                        "original_filename": None,
+                    }
+                },
+            ),
             patch("retrieval_api.api.retrieve.settings") as mock_settings,
         ):
             mock_settings.retrieval_candidates = 60
@@ -671,6 +683,11 @@ class TestGraphMetadata:
         assert pack["items"][0]["artifact_id"] == "artifact-abc"
         assert pack["items"][0]["content_type"] == "graph_edge"
         assert [source["artifact_id"] for source in pack["sources"]] == ["artifact-abc"]
+        # The citation names the document, not a truncated fact. Production
+        # showed the latter on 2026-08-21: "De paginamap identificeert de
+        # Voys-app als een applicatie die kan worden gebruik".
+        assert pack["sources"][0]["title"] == "Nummerbehoud aanvragen"
+        assert pack["sources"][0]["source_url"] == "https://help.voys.nl/nummerbehoud-aanvragen"
         # Graphiti's bi-temporal window survives to the served chunk.
         assert resp.json()["chunks"][0]["valid_at"] == "2026-03-11T00:00:00+00:00"
 
