@@ -164,6 +164,23 @@ class PortalOrg(Base):
         default=list,
         server_default=sa.text("'{}'::text[]"),
     )
+    # @MX:NOTE: SPEC-PRIVACY-PII-POLICY-ADMIN-001 D1/REQ-3 — per-tenant PII
+    # allow-list (the subtractive model). Each element:
+    # ``{"value": str, "match": "exact"|"regex", "note": str | None}``.
+    # Storage only in this PR — the enforcement-side wiring into Presidio's
+    # ``allow_list`` / ``allow_list_match`` parameters is a later PR.
+    # Every write path MUST call
+    # ``app.services.pii_allow_list.validate_allow_list`` (REQ-9's safety
+    # envelope for regex entries). DB-level backstop is the shape-only CHECK
+    # ``chk_portal_orgs_pii_allow_list_shape`` (migration 76f43911a5ba) —
+    # array type + entry-count cap; per-element validation is Python-only,
+    # deliberately, since JSONB element-shape CHECKs are brittle.
+    pii_allow_list: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=sa.text("'[]'::jsonb"),
+    )
 
     users: Mapped[list["PortalUser"]] = relationship(back_populates="org")
 

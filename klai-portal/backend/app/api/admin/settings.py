@@ -13,7 +13,7 @@ import logging
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import _load_org_or_500
@@ -21,6 +21,8 @@ from app.core.database import get_db
 from app.core.features import FEATURE_MIN_PROFILE, PLAN_FEATURES
 from app.core.permissions import ProfileRole, UserPermissions, get_caller_at_least
 from app.services.domain_validation import primary_domain_for_email_domain
+from app.services.pii_allow_list import sanitize_stored_entries as sanitize_stored_allow_list
+from app.services.pii_entity_policy import sanitize_stored_entities
 
 # Set of user-facing product keys (= keys that appear in derive_user_products
 # output). Used by the deprecated /settings/addons GET facade to return only
@@ -44,6 +46,12 @@ class MessageResponse(BaseModel):
     message: str
 
 
+class PiiAllowListEntryOut(BaseModel):
+    value: str
+    match: Literal["exact", "regex"]
+    note: str | None = None
+
+
 class OrgSettingsOut(BaseModel):
     name: str
     default_language: Literal["nl", "en"]
@@ -59,6 +67,12 @@ class OrgSettingsOut(BaseModel):
     # current state without a second roundtrip. Mutated via the dedicated
     # tenant-self-service endpoint POST /api/orgs/me/telemetry-level.
     telemetry_level: Literal["off", "shadow", "full"] = "shadow"
+    # @MX:NOTE SPEC-PRIVACY-PII-POLICY-ADMIN-001 PR1 — current PII masking
+    # policy, read-only on this GET (same pattern as telemetry_level above).
+    # Mutated via PATCH /api/orgs/me/pii-entities and
+    # PATCH /api/orgs/me/pii-allow-list respectively.
+    pii_masked_entities: list[str] = Field(default_factory=list)
+    pii_allow_list: list[PiiAllowListEntryOut] = Field(default_factory=list)
 
 
 class OrgSettingsUpdate(BaseModel):
@@ -81,6 +95,8 @@ def _settings_out(org) -> OrgSettingsOut:
         auto_accept_same_domain=bool(org.auto_accept_same_domain) if primary_domain else False,
         primary_domain=primary_domain or None,
         telemetry_level=org.telemetry_level,
+        pii_masked_entities=sanitize_stored_entities(org.pii_masked_entities),
+        pii_allow_list=[PiiAllowListEntryOut(**e) for e in sanitize_stored_allow_list(org.pii_allow_list)],
     )
 
 
