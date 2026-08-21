@@ -46,7 +46,7 @@ jobs:
         working-directory: klai-knowledge-ingest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           version: "0.12.3"
           python-version: "3.12"
@@ -114,7 +114,7 @@ jobs:
       ENRICHMENT_ENABLED: "false"
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           version: "0.12.3"
           python-version: "3.12"
@@ -170,7 +170,7 @@ jobs:
       # in lockstep with the version that runs at container entrypoint
       # rather than drifting against a hardcoded pin.
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           version: "0.12.3"
           enable-cache: true

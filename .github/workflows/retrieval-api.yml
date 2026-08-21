@@ -57,7 +57,7 @@ jobs:
         working-directory: klai-retrieval-api
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           python-version: "3.13"
       # Dependency vulnerability gate — see knowledge-ingest.yml for the
