@@ -347,6 +347,8 @@ def _register_tasks(procrastinate_app: Any) -> None:
         org_id: str,
         content_type: str,
         belief_time_start: int,
+        kb_slug: str = "",
+        path: str = "",
     ) -> None:
         """Ingest a document into the Graphiti knowledge graph.
 
@@ -389,6 +391,8 @@ def _register_tasks(procrastinate_app: Any) -> None:
                 org_id=org_id,
                 content_type=content_type,
                 belief_time_start=belief_time_start,
+                kb_slug=kb_slug,
+                path=path,
             )
             if episode_id:
                 await pg_store.update_artifact_extra(

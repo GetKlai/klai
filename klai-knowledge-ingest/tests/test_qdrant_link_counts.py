@@ -289,6 +289,9 @@ async def test_ensure_collection_skips_indexes_when_already_present():
     all_fields = {
         "org_id",
         "kb_slug",
+        # SPEC-RAG-GRAPH-CITE-002: retrieval filters on (kb_slug, path) to
+        # resolve a graph fact to its source document.
+        "path",
         "artifact_id",
         "content_type",
         "user_id",

@@ -31,6 +31,7 @@ except ImportError:
     _GRAPHITI_AVAILABLE = False  # graphiti-core not installed yet; added in /run SPEC-KB-011
 
 import structlog
+from klai_kb_slugs import episode_name
 
 import knowledge_ingest.qdrant_store as qdrant_store
 from knowledge_ingest.config import settings
@@ -489,12 +490,33 @@ async def compute_entity_pagerank(org_id: str) -> dict[str, float]:
         return {}
 
 
+def _episode_name(artifact_id: str, kb_slug: str, path: str) -> str:
+    """Name an episode after the DOCUMENT, falling back to the artifact_id.
+
+    SPEC-RAG-GRAPH-CITE-002. ``artifact_id`` identifies a version, not a
+    document: every ingest mints a fresh uuid4 and supersedes the previous
+    row, while Qdrant keeps only the current version's chunks. An episode
+    named after it therefore stops resolving the moment its page is
+    re-ingested, which is exactly what made graph citations render as
+    truncated sentences instead of links.
+
+    The fallback keeps in-flight Procrastinate jobs working: those were
+    deferred with the old kwargs and arrive without kb_slug/path, and a task
+    that has been queued for an hour must not fail on a signature change.
+    """
+    if kb_slug and path:
+        return episode_name(kb_slug, path)
+    return artifact_id
+
+
 async def ingest_episode(
     artifact_id: str,
     document_text: str,
     org_id: str,
     content_type: str,
     belief_time_start: int,
+    kb_slug: str = "",
+    path: str = "",
 ) -> str | None:
     """Ingest a document as a Graphiti episode.
 
@@ -528,7 +550,7 @@ async def ingest_episode(
                 )
                 t0 = time.perf_counter()
                 result = await graphiti.add_episode(
-                    name=artifact_id,
+                    name=_episode_name(artifact_id, kb_slug, path),
                     episode_body=document_text,
                     source=EpisodeType.text,
                     source_description=content_type,

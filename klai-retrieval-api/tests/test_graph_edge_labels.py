@@ -20,12 +20,26 @@ import pytest
 
 from retrieval_api.api.retrieve import _label_graph_results
 from retrieval_api.models import RetrieveRequest
-from retrieval_api.services import search
+from retrieval_api.services import graph_search, search
 from retrieval_api.services.evidence_pack import build_evidence_pack, chunk_source_key
 
 
 def _point(artifact_id: str, **payload):
     return SimpleNamespace(id="c1", score=0.9, payload={"artifact_id": artifact_id, **payload})
+
+
+def _edge(uuid: str, episodes: list[str]):
+    """Minimal stand-in for a Graphiti EntityEdge (see test_graph_search.py)."""
+    edge = SimpleNamespace(
+        uuid=uuid,
+        fact="fact",
+        score=0.8,
+        weight=None,
+        episodes=episodes,
+        valid_at=None,
+        invalid_at=None,
+    )
+    return edge
 
 
 def _graph_chunk(artifact_id: str | None, text: str = "Nummerbehoud kan bij overstap"):
@@ -237,3 +251,122 @@ class TestGraphResultLabelling:
             req = RetrieveRequest(query="q", org_id="org-1", scope="org")
             await _label_graph_results(chunks, req)
         assert "title" not in chunks[0]
+
+
+class TestStableDocumentResolution:
+    """SPEC-RAG-GRAPH-CITE-002: resolve a fact via (kb_slug, path), not a version id.
+
+    Observed in production on 2026-08-21: every graph citation rendered as a
+    truncated fact because the episode was named after the artifact_id it was
+    ingested from. pg_store mints a fresh uuid4 per ingest and supersedes the
+    previous row, while Qdrant keeps only the current version's chunks — so
+    the moment a page was re-ingested, the pointer went stale.
+    """
+
+    def test_doc_key_episode_yields_a_document_pointer(self):
+        converted = graph_search._convert_results(
+            [_edge("e1", ["ep-1"])], 10, {"ep-1": "doc:support:yealink-dect-configuratie"}
+        )
+        assert converted[0]["graph_kb_slug"] == "support"
+        assert converted[0]["graph_path"] == "yealink-dect-configuratie"
+        # The current artifact_id is only known after the lookup.
+        assert converted[0]["artifact_id"] is None
+
+    def test_legacy_episode_still_yields_an_artifact_id(self):
+        """Edges written before the change must not get worse."""
+        converted = graph_search._convert_results(
+            [_edge("e1", ["ep-1"])], 10, {"ep-1": "artifact-abc"}
+        )
+        assert converted[0]["artifact_id"] == "artifact-abc"
+        assert converted[0]["graph_kb_slug"] is None
+
+    @pytest.mark.asyncio
+    async def test_document_lookup_is_tenant_scoped(self):
+        """TENANT ISOLATION: same rule as the artifact path — titles are data."""
+        mock_client = AsyncMock()
+        mock_client.scroll.return_value = ([], None)
+
+        with patch.object(search, "_get_client", return_value=mock_client):
+            req = RetrieveRequest(query="q", org_id="org-1", scope="org")
+            await search.fetch_document_display_metadata([("support", "a-page")], req)
+
+        rendered = repr(mock_client.scroll.await_args.kwargs["scroll_filter"])
+        assert "org_id" in rendered and "org-1" in rendered
+        assert "visibility" in rendered
+
+    @pytest.mark.asyncio
+    async def test_resolved_document_supplies_the_current_artifact_id(self):
+        """The edge becomes citable via the CURRENT version, not the dead one."""
+        chunks = [_graph_chunk(None)]
+        chunks[0]["graph_kb_slug"] = "support"
+        chunks[0]["graph_path"] = "yealink-dect-configuratie"
+        meta = {
+            ("support", "yealink-dect-configuratie"): {
+                "title": "Yealink Draadloze Telefoons (Basisstation) Instellen",
+                "source_url": "https://help.voys.nl/yealink-dect-configuratie",
+                "source_label": "help.voys.nl",
+                "original_filename": None,
+                "artifact_id": "artifact-current",
+            }
+        }
+
+        with (
+            patch.object(
+                search, "fetch_document_display_metadata", new=AsyncMock(return_value=meta)
+            ),
+            patch.object(search, "fetch_artifact_display_metadata", new=AsyncMock(return_value={})),
+        ):
+            req = RetrieveRequest(query="q", org_id="org-1", scope="org")
+            await _label_graph_results(chunks, req)
+
+        assert chunks[0]["artifact_id"] == "artifact-current"
+        pack = build_evidence_pack(chunks)
+        assert pack.sources[0].title == "Yealink Draadloze Telefoons (Basisstation) Instellen"
+        assert pack.sources[0].source_url == "https://help.voys.nl/yealink-dect-configuratie"
+
+    @pytest.mark.asyncio
+    async def test_legacy_edge_keeps_working_alongside_the_new_scheme(self):
+        """Both schemes are live in the graph at once; one must not break the other."""
+        legacy = _graph_chunk("artifact-legacy", text="Oud feit")
+        modern = _graph_chunk(None, text="Nieuw feit")
+        modern["chunk_id"] = "graph:e2"
+        modern["graph_kb_slug"] = "support"
+        modern["graph_path"] = "webphone"
+
+        with (
+            patch.object(
+                search,
+                "fetch_document_display_metadata",
+                new=AsyncMock(
+                    return_value={
+                        ("support", "webphone"): {
+                            "title": "De Webphone",
+                            "source_url": "https://help.voys.nl/webphone",
+                            "source_label": "help.voys.nl",
+                            "original_filename": None,
+                            "artifact_id": "artifact-current",
+                        }
+                    }
+                ),
+            ),
+            patch.object(
+                search,
+                "fetch_artifact_display_metadata",
+                new=AsyncMock(
+                    return_value={
+                        "artifact-legacy": {
+                            "title": "Oud artikel",
+                            "source_url": "https://help.voys.nl/oud",
+                            "source_label": "help.voys.nl",
+                            "original_filename": None,
+                        }
+                    }
+                ),
+            ),
+        ):
+            req = RetrieveRequest(query="q", org_id="org-1", scope="org")
+            await _label_graph_results([legacy, modern], req)
+
+        assert legacy["title"] == "Oud artikel"
+        assert modern["title"] == "De Webphone"
+        assert modern["artifact_id"] == "artifact-current"

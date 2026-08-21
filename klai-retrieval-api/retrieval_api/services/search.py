@@ -481,6 +481,80 @@ async def _fetch_one_artifact_metadata(
     }
 
 
+async def _fetch_one_document_metadata(
+    kb_slug: str,
+    path: str,
+    request: RetrieveRequest,
+) -> tuple[tuple[str, str], dict[str, str | None]] | None:
+    """Fetch display fields for ONE document, keyed by (kb_slug, path)."""
+    client = _get_client()
+    document_filter = Filter(
+        must=[
+            *_scope_filter(request),
+            FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)),
+            FieldCondition(key="path", match=MatchValue(value=path)),
+            _temporal_validity_filter(),
+        ]
+    )
+    try:
+        result, _ = await asyncio.wait_for(
+            client.scroll(
+                collection_name=settings.qdrant_collection,
+                scroll_filter=document_filter,
+                limit=1,
+                with_payload=True,
+                with_vectors=False,
+            ),
+            timeout=_ARTIFACT_METADATA_TIMEOUT,
+        )
+    except Exception:
+        logger.warning("document_display_metadata_failed", kb_slug=kb_slug, exc_info=True)
+        return None
+    if not result:
+        return None
+    payload = result[0].payload
+    return (kb_slug, path), {
+        "title": payload.get("title"),
+        "source_url": payload.get("source_url"),
+        "source_label": payload.get("source_label"),
+        "original_filename": payload.get("original_filename"),
+        # The CURRENT version's id. A graph edge outlives the artifact it was
+        # extracted from, so this is the only id worth putting on a citation.
+        "artifact_id": payload.get("artifact_id"),
+    }
+
+
+async def fetch_document_display_metadata(
+    documents: list[tuple[str, str]],
+    request: RetrieveRequest,
+) -> dict[tuple[str, str], dict[str, str | None]]:
+    """Resolve (kb_slug, path) -> the fields a citation is rendered from.
+
+    This is the resolution path for episodes named by SPEC-RAG-GRAPH-CITE-002.
+    Unlike artifact_id it survives re-ingest, because ingest mints a new
+    artifact uuid every time while ``(org_id, kb_slug, path)`` is the identity
+    it dedups on.
+
+    Same shape as ``fetch_artifact_display_metadata``: tenant-scoped through
+    ``_scope_filter``, one bounded lookup per document, fail-open per entry.
+    """
+    unique = sorted({(kb, p) for kb, p in documents if kb and p})
+    if not unique:
+        return {}
+    if len(unique) > _ARTIFACT_METADATA_MAX:
+        logger.warning(
+            "document_display_metadata_truncated",
+            requested=len(unique),
+            resolved=_ARTIFACT_METADATA_MAX,
+        )
+        unique = unique[:_ARTIFACT_METADATA_MAX]
+
+    resolved = await asyncio.gather(
+        *(_fetch_one_document_metadata(kb, p, request) for kb, p in unique)
+    )
+    return {key: meta for entry in resolved if entry for key, meta in [entry]}
+
+
 async def fetch_artifact_display_metadata(
     artifact_ids: list[str],
     request: RetrieveRequest,

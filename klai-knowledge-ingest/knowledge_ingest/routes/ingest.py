@@ -286,6 +286,8 @@ async def _graphiti_background(
     org_id: str,
     content_type: str,
     belief_time_start: int,
+    kb_slug: str = "",
+    path: str = "",
 ) -> None:
     """Background task: ingest document into Graphiti, then store episode_id (AC-1, AC-2).
 
@@ -300,6 +302,8 @@ async def _graphiti_background(
         org_id=org_id,
         content_type=content_type,
         belief_time_start=belief_time_start,
+        kb_slug=kb_slug,
+        path=path,
     )
     if episode_id:
         await pg_store.update_artifact_extra(conn, artifact_id, {"graphiti_episode_id": episode_id})
@@ -831,6 +835,8 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
             org_id=req.org_id,
             content_type=req.content_type,
             belief_time_start=kf["belief_time_start"],
+            kb_slug=req.kb_slug,
+            path=req.path,
         )
 
     ingest_ms = int((time.monotonic() - t_ingest) * 1000)
