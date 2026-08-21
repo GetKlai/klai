@@ -29,11 +29,16 @@ Most of this document is prose you are trusted to follow. Three parts are not:
 | `klai/no-window-confirm` | `eslint-rules/`, runs in `npm run lint` | `window.confirm` / `alert` / `prompt`. Use `InlineDeleteConfirm` or `AlertDialog` |
 | Component table completeness | `tests/design/ui-standards-coverage.test.ts` | A module in `src/components/ui/` missing from the table below, or a table row whose module no longer exists |
 
-Everything else in this file is unenforced on purpose. Notably, raw
-`<button>` outside `components/ui/` is discouraged here but not linted: there
-are ~100 legitimate uses (disclosure toggles, custom rows) and a rule that
-noisy gets switched off. Do not add enforcement for a pattern you have not
-first counted.
+Everything else in this file is unenforced on purpose.
+
+Raw `<button>` is not linted because it is not a violation. See Component
+Library Reference: 96 of 100 uses are the prescribed pattern for interactive
+rows, and the remaining four are correct too. Raw `<input>`/`<textarea>` in
+forms IS a violation, and is also not linted yet — that is a known backlog
+item of ~21 sites, not a rule waiting to be written.
+
+Do not add enforcement for a pattern you have not first counted. The button
+rule that was nearly written here would have flagged 96 correct decisions.
 
 ## Component Library Reference
 
@@ -50,8 +55,31 @@ overview search + pagination. The widget (`klai-widget`) and website
 (`klai-website`) are separate systems with their own components — this
 library is portal-only.
 
-Build pages from these; never hand-roll a raw `<button>`, `<input>`,
-`<select>`, list row, or delete confirmation with inline Tailwind.
+Build pages from these. Never hand-roll a raw `<input>`, `<select>`,
+`<textarea>`, list row, or delete confirmation with inline Tailwind.
+
+`<button>` is the exception, and it is deliberate. Use `Button` for an
+**action**: something the user presses to make a thing happen, that should
+look like a control. Use a raw `<button>` for an **interactive surface**:
+a clickable row, a toggle, a tree item, a selectable option. Those get
+`w-full text-left` plus `klai-hover`, not a `Button` variant.
+
+The split is not academic. A 2026-08 count found 100 raw `<button>` elements
+outside `components/ui/`. Ninety-six were clickable rows, toggles and tree
+items, built exactly as this document prescribes. Of the four that resemble
+a control, all four are correct: a circular avatar opening a menu
+(`AccountMenu`), the Google and Microsoft SSO buttons whose appearance those
+vendors dictate (`login.tsx`), and kb-editor chrome at `h-7`, which no
+`Button` size offers. A blanket "never hand-roll a button" rule would flag
+96 correct decisions, and a rule that noisy gets switched off along with the
+rules that work.
+
+The same count found the opposite for form fields: roughly 11 raw text,
+password and email `<input>` elements and 10 raw `<textarea>` elements
+bypass the owned components, including in admin create forms
+(`admin/groups/new.tsx`, `admin/api-keys/new.tsx`). Those are real
+violations. Checkbox and radio inputs inside composed controls
+(`RadioCardGroup`, permission pickers) are not.
 
 | Component | Purpose | Canonical? |
 |---|---|---|
