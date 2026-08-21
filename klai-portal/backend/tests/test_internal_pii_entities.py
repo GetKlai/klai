@@ -245,13 +245,13 @@ class TestTenantIsolation:
 
         await patched_internal.get_org_pii_entities(org_id="372801852200189970", request=_make_request(), db=db)
 
-        # set_tenant takes the portal integer PK — that is what RLS binds to —
-        # while the path parameter and the audit record carry the Zitadel id
-        # the caller supplied. The two id spaces are deliberately different
-        # and this test pins both, because conflating them is exactly the bug
-        # that made this endpoint return 500 in production.
+        # Two id spaces, deliberately distinct — conflating them is exactly
+        # the bug that made this endpoint 500 in production.
+        #   set_tenant  -> portal integer PK (what RLS binds to)
+        #   audit log   -> portal integer PK (portal_audit_log references it)
+        #   path + body -> Zitadel id (what the caller has)
         assert patched_internal.set_tenant.await_args.args[1] == 1
-        assert patched_internal._audit_internal_call.await_args.kwargs["org_id"] == "372801852200189970"
+        assert patched_internal._audit_internal_call.await_args.kwargs["org_id"] == 1
 
 
 class TestOrgIdSpace:
@@ -297,3 +297,18 @@ class TestOrgIdSpace:
             await patched_internal.get_org_pii_entities(org_id="999999999999999999", request=_make_request(), db=db)
 
         assert exc.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_unknown_org_audits_without_a_dangling_id(self, patched_internal):
+        """404 must not write an org_id that references nothing.
+
+        portal_audit_log is keyed on the portal PK. An unresolvable Zitadel id
+        has no PK, so the audit record carries None rather than a value from
+        the wrong id space.
+        """
+        db = _FakeOrgDb({"372801852200189969": []})
+
+        with pytest.raises(HTTPException):
+            await patched_internal.get_org_pii_entities(org_id="999999999999999999", request=_make_request(), db=db)
+
+        assert patched_internal._audit_internal_call.await_args.kwargs["org_id"] is None

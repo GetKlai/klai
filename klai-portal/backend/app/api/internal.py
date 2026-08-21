@@ -1039,11 +1039,16 @@ async def get_org_pii_entities(
     )
     row = result.first()
     if row is None:
-        await _audit_internal_call(request, org_id=org_id)
+        # No portal row, so no portal PK to audit against. The audit trail is
+        # keyed on portal_orgs, not on the Zitadel id space — passing the
+        # unresolvable Zitadel id here would write a value that references
+        # nothing.
+        await _audit_internal_call(request, org_id=None)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Org not found")
 
-    await set_tenant(db, row[0])
-    stored = row[1] or []
+    portal_pk, stored_raw = row[0], row[1]
+    await set_tenant(db, portal_pk)
+    stored = stored_raw or []
     enabled = sanitize_stored_entities(stored)
 
     # "fail loudly" (root AGENTS.md): sanitising is defence in depth, but
@@ -1056,10 +1061,15 @@ async def get_org_pii_entities(
         structlog_logger.warning(
             "pii_org_policy_stored_value_rejected",
             org_id=org_id,
+            portal_org_id=portal_pk,
             dropped=dropped,
         )
 
-    await _audit_internal_call(request, org_id=org_id)
+    # The audit record takes the portal PK — that is the id space
+    # portal_audit_log references. The Zitadel id stays in the response and
+    # in the structlog event above, where operators correlate it with
+    # `pii_observed org_id=...` from the LiteLLM side.
+    await _audit_internal_call(request, org_id=portal_pk)
     return OrgPiiEntitiesResponse(org_id=org_id, enabled_entities=enabled)
 
 
