@@ -1,6 +1,6 @@
 ---
 id: SPEC-PRIVACY-MISTRAL-PII-001
-version: "0.8.0"
+version: "0.9.0"
 status: draft
 created: 2026-08-20
 updated: 2026-08-20
@@ -17,6 +17,7 @@ roadmap: docs/architecture/knowledge-rag-improvement-plan.md
 
 | Version | Date       | Author       | Change |
 |---------|------------|--------------|--------|
+| 0.9.0   | 2026-08-21 | Mark Vletter | Phase 3 merged and deployed **inert** (`adde54046`), analyzer image carrying the four system-review fixes pinned (`060459e28`). Verified on core-01 rather than assumed: `KLAI_PII_ENFORCE=false`, seven Phase 3 modules mounted with no import errors, the observer still emitting counts and changing nothing, and all four recogniser fixes confirmed against the running analyzer — `Factuurdatum 20200201` no longer masked, `bearer` prose no longer a SECRET, `2026 en` no longer a postcode, Rotterdam `010` still detected. Everything between LiteLLM and Mistral is now built and in place; the only remaining step to activate is the flag. |
 | 0.8.0   | 2026-08-20 | Mark Vletter | **System review of the merged stack** — the first review of the pieces together rather than each PR alone, and it found what per-diff review structurally cannot. REQ-8's overlap rule was wrong: it said "drop any span *contained* in one already taken", derived from the single IBAN⊃PHONE example, but the recogniser set produces pairs where the higher-scoring span sits INSIDE the lower-scoring one (`NL_BSN` 1.00 inside `NL_BTW` 0.70; a JWT span inside a Bearer span). A containment-only rule accepts both and corrupts the text. Now: drop any **overlap**, and never-restore entities win exact ties, because `NL_BSN` and `NL_KVK` can produce a byte-identical span with an identical score and a tie must not decide whether a value becomes restorable. The Phase 3 implementation already dropped overlaps — the defect was in this document, not the code. Three irreversible-false-positive fixes shipped alongside: 8-digit BSN now needs context (9.1% of `YYYYMMDD` dates passed the elfproef and were destroyed unrestorably), the `Bearer` pattern is anchored to an `Authorization:` header (it matched two words of ordinary Dutch prose), and the postcode letter pair is case-sensitive again (registry `IGNORECASE` made `2026 en` a postcode). A1 marked partly falsified. |
 | 0.7.0   | 2026-08-20 | Mark Vletter | Maintenance pass — the SPEC is a working document, not a record of what we once believed. Adds a **Status** table (per-phase state with the commit that proves it) so this doubles as the progress overview, plus a short "what this SPEC got wrong, and how it was caught" table: three of four errors were found by measuring, not reading, and two had already been written down as confident conclusions. Removed three claims that are now false: that the LiteLLM integration is configuration rather than code (REQ-5 and REQ-0a each measured otherwise), that `PHONE_NUMBER` is a stock built-in enabled via a YAML region key (the loader drops it — it is `NLPhoneRecognizer` now), and assumption A6 (struck through with the real root cause and the fixing commits). Re-validated every `file:line` anchor **semantically**, not just for range: the `MISTRAL_API_KEY` anchor had drifted from 388-389 to 421-422 as compose grew, still pointing inside the file and therefore passing a naive check while being wrong. |
 | 0.6.0   | 2026-08-20 | Mark Vletter | **Measurement gates removed; build-then-observe instead.** Klai's current traffic volume is far too low to produce a statistically meaningful 30-day, three-tenant, hand-annotated sample, so requiring one was not caution — it was a stall dressed as rigour. The workflow is: build on stated assumptions, ship, watch it in practice, correct. Every assumption that replaced a measurement is written down under "Assumptions" so it can be checked against reality rather than forgotten. Phase 3's design is also settled: REQ-0a proved the native restore path unusable for streaming, so Klai owns mask, map and restore end to end, keyed by `litellm_call_id` in process memory. Everything ships behind `KLAI_PII_ENFORCE`, default **off**, so Phase 3 can land, deploy and be exercised in production while inert — activation stays a separate, deliberate flip. |
@@ -49,7 +50,7 @@ so drafting an email still works while Mistral never receives the real values.
 
 Nothing here touches PII at rest, and nothing here depends on that work.
 
-## Status — 2026-08-20
+## Status — 2026-08-21
 
 **Maintenance rule.** Update this document whenever a phase lands, a measurement lands, or a
 claim in it turns out to be false — and *delete* what is no longer true rather than layering
@@ -66,7 +67,7 @@ the table is right and the text is stale — say so rather than working around i
 | **0** — prove the restore path | **Done, answered** | Ran on core-01. `output_parse_pii` restores non-streaming, returns an **empty map on streaming**. Verbatim-token instruction takes `PHONE_NUMBER` survival 58.3% → 95.8%. See the RESULT block under Phase 0 |
 | **1** — recognizer pack | **Live** | `d55d6adeb`, `d2aa35fd2`. Nine recognizers loaded across en/nl/de, spaCy disabled per language, verified in production logs. Rotterdam fix `4af66f4e0` + `b5b592051`, verified live |
 | **2** — read-only observer | **Live, measuring** | `c6dd946e4`. Real `pii_observed` events in VictoriaLogs, including `org_id=None` requests the existing hook skips. Changes no payload |
-| **3** — mask + restore | **In build, inert** | Behind `KLAI_PII_ENFORCE`, default off. Klai owns mask/map/restore because Phase 0 measured the native path unusable for streaming |
+| **3** — mask + restore | **Live, inert** | `adde54046` + `060459e28`. Verified on core-01: `KLAI_PII_ENFORCE=false`, seven modules mounted, no import errors, observer unaffected. Klai owns mask/map/restore because Phase 0 measured the native path unusable for streaming. **Activation is a flag flip** |
 | **4** — `PERSON` via GLiNER | **Blocked, deliberately** | No PERSON detector is deployed at all (REQ-2 disables SpacyRecognizer). REQ-0b's PERSON half is unmeasurable until GLiNER lands |
 
 **Nothing is being masked today.** The guardrail has no `default_on` and enforcement is off,
