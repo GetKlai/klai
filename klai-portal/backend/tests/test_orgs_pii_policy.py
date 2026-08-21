@@ -252,34 +252,47 @@ class TestSetPiiAllowList:
         db.commit.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_over_long_value_rejected(self) -> None:
+    async def test_over_long_value_rejected_even_when_schema_is_bypassed(self) -> None:
+        """The service layer holds on its own, not only because the schema does.
+
+        ``model_construct`` skips Pydantic validation, standing in for any
+        caller that reaches the endpoint without going through the HTTP
+        schema. The two layers guard different boundaries and both must
+        reject; this is the one that is not the route's own.
+        """
         from app.api.orgs import PiiAllowListEntryIn, PiiAllowListUpdate, set_my_org_pii_allow_list
 
         db = _make_db_async()
         db.get = AsyncMock()
         perms = make_perms(role="admin", user_id="zit-user-1", org_id=42)
+        unvalidated = PiiAllowListUpdate.model_construct(
+            entries=[PiiAllowListEntryIn.model_construct(value="a" * 500, match="exact", note=None)]
+        )
 
         with pytest.raises(HTTPException) as exc:
-            await set_my_org_pii_allow_list(
-                PiiAllowListUpdate(entries=[PiiAllowListEntryIn(value="a" * 500, match="exact")]),
-                perms=perms,
-                db=db,
-            )
+            await set_my_org_pii_allow_list(unvalidated, perms=perms, db=db)
 
         assert exc.value.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
         db.commit.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_too_many_entries_rejected(self) -> None:
+    async def test_too_many_entries_rejected_even_when_schema_is_bypassed(self) -> None:
+        """Same defense-in-depth check for the entry-count cap."""
         from app.api.orgs import PiiAllowListEntryIn, PiiAllowListUpdate, set_my_org_pii_allow_list
+        from app.services.pii_allow_list import MAX_ALLOW_LIST_ENTRIES
 
         db = _make_db_async()
         db.get = AsyncMock()
         perms = make_perms(role="admin", user_id="zit-user-1", org_id=42)
-        entries = [PiiAllowListEntryIn(value=f"v{i}", match="exact") for i in range(51)]
+        unvalidated = PiiAllowListUpdate.model_construct(
+            entries=[
+                PiiAllowListEntryIn.model_construct(value=f"v{i}", match="exact", note=None)
+                for i in range(MAX_ALLOW_LIST_ENTRIES + 1)
+            ]
+        )
 
         with pytest.raises(HTTPException) as exc:
-            await set_my_org_pii_allow_list(PiiAllowListUpdate(entries=entries), perms=perms, db=db)
+            await set_my_org_pii_allow_list(unvalidated, perms=perms, db=db)
 
         assert exc.value.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
         db.commit.assert_not_awaited()
@@ -372,3 +385,54 @@ class TestAuditFailureDoesNotLoseTheWrite:
 
         assert out.entries[0].value == "acme"
         db.commit.assert_awaited_once()
+
+
+class TestAllowListSchemaDeclaresItsBounds:
+    """The published schema must state the limits the service enforces.
+
+    The service-layer validator stays: it is the contract any write path
+    calls, not just this route. These assert the HTTP edge rejects first,
+    so a client learns the limit from the schema rather than from a 422
+    raised deeper in.
+    """
+
+    def test_too_many_entries_rejected_by_schema(self) -> None:
+        from pydantic import ValidationError
+
+        from app.api.orgs import PiiAllowListUpdate
+        from app.services.pii_allow_list import MAX_ALLOW_LIST_ENTRIES
+
+        too_many = [
+            {"value": f"term-{i}", "match": "exact"} for i in range(MAX_ALLOW_LIST_ENTRIES + 1)
+        ]
+        with pytest.raises(ValidationError):
+            PiiAllowListUpdate(entries=too_many)
+
+    def test_overlong_value_rejected_by_schema(self) -> None:
+        from pydantic import ValidationError
+
+        from app.api.orgs import PiiAllowListUpdate
+        from app.services.pii_allow_list import MAX_ALLOW_LIST_VALUE_LENGTH
+
+        with pytest.raises(ValidationError):
+            PiiAllowListUpdate(
+                entries=[{"value": "x" * (MAX_ALLOW_LIST_VALUE_LENGTH + 1), "match": "exact"}]
+            )
+
+    def test_empty_value_rejected_by_schema(self) -> None:
+        from pydantic import ValidationError
+
+        from app.api.orgs import PiiAllowListUpdate
+
+        with pytest.raises(ValidationError):
+            PiiAllowListUpdate(entries=[{"value": "", "match": "exact"}])
+
+    def test_entries_at_the_limit_still_accepted(self) -> None:
+        """The bound must sit exactly where the validator's does, not one below."""
+        from app.api.orgs import PiiAllowListUpdate
+        from app.services.pii_allow_list import MAX_ALLOW_LIST_ENTRIES
+
+        at_limit = [
+            {"value": f"term-{i}", "match": "exact"} for i in range(MAX_ALLOW_LIST_ENTRIES)
+        ]
+        assert len(PiiAllowListUpdate(entries=at_limit).entries) == MAX_ALLOW_LIST_ENTRIES

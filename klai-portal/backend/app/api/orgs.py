@@ -38,7 +38,13 @@ from app.core.database import get_db
 from app.core.permissions import UserPermissions, get_caller_at_least
 from app.core.profiles import ProfileRole
 from app.services.audit import log_event
-from app.services.pii_allow_list import PiiAllowListError, validate_allow_list
+from app.services.pii_allow_list import (
+    MAX_ALLOW_LIST_ENTRIES,
+    MAX_ALLOW_LIST_NOTE_LENGTH,
+    MAX_ALLOW_LIST_VALUE_LENGTH,
+    PiiAllowListError,
+    validate_allow_list,
+)
 from app.services.pii_entity_policy import PiiEntityPolicyError, validate_entity_selection
 from app.services.telemetry_level import set_telemetry_level
 
@@ -191,9 +197,14 @@ async def set_my_org_pii_entities(
 
 
 class PiiAllowListEntryIn(BaseModel):
-    value: str
+    # Bounds mirror pii_allow_list's own constants so the published schema
+    # states the contract the service actually enforces. Without them the
+    # OpenAPI doc advertises an unbounded list of unbounded strings, and a
+    # generated client learns the real limit from a 422 raised deep in a
+    # service layer instead of from the schema.
+    value: str = Field(min_length=1, max_length=MAX_ALLOW_LIST_VALUE_LENGTH)
     match: Literal["exact", "regex"]
-    note: str | None = None
+    note: str | None = Field(default=None, max_length=MAX_ALLOW_LIST_NOTE_LENGTH)
 
 
 class PiiAllowListEntryOut(BaseModel):
@@ -203,7 +214,9 @@ class PiiAllowListEntryOut(BaseModel):
 
 
 class PiiAllowListUpdate(BaseModel):
-    entries: list[PiiAllowListEntryIn] = Field(default_factory=list)
+    entries: list[PiiAllowListEntryIn] = Field(
+        default_factory=list, max_length=MAX_ALLOW_LIST_ENTRIES
+    )
 
 
 class PiiAllowListOut(BaseModel):
