@@ -185,7 +185,7 @@ repo. None of these workflows is documented in this public repo.
 |---|---|
 | "What's new" product-updates feed (megaphone in the portal) | `PRODUCT_UPDATES.md` |
 | Customer help centre (Klai Docs KB `klai-help`) | `HELP_SYSTEM.md` |
-| getklai.com website and blog | `WEBSITE_PUBLISHING.md` |
+| getklai.com website and blog | `docs/runbooks/website-publishing.md` |
 
 When publishing a product-updates batch, check whether the help centre
 needs matching page updates.
@@ -196,7 +196,7 @@ NOT checked out in a Conductor worktree, so edit it in its own checkout, not
 from here. And a push to its `main` is the deploy — it is Coolify-hosted and
 rebuilds automatically, with no staging branch and no approval gate. Build
 locally first, and verify the deployed commit and the live URL afterwards.
-`WEBSITE_PUBLISHING.md` has the exact commands.
+`docs/runbooks/website-publishing.md` has the exact commands.
 
 <!-- codeindex:start -->
 # CodeIndex MCP
