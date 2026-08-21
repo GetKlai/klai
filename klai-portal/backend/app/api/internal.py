@@ -976,13 +976,17 @@ class OrgPiiEntitiesResponse(BaseModel):
     caller reads it.
     """
 
-    org_id: int
+    # str, not int: this is the Zitadel org id the caller supplied, echoed
+    # back for operator debuggability. An 18-digit Zitadel id does not fit a
+    # PG int4 and typing it as int is what made this endpoint 500 in
+    # production — see the handler docstring and TestOrgIdSpace.
+    org_id: str
     enabled_entities: list[str]
 
 
 @router.get("/v1/orgs/{org_id}/pii-entities", response_model=OrgPiiEntitiesResponse)
 async def get_org_pii_entities(
-    org_id: int,
+    org_id: str,
     request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> OrgPiiEntitiesResponse:
@@ -1001,9 +1005,17 @@ async def get_org_pii_entities(
     off"), not a degraded answer — the column is ``NOT NULL DEFAULT '{}'``, so
     there is no NULL case to distinguish.
 
-    **Tenant isolation** (NFR): the row is selected by primary key from the path
-    ``org_id`` and nothing else, so there is no query shape in which org B's
-    policy can be returned for org A. ``portal_orgs`` is the tenant root — the
+    **``org_id`` is the ZITADEL org id, not the portal integer PK.** That is
+    what the caller has: LiteLLM carries it in team-key metadata and every
+    other PII event logs it (``pii_observed org_id=372801852200189969``).
+    Typing this path parameter as ``int`` was a live defect — verified against
+    production, a real Zitadel id returned **500** and the client fell back to
+    the empty policy, so the entire return set could never activate and the
+    failure looked exactly like "this org opted into nothing".
+
+    **Tenant isolation** (NFR): the row is selected by the unique
+    ``zitadel_org_id`` from the path and nothing else, so there is no query
+    shape in which org B's policy can be returned for org A. ``portal_orgs`` is the tenant root — the
     row *is* the tenant — and carries no RLS policy, which is why this endpoint
     is not covered by the 4-category framework; ``set_tenant`` is still called
     so the request's transaction carries the same tenant context as every other
@@ -1021,15 +1033,22 @@ async def get_org_pii_entities(
     ``sanitize_stored_entities``.
     """
     await _require_internal_token(request)
-    await set_tenant(db, org_id)
 
-    result = await db.execute(select(PortalOrg.pii_masked_entities).where(PortalOrg.id == org_id))
+    result = await db.execute(
+        select(PortalOrg.id, PortalOrg.pii_masked_entities).where(PortalOrg.zitadel_org_id == org_id)
+    )
     row = result.first()
     if row is None:
-        await _audit_internal_call(request, org_id=org_id)
+        # No portal row, so no portal PK to audit against. The audit trail is
+        # keyed on portal_orgs, not on the Zitadel id space — passing the
+        # unresolvable Zitadel id here would write a value that references
+        # nothing.
+        await _audit_internal_call(request, org_id=None)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Org not found")
 
-    stored = row[0] or []
+    portal_pk, stored_raw = row[0], row[1]
+    await set_tenant(db, portal_pk)
+    stored = stored_raw or []
     enabled = sanitize_stored_entities(stored)
 
     # "fail loudly" (root AGENTS.md): sanitising is defence in depth, but
@@ -1042,10 +1061,15 @@ async def get_org_pii_entities(
         structlog_logger.warning(
             "pii_org_policy_stored_value_rejected",
             org_id=org_id,
+            portal_org_id=portal_pk,
             dropped=dropped,
         )
 
-    await _audit_internal_call(request, org_id=org_id)
+    # The audit record takes the portal PK — that is the id space
+    # portal_audit_log references. The Zitadel id stays in the response and
+    # in the structlog event above, where operators correlate it with
+    # `pii_observed org_id=...` from the LiteLLM side.
+    await _audit_internal_call(request, org_id=portal_pk)
     return OrgPiiEntitiesResponse(org_id=org_id, enabled_entities=enabled)
 
 
