@@ -21,6 +21,7 @@ from graphiti_core.driver.falkordb_driver import FalkorDriver
 from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
 from graphiti_core.llm_client.config import LLMConfig
 from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
+from graphiti_core.nodes import EpisodicNode
 from klai_graphiti_compat import apply_falkordb_compat
 
 from retrieval_api.config import settings
@@ -89,11 +90,10 @@ async def search(query: str, org_id: str, top_k: int = 20) -> list[dict]:
 
     graphiti = _get_graphiti()
     try:
-        results = await asyncio.wait_for(
-            graphiti.search(query, group_ids=[org_id]),
+        return await asyncio.wait_for(
+            _search_with_provenance(graphiti, query, org_id, top_k),
             timeout=settings.graph_search_timeout,
         )
-        return _convert_results(results, top_k)
     except TimeoutError:
         logger.warning(
             "graph_search_timeout",
@@ -111,6 +111,84 @@ async def search(query: str, org_id: str, top_k: int = 20) -> list[dict]:
         return []
 
 
+async def _search_with_provenance(
+    graphiti: Graphiti, query: str, org_id: str, top_k: int
+) -> list[dict]:
+    """Search, then resolve each edge back to the artifact it came from.
+
+    Both steps share one timeout budget: the lookup is a uuid-indexed read in
+    the same graph the search just used, so it must never become a second,
+    unbounded round trip.
+    """
+    results = await graphiti.search(query, group_ids=[org_id])
+    episode_artifacts = await _resolve_episode_artifacts(graphiti, results, org_id)
+    return _convert_results(results, top_k, episode_artifacts)
+
+
+def _episode_uuids(edge: object) -> list[str]:
+    """Episode uuids on an edge, or [] when the shape is not what we expect."""
+    episodes = getattr(edge, "episodes", None)
+    if not isinstance(episodes, list):
+        return []
+    return [uuid for uuid in episodes if isinstance(uuid, str) and uuid]
+
+
+async def _resolve_episode_artifacts(
+    graphiti: Graphiti, results: list, org_id: str
+) -> dict[str, str]:
+    """Map episode uuid -> Klai artifact_id for the edges in ``results``.
+
+    knowledge-ingest calls ``add_episode(name=artifact_id, ...)``, so an
+    episode node's ``name`` IS the artifact identity. That is what turns a
+    derived graph fact into something the evidence pack can cite.
+
+    TENANT ISOLATION. ``EpisodicNode.get_by_uuids`` matches on uuid alone —
+    it applies no group_id filter of its own. Scoping therefore rests on the
+    driver being cloned to ``database=<org_id>``, the same per-tenant graph
+    boundary ``graphiti.search()`` gets from ``handle_multiple_group_ids``.
+    The ``group_id`` assertion below is deliberate defence in depth, not
+    redundancy: it keeps the read fail-closed if a future Graphiti change
+    alters how a driver resolves its database.
+
+    Fail-open on error: returning ``{}`` costs citations, raising would cost
+    the whole graph leg.
+    """
+    uuids = sorted({uuid for edge in results for uuid in _episode_uuids(edge)})
+    if not uuids:
+        return {}
+
+    try:
+        driver = graphiti.clients.driver.clone(database=org_id)
+        episodes = await EpisodicNode.get_by_uuids(driver, uuids)
+    except Exception:
+        logger.warning("graph_episode_lookup_failed", org_id=org_id, exc_info=True)
+        return {}
+
+    resolved: dict[str, str] = {}
+    foreign = 0
+    for episode in episodes:
+        if getattr(episode, "group_id", None) != org_id:
+            foreign += 1
+            continue
+        artifact_id = getattr(episode, "name", None)
+        uuid = getattr(episode, "uuid", None)
+        if isinstance(artifact_id, str) and artifact_id and isinstance(uuid, str):
+            resolved[uuid] = artifact_id
+    if foreign:
+        logger.warning("graph_episode_foreign_group_id_dropped", org_id=org_id, count=foreign)
+    return resolved
+
+
+def _iso(value: object) -> str | None:
+    """Serialise Graphiti's datetimes to the ISO strings ChunkResult expects."""
+    if value is None:
+        return None
+    isoformat = getattr(value, "isoformat", None)
+    if callable(isoformat):
+        return str(isoformat())
+    return str(value) if isinstance(value, str) else None
+
+
 def _has_searchable_text(query: str) -> bool:
     return any(ch.isalnum() for ch in query)
 
@@ -120,7 +198,9 @@ def _is_empty_fulltext_query_error(exc: Exception) -> bool:
     return "syntax" in message.lower() and _EMPTY_FULLTEXT_QUERY_RE.search(message) is not None
 
 
-def _convert_results(results: list, top_k: int) -> list[dict]:
+def _convert_results(
+    results: list, top_k: int, episode_artifacts: dict[str, str] | None = None
+) -> list[dict]:
     """Convert Graphiti search results to chunk-compatible format for RRF merge.
 
     Graphiti search returns EdgeResult / EntityEdge objects. Key fields:
@@ -128,6 +208,14 @@ def _convert_results(results: list, top_k: int) -> list[dict]:
     - .score: semantic relevance from Graphiti (cosine similarity)
     - .weight: Hebbian reinforcement count (incremented per confirming episode)
     - .uuid: unique identifier
+    - .episodes: uuids of the episodes the fact was extracted from
+    - .valid_at / .invalid_at: Graphiti's bi-temporal validity window
+
+    ``episode_artifacts`` maps episode uuid -> artifact_id (see
+    ``_resolve_episode_artifacts``). An edge can be supported by several
+    episodes; the first one that resolves is used, which is enough for a
+    citation because any supporting document lets the reader verify the
+    claim. Multi-source attribution belongs with knowledge.derivations.
 
     Scoring: base semantic score boosted by log-scaled Hebbian weight.
     Results are sorted by combined score so RRF uses the correct rank ordering.
@@ -153,17 +241,22 @@ def _convert_results(results: list, top_k: int) -> list[dict]:
             score = base
 
         uid = str(getattr(r, "uuid", i))
+        artifact_id = None
+        for episode_uuid in _episode_uuids(r):
+            artifact_id = (episode_artifacts or {}).get(episode_uuid)
+            if artifact_id:
+                break
         converted.append(
             {
                 "chunk_id": f"graph:{uid}",
                 "text": text,
                 "score": score,
-                "artifact_id": None,
+                "artifact_id": artifact_id,
                 "content_type": "graph_edge",
                 "context_prefix": None,
                 "scope": "org",
-                "valid_at": None,
-                "invalid_at": None,
+                "valid_at": _iso(getattr(r, "valid_at", None)),
+                "invalid_at": _iso(getattr(r, "invalid_at", None)),
             }
         )
 

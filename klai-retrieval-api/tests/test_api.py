@@ -593,6 +593,87 @@ class TestGraphMetadata:
         assert "graph_search_ms" in data["metadata"]
         assert data["metadata"]["graph_results_count"] == 0
 
+    def test_graph_edge_with_provenance_reaches_the_evidence_pack(
+        self, client, sample_retrieve_request
+    ):
+        """SPEC-RAG-GRAPH-CITE-001: a resolved graph fact must be citable.
+
+        Proves the whole chain end to end, because every stage between
+        graph_search and the response re-handles the chunk dict: RRF merge,
+        reranking, quality boost, source selection and evidence-pack
+        assembly. A unit test on _convert_results alone cannot show that
+        artifact_id survives all of them.
+
+        Scope note: this test injects a resolved graph chunk, so it locks the
+        DOWNSTREAM half of the contract and would also pass on the old code.
+        The conversion itself — episode uuid -> artifact_id — is locked by
+        test_graph_search.py::test_convert_results_sets_artifact_id_from_episode
+        and ::test_graph_edge_with_artifact_id_becomes_citable, which both
+        failed before this change.
+        """
+        graph_chunk = {
+            "chunk_id": "graph:edge-1",
+            "text": "Nummerbehoud is mogelijk bij overstap",
+            "score": 0.9,
+            "artifact_id": "artifact-abc",
+            "content_type": "graph_edge",
+            "context_prefix": None,
+            "scope": "org",
+            "valid_at": "2026-03-11T00:00:00+00:00",
+            "invalid_at": None,
+        }
+
+        with (
+            patch(
+                "retrieval_api.api.retrieve.coreference.resolve",
+                new_callable=AsyncMock,
+                return_value="resolved query",
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_single",
+                new_callable=AsyncMock,
+                return_value=[0.1, 0.2],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_sparse",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "retrieval_api.api.retrieve.search.hybrid_search",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.graph_search.search",
+                new_callable=AsyncMock,
+                return_value=[graph_chunk],
+            ),
+            patch("retrieval_api.api.retrieve.settings") as mock_settings,
+        ):
+            mock_settings.retrieval_candidates = 60
+            mock_settings.reranker_enabled = False
+            mock_settings.graphiti_enabled = True
+            mock_settings.link_expand_enabled = False
+            mock_settings.link_expand_score_boost = 1.00
+            mock_settings.source_quota_enabled = False
+            mock_settings.router_enabled = False
+            mock_settings.retrieval_quality_floor = 0.05
+            mock_settings.confidence_band_high_threshold = 0.60
+            mock_settings.confidence_band_low_threshold = 0.30
+
+            resp = client.post("/retrieve", json=sample_retrieve_request)
+
+        assert resp.status_code == 200
+        pack = resp.json()["evidence_pack"]
+        assert pack["no_citable_reason"] is None
+        assert [item["chunk_id"] for item in pack["items"]] == ["graph:edge-1"]
+        assert pack["items"][0]["artifact_id"] == "artifact-abc"
+        assert pack["items"][0]["content_type"] == "graph_edge"
+        assert [source["artifact_id"] for source in pack["sources"]] == ["artifact-abc"]
+        # Graphiti's bi-temporal window survives to the served chunk.
+        assert resp.json()["chunks"][0]["valid_at"] == "2026-03-11T00:00:00+00:00"
+
     def test_decision_record_graph_search_tracks_top_k_contribution(
         self, client, sample_retrieve_request, caplog
     ):
