@@ -215,7 +215,7 @@ async def test_flag_off_failure_hook_returns_none_and_touches_nothing(monkeypatc
 # ===========================================================================
 @pytest.mark.asyncio
 async def test_bsn_masked_and_not_restored(monkeypatch):
-    mod = _load_enforcer(monkeypatch, enforce=True, extra_env={"KLAI_PII_ENFORCE_ORG_IDS": "org1"})
+    mod = _load_enforcer(monkeypatch, enforce=True)
     _stub_org_policy(mod, monkeypatch, frozenset())  # no optional entities
 
     text = "mijn bsn is 111222333 graag verwerken"
@@ -261,7 +261,7 @@ async def test_bsn_masked_and_not_restored(monkeypatch):
 # ===========================================================================
 @pytest.mark.asyncio
 async def test_secret_masked_and_not_restored(monkeypatch):
-    mod = _load_enforcer(monkeypatch, enforce=True, extra_env={"KLAI_PII_ENFORCE_ORG_IDS": "org1"})
+    mod = _load_enforcer(monkeypatch, enforce=True)
     _stub_org_policy(mod, monkeypatch, frozenset())
 
     secret = "sk-ant-api03-abcdefghijklmnopqrstuvwxyz"
@@ -299,7 +299,7 @@ async def test_secret_masked_and_not_restored(monkeypatch):
 # ===========================================================================
 @pytest.mark.asyncio
 async def test_iban_masked_and_restored_when_enabled_for_org(monkeypatch):
-    mod = _load_enforcer(monkeypatch, enforce=True, extra_env={"KLAI_PII_ENFORCE_ORG_IDS": "org1"})
+    mod = _load_enforcer(monkeypatch, enforce=True)
     _stub_org_policy(mod, monkeypatch, frozenset({"IBAN_CODE"}))
 
     iban = "NL91ABNA0417164300"
@@ -333,7 +333,7 @@ async def test_iban_masked_and_restored_when_enabled_for_org(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_iban_untouched_when_not_in_org_policy(monkeypatch):
-    mod = _load_enforcer(monkeypatch, enforce=True, extra_env={"KLAI_PII_ENFORCE_ORG_IDS": "org1"})
+    mod = _load_enforcer(monkeypatch, enforce=True)
     _stub_org_policy(mod, monkeypatch, frozenset())  # IBAN_CODE not enabled
 
     iban = "NL91ABNA0417164300"
@@ -369,7 +369,7 @@ async def test_iban_untouched_when_not_in_org_policy(monkeypatch):
 # ===========================================================================
 @pytest.mark.asyncio
 async def test_two_distinct_phone_numbers_get_distinct_placeholders_and_restore(monkeypatch):
-    mod = _load_enforcer(monkeypatch, enforce=True, extra_env={"KLAI_PII_ENFORCE_ORG_IDS": "org1"})
+    mod = _load_enforcer(monkeypatch, enforce=True)
     _stub_org_policy(mod, monkeypatch, frozenset({"PHONE_NUMBER"}))
 
     phone_a, phone_b = "06-12345678", "06-98765432"
@@ -479,9 +479,7 @@ async def test_streaming_and_non_streaming_both_restore_return_set_entities(monk
 # ===========================================================================
 @pytest.mark.asyncio
 async def test_two_concurrent_requests_different_orgs_do_not_cross_contaminate(monkeypatch):
-    mod = _load_enforcer(
-        monkeypatch, enforce=True, extra_env={"KLAI_PII_ENFORCE_ORG_IDS": "org-a,org-b"}
-    )
+    mod = _load_enforcer(monkeypatch, enforce=True)
     _stub_org_policy(
         mod,
         monkeypatch,
@@ -645,7 +643,7 @@ async def test_map_entry_deleted_after_success_hook_even_with_no_restore_map(mon
 # ===========================================================================
 @pytest.mark.asyncio
 async def test_analyzer_error_with_enforcement_on_fails_the_request(monkeypatch, caplog):
-    mod = _load_enforcer(monkeypatch, enforce=True, extra_env={"KLAI_PII_ENFORCE_ORG_IDS": "org1"})
+    mod = _load_enforcer(monkeypatch, enforce=True)
     _stub_org_policy(mod, monkeypatch, frozenset())
     client = _ScriptedAnalyzerClient(raise_exc=ConnectionError("presidio-analyzer unreachable"))
     _install_analyzer(mod, monkeypatch, client)
@@ -690,7 +688,7 @@ async def test_analyzer_error_with_enforcement_off_does_nothing(monkeypatch):
 # ===========================================================================
 @pytest.mark.asyncio
 async def test_verbatim_instruction_injected_when_masking_active(monkeypatch):
-    mod = _load_enforcer(monkeypatch, enforce=True, extra_env={"KLAI_PII_ENFORCE_ORG_IDS": "org1"})
+    mod = _load_enforcer(monkeypatch, enforce=True)
     _stub_org_policy(mod, monkeypatch, frozenset())
 
     text = "mijn bsn is 111222333 graag verwerken"
@@ -717,7 +715,7 @@ async def test_verbatim_instruction_injected_when_masking_active(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_verbatim_instruction_absent_when_nothing_is_masked(monkeypatch):
-    mod = _load_enforcer(monkeypatch, enforce=True, extra_env={"KLAI_PII_ENFORCE_ORG_IDS": "org1"})
+    mod = _load_enforcer(monkeypatch, enforce=True)
     _stub_org_policy(mod, monkeypatch, frozenset())
 
     text = "hallo, hoe gaat het vandaag met je?"
@@ -745,7 +743,7 @@ async def test_verbatim_instruction_absent_when_nothing_is_masked(monkeypatch):
 # ===========================================================================
 @pytest.mark.asyncio
 async def test_tool_call_arguments_are_masked(monkeypatch):
-    mod = _load_enforcer(monkeypatch, enforce=True, extra_env={"KLAI_PII_ENFORCE_ORG_IDS": "org1"})
+    mod = _load_enforcer(monkeypatch, enforce=True)
     _stub_org_policy(mod, monkeypatch, frozenset({"EMAIL_ADDRESS"}))
 
     args_text = '{"to": "jan.devries@example.nl"}'
@@ -779,318 +777,3 @@ async def test_tool_call_arguments_are_masked(monkeypatch):
     masked_args = assistant_msg["tool_calls"][0]["function"]["arguments"]
     assert email not in masked_args
     assert "<EMAIL_ADDRESS_1>" in masked_args
-
-
-# ===========================================================================
-# Activation hardening — KLAI_PII_ENFORCE_ORG_IDS per-org scoping
-# ===========================================================================
-@pytest.mark.asyncio
-async def test_org_not_in_allowlist_is_not_enforced(monkeypatch):
-    mod = _load_enforcer(
-        monkeypatch, enforce=True, extra_env={"KLAI_PII_ENFORCE_ORG_IDS": "org-other"}
-    )
-    client = _ScriptedAnalyzerClient(raise_exc=AssertionError("must not call analyzer"))
-    _install_analyzer(mod, monkeypatch, client)
-
-    data = {
-        "model": "klai-primary",
-        "litellm_call_id": "call-allowlist-1",
-        "messages": [{"role": "user", "content": "mijn bsn is 111222333"}],
-    }
-    result = await mod.klai_pii_enforcer.async_pre_call_hook(
-        _user_api_key("org1"), None, data, "completion"
-    )
-    assert result is data
-    assert client.calls == []
-    assert mod._pii_map_store.get("call-allowlist-1") is None
-
-
-@pytest.mark.asyncio
-async def test_org_in_allowlist_is_enforced(monkeypatch):
-    mod = _load_enforcer(
-        monkeypatch, enforce=True, extra_env={"KLAI_PII_ENFORCE_ORG_IDS": "org1,org2"}
-    )
-    _stub_org_policy(mod, monkeypatch, frozenset())
-
-    text = "mijn bsn is 111222333 graag verwerken"
-    start, end = text.index("111222333"), text.index("111222333") + len("111222333")
-    client = _ScriptedAnalyzerClient(
-        script={text: [{"entity_type": "NL_BSN", "start": start, "end": end, "score": 0.85}]}
-    )
-    _install_analyzer(mod, monkeypatch, client)
-
-    data = {
-        "model": "klai-primary",
-        "litellm_call_id": "call-allowlist-2",
-        "messages": [{"role": "user", "content": text}],
-    }
-    result = await mod.klai_pii_enforcer.async_pre_call_hook(
-        _user_api_key("org1"), None, data, "completion"
-    )
-    user_message = [m for m in result["messages"] if m.get("role") == "user"][0]
-    assert "<NL_BSN_1>" in user_message["content"]
-    assert client.calls  # analyzer WAS called for the allowlisted org
-
-
-@pytest.mark.asyncio
-async def test_empty_allowlist_means_enforcement_for_no_org_even_with_flag_on(monkeypatch):
-    """The 'empty allowlist' decision: KLAI_PII_ENFORCE=true with
-    KLAI_PII_ENFORCE_ORG_IDS unset/empty must behave exactly like the flag
-    being off -- "no orgs", not "every org". See _org_is_enforced's
-    docstring for the full argument."""
-    mod = _load_enforcer(monkeypatch, enforce=True, extra_env={"KLAI_PII_ENFORCE_ORG_IDS": ""})
-    assert mod.KLAI_PII_ENFORCE_ORG_IDS == frozenset()
-    client = _ScriptedAnalyzerClient(raise_exc=AssertionError("must not call analyzer"))
-    _install_analyzer(mod, monkeypatch, client)
-
-    data = {
-        "model": "klai-primary",
-        "litellm_call_id": "call-allowlist-3",
-        "messages": [{"role": "user", "content": "mijn bsn is 111222333"}],
-    }
-    result = await mod.klai_pii_enforcer.async_pre_call_hook(
-        _user_api_key("org1"), None, data, "completion"
-    )
-    assert result is data
-    assert client.calls == []
-
-
-@pytest.mark.asyncio
-async def test_missing_org_id_is_never_enforced_even_with_nonempty_allowlist(monkeypatch):
-    """A request with no org_id (widget/partner master-key path) can never
-    match an org allowlist -- defined, deliberate behaviour, not a gap."""
-    mod = _load_enforcer(
-        monkeypatch, enforce=True, extra_env={"KLAI_PII_ENFORCE_ORG_IDS": "org1"}
-    )
-    client = _ScriptedAnalyzerClient(raise_exc=AssertionError("must not call analyzer"))
-    _install_analyzer(mod, monkeypatch, client)
-
-    data = {
-        "model": "klai-primary",
-        "litellm_call_id": "call-allowlist-4",
-        "messages": [{"role": "user", "content": "mijn bsn is 111222333"}],
-    }
-    result = await mod.klai_pii_enforcer.async_pre_call_hook(
-        _user_api_key(org_id=None), None, data, "completion"
-    )
-    assert result is data
-    assert client.calls == []
-
-
-def test_parse_org_allowlist_trims_whitespace_and_drops_empties():
-    from klai_pii_enforce import _parse_org_allowlist
-
-    assert _parse_org_allowlist("org1, org2 ,, org3") == frozenset({"org1", "org2", "org3"})
-    assert _parse_org_allowlist("") == frozenset()
-    assert _parse_org_allowlist("   ") == frozenset()
-
-
-# ===========================================================================
-# System-review finding M4 — length cap / chunking on the enforce path
-# ===========================================================================
-# REQ-10's fail-closed contract forbids analysing less than the whole
-# outbound text while forwarding the rest unmasked. These tests exercise
-# the chunking machinery directly (`_chunk_windows`, `_analyze_spans`,
-# `_analyze_spans_chunked`) with small monkeypatched cap/overlap constants
-# so they run fast and deterministically -- the real 20_000/6_000 values
-# are exercised implicitly by every other test staying under that size and
-# taking the single-call path.
-@pytest.mark.asyncio
-async def test_analyze_spans_makes_one_call_for_text_at_or_under_the_cap(monkeypatch):
-    mod = _load_enforcer(monkeypatch, enforce=True)
-    monkeypatch.setattr(mod, "_MAX_ANALYZE_CHARS", 20)
-
-    text = "x" * 20
-    client = _ScriptedAnalyzerClient(script={text: []})
-    spans = await mod._analyze_spans(client, text, "en")
-
-    assert spans == []
-    assert len(client.calls) == 1
-    assert client.calls[0]["json"]["text"] == text
-
-
-@pytest.mark.asyncio
-async def test_analyze_spans_dispatches_to_chunking_above_the_cap(monkeypatch):
-    mod = _load_enforcer(monkeypatch, enforce=True)
-    monkeypatch.setattr(mod, "_MAX_ANALYZE_CHARS", 10)
-    monkeypatch.setattr(mod, "_CHUNK_OVERLAP_CHARS", 3)
-
-    text = "a" * 25
-    client = _ScriptedAnalyzerClient(default=[])
-    spans = await mod._analyze_spans(client, text, "en")
-
-    assert spans == []
-    assert len(client.calls) > 1
-    # Every individual call stays within the cap.
-    assert all(len(c["json"]["text"]) <= 10 + 2 * 3 for c in client.calls)
-
-
-def test_chunk_windows_partition_the_full_text_with_no_gap_or_overlap_in_core(monkeypatch):
-    mod = _load_enforcer(monkeypatch, enforce=True)
-    monkeypatch.setattr(mod, "_MAX_ANALYZE_CHARS", 10)
-    monkeypatch.setattr(mod, "_CHUNK_OVERLAP_CHARS", 3)
-
-    windows = mod._chunk_windows(25)
-    assert windows[0].core_start == 0
-    assert windows[-1].core_end == 25
-    for prev, nxt in zip(windows, windows[1:]):
-        assert prev.core_end == nxt.core_start  # exact partition, no gap/overlap
-    for w in windows:
-        assert w.window_start == max(0, w.core_start - 3)
-        assert w.window_end == min(25, w.core_end + 3)
-        # padding guarantees any entity starting in the core is fully inside window
-        assert w.window_end - w.core_start >= (w.core_end - w.core_start)
-
-
-def test_chunk_windows_single_window_when_text_at_or_under_cap(monkeypatch):
-    mod = _load_enforcer(monkeypatch, enforce=True)
-    monkeypatch.setattr(mod, "_MAX_ANALYZE_CHARS", 100)
-    monkeypatch.setattr(mod, "_CHUNK_OVERLAP_CHARS", 20)
-
-    windows = mod._chunk_windows(100)
-    assert len(windows) == 1
-    assert windows[0] == mod._ChunkWindow(0, 100, 0, 100)
-
-
-@pytest.mark.asyncio
-async def test_chunked_analysis_detects_entity_straddling_a_window_boundary(monkeypatch):
-    """The overlap padding must be wide enough that an entity whose span
-    crosses a core boundary is still fully visible (and therefore
-    detected) inside the window that owns it -- and counted exactly ONCE,
-    not once per window that happens to see it."""
-    mod = _load_enforcer(monkeypatch, enforce=True)
-    monkeypatch.setattr(mod, "_MAX_ANALYZE_CHARS", 20)
-    monkeypatch.setattr(mod, "_CHUNK_OVERLAP_CHARS", 10)
-
-    phone = "0612345678"  # 10 chars
-    text = ("x" * 15) + phone + ("y" * 15)  # phone straddles the core boundary at 20
-    phone_start = text.index(phone)
-    phone_end = phone_start + len(phone)
-    windows = mod._chunk_windows(len(text))
-    assert len(windows) > 1  # sanity: chunking actually engaged
-
-    class _StraddleClient:
-        def __init__(self):
-            self.calls = []
-
-        async def post(self, url, json=None, **kwargs):
-            self.calls.append(json)
-            window_text = json["text"]
-            local_start = window_text.find(phone)
-            if local_start == -1:
-                return _FakeAnalyzerResponse([])
-            return _FakeAnalyzerResponse(
-                [
-                    {
-                        "entity_type": "PHONE_NUMBER",
-                        "start": local_start,
-                        "end": local_start + len(phone),
-                        "score": 0.9,
-                    }
-                ]
-            )
-
-    client = _StraddleClient()
-    spans = await mod._analyze_spans_chunked(client, text, "nl")
-
-    assert len(spans) == 1  # not double-counted across overlapping windows
-    assert spans[0].start == phone_start
-    assert spans[0].end == phone_end
-    assert spans[0].entity_type == "PHONE_NUMBER"
-
-
-@pytest.mark.asyncio
-async def test_chunked_analysis_covers_the_full_text_including_the_tail(monkeypatch):
-    """REQ-10: no silent truncation on the enforce path. An entity that
-    only appears near the very end of an oversized payload must still be
-    found -- chunking, not refusal or truncation, is the answer here."""
-    mod = _load_enforcer(monkeypatch, enforce=True)
-    monkeypatch.setattr(mod, "_MAX_ANALYZE_CHARS", 50)
-    monkeypatch.setattr(mod, "_CHUNK_OVERLAP_CHARS", 10)
-
-    bsn = "111222333"
-    text = ("filler tekst zonder iets gevoeligs " * 5) + f"bsn: {bsn}"
-    assert len(text) > 50
-
-    class _TailClient:
-        def __init__(self):
-            self.calls = 0
-
-        async def post(self, url, json=None, **kwargs):
-            self.calls += 1
-            window_text = json["text"]
-            local_start = window_text.find(bsn)
-            if local_start == -1:
-                return _FakeAnalyzerResponse([])
-            return _FakeAnalyzerResponse(
-                [
-                    {
-                        "entity_type": "NL_BSN",
-                        "start": local_start,
-                        "end": local_start + len(bsn),
-                        "score": 1.0,
-                    }
-                ]
-            )
-
-    client = _TailClient()
-    spans = await mod._analyze_spans_chunked(client, text, "nl")
-
-    assert len(spans) == 1
-    assert text[spans[0].start : spans[0].end] == bsn
-    assert client.calls > 1  # confirms multiple windows were actually analysed
-
-
-@pytest.mark.asyncio
-async def test_oversized_payload_through_the_real_pre_call_hook_masks_the_whole_text(
-    monkeypatch,
-):
-    """End-to-end smoke test through async_pre_call_hook (not just the
-    chunking helpers directly): a payload far above the cap still gets its
-    BSN masked, wherever it sits in the text."""
-    mod = _load_enforcer(
-        monkeypatch, enforce=True, extra_env={"KLAI_PII_ENFORCE_ORG_IDS": "org1"}
-    )
-    monkeypatch.setattr(mod, "_MAX_ANALYZE_CHARS", 30)
-    monkeypatch.setattr(mod, "_CHUNK_OVERLAP_CHARS", 10)
-    _stub_org_policy(mod, monkeypatch, frozenset())
-
-    bsn = "111222333"
-    text = ("veel tekst zonder iets gevoeligs " * 4) + f"mijn bsn is {bsn} graag"
-
-    class _E2EClient:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *exc_info):
-            return False
-
-        async def post(self, url, json=None, **kwargs):
-            window_text = json["text"]
-            local_start = window_text.find(bsn)
-            if local_start == -1:
-                return _FakeAnalyzerResponse([])
-            return _FakeAnalyzerResponse(
-                [
-                    {
-                        "entity_type": "NL_BSN",
-                        "start": local_start,
-                        "end": local_start + len(bsn),
-                        "score": 1.0,
-                    }
-                ]
-            )
-
-    monkeypatch.setattr(mod, "httpx", SimpleNamespace(AsyncClient=lambda **kw: _E2EClient()))
-
-    data = {
-        "model": "klai-primary",
-        "litellm_call_id": "call-oversized-1",
-        "messages": [{"role": "user", "content": text}],
-    }
-    result = await mod.klai_pii_enforcer.async_pre_call_hook(
-        _user_api_key("org1"), None, data, "completion"
-    )
-    user_message = [m for m in result["messages"] if m.get("role") == "user"][0]
-    assert bsn not in user_message["content"]
-    assert "<NL_BSN_1>" in user_message["content"]

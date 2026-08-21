@@ -145,25 +145,6 @@ class PortalOrg(Base):
         default="shadow",
         server_default="shadow",
     )
-    # @MX:NOTE: SPEC-PRIVACY-MISTRAL-PII-001 REQ-7 — the REQ-7 return-set entity
-    # types this tenant has opted into having masked on the Mistral call path.
-    # Empty for every org that predates this column, which IS REQ-7's default
-    # ("per-org, default off") rather than a missing backfill.
-    #
-    # Same storage shape as ``platform_unlocked_features`` above: a bounded set
-    # of opted-in string flags is a text[] column on this table, not a side
-    # table. ``SECRET`` / ``NL_BSN`` are NOT stored here — they are masked
-    # unconditionally for every org and are therefore not per-org state; the DB
-    # CHECK constraint ``chk_portal_orgs_pii_masked_entities`` (migration
-    # 5d8cef52b18c) rejects them, along with ``PERSON`` (REQ-9: no detector is
-    # deployed) and any unknown type. Python-side equivalent:
-    # ``app.services.pii_entity_policy.validate_entity_selection``.
-    pii_masked_entities: Mapped[list[str]] = mapped_column(
-        ARRAY(Text()),
-        nullable=False,
-        default=list,
-        server_default=sa.text("'{}'::text[]"),
-    )
 
     users: Mapped[list["PortalUser"]] = relationship(back_populates="org")
 

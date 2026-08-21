@@ -91,37 +91,6 @@ _HTTPX_CLIENT_TIMEOUT_SECONDS = 5.0
 _ANALYZER_SUPPORTED_LANGUAGES = frozenset({"en", "nl", "de"})
 _DEFAULT_ANALYZER_LANGUAGE = "en"
 
-# ---------------------------------------------------------------------------
-# Length cap on analysed text — system-review finding M4
-# ---------------------------------------------------------------------------
-# presidio-analyzer runs with `cpus: '1'`, shared by every tenant, and this
-# observer already sends it the FULL outbound payload with no size cap at
-# all — one pasted payload shaped to be expensive for any recognizer (the
-# PEM pattern's own quadratic-on-unmatched-markers cost, fixed separately in
-# klai_pii_recognizers.py, was one concrete way to do that) pegs the shared
-# core for every tenant's request queued behind it. Even though this hook is
-# fire-and-forget and its own timeout eventually gives up client-side, the
-# analyzer process keeps chewing CPU on the call already in flight — a
-# client-side timeout does not cancel server-side work.
-#
-# 20,000 chars, same value and same basis as klai_pii_enforce.py's
-# `_MAX_ANALYZE_CHARS` (double the NFR's own 10,000-char latency reference
-# payload) — kept in sync manually since Phase 2 and Phase 3 are separate,
-# independently-owned modules per REQ-5's "no parallel old+new" boundary.
-#
-# Unlike the enforce path, truncating here is the right call, not a
-# shortcut: REQ-5 says this observer "SHALL return the payload unchanged"
-# and "SHALL NOT" affect what reaches Mistral — it exists purely to COUNT
-# detections for telemetry (REQ-6), fails open on any error already, and
-# Phase 2's own measurement is explicitly directional, not a gate (AC-14).
-# Analysing only the first `_MAX_ANALYZE_CHARS` characters of an oversized
-# payload can only under-count that one telemetry sample; it can never
-# change what the user's request does. A `truncated` flag rides along in
-# the emitted event (REQ-6 allows it — it is a boolean, not a value, an
-# offset, or a hash) so the undercount is visible in the data rather than
-# silent.
-_MAX_ANALYZE_CHARS = 20_000
-
 
 # ---------------------------------------------------------------------------
 # Language detection — local, dependency-free approximation
@@ -347,12 +316,6 @@ async def _observe(
     it SHALL NOT fail the request", the deliberate inverse of REQ-10
     (which governs Phase 3 enforcement, not this observer).
     """
-    # REQ-6 permits a boolean here (no value, no offset, no hash): it only
-    # says whether the sample below is a full or a partial count, not what
-    # was cut. See the module-level comment above `_MAX_ANALYZE_CHARS`.
-    truncated = len(combined_text) > _MAX_ANALYZE_CHARS
-    analyzed_text = combined_text[:_MAX_ANALYZE_CHARS] if truncated else combined_text
-
     try:
         analyzer_language = (
             language
@@ -360,19 +323,18 @@ async def _observe(
             else _DEFAULT_ANALYZER_LANGUAGE
         )
         async with httpx.AsyncClient(timeout=_HTTPX_CLIENT_TIMEOUT_SECONDS) as http:
-            counts = await _analyze_entity_counts(http, analyzed_text, analyzer_language)
+            counts = await _analyze_entity_counts(http, combined_text, analyzer_language)
     except Exception as exc:
         # Fail-open per REQ-5, but keep the same non-sensitive dimensions the
         # success event carries. Without them an outage cannot be filtered out
         # of the Phase 2 sample per tenant/model/language, which quietly turns
         # "Presidio was down for this org" into "this org has no PII".
         logger.warning(
-            "pii_observe_failed org_id=%s call_type=%s model=%s language=%s truncated=%s error=%s",
+            "pii_observe_failed org_id=%s call_type=%s model=%s language=%s error=%s",
             org_id,
             call_type,
             model,
             language,
-            truncated,
             exc,
         )
         return
@@ -380,12 +342,11 @@ async def _observe(
     # REQ-6: org_id, call_type, model alias, detected language, per-entity
     # counts. Nothing else — no message text, no offsets, no hashes.
     logger.warning(
-        "pii_observed org_id=%s call_type=%s model=%s language=%s truncated=%s entity_counts=%s",
+        "pii_observed org_id=%s call_type=%s model=%s language=%s entity_counts=%s",
         org_id,
         call_type,
         model,
         language,
-        truncated,
         dict(counts),
     )
 
