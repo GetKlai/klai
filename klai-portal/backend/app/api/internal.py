@@ -51,6 +51,7 @@ from app.services.entitlements import get_effective_products
 from app.services.events import emit_event
 from app.services.gap_rescorer import schedule_rescore
 from app.services.partner_rate_limit import check_rate_limit
+from app.services.pii_entity_policy import sanitize_stored_entities
 from app.services.provisioning.infrastructure import assert_shared_librechat_mount_sources_intact
 from app.services.quality_scorer import schedule_quality_update
 from app.services.redis_client import get_redis_pool
@@ -960,6 +961,92 @@ async def admin_set_telemetry_level(
 
     await _audit_internal_call(request, org_id=org_id)
     return TelemetryLevelOut(org_id=org_id, old_level=old_level, new_level=new_level)
+
+
+# SPEC-PRIVACY-MISTRAL-PII-001 REQ-7: per-org PII entity policy, read side.
+class OrgPiiEntitiesResponse(BaseModel):
+    """Wire shape consumed by ``deploy/litellm/klai_pii_org_policy.py``.
+
+    That client reads exactly one key — ``payload.get("enabled_entities")``
+    (``klai_pii_org_policy.py:141``) — and drops the whole response unless it is
+    a ``list`` (line 142-143). ``enabled_entities`` is therefore load-bearing:
+    renaming it, nesting it, or returning a mapping makes the client fail closed
+    to the empty policy, which is indistinguishable from "this org opted into
+    nothing". ``org_id`` is echoed back for operator debuggability only; no
+    caller reads it.
+    """
+
+    org_id: int
+    enabled_entities: list[str]
+
+
+@router.get("/v1/orgs/{org_id}/pii-entities", response_model=OrgPiiEntitiesResponse)
+async def get_org_pii_entities(
+    org_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> OrgPiiEntitiesResponse:
+    """Return the REQ-7 return-set entity types this org has opted into.
+
+    Called by the LiteLLM PII-enforcement stack once per org per cache TTL to
+    resolve which of ``IBAN_CODE``, ``CREDIT_CARD``, ``EMAIL_ADDRESS``,
+    ``PHONE_NUMBER``, ``NL_KVK``, ``NL_BTW``, ``NL_POSTCODE`` to mask (and
+    restore) for that tenant. ``SECRET`` and ``NL_BSN`` are never in this
+    response: they are masked unconditionally for every org, so they are not
+    per-org state and the enforcement side adds them itself
+    (``klai_pii_entities.effective_enabled_entities``).
+
+    **Default.** An org that predates the column, or one that has opted into
+    nothing, returns ``[]``. That is REQ-7's stated default ("per-org, default
+    off"), not a degraded answer — the column is ``NOT NULL DEFAULT '{}'``, so
+    there is no NULL case to distinguish.
+
+    **Tenant isolation** (NFR): the row is selected by primary key from the path
+    ``org_id`` and nothing else, so there is no query shape in which org B's
+    policy can be returned for org A. ``portal_orgs`` is the tenant root — the
+    row *is* the tenant — and carries no RLS policy, which is why this endpoint
+    is not covered by the 4-category framework; ``set_tenant`` is still called
+    so the request's transaction carries the same tenant context as every other
+    org-scoped internal endpoint.
+
+    **404 on unknown org** matches the existing internal-endpoint convention
+    (``get_org_admin_email``, ``get_kb_metadata_internal``). The client treats
+    any non-2xx as the empty policy, so an unknown org degrades to default-off
+    rather than to a wrong tenant's policy.
+
+    There is deliberately **no write endpoint** in this change. The opt-in is set
+    by an operator (SQL / operator tooling) until a UI lands; the domain is
+    enforced server-side regardless by the CHECK constraint
+    ``chk_portal_orgs_pii_masked_entities`` and, on the read path below, by
+    ``sanitize_stored_entities``.
+    """
+    await _require_internal_token(request)
+    await set_tenant(db, org_id)
+
+    result = await db.execute(select(PortalOrg.pii_masked_entities).where(PortalOrg.id == org_id))
+    row = result.first()
+    if row is None:
+        await _audit_internal_call(request, org_id=org_id)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Org not found")
+
+    stored = row[0] or []
+    enabled = sanitize_stored_entities(stored)
+
+    # "fail loudly" (root AGENTS.md): sanitising is defence in depth, but
+    # dropping a stored value *silently* would make policy corruption look
+    # identical to "this org opted into nothing" — the exact ambiguity this
+    # endpoint exists to remove. Under the CHECK constraint this never fires,
+    # so a hit means the constraint was bypassed or the entity set drifted.
+    dropped = sorted({str(value) for value in stored} - set(enabled))
+    if dropped:
+        structlog_logger.warning(
+            "pii_org_policy_stored_value_rejected",
+            org_id=org_id,
+            dropped=dropped,
+        )
+
+    await _audit_internal_call(request, org_id=org_id)
+    return OrgPiiEntitiesResponse(org_id=org_id, enabled_entities=enabled)
 
 
 class PageSavedNotification(BaseModel):
