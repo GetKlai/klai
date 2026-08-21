@@ -329,3 +329,71 @@ class TestNLPhoneRecognizer:
         text = f"Bel mij op {number} alsjeblieft."
         results = rec.analyze(text, entities=["PHONE_NUMBER"], nlp_artifacts=None)
         assert results, f"{number} not detected"
+
+
+# ---------------------------------------------------------------------------
+# System-review fixes (2026-08-20) — irreversible false positives
+# ---------------------------------------------------------------------------
+class TestIrreversibleFalsePositives:
+    """NL_BSN and SECRET are masked for every org and NEVER restored, so a
+    false positive here silently destroys user text with no way back. These
+    three patterns each did exactly that before the system review."""
+
+    @pytest.mark.parametrize(
+        "date_digits", ["20200109", "20200110", "20200122", "20200201", "20200213"]
+    )
+    def test_yyyymmdd_dates_are_not_bsn_without_context(self, date_digits):
+        """~9% of YYYYMMDD dates pass the padded elfproef (365 of 4018 over
+        2020-2030). Nine digits stands on the checksum; eight needs context."""
+        from klai_pii_recognizers import NLBSNRecognizer
+
+        rec = NLBSNRecognizer()
+        text = f"Factuurdatum {date_digits} op de nota."
+        assert rec.analyze(text, entities=["NL_BSN"], nlp_artifacts=None) == []
+
+    def test_eight_digit_bsn_still_detected_with_context(self):
+        from klai_pii_recognizers import NLBSNRecognizer
+
+        rec = NLBSNRecognizer()
+        text = "Mijn bsn is 10000008 graag verwerken."
+        assert rec.analyze(text, entities=["NL_BSN"], nlp_artifacts=None)
+
+    def test_nine_digit_bsn_needs_no_context(self):
+        from klai_pii_recognizers import NLBSNRecognizer
+
+        rec = NLBSNRecognizer()
+        assert rec.analyze(
+            "Het nummer 111222333 hoort erbij.", entities=["NL_BSN"], nlp_artifacts=None
+        )
+
+    def test_bearer_in_prose_is_not_a_secret(self):
+        """Unanchored + registry IGNORECASE matched two words of Dutch prose."""
+        from klai_pii_recognizers import SecretRecognizer
+
+        rec = SecretRecognizer()
+        text = "De bearer verantwoordelijkheid ligt bij de klant."
+        assert rec.analyze(text, entities=["SECRET"], nlp_artifacts=None) == []
+
+    def test_authorization_bearer_header_still_detected(self):
+        from klai_pii_recognizers import SecretRecognizer
+
+        rec = SecretRecognizer()
+        text = "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9abcdefghij"
+        assert rec.analyze(text, entities=["SECRET"], nlp_artifacts=None)
+
+    def test_year_plus_dutch_word_is_not_a_postcode(self):
+        """Registry IGNORECASE turned [A-Z]{2} into 'any two letters', so
+        '2026 en' matched. Masking it hides the year from the model."""
+        from klai_pii_recognizers import NLPostcodeRecognizer
+
+        rec = NLPostcodeRecognizer()
+        text = "In 2026 en 2027 gaan we door."
+        assert rec.analyze(text, entities=["NL_POSTCODE"], nlp_artifacts=None) == []
+
+    def test_real_postcode_still_detected(self):
+        from klai_pii_recognizers import NLPostcodeRecognizer
+
+        rec = NLPostcodeRecognizer()
+        assert rec.analyze(
+            "Zie ook 3011 AB Rotterdam.", entities=["NL_POSTCODE"], nlp_artifacts=None
+        )

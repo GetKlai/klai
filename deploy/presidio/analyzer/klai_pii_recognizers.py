@@ -63,7 +63,17 @@ class NLBSNRecognizer(PatternRecognizer):
     """
 
     PATTERNS = [
-        Pattern("NL BSN (candidate)", r"(?<!\d)\d{8,9}(?!\d)", 0.3),
+        # 9 digits is the canonical BSN and stands on the elfproef alone.
+        Pattern("NL BSN (candidate, 9 digits)", r"(?<!\d)\d{9}(?!\d)", 0.3),
+        # 8 digits is the legacy form with the leading zero omitted. It is
+        # ALSO the shape of a YYYYMMDD date, an order number and a customer
+        # reference — and ~9% of them pass the padded elfproef (measured over
+        # every date 2020-2030: 365 of 4018). On the Mistral path NL_BSN is
+        # masked for every org and NEVER restored, so a false positive here
+        # silently destroys "Factuurdatum 20200201" with no way back. That is
+        # a worse outcome than missing a legacy 8-digit BSN, so this form now
+        # requires a BSN context word nearby (see analyze()).
+        Pattern("NL BSN (candidate, 8 digits, needs context)", r"(?<!\d)\d{8}(?!\d)", 0.3),
     ]
 
     def __init__(
@@ -85,6 +95,33 @@ class NLBSNRecognizer(PatternRecognizer):
     def validate_result(self, pattern_text: str) -> Optional[bool]:
         return _valid_bsn(pattern_text)
 
+    def analyze(self, text, entities, nlp_artifacts=None, regex_flags=None):
+        """Drop 8-digit matches that have no BSN context word nearby.
+
+        The elfproef alone is not enough for the 8-digit form: it is the
+        same shape as a YYYYMMDD date, and ~9% of dates pass it. Since
+        NL_BSN is masked for every org and never restored, an unqualified
+        8-digit match irreversibly destroys ordinary business text. Nine
+        digits is the canonical form and keeps standing on the checksum
+        alone, so real BSNs written in full are unaffected.
+        """
+        results = super().analyze(text, entities, nlp_artifacts, regex_flags)
+        if not results:
+            return results
+        kept = []
+        for result in results:
+            digits = text[result.start : result.end]
+            if len(digits.strip()) > 8:
+                kept.append(result)
+                continue
+            window = text[
+                max(0, result.start - _BSN_CONTEXT_WINDOW) : result.end
+                + _BSN_CONTEXT_WINDOW
+            ].lower()
+            if any(word in window for word in _BSN_CONTEXT_WORDS):
+                kept.append(result)
+        return kept
+
 
 # ---------------------------------------------------------------------------
 # NL_KVK — 8 digits + nearby context words ("kvk", "handelsregister")
@@ -96,6 +133,9 @@ class NLBSNRecognizer(PatternRecognizer):
 # recognizer does its own text-window context check in `analyze()`. That keeps it
 # self-contained and NLP-engine-independent, in the same spirit as the checksum
 # recognizers: a plain regex/text check, not a model dependency.
+
+_BSN_CONTEXT_WORDS = ("bsn", "burgerservicenummer", "sofinummer", "sofi-nummer")
+_BSN_CONTEXT_WINDOW = 40
 
 _KVK_CONTEXT_WORDS = ("kvk", "handelsregister")
 _KVK_CONTEXT_WINDOW = 40
@@ -183,7 +223,13 @@ class NLPostcodeRecognizer(PatternRecognizer):
     """Dutch postcode: 4 digits (not starting with 0) + 2 letters."""
 
     PATTERNS = [
-        Pattern("NL postcode", r"\b[1-9][0-9]{3}\s?[A-Z]{2}\b", 0.4),
+        # (?-i:...) forces case-sensitivity for the letter pair only. The
+        # registry applies IGNORECASE globally, which turned [A-Z]{2} into
+        # "any two letters" and matched "2026 en" / "1500 op" in ordinary
+        # Dutch. A real postcode is uppercase; a year followed by a
+        # two-letter word is not one, and masking it hides the year from the
+        # model even though the user gets it back.
+        Pattern("NL postcode", r"\b[1-9][0-9]{3}\s?(?-i:[A-Z]{2})\b", 0.4),
     ]
 
     def __init__(
@@ -233,7 +279,15 @@ _SECRET_PATTERNS = [
         # "~" / "+" / "/", optionally "="-padded. The original char class
         # dropped "~", "+", "/" — real base64(url) bearer tokens routinely
         # contain them and would have gone through unmasked (sol-review).
-        r"\bBearer\s+[A-Za-z0-9\-_.~+/=]{10,}",
+        # Anchored to an actual Authorization header. Unanchored, and with
+        # the registry's default IGNORECASE, this matched ordinary Dutch
+        # prose: "De bearer verantwoordelijkheid ligt bij de klant" ->
+        # SECRET 'bearer verantwoordelijkheid'. SECRET is masked for every
+        # org and NEVER restored, so that silently deleted two words of a
+        # user's sentence with no way back. Bare tokens are still covered by
+        # the JWT and provider-key patterns, so anchoring loses no real
+        # credential.
+        r"Authorization\s*:\s*Bearer\s+[A-Za-z0-9\-_.~+/=]{10,}",
         0.85,
     ),
     Pattern(
