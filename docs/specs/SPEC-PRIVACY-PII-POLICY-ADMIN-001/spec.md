@@ -1,6 +1,6 @@
 ---
 id: SPEC-PRIVACY-PII-POLICY-ADMIN-001
-version: "0.5.0"
+version: "0.7.0"
 status: draft
 created: 2026-08-21
 updated: 2026-08-21
@@ -18,6 +18,8 @@ roadmap: docs/architecture/knowledge-rag-improvement-plan.md
 
 | Version | Date       | Author       | Change |
 |---------|------------|--------------|--------|
+| 0.7.0   | 2026-08-21 | Mark Vletter | Adds D8 on end-user disclosure, which contradicts the obvious design and says why. An icon with hover text is what the evidence argues against: SOUPS 2021 (n=683) found plain text beat every alternative and icons had a **negative** effect on perceived security versus no icon; browser padlock comprehension measures 5-11%. Worse for our intent, telling people they are protected is documented to make them share **more** sensitive data — which would work against the data minimisation this SPEC exists for. Salesforce's Einstein Trust Layer, architecturally identical (mask before the model, unmask after), shows the end user nothing. So: no icon, no per-message badge; one line of plain text once per session, naming what happens rather than reassuring, linking once to the help centre; kept separate from the AI Act Art. 50 disclosure. Records the thing this does not fix — a user whose answer is subtly worse still has no way to know why — and names the conditional, answer-attached signal that would, as its own decision rather than smuggling it in. |
+| 0.6.0   | 2026-08-21 | Mark Vletter | Product answers folded in. Rights: `ProfileRole.ADMIN` confirmed, no new `Capability`. No confirmation dialog on toggling — it is a settings page and a modal per switch trains people to dismiss modals. Adds **D6**: the UI groups entities (contact, financial, company, location, plus a locked always-on row) instead of listing them, because seven toggles becomes twenty once BE/DE land and nobody reasons in `NL_BTW` versus `NL_KVK`. Storage stays per entity — grouping is presentational, and baking it into the model would make regrouping a migration and lose the mixed state. A collapsed per-entity view stays for the real-but-rare cases a group cannot express. Adds **D7**: the allow-list exists at both levels, unioned, with the platform list audited as heavily as a version publish and shown as inherited in the tenant UI — otherwise a tenant files a detection bug that is actually a platform exclusion. |
 | 0.5.0   | 2026-08-21 | Mark Vletter | REQ-13 reframed. 0.4.0 wrote the limitations defensively, which implies the platform needed this feature to be compliant — untrue, and it sells the existing position short. Klai's GDPR position rests on EU-only processing, the DPA, telemetry modes and retention; this is **voluntary data minimisation**, done because it is decent, not because something was missing. The factual points stay — names are not detected, only postcode and city, the context around a masked value remains, none of it touches what Klai stores — because an admin choosing what to enable needs to know where detection ends. Two hard rules survive the reframe for non-tone reasons: "anonymous" is factually wrong for pseudonymised data (Art. 4(5)) in any register, and the page must not claim a toggle makes anyone compliant — not because compliance is in doubt, but because that is not what compliance rests on, in either direction. |
 | 0.4.0   | 2026-08-21 | Mark Vletter | Adds REQ-13: the settings page must state what the system cannot do, as specific required copy rather than an instruction to be honest. Eight named limitations, including the three most likely to be misread — names are not detected at all, context around a masked value is not masked, and none of this touches what Klai stores. Forbids "anonymous", "removed", "safe" and "GDPR-compliant" in describing the result, because each overstates it and an admin who concludes their tenant is now compliant has been misled by us. Same copy for tenants and for Klai staff: there is no version that is honest for one audience and not the other. |
 | 0.3.0   | 2026-08-21 | Mark Vletter | **Country dropped as a policy axis.** D1 keyed platform defaults on country; Voys is the counter-example — one tenant across several countries, no single country to key on, and `portal_orgs` has no `country` column because the question has no answer. Every recogniser now runs for every tenant: a checksum-anchored recogniser that finds nothing costs nothing, so scoping bought complexity and no accuracy. Country survives as a UI grouping label only. Per-tenant configuration becomes **subtractive**: start from the platform default and exclude — an entity type, a specific value, a pattern, or a keyword. Presidio supports this natively via `allow_list` / `allow_list_match`, so it is plumbing rather than new detection machinery. This also answers D5's homonym problem better than a global exclusion list could: a tenant called *Best Solutions* excludes `Best` themselves. Adds the concrete schema and resolution order REQ-3 was missing, and settles REQ-5's open question — tenants do not pin a version; versioning buys audit and rollback, not per-tenant divergence. |
@@ -235,6 +237,97 @@ mogelijke oplossing"*. REQ-6 handles this with case sensitivity plus a curated e
 and — like every other new entity here — makes the measurement the gate rather than a
 follow-up.
 
+### D6 — group in the UI, store per entity
+
+Per-entity toggles do not scale as an interface. Today there are seven configurable types;
+with `NL_CITY` and a BE/DE pack that becomes fifteen or twenty, and no admin thinks in
+"`NL_BTW` versus `NL_KVK`".
+
+**THE UI SHALL** present **groups**, not entities:
+
+| Group | Contains | Default |
+|---|---|---|
+| Contact details | `EMAIL_ADDRESS`, `PHONE_NUMBER` | On |
+| Financial | `IBAN_CODE`, `CREDIT_CARD` | On |
+| Company identifiers | `NL_KVK`, `NL_BTW` (+ future BE/DE equivalents) | On |
+| Location | `NL_POSTCODE`, `NL_CITY` | On |
+| Always on | `SECRET`, `NL_BSN` | Locked, with the reason |
+
+Four switches instead of seven, and — the property that matters — **four instead of twenty**
+once more countries land. New entity types join an existing group rather than adding a row.
+
+**THE STORAGE SHALL** stay per entity. `pii_masked_entities` already holds individual types
+and **SHALL NOT** be changed to hold group names. Grouping is presentational: baking it into
+the data model would turn "move `NL_BTW` into another group" into a migration, and would lose
+the ability to express a mixed state.
+
+**THE UI SHALL** offer a collapsed per-entity view for the cases groups cannot express. Those
+are real but rare — a debt-collection tenant may need `IBAN_CODE` visible to the model while
+`CREDIT_CARD` stays masked, and both are "financial". A group whose entities disagree renders
+as indeterminate rather than silently rounding to on or off.
+
+**No confirmation dialog** on toggling. It is a settings page, the change is reversible, and a
+modal on every switch trains people to dismiss modals.
+
+### D7 — exclusions exist at both levels
+
+The allow-list mirrors the entity policy: a platform list Klai maintains for everyone, and a
+tenant list the customer maintains for themselves. **THE effective allow-list SHALL** be the
+**union** of the two.
+
+| Level | Who maintains it | For |
+|---|---|---|
+| Platform | Klai staff | Cases that are wrong for everyone — documentation IBANs, the `Best`/`Ede`/`Nes` homonyms from D5, well-known test numbers |
+| Tenant | Customer admin | Their own values — the company's own IBAN, ticket formats that look like BSNs, a product name that is also a place |
+
+A platform entry stops masking for **every tenant at once**, which makes it the most powerful
+control in this SPEC and the easiest to get wrong. **IT SHALL** therefore be audited with the
+same weight as a policy version publish, and **SHALL** be visible in the tenant UI as
+inherited — a tenant admin who cannot see why something is not being masked will file a bug
+against detection that is actually a platform exclusion.
+
+### D8 — no icon, no per-message badge; one line of text and a link
+
+The obvious design — a small icon on the chat input, hover text saying pseudonymisation is
+on, linking to the help centre — is the one the evidence argues against. Two independent
+lines, converging:
+
+**Icons underperform and can backfire.** Stransky et al., SOUPS 2021 (five studies, n=683):
+a plain sentence outperformed every alternative phrasing, and icons — envelope, shield,
+lock — had a **negative** effect on perceived security compared to no icon at all, strongest
+among technical users. Padlock comprehension in browsers measures at 5-11%; Chrome removed it
+as a positive trust signal for exactly this reason.
+
+**Telling people they are protected can make them share more.** Documented for encrypted chat
+and repeated in 2025 criticism of AI safety classifiers. For Klai this maps directly and
+badly: a support agent who reads "personal data is protected" may paste *more* customer detail
+into a chat, not less. An ambient reassurance would work against the data-minimisation intent
+of this whole SPEC.
+
+And the closest architectural precedent shows nothing at all: **Salesforce's Einstein Trust
+Layer masks before the model call and unmasks the response — the same shape as ours — with
+zero end-user indication.** Not proof it is right, but evidence that a compliance-sensitive
+vendor weighed this exact trade and chose silence.
+
+**THE product SHALL** therefore:
+
+1. **Not** place a persistent icon or badge in the chat UI for masking.
+2. Show **one line of plain text, once per session**, in the register the research supports —
+   naming what happens, not reassuring: *"Klai vervangt persoonsgegevens zoals telefoonnummers
+   en e-mailadressen voordat je vraag naar het AI-model gaat, en zet ze daarna terug."*
+3. Link that line **once** to a help-centre article. That is the WhatsApp "tap to learn more"
+   pattern: cheap for the majority, sufficient for the minority who want detail.
+4. **Not** merge this with the AI Act Art. 50 "you are talking to an AI" disclosure. They are
+   different signals with different obligations, and bundling them dilutes both.
+
+**The real problem this does not solve, stated rather than hidden.** The failure mode that
+actually costs a user something is not "I did not know masking existed" — it is "this answer
+is slightly off and I have no idea why". An ambient indicator does nothing for that. The
+useful signal is **conditional and attached to the answer**: when masking measurably shaped a
+response, say so on that response. That needs the enforcement side to report which entity
+types it masked per request, which it already does for telemetry — so the data exists, and
+this is deliberately left as its own decision rather than smuggled in here.
+
 ## Scope
 
 ### In scope
@@ -244,7 +337,7 @@ follow-up.
 - Tenant admin UI on the existing `privacy` tab of `/admin/settings`.
 - Platform admin UI under the existing `/admin/platform` console.
 - Write endpoints for both levels, reusing `validate_entity_selection()`.
-- Per-tenant **allow-list** (exclusions by value, pattern or keyword) — D1's subtractive model, wired into Presidio's native `allow_list` parameter.
+- **Two-level allow-list** (D7): platform-wide and per-tenant, unioned, wired into Presidio's native `allow_list` parameter.
 - Custom tenant-defined *detection* entities (regex + word list), with the safety envelope in REQ-9.
 - Policy preview against the real pipeline.
 - `NL_CITY` deny-list recogniser (D5), gated on REQ-6's homonym measurement.
