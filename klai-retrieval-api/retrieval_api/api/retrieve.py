@@ -340,6 +340,35 @@ async def _retrieve_sub_queries(
     )
 
 
+async def _label_graph_results(graph_results: list[dict], req: RetrieveRequest) -> None:
+    """Attach the citation fields a graph edge cannot know about itself.
+
+    A graph edge carries a fact and its artifact_id, but no title or URL, so
+    ``evidence_pack._title()`` would fall through to ``text[:80]`` and render a
+    truncated fact as the source name. Resolving the artifact's own metadata
+    turns that back into the document the reader can actually open.
+
+    Setting ``source_url`` also collapses a graph fact and an ordinary chunk
+    from the same document into ONE source, because ``chunk_source_key`` keys
+    on the URL before falling back to ``artifact:<id>``.
+
+    Mutates in place. Fail-open: on any miss the edge keeps today's behaviour.
+    """
+    artifact_ids = [r.get("artifact_id") for r in graph_results if r.get("artifact_id")]
+    if not artifact_ids:
+        return
+    metadata = await search.fetch_artifact_display_metadata(artifact_ids, req)
+    if not metadata:
+        return
+    for result in graph_results:
+        meta = metadata.get(result.get("artifact_id") or "")
+        if not meta:
+            continue
+        for field in ("title", "source_url", "source_label", "original_filename"):
+            if meta.get(field):
+                result[field] = meta[field]
+
+
 @router.post("/retrieve", response_model=RetrieveResponse)
 async def retrieve(
     req: RetrieveRequest,
@@ -566,6 +595,7 @@ async def retrieve(
             step_latency_seconds.labels(step="graph").observe(graph_search_ms / 1000)
             graph_results_count = len(graph_results)
             if graph_results:
+                await _label_graph_results(graph_results, req)
                 graph_candidate_ids = {r["chunk_id"] for r in graph_results}
                 raw_results = _rrf_merge(raw_results, graph_results)
         except Exception:

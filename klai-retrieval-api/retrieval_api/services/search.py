@@ -112,6 +112,12 @@ def _temporal_validity_filter() -> Filter:
     )
 
 
+# One chunk per artifact is enough for title/source_url; a small multiplier
+# absorbs the fact that scroll returns chunks, not artifacts.
+_ARTIFACT_METADATA_CHUNKS_PER_ARTIFACT = 3
+_ARTIFACT_METADATA_TIMEOUT = 2.0
+
+
 def _scope_filter(request: RetrieveRequest) -> list[FieldCondition | Filter]:
     """Build scope-specific Qdrant filter conditions for klai_knowledge.
 
@@ -434,6 +440,67 @@ async def fetch_chunks_by_urls(
         }
         for r in result
     ]
+
+
+async def fetch_artifact_display_metadata(
+    artifact_ids: list[str],
+    request: RetrieveRequest,
+) -> dict[str, dict[str, str | None]]:
+    """Resolve artifact_id -> the fields a citation is rendered from.
+
+    Graph edges carry a fact and (since SPEC-RAG-GRAPH-CITE-001) the
+    artifact_id they were extracted from, but no title or URL. Without those
+    ``evidence_pack._title()`` falls through to ``text[:80]`` and the source
+    list shows a truncated fact instead of the document — which defeats the
+    point of citing it at all.
+
+    Scoped through ``_scope_filter`` like every other read here. That is not
+    ceremony: a title alone can be sensitive, so the visibility rules that
+    keep private chunks out of a scope must also keep their titles out of a
+    source list.
+
+    Fail-open: an empty mapping costs labels, never the graph results.
+    """
+    unique_ids = sorted({aid for aid in artifact_ids if aid})
+    if not unique_ids:
+        return {}
+
+    client = _get_client()
+    artifact_filter = Filter(
+        must=[
+            *_scope_filter(request),
+            FieldCondition(key="artifact_id", match=MatchAny(any=unique_ids)),
+            _temporal_validity_filter(),
+        ]
+    )
+
+    try:
+        result, _ = await asyncio.wait_for(
+            client.scroll(
+                collection_name=settings.qdrant_collection,
+                scroll_filter=artifact_filter,
+                limit=len(unique_ids) * _ARTIFACT_METADATA_CHUNKS_PER_ARTIFACT,
+                with_payload=True,
+                with_vectors=False,
+            ),
+            timeout=_ARTIFACT_METADATA_TIMEOUT,
+        )
+    except Exception:
+        logger.warning("artifact_display_metadata_failed", exc_info=True)
+        return {}
+
+    metadata: dict[str, dict[str, str | None]] = {}
+    for point in result:
+        artifact_id = point.payload.get("artifact_id")
+        if not artifact_id or artifact_id in metadata:
+            continue
+        metadata[artifact_id] = {
+            "title": point.payload.get("title"),
+            "source_url": point.payload.get("source_url"),
+            "source_label": point.payload.get("source_label"),
+            "original_filename": point.payload.get("original_filename"),
+        }
+    return metadata
 
 
 async def hybrid_search(
