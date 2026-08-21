@@ -176,6 +176,15 @@ Remaining risk:   <honest residual>
 Confidence: [0-100] — <one-line evidence summary>   (evidence only; "looks right" = 0)
 ```
 
+## Customer-facing publishing (private runbooks)
+
+The "What's new" product-updates feed (megaphone in the portal) and the
+customer help centre (Klai Docs KB `klai-help`) are maintained through
+operator workflows in the private `klai-infra` repo: `PRODUCT_UPDATES.md`
+and `HELP_SYSTEM.md`. Neither workflow is documented in this public repo.
+When publishing a product-updates batch, check whether the help centre
+needs matching page updates.
+
 <!-- codeindex:start -->
 # CodeIndex MCP
 
