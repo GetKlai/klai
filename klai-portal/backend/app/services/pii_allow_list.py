@@ -127,11 +127,7 @@ def _has_nested_quantifier(subpattern: Any) -> bool:
         opname = op.name
         if opname in _REPEAT_OPCODES:
             _, _, sub = av
-            if (
-                _contains_repeat_node(sub)
-                or _contains_branch_node(sub)
-                or _has_nested_quantifier(sub)
-            ):
+            if _contains_repeat_node(sub) or _contains_branch_node(sub) or _has_nested_quantifier(sub):
                 return True
         elif opname == "SUBPATTERN":
             _, _, _, sub = av

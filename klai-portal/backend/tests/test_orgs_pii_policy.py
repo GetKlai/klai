@@ -358,9 +358,7 @@ class TestAuditFailureDoesNotLoseTheWrite:
 
         with patch("app.api.orgs.log_event", new_callable=AsyncMock) as audit:
             audit.side_effect = RuntimeError("audit backend down")
-            out = await set_my_org_pii_entities(
-                PiiEntitiesUpdate(entities=["IBAN_CODE"]), perms=perms, db=db
-            )
+            out = await set_my_org_pii_entities(PiiEntitiesUpdate(entities=["IBAN_CODE"]), perms=perms, db=db)
 
         assert out.entities == ["IBAN_CODE"]
         assert org.pii_masked_entities == ["IBAN_CODE"]
@@ -402,9 +400,7 @@ class TestAllowListSchemaDeclaresItsBounds:
         from app.api.orgs import PiiAllowListUpdate
         from app.services.pii_allow_list import MAX_ALLOW_LIST_ENTRIES
 
-        too_many = [
-            {"value": f"term-{i}", "match": "exact"} for i in range(MAX_ALLOW_LIST_ENTRIES + 1)
-        ]
+        too_many = [{"value": f"term-{i}", "match": "exact"} for i in range(MAX_ALLOW_LIST_ENTRIES + 1)]
         with pytest.raises(ValidationError):
             PiiAllowListUpdate(entries=too_many)
 
@@ -415,9 +411,7 @@ class TestAllowListSchemaDeclaresItsBounds:
         from app.services.pii_allow_list import MAX_ALLOW_LIST_VALUE_LENGTH
 
         with pytest.raises(ValidationError):
-            PiiAllowListUpdate(
-                entries=[{"value": "x" * (MAX_ALLOW_LIST_VALUE_LENGTH + 1), "match": "exact"}]
-            )
+            PiiAllowListUpdate(entries=[{"value": "x" * (MAX_ALLOW_LIST_VALUE_LENGTH + 1), "match": "exact"}])
 
     def test_empty_value_rejected_by_schema(self) -> None:
         from pydantic import ValidationError
@@ -432,7 +426,5 @@ class TestAllowListSchemaDeclaresItsBounds:
         from app.api.orgs import PiiAllowListUpdate
         from app.services.pii_allow_list import MAX_ALLOW_LIST_ENTRIES
 
-        at_limit = [
-            {"value": f"term-{i}", "match": "exact"} for i in range(MAX_ALLOW_LIST_ENTRIES)
-        ]
+        at_limit = [{"value": f"term-{i}", "match": "exact"} for i in range(MAX_ALLOW_LIST_ENTRIES)]
         assert len(PiiAllowListUpdate(entries=at_limit).entries) == MAX_ALLOW_LIST_ENTRIES

@@ -214,9 +214,7 @@ class PiiAllowListEntryOut(BaseModel):
 
 
 class PiiAllowListUpdate(BaseModel):
-    entries: list[PiiAllowListEntryIn] = Field(
-        default_factory=list, max_length=MAX_ALLOW_LIST_ENTRIES
-    )
+    entries: list[PiiAllowListEntryIn] = Field(default_factory=list, max_length=MAX_ALLOW_LIST_ENTRIES)
 
 
 class PiiAllowListOut(BaseModel):
