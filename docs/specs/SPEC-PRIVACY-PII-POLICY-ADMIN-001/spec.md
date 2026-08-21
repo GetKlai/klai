@@ -35,6 +35,13 @@ in the response. Which entity types a tenant gets is a `text[]` column with **no
 and no UI** — set by an operator with SQL. This SPEC gives it a policy model and two admin
 surfaces: Klai staff setting defaults, tenant admins overriding within them.
 
+**Why this exists.** Not to close a compliance gap — Klai's GDPR position rests on EU-only
+processing, the DPA, the telemetry modes and the retention limits, and stands without this.
+This is voluntary **data minimisation**: sending a model provider less than we are entitled
+to send. That intent should shape the work, because it changes what "good" looks like — an
+over-eager detector that degrades answers is a worse outcome here than a conservative one
+that catches less, which would not be true if this were a compliance control.
+
 It also answers, with evidence rather than preference, the two questions the request raised
 that are not really UI questions: whether person names and street addresses can be turned on
 by default, and whether policy should be scoped per country at all — it should not, and Voys
