@@ -255,17 +255,44 @@ class NLPostcodeRecognizer(PatternRecognizer):
 # The PEM pattern deliberately makes the "<type> " token optional in BOTH the
 # BEGIN and END markers: canonical PKCS#8 keys are literally
 # "-----BEGIN PRIVATE KEY-----" with no type, and requiring one would let the
-# most common key format through unmasked. `.*?` (non-greedy) + the registry's
-# default global_regex_flags (DOTALL|MULTILINE|IGNORECASE, see conf/analyzer.yaml)
+# most common key format through unmasked. The body is base64 (`A-Za-z0-9+/=`)
+# plus whitespace between the markers, and `[A-Za-z0-9+/=\s]{0,_PEM_MAX_BODY_CHARS}?`
 # lets the span run across newlines to the matching END marker, so key material
 # is never left in the payload. A BEGIN with no following END never matches at
 # all — "bare unmatched PEM header" (AC-5) stays undetected by design, since a
 # half pattern is not sensitive key material.
+#
+# Bounded, not `.*?` (system-review finding M4). `.*?` + DOTALL is quadratic
+# on a payload containing many unmatched BEGIN markers: from every BEGIN, the
+# engine backtracks forward looking for an END that never comes, and does
+# that scan again from the next BEGIN, and the next — O(n^2) in the number of
+# markers. Measured on the unbounded pattern (deploy/presidio/tests/
+# test_klai_pii_recognizers.py::TestSecretPemPerformance fixtures): 200
+# markers ~10ms, 1000 ~257ms, 4000 (~340KB) ~4.1s on a single core — and
+# presidio-analyzer runs with `cpus: '1'`, shared by every tenant, with no
+# size cap upstream on what the Phase 2 observer or a future Phase 3
+# enforcement call sends it. Bounding the body length turns "scan to the end
+# of the payload" into "give up after `_PEM_MAX_BODY_CHARS` chars", which
+# caps the backtracking cost per BEGIN marker instead of letting it grow with
+# the remaining text length: same fixtures measured 200 markers ~0.1ms, 1000
+# ~0.7ms, 4000 ~2.7ms — no longer measurably different from linear.
+#
+# 5000 chars covers every realistic PEM private key body: a real PKCS#8 RSA
+# 4096-bit key (the largest RSA size in common use) base64-encodes to ~3.2K
+# characters (measured directly via `cryptography.hazmat` — 2048-bit is
+# ~1.6K, EC/Ed25519 keys are much shorter). 5000 leaves comfortable headroom
+# above the largest key anyone will plausibly paste while still bounding the
+# worst-case scan per BEGIN marker. A key body genuinely longer than that is
+# not a realistic PEM private key and this recognizer intentionally does not
+# chase it.
+_PEM_MAX_BODY_CHARS = 5000
 
 _SECRET_PATTERNS = [
     Pattern(
         "PEM private key block",
-        r"-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----.*?-----END(?: [A-Z0-9]+)? PRIVATE KEY-----",
+        r"-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----"
+        rf"[A-Za-z0-9+/=\s]{{0,{_PEM_MAX_BODY_CHARS}}}?"
+        r"-----END(?: [A-Z0-9]+)? PRIVATE KEY-----",
         0.95,
     ),
     Pattern(

@@ -460,6 +460,15 @@ services:
       # Flipping this to "true" is the entire activation decision; it is
       # NOT part of this PR's scope to turn on.
       KLAI_PII_ENFORCE: ${KLAI_PII_ENFORCE:-false}
+      # Activation hardening (see klai_pii_enforce.py's `_org_is_enforced`):
+      # comma-separated org_id allowlist. KLAI_PII_ENFORCE alone applies to
+      # every tenant identically the moment it flips; this lets the FIRST
+      # activation be exactly one org. Empty/unset means enforce for NO org
+      # even if KLAI_PII_ENFORCE is "true" — the safe reading, not "every
+      # org" — so turning enforcement on for anyone is a deliberate
+      # two-variable action, never a single flag flip. NOT part of this
+      # PR's scope to populate.
+      KLAI_PII_ENFORCE_ORG_IDS: ${KLAI_PII_ENFORCE_ORG_IDS:-}
     depends_on:
       postgres:
         condition: service_healthy
