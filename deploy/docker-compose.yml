@@ -1368,7 +1368,14 @@ services:
       FALKORDB_HOST: falkordb
       FALKORDB_PORT: "6379"
       GRAPHITI_ENABLED: "true"
-      GRAPH_SEARCH_TIMEOUT: "60.0"
+      # Back to the code default after measurement: over 10,151 graph
+      # searches in 30 days the mean was 252 ms and the worst case
+      # 2,679 ms, so 5s leaves ~2x headroom on the observed peak. The
+      # previous 60.0 let the graph leg hold a live chat query for a
+      # minute, which made the AC-7 fail-open path unreachable in
+      # practice: retrieval degrades gracefully without graph results,
+      # but not if it waits a minute to find that out.
+      GRAPH_SEARCH_TIMEOUT: "5.0"
       # Graphiti LLM model for knowledge-graph extraction. klai-fast
       # points at Mistral Small 4 (same model the dropped klai-pipeline
       # alias used to point at). Override via env if a different tier

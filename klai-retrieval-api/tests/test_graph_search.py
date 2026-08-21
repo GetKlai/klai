@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from retrieval_api.api.retrieve import _rrf_merge
 from retrieval_api.services import graph_search
+from retrieval_api.services.evidence_pack import build_evidence_pack, chunk_source_key
 
 
 def _make_graph_result(
@@ -16,6 +18,9 @@ def _make_graph_result(
     fact: str,
     score: float = 0.8,
     weight: float | None = None,
+    episodes: list[str] | None = None,
+    valid_at: object | None = None,
+    invalid_at: object | None = None,
 ) -> MagicMock:
     """Build a fake Graphiti EdgeResult for tests.
 
@@ -33,6 +38,12 @@ def _make_graph_result(
     r.fact = fact
     r.score = score
     r.weight = weight
+    # Set explicitly for the same reason ``weight`` is: a bare MagicMock
+    # attribute is truthy and iterable-ish, so leaving these unset would let a
+    # test pass against accidental provenance instead of the real path.
+    r.episodes = episodes if episodes is not None else []
+    r.valid_at = valid_at
+    r.invalid_at = invalid_at
     return r
 
 
@@ -361,3 +372,239 @@ async def test_close_is_safe_before_client_initialization(monkeypatch):
     await graph_search.close()
 
     assert graph_search._graphiti_client is None
+
+
+# ---------------------------------------------------------------------------
+# Provenance: graph edges must be citable (SPEC-RAG-GRAPH-CITE-001)
+# ---------------------------------------------------------------------------
+
+
+def _make_episode(uuid: str, name: str, group_id: str) -> MagicMock:
+    """Stand-in for a Graphiti EpisodicNode.
+
+    ``name`` is the Klai artifact_id: knowledge-ingest calls
+    ``add_episode(name=artifact_id, ...)``, so the episode node carries the
+    artifact identity that makes a derived fact citable.
+    """
+    ep = MagicMock()
+    ep.uuid = uuid
+    ep.name = name
+    ep.group_id = group_id
+    return ep
+
+
+def test_convert_results_sets_artifact_id_from_episode():
+    """An edge's episode resolves to the artifact it was extracted from.
+
+    Without this the evidence pack drops every graph edge on
+    ``if not source_key: continue`` — the fact reaches the model but the
+    document it came from never reaches the user.
+    """
+    edge = _make_graph_result("e1", "Nummerbehoud kan bij overstap", episodes=["ep-1"])
+
+    converted = graph_search._convert_results([edge], 10, {"ep-1": "artifact-abc"})
+
+    assert converted[0]["artifact_id"] == "artifact-abc"
+
+
+def test_convert_results_keeps_artifact_id_none_when_episode_unresolved():
+    """Unresolvable provenance degrades to today's behaviour, not an error."""
+    edge = _make_graph_result("e1", "fact", episodes=["ep-missing"])
+
+    converted = graph_search._convert_results([edge], 10, {})
+
+    assert converted[0]["artifact_id"] is None
+
+
+def test_convert_results_passes_through_temporal_validity():
+    """Graphiti's bi-temporal fields are the one thing Qdrant cannot express.
+
+    They were hardcoded to None at this boundary, discarding the only
+    signal that distinguishes a superseded fact from a current one.
+    """
+    edge = _make_graph_result(
+        "e1",
+        "fact",
+        valid_at=datetime(2026, 3, 11, tzinfo=UTC),
+        invalid_at=datetime(2026, 8, 1, tzinfo=UTC),
+    )
+
+    converted = graph_search._convert_results([edge], 10, {})
+
+    assert converted[0]["valid_at"] == "2026-03-11T00:00:00+00:00"
+    assert converted[0]["invalid_at"] == "2026-08-01T00:00:00+00:00"
+
+
+def test_graph_edge_with_artifact_id_becomes_citable():
+    """End of the chain: the evidence pack now emits the graph fact.
+
+    ``chunk_source_key`` falls back to ``artifact:<id>`` for URL-less
+    sources, so filling artifact_id is all that stands between a graph
+    fact and a citation — no evidence-pack change required.
+    """
+    edge = _make_graph_result("e1", "Nummerbehoud kan bij overstap", episodes=["ep-1"])
+    citable = graph_search._convert_results([edge], 10, {"ep-1": "artifact-abc"})
+    uncitable = graph_search._convert_results([edge], 10, {})
+
+    pack = build_evidence_pack(citable)
+    assert len(pack.items) == 1
+    assert pack.items[0].chunk_id == "graph:e1"
+    assert pack.items[0].artifact_id == "artifact-abc"
+    assert pack.items[0].content_type == "graph_edge"
+    assert [source.artifact_id for source in pack.sources] == ["artifact-abc"]
+    assert chunk_source_key(citable[0]) == "artifact:artifact-abc"
+    # Regression guard on the behaviour this change fixes.
+    assert build_evidence_pack(uncitable).no_citable_reason == "no_citable_sources"
+
+
+@pytest.mark.asyncio
+async def test_episode_lookup_is_scoped_to_the_tenant_database():
+    """TENANT ISOLATION: the lookup must run in the org's own FalkorDB graph.
+
+    ``EpisodicNode.get_by_uuids`` matches on uuid ALONE — it has no group_id
+    filter. Isolation therefore rests entirely on the driver being cloned to
+    ``database=<org_id>``, which is the same boundary graphiti.search() uses
+    via handle_multiple_group_ids. Passing the shared driver would read
+    whatever database it happens to point at.
+    """
+    edge = _make_graph_result("e1", "fact", episodes=["ep-1"])
+    cloned = MagicMock()
+    mock_graphiti = AsyncMock()
+    mock_graphiti.clients.driver.clone = MagicMock(return_value=cloned)
+
+    with patch(
+        "retrieval_api.services.graph_search.EpisodicNode.get_by_uuids",
+        new=AsyncMock(return_value=[_make_episode("ep-1", "artifact-abc", "org-1")]),
+    ) as mock_lookup:
+        mapping = await graph_search._resolve_episode_artifacts(mock_graphiti, [edge], "org-1")
+
+    mock_graphiti.clients.driver.clone.assert_called_once_with(database="org-1")
+    assert mock_lookup.await_args.args[0] is cloned
+    assert mapping == {"ep-1": "artifact-abc"}
+
+
+@pytest.mark.asyncio
+async def test_episode_from_another_tenant_is_discarded():
+    """TENANT ISOLATION, defence in depth: group_id must match the caller.
+
+    The database clone above is the real boundary. This assertion is the
+    fail-closed backstop so a future Graphiti refactor that changes how the
+    driver resolves databases cannot silently turn a uuid-only MATCH into a
+    cross-tenant read.
+    """
+    edge = _make_graph_result("e1", "fact", episodes=["ep-1"])
+    mock_graphiti = AsyncMock()
+    mock_graphiti.clients.driver.clone = MagicMock(return_value=MagicMock())
+
+    with patch(
+        "retrieval_api.services.graph_search.EpisodicNode.get_by_uuids",
+        new=AsyncMock(return_value=[_make_episode("ep-1", "artifact-of-other-org", "org-2")]),
+    ):
+        mapping = await graph_search._resolve_episode_artifacts(mock_graphiti, [edge], "org-1")
+
+    assert mapping == {}
+
+
+@pytest.mark.asyncio
+async def test_episode_lookup_failure_keeps_graph_results():
+    """Fail-open: losing provenance must not lose the graph leg itself."""
+    edge = _make_graph_result("e1", "fact", episodes=["ep-1"])
+    mock_graphiti = AsyncMock()
+    mock_graphiti.search = AsyncMock(return_value=[edge])
+    mock_graphiti.clients.driver.clone = MagicMock(side_effect=RuntimeError("falkor down"))
+
+    with (
+        patch("retrieval_api.services.graph_search.settings") as mock_settings,
+        patch("retrieval_api.services.graph_search._get_graphiti", return_value=mock_graphiti),
+    ):
+        mock_settings.graphiti_enabled = True
+        mock_settings.graph_search_timeout = 5.0
+        result = await graph_search.search("query", "org-1", top_k=10)
+
+    assert len(result) == 1
+    assert result[0]["artifact_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_search_resolves_provenance_end_to_end():
+    """search() wires the lookup in without changing its contract."""
+    edge = _make_graph_result("e1", "fact", episodes=["ep-1"])
+    mock_graphiti = AsyncMock()
+    mock_graphiti.search = AsyncMock(return_value=[edge])
+    mock_graphiti.clients.driver.clone = MagicMock(return_value=MagicMock())
+
+    with (
+        patch("retrieval_api.services.graph_search.settings") as mock_settings,
+        patch("retrieval_api.services.graph_search._get_graphiti", return_value=mock_graphiti),
+        patch(
+            "retrieval_api.services.graph_search.EpisodicNode.get_by_uuids",
+            new=AsyncMock(return_value=[_make_episode("ep-1", "artifact-abc", "org-1")]),
+        ),
+    ):
+        mock_settings.graphiti_enabled = True
+        mock_settings.graph_search_timeout = 5.0
+        result = await graph_search.search("query", "org-1", top_k=10)
+
+    assert result[0]["artifact_id"] == "artifact-abc"
+
+
+def test_graphiti_provenance_api_contract_holds():
+    """Guard the real Graphiti API this feature depends on.
+
+    Every other test here mocks the client, so a graphiti-core upgrade that
+    renamed any of these would keep the suite green and silently disable
+    provenance in production — the exact failure mode that shipped a broken
+    Confluence connector in #1137. Assert against the real classes instead.
+    """
+    import inspect
+
+    from graphiti_core import Graphiti
+    from graphiti_core.driver.falkordb_driver import FalkorDriver
+    from graphiti_core.edges import EntityEdge
+    from graphiti_core.nodes import EpisodicNode
+
+    # The edge fields we read.
+    for field in ("episodes", "valid_at", "invalid_at"):
+        assert field in EntityEdge.model_fields, f"EntityEdge lost {field}"
+    # The episode fields provenance and the tenant assertion depend on.
+    for field in ("uuid", "name", "group_id"):
+        assert field in EpisodicNode.model_fields, f"EpisodicNode lost {field}"
+    # The tenant-scoped lookup path.
+    assert "clients" in inspect.getsource(Graphiti.__init__)
+    assert list(inspect.signature(FalkorDriver.clone).parameters) == ["self", "database"]
+    assert list(inspect.signature(EpisodicNode.get_by_uuids).parameters) == ["driver", "uuids"]
+
+
+@pytest.mark.asyncio
+async def test_slow_provenance_lookup_never_costs_the_graph_results():
+    """Regression (Sol review, high): an optional lookup must not eat the results.
+
+    When search() finishes but the episode lookup hangs, a single shared
+    wait_for would cancel the whole coroutine. asyncio.CancelledError derives
+    from BaseException, so _resolve_episode_artifacts' ``except Exception``
+    cannot downgrade it to "no provenance" — search() would return [] and the
+    graph leg would be worse off than before citations existed.
+    """
+    edge = _make_graph_result("e1", "fact", episodes=["ep-1"])
+    mock_graphiti = AsyncMock()
+    mock_graphiti.search = AsyncMock(return_value=[edge])
+    mock_graphiti.clients.driver.clone = MagicMock(return_value=MagicMock())
+
+    async def _hang(*_args, **_kwargs):
+        await asyncio.sleep(30)
+
+    with (
+        patch("retrieval_api.services.graph_search.settings") as mock_settings,
+        patch("retrieval_api.services.graph_search._get_graphiti", return_value=mock_graphiti),
+        patch("retrieval_api.services.graph_search._PROVENANCE_TIMEOUT", 0.01),
+        patch(
+            "retrieval_api.services.graph_search.EpisodicNode.get_by_uuids",
+            new=AsyncMock(side_effect=_hang),
+        ),
+    ):
+        mock_settings.graphiti_enabled = True
+        mock_settings.graph_search_timeout = 5.0
+        result = await graph_search.search("query", "org-1", top_k=10)
+
+    assert len(result) == 1, "a slow provenance lookup must not drop graph results"
+    assert result[0]["artifact_id"] is None
