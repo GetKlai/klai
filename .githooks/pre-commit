@@ -6,7 +6,8 @@
 # Triggers:
 #   1. deploy/ image-tag validators — when public compose files / image-tag scripts
 #      / VERSIONS.md change. Catches PR #269-class bugs (unpullable
-#      vexaai/* tags). See docs/retros/2026-05-03-vexa-transcription-tag.md.
+#      vexaai/* tags). Origin story in PR #269 (shipped a tag that did not
+#      exist) and PR #272 (added these guards, with a negative control).
 #   2. env_file scope validator — when deploy Compose files or the validator
 #      are staged. Blocks literal bare .env references in every YAML form.
 #   3. .trivyignore.yaml validator — when any **/.trivyignore.yaml is staged.

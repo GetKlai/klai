@@ -18,6 +18,7 @@ on:
   pull_request:
     paths:
       - 'deploy/scripts/**'
+      - 'scripts/check-vexa12-deploy-preconditions.sh'
       - '.github/workflows/deploy-compose.yml'
       - 'deploy/librechat/tests/**'
       - '**/Dockerfile'
@@ -29,6 +30,7 @@ on:
     branches: [main]
     paths:
       - 'deploy/scripts/**'
+      - 'scripts/check-vexa12-deploy-preconditions.sh'
       - '.github/workflows/deploy-compose.yml'
       - 'deploy/librechat/tests/**'
       - '**/Dockerfile'
@@ -87,6 +89,13 @@ jobs:
 
       - name: backup retention suite
         run: bash deploy/scripts/tests/backup-retention.test.sh
+
+      # The Vexa host-readiness checks are run by hand over SSH, which is
+      # precisely why they rotted unnoticed: a guard nobody executes on a
+      # schedule cannot report that it stopped working. Its third check reported
+      # OK for a week against a container deleted in #914.
+      - name: vexa12 host-readiness suite
+        run: bash deploy/scripts/tests/check-vexa12-preconditions.test.sh
 
       - name: container-hygiene preflight suite
         run: bash .claude/hooks/klai/tests/container-hygiene-preflight.test.sh
