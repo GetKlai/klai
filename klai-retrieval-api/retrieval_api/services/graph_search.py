@@ -32,6 +32,10 @@ apply_falkordb_compat()
 logger = structlog.get_logger()
 
 _graphiti_client: Graphiti | None = None
+# Provenance is optional garnish on the graph leg: it gets its own small
+# budget so it can never cost more than the search it annotates.
+_PROVENANCE_TIMEOUT = 1.0
+
 _EMPTY_FULLTEXT_QUERY_RE = re.compile(r"\(@group_id:[^)]*\)\s+\(\s*\)(?:\s|['\"]|$)")
 
 
@@ -90,10 +94,7 @@ async def search(query: str, org_id: str, top_k: int = 20) -> list[dict]:
 
     graphiti = _get_graphiti()
     try:
-        return await asyncio.wait_for(
-            _search_with_provenance(graphiti, query, org_id, top_k),
-            timeout=settings.graph_search_timeout,
-        )
+        return await _search_with_provenance(graphiti, query, org_id, top_k)
     except TimeoutError:
         logger.warning(
             "graph_search_timeout",
@@ -116,11 +117,20 @@ async def _search_with_provenance(
 ) -> list[dict]:
     """Search, then resolve each edge back to the artifact it came from.
 
-    Both steps share one timeout budget: the lookup is a uuid-indexed read in
-    the same graph the search just used, so it must never become a second,
-    unbounded round trip.
+    The two steps have SEPARATE budgets on purpose. Sharing one would mean a
+    slow provenance lookup gets the whole coroutine cancelled by the outer
+    ``wait_for``, and ``asyncio.CancelledError`` inherits from BaseException,
+    so ``_resolve_episode_artifacts``'s ``except Exception`` cannot turn that
+    back into "no provenance". Results already in hand would be thrown away by
+    an optional lookup — worse than the behaviour before citations existed.
+
+    Worst case is therefore ``graph_search_timeout + _PROVENANCE_TIMEOUT``,
+    both bounded and explicit.
     """
-    results = await graphiti.search(query, group_ids=[org_id])
+    results = await asyncio.wait_for(
+        graphiti.search(query, group_ids=[org_id]),
+        timeout=settings.graph_search_timeout,
+    )
     episode_artifacts = await _resolve_episode_artifacts(graphiti, results, org_id)
     return _convert_results(results, top_k, episode_artifacts)
 
@@ -159,7 +169,12 @@ async def _resolve_episode_artifacts(
 
     try:
         driver = graphiti.clients.driver.clone(database=org_id)
-        episodes = await EpisodicNode.get_by_uuids(driver, uuids)
+        episodes = await asyncio.wait_for(
+            EpisodicNode.get_by_uuids(driver, uuids), timeout=_PROVENANCE_TIMEOUT
+        )
+    except TimeoutError:
+        logger.warning("graph_episode_lookup_timeout", org_id=org_id, uuid_count=len(uuids))
+        return {}
     except Exception:
         logger.warning("graph_episode_lookup_failed", org_id=org_id, exc_info=True)
         return {}

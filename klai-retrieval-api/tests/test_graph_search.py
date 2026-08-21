@@ -573,3 +573,38 @@ def test_graphiti_provenance_api_contract_holds():
     assert "clients" in inspect.getsource(Graphiti.__init__)
     assert list(inspect.signature(FalkorDriver.clone).parameters) == ["self", "database"]
     assert list(inspect.signature(EpisodicNode.get_by_uuids).parameters) == ["driver", "uuids"]
+
+
+@pytest.mark.asyncio
+async def test_slow_provenance_lookup_never_costs_the_graph_results():
+    """Regression (Sol review, high): an optional lookup must not eat the results.
+
+    When search() finishes but the episode lookup hangs, a single shared
+    wait_for would cancel the whole coroutine. asyncio.CancelledError derives
+    from BaseException, so _resolve_episode_artifacts' ``except Exception``
+    cannot downgrade it to "no provenance" — search() would return [] and the
+    graph leg would be worse off than before citations existed.
+    """
+    edge = _make_graph_result("e1", "fact", episodes=["ep-1"])
+    mock_graphiti = AsyncMock()
+    mock_graphiti.search = AsyncMock(return_value=[edge])
+    mock_graphiti.clients.driver.clone = MagicMock(return_value=MagicMock())
+
+    async def _hang(*_args, **_kwargs):
+        await asyncio.sleep(30)
+
+    with (
+        patch("retrieval_api.services.graph_search.settings") as mock_settings,
+        patch("retrieval_api.services.graph_search._get_graphiti", return_value=mock_graphiti),
+        patch("retrieval_api.services.graph_search._PROVENANCE_TIMEOUT", 0.01),
+        patch(
+            "retrieval_api.services.graph_search.EpisodicNode.get_by_uuids",
+            new=AsyncMock(side_effect=_hang),
+        ),
+    ):
+        mock_settings.graphiti_enabled = True
+        mock_settings.graph_search_timeout = 5.0
+        result = await graph_search.search("query", "org-1", top_k=10)
+
+    assert len(result) == 1, "a slow provenance lookup must not drop graph results"
+    assert result[0]["artifact_id"] is None
