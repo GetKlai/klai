@@ -178,12 +178,25 @@ Confidence: [0-100] — <one-line evidence summary>   (evidence only; "looks rig
 
 ## Customer-facing publishing (private runbooks)
 
-The "What's new" product-updates feed (megaphone in the portal) and the
-customer help centre (Klai Docs KB `klai-help`) are maintained through
-operator workflows in the private `klai-infra` repo: `PRODUCT_UPDATES.md`
-and `HELP_SYSTEM.md`. Neither workflow is documented in this public repo.
+Three separate publishing paths, all operated from the private `klai-infra`
+repo. None of these workflows is documented in this public repo.
+
+| Surface | Runbook |
+|---|---|
+| "What's new" product-updates feed (megaphone in the portal) | `PRODUCT_UPDATES.md` |
+| Customer help centre (Klai Docs KB `klai-help`) | `HELP_SYSTEM.md` |
+| getklai.com website and blog | `WEBSITE_PUBLISHING.md` |
+
 When publishing a product-updates batch, check whether the help centre
 needs matching page updates.
+
+For website content, two things are worth knowing before you start, because
+both have already cost time. `klai-website` is a submodule that is usually
+NOT checked out in a Conductor worktree, so edit it in its own checkout, not
+from here. And a push to its `main` is the deploy — it is Coolify-hosted and
+rebuilds automatically, with no staging branch and no approval gate. Build
+locally first, and verify the deployed commit and the live URL afterwards.
+`WEBSITE_PUBLISHING.md` has the exact commands.
 
 <!-- codeindex:start -->
 # CodeIndex MCP
