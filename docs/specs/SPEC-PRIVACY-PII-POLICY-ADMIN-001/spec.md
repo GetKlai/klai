@@ -1,6 +1,6 @@
 ---
 id: SPEC-PRIVACY-PII-POLICY-ADMIN-001
-version: "0.2.0"
+version: "0.3.0"
 status: draft
 created: 2026-08-21
 updated: 2026-08-21
@@ -18,6 +18,7 @@ roadmap: docs/architecture/knowledge-rag-improvement-plan.md
 
 | Version | Date       | Author       | Change |
 |---------|------------|--------------|--------|
+| 0.3.0   | 2026-08-21 | Mark Vletter | **Country dropped as a policy axis.** D1 keyed platform defaults on country; Voys is the counter-example — one tenant across several countries, no single country to key on, and `portal_orgs` has no `country` column because the question has no answer. Every recogniser now runs for every tenant: a checksum-anchored recogniser that finds nothing costs nothing, so scoping bought complexity and no accuracy. Country survives as a UI grouping label only. Per-tenant configuration becomes **subtractive**: start from the platform default and exclude — an entity type, a specific value, a pattern, or a keyword. Presidio supports this natively via `allow_list` / `allow_list_match`, so it is plumbing rather than new detection machinery. This also answers D5's homonym problem better than a global exclusion list could: a tenant called *Best Solutions* excludes `Best` themselves. Adds the concrete schema and resolution order REQ-3 was missing, and settles REQ-5's open question — tenants do not pin a version; versioning buys audit and rollback, not per-tenant divergence. |
 | 0.2.0   | 2026-08-21 | Mark Vletter | Four product decisions taken. **Names stay off** for now, but a per-country export of common names is available — recorded in REQ-8 as a *secondary* signal raising confidence on a candidate, never as a hard list, and as a possible cheaper alternative to a 500-750 MB NER model. **Email stays on.** **IBAN is default-on**, and the argument I had made against it is withdrawn in D2: IBAN is in the return set, so the agent sees it in their own message and in the restored answer — only Mistral does not, so there is no workflow cost. **Street-level address is dropped** in favour of postcode plus city (new D5): both are closed format or closed vocabulary, which keeps every entity in the same class and avoids matching street names, the one thing the research argued hardest against. `NL_CITY` is a deny-list recogniser with a case-sensitivity requirement and a homonym gate — `Best`, `Ede`, `Nes` are municipalities and ordinary words. |
 | 0.1.0   | 2026-08-21 | Mark Vletter | Initial draft. Written after three research passes (competitive config-UX, Dutch address/name detection, codebase admin surfaces) against a request for: a generic default-on entity set for all customers, names and addresses added, a configurable frontend at both platform and tenant level, per language and per country. Two of those four turn out to be blocked on evidence rather than engineering, and this SPEC says which. |
 
@@ -34,7 +35,8 @@ surfaces: Klai staff setting defaults, tenant admins overriding within them.
 
 It also answers, with evidence rather than preference, the two questions the request raised
 that are not really UI questions: whether person names and street addresses can be turned on
-by default, and whether "per country" and "per language" are one axis or two.
+by default, and whether policy should be scoped per country at all — it should not, and Voys
+is the reason.
 
 ## What exists today
 
@@ -111,25 +113,45 @@ mostly wiring, not invention.
 
 ## Decisions
 
-### D1 — Country and language are two axes, not one
+### D1 — Detection is country-agnostic; tenants subtract, they do not scope
 
-They are routinely conflated and they behave differently. Google DLP and Azure both split
-them structurally, and Klai already does implicitly.
+An earlier draft made country the first axis of policy: platform defaults per country, per
+language. **That was wrong, and Voys is the counter-example** — one tenant operating across
+several countries. There is no single country to key their policy on, and
+`portal_orgs` has no `country` column precisely because the question has no answer.
 
-| Axis | Governs | Examples | Detection method |
-|---|---|---|---|
-| **Global** | Nothing — applies everywhere | `EMAIL_ADDRESS`, `IBAN_CODE`, `CREDIT_CARD`, `PHONE_NUMBER` | Format + checksum |
-| **Country** | Which jurisdiction's identifiers to look for | `NL_BSN`, `NL_KVK`, `NL_BTW`, `NL_POSTCODE`, `NL_CITY`; later `BE_RRN`, `DE_STEUERID` | Format + checksum, or closed vocabulary |
-| **Language** | Only entities that need a language model | `PERSON` | NER |
+So the country axis is dropped entirely:
 
-**THE distinction SHALL** be preserved in the data model. A BSN in an English sentence is
-still a BSN — that is why REQ-2 of the pipeline SPEC made checksum detection
-language-agnostic, and nothing here reverses it. Only `PERSON` (and the NER-flavoured part of
-address, if ever added) is language-scoped.
+**Every recogniser runs for every tenant.** A BSN is a BSN wherever the organisation
+operates. A tenant that never sees Belgian numbers simply never triggers the Belgian
+recogniser — there is no cost to it being enabled, because every entity in the pack is
+checksum- or format-anchored and a recogniser that finds nothing costs nothing.
 
-A caution against over-modelling country: Google documents that its **country-specific
-detectors are often less reliable than the generic ones** without strong context. Country
-scoping is a filter on *which* recognisers run, not automatically an accuracy improvement.
+Country survives only as a **grouping label in the UI**, so an admin reading a list of
+entity types can tell that `NL_BSN` is a Dutch identifier. It is documentation, not scoping.
+
+Language survives as a real axis, but for exactly one thing: `PERSON` needs a language model.
+Nothing else does — which is what made the pipeline's REQ-2 language-agnostic in the first
+place.
+
+**Per-tenant configuration is subtractive.** A tenant does not compose a policy from
+scratch; they start from the platform default and take things away:
+
+| Exclusion | Example | Mechanism |
+|---|---|---|
+| An entity type | "we do not want phone numbers masked" | Remove from the enabled set, subject to the floor (D4) |
+| A specific value | "our own company IBAN is not a customer's IBAN" | Allow-list, exact match |
+| A pattern | "our ticket numbers look like BSNs" | Allow-list, regex match |
+| A keyword | "`Best` is our product name, not a city" | Allow-list, exact match |
+
+This is also the answer to the homonym problem D5 raises: a tenant called *Best Solutions*
+excludes `Best` themselves, instead of Klai trying to guess a global exclusion list that is
+right for everyone.
+
+**Presidio supports this natively.** `AnalyzerEngine.analyze()` takes `allow_list` and
+`allow_list_match` (`"exact"` or `"regex"`), so allowed values are dropped before results are
+returned. No new detection machinery is needed — this is plumbing a per-tenant list into an
+existing parameter.
 
 ### D2 — Default-on, but not for everything
 
@@ -170,8 +192,8 @@ Voys actually running last Tuesday", which is exactly the question a privacy inc
 Modelled on Tonic Textual's `generator_default` + per-entity `generator_config`, and Google
 DLP's org-level `storedInfoType` referenced by project templates.
 
-- **Platform default** (Klai staff): the value a tenant gets with no override, per country
-  and per language.
+- **Platform default** (Klai staff): the value a tenant gets with no override. Not scoped by
+  country (D1); scoped by language only for `PERSON`.
 - **Platform floor** (Klai staff): entity types a tenant **may not** disable. `SECRET` and
   `NL_BSN` are in the floor by construction, not by configuration.
 - **Tenant override**: within what the floor allows.
@@ -208,12 +230,13 @@ follow-up.
 
 ### In scope
 
-- Policy data model: platform defaults per country/language, platform floor, tenant override,
-  versioning.
+- Policy data model: platform defaults, platform floor, tenant override, per-tenant
+  allow-list, versioning.
 - Tenant admin UI on the existing `privacy` tab of `/admin/settings`.
 - Platform admin UI under the existing `/admin/platform` console.
 - Write endpoints for both levels, reusing `validate_entity_selection()`.
-- Custom tenant-defined entities (regex + word list), with the safety envelope in REQ-9.
+- Per-tenant **allow-list** (exclusions by value, pattern or keyword) — D1's subtractive model, wired into Presidio's native `allow_list` parameter.
+- Custom tenant-defined *detection* entities (regex + word list), with the safety envelope in REQ-9.
 - Policy preview against the real pipeline.
 - `NL_CITY` deny-list recogniser (D5), gated on REQ-6's homonym measurement.
 
@@ -260,11 +283,36 @@ operator-writable by SQL, and will remain so for support purposes.
 **THE platform default SHALL** be stored in a new table, because none exists — every setting
 in the portal today is per-org, and `platform_org_slug` is an env value, not a row.
 
-**IT SHALL** be keyed on `(country, language, entity_type)` per D1, **SHALL** carry an
-immutable version number per D3, and **SHALL** record who published each version and when.
+**IT SHALL NOT** be keyed on country (D1). Concretely:
 
-**THE resolution order SHALL** be: platform floor (wins always) → tenant override → platform
-default → off.
+```
+pii_policy_version        id, version_no, published_at, published_by, notes
+pii_policy_entity         version_id -> pii_policy_version
+                          entity_type            e.g. NL_BSN, IBAN_CODE
+                          default_enabled        bool   -- the platform default
+                          in_floor               bool   -- tenant may not disable
+                          language               null = all; only PERSON uses this
+                          country_label          null = global; UI grouping ONLY, never
+                                                 used in resolution (D1)
+```
+
+Per-tenant state stays where it already is and gains one sibling:
+
+```
+portal_orgs.pii_masked_entities      text[]   -- existing: the enabled set
+portal_orgs.pii_allow_list           jsonb    -- new: [{value, match: exact|regex, note}]
+```
+
+**THE resolution for one request SHALL** be, in order:
+
+1. Start from the active `pii_policy_version`'s `default_enabled` set.
+2. Apply the tenant's `pii_masked_entities` as the override, if present.
+3. Union in every entity where `in_floor` is true — the floor wins over both.
+4. Pass the tenant's `pii_allow_list` to Presidio as `allow_list` / `allow_list_match`.
+5. `PERSON` is removed at every step regardless, until REQ-8 is satisfied.
+
+Step 3 after step 2 is deliberate: the floor is applied last so no override order can
+subtract it.
 
 #### REQ-4 — the floor is structural (state-driven)
 
@@ -278,10 +326,17 @@ mis-click from gone.
 
 #### REQ-5 — consumers pin a version (ubiquitous)
 
-**THE enforcement side SHALL** resolve policy by version, and the resolved version id
-**SHALL** appear in the Phase 2 telemetry event alongside the entity counts, so a support
-question about a specific conversation can be answered with the policy that was actually in
-force.
+**THE enforcement side SHALL** resolve policy against the **currently active** version, not a
+per-tenant pin. Tenants do not choose a platform version — that would leave a tenant sitting
+on a superseded default indefinitely, which is the opposite of why the floor exists.
+
+Versioning here buys **auditability and rollback**, not per-tenant divergence: publishing a
+new version moves everyone, and reverting is repointing the active version rather than
+replaying edits.
+
+**THE resolved version id SHALL** appear in the Phase 2 telemetry event alongside the entity
+counts, so a support question about a specific conversation can be answered with the policy
+that was actually in force at the time.
 
 ### Phase 3 — new entity types
 
@@ -365,6 +420,11 @@ Tenant-defined regex is the most dangerous surface in this SPEC. **IT SHALL**:
 
 **A custom entity SHALL NOT** be addable to the never-restore set. A tenant defining a pattern
 whose matches are destroyed unrecoverably is a support incident, not a feature.
+
+**THE same envelope SHALL** cover allow-list entries with `match: regex` (D1). An exclusion
+pattern is user-supplied regex reaching the analyzer exactly like a detection pattern, and is
+if anything more dangerous: a catastrophic pattern there fails *open*, silently letting real
+PII through rather than merely erroring.
 
 #### REQ-10 — preview runs the real pipeline (ubiquitous)
 
