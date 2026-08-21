@@ -79,7 +79,18 @@ Klai should feel calm, confident, and warm. Not a startup shouting for attention
 
 One font family (Parabole) in multiple weights, plus Decima Mono for labels.
 
-### Font stack
+> [HARD] **The table below is the WEBSITE font stack only.** The portal binds
+> the same token names to different faces and weights. `--font-display` is
+> `"Parabole Trial Regular Text"` at 400 here and `"Parabole Medium"` at 500
+> in the portal, and `--font-display-medium` does not exist in the portal at
+> all. When you are editing `klai-portal/**`, the font tokens in
+> `tokens.md` win over this section. Colors, radii, logo and anti-patterns in
+> this file ARE shared and apply to both.
+>
+> Source of truth: `klai-website/src/styles/global.css` for the values below,
+> `klai-portal/frontend/src/index.css` for the portal.
+
+### Font stack (website)
 
 | Variable | Font | Tailwind class | Weight | Usage |
 |---|---|---|---|---|
