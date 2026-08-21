@@ -770,6 +770,22 @@ control is best understood as a direct on/off setting; if that switch belongs
 to a saved form, it still only stages state and persists through the paired
 save button.
 
+A settings tab has **one** save button, at the bottom, and it writes everything
+on that tab. A tab that grows a second editable section does not grow a second
+button: lift the form and the button to the tab and let the sections stage into
+it. Never resolve two buttons by making one section persist on click instead.
+That trades a visible duplicate for an invisible inconsistency, where half the
+page saves when you touch it and half waits for a button, and the reader has no
+way to tell which half they are looking at.
+
+Both halves of this have been got wrong on the privacy tab. The telemetry and
+PII sections each shipped their own save button, and the first fix made the PII
+checkboxes persist on click, which is what the paragraph above already
+forbids. `_components/-PrivacySettingsTab.tsx` is the shape that works: staged
+state and both mutations at the tab, presentational sections below it, and only
+the dirty mutation firing on submit so an untouched value never rewrites its own
+audit trail.
+
 ## Chat Disclosure Rows
 
 Use this pattern when a chat answer needs secondary provenance below the
