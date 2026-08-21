@@ -155,7 +155,7 @@ describe('PiiPolicySettingsSection', () => {
     expect(creditCardCheckbox.checked).toBe(false)
   })
 
-  it('saves the full entity set on submit after toggling a group off', async () => {
+  it('saves the full entity set immediately when a group is toggled off', async () => {
     apiFetchMock.mockResolvedValue({
       entities: ['EMAIL_ADDRESS', 'IBAN_CODE', 'CREDIT_CARD', 'NL_BTW', 'NL_KVK', 'NL_POSTCODE'],
     })
@@ -164,10 +164,9 @@ describe('PiiPolicySettingsSection', () => {
     await waitFor(() => expect(screen.getByText('Contact details')).toBeTruthy())
 
     // Turn the contact group off (was fully on).
+    // Persists on click. The telemetry section owns this tab's save button
+    // and no tab in this portal shows two.
     fireEvent.click(screen.getByRole('checkbox', { name: 'Contact details' }))
-
-    const saveButton = screen.getByRole('button', { name: 'Save' })
-    fireEvent.click(saveButton)
 
     await waitFor(() => {
       expect(apiFetchMock).toHaveBeenCalledWith('/api/orgs/me/pii-entities', {

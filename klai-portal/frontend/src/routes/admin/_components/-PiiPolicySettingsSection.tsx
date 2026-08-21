@@ -1,7 +1,6 @@
-import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { ChevronDown, ChevronRight, Lock } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   ListFrame,
@@ -109,11 +108,7 @@ export function PiiPolicySettingsSection({
 
   const [stagedEntities, setStagedEntities] = useState<Set<string>>(new Set())
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
-  const [savedEntities, setSavedEntities] = useState(false)
-  const entitiesMutation = usePiiEntitiesMutation(() => {
-    setSavedEntities(true)
-    setTimeout(() => setSavedEntities(false), 2500)
-  })
+  const entitiesMutation = usePiiEntitiesMutation(() => {})
 
   // Depend on the entity list's content, not on `settings` — TanStack Query
   // hands back a fresh object on every refetch, so an object-identity dep
@@ -153,24 +148,27 @@ export function PiiPolicySettingsSection({
     },
   ]
 
+  // Each toggle persists on click. The telemetry section above owns this
+  // tab's save button, and no tab in this portal shows two.
+  function persist(next: Set<string>) {
+    setStagedEntities(next)
+    entitiesMutation.mutate([...next].sort())
+  }
+
   function toggleGroup(group: PiiGroupConfig, turnOn: boolean) {
-    setStagedEntities((prev) => {
-      const next = new Set(prev)
-      for (const entity of group.entities) {
-        if (turnOn) next.add(entity)
-        else next.delete(entity)
-      }
-      return next
-    })
+    const next = new Set(stagedEntities)
+    for (const entity of group.entities) {
+      if (turnOn) next.add(entity)
+      else next.delete(entity)
+    }
+    persist(next)
   }
 
   function toggleEntity(entity: PiiEntity, enabled: boolean) {
-    setStagedEntities((prev) => {
-      const next = new Set(prev)
-      if (enabled) next.add(entity)
-      else next.delete(entity)
-      return next
-    })
+    const next = new Set(stagedEntities)
+    if (enabled) next.add(entity)
+    else next.delete(entity)
+    persist(next)
   }
 
   function toggleExpanded(key: string) {
@@ -182,17 +180,6 @@ export function PiiPolicySettingsSection({
     })
   }
 
-  const savedSet = new Set(settings?.pii_masked_entities ?? [])
-  const entitiesDirty =
-    settings != null &&
-    (stagedEntities.size !== savedSet.size ||
-      [...stagedEntities].some((entity) => !savedSet.has(entity)))
-
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    entitiesMutation.mutate([...stagedEntities].sort())
-  }
-
   return (
     <section className="space-y-4" data-help-id="admin-settings-pii-policy">
       <div className="space-y-1">
@@ -201,7 +188,7 @@ export function PiiPolicySettingsSection({
         </h2>
         <p className="text-sm text-gray-600">{m.admin_settings_pii_intro()}</p>
       </div>
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="space-y-4">
         {isLoading ? (
           <p className="text-sm text-gray-400">{m.admin_users_loading()}</p>
         ) : error ? (
@@ -287,23 +274,9 @@ export function PiiPolicySettingsSection({
             {entitiesMutation.error && (
               <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_save()}</p>
             )}
-            {isTenantAdmin && (
-              <div className="pt-2">
-                <Button
-                  type="submit"
-                  disabled={entitiesMutation.isPending || savedEntities || !entitiesDirty}
-                >
-                  {savedEntities
-                    ? m.admin_settings_saved()
-                    : entitiesMutation.isPending
-                      ? m.admin_settings_saving()
-                      : m.admin_settings_save()}
-                </Button>
-              </div>
-            )}
           </>
         )}
-      </form>
+      </div>
       <div className="space-y-2 border-t border-gray-100 pt-4">
         <h3 className="text-sm font-display-bold text-gray-900">
           {m.admin_settings_pii_limitations_title()}
