@@ -268,9 +268,7 @@ async def _update_edge_weights(
     return updated
 
 
-async def rename_episodes_to_document_keys(
-    org_id: str, renames: dict[str, list[str]]
-) -> int:
+async def rename_episodes_to_document_keys(org_id: str, renames: dict[str, list[str]]) -> int:
     """Point existing episodes at their DOCUMENT instead of an artifact version.
 
     ``renames`` maps a stable episode name (``doc:<kb_slug>:<path>``) to the
