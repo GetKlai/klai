@@ -1,5 +1,8 @@
 # 2026-05-06 — SPEC-CI-TRIVY-POLICY-001 iteration retro
 
+> Historical provenance note (2026-08-20): `.moai` paths in this retrospective
+> are retained verbatim; the `.moai` tree was removed in the 2026-08-18 repo cleanup.
+
 **Pitfalls (now live in):**
 - `.claude/rules/klai/infra/deploy.md` § Trivy scanning (trivy-action 0.35.0 SARIF/severity bug + scan-job checkout + DB-lag noot)
 - `.claude/rules/klai/lang/docker.md` § `apt purge --auto-remove` does not remove apt-hard-deps

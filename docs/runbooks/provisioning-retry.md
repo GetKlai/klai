@@ -171,7 +171,7 @@ service:portal-api AND (event:rollback_zitadel_app_failed OR event:rollback_lite
 
 ## References
 
-- SPEC: `.moai/specs/SPEC-PROV-001/spec.md`
+- SPEC-PROV-001 (historical — SPEC removed in repo cleanup 2026-08-18)
 - Orchestrator: `klai-portal/backend/app/services/provisioning/orchestrator.py`
 - State machine: `klai-portal/backend/app/services/provisioning/state_machine.py`
 - Stuck detector: `klai-portal/backend/app/services/provisioning/stuck_detector.py`

@@ -1,13 +1,8 @@
 name: Build and push klai-docker-authz
 
 on:
+  workflow_call:
   push:
-    branches: [main]
-    paths:
-      - 'klai-docker-authz/**'
-      - 'klai-libs/log-utils/**'
-      - '.github/workflows/klai-docker-authz.yml'
-  pull_request:
     branches: [main]
     paths:
       - 'klai-docker-authz/**'

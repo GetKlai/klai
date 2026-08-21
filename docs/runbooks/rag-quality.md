@@ -1,7 +1,7 @@
 # RAG Quality Runbooks
 
 > Step-by-step procedures for RAGAS evaluation harness alerts.
-> See `.moai/specs/SPEC-RAG-EVAL-001/spec.md` for the harness design.
+> Harness design: SPEC-RAG-EVAL-001 (historical — SPEC removed in repo cleanup 2026-08-18).
 
 ---
 
@@ -90,8 +90,7 @@ This runs the same suite synchronously and prints per-query results. Cheaper tha
 
 ### Related
 
-- SPEC: `.moai/specs/SPEC-RAG-EVAL-001/spec.md`
-- Plan: `.moai/specs/SPEC-RAG-EVAL-001/plan.md`
+- SPEC-RAG-EVAL-001 (historical — SPEC removed in repo cleanup 2026-08-18)
 - Roadmap: `docs/architecture/retrieval-improvements-roadmap.md`
 
 ---
@@ -270,7 +269,7 @@ If the injection rate is 0% but the low-confidence band rate is above 20%, there
 
 ### Related
 
-- SPEC: `.moai/specs/SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001/spec.md`
+- SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 (historical — SPEC removed in repo cleanup 2026-08-18)
 - Alert rule: `deploy/grafana/provisioning/alerting/rag-eval-rules.yaml` (uid: `spec-rag-001-low-confidence-rate`)
 - Dashboard panel: `deploy/grafana/provisioning/dashboards/rag-quality.json` (panel id 6, "Low-Confidence")
 - Regression canaries: `klai-knowledge-ingest/knowledge_ingest/eval/suites/chat.yaml` (mix: `brand_bridging`)

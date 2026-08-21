@@ -788,8 +788,8 @@ async def retrieve(
     # the served top-k. Lets us answer "did the extra Qdrant scroll
     # ever produce a chunk that beat the reranker top-k cut-off?"
     # before deciding on phase 2 (RRF migration vs disable).
-    # Audit ref: .moai/audits/retrieval-coupling-2026-05-06/findings/
-    # F3-link-expansion-dead-weight.md
+    # Audit ref: retrieval-coupling-2026-05-06 finding F3, link expansion
+    # dead weight (historical — audit removed in repo cleanup 2026-08-18).
     expanded_in_top_k_ids = [r["chunk_id"] for r in serving if r.get("_link_expanded")]
     seed_in_top_k_ids = [
         r["chunk_id"] for r in serving if r["chunk_id"] in link_expand_seed_chunk_ids

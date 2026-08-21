@@ -1,6 +1,7 @@
 name: Build and deploy portal-frontend
 
 on:
+  workflow_call:
   push:
     branches: [main]
     paths:
@@ -11,24 +12,11 @@ on:
       - 'klai-widget/vite.config.ts'
       - 'klai-portal/.github/workflows/portal-frontend.yml'
       - '.github/workflows/portal-frontend.yml'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'klai-portal/frontend/**'
-      - 'klai-widget/src/**'
-      - 'klai-widget/package.json'
-      - 'klai-widget/package-lock.json'
-      - 'klai-widget/vite.config.ts'
-      - 'klai-portal/.github/workflows/portal-frontend.yml'
-      - '.github/workflows/portal-frontend.yml'
-
 jobs:
   # Split out of build-deploy on 2026-08-14 for two reasons:
   #
-  #  1. `quality` is the required status check on main. This workflow's only
-  #     job was called `build-deploy`, so the check never appeared on a
-  #     frontend-only PR and the branch protection was decorative here —
-  #     every merge went through admin bypass.
+  #  1. This job is aggregated by the always-running Required quality workflow
+  #     into the single required `quality` context on affected PRs.
   #  2. The 476 vitest tests were NOT running in CI at all. Lint and build ran;
   #     the test suite existed in the repo and nothing ever executed it.
   #

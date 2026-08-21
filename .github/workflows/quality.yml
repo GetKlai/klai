@@ -1,0 +1,228 @@
+name: Required quality
+
+# Branch protection requires the final `quality` job. This workflow must stay
+# unfiltered: path-filtered reusable workflows are selected below, then their
+# results are aggregated so unrelated checks cannot satisfy the requirement.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+  pull-requests: read
+  security-events: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      portal_api: ${{ steps.filter.outputs.portal_api }}
+      retrieval_api: ${{ steps.filter.outputs.retrieval_api }}
+      knowledge_mcp: ${{ steps.filter.outputs.knowledge_mcp }}
+      mailer: ${{ steps.filter.outputs.mailer }}
+      knowledge_ingest: ${{ steps.filter.outputs.knowledge_ingest }}
+      scribe_api: ${{ steps.filter.outputs.scribe_api }}
+      docs: ${{ steps.filter.outputs.docs }}
+      docker_authz: ${{ steps.filter.outputs.docker_authz }}
+      portal_frontend: ${{ steps.filter.outputs.portal_frontend }}
+      connector: ${{ steps.filter.outputs.connector }}
+      trivyignore: ${{ steps.filter.outputs.trivyignore }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Detect affected workflows
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            portal_api:
+              - 'klai-portal/backend/**'
+              - 'klai-libs/chat-prompts/**'
+              - 'klai-libs/citations/**'
+              - 'klai-libs/connector-credentials/**'
+              - 'klai-libs/kb-slugs/**'
+              - '.github/workflows/portal-api.yml'
+              - '.github/workflows/quality.yml'
+            retrieval_api:
+              - 'klai-retrieval-api/**'
+              - 'klai-libs/identity-assert/**'
+              - 'klai-libs/chat-prompts/**'
+              - 'klai-libs/kb-slugs/**'
+              - 'klai-libs/citations/**'
+              - 'klai-libs/service-auth/**'
+              - 'klai-libs/llm-safety/**'
+              - 'klai-libs/graphiti-compat/**'
+              - '.github/workflows/retrieval-api.yml'
+              - '.github/workflows/quality.yml'
+            knowledge_mcp:
+              - 'klai-knowledge-mcp/**'
+              - 'klai-libs/identity-assert/**'
+              - 'klai-libs/kb-slugs/**'
+              - '.github/workflows/klai-knowledge-mcp.yml'
+              - '.github/workflows/quality.yml'
+            mailer:
+              - 'klai-mailer/**'
+              - 'klai-libs/log-utils/**'
+              - 'klai-libs/webhook-replay/**'
+              - '.github/workflows/klai-mailer.yml'
+              - '.github/workflows/quality.yml'
+            knowledge_ingest:
+              - 'klai-knowledge-ingest/**'
+              - 'klai-libs/connector-credentials/**'
+              - 'klai-libs/image-storage/**'
+              - 'klai-libs/kb-slugs/**'
+              - 'klai-libs/llm-throttle/**'
+              - 'klai-libs/graphiti-compat/**'
+              - '.github/workflows/knowledge-ingest.yml'
+              - '.github/workflows/quality.yml'
+            scribe_api:
+              - 'klai-scribe/scribe-api/**'
+              - '.github/workflows/scribe-api.yml'
+              - '.github/workflows/quality.yml'
+            docs:
+              - 'klai-docs/**'
+              - '.github/workflows/docs.yml'
+              - '.github/workflows/quality.yml'
+            docker_authz:
+              - 'klai-docker-authz/**'
+              - 'klai-libs/log-utils/**'
+              - '.github/workflows/klai-docker-authz.yml'
+              - '.github/workflows/quality.yml'
+            portal_frontend:
+              - 'klai-portal/frontend/**'
+              - 'klai-widget/src/**'
+              - 'klai-widget/package.json'
+              - 'klai-widget/package-lock.json'
+              - 'klai-widget/vite.config.ts'
+              - 'klai-portal/.github/workflows/portal-frontend.yml'
+              - '.github/workflows/portal-frontend.yml'
+              - '.github/workflows/quality.yml'
+            connector:
+              - 'klai-connector/**'
+              - 'klai-libs/connector-credentials/**'
+              - 'klai-libs/image-storage/**'
+              - '.github/workflows/klai-connector.yml'
+              - '.github/workflows/quality.yml'
+            trivyignore:
+              - '**/.trivyignore.yaml'
+              - '**/.trivyignore.yml'
+              - 'scripts/validate-trivyignore.sh'
+              - 'scripts/_validate_trivyignore.py'
+              - '.github/workflows/validate-trivyignore.yml'
+              - '.github/workflows/quality.yml'
+
+  portal-api:
+    needs: changes
+    if: needs.changes.outputs.portal_api == 'true'
+    uses: ./.github/workflows/portal-api.yml
+    secrets: inherit
+
+  retrieval-api:
+    needs: changes
+    if: needs.changes.outputs.retrieval_api == 'true'
+    uses: ./.github/workflows/retrieval-api.yml
+    secrets: inherit
+
+  knowledge-mcp:
+    needs: changes
+    if: needs.changes.outputs.knowledge_mcp == 'true'
+    uses: ./.github/workflows/klai-knowledge-mcp.yml
+    secrets: inherit
+
+  mailer:
+    needs: changes
+    if: needs.changes.outputs.mailer == 'true'
+    uses: ./.github/workflows/klai-mailer.yml
+    secrets: inherit
+
+  knowledge-ingest:
+    needs: changes
+    if: needs.changes.outputs.knowledge_ingest == 'true'
+    uses: ./.github/workflows/knowledge-ingest.yml
+    secrets: inherit
+
+  scribe-api:
+    needs: changes
+    if: needs.changes.outputs.scribe_api == 'true'
+    uses: ./.github/workflows/scribe-api.yml
+    secrets: inherit
+
+  docs:
+    needs: changes
+    if: needs.changes.outputs.docs == 'true'
+    uses: ./.github/workflows/docs.yml
+    secrets: inherit
+
+  docker-authz:
+    needs: changes
+    if: needs.changes.outputs.docker_authz == 'true'
+    uses: ./.github/workflows/klai-docker-authz.yml
+    secrets: inherit
+
+  portal-frontend:
+    needs: changes
+    if: needs.changes.outputs.portal_frontend == 'true'
+    uses: ./.github/workflows/portal-frontend.yml
+    secrets: inherit
+
+  connector:
+    needs: changes
+    if: needs.changes.outputs.connector == 'true'
+    uses: ./.github/workflows/klai-connector.yml
+    secrets: inherit
+
+  trivyignore:
+    needs: changes
+    if: needs.changes.outputs.trivyignore == 'true'
+    uses: ./.github/workflows/validate-trivyignore.yml
+    secrets: inherit
+
+  quality:
+    name: quality
+    if: always()
+    needs:
+      - changes
+      - portal-api
+      - retrieval-api
+      - knowledge-mcp
+      - mailer
+      - knowledge-ingest
+      - scribe-api
+      - docs
+      - docker-authz
+      - portal-frontend
+      - connector
+      - trivyignore
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every affected workflow to pass
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          needs = json.loads(os.environ["NEEDS_JSON"])
+          blocked = {
+              name: data["result"]
+              for name, data in needs.items()
+              if data["result"] not in {"success", "skipped"}
+          }
+          selected = sorted(
+              name
+              for name, data in needs.items()
+              if name != "changes" and data["result"] != "skipped"
+          )
+          print("Affected quality workflows:", ", ".join(selected) or "none")
+          if blocked:
+              for name, result in sorted(blocked.items()):
+                  print(f"::error::{name} finished with {result}")
+              sys.exit(1)
+          PY

@@ -1,5 +1,8 @@
 # Changelog
 
+> Historical provenance note (2026-08-20): `.moai` paths in older entries are
+> retained verbatim; the `.moai` tree was removed in the 2026-08-18 repo cleanup.
+
 ## [Unreleased] — 2026-05-13 — SPEC-PORTAL-PRICING-PER-USER-001 v0.5.x: Per-user accounts, profile-derived account type
 
 Klai's billing axis is now per-user: each user has an **account type** (`chat` €28/mo or `knowledge` €68/mo, matching [getklai.com/pricing](https://getklai.com/pricing)) and a **role / profile** kept as two orthogonal columns on `portal_users`. The invite UI shows only the Profile dropdown — account type is derived live via `suggest_seat(role)` and rendered as a read-only badge with `role="status"` + `aria-live="polite"`. Admin-support flow (`PATCH /api/admin/users/{id}`) still accepts an explicit `seat_type` so a customer's billing intent can override a role's default. The legacy `viewer` tier has been dropped — it never appeared on the marketing page.

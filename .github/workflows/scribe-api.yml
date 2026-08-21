@@ -1,12 +1,8 @@
 name: Build and push scribe-api
 
 on:
+  workflow_call:
   push:
-    branches: [main]
-    paths:
-      - 'klai-scribe/scribe-api/**'
-      - '.github/workflows/scribe-api.yml'
-  pull_request:
     branches: [main]
     paths:
       - 'klai-scribe/scribe-api/**'

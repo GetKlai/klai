@@ -642,7 +642,8 @@ services:
   # ─── Docker socket proxy (limits portal-api + runtime-api to required Docker API calls only)
   # SPEC-SEC-021: routes portal-api + runtime-api through this proxy instead of mounting the socket directly.
   # SPEC-SEC-024: audit verified this minimum (CONTAINERS+NETWORKS+POST+DELETE) covers every
-  # Docker API call portal-api actually makes — see .moai/specs/SPEC-SEC-024/plan.md Tabel C.
+  # Docker API call portal-api actually makes — see SPEC-SEC-024 Tabel C
+  # (historical — SPEC removed in repo cleanup 2026-08-18).
   # Runtime-api is black-box; unexpected 403's are caught by the permanent Grafana alert
   # "Security — Proxy Denials" (SPEC-SEC-024-R12). Fix-forward: add the specific verb here
   # if the alert fires. Never add a verb preventively.

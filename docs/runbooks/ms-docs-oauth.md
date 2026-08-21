@@ -210,7 +210,7 @@ No operator action needed for RT rotation — only client-secret rotation.
 
 ## References
 
-- [SPEC-KB-MS-DOCS-001](../../.moai/specs/SPEC-KB-MS-DOCS-001/spec.md)
+- SPEC-KB-MS-DOCS-001 (historical — SPEC removed in repo cleanup 2026-08-18)
 - [Microsoft Graph permissions reference](https://learn.microsoft.com/en-us/graph/permissions-reference)
 - [driveItem: delta](https://learn.microsoft.com/en-us/graph/api/driveitem-delta)
 - [Refresh tokens in Microsoft identity platform](https://learn.microsoft.com/en-us/entra/identity-platform/refresh-tokens)

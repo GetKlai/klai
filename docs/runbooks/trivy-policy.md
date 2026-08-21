@@ -239,4 +239,4 @@ External images go through `scan-pinned-images.yml` (WARN-tier — never blocks 
 
 - `.claude/rules/klai/infra/deploy.md` — § Trivy scanning (the rule)
 - `.claude/rules/klai/infra/container-hygiene.md` — locally-built tag convention
-- `.moai/specs/SPEC-CI-TRIVY-POLICY-001/` — original SPEC, plan, acceptance scenarios
+- SPEC-CI-TRIVY-POLICY-001 (historical — SPEC removed in repo cleanup 2026-08-18) — original SPEC, plan, acceptance scenarios

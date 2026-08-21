@@ -1,5 +1,8 @@
 # Knowledge-retrieval improvements — Low-Confidence Abstain + Brand-Bridging (2026-05-07/08)
 
+> Historical provenance note (2026-08-20): `.moai` paths in this capture are
+> retained verbatim; the `.moai` tree was removed in the 2026-08-18 repo cleanup.
+
 > Quick capture of the work that landed in main on 2026-05-07/08 across PRs
 > #516, #517, #518. Move/restructure into the right doc home later.
 > Companion to [retrieval-improvements-roadmap.md](architecture/retrieval-improvements-roadmap.md)

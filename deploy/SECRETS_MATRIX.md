@@ -1,7 +1,7 @@
 # Secrets Matrix
 
 Per-service env-var inventory for `deploy/docker-compose.yml`.
-Required by [SPEC-SEC-ENVFILE-SCOPE-001](../.moai/specs/SPEC-SEC-ENVFILE-SCOPE-001/spec.md)
+Required by SPEC-SEC-ENVFILE-SCOPE-001 (historical — SPEC removed in repo cleanup 2026-08-18)
 REQ-2 — the authoritative source of truth for "which service
 legitimately reads which secret". Keep in lock-step with
 `deploy/docker-compose.yml`: any PR that adds an env var to a service's
@@ -122,7 +122,7 @@ details in the private infra repo.
 
 ## Rotation coupling
 
-See [SPEC-SEC-005](../.moai/specs/SPEC-SEC-005/spec.md) and
+See SPEC-SEC-005 (historical — SPEC removed in repo cleanup 2026-08-18) and
 the private infra rotation runbooks — narrower per-service scope
 means a secret rotation now touches only the services listed in its
 column of this table. When this matrix changes, cross-check the

@@ -1,5 +1,8 @@
 # Handoff — laptop transfer 2026-05-06 ochtend
 
+> Historische provenance-notitie (2026-08-20): `.moai`-paden in deze handoff
+> blijven ongewijzigd; de `.moai`-tree is verwijderd bij de repo-opruiming van 2026-08-18.
+
 ## Hoe je dit op je laptop ophaalt
 
 ```bash

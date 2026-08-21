@@ -110,8 +110,7 @@ curl -i -X POST 'https://my.getklai.com/partner/v1/chat/completions' \
 
 ## Cross-references
 
-- SPEC: `.moai/specs/SPEC-SEC-CORS-001/spec.md` REQ-2, REQ-3, REQ-3.3
-- Acceptance: `.moai/specs/SPEC-SEC-CORS-001/acceptance.md` AC-9, AC-10, AC-11
+- SPEC-SEC-CORS-001 REQ-2, REQ-3, REQ-3.3; AC-9, AC-10, AC-11 (historical — SPEC removed in repo cleanup 2026-08-18)
 - Per-widget origin handler: `klai-portal/backend/app/api/partner.py`
   (`widget_config` GET around line 432, OPTIONS preflight around line 484)
 - Origin validation helper: `klai-portal/backend/app/services/widget_auth.py`

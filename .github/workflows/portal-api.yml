@@ -1,6 +1,7 @@
 name: Build and push portal-api
 
 on:
+  workflow_call:
   push:
     branches: [main]
     paths:
@@ -10,16 +11,6 @@ on:
       - 'klai-libs/connector-credentials/**'
       - 'klai-libs/kb-slugs/**'
       - '.github/workflows/portal-api.yml'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'klai-portal/backend/**'
-      - 'klai-libs/chat-prompts/**'
-      - 'klai-libs/citations/**'
-      - 'klai-libs/connector-credentials/**'
-      - 'klai-libs/kb-slugs/**'
-      - '.github/workflows/portal-api.yml'
-
 permissions:
   contents: read
   packages: write
