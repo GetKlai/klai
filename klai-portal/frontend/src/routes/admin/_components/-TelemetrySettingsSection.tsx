@@ -68,7 +68,7 @@ export function TelemetrySettingsSection({
               </Select>
               <p className="text-xs text-gray-400">
                 {m.admin_settings_telemetry_help()}{' '}
-                <a href="/privacy" className="underline">
+                <a href="/app/docs/klai-help/8b57605d-675c-48cd-b33b-3ee1705c33a6" className="underline">
                   {m.admin_settings_telemetry_privacy_link()}
                 </a>
               </p>

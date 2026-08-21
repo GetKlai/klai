@@ -2007,7 +2007,7 @@
   "admin_settings_telemetry_full_hint": "Bewaart letterlijke vragen 7 dagen. Alleen voor actief debugwerk.",
   "admin_settings_telemetry_help": "Schaduw bewaart 7 dagen anonieme signalen, zonder letterlijke vragen. Volledig bewaart 7 dagen ook letterlijke vragen en is alleen bedoeld voor actief debugwerk. Lees meer in ons",
   "admin_settings_telemetry_disabled_for_non_admin": "Alleen organisatie-beheerders kunnen deze instelling wijzigen.",
-  "admin_settings_telemetry_privacy_link": "privacybeleid",
+  "admin_settings_telemetry_privacy_link": "uitleg over privacy en je data",
   "admin_settings_pii_title": "Persoonsgegevens maskeren voor het AI-model",
   "admin_settings_pii_intro": "Dit is een extra laag data-minimalisatie: Klai stuurt de onderstaande categorieën gemaskeerd naar het AI-model en herstelt ze in het antwoord. Klai's positie onder de AVG rust op verwerking binnen de EU, de verwerkersovereenkomst en de retentie-instellingen. Dat blijft ongewijzigd, met of zonder deze laag. Hieronder kies je welke categorieën gemaskeerd worden.",
   "admin_settings_pii_group_contact_title": "Contactgegevens",

@@ -2007,7 +2007,7 @@
   "admin_settings_telemetry_full_hint": "Keeps literal questions for 7 days. Use only during active debugging.",
   "admin_settings_telemetry_help": "Shadow keeps anonymous signals for 7 days, without literal questions. Full also keeps literal questions for 7 days and is only meant for active debugging. Read more in our",
   "admin_settings_telemetry_disabled_for_non_admin": "Only organisation admins can change this setting.",
-  "admin_settings_telemetry_privacy_link": "privacy policy",
+  "admin_settings_telemetry_privacy_link": "privacy and your data",
   "admin_settings_pii_title": "Masking personal data for the AI model",
   "admin_settings_pii_intro": "This is an extra layer of data minimisation: Klai sends the categories below to the AI model masked, and restores them in the answer. Klai's position under the GDPR rests on EU-only processing, the data processing agreement and the retention settings. That stays unchanged, with or without this layer. Below you choose which categories are masked.",
   "admin_settings_pii_group_contact_title": "Contact details",
