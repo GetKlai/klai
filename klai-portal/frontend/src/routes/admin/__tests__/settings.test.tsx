@@ -25,7 +25,12 @@ vi.mock('@/lib/auth', () => ({
   useAuth: () => ({ isAuthenticated: true }),
 }))
 
-vi.mock('@/paraglide/messages', () => {
+vi.mock('@/paraglide/messages', async () => {
+  // Start from the real messages so rendering any tab works, then pin the
+  // handful this file asserts on. Listing only a subset used to throw the
+  // moment a test rendered a tab whose sections use other keys, which is
+  // why the one-save-button check covered a single tab for so long.
+  const actual = await vi.importActual<Record<string, unknown>>('@/paraglide/messages')
   const messages = {
     admin_settings_heading: () => 'Settings',
     admin_settings_subtitle: () => 'Organisation name and account details.',
@@ -63,7 +68,7 @@ vi.mock('@/paraglide/messages', () => {
     admin_settings_auto_accept_hint_off: () => 'Users from your domain must request access.',
     admin_users_loading: () => 'Loading...',
   }
-  return messages
+  return { ...actual, ...messages }
 })
 
 import { Route as RouteCfg } from '../settings'
@@ -119,6 +124,37 @@ describe('AdminSettings page', () => {
       search: { tab: 'security' },
     })
   })
+
+  // A settings tab has one save button (docs/ui-standards.md, Form Controls).
+  // That was asserted for one tab only, which is how the privacy tab shipped
+  // with two: telemetry and PII masking each brought their own. Cover every
+  // tab, so the next section added to an existing tab cannot repeat it.
+  it.each(['general', 'security', 'privacy', 'features'])(
+    'has at most one save button on the %s tab',
+    async (tab) => {
+      routeSearch = { tab }
+      apiFetchMock.mockResolvedValue({
+        name: 'Klai',
+        default_language: 'nl',
+        mfa_policy: 'optional',
+        auto_accept_same_domain: false,
+        primary_domain: 'getklai.com',
+        telemetry_level: 'shadow',
+        pii_masked_entities: ['EMAIL_ADDRESS'],
+        pii_allow_list: [],
+      })
+
+      const Cfg = RouteCfg as unknown as { component: () => JSX.Element }
+      render(
+        <Wrapper>
+          <Cfg.component />
+        </Wrapper>,
+      )
+      await waitFor(() => expect(apiFetchMock).toHaveBeenCalled())
+
+      expect(screen.queryAllByRole('button', { name: 'Save' }).length).toBeLessThanOrEqual(1)
+    },
+  )
 
   it('stages auto-accept changes until save is clicked', async () => {
     routeSearch = { tab: 'security' }
