@@ -57,7 +57,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install uv (so the test's uvx fallback is reachable)
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           python-version: "3.12"
 
