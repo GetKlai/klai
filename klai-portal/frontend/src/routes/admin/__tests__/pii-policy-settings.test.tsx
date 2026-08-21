@@ -53,6 +53,13 @@ vi.mock('@/paraglide/messages', () => ({
   admin_settings_pii_limitation_false_positives: () => 'False positives happen.',
   admin_settings_pii_limitation_storage: () => 'This only governs what is sent to the AI model.',
   admin_settings_pii_limitation_locked_categories: () => 'Two categories cannot be switched off.',
+  admin_settings_telemetry_title: () => 'Telemetry',
+  admin_settings_telemetry_label: () => 'Telemetry level',
+  admin_settings_telemetry_off_name: () => 'Off',
+  admin_settings_telemetry_shadow_name: () => 'Shadow',
+  admin_settings_telemetry_full_name: () => 'Full',
+  admin_settings_telemetry_help: () => 'Controls what usage data is shared.',
+  admin_settings_telemetry_privacy_link: () => 'Read the privacy policy',
   admin_settings_save: () => 'Save',
   admin_settings_saving: () => 'Saving...',
   admin_settings_saved: () => 'Saved',
@@ -61,7 +68,7 @@ vi.mock('@/paraglide/messages', () => ({
   admin_users_loading: () => 'Loading...',
 }))
 
-import { PiiPolicySettingsSection } from '../_components/-PiiPolicySettingsSection'
+import { PrivacySettingsTab } from '../_components/-PrivacySettingsTab'
 import type { OrgSettings } from '../-settings-hooks'
 
 function Wrapper({ children }: { children: ReactNode }) {
@@ -95,7 +102,7 @@ const baseSettings: OrgSettings = {
 function renderSection(settings: OrgSettings | undefined = baseSettings) {
   return render(
     <Wrapper>
-      <PiiPolicySettingsSection settings={settings} isLoading={false} error={null} />
+      <PrivacySettingsTab settings={settings} isLoading={false} error={null} />
     </Wrapper>,
   )
 }
@@ -155,7 +162,7 @@ describe('PiiPolicySettingsSection', () => {
     expect(creditCardCheckbox.checked).toBe(false)
   })
 
-  it('saves the full entity set immediately when a group is toggled off', async () => {
+  it('stages a group toggle and only persists it once the tab-level save button is pressed', async () => {
     apiFetchMock.mockResolvedValue({
       entities: ['EMAIL_ADDRESS', 'IBAN_CODE', 'CREDIT_CARD', 'NL_BTW', 'NL_KVK', 'NL_POSTCODE'],
     })
@@ -163,10 +170,13 @@ describe('PiiPolicySettingsSection', () => {
 
     await waitFor(() => expect(screen.getByText('Contact details')).toBeTruthy())
 
-    // Turn the contact group off (was fully on).
-    // Persists on click. The telemetry section owns this tab's save button
-    // and no tab in this portal shows two.
+    // Turn the contact group off (was fully on). Nothing persists yet.
     fireEvent.click(screen.getByRole('checkbox', { name: 'Contact details' }))
+    expect(apiFetchMock).not.toHaveBeenCalled()
+
+    const saveButton = screen.getByRole('button', { name: 'Save' })
+    expect(saveButton.hasAttribute('disabled')).toBe(false)
+    fireEvent.click(saveButton)
 
     await waitFor(() => {
       expect(apiFetchMock).toHaveBeenCalledWith('/api/orgs/me/pii-entities', {
@@ -176,16 +186,21 @@ describe('PiiPolicySettingsSection', () => {
         }),
       })
     })
+    // Untouched telemetry value must not be rewritten by the same save.
+    expect(apiFetchMock).not.toHaveBeenCalledWith(
+      '/api/orgs/me/telemetry-level',
+      expect.anything(),
+    )
   })
 
-  it('renders read-only for a caller below the admin role', async () => {
+  it('renders exactly one save button and disables PII checkboxes for a caller below the admin role', async () => {
     fetchMeMock.mockResolvedValue({ portal_role: 'kb_manager', is_platform_admin: false })
     renderSection()
 
     await waitFor(() => {
       expect(screen.getByText('Only organisation admins can change this.')).toBeTruthy()
     })
-    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull()
+    expect(screen.getAllByRole('button', { name: 'Save' })).toHaveLength(1)
     const contactCheckbox = screen.getByRole<HTMLInputElement>('checkbox', { name: 'Contact details' })
     expect(contactCheckbox.disabled).toBe(true)
   })

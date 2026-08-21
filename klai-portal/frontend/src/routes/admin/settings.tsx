@@ -4,9 +4,8 @@ import { Tabs, type TabItem } from '@/components/ui/tabs'
 import { ExtensionsSettingsSection } from './_components/-ExtensionsSettingsSection'
 import { LanguageSettingsSection } from './_components/-LanguageSettingsSection'
 import { OrganizationSettingsSection } from './_components/-OrganizationSettingsSection'
-import { PiiPolicySettingsSection } from './_components/-PiiPolicySettingsSection'
+import { PrivacySettingsTab } from './_components/-PrivacySettingsTab'
 import { SecuritySettingsSection } from './_components/-SecuritySettingsSection'
-import { TelemetrySettingsSection } from './_components/-TelemetrySettingsSection'
 import { useAdminSettings } from './-settings-hooks'
 import * as m from '@/paraglide/messages'
 
@@ -72,10 +71,7 @@ function AdminSettingsPage() {
         <SecuritySettingsSection settings={settings} isLoading={isLoading} error={error} />
       )}
       {activeTab === 'privacy' && (
-        <div className="space-y-6">
-          <TelemetrySettingsSection settings={settings} isLoading={isLoading} error={error} />
-          <PiiPolicySettingsSection settings={settings} isLoading={isLoading} error={error} />
-        </div>
+        <PrivacySettingsTab settings={settings} isLoading={isLoading} error={error} />
       )}
       {activeTab === 'features' && <ExtensionsSettingsSection />}
     </div>

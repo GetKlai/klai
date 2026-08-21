@@ -12,11 +12,7 @@ import {
 } from '@/components/ui/list'
 import { meetsMinRole } from '@/lib/profiles'
 import * as m from '@/paraglide/messages'
-import {
-  useAdminSettingsMe,
-  usePiiEntitiesMutation,
-  type OrgSettings,
-} from '../-settings-hooks'
+import { useAdminSettingsMe } from '../-settings-hooks'
 
 // SPEC-PRIVACY-PII-POLICY-ADMIN-001 D6 — the seven return-set entity types
 // this PR ships (NL_CITY is out of scope: no recogniser exists yet, see
@@ -93,33 +89,28 @@ function GroupCheckbox({ checked, indeterminate, disabled, label, onChange }: Gr
 }
 
 interface PiiPolicySettingsSectionProps {
-  settings: OrgSettings | undefined
+  stagedEntities: Set<string>
+  onEntitiesChange: (next: Set<string>) => void
   isLoading: boolean
   error: unknown
+  disabled: boolean
 }
 
+// Presentational + controlled: staged entities and the mutation both live in
+// the parent PrivacySettingsTab, which owns this tab's single save button.
+// Ticking a checkbox here only stages state — nothing persists until that
+// button is pressed.
 export function PiiPolicySettingsSection({
-  settings,
+  stagedEntities,
+  onEntitiesChange,
   isLoading,
   error,
+  disabled,
 }: PiiPolicySettingsSectionProps) {
   const { data: me } = useAdminSettingsMe()
   const isTenantAdmin = meetsMinRole(me?.portal_role, 'admin')
 
-  const [stagedEntities, setStagedEntities] = useState<Set<string>>(new Set())
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
-  const entitiesMutation = usePiiEntitiesMutation(() => {})
-
-  // Depend on the entity list's content, not on `settings` — TanStack Query
-  // hands back a fresh object on every refetch, so an object-identity dep
-  // resets staged choices whenever any OTHER section on this tab saves.
-  const serverEntities = settings?.pii_masked_entities
-  const serverEntitiesKey = serverEntities ? [...serverEntities].sort().join(',') : null
-  useEffect(() => {
-    if (serverEntitiesKey !== null) {
-      setStagedEntities(new Set(serverEntitiesKey ? serverEntitiesKey.split(',') : []))
-    }
-  }, [serverEntitiesKey])
 
   const groups: PiiGroupConfig[] = [
     {
@@ -148,12 +139,7 @@ export function PiiPolicySettingsSection({
     },
   ]
 
-  // Each toggle persists on click. The telemetry section above owns this
-  // tab's save button, and no tab in this portal shows two.
-  function persist(next: Set<string>) {
-    setStagedEntities(next)
-    entitiesMutation.mutate([...next].sort())
-  }
+  const controlsDisabled = !isTenantAdmin || disabled
 
   function toggleGroup(group: PiiGroupConfig, turnOn: boolean) {
     const next = new Set(stagedEntities)
@@ -161,14 +147,14 @@ export function PiiPolicySettingsSection({
       if (turnOn) next.add(entity)
       else next.delete(entity)
     }
-    persist(next)
+    onEntitiesChange(next)
   }
 
   function toggleEntity(entity: PiiEntity, enabled: boolean) {
     const next = new Set(stagedEntities)
     if (enabled) next.add(entity)
     else next.delete(entity)
-    persist(next)
+    onEntitiesChange(next)
   }
 
   function toggleExpanded(key: string) {
@@ -208,7 +194,7 @@ export function PiiPolicySettingsSection({
                       <GroupCheckbox
                         checked={allOn}
                         indeterminate={mixed}
-                        disabled={!isTenantAdmin || entitiesMutation.isPending}
+                        disabled={controlsDisabled}
                         label={group.title}
                         onChange={(e) => toggleGroup(group, e.target.checked)}
                       />
@@ -247,7 +233,7 @@ export function PiiPolicySettingsSection({
                           <Checkbox
                             key={entity}
                             checked={stagedEntities.has(entity)}
-                            disabled={!isTenantAdmin || entitiesMutation.isPending}
+                            disabled={controlsDisabled}
                             onChange={(e) => toggleEntity(entity, e.target.checked)}
                             label={entityLabel(entity)}
                           />
@@ -270,9 +256,6 @@ export function PiiPolicySettingsSection({
             </ListFrame>
             {!isTenantAdmin && (
               <p className="text-xs text-gray-400">{m.admin_settings_pii_readonly_hint()}</p>
-            )}
-            {entitiesMutation.error && (
-              <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_save()}</p>
             )}
           </>
         )}
