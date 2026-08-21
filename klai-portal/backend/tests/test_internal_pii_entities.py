@@ -53,9 +53,13 @@ class _FakeOrgDb:
     instead of quietly passing.
     """
 
-    def __init__(self, rows: dict[int, list[str]]):
+    def __init__(self, rows: dict[str, list[str]]):
+        # Keyed on the ZITADEL org id — the id the caller actually has. See
+        # test_zitadel_org_id_is_the_lookup_key for why this is not the
+        # portal integer PK.
         self._rows = rows
-        self.queried_org_ids: list[int] = []
+        self.queried_org_ids: list[str] = []
+        self._pk_for = {org: index + 1 for index, org in enumerate(sorted(rows))}
 
     async def execute(self, statement):
         params = statement.compile().params
@@ -64,7 +68,9 @@ class _FakeOrgDb:
 
         stored = self._rows.get(org_id)
         result = MagicMock()
-        result.first.return_value = None if stored is None else (stored,)
+        # The handler selects (PortalOrg.id, PortalOrg.pii_masked_entities):
+        # the PK for set_tenant, the array for the response.
+        result.first.return_value = None if stored is None else (self._pk_for[org_id], stored)
         return result
 
 
@@ -83,20 +89,24 @@ def patched_internal(monkeypatch):
 class TestAuth:
     @pytest.mark.asyncio
     async def test_missing_bearer_returns_401_before_db(self, patched_internal):
-        db = _FakeOrgDb({1: []})
+        db = _FakeOrgDb({"372801852200189969": []})
 
         with pytest.raises(HTTPException) as exc:
-            await patched_internal.get_org_pii_entities(org_id=1, request=_make_request(token=None), db=db)
+            await patched_internal.get_org_pii_entities(
+                org_id="372801852200189969", request=_make_request(token=None), db=db
+            )
 
         assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
         assert db.queried_org_ids == []
 
     @pytest.mark.asyncio
     async def test_wrong_bearer_returns_401_before_db(self, patched_internal):
-        db = _FakeOrgDb({1: []})
+        db = _FakeOrgDb({"372801852200189969": []})
 
         with pytest.raises(HTTPException) as exc:
-            await patched_internal.get_org_pii_entities(org_id=1, request=_make_request(token="wrong"), db=db)
+            await patched_internal.get_org_pii_entities(
+                org_id="372801852200189969", request=_make_request(token="wrong"), db=db
+            )
 
         assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
         assert db.queried_org_ids == []
@@ -105,19 +115,23 @@ class TestAuth:
     async def test_unconfigured_secret_returns_503(self, patched_internal, monkeypatch):
         """Fail closed rather than accepting an empty bearer."""
         monkeypatch.setattr(patched_internal.settings, "internal_secret", "")
-        db = _FakeOrgDb({1: []})
+        db = _FakeOrgDb({"372801852200189969": []})
 
         with pytest.raises(HTTPException) as exc:
-            await patched_internal.get_org_pii_entities(org_id=1, request=_make_request(token=""), db=db)
+            await patched_internal.get_org_pii_entities(
+                org_id="372801852200189969", request=_make_request(token=""), db=db
+            )
 
         assert exc.value.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
         assert db.queried_org_ids == []
 
     @pytest.mark.asyncio
     async def test_correct_bearer_is_accepted(self, patched_internal):
-        db = _FakeOrgDb({1: ["IBAN_CODE"]})
+        db = _FakeOrgDb({"372801852200189969": ["IBAN_CODE"]})
 
-        response = await patched_internal.get_org_pii_entities(org_id=1, request=_make_request(), db=db)
+        response = await patched_internal.get_org_pii_entities(
+            org_id="372801852200189969", request=_make_request(), db=db
+        )
 
         assert response.enabled_entities == ["IBAN_CODE"]
 
@@ -126,27 +140,33 @@ class TestPolicyResponse:
     @pytest.mark.asyncio
     async def test_org_without_opt_in_returns_empty_set(self, patched_internal):
         """REQ-7 default-off, including for orgs that predate the column."""
-        db = _FakeOrgDb({7: []})
+        db = _FakeOrgDb({"372801852200189907": []})
 
-        response = await patched_internal.get_org_pii_entities(org_id=7, request=_make_request(), db=db)
+        response = await patched_internal.get_org_pii_entities(
+            org_id="372801852200189907", request=_make_request(), db=db
+        )
 
-        assert response.org_id == 7
+        assert response.org_id == "372801852200189907"
         assert response.enabled_entities == []
 
     @pytest.mark.asyncio
     async def test_populated_policy_is_returned_sorted(self, patched_internal):
-        db = _FakeOrgDb({7: ["NL_KVK", "IBAN_CODE", "EMAIL_ADDRESS"]})
+        db = _FakeOrgDb({"372801852200189907": ["NL_KVK", "IBAN_CODE", "EMAIL_ADDRESS"]})
 
-        response = await patched_internal.get_org_pii_entities(org_id=7, request=_make_request(), db=db)
+        response = await patched_internal.get_org_pii_entities(
+            org_id="372801852200189907", request=_make_request(), db=db
+        )
 
         assert response.enabled_entities == ["EMAIL_ADDRESS", "IBAN_CODE", "NL_KVK"]
 
     @pytest.mark.asyncio
     async def test_response_key_matches_the_litellm_client_contract(self, patched_internal):
         """``klai_pii_org_policy.py:141-143`` reads ``enabled_entities`` and needs a list."""
-        db = _FakeOrgDb({7: ["IBAN_CODE"]})
+        db = _FakeOrgDb({"372801852200189907": ["IBAN_CODE"]})
 
-        response = await patched_internal.get_org_pii_entities(org_id=7, request=_make_request(), db=db)
+        response = await patched_internal.get_org_pii_entities(
+            org_id="372801852200189907", request=_make_request(), db=db
+        )
         payload = response.model_dump()
 
         assert isinstance(payload.get("enabled_entities"), list)
@@ -155,9 +175,11 @@ class TestPolicyResponse:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("stored", ["PERSON", "SECRET", "NL_BSN", "US_SSN"])
     async def test_non_return_set_values_are_filtered_out(self, patched_internal, stored):
-        db = _FakeOrgDb({7: [stored, "IBAN_CODE"]})
+        db = _FakeOrgDb({"372801852200189907": [stored, "IBAN_CODE"]})
 
-        response = await patched_internal.get_org_pii_entities(org_id=7, request=_make_request(), db=db)
+        response = await patched_internal.get_org_pii_entities(
+            org_id="372801852200189907", request=_make_request(), db=db
+        )
 
         assert response.enabled_entities == ["IBAN_CODE"]
 
@@ -166,9 +188,9 @@ class TestPolicyResponse:
         """Fail loudly: a stored value outside the return set must be visible."""
         logger = MagicMock()
         monkeypatch.setattr(patched_internal, "structlog_logger", logger)
-        db = _FakeOrgDb({7: ["SECRET", "IBAN_CODE"]})
+        db = _FakeOrgDb({"372801852200189907": ["SECRET", "IBAN_CODE"]})
 
-        await patched_internal.get_org_pii_entities(org_id=7, request=_make_request(), db=db)
+        await patched_internal.get_org_pii_entities(org_id="372801852200189907", request=_make_request(), db=db)
 
         logger.warning.assert_called_once()
         assert logger.warning.call_args.args[0] == "pii_org_policy_stored_value_rejected"
@@ -178,9 +200,9 @@ class TestPolicyResponse:
     async def test_clean_policy_logs_nothing(self, patched_internal, monkeypatch):
         logger = MagicMock()
         monkeypatch.setattr(patched_internal, "structlog_logger", logger)
-        db = _FakeOrgDb({7: ["IBAN_CODE"]})
+        db = _FakeOrgDb({"372801852200189907": ["IBAN_CODE"]})
 
-        await patched_internal.get_org_pii_entities(org_id=7, request=_make_request(), db=db)
+        await patched_internal.get_org_pii_entities(org_id="372801852200189907", request=_make_request(), db=db)
 
         logger.warning.assert_not_called()
 
@@ -189,7 +211,7 @@ class TestPolicyResponse:
         db = _FakeOrgDb({})
 
         with pytest.raises(HTTPException) as exc:
-            await patched_internal.get_org_pii_entities(org_id=999, request=_make_request(), db=db)
+            await patched_internal.get_org_pii_entities(org_id="3728018522001899999", request=_make_request(), db=db)
 
         assert exc.value.status_code == status.HTTP_404_NOT_FOUND
 
@@ -197,22 +219,81 @@ class TestPolicyResponse:
 class TestTenantIsolation:
     @pytest.mark.asyncio
     async def test_org_a_cannot_read_org_b_policy(self, patched_internal):
-        db = _FakeOrgDb({1: ["IBAN_CODE"], 2: ["NL_POSTCODE", "PHONE_NUMBER"]})
+        db = _FakeOrgDb(
+            {
+                "372801852200189969": ["IBAN_CODE"],
+                "372801852200189970": ["NL_POSTCODE", "PHONE_NUMBER"],
+            }
+        )
 
-        response_a = await patched_internal.get_org_pii_entities(org_id=1, request=_make_request(), db=db)
-        response_b = await patched_internal.get_org_pii_entities(org_id=2, request=_make_request(), db=db)
+        response_a = await patched_internal.get_org_pii_entities(
+            org_id="372801852200189969", request=_make_request(), db=db
+        )
+        response_b = await patched_internal.get_org_pii_entities(
+            org_id="372801852200189970", request=_make_request(), db=db
+        )
 
         assert response_a.enabled_entities == ["IBAN_CODE"]
         assert response_b.enabled_entities == ["NL_POSTCODE", "PHONE_NUMBER"]
         assert "NL_POSTCODE" not in response_a.enabled_entities
         assert "IBAN_CODE" not in response_b.enabled_entities
-        assert db.queried_org_ids == [1, 2]
+        assert db.queried_org_ids == ["372801852200189969", "372801852200189970"]
 
     @pytest.mark.asyncio
     async def test_tenant_context_is_bound_to_the_path_org(self, patched_internal):
-        db = _FakeOrgDb({2: []})
+        db = _FakeOrgDb({"372801852200189970": []})
 
-        await patched_internal.get_org_pii_entities(org_id=2, request=_make_request(), db=db)
+        await patched_internal.get_org_pii_entities(org_id="372801852200189970", request=_make_request(), db=db)
 
-        assert patched_internal.set_tenant.await_args.args[1] == 2
-        assert patched_internal._audit_internal_call.await_args.kwargs["org_id"] == 2
+        # set_tenant takes the portal integer PK — that is what RLS binds to —
+        # while the path parameter and the audit record carry the Zitadel id
+        # the caller supplied. The two id spaces are deliberately different
+        # and this test pins both, because conflating them is exactly the bug
+        # that made this endpoint return 500 in production.
+        assert patched_internal.set_tenant.await_args.args[1] == 1
+        assert patched_internal._audit_internal_call.await_args.kwargs["org_id"] == "372801852200189970"
+
+
+class TestOrgIdSpace:
+    """The path parameter is the ZITADEL org id, not the portal integer PK.
+
+    Typing it as ``int`` was a live production defect: the LiteLLM enforcement
+    stack carries the Zitadel id in team-key metadata (every PII event logs it,
+    e.g. ``pii_observed org_id=372801852200189969``), and against the deployed
+    endpoint a real id returned **500** while the portal PK ``1`` returned 200.
+    The client treats any non-2xx as the empty policy, so the entire REQ-7
+    return set could never activate and the failure was indistinguishable from
+    "this org opted into nothing".
+
+    No unit test caught it because every test supplied the PK the handler
+    happened to want. These pin the id space itself.
+    """
+
+    @pytest.mark.asyncio
+    async def test_zitadel_org_id_is_the_lookup_key(self, patched_internal):
+        zitadel_id = "372801852200189969"
+        db = _FakeOrgDb({zitadel_id: ["IBAN_CODE"]})
+
+        response = await patched_internal.get_org_pii_entities(org_id=zitadel_id, request=_make_request(), db=db)
+
+        assert db.queried_org_ids == [zitadel_id]
+        assert response.enabled_entities == ["IBAN_CODE"]
+
+    @pytest.mark.asyncio
+    async def test_long_zitadel_id_does_not_raise(self, patched_internal):
+        """A 18-digit Zitadel id overflows a PG int4 — the shape that 500'd."""
+        zitadel_id = "372801852200189969"
+        db = _FakeOrgDb({zitadel_id: []})
+
+        response = await patched_internal.get_org_pii_entities(org_id=zitadel_id, request=_make_request(), db=db)
+
+        assert response.org_id == zitadel_id
+
+    @pytest.mark.asyncio
+    async def test_unknown_org_is_404_not_a_crash(self, patched_internal):
+        db = _FakeOrgDb({"372801852200189969": []})
+
+        with pytest.raises(HTTPException) as exc:
+            await patched_internal.get_org_pii_entities(org_id="999999999999999999", request=_make_request(), db=db)
+
+        assert exc.value.status_code == 404
