@@ -1,6 +1,6 @@
 ---
 id: SPEC-PRIVACY-PII-POLICY-ADMIN-001
-version: "0.4.0"
+version: "0.5.0"
 status: draft
 created: 2026-08-21
 updated: 2026-08-21
@@ -18,6 +18,7 @@ roadmap: docs/architecture/knowledge-rag-improvement-plan.md
 
 | Version | Date       | Author       | Change |
 |---------|------------|--------------|--------|
+| 0.5.0   | 2026-08-21 | Mark Vletter | REQ-13 reframed. 0.4.0 wrote the limitations defensively, which implies the platform needed this feature to be compliant — untrue, and it sells the existing position short. Klai's GDPR position rests on EU-only processing, the DPA, telemetry modes and retention; this is **voluntary data minimisation**, done because it is decent, not because something was missing. The factual points stay — names are not detected, only postcode and city, the context around a masked value remains, none of it touches what Klai stores — because an admin choosing what to enable needs to know where detection ends. Two hard rules survive the reframe for non-tone reasons: "anonymous" is factually wrong for pseudonymised data (Art. 4(5)) in any register, and the page must not claim a toggle makes anyone compliant — not because compliance is in doubt, but because that is not what compliance rests on, in either direction. |
 | 0.4.0   | 2026-08-21 | Mark Vletter | Adds REQ-13: the settings page must state what the system cannot do, as specific required copy rather than an instruction to be honest. Eight named limitations, including the three most likely to be misread — names are not detected at all, context around a masked value is not masked, and none of this touches what Klai stores. Forbids "anonymous", "removed", "safe" and "GDPR-compliant" in describing the result, because each overstates it and an admin who concludes their tenant is now compliant has been misled by us. Same copy for tenants and for Klai staff: there is no version that is honest for one audience and not the other. |
 | 0.3.0   | 2026-08-21 | Mark Vletter | **Country dropped as a policy axis.** D1 keyed platform defaults on country; Voys is the counter-example — one tenant across several countries, no single country to key on, and `portal_orgs` has no `country` column because the question has no answer. Every recogniser now runs for every tenant: a checksum-anchored recogniser that finds nothing costs nothing, so scoping bought complexity and no accuracy. Country survives as a UI grouping label only. Per-tenant configuration becomes **subtractive**: start from the platform default and exclude — an entity type, a specific value, a pattern, or a keyword. Presidio supports this natively via `allow_list` / `allow_list_match`, so it is plumbing rather than new detection machinery. This also answers D5's homonym problem better than a global exclusion list could: a tenant called *Best Solutions* excludes `Best` themselves. Adds the concrete schema and resolution order REQ-3 was missing, and settles REQ-5's open question — tenants do not pin a version; versioning buys audit and rollback, not per-tenant divergence. |
 | 0.2.0   | 2026-08-21 | Mark Vletter | Four product decisions taken. **Names stay off** for now, but a per-country export of common names is available — recorded in REQ-8 as a *secondary* signal raising confidence on a candidate, never as a hard list, and as a possible cheaper alternative to a 500-750 MB NER model. **Email stays on.** **IBAN is default-on**, and the argument I had made against it is withdrawn in D2: IBAN is in the return set, so the agent sees it in their own message and in the restored answer — only Mistral does not, so there is no workflow cost. **Street-level address is dropped** in favour of postcode plus city (new D5): both are closed format or closed vocabulary, which keeps every entity in the same class and avoids matching street names, the one thing the research argued hardest against. `NL_CITY` is a deny-list recogniser with a case-sensitivity requirement and a homonym gate — `Best`, `Ede`, `Nes` are municipalities and ordinary words. |
@@ -450,42 +451,51 @@ rate limit.
 tokens, hand-rolled form state (this frontend has **no** form library and one **SHALL NOT** be
 introduced here).
 
-#### REQ-13 — the settings page states what the system cannot do (ubiquitous)
+#### REQ-13 — the settings page is accurate about what it does and does not catch (ubiquitous)
 
-**THE tenant settings page SHALL** carry a plainly-worded limitations section, visible without
-expanding anything, stating at minimum:
+**Framing first, because the wrong framing is worse than no page.** Klai's GDPR position does
+not rest on this feature. EU-only processing, the DPA, the telemetry modes and the retention
+limits already carry it. This is **voluntary data minimisation** — sending a provider less
+than we are entitled to send, because it is the decent thing to do, not because something was
+missing.
 
-1. **This is pseudonymisation, not anonymisation.** Data that has been pseudonymised remains
-   personal data under the GDPR (Art. 4(5)). This reduces what the model provider receives; it
-   does not remove Klai's or the customer's obligations.
-2. **Detection is not complete.** It finds structured identifiers — numbers, codes, addresses
-   in a known format. It does not find everything.
-3. **Person names are not detected at all** (until REQ-8 lands). If a name appears in a
-   message, the provider sees it. Say this explicitly rather than letting an admin infer from
-   an unchecked box that names are handled.
-4. **Only the postcode and the city are detected, not the street.** An address written without
+**THE copy SHALL NOT** be written defensively. Wording that reads as a disclaimer implies the
+platform needed this to be compliant, which is untrue and sells the existing position short.
+The register is "here is an extra layer and here is exactly what it catches", not "here is why
+this may not be enough".
+
+**AND it SHALL be accurate**, because an admin deciding what to switch on needs to know where
+the detection ends:
+
+1. **Person names are not detected** (until REQ-8 lands). If a name appears in a message, the
+   provider sees it. State it, rather than letting an unchecked box imply names are handled.
+2. **Addresses are detected by postcode and city, not by street.** An address written without
    a postcode is not detected.
-5. **Context is not masked.** Masking a BSN in *"the BSN of the customer with the payment
-   arrears is 111222333"* removes the number and leaves the fact. Identification through
-   combined details — a rare job title, an exact date, a small town — is not something this
-   catches.
-6. **False positives happen.** Something that is not personal data may be masked. For entity
-   types that are restored, the user sees their own text back unchanged, but the model
-   answered on the masked version, so the answer can be worse without any visible sign.
-7. **This applies only to what is sent to the AI provider.** It does **not** change what Klai
-   stores: knowledge-base content, meeting transcripts and chat history are unaffected.
-8. **Two categories cannot be switched off**, and why: credentials, because forwarding one is
-   an incident regardless of preference; the BSN, because a private company may only process
-   one where a statute allows it.
+3. **Detection covers structured identifiers** — numbers, codes, formats. It is not a general
+   understanding of what is sensitive.
+4. **The context around a masked value stays.** Masking a BSN in *"the BSN of the customer
+   with payment arrears is 111222333"* removes the number and leaves the fact. Identification
+   by combination — a rare job title, an exact date, a small town — is not what this catches.
+5. **False positives happen.** For restored entity types the user sees their own text back
+   unchanged, but the model answered on the masked version, so an answer can be slightly worse
+   with no visible sign.
+6. **This governs what is sent to the AI provider.** It does not change what Klai stores:
+   knowledge bases, meeting transcripts and chat history are unaffected.
+7. **Two categories cannot be switched off**, with the reason: credentials, because forwarding
+   one is an incident regardless of preference; the BSN, because a private company may only
+   process one where a statute allows it.
 
-**THE copy SHALL NOT** use "anonymous", "removed", "safe" or "GDPR-compliant" about the result.
-Every one of those overstates it, and an admin who reads this page and concludes their tenant
-is now GDPR-compliant has been misled by us.
+**THE word "anonymous" (and "geanonimiseerd") SHALL NOT** be used about the result. That one is
+not a matter of tone: pseudonymised data is still personal data under GDPR Art. 4(5), and
+calling it anonymous is factually wrong in any framing.
 
-**THE page SHALL** state the same limitations to a tenant admin and to Klai staff. There is no
-version of this that is honest for one audience and not the other.
+**THE page SHALL NOT** claim that enabling any of this makes a tenant compliant with anything.
+Not because compliance is in doubt, but because a per-entity toggle is not what compliance
+rests on, in either direction.
 
-#### REQ-12 — platform UI extends the existing console (ubiquitous)
+**THE page SHALL** state the same things to a tenant admin and to Klai staff.
+
+#### REQ-12 —#### REQ-12 — platform UI extends the existing console (ubiquitous)
 
 **THE platform surface SHALL** live under `/admin/platform`, gated by
 `require_platform_admin()`, as a route rather than a drawer — `ui-standards.md` forbids sheets
@@ -523,7 +533,7 @@ surface.
 | AC-12 | `NL_CITY` homonym measurement over real corpus | Non-place hit rate reported; `Best`/`Ede`/`Nes` exclusions verified; entity stays off until reviewed |
 | AC-12b | `NL_CITY` on `dat is de best mogelijke oplossing` | No match (case-sensitive + exclusion list) |
 | AC-13 | Two orgs with different policies, concurrent requests | Neither sees the other's policy |
-| AC-14 | Settings page copy review | All eight REQ-13 limitations present; the words "anonymous", "removed", "safe", "GDPR-compliant" absent from the result description |
+| AC-14 | Settings page copy review | All seven REQ-13 points present; "anonymous"/"geanonimiseerd" absent; no claim that enabling this makes a tenant compliant; tone is additive, not defensive |
 | AC-15 | Settings page with `PERSON` unavailable | Copy states names are not detected — not merely an absent or disabled checkbox |
 
 ## Risks and Mitigations
