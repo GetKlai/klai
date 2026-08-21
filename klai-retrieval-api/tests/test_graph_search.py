@@ -546,3 +546,30 @@ async def test_search_resolves_provenance_end_to_end():
         result = await graph_search.search("query", "org-1", top_k=10)
 
     assert result[0]["artifact_id"] == "artifact-abc"
+
+
+def test_graphiti_provenance_api_contract_holds():
+    """Guard the real Graphiti API this feature depends on.
+
+    Every other test here mocks the client, so a graphiti-core upgrade that
+    renamed any of these would keep the suite green and silently disable
+    provenance in production — the exact failure mode that shipped a broken
+    Confluence connector in #1137. Assert against the real classes instead.
+    """
+    import inspect
+
+    from graphiti_core import Graphiti
+    from graphiti_core.driver.falkordb_driver import FalkorDriver
+    from graphiti_core.edges import EntityEdge
+    from graphiti_core.nodes import EpisodicNode
+
+    # The edge fields we read.
+    for field in ("episodes", "valid_at", "invalid_at"):
+        assert field in EntityEdge.model_fields, f"EntityEdge lost {field}"
+    # The episode fields provenance and the tenant assertion depend on.
+    for field in ("uuid", "name", "group_id"):
+        assert field in EpisodicNode.model_fields, f"EpisodicNode lost {field}"
+    # The tenant-scoped lookup path.
+    assert "clients" in inspect.getsource(Graphiti.__init__)
+    assert list(inspect.signature(FalkorDriver.clone).parameters) == ["self", "database"]
+    assert list(inspect.signature(EpisodicNode.get_by_uuids).parameters) == ["driver", "uuids"]
