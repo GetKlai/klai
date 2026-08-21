@@ -397,3 +397,213 @@ class TestIrreversibleFalsePositives:
         assert rec.analyze(
             "Zie ook 3011 AB Rotterdam.", entities=["NL_POSTCODE"], nlp_artifacts=None
         )
+
+
+# ---------------------------------------------------------------------------
+# System-review finding M4 — PEM pattern is quadratic on unmatched BEGIN
+# markers. Fixed by bounding the body to `_PEM_MAX_BODY_CHARS` instead of an
+# unbounded `.*?`. Two things must both hold: a real key still matches in
+# full, and the pathological-input cost is actually bounded now.
+# ---------------------------------------------------------------------------
+
+# A real legacy-encrypted RSA-2048 key (RFC 1421 / OpenSSL "traditional"
+# format: `Proc-Type` / `DEK-Info` header lines before the base64 body),
+# generated once with `openssl rsa -aes256 -traditional` on a throwaway key
+# and pasted in literally (test-only key, passphrase not reused anywhere).
+_LEGACY_ENCRYPTED_RSA_PEM = (
+    "-----BEGIN RSA PRIVATE KEY-----\n"
+    "Proc-Type: 4,ENCRYPTED\n"
+    "DEK-Info: AES-256-CBC,74872D43B0A9C5BF71826452B86B338F\n"
+    "\n"
+    "x8KyAcN+kZPB/X7GVmxGDQjYOF8R1pj48B1FvedXCCPrtXAQC9dHREacE8YH/JVk\n"
+    "o6z8BcM84mZiIZgwhrNuzAK10Vr2fMdkMcGwjateDwHcv3RRzBqhBXIa2AXasDc3\n"
+    "3uRaKaqXAm7HGM1FKkpaWekQwlk0bdAwEBzvhX0fplSNeWaPALyKd6sYy41GUQbx\n"
+    "sORJ2Hb/U8YfHb5MsksdRsz1V81cfAOaVNNIQHpUVeJd4ZgsrrlK9+I3YThXgtIK\n"
+    "LruLRctQ+ijLpnQIvmIe858KfVZTxBOcJkOb6ii8ryKJ8zBFqfi5kuQ2/R5t3rpC\n"
+    "nwnQ2gHXy708uw7mQWu1WD/HZQGsZB5n9I8rwOWevENMb0hHILPLrpHdKPAWCAZP\n"
+    "JAGfuxLx+6DsF65qcRJr80jPlKHb0SEb9VnHvvhZJ6Wllc9QqMb2gxQIgdKN3yyb\n"
+    "O5o14hAHvZ/guRtFq1Ydi2ZJsBskwgn1YoWIRJbf5VHaKPnyzqp6b7vsiM2gu8+G\n"
+    "RZQFqeD/sTHNMrvYmuYhV1FgZ/E8vc16NuHeAnGHIdan5BBDuBs3bsXI52jBAlW1\n"
+    "PZTfQ/wNyotJ6LRvHd+2ts+pItuNE7cIhpnkRZjNtJMACOv2qjdAm8h4BtSGFboi\n"
+    "MEnnTjPpi6XyGLZOjk7swaC33414zXhz5Cth75+OUpl1fZ9bsH8EM1+tFYgMnH5t\n"
+    "qoIifNQQBJj3wh4Ods+JWC4CKtGsGSzr9f2jJ4zha3VPp98VZew7UADw1jpFjq+P\n"
+    "FxoQNj9JsMBEOPU/CPhRd+KmCHXj8+Rxojad5jZ6Dwy94i0HraI1Um1lpk6Pyfsh\n"
+    "g2ncZamkBTOyZtgWP1ubbvSyRLRQtiI12OJPWFFEqz9pOJOFDt5b6nyuSjgK6iJ7\n"
+    "ELlXCgEWkFr7fxx6utfvoatV9xa4s/4tby8BdR1lyP5EDqXy334GgmjMHbyDttVx\n"
+    "ocbuDrBb1K6LTbIaO9uT9OXers/gCj2X+Eg9w3eMOUB8esSEgMbTxae3lBtAI7i5\n"
+    "5e7To1cSpCs1NS/2+aM7zBZbN1oUAU0ufD75HUIQfRe3cLxQwlKPyVSI+mkHhs0b\n"
+    "J91mQiWxne8lL7dhtnSPKxHnWgkBfXFLOxmPckhqB8tBQsLfPljV8Og3dg/7bn0g\n"
+    "OoflCtqhNIa9lT/g+E0bXVT+3lVRFBfTbCfl4gLCjg4q7Fd9L9Her9dfG4rvWpqR\n"
+    "Bm6tJoAcanjz492Jq+RZT6BL4XvJWgzOslG+N8kd0V38jfAxZzYUnh3a9sM6QbRh\n"
+    "eHT6R6wFF4n64DArWOH48Dg77PmPgUOYqKJLsL8u9dI9BcLXFsU3d2k1pJHrzUco\n"
+    "vKgNDvKh7CwKqcpQBgQFJMx9QpqoNIL2ORjOFNIQNyjVdFeZqF64ZPyHJu++B3IB\n"
+    "OCDTgrXO+SfAVos8gbWku4Esv1ORwSQRcYHhl0Rc87XvTD8OMTBFhI0dk8jyGyoy\n"
+    "6Otn6RyFnDlELOnWNqRhVJI5aH0QNTjsZxQdS3k5N01MPehOxTv56AbqqN2aZR3d\n"
+    "qmYxWJKDpa4aZmodYINvObD5U5VGADwctlUzOxH0I7eaV0p4yPOgwCGg07GCdRmz\n"
+    "-----END RSA PRIVATE KEY-----"
+)
+
+# A real PKCS#8 RSA-4096 private key body (the largest RSA size in common
+# use), generated once with `cryptography.hazmat` and pasted in literally so
+# this test needs no crypto library at run time. 4096-bit is the size most
+# likely to approach `_PEM_MAX_BODY_CHARS` — smaller RSA sizes and EC/Ed25519
+# keys are all shorter.
+_REAL_RSA4096_PKCS8 = (
+    "-----BEGIN PRIVATE KEY-----\n"
+    "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\n"
+    "7Nuq0kIyHfue9xrq/FyLF/0ZZv6GSQ==\n"
+    "-----END PRIVATE KEY-----"
+)
+
+
+class TestSecretPemBounded:
+    """System-review finding M4: the PEM pattern was `.*?` + DOTALL, which is
+    quadratic on a payload containing many unmatched BEGIN markers. Bounding
+    the body to `_PEM_MAX_BODY_CHARS` must not break real-key detection.
+    """
+
+    def test_real_rsa4096_pkcs8_key_still_fully_detected(self):
+        rec = SecretRecognizer()
+        text = f"Here is the key:\n{_REAL_RSA4096_PKCS8}\ndone"
+        results = _detected(rec, text, "SECRET")
+        pem_results = [r for r in results if text[r.start : r.end].startswith("-----BEGIN")]
+        assert len(pem_results) == 1
+        matched = text[pem_results[0].start : pem_results[0].end]
+        assert matched == _REAL_RSA4096_PKCS8
+        assert "done" not in matched
+
+    def test_legacy_encrypted_pem_with_proc_type_header_still_detected(self):
+        """Sol-review finding: the first version of this fix's character
+        class was base64-only (`A-Za-z0-9+/=`) and could no longer detect
+        the RFC 1421 / OpenSSL "traditional" encrypted-key format, which
+        has two metadata lines BEFORE the base64 body:
+
+            -----BEGIN RSA PRIVATE KEY-----
+            Proc-Type: 4,ENCRYPTED
+            DEK-Info: AES-256-CBC,<hex-IV>
+
+            <base64 body>
+            -----END RSA PRIVATE KEY-----
+
+        `Proc-Type: 4,ENCRYPTED` and `DEK-Info: AES-256-CBC,...` contain
+        `:`, `,` and `-` (the cipher name itself is hyphenated), none of
+        which were in the base64-only class. A real key generated this way
+        (`openssl rsa -aes256 -traditional`) would have gone through
+        unmasked under enforcement. Regression test for the fix that added
+        `:,\\-` to the body character class.
+        """
+        rec = SecretRecognizer()
+        text = f"Hier is de sleutel:\n{_LEGACY_ENCRYPTED_RSA_PEM}\nklaar"
+        results = _detected(rec, text, "SECRET")
+        pem_results = [r for r in results if text[r.start : r.end].startswith("-----BEGIN")]
+        assert len(pem_results) == 1
+        matched = text[pem_results[0].start : pem_results[0].end]
+        assert matched == _LEGACY_ENCRYPTED_RSA_PEM
+        assert "Proc-Type" in matched
+        assert "DEK-Info" in matched
+        assert "klaar" not in matched
+
+    def test_body_longer_than_bound_is_a_documented_non_match(self):
+        """Deliberate design boundary, not a bug: a body past
+        `_PEM_MAX_BODY_CHARS` is not chased. No real PEM private key body
+        (largest measured: RSA-4096 at ~3.2K chars) gets anywhere near this."""
+        from klai_pii_recognizers import _PEM_MAX_BODY_CHARS
+
+        oversized_body = "A" * (_PEM_MAX_BODY_CHARS + 1)
+        text = f"-----BEGIN PRIVATE KEY-----\n{oversized_body}\n-----END PRIVATE KEY-----"
+        rec = SecretRecognizer()
+        results = _detected(rec, text, "SECRET")
+        pem_results = [r for r in results if "BEGIN PRIVATE KEY" in text[r.start : r.end]]
+        assert pem_results == []
+
+
+class TestSecretPemPerformance:
+    """Regression for system-review finding M4's actual measurement.
+
+    presidio-analyzer runs with `cpus: '1'`, shared across every tenant, and
+    nothing upstream caps payload size before this recognizer runs (the
+    length caps in klai_pii_observe.py / klai_pii_enforce.py are a separate,
+    second layer of defense — this test is about the regex alone). The old
+    `.*?` pattern took ~4.1s on a single core for 4000 unmatched BEGIN
+    markers (~340KB) — a chat request from one tenant pasting a payload
+    shaped like this would peg the shared analyzer for every other tenant at
+    once. The bounded pattern must stay comfortably sub-second at the same
+    marker counts: measured at ~7ms / ~40ms / ~171ms for 200 / 1000 / 4000
+    markers (the character class also carries `:,-` now, for the legacy
+    encrypted-PEM fix below — that raises the constant factor versus a
+    base64-only class, ~0.1/0.7/2.7ms, but the growth stays roughly linear in
+    marker count either way, not quadratic). Generous bound (2s) to avoid
+    CI-runner flakiness while still failing hard if the quadratic behaviour
+    ever comes back — the old pattern blew well past this bound even at 1000
+    markers (~257ms) and catastrophically at 4000 (~4.1s).
+    """
+
+    @staticmethod
+    def _payload_with_unmatched_begin_markers(n_markers: int, filler_len: int = 60) -> str:
+        filler = "A" * filler_len + "\n"
+        return "".join(f"-----BEGIN PRIVATE KEY-----\n{filler}" for _ in range(n_markers))
+
+    @pytest.mark.parametrize("n_markers", [200, 1000, 4000])
+    def test_unmatched_begin_markers_do_not_blow_up(self, n_markers):
+        import time
+
+        rec = SecretRecognizer()
+        payload = self._payload_with_unmatched_begin_markers(n_markers)
+
+        start = time.perf_counter()
+        results = _detected(rec, payload, "SECRET")
+        elapsed = time.perf_counter() - start
+
+        assert elapsed < 2.0, f"{n_markers} unmatched BEGIN markers took {elapsed:.3f}s"
+        # None of these should register as a PEM match -- no END marker
+        # anywhere in the payload.
+        pem_results = [r for r in results if "BEGIN PRIVATE KEY" in payload[r.start : r.end]]
+        assert pem_results == []

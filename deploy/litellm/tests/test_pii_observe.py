@@ -582,3 +582,90 @@ async def test_language_detected_from_user_turn_not_kb_context(monkeypatch, capl
     assert "language=nl" in logged, logged
     # The scan itself still saw the English block.
     assert "knowledge base" in client.last_text.lower()
+
+
+# ---------------------------------------------------------------------------
+# System-review finding M4 — length cap on analysed text
+# ---------------------------------------------------------------------------
+# presidio-analyzer runs with cpus: '1', shared by every tenant, with no
+# upstream size cap before this fix. Phase 2 is read-only/fail-open (REQ-5),
+# so truncating the ANALYSED text can only under-count one telemetry
+# sample -- it must never change `data`, the payload Mistral receives.
+@pytest.mark.asyncio
+async def test_text_under_cap_is_analysed_in_full_and_reported_untruncated(monkeypatch, caplog):
+    mod = _load_observer(monkeypatch)
+    monkeypatch.setattr(mod, "_MAX_ANALYZE_CHARS", 100)
+    client = _FakeAsyncClient(results=[])
+    monkeypatch.setattr(mod, "httpx", SimpleNamespace(AsyncClient=lambda **kw: client))
+
+    text = "hallo dit is een kort berichtje zonder iets gevoeligs erin"
+    data = {"model": "klai-fast", "messages": [{"role": "user", "content": text}]}
+
+    with caplog.at_level("WARNING", logger="klai_pii_observe"):
+        await mod.klai_pii_observer.async_pre_call_hook(
+            _user_api_key("org1"), None, data, "completion"
+        )
+        await _drain_background_tasks()
+
+    assert client.last_text == text
+    assert any("truncated=False" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_text_over_cap_is_truncated_before_analysis_but_payload_untouched(
+    monkeypatch, caplog
+):
+    mod = _load_observer(monkeypatch)
+    monkeypatch.setattr(mod, "_MAX_ANALYZE_CHARS", 20)
+    client = _FakeAsyncClient(results=[])
+    monkeypatch.setattr(mod, "httpx", SimpleNamespace(AsyncClient=lambda **kw: client))
+
+    text = "x" * 50
+    data = {"model": "klai-fast", "messages": [{"role": "user", "content": text}]}
+
+    with caplog.at_level("WARNING", logger="klai_pii_observe"):
+        result = await mod.klai_pii_observer.async_pre_call_hook(
+            _user_api_key("org1"), None, data, "completion"
+        )
+        await _drain_background_tasks()
+
+    # The ANALYSER only saw the first 20 chars.
+    assert client.last_text == "x" * 20
+    assert len(client.last_text) == 20
+    assert any("truncated=True" in r.message for r in caplog.records)
+    # REQ-5: the payload itself is untouched regardless -- truncation is a
+    # telemetry-only decision, never a mutation of what reaches Mistral.
+    assert result["messages"][0]["content"] == text
+    assert len(result["messages"][0]["content"]) == 50
+
+
+@pytest.mark.asyncio
+async def test_truncated_flag_present_in_failure_log_too(monkeypatch, caplog):
+    mod = _load_observer(monkeypatch)
+    monkeypatch.setattr(mod, "_MAX_ANALYZE_CHARS", 10)
+
+    class _FailingClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc_info):
+            return False
+
+        async def post(self, *args, **kwargs):
+            raise ConnectionError("presidio-analyzer unreachable")
+
+    monkeypatch.setattr(mod, "httpx", SimpleNamespace(AsyncClient=lambda **kw: _FailingClient()))
+
+    text = "x" * 50
+    data = {"model": "klai-fast", "messages": [{"role": "user", "content": text}]}
+
+    with caplog.at_level("WARNING", logger="klai_pii_observe"):
+        await mod.klai_pii_observer.async_pre_call_hook(
+            _user_api_key("org1"), None, data, "completion"
+        )
+        await _drain_background_tasks()
+
+    assert any(
+        "pii_observe_failed" in r.message and "truncated=True" in r.message
+        for r in caplog.records
+    )
