@@ -52,6 +52,13 @@ EPISODE_TIMEOUT = 600  # seconds per episode (large articles need more time)
 # first would orphan episodes on delete. Tracked in GetKlai/klai#1176.
 MAX_TEXT_CHARS = 30000
 
+# This raises the ceiling for FUTURE runs; it repairs nothing already stored.
+# The resume filter below skips every artifact that already has a
+# graphiti_episode_id, which is exactly the truncated 2026-05 population, so
+# re-running this script will not revisit them. Healing those means deleting
+# their episodes and re-extracting — the rebuild discussed in #1148, not a
+# side effect of a larger constant.
+#
 # The normal ingest path does NOT truncate — routes/ingest.py hands
 # ``indexable_content`` to the procrastinate task in full. This cap applies to
 # this operator one-shot only, which is why the graph has two populations:
