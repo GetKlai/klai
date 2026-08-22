@@ -33,7 +33,37 @@ from knowledge_ingest.graph import ingest_episode
 # Config
 # ---------------------------------------------------------------------------
 EPISODE_TIMEOUT = 600  # seconds per episode (large articles need more time)
-MAX_TEXT_CHARS = 4000  # limit text per episode to reduce LLM calls
+
+# Cap on the text handed to one episode. 4000 was chosen in the original
+# one-shot (2026-03-31) to "reduce LLM calls", and it cost far more than it
+# saved: on the Voys Dutch corpus 488 of 726 documents exceed it, so only 36%
+# of the text ever reached extraction. Everything past the cap was dropped
+# silently — a document simply had no facts about its second half.
+#
+# 30000 retains 91% of that corpus and leaves 24 documents truncated. It is a
+# cap rather than "no limit" because one artifact there is 464k characters:
+# unbounded, a single document would blow the context window and the per-tenant
+# rate budget in one go.
+#
+# The remaining 9% needs a document split across SEVERAL episodes, which is a
+# different change: artifacts.extra records ONE graphiti_episode_id and eight
+# call sites read it, including the connector- and KB-deletion paths that use
+# it to remove episodes from FalkorDB. One-to-many there without updating those
+# first would orphan episodes on delete. Tracked in GetKlai/klai#1176.
+MAX_TEXT_CHARS = 30000
+
+# This raises the ceiling for FUTURE runs; it repairs nothing already stored.
+# The resume filter below skips every artifact that already has a
+# graphiti_episode_id, which is exactly the truncated 2026-05 population, so
+# re-running this script will not revisit them. Healing those means deleting
+# their episodes and re-extracting — the rebuild discussed in #1148, not a
+# side effect of a larger constant.
+#
+# The normal ingest path does NOT truncate — routes/ingest.py hands
+# ``indexable_content`` to the procrastinate task in full. This cap applies to
+# this operator one-shot only, which is why the graph has two populations:
+# episodes written by this script (2026-05, ~8.1k edges, truncated at 4000) and
+# episodes from live ingest (2026-08, ~9.6k edges, complete).
 
 logging.basicConfig(
     level=logging.INFO,
@@ -152,6 +182,18 @@ async def main(limit: int | None = None) -> None:
 
             full_text = "\n\n".join(chunks)
             if len(full_text) > MAX_TEXT_CHARS:
+                # Loud, not silent: a truncated document yields no facts about
+                # its tail, and the old code left no trace that it happened.
+                log.warning(
+                    "[%d/%d] %s — TRUNCATED %d of %d chars (%.0f%% dropped); "
+                    "needs a multi-episode split",
+                    idx,
+                    total_to_process,
+                    title,
+                    len(full_text) - MAX_TEXT_CHARS,
+                    len(full_text),
+                    100 * (len(full_text) - MAX_TEXT_CHARS) / len(full_text),
+                )
                 full_text = full_text[:MAX_TEXT_CHARS]
 
             try:
