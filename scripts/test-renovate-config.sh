@@ -90,10 +90,13 @@ if ! printf '%s\n' "$quality_on_block" | grep -q '^  pull_request:'; then
   echo 'FAIL: quality.yml must trigger on pull_request, or the required check never reports on a PR at all' >&2
   exit 1
 fi
-# Both spellings, deliberately. `paths-ignore:` does not contain the substring
-# `paths:`, so matching on that alone let the exclusive form through — and
-# excluding a directory is the more plausible edit of the two.
-if printf '%s\n' "$quality_on_block" | grep -qE '^[[:space:]]*paths(-ignore)?:'; then
+# Both spellings and both YAML styles, deliberately. `paths-ignore:` does not
+# contain the substring `paths:`, so matching on that alone let the exclusive
+# form through — and excluding a directory is the more plausible edit of the
+# two. Anchoring to the start of a line instead then missed the inline flow
+# mapping (`pull_request: { paths: [...] }`), which is valid YAML and which the
+# original substring check did catch. A word-boundary match covers all four.
+if printf '%s\n' "$quality_on_block" | grep -qE '\bpaths(-ignore)?:'; then
   echo 'FAIL: quality.yml must stay unfiltered — a paths:/paths-ignore: filter means the required check cannot report on an unmatched PR' >&2
   exit 1
 fi
