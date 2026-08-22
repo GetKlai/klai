@@ -363,6 +363,15 @@ def _register_tasks(procrastinate_app: Any) -> None:
         ``source_connector_id`` arg, so the artifact-presence check is the
         canonical signal here.
 
+        Supersession guard: ``document_text`` is frozen at enqueue time, so a
+        job dequeued after a newer ingest replaced its artifact would write
+        stale content. Existence alone does not catch this — superseded rows
+        are retained — and since #1152 named episodes ``doc:<kb_slug>:<path>``
+        the stale episode shares its name with the active version, so retrieval
+        resolves it and cites the live page for content that only existed in
+        the old one. ``_enrich_document`` guards the same window with
+        ``artifact_is_active``; this mirrors it.
+
         SPEC-TI-003-FOLLOWUP-001 AC-1: opens a tenant_scoped_connection on
         ``org_id`` so artifact_exists + update_artifact_extra both run with
         the RLS GUC pinned to this tenant.
@@ -373,6 +382,13 @@ def _register_tasks(procrastinate_app: Any) -> None:
             if not await pg_store.artifact_exists(conn, artifact_id):
                 logger.info(
                     "graphiti_aborted_artifact_missing",
+                    artifact_id=artifact_id,
+                    org_id=org_id,
+                )
+                return
+            if not await pg_store.artifact_is_active(conn, artifact_id):
+                logger.info(
+                    "graphiti_aborted_artifact_superseded",
                     artifact_id=artifact_id,
                     org_id=org_id,
                 )
