@@ -13,9 +13,11 @@ draws nothing from the shared klai-fast rate limit that enrichment and
 taxonomy compete over. Postgres already holds the mapping: every successful
 episode writes ``graphiti_episode_id`` into ``knowledge.artifacts.extra``.
 
-Superseded artifacts are included on purpose. Their episodes carry exactly the
-stale edges this is meant to heal, and their ``kb_slug``/``path`` still name
-the document correctly.
+Superseded artifacts are included on purpose: their episodes carry exactly the
+stale edges this is meant to heal. They are keyed on the path of the ACTIVE
+version at the end of their ``superseded_by`` chain, not their own — a renamed
+connector page (see #1172) leaves old rows under a path Qdrant no longer holds,
+and naming an episode after that is no better than the artifact_id it replaced.
 
 Usage (in a knowledge-ingest container):
 
@@ -49,17 +51,58 @@ async def collect_renames(org_id: str) -> tuple[dict[str, list[str]], int]:
 
     ``renames`` maps the stable document name to the episode uuids that should
     carry it; ``skipped`` counts artifacts with no usable episode pointer.
+
+    The name comes from the CURRENT version of each document, reached by
+    following ``superseded_by``, so episodes extracted from a page that was
+    later renamed land on the key retrieval can actually resolve.
     """
     renames: dict[str, list[str]] = defaultdict(list)
     skipped = 0
 
     async with tenant_scoped_connection(org_id) as conn:
+        # Walk superseded_by to the END of each supersession chain and take
+        # THAT row's kb_slug/path. A row's own path is the wrong answer when
+        # the document was renamed: the old path names a document that no
+        # longer exists in Qdrant, so an episode keyed on it stays exactly as
+        # unresolvable as the artifact_id it replaced. The active version's
+        # path is the one retrieval can look up.
+        #
+        # Only rows with superseded_by IS NULL are real chain ends. Taking the
+        # deepest row reached would treat the depth cap as a terminus: a chain
+        # longer than the bound would silently key its episodes on an
+        # intermediate version's path, which is the same unresolvable-name
+        # defect this script exists to remove. An origin whose walk finds no
+        # terminal LEFT JOINs to NULL and lands in ``skipped`` instead, so it
+        # is reported rather than guessed at.
+        #
+        # depth < 20 bounds the walk. superseded_by points forward in time so
+        # a cycle should be impossible, but an unbounded recursive CTE that
+        # meets one hangs against production instead of failing. Production
+        # (Voys, 2026-08-22) tops out at 7.
         rows = await conn.fetch(
             """
-            SELECT kb_slug, path, extra
-            FROM knowledge.artifacts
-            WHERE org_id = $1 AND extra IS NOT NULL
-            ORDER BY created_at
+            WITH RECURSIVE chain AS (
+                SELECT a.id AS origin, a.superseded_by, a.kb_slug, a.path, 0 AS depth
+                FROM knowledge.artifacts a
+                WHERE a.org_id = $1 AND a.extra IS NOT NULL
+
+                UNION ALL
+
+                SELECT c.origin, n.superseded_by, n.kb_slug, n.path, c.depth + 1
+                FROM chain c
+                JOIN knowledge.artifacts n ON n.id = c.superseded_by AND n.org_id = $1
+                WHERE c.superseded_by IS NOT NULL AND c.depth < 20
+            ),
+            terminal AS (
+                SELECT DISTINCT ON (c.origin) c.origin, c.kb_slug, c.path
+                FROM chain c
+                WHERE c.superseded_by IS NULL
+                ORDER BY c.origin
+            )
+            SELECT t.kb_slug, t.path, a.extra
+            FROM knowledge.artifacts a
+            LEFT JOIN terminal t ON t.origin = a.id
+            WHERE a.org_id = $1 AND a.extra IS NOT NULL
             """,
             org_id,
         )

@@ -451,6 +451,64 @@ async def set_superseded_by(
     )
 
 
+async def get_episode_ids_for_document_history(
+    conn: asyncpg.Connection,
+    org_id: str,
+    artifact_ids: list[str],
+) -> list[str]:
+    """Return the Graphiti episode uuids of these rows AND every version they replaced.
+
+    ``ingest_graphiti_episode`` writes ``graphiti_episode_id`` into
+    ``knowledge.artifacts.extra`` when an episode lands, so that key is the
+    mapping from an artifact VERSION to the episode extracted from it.
+
+    The walk backwards along ``superseded_by`` is the point. A caller passes
+    the rows a rename just closed, but ``soft_delete_artifact`` only closes
+    ACTIVE rows — so for a document ingested more than once before the rename,
+    the ids it hands over cover the newest version only. Every earlier version
+    holds episodes named after the same dead path, and stopping at the direct
+    predecessor would leave those stranded exactly as before.
+
+    Rows contribute nothing when their episode never ran (graphiti disabled,
+    job still queued, extraction failed) or when they carry the ``no-chunks``
+    sentinel ``backfill.py`` writes for documents it deliberately skipped —
+    that string is not an episode uuid and renaming it would match nothing.
+
+    depth < 100 bounds the walk. ``superseded_by`` points forward in time so a
+    cycle should be impossible, but an unbounded recursive CTE that meets one
+    hangs the ingest request. Truncating here costs completeness, never
+    correctness: a missed ancestor keeps its current name and the backfill
+    still reaches it.
+    """
+    if not artifact_ids:
+        return []
+    rows = await conn.fetch(
+        """
+        WITH RECURSIVE history AS (
+            SELECT a.id, 0 AS depth
+            FROM knowledge.artifacts a
+            WHERE a.org_id = $1 AND a.id = ANY($2::uuid[])
+
+            UNION ALL
+
+            SELECT p.id, h.depth + 1
+            FROM history h
+            JOIN knowledge.artifacts p ON p.superseded_by = h.id AND p.org_id = $1
+            WHERE h.depth < 100
+        )
+        SELECT DISTINCT a.extra->>'graphiti_episode_id' AS episode_id
+        FROM knowledge.artifacts a
+        WHERE a.org_id = $1
+          AND a.id IN (SELECT id FROM history)
+          AND a.extra->>'graphiti_episode_id' IS NOT NULL
+          AND a.extra->>'graphiti_episode_id' <> 'no-chunks'
+        """,
+        org_id,
+        artifact_ids,
+    )
+    return [str(row["episode_id"]) for row in rows]
+
+
 async def list_stale_connector_artifact_paths(
     conn: asyncpg.Connection,
     org_id: str,
