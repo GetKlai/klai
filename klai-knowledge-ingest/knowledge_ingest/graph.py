@@ -44,6 +44,67 @@ logger = structlog.get_logger()
 _episode_semaphore: asyncio.Semaphore | None = None
 
 
+# Extra rules appended to Graphiti's entity- AND edge-extraction prompts
+# (graphiti_core injects this same string into extract_nodes, extract_edges and
+# the combined extractor). GetKlai/klai#1148.
+#
+# Two defects were measured on the live Voys graph on 2026-08-21, once #1147
+# made edge facts citable and therefore visible for the first time:
+#
+#   1. Meta-facts. Edges such as "De paginamap identificeert de Voys-app als
+#      een applicatie die kan worden gebruikt..." describe the *document*, not
+#      the domain. They can never answer a user question, but they still take
+#      up context: the graph leg returns candidates on 29% of queries and in
+#      181 of 1,704 requests all 10 of its results were served against
+#      served_top_k=20 — half the model's context.
+#   2. Language drift. The corpus is Dutch, yet several extracted facts came
+#      back in English. The retrieval fulltext leg ORs the user's Dutch query
+#      tokens against the edge text, so an English fact rarely matches a Dutch
+#      question even when it is topically perfect.
+#
+# The examples below are the actual production strings, kept verbatim so the
+# rules stay anchored to observed output rather than to an imagined failure.
+#
+# Reach (graphiti-core 0.29.3): this string is interpolated into the entity
+# prompts (extract_message / extract_json / extract_text), extract_edges, and
+# the combined extractor. It is NOT interpolated into the node-summary prompts
+# (extract_summary / extract_summaries_batch), so entity summaries are out of
+# scope for rule 2 — the rules deliberately speak only about entity names and
+# fact text. tests/test_graph.py pins that reach so a graphiti bump that moves
+# the hook fails in CI.
+_EXTRACTION_INSTRUCTIONS = """
+# SOURCE-DOCUMENT RULES
+
+These episodes are whole documents from a company knowledge base (manuals,
+wiki pages, meeting notes), not chat messages. Two extra rules apply.
+
+1. **Extract facts about the world, never about the document.**
+   The subject of a fact must be a thing that exists outside this text — a
+   product, a person, an organisation, a procedure, a setting. A statement
+   whose subject is the document, page, section, chapter, manual, index,
+   table of contents, heading or layout is NOT a fact; skip it entirely
+   rather than rephrasing it.
+   - BAD: "De paginamap identificeert de Voys-app als een applicatie"
+     (subject is the page map, not the Voys app)
+   - BAD: "De Webphone is een applicatie met een handleiding voor klanten"
+     (the existence of a manual is a property of the documentation)
+   - BAD: "This section explains how to configure call forwarding"
+   - GOOD: "De Voys-app gebruikt de internetverbinding van de smartphone
+     voor gesprekken"
+   - GOOD: "Call forwarding is configured from the Freedom web interface"
+   Rewrite where a real fact hides inside a meta-statement: from "De
+   paginamap identificeert de Voys-app als een applicatie die op mobiel
+   werkt", extract "De Voys-app werkt op mobiel".
+
+2. **Write in the language of the source text.**
+   Entity names and fact text must use the same language as the
+   CURRENT_MESSAGE. Do not translate to English. A Dutch document yields
+   Dutch entity names and Dutch facts; an English document yields English
+   ones. Keep product names, proper nouns and technical terms exactly as
+   they are spelled in the source, in either language.
+"""
+
+
 class _RateLimitedTransport(httpx.AsyncBaseTransport):
     def __init__(self, wrapped: httpx.AsyncBaseTransport, limiter: TokenBucketLimiter) -> None:
         self._wrapped = wrapped
@@ -568,6 +629,12 @@ async def ingest_episode(
     AC-3: 3 retries with exponential backoff (1s, 2s, 4s).
     AC-13: Structured log on success.
     AC-14: LLM calls routed through LiteLLM proxy.
+
+    Extraction is steered by ``_EXTRACTION_INSTRUCTIONS`` (GetKlai/klai#1148).
+    This is the single choke point for every episode — the procrastinate task
+    in ``enrichment_tasks.py``, the route helper in ``routes/ingest.py`` and
+    the ``backfill.py`` script all funnel through here — so the rules cannot
+    be bypassed by one call path.
     """
     if not settings.graphiti_enabled:
         return None
@@ -596,6 +663,9 @@ async def ingest_episode(
                     source_description=content_type,
                     reference_time=reference_time,
                     group_id=org_id,
+                    # GetKlai/klai#1148 — suppress document-meta facts and pin
+                    # the extraction language to the source language.
+                    custom_extraction_instructions=_EXTRACTION_INSTRUCTIONS,
                 )
                 ingest_ms = (time.perf_counter() - t0) * 1000
 

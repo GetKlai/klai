@@ -183,3 +183,93 @@ async def test_ingest_episode_reference_time_matches_belief_time_start():
     call_kwargs = mock_graphiti.add_episode.call_args.kwargs
     expected_dt = datetime.fromtimestamp(1700000000, tz=UTC)
     assert call_kwargs["reference_time"] == expected_dt
+
+
+# ---------------------------------------------------------------------------
+# Extraction-instruction contract -- GetKlai/klai#1148
+# ---------------------------------------------------------------------------
+
+
+def test_extraction_instructions_ban_document_meta_and_pin_language():
+    """The prompt rules that #1148 exists for must be present, not just wired.
+
+    Both defects were measured on live Voys retrievals on 2026-08-21: edge
+    facts whose subject was the document ("De paginamap identificeert...")
+    and English facts extracted from a Dutch corpus.
+    """
+    instructions = graph_module._EXTRACTION_INSTRUCTIONS
+
+    lowered = instructions.lower()
+    # Rule 1 — no statements about the document itself.
+    assert "never about the document" in lowered
+    assert "table of contents" in lowered
+    # The observed production string is kept as the worked example.
+    assert "De paginamap identificeert de Voys-app" in instructions
+    # Rule 2 — output language follows the source language.
+    assert "language of the source text" in lowered
+    assert "do not translate to english" in lowered
+
+
+@pytest.mark.asyncio
+async def test_ingest_episode_passes_extraction_instructions():
+    """Every episode carries the #1148 rules into Graphiti's prompts."""
+    mock_graphiti = AsyncMock()
+    mock_graphiti.add_episode = AsyncMock(return_value=_make_episode_result("ep-abc"))
+
+    with (
+        patch("knowledge_ingest.graph.settings") as mock_settings,
+        patch("knowledge_ingest.graph._get_graphiti", return_value=mock_graphiti),
+    ):
+        mock_settings.graphiti_enabled = True
+        mock_settings.graphiti_max_concurrent = 1
+        mock_settings.graphiti_episode_delay = 0
+        await graph_module.ingest_episode(
+            artifact_id="art-1",
+            document_text="De Voys-app gebruikt de internetverbinding.",
+            org_id="org-1",
+            content_type="markdown",
+            belief_time_start=1700000000,
+        )
+
+    call_kwargs = mock_graphiti.add_episode.call_args.kwargs
+    assert (
+        call_kwargs["custom_extraction_instructions"]
+        is graph_module._EXTRACTION_INSTRUCTIONS
+    )
+
+
+def test_graphiti_still_accepts_custom_extraction_instructions():
+    """``add_episode`` must still take the kwarg we steer extraction with.
+
+    Without this, a graphiti-core bump that renames or drops the hook would
+    leave ingest_episode() passing an argument nothing reads, and the graph
+    would silently go back to producing the #1148 meta-facts. Same failure
+    mode as GetKlai/klai#1137, where a mocked SDK hid a removed method.
+    """
+    import inspect
+
+    pytest.importorskip("graphiti_core")
+    from graphiti_core import Graphiti
+
+    params = inspect.signature(Graphiti.add_episode).parameters
+    assert "custom_extraction_instructions" in params, (
+        "graphiti-core no longer accepts custom_extraction_instructions — "
+        "knowledge_ingest/graph.py relies on it (GetKlai/klai#1148)"
+    )
+
+
+def test_graphiti_injects_extraction_instructions_into_both_prompts():
+    """The hook must reach entity AND edge extraction.
+
+    #1148 is a complaint about edge ``fact`` text, so a hook that only lands
+    in the entity prompt would not fix it.
+    """
+    import inspect
+
+    pytest.importorskip("graphiti_core")
+    from graphiti_core.prompts import extract_edges, extract_nodes
+
+    edge_src = inspect.getsource(extract_edges)
+    node_src = inspect.getsource(extract_nodes)
+    assert "custom_extraction_instructions" in edge_src
+    assert "custom_extraction_instructions" in node_src
