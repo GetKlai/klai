@@ -451,6 +451,40 @@ async def set_superseded_by(
     )
 
 
+async def get_graphiti_episode_ids(
+    conn: asyncpg.Connection,
+    org_id: str,
+    artifact_ids: list[str],
+) -> list[str]:
+    """Return the Graphiti episode uuids recorded on these artifact rows.
+
+    ``ingest_graphiti_episode`` writes ``graphiti_episode_id`` into
+    ``knowledge.artifacts.extra`` when an episode lands, so this is the
+    mapping from an artifact VERSION to the episode extracted from it.
+
+    Rows contribute nothing when their episode never ran (graphiti disabled,
+    job still queued, extraction failed) or when they carry the ``no-chunks``
+    sentinel ``backfill.py`` writes for documents it deliberately skipped —
+    that string is not an episode uuid and renaming it would silently match
+    nothing.
+    """
+    if not artifact_ids:
+        return []
+    rows = await conn.fetch(
+        """
+        SELECT extra->>'graphiti_episode_id' AS episode_id
+        FROM knowledge.artifacts
+        WHERE org_id = $1
+          AND id = ANY($2::uuid[])
+          AND extra->>'graphiti_episode_id' IS NOT NULL
+          AND extra->>'graphiti_episode_id' <> 'no-chunks'
+        """,
+        org_id,
+        artifact_ids,
+    )
+    return [str(row["episode_id"]) for row in rows]
+
+
 async def list_stale_connector_artifact_paths(
     conn: asyncpg.Connection,
     org_id: str,

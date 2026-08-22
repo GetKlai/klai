@@ -20,6 +20,7 @@ from contextlib import ExitStack, asynccontextmanager, contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from klai_kb_slugs import episode_name
 
 from knowledge_ingest import pg_store
 from knowledge_ingest.models import IngestRequest
@@ -41,11 +42,18 @@ def _make_procrastinate_app() -> MagicMock:
 
 
 @contextmanager
-def _ingest_patches(req, closed_rows, delete_document_side_effect=None):
+def _ingest_patches(
+    req,
+    closed_rows,
+    delete_document_side_effect=None,
+    episode_ids=None,
+    rename_side_effect=None,
+):
     """Patch ingest_document's collaborators; yield the mocks tests assert on.
 
     ``closed_rows`` is what ``soft_delete_artifact`` returns — the
-    ``(artifact_id, path)`` pairs this ingest supersedes.
+    ``(artifact_id, path)`` pairs this ingest supersedes. ``episode_ids`` is
+    what those closed rows recorded in ``extra.graphiti_episode_id``.
     """
     with ExitStack() as stack:
 
@@ -109,10 +117,24 @@ def _ingest_patches(req, closed_rows, delete_document_side_effect=None):
         settings.chunk_overlap = 200
         settings.enrichment_enabled = False
 
+        get_episode_ids = _p(
+            "knowledge_ingest.pg_store.get_graphiti_episode_ids",
+            new_callable=AsyncMock,
+            return_value=list(episode_ids or []),
+        )
+        rename_episodes = _p(
+            "knowledge_ingest.graph.rename_episodes_to_document_keys",
+            new_callable=AsyncMock,
+            side_effect=rename_side_effect,
+            return_value=len(episode_ids or []),
+        )
+
         yield {
             "soft_delete": soft_delete,
             "delete_document": delete_document,
             "set_superseded_by": set_superseded_by,
+            "get_episode_ids": get_episode_ids,
+            "rename_episodes": rename_episodes,
         }
 
 
@@ -260,3 +282,120 @@ async def test_qdrant_cleanup_failure_does_not_fail_the_ingest():
 
     assert result["status"] == "ok", "a cleanup blip must not fail the whole ingest"
     mocks["delete_document"].assert_awaited_once_with("org1", "support", _OLD_PATH)
+
+
+@pytest.mark.asyncio
+async def test_renamed_page_repoints_its_graph_episodes_at_the_new_document_key():
+    """Facts extracted before a rename must keep citing their document.
+
+    SPEC-RAG-GRAPH-CITE-002 names episodes ``doc:<kb_slug>:<path>`` so they
+    survive re-ingest. A rename breaks that: the old artifact's episodes keep
+    the OLD path, and the block above deletes exactly the chunks that name
+    resolved against. Every fact extracted before the rename then falls back
+    to rendering as a truncated sentence — the failure the doc-key naming was
+    introduced to remove, reappearing for the one case where the document
+    identity moved.
+    """
+    req = IngestRequest(
+        org_id="org1",
+        kb_slug="support",
+        path=_NEW_PATH,
+        content="# App troubleshooting\n" + ("body content " * 40),
+        source_type="notion",
+        content_type="kb_article",
+        source_connector_id=_CONNECTOR_ID,
+        source_ref=_SOURCE_REF,
+    )
+    conn = _make_conn()
+
+    with _ingest_patches(
+        req,
+        closed_rows=[("may-artifact-id", _OLD_PATH)],
+        episode_ids=["may-episode-uuid"],
+    ) as mocks:
+        from knowledge_ingest.routes.ingest import ingest_document
+
+        result = await ingest_document(conn, req)
+
+    assert result["status"] == "ok"
+
+    mocks["get_episode_ids"].assert_awaited_once()
+    episode_args = mocks["get_episode_ids"].await_args
+    assert "may-artifact-id" in episode_args[0][2], (
+        "the closed row under the old path was not looked up for its episode"
+    )
+
+    mocks["rename_episodes"].assert_awaited_once()
+    org_arg, renames = mocks["rename_episodes"].await_args[0]
+    assert org_arg == "org1"
+    assert renames == {episode_name("support", _NEW_PATH): ["may-episode-uuid"]}, (
+        "pre-rename episodes still carry the old path -- their citations stay unresolvable"
+    )
+
+
+@pytest.mark.asyncio
+async def test_unrenamed_reingest_does_not_touch_the_graph():
+    """A plain re-ingest supersedes under the SAME path and must rename nothing.
+
+    The episode already carries the right name, so a rename here would be
+    write traffic to FalkorDB bought with nothing.
+    """
+    req = IngestRequest(
+        org_id="org1",
+        kb_slug="support",
+        path=_NEW_PATH,
+        content="# App troubleshooting\n" + ("body content " * 40),
+        source_type="notion",
+        content_type="kb_article",
+        source_connector_id=_CONNECTOR_ID,
+        source_ref=_SOURCE_REF,
+    )
+    conn = _make_conn()
+
+    with _ingest_patches(
+        req,
+        closed_rows=[("july-artifact-id", _NEW_PATH)],
+        episode_ids=["july-episode-uuid"],
+    ) as mocks:
+        from knowledge_ingest.routes.ingest import ingest_document
+
+        result = await ingest_document(conn, req)
+
+    assert result["status"] == "ok"
+    mocks["rename_episodes"].assert_not_awaited()
+    mocks["get_episode_ids"].assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_episode_rename_failure_does_not_fail_the_ingest():
+    """A stranded episode costs a citation, not correctness.
+
+    The supersede is already committed by this point, so raising would fail
+    the ingest without undoing it — and the retry cannot recover, because the
+    old row is closed and ``soft_delete_artifact`` stops returning it. Same
+    reasoning as the stale-chunk cleanup directly above it.
+    """
+    req = IngestRequest(
+        org_id="org1",
+        kb_slug="support",
+        path=_NEW_PATH,
+        content="# App troubleshooting\n" + ("body content " * 40),
+        source_type="notion",
+        content_type="kb_article",
+        source_connector_id=_CONNECTOR_ID,
+        source_ref=_SOURCE_REF,
+    )
+    conn = _make_conn()
+
+    with _ingest_patches(
+        req,
+        closed_rows=[("may-artifact-id", _OLD_PATH)],
+        episode_ids=["may-episode-uuid"],
+        rename_side_effect=RuntimeError("falkordb unreachable"),
+    ) as mocks:
+        from knowledge_ingest.routes.ingest import ingest_document
+
+        result = await ingest_document(conn, req)
+
+    assert result["status"] == "ok", "a FalkorDB hiccup must not fail a committed ingest"
+    mocks["rename_episodes"].assert_awaited_once()

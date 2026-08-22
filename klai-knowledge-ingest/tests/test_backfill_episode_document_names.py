@@ -133,3 +133,67 @@ class TestRenameEpisodes:
         assert "SET e.name" in cypher
         for forbidden in ("DELETE", "CREATE", "MERGE", "Entity"):
             assert forbidden not in cypher
+
+
+class TestRenamedDocumentsResolveToTheActivePath:
+    """A renamed page's old rows must be keyed on the path that still exists.
+
+    #1172: for connector documents ``path`` mirrors a user-editable title.
+    When a page is renamed, its pre-rename artifact rows keep the old path
+    while Qdrant only holds the new one. Keying an episode on the row's own
+    path therefore reproduces the exact defect SPEC-RAG-GRAPH-CITE-002 set out
+    to remove — an episode name nothing can resolve.
+    """
+
+    @pytest.mark.asyncio
+    async def test_query_walks_the_supersession_chain(self):
+        from scripts.backfill_episode_document_names import collect_renames
+
+        conn = AsyncMock()
+        conn.fetch = AsyncMock(return_value=[])
+        ctx = MagicMock()
+        ctx.__aenter__ = AsyncMock(return_value=conn)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "scripts.backfill_episode_document_names.tenant_scoped_connection", return_value=ctx
+        ):
+            await collect_renames("org-1")
+
+        sql = conn.fetch.call_args[0][0]
+        assert "superseded_by" in sql, (
+            "the backfill reads each row's own path -- renamed pages keep an "
+            "episode name that resolves to nothing"
+        )
+        assert "RECURSIVE" in sql, "a rename can be superseded again; one hop is not enough"
+        assert "depth < 20" in sql, "an unbounded recursive CTE hangs on a cycle"
+
+    @pytest.mark.asyncio
+    async def test_old_version_is_keyed_on_the_renamed_documents_new_path(self):
+        """The May row under the old title must land on the August key.
+
+        Mirrors the Voys ``support`` incident of 2026-08-14: "App troubleshoot
+        & transfers" was renamed to "App troubleshooting". Both versions'
+        episodes have to answer to the surviving name.
+        """
+        from scripts.backfill_episode_document_names import collect_renames
+
+        # What the chain-walking query returns: the ORIGIN row's extra, paired
+        # with the kb_slug/path of the ACTIVE row at the end of its chain.
+        rows = [
+            _row("support", "App troubleshooting", {"graphiti_episode_id": "ep-may"}),
+            _row("support", "App troubleshooting", {"graphiti_episode_id": "ep-august"}),
+        ]
+        conn = AsyncMock()
+        conn.fetch = AsyncMock(return_value=rows)
+        ctx = MagicMock()
+        ctx.__aenter__ = AsyncMock(return_value=conn)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "scripts.backfill_episode_document_names.tenant_scoped_connection", return_value=ctx
+        ):
+            renames, skipped = await collect_renames("org-1")
+
+        assert renames == {"doc:support:App troubleshooting": ["ep-may", "ep-august"]}
+        assert skipped == 0

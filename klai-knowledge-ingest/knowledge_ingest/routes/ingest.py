@@ -24,7 +24,7 @@ import httpx
 import structlog
 import yaml
 from fastapi import APIRouter, HTTPException, Request
-from klai_kb_slugs import personal_kb_slug
+from klai_kb_slugs import episode_name, personal_kb_slug
 
 from knowledge_ingest import (
     chunker,
@@ -637,6 +637,46 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
                     new_path=req.path,
                     source_ref=req.source_ref,
                 )
+
+    # The rename strands the graph episodes too. They are named
+    # doc:<kb_slug>:<old_path> (SPEC-RAG-GRAPH-CITE-002), and the chunks that
+    # name resolves against are exactly the ones just deleted above — so every
+    # fact extracted before the rename loses its title and URL and renders as a
+    # truncated sentence again. Point them at the document's current key.
+    #
+    # Metadata only: no re-extraction, no LLM calls, nothing drawn from the
+    # shared klai-fast budget. Several versions legitimately end up sharing one
+    # name; retrieval resolves it against the CURRENT version in Qdrant.
+    renamed_ids = [row_id for row_id, stale_path in closed_rows if stale_path != req.path]
+    if renamed_ids:
+        try:
+            episode_ids = await pg_store.get_graphiti_episode_ids(conn, req.org_id, renamed_ids)
+            if episode_ids:
+                repointed = await graph_module.rename_episodes_to_document_keys(
+                    req.org_id,
+                    {episode_name(req.kb_slug, req.path): episode_ids},
+                )
+                logger.info(
+                    "renamed_path_episodes_repointed",
+                    org_id=req.org_id,
+                    kb_slug=req.kb_slug,
+                    new_path=req.path,
+                    episodes=repointed,
+                )
+        except Exception:
+            # Same reasoning as the chunk cleanup above: the supersede is
+            # already committed, so raising fails the ingest without undoing
+            # it, and a retry cannot recover because the closed row stops
+            # coming back from soft_delete_artifact. A stranded episode costs
+            # a citation, not correctness — the fact stays in the graph and
+            # still answers queries, it just renders without its link.
+            logger.exception(
+                "renamed_path_episode_repoint_failed",
+                org_id=req.org_id,
+                kb_slug=req.kb_slug,
+                new_path=req.path,
+                source_ref=req.source_ref,
+            )
 
     # SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-06.2: record image-key
     # bookkeeping so per-connector cleanup can compute orphan keys via
