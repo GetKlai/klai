@@ -232,10 +232,7 @@ async def test_ingest_episode_passes_extraction_instructions():
         )
 
     call_kwargs = mock_graphiti.add_episode.call_args.kwargs
-    assert (
-        call_kwargs["custom_extraction_instructions"]
-        is graph_module._EXTRACTION_INSTRUCTIONS
-    )
+    assert call_kwargs["custom_extraction_instructions"] is graph_module._EXTRACTION_INSTRUCTIONS
 
 
 def test_graphiti_still_accepts_custom_extraction_instructions():
