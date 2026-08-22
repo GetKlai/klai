@@ -1,8 +1,14 @@
 """Graphiti backfill: ingest existing artifacts into the knowledge graph.
 
 Usage:
-    docker exec klai-core-knowledge-ingest-1 python -m knowledge_ingest.backfill
-    docker exec klai-core-knowledge-ingest-1 python -m knowledge_ingest.backfill --limit 1
+    docker exec klai-core-knowledge-ingest-1 \
+        python -m knowledge_ingest.backfill --org-id <org_id>
+    docker exec klai-core-knowledge-ingest-1 \
+        python -m knowledge_ingest.backfill --org-id <org_id> --limit 1
+
+``--org-id`` is required. The tenant used to be read back from the artifacts
+table with a bare LIMIT 1 and no ORDER BY, which is an unordered pick from what
+is now 19 tenants.
 
 Reads artifacts from PostgreSQL, fetches chunks from Qdrant, and calls
 ingest_episode() for each text part. Resume-safe: prefers graphiti_episode_ids
@@ -63,19 +69,28 @@ def _has_graphiti_episode_record(raw_extra: str | dict | None) -> bool:
     return bool(extra.get("graphiti_episode_id"))
 
 
-async def main(limit: int | None = None) -> None:
+async def main(org_id: str, limit: int | None = None) -> None:
     qdrant = AsyncQdrantClient(
         url=settings.qdrant_url,
         api_key=settings.qdrant_api_key or None,
     )
 
     async with cross_org_admin_connection() as conn:
-        # ---- Discover org --------------------------------------------------
-        org = await conn.fetchrow("SELECT DISTINCT org_id FROM knowledge.artifacts LIMIT 1")
-        if not org:
-            log.error("No artifacts found — nothing to backfill")
+        # ---- Confirm the tenant exists -------------------------------------
+        # The org is an argument, never discovered. It used to be read back
+        # from the artifacts table with a bare LIMIT 1 and no ORDER BY — an
+        # unordered pick from what is now 19 tenants, so an operator running a
+        # rebuild for one customer could silently spend another customer's
+        # rate budget writing episodes into their graph. The script opens a
+        # cross_org_admin_connection precisely because it bypasses RLS, which
+        # is what made the wrong-tenant outcome reachable rather than blocked.
+        exists = await conn.fetchval(
+            "SELECT EXISTS (SELECT 1 FROM knowledge.artifacts WHERE org_id = $1)",
+            org_id,
+        )
+        if not exists:
+            log.error("No artifacts for org %s — nothing to backfill", org_id)
             return
-        org_id = str(org["org_id"])
         log.info("Org: %s", org_id)
 
         # ---- Get artifacts -------------------------------------------------
@@ -280,6 +295,12 @@ async def main(limit: int | None = None) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Graphiti backfill")
+    parser.add_argument(
+        "--org-id",
+        required=True,
+        help="Zitadel org id to backfill. Required: this script bypasses RLS, "
+        "so a wrong or missing tenant writes into someone else's graph.",
+    )
     parser.add_argument("--limit", type=int, default=None, help="Process at most N artifacts")
     args = parser.parse_args()
-    asyncio.run(main(limit=args.limit))
+    asyncio.run(main(org_id=args.org_id, limit=args.limit))
