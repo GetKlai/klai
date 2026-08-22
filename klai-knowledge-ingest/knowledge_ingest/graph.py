@@ -96,18 +96,30 @@ wiki pages, meeting notes), not chat messages. One extra rule applies.
    product, a person, an organisation, a procedure, a setting. A statement
    whose subject is the document, page, section, chapter, manual, index,
    table of contents, heading or layout is NOT a fact; skip it entirely
-   rather than rephrasing it.
+   rather than rephrasing it. This includes a document, manual or article
+   being titled, named, called or having a subject; a manual describing or
+   explaining a topic; and something falling under a section or category of
+   the documentation.
    - BAD: "De paginamap identificeert de Voys-app als een applicatie"
      (subject is the page map, not the Voys app)
    - BAD: "De Webphone is een applicatie met een handleiding voor klanten"
      (the existence of a manual is a property of the documentation)
    - BAD: "This section explains how to configure call forwarding"
+   - BAD: "Een van de documentatieartikelen voor Freedom is \
+getiteld 'Freedom: Het Dashboard'." (subject is the documentation article)
+   - BAD: "De handleiding 'Wachtrijstatistieken' beschrijft statistieken over \
+wachtrijen binnen Freedom." (subject is the manual)
+   - BAD: "Het onderwerp van de handleiding 'Statistieken' zijn statistische \
+overzichten in Freedom." (subject is the manual)
+   - BAD: "VoIP-bureautelefoons vallen onder de apparatuursectie in de \
+Voys-documentatie." (relation is to a documentation section)
    - GOOD: "De Voys-app gebruikt de internetverbinding van de smartphone
      voor gesprekken"
    - GOOD: "Call forwarding is configured from the Freedom web interface"
    Rewrite where a real fact hides inside a meta-statement: from "De
    paginamap identificeert de Voys-app als een applicatie die op mobiel
-   werkt", extract "De Voys-app werkt op mobiel".
+   werkt", extract "De Voys-app werkt op mobiel". If no world-fact remains,
+   drop the statement.
 
 Language is NOT covered here. It is set once, for every LLM call graphiti
 makes, by ``_LANGUAGE_POLICY`` below — stating it in two places invites the

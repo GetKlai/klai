@@ -290,6 +290,10 @@ def test_extraction_instructions_ban_document_meta():
     assert "table of contents" in lowered
     # The observed production string is kept as the worked example.
     assert "De paginamap identificeert de Voys-app" in instructions
+    assert "documentatieartikelen" in lowered and "getiteld" in lowered
+    assert "handleiding 'wachtrijstatistieken'" in lowered and "beschrijft" in lowered
+    assert "onderwerp van de handleiding 'statistieken'" in lowered
+    assert "vallen onder de apparatuursectie" in lowered
     # Language must NOT be restated here; two copies drift.
     assert "language of the source text" not in lowered
     assert "_LANGUAGE_POLICY" in instructions
