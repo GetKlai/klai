@@ -10,6 +10,11 @@ Usage:
 table with a bare LIMIT 1 and no ORDER BY, which is an unordered pick from what
 is now 19 tenants.
 
+``--kb-slug`` is optional and repeatable, and restricts the run to those
+knowledge bases. A tenant mixes languages per knowledge base — Voys keeps its
+Dutch help centre in ``support`` and an English vendor corpus in ``ascend`` —
+so a rebuild scoped to one language is expressed as a set of knowledge bases.
+
 Reads artifacts from PostgreSQL, fetches chunks from Qdrant, and calls
 ingest_episode() for each text part. Resume-safe: prefers graphiti_episode_ids
 and falls back to graphiti_episode_id before processing.
@@ -69,7 +74,7 @@ def _has_graphiti_episode_record(raw_extra: str | dict | None) -> bool:
     return bool(extra.get("graphiti_episode_id"))
 
 
-async def main(org_id: str, limit: int | None = None) -> None:
+async def main(org_id: str, limit: int | None = None, kb_slugs: list[str] | None = None) -> None:
     qdrant = AsyncQdrantClient(
         url=settings.qdrant_url,
         api_key=settings.qdrant_api_key or None,
@@ -94,15 +99,54 @@ async def main(org_id: str, limit: int | None = None) -> None:
         log.info("Org: %s", org_id)
 
         # ---- Get artifacts -------------------------------------------------
-        rows = await conn.fetch(
-            """
-            SELECT id, kb_slug, path, content_type, created_at, extra
-            FROM knowledge.artifacts
-            WHERE org_id = $1
-            ORDER BY created_at
-            """,
-            org_id,
-        )
+        # kb_slugs is an INCLUDE list, never an exclude list. A tenant mixes
+        # languages per knowledge base — Voys keeps its Dutch help centre in
+        # `support` and an English vendor corpus in `ascend` — and a rebuild is
+        # usually scoped to one of them. An exclude list would silently pull in
+        # every knowledge base added after the command was written.
+        if kb_slugs:
+            # A typo here would otherwise select nothing, log "Nothing to do"
+            # and exit 0 — so an operator running a rebuild is told it
+            # succeeded when it processed no documents at all. That is the
+            # failure this whole change exists to prevent, one level up.
+            known = {
+                r["kb_slug"]
+                for r in await conn.fetch(
+                    "SELECT DISTINCT kb_slug FROM knowledge.artifacts WHERE org_id = $1",
+                    org_id,
+                )
+            }
+            missing = sorted(set(kb_slugs) - known)
+            if missing:
+                log.error(
+                    "Unknown knowledge base(s) for org %s: %s — known: %s",
+                    org_id,
+                    ", ".join(missing),
+                    ", ".join(sorted(known)),
+                )
+                return
+            log.info("Knowledge bases: %s", ", ".join(sorted(kb_slugs)))
+            rows = await conn.fetch(
+                """
+                SELECT id, kb_slug, path, content_type, created_at, extra
+                FROM knowledge.artifacts
+                WHERE org_id = $1 AND kb_slug = ANY($2::text[])
+                ORDER BY created_at
+                """,
+                org_id,
+                kb_slugs,
+            )
+        else:
+            log.info("Knowledge bases: all")
+            rows = await conn.fetch(
+                """
+                SELECT id, kb_slug, path, content_type, created_at, extra
+                FROM knowledge.artifacts
+                WHERE org_id = $1
+                ORDER BY created_at
+                """,
+                org_id,
+            )
         total = len(rows)
         already = sum(1 for r in rows if _has_graphiti_episode_record(r["extra"]))
         to_process = [r for r in rows if not _has_graphiti_episode_record(r["extra"])]
@@ -302,5 +346,13 @@ if __name__ == "__main__":
         "so a wrong or missing tenant writes into someone else's graph.",
     )
     parser.add_argument("--limit", type=int, default=None, help="Process at most N artifacts")
+    parser.add_argument(
+        "--kb-slug",
+        action="append",
+        dest="kb_slugs",
+        default=None,
+        help="Restrict to this knowledge base; repeat for several. "
+        "Omit to process every knowledge base in the tenant.",
+    )
     args = parser.parse_args()
-    asyncio.run(main(org_id=args.org_id, limit=args.limit))
+    asyncio.run(main(org_id=args.org_id, limit=args.limit, kb_slugs=args.kb_slugs))
