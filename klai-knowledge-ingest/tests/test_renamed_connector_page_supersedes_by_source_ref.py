@@ -118,7 +118,7 @@ def _ingest_patches(
         settings.enrichment_enabled = False
 
         get_episode_ids = _p(
-            "knowledge_ingest.pg_store.get_graphiti_episode_ids",
+            "knowledge_ingest.pg_store.get_episode_ids_for_document_history",
             new_callable=AsyncMock,
             return_value=list(episode_ids or []),
         )
@@ -399,3 +399,33 @@ async def test_episode_rename_failure_does_not_fail_the_ingest():
 
     assert result["status"] == "ok", "a FalkorDB hiccup must not fail a committed ingest"
     mocks["rename_episodes"].assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_episode_lookup_walks_the_whole_predecessor_chain():
+    """Versions older than the one just closed hold episodes on the same dead path.
+
+    ``soft_delete_artifact`` closes ACTIVE rows only, so a document ingested
+    more than once before its rename hands over the newest version alone. Its
+    predecessors carry episodes named after the very path this ingest is about
+    to delete from Qdrant; stopping at the direct predecessor strands them
+    exactly as before the fix.
+    """
+    conn = _make_conn()
+
+    await pg_store.get_episode_ids_for_document_history(conn, "org1", ["may-artifact-id"])
+
+    sql = conn.fetch.call_args[0][0]
+    assert "RECURSIVE" in sql, "only the rows handed in are looked up -- older versions strand"
+    assert "superseded_by" in sql
+    assert "depth < 100" in sql, "an unbounded walk hangs the ingest request on a cycle"
+    assert "'no-chunks'" in sql, "the skip sentinel is not an episode uuid"
+
+
+@pytest.mark.asyncio
+async def test_episode_lookup_is_a_noop_without_artifact_ids():
+    """No closed rows means no query -- an empty ANY() would scan the tenant."""
+    conn = _make_conn()
+
+    assert await pg_store.get_episode_ids_for_document_history(conn, "org1", []) == []
+    conn.fetch.assert_not_awaited()

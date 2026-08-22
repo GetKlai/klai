@@ -167,6 +167,14 @@ class TestRenamedDocumentsResolveToTheActivePath:
         )
         assert "RECURSIVE" in sql, "a rename can be superseded again; one hop is not enough"
         assert "depth < 20" in sql, "an unbounded recursive CTE hangs on a cycle"
+        assert "c.superseded_by IS NULL" in sql, (
+            "the deepest row reached is not a chain end -- a chain longer than "
+            "the depth cap would key its episodes on an intermediate path"
+        )
+        assert "LEFT JOIN terminal" in sql, (
+            "an origin with no reachable terminal must be reported as skipped, "
+            "not silently given some intermediate version's path"
+        )
 
     @pytest.mark.asyncio
     async def test_old_version_is_keyed_on_the_renamed_documents_new_path(self):

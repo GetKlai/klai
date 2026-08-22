@@ -647,10 +647,17 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
     # Metadata only: no re-extraction, no LLM calls, nothing drawn from the
     # shared klai-fast budget. Several versions legitimately end up sharing one
     # name; retrieval resolves it against the CURRENT version in Qdrant.
+    #
+    # closed_rows carries the ACTIVE version only — that is all
+    # soft_delete_artifact closes — so the lookup walks superseded_by backwards
+    # from it. A document ingested twice before being renamed keeps episodes on
+    # the older version too, and they name the same dead path.
     renamed_ids = [row_id for row_id, stale_path in closed_rows if stale_path != req.path]
     if renamed_ids:
         try:
-            episode_ids = await pg_store.get_graphiti_episode_ids(conn, req.org_id, renamed_ids)
+            episode_ids = await pg_store.get_episode_ids_for_document_history(
+                conn, req.org_id, renamed_ids
+            )
             if episode_ids:
                 repointed = await graph_module.rename_episodes_to_document_keys(
                     req.org_id,

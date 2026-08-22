@@ -67,9 +67,18 @@ async def collect_renames(org_id: str) -> tuple[dict[str, list[str]], int]:
         # unresolvable as the artifact_id it replaced. The active version's
         # path is the one retrieval can look up.
         #
+        # Only rows with superseded_by IS NULL are real chain ends. Taking the
+        # deepest row reached would treat the depth cap as a terminus: a chain
+        # longer than the bound would silently key its episodes on an
+        # intermediate version's path, which is the same unresolvable-name
+        # defect this script exists to remove. An origin whose walk finds no
+        # terminal LEFT JOINs to NULL and lands in ``skipped`` instead, so it
+        # is reported rather than guessed at.
+        #
         # depth < 20 bounds the walk. superseded_by points forward in time so
         # a cycle should be impossible, but an unbounded recursive CTE that
-        # meets one hangs against production instead of failing.
+        # meets one hangs against production instead of failing. Production
+        # (Voys, 2026-08-22) tops out at 7.
         rows = await conn.fetch(
             """
             WITH RECURSIVE chain AS (
@@ -84,10 +93,16 @@ async def collect_renames(org_id: str) -> tuple[dict[str, list[str]], int]:
                 JOIN knowledge.artifacts n ON n.id = c.superseded_by AND n.org_id = $1
                 WHERE c.superseded_by IS NOT NULL AND c.depth < 20
             )
-            SELECT DISTINCT ON (c.origin) c.kb_slug, c.path, a.extra
-            FROM chain c
-            JOIN knowledge.artifacts a ON a.id = c.origin
-            ORDER BY c.origin, c.depth DESC
+            terminal AS (
+                SELECT DISTINCT ON (c.origin) c.origin, c.kb_slug, c.path
+                FROM chain c
+                WHERE c.superseded_by IS NULL
+                ORDER BY c.origin
+            )
+            SELECT t.kb_slug, t.path, a.extra
+            FROM knowledge.artifacts a
+            LEFT JOIN terminal t ON t.origin = a.id
+            WHERE a.org_id = $1 AND a.extra IS NOT NULL
             """,
             org_id,
         )
