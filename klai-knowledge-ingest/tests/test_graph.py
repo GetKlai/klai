@@ -190,24 +190,26 @@ async def test_ingest_episode_reference_time_matches_belief_time_start():
 # ---------------------------------------------------------------------------
 
 
-def test_extraction_instructions_ban_document_meta_and_pin_language():
-    """The prompt rules that #1148 exists for must be present, not just wired.
+def test_extraction_instructions_ban_document_meta():
+    """The prompt rule that #1148 exists for must be present, not just wired.
 
-    Both defects were measured on live Voys retrievals on 2026-08-21: edge
-    facts whose subject was the document ("De paginamap identificeert...")
-    and English facts extracted from a Dutch corpus.
+    Measured on live Voys retrievals on 2026-08-21: edge facts whose subject
+    was the document ("De paginamap identificeert...").
+
+    Language used to be rule 2 here. It now lives in ``_LANGUAGE_POLICY``,
+    which reaches every graphiti LLM call rather than only the prompts this
+    string is interpolated into — see tests/test_graph_language_policy.py.
     """
     instructions = graph_module._EXTRACTION_INSTRUCTIONS
 
     lowered = instructions.lower()
-    # Rule 1 — no statements about the document itself.
     assert "never about the document" in lowered
     assert "table of contents" in lowered
     # The observed production string is kept as the worked example.
     assert "De paginamap identificeert de Voys-app" in instructions
-    # Rule 2 — output language follows the source language.
-    assert "language of the source text" in lowered
-    assert "do not translate to english" in lowered
+    # Language must NOT be restated here; two copies drift.
+    assert "language of the source text" not in lowered
+    assert "_LANGUAGE_POLICY" in instructions
 
 
 @pytest.mark.asyncio

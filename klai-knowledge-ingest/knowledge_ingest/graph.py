@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+import types
 from datetime import UTC, datetime
 
 import httpx
@@ -69,14 +70,13 @@ _episode_semaphore: asyncio.Semaphore | None = None
 # prompts (extract_message / extract_json / extract_text), extract_edges, and
 # the combined extractor. It is NOT interpolated into the node-summary prompts
 # (extract_summary / extract_summaries_batch), so entity summaries are out of
-# scope for rule 2 — the rules deliberately speak only about entity names and
-# fact text. tests/test_graph.py pins that reach so a graphiti bump that moves
-# the hook fails in CI.
+# scope. tests/test_graph.py pins that reach so a graphiti bump that moves the
+# hook fails in CI.
 _EXTRACTION_INSTRUCTIONS = """
 # SOURCE-DOCUMENT RULES
 
 These episodes are whole documents from a company knowledge base (manuals,
-wiki pages, meeting notes), not chat messages. Two extra rules apply.
+wiki pages, meeting notes), not chat messages. One extra rule applies.
 
 1. **Extract facts about the world, never about the document.**
    The subject of a fact must be a thing that exists outside this text — a
@@ -96,13 +96,106 @@ wiki pages, meeting notes), not chat messages. Two extra rules apply.
    paginamap identificeert de Voys-app als een applicatie die op mobiel
    werkt", extract "De Voys-app werkt op mobiel".
 
-2. **Write in the language of the source text.**
-   Entity names and fact text must use the same language as the
-   CURRENT_MESSAGE. Do not translate to English. A Dutch document yields
-   Dutch entity names and Dutch facts; an English document yields English
-   ones. Keep product names, proper nouns and technical terms exactly as
-   they are spelled in the source, in either language.
+Language is NOT covered here. It is set once, for every LLM call graphiti
+makes, by ``_LANGUAGE_POLICY`` below — stating it in two places invites the
+two copies to drift apart.
 """
+
+
+# ---------------------------------------------------------------------------
+# Language policy (GetKlai/klai#1148)
+# ---------------------------------------------------------------------------
+#
+# The corpus is multilingual and open-ended: mostly Dutch and English today,
+# German already in use, and French/Spanish/Portuguese arriving with the
+# multi-country chat-agent rollout. Two DIFFERENT things need two different
+# answers, and conflating them is what produced the current graph.
+#
+# Fact text is what a user reads as a citation, so it stays in the language of
+# the document it came from. Translating it would make the citation disagree
+# with the page it links to.
+#
+# Entity names are the graph's join keys, so they cannot be per-language.
+# graphiti resolves entities with character 3-gram shingles + MinHash/Jaccard
+# over the normalised name (``dedup_helpers._shingles``). "Toestel" and
+# "Device" share no 3-gram, so lexical dedup can never merge them; across six
+# languages one concept becomes six unconnected nodes and the graph stops
+# being a graph. A canonical name in one pivot language is what keeps a Dutch
+# document and a Portuguese question anchored to the same node. English is the
+# pivot because the model is strongest there and because the existing graph is
+# already mostly English on entity names (Call 147 vs Gesprek 27, User 57 vs
+# Gebruiker 16), so this is the direction with the least to migrate.
+#
+# Proper nouns are exempt from the pivot in both directions: "Belplan" has no
+# English equivalent worth inventing, and inventing one would break the join
+# with every document that names it.
+#
+# graphiti's own default says the opposite of what we need — "Otherwise,
+# output English", appended AFTER any custom instruction, which is why facts
+# extracted before this override came out English from Dutch pages. The
+# docstring on ``get_extraction_language_instruction`` invites the override;
+# ``_install_language_policy`` below performs it.
+_LANGUAGE_POLICY = """
+
+# LANGUAGE POLICY
+
+The source material is multilingual (Dutch, English, German, French, Spanish,
+Portuguese and others). Apply these rules to every response.
+
+1. **Fact text follows the source.** Any sentence describing a fact,
+   relationship or summary must be written in the same language as the text it
+   was extracted from. A Dutch page yields Dutch facts; a German page yields
+   German facts. Never translate fact text, and never default to English.
+
+2. **Entity names are canonical English.** The name of an entity is an
+   identifier shared across every language in the corpus, so it must not vary
+   by source language. Use the ordinary English term: "Device", not "Toestel"
+   or "Gerät"; "Queue", not "Wachtrij" or "File d'attente".
+
+3. **Proper nouns are never translated.** Product names, brand names, feature
+   names, interface labels, error strings and technical identifiers keep their
+   exact source spelling in both fact text and entity names — "Belplan",
+   "Freedom", "Voys App", "Force Encryption", "sipproxy.voipgrid.nl". If a term
+   is a name rather than a description, copy it verbatim.
+
+The distinction that matters: rule 1 is about the prose a person reads, rule 2
+is about the key the system joins on. A Dutch fact may therefore reference an
+English entity name, and that is correct.
+"""
+
+
+def _install_language_policy() -> None:
+    """Replace graphiti's default language instruction with ``_LANGUAGE_POLICY``.
+
+    ``get_extraction_language_instruction`` is documented as the override point
+    ("Override this function to customize language extraction"), but every LLM
+    client binds it with ``from .client import ...`` at import time. Rebinding
+    only the definition in ``llm_client.client`` would leave each concrete
+    client calling the original, so every module that holds a reference has to
+    be rebound.
+
+    Discovering those modules by attribute rather than naming them means a
+    graphiti upgrade that adds a client picks the policy up automatically;
+    ``tests/test_graph_language_policy.py`` fails if any binding is missed.
+    """
+    import graphiti_core.llm_client as _llm_pkg
+
+    def _policy(group_id: str | None = None) -> str:  # noqa: ARG001 - graphiti's signature
+        # group_id is graphiti's per-partition hook. We deliberately do not
+        # branch on it: the policy is a property of the corpus, not of one
+        # tenant, and a per-tenant pivot language would fragment the graph in
+        # exactly the way rule 2 exists to prevent.
+        return _LANGUAGE_POLICY
+
+    patched = 0
+    for _name in dir(_llm_pkg):
+        module = getattr(_llm_pkg, _name, None)
+        if isinstance(module, types.ModuleType) and hasattr(
+            module, "get_extraction_language_instruction"
+        ):
+            module.get_extraction_language_instruction = _policy
+            patched += 1
+    logger.info("graph_language_policy_installed", bindings=patched)
 
 
 class _RateLimitedTransport(httpx.AsyncBaseTransport):
@@ -273,6 +366,10 @@ def _get_graphiti() -> Graphiti:
                 )
             ),
         )
+        # Before any client is constructed: graphiti appends its own language
+        # instruction to every system message, and its default ends in
+        # "Otherwise, output English".
+        _install_language_policy()
         llm_client = OpenAIGenericClient(config=llm_config, client=openai_client)
         embedder = _BatchSplittingEmbedder(
             inner=OpenAIEmbedder(
