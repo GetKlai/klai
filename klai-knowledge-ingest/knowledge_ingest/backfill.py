@@ -105,6 +105,26 @@ async def main(org_id: str, limit: int | None = None, kb_slugs: list[str] | None
         # usually scoped to one of them. An exclude list would silently pull in
         # every knowledge base added after the command was written.
         if kb_slugs:
+            # A typo here would otherwise select nothing, log "Nothing to do"
+            # and exit 0 — so an operator running a rebuild is told it
+            # succeeded when it processed no documents at all. That is the
+            # failure this whole change exists to prevent, one level up.
+            known = {
+                r["kb_slug"]
+                for r in await conn.fetch(
+                    "SELECT DISTINCT kb_slug FROM knowledge.artifacts WHERE org_id = $1",
+                    org_id,
+                )
+            }
+            missing = sorted(set(kb_slugs) - known)
+            if missing:
+                log.error(
+                    "Unknown knowledge base(s) for org %s: %s — known: %s",
+                    org_id,
+                    ", ".join(missing),
+                    ", ".join(sorted(known)),
+                )
+                return
             log.info("Knowledge bases: %s", ", ".join(sorted(kb_slugs)))
             rows = await conn.fetch(
                 """

@@ -36,6 +36,8 @@ def _admin(conn):
 @pytest.mark.asyncio
 async def test_kb_slugs_restrict_the_query():
     conn = _conn()
+    # First fetch is the known-slug lookup, second is the artifact query.
+    conn.fetch = AsyncMock(side_effect=[[{"kb_slug": "support"}, {"kb_slug": "sip"}], []])
     with (
         patch("knowledge_ingest.backfill.cross_org_admin_connection", return_value=_admin(conn)),
         patch("knowledge_ingest.backfill.AsyncQdrantClient"),
@@ -68,3 +70,36 @@ def test_the_flag_is_an_include_list_not_an_exclude_list():
     assert '"--kb-slug"' in source
     assert 'action="append"' in source
     assert "--exclude-kb" not in source
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_knowledge_base_aborts_instead_of_doing_nothing():
+    """A typo must not read as a completed rebuild.
+
+    Without this the filter simply matches nothing, the script logs "Nothing to
+    do" and exits 0, and the operator believes a rebuild ran. AGENTS.md's
+    fail-loudly rule: unknown external state is an error, not a quiet success.
+    """
+    conn = _conn()
+    conn.fetch = AsyncMock(return_value=[{"kb_slug": "support"}, {"kb_slug": "ascend"}])
+    with (
+        patch("knowledge_ingest.backfill.cross_org_admin_connection", return_value=_admin(conn)),
+        patch("knowledge_ingest.backfill.AsyncQdrantClient"),
+    ):
+        await backfill.main(org_id="org-1", kb_slugs=["suport"])
+
+    # One call only: the known-slug lookup. It never reached the artifact query.
+    assert conn.fetch.await_count == 1, "a misspelled knowledge base still started a run"
+
+
+@pytest.mark.asyncio
+async def test_known_knowledge_bases_proceed():
+    conn = _conn()
+    conn.fetch = AsyncMock(side_effect=[[{"kb_slug": "support"}, {"kb_slug": "ascend"}], []])
+    with (
+        patch("knowledge_ingest.backfill.cross_org_admin_connection", return_value=_admin(conn)),
+        patch("knowledge_ingest.backfill.AsyncQdrantClient"),
+    ):
+        await backfill.main(org_id="org-1", kb_slugs=["support"])
+
+    assert conn.fetch.await_count == 2, "a valid knowledge base did not reach the artifact query"
