@@ -50,6 +50,7 @@ def test_incomplete_episode_list_is_retried_until_expected_part_count_lands():
 async def test_resume_prefers_episode_ids_list_without_reprocessing():
     conn = AsyncMock()
     conn.fetchrow = AsyncMock(return_value={"org_id": "org-1"})
+    conn.fetchval = AsyncMock(return_value=True)
     conn.fetch = AsyncMock(
         return_value=[
             {
@@ -72,7 +73,7 @@ async def test_resume_prefers_episode_ids_list_without_reprocessing():
         patch("knowledge_ingest.backfill.cross_org_admin_connection", return_value=ctx),
         patch("knowledge_ingest.backfill.AsyncQdrantClient", return_value=qdrant),
     ):
-        await backfill.main()
+        await backfill.main(org_id="org-1")
 
     qdrant.scroll.assert_not_awaited()
 
@@ -83,6 +84,7 @@ async def test_backfill_creates_and_records_every_episode_for_a_long_document():
     document_text = f"{paragraph}\n\n{paragraph}"
     conn = AsyncMock()
     conn.fetchrow = AsyncMock(return_value={"org_id": "org-1"})
+    conn.fetchval = AsyncMock(return_value=True)
     conn.fetch = AsyncMock(
         return_value=[
             {
@@ -112,7 +114,7 @@ async def test_backfill_creates_and_records_every_episode_for_a_long_document():
         patch("knowledge_ingest.backfill.AsyncQdrantClient", return_value=qdrant),
         patch("knowledge_ingest.backfill.ingest_episode", ingest_episode),
     ):
-        await backfill.main()
+        await backfill.main(org_id="org-1")
 
     parts = [call.kwargs["document_text"] for call in ingest_episode.await_args_list]
     assert len(parts) == 2
