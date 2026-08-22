@@ -306,7 +306,14 @@ async def _graphiti_background(
         path=path,
     )
     if episode_id:
-        await pg_store.update_artifact_extra(conn, artifact_id, {"graphiti_episode_id": episode_id})
+        await pg_store.update_artifact_extra(
+            conn,
+            artifact_id,
+            {
+                "graphiti_episode_id": episode_id,
+                "graphiti_episode_ids": [episode_id],
+            },
+        )
 
 
 async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:

@@ -10,8 +10,8 @@ renders as a truncated sentence instead of a link.
 
 The rename is metadata only. It does NOT re-extract, makes no LLM calls, and
 draws nothing from the shared klai-fast rate limit that enrichment and
-taxonomy compete over. Postgres already holds the mapping: every successful
-episode writes ``graphiti_episode_id`` into ``knowledge.artifacts.extra``.
+taxonomy compete over. Postgres already holds the mapping in
+``graphiti_episode_ids``, with ``graphiti_episode_id`` as the legacy fallback.
 
 Superseded artifacts are included on purpose: their episodes carry exactly the
 stale edges this is meant to heal. They are keyed on the path of the ACTIVE
@@ -112,10 +112,19 @@ async def collect_renames(org_id: str) -> tuple[dict[str, list[str]], int]:
             extra = json.loads(row["extra"]) if isinstance(row["extra"], str) else row["extra"]
         except (TypeError, ValueError):
             continue
-        episode_id = (extra or {}).get("graphiti_episode_id")
+        extra = extra or {}
+        if "graphiti_episode_ids" in extra:
+            episode_ids = extra["graphiti_episode_ids"]
+            if not isinstance(episode_ids, list):
+                raise TypeError("graphiti_episode_ids must be a JSON list")
+        else:
+            episode_ids = [extra.get("graphiti_episode_id")]
         # "no-chunks" is the sentinel backfill.py writes for artifacts it
         # deliberately skipped; it is not an episode uuid.
-        if not episode_id or episode_id == "no-chunks":
+        episode_ids = [
+            episode_id for episode_id in episode_ids if episode_id and episode_id != "no-chunks"
+        ]
+        if not episode_ids:
             skipped += 1
             continue
         kb_slug, path = row["kb_slug"], row["path"]
@@ -123,7 +132,7 @@ async def collect_renames(org_id: str) -> tuple[dict[str, list[str]], int]:
             skipped += 1
             continue
         name = episode_name(kb_slug, path)
-        renames[name].append(episode_id)
+        renames[name].extend(episode_ids)
 
     return dict(renames), skipped
 

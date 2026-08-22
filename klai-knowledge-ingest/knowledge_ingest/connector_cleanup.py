@@ -313,9 +313,8 @@ async def purge_connector(
         # because their inputs depend on rows that no longer exist.
         # Org-wide sweep: catches both this connector's late-arrivers AND
         # historical orphans from previous failed purges. Computes alive
-        # episode-uuid set from postgres
-        # (``artifacts.extra->>'graphiti_episode_id'`` — the FalkorDB
-        # ``Episodic.uuid`` value the ingest pipeline persists) and
+        # episode-uuid set from both the list and legacy scalar in
+        # ``artifacts.extra`` and
         # intersects against the org's FalkorDB graph.
         alive_episode_uuids = await pg_store.get_alive_episode_uuids_for_org(conn, org_id)
         falkor_orphans_deleted = await graph_module.sweep_orphan_episodes_org_wide(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -36,6 +37,88 @@ def _make_episode_result(uuid: str = "ep-001") -> MagicMock:
     result.nodes = []
     result.edges = []
     return result
+
+
+@pytest.mark.asyncio
+async def test_document_entity_graph_data_accumulates_entities_across_episode_parts():
+    graphiti = AsyncMock()
+    first = _make_episode_result("ep-1")
+    first.nodes = [SimpleNamespace(uuid="entity-1", name="Alpha")]
+    second = _make_episode_result("ep-2")
+    second.nodes = [SimpleNamespace(uuid="entity-2", name="Bravo")]
+    graphiti.add_episode = AsyncMock(side_effect=[first, second])
+    entity_data = graph_module.EntityGraphData()
+
+    with (
+        patch("knowledge_ingest.graph.settings") as mock_settings,
+        patch("knowledge_ingest.graph._get_graphiti", return_value=graphiti),
+        patch(
+            "knowledge_ingest.graph.compute_entity_pagerank",
+            new=AsyncMock(return_value={"entity-1": 0.2, "entity-2": 0.7}),
+        ),
+        patch(
+            "knowledge_ingest.graph.qdrant_store.set_entity_graph_data",
+            new=AsyncMock(return_value=None),
+        ) as set_entity_graph_data,
+    ):
+        mock_settings.graphiti_enabled = True
+        mock_settings.graphiti_max_concurrent = 1
+        mock_settings.graphiti_episode_delay = 0
+        for body in ("Part one", "Part two"):
+            await graph_module.ingest_episode(
+                artifact_id="art-1",
+                document_text=body,
+                org_id="org-1",
+                content_type="markdown",
+                belief_time_start=1700000000,
+                entity_graph_data=entity_data,
+            )
+        await graph_module.flush_entity_graph_data("art-1", "org-1", entity_data)
+
+    assert set_entity_graph_data.await_args.kwargs["entity_uuids"] == [
+        "entity-1",
+        "entity-2",
+    ]
+    assert set_entity_graph_data.await_args.kwargs["entity_names"] == ["Alpha", "Bravo"]
+
+
+@pytest.mark.asyncio
+async def test_document_entity_graph_data_computes_pagerank_once_after_all_parts():
+    graphiti = AsyncMock()
+    first = _make_episode_result("ep-1")
+    first.nodes = [SimpleNamespace(uuid="entity-1", name="Alpha")]
+    second = _make_episode_result("ep-2")
+    second.nodes = [SimpleNamespace(uuid="entity-2", name="Bravo")]
+    graphiti.add_episode = AsyncMock(side_effect=[first, second])
+    entity_data = graph_module.EntityGraphData()
+
+    with (
+        patch("knowledge_ingest.graph.settings") as mock_settings,
+        patch("knowledge_ingest.graph._get_graphiti", return_value=graphiti),
+        patch(
+            "knowledge_ingest.graph.compute_entity_pagerank",
+            new=AsyncMock(return_value={}),
+        ) as compute_entity_pagerank,
+        patch(
+            "knowledge_ingest.graph.qdrant_store.set_entity_graph_data",
+            new=AsyncMock(return_value=None),
+        ),
+    ):
+        mock_settings.graphiti_enabled = True
+        mock_settings.graphiti_max_concurrent = 1
+        mock_settings.graphiti_episode_delay = 0
+        for body in ("Part one", "Part two"):
+            await graph_module.ingest_episode(
+                artifact_id="art-1",
+                document_text=body,
+                org_id="org-1",
+                content_type="markdown",
+                belief_time_start=1700000000,
+                entity_graph_data=entity_data,
+            )
+        await graph_module.flush_entity_graph_data("art-1", "org-1", entity_data)
+
+    compute_entity_pagerank.assert_awaited_once_with("org-1")
 
 
 def test_graphiti_retry_delay_rate_limit_waits_for_minute_window():

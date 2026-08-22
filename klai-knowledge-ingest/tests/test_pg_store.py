@@ -607,3 +607,95 @@ async def test_update_artifact_extra_merges_jsonb():
     assert patch_dict["graphiti_episode_id"] == "ep-xyz"
     # Second positional arg is the artifact_id
     assert call_args[2] == "art-001"
+
+
+@pytest.mark.asyncio
+async def test_append_graphiti_episode_id_preserves_ids_from_earlier_worker_attempts():
+    conn = _make_conn()
+
+    await pg_store.append_graphiti_episode_id(conn, "art-001", "ep-new")
+
+    sql, artifact_id, episode_id = conn.execute.call_args.args
+    assert "extra::jsonb->'graphiti_episode_ids'" in sql
+    assert "|| jsonb_build_array($2::text)" in sql
+    assert artifact_id == "art-001"
+    assert episode_id == "ep-new"
+
+
+@pytest.mark.asyncio
+async def test_document_history_reader_selects_all_episode_ids():
+    conn = _make_conn()
+    conn.fetch = AsyncMock(return_value=[{"episode_id": "ep-1"}, {"episode_id": "ep-2"}])
+
+    result = await pg_store.get_episode_ids_for_document_history(conn, "org1", ["artifact-1"])
+
+    assert result == ["ep-1", "ep-2"]
+    sql = conn.fetch.call_args[0][0]
+    assert "graphiti_episode_ids" in sql
+    assert "jsonb_array_elements_text" in sql
+
+
+@pytest.mark.asyncio
+async def test_kb_deletion_selects_all_episode_ids():
+    conn = _make_conn()
+    conn.fetch = AsyncMock(return_value=[{"episode_id": "ep-1"}, {"episode_id": "ep-2"}])
+
+    result = await pg_store.get_episode_ids(conn, "org1", "support")
+
+    assert result == ["ep-1", "ep-2"]
+    sql = conn.fetch.call_args[0][0]
+    assert "graphiti_episode_ids" in sql
+    assert "jsonb_array_elements_text" in sql
+
+
+@pytest.mark.asyncio
+async def test_connector_deletion_selects_all_episode_ids():
+    conn = _make_conn()
+    conn.fetch = AsyncMock(return_value=[{"episode_id": "ep-1"}, {"episode_id": "ep-2"}])
+
+    result = await pg_store.get_connector_episode_ids(conn, "org1", "support", "connector-1")
+
+    assert result == ["ep-1", "ep-2"]
+    sql = conn.fetch.call_args[0][0]
+    assert "graphiti_episode_ids" in sql
+    assert "jsonb_array_elements_text" in sql
+
+
+@pytest.mark.asyncio
+async def test_page_deletion_selects_all_episode_ids():
+    conn = _make_conn()
+    conn.fetch = AsyncMock(return_value=[{"episode_id": "ep-1"}, {"episode_id": "ep-2"}])
+
+    result = await pg_store.get_page_episode_ids(conn, "org1", "support", "guide.md")
+
+    assert result == ["ep-1", "ep-2"]
+    sql = conn.fetch.call_args[0][0]
+    assert "graphiti_episode_ids" in sql
+    assert "jsonb_array_elements_text" in sql
+
+
+@pytest.mark.asyncio
+async def test_page_deletion_falls_back_to_legacy_scalar_episode_id():
+    conn = _make_conn()
+    conn.fetch = AsyncMock(return_value=[{"episode_id": "legacy-episode"}])
+
+    result = await pg_store.get_page_episode_ids(conn, "org1", "support", "legacy.md")
+
+    assert result == ["legacy-episode"]
+    sql = conn.fetch.call_args[0][0]
+    assert "graphiti_episode_id" in sql
+    assert "jsonb_build_array" in sql
+
+
+@pytest.mark.asyncio
+async def test_org_orphan_sweep_keeps_all_referenced_episode_ids():
+    conn = _make_conn()
+    conn.fetch = AsyncMock(return_value=[{"episode_uuid": "ep-1"}, {"episode_uuid": "ep-2"}])
+
+    result = await pg_store.get_alive_episode_uuids_for_org(conn, "org1")
+
+    assert result == {"ep-1", "ep-2"}
+    sql = conn.fetch.call_args[0][0]
+    assert "graphiti_episode_ids" in sql
+    assert "jsonb_array_elements_text" in sql
+    assert "jsonb_build_array" in sql
