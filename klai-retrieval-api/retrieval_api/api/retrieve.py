@@ -343,30 +343,52 @@ async def _retrieve_sub_queries(
 async def _label_graph_results(graph_results: list[dict], req: RetrieveRequest) -> None:
     """Attach the citation fields a graph edge cannot know about itself.
 
-    A graph edge carries a fact and its artifact_id, but no title or URL, so
-    ``evidence_pack._title()`` would fall through to ``text[:80]`` and render a
-    truncated fact as the source name. Resolving the artifact's own metadata
-    turns that back into the document the reader can actually open.
+    A graph edge carries a fact and a pointer to the document it came from,
+    but no title or URL, so ``evidence_pack._title()`` would fall through to
+    ``text[:80]`` and render a truncated fact as the source name.
+
+    Two pointer schemes coexist and both are resolved here:
+
+    - ``(kb_slug, path)`` — SPEC-RAG-GRAPH-CITE-002, stable across re-ingest.
+      Also yields the CURRENT artifact_id, which is what makes the edge
+      citable at all.
+    - a legacy ``artifact_id`` — every edge written before that change. It
+      identifies a version, so it only resolves while that version is still
+      the current one; those edges heal on their document's next ingest.
 
     Setting ``source_url`` also collapses a graph fact and an ordinary chunk
     from the same document into ONE source, because ``chunk_source_key`` keys
     on the URL before falling back to ``artifact:<id>``.
 
-    Mutates in place. Fail-open: on any miss the edge keeps today's behaviour.
+    Mutates in place. Fail-open: an unresolved edge keeps whatever identity it
+    already had, so a failed lookup never costs a result.
     """
+    documents = [
+        (r["graph_kb_slug"], r["graph_path"])
+        for r in graph_results
+        if r.get("graph_kb_slug") and r.get("graph_path")
+    ]
     artifact_ids = [r.get("artifact_id") for r in graph_results if r.get("artifact_id")]
-    if not artifact_ids:
+    if not documents and not artifact_ids:
         return
-    metadata = await search.fetch_artifact_display_metadata(artifact_ids, req)
-    if not metadata:
-        return
+
+    by_document, by_artifact = await asyncio.gather(
+        search.fetch_document_display_metadata(documents, req),
+        search.fetch_artifact_display_metadata(artifact_ids, req),
+    )
+
     for result in graph_results:
-        meta = metadata.get(result.get("artifact_id") or "")
+        key = (result.get("graph_kb_slug"), result.get("graph_path"))
+        meta = (
+            by_document.get(key) if all(key) else by_artifact.get(result.get("artifact_id") or "")
+        )
         if not meta:
             continue
         for field in ("title", "source_url", "source_label", "original_filename"):
             if meta.get(field):
                 result[field] = meta[field]
+        if meta.get("artifact_id"):
+            result["artifact_id"] = meta["artifact_id"]
 
 
 @router.post("/retrieve", response_model=RetrieveResponse)

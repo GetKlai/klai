@@ -60,7 +60,7 @@ async def main(limit: int | None = None) -> None:
         # ---- Get artifacts -------------------------------------------------
         rows = await conn.fetch(
             """
-            SELECT id, path, content_type, created_at, extra
+            SELECT id, kb_slug, path, content_type, created_at, extra
             FROM knowledge.artifacts
             WHERE org_id = $1
             ORDER BY created_at
@@ -162,6 +162,8 @@ async def main(limit: int | None = None) -> None:
                         org_id=org_id,
                         content_type=content_type,
                         belief_time_start=created_epoch,
+                        kb_slug=row["kb_slug"] or "",
+                        path=row["path"] or "",
                     ),
                     timeout=EPISODE_TIMEOUT,
                 )

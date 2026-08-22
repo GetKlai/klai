@@ -476,7 +476,7 @@ async def test_episode_lookup_is_scoped_to_the_tenant_database():
         "retrieval_api.services.graph_search.EpisodicNode.get_by_uuids",
         new=AsyncMock(return_value=[_make_episode("ep-1", "artifact-abc", "org-1")]),
     ) as mock_lookup:
-        mapping = await graph_search._resolve_episode_artifacts(mock_graphiti, [edge], "org-1")
+        mapping = await graph_search._resolve_episode_names(mock_graphiti, [edge], "org-1")
 
     mock_graphiti.clients.driver.clone.assert_called_once_with(database="org-1")
     assert mock_lookup.await_args.args[0] is cloned
@@ -500,7 +500,7 @@ async def test_episode_from_another_tenant_is_discarded():
         "retrieval_api.services.graph_search.EpisodicNode.get_by_uuids",
         new=AsyncMock(return_value=[_make_episode("ep-1", "artifact-of-other-org", "org-2")]),
     ):
-        mapping = await graph_search._resolve_episode_artifacts(mock_graphiti, [edge], "org-1")
+        mapping = await graph_search._resolve_episode_names(mock_graphiti, [edge], "org-1")
 
     assert mapping == {}
 

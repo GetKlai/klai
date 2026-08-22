@@ -23,6 +23,7 @@ from graphiti_core.llm_client.config import LLMConfig
 from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
 from graphiti_core.nodes import EpisodicNode
 from klai_graphiti_compat import apply_falkordb_compat
+from klai_kb_slugs import parse_episode_name
 
 from retrieval_api.config import settings
 
@@ -131,8 +132,8 @@ async def _search_with_provenance(
         graphiti.search(query, group_ids=[org_id]),
         timeout=settings.graph_search_timeout,
     )
-    episode_artifacts = await _resolve_episode_artifacts(graphiti, results, org_id)
-    return _convert_results(results, top_k, episode_artifacts)
+    episode_names = await _resolve_episode_names(graphiti, results, org_id)
+    return _convert_results(results, top_k, episode_names)
 
 
 def _episode_uuids(edge: object) -> list[str]:
@@ -143,14 +144,17 @@ def _episode_uuids(edge: object) -> list[str]:
     return [uuid for uuid in episodes if isinstance(uuid, str) and uuid]
 
 
-async def _resolve_episode_artifacts(
-    graphiti: Graphiti, results: list, org_id: str
-) -> dict[str, str]:
-    """Map episode uuid -> Klai artifact_id for the edges in ``results``.
+async def _resolve_episode_names(graphiti: Graphiti, results: list, org_id: str) -> dict[str, str]:
+    """Map episode uuid -> episode name for the edges in ``results``.
 
-    knowledge-ingest calls ``add_episode(name=artifact_id, ...)``, so an
-    episode node's ``name`` IS the artifact identity. That is what turns a
-    derived graph fact into something the evidence pack can cite.
+    The name is what ties a derived fact back to a document. Two schemes are
+    in the graph at once and both must keep working:
+
+    - ``doc:<kb_slug>:<path>`` (SPEC-RAG-GRAPH-CITE-002) — the identity
+      ingest dedups on, stable across re-ingest.
+    - a bare ``artifact_id`` — every episode written before that change.
+      artifact_id identifies a VERSION, so it stops resolving once the page
+      is re-ingested; those edges heal on their next ingest.
 
     TENANT ISOLATION. ``EpisodicNode.get_by_uuids`` matches on uuid alone —
     it applies no group_id filter of its own. Scoping therefore rests on the
@@ -185,10 +189,10 @@ async def _resolve_episode_artifacts(
         if getattr(episode, "group_id", None) != org_id:
             foreign += 1
             continue
-        artifact_id = getattr(episode, "name", None)
+        name = getattr(episode, "name", None)
         uuid = getattr(episode, "uuid", None)
-        if isinstance(artifact_id, str) and artifact_id and isinstance(uuid, str):
-            resolved[uuid] = artifact_id
+        if isinstance(name, str) and name and isinstance(uuid, str):
+            resolved[uuid] = name
     if foreign:
         logger.warning("graph_episode_foreign_group_id_dropped", org_id=org_id, count=foreign)
     return resolved
@@ -256,17 +260,31 @@ def _convert_results(
             score = base
 
         uid = str(getattr(r, "uuid", i))
-        artifact_id = None
-        for episode_uuid in _episode_uuids(r):
-            artifact_id = (episode_artifacts or {}).get(episode_uuid)
-            if artifact_id:
-                break
+        # Prefer a document-key episode over a legacy artifact-id one. An edge
+        # accumulates episodes as later ingests re-confirm the same fact, and
+        # the pre-rollout episode stays FIRST in that list — taking whichever
+        # name resolves first would therefore keep picking the superseded
+        # artifact_id and no existing edge would ever heal. Choosing by scheme
+        # instead of by position removes the ordering assumption entirely.
+        names = [
+            name
+            for episode_uuid in _episode_uuids(r)
+            if (name := (episode_artifacts or {}).get(episode_uuid))
+        ]
+        document = next((parsed for name in names if (parsed := parse_episode_name(name))), None)
+        source_name = None if document else next(iter(names), None)
+        # A doc-key edge gets its artifact_id from the CURRENT version at
+        # label time; a legacy edge carries the (possibly superseded) id it
+        # was named after, which keeps it citable exactly as it is today.
+        artifact_id = source_name
         converted.append(
             {
                 "chunk_id": f"graph:{uid}",
                 "text": text,
                 "score": score,
                 "artifact_id": artifact_id,
+                "graph_kb_slug": document[0] if document else None,
+                "graph_path": document[1] if document else None,
                 "content_type": "graph_edge",
                 "context_prefix": None,
                 "scope": "org",

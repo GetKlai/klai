@@ -31,6 +31,7 @@ except ImportError:
     _GRAPHITI_AVAILABLE = False  # graphiti-core not installed yet; added in /run SPEC-KB-011
 
 import structlog
+from klai_kb_slugs import episode_name
 
 import knowledge_ingest.qdrant_store as qdrant_store
 from knowledge_ingest.config import settings
@@ -267,6 +268,46 @@ async def _update_edge_weights(
     return updated
 
 
+async def rename_episodes_to_document_keys(org_id: str, renames: dict[str, list[str]]) -> int:
+    """Point existing episodes at their DOCUMENT instead of an artifact version.
+
+    ``renames`` maps a stable episode name (``doc:<kb_slug>:<path>``) to the
+    episode uuids that should carry it.
+
+    SPEC-RAG-GRAPH-CITE-002 makes ingest write this name, but that only helps
+    documents that get ingested again — and content_hash dedup means an
+    unchanged page is never re-ingested, so an existing edge would keep its
+    artifact-version name forever and its citations would stay unresolvable.
+
+    This is a metadata rename, not a re-extraction: no LLM calls, no entity
+    work, nothing drawn from the shared klai-fast budget. Idempotent, so a
+    partially completed run can simply be repeated.
+
+    Several versions of one document legitimately end up sharing a name. That
+    is fine — the name is a pointer, and retrieval resolves it against the
+    CURRENT version in Qdrant.
+    """
+    if not settings.graphiti_enabled or not renames:
+        return 0
+    graphiti = _get_graphiti()
+    driver = graphiti.driver.clone(org_id)
+    renamed = 0
+    for name, uuids in renames.items():
+        if not uuids:
+            continue
+        result = await driver.execute_query(
+            "MATCH (e:Episodic) WHERE e.uuid IN $uuids SET e.name = $name RETURN count(e) AS n",
+            uuids=uuids,
+            name=name,
+        )
+        if result is not None:
+            records, _, _ = result
+            if records:
+                renamed += records[0].get("n", 0)
+    logger.info("graph_episodes_renamed", org_id=org_id, documents=len(renames), episodes=renamed)
+    return renamed
+
+
 async def delete_kb_episodes(org_id: str, episode_ids: list[str]) -> None:
     """Delete FalkorDB nodes for a set of episodes within an org's graph.
 
@@ -489,12 +530,33 @@ async def compute_entity_pagerank(org_id: str) -> dict[str, float]:
         return {}
 
 
+def _episode_name(artifact_id: str, kb_slug: str, path: str) -> str:
+    """Name an episode after the DOCUMENT, falling back to the artifact_id.
+
+    SPEC-RAG-GRAPH-CITE-002. ``artifact_id`` identifies a version, not a
+    document: every ingest mints a fresh uuid4 and supersedes the previous
+    row, while Qdrant keeps only the current version's chunks. An episode
+    named after it therefore stops resolving the moment its page is
+    re-ingested, which is exactly what made graph citations render as
+    truncated sentences instead of links.
+
+    The fallback keeps in-flight Procrastinate jobs working: those were
+    deferred with the old kwargs and arrive without kb_slug/path, and a task
+    that has been queued for an hour must not fail on a signature change.
+    """
+    if kb_slug and path:
+        return episode_name(kb_slug, path)
+    return artifact_id
+
+
 async def ingest_episode(
     artifact_id: str,
     document_text: str,
     org_id: str,
     content_type: str,
     belief_time_start: int,
+    kb_slug: str = "",
+    path: str = "",
 ) -> str | None:
     """Ingest a document as a Graphiti episode.
 
@@ -528,7 +590,7 @@ async def ingest_episode(
                 )
                 t0 = time.perf_counter()
                 result = await graphiti.add_episode(
-                    name=artifact_id,
+                    name=_episode_name(artifact_id, kb_slug, path),
                     episode_body=document_text,
                     source=EpisodeType.text,
                     source_description=content_type,

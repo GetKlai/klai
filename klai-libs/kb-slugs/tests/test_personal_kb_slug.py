@@ -53,12 +53,20 @@ def test_personal_kb_slug_matches_legacy_inline_pattern() -> None:
         )
 
 
-def test_personal_kb_slug_is_in_dunder_all() -> None:
-    """Public-API surface is intentionally narrow — exactly one export.
+def test_public_api_surface_is_deliberate() -> None:
+    """Public-API surface stays narrow and explicit.
 
-    Adding new exports requires updating ``__all__``; this test ensures
-    re-exports stay deliberate.
+    Adding new exports requires updating ``__all__`` AND this list, so a
+    re-export is always a decision rather than a side effect. The episode
+    helpers were added by SPEC-RAG-GRAPH-CITE-002: they belong here because
+    knowledge-ingest writes the episode name and retrieval-api parses it, so
+    the format must live in exactly one place — the same reason
+    ``personal_kb_slug`` does.
     """
     import klai_kb_slugs
 
-    assert klai_kb_slugs.__all__ == ["personal_kb_slug"]
+    assert klai_kb_slugs.__all__ == [
+        "episode_name",
+        "parse_episode_name",
+        "personal_kb_slug",
+    ]

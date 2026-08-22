@@ -124,6 +124,10 @@ async def ensure_collection() -> None:
 
     for field in (
         "kb_slug",
+        # SPEC-RAG-GRAPH-CITE-002: retrieval resolves a graph fact to its source
+        # document by (kb_slug, path), the identity that survives re-ingest.
+        # Without the index that filter degrades to a payload scan of the KB.
+        "path",
         "artifact_id",
         "content_type",
         "user_id",
