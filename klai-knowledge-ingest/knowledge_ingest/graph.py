@@ -135,6 +135,17 @@ two copies to drift apart.
 # extracted before this override came out English from Dutch pages. The
 # docstring on ``get_extraction_language_instruction`` invites the override;
 # ``_install_language_policy`` below performs it.
+#
+# This governs EXTRACTION ONLY; edges already in the graph keep the language
+# they were written in. content_hash dedup means an unchanged page is never
+# re-extracted, so the existing mix heals only via a deliberate migration
+# (#1148). The transitional state is safe rather than merely tolerable: edges
+# are extracted against ``extracted_nodes`` — the names produced by this same
+# run, before resolution against existing nodes (graphiti.py:656-659) — so the
+# ENTITIES list an edge must reference always holds the canonical names, and no
+# relationship is dropped for naming a node the old graph spells differently.
+# What a pre-existing node costs is only that resolution keeps ITS name, so
+# canonicalisation of that concept waits for the migration.
 _LANGUAGE_POLICY = """
 
 # LANGUAGE POLICY
