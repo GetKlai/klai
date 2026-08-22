@@ -9,6 +9,12 @@ and nothing recorded that it had happened.
 
 from __future__ import annotations
 
+import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
 from knowledge_ingest import backfill
 
 
@@ -30,15 +36,97 @@ def test_cap_still_exists():
     assert backfill.MAX_TEXT_CHARS <= 60000
 
 
-def test_truncation_is_reported(caplog):
-    """Silent truncation is what made this invisible for five months."""
-    import inspect
+def test_incomplete_episode_list_is_retried_until_expected_part_count_lands():
+    extra = {
+        "graphiti_episode_ids": ["episode-1"],
+        "graphiti_episode_part_count": 2,
+        "graphiti_episode_complete": False,
+    }
 
-    source = inspect.getsource(backfill)
-    truncation_block = source[source.index("MAX_TEXT_CHARS:") :]
-    truncation_block = truncation_block[: truncation_block.index("try:")]
+    assert backfill._has_graphiti_episode_record(extra) is False
 
-    assert "log.warning" in truncation_block, (
-        "truncation leaves no trace -- a document loses its tail and nothing says so"
+
+@pytest.mark.asyncio
+async def test_resume_prefers_episode_ids_list_without_reprocessing():
+    conn = AsyncMock()
+    conn.fetchrow = AsyncMock(return_value={"org_id": "org-1"})
+    conn.fetch = AsyncMock(
+        return_value=[
+            {
+                "id": "artifact-1",
+                "kb_slug": "support",
+                "path": "guide.md",
+                "content_type": "text/markdown",
+                "created_at": 1,
+                "extra": json.dumps({"graphiti_episode_ids": ["ep-1", "ep-2"]}),
+            }
+        ]
     )
-    assert "TRUNCATED" in truncation_block
+    ctx = MagicMock()
+    ctx.__aenter__ = AsyncMock(return_value=conn)
+    ctx.__aexit__ = AsyncMock(return_value=False)
+    qdrant = MagicMock()
+    qdrant.scroll = AsyncMock(return_value=([], None))
+
+    with (
+        patch("knowledge_ingest.backfill.cross_org_admin_connection", return_value=ctx),
+        patch("knowledge_ingest.backfill.AsyncQdrantClient", return_value=qdrant),
+    ):
+        await backfill.main()
+
+    qdrant.scroll.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_backfill_creates_and_records_every_episode_for_a_long_document():
+    paragraph = ("A complete sentence. " * 1000).strip()
+    document_text = f"{paragraph}\n\n{paragraph}"
+    conn = AsyncMock()
+    conn.fetchrow = AsyncMock(return_value={"org_id": "org-1"})
+    conn.fetch = AsyncMock(
+        return_value=[
+            {
+                "id": "artifact-1",
+                "kb_slug": "support",
+                "path": "guide.md",
+                "content_type": "text/markdown",
+                "created_at": 1,
+                "extra": None,
+            }
+        ]
+    )
+    ctx = MagicMock()
+    ctx.__aenter__ = AsyncMock(return_value=conn)
+    ctx.__aexit__ = AsyncMock(return_value=False)
+    qdrant = MagicMock()
+    qdrant.scroll = AsyncMock(
+        return_value=(
+            [SimpleNamespace(payload={"artifact_id": "artifact-1", "text": document_text})],
+            None,
+        )
+    )
+    ingest_episode = AsyncMock(side_effect=["episode-1", "episode-2"])
+
+    with (
+        patch("knowledge_ingest.backfill.cross_org_admin_connection", return_value=ctx),
+        patch("knowledge_ingest.backfill.AsyncQdrantClient", return_value=qdrant),
+        patch("knowledge_ingest.backfill.ingest_episode", ingest_episode),
+    ):
+        await backfill.main()
+
+    parts = [call.kwargs["document_text"] for call in ingest_episode.await_args_list]
+    assert len(parts) == 2
+    assert "\n\n".join(parts) == document_text
+    assert all(len(part) <= backfill.MAX_TEXT_CHARS for part in parts)
+    assert conn.execute.await_count == 4
+    first_patch = json.loads(conn.execute.await_args_list[0].args[1])
+    final_patch = json.loads(conn.execute.await_args_list[-1].args[1])
+    assert first_patch == {
+        "graphiti_episode_part_count": 2,
+        "graphiti_episode_complete": False,
+    }
+    assert [call.args[2] for call in conn.execute.await_args_list[1:3]] == [
+        "episode-1",
+        "episode-2",
+    ]
+    assert final_patch["graphiti_episode_complete"] is True
