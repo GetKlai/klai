@@ -58,6 +58,7 @@ async def test_ingest_crawl_result_populates_link_fields():
     """_ingest_crawl_result populates extra with links_to, anchor_texts, incoming_link_count."""
     mock_conn = _make_mock_conn()
     result = _make_crawl_result()
+    result.metadata = {"title": "Configure call forwarding"}
 
     outbound_urls = ["https://example.com/b"]
     # ``make_pg_store_mock`` from conftest returns
@@ -112,6 +113,7 @@ async def test_ingest_crawl_result_populates_link_fields():
         assert ingest_req.extra["links_to"] == ["https://example.com/b"]
         assert ingest_req.extra["anchor_texts"] == ["Link to B"]
         assert ingest_req.extra["incoming_link_count"] == 3
+        assert ingest_req.title == "Configure call forwarding"
 
 
 @pytest.mark.asyncio

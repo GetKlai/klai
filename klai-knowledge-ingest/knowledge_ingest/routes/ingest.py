@@ -14,10 +14,13 @@ so RLS sees the tenant context.
 
 import hashlib
 import hmac
+import html
 import json
+import re
 import time
 import uuid
 from datetime import UTC, datetime
+from urllib.parse import unquote, urlparse
 
 import asyncpg
 import httpx
@@ -112,22 +115,58 @@ def _verify_internal_secret(request: Request) -> None:
 
 
 def _extract_title(content: str, path: str, explicit_title: str | None = None) -> str:
-    """Extract title from caller metadata, frontmatter, H1, then path."""
+    """Extract title from caller metadata, frontmatter, H1, then URL/path."""
+    fallback_id: str | None = None
+    parsed_path = urlparse(path)
+    path_segments = (
+        {unquote(segment) for segment in parsed_path.path.split("/") if segment}
+        if parsed_path.scheme in {"http", "https"} and parsed_path.netloc
+        else set()
+    )
+
+    def is_url_id_leak(candidate: str) -> bool:
+        # Numeric titles such as room "204" are legitimate; only reject the
+        # exact URL-segment match observed for the leaked article id "15937".
+        return candidate.isdigit() and candidate in path_segments
+
     if explicit_title and explicit_title.strip():
-        return explicit_title.strip()
+        candidate = explicit_title.strip()
+        if not is_url_id_leak(candidate):
+            return candidate
+        fallback_id = candidate
     if content.startswith("---"):
         end = content.find("\n---", 3)
         if end != -1:
             try:
                 fm = yaml.safe_load(content[3:end])
                 if isinstance(fm, dict) and fm.get("title"):
-                    return str(fm["title"])
+                    candidate = str(fm["title"]).strip()
+                    if candidate and not is_url_id_leak(candidate):
+                        return candidate
+                    fallback_id = fallback_id or candidate or None
             except Exception:
                 logger.debug("frontmatter_yaml_parse_error")
     for line in content.splitlines():
         if line.startswith("# "):
-            return line[2:].strip()
-    return path.rsplit("/", 1)[-1].replace(".md", "")
+            candidate = line[2:].strip()
+            if candidate and not is_url_id_leak(candidate):
+                return candidate
+            fallback_id = fallback_id or candidate or None
+    html_h1s = re.findall(r"<h1(?:\s[^>]*)?>(.*?)</h1>", content, flags=re.IGNORECASE | re.DOTALL)
+    # Crawled HTML can retain a masthead H1 before the article H1, as in the
+    # observed "Ascend Cloud" then "Configure call forwarding" page.
+    for html_h1 in reversed(html_h1s):
+        candidate = html.unescape(re.sub(r"<[^>]+>", "", html_h1)).strip()
+        if candidate and not is_url_id_leak(candidate):
+            return candidate
+        fallback_id = fallback_id or candidate or None
+    if parsed_path.scheme in {"http", "https"} and parsed_path.netloc:
+        slug = unquote(parsed_path.path.rstrip("/").rsplit("/", 1)[-1])
+        slug = re.sub(r"\.(?:html?|md)$", "", slug, flags=re.IGNORECASE)
+        if slug and not slug.isdigit():
+            return re.sub(r"[-_]+", " ", slug).strip().title()
+        fallback_id = fallback_id or slug or None
+    return fallback_id or path.rsplit("/", 1)[-1].replace(".md", "")
 
 
 def _extract_frontmatter_metadata(content: str) -> dict:
