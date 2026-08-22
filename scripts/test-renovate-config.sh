@@ -86,8 +86,18 @@ fi
 # all, and the PR can never merge — which is the failure mode this whole file
 # exists to prevent.
 quality_on_block=$(awk '/^on:/{f=1;next} /^[a-z]/{f=0} f' "$quality_workflow")
-if printf '%s\n' "$quality_on_block" | grep -q 'paths:'; then
-  echo 'FAIL: quality.yml must stay unfiltered — a paths: filter means the required check cannot report on an unmatched PR' >&2
+if ! printf '%s\n' "$quality_on_block" | grep -q '^  pull_request:'; then
+  echo 'FAIL: quality.yml must trigger on pull_request, or the required check never reports on a PR at all' >&2
+  exit 1
+fi
+# Both spellings and both YAML styles, deliberately. `paths-ignore:` does not
+# contain the substring `paths:`, so matching on that alone let the exclusive
+# form through — and excluding a directory is the more plausible edit of the
+# two. Anchoring to the start of a line instead then missed the inline flow
+# mapping (`pull_request: { paths: [...] }`), which is valid YAML and which the
+# original substring check did catch. A word-boundary match covers all four.
+if printf '%s\n' "$quality_on_block" | grep -qE '\bpaths(-ignore)?:'; then
+  echo 'FAIL: quality.yml must stay unfiltered — a paths:/paths-ignore: filter means the required check cannot report on an unmatched PR' >&2
   exit 1
 fi
 
