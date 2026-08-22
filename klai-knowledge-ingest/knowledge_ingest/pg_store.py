@@ -458,9 +458,9 @@ async def get_episode_ids_for_document_history(
 ) -> list[str]:
     """Return the Graphiti episode uuids of these rows AND every version they replaced.
 
-    ``ingest_graphiti_episode`` writes ``graphiti_episode_id`` into
-    ``knowledge.artifacts.extra`` when an episode lands, so that key is the
-    mapping from an artifact VERSION to the episode extracted from it.
+    ``ingest_graphiti_episode`` writes ``graphiti_episode_ids`` plus the first
+    id in ``graphiti_episode_id`` when episodes land. The list is authoritative;
+    the scalar keeps rows written before GetKlai/klai#1176 readable.
 
     The walk backwards along ``superseded_by`` is the point. A caller passes
     the rows a rename just closed, but ``soft_delete_artifact`` only closes
@@ -498,13 +498,21 @@ async def get_episode_ids_for_document_history(
             JOIN knowledge.artifacts p ON p.superseded_by = h.id AND p.org_id = $1
             WHERE h.depth < 100
         )
-        SELECT DISTINCT a.extra->>'graphiti_episode_id' AS episode_id
+        SELECT DISTINCT stored_episode.episode_id
         FROM knowledge.artifacts a
+        CROSS JOIN LATERAL jsonb_array_elements_text(
+            CASE
+                WHEN a.extra::jsonb ? 'graphiti_episode_ids'
+                    THEN a.extra::jsonb->'graphiti_episode_ids'
+                WHEN a.extra::jsonb->>'graphiti_episode_id' IS NOT NULL
+                    THEN jsonb_build_array(a.extra::jsonb->>'graphiti_episode_id')
+                ELSE '[]'::jsonb
+            END
+        ) AS stored_episode(episode_id)
         WHERE a.org_id = $1
           AND a.id IN (SELECT id FROM history)
-          AND a.extra->>'graphiti_episode_id' IS NOT NULL
-          AND a.extra->>'graphiti_episode_id' <> 'no-chunks'
-          AND a.extra->>'graphiti_episode_id' NOT LIKE 'skipped:%'
+          AND stored_episode.episode_id <> 'no-chunks'
+          AND stored_episode.episode_id NOT LIKE 'skipped:%'
         """,
         org_id,
         artifact_ids,
@@ -667,15 +675,23 @@ async def soft_delete_stale_connector_artifacts(
 async def get_episode_ids(conn: asyncpg.Connection, org_id: str, kb_slug: str) -> list[str]:
     """Return Graphiti episode UUIDs for all artifacts in a KB.
 
-    Reads the graphiti_episode_id from the extra JSON field before deletion.
+    Reads graphiti_episode_ids, falling back to the legacy scalar, before deletion.
     Excludes the 'no-chunks' sentinel (artifacts with no text content).
     """
     rows = await conn.fetch(
-        """SELECT extra::jsonb->>'graphiti_episode_id' AS episode_id
-           FROM knowledge.artifacts
-           WHERE org_id = $1 AND kb_slug = $2
-             AND extra IS NOT NULL
-             AND extra::jsonb->>'graphiti_episode_id' IS NOT NULL""",
+        """SELECT DISTINCT stored_episode.episode_id
+           FROM knowledge.artifacts AS a
+           CROSS JOIN LATERAL jsonb_array_elements_text(
+               CASE
+                   WHEN a.extra::jsonb ? 'graphiti_episode_ids'
+                       THEN a.extra::jsonb->'graphiti_episode_ids'
+                   WHEN a.extra::jsonb->>'graphiti_episode_id' IS NOT NULL
+                       THEN jsonb_build_array(a.extra::jsonb->>'graphiti_episode_id')
+                   ELSE '[]'::jsonb
+               END
+           ) AS stored_episode(episode_id)
+           WHERE a.org_id = $1 AND a.kb_slug = $2
+             AND stored_episode.episode_id <> 'no-chunks'""",
         org_id,
         kb_slug,
     )
@@ -754,12 +770,20 @@ async def get_connector_episode_ids(
 ) -> list[str]:
     """Return Graphiti episode UUIDs for artifacts ingested by a specific connector."""
     rows = await conn.fetch(
-        """SELECT extra::jsonb->>'graphiti_episode_id' AS episode_id
-           FROM knowledge.artifacts
-           WHERE org_id = $1 AND kb_slug = $2
-             AND extra IS NOT NULL
-             AND extra::jsonb->>'source_connector_id' = $3
-             AND extra::jsonb->>'graphiti_episode_id' IS NOT NULL""",
+        """SELECT DISTINCT stored_episode.episode_id
+           FROM knowledge.artifacts AS a
+           CROSS JOIN LATERAL jsonb_array_elements_text(
+               CASE
+                   WHEN a.extra::jsonb ? 'graphiti_episode_ids'
+                       THEN a.extra::jsonb->'graphiti_episode_ids'
+                   WHEN a.extra::jsonb->>'graphiti_episode_id' IS NOT NULL
+                       THEN jsonb_build_array(a.extra::jsonb->>'graphiti_episode_id')
+                   ELSE '[]'::jsonb
+               END
+           ) AS stored_episode(episode_id)
+           WHERE a.org_id = $1 AND a.kb_slug = $2
+             AND a.extra::jsonb->>'source_connector_id' = $3
+             AND stored_episode.episode_id <> 'no-chunks'""",
         org_id,
         kb_slug,
         connector_id,
@@ -962,22 +986,27 @@ async def get_orphan_image_keys_for_connector(
 async def get_alive_episode_uuids_for_org(conn: asyncpg.Connection, org_id: str) -> set[str]:
     """Return every Graphiti episode UUID still referenced by an artifact for this org.
 
-    Read from ``knowledge.artifacts.extra->>'graphiti_episode_id'`` —
-    this is where the ingest pipeline stores the FalkorDB ``Episodic.uuid``
-    after a successful ``graph_module.ingest_episode``. The org-wide
-    janitor uses the result to compute which FalkorDB episodes are no
-    longer referenced and therefore orphan.
+    The list key is authoritative when present; the scalar fallback keeps rows
+    written before GetKlai/klai#1176 visible to the org-wide janitor.
 
     Excludes the ``no-chunks`` sentinel that artifacts use when an
     article had no extractable text.
     """
     rows = await conn.fetch(
         """
-        SELECT extra::jsonb->>'graphiti_episode_id' AS episode_uuid
-          FROM knowledge.artifacts
-         WHERE org_id = $1
-           AND extra IS NOT NULL
-           AND extra::jsonb->>'graphiti_episode_id' IS NOT NULL
+        SELECT DISTINCT stored_episode.episode_id AS episode_uuid
+          FROM knowledge.artifacts AS a
+          CROSS JOIN LATERAL jsonb_array_elements_text(
+              CASE
+                  WHEN a.extra::jsonb ? 'graphiti_episode_ids'
+                      THEN a.extra::jsonb->'graphiti_episode_ids'
+                  WHEN a.extra::jsonb->>'graphiti_episode_id' IS NOT NULL
+                      THEN jsonb_build_array(a.extra::jsonb->>'graphiti_episode_id')
+                  ELSE '[]'::jsonb
+              END
+          ) AS stored_episode(episode_id)
+         WHERE a.org_id = $1
+           AND stored_episode.episode_id <> 'no-chunks'
         """,
         org_id,
     )
@@ -1354,11 +1383,19 @@ async def get_page_episode_ids(
     to clean up Graphiti graph nodes before soft-deleting the artifact.
     """
     rows = await conn.fetch(
-        """SELECT extra::jsonb->>'graphiti_episode_id' AS episode_id
-           FROM knowledge.artifacts
-           WHERE org_id = $1 AND kb_slug = $2 AND path = $3
-             AND extra IS NOT NULL
-             AND extra::jsonb->>'graphiti_episode_id' IS NOT NULL""",
+        """SELECT DISTINCT stored_episode.episode_id
+           FROM knowledge.artifacts AS a
+           CROSS JOIN LATERAL jsonb_array_elements_text(
+               CASE
+                   WHEN a.extra::jsonb ? 'graphiti_episode_ids'
+                       THEN a.extra::jsonb->'graphiti_episode_ids'
+                   WHEN a.extra::jsonb->>'graphiti_episode_id' IS NOT NULL
+                       THEN jsonb_build_array(a.extra::jsonb->>'graphiti_episode_id')
+                   ELSE '[]'::jsonb
+               END
+           ) AS stored_episode(episode_id)
+           WHERE a.org_id = $1 AND a.kb_slug = $2 AND a.path = $3
+             AND stored_episode.episode_id <> 'no-chunks'""",
         org_id,
         kb_slug,
         path,
@@ -1431,6 +1468,50 @@ async def update_artifact_extra(
         """,
         json.dumps(extra_patch),
         artifact_id,
+    )
+
+
+async def append_graphiti_episode_id(
+    conn: asyncpg.Connection,
+    artifact_id: str,
+    episode_id: str,
+) -> None:
+    """Atomically retain every Graphiti episode created across task attempts."""
+    await conn.execute(
+        """
+        WITH current AS (
+            SELECT id,
+                   COALESCE(
+                       CASE
+                           WHEN jsonb_typeof(extra::jsonb->'graphiti_episode_ids') = 'array'
+                               THEN extra::jsonb->'graphiti_episode_ids'
+                           WHEN extra::jsonb->>'graphiti_episode_id' IS NOT NULL
+                            AND extra::jsonb->>'graphiti_episode_id' <> 'no-chunks'
+                               THEN jsonb_build_array(extra::jsonb->>'graphiti_episode_id')
+                           ELSE '[]'::jsonb
+                       END,
+                       '[]'::jsonb
+                   ) AS episode_ids,
+                   NULLIF(extra::jsonb->>'graphiti_episode_id', 'no-chunks') AS first_id
+            FROM knowledge.artifacts
+            WHERE id = $1
+        )
+        UPDATE knowledge.artifacts AS artifact
+        SET extra = COALESCE(artifact.extra::jsonb, '{}'::jsonb)
+                    || jsonb_build_object(
+                        'graphiti_episode_id', COALESCE(current.first_id, $2::text),
+                        'graphiti_episode_ids',
+                        CASE
+                            WHEN current.episode_ids @> jsonb_build_array($2::text)
+                                THEN current.episode_ids
+                            ELSE current.episode_ids || jsonb_build_array($2::text)
+                        END
+                    )
+        FROM current
+        WHERE artifact.id = current.id
+        """,
+        artifact_id,
+        episode_id,
     )
 
 

@@ -5,8 +5,8 @@ Usage:
     docker exec klai-core-knowledge-ingest-1 python -m knowledge_ingest.backfill --limit 1
 
 Reads artifacts from PostgreSQL, fetches chunks from Qdrant, and calls
-ingest_episode() for each. Resume-safe: checks for graphiti_episode_id
-in artifact.extra before processing.
+ingest_episode() for each text part. Resume-safe: prefers graphiti_episode_ids
+and falls back to graphiti_episode_id before processing.
 
 SPEC-TI-003-FOLLOWUP-001 AC-2: this is an operator one-shot that does
 cross-org admin work (it picks the org via DISTINCT on first run, then
@@ -25,52 +25,42 @@ import time
 
 from qdrant_client import AsyncQdrantClient
 
+from knowledge_ingest import pg_store
 from knowledge_ingest.config import settings
 from knowledge_ingest.db import cross_org_admin_connection
 from knowledge_ingest.enrichment_policy import graph_episode_skip_reason
-from knowledge_ingest.graph import ingest_episode
+from knowledge_ingest.episode_text import MAX_TEXT_CHARS, split_episode_text
+from knowledge_ingest.graph import EntityGraphData, flush_entity_graph_data, ingest_episode
+
+__all__ = ["MAX_TEXT_CHARS"]
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 EPISODE_TIMEOUT = 600  # seconds per episode (large articles need more time)
 
-# Cap on the text handed to one episode. 4000 was chosen in the original
-# one-shot (2026-03-31) to "reduce LLM calls", and it cost far more than it
-# saved: on the Voys Dutch corpus 488 of 726 documents exceed it, so only 36%
-# of the text ever reached extraction. Everything past the cap was dropped
-# silently — a document simply had no facts about its second half.
-#
-# 30000 retains 91% of that corpus and leaves 24 documents truncated. It is a
-# cap rather than "no limit" because one artifact there is 464k characters:
-# unbounded, a single document would blow the context window and the per-tenant
-# rate budget in one go.
-#
-# The remaining 9% needs a document split across SEVERAL episodes, which is a
-# different change: artifacts.extra records ONE graphiti_episode_id and eight
-# call sites read it, including the connector- and KB-deletion paths that use
-# it to remove episodes from FalkorDB. One-to-many there without updating those
-# first would orphan episodes on delete. Tracked in GetKlai/klai#1176.
-MAX_TEXT_CHARS = 30000
-
-# This raises the ceiling for FUTURE runs; it repairs nothing already stored.
-# The resume filter below skips every artifact that already has a
-# graphiti_episode_id, which is exactly the truncated 2026-05 population, so
-# re-running this script will not revisit them. Healing those means deleting
-# their episodes and re-extracting — the rebuild discussed in #1148, not a
-# side effect of a larger constant.
-#
-# The normal ingest path does NOT truncate — routes/ingest.py hands
-# ``indexable_content`` to the procrastinate task in full. This cap applies to
-# this operator one-shot only, which is why the graph has two populations:
-# episodes written by this script (2026-05, ~8.1k edges, truncated at 4000) and
-# episodes from live ingest (2026-08, ~9.6k edges, complete).
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
 )
 log = logging.getLogger("backfill")
+
+
+def _has_graphiti_episode_record(raw_extra: str | dict | None) -> bool:
+    if not raw_extra:
+        return False
+    extra = json.loads(raw_extra) if isinstance(raw_extra, str) else raw_extra
+    if "graphiti_episode_ids" in extra:
+        if not isinstance(extra["graphiti_episode_ids"], list):
+            raise TypeError("graphiti_episode_ids must be a JSON list")
+        expected_parts = extra.get("graphiti_episode_part_count")
+        if expected_parts is not None:
+            return (
+                extra.get("graphiti_episode_complete") is True
+                and len(extra["graphiti_episode_ids"]) >= expected_parts
+            )
+        return True
+    return bool(extra.get("graphiti_episode_id"))
 
 
 async def main(limit: int | None = None) -> None:
@@ -99,14 +89,8 @@ async def main(limit: int | None = None) -> None:
             org_id,
         )
         total = len(rows)
-        already = sum(
-            1 for r in rows if r["extra"] and json.loads(r["extra"]).get("graphiti_episode_id")
-        )
-        to_process = [
-            r
-            for r in rows
-            if not (r["extra"] and json.loads(r["extra"]).get("graphiti_episode_id"))
-        ]
+        already = sum(1 for r in rows if _has_graphiti_episode_record(r["extra"]))
+        to_process = [r for r in rows if not _has_graphiti_episode_record(r["extra"])]
         log.info(
             "Found %d artifacts, %d already processed, %d to backfill",
             total,
@@ -176,7 +160,12 @@ async def main(limit: int | None = None) -> None:
                     "UPDATE knowledge.artifacts "
                     "SET extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb "
                     "WHERE id = $2::uuid",
-                    json.dumps({"graphiti_episode_id": "no-chunks"}),
+                    json.dumps(
+                        {
+                            "graphiti_episode_id": "no-chunks",
+                            "graphiti_episode_ids": [],
+                        }
+                    ),
                     artifact_id,
                 )
                 continue
@@ -200,33 +189,58 @@ async def main(limit: int | None = None) -> None:
                 )
                 continue
 
-            if len(full_text) > MAX_TEXT_CHARS:
-                # Loud, not silent: a truncated document yields no facts about
-                # its tail, and the old code left no trace that it happened.
-                log.warning(
-                    "[%d/%d] %s — TRUNCATED %d of %d chars (%.0f%% dropped); "
-                    "needs a multi-episode split",
-                    idx,
-                    total_to_process,
-                    title,
-                    len(full_text) - MAX_TEXT_CHARS,
-                    len(full_text),
-                    100 * (len(full_text) - MAX_TEXT_CHARS) / len(full_text),
-                )
-                full_text = full_text[:MAX_TEXT_CHARS]
-
+            # No truncation branch any more: split_episode_text spreads a long
+            # document across several episodes instead of dropping its tail.
+            episode_parts = split_episode_text(full_text)
+            episode_ids: list[str] = []
+            entity_graph_data = EntityGraphData()
             try:
-                episode_id = await asyncio.wait_for(
-                    ingest_episode(
-                        artifact_id=artifact_id,
-                        document_text=full_text,
-                        org_id=org_id,
-                        content_type=content_type,
-                        belief_time_start=created_epoch,
-                        kb_slug=row["kb_slug"] or "",
-                        path=row["path"] or "",
+                await conn.execute(
+                    "UPDATE knowledge.artifacts "
+                    "SET extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb "
+                    "WHERE id = $2::uuid",
+                    json.dumps(
+                        {
+                            "graphiti_episode_part_count": len(episode_parts),
+                            "graphiti_episode_complete": False,
+                        }
                     ),
-                    timeout=EPISODE_TIMEOUT,
+                    artifact_id,
+                )
+                for episode_text in episode_parts:
+                    episode_id = await asyncio.wait_for(
+                        ingest_episode(
+                            artifact_id=artifact_id,
+                            document_text=episode_text,
+                            org_id=org_id,
+                            content_type=content_type,
+                            belief_time_start=created_epoch,
+                            kb_slug=row["kb_slug"] or "",
+                            path=row["path"] or "",
+                            entity_graph_data=entity_graph_data,
+                        ),
+                        timeout=EPISODE_TIMEOUT,
+                    )
+                    if episode_id is None:
+                        raise RuntimeError("returned None (LLM issue?)")
+                    episode_ids.append(episode_id)
+                    await pg_store.append_graphiti_episode_id(conn, artifact_id, episode_id)
+
+                try:
+                    await flush_entity_graph_data(artifact_id, org_id, entity_graph_data)
+                except Exception:
+                    log.exception("%s — entity graph data update failed", title)
+                await conn.execute(
+                    "UPDATE knowledge.artifacts "
+                    "SET extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb "
+                    "WHERE id = $2::uuid",
+                    json.dumps(
+                        {
+                            "graphiti_episode_complete": True,
+                            "graphiti_model": settings.graphiti_llm_model,
+                        }
+                    ),
+                    artifact_id,
                 )
             except TimeoutError:
                 err_count += 1
@@ -243,39 +257,15 @@ async def main(limit: int | None = None) -> None:
                 log.error("[%d/%d] %s — %s", idx, total_to_process, title, exc)
                 continue
 
-            if episode_id is None:
-                err_count += 1
-                log.error(
-                    "[%d/%d] %s — returned None (LLM issue?)",
-                    idx,
-                    total_to_process,
-                    title,
-                )
-                continue
-
-            # Success — persist for resume
             ok_count += 1
-            await conn.execute(
-                "UPDATE knowledge.artifacts "
-                "SET extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb "
-                "WHERE id = $2::uuid",
-                json.dumps(
-                    {
-                        "graphiti_episode_id": episode_id,
-                        "graphiti_model": settings.graphiti_llm_model,
-                    }
-                ),
-                artifact_id,
-            )
-
             elapsed = time.time() - t_start
             rate = ok_count / (elapsed / 3600) if elapsed > 0 else 0
             log.info(
-                "[%d/%d] %s — OK episode=%s (%d/hr, %ds elapsed)",
+                "[%d/%d] %s — OK episodes=%s (%d/hr, %ds elapsed)",
                 idx,
                 total_to_process,
                 title,
-                episode_id,
+                episode_ids,
                 int(rate),
                 int(elapsed),
             )

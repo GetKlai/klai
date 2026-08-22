@@ -22,6 +22,34 @@ def _row(kb_slug, path, extra):
 
 class TestCollectRenames:
     @pytest.mark.asyncio
+    async def test_prefers_all_episode_ids_over_legacy_scalar(self):
+        from scripts.backfill_episode_document_names import collect_renames
+
+        rows = [
+            _row(
+                "support",
+                "webphone",
+                {
+                    "graphiti_episode_ids": ["ep-1", "ep-2"],
+                    "graphiti_episode_id": "ep-1",
+                },
+            )
+        ]
+        conn = AsyncMock()
+        conn.fetch = AsyncMock(return_value=rows)
+        ctx = MagicMock()
+        ctx.__aenter__ = AsyncMock(return_value=conn)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "scripts.backfill_episode_document_names.tenant_scoped_connection", return_value=ctx
+        ):
+            renames, skipped = await collect_renames("org-1")
+
+        assert renames == {"doc:support:webphone": ["ep-1", "ep-2"]}
+        assert skipped == 0
+
+    @pytest.mark.asyncio
     async def test_groups_every_version_of_a_document_under_one_name(self):
         """Several versions share a document, and all their episodes must move.
 

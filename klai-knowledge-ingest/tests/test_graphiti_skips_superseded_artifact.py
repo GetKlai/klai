@@ -22,12 +22,14 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
 import knowledge_ingest
 from knowledge_ingest import enrichment_tasks, queues
+from knowledge_ingest.episode_text import MAX_TEXT_CHARS
+from knowledge_ingest.routes import ingest as ingest_route
 
 _ARTIFACT_ID = "0f9c1a2b-3d4e-4f50-9a61-72b83c94d5e6"
 _ORG_ID = "368884765035593759"
@@ -73,11 +75,14 @@ async def _run(graphiti_task, *, exists: bool, active: bool):
     ingest_episode = AsyncMock(return_value="episode-uuid")
     graph_module = MagicMock()
     graph_module.ingest_episode = ingest_episode
+    graph_module.EntityGraphData.return_value = SimpleNamespace()
+    graph_module.flush_entity_graph_data = AsyncMock(return_value=None)
 
     pg_store = MagicMock()
     pg_store.artifact_exists = AsyncMock(return_value=exists)
     pg_store.artifact_is_active = AsyncMock(return_value=active)
     pg_store.update_artifact_extra = AsyncMock(return_value=None)
+    pg_store.append_graphiti_episode_id = AsyncMock(return_value=None)
 
     # The task body does `from knowledge_ingest import pg_store` / `import graph
     # as graph_module`, which reads the PACKAGE attribute -- patching
@@ -95,6 +100,46 @@ async def _run(graphiti_task, *, exists: bool, active: bool):
             belief_time_start=0,
         )
     return ingest_episode
+
+
+async def _run_active_document(
+    graphiti_task,
+    document_text: str,
+    episode_results: list[str | Exception | None],
+    expected_error: type[Exception] | None = None,
+):
+    ingest_episode = AsyncMock(side_effect=episode_results)
+    graph_module = MagicMock()
+    graph_module.ingest_episode = ingest_episode
+    graph_module.EntityGraphData.return_value = SimpleNamespace()
+    graph_module.flush_entity_graph_data = AsyncMock(return_value=None)
+
+    pg_store = MagicMock()
+    pg_store.artifact_exists = AsyncMock(return_value=True)
+    pg_store.artifact_is_active = AsyncMock(return_value=True)
+    pg_store.update_artifact_extra = AsyncMock(return_value=None)
+    pg_store.append_graphiti_episode_id = AsyncMock(return_value=None)
+
+    with (
+        patch.object(knowledge_ingest, "pg_store", pg_store),
+        patch.object(knowledge_ingest, "graph", graph_module),
+        patch.object(enrichment_tasks, "tenant_scoped_connection", _fake_conn),
+    ):
+        kwargs = {
+            "artifact_id": _ARTIFACT_ID,
+            "document_text": document_text,
+            "org_id": _ORG_ID,
+            "content_type": "text/markdown",
+            "belief_time_start": 0,
+            "kb_slug": "support",
+            "path": "guide.md",
+        }
+        if expected_error is None:
+            await graphiti_task(**kwargs)
+        else:
+            with pytest.raises(expected_error):
+                await graphiti_task(**kwargs)
+    return ingest_episode, pg_store, graph_module
 
 
 @pytest.mark.asyncio
@@ -116,3 +161,151 @@ async def test_deleted_artifact_still_aborts(graphiti_task):
     """SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-07 must keep holding."""
     ingest_episode = await _run(graphiti_task, exists=False, active=False)
     ingest_episode.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_short_document_creates_one_episode_and_records_both_id_keys(graphiti_task):
+    ingest_episode, pg_store, graph_module = await _run_active_document(
+        graphiti_task, "One short sentence.", ["episode-1"]
+    )
+
+    ingest_episode.assert_awaited_once()
+    assert ingest_episode.call_args.kwargs["document_text"] == "One short sentence."
+    pg_store.append_graphiti_episode_id.assert_awaited_once_with(ANY, _ARTIFACT_ID, "episode-1")
+    assert pg_store.update_artifact_extra.await_args_list[0].args[2] == {
+        "graphiti_episode_part_count": 1,
+        "graphiti_episode_complete": False,
+    }
+    assert pg_store.update_artifact_extra.await_args_list[-1].args[2] == {
+        "graphiti_episode_complete": True
+    }
+    graph_module.flush_entity_graph_data.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_long_document_creates_every_episode_and_records_all_ids(graphiti_task):
+    paragraph = ("A complete sentence. " * 1000).strip()
+    document_text = f"{paragraph}\n\n{paragraph}"
+    assert len(document_text) > MAX_TEXT_CHARS
+
+    ingest_episode, pg_store, graph_module = await _run_active_document(
+        graphiti_task, document_text, ["episode-1", "episode-2"]
+    )
+
+    parts = [call.kwargs["document_text"] for call in ingest_episode.await_args_list]
+    assert len(parts) == 2
+    assert "\n\n".join(parts) == document_text
+    assert all(len(part) <= MAX_TEXT_CHARS for part in parts)
+    assert all(call.kwargs["kb_slug"] == "support" for call in ingest_episode.await_args_list)
+    assert all(call.kwargs["path"] == "guide.md" for call in ingest_episode.await_args_list)
+    assert [call.args[2] for call in pg_store.append_graphiti_episode_id.await_args_list] == [
+        "episode-1",
+        "episode-2",
+    ]
+    graph_module.flush_entity_graph_data.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_partial_failure_records_episodes_created_before_the_error(graphiti_task):
+    paragraph = ("A complete sentence. " * 1000).strip()
+    document_text = f"{paragraph}\n\n{paragraph}"
+
+    ingest_episode, pg_store, graph_module = await _run_active_document(
+        graphiti_task,
+        document_text,
+        ["episode-1", RuntimeError("second episode failed")],
+        expected_error=RuntimeError,
+    )
+
+    assert ingest_episode.await_count == 2
+    pg_store.append_graphiti_episode_id.assert_awaited_once_with(ANY, _ARTIFACT_ID, "episode-1")
+    assert pg_store.update_artifact_extra.await_count == 1
+    graph_module.flush_entity_graph_data.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_missing_episode_id_raises_and_reports_partial_coverage(graphiti_task):
+    paragraph = ("A complete sentence. " * 1000).strip()
+
+    with patch.object(enrichment_tasks.logger, "error") as log_error:
+        ingest_episode, _, _ = await _run_active_document(
+            graphiti_task,
+            f"{paragraph}\n\n{paragraph}",
+            ["episode-1", None],
+            expected_error=RuntimeError,
+        )
+
+    assert ingest_episode.await_count == 2
+    log_error.assert_called_once_with(
+        "graphiti_episode_partial",
+        artifact_id=_ARTIFACT_ID,
+        org_id=_ORG_ID,
+        completed_parts=1,
+        expected_parts=2,
+    )
+
+
+@pytest.mark.asyncio
+async def test_deletion_between_episode_parts_aborts_before_the_next_write(graphiti_task):
+    paragraph = ("A complete sentence. " * 1000).strip()
+    ingest_episode = AsyncMock(side_effect=["episode-1", "episode-2", "episode-3"])
+    graph_module = MagicMock()
+    graph_module.ingest_episode = ingest_episode
+    graph_module.EntityGraphData.return_value = SimpleNamespace()
+    graph_module.flush_entity_graph_data = AsyncMock(return_value=None)
+    graph_module.delete_kb_episodes = AsyncMock(return_value=None)
+    pg_store = MagicMock()
+    pg_store.artifact_exists = AsyncMock(side_effect=[True, True, True, False])
+    pg_store.artifact_is_active = AsyncMock(return_value=True)
+    pg_store.update_artifact_extra = AsyncMock(return_value=None)
+    pg_store.append_graphiti_episode_id = AsyncMock(return_value=None)
+
+    with (
+        patch.object(knowledge_ingest, "pg_store", pg_store),
+        patch.object(knowledge_ingest, "graph", graph_module),
+        patch.object(enrichment_tasks, "tenant_scoped_connection", _fake_conn),
+    ):
+        await graphiti_task(
+            artifact_id=_ARTIFACT_ID,
+            document_text=f"{paragraph}\n\n{paragraph}\n\n{paragraph}",
+            org_id=_ORG_ID,
+            content_type="text/markdown",
+            belief_time_start=0,
+            kb_slug="support",
+            path="guide.md",
+        )
+
+    assert ingest_episode.await_count == 2
+    graph_module.delete_kb_episodes.assert_awaited_once_with(_ORG_ID, ["episode-2"])
+    assert pg_store.artifact_exists.await_count == 4
+
+
+@pytest.mark.asyncio
+async def test_legacy_background_writer_records_both_id_keys():
+    conn = SimpleNamespace()
+
+    with (
+        patch.object(
+            ingest_route.graph_module,
+            "ingest_episode",
+            new=AsyncMock(return_value="episode-1"),
+        ),
+        patch.object(
+            ingest_route.pg_store,
+            "update_artifact_extra",
+            new=AsyncMock(return_value=None),
+        ) as update_extra,
+    ):
+        await ingest_route._graphiti_background(
+            conn,
+            _ARTIFACT_ID,
+            "One short sentence.",
+            _ORG_ID,
+            "text/markdown",
+            0,
+        )
+
+    assert update_extra.await_args.args[2] == {
+        "graphiti_episode_id": "episode-1",
+        "graphiti_episode_ids": ["episode-1"],
+    }

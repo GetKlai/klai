@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import time
 import types
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 import httpx
@@ -43,6 +44,18 @@ logger = structlog.get_logger()
 # Rate-limit Graphiti episodes: each add_episode() makes ~5 LLM calls internally.
 # Concurrency controlled by GRAPHITI_MAX_CONCURRENT env var (default: 1).
 _episode_semaphore: asyncio.Semaphore | None = None
+
+
+@dataclass
+class EntityGraphData:
+    """Entity data collected across every episode part of one document."""
+
+    entity_uuids: list[str] = field(default_factory=list)
+    entity_names: list[str] = field(default_factory=list)
+
+    def extend(self, entity_uuids: list[str], entity_names: list[str]) -> None:
+        self.entity_uuids.extend(uid for uid in entity_uuids if uid not in self.entity_uuids)
+        self.entity_names.extend(name for name in entity_names if name not in self.entity_names)
 
 
 # Extra rules appended to Graphiti's entity- AND edge-extraction prompts
@@ -508,8 +521,9 @@ async def sweep_orphan_episodes_org_wide(org_id: str, alive_episode_uuids: set[s
     Graphiti's Episodic node-schema has ``uuid``, ``name``, ``group_id``,
     ``source``, ``source_description``, ``valid_at``, ``created_at`` —
     but NO ``artifact_id`` property. The ingest pipeline links postgres
-    -> FalkorDB by writing the FalkorDB ``Episodic.uuid`` into
-    ``knowledge.artifacts.extra->>'graphiti_episode_id'``.
+    -> FalkorDB by writing FalkorDB ``Episodic.uuid`` values into
+    ``knowledge.artifacts.extra->'graphiti_episode_ids'`` while retaining the
+    first value in the legacy scalar.
 
     Implementation uses the direct ``falkordb`` Python client (the same
     pattern as ``routes/stats.py::get_graph_stats``). The earlier
@@ -582,8 +596,8 @@ async def delete_orphan_episodes_for_artifact_ids(org_id: str, artifact_ids: lis
     do synchronous LLM calls that don't honour ``asyncio.CancelledError``
     — they keep running after the procrastinate cancel and write a fresh
     episode for an already-deleted artifact. Those episodes never made
-    it into ``knowledge.artifacts.extra->>graphiti_episode_id`` (the row
-    was already gone), so ``delete_kb_episodes`` cannot find them via
+    them into ``knowledge.artifacts.extra`` (the row was already gone), so
+    ``delete_kb_episodes`` cannot find them via
     the normal path.
 
     The orchestrator runs this AFTER ``delete_connector_artifacts`` with
@@ -718,6 +732,24 @@ def _episode_name(artifact_id: str, kb_slug: str, path: str) -> str:
     return artifact_id
 
 
+async def flush_entity_graph_data(
+    artifact_id: str,
+    org_id: str,
+    entity_graph_data: EntityGraphData,
+) -> None:
+    """Write the complete document entity payload and refresh PageRank once."""
+    if not entity_graph_data.entity_uuids and not entity_graph_data.entity_names:
+        return
+    pagerank_scores = await compute_entity_pagerank(org_id)
+    await qdrant_store.set_entity_graph_data(
+        artifact_id=artifact_id,
+        org_id=org_id,
+        entity_uuids=entity_graph_data.entity_uuids,
+        pagerank_scores=pagerank_scores,
+        entity_names=entity_graph_data.entity_names,
+    )
+
+
 async def ingest_episode(
     artifact_id: str,
     document_text: str,
@@ -726,6 +758,7 @@ async def ingest_episode(
     belief_time_start: int,
     kb_slug: str = "",
     path: str = "",
+    entity_graph_data: EntityGraphData | None = None,
 ) -> str | None:
     """Ingest a document as a Graphiti episode.
 
@@ -833,20 +866,20 @@ async def ingest_episode(
                     if getattr(n, "name", None) and str(getattr(n, "name", "")).strip()
                 ]
                 if entity_uuids_list or entity_names_list:
-                    try:
-                        pagerank_scores = await compute_entity_pagerank(org_id)
-                        await qdrant_store.set_entity_graph_data(
-                            artifact_id=artifact_id,
-                            org_id=org_id,
-                            entity_uuids=entity_uuids_list,
-                            pagerank_scores=pagerank_scores,
-                            entity_names=entity_names_list,
-                        )
-                    except Exception:
-                        logger.exception(
-                            "entity_graph_data_failed",
-                            artifact_id=artifact_id,
-                        )
+                    if entity_graph_data is not None:
+                        entity_graph_data.extend(entity_uuids_list, entity_names_list)
+                    else:
+                        try:
+                            await flush_entity_graph_data(
+                                artifact_id,
+                                org_id,
+                                EntityGraphData(entity_uuids_list, entity_names_list),
+                            )
+                        except Exception:
+                            logger.exception(
+                                "entity_graph_data_failed",
+                                artifact_id=artifact_id,
+                            )
 
                 break
 

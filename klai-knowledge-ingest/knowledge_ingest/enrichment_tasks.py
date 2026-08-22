@@ -44,6 +44,7 @@ from knowledge_ingest.content_profiles import get_profile
 from knowledge_ingest.db import cross_org_admin_connection, tenant_scoped_connection
 from knowledge_ingest.document_normalizer import normalize_document_for_chunking
 from knowledge_ingest.enrichment_policy import enrichment_skip_reason
+from knowledge_ingest.episode_text import split_episode_text
 
 logger = structlog.get_logger()
 
@@ -401,19 +402,93 @@ def _register_tasks(procrastinate_app: Any) -> None:
             )
             from knowledge_ingest import graph as graph_module
 
-            episode_id = await graph_module.ingest_episode(
-                artifact_id=artifact_id,
-                document_text=document_text,
-                org_id=org_id,
-                content_type=content_type,
-                belief_time_start=belief_time_start,
-                kb_slug=kb_slug,
-                path=path,
+            episode_parts = split_episode_text(document_text)
+            await pg_store.update_artifact_extra(
+                conn,
+                artifact_id,
+                {
+                    "graphiti_episode_part_count": len(episode_parts),
+                    "graphiti_episode_complete": False,
+                },
             )
-            if episode_id:
-                await pg_store.update_artifact_extra(
-                    conn, artifact_id, {"graphiti_episode_id": episode_id}
+            episode_ids: list[str] = []
+            entity_graph_data = graph_module.EntityGraphData()
+            for part_index, episode_text in enumerate(episode_parts):
+                if part_index > 0:
+                    # Page deletion can land while an earlier part is spending
+                    # minutes in Graphiti; never regrow later parts afterward.
+                    if not await pg_store.artifact_exists(conn, artifact_id):
+                        logger.info(
+                            "graphiti_aborted_artifact_missing",
+                            artifact_id=artifact_id,
+                            org_id=org_id,
+                        )
+                        return
+                    if not await pg_store.artifact_is_active(conn, artifact_id):
+                        logger.info(
+                            "graphiti_aborted_artifact_superseded",
+                            artifact_id=artifact_id,
+                            org_id=org_id,
+                        )
+                        return
+                episode_id = await graph_module.ingest_episode(
+                    artifact_id=artifact_id,
+                    document_text=episode_text,
+                    org_id=org_id,
+                    content_type=content_type,
+                    belief_time_start=belief_time_start,
+                    kb_slug=kb_slug,
+                    path=path,
+                    entity_graph_data=entity_graph_data,
                 )
+                if episode_id is None:
+                    logger.error(
+                        "graphiti_episode_partial",
+                        artifact_id=artifact_id,
+                        org_id=org_id,
+                        completed_parts=len(episode_ids),
+                        expected_parts=len(episode_parts),
+                    )
+                    raise RuntimeError(
+                        f"Graphiti returned no episode id for part "
+                        f"{part_index + 1} of {len(episode_parts)}"
+                    )
+                episode_ids.append(episode_id)
+                # A worker retry starts with a fresh Python list, so the SQL
+                # append must retain IDs written before a mid-loop worker kill.
+                await pg_store.append_graphiti_episode_id(conn, artifact_id, episode_id)
+                if not await pg_store.artifact_exists(conn, artifact_id):
+                    # Deletion may finish while Graphiti is extracting this
+                    # part; the delete path could not have seen its new UUID.
+                    await graph_module.delete_kb_episodes(org_id, [episode_id])
+                    logger.info(
+                        "graphiti_aborted_artifact_missing",
+                        artifact_id=artifact_id,
+                        org_id=org_id,
+                    )
+                    return
+                if not await pg_store.artifact_is_active(conn, artifact_id):
+                    await graph_module.delete_kb_episodes(org_id, [episode_id])
+                    logger.info(
+                        "graphiti_aborted_artifact_superseded",
+                        artifact_id=artifact_id,
+                        org_id=org_id,
+                    )
+                    return
+
+            try:
+                await graph_module.flush_entity_graph_data(
+                    artifact_id,
+                    org_id,
+                    entity_graph_data,
+                )
+            except Exception:
+                logger.exception("entity_graph_data_failed", artifact_id=artifact_id)
+            await pg_store.update_artifact_extra(
+                conn,
+                artifact_id,
+                {"graphiti_episode_complete": True},
+            )
 
     procrastinate_app.ingest_graphiti_episode = ingest_graphiti_episode  # type: ignore[attr-defined]
 
