@@ -7,6 +7,22 @@ Confluence storage format (XHTML) to plain text via html2text.
 SDK note: atlassian-python-api is synchronous. All blocking calls are wrapped
 with asyncio.to_thread() per the klai Python async pattern (lang/python.md).
 
+API version (GetKlai/klai#1137): this adapter targets the Confluence Cloud
+**v2** REST API through ``atlassian.ConfluenceV2``. atlassian-python-api v5
+turned ``atlassian.Confluence`` into a dispatcher whose Cloud implementation
+no longer exposes ``get_page_by_id``, and whose remaining v1 compatibility
+shims build URLs without the REST api-root prefix. ``ConfluenceV2`` is the
+supported Cloud client: it resolves ``<base>/wiki/api/v2/...`` and keeps a
+typed ``get_page_by_id`` / ``get_pages`` / ``get_spaces`` surface.
+
+v2 differences that are visible in the DocumentRefs this adapter produces:
+    * Pages are addressed by numeric **space id**, not by space key, so the
+      space listing is resolved into a key -> id map before page iteration.
+    * ``version.by.email`` is gone. v2 returns only ``version.authorId``
+      (an Atlassian account id), so ``sender_email`` is always empty for
+      Confluence. It stays an optional field downstream — the ingest client
+      only writes it into ``extra`` when non-empty.
+
 Image carve-out (SPEC-KB-CONNECTORS-001 R4.4):
     Shape A (external URL, <ri:url>): extracted into ref.images.
     Shape B (attachment, <ri:attachment>): silently dropped with info log.
@@ -27,7 +43,7 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 import html2text
-from atlassian import Confluence  # noqa: F401 -- used in tests via patch target
+from atlassian import ConfluenceV2
 from bs4 import BeautifulSoup
 
 from app.adapters.base import BaseAdapter, DocumentRef, ImageRef
@@ -40,14 +56,28 @@ logger = get_logger(__name__)
 # Maximum number of spaces to iterate when space_keys is empty.
 _MAX_SPACES = 100
 
+# Maximum number of pages synced per space. Preserves the effective bound of
+# the pre-v5 call (``get_all_pages_from_space(space, start=0, limit=100)``
+# returned a single 100-item page). ``ConfluenceV2.get_pages`` follows the v2
+# cursor to the end of the space, so the bound is applied here instead — and
+# logged when it truncates, so a silently half-synced space is impossible.
+_MAX_PAGES_PER_SPACE = 100
+
+# Per-request page size for the v2 cursor pagination.
+_PAGE_BATCH = 100
+
 
 def _build_confluence_client(
     base_url: str,
     email: str,
     api_token: str,
 ) -> Any:
-    """Construct a Confluence client (synchronous, run via asyncio.to_thread)."""
-    return Confluence(
+    """Construct a Confluence Cloud v2 client (sync, run via asyncio.to_thread).
+
+    ``ConfluenceV2`` appends the ``/wiki`` context path to *base_url* itself
+    and is idempotent when the caller already supplied one.
+    """
+    return ConfluenceV2(
         url=base_url,
         username=email,
         password=api_token,
@@ -154,8 +184,11 @@ class ConfluenceAdapter(BaseAdapter):
         Confluence does not provide a cheap incremental cursor; the sync engine
         reconciles using last_edited on each DocumentRef.
 
-        When space_keys is empty, all accessible spaces are discovered first
-        (up to _MAX_SPACES).
+        The v2 page endpoint filters by numeric space id, not by space key, so
+        the spaces are resolved into a key -> id map first — via the v2 ``keys``
+        filter when space_keys is configured, otherwise a full listing capped
+        at _MAX_SPACES. Keys the token cannot see are logged and skipped rather
+        than failing the whole run.
 
         Args:
             connector: Connector model instance with Confluence config.
@@ -175,23 +208,39 @@ class ConfluenceAdapter(BaseAdapter):
             _build_confluence_client, base_url, email, api_token
         )
 
-        if not space_keys:
-            space_keys = await asyncio.to_thread(
-                self._discover_all_spaces, client
-            )
+        space_ids_by_key = await asyncio.to_thread(
+            self._discover_all_spaces, client, space_keys
+        )
+
+        if space_keys:
+            missing = [key for key in space_keys if key not in space_ids_by_key]
+            if missing:
+                logger.warning(
+                    "Confluence list_documents: configured space key(s) %s not "
+                    "visible to this token — skipped",
+                    missing,
+                )
+            # Preserve the configured order rather than the API listing order.
+            selected = {
+                key: space_ids_by_key[key]
+                for key in space_keys
+                if key in space_ids_by_key
+            }
+        else:
+            selected = space_ids_by_key
 
         refs: list[DocumentRef] = []
 
-        for space_key in space_keys:
+        for space_key, space_id in selected.items():
             pages = await asyncio.to_thread(
-                self._fetch_all_pages_in_space, client, space_key
+                self._fetch_all_pages_in_space, client, space_key, space_id
             )
             for page in pages:
                 page_id: str = str(page.get("id", ""))
                 version: dict[str, Any] = cast(dict[str, Any], page.get("version") or {})
-                created_at: str = version.get("createdAt") or ""
-                by: dict[str, Any] = cast(dict[str, Any], version.get("by") or {})
-                sender_email: str = by.get("email") or ""
+                # v2 exposes the last version's timestamp; fall back to the
+                # page creation timestamp when ``version`` was not returned.
+                last_edited: str = version.get("createdAt") or page.get("createdAt") or ""
 
                 source_url = f"{base_url}/wiki/spaces/{space_key}/pages/{page_id}"
 
@@ -203,15 +252,18 @@ class ConfluenceAdapter(BaseAdapter):
                         content_type="text/plain",
                         source_ref=source_url,
                         source_url=source_url,
-                        last_edited=created_at,
-                        sender_email=sender_email,
+                        last_edited=last_edited,
+                        # v2 returns ``version.authorId`` (account id) only —
+                        # there is no email on the page payload. See module
+                        # docstring.
+                        sender_email="",
                         mentioned_emails=[],
                     )
                 )
 
         logger.info(
             "Confluence list_documents complete: spaces=%s pages=%d",
-            space_keys,
+            list(selected),
             len(refs),
         )
         return refs
@@ -219,10 +271,11 @@ class ConfluenceAdapter(BaseAdapter):
     async def fetch_document(self, ref: DocumentRef, connector: Any) -> bytes:
         """Fetch a single Confluence page and return it as UTF-8 encoded bytes.
 
-        Retrieves the page in storage format (XHTML), extracts external images
-        into ref.images (Shape A only — see module docstring for carve-out),
-        strips Confluence-specific ac:* tags, and converts to plain text via
-        html2text.
+        Retrieves the page in storage format (XHTML) via the v2
+        ``GET /wiki/api/v2/pages/{id}?body-format=storage`` endpoint, extracts
+        external images into ref.images (Shape A only — see module docstring
+        for carve-out), strips Confluence-specific ac:* tags, and converts to
+        plain text via html2text.
 
         Args:
             ref: DocumentRef with ``ref`` set to the Confluence page ID.
@@ -244,7 +297,7 @@ class ConfluenceAdapter(BaseAdapter):
         page = await asyncio.to_thread(
             client.get_page_by_id,
             page_id,
-            expand="body.storage",
+            body_format="storage",
         )
 
         storage_xml: str = (
@@ -284,16 +337,32 @@ class ConfluenceAdapter(BaseAdapter):
     # -- Synchronous helpers (run via asyncio.to_thread) ----------------------
 
     @staticmethod
-    def _discover_all_spaces(client: Any) -> list[str]:
-        """Discover all accessible Confluence spaces (synchronous).
+    def _discover_all_spaces(
+        client: Any,
+        space_keys: list[str] | None = None,
+    ) -> dict[str, str]:
+        """Map Confluence space keys to their v2 space ids (synchronous).
 
-        Wrapped via asyncio.to_thread() in async callers. Capped at
-        _MAX_SPACES spaces to prevent unbounded iteration.
+        Wrapped via asyncio.to_thread() in async callers.
+
+        When *space_keys* is given, the v2 ``keys`` filter resolves exactly
+        those spaces. That matters for a tenant with more spaces than
+        _MAX_SPACES: an unfiltered listing could stop before reaching a
+        configured space and silently sync nothing for it.
+
+        When *space_keys* is empty the full listing is used, capped at
+        _MAX_SPACES. ``get_spaces`` follows the v2 cursor to the end, so the
+        cap is applied to the materialised result and logged when it actually
+        truncates.
 
         Returns:
-            List of space key strings.
+            Mapping of space key -> space id, in listing order.
         """
-        raw: Any = client.get_all_spaces(start=0, limit=_MAX_SPACES)
+        if space_keys:
+            raw: Any = client.get_spaces(keys=space_keys, limit=_MAX_SPACES)
+        else:
+            raw = client.get_spaces(limit=_MAX_SPACES)
+
         results: list[Any]
         if isinstance(raw, dict):
             raw_dict: dict[str, Any] = cast(dict[str, Any], raw)
@@ -301,47 +370,75 @@ class ConfluenceAdapter(BaseAdapter):
         elif isinstance(raw, list):
             results = cast(list[Any], raw)
         else:
-            results = []
+            results = list(raw)  # pyright: ignore[reportUnknownArgumentType]
 
-        keys: list[str] = []
+        ids_by_key: dict[str, str] = {}
         for space in results:
-            if isinstance(space, dict):
-                space_dict: dict[str, Any] = cast(dict[str, Any], space)
-                key: Any = space_dict.get("key")
-                if key:
-                    keys.append(str(key))
-        return keys
+            if not isinstance(space, dict):
+                continue
+            space_dict: dict[str, Any] = cast(dict[str, Any], space)
+            key: Any = space_dict.get("key")
+            space_id: Any = space_dict.get("id")
+            if key and space_id and str(key) not in ids_by_key:
+                ids_by_key[str(key)] = str(space_id)
+
+        if not space_keys and len(ids_by_key) > _MAX_SPACES:
+            logger.warning(
+                "Confluence: %d spaces visible — truncated to _MAX_SPACES=%d; "
+                "the remainder is not synced",
+                len(ids_by_key),
+                _MAX_SPACES,
+            )
+            ids_by_key = dict(list(ids_by_key.items())[:_MAX_SPACES])
+        return ids_by_key
 
     @staticmethod
     def _fetch_all_pages_in_space(
         client: Any,
         space_key: str,
+        space_id: str,
     ) -> list[dict[str, Any]]:
-        """Fetch all pages from a single Confluence space (synchronous).
+        """Fetch pages from a single Confluence space by space id (synchronous).
 
         Wrapped via asyncio.to_thread() in async callers. Converts the
-        result to a list inside the thread to avoid generator leakage.
+        result to a list inside the thread to avoid generator leakage, then
+        truncates to _MAX_PAGES_PER_SPACE.
+
+        *space_key* is carried only for logging — the v2 page endpoint filters
+        on *space_id*.
         """
         try:
-            raw: Any = client.get_all_pages_from_space(
-                space_key,
-                start=0,
-                limit=100,
-                expand="version",
+            raw: Any = client.get_pages(
+                space_id=space_id,
+                limit=_PAGE_BATCH,
             )
+            pages: list[dict[str, Any]]
             if isinstance(raw, list):
-                return cast(list[dict[str, Any]], raw)
-            if isinstance(raw, dict):
+                pages = cast(list[dict[str, Any]], raw)
+            elif isinstance(raw, dict):
                 raw_dict: dict[str, Any] = cast(dict[str, Any], raw)
-                return cast(list[dict[str, Any]], raw_dict.get("results") or [])
-            return cast(list[dict[str, Any]], list(raw))
+                pages = cast(list[dict[str, Any]], raw_dict.get("results") or [])
+            else:
+                pages = cast(list[dict[str, Any]], list(raw))
         except Exception:
             logger.warning(
-                "Confluence: failed to list pages in space %s",
+                "Confluence: failed to list pages in space %s (id=%s)",
                 space_key,
+                space_id,
                 exc_info=True,
             )
             return []
+
+        if len(pages) > _MAX_PAGES_PER_SPACE:
+            logger.warning(
+                "Confluence: space %s returned %d pages — truncated to "
+                "_MAX_PAGES_PER_SPACE=%d; the remainder is not synced",
+                space_key,
+                len(pages),
+                _MAX_PAGES_PER_SPACE,
+            )
+            pages = pages[:_MAX_PAGES_PER_SPACE]
+        return pages
 
 
 # -- Module-level helpers (pure functions, no adapter state) ------------------

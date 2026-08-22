@@ -2,6 +2,13 @@
 
 RED phase: these tests define expected behavior before implementation exists.
 All tests should FAIL before the adapter is implemented.
+
+These tests patch the SDK class, so they verify the adapter's own logic
+(space/page mapping, storage-format conversion, the image carve-out) and
+NOT the SDK contract. GetKlai/klai#1137: patching the class is precisely why
+CI could not see the v5 break — ``tests/test_confluence_sdk_contract.py``
+covers the SDK surface without patching it. Payload fixtures here follow the
+Confluence Cloud **v2** shapes.
 """
 
 from __future__ import annotations
@@ -45,26 +52,43 @@ def _valid_config(
     return cfg
 
 
+# Space keys mapped to the numeric v2 space ids used by GET /wiki/api/v2/pages.
+_SPACE_IDS = {"ENG": "9001", "DOCS": "9002"}
+
+
 def _make_page(
     page_id: str = "12345",
     space_key: str = "ENG",
     title: str = "Test Page",
     created_at: str = "2026-01-15T10:00:00.000Z",
-    author_email: str = "author@example.com",
 ) -> dict[str, Any]:
-    """Build a minimal Confluence page dict matching atlassian-python-api shape."""
+    """Build a Confluence Cloud **v2** page object.
+
+    v2 identifies the space by numeric ``spaceId`` and exposes only
+    ``version.authorId`` — there is no ``version.by.email``.
+    """
     return {
         "id": page_id,
+        "status": "current",
         "title": title,
-        "space": {"key": space_key},
+        "spaceId": _SPACE_IDS.get(space_key, "9000"),
+        "authorId": "5b10ac8d82e05b22cc7d4ef5",
+        "createdAt": created_at,
         "version": {
             "createdAt": created_at,
-            "by": {
-                "email": author_email,
-                "displayName": "Author Name",
-            },
+            "number": 1,
+            "minorEdit": False,
+            "authorId": "5b10ac8d82e05b22cc7d4ef5",
         },
     }
+
+
+def _spaces(*keys: str) -> list[dict[str, Any]]:
+    """Build the v2 space list returned by GET /wiki/api/v2/spaces."""
+    return [
+        {"id": _SPACE_IDS[key], "key": key, "name": key.title(), "type": "global"}
+        for key in keys
+    ]
 
 
 def _make_page_with_body(
@@ -149,26 +173,51 @@ def test_extract_config_space_keys_optional_defaults_empty(confluence_adapter: A
     assert cfg["space_keys"] == []
 
 
+def _mock_v2_client(
+    mock_confluence_cls: MagicMock,
+    *,
+    spaces: list[dict[str, Any]],
+    pages_by_space_id: dict[str, list[dict[str, Any]]] | None = None,
+    pages: list[dict[str, Any]] | None = None,
+) -> MagicMock:
+    """Wire a MagicMock onto the Confluence Cloud v2 method surface.
+
+    The adapter lists spaces once to build a key -> id map, then asks for
+    pages per numeric space id.
+    """
+    mock_client = MagicMock()
+    mock_confluence_cls.return_value = mock_client
+    mock_client.get_spaces.return_value = spaces
+
+    def _get_pages(*, space_id: str, **_kwargs: Any) -> list[dict[str, Any]]:
+        if pages_by_space_id is not None:
+            return pages_by_space_id.get(space_id, [])
+        return pages or []
+
+    mock_client.get_pages.side_effect = _get_pages
+    return mock_client
+
+
 # ---------------------------------------------------------------------------
 # list_documents tests
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-@patch("app.adapters.confluence.Confluence")
+@patch("app.adapters.confluence.ConfluenceV2")
 async def test_list_documents_single_space_happy_path(
     mock_confluence_cls: MagicMock,
     confluence_adapter: Any,
 ) -> None:
     """list_documents with one space key returns one DocumentRef per page."""
-    mock_client = MagicMock()
-    mock_confluence_cls.return_value = mock_client
-
-    pages = [
-        _make_page("100", "ENG", "Page One"),
-        _make_page("101", "ENG", "Page Two"),
-    ]
-    mock_client.get_all_pages_from_space.return_value = pages
+    _mock_v2_client(
+        mock_confluence_cls,
+        spaces=_spaces("ENG"),
+        pages=[
+            _make_page("100", "ENG", "Page One"),
+            _make_page("101", "ENG", "Page Two"),
+        ],
+    )
 
     connector = _make_connector(_valid_config(space_keys=["ENG"]))
     refs = await confluence_adapter.list_documents(connector)
@@ -178,23 +227,23 @@ async def test_list_documents_single_space_happy_path(
 
 
 @pytest.mark.asyncio
-@patch("app.adapters.confluence.Confluence")
+@patch("app.adapters.confluence.ConfluenceV2")
 async def test_list_documents_multiple_spaces(
     mock_confluence_cls: MagicMock,
     confluence_adapter: Any,
 ) -> None:
     """list_documents with multiple space_keys aggregates pages from all spaces."""
-    mock_client = MagicMock()
-    mock_confluence_cls.return_value = mock_client
-
-    def pages_for_space(space_key: str, **_kwargs: Any) -> list[dict[str, Any]]:
-        if space_key == "ENG":
-            return [_make_page("100", "ENG")]
-        if space_key == "DOCS":
-            return [_make_page("200", "DOCS"), _make_page("201", "DOCS")]
-        return []
-
-    mock_client.get_all_pages_from_space.side_effect = pages_for_space
+    _mock_v2_client(
+        mock_confluence_cls,
+        spaces=_spaces("ENG", "DOCS"),
+        pages_by_space_id={
+            _SPACE_IDS["ENG"]: [_make_page("100", "ENG")],
+            _SPACE_IDS["DOCS"]: [
+                _make_page("200", "DOCS"),
+                _make_page("201", "DOCS"),
+            ],
+        },
+    )
 
     connector = _make_connector(_valid_config(space_keys=["ENG", "DOCS"]))
     refs = await confluence_adapter.list_documents(connector)
@@ -203,39 +252,43 @@ async def test_list_documents_multiple_spaces(
 
 
 @pytest.mark.asyncio
-@patch("app.adapters.confluence.Confluence")
+@patch("app.adapters.confluence.ConfluenceV2")
 async def test_list_documents_empty_space_keys_lists_all_spaces(
     mock_confluence_cls: MagicMock,
     confluence_adapter: Any,
 ) -> None:
     """When space_keys is empty, list_documents discovers all spaces first."""
-    mock_client = MagicMock()
-    mock_confluence_cls.return_value = mock_client
-
-    # get_all_spaces returns space objects
-    mock_client.get_all_spaces.return_value = {
-        "results": [{"key": "ENG"}, {"key": "DOCS"}]
-    }
-    mock_client.get_all_pages_from_space.return_value = [_make_page("100", "ENG")]
+    mock_client = _mock_v2_client(
+        mock_confluence_cls,
+        spaces=_spaces("ENG", "DOCS"),
+        pages=[_make_page("100", "ENG")],
+    )
 
     connector = _make_connector(_valid_config())  # no space_keys → empty
     refs = await confluence_adapter.list_documents(connector)
 
     # Should have discovered spaces
-    mock_client.get_all_spaces.assert_called_once()
+    mock_client.get_spaces.assert_called_once()
+    # Pages are requested per numeric v2 space id, never by key.
+    requested_ids = {
+        call.kwargs["space_id"] for call in mock_client.get_pages.call_args_list
+    }
+    assert requested_ids == {_SPACE_IDS["ENG"], _SPACE_IDS["DOCS"]}
     assert len(refs) >= 1
 
 
 @pytest.mark.asyncio
-@patch("app.adapters.confluence.Confluence")
+@patch("app.adapters.confluence.ConfluenceV2")
 async def test_list_documents_source_url_format(
     mock_confluence_cls: MagicMock,
     confluence_adapter: Any,
 ) -> None:
     """source_url is formatted as {base_url}/wiki/spaces/{key}/pages/{id}."""
-    mock_client = MagicMock()
-    mock_confluence_cls.return_value = mock_client
-    mock_client.get_all_pages_from_space.return_value = [_make_page("999", "ENG")]
+    _mock_v2_client(
+        mock_confluence_cls,
+        spaces=_spaces("ENG"),
+        pages=[_make_page("999", "ENG")],
+    )
 
     connector = _make_connector(_valid_config(
         base_url="https://company.atlassian.net",
@@ -247,17 +300,17 @@ async def test_list_documents_source_url_format(
 
 
 @pytest.mark.asyncio
-@patch("app.adapters.confluence.Confluence")
+@patch("app.adapters.confluence.ConfluenceV2")
 async def test_list_documents_last_edited_from_version_created_at(
     mock_confluence_cls: MagicMock,
     confluence_adapter: Any,
 ) -> None:
     """last_edited on DocumentRef comes from page version.createdAt."""
-    mock_client = MagicMock()
-    mock_confluence_cls.return_value = mock_client
-    mock_client.get_all_pages_from_space.return_value = [
-        _make_page("100", "ENG", created_at="2026-03-01T12:00:00.000Z")
-    ]
+    _mock_v2_client(
+        mock_confluence_cls,
+        spaces=_spaces("ENG"),
+        pages=[_make_page("100", "ENG", created_at="2026-03-01T12:00:00.000Z")],
+    )
 
     connector = _make_connector(_valid_config(space_keys=["ENG"]))
     refs = await confluence_adapter.list_documents(connector)
@@ -266,44 +319,30 @@ async def test_list_documents_last_edited_from_version_created_at(
 
 
 @pytest.mark.asyncio
-@patch("app.adapters.confluence.Confluence")
-async def test_list_documents_sender_email_from_version_by_email(
+@patch("app.adapters.confluence.ConfluenceV2")
+async def test_list_documents_sender_email_empty_on_v2(
     mock_confluence_cls: MagicMock,
     confluence_adapter: Any,
 ) -> None:
-    """sender_email is populated from page version.by.email."""
-    mock_client = MagicMock()
-    mock_confluence_cls.return_value = mock_client
-    mock_client.get_all_pages_from_space.return_value = [
-        _make_page("100", "ENG", author_email="alice@example.com")
-    ]
+    """sender_email is always empty for Confluence (GetKlai/klai#1137).
 
-    connector = _make_connector(_valid_config(space_keys=["ENG"]))
-    refs = await confluence_adapter.list_documents(connector)
-
-    assert refs[0].sender_email == "alice@example.com"
-
-
-@pytest.mark.asyncio
-@patch("app.adapters.confluence.Confluence")
-async def test_list_documents_sender_email_empty_when_api_hides_email(
-    mock_confluence_cls: MagicMock,
-    confluence_adapter: Any,
-) -> None:
-    """sender_email is empty string when version.by has no email field."""
-    mock_client = MagicMock()
-    mock_confluence_cls.return_value = mock_client
-
-    page = _make_page("100", "ENG")
-    # Remove email from version.by (e.g., scope not sufficient)
-    page["version"]["by"] = {"displayName": "Anonymous"}
-
-    mock_client.get_all_pages_from_space.return_value = [page]
+    The v1 payload carried ``version.by.email``; the v2 page object exposes
+    only ``version.authorId`` (an Atlassian account id). sender_email stays an
+    optional field downstream — ``clients/knowledge_ingest.py`` writes it into
+    ``extra`` only when non-empty — so an empty value degrades gracefully
+    rather than failing the sync.
+    """
+    _mock_v2_client(
+        mock_confluence_cls,
+        spaces=_spaces("ENG"),
+        pages=[_make_page("100", "ENG")],
+    )
 
     connector = _make_connector(_valid_config(space_keys=["ENG"]))
     refs = await confluence_adapter.list_documents(connector)
 
     assert refs[0].sender_email == ""
+    assert refs[0].mentioned_emails == []
 
 
 # ---------------------------------------------------------------------------
@@ -312,7 +351,7 @@ async def test_list_documents_sender_email_empty_when_api_hides_email(
 
 
 @pytest.mark.asyncio
-@patch("app.adapters.confluence.Confluence")
+@patch("app.adapters.confluence.ConfluenceV2")
 async def test_fetch_document_plain_html_to_text(
     mock_confluence_cls: MagicMock,
     confluence_adapter: Any,
@@ -337,7 +376,7 @@ async def test_fetch_document_plain_html_to_text(
 
 
 @pytest.mark.asyncio
-@patch("app.adapters.confluence.Confluence")
+@patch("app.adapters.confluence.ConfluenceV2")
 async def test_fetch_document_strips_ac_tags(
     mock_confluence_cls: MagicMock,
     confluence_adapter: Any,
@@ -364,7 +403,7 @@ async def test_fetch_document_strips_ac_tags(
 
 
 @pytest.mark.asyncio
-@patch("app.adapters.confluence.Confluence")
+@patch("app.adapters.confluence.ConfluenceV2")
 async def test_fetch_document_returns_bytes_utf8(
     mock_confluence_cls: MagicMock,
     confluence_adapter: Any,
@@ -387,7 +426,7 @@ async def test_fetch_document_returns_bytes_utf8(
 
 
 @pytest.mark.asyncio
-@patch("app.adapters.confluence.Confluence")
+@patch("app.adapters.confluence.ConfluenceV2")
 async def test_fetch_document_extracts_external_image(
     mock_confluence_cls: MagicMock,
     confluence_adapter: Any,
@@ -414,7 +453,7 @@ async def test_fetch_document_extracts_external_image(
 
 
 @pytest.mark.asyncio
-@patch("app.adapters.confluence.Confluence")
+@patch("app.adapters.confluence.ConfluenceV2")
 async def test_fetch_document_skips_attachment_images_shape_b(
     mock_confluence_cls: MagicMock,
     confluence_adapter: Any,
@@ -445,7 +484,7 @@ async def test_fetch_document_skips_attachment_images_shape_b(
 
 
 @pytest.mark.asyncio
-@patch("app.adapters.confluence.Confluence")
+@patch("app.adapters.confluence.ConfluenceV2")
 async def test_fetch_document_mixed_images(
     mock_confluence_cls: MagicMock,
     confluence_adapter: Any,
@@ -474,7 +513,7 @@ async def test_fetch_document_mixed_images(
 
 
 @pytest.mark.asyncio
-@patch("app.adapters.confluence.Confluence")
+@patch("app.adapters.confluence.ConfluenceV2")
 async def test_fetch_document_image_alt_text_captured_when_present(
     mock_confluence_cls: MagicMock,
     confluence_adapter: Any,

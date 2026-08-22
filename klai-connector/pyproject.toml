@@ -37,14 +37,13 @@ dependencies = [
     # by every upstream-error log/persist call site (incl. sync_run.error_details).
     "klai-log-utils",
     "pyairtable>=3.3.0",
-    # Upper-bounded at <5: v5 split Confluence into Cloud/Server classes and
-    # dropped ``get_page_by_id`` from the Cloud client, which is the method
-    # ConfluenceAdapter.fetch_document() calls. Verified against 5.0.3:
-    # Confluence(url=..., cloud=True).get_page_by_id -> AttributeError
-    # ("'Cloud' object has no attribute 'get_page_by_id'"). The adapter test
-    # patches the SDK class, so CI cannot catch this. Lift the bound only
-    # together with a v5 migration of app/adapters/confluence.py.
-    "atlassian-python-api>=4.0.7,<5",
+    # Floor at >=5: app/adapters/confluence.py targets the Confluence Cloud
+    # v2 client (``atlassian.ConfluenceV2``). GetKlai/klai#1137 lifted the
+    # earlier ``<5`` ceiling together with that migration.
+    # tests/test_confluence_sdk_contract.py asserts the SDK surface the
+    # adapter calls against a real (un-patched) client, so the next major
+    # bump fails in CI instead of in production.
+    "atlassian-python-api>=5.0.3",
     "html2text>=2025.4.15",
     "redis>=5.0",
     # SPEC-SEC-IDENTITY-ASSERT-003 REQ-2: replace JWT resourceowner trust

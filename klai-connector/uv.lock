@@ -157,7 +157,7 @@ wheels = [
 
 [[package]]
 name = "atlassian-python-api"
-version = "4.0.7"
+version = "5.0.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "beautifulsoup4" },
@@ -168,9 +168,9 @@ dependencies = [
     { name = "requests-oauthlib" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/40/e8/f23b7273e410c6fe9f98f9db25268c6736572f22a9566d1dc9ed3614bb68/atlassian_python_api-4.0.7.tar.gz", hash = "sha256:8d9cc6068b1d2a48eb434e22e57f6bbd918a47fac9e46b95b7a3cefb00fceacb", size = 271149, upload-time = "2025-08-21T13:19:40.746Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/66/b8/6a597a1d31329bd26d6dc6769d49bbd3cf173221322b4de0af3351133c74/atlassian_python_api-5.0.3.tar.gz", hash = "sha256:7d0443a01568cdbf9af45efd30980472979923f6b605f2640e0e80dd02c1dc8a", size = 1257894, upload-time = "2026-08-17T09:22:11.355Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1d/83/e4f9976ce3c933a079b8931325e7a9c0a8bba7030a2cb85764c0048f3479/atlassian_python_api-4.0.7-py3-none-any.whl", hash = "sha256:46a70cb29eaab87c0a1697fccd3e25df1aa477e6aa4fb9ba936a9d46b425933c", size = 197746, upload-time = "2025-08-21T13:19:39.044Z" },
+    { url = "https://files.pythonhosted.org/packages/1d/47/ab11677bb9f879719e1b8123a2c953ebc88a2b63f15c7f0f7f84a15e623d/atlassian_python_api-5.0.3-py3-none-any.whl", hash = "sha256:c5265c39a8bceb7c3b254d768b4a006a63c7fd80153d293a686fa4e31d52e3c2", size = 331473, upload-time = "2026-08-17T09:22:09.655Z" },
 ]
 
 [[package]]
@@ -1114,7 +1114,7 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.14.0" },
     { name = "apscheduler", specifier = ">=3.10.0" },
     { name = "asyncpg", specifier = ">=0.30.0" },
-    { name = "atlassian-python-api", specifier = ">=4.0.7,<5" },
+    { name = "atlassian-python-api", specifier = ">=5.0.3" },
     { name = "cryptography", specifier = ">=44.0.0" },
     { name = "en-core-web-sm", url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" },
     { name = "fastapi", specifier = ">=0.115.0" },

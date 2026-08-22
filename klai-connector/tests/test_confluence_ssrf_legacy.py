@@ -4,7 +4,7 @@ SPEC-SEC-SSRF-001 REQ-8.4 / AC-21: a pre-existing ``connector.connectors``
 row whose ``config.base_url`` is today SSRF-unsafe (stored before REQ-8
 landed in the portal) MUST fail the sync run with the stable error code
 ``ssrf_blocked_persisted_confluence_base_url`` and MUST NOT construct
-an ``atlassian.Confluence`` client.
+an ``atlassian.ConfluenceV2`` client.
 """
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ class TestConfluenceBaseUrlStrict:
 
 class TestAdapterExtractConfig:
     """``_extract_config`` is the load-time hook; it MUST fail before
-    any ``atlassian.Confluence(...)`` client is instantiated."""
+    any ``atlassian.ConfluenceV2(...)`` client is instantiated."""
 
     def _connector(self, base_url: str) -> SimpleNamespace:
         return SimpleNamespace(
@@ -79,7 +79,9 @@ class TestAdapterExtractConfig:
     def test_legacy_internal_base_url_blocks_client(self) -> None:
         connector = self._connector("http://confluence-internal:8090/")
 
-        with patch("app.adapters.confluence.Confluence") as sdk, pytest.raises(PersistedUrlRejectedError) as excinfo:
+        with patch("app.adapters.confluence.ConfluenceV2") as sdk, pytest.raises(
+            PersistedUrlRejectedError
+        ) as excinfo:
             ConfluenceAdapter._extract_config(connector)
         # CRITICAL: the SDK client MUST NOT have been constructed.
         assert sdk.call_count == 0
