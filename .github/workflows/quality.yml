@@ -37,7 +37,7 @@ jobs:
 
       - name: Detect affected workflows
         id: filter
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@v4
         with:
           filters: |
             portal_api:
