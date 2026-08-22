@@ -136,6 +136,23 @@
       automerge: false,
     },
     {
+      description:
+        'BlockNote must move as one unit. The three packages re-export each \
+        other\'s types, so bumping one alone makes npm nest a SECOND copy of \
+        @blocknote/core under @blocknote/react/node_modules. TypeScript then \
+        sees two structurally identical but nominally distinct BlockNoteEditor \
+        classes and `tsc -b` fails on BlockPageEditor.tsx with TS2322 \
+        ("Property \'options\' is protected but type ... is not a class \
+        derived from ..."). That is what killed PRs #1158, #1159 and #1160 at \
+        0.54.0. Verified 2026-08-22: with all three moved to ^0.54.0 together, \
+        npm creates no nested copy and `tsc -b --force` exits 0 with no code \
+        change. Renovate has no monorepo preset for BlockNote, so the group \
+        has to be declared here.',
+      matchManagers: ['npm'],
+      matchPackageNames: ['@blocknote/**'],
+      groupName: 'BlockNote',
+    },
+    {
       description: 'Major upgrades always get human eyes',
       matchUpdateTypes: ['major'],
       automerge: false,
@@ -201,6 +218,23 @@
       matchDatasources: ['docker'],
       matchPackageNames: ['python'],
       allowedVersions: '<3.14',
+    },
+    {
+      description:
+        'eslint (klai-docs only): pinned below 10 — eslint-config-next 16.3.1 \
+        pulls in eslint-plugin-react 7.37.5, whose lib/util/version.js still \
+        calls context.getFilename(). ESLint 10 removed that method, so \
+        `eslint .` throws "contextOrFilename.getFilename is not a function" \
+        while loading the very first React rule and the quality-docs job never \
+        gets as far as linting (proven by PR #1161). 7.37.5 is the latest \
+        release, so there is nothing to bump to and nothing in klai-docs to \
+        edit around it. klai-portal/frontend is already on eslint 10 and is \
+        unaffected — it does not use eslint-config-next. \
+        Tracking: GetKlai/klai#1184',
+      matchManagers: ['npm'],
+      matchPackageNames: ['eslint'],
+      matchFileNames: ['klai-docs/package.json'],
+      allowedVersions: '<10.0.0',
     },
     {
       description:
