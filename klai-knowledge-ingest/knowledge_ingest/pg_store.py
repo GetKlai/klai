@@ -470,9 +470,11 @@ async def get_episode_ids_for_document_history(
     predecessor would leave those stranded exactly as before.
 
     Rows contribute nothing when their episode never ran (graphiti disabled,
-    job still queued, extraction failed) or when they carry the ``no-chunks``
-    sentinel ``backfill.py`` writes for documents it deliberately skipped —
-    that string is not an episode uuid and renaming it would match nothing.
+    job still queued, extraction failed) or when they carry a sentinel rather
+    than a uuid: ``no-chunks`` from ``backfill.py``, or ``skipped:<reason>``
+    written by the ingest route for a page that must not become an episode at
+    all (a navigation page, #1148). Neither is an episode uuid, and renaming
+    one would match nothing.
 
     depth < 100 bounds the walk. ``superseded_by`` points forward in time so a
     cycle should be impossible, but an unbounded recursive CTE that meets one
@@ -502,6 +504,7 @@ async def get_episode_ids_for_document_history(
           AND a.id IN (SELECT id FROM history)
           AND a.extra->>'graphiti_episode_id' IS NOT NULL
           AND a.extra->>'graphiti_episode_id' <> 'no-chunks'
+          AND a.extra->>'graphiti_episode_id' NOT LIKE 'skipped:%'
         """,
         org_id,
         artifact_ids,

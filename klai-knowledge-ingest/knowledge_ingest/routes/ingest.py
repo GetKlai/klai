@@ -44,7 +44,10 @@ from knowledge_ingest.content_profiles import get_profile
 from knowledge_ingest.db import tenant_scoped_connection
 from knowledge_ingest.docs_provenance import build_docs_source_extra
 from knowledge_ingest.document_normalizer import normalize_document_for_chunking
-from knowledge_ingest.enrichment_policy import enrichment_skip_reason
+from knowledge_ingest.enrichment_policy import (
+    enrichment_skip_reason,
+    graph_episode_skip_reason,
+)
 from knowledge_ingest.identity import assert_caller_identity, assert_caller_identity_tenant_only
 from knowledge_ingest.models import (
     BulkSyncRequest,
@@ -870,7 +873,25 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
     # The worker drains: ingest-kb → enrich-interactive → enrich-bulk → graphiti-bulk.
     # This ensures enrichment LLM calls finish before Graphiti starts, so they never
     # compete on the same 1 req/s upstream rate limit simultaneously.
-    if settings.graphiti_enabled:
+    graph_skip = graph_episode_skip_reason(indexable_content)
+    if settings.graphiti_enabled and graph_skip:
+        # An index or category page holds no facts about the world, only about
+        # the documentation, so extraction can only yield the meta-statements
+        # rule 1 forbids (#1148). Recorded on the artifact rather than silently
+        # dropped: without a marker the resume logic in backfill.py would keep
+        # picking the page up, and nothing would show why the graph has no
+        # episode for a document that plainly has content.
+        await pg_store.update_artifact_extra(
+            conn, artifact_id, {"graphiti_episode_id": f"skipped:{graph_skip}"}
+        )
+        logger.info(
+            "graphiti_episode_skipped",
+            artifact_id=artifact_id,
+            org_id=req.org_id,
+            path=req.path,
+            reason=graph_skip,
+        )
+    elif settings.graphiti_enabled:
         from knowledge_ingest import enrichment_tasks
 
         proc_app = enrichment_tasks.get_app()

@@ -113,9 +113,10 @@ async def collect_renames(org_id: str) -> tuple[dict[str, list[str]], int]:
         except (TypeError, ValueError):
             continue
         episode_id = (extra or {}).get("graphiti_episode_id")
-        # "no-chunks" is the sentinel backfill.py writes for artifacts it
-        # deliberately skipped; it is not an episode uuid.
-        if not episode_id or episode_id == "no-chunks":
+        # Sentinels, not uuids: "no-chunks" from backfill.py, and
+        # "skipped:<reason>" from the ingest route for a page that must not
+        # become an episode at all (a navigation page, #1148).
+        if not episode_id or episode_id == "no-chunks" or episode_id.startswith("skipped:"):
             skipped += 1
             continue
         kb_slug, path = row["kb_slug"], row["path"]
