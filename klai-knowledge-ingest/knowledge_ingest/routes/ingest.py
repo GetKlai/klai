@@ -14,7 +14,6 @@ so RLS sees the tenant context.
 
 import hashlib
 import hmac
-import html
 import json
 import re
 import time
@@ -152,14 +151,13 @@ def _extract_title(content: str, path: str, explicit_title: str | None = None) -
             if candidate and not is_url_id_leak(candidate):
                 return candidate
             fallback_id = fallback_id or candidate or None
-    html_h1s = re.findall(r"<h1(?:\s[^>]*)?>(.*?)</h1>", content, flags=re.IGNORECASE | re.DOTALL)
-    # Crawled HTML can retain a masthead H1 before the article H1, as in the
-    # observed "Ascend Cloud" then "Configure call forwarding" page.
-    for html_h1 in reversed(html_h1s):
-        candidate = html.unescape(re.sub(r"<[^>]+>", "", html_h1)).strip()
-        if candidate and not is_url_id_leak(candidate):
-            return candidate
-        fallback_id = fallback_id or candidate or None
+    # No HTML <h1> branch on purpose. The crawler stores markdown
+    # (adapters/crawler.py:1555 takes fit_markdown or raw_markdown), and of
+    # 1383 stored Voys documents exactly 1 contains an "<h1" while 746 carry a
+    # markdown "# " heading. A branch that fires on 0.07% of the corpus is not
+    # worth the failure mode it brings: the first <h1> on a crawled page is
+    # routinely the site masthead, so it would confidently mislabel documents
+    # to rescue almost none.
     if parsed_path.scheme in {"http", "https"} and parsed_path.netloc:
         slug = unquote(parsed_path.path.rstrip("/").rsplit("/", 1)[-1])
         slug = re.sub(r"\.(?:html?|md)$", "", slug, flags=re.IGNORECASE)

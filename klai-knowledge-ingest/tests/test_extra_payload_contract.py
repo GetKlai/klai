@@ -466,14 +466,12 @@ async def test_explicit_title_wins_for_file_hash_paths_and_extra_payload():
 
 
 @pytest.mark.asyncio
-async def test_crawl_article_id_url_uses_html_h1_for_title():
+async def test_crawl_article_id_url_uses_document_heading_for_title():
     req = IngestRequest(
         org_id="org-contract",
         kb_slug="kb-contract",
         path="https://support.ascendcloud.com/app/articles/detail/a_id/15937",
-        content=(
-            "<h1>Configure call forwarding</h1>\n\nInstructions for configuring call forwarding."
-        ),
+        content=("# Configure call forwarding\n\nInstructions for configuring call forwarding."),
         source_type="crawl",
         content_type="kb_article",
         extra={"source_url": "https://support.ascendcloud.com/app/articles/detail/a_id/15937"},
@@ -560,24 +558,6 @@ async def test_numeric_report_title_is_preserved_when_absent_from_url_path():
 
     assert result["title"] == "2024"
     assert _captured_extra_payload(update_extra_mock)["title"] == "2024"
-
-
-@pytest.mark.asyncio
-async def test_article_heading_wins_over_earlier_masthead_h1():
-    req = IngestRequest(
-        org_id="org-contract",
-        kb_slug="kb-contract",
-        path="https://support.ascendcloud.com/app/articles/detail/a_id/15937",
-        content=("<h1>Ascend Cloud</h1>\n<p>nav</p>\n<h1>Configure call forwarding</h1>\nBody"),
-        source_type="crawl",
-        content_type="kb_article",
-    )
-
-    result, update_extra_mock = await _run_with_mocks(req, _MockProcApp())
-
-    extra_payload = _captured_extra_payload(update_extra_mock)
-    assert result["title"] == "Configure call forwarding"
-    assert extra_payload["title"] == "Configure call forwarding"
 
 
 @pytest.mark.asyncio

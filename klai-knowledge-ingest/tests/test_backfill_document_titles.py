@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
-def test_derives_title_from_stored_h1_for_numeric_article_id():
+def test_derives_title_from_stored_heading_for_numeric_article_id():
     from scripts.backfill_document_titles import title_update_from_row
 
     update = title_update_from_row(
@@ -17,7 +17,7 @@ def test_derives_title_from_stored_h1_for_numeric_article_id():
                 {
                     "title": "15937",
                     "source_url": "https://support.ascendcloud.com/app/articles/detail/a_id/15937",
-                    "document_text": "<h1>Configure call forwarding</h1>\n\nInstructions.",
+                    "document_text": "# Configure call forwarding\n\nInstructions.",
                 }
             ),
         }
