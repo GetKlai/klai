@@ -92,7 +92,7 @@ async def collect_renames(org_id: str) -> tuple[dict[str, list[str]], int]:
                 FROM chain c
                 JOIN knowledge.artifacts n ON n.id = c.superseded_by AND n.org_id = $1
                 WHERE c.superseded_by IS NOT NULL AND c.depth < 20
-            )
+            ),
             terminal AS (
                 SELECT DISTINCT ON (c.origin) c.origin, c.kb_slug, c.path
                 FROM chain c
