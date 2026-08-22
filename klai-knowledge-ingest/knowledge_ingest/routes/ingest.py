@@ -15,9 +15,11 @@ so RLS sees the tenant context.
 import hashlib
 import hmac
 import json
+import re
 import time
 import uuid
 from datetime import UTC, datetime
+from urllib.parse import unquote, urlparse
 
 import asyncpg
 import httpx
@@ -115,22 +117,57 @@ def _verify_internal_secret(request: Request) -> None:
 
 
 def _extract_title(content: str, path: str, explicit_title: str | None = None) -> str:
-    """Extract title from caller metadata, frontmatter, H1, then path."""
+    """Extract title from caller metadata, frontmatter, H1, then URL/path."""
+    fallback_id: str | None = None
+    parsed_path = urlparse(path)
+    path_segments = (
+        {unquote(segment) for segment in parsed_path.path.split("/") if segment}
+        if parsed_path.scheme in {"http", "https"} and parsed_path.netloc
+        else set()
+    )
+
+    def is_url_id_leak(candidate: str) -> bool:
+        # Numeric titles such as room "204" are legitimate; only reject the
+        # exact URL-segment match observed for the leaked article id "15937".
+        return candidate.isdigit() and candidate in path_segments
+
     if explicit_title and explicit_title.strip():
-        return explicit_title.strip()
+        candidate = explicit_title.strip()
+        if not is_url_id_leak(candidate):
+            return candidate
+        fallback_id = candidate
     if content.startswith("---"):
         end = content.find("\n---", 3)
         if end != -1:
             try:
                 fm = yaml.safe_load(content[3:end])
                 if isinstance(fm, dict) and fm.get("title"):
-                    return str(fm["title"])
+                    candidate = str(fm["title"]).strip()
+                    if candidate and not is_url_id_leak(candidate):
+                        return candidate
+                    fallback_id = fallback_id or candidate or None
             except Exception:
                 logger.debug("frontmatter_yaml_parse_error")
     for line in content.splitlines():
         if line.startswith("# "):
-            return line[2:].strip()
-    return path.rsplit("/", 1)[-1].replace(".md", "")
+            candidate = line[2:].strip()
+            if candidate and not is_url_id_leak(candidate):
+                return candidate
+            fallback_id = fallback_id or candidate or None
+    # No HTML <h1> branch on purpose. The crawler stores markdown
+    # (adapters/crawler.py:1555 takes fit_markdown or raw_markdown), and of
+    # 1383 stored Voys documents exactly 1 contains an "<h1" while 746 carry a
+    # markdown "# " heading. A branch that fires on 0.07% of the corpus is not
+    # worth the failure mode it brings: the first <h1> on a crawled page is
+    # routinely the site masthead, so it would confidently mislabel documents
+    # to rescue almost none.
+    if parsed_path.scheme in {"http", "https"} and parsed_path.netloc:
+        slug = unquote(parsed_path.path.rstrip("/").rsplit("/", 1)[-1])
+        slug = re.sub(r"\.(?:html?|md)$", "", slug, flags=re.IGNORECASE)
+        if slug and not slug.isdigit():
+            return re.sub(r"[-_]+", " ", slug).strip().title()
+        fallback_id = fallback_id or slug or None
+    return fallback_id or path.rsplit("/", 1)[-1].replace(".md", "")
 
 
 def _extract_frontmatter_metadata(content: str) -> dict:

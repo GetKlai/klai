@@ -466,6 +466,121 @@ async def test_explicit_title_wins_for_file_hash_paths_and_extra_payload():
 
 
 @pytest.mark.asyncio
+async def test_crawl_article_id_url_uses_document_heading_for_title():
+    req = IngestRequest(
+        org_id="org-contract",
+        kb_slug="kb-contract",
+        path="https://support.ascendcloud.com/app/articles/detail/a_id/15937",
+        content=("# Configure call forwarding\n\nInstructions for configuring call forwarding."),
+        source_type="crawl",
+        content_type="kb_article",
+        extra={"source_url": "https://support.ascendcloud.com/app/articles/detail/a_id/15937"},
+    )
+    proc_app = _MockProcApp()
+
+    result, update_extra_mock = await _run_with_mocks(req, proc_app)
+
+    extra_payload = _captured_extra_payload(update_extra_mock)
+    assert result["title"] == "Configure call forwarding"
+    assert extra_payload["title"] == "Configure call forwarding"
+
+
+@pytest.mark.asyncio
+async def test_bare_id_explicit_title_does_not_hide_document_h1():
+    req = IngestRequest(
+        org_id="org-contract",
+        kb_slug="kb-contract",
+        path="https://support.ascendcloud.com/app/articles/detail/a_id/15937",
+        content="# Configure call forwarding\n\nInstructions for configuring call forwarding.",
+        title="15937",
+        source_type="crawl",
+        content_type="kb_article",
+        extra={"source_url": "https://support.ascendcloud.com/app/articles/detail/a_id/15937"},
+    )
+    proc_app = _MockProcApp()
+
+    result, update_extra_mock = await _run_with_mocks(req, proc_app)
+
+    extra_payload = _captured_extra_payload(update_extra_mock)
+    assert result["title"] == "Configure call forwarding"
+    assert extra_payload["title"] == "Configure call forwarding"
+
+
+@pytest.mark.asyncio
+async def test_numeric_room_title_is_preserved_when_absent_from_url_path():
+    req = IngestRequest(
+        org_id="org-contract",
+        kb_slug="kb-contract",
+        path="https://example.com/rooms/book-now",
+        content="Book a room.",
+        title="204",
+        source_type="crawl",
+        content_type="kb_article",
+    )
+
+    result, update_extra_mock = await _run_with_mocks(req, _MockProcApp())
+
+    assert result["title"] == "204"
+    assert _captured_extra_payload(update_extra_mock)["title"] == "204"
+
+
+@pytest.mark.asyncio
+async def test_numeric_version_title_is_preserved_when_absent_from_url_path():
+    req = IngestRequest(
+        org_id="org-contract",
+        kb_slug="kb-contract",
+        path="https://example.com/releases/download",
+        content="Download this release.",
+        title="2",
+        source_type="crawl",
+        content_type="kb_article",
+    )
+
+    result, update_extra_mock = await _run_with_mocks(req, _MockProcApp())
+
+    assert result["title"] == "2"
+    assert _captured_extra_payload(update_extra_mock)["title"] == "2"
+
+
+@pytest.mark.asyncio
+async def test_numeric_report_title_is_preserved_when_absent_from_url_path():
+    req = IngestRequest(
+        org_id="org-contract",
+        kb_slug="kb-contract",
+        path="https://example.com/reports/annual-summary",
+        content="Annual report.",
+        title="2024",
+        source_type="crawl",
+        content_type="kb_article",
+    )
+
+    result, update_extra_mock = await _run_with_mocks(req, _MockProcApp())
+
+    assert result["title"] == "2024"
+    assert _captured_extra_payload(update_extra_mock)["title"] == "2024"
+
+
+@pytest.mark.asyncio
+async def test_crawl_url_slug_is_humanised_when_content_has_no_h1():
+    req = IngestRequest(
+        org_id="org-contract",
+        kb_slug="kb-contract",
+        path="https://help.example.com/articles/reset-your-password",
+        content="Instructions for resetting a password without a page heading.",
+        source_type="crawl",
+        content_type="kb_article",
+        extra={"source_url": "https://help.example.com/articles/reset-your-password"},
+    )
+    proc_app = _MockProcApp()
+
+    result, update_extra_mock = await _run_with_mocks(req, proc_app)
+
+    extra_payload = _captured_extra_payload(update_extra_mock)
+    assert result["title"] == "Reset Your Password"
+    assert extra_payload["title"] == "Reset Your Password"
+
+
+@pytest.mark.asyncio
 async def test_extra_payload_carries_content_label_even_when_empty():
     """content_label must be in extra_payload as the third-time-bitten
     bug guard. The labeler may legitimately return [] (LLM call failed

@@ -1554,6 +1554,9 @@ async def _ingest_crawl_result(
 
     text = result.fit_markdown or result.raw_markdown or ""
     front_matter = (result.metadata or {}).get("description", "")
+    page_title = (result.metadata or {}).get("title")
+    if not isinstance(page_title, str):
+        page_title = None
 
     # SPEC-INGEST-LOGIN-WALL-DETECT-002 REQ-01 — compute the page's SimHash
     # once, BEFORE any use (this call site's short-content-cluster gate
@@ -1841,6 +1844,7 @@ async def _ingest_crawl_result(
             kb_slug=kb_slug,
             path=url,
             content=text,
+            title=page_title,
             source_type="crawl",
             source_domain=urlparse(url).netloc,
             content_type=content_type,
