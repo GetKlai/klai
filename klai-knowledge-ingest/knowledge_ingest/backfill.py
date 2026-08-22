@@ -27,6 +27,7 @@ from qdrant_client import AsyncQdrantClient
 
 from knowledge_ingest.config import settings
 from knowledge_ingest.db import cross_org_admin_connection
+from knowledge_ingest.enrichment_policy import graph_episode_skip_reason
 from knowledge_ingest.graph import ingest_episode
 
 # ---------------------------------------------------------------------------
@@ -181,6 +182,24 @@ async def main(limit: int | None = None) -> None:
                 continue
 
             full_text = "\n\n".join(chunks)
+
+            # Same rule the live ingest route applies. This script is what a
+            # graph rebuild runs, so without the check here every index page
+            # comes straight back — along with the meta-facts and the ~26 LLM
+            # calls each one costs. The route cannot cover this path: backfill
+            # calls ingest_episode() directly.
+            skip_reason = graph_episode_skip_reason(full_text)
+            if skip_reason:
+                log.info("[%d/%d] %s — skipped (%s)", idx, total_to_process, title, skip_reason)
+                await conn.execute(
+                    "UPDATE knowledge.artifacts "
+                    "SET extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb "
+                    "WHERE id = $2::uuid",
+                    json.dumps({"graphiti_episode_id": f"skipped:{skip_reason}"}),
+                    artifact_id,
+                )
+                continue
+
             if len(full_text) > MAX_TEXT_CHARS:
                 # Loud, not silent: a truncated document yields no facts about
                 # its tail, and the old code left no trace that it happened.

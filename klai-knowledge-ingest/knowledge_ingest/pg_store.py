@@ -981,7 +981,15 @@ async def get_alive_episode_uuids_for_org(conn: asyncpg.Connection, org_id: str)
         """,
         org_id,
     )
-    return {r["episode_uuid"] for r in rows if r["episode_uuid"] != "no-chunks"}
+    # "no-chunks" and "skipped:<reason>" are sentinels, not episode uuids: the
+    # first from backfill.py, the second from a page held out of the graph
+    # deliberately (#1148). Treating either as alive would have the caller ask
+    # FalkorDB about an episode that never existed.
+    return {
+        r["episode_uuid"]
+        for r in rows
+        if r["episode_uuid"] != "no-chunks" and not r["episode_uuid"].startswith("skipped:")
+    }
 
 
 async def get_active_image_hashes_for_kb(
