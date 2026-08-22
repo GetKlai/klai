@@ -67,7 +67,7 @@ def test_an_illustrated_walkthrough_is_not_a_link_list():
 
 
 def test_a_link_list_punctuated_as_prose_is_still_a_link_list():
-    """"* [Artikel](url)." scores one sentence per link.
+    """ "* [Artikel](url)." scores one sentence per link.
 
     Counting sentence-ending punctuation lets a list written this way pass as
     an article. Measuring what is left once the links are removed does not.
