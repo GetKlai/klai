@@ -49,8 +49,14 @@
   // config reason nobody had diagnosed yet; one eslint PR could never go green.
   // Ten unmergeable PRs, ten of ten slots, and a debug run saying it plainly:
   //
-  //   Open PR Count: 10, Existing Branch Count: 10
+  //   Open PR Count: 10, Existing Branch Count: 10, Hourly PR Count: 0
+  //   Calculated lowest branchConcurrentLimit among the upgrades present in
+  //     this branch is 10.
   //   Reached branch limit - skipping branch creation
+  //
+  // Note the middle line: what blocks creation is branchConcurrentLimit, which
+  // is null by default and inherits prConcurrentLimit. Setting the latter to 0
+  // is therefore what lifts the former; there is no second knob to turn.
   //
   // Nothing new could be opened at all. Lock file maintenance — the thing added
   // specifically because transitive pins had rotted for 28 weeks — was among
