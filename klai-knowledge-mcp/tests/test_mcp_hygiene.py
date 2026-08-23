@@ -46,6 +46,57 @@ def test_dns_rebinding_protection_is_enabled_with_anchor() -> None:
     assert "spec-mcp-auth-001" in reason_text, "@MX:REASON must reference SPEC-MCP-AUTH-001"
 
 
+def test_dns_rebinding_protection_actually_rejects_a_foreign_host() -> None:
+    """SPEC-MCP-AUTH-001 REQ-A6 — the settings are WIRED UP, not merely written down.
+
+    The test above greps main.py for ``enable_dns_rebinding_protection=True``.
+    That is a text check, and it stayed green through the mcp SDK v2 migration
+    even though v2 moved ``transport_security`` off the server constructor onto
+    ``streamable_http_app()`` — a settings object that is built and never passed
+    satisfies it perfectly. So this one asks the running app instead.
+
+    It drives ``main.app``, the app uvicorn actually serves, rather than the
+    inner ``_mcp_app``: that way a regression in how the MCP app is mounted, or
+    in middleware order, fails here too. Reaching the transport requires getting
+    past ``_WWWAuthenticateMiddleware``, which only prefix-matches the bearer
+    token, so a dummy ``klai_mcp_`` token is enough — the tools themselves still
+    verify it against portal-api, and we never get that far.
+
+    Both statuses are pinned deliberately. An allow-listed Host reaches the
+    transport and fails there on protocol grounds (400, no session ID); a
+    foreign Host is refused by the host gate (421). Asserting only ``!= 421``
+    for the allowed case would also accept a 404 or a 500 from an app that no
+    longer serves /mcp at all.
+    """
+    from starlette.testclient import TestClient
+
+    import main
+
+    headers = {
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+        "Authorization": "Bearer klai_mcp_test-token-never-verified",
+    }
+    body = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+
+    with TestClient(main.app) as client:
+        for allowed in ("mcp.getklai.com", "klai-knowledge-mcp:8080"):
+            response = client.post("/mcp", headers={**headers, "Host": allowed}, json=body)
+            assert response.status_code == 400, (
+                f"allow-listed Host {allowed!r} should reach the MCP transport and fail "
+                f"there on the missing session ID; got {response.status_code}. 421 means "
+                "the host gate rejected it and production traffic through Caddy and "
+                "LibreChat would both break."
+            )
+
+        for foreign in ("evil.example.com", "attacker.test"):
+            response = client.post("/mcp", headers={**headers, "Host": foreign}, json=body)
+            assert response.status_code == 421, (
+                f"Host {foreign!r} should be refused with 421 Misdirected Request; got "
+                f"{response.status_code}. DNS-rebinding protection is not reaching the app."
+            )
+
+
 def test_caddyfile_routes_mcp_subdomain_to_knowledge_mcp() -> None:
     """SPEC-MCP-AUTH-001 Fase 5 — Caddy upstream block for mcp.${DOMAIN}."""
     assert CADDYFILE.exists(), f"expected Caddyfile at {CADDYFILE}"
