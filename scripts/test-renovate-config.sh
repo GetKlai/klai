@@ -70,6 +70,16 @@ if [ "$rebase_when_conflicted_count" -ne 2 ]; then
   exit 1
 fi
 
+# Renovate defaults prConcurrentLimit to 10. On 2026-08-22 ten unmergeable PRs
+# filled every slot and Renovate stopped opening branches entirely — including
+# the lock file refresh that exists precisely because silence had gone unnoticed
+# for 28 weeks before. Deleting this line restores that default, and the symptom
+# is a Renovate run that succeeds while doing nothing. prHourlyLimit stays at its
+# default and is what actually paces a large backlog.
+assert_line "$config" \
+  '  prConcurrentLimit: 0,' \
+  'the concurrent PR limit must stay unlimited, or PRs awaiting review can starve the queue'
+
 # Main requires a GitHub Actions check named `quality`. Since #1113 that context
 # comes from ONE unfiltered workflow: quality.yml runs on every PR, selects the
 # affected reusable workflows, and aggregates their results. It replaced the
