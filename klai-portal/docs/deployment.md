@@ -9,13 +9,13 @@ maintain or recover it.
 git push (backend/**) → GitHub Actions → GHCR image → SSH into core-01 → docker compose up
 ```
 
-The workflow file is at [`.github/workflows/portal-api.yml`](../.github/workflows/portal-api.yml).
+The workflow file is at [`.github/workflows/portal-api.yml`](../../.github/workflows/portal-api.yml).
 
 ## Trigger
 
 The pipeline runs automatically on every push to `main` that touches:
 
-- `backend/**`
+- `klai-portal/backend/**`
 - `.github/workflows/portal-api.yml`
 
 ## Steps
@@ -96,13 +96,13 @@ curl --max-time 3 http://localhost:8010/health
 git push (frontend/**) → GitHub Actions → npm run build → rsync to core-01
 ```
 
-The workflow file is at [`.github/workflows/portal-frontend.yml`](../.github/workflows/portal-frontend.yml).
+The workflow file is at [`.github/workflows/portal-frontend.yml`](../../.github/workflows/portal-frontend.yml).
 
 ## Trigger
 
 The pipeline runs automatically on every push to `main` that touches:
 
-- `frontend/**`
+- `klai-portal/frontend/**`
 - `.github/workflows/portal-frontend.yml`
 
 ## Steps
