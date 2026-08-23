@@ -74,7 +74,12 @@ def _has_graphiti_episode_record(raw_extra: str | dict | None) -> bool:
     return bool(extra.get("graphiti_episode_id"))
 
 
-async def main(org_id: str, limit: int | None = None, kb_slugs: list[str] | None = None) -> None:
+async def main(
+    org_id: str,
+    limit: int | None = None,
+    kb_slugs: list[str] | None = None,
+    concurrency: int = 1,
+) -> None:
     qdrant = AsyncQdrantClient(
         url=settings.qdrant_url,
         api_key=settings.qdrant_api_key or None,
@@ -201,134 +206,157 @@ async def main(org_id: str, limit: int | None = None, kb_slugs: list[str] | None
         t_start = time.time()
         total_to_process = len(to_process)
 
-        for idx, row in enumerate(to_process, 1):
-            artifact_id = str(row["id"])
-            title = row["path"] or artifact_id
-            content_type = row["content_type"] or "text"
-            created_epoch = row["created_at"] or int(time.time())
+        # ---- Process (bounded concurrency) ---------------------------------
+        # This loop used to be strictly sequential, with a comment claiming
+        # ingest_episode's own semaphore handled concurrency. It does not: that
+        # semaphore bounds episodes ALREADY in flight, and a sequential caller
+        # never puts more than one there. Measured during the #1148 rebuild,
+        # raising GRAPHITI_MAX_CONCURRENT changed nothing — 8 LLM calls a
+        # minute against an alias allowing 90, so a 726-document rebuild was on
+        # course to take a day with the rate budget sitting idle.
+        #
+        # --concurrency is the caller-side dial. Documents are independent:
+        # each reads its own chunks and writes its own artifact row. Progress
+        # lines interleave, which is why each still carries its own index.
+        sem = asyncio.Semaphore(max(1, concurrency))
+        counts = {"ok": 0, "err": 0}
+        t_start = time.time()
+        total_to_process = len(to_process)
 
-            chunks = chunks_by_artifact.get(artifact_id, [])
-            if not chunks:
-                log.warning(
-                    "[%d/%d] %s — no chunks, marking as skipped",
-                    idx,
-                    total_to_process,
-                    title,
-                )
-                await conn.execute(
-                    "UPDATE knowledge.artifacts "
-                    "SET extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb "
-                    "WHERE id = $2::uuid",
-                    json.dumps(
-                        {
-                            "graphiti_episode_id": "no-chunks",
-                            "graphiti_episode_ids": [],
-                        }
-                    ),
-                    artifact_id,
-                )
-                continue
+        async def _process(idx: int, row) -> None:
+            async with sem:
+                artifact_id = str(row["id"])
+                title = row["path"] or artifact_id
+                content_type = row["content_type"] or "text"
+                created_epoch = row["created_at"] or int(time.time())
 
-            full_text = "\n\n".join(chunks)
-
-            # Same rule the live ingest route applies. This script is what a
-            # graph rebuild runs, so without the check here every index page
-            # comes straight back — along with the meta-facts and the ~26 LLM
-            # calls each one costs. The route cannot cover this path: backfill
-            # calls ingest_episode() directly.
-            skip_reason = graph_episode_skip_reason(full_text)
-            if skip_reason:
-                log.info("[%d/%d] %s — skipped (%s)", idx, total_to_process, title, skip_reason)
-                await conn.execute(
-                    "UPDATE knowledge.artifacts "
-                    "SET extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb "
-                    "WHERE id = $2::uuid",
-                    json.dumps({"graphiti_episode_id": f"skipped:{skip_reason}"}),
-                    artifact_id,
-                )
-                continue
-
-            # No truncation branch any more: split_episode_text spreads a long
-            # document across several episodes instead of dropping its tail.
-            episode_parts = split_episode_text(full_text)
-            episode_ids: list[str] = []
-            entity_graph_data = EntityGraphData()
-            try:
-                await conn.execute(
-                    "UPDATE knowledge.artifacts "
-                    "SET extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb "
-                    "WHERE id = $2::uuid",
-                    json.dumps(
-                        {
-                            "graphiti_episode_part_count": len(episode_parts),
-                            "graphiti_episode_complete": False,
-                        }
-                    ),
-                    artifact_id,
-                )
-                for episode_text in episode_parts:
-                    episode_id = await asyncio.wait_for(
-                        ingest_episode(
-                            artifact_id=artifact_id,
-                            document_text=episode_text,
-                            org_id=org_id,
-                            content_type=content_type,
-                            belief_time_start=created_epoch,
-                            kb_slug=row["kb_slug"] or "",
-                            path=row["path"] or "",
-                            entity_graph_data=entity_graph_data,
-                        ),
-                        timeout=EPISODE_TIMEOUT,
+                chunks = chunks_by_artifact.get(artifact_id, [])
+                if not chunks:
+                    log.warning(
+                        "[%d/%d] %s — no chunks, marking as skipped",
+                        idx,
+                        total_to_process,
+                        title,
                     )
-                    if episode_id is None:
-                        raise RuntimeError("returned None (LLM issue?)")
-                    episode_ids.append(episode_id)
-                    await pg_store.append_graphiti_episode_id(conn, artifact_id, episode_id)
+                    await conn.execute(
+                        "UPDATE knowledge.artifacts "
+                        "SET extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb "
+                        "WHERE id = $2::uuid",
+                        json.dumps(
+                            {
+                                "graphiti_episode_id": "no-chunks",
+                                "graphiti_episode_ids": [],
+                            }
+                        ),
+                        artifact_id,
+                    )
+                    return
 
+                full_text = "\n\n".join(chunks)
+
+                # Same rule the live ingest route applies. This script is what a
+                # graph rebuild runs, so without the check here every index page
+                # comes straight back — along with the meta-facts and the ~26 LLM
+                # calls each one costs. The route cannot cover this path: backfill
+                # calls ingest_episode() directly.
+                skip_reason = graph_episode_skip_reason(full_text)
+                if skip_reason:
+                    log.info("[%d/%d] %s — skipped (%s)", idx, total_to_process, title, skip_reason)
+                    await conn.execute(
+                        "UPDATE knowledge.artifacts "
+                        "SET extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb "
+                        "WHERE id = $2::uuid",
+                        json.dumps({"graphiti_episode_id": f"skipped:{skip_reason}"}),
+                        artifact_id,
+                    )
+                    return
+
+                # No truncation branch any more: split_episode_text spreads a long
+                # document across several episodes instead of dropping its tail.
+                episode_parts = split_episode_text(full_text)
+                episode_ids: list[str] = []
+                entity_graph_data = EntityGraphData()
                 try:
-                    await flush_entity_graph_data(artifact_id, org_id, entity_graph_data)
-                except Exception:
-                    log.exception("%s — entity graph data update failed", title)
-                await conn.execute(
-                    "UPDATE knowledge.artifacts "
-                    "SET extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb "
-                    "WHERE id = $2::uuid",
-                    json.dumps(
-                        {
-                            "graphiti_episode_complete": True,
-                            "graphiti_model": settings.graphiti_llm_model,
-                        }
-                    ),
-                    artifact_id,
-                )
-            except TimeoutError:
-                err_count += 1
-                log.error(
-                    "[%d/%d] %s — TIMEOUT after %ds",
+                    await conn.execute(
+                        "UPDATE knowledge.artifacts "
+                        "SET extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb "
+                        "WHERE id = $2::uuid",
+                        json.dumps(
+                            {
+                                "graphiti_episode_part_count": len(episode_parts),
+                                "graphiti_episode_complete": False,
+                            }
+                        ),
+                        artifact_id,
+                    )
+                    for episode_text in episode_parts:
+                        episode_id = await asyncio.wait_for(
+                            ingest_episode(
+                                artifact_id=artifact_id,
+                                document_text=episode_text,
+                                org_id=org_id,
+                                content_type=content_type,
+                                belief_time_start=created_epoch,
+                                kb_slug=row["kb_slug"] or "",
+                                path=row["path"] or "",
+                                entity_graph_data=entity_graph_data,
+                            ),
+                            timeout=EPISODE_TIMEOUT,
+                        )
+                        if episode_id is None:
+                            raise RuntimeError("returned None (LLM issue?)")
+                        episode_ids.append(episode_id)
+                        await pg_store.append_graphiti_episode_id(conn, artifact_id, episode_id)
+
+                    try:
+                        await flush_entity_graph_data(artifact_id, org_id, entity_graph_data)
+                    except Exception:
+                        log.exception("%s — entity graph data update failed", title)
+                    await conn.execute(
+                        "UPDATE knowledge.artifacts "
+                        "SET extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb "
+                        "WHERE id = $2::uuid",
+                        json.dumps(
+                            {
+                                "graphiti_episode_complete": True,
+                                "graphiti_model": settings.graphiti_llm_model,
+                            }
+                        ),
+                        artifact_id,
+                    )
+                except TimeoutError:
+                    counts["err"] += 1
+                    log.error(
+                        "[%d/%d] %s — TIMEOUT after %ds",
+                        idx,
+                        total_to_process,
+                        title,
+                        EPISODE_TIMEOUT,
+                    )
+                    return
+                except Exception as exc:
+                    counts["err"] += 1
+                    log.error("[%d/%d] %s — %s", idx, total_to_process, title, exc)
+                    return
+
+                counts["ok"] += 1
+                elapsed = time.time() - t_start
+                rate = counts["ok"] / (elapsed / 3600) if elapsed > 0 else 0
+                log.info(
+                    "[%d/%d] %s — OK episodes=%s (%d/hr, %ds elapsed)",
                     idx,
                     total_to_process,
                     title,
-                    EPISODE_TIMEOUT,
+                    episode_ids,
+                    int(rate),
+                    int(elapsed),
                 )
-                continue
-            except Exception as exc:
-                err_count += 1
-                log.error("[%d/%d] %s — %s", idx, total_to_process, title, exc)
-                continue
 
-            ok_count += 1
-            elapsed = time.time() - t_start
-            rate = ok_count / (elapsed / 3600) if elapsed > 0 else 0
-            log.info(
-                "[%d/%d] %s — OK episodes=%s (%d/hr, %ds elapsed)",
-                idx,
-                total_to_process,
-                title,
-                episode_ids,
-                int(rate),
-                int(elapsed),
-            )
-
+        await asyncio.gather(
+            *(_process(i, r) for i, r in enumerate(to_process, 1)), return_exceptions=True
+        )
+        ok_count = counts["ok"]
+        err_count = counts["err"]
         log.info(
             "Backfill complete: %d OK, %d errors out of %d",
             ok_count,
@@ -354,5 +382,20 @@ if __name__ == "__main__":
         help="Restrict to this knowledge base; repeat for several. "
         "Omit to process every knowledge base in the tenant.",
     )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        help="Documents in flight at once. Default 1 keeps the historical "
+        "sequential behaviour; raise it for a bulk rebuild. The real ceiling is "
+        "the LiteLLM alias rpm/tpm, not this number.",
+    )
     args = parser.parse_args()
-    asyncio.run(main(org_id=args.org_id, limit=args.limit, kb_slugs=args.kb_slugs))
+    asyncio.run(
+        main(
+            org_id=args.org_id,
+            limit=args.limit,
+            kb_slugs=args.kb_slugs,
+            concurrency=args.concurrency,
+        )
+    )
