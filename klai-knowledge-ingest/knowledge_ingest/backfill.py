@@ -219,6 +219,18 @@ async def main(
         # each reads its own chunks and writes its own artifact row. Progress
         # lines interleave, which is why each still carries its own index.
         sem = asyncio.Semaphore(max(1, concurrency))
+        # One asyncpg connection, shared by every worker. asyncpg forbids
+        # concurrent operations on a connection and raises "another operation
+        # is in progress" — measured at 715 such errors within two minutes the
+        # first time this loop ran concurrently without the lock. Serialising
+        # the writes costs nothing worth measuring: they are millisecond UPDATEs
+        # against the seconds each document spends in LLM calls.
+        db_lock = asyncio.Lock()
+
+        async def _db_execute(*args: object) -> str:
+            async with db_lock:
+                return await conn.execute(*args)
+
         counts = {"ok": 0, "err": 0}
         t_start = time.time()
         total_to_process = len(to_process)
@@ -238,7 +250,7 @@ async def main(
                         total_to_process,
                         title,
                     )
-                    await conn.execute(
+                    await _db_execute(
                         "UPDATE knowledge.artifacts "
                         "SET extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb "
                         "WHERE id = $2::uuid",
@@ -262,7 +274,7 @@ async def main(
                 skip_reason = graph_episode_skip_reason(full_text)
                 if skip_reason:
                     log.info("[%d/%d] %s — skipped (%s)", idx, total_to_process, title, skip_reason)
-                    await conn.execute(
+                    await _db_execute(
                         "UPDATE knowledge.artifacts "
                         "SET extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb "
                         "WHERE id = $2::uuid",
@@ -277,7 +289,7 @@ async def main(
                 episode_ids: list[str] = []
                 entity_graph_data = EntityGraphData()
                 try:
-                    await conn.execute(
+                    await _db_execute(
                         "UPDATE knowledge.artifacts "
                         "SET extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb "
                         "WHERE id = $2::uuid",
@@ -312,7 +324,7 @@ async def main(
                         await flush_entity_graph_data(artifact_id, org_id, entity_graph_data)
                     except Exception:
                         log.exception("%s — entity graph data update failed", title)
-                    await conn.execute(
+                    await _db_execute(
                         "UPDATE knowledge.artifacts "
                         "SET extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb "
                         "WHERE id = $2::uuid",
