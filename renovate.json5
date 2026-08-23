@@ -123,6 +123,23 @@
     },
     {
       description:
+        'Klai presidio-analyzer is digest-only, exactly like Klai LibreChat: \
+        the image is Klai\'s own analyzer (Dutch/credential recognizer pack \
+        layered on the digest-pinned data-privacy-stack base), built and \
+        pushed by presidio-analyzer-image-build.yml, and the pin is enforced \
+        by deploy/check-klai-presidio-digest.sh. There is no tag for Renovate \
+        to discover, which is why every run logged "Could not determine new \
+        digest for update (docker package ghcr.io/getklai/presidio-analyzer)" \
+        against deploy/docker-compose.yml — a permanent WARN that trains \
+        people to skim past Renovate warnings, which is how a real one gets \
+        missed.',
+      matchManagers: ['docker-compose'],
+      matchDatasources: ['docker'],
+      matchPackageNames: ['ghcr.io/getklai/presidio-analyzer'],
+      enabled: false,
+    },
+    {
+      description:
         'Klai crawl4ai is built and tagged directly on the deployment host; \
         there is no published GHCR package for Renovate to query.',
       matchManagers: ['docker-compose'],
