@@ -35,3 +35,20 @@ def test_a_zero_or_negative_concurrency_cannot_deadlock():
     """asyncio.Semaphore(0) blocks forever; the guard must floor it at 1."""
     source = inspect.getsource(backfill.main)
     assert "max(1, concurrency)" in source
+
+
+def test_database_writes_are_serialised():
+    """asyncpg forbids concurrent operations on one connection.
+
+    The loop shares a single connection across every worker. Running it
+    concurrently without a lock produced 715 "another operation is in progress"
+    errors within two minutes and completed one document out of 905.
+    """
+    source = inspect.getsource(backfill.main)
+    assert "db_lock" in source, "workers share one asyncpg connection with no lock"
+    assert "async with db_lock" in source
+    # No worker may reach the connection directly.
+    process_src = source[source.index("async def _process") : source.index("await asyncio.gather")]
+    assert "conn.execute" not in process_src, (
+        "a worker still writes to the shared connection directly"
+    )
