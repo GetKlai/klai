@@ -46,7 +46,10 @@ from klai_retrieval_telemetry import (
 from log_utils import sanitize_response_body, verify_shared_secret
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
-from mcp.server.transport_security import TransportSecuritySettings
+from mcp.server.transport_security import (
+    TransportSecurityMiddleware,
+    TransportSecuritySettings,
+)
 
 from logging_setup import setup_logging
 from shield_compliance import check_compliance as _shield_check_compliance
@@ -824,6 +827,7 @@ _TRANSPORT_SECURITY = TransportSecuritySettings(
         "127.0.0.1:8080",
     ],
 )
+_TRANSPORT_SECURITY_VALIDATOR = TransportSecurityMiddleware(_TRANSPORT_SECURITY)
 
 mcp = MCPServer(
     "klai-knowledge",
@@ -1926,6 +1930,17 @@ class _WWWAuthenticateMiddleware(BaseHTTPMiddleware):
                         ),
                     },
                 )
+
+            # The SDK's stateful manager registers a transport before the
+            # transport applies this validator. Run the same validator at the
+            # outer boundary so rejected requests never consume a session.
+            if path.startswith("/mcp"):
+                transport_error = await _TRANSPORT_SECURITY_VALIDATOR.validate_request(
+                    request,
+                    is_post=request.method == "POST",
+                )
+                if transport_error is not None:
+                    return transport_error
 
         response: Response = await call_next(request)
         if response.status_code == 401 and "www-authenticate" not in {

@@ -13,11 +13,24 @@ This test now enforces the new state:
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
+
+import pytest
+from starlette.testclient import TestClient
 
 MAIN_PY = Path(__file__).resolve().parents[1] / "main.py"
 DOCKERFILE = Path(__file__).resolve().parents[1] / "Dockerfile"
 CADDYFILE = Path(__file__).resolve().parents[2] / "deploy" / "caddy" / "Caddyfile"
+
+
+@pytest.fixture(scope="module")
+def mcp_client() -> Iterator[TestClient]:
+    """Start the SDK session manager once; MCP 2.0 managers cannot restart."""
+    import main
+
+    with TestClient(main.app) as client:
+        yield client
 
 
 def test_dns_rebinding_protection_is_enabled_with_anchor() -> None:
@@ -46,7 +59,9 @@ def test_dns_rebinding_protection_is_enabled_with_anchor() -> None:
     assert "spec-mcp-auth-001" in reason_text, "@MX:REASON must reference SPEC-MCP-AUTH-001"
 
 
-def test_dns_rebinding_protection_actually_rejects_a_foreign_host() -> None:
+def test_dns_rebinding_protection_actually_rejects_a_foreign_host(
+    mcp_client: TestClient,
+) -> None:
     """SPEC-MCP-AUTH-001 REQ-A6 — the settings are WIRED UP, not merely written down.
 
     The test above greps main.py for ``enable_dns_rebinding_protection=True``.
@@ -68,10 +83,6 @@ def test_dns_rebinding_protection_actually_rejects_a_foreign_host() -> None:
     for the allowed case would also accept a 404 or a 500 from an app that no
     longer serves /mcp at all.
     """
-    from starlette.testclient import TestClient
-
-    import main
-
     headers = {
         "Accept": "application/json, text/event-stream",
         "Content-Type": "application/json",
@@ -79,22 +90,64 @@ def test_dns_rebinding_protection_actually_rejects_a_foreign_host() -> None:
     }
     body = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
 
-    with TestClient(main.app) as client:
-        for allowed in ("mcp.getklai.com", "klai-knowledge-mcp:8080"):
-            response = client.post("/mcp", headers={**headers, "Host": allowed}, json=body)
-            assert response.status_code == 400, (
-                f"allow-listed Host {allowed!r} should reach the MCP transport and fail "
-                f"there on the missing session ID; got {response.status_code}. 421 means "
-                "the host gate rejected it and production traffic through Caddy and "
-                "LibreChat would both break."
-            )
+    for allowed in ("mcp.getklai.com", "klai-knowledge-mcp:8080"):
+        response = mcp_client.post("/mcp", headers={**headers, "Host": allowed}, json=body)
+        assert response.status_code == 400, (
+            f"allow-listed Host {allowed!r} should reach the MCP transport and fail "
+            f"there on the missing session ID; got {response.status_code}. 421 means "
+            "the host gate rejected it and production traffic through Caddy and "
+            "LibreChat would both break."
+        )
 
-        for foreign in ("evil.example.com", "attacker.test"):
-            response = client.post("/mcp", headers={**headers, "Host": foreign}, json=body)
-            assert response.status_code == 421, (
-                f"Host {foreign!r} should be refused with 421 Misdirected Request; got "
-                f"{response.status_code}. DNS-rebinding protection is not reaching the app."
-            )
+    for foreign in ("evil.example.com", "attacker.test"):
+        response = mcp_client.post("/mcp", headers={**headers, "Host": foreign}, json=body)
+        assert response.status_code == 421, (
+            f"Host {foreign!r} should be refused with 421 Misdirected Request; got "
+            f"{response.status_code}. DNS-rebinding protection is not reaching the app."
+        )
+
+
+def test_rejected_foreign_hosts_do_not_consume_mcp_sessions(mcp_client: TestClient) -> None:
+    """A transport-security rejection must not consume process-lifetime session capacity."""
+    import main
+
+    headers = {
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+        "Authorization": "Bearer klai_mcp_test-token-never-verified",
+        "Host": "evil.example.com",
+    }
+    body = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+
+    session_manager = main.mcp.session_manager
+    sessions_before = len(session_manager._server_instances)
+
+    responses = [mcp_client.post("/mcp", headers=headers, json=body) for _ in range(50)]
+
+    assert {response.status_code for response in responses} == {421}
+    assert len(session_manager._server_instances) == sessions_before
+
+
+def test_rejected_foreign_origins_do_not_consume_mcp_sessions(mcp_client: TestClient) -> None:
+    """The adjacent Origin rejection must happen before session allocation too."""
+    import main
+
+    headers = {
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+        "Authorization": "Bearer klai_mcp_test-token-never-verified",
+        "Host": "mcp.getklai.com",
+        "Origin": "https://evil.example.com",
+    }
+    body = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+
+    session_manager = main.mcp.session_manager
+    sessions_before = len(session_manager._server_instances)
+
+    response = mcp_client.post("/mcp", headers=headers, json=body)
+
+    assert response.status_code == 403
+    assert len(session_manager._server_instances) == sessions_before
 
 
 def test_caddyfile_routes_mcp_subdomain_to_knowledge_mcp() -> None:
