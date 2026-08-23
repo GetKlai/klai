@@ -52,28 +52,41 @@ def test_dns_rebinding_protection_actually_rejects_a_foreign_host() -> None:
     The test above greps main.py for ``enable_dns_rebinding_protection=True``.
     That is a text check, and it stayed green through the mcp SDK v2 migration
     even though v2 moved ``transport_security`` off the server constructor onto
-    ``streamable_http_app()`` — a settings object that is constructed and never
-    passed would satisfy it perfectly. So this one asks the built app instead.
+    ``streamable_http_app()`` — a settings object that is built and never passed
+    satisfies it perfectly. So this one asks the running app instead.
 
-    Enforcement lives on the inner MCP app, below the auth middleware on the
-    outer Starlette app (which answers 401 first and hides the distinction), so
-    it has to be exercised at ``_mcp_app``. An allowed Host gets past the host
-    gate and fails later on protocol grounds (400, no initialized session);
-    that difference from 421 is the whole assertion.
+    It drives ``main.app``, the app uvicorn actually serves, rather than the
+    inner ``_mcp_app``: that way a regression in how the MCP app is mounted, or
+    in middleware order, fails here too. Reaching the transport requires getting
+    past ``_WWWAuthenticateMiddleware``, which only prefix-matches the bearer
+    token, so a dummy ``klai_mcp_`` token is enough — the tools themselves still
+    verify it against portal-api, and we never get that far.
+
+    Both statuses are pinned deliberately. An allow-listed Host reaches the
+    transport and fails there on protocol grounds (400, no session ID); a
+    foreign Host is refused by the host gate (421). Asserting only ``!= 421``
+    for the allowed case would also accept a 404 or a 500 from an app that no
+    longer serves /mcp at all.
     """
     from starlette.testclient import TestClient
 
     import main
 
-    headers = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
+    headers = {
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+        "Authorization": "Bearer klai_mcp_test-token-never-verified",
+    }
     body = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
 
-    with TestClient(main._mcp_app) as client:
+    with TestClient(main.app) as client:
         for allowed in ("mcp.getklai.com", "klai-knowledge-mcp:8080"):
             response = client.post("/mcp", headers={**headers, "Host": allowed}, json=body)
-            assert response.status_code != 421, (
-                f"allow-listed Host {allowed!r} was rejected as misdirected — production "
-                "traffic through Caddy and LibreChat would both break"
+            assert response.status_code == 400, (
+                f"allow-listed Host {allowed!r} should reach the MCP transport and fail "
+                f"there on the missing session ID; got {response.status_code}. 421 means "
+                "the host gate rejected it and production traffic through Caddy and "
+                "LibreChat would both break."
             )
 
         for foreign in ("evil.example.com", "attacker.test"):

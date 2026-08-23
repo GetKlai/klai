@@ -799,10 +799,12 @@ def _docs_kb_url(identity: _VerifiedIdentity, kb_name: str, suffix: str = "") ->
 _TRANSPORT_SECURITY = TransportSecuritySettings(
     # @MX:ANCHOR fan_in=1 — DNS-rebinding protection re-enabled by
     # SPEC-MCP-AUTH-001 Fase 5. The MCP is now internet-reachable via
-    # Caddy at mcp.getklai.com; LibreChat still reaches it via the
-    # Docker-internal hostname (which doesn't carry a Host header that
-    # matches the allowlist, so it's exempt from DNS-rebinding checks
-    # by virtue of internal-network bypass at the Caddy level).
+    # Caddy at mcp.getklai.com; LibreChat reaches the same container
+    # directly over the Docker network, with Caddy nowhere in its path
+    # (deploy/librechat/librechat.yaml points at
+    # http://klai-knowledge-mcp:8080/mcp). There is no bypass: LibreChat
+    # gets through because its Host lands in the allowlist below, which
+    # is why removing an entry there breaks it.
     # @MX:REASON Without DNS-rebinding protection on a public MCP,
     # any attacker page can issue cross-origin requests and have them
     # accepted. The two-line lift here is the entire defense.
