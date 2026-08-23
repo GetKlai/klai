@@ -43,6 +43,38 @@
   // weekly.
   platformAutomerge: false,
 
+  // Renovate's default prConcurrentLimit is 10, and on 2026-08-22 that default
+  // deadlocked the whole queue. Majors are automerge: false by policy, so six
+  // of them sat open waiting for review; three BlockNote PRs were failing for a
+  // config reason nobody had diagnosed yet; one eslint PR could never go green.
+  // Ten unmergeable PRs, ten of ten slots, and a debug run saying it plainly:
+  //
+  //   Open PR Count: 10, Existing Branch Count: 10, Hourly PR Count: 0
+  //   Calculated lowest branchConcurrentLimit among the upgrades present in
+  //     this branch is 10.
+  //   Reached branch limit - skipping branch creation
+  //
+  // Note the middle line: what blocks creation is branchConcurrentLimit, which
+  // is null by default and inherits prConcurrentLimit. Setting the latter to 0
+  // is therefore what lifts the former; there is no second knob to turn.
+  //
+  // Nothing new could be opened at all. Lock file maintenance — the thing added
+  // specifically because transitive pins had rotted for 28 weeks — was among
+  // the updates that could not get a branch. The failure mode is the same one
+  // this file keeps rediscovering: Renovate runs, reports success, and silently
+  // does nothing.
+  //
+  // The limit is the wrong tool here. It exists to stop a first run on a stale
+  // repo from opening fifty PRs at once, but prHourlyLimit (default 2) already
+  // paces that — at two per hour a backlog drains gradually no matter how large
+  // it is. What prConcurrentLimit adds on top is a hard ceiling that anything
+  // needing human review can permanently occupy, and reviewable-but-unreviewed
+  // is the normal state of a major upgrade, not an exception.
+  //
+  // 0 means unlimited. Keep prHourlyLimit at its default; it is what actually
+  // protects against a flood, and removing both at once WOULD be reckless.
+  prConcurrentLimit: 0,
+
   // Mirrors min-release-age=7 in klai-portal/frontend/.npmrc. Without it
   // Renovate would propose a version the npm CLI then refuses to install while
   // generating the lockfile, producing a PR that cannot build. Keep the two
