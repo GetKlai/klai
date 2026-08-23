@@ -1,4 +1,4 @@
-FROM node:22-alpine AS base
+FROM node:24-alpine AS base
 
 # Install dependencies only when needed
 FROM base AS deps
@@ -19,7 +19,7 @@ RUN npm run build
 # Production image
 FROM base AS runner
 
-# Apply security patches to base image OS packages. node:22-alpine ships
+# Apply security patches to base image OS packages. node:24-alpine ships
 # apk packages with fixed CVEs and the Trivy gate blocks the deploy on them.
 RUN apk update && apk upgrade --no-cache
 
