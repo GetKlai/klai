@@ -231,6 +231,14 @@ async def main(
             async with db_lock:
                 return await conn.execute(*args)
 
+        async def _db_append_episode(artifact_id: str, episode_id: str) -> None:
+            # Every touch of the shared connection goes through the lock, not
+            # just the ones written as conn.execute. This one reaches it via a
+            # pg_store helper and was missed the first time, leaving the very
+            # bug the lock exists to prevent.
+            async with db_lock:
+                await pg_store.append_graphiti_episode_id(conn, artifact_id, episode_id)
+
         counts = {"ok": 0, "err": 0}
         t_start = time.time()
         total_to_process = len(to_process)
@@ -318,7 +326,7 @@ async def main(
                         if episode_id is None:
                             raise RuntimeError("returned None (LLM issue?)")
                         episode_ids.append(episode_id)
-                        await pg_store.append_graphiti_episode_id(conn, artifact_id, episode_id)
+                        await _db_append_episode(artifact_id, episode_id)
 
                     try:
                         await flush_entity_graph_data(artifact_id, org_id, entity_graph_data)

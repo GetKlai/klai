@@ -52,3 +52,8 @@ def test_database_writes_are_serialised():
     assert "conn.execute" not in process_src, (
         "a worker still writes to the shared connection directly"
     )
+    # Not only the calls spelled conn.execute: a pg_store helper handed the
+    # same connection is just as unsafe, and that one was missed first time.
+    assert "(conn," not in process_src, (
+        "a worker still hands the shared connection to a helper outside the lock"
+    )
