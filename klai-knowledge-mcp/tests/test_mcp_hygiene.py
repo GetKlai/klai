@@ -46,6 +46,44 @@ def test_dns_rebinding_protection_is_enabled_with_anchor() -> None:
     assert "spec-mcp-auth-001" in reason_text, "@MX:REASON must reference SPEC-MCP-AUTH-001"
 
 
+def test_dns_rebinding_protection_actually_rejects_a_foreign_host() -> None:
+    """SPEC-MCP-AUTH-001 REQ-A6 — the settings are WIRED UP, not merely written down.
+
+    The test above greps main.py for ``enable_dns_rebinding_protection=True``.
+    That is a text check, and it stayed green through the mcp SDK v2 migration
+    even though v2 moved ``transport_security`` off the server constructor onto
+    ``streamable_http_app()`` — a settings object that is constructed and never
+    passed would satisfy it perfectly. So this one asks the built app instead.
+
+    Enforcement lives on the inner MCP app, below the auth middleware on the
+    outer Starlette app (which answers 401 first and hides the distinction), so
+    it has to be exercised at ``_mcp_app``. An allowed Host gets past the host
+    gate and fails later on protocol grounds (400, no initialized session);
+    that difference from 421 is the whole assertion.
+    """
+    from starlette.testclient import TestClient
+
+    import main
+
+    headers = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
+    body = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+
+    with TestClient(main._mcp_app) as client:
+        for allowed in ("mcp.getklai.com", "klai-knowledge-mcp:8080"):
+            response = client.post("/mcp", headers={**headers, "Host": allowed}, json=body)
+            assert response.status_code != 421, (
+                f"allow-listed Host {allowed!r} was rejected as misdirected — production "
+                "traffic through Caddy and LibreChat would both break"
+            )
+
+        for foreign in ("evil.example.com", "attacker.test"):
+            response = client.post("/mcp", headers={**headers, "Host": foreign}, json=body)
+            assert response.status_code == 421, (
+                f"Host {foreign!r} should be refused with 421 Misdirected Request; got "
+                f"{response.status_code}. DNS-rebinding protection is not reaching the app."
+            )
+
+
 def test_caddyfile_routes_mcp_subdomain_to_knowledge_mcp() -> None:
     """SPEC-MCP-AUTH-001 Fase 5 — Caddy upstream block for mcp.${DOMAIN}."""
     assert CADDYFILE.exists(), f"expected Caddyfile at {CADDYFILE}"

@@ -44,8 +44,8 @@ from klai_retrieval_telemetry import (
     fire_retrieval_log,
 )
 from log_utils import sanitize_response_body, verify_shared_secret
-from mcp.server.fastmcp import Context, FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver import Context, MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 
 from logging_setup import setup_logging
@@ -793,34 +793,38 @@ def _docs_kb_url(identity: _VerifiedIdentity, kb_name: str, suffix: str = "") ->
 # live ``Authorization`` header on every emit — NOT from cached session
 # state. Without that discipline the GEEL caveat in finding B3 turns
 # into a real cross-token leak.
-mcp = FastMCP(
+# mcp SDK v2: transport-specific settings (incl. transport_security) moved
+# off the MCPServer constructor and onto run()/sse_app()/streamable_http_app().
+# See the ``mcp.streamable_http_app(transport_security=...)`` call below.
+_TRANSPORT_SECURITY = TransportSecuritySettings(
+    # @MX:ANCHOR fan_in=1 — DNS-rebinding protection re-enabled by
+    # SPEC-MCP-AUTH-001 Fase 5. The MCP is now internet-reachable via
+    # Caddy at mcp.getklai.com; LibreChat still reaches it via the
+    # Docker-internal hostname (which doesn't carry a Host header that
+    # matches the allowlist, so it's exempt from DNS-rebinding checks
+    # by virtue of internal-network bypass at the Caddy level).
+    # @MX:REASON Without DNS-rebinding protection on a public MCP,
+    # any attacker page can issue cross-origin requests and have them
+    # accepted. The two-line lift here is the entire defense.
+    # @MX:SPEC SPEC-MCP-AUTH-001 REQ-A6
+    enable_dns_rebinding_protection=True,
+    # Without an explicit allowlist FastMCP rejects every Host (HTTP 421
+    # "Misdirected Request"). Public route comes in via Caddy with
+    # Host: mcp.getklai.com. LibreChat still reaches the same container
+    # via the Docker-internal hostname klai-knowledge-mcp:8080.
+    allowed_hosts=[
+        "mcp.getklai.com",
+        "klai-knowledge-mcp",
+        "klai-knowledge-mcp:8080",
+        "localhost",
+        "localhost:8080",
+        "127.0.0.1",
+        "127.0.0.1:8080",
+    ],
+)
+
+mcp = MCPServer(
     "klai-knowledge",
-    transport_security=TransportSecuritySettings(
-        # @MX:ANCHOR fan_in=1 — DNS-rebinding protection re-enabled by
-        # SPEC-MCP-AUTH-001 Fase 5. The MCP is now internet-reachable via
-        # Caddy at mcp.getklai.com; LibreChat still reaches it via the
-        # Docker-internal hostname (which doesn't carry a Host header that
-        # matches the allowlist, so it's exempt from DNS-rebinding checks
-        # by virtue of internal-network bypass at the Caddy level).
-        # @MX:REASON Without DNS-rebinding protection on a public MCP,
-        # any attacker page can issue cross-origin requests and have them
-        # accepted. The two-line lift here is the entire defense.
-        # @MX:SPEC SPEC-MCP-AUTH-001 REQ-A6
-        enable_dns_rebinding_protection=True,
-        # Without an explicit allowlist FastMCP rejects every Host (HTTP 421
-        # "Misdirected Request"). Public route comes in via Caddy with
-        # Host: mcp.getklai.com. LibreChat still reaches the same container
-        # via the Docker-internal hostname klai-knowledge-mcp:8080.
-        allowed_hosts=[
-            "mcp.getklai.com",
-            "klai-knowledge-mcp",
-            "klai-knowledge-mcp:8080",
-            "localhost",
-            "localhost:8080",
-            "127.0.0.1",
-            "127.0.0.1:8080",
-        ],
-    ),
     instructions=(
         "Je hebt toegang tot de kennisbank van de gebruiker en de organisatie.\n\n"
         "PERSOONLIJKE KENNISBANK (save_personal_knowledge):\n"
@@ -1932,7 +1936,7 @@ class _WWWAuthenticateMiddleware(BaseHTTPMiddleware):
         return response
 
 
-_mcp_app = mcp.streamable_http_app()
+_mcp_app = mcp.streamable_http_app(transport_security=_TRANSPORT_SECURITY)
 # Propagate FastMCP's lifespan (initializes session_manager task group) to
 # the Starlette parent so the inner MCP routes work. Without this the inner
 # /mcp handler raises "Task group is not initialized".

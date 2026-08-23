@@ -20,7 +20,7 @@ forwarded correctly.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -345,7 +345,7 @@ class TestRetrievalFailures:
     @pytest.mark.asyncio
     async def test_503_raises_tool_error(self) -> None:
         """REQ-18 + AC-5."""
-        from mcp.server.fastmcp.exceptions import ToolError
+        from mcp.server.mcpserver.exceptions import ToolError
 
         from main import search_knowledge
 
@@ -369,7 +369,7 @@ class TestRetrievalFailures:
     @pytest.mark.asyncio
     async def test_4xx_raises_tool_error(self) -> None:
         """REQ-17 + AC-12."""
-        from mcp.server.fastmcp.exceptions import ToolError
+        from mcp.server.mcpserver.exceptions import ToolError
 
         from main import search_knowledge
 
@@ -393,7 +393,7 @@ class TestRetrievalFailures:
     @pytest.mark.asyncio
     async def test_timeout_raises_tool_error(self) -> None:
         """REQ-18 + AC-5: TimeoutException maps to ToolError."""
-        from mcp.server.fastmcp.exceptions import ToolError
+        from mcp.server.mcpserver.exceptions import ToolError
 
         from main import search_knowledge
 
@@ -466,7 +466,7 @@ class TestScopeAndKbSlugsParameters:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("scope", ["org", "personal", "both"])
     async def test_mcp_search_knowledge_scope_parameter_maps_to_retrieve_body(
-        self, scope: str
+        self, scope: Literal["org", "personal", "both"]
     ) -> None:
         from main import search_knowledge
 
@@ -597,7 +597,7 @@ class TestScopeAndKbSlugsParameters:
         for the day those asserts change, and the direct mock is the only
         way to exercise it.
         """
-        from mcp.server.fastmcp.exceptions import ToolError
+        from mcp.server.mcpserver.exceptions import ToolError
 
         from main import search_knowledge
 

@@ -536,7 +536,7 @@ class TestUpdateDocsPage:
 class TestDocsToolsEdgeCases:
     @pytest.mark.asyncio
     async def test_get_docs_page_404_raises_tool_error(self) -> None:
-        from mcp.server.fastmcp.exceptions import ToolError
+        from mcp.server.mcpserver.exceptions import ToolError
 
         from main import get_docs_page
 
@@ -566,7 +566,7 @@ class TestDocsToolsEdgeCases:
 
     @pytest.mark.asyncio
     async def test_get_docs_page_invalid_kb_name_rejected_before_http(self) -> None:
-        from mcp.server.fastmcp.exceptions import ToolError
+        from mcp.server.mcpserver.exceptions import ToolError
 
         from main import get_docs_page
 
@@ -588,7 +588,7 @@ class TestDocsToolsEdgeCases:
 
     @pytest.mark.asyncio
     async def test_list_docs_pages_multi_kb_ambiguity_raises(self) -> None:
-        from mcp.server.fastmcp.exceptions import ToolError
+        from mcp.server.mcpserver.exceptions import ToolError
 
         from main import list_docs_pages
 
