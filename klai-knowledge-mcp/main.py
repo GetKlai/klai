@@ -50,6 +50,7 @@ from mcp.server.transport_security import (
     TransportSecurityMiddleware,
     TransportSecuritySettings,
 )
+from mcp.types import InitializeRequest
 
 from logging_setup import setup_logging
 from shield_compliance import check_compliance as _shield_check_compliance
@@ -1941,6 +1942,57 @@ class _WWWAuthenticateMiddleware(BaseHTTPMiddleware):
                 )
                 if transport_error is not None:
                     return transport_error
+
+                # The stateful SDK allocates a transport for every request that
+                # omits Mcp-Session-Id, before it validates the method or body.
+                # Per the MCP lifecycle, only a valid initialize request may
+                # create a session. Classify it at this outer boundary first.
+                if "mcp-session-id" not in request.headers:
+                    if request.method != "POST":
+                        return JSONResponse(
+                            {
+                                "jsonrpc": "2.0",
+                                "id": None,
+                                "error": {
+                                    "code": -32600,
+                                    "message": "Bad Request: Missing session ID",
+                                },
+                            },
+                            status_code=400,
+                        )
+
+                    # Read the body with a cap rather than via request.body(),
+                    # which buffers without one. Assigning _body afterwards is
+                    # load-bearing and not decoration: Starlette's
+                    # _CachedRequest.wrapped_receive checks _body BEFORE its
+                    # "stream was consumed, send an empty body" branch, so this
+                    # is what lets call_next replay the body downstream. Drain
+                    # the stream without setting it and the SDK receives an
+                    # empty body -- initialize would break, which is why the
+                    # handshake test below exists.
+                    body = bytearray()
+                    async for chunk in request.stream():
+                        if len(body) + len(chunk) > mcp.session_manager.max_request_body_size:
+                            return Response("Request body too large", status_code=413)
+                        body.extend(chunk)
+                    request._body = bytes(body)
+
+                    try:
+                        InitializeRequest.model_validate_json(request._body)
+                    except ValueError:
+                        return JSONResponse(
+                            {
+                                "jsonrpc": "2.0",
+                                "id": None,
+                                "error": {
+                                    "code": -32600,
+                                    "message": (
+                                        "Bad Request: Only initialize may omit Mcp-Session-Id"
+                                    ),
+                                },
+                            },
+                            status_code=400,
+                        )
 
         response: Response = await call_next(request)
         if response.status_code == 401 and "www-authenticate" not in {
