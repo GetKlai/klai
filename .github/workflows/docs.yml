@@ -45,6 +45,27 @@ jobs:
         run: npm run build
         working-directory: klai-docs
 
+  verify-image:
+    needs: quality-docs
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Verify Docker image builds
+        uses: docker/build-push-action@v7
+        with:
+          context: ./klai-docs
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   build-and-push:
     needs: quality-docs
     if: github.event_name != 'pull_request'
