@@ -201,6 +201,52 @@ English entity name, and that is correct.
 """
 
 
+def _install_strict_structured_output() -> None:
+    """Make graphiti ask the model to OBEY its schema, not merely to see it.
+
+    ``OpenAIGenericClient._build_response_format`` sends json_schema without
+    ``strict: true``, with the comment that strict "requires the schema to meet
+    OpenAI's strict subset ... So adherence is best-effort on OpenAI-proper;
+    constrained-decoding servers (vLLM, llama.cpp) still enforce it."
+
+    Mistral behind LiteLLM is neither of those. Without the flag it treats the
+    schema as advice and drifts once a response carries many items, which is
+    silent until pydantic rejects the result and the whole episode is lost:
+
+        extracted_entities.26.episode_indices
+          Input should be a valid list [input_value=0, input_type=int]
+        extracted_entities.15.entity_type_id
+          Field required [input_value={'entity_type_id_id': 0, ...}]
+
+    Both are the same failure — the model inventing shapes at entity 15, 26, 36
+    while the first dozen are fine. Measured on 2026-08-24 with graphiti's own
+    ``ExtractedEntities.model_json_schema()`` through this LiteLLM: without the
+    flag the #1148 rebuild lost 2 of every 4 documents; with it, 39 entities in
+    one response and none malformed.
+
+    The concern graphiti's comment raises is real but not ours to inherit: the
+    schema either satisfies the provider or the provider rejects the request
+    outright, which is loud. Best-effort adherence fails silently instead, and
+    costs the document.
+    """
+    from graphiti_core.llm_client import openai_generic_client as _ogc
+
+    client_cls = _ogc.OpenAIGenericClient
+    if getattr(client_cls, "_klai_strict_schema", False):
+        return
+    original = client_cls._build_response_format
+
+    def _build_response_format(self, response_model):
+        payload = original(self, response_model)
+        if payload.get("type") == "json_schema":
+            payload["json_schema"]["strict"] = True
+        return payload
+
+    client_cls._build_response_format = _build_response_format
+    client_cls._klai_strict_schema = True
+    logger.info("graph_strict_structured_output_installed")
+
+
 def _install_language_policy() -> None:
     """Replace graphiti's default language instruction with ``_LANGUAGE_POLICY``.
 
@@ -407,6 +453,7 @@ def _get_graphiti() -> Graphiti:
         # instruction to every system message, and its default ends in
         # "Otherwise, output English".
         _install_language_policy()
+        _install_strict_structured_output()
         # The FalkorDB compatibility layer, applied here rather than only in
         # app.py. Its edge-search rewrite is what keeps the fulltext join from
         # scanning every RELATES_TO edge once per hit (GetKlai/klai#1214); on
