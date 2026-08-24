@@ -36,6 +36,7 @@ import structlog
 from klai_kb_slugs import episode_name
 
 import knowledge_ingest.qdrant_store as qdrant_store
+from knowledge_ingest import _patch_graphiti
 from knowledge_ingest.config import settings
 from knowledge_ingest.llm_throttle import TokenBucketLimiter, shared_klai_fast_limiter
 
@@ -198,63 +199,6 @@ The distinction that matters: rule 1 is about the prose a person reads, rule 2
 is about the key the system joins on. A Dutch fact may therefore reference an
 English entity name, and that is correct.
 """
-
-
-# ---------------------------------------------------------------------------
-# graphiti edge fulltext search: quadratic join (GetKlai/klai#1214)
-# ---------------------------------------------------------------------------
-#
-# graphiti_core builds its edge fulltext search as
-#
-#     CALL db.idx.fulltext.queryRelationships('RELATES_TO', $query)
-#     YIELD relationship AS rel, score
-#     MATCH (n:Entity)-[e:RELATES_TO {uuid: rel.uuid}]->(m:Entity)
-#
-# search_utils.py:205. The MATCH re-finds a relationship the CALL already
-# yielded, by an inline property pattern that FalkorDB does not answer from the
-# uuid index — so it scans every RELATES_TO edge once per fulltext hit. The cost
-# is hits x edges, which is fine on a small graph and fatal on a real one.
-#
-# Measured on the Voys graph (18,031 edges) on 2026-08-23, same data, same
-# index, same fulltext term:
-#
-#     as shipped                      timed out (>140 s)
-#     with startNode/endNode            2.99 ms
-#
-# ``rel`` IS the relationship, so its endpoints come from startNode/endNode
-# without touching the graph again. graphiti's own Neptune branch already
-# writes it that way (search_utils.py:281), which is what makes this a slip
-# rather than a design.
-#
-# Consequence while it was unpatched: every episode write into the Voys graph
-# failed on FalkorDB's 1 s query timeout, so the graph silently stopped
-# accepting new knowledge after 2026-08-19.
-#
-# Patched at the driver rather than by vendoring the 90-line search function:
-# the substring is exact, appears in one query, and a graphiti upgrade that
-# changes it simply stops matching — at which point the test below fails and
-# says so, rather than this silently going stale.
-_SLOW_EDGE_JOIN = "MATCH (n:Entity)-[e:RELATES_TO {uuid: rel.uuid}]->(m:Entity)"
-_FAST_EDGE_JOIN = "WITH rel AS e, score, startNode(rel) AS n, endNode(rel) AS m"
-
-
-def _install_edge_fulltext_fix() -> None:
-    """Rewrite graphiti's quadratic edge-fulltext join at the driver boundary."""
-    from graphiti_core.driver import falkordb_driver
-
-    driver_cls = falkordb_driver.FalkorDriver
-    if getattr(driver_cls, "_klai_edge_join_patched", False):
-        return
-    original = driver_cls.execute_query
-
-    async def execute_query(self, cypher_query_, **kwargs):
-        if _SLOW_EDGE_JOIN in cypher_query_:
-            cypher_query_ = cypher_query_.replace(_SLOW_EDGE_JOIN, _FAST_EDGE_JOIN)
-        return await original(self, cypher_query_, **kwargs)
-
-    driver_cls.execute_query = execute_query
-    driver_cls._klai_edge_join_patched = True
-    logger.info("graph_edge_fulltext_fix_installed")
 
 
 def _install_language_policy() -> None:
@@ -463,7 +407,18 @@ def _get_graphiti() -> Graphiti:
         # instruction to every system message, and its default ends in
         # "Otherwise, output English".
         _install_language_policy()
-        _install_edge_fulltext_fix()
+        # The FalkorDB compatibility layer, applied here rather than only in
+        # app.py. Its edge-search rewrite is what keeps the fulltext join from
+        # scanning every RELATES_TO edge once per hit (GetKlai/klai#1214); on
+        # the Voys graph that is 2.99 ms against a query that otherwise runs
+        # past 140 s and dies on FalkorDB's 1 s timeout.
+        #
+        # app.py applies it at import, so the service was always covered. An
+        # operator entry point is not: `python -m knowledge_ingest.backfill`
+        # never imports app, so every episode it wrote failed. _get_graphiti is
+        # the one place every path — service, worker, backfill, one-off script —
+        # builds a client, which is why it belongs here and not in each caller.
+        _patch_graphiti.apply()
         llm_client = OpenAIGenericClient(config=llm_config, client=openai_client)
         embedder = _BatchSplittingEmbedder(
             inner=OpenAIEmbedder(
