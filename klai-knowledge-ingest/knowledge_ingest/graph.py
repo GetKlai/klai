@@ -36,6 +36,7 @@ import structlog
 from klai_kb_slugs import episode_name
 
 import knowledge_ingest.qdrant_store as qdrant_store
+from knowledge_ingest import _patch_graphiti
 from knowledge_ingest.config import settings
 from knowledge_ingest.llm_throttle import TokenBucketLimiter, shared_klai_fast_limiter
 
@@ -406,6 +407,18 @@ def _get_graphiti() -> Graphiti:
         # instruction to every system message, and its default ends in
         # "Otherwise, output English".
         _install_language_policy()
+        # The FalkorDB compatibility layer, applied here rather than only in
+        # app.py. Its edge-search rewrite is what keeps the fulltext join from
+        # scanning every RELATES_TO edge once per hit (GetKlai/klai#1214); on
+        # the Voys graph that is 2.99 ms against a query that otherwise runs
+        # past 140 s and dies on FalkorDB's 1 s timeout.
+        #
+        # app.py applies it at import, so the service was always covered. An
+        # operator entry point is not: `python -m knowledge_ingest.backfill`
+        # never imports app, so every episode it wrote failed. _get_graphiti is
+        # the one place every path — service, worker, backfill, one-off script —
+        # builds a client, which is why it belongs here and not in each caller.
+        _patch_graphiti.apply()
         llm_client = OpenAIGenericClient(config=llm_config, client=openai_client)
         embedder = _BatchSplittingEmbedder(
             inner=OpenAIEmbedder(
