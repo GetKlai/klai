@@ -826,6 +826,15 @@ _TRANSPORT_SECURITY = TransportSecuritySettings(
         "127.0.0.1",
         "127.0.0.1:8080",
     ],
+    # Match the web MCP clients registered by portal-api's OAuth flow, plus
+    # the public MCP origin itself. Server-side clients omit Origin.
+    allowed_origins=[
+        "https://mcp.getklai.com",
+        "https://chat.openai.com",
+        "https://chatgpt.com",
+        "https://claude.ai",
+        "https://claude.com",
+    ],
 )
 _TRANSPORT_SECURITY_VALIDATOR = TransportSecurityMiddleware(_TRANSPORT_SECURITY)
 

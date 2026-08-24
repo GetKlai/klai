@@ -150,6 +150,39 @@ def test_rejected_foreign_origins_do_not_consume_mcp_sessions(mcp_client: TestCl
     assert len(session_manager._server_instances) == sessions_before
 
 
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "https://mcp.getklai.com",
+        "https://chat.openai.com",
+        "https://chatgpt.com",
+        "https://claude.ai",
+        "https://claude.com",
+    ],
+)
+def test_supported_browser_origins_reach_mcp_transport(
+    mcp_client: TestClient,
+    origin: str,
+) -> None:
+    """Registered web MCP clients must pass transport security."""
+    headers = {
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+        "Authorization": "Bearer klai_mcp_test-token-never-verified",
+        "Host": "mcp.getklai.com",
+        "Origin": origin,
+    }
+    body = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+
+    response = mcp_client.post("/mcp", headers=headers, json=body)
+
+    assert response.status_code == 400, (
+        f"supported Origin {origin!r} should reach the MCP transport and fail there on "
+        f"the missing session ID; got {response.status_code}. 403 means the Origin gate "
+        "rejected it."
+    )
+
+
 def test_caddyfile_routes_mcp_subdomain_to_knowledge_mcp() -> None:
     """SPEC-MCP-AUTH-001 Fase 5 — Caddy upstream block for mcp.${DOMAIN}."""
     assert CADDYFILE.exists(), f"expected Caddyfile at {CADDYFILE}"
