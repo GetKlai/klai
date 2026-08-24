@@ -6,10 +6,7 @@ on:
     branches: [main]
     paths:
       - 'klai-portal/frontend/**'
-      - 'klai-widget/src/**'
-      - 'klai-widget/package.json'
-      - 'klai-widget/package-lock.json'
-      - 'klai-widget/vite.config.ts'
+      - 'klai-widget/**'
       - '.github/workflows/portal-frontend.yml'
 jobs:
   # Split out of build-deploy on 2026-08-14 for two reasons:
@@ -79,6 +76,7 @@ jobs:
           cd klai-widget
           npm ci
           npm run build
+          npm run check-size
           mkdir -p ../klai-portal/frontend/public/widget
           cp dist/klai-chat.js ../klai-portal/frontend/public/widget/klai-chat.js
 
