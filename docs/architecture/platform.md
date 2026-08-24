@@ -45,10 +45,10 @@ Billing (handled by Moneybird, see Stack table):
 
 ### Chat widgets
 
-Embeddable SolidJS bundle served from the portal origin (`/klai-chat.js`). One-tag embed:
+Embeddable SolidJS bundle served from the portal origin (`/widget/klai-chat.js`). One-tag embed:
 
 ```html
-<script src="https://getklai.com/klai-chat.js" data-widget-id="wgt_..."></script>
+<script src="https://my.getklai.com/widget/klai-chat.js" data-widget-id="wgt_..."></script>
 ```
 
 **Auth flow (JWT-only, no browser-visible API key):**

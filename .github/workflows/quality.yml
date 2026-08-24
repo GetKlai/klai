@@ -95,10 +95,7 @@ jobs:
               - '.github/workflows/quality.yml'
             portal_frontend:
               - 'klai-portal/frontend/**'
-              - 'klai-widget/src/**'
-              - 'klai-widget/package.json'
-              - 'klai-widget/package-lock.json'
-              - 'klai-widget/vite.config.ts'
+              - 'klai-widget/**'
               - '.github/workflows/portal-frontend.yml'
               - '.github/workflows/quality.yml'
             connector:

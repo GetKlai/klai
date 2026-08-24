@@ -138,8 +138,8 @@ assert_contains "$quality_workflow" \
   "              - 'klai-docs/**'" \
   'docs dependency updates must select the docs workflow'
 assert_contains "$quality_workflow" \
-  "              - 'klai-widget/package-lock.json'" \
-  'widget lockfile updates must select the portal-frontend workflow'
+  "              - 'klai-widget/**'" \
+  'every widget build input must select the portal-frontend workflow'
 assert_contains "$quality_workflow" \
   "              - '.github/workflows/validate-trivyignore.yml'" \
   'Trivy workflow updates must select the trivyignore validator'
