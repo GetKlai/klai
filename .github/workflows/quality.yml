@@ -99,7 +99,6 @@ jobs:
               - 'klai-widget/package.json'
               - 'klai-widget/package-lock.json'
               - 'klai-widget/vite.config.ts'
-              - 'klai-portal/.github/workflows/portal-frontend.yml'
               - '.github/workflows/portal-frontend.yml'
               - '.github/workflows/quality.yml'
             connector:

@@ -10,7 +10,6 @@ on:
       - 'klai-widget/package.json'
       - 'klai-widget/package-lock.json'
       - 'klai-widget/vite.config.ts'
-      - 'klai-portal/.github/workflows/portal-frontend.yml'
       - '.github/workflows/portal-frontend.yml'
 jobs:
   # Split out of build-deploy on 2026-08-14 for two reasons:

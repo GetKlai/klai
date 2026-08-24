@@ -46,7 +46,12 @@ from klai_retrieval_telemetry import (
 from log_utils import sanitize_response_body, verify_shared_secret
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
-from mcp.server.transport_security import TransportSecuritySettings
+from mcp.server.streamable_http import check_accept_headers
+from mcp.server.transport_security import (
+    TransportSecurityMiddleware,
+    TransportSecuritySettings,
+)
+from mcp.types import LATEST_PROTOCOL_VERSION, InitializeRequest
 
 from logging_setup import setup_logging
 from shield_compliance import check_compliance as _shield_check_compliance
@@ -824,6 +829,7 @@ _TRANSPORT_SECURITY = TransportSecuritySettings(
         "127.0.0.1:8080",
     ],
 )
+_TRANSPORT_SECURITY_VALIDATOR = TransportSecurityMiddleware(_TRANSPORT_SECURITY)
 
 mcp = MCPServer(
     "klai-knowledge",
@@ -1926,6 +1932,95 @@ class _WWWAuthenticateMiddleware(BaseHTTPMiddleware):
                         ),
                     },
                 )
+
+            # The SDK's stateful manager registers a transport before the
+            # transport applies this validator. Run the same validator at the
+            # outer boundary so rejected requests never consume a session.
+            if path.startswith("/mcp"):
+                transport_error = await _TRANSPORT_SECURITY_VALIDATOR.validate_request(
+                    request,
+                    is_post=request.method == "POST",
+                )
+                if transport_error is not None:
+                    return transport_error
+
+                # The stateful SDK allocates a transport for every request that
+                # omits Mcp-Session-Id, before it validates the method or body.
+                # Per the MCP lifecycle, only a valid initialize request may
+                # create a session. Classify it at this outer boundary first.
+                # The latest protocol is deliberately sessionless. The SDK
+                # routes it to its modern single-request handler before the
+                # stateful manager, so it cannot allocate a transport here.
+                is_modern_request = (
+                    request.headers.get("mcp-protocol-version") == LATEST_PROTOCOL_VERSION
+                )
+                if "mcp-session-id" not in request.headers and not is_modern_request:
+                    if request.method != "POST":
+                        return JSONResponse(
+                            {
+                                "jsonrpc": "2.0",
+                                "id": None,
+                                "error": {
+                                    "code": -32600,
+                                    "message": "Bad Request: Missing session ID",
+                                },
+                            },
+                            status_code=400,
+                        )
+
+                    has_json, has_sse = check_accept_headers(request)
+                    if not has_json or (not mcp.session_manager.json_response and not has_sse):
+                        required_types = (
+                            "application/json"
+                            if mcp.session_manager.json_response
+                            else "both application/json and text/event-stream"
+                        )
+                        return JSONResponse(
+                            {
+                                "jsonrpc": "2.0",
+                                "id": None,
+                                "error": {
+                                    "code": -32600,
+                                    "message": (
+                                        f"Not Acceptable: Client must accept {required_types}"
+                                    ),
+                                },
+                            },
+                            status_code=406,
+                        )
+
+                    # Read the body with a cap rather than via request.body(),
+                    # which buffers without one. Assigning _body afterwards is
+                    # load-bearing and not decoration: Starlette's
+                    # _CachedRequest.wrapped_receive checks _body BEFORE its
+                    # "stream was consumed, send an empty body" branch, so this
+                    # is what lets call_next replay the body downstream. Drain
+                    # the stream without setting it and the SDK receives an
+                    # empty body -- initialize would break, which is why the
+                    # handshake test below exists.
+                    body = bytearray()
+                    async for chunk in request.stream():
+                        if len(body) + len(chunk) > mcp.session_manager.max_request_body_size:
+                            return Response("Request body too large", status_code=413)
+                        body.extend(chunk)
+                    request._body = bytes(body)
+
+                    try:
+                        InitializeRequest.model_validate_json(request._body)
+                    except ValueError:
+                        return JSONResponse(
+                            {
+                                "jsonrpc": "2.0",
+                                "id": None,
+                                "error": {
+                                    "code": -32600,
+                                    "message": (
+                                        "Bad Request: Only initialize may omit Mcp-Session-Id"
+                                    ),
+                                },
+                            },
+                            status_code=400,
+                        )
 
         response: Response = await call_next(request)
         if response.status_code == 401 and "www-authenticate" not in {

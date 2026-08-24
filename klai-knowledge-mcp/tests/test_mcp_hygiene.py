@@ -13,11 +13,24 @@ This test now enforces the new state:
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
+
+import pytest
+from starlette.testclient import TestClient
 
 MAIN_PY = Path(__file__).resolve().parents[1] / "main.py"
 DOCKERFILE = Path(__file__).resolve().parents[1] / "Dockerfile"
 CADDYFILE = Path(__file__).resolve().parents[2] / "deploy" / "caddy" / "Caddyfile"
+
+
+@pytest.fixture(scope="module")
+def mcp_client() -> Iterator[TestClient]:
+    """Start the SDK session manager once; MCP 2.0 managers cannot restart."""
+    import main
+
+    with TestClient(main.app) as client:
+        yield client
 
 
 def test_dns_rebinding_protection_is_enabled_with_anchor() -> None:
@@ -46,7 +59,9 @@ def test_dns_rebinding_protection_is_enabled_with_anchor() -> None:
     assert "spec-mcp-auth-001" in reason_text, "@MX:REASON must reference SPEC-MCP-AUTH-001"
 
 
-def test_dns_rebinding_protection_actually_rejects_a_foreign_host() -> None:
+def test_dns_rebinding_protection_actually_rejects_a_foreign_host(
+    mcp_client: TestClient,
+) -> None:
     """SPEC-MCP-AUTH-001 REQ-A6 — the settings are WIRED UP, not merely written down.
 
     The test above greps main.py for ``enable_dns_rebinding_protection=True``.
@@ -68,10 +83,6 @@ def test_dns_rebinding_protection_actually_rejects_a_foreign_host() -> None:
     for the allowed case would also accept a 404 or a 500 from an app that no
     longer serves /mcp at all.
     """
-    from starlette.testclient import TestClient
-
-    import main
-
     headers = {
         "Accept": "application/json, text/event-stream",
         "Content-Type": "application/json",
@@ -79,22 +90,296 @@ def test_dns_rebinding_protection_actually_rejects_a_foreign_host() -> None:
     }
     body = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
 
-    with TestClient(main.app) as client:
-        for allowed in ("mcp.getklai.com", "klai-knowledge-mcp:8080"):
-            response = client.post("/mcp", headers={**headers, "Host": allowed}, json=body)
-            assert response.status_code == 400, (
-                f"allow-listed Host {allowed!r} should reach the MCP transport and fail "
-                f"there on the missing session ID; got {response.status_code}. 421 means "
-                "the host gate rejected it and production traffic through Caddy and "
-                "LibreChat would both break."
-            )
+    for allowed in ("mcp.getklai.com", "klai-knowledge-mcp:8080"):
+        response = mcp_client.post("/mcp", headers={**headers, "Host": allowed}, json=body)
+        assert response.status_code == 400, (
+            f"allow-listed Host {allowed!r} should reach the MCP transport and fail "
+            f"there on the missing session ID; got {response.status_code}. 421 means "
+            "the host gate rejected it and production traffic through Caddy and "
+            "LibreChat would both break."
+        )
 
-        for foreign in ("evil.example.com", "attacker.test"):
-            response = client.post("/mcp", headers={**headers, "Host": foreign}, json=body)
-            assert response.status_code == 421, (
-                f"Host {foreign!r} should be refused with 421 Misdirected Request; got "
-                f"{response.status_code}. DNS-rebinding protection is not reaching the app."
-            )
+    for foreign in ("evil.example.com", "attacker.test"):
+        response = mcp_client.post("/mcp", headers={**headers, "Host": foreign}, json=body)
+        assert response.status_code == 421, (
+            f"Host {foreign!r} should be refused with 421 Misdirected Request; got "
+            f"{response.status_code}. DNS-rebinding protection is not reaching the app."
+        )
+
+
+def test_rejected_foreign_hosts_do_not_consume_mcp_sessions(mcp_client: TestClient) -> None:
+    """A transport-security rejection must not consume process-lifetime session capacity."""
+    import main
+
+    headers = {
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+        "Authorization": "Bearer klai_mcp_test-token-never-verified",
+        "Host": "evil.example.com",
+    }
+    body = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+
+    session_manager = main.mcp.session_manager
+    sessions_before = len(session_manager._server_instances)
+
+    responses = [mcp_client.post("/mcp", headers=headers, json=body) for _ in range(50)]
+
+    assert {response.status_code for response in responses} == {421}
+    assert len(session_manager._server_instances) == sessions_before
+
+
+def test_rejected_foreign_origins_do_not_consume_mcp_sessions(mcp_client: TestClient) -> None:
+    """The adjacent Origin rejection must happen before session allocation too."""
+    import main
+
+    headers = {
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+        "Authorization": "Bearer klai_mcp_test-token-never-verified",
+        "Host": "mcp.getklai.com",
+        "Origin": "https://evil.example.com",
+    }
+    body = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+
+    session_manager = main.mcp.session_manager
+    sessions_before = len(session_manager._server_instances)
+
+    response = mcp_client.post("/mcp", headers=headers, json=body)
+
+    assert response.status_code == 403
+    assert len(session_manager._server_instances) == sessions_before
+
+
+def test_sessionless_non_initialize_requests_do_not_consume_mcp_sessions(
+    mcp_client: TestClient,
+) -> None:
+    """Only initialize may allocate a session for a request without a session ID."""
+    import main
+
+    common_headers = {
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+    }
+    request_paths = (
+        {
+            "Host": "mcp.getklai.com",
+            "Authorization": "Bearer klai_mcp_test-token-never-verified",
+        },
+        {
+            "Host": "klai-knowledge-mcp:8080",
+            "X-Internal-Secret": "non-empty-but-not-verified-at-the-outer-gate",
+        },
+    )
+    body = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+
+    session_manager = main.mcp.session_manager
+    sessions_before = len(session_manager._server_instances)
+
+    responses = [
+        mcp_client.post("/mcp", headers={**common_headers, **path_headers}, json=body)
+        for path_headers in request_paths
+        for _ in range(100)
+    ]
+
+    assert {response.status_code for response in responses} == {400}
+    assert len(session_manager._server_instances) == sessions_before
+
+
+def test_sessionless_2026_discover_remains_available_without_allocating_a_session(
+    mcp_client: TestClient,
+) -> None:
+    """The 2026 discovery handshake is stateless and must remain reachable."""
+    import main
+
+    headers = {
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+        "Authorization": "Bearer klai_mcp_test-token-never-verified",
+        "Host": "mcp.getklai.com",
+        "MCP-Protocol-Version": "2026-07-28",
+        "MCP-Method": "server/discover",
+    }
+    session_manager = main.mcp.session_manager
+    sessions_before = len(session_manager._server_instances)
+
+    response = mcp_client.post(
+        "/mcp",
+        headers=headers,
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "server/discover",
+            "params": {
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                    "io.modelcontextprotocol/clientInfo": {
+                        "name": "klai-session-guard-test",
+                        "version": "1",
+                    },
+                }
+            },
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert "2026-07-28" in response.json()["result"]["supportedVersions"]
+    assert "mcp-session-id" not in response.headers
+    assert len(session_manager._server_instances) == sessions_before
+
+
+@pytest.mark.parametrize(
+    "body",
+    (
+        b"{",
+        b'{"jsonrpc":"2.0","id":1,"method":"initialize"}',
+    ),
+    ids=("malformed-json", "incomplete-initialize"),
+)
+def test_invalid_initialize_requests_do_not_consume_mcp_sessions(
+    mcp_client: TestClient,
+    body: bytes,
+) -> None:
+    """A method label alone is not a valid initialize request and cannot allocate."""
+    import main
+
+    headers = {
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+        "Authorization": "Bearer klai_mcp_test-token-never-verified",
+        "Host": "mcp.getklai.com",
+    }
+    session_manager = main.mcp.session_manager
+    sessions_before = len(session_manager._server_instances)
+
+    response = mcp_client.post("/mcp", headers=headers, content=body)
+
+    assert response.status_code == 400
+    assert len(session_manager._server_instances) == sessions_before
+
+
+@pytest.mark.parametrize(
+    "accept",
+    ("application/json", "text/event-stream", "text/html"),
+    ids=("missing-sse", "missing-json", "unsupported"),
+)
+def test_initialize_with_invalid_accept_does_not_allocate_a_session(
+    mcp_client: TestClient,
+    accept: str,
+) -> None:
+    """Transport negotiation must fail before a stateful session is registered."""
+    import main
+
+    headers = {
+        "Accept": accept,
+        "Content-Type": "application/json",
+        "Authorization": "Bearer klai_mcp_test-token-never-verified",
+        "Host": "mcp.getklai.com",
+    }
+    session_manager = main.mcp.session_manager
+    sessions_before = len(session_manager._server_instances)
+
+    response = mcp_client.post(
+        "/mcp",
+        headers=headers,
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "klai-session-guard-test", "version": "1"},
+            },
+        },
+    )
+
+    assert response.status_code == 406
+    assert "mcp-session-id" not in response.headers
+    assert len(session_manager._server_instances) == sessions_before
+
+
+def test_sessionless_get_does_not_consume_an_mcp_session(mcp_client: TestClient) -> None:
+    """Standalone SSE is valid only after initialize has established a session."""
+    import main
+
+    headers = {
+        "Accept": "text/event-stream",
+        "Authorization": "Bearer klai_mcp_test-token-never-verified",
+        "Host": "mcp.getklai.com",
+    }
+    session_manager = main.mcp.session_manager
+    sessions_before = len(session_manager._server_instances)
+
+    response = mcp_client.get("/mcp", headers=headers)
+
+    assert response.status_code == 400
+    assert len(session_manager._server_instances) == sessions_before
+
+
+@pytest.mark.parametrize(
+    ("host", "auth_headers"),
+    (
+        (
+            "mcp.getklai.com",
+            {"Authorization": "Bearer klai_mcp_test-token-never-verified"},
+        ),
+        (
+            "klai-knowledge-mcp:8080",
+            {"X-Internal-Secret": "non-empty-but-not-verified-at-the-outer-gate"},
+        ),
+    ),
+    ids=("public", "librechat"),
+)
+def test_legitimate_mcp_handshake_survives_sessionless_request_guard(
+    mcp_client: TestClient,
+    host: str,
+    auth_headers: dict[str, str],
+) -> None:
+    """Body inspection must preserve initialize, session use, and termination end to end."""
+    common_headers = {
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+        "Host": host,
+        **auth_headers,
+    }
+    initialize = mcp_client.post(
+        "/mcp",
+        headers=common_headers,
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "klai-session-guard-test", "version": "1"},
+            },
+        },
+    )
+    assert initialize.status_code == 200
+    session_id = initialize.headers["mcp-session-id"]
+    session_headers = {
+        **common_headers,
+        "Mcp-Session-Id": session_id,
+        "MCP-Protocol-Version": "2025-06-18",
+    }
+
+    initialized = mcp_client.post(
+        "/mcp",
+        headers=session_headers,
+        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+    )
+    tools_list = mcp_client.post(
+        "/mcp",
+        headers=session_headers,
+        json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+    )
+    deleted = mcp_client.delete("/mcp", headers=session_headers)
+
+    assert initialized.status_code == 202
+    assert tools_list.status_code == 200
+    assert deleted.status_code == 200
 
 
 def test_caddyfile_routes_mcp_subdomain_to_knowledge_mcp() -> None:
