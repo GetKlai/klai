@@ -1886,6 +1886,26 @@ def _hash_user_id(user_id: str) -> str:
     return hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:16]
 
 
+def _unauthorized_mcp_response() -> JSONResponse:
+    """Return the OAuth discovery challenge used by every MCP auth rejection."""
+    prm_url = f"{MCP_OAUTH_RESOURCE_URL}/.well-known/oauth-protected-resource"
+    return JSONResponse(
+        {
+            "error": "unauthorized",
+            "error_description": (
+                "MCP requests require Authorization: Bearer klai_mcp_<token>. "
+                "Use OAuth flow at " + MCP_OAUTH_ISSUER_BASE_URL + "/oauth/authorize."
+            ),
+        },
+        status_code=401,
+        headers={
+            "WWW-Authenticate": (
+                f'Bearer realm="klai-mcp", resource_metadata="{prm_url}", scope="mcp:knowledge"'
+            ),
+        },
+    )
+
+
 class _WWWAuthenticateMiddleware(BaseHTTPMiddleware):
     """Add WWW-Authenticate to every 401 response (REQ-10).
 
@@ -1910,28 +1930,9 @@ class _WWWAuthenticateMiddleware(BaseHTTPMiddleware):
             has_oauth = authorization.lower().startswith(
                 "bearer klai_mcp_"
             ) and not authorization.lower().startswith("bearer klai_mcp_rt_")
-            has_internal = bool(internal_secret)
+            has_internal = verify_shared_secret(internal_secret, KNOWLEDGE_INGEST_SECRET)
             if not has_oauth and not has_internal:
-                from starlette.responses import JSONResponse as _JSON
-
-                prm_url = f"{MCP_OAUTH_RESOURCE_URL}/.well-known/oauth-protected-resource"
-                return _JSON(
-                    {
-                        "error": "unauthorized",
-                        "error_description": (
-                            "MCP requests require Authorization: Bearer klai_mcp_<token>. "
-                            "Use OAuth flow at " + MCP_OAUTH_ISSUER_BASE_URL + "/oauth/authorize."
-                        ),
-                    },
-                    status_code=401,
-                    headers={
-                        "WWW-Authenticate": (
-                            f'Bearer realm="klai-mcp", '
-                            f'resource_metadata="{prm_url}", '
-                            f'scope="mcp:knowledge"'
-                        ),
-                    },
-                )
+                return _unauthorized_mcp_response()
 
             # The SDK's stateful manager registers a transport before the
             # transport applies this validator. Run the same validator at the
@@ -2021,6 +2022,15 @@ class _WWWAuthenticateMiddleware(BaseHTTPMiddleware):
                             },
                             status_code=400,
                         )
+
+                    if has_oauth:
+                        raw_token = authorization.split(" ", 1)[1].strip()
+                        verification = await _mcp_token_asserter.verify(
+                            raw_token=raw_token,
+                            request_headers=dict(request.headers),
+                        )
+                        if not verification.verified:
+                            return _unauthorized_mcp_response()
 
         response: Response = await call_next(request)
         if response.status_code == 401 and "www-authenticate" not in {

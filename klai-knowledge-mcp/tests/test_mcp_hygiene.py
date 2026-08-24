@@ -14,9 +14,12 @@ This test now enforces the new state:
 from __future__ import annotations
 
 from collections.abc import Iterator
+from contextlib import nullcontext
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
+from klai_identity_assert.mcp_token_client import McpTokenVerifyResult
 from starlette.testclient import TestClient
 
 MAIN_PY = Path(__file__).resolve().parents[1] / "main.py"
@@ -167,7 +170,7 @@ def test_sessionless_non_initialize_requests_do_not_consume_mcp_sessions(
         },
         {
             "Host": "klai-knowledge-mcp:8080",
-            "X-Internal-Secret": "non-empty-but-not-verified-at-the-outer-gate",
+            "X-Internal-Secret": "test-secret",
         },
     )
     body = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
@@ -182,6 +185,90 @@ def test_sessionless_non_initialize_requests_do_not_consume_mcp_sessions(
     ]
 
     assert {response.status_code for response in responses} == {400}
+    assert len(session_manager._server_instances) == sessions_before
+
+
+@pytest.mark.parametrize(
+    "deny_reason",
+    ("unknown_token", "portal_unreachable"),
+    ids=("invalid-credential", "verifier-unavailable"),
+)
+def test_initialize_requires_verified_bearer_before_session_allocation(
+    mcp_client: TestClient,
+    deny_reason: str,
+) -> None:
+    """A syntactically valid bearer credential is not authenticated until verified."""
+    import main
+
+    headers = {
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+        "Authorization": "Bearer klai_mcp_unverified-initialize",
+        "Host": "mcp.getklai.com",
+    }
+    session_manager = main.mcp.session_manager
+    sessions_before = len(session_manager._server_instances)
+
+    with patch(
+        "main._mcp_token_asserter.verify",
+        new_callable=AsyncMock,
+        return_value=McpTokenVerifyResult.deny(deny_reason),
+    ) as verify_mock:
+        response = mcp_client.post(
+            "/mcp",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "klai-auth-contract-test", "version": "1"},
+                },
+            },
+        )
+
+    assert response.status_code == 401
+    assert "www-authenticate" in response.headers
+    assert "mcp-session-id" not in response.headers
+    assert len(session_manager._server_instances) == sessions_before
+    assert verify_mock.await_args is not None
+    assert verify_mock.await_args.kwargs["raw_token"] == "klai_mcp_unverified-initialize"
+
+
+def test_initialize_requires_valid_internal_secret_before_session_allocation(
+    mcp_client: TestClient,
+) -> None:
+    """Internal initialize authenticates the shared secret before reaching FastMCP."""
+    import main
+
+    headers = {
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+        "X-Internal-Secret": "wrong-internal-secret",
+        "Host": "klai-knowledge-mcp:8080",
+    }
+    session_manager = main.mcp.session_manager
+    sessions_before = len(session_manager._server_instances)
+
+    response = mcp_client.post(
+        "/mcp",
+        headers=headers,
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "klai-auth-contract-test", "version": "1"},
+            },
+        },
+    )
+
+    assert response.status_code == 401
+    assert "mcp-session-id" not in response.headers
     assert len(session_manager._server_instances) == sessions_before
 
 
@@ -326,7 +413,7 @@ def test_sessionless_get_does_not_consume_an_mcp_session(mcp_client: TestClient)
         ),
         (
             "klai-knowledge-mcp:8080",
-            {"X-Internal-Secret": "non-empty-but-not-verified-at-the-outer-gate"},
+            {"X-Internal-Secret": "test-secret"},
         ),
     ),
     ids=("public", "librechat"),
@@ -343,20 +430,36 @@ def test_legitimate_mcp_handshake_survives_sessionless_request_guard(
         "Host": host,
         **auth_headers,
     }
-    initialize = mcp_client.post(
-        "/mcp",
-        headers=common_headers,
-        json={
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2025-06-18",
-                "capabilities": {},
-                "clientInfo": {"name": "klai-session-guard-test", "version": "1"},
-            },
-        },
+    verifier = (
+        patch(
+            "main._mcp_token_asserter.verify",
+            new_callable=AsyncMock,
+            return_value=McpTokenVerifyResult.allow(
+                user_id="verified-user",
+                org_id="verified-org",
+                org_slug="verified-org",
+                scopes=("mcp:knowledge",),
+                resource_uri="https://mcp.getklai.com/mcp",
+            ),
+        )
+        if "Authorization" in auth_headers
+        else nullcontext()
     )
+    with verifier:
+        initialize = mcp_client.post(
+            "/mcp",
+            headers=common_headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "klai-session-guard-test", "version": "1"},
+                },
+            },
+        )
     assert initialize.status_code == 200
     session_id = initialize.headers["mcp-session-id"]
     session_headers = {
@@ -380,6 +483,73 @@ def test_legitimate_mcp_handshake_survives_sessionless_request_guard(
     assert initialized.status_code == 202
     assert tools_list.status_code == 200
     assert deleted.status_code == 200
+
+
+def test_session_does_not_replace_tool_level_bearer_revalidation(
+    mcp_client: TestClient,
+) -> None:
+    """Creating a session does not pin an allow result for later tool calls."""
+    headers = {
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+        "Authorization": "Bearer klai_mcp_revalidation-contract",
+        "Host": "mcp.getklai.com",
+    }
+    allow = McpTokenVerifyResult.allow(
+        user_id="verified-user",
+        org_id="verified-org",
+        org_slug="verified-org",
+        scopes=("mcp:knowledge",),
+        resource_uri="https://mcp.getklai.com/mcp",
+    )
+
+    with patch(
+        "main._mcp_token_asserter.verify",
+        new_callable=AsyncMock,
+        side_effect=(allow, McpTokenVerifyResult.deny("token_revoked")),
+    ) as verify_mock:
+        initialize = mcp_client.post(
+            "/mcp",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "klai-auth-contract-test", "version": "1"},
+                },
+            },
+        )
+        assert initialize.status_code == 200
+        session_headers = {
+            **headers,
+            "Mcp-Session-Id": initialize.headers["mcp-session-id"],
+            "MCP-Protocol-Version": "2025-06-18",
+        }
+
+        initialized = mcp_client.post(
+            "/mcp",
+            headers=session_headers,
+            json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+        )
+        tool_call = mcp_client.post(
+            "/mcp",
+            headers=session_headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {"name": "list_docs_kbs", "arguments": {}},
+            },
+        )
+        mcp_client.delete("/mcp", headers=session_headers)
+
+    assert initialized.status_code == 202
+    assert tool_call.status_code == 200
+    assert '"isError":true' in tool_call.text
+    assert verify_mock.await_count == 2
 
 
 def test_caddyfile_routes_mcp_subdomain_to_knowledge_mcp() -> None:
