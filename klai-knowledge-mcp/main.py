@@ -46,11 +46,12 @@ from klai_retrieval_telemetry import (
 from log_utils import sanitize_response_body, verify_shared_secret
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.streamable_http import check_accept_headers
 from mcp.server.transport_security import (
     TransportSecurityMiddleware,
     TransportSecuritySettings,
 )
-from mcp.types import InitializeRequest
+from mcp.types import LATEST_PROTOCOL_VERSION, InitializeRequest
 
 from logging_setup import setup_logging
 from shield_compliance import check_compliance as _shield_check_compliance
@@ -1947,7 +1948,13 @@ class _WWWAuthenticateMiddleware(BaseHTTPMiddleware):
                 # omits Mcp-Session-Id, before it validates the method or body.
                 # Per the MCP lifecycle, only a valid initialize request may
                 # create a session. Classify it at this outer boundary first.
-                if "mcp-session-id" not in request.headers:
+                # The latest protocol is deliberately sessionless. The SDK
+                # routes it to its modern single-request handler before the
+                # stateful manager, so it cannot allocate a transport here.
+                is_modern_request = (
+                    request.headers.get("mcp-protocol-version") == LATEST_PROTOCOL_VERSION
+                )
+                if "mcp-session-id" not in request.headers and not is_modern_request:
                     if request.method != "POST":
                         return JSONResponse(
                             {
@@ -1959,6 +1966,27 @@ class _WWWAuthenticateMiddleware(BaseHTTPMiddleware):
                                 },
                             },
                             status_code=400,
+                        )
+
+                    has_json, has_sse = check_accept_headers(request)
+                    if not has_json or (not mcp.session_manager.json_response and not has_sse):
+                        required_types = (
+                            "application/json"
+                            if mcp.session_manager.json_response
+                            else "both application/json and text/event-stream"
+                        )
+                        return JSONResponse(
+                            {
+                                "jsonrpc": "2.0",
+                                "id": None,
+                                "error": {
+                                    "code": -32600,
+                                    "message": (
+                                        f"Not Acceptable: Client must accept {required_types}"
+                                    ),
+                                },
+                            },
+                            status_code=406,
                         )
 
                     # Read the body with a cap rather than via request.body(),

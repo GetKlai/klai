@@ -185,6 +185,49 @@ def test_sessionless_non_initialize_requests_do_not_consume_mcp_sessions(
     assert len(session_manager._server_instances) == sessions_before
 
 
+def test_sessionless_2026_discover_remains_available_without_allocating_a_session(
+    mcp_client: TestClient,
+) -> None:
+    """The 2026 discovery handshake is stateless and must remain reachable."""
+    import main
+
+    headers = {
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+        "Authorization": "Bearer klai_mcp_test-token-never-verified",
+        "Host": "mcp.getklai.com",
+        "MCP-Protocol-Version": "2026-07-28",
+        "MCP-Method": "server/discover",
+    }
+    session_manager = main.mcp.session_manager
+    sessions_before = len(session_manager._server_instances)
+
+    response = mcp_client.post(
+        "/mcp",
+        headers=headers,
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "server/discover",
+            "params": {
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                    "io.modelcontextprotocol/clientInfo": {
+                        "name": "klai-session-guard-test",
+                        "version": "1",
+                    },
+                }
+            },
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert "2026-07-28" in response.json()["result"]["supportedVersions"]
+    assert "mcp-session-id" not in response.headers
+    assert len(session_manager._server_instances) == sessions_before
+
+
 @pytest.mark.parametrize(
     "body",
     (
@@ -212,6 +255,47 @@ def test_invalid_initialize_requests_do_not_consume_mcp_sessions(
     response = mcp_client.post("/mcp", headers=headers, content=body)
 
     assert response.status_code == 400
+    assert len(session_manager._server_instances) == sessions_before
+
+
+@pytest.mark.parametrize(
+    "accept",
+    ("application/json", "text/event-stream", "text/html"),
+    ids=("missing-sse", "missing-json", "unsupported"),
+)
+def test_initialize_with_invalid_accept_does_not_allocate_a_session(
+    mcp_client: TestClient,
+    accept: str,
+) -> None:
+    """Transport negotiation must fail before a stateful session is registered."""
+    import main
+
+    headers = {
+        "Accept": accept,
+        "Content-Type": "application/json",
+        "Authorization": "Bearer klai_mcp_test-token-never-verified",
+        "Host": "mcp.getklai.com",
+    }
+    session_manager = main.mcp.session_manager
+    sessions_before = len(session_manager._server_instances)
+
+    response = mcp_client.post(
+        "/mcp",
+        headers=headers,
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "klai-session-guard-test", "version": "1"},
+            },
+        },
+    )
+
+    assert response.status_code == 406
+    assert "mcp-session-id" not in response.headers
     assert len(session_manager._server_instances) == sessions_before
 
 
