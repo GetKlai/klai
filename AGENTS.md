@@ -89,6 +89,29 @@ queries, or terminal output.
   same turn. Do not repeat the previous delivery mechanism after the user has
   rejected it.
 
+## Public publication boundary
+
+This repository is public. A backlog finding is conversation output, not
+authorization to mutate GitHub.
+
+- Never create, edit, or comment on a public GitHub issue unless the user's
+  current request explicitly asks for that exact public mutation. "Track it",
+  "backlog item", autonomous execution, and finding something outside the
+  current task are not authorization.
+- Potential security findings stay private by default. Do not publish exploit
+  steps, reachability, live-system evidence, secret paths, or unpatched details
+  in issues, PRs, discussions, commits, tracked files, or public Actions output.
+  Report them in the private conversation first. Use a draft GitHub Security
+  Advisory or a private repository only when the user explicitly authorizes
+  that route.
+- A public repository branch or PR is itself disclosure. Before pushing an
+  unpatched security fix, establish the private remediation and deployment
+  path with the user. After the fix is deployed, a deliberately redacted public
+  explanation is allowed when requested.
+- If sensitive details are already public, do not amplify them in comments or
+  linked issues. Prioritize remediation, then close or redact the public item
+  only with explicit user authorization.
+
 ## Codex + Serena
 
 Codex only auto-loads `AGENTS.md` files. It does not automatically read

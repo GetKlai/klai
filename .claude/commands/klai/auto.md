@@ -3,7 +3,7 @@ description: >
   Volledig autonome pipeline voor een goedgekeurde SPEC: run → interview-standard review
   (auto-fix) → migraties → sync → e2e → merge. Geen menselijke stops — alleen de SPEC
   annotation (plan fase) vereist goedkeuring. Gebruik --review voor handmatige gates.
-argument-hint: "SPEC-XXX [--no-e2e] [--no-merge] [--no-issue] [--review]"
+argument-hint: "SPEC-XXX [--no-e2e] [--no-merge] [--issue] [--review]"
 ---
 
 # /klai:auto — Klai Autonomous Pipeline
@@ -25,7 +25,7 @@ vereist. De enige bewuste stop in de totale workflow is de SPEC-goedkeuring in d
 **Flags:**
 - `--no-e2e`: Sla E2E tests over (bijv. als dev server niet draait)
 - `--no-merge`: Stop na sync + E2E, merge niet automatisch
-- `--no-issue`: Geen GitHub Issue aanmaken
+- `--issue`: Maak alleen op expliciet verzoek een gekoppeld publiek GitHub Issue
 - `--review`: Voeg twee menselijke goedkeuringsstops toe (na interview review + voor merge)
 
 **Volledige flow (geen --review):**
@@ -234,8 +234,12 @@ Log: "N nieuwe migratie(s) [succesvol gedraaid op core-01 / gefaald — zie rapp
 
 ## Phase 4: Sync & PR
 
-Push de branch en open een PR met `gh pr create` (tenzij `--no-issue` is
-meegegeven, dan geen gekoppelde GitHub Issue aanmaken).
+Push de branch en open een PR met `gh pr create`. Maak standaard geen gekoppeld
+GitHub Issue aan. Alleen als `--issue` expliciet is meegegeven mag een publiek
+issue worden aangemaakt, en dan pas nadat is vastgesteld dat de inhoud geen
+security finding, live exploitdetail, secret path of klantdata bevat. Een
+security finding gaat terug naar de gebruiker in de private conversatie; nooit
+naar een publiek issue.
 
 Wacht op:
 - PR URL in de output van `gh pr create`

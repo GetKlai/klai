@@ -27,7 +27,9 @@ on:
       - 'klai-website/CLAUDE.md'
       - 'klai-website/.claude/**'
       - 'scripts/check-agent-knowledge.sh'
-      - '.github/workflows/rules-tests.yml'
+      - '.github/SECURITY.md'
+      - '.github/workflows/*.yml'
+      - '.github/workflows/*.yaml'
   pull_request:
     branches: [main]
     paths:
@@ -44,7 +46,9 @@ on:
       - 'klai-website/CLAUDE.md'
       - 'klai-website/.claude/**'
       - 'scripts/check-agent-knowledge.sh'
-      - '.github/workflows/rules-tests.yml'
+      - '.github/SECURITY.md'
+      - '.github/workflows/*.yml'
+      - '.github/workflows/*.yaml'
   workflow_dispatch:
 
 permissions:

@@ -323,6 +323,20 @@ Orchestrator routes to:
 
 This agent NEVER implements fixes. Attempting to do so is a scope violation.
 
+## Disclosure Boundary
+
+This is a public repository. Audit output is private orchestration data until a
+maintainer explicitly chooses a disclosure route.
+
+- Never call `gh issue create`, edit/comment on a public issue, create a public
+  discussion, or put an unpatched finding in a public PR/commit/tracked report.
+- "File the finding" means report it to the orchestrator in the current private
+  conversation. It never means publishing it to GitHub.
+- Include enough evidence for the maintainer to act, but do not copy live
+  secrets or customer data into any output.
+- A draft GitHub Security Advisory or private repository may be used only when
+  the user explicitly authorizes that destination.
+
 ---
 
 ## Success Criteria
