@@ -51,7 +51,29 @@ def engine():
 
 class TestConfigLoadsAsIntended:
     def test_supported_languages_match_yaml(self, engine):
-        assert set(engine.supported_languages) == {"en", "nl", "de"}
+        """Read the YAML rather than restate it.
+
+        This test is named "match_yaml" but hard-coded {en, nl, de}, so
+        adding fr/es/pt to the config broke it as a literal mismatch rather
+        than telling us anything about the engine. Derived from the file, it
+        pins what the name claims: whatever the config declares is what the
+        engine actually serves.
+        """
+        import yaml
+
+        declared = yaml.safe_load(Path(_REPO_CONF_FILE).read_text(encoding="utf-8"))
+        assert set(engine.supported_languages) == set(declared["supported_languages"])
+
+    def test_every_supported_language_has_an_nlp_model_entry(self, engine):
+        """A language in `supported_languages` with no `nlp_configuration`
+        model entry fails when that language is first requested, not at
+        startup — so the config looks fine until someone calls /analyze with
+        it."""
+        import yaml
+
+        declared = yaml.safe_load(Path(_REPO_CONF_FILE).read_text(encoding="utf-8"))
+        modelled = {m["lang_code"] for m in declared["nlp_configuration"]["models"]}
+        assert set(declared["supported_languages"]) == modelled
 
     def test_klai_entities_are_registered(self, engine):
         entities = set(engine.get_supported_entities(language="en"))
@@ -80,8 +102,11 @@ class TestConfigLoadsAsIntended:
             assert pipeline.pipe_names == [], (lang, pipeline.pipe_names)
 
 
+_CONFIGURED_LANGUAGES = ["en", "nl", "de", "fr", "es", "pt"]
+
+
 class TestAC1LanguageAccepted:
-    @pytest.mark.parametrize("language", ["en", "nl", "de"])
+    @pytest.mark.parametrize("language", _CONFIGURED_LANGUAGES)
     def test_language_is_accepted_not_a_language_error(self, engine, language):
         # AC-1's actual assertion ("200, not a language error") at the
         # analyzer-engine level: analyze() must not raise for any configured
@@ -91,12 +116,15 @@ class TestAC1LanguageAccepted:
 
 
 class TestLanguageAgnosticismEndToEnd:
-    @pytest.mark.parametrize("language", ["en", "nl", "de"])
+    @pytest.mark.parametrize("language", _CONFIGURED_LANGUAGES)
     def test_bsn_detected_identically_through_full_engine(self, engine, language):
         sentences = {
             "en": "Please note my BSN is 111222333 for the application.",
             "nl": "Let op, mijn BSN is 111222333 voor de aanvraag.",
             "de": "Bitte beachten Sie, meine BSN ist 111222333 für den Antrag.",
+            "fr": "Veuillez noter que mon BSN est 111222333 pour la demande.",
+            "es": "Tenga en cuenta que mi BSN es 111222333 para la solicitud.",
+            "pt": "Observe que o meu BSN é 111222333 para o pedido.",
         }
         text = sentences[language]
         results = engine.analyze(text=text, language=language)
