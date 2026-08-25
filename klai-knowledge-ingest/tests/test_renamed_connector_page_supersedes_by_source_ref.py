@@ -67,7 +67,7 @@ def _ingest_patches(
         )
         _p("knowledge_ingest.enrichment_tasks.get_app", return_value=_make_procrastinate_app())
         _p(
-            "knowledge_ingest.pg_store.get_active_content_hash",
+            "knowledge_ingest.pg_store.get_active_artifact_state",
             new_callable=AsyncMock,
             return_value=None,
         )

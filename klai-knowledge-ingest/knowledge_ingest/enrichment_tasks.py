@@ -43,7 +43,10 @@ from knowledge_ingest import (
 from knowledge_ingest.content_profiles import get_profile
 from knowledge_ingest.db import cross_org_admin_connection, tenant_scoped_connection
 from knowledge_ingest.document_normalizer import normalize_document_for_chunking
-from knowledge_ingest.enrichment_policy import enrichment_skip_reason
+from knowledge_ingest.enrichment_policy import (
+    GRAPHITI_EXTRACTION_VERSION,
+    enrichment_skip_reason,
+)
 from knowledge_ingest.episode_text import split_episode_text
 
 logger = structlog.get_logger()
@@ -350,6 +353,7 @@ def _register_tasks(procrastinate_app: Any) -> None:
         belief_time_start: int,
         kb_slug: str = "",
         path: str = "",
+        replace_stale: bool = False,
     ) -> None:
         """Ingest a document into the Graphiti knowledge graph.
 
@@ -394,13 +398,36 @@ def _register_tasks(procrastinate_app: Any) -> None:
                     org_id=org_id,
                 )
                 return
+            from knowledge_ingest import graph as graph_module
+
+            if replace_stale:
+                # Delete at execution time so old episodes stay readable while
+                # the bulk queue drains; retries also remove partial episodes.
+                stale_ids = await pg_store.get_episode_ids_for_document_history(
+                    conn, org_id, [artifact_id]
+                )
+                if stale_ids:
+                    await graph_module.delete_kb_episodes(org_id, stale_ids)
+                # Null the legacy scalar too: append_graphiti_episode_id keeps
+                # an existing scalar via COALESCE, so leaving the old value in
+                # place would pin it to a just-deleted episode uuid forever.
+                await pg_store.update_artifact_extra(
+                    conn,
+                    artifact_id,
+                    {"graphiti_episode_ids": [], "graphiti_episode_id": None},
+                )
+                logger.info(
+                    "graphiti_stale_episodes_replaced",
+                    artifact_id=artifact_id,
+                    org_id=org_id,
+                    deleted=len(stale_ids),
+                )
             logger.info(
                 "graphiti_episode_started",
                 artifact_id=artifact_id,
                 org_id=org_id,
                 content_type=content_type,
             )
-            from knowledge_ingest import graph as graph_module
 
             episode_parts = split_episode_text(document_text)
             await pg_store.update_artifact_extra(
@@ -487,7 +514,10 @@ def _register_tasks(procrastinate_app: Any) -> None:
             await pg_store.update_artifact_extra(
                 conn,
                 artifact_id,
-                {"graphiti_episode_complete": True},
+                {
+                    "graphiti_episode_complete": True,
+                    "graphiti_extraction_version": GRAPHITI_EXTRACTION_VERSION,
+                },
             )
 
     procrastinate_app.ingest_graphiti_episode = ingest_graphiti_episode  # type: ignore[attr-defined]

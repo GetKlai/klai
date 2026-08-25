@@ -47,9 +47,11 @@ from knowledge_ingest.db import tenant_scoped_connection
 from knowledge_ingest.docs_provenance import build_docs_source_extra
 from knowledge_ingest.document_normalizer import normalize_document_for_chunking
 from knowledge_ingest.enrichment_policy import (
+    GRAPHITI_EXTRACTION_VERSION,
     enrichment_skip_reason,
     graph_episode_skip_reason,
 )
+from knowledge_ingest.graph_refresh import maybe_refresh_stale_graph
 from knowledge_ingest.identity import assert_caller_identity, assert_caller_identity_tenant_only
 from knowledge_ingest.models import (
     BulkSyncRequest,
@@ -411,16 +413,34 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
         req.content if req.skip_chunking else normalize_document_for_chunking(req.content)
     )
     content_hash = req.content_hash or hashlib.sha256(indexable_content.encode()).hexdigest()
-    stored_hash = await pg_store.get_active_content_hash(conn, req.org_id, req.kb_slug, req.path)
-    if stored_hash is not None and stored_hash == content_hash:
+    active_artifact = await pg_store.get_active_artifact_state(
+        conn, req.org_id, req.kb_slug, req.path
+    )
+    if active_artifact is not None and active_artifact["content_hash"] == content_hash:
+        graph_refresh = await maybe_refresh_stale_graph(
+            conn,
+            artifact_id=active_artifact["id"],
+            extra=active_artifact["extra"],
+            org_id=req.org_id,
+            kb_slug=req.kb_slug,
+            path=req.path,
+            content_type=req.content_type,
+            belief_time_start=active_artifact["belief_time_start"],
+            indexable_content=indexable_content,
+        )
+        log_fields = {"graph_refresh": graph_refresh} if graph_refresh is not None else {}
         logger.info(
             "ingest_skipped",
             reason="content_unchanged",
             kb_slug=req.kb_slug,
             path=req.path,
             org_id=req.org_id,
+            **log_fields,
         )
-        return {"status": "skipped", "reason": "content unchanged", "chunks": 0}
+        result = {"status": "skipped", "reason": "content unchanged", "chunks": 0}
+        if graph_refresh is not None:
+            result["graph_refresh"] = graph_refresh
+        return result
 
     # Determine chunks: skip_chunking uses pre-provided chunks or content as single chunk
     parent_chunk_ids: list[int | None] | None = None
@@ -926,7 +946,12 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
         # picking the page up, and nothing would show why the graph has no
         # episode for a document that plainly has content.
         await pg_store.update_artifact_extra(
-            conn, artifact_id, {"graphiti_episode_id": f"skipped:{graph_skip}"}
+            conn,
+            artifact_id,
+            {
+                "graphiti_episode_id": f"skipped:{graph_skip}",
+                "graphiti_extraction_version": GRAPHITI_EXTRACTION_VERSION,
+            },
         )
         logger.info(
             "graphiti_episode_skipped",

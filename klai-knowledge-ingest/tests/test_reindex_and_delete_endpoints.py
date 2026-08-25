@@ -60,6 +60,24 @@ def _make_mock_conn() -> MagicMock:
     return conn
 
 
+def _artifact_for_enrichment() -> dict:
+    return {
+        "id": _ARTIFACT,
+        "org_id": _ORG,
+        "kb_slug": _KB,
+        "path": _PATH,
+        "user_id": None,
+        "content_type": "application/pdf",
+        "synthesis_depth": 0,
+        "assertion_mode": "factual",
+        "provenance_type": "observed",
+        "confidence": "medium",
+        "belief_time_start": 0,
+        "belief_time_end": 253402300800,
+        "extra": {},
+    }
+
+
 @contextmanager
 def _client_with_conn(conn: MagicMock):  # type: ignore[return]
     """Build a TestClient that yields *conn* from tenant_scoped_connection."""
@@ -100,6 +118,7 @@ class TestReindexHappyPath:
                     "belief_time_end": 253402300800,
                 },
                 {"artifact_id": _ARTIFACT, "path": _PATH},
+                _artifact_for_enrichment(),
             ]
         )
 
@@ -142,6 +161,7 @@ class TestReindexHappyPath:
                     "belief_time_end": 253402300800,
                 },
                 {"artifact_id": _ARTIFACT, "path": _PATH},
+                _artifact_for_enrichment(),
             ]
         )
 
@@ -191,6 +211,7 @@ class TestReindexHappyPath:
                     "belief_time_end": 253402300800,
                 },
                 {"artifact_id": _ARTIFACT, "path": _PATH},
+                _artifact_for_enrichment(),
             ]
         )
 
@@ -232,6 +253,7 @@ class TestReindexHappyPath:
                     "belief_time_end": 1779974993,
                 },
                 {"artifact_id": _ARTIFACT, "path": _PATH},
+                _artifact_for_enrichment(),
             ]
         )
 

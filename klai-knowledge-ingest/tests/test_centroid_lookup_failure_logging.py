@@ -57,7 +57,7 @@ async def test_centroid_lookup_failure_logs_at_warning_with_structured_fields():
 
     with (
         patch(
-            "knowledge_ingest.pg_store.get_active_content_hash",
+            "knowledge_ingest.pg_store.get_active_artifact_state",
             new_callable=AsyncMock,
             return_value=None,
         ),
