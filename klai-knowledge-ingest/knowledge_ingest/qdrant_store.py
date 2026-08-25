@@ -411,6 +411,29 @@ async def delete_document(org_id: str, kb_slug: str, path: str) -> None:
     )
 
 
+async def delete_connector_document(
+    org_id: str,
+    kb_slug: str,
+    connector_id: str,
+    source_ref: str,
+) -> None:
+    """Delete one connector document without touching sibling source refs."""
+    client = get_client()
+    await client.delete(
+        COLLECTION,
+        points_selector=Filter(
+            must=[
+                FieldCondition(key="org_id", match=MatchValue(value=org_id)),
+                FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)),
+                FieldCondition(
+                    key="source_connector_id", match=MatchValue(value=connector_id)
+                ),
+                FieldCondition(key="source_ref", match=MatchValue(value=source_ref)),
+            ]
+        ),
+    )
+
+
 async def delete_kb(org_id: str, kb_slug: str) -> None:
     """Delete all Qdrant chunks for an entire knowledge base."""
     client = get_client()

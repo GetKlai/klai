@@ -1339,6 +1339,61 @@ async def delete_connector_route(
     }
 
 
+@router.delete("/ingest/v1/connector/document")
+async def delete_connector_document_route(
+    request: Request,
+    org_id: str,
+    kb_slug: str,
+    connector_id: str,
+    source_ref: str,
+) -> dict:
+    """Delete one connector artifact and its vectors and graph episodes."""
+    _verify_internal_secret(request)
+    verified_org_id = await assert_caller_identity_tenant_only(
+        request, claimed_org_id=org_id
+    )
+
+    async with tenant_scoped_connection(verified_org_id) as conn:
+        # Close active rows first. Enrichment and Graphiti workers both abort
+        # when an artifact is no longer active, preventing cleanup races from
+        # recreating external state while this request is in progress.
+        await pg_store.soft_delete_connector_artifacts_by_source_ref(
+            conn, verified_org_id, kb_slug, connector_id, source_ref
+        )
+        artifact_ids = await pg_store.list_connector_artifact_ids_by_source_ref(
+            conn, verified_org_id, kb_slug, connector_id, source_ref
+        )
+        episode_ids = await pg_store.get_episode_ids_for_document_history(
+            conn, verified_org_id, artifact_ids
+        )
+
+        # PostgreSQL remains the retry ledger until both external stores are
+        # confirmed clean. If either call fails, the endpoint raises and a
+        # later sync can recover the same artifact/episode identifiers.
+        await graph_module.delete_kb_episodes(verified_org_id, episode_ids)
+        await qdrant_store.delete_connector_document(
+            verified_org_id, kb_slug, connector_id, source_ref
+        )
+        artifacts_deleted = await pg_store.delete_connector_artifacts_by_source_ref(
+            conn, verified_org_id, kb_slug, connector_id, source_ref
+        )
+
+    logger.info(
+        "connector_document_deleted",
+        org_id=verified_org_id,
+        kb_slug=kb_slug,
+        connector_id=connector_id,
+        source_ref=source_ref,
+        artifacts_deleted=artifacts_deleted,
+        episodes_deleted=len(episode_ids),
+    )
+    return {
+        "status": "ok",
+        "artifacts_deleted": artifacts_deleted,
+        "episodes_deleted": len(episode_ids),
+    }
+
+
 @router.patch("/ingest/v1/kb/visibility")
 async def update_kb_visibility_route(request: Request, req: UpdateKBVisibilityRequest) -> dict:
     """Update visibility for a KB: persists to kb_config table and backfills all Qdrant chunks."""

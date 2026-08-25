@@ -81,6 +81,94 @@ async def test_skips_when_content_unchanged():
 
 
 @pytest.mark.asyncio
+async def test_two_identical_connector_requests_upsert_chunks_once():
+    """AC-4: the second unchanged request exits at the real hash decision seam."""
+    req = _make_request("# Prices\nA stable rendered JSON-feed group document.")
+    req.source_connector_id = "connector-1"
+    req.source_ref = "json-feed:connector-1:group-a"
+    conn = _make_mock_conn()
+    stored_hash = AsyncMock(side_effect=[None, _sha256(req.content)])
+
+    with (
+        patch(
+            "knowledge_ingest.pg_store.get_active_content_hash",
+            new=stored_hash,
+        ),
+        patch(
+            "knowledge_ingest.pg_store.soft_delete_artifact",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "knowledge_ingest.pg_store.create_artifact",
+            new_callable=AsyncMock,
+            return_value="artifact-uuid-1",
+        ),
+        patch("knowledge_ingest.pg_store.set_superseded_by", new_callable=AsyncMock),
+        patch("knowledge_ingest.pg_store.update_artifact_extra", new_callable=AsyncMock),
+        patch(
+            "knowledge_ingest.pg_store.set_artifact_ingest_status",
+            new_callable=AsyncMock,
+            return_value={"artifact_id": "artifact-uuid-1", "path": req.path},
+        ),
+        patch(
+            "knowledge_ingest.pg_store.insert_parent_chunks",
+            new_callable=AsyncMock,
+            return_value=[1],
+        ),
+        patch(
+            "knowledge_ingest.embedder.embed",
+            new_callable=AsyncMock,
+            return_value=[[0.1] * 10],
+        ) as embed,
+        patch(
+            "knowledge_ingest.qdrant_store.upsert_chunks",
+            new_callable=AsyncMock,
+        ) as upsert,
+        patch(
+            "knowledge_ingest.org_config.is_enrichment_enabled",
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
+        patch(
+            "knowledge_ingest.routes.ingest.kb_config.get_kb_visibility",
+            new_callable=AsyncMock,
+            return_value="internal",
+        ),
+        patch(
+            "knowledge_ingest.routes.ingest.fetch_taxonomy_nodes",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "knowledge_ingest.routes.ingest.generate_content_label",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "knowledge_ingest.connector_state.connector_is_active",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+        patch("knowledge_ingest.routes.ingest.settings") as mock_settings,
+    ):
+        mock_settings.graphiti_enabled = False
+        mock_settings.chunk_size = 1500
+        mock_settings.chunk_overlap = 200
+
+        from knowledge_ingest.routes.ingest import ingest_document
+
+        first = await ingest_document(conn, req)
+        second = await ingest_document(conn, req)
+
+    assert first["status"] == "ok"
+    assert second == {"status": "skipped", "reason": "content unchanged", "chunks": 0}
+    assert stored_hash.await_count == 2
+    assert embed.await_count == 1
+    assert upsert.await_count == 1
+
+
+@pytest.mark.asyncio
 async def test_proceeds_when_content_changed():
     """ingest_document runs the full pipeline when content hash differs."""
     req = _make_request("# New content\nDifferent text")
