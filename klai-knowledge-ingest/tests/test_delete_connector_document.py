@@ -131,9 +131,7 @@ async def test_qdrant_delete_is_org_kb_connector_and_source_ref_scoped(monkeypat
     )
 
     selector = qdrant.delete.await_args.kwargs["points_selector"]
-    conditions = {
-        condition.key: condition.match.value for condition in selector.must
-    }
+    conditions = {condition.key: condition.match.value for condition in selector.must}
     assert conditions == {
         "org_id": "org-1",
         "kb_slug": "prices",

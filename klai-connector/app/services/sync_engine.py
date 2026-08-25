@@ -113,7 +113,8 @@ class SyncEngine:
         if image_store:
             self._image_transport = PinnedResolverTransport()
             self._image_http = httpx.AsyncClient(
-                transport=self._image_transport, timeout=30.0,
+                transport=self._image_transport,
+                timeout=30.0,
             )
         else:
             self._image_transport = None
@@ -208,10 +209,7 @@ class SyncEngine:
         # instead it POSTs the config to /ingest/v1/crawl/sync and polls
         # the returned job_id. Keeps sync_runs ownership + product_events
         # on the connector side; moves pipeline execution to ingest.
-        if (
-            portal_config.connector_type == "web_crawler"
-            and self._crawl_sync_client is not None
-        ):
+        if portal_config.connector_type == "web_crawler" and self._crawl_sync_client is not None:
             await self._run_web_crawler_delegation(
                 portal_config=portal_config,
                 connector_id=connector_id,
@@ -432,10 +430,7 @@ class SyncEngine:
                 # REQ-5: only adapters whose discovery is a complete snapshot may
                 # opt into destructive stale-ref reconciliation. A partial run is
                 # never allowed to delete downstream state.
-                if (
-                    documents_failed == 0
-                    and adapter.stale_ref_cleanup_enabled is True
-                ):
+                if documents_failed == 0 and adapter.stale_ref_cleanup_enabled is True:
                     current_refs = {ref.source_ref or ref.path for ref in refs}
                     stale_refs = sorted(prev_synced_refs - current_refs)
                     if len(stale_refs) > max(1, len(prev_synced_refs) // 2):
@@ -461,11 +456,13 @@ class SyncEngine:
                                 )
                             except Exception as cleanup_err:
                                 status = SyncStatus.FAILED
-                                error_details.append({
-                                    "error": "Stale source_ref cleanup failed",
-                                    "source_ref": stale_ref,
-                                    "reason": str(cleanup_err),
-                                })
+                                error_details.append(
+                                    {
+                                        "error": "Stale source_ref cleanup failed",
+                                        "source_ref": stale_ref,
+                                        "reason": str(cleanup_err),
+                                    }
+                                )
                                 logger.exception(
                                     "Failed to delete stale source_ref %s for connector %s",
                                     stale_ref,
@@ -519,11 +516,13 @@ class SyncEngine:
                 # client or HTTP request was issued — the guard fired
                 # inside ``_extract_config``.
                 status = SyncStatus.FAILED
-                error_details.append({
-                    "error": err.error_code,
-                    "hostname": err.hostname or "",
-                    "reason": str(err),
-                })
+                error_details.append(
+                    {
+                        "error": err.error_code,
+                        "hostname": err.hostname or "",
+                        "reason": str(err),
+                    }
+                )
                 logger.warning(
                     "Sync blocked for connector %s: persisted URL failed SSRF guard",
                     connector_id,
@@ -569,11 +568,7 @@ class SyncEngine:
             # refs disappear. The sync engine compares against this on the next run.
             if status == SyncStatus.COMPLETED and cursor_state is not None:
                 failed_refs = {e.get("file", "") for e in error_details}
-                discovered_refs = {
-                    r.source_ref or r.path
-                    for r in refs
-                    if (r.source_ref or r.path) not in failed_refs
-                }
+                discovered_refs = {r.source_ref or r.path for r in refs if (r.source_ref or r.path) not in failed_refs}
                 if stale_cleanup_refused:
                     discovered_refs.update(prev_synced_refs)
                 cursor_state["synced_refs"] = sorted(discovered_refs)
@@ -593,9 +588,7 @@ class SyncEngine:
                     # Backwards-compat alias for log consumers (Grafana panels
                     # still query ``documents_short_skipped``); ``skip_reasons``
                     # is the structured form added by SPEC-INGEST-RECONCILE-001.
-                    "documents_short_skipped": skip_reasons.get(
-                        PersistSkipReason.CONTENT_TOO_SHORT.value, 0
-                    ),
+                    "documents_short_skipped": skip_reasons.get(PersistSkipReason.CONTENT_TOO_SHORT.value, 0),
                     "skip_reasons": dict(skip_reasons),
                     "bytes_processed": bytes_processed,
                     "groups_total": groups_total,

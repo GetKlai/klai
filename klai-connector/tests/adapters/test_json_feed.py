@@ -71,9 +71,7 @@ async def _list_payload(
 ) -> tuple[list, MagicMock, AsyncMock]:
     response = _StreamingResponse(status_code=200, headers={}, chunks=[json.dumps(payload).encode()])
     client_factory = MagicMock(return_value=_StreamingClient(response))
-    validator = AsyncMock(
-        return_value=SimpleNamespace(hostname="data.example.com", preferred_ip="203.0.113.10")
-    )
+    validator = AsyncMock(return_value=SimpleNamespace(hostname="data.example.com", preferred_ip="203.0.113.10"))
     with (
         patch("app.adapters.json_feed.validate_json_feed_url_strict", new=validator),
         patch("app.adapters.json_feed.httpx.AsyncClient", client_factory),
@@ -133,10 +131,7 @@ async def test_ac2_without_group_by_batches_in_feed_order() -> None:
 async def test_ac3_documents_preserve_chunker_soft_boundaries() -> None:
     adapter = JsonFeedAdapter()
     connector = _connector(group_by=["category"])
-    records = [
-        {"category": "prijzen", "name": f"Product {index:02d}", "description": "x" * 300}
-        for index in range(6)
-    ]
+    records = [{"category": "prijzen", "name": f"Product {index:02d}", "description": "x" * 300} for index in range(6)]
     refs, _, _ = await _list_payload(adapter, records, connector)
 
     for ref in refs:
@@ -151,10 +146,7 @@ async def test_ac3_documents_preserve_chunker_soft_boundaries() -> None:
 async def test_ac5_oversized_group_splits_at_record_boundaries_below_cap() -> None:
     adapter = JsonFeedAdapter()
     connector = _connector(group_by=["category"], max_doc_chars=700)
-    records = [
-        {"category": "prijzen", "name": f"Product {index:02d}", "description": "x" * 240}
-        for index in range(8)
-    ]
+    records = [{"category": "prijzen", "name": f"Product {index:02d}", "description": "x" * 240} for index in range(8)]
     refs, _, _ = await _list_payload(adapter, records, connector)
 
     assert len(refs) > 1

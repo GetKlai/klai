@@ -425,9 +425,7 @@ async def delete_connector_document(
             must=[
                 FieldCondition(key="org_id", match=MatchValue(value=org_id)),
                 FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)),
-                FieldCondition(
-                    key="source_connector_id", match=MatchValue(value=connector_id)
-                ),
+                FieldCondition(key="source_connector_id", match=MatchValue(value=connector_id)),
                 FieldCondition(key="source_ref", match=MatchValue(value=source_ref)),
             ]
         ),

@@ -149,12 +149,8 @@ class JsonFeedAdapter(BaseAdapter):
             raise ValueError("JSON feed connector config 'group_by' must be a list of non-empty field names")
 
         label_fields = config.get("record_label_fields", list(_DEFAULT_RECORD_LABEL_FIELDS))
-        if not isinstance(label_fields, list) or any(
-            not isinstance(field, str) or not field for field in label_fields
-        ):
-            raise ValueError(
-                "JSON feed connector config 'record_label_fields' must be a list of non-empty field names"
-            )
+        if not isinstance(label_fields, list) or any(not isinstance(field, str) or not field for field in label_fields):
+            raise ValueError("JSON feed connector config 'record_label_fields' must be a list of non-empty field names")
 
         field_labels = config.get("field_labels", {})
         if not isinstance(field_labels, dict) or any(
@@ -214,8 +210,7 @@ class JsonFeedAdapter(BaseAdapter):
         has_render_errors = any(document.error for document in rendered.values())
         if not rendered or (rendered_chars < _MIN_KNOWLEDGE_CHARS and not has_render_errors):
             raise ValueError(
-                "JSON feed contains too little knowledge "
-                f"(minimum {_MIN_KNOWLEDGE_CHARS} rendered characters)"
+                f"JSON feed contains too little knowledge (minimum {_MIN_KNOWLEDGE_CHARS} rendered characters)"
             )
 
         self._documents_by_connector[connector_id] = rendered
@@ -545,9 +540,7 @@ class JsonFeedAdapter(BaseAdapter):
     @staticmethod
     def _validate_document_size(content: str, max_chars: int) -> None:
         if len(content) > max_chars:
-            raise ValueError(
-                f"JSON feed document produces {len(content)} characters; max_doc_chars is {max_chars}"
-            )
+            raise ValueError(f"JSON feed document produces {len(content)} characters; max_doc_chars is {max_chars}")
         if len(content) > MAX_INGEST_CONTENT_CHARS:
             raise ValueError(
                 f"JSON feed document produces {len(content)} characters; "
@@ -563,16 +556,9 @@ class JsonFeedAdapter(BaseAdapter):
         max_chars: int,
     ) -> dict[str, _RenderedDocument]:
         if isinstance(parsed, dict):
-            sections = [
-                (str(key), self._nested_blocks(value, path=str(key), depth=1))
-                for key, value in parsed.items()
-            ]
+            sections = [(str(key), self._nested_blocks(value, path=str(key), depth=1)) for key, value in parsed.items()]
             sections = [(key, blocks) for key, blocks in sections if blocks]
-            combined_blocks = [
-                block
-                for key, section_blocks in sections
-                for block in [f"## {key}", *section_blocks]
-            ]
+            combined_blocks = [block for key, section_blocks in sections for block in [f"## {key}", *section_blocks]]
         elif isinstance(parsed, list) and parsed:
             sections = [("document", self._nested_blocks(parsed, path="document", depth=1))]
             combined_blocks = sections[0][1]

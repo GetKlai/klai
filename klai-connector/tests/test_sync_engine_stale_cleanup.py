@@ -132,9 +132,7 @@ async def test_successful_sync_deletes_stale_group_and_forwards_extra(
     """AC-6 + REQ-4 + REQ-7: cleanup is scoped and observable after success."""
     refs = [_ref("a"), _ref("b", records=2)]
     previous = MagicMock()
-    previous.cursor_state = {
-        "synced_refs": [refs[0].source_ref, refs[1].source_ref, f"json-feed:{CONNECTOR_ID}:c"]
-    }
+    previous.cursor_state = {"synced_refs": [refs[0].source_ref, refs[1].source_ref, f"json-feed:{CONNECTOR_ID}:c"]}
     current = _sync_run()
     adapter = _adapter(refs)
     ingest_client = MagicMock()
@@ -199,22 +197,14 @@ async def test_shrunken_listing_refuses_cleanup_and_preserves_baseline_for_recov
 
     assert refused_run.status == SyncStatus.COMPLETED
     ingest_client.delete_connector_document.assert_not_awaited()
-    assert refused_run.cursor_state["synced_refs"] == sorted(
-        ref.source_ref for ref in previous_refs
-    )
+    assert refused_run.cursor_state["synced_refs"] == sorted(ref.source_ref for ref in previous_refs)
     refused = next(
-        record
-        for record in caplog.records
-        if getattr(record, "event", None) == "stale_cleanup_refused_shrink"
+        record for record in caplog.records if getattr(record, "event", None) == "stale_cleanup_refused_shrink"
     )
     assert refused.connector_id == str(CONNECTOR_ID)
     assert refused.previous_ref_count == 10
     assert refused.current_ref_count == 2
-    complete = next(
-        record
-        for record in caplog.records
-        if getattr(record, "event", None) == "sync_complete"
-    )
+    complete = next(record for record in caplog.records if getattr(record, "event", None) == "sync_complete")
     assert complete.stale_cleanup_refused is True
 
     caplog.clear()
@@ -226,9 +216,7 @@ async def test_shrunken_listing_refuses_cleanup_and_preserves_baseline_for_recov
         source_connector_id=str(CONNECTOR_ID),
         source_ref=previous_refs[-1].source_ref,
     )
-    assert recovered_run.cursor_state["synced_refs"] == sorted(
-        ref.source_ref for ref in recovered_refs
-    )
+    assert recovered_run.cursor_state["synced_refs"] == sorted(ref.source_ref for ref in recovered_refs)
 
 
 @pytest.mark.asyncio
@@ -236,9 +224,7 @@ async def test_partial_sync_never_deletes_stale_groups() -> None:
     """AC-6: one failed document gates every destructive reconciliation call."""
     refs = [_ref("a"), _ref("b")]
     previous = MagicMock()
-    previous.cursor_state = {
-        "synced_refs": [refs[0].source_ref, refs[1].source_ref, f"json-feed:{CONNECTOR_ID}:c"]
-    }
+    previous.cursor_state = {"synced_refs": [refs[0].source_ref, refs[1].source_ref, f"json-feed:{CONNECTOR_ID}:c"]}
     current = _sync_run()
     adapter = _adapter(refs)
     ingest_client = MagicMock()
@@ -325,9 +311,7 @@ async def test_cleanup_failure_fails_run_and_retries_from_successful_baseline() 
     adapter = _adapter([ref])
     ingest_client = MagicMock()
     ingest_client.ingest_document = AsyncMock()
-    ingest_client.delete_connector_document = AsyncMock(
-        side_effect=[RuntimeError("downstream delete failed"), None]
-    )
+    ingest_client.delete_connector_document = AsyncMock(side_effect=[RuntimeError("downstream delete failed"), None])
     engine = _engine(
         runs=[first, second],
         adapter=adapter,

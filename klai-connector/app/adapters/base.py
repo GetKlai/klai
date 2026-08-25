@@ -87,7 +87,9 @@ class BaseAdapter(ABC):
 
     @abstractmethod
     async def list_documents(
-        self, connector: Any, cursor_context: dict[str, Any] | None = None,
+        self,
+        connector: Any,
+        cursor_context: dict[str, Any] | None = None,
     ) -> list[DocumentRef]:
         """List all documents available for sync from the external source.
 

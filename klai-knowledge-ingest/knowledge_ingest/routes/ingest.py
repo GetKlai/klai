@@ -1349,9 +1349,7 @@ async def delete_connector_document_route(
 ) -> dict:
     """Delete one connector artifact and its vectors and graph episodes."""
     _verify_internal_secret(request)
-    verified_org_id = await assert_caller_identity_tenant_only(
-        request, claimed_org_id=org_id
-    )
+    verified_org_id = await assert_caller_identity_tenant_only(request, claimed_org_id=org_id)
 
     async with tenant_scoped_connection(verified_org_id) as conn:
         # Close active rows first. Enrichment and Graphiti workers both abort
