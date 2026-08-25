@@ -725,17 +725,44 @@ class TestCompanyNumberContextIsNotDutchOnly:
         assert _detected(rec, "Factuurnummer 12345678", "NL_KVK") == []
 
 
-class TestPhoneRegionsCoverTheSingleMarket:
-    def test_eu_eea_regions_present(self):
+class TestPhoneRegionsDeliberatelyNotWidened:
+    """Pins a widening that was written, measured, and reverted.
+
+    The EU/EEA region list looked free and was not. These tests exist so the
+    next person to reach for a longer tuple has the measurement instead of
+    the intuition.
+    """
+
+    def test_international_format_works_for_a_region_not_in_the_list(self):
+        """The premise of the widening was false twice over. An `+NN` prefix
+        carries its own country code, so the region list never applied to it
+        — and Presidio's stock defaults already include FR, which is the
+        country the widening was written to fix. Portugal is genuinely absent
+        from the list and its numbers are detected anyway."""
         from klai_pii_recognizers import NLPhoneRecognizer
 
         rec = NLPhoneRecognizer()
-        for region in ("NL", "BE", "FR", "ES", "IT", "PT", "AT", "PL", "SE", "GR"):
-            assert region in rec.supported_regions, region
+        assert "PT" not in rec.supported_regions
+        assert _detected(rec, "Ligue para +351 21 234 5678", "PHONE_NUMBER")
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Datum 2026-08-25 akkoord.",
+            "Ref 20260825 verstuurd.",
+            "Ordernummer 123456789 is verzonden.",
+        ],
+    )
+    def test_dates_and_order_numbers_are_not_phone_numbers(self, text):
+        """What the widening actually cost. `PhoneNumberMatcher` treats every
+        configured region as a local default for numbers without a `+`, so
+        adding LU and PL made all three of these parse as valid numbers."""
+        from klai_pii_recognizers import NLPhoneRecognizer
+
+        rec = NLPhoneRecognizer()
+        assert _detected(rec, text, "PHONE_NUMBER") == [], text
 
     def test_stock_regions_are_retained(self):
-        """The class can only ever detect more than the recognizer it
-        replaces, never less."""
         from presidio_analyzer.predefined_recognizers import PhoneRecognizer
 
         from klai_pii_recognizers import NLPhoneRecognizer
@@ -743,17 +770,84 @@ class TestPhoneRegionsCoverTheSingleMarket:
         rec = NLPhoneRecognizer()
         for region in PhoneRecognizer.DEFAULT_SUPPORTED_REGIONS:
             assert region in rec.supported_regions, region
+        assert "NL" in rec.supported_regions
+        assert "BE" in rec.supported_regions
+
+
+class TestVATSeparators:
+    """VAT numbers as people write them, not as a database stores them."""
+
+    @pytest.mark.parametrize(
+        "text,expected",
+        [
+            ("DE 123456789", "DE 123456789"),
+            ("BE 0123.456.789", "BE 0123.456.789"),
+            ("FR AB 123 456 789", "FR AB 123 456 789"),
+            ("NL 123456789 B 01", "NL 123456789 B 01"),
+            ("AT U 12345678", "AT U 12345678"),
+        ],
+    )
+    def test_spaced_and_dotted_forms_match(self, text, expected):
+        rec = NLBTWRecognizer()
+        results = _detected(rec, text, "NL_BTW")
+        assert len(results) == 1, text
+        assert text[results[0].start : results[0].end] == expected
+
+    def test_separators_do_not_relax_the_digit_count(self):
+        """One optional separator between characters, never a free-for-all:
+        the count stays exactly as strict as the source format."""
+        rec = NLBTWRecognizer()
+        assert _detected(rec, "DE 1234 5678", "NL_BTW") == []       # 8, needs 9
+        assert _detected(rec, "DE 1234 567 890", "NL_BTW") == []    # 10, needs 9
+
+    def test_pattern_has_no_doubled_separator(self):
+        """Regression on the construction itself. The first version built
+        this string with two `regex.sub` passes and the second matched the
+        separators the first inserted, allowing two between every digit."""
+        from klai_pii_recognizers import _eu_vat_regex
+
+        assert r"[ .\-]?[ .\-]?" not in _eu_vat_regex()
+
+
+class TestIrishVATForms:
+    @pytest.mark.parametrize(
+        "text,expected",
+        [
+            ("VAT IE1234567T", "IE1234567T"),          # 7 digits + 1 letter
+            ("VAT IE1234567FA", "IE1234567FA"),        # 7 digits + 2 letters
+            ("VAT IE8D79739I", "IE8D79739I"),          # old style, being phased out
+        ],
+    )
+    def test_all_three_live_forms_match(self, text, expected):
+        rec = NLBTWRecognizer()
+        results = _detected(rec, text, "NL_BTW")
+        assert len(results) == 1, text
+        assert text[results[0].start : results[0].end] == expected
+
+
+class TestCompanyNumberContextIsWordBounded:
+    """`kbo` and `bce` are three letters and the gate used a substring test."""
 
     @pytest.mark.parametrize(
         "text",
         [
-            "Bel me op +33 1 42 68 53 00",
-            "Llámame al +34 912 34 56 78",
-            "Chiamami al +39 06 6982 1234",
+            "Subcellular reference 87654321 noted.",   # 'bce' inside 'subcellular'
+            "The backbone service 87654321 restarted.",  # 'kbo' inside 'backbone'
         ],
     )
-    def test_non_nl_european_numbers_detected(self, text):
-        from klai_pii_recognizers import NLPhoneRecognizer
+    def test_abbreviation_inside_an_ordinary_word_does_not_gate(self, text):
+        rec = NLKvKRecognizer()
+        assert _detected(rec, text, "NL_KVK") == [], text
 
-        rec = NLPhoneRecognizer()
-        assert _detected(rec, text, "PHONE_NUMBER"), text
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Our KBO number is 87654321.",
+            "número de registo comercial 87654321",
+            "cámara de comercio 87654321",
+            "numéro d'entreprise 87654321",
+        ],
+    )
+    def test_the_abbreviation_as_its_own_word_still_gates(self, text):
+        rec = NLKvKRecognizer()
+        assert len(_detected(rec, text, "NL_KVK")) == 1, text
