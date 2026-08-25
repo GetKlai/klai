@@ -84,3 +84,18 @@ def test_latest_substantive_user_text_handles_list_parts() -> None:
 
 def test_latest_substantive_user_text_empty_without_user_messages() -> None:
     assert latest_substantive_user_text([{"role": "assistant", "content": "Hi"}]) == ""
+
+
+def test_detect_language_rejects_unsupported_neighbour_languages() -> None:
+    # Sol review P2: Italian scored Spanish via shared function words ("la",
+    # "con") and got an explicit "Respond in Spanish" instruction. Distractor
+    # stopword sets must push these to "und" so the caller falls back to
+    # model-side detection instead of injecting a confidently wrong target.
+    italian = [
+        "Come posso configurare la connessione con il mio account?",
+        "Vorrei sapere come posso collegare il telefono con la piattaforma per favore",
+    ]
+    swedish = ["Hur kan jag koppla telefonen till plattformen och mitt konto? Tack!"]
+    danish = ["Hvordan kan jeg koble telefonen til platformen og min konto? Tak!"]
+    for text in italian + swedish + danish:
+        assert detect_language(text) == UNKNOWN_LANGUAGE, text

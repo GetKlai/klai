@@ -75,6 +75,34 @@ _STOPWORDS: dict[str, frozenset[str]] = {
     ),
 }
 
+# Distractor languages: scored alongside the six targets but never returned.
+# Without these, a language OUTSIDE the target set can win on shared function
+# words — Italian "la"/"con" score Spanish, so an Italian question would get
+# an explicit "Respond in Spanish" instruction (Sol review P2). When a
+# distractor wins (or ties), the result is "und" and the caller falls back to
+# the generic model-side detection reminder, which handles any language.
+_DISTRACTOR_STOPWORDS: dict[str, frozenset[str]] = {
+    "it": frozenset(
+        {
+            "il", "lo", "gli", "della", "delle", "degli", "che", "come",
+            "posso", "sono", "questo", "questa", "anche", "perché", "mio",
+            "mia", "grazie", "vorrei",
+        }
+    ),
+    "sv": frozenset(
+        {
+            "och", "att", "det", "som", "jag", "inte", "har", "kan",
+            "vill", "hur", "vad", "med", "tack",
+        }
+    ),
+    "da": frozenset(
+        {
+            "og", "at", "det", "som", "jeg", "ikke", "har", "kan",
+            "hvordan", "hvad", "med", "tak", "til",
+        }
+    ),
+}
+
 _WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
 
 
@@ -89,7 +117,7 @@ def detect_language(text: str) -> str:
 
     scores = {
         lang: sum(1 for tok in tokens if tok in words)
-        for lang, words in _STOPWORDS.items()
+        for lang, words in {**_STOPWORDS, **_DISTRACTOR_STOPWORDS}.items()
     }
     best_score = max(scores.values())
     if best_score < _MIN_STOPWORD_HITS:
@@ -97,8 +125,10 @@ def detect_language(text: str) -> str:
 
     # A single ambiguous overlap word ("de" is a stopword in nl/fr/pt/es)
     # must not silently pick a winner - report unknown rather than guess.
+    # A distractor language winning or tying means the text is likely not in
+    # any target language at all - same conclusion.
     tied = [lang for lang, score in scores.items() if score == best_score]
-    if len(tied) > 1:
+    if len(tied) > 1 or tied[0] in _DISTRACTOR_STOPWORDS:
         return UNKNOWN_LANGUAGE
     return tied[0]
 

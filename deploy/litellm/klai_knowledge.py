@@ -99,6 +99,10 @@ from klai_kb_system_prompt import (
     build_template_instructions_block as _build_template_instructions_block,
     prepend_system_prefix as _prepend_system_prefix,
 )
+from klai_language_detect import (
+    UNKNOWN_LANGUAGE as _UNKNOWN_LANGUAGE,
+    detect_response_language as _detect_response_language,
+)
 from klai_kb_chat_mode import (
     prompt_mode_is_unavailable as _prompt_mode_is_unavailable,
 )
@@ -428,6 +432,11 @@ class KlaiKnowledgeHook(CustomLogger):
         messages = _sanitize_assistant_history_messages(data.get("messages", []))
         query = _last_user_message(messages)
         data["messages"] = messages
+        # Detect the response-language target BEFORE any message mutation:
+        # PDF attachment processing below replaces the latest user content
+        # with question + extracted document text, and a Dutch document must
+        # never overrule an English question (Sol review P1).
+        response_language_target = _detect_response_language(messages)
         context_meta: dict[str, Any] | None = None
         should_assemble_provider_context = _should_assemble_provider_context(data)
         if should_assemble_provider_context:
@@ -471,6 +480,14 @@ class KlaiKnowledgeHook(CustomLogger):
         # exactly where the sender's claims get re-adopted as facts.
         pasted_correspondence = _detect_pasted_correspondence(messages)
         latest_turn_correspondence = _latest_user_turn_has_correspondence(messages)
+        if pasted_correspondence or latest_turn_correspondence:
+            # Pasted third-party correspondence (an email, ticket, forwarded
+            # thread) sits INSIDE the user message, so the stopword detector
+            # would follow the correspondence language, not the user's own
+            # words ("Please summarize this in English" + a German email
+            # detects as German). Fall back to model-side detection — the
+            # pre-injection behaviour — rather than inject a wrong target.
+            response_language_target = _UNKNOWN_LANGUAGE
         if _is_trivial(query) and not pasted_correspondence:
             return data
 
@@ -600,7 +617,11 @@ class KlaiKnowledgeHook(CustomLogger):
         # description per org.
         if _is_meta_query(query):
             _prepend_system_prefix(messages, _compose_meta_chat_prefix(templates_block))
-            _append_final_language_reminder(messages, include_kb_reminder=False)
+            _append_final_language_reminder(
+                messages,
+                include_kb_reminder=False,
+                target=response_language_target,
+            )
             data["messages"] = messages
             logger.info(
                 "meta_query_detected org_id=%s user_id=%s",
@@ -689,7 +710,11 @@ class KlaiKnowledgeHook(CustomLogger):
                     templates_block,
                 ),
             )
-            _append_final_language_reminder(messages, include_kb_reminder=False)
+            _append_final_language_reminder(
+                messages,
+                include_kb_reminder=False,
+                target=response_language_target,
+            )
             data["messages"] = messages
             if pasted_correspondence:
                 _attach_correspondence_render_meta(
@@ -741,7 +766,11 @@ class KlaiKnowledgeHook(CustomLogger):
                 kb_unavailable_notice,
             )
             _prepend_system_prefix(messages, prefix)
-            _append_final_language_reminder(messages, include_kb_reminder=False)
+            _append_final_language_reminder(
+                messages,
+                include_kb_reminder=False,
+                target=response_language_target,
+            )
             data["messages"] = messages
             if pasted_correspondence:
                 _attach_correspondence_render_meta(
@@ -1029,14 +1058,16 @@ class KlaiKnowledgeHook(CustomLogger):
                 kb_narrow, templates_block, kb_unavailable_notice
             )
             _prepend_system_prefix(messages, prefix)
-            response_language_target = None
+            reminder_target = None
             if not kb_narrow:
                 # Strict gets a deterministic mock_response below — the model
                 # never reads these messages. Open answers from general
                 # knowledge, so the language contract must still close the
                 # prompt.
-                response_language_target = _append_final_language_reminder(
-                    messages, include_kb_reminder=False
+                reminder_target = _append_final_language_reminder(
+                    messages,
+                    include_kb_reminder=False,
+                    target=response_language_target,
                 )
             data["messages"] = messages
             original_stream = data.get("stream")
@@ -1067,7 +1098,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 retrieval_request_id=retrieval_request_id,
                 kb_scope_mode=kb_scope_mode,
                 kbs_in_scope=kbs_in_scope,
-                response_language_target=response_language_target,
+                response_language_target=reminder_target,
             )
             if kb_narrow:
                 data["mock_response"] = _strict_kb_unavailable_message(query)
@@ -1128,7 +1159,9 @@ class KlaiKnowledgeHook(CustomLogger):
                 messages, _compose_kb_mode_chat_prefix(kb_narrow, templates_block)
             )
             response_language_target = _append_final_language_reminder(
-                messages, include_kb_reminder=False
+                messages,
+                include_kb_reminder=False,
+                target=response_language_target,
             )
             data["messages"] = messages
             # @MX:NOTE: render_mode must stay None for the common
@@ -1488,7 +1521,9 @@ class KlaiKnowledgeHook(CustomLogger):
             # Inert when the strict branch below sets mock_response (model
             # bypassed); every other zero-chunks branch reaches the model.
             response_language_target = _append_final_language_reminder(
-                messages, include_kb_reminder=False
+                messages,
+                include_kb_reminder=False,
+                target=response_language_target,
             )
             data["messages"] = messages
             if has_evidence_pack:
@@ -1605,7 +1640,9 @@ class KlaiKnowledgeHook(CustomLogger):
         # templates_block again would duplicate it.
         prefix = _compose_kb_mode_chat_prefix(kb_narrow, context_block)
         _prepend_system_prefix(messages, prefix)
-        response_language_target = _append_final_language_reminder(messages)
+        response_language_target = _append_final_language_reminder(
+            messages, target=response_language_target
+        )
         data["messages"] = messages
         original_stream = data.get("stream")
         render_strategy = _select_kb_render_strategy(original_stream)
