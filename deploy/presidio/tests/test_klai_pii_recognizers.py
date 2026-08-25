@@ -607,3 +607,247 @@ class TestSecretPemPerformance:
         # anywhere in the payload.
         pem_results = [r for r in results if "BEGIN PRIVATE KEY" in payload[r.start : r.end]]
         assert pem_results == []
+
+
+# ---------------------------------------------------------------------------
+# International coverage (2026-08-25) — EU VAT, BE enterprise number,
+# EU/EEA phone regions, and the language-bound company-number gate.
+# ---------------------------------------------------------------------------
+class TestEUVAT:
+    """The entity id still says NL_BTW; the coverage is all 27 member states.
+
+    Before this, a Belgian or German tenant ticking "VAT number" got a box
+    that was honest about intent and wrong about coverage.
+    """
+
+    @pytest.mark.parametrize(
+        "text,expected",
+        [
+            ("BTW-nummer: NL123456789B01", "NL123456789B01"),
+            ("USt-IdNr. DE123456789", "DE123456789"),
+            ("BTW BE0123456789", "BE0123456789"),
+            ("TVA FR12345678901", "FR12345678901"),
+            ("TVA FRAB123456789", "FRAB123456789"),
+            ("IVA IT12345678901", "IT12345678901"),
+            ("NIF ESA1234567Z", "ESA1234567Z"),
+            ("NIF PT123456789", "PT123456789"),
+            ("ATU12345678 is the number", "ATU12345678"),
+            ("VAT IE1234567A", "IE1234567A"),
+            ("VAT IE1234567AB", "IE1234567AB"),
+            ("Greek VAT EL123456789", "EL123456789"),
+            ("Lithuanian VAT LT123456789012", "LT123456789012"),
+            ("Lithuanian short LT123456789", "LT123456789"),
+        ],
+    )
+    def test_member_state_formats_detected(self, text, expected):
+        rec = NLBTWRecognizer()
+        results = _detected(rec, text, "NL_BTW")
+        assert len(results) == 1, f"no match in {text!r}"
+        assert text[results[0].start : results[0].end] == expected
+
+    def test_greece_uses_el_not_gr(self):
+        """The single most-cited trap in the VAT format reference."""
+        rec = NLBTWRecognizer()
+        assert _detected(rec, "GR123456789", "NL_BTW") == []
+
+    def test_prefix_is_case_sensitive(self):
+        """The registry applies IGNORECASE globally. Without `(?-i:...)` the
+        German branch would match `de123456789`, and `de` is the most common
+        word in Dutch — the same shape as the `2026 en` postcode bug."""
+        rec = NLBTWRecognizer()
+        assert _detected(rec, "de123456789", "NL_BTW") == []
+        assert _detected(rec, "nl123456789B01", "NL_BTW") == []
+
+    def test_wrong_digit_count_not_detected(self):
+        rec = NLBTWRecognizer()
+        assert _detected(rec, "DE12345678", "NL_BTW") == []  # 8, needs 9
+        assert _detected(rec, "DE1234567890", "NL_BTW") == []  # 10, needs 9
+
+
+class TestBEEnterpriseNumber:
+    """Folded into NL_KVK: same customer-facing concept ("chamber of commerce
+    number"), and a real modulo-97 checksum rather than a context word."""
+
+    # 97 - (07762299 % 97) == 29. Computed, not invented: the first
+    # fixture written here carried a made-up check pair and failed.
+    VALID = "0776229929"
+
+    def test_valid_be_number_detected_without_any_context_word(self):
+        rec = NLKvKRecognizer()
+        results = _detected(rec, f"Ons nummer is {self.VALID}.", "NL_KVK")
+        assert len(results) == 1
+        assert results[0].score == 1.0
+
+    def test_dotted_form_detected(self):
+        rec = NLKvKRecognizer()
+        results = _detected(rec, "Nummer 0776.229.929 in de KBO.", "NL_KVK")
+        assert len(results) == 1
+
+    def test_checksum_failure_not_detected_even_next_to_a_context_word(self):
+        """The gate that keeps a 10-digit order number out. NL KvK is 8
+        digits, so a failing 10-digit candidate is not a company number in
+        either jurisdiction and must not fall through to the context gate."""
+        rec = NLKvKRecognizer()
+        assert _detected(rec, "KvK 0776229977", "NL_KVK") == []
+
+    def test_number_not_starting_with_zero_or_one_not_detected(self):
+        rec = NLKvKRecognizer()
+        assert _detected(rec, "Referentie 9776229978", "NL_KVK") == []
+
+    def test_nl_kvk_still_needs_context(self):
+        """Regression: the Belgian branch must not weaken the Dutch gate."""
+        rec = NLKvKRecognizer()
+        assert _detected(rec, "Bestelnummer: 12345678", "NL_KVK") == []
+
+
+class TestCompanyNumberContextIsNotDutchOnly:
+    """The context gate was the whole detector for NL_KVK, and every word in
+    it was Dutch — which made a jurisdiction-specific entity accidentally
+    language-specific."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Our chamber of commerce number is 12345678.",
+            "Handelsregisternummer 12345678",
+            "Ons ondernemingsnummer is 12345678",
+        ],
+    )
+    def test_non_dutch_context_words_gate_the_match(self, text):
+        rec = NLKvKRecognizer()
+        assert len(_detected(rec, text, "NL_KVK")) == 1
+
+    def test_generic_business_words_still_do_not_gate(self):
+        """Deliberately excluded: these attach to any 8-digit run in ordinary
+        business text, and the gate is all this pattern has."""
+        rec = NLKvKRecognizer()
+        assert _detected(rec, "Our reference number is 12345678.", "NL_KVK") == []
+        assert _detected(rec, "Factuurnummer 12345678", "NL_KVK") == []
+
+
+class TestPhoneRegionsDeliberatelyNotWidened:
+    """Pins a widening that was written, measured, and reverted.
+
+    The EU/EEA region list looked free and was not. These tests exist so the
+    next person to reach for a longer tuple has the measurement instead of
+    the intuition.
+    """
+
+    def test_international_format_works_for_a_region_not_in_the_list(self):
+        """The premise of the widening was false twice over. An `+NN` prefix
+        carries its own country code, so the region list never applied to it
+        — and Presidio's stock defaults already include FR, which is the
+        country the widening was written to fix. Portugal is genuinely absent
+        from the list and its numbers are detected anyway."""
+        from klai_pii_recognizers import NLPhoneRecognizer
+
+        rec = NLPhoneRecognizer()
+        assert "PT" not in rec.supported_regions
+        assert _detected(rec, "Ligue para +351 21 234 5678", "PHONE_NUMBER")
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Datum 2026-08-25 akkoord.",
+            "Ref 20260825 verstuurd.",
+            "Ordernummer 123456789 is verzonden.",
+        ],
+    )
+    def test_dates_and_order_numbers_are_not_phone_numbers(self, text):
+        """What the widening actually cost. `PhoneNumberMatcher` treats every
+        configured region as a local default for numbers without a `+`, so
+        adding LU and PL made all three of these parse as valid numbers."""
+        from klai_pii_recognizers import NLPhoneRecognizer
+
+        rec = NLPhoneRecognizer()
+        assert _detected(rec, text, "PHONE_NUMBER") == [], text
+
+    def test_stock_regions_are_retained(self):
+        from presidio_analyzer.predefined_recognizers import PhoneRecognizer
+
+        from klai_pii_recognizers import NLPhoneRecognizer
+
+        rec = NLPhoneRecognizer()
+        for region in PhoneRecognizer.DEFAULT_SUPPORTED_REGIONS:
+            assert region in rec.supported_regions, region
+        assert "NL" in rec.supported_regions
+        assert "BE" in rec.supported_regions
+
+
+class TestVATSeparators:
+    """VAT numbers as people write them, not as a database stores them."""
+
+    @pytest.mark.parametrize(
+        "text,expected",
+        [
+            ("DE 123456789", "DE 123456789"),
+            ("BE 0123.456.789", "BE 0123.456.789"),
+            ("FR AB 123 456 789", "FR AB 123 456 789"),
+            ("NL 123456789 B 01", "NL 123456789 B 01"),
+            ("AT U 12345678", "AT U 12345678"),
+        ],
+    )
+    def test_spaced_and_dotted_forms_match(self, text, expected):
+        rec = NLBTWRecognizer()
+        results = _detected(rec, text, "NL_BTW")
+        assert len(results) == 1, text
+        assert text[results[0].start : results[0].end] == expected
+
+    def test_separators_do_not_relax_the_digit_count(self):
+        """One optional separator between characters, never a free-for-all:
+        the count stays exactly as strict as the source format."""
+        rec = NLBTWRecognizer()
+        assert _detected(rec, "DE 1234 5678", "NL_BTW") == []       # 8, needs 9
+        assert _detected(rec, "DE 1234 567 890", "NL_BTW") == []    # 10, needs 9
+
+    def test_pattern_has_no_doubled_separator(self):
+        """Regression on the construction itself. The first version built
+        this string with two `regex.sub` passes and the second matched the
+        separators the first inserted, allowing two between every digit."""
+        from klai_pii_recognizers import _eu_vat_regex
+
+        assert r"[ .\-]?[ .\-]?" not in _eu_vat_regex()
+
+
+class TestIrishVATForms:
+    @pytest.mark.parametrize(
+        "text,expected",
+        [
+            ("VAT IE1234567T", "IE1234567T"),          # 7 digits + 1 letter
+            ("VAT IE1234567FA", "IE1234567FA"),        # 7 digits + 2 letters
+            ("VAT IE8D79739I", "IE8D79739I"),          # old style, being phased out
+        ],
+    )
+    def test_all_three_live_forms_match(self, text, expected):
+        rec = NLBTWRecognizer()
+        results = _detected(rec, text, "NL_BTW")
+        assert len(results) == 1, text
+        assert text[results[0].start : results[0].end] == expected
+
+
+class TestCompanyNumberContextIsWordBounded:
+    """`kbo` and `bce` are three letters and the gate used a substring test."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Subcellular reference 87654321 noted.",   # 'bce' inside 'subcellular'
+            "The backbone service 87654321 restarted.",  # 'kbo' inside 'backbone'
+        ],
+    )
+    def test_abbreviation_inside_an_ordinary_word_does_not_gate(self, text):
+        rec = NLKvKRecognizer()
+        assert _detected(rec, text, "NL_KVK") == [], text
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Our KBO number is 87654321.",
+            "número de registo comercial 87654321",
+            "cámara de comercio 87654321",
+            "numéro d'entreprise 87654321",
+        ],
+    )
+    def test_the_abbreviation_as_its_own_word_still_gates(self, text):
+        rec = NLKvKRecognizer()
+        assert len(_detected(rec, text, "NL_KVK")) == 1, text

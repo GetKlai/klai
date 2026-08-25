@@ -13,18 +13,25 @@
 # this reason: a BSN in an English sentence is still a BSN, and this list is
 # what the "registered across all languages" claim is actually implemented as.
 #
-# Three languages ship in this PR (en, nl, de) — enough to prove the mechanism
-# (the language-agnosticism test covers all three). Extending coverage to the
-# rest of the six languages klai-retrieval-api's language detector already
-# serves (nl, en, de, fr, pt, es —
-# klai-retrieval-api/retrieval_api/util/language_detect.py) is a one-line
-# addition to this list, not a code change — REQ-2's own framing ("adding a
-# jurisdiction later is adding a recognizer, not a language pipeline") applies
-# equally to adding a language here.
+# All six languages klai-retrieval-api's own detector serves (nl, en, de, fr,
+# pt, es — klai-retrieval-api/retrieval_api/util/language_detect.py). The
+# first three shipped with Phase 1; fr/es/pt were added 2026-08-25 and cost
+# exactly this list, because no model is loaded per language (see
+# nlp_configuration below) and every recogniser is registered per language
+# rather than scoped to one — REQ-2's "adding a jurisdiction is adding a
+# recognizer, not a language pipeline", from the other direction.
+#
+# The enforcement hook calls /analyze with `en` regardless of the message's
+# language (klai_pii_enforce.py's _ANALYZER_LANGUAGE), which is sound because
+# every entity here is regex-plus-checksum. This list is what the read-only
+# observer and any future language-sensitive entity need.
 supported_languages:
   - en
   - nl
   - de
+  - fr
+  - es
+  - pt
 
 default_score_threshold: 0
 
@@ -42,6 +49,12 @@ nlp_configuration:
     - lang_code: nl
       model_name: blank
     - lang_code: de
+      model_name: blank
+    - lang_code: fr
+      model_name: blank
+    - lang_code: es
+      model_name: blank
+    - lang_code: pt
       model_name: blank
 
 recognizer_registry:

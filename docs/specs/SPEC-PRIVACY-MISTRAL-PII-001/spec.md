@@ -1,6 +1,6 @@
 ---
 id: SPEC-PRIVACY-MISTRAL-PII-001
-version: "1.0.0"
+version: "1.1.0"
 status: draft
 created: 2026-08-20
 updated: 2026-08-25
@@ -17,6 +17,7 @@ roadmap: docs/architecture/knowledge-rag-improvement-plan.md
 
 | Version | Date       | Author       | Change |
 |---------|------------|--------------|--------|
+| 1.1.0   | 2026-08-25 | Mark Vletter | **International coverage.** The pack was jurisdiction-specific by design and Dutch by accident, and general availability made the difference matter: a Belgian or German tenant could tick every box and still send its VAT numbers, company numbers and phone numbers to the model in full. Four changes, all widening what an existing entity matches rather than adding entities, so no migration and no frontend union change. `NL_BTW` now covers all 27 member states' VAT formats, taken from the VAT-identification-number reference rather than memory, with every country prefix wrapped in `(?-i:...)` — the registry's global `IGNORECASE` would otherwise have made `de123456789` a German VAT number, `de` being the most common word in Dutch, which is the `2026 en` postcode bug a second time. `NL_KVK` gained the Belgian enterprise number, gated on its own modulo-97 check rather than on context, plus context words in the other languages the analyzer serves — that gate was the entire detector and every word in it was Dutch, which made a jurisdiction-specific entity accidentally language-specific. `PHONE_NUMBER` was left at NL+BE plus the stock regions: the EU/EEA widening was written, measured and reverted in the same pass, because every configured region doubles as a local default for numbers without a `+` and it turned ISO dates and 9-digit references into phone numbers — while the French number it was meant to fix was already detected. The analyzer serves all six languages retrieval-api's own detector does, with a matching `nlp_configuration` entry per language — a language declared without one fails when first requested, not at startup, so a test now pins the two lists together. Deliberately NOT done: bare-numeric BE/DE postcodes (four and five digits are a year and a quantity, and over-detection that degrades answers is the worse failure here), and `NL_BSN`'s international false-positive rate, which is a precision decision rather than a coverage one and is written up under REQ-3. |
 | 1.0.0   | 2026-08-25 | Mark Vletter | **General availability.** `KLAI_PII_ENFORCE_ORG_IDS=*`: every request carrying an `org_id` is enforced, replacing the one-named-org rollout that ran from 2026-08-21. The allowlist gained a wildcard rather than an enumerated list of org_ids, because an enumerated list goes stale at the next signup and does so in the unsafe direction — the new tenant would be the uncovered one. Neither of the two guarantees the staged rollout was built on changes: an absent or empty value still means no orgs at the hook, and a request with no `org_id` is still never enforced. Where that stops: Compose supplies `*` when the host variable is unset, so the deployment-level off switch is an explicitly empty `KLAI_PII_ENFORCE_ORG_IDS=`, not a deleted one. Capacity was measured before flipping rather than assumed: presidio-analyzer sits at 214MiB/512MiB and 0.01% CPU while the Phase 2 observer already calls `/analyze` for every tenant, so enforcement roughly doubles a volume of ~3 calls per minute. The residual risk is availability, not capacity — REQ-10 fails closed, so the analyzer being down is now a chat outage for every tenant instead of one; `container_down` in `infra-rules.yaml` already covers `klai-core-.*`. Also records what GA does NOT cover: the `org_id=None` path carried 1619 of 1650 observed detections over 2026-08-18 to 2026-08-25, against 29 on attributable tenant chat, and masking cannot reach it. |
 | 0.9.0   | 2026-08-21 | Mark Vletter | Phase 3 merged and deployed **inert** (`adde54046`), analyzer image carrying the four system-review fixes pinned (`060459e28`). Verified on core-01 rather than assumed: `KLAI_PII_ENFORCE=false`, seven Phase 3 modules mounted with no import errors, the observer still emitting counts and changing nothing, and all four recogniser fixes confirmed against the running analyzer — `Factuurdatum 20200201` no longer masked, `bearer` prose no longer a SECRET, `2026 en` no longer a postcode, Rotterdam `010` still detected. Everything between LiteLLM and Mistral is now built and in place; the only remaining step to activate is the flag. |
 | 0.8.0   | 2026-08-20 | Mark Vletter | **System review of the merged stack** — the first review of the pieces together rather than each PR alone, and it found what per-diff review structurally cannot. REQ-8's overlap rule was wrong: it said "drop any span *contained* in one already taken", derived from the single IBAN⊃PHONE example, but the recogniser set produces pairs where the higher-scoring span sits INSIDE the lower-scoring one (`NL_BSN` 1.00 inside `NL_BTW` 0.70; a JWT span inside a Bearer span). A containment-only rule accepts both and corrupts the text. Now: drop any **overlap**, and never-restore entities win exact ties, because `NL_BSN` and `NL_KVK` can produce a byte-identical span with an identical score and a tie must not decide whether a value becomes restorable. The Phase 3 implementation already dropped overlaps — the defect was in this document, not the code. Three irreversible-false-positive fixes shipped alongside: 8-digit BSN now needs context (9.1% of `YYYYMMDD` dates passed the elfproef and were destroyed unrestorably), the `Bearer` pattern is anchored to an `Authorization:` header (it matched two words of ordinary Dutch prose), and the postcode letter pair is case-sensitive again (registry `IGNORECASE` made `2026 en` a postcode). A1 marked partly falsified. |
@@ -387,13 +388,53 @@ indistinguishable from a successful restore. This exception ends with Phase 1.
 | Entity | Validation | Source |
 |---|---|---|
 | `NL_BSN` | **elfproef** (weighted sum mod 11) | Port `shield_compliance.py:96-104` — already working in production, do not rewrite it |
-| `NL_KVK` | 8 digits, context words (`kvk`, `handelsregister`) | new |
-| `NL_BTW` | `NL` + 9 digits + `B` + 2 digits | new |
-| `NL_POSTCODE` | `1234 AB` shape | `shield_compliance.py:38` |
-| `IBAN_CODE` | mod-97 | **built-in**, enable rather than write |
+| `NL_KVK` | NL: 8 digits + context words. BE: 10 digits, **modulo-97** check, no context needed | new. Context words are no longer Dutch-only (2026-08-25) |
+| `NL_BTW` | EU VAT, all 27 member states, per-state format, case-sensitive prefix | new. NL-only until 2026-08-25. The id still says NL; the coverage does not |
+| `NL_POSTCODE` | `1234 AB` shape — **Netherlands only** | `shield_compliance.py:38`. The one entity that is still single-jurisdiction |
+| `IBAN_CODE` | mod-97 | **built-in**, enable rather than write. Already every IBAN country |
 | `CREDIT_CARD` | Luhn | **built-in**, enable rather than write |
 | `EMAIL_ADDRESS` | shape | **built-in**, enable rather than write |
-| `PHONE_NUMBER` | libphonenumber, regions NL + BE prepended to the stock list | `NLPhoneRecognizer` — a subclass, **not** a YAML `supported_regions:` key, which the registry loader silently drops (see ~~A6~~) |
+| `PHONE_NUMBER` | libphonenumber, NL + BE prepended to the stock list | `NLPhoneRecognizer` — a subclass, **not** a YAML `supported_regions:` key, which the registry loader silently drops (see ~~A6~~). An EU/EEA widening was written and reverted on 2026-08-25; see below |
+
+**Jurisdiction coverage is not uniform, and the gaps are the point.** As of
+2026-08-25 the pack detects EU-wide for VAT, IBAN, credit card, email and
+credentials; NL+BE plus Presidio's stock region list for phone; NL+BE for company
+registration numbers; and NL only for postcode and BSN. A tenant outside the Netherlands gets most of the return set and no address
+detection at all. That is stated in the settings UI rather than left implied —
+`admin_settings_pii_limitation_address` names both halves.
+
+**The phone region list was widened and reverted, and the measurement is the
+reason.** Adding the EU/EEA regions looked free — libphonenumber validates
+against real numbering plans, so an inapplicable region should contribute
+nothing. It does not work that way for numbers written without a `+`:
+`PhoneNumberMatcher` treats every configured region as a local default, so
+adding LU and PL made `2026-08-25`, `20260825` and `123456789` parse as valid
+numbers. None of them matched before. The gain was also smaller than assumed —
+`+33 …` was already detected, because an international prefix carries its own
+country code and because Presidio's stock defaults already include FR. What a
+widening would really buy is national-format foreign numbers, against masking
+every ISO date for every tenant with the box ticked. Reverted, with both halves
+pinned by tests so the next attempt starts from the measurement.
+
+**The Belgian company number's false-positive rate, measured not assumed.** The
+modulo-97 check accepts 1 in 97 of the 10-digit runs beginning 0 or 1, so a
+long invoice or order number occasionally masks as a company number. Kept
+anyway, and the comparison is the argument: `NL_BSN` runs at 1 in 11 and is
+irreversible, while this is roughly nine times rarer and sits in `RETURN_SET`,
+so the user gets their own text back and only the model saw a placeholder.
+Requiring context for the bare form (letting the dotted `0776.229.929` stand
+alone) would cut it further, at the cost of the form that machine-generated
+exports actually use. Revisit if a tenant reports answer quality rather than
+on principle.
+
+**`NL_BSN` is the open question this coverage work did not answer.** It is
+`NEVER_RESTORE`, so a false positive is irreversible, and the 9-digit form stands
+on the elfproef alone — roughly 1 in 11 arbitrary 9-digit runs passes. For a Dutch
+tenant that is the accepted trade. For a German or Belgian tenant there is no BSN
+to find, so the same rate is pure cost. Fixing it means either gating the 9-digit
+form on context (recall loss for NL) or reintroducing country as an axis, which
+~~D1~~ dropped for good reasons. Neither is a coverage change, so neither is in
+this pass.
 
 **THE checksum-validated recognizers SHALL** be Python `PatternRecognizer` subclasses
 overriding `validate_result()`, not YAML entries. Presidio's YAML registry can express a
