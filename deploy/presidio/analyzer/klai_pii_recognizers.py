@@ -30,6 +30,8 @@ from __future__ import annotations
 
 from typing import List, Optional
 
+import regex
+
 from presidio_analyzer import EntityRecognizer, Pattern, PatternRecognizer, RecognizerResult
 from presidio_analyzer.predefined_recognizers import PhoneRecognizer
 
@@ -155,8 +157,25 @@ _KVK_CONTEXT_WORDS = (
     "numéro d'entreprise",      # BE (fr)
     "kbo",
     "bce",
+    "cámara de comercio",       # es
+    "registro mercantil",       # es
+    "registo comercial",        # pt
+    "câmara de comércio",       # pt
 )
 _KVK_CONTEXT_WINDOW = 40
+
+# Matched on word boundaries, NOT as substrings. The gate used a plain
+# `word in window` test, which is harmless for a long phrase and actively
+# wrong for a three-letter abbreviation: `bce` occurs inside "su(bce)llular"
+# and `kbo` inside "bac(kbo)ne", so an ordinary 8-digit reference near either
+# word was masked with score 1.0. Found by review, reproduced before fixing.
+# `\b` is wrong for the accented and apostrophed phrases (`numéro d'entreprise`),
+# so the boundary is "not a word character" on either side, with the regex
+# built once at import rather than per request.
+_KVK_CONTEXT_RE = regex.compile(
+    r"(?<!\w)(?:" + "|".join(regex.escape(w) for w in _KVK_CONTEXT_WORDS) + r")(?!\w)",
+    regex.IGNORECASE,
+)
 
 
 def _valid_be_enterprise_number(value: str) -> bool:
@@ -246,8 +265,8 @@ class NLKvKRecognizer(PatternRecognizer):
             window = text[
                 max(0, result.start - _KVK_CONTEXT_WINDOW) : result.end
                 + _KVK_CONTEXT_WINDOW
-            ].lower()
-            if any(word in window for word in _KVK_CONTEXT_WORDS):
+            ]
+            if _KVK_CONTEXT_RE.search(window):
                 result.score = EntityRecognizer.MAX_SCORE
                 confirmed.append(result)
         return confirmed
@@ -274,47 +293,87 @@ class NLKvKRecognizer(PatternRecognizer):
 # -- `de` being the most common word in Dutch. This is the same failure that
 # made `2026 en` a postcode; the fix is the same, applied before it can bite
 # rather than after.
-_EU_VAT_PATTERNS: tuple[tuple[str, str], ...] = (
-    # Prefix,                body
-    ("AT", r"U\d{8}"),                    # 'U' + 8 digits
-    ("BE", r"\d{10}"),                    # 8 digits + 2 check digits
-    ("BG", r"\d{9,10}"),                  # 9 or 10
-    ("CY", r"\d{8}[A-Z]"),                # 8 digits + 1 letter
-    ("CZ", r"\d{8,10}"),                  # 8, 9 or 10
-    ("DE", r"\d{9}"),
-    ("DK", r"\d{8}"),
-    ("EE", r"\d{9}"),
-    ("EL", r"\d{9}"),                     # Greece is EL, never GR
-    ("ES", r"[A-Z0-9]\d{7}[A-Z0-9]"),     # letter/digit + 7 digits + letter/digit
-    ("FI", r"\d{8}"),
-    ("FR", r"[A-Z0-9]{2}\d{9}"),          # 2 validation chars + 9-digit SIREN
-    ("HR", r"\d{11}"),
-    ("HU", r"\d{8}"),
-    ("IE", r"\d{7}[A-Z]{1,2}"),           # 7 digits + 1 or 2 letters
-    ("IT", r"\d{11}"),
-    ("LT", r"(?:\d{12}|\d{9})"),          # 12 before 9: longest alternative first
-    ("LU", r"\d{8}"),
-    ("LV", r"\d{11}"),
-    ("MT", r"\d{8}"),
-    ("NL", r"\d{9}B\d{2}"),
-    ("PL", r"\d{10}"),
-    ("PT", r"\d{9}"),
-    ("RO", r"\d{2,10}"),
-    ("SE", r"\d{12}"),
-    ("SI", r"\d{8}"),
-    ("SK", r"\d{10}"),
+# Each entry is a country prefix plus one or more alternative bodies. A body
+# is a tuple of TOKENS, not a regex string: an int is that many digits, a
+# (lo, hi) pair is a variable-length digit run, and a string is a regex atom
+# matching one element. Tokens are joined with at most one optional
+# separator, and digit runs get the same tolerance internally, so
+# `BE0123456789`, `BE 0123.456.789` and `BE 0123 456 789` all match while the
+# digit COUNT stays exactly as strict as the source format.
+#
+# This is a token list rather than a hand-written regex because the first
+# version of it WAS a hand-written regex rewritten by two `regex.sub` passes,
+# and the second pass matched the separators the first had just inserted --
+# producing `[ .\-]?[ .\-]?` between every digit. Two separators, not one,
+# in a pattern whose comment promised one. Building the string from tokens
+# makes that class of error unrepresentable instead of merely fixed.
+_EU_VAT_PATTERNS: tuple[tuple[str, tuple[tuple[object, ...], ...]], ...] = (
+    ("AT", (("U", 8),)),
+    ("BE", ((10,),)),
+    ("BG", (((9, 10),),)),
+    ("CY", ((8, "[A-Z]"),)),
+    ("CZ", (((8, 10),),)),
+    ("DE", ((9,),)),
+    ("DK", ((8,),)),
+    ("EE", ((9,),)),
+    ("EL", ((9,),)),                       # Greece is EL, never GR
+    ("ES", (("[A-Z0-9]", 7, "[A-Z0-9]"),)),
+    ("FI", ((8,),)),
+    ("FR", (("[A-Z0-9]{2}", 9),)),         # 2 validation chars + 9-digit SIREN
+    ("HR", ((11,),)),
+    ("HU", ((8,),)),
+    # Three live Irish forms, longest first so the alternation cannot settle
+    # on a prefix of a longer valid number. The third is the old style being
+    # phased out (1 digit, a letter/+/*, 5 digits, 1 letter, e.g. IE8D79739I)
+    # and is still valid, so leaving it out would miss real numbers.
+    ("IE", ((7, "[A-Z]{2}"), (7, "[A-Z]"), (1, "[A-Z+*]", 5, "[A-Z]"))),
+    ("IT", ((11,),)),
+    ("LT", ((12,), (9,))),                 # 12 before 9: longest alternative first
+    ("LU", ((8,),)),
+    ("LV", ((11,),)),
+    ("MT", ((8,),)),
+    ("NL", ((9, "B", 2),)),
+    ("PL", ((10,),)),
+    ("PT", ((9,),)),
+    ("RO", (((2, 10),),)),
+    ("SE", ((12,),)),
+    ("SI", ((8,),)),
+    ("SK", ((10,),)),
 )
+
+# People write VAT numbers with the prefix spaced off and the body grouped:
+# `DE 123456789`, `BE 0123.456.789`, `NL 123456789 B 01`. Requiring a
+# separator-free string is the difference between a recogniser that works on
+# a database export and one that works on the email a customer pasted.
+# Optional and singular, so a digit run interrupted by a sentence cannot be
+# glued into a match.
+_VAT_SEP = r"[ .\-]?"
+
+
+def _digits(count: object) -> str:
+    """A digit run that tolerates one separator between its digits."""
+    if isinstance(count, tuple):
+        low, high = count
+        return rf"(?:\d{_VAT_SEP}){{{low - 1},{high - 1}}}\d"
+    return rf"(?:\d{_VAT_SEP}){{{int(count) - 1}}}\d" if int(count) > 1 else r"\d"
+
+
+def _body_regex(tokens: tuple[object, ...]) -> str:
+    parts = [_digits(t) if isinstance(t, (int, tuple)) else str(t) for t in tokens]
+    return _VAT_SEP.join(parts)
 
 
 def _eu_vat_regex() -> str:
     """One alternation over every member state, prefixes case-sensitive.
 
-    Sorted longest-prefix-irrelevant (all prefixes are two characters) but
-    each body is anchored by `\\b` on both sides, so `DE123456789` cannot
-    be clipped out of a longer digit run.
+    Each branch is `\b` anchored on both sides, so `DE123456789` cannot be
+    clipped out of a longer digit run.
     """
-    branches = "|".join(f"(?-i:{code})(?:{body})" for code, body in _EU_VAT_PATTERNS)
-    return rf"\b(?:{branches})\b"
+    branches = []
+    for code, bodies in _EU_VAT_PATTERNS:
+        for body in bodies:
+            branches.append(f"(?-i:{code}){_VAT_SEP}{_body_regex(body)}")
+    return rf"\b(?:{'|'.join(branches)})\b"
 
 
 class NLBTWRecognizer(PatternRecognizer):
@@ -540,27 +599,36 @@ KLAI_RECOGNIZER_CLASSES = (
 # language-agnostic and a tenant's documents legitimately contain foreign
 # numbers, so narrowing to NL alone would trade one detection gap for another.
 class NLPhoneRecognizer(PhoneRecognizer):
-    """PhoneRecognizer covering the EU/EEA, not just NL and BE.
+    """PhoneRecognizer with NL (and BE) in the region list.
 
-    Widened on 2026-08-25. NL and BE plus the stock regions left the rest of
-    the single market uncovered: a French, Spanish, Italian or Portuguese
-    number reached the model in full with the "phone number" box ticked.
+    Neighbouring-country numbers are realistic in Dutch SMB correspondence, so
+    BE is included; the stock regions are retained so this can only ever detect
+    more than the recognizer it replaces, never less.
 
-    Adding a region is close to free here, unlike adding a regex. The
-    underlying `phonenumbers` library validates against each region's real
-    numbering plan rather than a digit-count pattern, so a region that does
-    not apply to a tenant contributes no false positives -- the same
-    "a recogniser that finds nothing costs nothing" argument REQ-2 already
-    makes for jurisdiction-specific checksums.
+    Deliberately NOT widened to the EU/EEA, and the reason is measured rather
+    than argued. That change was written on 2026-08-25 on the assumption that
+    a French or Spanish number went undetected, and both halves of the
+    assumption were wrong:
+
+    - `+33 1 42 68 53 00` was ALREADY detected with this region list. An
+      international `+` prefix identifies its own country, so the region list
+      is irrelevant to it. The test written to prove the widening worked
+      passed identically before and after -- it proved nothing.
+    - `PhoneNumberMatcher` treats every configured region as a local default
+      for numbers WITHOUT a `+`. Adding LU and PL therefore made
+      `2026-08-25`, `20260825` and `123456789` parse as valid phone numbers,
+      none of which matched before. Dates and order numbers, masked on every
+      request for every tenant with the box ticked.
+
+    What the widening would actually buy is national-format foreign numbers
+    (`01 42 68 53 00` with no country code). That is a narrow gain against
+    masking every ISO date, and REQ-2's own framing says which way to err: an
+    over-eager detector that degrades answers is worse here than a
+    conservative one that catches less. Revisit with a benchmark and a
+    context requirement, not with a longer tuple.
     """
 
-    KLAI_EU_EEA_REGIONS = (
-        "NL", "BE", "LU", "FR", "ES", "PT", "IT", "AT", "IE", "DK", "SE",
-        "FI", "PL", "CZ", "SK", "HU", "RO", "BG", "HR", "SI", "EE", "LV",
-        "LT", "GR", "CY", "MT", "NO", "IS", "LI", "CH",
-    )
-
-    KLAI_SUPPORTED_REGIONS = KLAI_EU_EEA_REGIONS + PhoneRecognizer.DEFAULT_SUPPORTED_REGIONS
+    KLAI_SUPPORTED_REGIONS = ("NL", "BE") + PhoneRecognizer.DEFAULT_SUPPORTED_REGIONS
 
     def __init__(self, **kwargs):
         kwargs.setdefault("supported_regions", self.KLAI_SUPPORTED_REGIONS)

@@ -102,7 +102,20 @@ class TestConfigLoadsAsIntended:
             assert pipeline.pipe_names == [], (lang, pipeline.pipe_names)
 
 
-_CONFIGURED_LANGUAGES = ["en", "nl", "de", "fr", "es", "pt"]
+def _configured_languages() -> list[str]:
+    """Read the languages from the config the engine is built from.
+
+    Restating them as a literal is how the acceptance and end-to-end tests
+    would silently stop covering a language added to the YAML: the config
+    tests would still pass, and nothing would actually exercise it.
+    """
+    import yaml
+
+    declared = yaml.safe_load(Path(_REPO_CONF_FILE).read_text(encoding="utf-8"))
+    return list(declared["supported_languages"])
+
+
+_CONFIGURED_LANGUAGES = _configured_languages()
 
 
 class TestAC1LanguageAccepted:
