@@ -97,12 +97,12 @@ async def test_two_identical_connector_requests_upsert_chunks_once():
     req.source_connector_id = "connector-1"
     req.source_ref = "json-feed:connector-1:group-a"
     conn = _make_mock_conn()
-    stored_hash = AsyncMock(side_effect=[None, _sha256(req.content)])
+    stored_state = AsyncMock(side_effect=[None, _active_state(_sha256(req.content))])
 
     with (
         patch(
-            "knowledge_ingest.pg_store.get_active_content_hash",
-            new=stored_hash,
+            "knowledge_ingest.pg_store.get_active_artifact_state",
+            new=stored_state,
         ),
         patch(
             "knowledge_ingest.pg_store.soft_delete_artifact",
@@ -173,7 +173,7 @@ async def test_two_identical_connector_requests_upsert_chunks_once():
 
     assert first["status"] == "ok"
     assert second == {"status": "skipped", "reason": "content unchanged", "chunks": 0}
-    assert stored_hash.await_count == 2
+    assert stored_state.await_count == 2
     assert embed.await_count == 1
     assert upsert.await_count == 1
 
