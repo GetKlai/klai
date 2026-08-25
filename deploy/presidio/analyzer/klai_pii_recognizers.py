@@ -137,15 +137,64 @@ class NLBSNRecognizer(PatternRecognizer):
 _BSN_CONTEXT_WORDS = ("bsn", "burgerservicenummer", "sofinummer", "sofi-nummer")
 _BSN_CONTEXT_WINDOW = 40
 
-_KVK_CONTEXT_WORDS = ("kvk", "handelsregister")
+# The Dutch words were the whole gate until 2026-08-25, which made this
+# entity silently language-bound rather than jurisdiction-bound: a tenant
+# writing "our chamber of commerce number is 12345678" in English got no
+# match, with the box ticked. The additions are the same concept in the
+# languages the analyzer serves, plus the Belgian and German registry names.
+# Deliberately NOT added: bare "company number" and "registratienummer".
+# Both attach to any 8-digit run in ordinary business text, and the gate is
+# the only thing standing between this pattern and every order number.
+_KVK_CONTEXT_WORDS = (
+    "kvk",
+    "handelsregister",          # NL + DE registry, same word
+    "handelsregisternummer",
+    "chamber of commerce",
+    "companies house",
+    "ondernemingsnummer",       # BE (nl)
+    "numéro d'entreprise",      # BE (fr)
+    "kbo",
+    "bce",
+)
 _KVK_CONTEXT_WINDOW = 40
 
 
+def _valid_be_enterprise_number(value: str) -> bool:
+    """Belgian enterprise number (KBO/BCE) modulo-97 check.
+
+    Ten digits, the first being 0 or 1, the last two a check number equal to
+    ``97 - (first eight mod 97)``. Cross-checked against two independent
+    sources on 2026-08-25 rather than written from memory, because a wrong
+    checksum here fails in the quiet direction: it would simply never match,
+    and a recogniser that finds nothing looks exactly like a jurisdiction
+    with nothing to find.
+    """
+    digits = "".join(ch for ch in value if ch.isdigit())
+    if len(digits) != 10 or digits[0] not in "01":
+        return False
+    return int(digits[8:]) == 97 - (int(digits[:8]) % 97)
+
+
 class NLKvKRecognizer(PatternRecognizer):
-    """Dutch KvK (Chamber of Commerce) number: 8 digits, gated on nearby context."""
+    """Company registration number: NL KvK, or BE enterprise number.
+
+    Two shapes with deliberately different gates, because the evidence
+    available differs. The Dutch KvK number has no checksum at all, so
+    nearby context words are the only thing separating it from an order
+    number. The Belgian enterprise number has a modulo-97 check, which is
+    stronger evidence than any context word, so it stands on its own -- the
+    same split this pack already makes between NL_BSN (checksum) and
+    NL_KVK (context).
+    """
 
     PATTERNS = [
         Pattern("NL KvK (candidate)", r"(?<!\d)\d{8}(?!\d)", 0.3),
+        Pattern("BE enterprise number (candidate)", r"(?<!\d)[01]\d{9}(?!\d)", 0.3),
+        Pattern(
+            "BE enterprise number, dotted (candidate)",
+            r"(?<!\d)[01]\d{3}\.\d{3}\.\d{3}(?!\d)",
+            0.3,
+        ),
     ]
 
     def __init__(
@@ -174,6 +223,26 @@ class NLKvKRecognizer(PatternRecognizer):
         candidates = super().analyze(text, entities, nlp_artifacts, regex_flags)
         confirmed = []
         for result in candidates:
+            matched = text[result.start : result.end]
+
+            # A valid modulo-97 check is stronger evidence than any context
+            # word, so the Belgian form does not need one. Checked before the
+            # context gate rather than after: a BE number that happens to sit
+            # next to "kvk" must not be waved through by the Dutch gate while
+            # failing its own checksum.
+            if _valid_be_enterprise_number(matched):
+                result.score = EntityRecognizer.MAX_SCORE
+                confirmed.append(result)
+                continue
+
+            # Only the Belgian patterns produce a 10-digit candidate, and one
+            # that failed the checksum above is not a company number in either
+            # jurisdiction -- NL KvK is 8 digits. Drop it rather than fall
+            # through, or the context gate would promote any 10-digit order
+            # number sitting near the word "kvk" to a full match.
+            if sum(ch.isdigit() for ch in matched) != 8:
+                continue
+
             window = text[
                 max(0, result.start - _KVK_CONTEXT_WINDOW) : result.end
                 + _KVK_CONTEXT_WINDOW
@@ -185,15 +254,81 @@ class NLKvKRecognizer(PatternRecognizer):
 
 
 # ---------------------------------------------------------------------------
-# NL_BTW — "NL" + 9 digits + "B" + 2 digits (format only, per the SPEC's table)
+# NL_BTW — EU VAT identification number, all 27 member states
 # ---------------------------------------------------------------------------
+# The entity id stays `NL_BTW` deliberately. It is an internal key, it is
+# CHECK-constrained in `portal_orgs.pii_masked_entities`, and the only
+# customer-facing string for it already reads "VAT number" / "btw-nummer" --
+# country-neutral. Renaming it would mean a data migration over live tenant
+# rows plus a frontend union type, to change a label nobody sees. Recorded
+# here rather than left to be rediscovered: the id says NL, the coverage is
+# EU-wide.
+#
+# Formats per member state are taken from the VAT-identification-number
+# reference (verified 2026-08-25), not from memory. The two traps the source
+# calls out are both handled below: Greece uses EL rather than GR, and four
+# countries accept more than one length (BG, CZ, LT, RO).
+#
+# Every prefix is wrapped in `(?-i:...)`. The registry applies IGNORECASE
+# globally, and a bare `\bDE\d{9}\b` would therefore also match `de123456789`
+# -- `de` being the most common word in Dutch. This is the same failure that
+# made `2026 en` a postcode; the fix is the same, applied before it can bite
+# rather than after.
+_EU_VAT_PATTERNS: tuple[tuple[str, str], ...] = (
+    # Prefix,                body
+    ("AT", r"U\d{8}"),                    # 'U' + 8 digits
+    ("BE", r"\d{10}"),                    # 8 digits + 2 check digits
+    ("BG", r"\d{9,10}"),                  # 9 or 10
+    ("CY", r"\d{8}[A-Z]"),                # 8 digits + 1 letter
+    ("CZ", r"\d{8,10}"),                  # 8, 9 or 10
+    ("DE", r"\d{9}"),
+    ("DK", r"\d{8}"),
+    ("EE", r"\d{9}"),
+    ("EL", r"\d{9}"),                     # Greece is EL, never GR
+    ("ES", r"[A-Z0-9]\d{7}[A-Z0-9]"),     # letter/digit + 7 digits + letter/digit
+    ("FI", r"\d{8}"),
+    ("FR", r"[A-Z0-9]{2}\d{9}"),          # 2 validation chars + 9-digit SIREN
+    ("HR", r"\d{11}"),
+    ("HU", r"\d{8}"),
+    ("IE", r"\d{7}[A-Z]{1,2}"),           # 7 digits + 1 or 2 letters
+    ("IT", r"\d{11}"),
+    ("LT", r"(?:\d{12}|\d{9})"),          # 12 before 9: longest alternative first
+    ("LU", r"\d{8}"),
+    ("LV", r"\d{11}"),
+    ("MT", r"\d{8}"),
+    ("NL", r"\d{9}B\d{2}"),
+    ("PL", r"\d{10}"),
+    ("PT", r"\d{9}"),
+    ("RO", r"\d{2,10}"),
+    ("SE", r"\d{12}"),
+    ("SI", r"\d{8}"),
+    ("SK", r"\d{10}"),
+)
+
+
+def _eu_vat_regex() -> str:
+    """One alternation over every member state, prefixes case-sensitive.
+
+    Sorted longest-prefix-irrelevant (all prefixes are two characters) but
+    each body is anchored by `\\b` on both sides, so `DE123456789` cannot
+    be clipped out of a longer digit run.
+    """
+    branches = "|".join(f"(?-i:{code})(?:{body})" for code, body in _EU_VAT_PATTERNS)
+    return rf"\b(?:{branches})\b"
 
 
 class NLBTWRecognizer(PatternRecognizer):
-    """Dutch VAT (BTW) number: NLddddddddd B dd. Format recognizer, no checksum."""
+    """EU VAT identification number. Format recognizer, no checksum.
+
+    Was NL-only (`NL\\d{9}B\\d{2}`) until 2026-08-25. A tenant operating in
+    Belgium or Germany had its VAT numbers reach the model unmasked even
+    with the "VAT number" box ticked, because the pattern only ever matched
+    the Dutch form -- the box was honest about intent and wrong about
+    coverage.
+    """
 
     PATTERNS = [
-        Pattern("NL BTW", r"\bNL\d{9}B\d{2}\b", 0.7),
+        Pattern("EU VAT", _eu_vat_regex(), 0.7),
     ]
 
     def __init__(
@@ -405,14 +540,27 @@ KLAI_RECOGNIZER_CLASSES = (
 # language-agnostic and a tenant's documents legitimately contain foreign
 # numbers, so narrowing to NL alone would trade one detection gap for another.
 class NLPhoneRecognizer(PhoneRecognizer):
-    """PhoneRecognizer with NL (and BE) in the region list.
+    """PhoneRecognizer covering the EU/EEA, not just NL and BE.
 
-    Neighbouring-country numbers are realistic in Dutch SMB correspondence, so
-    BE is included; the stock regions are retained so this can only ever detect
-    more than the recognizer it replaces, never less.
+    Widened on 2026-08-25. NL and BE plus the stock regions left the rest of
+    the single market uncovered: a French, Spanish, Italian or Portuguese
+    number reached the model in full with the "phone number" box ticked.
+
+    Adding a region is close to free here, unlike adding a regex. The
+    underlying `phonenumbers` library validates against each region's real
+    numbering plan rather than a digit-count pattern, so a region that does
+    not apply to a tenant contributes no false positives -- the same
+    "a recogniser that finds nothing costs nothing" argument REQ-2 already
+    makes for jurisdiction-specific checksums.
     """
 
-    KLAI_SUPPORTED_REGIONS = ("NL", "BE") + PhoneRecognizer.DEFAULT_SUPPORTED_REGIONS
+    KLAI_EU_EEA_REGIONS = (
+        "NL", "BE", "LU", "FR", "ES", "PT", "IT", "AT", "IE", "DK", "SE",
+        "FI", "PL", "CZ", "SK", "HU", "RO", "BG", "HR", "SI", "EE", "LV",
+        "LT", "GR", "CY", "MT", "NO", "IS", "LI", "CH",
+    )
+
+    KLAI_SUPPORTED_REGIONS = KLAI_EU_EEA_REGIONS + PhoneRecognizer.DEFAULT_SUPPORTED_REGIONS
 
     def __init__(self, **kwargs):
         kwargs.setdefault("supported_regions", self.KLAI_SUPPORTED_REGIONS)
