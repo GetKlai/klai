@@ -22,6 +22,7 @@ KLAI_KB_MODULES = (
     "klai_kb_system_prompt",
     "klai_kb_traceability",
     "klai_kb_urls",
+    "klai_language_detect",
     "klai_litellm_response",
     "klai_pasted_correspondence",
     "klai_pii_observe",

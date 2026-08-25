@@ -1029,12 +1029,15 @@ class KlaiKnowledgeHook(CustomLogger):
                 kb_narrow, templates_block, kb_unavailable_notice
             )
             _prepend_system_prefix(messages, prefix)
+            response_language_target = None
             if not kb_narrow:
                 # Strict gets a deterministic mock_response below — the model
                 # never reads these messages. Open answers from general
                 # knowledge, so the language contract must still close the
                 # prompt.
-                _append_final_language_reminder(messages, include_kb_reminder=False)
+                response_language_target = _append_final_language_reminder(
+                    messages, include_kb_reminder=False
+                )
             data["messages"] = messages
             original_stream = data.get("stream")
             render_strategy = _select_kb_render_strategy(original_stream)
@@ -1064,6 +1067,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 retrieval_request_id=retrieval_request_id,
                 kb_scope_mode=kb_scope_mode,
                 kbs_in_scope=kbs_in_scope,
+                response_language_target=response_language_target,
             )
             if kb_narrow:
                 data["mock_response"] = _strict_kb_unavailable_message(query)
@@ -1123,7 +1127,9 @@ class KlaiKnowledgeHook(CustomLogger):
             _prepend_system_prefix(
                 messages, _compose_kb_mode_chat_prefix(kb_narrow, templates_block)
             )
-            _append_final_language_reminder(messages, include_kb_reminder=False)
+            response_language_target = _append_final_language_reminder(
+                messages, include_kb_reminder=False
+            )
             data["messages"] = messages
             # @MX:NOTE: render_mode must stay None for the common
             # gate_bypassed-without-unchecked-questions path (the vast
@@ -1161,6 +1167,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 kbs_in_scope=kbs_in_scope,
                 unchecked_questions=unchecked_questions or None,
                 render_mode=render_mode,
+                response_language_target=response_language_target,
             )
             return data
 
@@ -1480,7 +1487,9 @@ class KlaiKnowledgeHook(CustomLogger):
             )
             # Inert when the strict branch below sets mock_response (model
             # bypassed); every other zero-chunks branch reaches the model.
-            _append_final_language_reminder(messages, include_kb_reminder=False)
+            response_language_target = _append_final_language_reminder(
+                messages, include_kb_reminder=False
+            )
             data["messages"] = messages
             if has_evidence_pack:
                 original_stream = data.get("stream")
@@ -1534,6 +1543,7 @@ class KlaiKnowledgeHook(CustomLogger):
                         kb_scope_mode=kb_scope_mode,
                         kbs_in_scope=kbs_in_scope,
                         kbs_with_results=kbs_with_results,
+                        response_language_target=response_language_target,
                     )
                 )
                 if kb_narrow and not user_provided_content_context:
@@ -1595,7 +1605,7 @@ class KlaiKnowledgeHook(CustomLogger):
         # templates_block again would duplicate it.
         prefix = _compose_kb_mode_chat_prefix(kb_narrow, context_block)
         _prepend_system_prefix(messages, prefix)
-        _append_final_language_reminder(messages)
+        response_language_target = _append_final_language_reminder(messages)
         data["messages"] = messages
         original_stream = data.get("stream")
         render_strategy = _select_kb_render_strategy(original_stream)
@@ -1641,6 +1651,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 evidence_pack,
                 raw_chunks,
             ),
+            response_language_target=response_language_target,
         )
         return data
 

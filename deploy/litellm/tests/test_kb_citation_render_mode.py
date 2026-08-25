@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
+
 from klai_kb_citation_render import (
     compose_non_streaming_kb_response,
     compose_streaming_kb_response,
+    log_kb_citation_render,
 )
 
 
@@ -194,3 +197,70 @@ def test_streaming_response_includes_unchecked_questions_footer():
 
     content = final["choices"][0]["delta"]["content"]
     assert "- Niet apart doorzocht (limiet bereikt): Vraag zeven?; Vraag acht?." in content
+
+
+def test_non_streaming_render_log_contains_language_fields(caplog):
+    response = _response(
+        "The notifications are not offered again, and you can review the setting. (E1)"
+    )
+    kb_meta = _fanout_meta(
+        response_language_target="en",
+        kb_scope_mode="all_org_and_personal",
+        kbs_in_scope=["support"],
+    )
+
+    stats = compose_non_streaming_kb_response(response, kb_meta)
+
+    logger = logging.getLogger("test_kb_citation_render_language_non_stream")
+    with caplog.at_level(logging.WARNING, logger=logger.name):
+        log_kb_citation_render(logger, kb_meta, stats, stream=False)
+
+    messages = [
+        record.message
+        for record in caplog.records
+        if "kb_citations_rendered_structured" in record.message
+    ]
+    assert len(messages) == 1
+    assert "response_language_target=en" in messages[0]
+    assert "answer_language=en" in messages[0]
+    assert "language_correct=True" in messages[0]
+
+
+def test_streaming_render_log_contains_language_fields(caplog):
+    kb_meta = _fanout_meta(
+        response_language_target="en",
+        kb_scope_mode="all_org_and_personal",
+        kbs_in_scope=["support"],
+    )
+    first = {
+        "choices": [
+            {"delta": {"content": "The notifications are not "}, "finish_reason": None}
+        ]
+    }
+    final = {
+        "choices": [
+            {
+                "delta": {
+                    "content": "offered again, and you can review the setting. (E1)"
+                },
+                "finish_reason": "stop",
+            }
+        ]
+    }
+
+    compose_streaming_kb_response(first, kb_meta)
+    stats = compose_streaming_kb_response(final, kb_meta, flush_stream=True)
+
+    logger = logging.getLogger("test_kb_citation_render_language_stream")
+    with caplog.at_level(logging.WARNING, logger=logger.name):
+        log_kb_citation_render(logger, kb_meta, stats, stream=True)
+
+    messages = [
+        record.message
+        for record in caplog.records
+        if "kb_citations_rendered_structured" in record.message
+    ]
+    assert len(messages) == 1
+    assert "response_language_target=en" in messages[0]
+    assert "answer_language=en" in messages[0]
+    assert "language_correct=True" in messages[0]

@@ -110,6 +110,7 @@ _EXPECTED_KEYS = {
     "multi_question",
     "sub_query_coverage",
     "unchecked_questions",
+    "response_language_target",
     # policy-derived
     "answer_policy_state",
     "chat_retrieval_prompt_mode",
@@ -149,6 +150,17 @@ def test_to_kb_meta_carries_retrieval_request_id():
         retrieval_request_id="req-123",
     )
     assert meta["request_id"] == "req-123"
+
+
+def test_to_kb_meta_carries_response_language_target():
+    meta = _policy("chunks_present").to_kb_meta(
+        org_id="o",
+        user_id="u",
+        retrieval_ms=1,
+        response_language_target="en",
+    )
+
+    assert meta["response_language_target"] == "en"
 
 
 def test_policy_module_declares_every_pre_call_answer_state():

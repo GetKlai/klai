@@ -446,6 +446,29 @@ async def test_rewrite_query_prompt_includes_distillation_instructions_when_flag
     assert "Reply with ONLY the rewritten question" in sent
 
 
+def test_rewrite_and_classify_prompt_brand_examples_are_mixed_language(monkeypatch):
+    hook = _load_hook(monkeypatch)
+    prompt = hook._QUERY_REWRITE_AND_CLASSIFY_PROMPT
+
+    assert (
+        "- 'Hoe koppel ik Voys aan Salesforce?' → "
+        "'Voys Salesforce CRM-koppeling Bubble RedCactus'"
+    ) in prompt
+    assert (
+        "- 'Does Outlook work with Voys?' → "
+        "'Voys Outlook email integration calendar sync'"
+    ) in prompt
+    assert (
+        "- 'Unterstützt ihr Zoom?' → "
+        "'Voys Zoom Meeting-Integration Telefonkopplung'"
+    ) in prompt
+    assert (
+        "The rewritten_query MUST be in the language of the user's current "
+        "question"
+    ) in prompt
+    assert "never copy terms from an example written in another language" in prompt
+
+
 @pytest.mark.asyncio
 async def test_rewrite_query_distillation_preserves_technical_token(monkeypatch):
     """AC-5: a distilled query must keep at least one verbatim technical

@@ -54,7 +54,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import re
 from collections import Counter
 from typing import Any
 
@@ -62,6 +61,7 @@ import httpx
 from litellm.integrations.custom_logger import CustomLogger
 
 from klai_kb_request_context import message_text as _message_text
+from klai_language_detect import UNKNOWN_LANGUAGE, detect_language
 
 logger = logging.getLogger(__name__)
 
@@ -121,117 +121,6 @@ _DEFAULT_ANALYZER_LANGUAGE = "en"
 # offset, or a hash) so the undercount is visible in the data rather than
 # silent.
 _MAX_ANALYZE_CHARS = 20_000
-
-
-# ---------------------------------------------------------------------------
-# Language detection — local, dependency-free approximation
-# ---------------------------------------------------------------------------
-# REQ-2 asks Phase 2 telemetry to "reuse the existing detector rather than
-# adding one" — klai-retrieval-api's `util/language_detect.py`, a
-# lingua-backed detector with preloaded per-language models.
-#
-# That module cannot be imported here as-is. deploy/litellm runs the STOCK
-# ghcr.io/berriai/litellm image: individual .py files are bind-mounted onto
-# PYTHONPATH (see docker-compose.yml's `litellm:` service), there is no
-# Dockerfile and no pip-install step for this container. The `lingua`
-# package (and its preloaded language models) is not, and cannot become,
-# part of that image without introducing a custom build — the same
-# constraint already recorded against klai_chat_prompts.py and
-# klai_llm_safety's vendoring ("Phase D plan: pip install in custom
-# image"). Mounting the canonical module unmodified would crash the
-# container at import time with ModuleNotFoundError, the exact failure
-# class documented on klai_retrieval_telemetry.py's own compose mount.
-#
-# REQ-6 only needs this signal for TELEMETRY — "so per-language recall can
-# be compared instead of assumed" — never to change detection or routing
-# behaviour. A coarse, stdlib-only function-word heuristic over the same
-# six target languages is proportionate for that purpose and adds no new
-# dependency. This is a deliberate simplification, not a hidden shortcut —
-# see the implementation report's "could not fully satisfy" note.
-TARGET_LANGUAGES = ("nl", "en", "de", "fr", "pt", "es")
-UNKNOWN_LANGUAGE = "und"
-
-# Lingua needs ~30 chars before it trusts its own result; mirrored here so
-# short/greeting-only turns consistently report "und" rather than a guess.
-_MIN_CHARS_FOR_DETECTION = 30
-_MIN_STOPWORD_HITS = 2
-
-_STOPWORDS: dict[str, frozenset[str]] = {
-    "nl": frozenset(
-        {
-            "de", "het", "een", "en", "van", "ik", "je", "is", "dat", "niet",
-            "met", "voor", "op", "aan", "te", "dit", "ook", "zijn", "wij",
-            "hebben", "kunt", "graag", "alstublieft",
-        }
-    ),
-    "en": frozenset(
-        {
-            "the", "and", "is", "of", "to", "in", "that", "it", "for",
-            "with", "on", "as", "are", "was", "this", "have", "you", "not",
-            "please", "could", "would",
-        }
-    ),
-    "de": frozenset(
-        {
-            "der", "die", "das", "und", "ist", "nicht", "mit", "für", "auf",
-            "den", "dem", "des", "ein", "eine", "sie", "wir", "haben",
-            "bitte", "können",
-        }
-    ),
-    "fr": frozenset(
-        {
-            "le", "la", "les", "et", "est", "un", "une", "pour", "avec",
-            "sur", "dans", "ne", "pas", "je", "vous", "nous", "des",
-            "merci", "pouvez",
-        }
-    ),
-    "pt": frozenset(
-        {
-            "o", "a", "os", "as", "de", "e", "um", "uma", "para", "com",
-            "não", "em", "que", "você", "nós", "é", "por", "favor",
-        }
-    ),
-    "es": frozenset(
-        {
-            "el", "la", "los", "las", "de", "y", "un", "una", "para",
-            "con", "no", "en", "que", "usted", "nosotros", "es", "por",
-            "favor",
-        }
-    ),
-}
-
-_WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
-
-
-def _detect_language(text: str) -> str:
-    """Return a best-effort ISO-639-1-ish code, or ``UNKNOWN_LANGUAGE``.
-
-    Telemetry-only (REQ-6) — never used to gate or change detection
-    behaviour. See the module-level note above for why this is a local
-    heuristic rather than an import of the canonical lingua-based
-    detector.
-    """
-    if not text or len(text.strip()) < _MIN_CHARS_FOR_DETECTION:
-        return UNKNOWN_LANGUAGE
-
-    tokens = [tok.lower() for tok in _WORD_RE.findall(text)]
-    if not tokens:
-        return UNKNOWN_LANGUAGE
-
-    scores = {
-        lang: sum(1 for tok in tokens if tok in words)
-        for lang, words in _STOPWORDS.items()
-    }
-    best_score = max(scores.values())
-    if best_score < _MIN_STOPWORD_HITS:
-        return UNKNOWN_LANGUAGE
-
-    # A single ambiguous overlap word ("de" is a stopword in nl/fr/pt/es)
-    # must not silently pick a winner — report unknown rather than guess.
-    tied = [lang for lang, score in scores.items() if score == best_score]
-    if len(tied) > 1:
-        return UNKNOWN_LANGUAGE
-    return tied[0]
 
 
 # ---------------------------------------------------------------------------
@@ -356,7 +245,10 @@ async def _observe(
     try:
         analyzer_language = (
             language
-            if language in _ANALYZER_SUPPORTED_LANGUAGES
+            if (
+                language != UNKNOWN_LANGUAGE
+                and language in _ANALYZER_SUPPORTED_LANGUAGES
+            )
             else _DEFAULT_ANALYZER_LANGUAGE
         )
         async with httpx.AsyncClient(timeout=_HTTPX_CLIENT_TIMEOUT_SECONDS) as http:
@@ -423,7 +315,7 @@ class KlaiPiiObserver(CustomLogger):
                 # last in `callbacks:` so it is the post-injection payload.
                 texts = _payload_texts(messages)
                 if texts:
-                    language = _detect_language(_user_text(messages))
+                    language = detect_language(_user_text(messages))
                     asyncio.get_running_loop().create_task(
                         _observe(
                             "\n\n".join(texts),

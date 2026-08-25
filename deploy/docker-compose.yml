@@ -329,6 +329,7 @@ services:
       - ./litellm/klai_kb_system_prompt.py:/app/klai_kb_system_prompt.py:ro
       - ./litellm/klai_kb_traceability.py:/app/klai_kb_traceability.py:ro
       - ./litellm/klai_kb_urls.py:/app/klai_kb_urls.py:ro
+      - ./litellm/klai_language_detect.py:/app/klai_language_detect.py:ro
       - ./litellm/klai_litellm_response.py:/app/klai_litellm_response.py:ro
       - ./litellm/klai_chat_attachments.py:/app/klai_chat_attachments.py:ro
       - ./litellm/klai_pasted_correspondence.py:/app/klai_pasted_correspondence.py:ro

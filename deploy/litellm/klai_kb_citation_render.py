@@ -32,6 +32,7 @@ from klai_kb_chat_mode import prompt_mode_is_known, prompt_mode_is_strict
 from klai_kb_context_prompt import _sanitize_question_echo
 from klai_kb_traceability import dedupe_strings
 from klai_kb_urls import normalise_guard_url
+from klai_language_detect import UNKNOWN_LANGUAGE, detect_language
 from klai_litellm_response import (
     get_choice_finish_reason,
     get_choice_message,
@@ -855,7 +856,7 @@ def log_kb_citation_render(
     # Semgrep reads the contract's "tokens" field names as credentials;
     # values are redacted unless privacy mode is explicitly "full".
     logger.warning(  # nosemgrep
-        "%s org_id=%s user_id=%s request_id=%s render_mode=%s stream=%s rendered_messages=%d rendered_sources=%d chunks_injected=%s no_citable_reason=%s citation_reason_counts=%s citation_decisions=%s sender_only_tokens_in_answer=%s answer_tokens_unsupported_by_evidence=%s correspondence_detected=%s sender_only_tokens=%s answer_tokens_unsupported_by_evidence_values=%s answer_contract=%s",
+        "%s org_id=%s user_id=%s request_id=%s render_mode=%s stream=%s rendered_messages=%d rendered_sources=%d chunks_injected=%s no_citable_reason=%s citation_reason_counts=%s citation_decisions=%s sender_only_tokens_in_answer=%s answer_tokens_unsupported_by_evidence=%s correspondence_detected=%s sender_only_tokens=%s answer_tokens_unsupported_by_evidence_values=%s answer_contract=%s response_language_target=%s answer_language=%s language_correct=%s",
         event,
         kb_meta.get("org_id"),
         kb_meta.get("user_id"),
@@ -874,6 +875,9 @@ def log_kb_citation_render(
         provenance.get("sender_only_tokens", "<redacted>"),
         provenance.get("answer_tokens_unsupported_by_evidence_values", "<redacted>"),
         kb_meta.get("answer_contract"),
+        kb_meta.get("response_language_target"),
+        kb_meta.get("answer_language"),
+        kb_meta.get("language_correct"),
     )
 
 
@@ -926,6 +930,23 @@ def _citation_user_content_flags(kb_meta: dict[str, Any]) -> tuple[bool, bool]:
     return (
         bool(kb_meta.get("allow_uncited_user_content")),
         bool(kb_meta.get("suppress_kb_citations")),
+    )
+
+
+def _record_answer_language(answer: str, kb_meta: dict[str, Any]) -> None:
+    answer_language = detect_language(answer)
+    target = kb_meta.get("response_language_target")
+    target_language = (
+        target if isinstance(target, str) and target != UNKNOWN_LANGUAGE else None
+    )
+    measured_answer_language = (
+        answer_language if answer_language != UNKNOWN_LANGUAGE else None
+    )
+    kb_meta["answer_language"] = answer_language
+    kb_meta["language_correct"] = (
+        None
+        if target_language is None or measured_answer_language is None
+        else target_language == measured_answer_language
     )
 
 
@@ -1073,6 +1094,7 @@ def compose_non_streaming_kb_response(
                     ),
                 )
             )
+            _record_answer_language(rendered_content, kb_meta)
             if (
                 rendered_content != content
                 or sources
@@ -1195,6 +1217,7 @@ def compose_streaming_kb_response(
                     ),
                 )
             )
+            _record_answer_language(rendered_content, kb_meta)
             _remember_citation_decision(
                 kb_meta,
                 decision,
@@ -1282,6 +1305,7 @@ def compose_streaming_kb_response(
                 ),
             )
         )
+        _record_answer_language(rendered_content, kb_meta)
         tail = remove_already_streamed_prefix(rendered_content, emitted_text)
         if tail is None and no_citable_sources:
             # Deliberate replacement (strict refusal): the canned message is

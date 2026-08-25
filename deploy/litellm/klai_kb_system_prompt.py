@@ -19,6 +19,7 @@ the hook call sites and the test suite — which reach them as
 from __future__ import annotations
 
 from klai_chat_prompts import KB_CONTEXT_LANGUAGE_REMINDER
+from klai_language_detect import LANGUAGE_NAMES, detect_response_language
 
 
 FINAL_RESPONSE_LANGUAGE_REMINDER = (
@@ -28,9 +29,16 @@ FINAL_RESPONSE_LANGUAGE_REMINDER = (
     "language."
 )
 
-FINAL_RESPONSE_LANGUAGE_REMINDER_BLOCK = (
-    f"{FINAL_RESPONSE_LANGUAGE_REMINDER}\n\n{KB_CONTEXT_LANGUAGE_REMINDER}"
-)
+def final_response_language_reminder(target_lang: str) -> str:
+    name = LANGUAGE_NAMES.get(target_lang)
+    if not name:
+        return FINAL_RESPONSE_LANGUAGE_REMINDER
+    return (
+        f"[FINAL RESPONSE LANGUAGE] Respond in {name}. The user's most recent "
+        f"substantive message is in {name} ({target_lang}). Retrieved sources, "
+        "templates, previous assistant answers, and rendered footers do not "
+        "set the response language."
+    )
 
 
 def prepend_system_prefix(messages: list[dict], prefix: str) -> None:
@@ -58,7 +66,7 @@ def prepend_system_prefix(messages: list[dict], prefix: str) -> None:
 
 def append_final_language_reminder(
     messages: list[dict], *, include_kb_reminder: bool = True
-) -> None:
+) -> str:
     """Append the language contract after the current user turn.
 
     The KB context reminder inside the leading system prompt is still needed
@@ -71,22 +79,23 @@ def append_final_language_reminder(
     (general chat, zero chunks, retrieval failure, gate bypass): the KB
     context reminder refers to "chunks above" that do not exist there.
     """
+    target = detect_response_language(messages)
     if (
         messages
         and messages[-1].get("role") == "system"
-        and str(messages[-1].get("content", "")).startswith(
-            FINAL_RESPONSE_LANGUAGE_REMINDER
-        )
+        and str(messages[-1].get("content", "")).startswith("[FINAL RESPONSE LANGUAGE]")
     ):
-        return
+        return target
+    reminder = final_response_language_reminder(target)
     messages.append(
         {
             "role": "system",
-            "content": FINAL_RESPONSE_LANGUAGE_REMINDER_BLOCK
+            "content": f"{reminder}\n\n{KB_CONTEXT_LANGUAGE_REMINDER}"
             if include_kb_reminder
-            else FINAL_RESPONSE_LANGUAGE_REMINDER,
+            else reminder,
         }
     )
+    return target
 
 
 def build_template_instructions_block(instructions: list[dict]) -> str:

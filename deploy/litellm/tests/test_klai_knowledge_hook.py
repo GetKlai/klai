@@ -4390,7 +4390,11 @@ class TestKlaiKnowledgeHookNLBiasRegression:
         }
         assert messages[-1]["role"] == "system"
         assert "[FINAL RESPONSE LANGUAGE]" in messages[-1]["content"]
+        assert "Respond in English" in messages[-1]["content"]
         assert "NOT the language of the source documents" in messages[-1]["content"]
+        assert (
+            result["metadata"]["_klai_kb_meta"]["response_language_target"] == "en"
+        )
 
     def test_final_language_reminder_append_is_idempotent(self, monkeypatch):
         """Double-appending must not stack duplicate reminder messages."""

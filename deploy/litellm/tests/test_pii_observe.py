@@ -464,8 +464,8 @@ async def test_event_carries_detected_english_language(monkeypatch, caplog):
 
 def test_short_text_detects_as_unknown_language(monkeypatch):
     mod = _load_observer(monkeypatch)
-    assert mod._detect_language("hoi") == mod.UNKNOWN_LANGUAGE
-    assert mod._detect_language("") == mod.UNKNOWN_LANGUAGE
+    assert mod.detect_language("hoi") == mod.UNKNOWN_LANGUAGE
+    assert mod.detect_language("") == mod.UNKNOWN_LANGUAGE
 
 
 def test_analyzer_language_falls_back_to_supported_set(monkeypatch):
