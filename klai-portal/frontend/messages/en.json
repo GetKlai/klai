@@ -2034,7 +2034,7 @@
   "admin_settings_pii_readonly_hint": "Only organisation admins can change this.",
   "admin_settings_pii_limitations_title": "What this does and does not catch",
   "admin_settings_pii_limitation_names": "Names are not detected. If a name appears in a message, the model sees it.",
-  "admin_settings_pii_limitation_address": "Addresses are recognised by postcode, and only Dutch postcodes. An address without a Dutch postcode is not recognised. Phone numbers, VAT numbers and IBANs are recognised across the EU. Company registration numbers are recognised for the Netherlands and Belgium only.",
+  "admin_settings_pii_limitation_address": "Addresses are recognised by postcode, and only Dutch postcodes. An address without a Dutch postcode is not recognised. VAT numbers and IBANs are recognised across the EU. Company registration numbers cover the Netherlands and Belgium. Phone numbers written with a country code are recognised anywhere; without one, only Dutch, Belgian, German, French and British numbers are.",
   "admin_settings_pii_limitation_structured": "Detection covers structured identifiers: numbers, codes, formats. It is not a general understanding of what is sensitive.",
   "admin_settings_pii_limitation_context": "The context around a masked value stays. Masking the BSN in \"the BSN of the customer with a payment arrears is 111222333\" removes the number, not the sentence's meaning.",
   "admin_settings_pii_limitation_false_positives": "False positives happen. For restored entity types you get your own text back unchanged, but the model answered on the masked version, so an answer can be slightly worse with no visible sign.",
