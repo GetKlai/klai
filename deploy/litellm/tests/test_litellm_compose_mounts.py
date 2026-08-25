@@ -48,3 +48,19 @@ def test_litellm_prisma_migrations_are_preflight_gated():
     assert "no env-drift services resolved; refusing an all-services compose up" in (
         deploy_compose_text
     )
+
+
+def test_compose_allowlist_preserves_the_empty_kill_switch():
+    """`${VAR-*}`, never `${VAR:-*}`, for the PII enforcement allowlist.
+
+    `_org_is_enforced` documents an explicitly empty allowlist as "enforce
+    for NO org" and `test_empty_allowlist_means_enforcement_for_no_org_even_with_flag_on`
+    pins that in the hook. The colon form would make it unreachable from
+    the deployment: Compose substitutes the default for unset AND empty, so
+    an operator emptying the variable to switch enforcement off would get
+    `*` and switch it on for every tenant instead.
+    """
+    compose_text = COMPOSE_FILE.read_text(encoding="utf-8")
+
+    assert "KLAI_PII_ENFORCE_ORG_IDS: ${KLAI_PII_ENFORCE_ORG_IDS-*}" in compose_text
+    assert "${KLAI_PII_ENFORCE_ORG_IDS:-" not in compose_text

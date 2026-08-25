@@ -457,7 +457,6 @@ services:
       # SPEC-PRIVACY-MISTRAL-PII-001 Phase 3 (REQ-7): the single switch that
       # keeps klai_pii_enforce.py inert. Default OFF/unset — with it off,
       # masking/restore never runs at all (no analyzer call, no map entry).
-      # ACTIVATED 2026-08-21 for Voys only (see the allowlist below).
       # Verified end-to-end against real Mistral calls before flipping:
       # masking, non-streaming restore, AND streaming restore — the last is
       # the path LibreChat uses and the one we had to build ourselves
@@ -465,18 +464,32 @@ services:
       # (REQ-0a). Rollback is reverting this line.
       KLAI_PII_ENFORCE: ${KLAI_PII_ENFORCE:-true}
       # Activation hardening (see klai_pii_enforce.py's `_org_is_enforced`):
-      # comma-separated org_id allowlist. KLAI_PII_ENFORCE alone applies to
-      # every tenant identically the moment it flips; this lets the FIRST
-      # activation be exactly one org. Empty/unset means enforce for NO org
-      # even if KLAI_PII_ENFORCE is "true" — the safe reading, not "every
-      # org" — so turning enforcement on for anyone is a deliberate
-      # two-variable action, never a single flag flip.
+      # comma-separated org_id allowlist. The hook treats an absent or empty
+      # value as "enforce for NO org" even when KLAI_PII_ENFORCE is "true".
+      # Since GA the Compose default below fills in `*` when the HOST
+      # variable is unset, so the off switch an operator reaches for is an
+      # explicitly empty value — `KLAI_PII_ENFORCE_ORG_IDS=` — and NOT
+      # deleting the variable, which now yields `*`.
       #
-      # 368884765035593759 = Voys (portal_orgs.id 8). First and currently
-      # ONLY activated tenant. Every other org takes the same early-return
-      # path it did yesterday, which is what makes this reversible per
-      # tenant rather than platform-wide.
-      KLAI_PII_ENFORCE_ORG_IDS: ${KLAI_PII_ENFORCE_ORG_IDS:-368884765035593759}
+      # `*` = general availability, 2026-08-25: every request that carries
+      # an org_id is enforced. The staged rollout it replaces (one named
+      # org, 2026-08-21 to 2026-08-25) is done. Enumerating org_ids instead
+      # would go stale at the next signup, and in the unsafe direction — the
+      # new tenant would be the uncovered one.
+      #
+      # What this does NOT turn on: the seven RETURN_SET entities stay
+      # per-org and default off (`portal_orgs.pii_masked_entities`), so an
+      # org that has opted into nothing gets SECRET and NL_BSN masked and
+      # nothing else. Defaulting the return set on is a separate decision.
+      #
+      # `-` and NOT `:-`, deliberately. `${VAR:-*}` substitutes the default
+      # for unset AND empty, which would turn the documented emergency-off
+      # (set the variable to empty -> enforce for NO org) into its exact
+      # opposite: enforce for EVERY org, during whatever incident made
+      # someone reach for it. With `-`, unset means GA, explicitly empty
+      # means nobody, and a named list means those orgs. Pinned by
+      # test_compose_allowlist_preserves_the_empty_kill_switch.
+      KLAI_PII_ENFORCE_ORG_IDS: ${KLAI_PII_ENFORCE_ORG_IDS-*}
     depends_on:
       postgres:
         condition: service_healthy

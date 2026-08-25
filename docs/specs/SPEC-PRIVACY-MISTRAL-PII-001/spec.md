@@ -1,9 +1,9 @@
 ---
 id: SPEC-PRIVACY-MISTRAL-PII-001
-version: "0.9.0"
+version: "1.0.0"
 status: draft
 created: 2026-08-20
-updated: 2026-08-20
+updated: 2026-08-25
 author: Mark Vletter
 priority: high
 related:
@@ -17,6 +17,7 @@ roadmap: docs/architecture/knowledge-rag-improvement-plan.md
 
 | Version | Date       | Author       | Change |
 |---------|------------|--------------|--------|
+| 1.0.0   | 2026-08-25 | Mark Vletter | **General availability.** `KLAI_PII_ENFORCE_ORG_IDS=*`: every request carrying an `org_id` is enforced, replacing the one-named-org rollout that ran from 2026-08-21. The allowlist gained a wildcard rather than an enumerated list of org_ids, because an enumerated list goes stale at the next signup and does so in the unsafe direction — the new tenant would be the uncovered one. Neither of the two guarantees the staged rollout was built on changes: an absent or empty value still means no orgs at the hook, and a request with no `org_id` is still never enforced. Where that stops: Compose supplies `*` when the host variable is unset, so the deployment-level off switch is an explicitly empty `KLAI_PII_ENFORCE_ORG_IDS=`, not a deleted one. Capacity was measured before flipping rather than assumed: presidio-analyzer sits at 214MiB/512MiB and 0.01% CPU while the Phase 2 observer already calls `/analyze` for every tenant, so enforcement roughly doubles a volume of ~3 calls per minute. The residual risk is availability, not capacity — REQ-10 fails closed, so the analyzer being down is now a chat outage for every tenant instead of one; `container_down` in `infra-rules.yaml` already covers `klai-core-.*`. Also records what GA does NOT cover: the `org_id=None` path carried 1619 of 1650 observed detections over 2026-08-18 to 2026-08-25, against 29 on attributable tenant chat, and masking cannot reach it. |
 | 0.9.0   | 2026-08-21 | Mark Vletter | Phase 3 merged and deployed **inert** (`adde54046`), analyzer image carrying the four system-review fixes pinned (`060459e28`). Verified on core-01 rather than assumed: `KLAI_PII_ENFORCE=false`, seven Phase 3 modules mounted with no import errors, the observer still emitting counts and changing nothing, and all four recogniser fixes confirmed against the running analyzer — `Factuurdatum 20200201` no longer masked, `bearer` prose no longer a SECRET, `2026 en` no longer a postcode, Rotterdam `010` still detected. Everything between LiteLLM and Mistral is now built and in place; the only remaining step to activate is the flag. |
 | 0.8.0   | 2026-08-20 | Mark Vletter | **System review of the merged stack** — the first review of the pieces together rather than each PR alone, and it found what per-diff review structurally cannot. REQ-8's overlap rule was wrong: it said "drop any span *contained* in one already taken", derived from the single IBAN⊃PHONE example, but the recogniser set produces pairs where the higher-scoring span sits INSIDE the lower-scoring one (`NL_BSN` 1.00 inside `NL_BTW` 0.70; a JWT span inside a Bearer span). A containment-only rule accepts both and corrupts the text. Now: drop any **overlap**, and never-restore entities win exact ties, because `NL_BSN` and `NL_KVK` can produce a byte-identical span with an identical score and a tie must not decide whether a value becomes restorable. The Phase 3 implementation already dropped overlaps — the defect was in this document, not the code. Three irreversible-false-positive fixes shipped alongside: 8-digit BSN now needs context (9.1% of `YYYYMMDD` dates passed the elfproef and were destroyed unrestorably), the `Bearer` pattern is anchored to an `Authorization:` header (it matched two words of ordinary Dutch prose), and the postcode letter pair is case-sensitive again (registry `IGNORECASE` made `2026 en` a postcode). A1 marked partly falsified. |
 | 0.7.0   | 2026-08-20 | Mark Vletter | Maintenance pass — the SPEC is a working document, not a record of what we once believed. Adds a **Status** table (per-phase state with the commit that proves it) so this doubles as the progress overview, plus a short "what this SPEC got wrong, and how it was caught" table: three of four errors were found by measuring, not reading, and two had already been written down as confident conclusions. Removed three claims that are now false: that the LiteLLM integration is configuration rather than code (REQ-5 and REQ-0a each measured otherwise), that `PHONE_NUMBER` is a stock built-in enabled via a YAML region key (the loader drops it — it is `NLPhoneRecognizer` now), and assumption A6 (struck through with the real root cause and the fixing commits). Re-validated every `file:line` anchor **semantically**, not just for range: the `MISTRAL_API_KEY` anchor had drifted from 388-389 to 421-422 as compose grew, still pointing inside the file and therefore passing a naive check while being wrong. |
@@ -67,12 +68,20 @@ the table is right and the text is stale — say so rather than working around i
 | **0** — prove the restore path | **Done, answered** | Ran on core-01. `output_parse_pii` restores non-streaming, returns an **empty map on streaming**. Verbatim-token instruction takes `PHONE_NUMBER` survival 58.3% → 95.8%. See the RESULT block under Phase 0 |
 | **1** — recognizer pack | **Live** | `d55d6adeb`, `d2aa35fd2`. Nine recognizers loaded across en/nl/de, spaCy disabled per language, verified in production logs. Rotterdam fix `4af66f4e0` + `b5b592051`, verified live |
 | **2** — read-only observer | **Live, measuring** | `c6dd946e4`. Real `pii_observed` events in VictoriaLogs, including `org_id=None` requests the existing hook skips. Changes no payload |
-| **3** — mask + restore | **Live, inert** | `adde54046` + `060459e28`. Verified on core-01: `KLAI_PII_ENFORCE=false`, seven modules mounted, no import errors, observer unaffected. Klai owns mask/map/restore because Phase 0 measured the native path unusable for streaming. **Activation is a flag flip** |
+| **3** — mask + restore | **Live, all tenants** | `adde54046` + `060459e28` shipped it inert; one named org from 2026-08-21; `KLAI_PII_ENFORCE_ORG_IDS=*` from 2026-08-25. Klai owns mask/map/restore because Phase 0 measured the native path unusable for streaming |
 | **4** — `PERSON` via GLiNER | **Blocked, deliberately** | No PERSON detector is deployed at all (REQ-2 disables SpacyRecognizer). REQ-0b's PERSON half is unmeasurable until GLiNER lands |
 
-**Nothing is being masked today.** The guardrail has no `default_on` and enforcement is off,
-so production payloads reach Mistral unchanged. Phases 1 and 2 detect and count; they do not
-alter.
+**What is masked today.** `SECRET` and `NL_BSN`, for every request that carries an `org_id`.
+The seven `RETURN_SET` entities remain per-org and default off, so a tenant that has opted
+into nothing gets those two and nothing else. Defaulting the return set on is a separate
+decision, not implied by general availability.
+
+**What is still never masked.** A request with no `org_id` — the widget and internal
+service-key paths, including knowledge-graph extraction and query rewriting. Measured over
+2026-08-18 to 2026-08-25, that path carried 1619 of the 1650 observed detections, against 29
+on attributable tenant chat. General availability therefore covers the chat call and not the
+larger flow behind it; closing that is its own work, and the gap should not be described to
+customers as covered.
 
 ### What this SPEC got wrong, and how it was caught
 
@@ -691,10 +700,10 @@ safe to assert.
 | Risk | Likelihood | Impact | Mitigation |
 |------|------------|--------|------------|
 | GLiNER blows the latency budget on CPU | medium | medium | It is the only model in the path. Every other REQ-3 entity is regex-plus-checksum and unaffected, so the documented response is to disable `PERSON` and ship the rest |
-| Over-detection: a nine-digit order number read as a BSN | medium | medium | The elfproef makes an accidental match roughly 1 in 11 — an assumption, not a measurement (see Assumptions). Bounded in practice because enforcement ships off by default and the first activation is per-org, so a bad rate shows on one tenant, not all |
+| Over-detection: a nine-digit order number read as a BSN | medium | medium | The elfproef makes an accidental match roughly 1 in 11 — an assumption, not a measurement (see Assumptions). The per-org bound this row used to claim is gone as of GA (2026-08-25): a bad rate now shows on every tenant at once, and `NL_BSN` is never restored, so a false positive is irreversible. What remains is the 8-digit context gate (`klai_pii_recognizers.py`, `NLBSNRecognizer.analyze`), which removed the `YYYYMMDD` collision that made this likely; the 9-digit form still stands on the checksum alone |
 | A tenant genuinely needs a BSN to reach the model | low | medium | REQ-7's audited statutory-basis exception. If there is no statutory basis, the correct outcome is that it does not reach the model |
 | `PERSON` recall varies by language even with multilingual GLiNER | medium | medium | REQ-2 requires Phase 2 telemetry to carry detected language so this is measured per language rather than assumed uniform. A material gap gates REQ-9, and the checksum entities are unaffected either way |
-| Fail-closed turns a Presidio outage into a chat outage | low | high | Enforcement ships behind `KLAI_PII_ENFORCE`, default off, so the code runs in production inert before it can reject anything. Bounded by the 60 ms NFR, and the flag is the rollback |
+| Fail-closed turns a Presidio outage into a chat outage | low | critical | No longer bounded to a pilot: as of GA (2026-08-25) an analyzer outage rejects chat for every tenant carrying an `org_id`, so likelihood stays low but the blast radius is now platform-wide. `container_down` in `deploy/grafana/provisioning/alerting/infra-rules.yaml` covers `klai-core-.*` and therefore the analyzer. Rollback is two levels: `KLAI_PII_ENFORCE=false`, or an explicitly empty `KLAI_PII_ENFORCE_ORG_IDS` — which is why the Compose default uses `${VAR-*}` and not `${VAR:-*}` |
 | Presidio's upstream governance move stalls and the project goes quiet | low | medium | MIT-licensed and self-hosted; a frozen dependency stays working. Our recognizer pack is our own code and portable |
 | Someone re-proposes Piiranha because it supports Dutch | medium | low | Rejected in the Motivation with the licence quoted, so the answer is on file |
 
