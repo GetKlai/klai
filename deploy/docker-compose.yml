@@ -516,15 +516,17 @@ services:
   # Neither takes a secret, so this adds no `env_file` scope and no
   # `SECRETS_MATRIX.md` entry.
   presidio-analyzer:
-    # PLACEHOLDER DIGEST — deploy/presidio/analyzer-image-build.yml has not
-    # run against this change yet (it runs on push to `main`; this PR does
-    # not push or deploy). Replace with the real digest from that workflow's
-    # step summary. Bootstrap complete: presidio-analyzer-image-build.yml
-    # published this digest from d55d6adeb (tag 2.2.362-klai.1-d55d6adeb0ec),
-    # built FROM the same ghcr.io/data-privacy-stack digest Phase 0 pinned.
+    # Digest published by presidio-analyzer-image-build.yml from c0d198b9d
+    # (tag 2.2.362-klai.1-c0d198b9da7b), carrying the EU-wide VAT recogniser,
+    # the Belgian enterprise number and the six-language registry.
+    #
+    # This pin is a SEPARATE step from merging a recogniser change: the build
+    # runs on push to main and publishes a digest, and until this line points
+    # at it the analyzer keeps serving the previous pack. A recogniser PR that
+    # merges without a follow-up bump changes nothing in production.
     # This is where REQ-3's Dutch recognizers (BSN/KvK/BTW/postcode) and
     # REQ-4's SECRET recognizer actually enter the request path.
-    image: ghcr.io/getklai/presidio-analyzer@sha256:47151487c449f8762a3d9760279514f9bbfc3b312d2d731c12761465bd27e003
+    image: ghcr.io/getklai/presidio-analyzer@sha256:23f1c064761baadc030786aac60b58a42c5157bbf0c6e4a0201c538dc262241d
     restart: unless-stopped
     networks:
       - inference
