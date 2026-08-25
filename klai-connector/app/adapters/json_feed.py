@@ -34,7 +34,11 @@ from app.adapters.base import BaseAdapter, DocumentRef
 from app.clients.knowledge_ingest import MAX_INGEST_CONTENT_CHARS
 from app.services.url_guard import validate_json_feed_url_strict
 
-_MAX_FEED_SIZE = 2 * 1024 * 1024
+# Raw download cap. This bounds memory for the in-flight fetch only; document
+# and chunk sizes are bounded separately per rendered group document. The Voys
+# PriceRight feed crossed 2 MiB in Aug 2026 (4.9 MB on 2026-08-25) and legitimate
+# record feeds grow, so the cap guards against runaway endpoints, not big feeds.
+_MAX_FEED_SIZE = 16 * 1024 * 1024
 _REQUEST_TIMEOUT = 30.0
 _TOTAL_FETCH_TIMEOUT = 60.0
 _MIN_KNOWLEDGE_CHARS = 50
