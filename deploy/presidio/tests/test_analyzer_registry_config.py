@@ -38,11 +38,19 @@ from presidio_analyzer import AnalyzerEngineProvider  # noqa: E402
 # falsy overrides the Dockerfile sets.
 _REPO_CONF_FILE = str(Path(__file__).resolve().parent.parent / "analyzer" / "conf" / "analyzer.yaml")
 
+# The one path every check in this file must use. Inside the image only
+# `tests/` is mounted, so `_REPO_CONF_FILE` does not exist there — reading it
+# unconditionally broke collection in the "Test recognizer pack against the
+# built image" step while passing locally. Resolve it the same way the engine
+# fixture does, so the assertions run against whichever config the engine was
+# actually built from.
+_CONF_FILE = os.environ.get("ANALYZER_CONF_FILE") or _REPO_CONF_FILE
+
 
 @pytest.fixture(scope="module")
 def engine():
     provider = AnalyzerEngineProvider(
-        analyzer_engine_conf_file=os.environ.get("ANALYZER_CONF_FILE") or _REPO_CONF_FILE,
+        analyzer_engine_conf_file=_CONF_FILE,
         nlp_engine_conf_file=os.environ.get("NLP_CONF_FILE", ""),
         recognizer_registry_conf_file=os.environ.get("RECOGNIZER_REGISTRY_CONF_FILE", ""),
     )
@@ -61,7 +69,7 @@ class TestConfigLoadsAsIntended:
         """
         import yaml
 
-        declared = yaml.safe_load(Path(_REPO_CONF_FILE).read_text(encoding="utf-8"))
+        declared = yaml.safe_load(Path(_CONF_FILE).read_text(encoding="utf-8"))
         assert set(engine.supported_languages) == set(declared["supported_languages"])
 
     def test_every_supported_language_has_an_nlp_model_entry(self, engine):
@@ -71,7 +79,7 @@ class TestConfigLoadsAsIntended:
         it."""
         import yaml
 
-        declared = yaml.safe_load(Path(_REPO_CONF_FILE).read_text(encoding="utf-8"))
+        declared = yaml.safe_load(Path(_CONF_FILE).read_text(encoding="utf-8"))
         modelled = {m["lang_code"] for m in declared["nlp_configuration"]["models"]}
         assert set(declared["supported_languages"]) == modelled
 
@@ -111,7 +119,7 @@ def _configured_languages() -> list[str]:
     """
     import yaml
 
-    declared = yaml.safe_load(Path(_REPO_CONF_FILE).read_text(encoding="utf-8"))
+    declared = yaml.safe_load(Path(_CONF_FILE).read_text(encoding="utf-8"))
     return list(declared["supported_languages"])
 
 
