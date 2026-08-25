@@ -885,6 +885,101 @@ def test_parse_org_allowlist_trims_whitespace_and_drops_empties():
     assert _parse_org_allowlist("   ") == frozenset()
 
 
+@pytest.mark.asyncio
+async def test_wildcard_allowlist_enforces_an_org_it_never_names(monkeypatch):
+    """General availability: `*` covers a tenant that appears after the
+    variable was set, which is the case an enumerated list gets wrong --
+    silently, and in the unsafe direction."""
+    mod = _load_enforcer(monkeypatch, enforce=True, extra_env={"KLAI_PII_ENFORCE_ORG_IDS": "*"})
+    _stub_org_policy(mod, monkeypatch, frozenset())
+
+    text = "mijn bsn is 111222333 graag verwerken"
+    start, end = text.index("111222333"), text.index("111222333") + len("111222333")
+    client = _ScriptedAnalyzerClient(
+        script={text: [{"entity_type": "NL_BSN", "start": start, "end": end, "score": 0.85}]}
+    )
+    _install_analyzer(mod, monkeypatch, client)
+
+    data = {
+        "model": "klai-primary",
+        "litellm_call_id": "call-wildcard-1",
+        "messages": [{"role": "user", "content": text}],
+    }
+    result = await mod.klai_pii_enforcer.async_pre_call_hook(
+        _user_api_key("an-org-nobody-listed"), None, data, "completion"
+    )
+    user_message = [m for m in result["messages"] if m.get("role") == "user"][0]
+    assert "<NL_BSN_1>" in user_message["content"]
+    assert client.calls
+
+
+@pytest.mark.asyncio
+async def test_wildcard_still_never_enforces_a_request_without_org_id(monkeypatch):
+    """`*` widens which identities match, not whether an identity is
+    required. The org-less master-key path stays exempt, so decision (2)
+    in `_org_is_enforced` survives general availability."""
+    mod = _load_enforcer(monkeypatch, enforce=True, extra_env={"KLAI_PII_ENFORCE_ORG_IDS": "*"})
+    client = _ScriptedAnalyzerClient(raise_exc=AssertionError("must not call analyzer"))
+    _install_analyzer(mod, monkeypatch, client)
+
+    data = {
+        "model": "klai-primary",
+        "litellm_call_id": "call-wildcard-2",
+        "messages": [{"role": "user", "content": "mijn bsn is 111222333"}],
+    }
+    result = await mod.klai_pii_enforcer.async_pre_call_hook(
+        _user_api_key(org_id=None), None, data, "completion"
+    )
+    assert result is data
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_wildcard_masks_never_restore_entities_for_an_org_with_empty_policy(monkeypatch):
+    """What "on for all tenants" actually delivers on day one: an org that
+    has opted into nothing still gets SECRET and NL_BSN masked, and still
+    gets no RETURN_SET entity masked. Guards against the wildcard being
+    mistaken for "every entity on for everyone"."""
+    mod = _load_enforcer(monkeypatch, enforce=True, extra_env={"KLAI_PII_ENFORCE_ORG_IDS": "*"})
+    _stub_org_policy(mod, monkeypatch, frozenset())
+
+    email = "jan@example.nl"
+    text = f"mijn bsn is 111222333 en mijn mail is {email}"
+    bsn_start = text.index("111222333")
+    email_start = text.index(email)
+    client = _ScriptedAnalyzerClient(
+        script={
+            text: [
+                {
+                    "entity_type": "NL_BSN",
+                    "start": bsn_start,
+                    "end": bsn_start + len("111222333"),
+                    "score": 0.85,
+                },
+                {
+                    "entity_type": "EMAIL_ADDRESS",
+                    "start": email_start,
+                    "end": email_start + len(email),
+                    "score": 1.0,
+                },
+            ]
+        }
+    )
+    _install_analyzer(mod, monkeypatch, client)
+
+    data = {
+        "model": "klai-primary",
+        "litellm_call_id": "call-wildcard-3",
+        "messages": [{"role": "user", "content": text}],
+    }
+    result = await mod.klai_pii_enforcer.async_pre_call_hook(
+        _user_api_key("org-with-no-opt-ins"), None, data, "completion"
+    )
+    sent = [m for m in result["messages"] if m.get("role") == "user"][0]["content"]
+    assert "<NL_BSN_1>" in sent, "never-restore entities apply the moment the org is enforced"
+    assert email in sent, "a RETURN_SET entity stays unmasked until the org opts into it"
+
+
 # ===========================================================================
 # System-review finding M4 — length cap / chunking on the enforce path
 # ===========================================================================

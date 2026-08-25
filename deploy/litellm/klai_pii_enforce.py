@@ -115,13 +115,21 @@ def _parse_org_allowlist(value: str) -> frozenset[str]:
 # be exactly one org while the rest of the tenant base is provably
 # untouched -- wired into deploy/docker-compose.yml next to
 # KLAI_PII_ENFORCE.
+#
+# `*` is the general-availability value: every request that carries an
+# org_id is enforced. It exists because the only other way to reach "all
+# tenants" is enumerating org_ids, and an enumerated list is wrong the
+# moment a customer signs up -- silently, and in the unsafe direction (the
+# new tenant is the one NOT covered). A wildcard cannot drift.
+_ALL_ORGS_WILDCARD = "*"
+
 KLAI_PII_ENFORCE_ORG_IDS = _parse_org_allowlist(os.getenv("KLAI_PII_ENFORCE_ORG_IDS", ""))
 
 
 def _org_is_enforced(org_id: Any) -> bool:
     """Whether masking/restore should run at all for THIS request's org.
 
-    Two deliberate decisions, each argued rather than assumed:
+    Three deliberate decisions, each argued rather than assumed:
 
     1. EMPTY allowlist + KLAI_PII_ENFORCE=true means enforcement for NO
        org -- not "every org", which would be the reading that reproduces
@@ -157,10 +165,24 @@ def _org_is_enforced(org_id: Any) -> bool:
        same as every other entity -- there is no path left that masks
        unconditionally across the whole tenant base while the allowlist
        is not yet "every org", which is what makes the rollout actually
-       gradual rather than gradual-except-for-credentials-and-BSN.
+       gradual rather than gradual-except-for-credentials-and-BSN. That
+       rollout is now complete: the deployed value is `*` (see 3), so the
+       "not yet every org" state this paragraph describes is history
+       rather than current behaviour.
+
+    3. `*` in the allowlist means every request that DOES carry an org_id
+       is enforced. This is general availability, and it deliberately does
+       not weaken (1) or (2): an absent or empty value still means no
+       orgs HERE, and a request with no org_id is still never enforced,
+       because `*` widens which identities match, not whether an identity
+       is required. Note where that first guarantee now stops: Compose
+       fills in `*` when the host variable is unset, so at the deployment
+       the off switch is an explicitly empty value, not a deleted one.
     """
     if not org_id:
         return False
+    if _ALL_ORGS_WILDCARD in KLAI_PII_ENFORCE_ORG_IDS:
+        return True
     return org_id in KLAI_PII_ENFORCE_ORG_IDS
 
 
