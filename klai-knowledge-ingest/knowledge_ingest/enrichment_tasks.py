@@ -411,10 +411,18 @@ def _register_tasks(procrastinate_app: Any) -> None:
                 # Null the legacy scalar too: append_graphiti_episode_id keeps
                 # an existing scalar via COALESCE, so leaving the old value in
                 # place would pin it to a just-deleted episode uuid forever.
+                # complete/part_count reset in the same write: a worker kill
+                # between this statement and the part-count update below must
+                # not leave a row that reads as "complete with zero episodes".
                 await pg_store.update_artifact_extra(
                     conn,
                     artifact_id,
-                    {"graphiti_episode_ids": [], "graphiti_episode_id": None},
+                    {
+                        "graphiti_episode_ids": [],
+                        "graphiti_episode_id": None,
+                        "graphiti_episode_complete": False,
+                        "graphiti_episode_part_count": 0,
+                    },
                 )
                 logger.info(
                     "graphiti_stale_episodes_replaced",

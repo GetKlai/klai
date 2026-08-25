@@ -964,7 +964,11 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
         from knowledge_ingest import enrichment_tasks
 
         proc_app = enrichment_tasks.get_app()
+        # ``lock`` (execution) alongside ``queueing_lock`` (dedup): a stale-graph
+        # refresh for the same artifact must serialise against this job, not
+        # run concurrently and delete the episodes it is appending.
         await proc_app.ingest_graphiti_episode.configure(  # type: ignore[attr-defined]
+            lock=f"graphiti:{artifact_id}",
             queueing_lock=f"graphiti:{artifact_id}",
         ).defer_async(
             artifact_id=artifact_id,

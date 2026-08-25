@@ -231,7 +231,6 @@ async def test_get_active_artifact_state_only_uses_synced_artifacts():
         "content_hash": "sha256",
         "extra": {"graphiti_extraction_version": 2},
         "belief_time_start": 123,
-        "content_type": "kb_article",
     }
     sql = conn.fetchrow.call_args[0][0]
     assert "index_status = 'synced'" in sql

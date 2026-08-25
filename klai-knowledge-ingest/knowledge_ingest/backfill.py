@@ -39,7 +39,10 @@ from qdrant_client import AsyncQdrantClient
 from knowledge_ingest import pg_store
 from knowledge_ingest.config import settings
 from knowledge_ingest.db import cross_org_admin_connection
-from knowledge_ingest.enrichment_policy import graph_episode_skip_reason
+from knowledge_ingest.enrichment_policy import (
+    GRAPHITI_EXTRACTION_VERSION,
+    graph_episode_skip_reason,
+)
 from knowledge_ingest.episode_text import MAX_TEXT_CHARS, split_episode_text
 from knowledge_ingest.graph import EntityGraphData, flush_entity_graph_data, ingest_episode
 
@@ -286,7 +289,12 @@ async def main(
                         "UPDATE knowledge.artifacts "
                         "SET extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb "
                         "WHERE id = $2::uuid",
-                        json.dumps({"graphiti_episode_id": f"skipped:{skip_reason}"}),
+                        json.dumps(
+                            {
+                                "graphiti_episode_id": f"skipped:{skip_reason}",
+                                "graphiti_extraction_version": GRAPHITI_EXTRACTION_VERSION,
+                            }
+                        ),
                         artifact_id,
                     )
                     return
@@ -340,6 +348,7 @@ async def main(
                             {
                                 "graphiti_episode_complete": True,
                                 "graphiti_model": settings.graphiti_llm_model,
+                                "graphiti_extraction_version": GRAPHITI_EXTRACTION_VERSION,
                             }
                         ),
                         artifact_id,

@@ -91,7 +91,7 @@ async def get_active_artifact_state(
     """Return graph-refresh state for the current synced active artifact."""
     row = await conn.fetchrow(
         """
-        SELECT id::text AS id, content_hash, extra, belief_time_start, content_type
+        SELECT id::text AS id, content_hash, extra, belief_time_start
         FROM knowledge.artifacts
         WHERE org_id = $1 AND kb_slug = $2 AND path = $3
           AND belief_time_end = $4
@@ -116,7 +116,6 @@ async def get_active_artifact_state(
         "content_hash": row["content_hash"],
         "extra": extra,
         "belief_time_start": row["belief_time_start"],
-        "content_type": row["content_type"],
     }
 
 

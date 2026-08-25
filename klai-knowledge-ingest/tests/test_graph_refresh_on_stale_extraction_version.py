@@ -221,6 +221,59 @@ async def test_upload_reindex_always_enriches_and_only_refreshes_legacy_graph(
         assert app.ingest_graphiti_episode.defer_async.await_args.kwargs["replace_stale"] is True
 
 
+@pytest.mark.asyncio
+async def test_graph_refresh_failure_does_not_fail_the_unchanged_content_skip() -> None:
+    """A FalkorDB/queue hiccup in the refresh must not 500 a previously
+    side-effect-free "content unchanged" ingest."""
+    content = "\n".join(f"* [Page {number}](https://example.test/{number})" for number in range(8))
+    req = _request(content)
+    app = _ProcApp()
+
+    with (
+        patch.object(
+            pg_store,
+            "get_episode_ids_for_document_history",
+            AsyncMock(return_value=["episode-old"]),
+        ),
+        patch(
+            "knowledge_ingest.graph.delete_kb_episodes",
+            AsyncMock(side_effect=RuntimeError("falkordb down")),
+        ),
+    ):
+        result = await _ingest_unchanged(req, extra={}, app=app)
+
+    assert result == {"status": "skipped", "reason": "content unchanged", "chunks": 0}
+
+
+@pytest.mark.asyncio
+async def test_refresh_of_job_already_waiting_in_queue_reports_already_queued() -> None:
+    from procrastinate.exceptions import AlreadyEnqueued
+
+    req = _request()
+    app = _ProcApp()
+    app.ingest_graphiti_episode.defer_async = AsyncMock(side_effect=AlreadyEnqueued())
+
+    result = await _ingest_unchanged(req, extra={}, app=app)
+
+    assert result["graph_refresh"] == "already_queued"
+
+
+@pytest.mark.asyncio
+async def test_refresh_job_serialises_against_a_running_extraction_via_lock() -> None:
+    """queueing_lock dedups only todo jobs; the execution lock is what stops a
+    refresh from running concurrently with an in-flight extraction and deleting
+    the episodes it is appending."""
+    req = _request()
+    app = _ProcApp()
+
+    await _ingest_unchanged(req, extra={}, app=app)
+
+    assert app.ingest_graphiti_episode.configure.call_args.kwargs == {
+        "lock": f"graphiti:{_ARTIFACT_ID}",
+        "queueing_lock": f"graphiti:{_ARTIFACT_ID}",
+    }
+
+
 @pytest.fixture
 def graphiti_task() -> object:
     app = _CapturingApp()
@@ -246,7 +299,12 @@ async def _run_graphiti_task(graphiti_task: object, *, replace_stale: bool = Fal
     )
 
     async def _update(_conn, _artifact_id, values):
-        if values == {"graphiti_episode_ids": [], "graphiti_episode_id": None}:
+        if values == {
+            "graphiti_episode_ids": [],
+            "graphiti_episode_id": None,
+            "graphiti_episode_complete": False,
+            "graphiti_episode_part_count": 0,
+        }:
             events.append("reset")
 
     store.update_artifact_extra = AsyncMock(side_effect=_update)
