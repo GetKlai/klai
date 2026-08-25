@@ -10,6 +10,12 @@ from knowledge_ingest.config import settings
 
 _DEFAULT_MAX_CHUNKS = 200
 
+# Version 1 is the implicit, never-stamped legacy ruleset from before #1148.
+# Version 2 is the subject-facts, navigation-page skip, cross-language entity
+# naming ruleset used for the 2026-08-22 Voys rebuild. Bump this whenever the
+# extraction prompt in graph.py or the skip rules below change semantically.
+GRAPHITI_EXTRACTION_VERSION = 2
+
 
 def _configured_max_chunks() -> int:
     value = getattr(settings, "enrichment_max_chunks", _DEFAULT_MAX_CHUNKS)

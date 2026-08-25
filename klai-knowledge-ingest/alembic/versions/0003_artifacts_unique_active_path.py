@@ -1,7 +1,7 @@
 """SPEC-INGEST-UNIQUE-ARTIFACT-001 -- partial UNIQUE index on knowledge.artifacts.
 
 Closes the race window where two concurrent ``ingest_document()`` calls with
-identical ``(org_id, kb_slug, path)`` both pass ``get_active_content_hash``
+identical ``(org_id, kb_slug, path)`` both pass ``get_active_artifact_state``
 (see no active row), both call ``soft_delete_artifact`` (idempotent), and
 both call ``create_artifact`` -- leaving two active rows for the same path.
 

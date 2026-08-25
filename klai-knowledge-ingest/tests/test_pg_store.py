@@ -212,14 +212,27 @@ async def test_create_artifact_with_derived_from_recovers_unique_race_inside_sav
 
 
 @pytest.mark.asyncio
-async def test_get_active_content_hash_only_uses_synced_artifacts():
+async def test_get_active_artifact_state_only_uses_synced_artifacts():
     conn = _make_conn()
-    conn.fetchval = AsyncMock(return_value="sha256")
+    conn.fetchrow = AsyncMock(
+        return_value={
+            "id": "artifact-id",
+            "content_hash": "sha256",
+            "extra": '{"graphiti_extraction_version": 2}',
+            "belief_time_start": 123,
+            "content_type": "kb_article",
+        }
+    )
 
-    result = await pg_store.get_active_content_hash(conn, "org", "kb", "path.md")
+    result = await pg_store.get_active_artifact_state(conn, "org", "kb", "path.md")
 
-    assert result == "sha256"
-    sql = conn.fetchval.call_args[0][0]
+    assert result == {
+        "id": "artifact-id",
+        "content_hash": "sha256",
+        "extra": {"graphiti_extraction_version": 2},
+        "belief_time_start": 123,
+    }
+    sql = conn.fetchrow.call_args[0][0]
     assert "index_status = 'synced'" in sql
 
 

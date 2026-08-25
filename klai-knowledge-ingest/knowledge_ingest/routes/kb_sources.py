@@ -41,6 +41,7 @@ from pydantic import BaseModel, Field
 
 from knowledge_ingest import enrichment_tasks, pg_store, qdrant_store
 from knowledge_ingest.db import tenant_scoped_connection
+from knowledge_ingest.graph_refresh import maybe_refresh_stale_graph
 from knowledge_ingest.identity import assert_caller_identity_tenant_only
 
 logger = structlog.get_logger()
@@ -257,6 +258,30 @@ async def reindex_upload(
         updated = await pg_store.set_artifact_index_status(
             conn, artifact_id, verified_org_id, "pending"
         )
+        if updated is not None:
+            artifact = await pg_store.read_artifact_for_enrichment(conn, artifact_id)
+            if artifact is None:
+                raise RuntimeError(f"artifact {artifact_id} disappeared after status update")
+            extra = artifact["extra"] or {}
+            document_text = extra.get("document_text", "") or ""
+            if not document_text:
+                logger.warning(
+                    "graph_refresh_unavailable",
+                    artifact_id=artifact_id,
+                    reason="no document_text",
+                )
+            else:
+                await maybe_refresh_stale_graph(
+                    conn,
+                    artifact_id=artifact_id,
+                    extra=extra,
+                    org_id=verified_org_id,
+                    kb_slug=artifact["kb_slug"],
+                    path=artifact["path"],
+                    content_type=artifact["content_type"],
+                    belief_time_start=artifact["belief_time_start"],
+                    indexable_content=document_text,
+                )
     if updated is None:
         raise HTTPException(status_code=404, detail="artifact not found")
 

@@ -56,6 +56,16 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
+def _active_state(content_hash: str) -> dict:
+    return {
+        "id": "active-artifact-id",
+        "content_hash": content_hash,
+        "extra": {"graphiti_extraction_version": 2},
+        "belief_time_start": 0,
+        "content_type": "kb_article",
+    }
+
+
 @pytest.mark.asyncio
 async def test_skips_when_content_unchanged():
     """ingest_document returns 'skipped' without calling embed when hash matches."""
@@ -65,9 +75,9 @@ async def test_skips_when_content_unchanged():
 
     with (
         patch(
-            "knowledge_ingest.pg_store.get_active_content_hash",
+            "knowledge_ingest.pg_store.get_active_artifact_state",
             new_callable=AsyncMock,
-            return_value=stored_hash,
+            return_value=_active_state(stored_hash),
         ),
         patch("knowledge_ingest.embedder.embed", new_callable=AsyncMock) as mock_embed,
     ):
@@ -87,12 +97,12 @@ async def test_two_identical_connector_requests_upsert_chunks_once():
     req.source_connector_id = "connector-1"
     req.source_ref = "json-feed:connector-1:group-a"
     conn = _make_mock_conn()
-    stored_hash = AsyncMock(side_effect=[None, _sha256(req.content)])
+    stored_state = AsyncMock(side_effect=[None, _active_state(_sha256(req.content))])
 
     with (
         patch(
-            "knowledge_ingest.pg_store.get_active_content_hash",
-            new=stored_hash,
+            "knowledge_ingest.pg_store.get_active_artifact_state",
+            new=stored_state,
         ),
         patch(
             "knowledge_ingest.pg_store.soft_delete_artifact",
@@ -163,7 +173,7 @@ async def test_two_identical_connector_requests_upsert_chunks_once():
 
     assert first["status"] == "ok"
     assert second == {"status": "skipped", "reason": "content unchanged", "chunks": 0}
-    assert stored_hash.await_count == 2
+    assert stored_state.await_count == 2
     assert embed.await_count == 1
     assert upsert.await_count == 1
 
@@ -177,9 +187,9 @@ async def test_proceeds_when_content_changed():
 
     with (
         patch(
-            "knowledge_ingest.pg_store.get_active_content_hash",
+            "knowledge_ingest.pg_store.get_active_artifact_state",
             new_callable=AsyncMock,
-            return_value=old_hash,  # different from current content
+            return_value=_active_state(old_hash),  # different from current content
         ),
         patch(
             "knowledge_ingest.pg_store.soft_delete_artifact",
@@ -272,7 +282,7 @@ async def test_proceeds_when_no_previous_artifact():
 
     with (
         patch(
-            "knowledge_ingest.pg_store.get_active_content_hash",
+            "knowledge_ingest.pg_store.get_active_artifact_state",
             new_callable=AsyncMock,
             return_value=None,  # no previous artifact
         ),
@@ -344,7 +354,7 @@ async def test_content_hash_stored_on_create():
 
     with (
         patch(
-            "knowledge_ingest.pg_store.get_active_content_hash",
+            "knowledge_ingest.pg_store.get_active_artifact_state",
             new_callable=AsyncMock,
             return_value=None,
         ),
@@ -416,7 +426,7 @@ async def test_qdrant_failure_leaves_artifact_pending_for_retry():
 
     with (
         patch(
-            "knowledge_ingest.pg_store.get_active_content_hash",
+            "knowledge_ingest.pg_store.get_active_artifact_state",
             new_callable=AsyncMock,
             return_value=None,
         ),
@@ -488,7 +498,7 @@ async def test_content_hash_override_used_for_prechunked_ingest():
 
     with (
         patch(
-            "knowledge_ingest.pg_store.get_active_content_hash",
+            "knowledge_ingest.pg_store.get_active_artifact_state",
             new_callable=AsyncMock,
             return_value=None,
         ) as mock_get_hash,
@@ -572,7 +582,7 @@ async def test_docling_skip_chunking_writes_parent_chunks() -> None:
 
     with (
         patch(
-            "knowledge_ingest.pg_store.get_active_content_hash",
+            "knowledge_ingest.pg_store.get_active_artifact_state",
             new_callable=AsyncMock,
             return_value=None,
         ),

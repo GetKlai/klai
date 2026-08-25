@@ -88,7 +88,7 @@ def _base_patches(mock_app, *, enrichment_enabled: bool = True):
                 return_value=[[0.1] * 10],
             ),
             patch(
-                "knowledge_ingest.routes.ingest.pg_store.get_active_content_hash",
+                "knowledge_ingest.routes.ingest.pg_store.get_active_artifact_state",
                 new_callable=AsyncMock,
                 return_value=None,
             ),

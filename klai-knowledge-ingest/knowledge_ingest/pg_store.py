@@ -85,13 +85,13 @@ async def _insert_derivation_edges(
     )
 
 
-async def get_active_content_hash(
+async def get_active_artifact_state(
     conn: asyncpg.Connection, org_id: str, kb_slug: str, path: str
-) -> str | None:
-    """Return the content_hash of the current synced active artifact, or None."""
-    row = await conn.fetchval(
+) -> dict | None:
+    """Return graph-refresh state for the current synced active artifact."""
+    row = await conn.fetchrow(
         """
-        SELECT content_hash
+        SELECT id::text AS id, content_hash, extra, belief_time_start
         FROM knowledge.artifacts
         WHERE org_id = $1 AND kb_slug = $2 AND path = $3
           AND belief_time_end = $4
@@ -104,7 +104,19 @@ async def get_active_content_hash(
         path,
         _SENTINEL,
     )
-    return row
+    if row is None:
+        return None
+    raw_extra = row["extra"]
+    if isinstance(raw_extra, str):
+        extra: dict = json.loads(raw_extra) if raw_extra else {}
+    else:
+        extra = dict(raw_extra) if raw_extra else {}
+    return {
+        "id": str(row["id"]),
+        "content_hash": row["content_hash"],
+        "extra": extra,
+        "belief_time_start": row["belief_time_start"],
+    }
 
 
 async def list_active_synced_artifacts(conn: asyncpg.Connection, created_before: int) -> list[dict]:

@@ -199,7 +199,7 @@ async def _run_with_mocks(
 
     with (
         patch(
-            "knowledge_ingest.pg_store.get_active_content_hash",
+            "knowledge_ingest.pg_store.get_active_artifact_state",
             new_callable=AsyncMock,
             return_value=None,
         ),
