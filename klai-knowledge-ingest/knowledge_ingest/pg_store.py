@@ -520,6 +520,170 @@ async def get_episode_ids_for_document_history(
     return [str(row["episode_id"]) for row in rows]
 
 
+async def soft_delete_connector_artifacts_by_source_ref(
+    conn: asyncpg.Connection,
+    org_id: str,
+    kb_slug: str,
+    connector_id: str,
+    source_ref: str,
+) -> int:
+    """Close active versions of one connector document before external cleanup."""
+    rows = await conn.fetch(
+        """
+        UPDATE knowledge.artifacts
+        SET belief_time_end = $5
+        WHERE org_id = $1
+          AND kb_slug = $2
+          AND extra::jsonb->>'source_connector_id' = $3
+          AND extra::jsonb->>'source_ref' = $4
+          AND belief_time_end = $6
+        RETURNING id
+        """,
+        org_id,
+        kb_slug,
+        connector_id,
+        source_ref,
+        int(time.time()),
+        _SENTINEL,
+    )
+    return len(rows)
+
+
+async def list_connector_artifact_ids_by_source_ref(
+    conn: asyncpg.Connection,
+    org_id: str,
+    kb_slug: str,
+    connector_id: str,
+    source_ref: str,
+) -> list[str]:
+    """List every stored version of one connector document."""
+    rows = await conn.fetch(
+        """
+        SELECT id::text AS id
+        FROM knowledge.artifacts
+        WHERE org_id = $1
+          AND kb_slug = $2
+          AND extra::jsonb->>'source_connector_id' = $3
+          AND extra::jsonb->>'source_ref' = $4
+        """,
+        org_id,
+        kb_slug,
+        connector_id,
+        source_ref,
+    )
+    return [str(row["id"]) for row in rows]
+
+
+async def delete_connector_artifacts_by_source_ref(
+    conn: asyncpg.Connection,
+    org_id: str,
+    kb_slug: str,
+    connector_id: str,
+    source_ref: str,
+) -> int:
+    """Hard-delete every PostgreSQL row owned by one connector source_ref."""
+    params = (org_id, kb_slug, connector_id, source_ref)
+
+    async with conn.transaction():
+        await conn.execute(
+            """
+            UPDATE knowledge.artifacts SET superseded_by = NULL
+            WHERE superseded_by IN (
+                SELECT id FROM knowledge.artifacts
+                WHERE org_id = $1 AND kb_slug = $2
+                  AND extra::jsonb->>'source_connector_id' = $3
+                  AND extra::jsonb->>'source_ref' = $4
+            )
+            """,
+            *params,
+        )
+        await conn.execute(
+            """
+            DELETE FROM knowledge.embedding_queue WHERE artifact_id IN (
+                SELECT id FROM knowledge.artifacts
+                WHERE org_id = $1 AND kb_slug = $2
+                  AND extra::jsonb->>'source_connector_id' = $3
+                  AND extra::jsonb->>'source_ref' = $4
+            )
+            """,
+            *params,
+        )
+        await conn.execute(
+            """
+            DELETE FROM knowledge.artifact_entities WHERE artifact_id IN (
+                SELECT id FROM knowledge.artifacts
+                WHERE org_id = $1 AND kb_slug = $2
+                  AND extra::jsonb->>'source_connector_id' = $3
+                  AND extra::jsonb->>'source_ref' = $4
+            )
+            """,
+            *params,
+        )
+        await conn.execute(
+            """
+            DELETE FROM knowledge.derivations
+            WHERE child_id IN (
+                SELECT id FROM knowledge.artifacts
+                WHERE org_id = $1 AND kb_slug = $2
+                  AND extra::jsonb->>'source_connector_id' = $3
+                  AND extra::jsonb->>'source_ref' = $4
+            ) OR parent_id IN (
+                SELECT id FROM knowledge.artifacts
+                WHERE org_id = $1 AND kb_slug = $2
+                  AND extra::jsonb->>'source_connector_id' = $3
+                  AND extra::jsonb->>'source_ref' = $4
+            )
+            """,
+            *params,
+        )
+        await conn.execute(
+            """
+            DELETE FROM knowledge.crawled_pages
+            WHERE org_id = $1 AND kb_slug = $2 AND url IN (
+                SELECT path FROM knowledge.artifacts
+                WHERE org_id = $1 AND kb_slug = $2
+                  AND extra::jsonb->>'source_connector_id' = $3
+                  AND extra::jsonb->>'source_ref' = $4
+            )
+            """,
+            *params,
+        )
+        await conn.execute(
+            """
+            DELETE FROM knowledge.page_links
+            WHERE org_id = $1 AND kb_slug = $2 AND (
+                from_url IN (
+                    SELECT path FROM knowledge.artifacts
+                    WHERE org_id = $1 AND kb_slug = $2
+                      AND extra::jsonb->>'source_connector_id' = $3
+                      AND extra::jsonb->>'source_ref' = $4
+                ) OR to_url IN (
+                    SELECT path FROM knowledge.artifacts
+                    WHERE org_id = $1 AND kb_slug = $2
+                      AND extra::jsonb->>'source_connector_id' = $3
+                      AND extra::jsonb->>'source_ref' = $4
+                )
+            )
+            """,
+            *params,
+        )
+        result = await conn.fetchval(
+            """
+            WITH deleted AS (
+                DELETE FROM knowledge.artifacts
+                WHERE org_id = $1
+                  AND kb_slug = $2
+                  AND extra::jsonb->>'source_connector_id' = $3
+                  AND extra::jsonb->>'source_ref' = $4
+                RETURNING id
+            )
+            SELECT COUNT(*) FROM deleted
+            """,
+            *params,
+        )
+    return int(result or 0)
+
+
 async def list_stale_connector_artifact_paths(
     conn: asyncpg.Connection,
     org_id: str,

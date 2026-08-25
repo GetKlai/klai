@@ -5,7 +5,7 @@ Focus: source_type / source_domain derivation for web_crawler (SPEC-KB-021).
 
 from pathlib import Path
 from runpy import run_path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -88,6 +88,39 @@ class TestExtraPassthrough:
     def test_connector_type_preserved(self):
         payload = _build_payload(**_base_kwargs())
         assert payload["connector_type"] == "web_crawler"
+
+
+@pytest.mark.asyncio
+async def test_delete_connector_document_sends_scoped_internal_request():
+    client = KnowledgeIngestClient("http://knowledge-ingest", "internal-secret")
+    await client._client.aclose()
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    http_client = MagicMock()
+    http_client.delete = AsyncMock(return_value=response)
+    client._client = http_client
+
+    await client.delete_connector_document(
+        org_id="org-1",
+        kb_slug="prices",
+        source_connector_id="connector-1",
+        source_ref="json-feed:connector-1:group-a",
+    )
+
+    http_client.delete.assert_awaited_once_with(
+        "/ingest/v1/connector/document",
+        params={
+            "org_id": "org-1",
+            "kb_slug": "prices",
+            "connector_id": "connector-1",
+            "source_ref": "json-feed:connector-1:group-a",
+        },
+        headers={
+            "X-Internal-Secret": "internal-secret",
+            "X-Caller-Service": "connector",
+        },
+    )
+    response.raise_for_status.assert_called_once_with()
 
 
 class TestSenderEmailAndMentionedEmails:

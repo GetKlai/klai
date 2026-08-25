@@ -699,3 +699,39 @@ async def test_org_orphan_sweep_keeps_all_referenced_episode_ids():
     assert "graphiti_episode_ids" in sql
     assert "jsonb_array_elements_text" in sql
     assert "jsonb_build_array" in sql
+
+
+@pytest.mark.asyncio
+async def test_connector_source_ref_cleanup_queries_are_fully_tenant_scoped() -> None:
+    conn = _make_conn()
+    conn.fetch = AsyncMock(return_value=[])
+    conn.fetchval = AsyncMock(return_value=0)
+
+    await pg_store.soft_delete_connector_artifacts_by_source_ref(
+        conn, "org-1", "prices", "connector-1", "json-feed:connector-1:group-a"
+    )
+    await pg_store.list_connector_artifact_ids_by_source_ref(
+        conn, "org-1", "prices", "connector-1", "json-feed:connector-1:group-a"
+    )
+    await pg_store.delete_connector_artifacts_by_source_ref(
+        conn, "org-1", "prices", "connector-1", "json-feed:connector-1:group-a"
+    )
+
+    calls = [
+        *conn.fetch.await_args_list,
+        *conn.execute.await_args_list,
+        *conn.fetchval.await_args_list,
+    ]
+    assert calls
+    for call in calls:
+        sql, *params = call.args
+        assert "org_id" in sql
+        assert "kb_slug" in sql
+        assert "source_connector_id" in sql
+        assert "source_ref" in sql
+        assert params[:4] == [
+            "org-1",
+            "prices",
+            "connector-1",
+            "json-feed:connector-1:group-a",
+        ]

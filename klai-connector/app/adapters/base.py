@@ -53,6 +53,8 @@ class DocumentRef:
             no-normalisation contract as ``sender_email``.  Empty list when
             unavailable.  Uses ``field(default_factory=list)`` so instances
             never share a mutable default.
+        extra: Adapter-specific structured metadata forwarded to the ingest
+            payload. Empty by default so existing adapters remain unchanged.
     """
 
     path: str
@@ -65,6 +67,7 @@ class DocumentRef:
     images: list[ImageRef] | None = None
     sender_email: str = ""
     mentioned_emails: list[str] = field(default_factory=lambda: [])
+    extra: dict[str, Any] = field(default_factory=dict)
     # @MX:NOTE: content_fingerprint field (SPEC-CRAWL-003 REQ-12) removed in
     # SPEC-CRAWLER-004 Fase F — only WebCrawlerAdapter populated it, and that
     # adapter has been deleted now that bulk crawls go through the delegation
@@ -77,6 +80,10 @@ class BaseAdapter(ABC):
     Each connector type (GitHub, Notion, SharePoint, etc.)
     implements this interface.
     """
+
+    # Destructive reconciliation is opt-in because not every adapter's
+    # ``list_documents`` call is guaranteed to be a complete source snapshot.
+    stale_ref_cleanup_enabled = False
 
     @abstractmethod
     async def list_documents(
@@ -99,6 +106,10 @@ class BaseAdapter(ABC):
     async def get_cursor_state(self, connector: Any) -> dict[str, Any]:
         """Return the current cursor state for incremental sync."""
         ...
+
+    def get_sync_metrics(self, connector: Any) -> dict[str, int]:
+        """Return adapter-specific counters for the current sync lifecycle."""
+        return {}
 
     async def post_sync(self, connector: Any) -> None:
         """Called after all documents have been fetched for a sync run.

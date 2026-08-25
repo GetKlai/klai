@@ -35,6 +35,7 @@ def _build_payload(
     connector_type: str = "",
     sender_email: str = "",
     mentioned_emails: list[str] | None = None,
+    document_extra: dict[str, object] | None = None,
     user_id: str | None = None,
 ) -> dict:
     """Build the JSON payload for the knowledge-ingest endpoint."""
@@ -62,7 +63,7 @@ def _build_payload(
         host = urlparse(source_url).hostname
         if host:
             payload["source_domain"] = host
-    extra: dict[str, object] = {}
+    extra: dict[str, object] = dict(document_extra or {})
     if source_url:
         extra["source_url"] = source_url
     if image_urls:
@@ -114,6 +115,7 @@ class KnowledgeIngestClient:
         image_urls: list[str] | None = None,
         connector_type: str = "",
         user_id: str | None = None,
+        document_extra: dict[str, object] | None = None,
     ) -> None:
         """Send a parsed document to knowledge-ingest for embedding.
 
@@ -128,6 +130,8 @@ class KnowledgeIngestClient:
             allowed_assertion_modes: Optional connector-level hint for which assertion modes
                 this source can produce. Used in knowledge-ingest when content has no frontmatter.
             image_urls: Optional list of presigned S3 URLs for images extracted from the document.
+            document_extra: Adapter-specific structured metadata forwarded in
+                the ingest request's ``extra`` object.
             user_id: Zitadel user_id of the connector creator. Forwarded as
                 ``req.user_id`` so knowledge-ingest can pass the
                 personal-KB owner-binding check (``personal_kb_owner_mismatch``).
@@ -166,6 +170,7 @@ class KnowledgeIngestClient:
             image_urls=image_urls,
             connector_type=connector_type,
             user_id=user_id,
+            document_extra=document_extra,
         )
         if allowed_assertion_modes is not None:
             payload["allowed_assertion_modes"] = allowed_assertion_modes
@@ -177,6 +182,31 @@ class KnowledgeIngestClient:
         )
         response.raise_for_status()
         logger.info("Ingested document: %s", path)
+
+    async def delete_connector_document(
+        self,
+        *,
+        org_id: str,
+        kb_slug: str,
+        source_connector_id: str,
+        source_ref: str,
+    ) -> None:
+        """Delete one connector artifact by its stable provider reference."""
+        response = await self._client.delete(
+            "/ingest/v1/connector/document",
+            params={
+                "org_id": org_id,
+                "kb_slug": kb_slug,
+                "connector_id": source_connector_id,
+                "source_ref": source_ref,
+            },
+            headers={
+                "X-Internal-Secret": self._internal_secret,
+                "X-Caller-Service": "connector",
+            },
+        )
+        response.raise_for_status()
+        logger.info("Deleted stale connector document: %s", source_ref)
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client."""
