@@ -16,15 +16,75 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import nullcontext
 from pathlib import Path
+from typing import cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from klai_identity_assert.mcp_token_client import McpTokenVerifyResult
 from starlette.testclient import TestClient
+from starlette.types import Message, Scope
 
 MAIN_PY = Path(__file__).resolve().parents[1] / "main.py"
 DOCKERFILE = Path(__file__).resolve().parents[1] / "Dockerfile"
 CADDYFILE = Path(__file__).resolve().parents[2] / "deploy" / "caddy" / "Caddyfile"
+
+_VALID_INITIALIZE_PARAMS = (
+    b'{"protocolVersion":"2025-06-18","capabilities":{},'
+    b'"clientInfo":{"name":"klai-session-guard-test","version":"1"}}'
+)
+_SESSIONLESS_BODY_CORPUS = (
+    (
+        b'{"jsonrpc":"2.0","id":1,"method":"initialize","params":'
+        + _VALID_INITIALIZE_PARAMS
+        + b"}",
+        200,
+    ),
+    (b'{"params":' + _VALID_INITIALIZE_PARAMS + b"}", 400),
+    (b'{"jsonrpc":"2.0","id":1,"params":' + _VALID_INITIALIZE_PARAMS + b"}", 400),
+    (b'{"jsonrpc":"2.0","method":"initialize","params":' + _VALID_INITIALIZE_PARAMS + b"}", 400),
+    (b'{"id":1,"method":"initialize","params":' + _VALID_INITIALIZE_PARAMS + b"}", 400),
+    (
+        b'{"jsonrpc":"1.0","id":1,"method":"initialize","params":'
+        + _VALID_INITIALIZE_PARAMS
+        + b"}",
+        400,
+    ),
+    (
+        b'{"jsonrpc":"2.0","id":{},"method":"initialize","params":'
+        + _VALID_INITIALIZE_PARAMS
+        + b"}",
+        400,
+    ),
+    (
+        b'{"jsonrpc":"2.0","id":1,"method":"initialize","method":"ping","params":'
+        + _VALID_INITIALIZE_PARAMS
+        + b"}",
+        400,
+    ),
+    (b'{"jsonrpc":"2.0","id":1,"method":"ping"}', 400),
+    (
+        b'[{"jsonrpc":"2.0","id":1,"method":"initialize","params":'
+        + _VALID_INITIALIZE_PARAMS
+        + b"}]",
+        400,
+    ),
+    (b"{}", 400),
+    (b"{", 400),
+)
+_SESSIONLESS_BODY_CORPUS_IDS = (
+    "valid-initialize",
+    "methodless-valid-params",
+    "methodless-jsonrpc-id",
+    "notification-shaped-initialize",
+    "missing-jsonrpc",
+    "jsonrpc-1.0",
+    "object-id",
+    "duplicate-method-initialize-then-ping",
+    "ping",
+    "batch",
+    "empty-object",
+    "malformed-json",
+)
 
 
 @pytest.fixture(scope="module")
@@ -150,6 +210,151 @@ def test_rejected_foreign_origins_do_not_consume_mcp_sessions(mcp_client: TestCl
     response = mcp_client.post("/mcp", headers=headers, json=body)
 
     assert response.status_code == 403
+    assert len(session_manager._server_instances) == sessions_before
+
+
+@pytest.mark.parametrize(
+    ("body", "expected_status"),
+    _SESSIONLESS_BODY_CORPUS,
+    ids=_SESSIONLESS_BODY_CORPUS_IDS,
+)
+def test_sessionless_guard_matches_the_sdk_envelope_contract_without_leaking_sessions(
+    mcp_client: TestClient,
+    body: bytes,
+    expected_status: int,
+) -> None:
+    """Every rejected legacy sessionless envelope must leave session state unchanged."""
+    import main
+
+    headers = {
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+        "Authorization": "Bearer klai_mcp_verified-corpus",
+        "Host": "mcp.getklai.com",
+    }
+    session_manager = main.mcp.session_manager
+    sessions_before = len(session_manager._server_instances)
+
+    with patch(
+        "main._mcp_token_asserter.verify",
+        new_callable=AsyncMock,
+        return_value=McpTokenVerifyResult.allow(
+            user_id="verified-user",
+            org_id="verified-org",
+            org_slug="verified-org",
+            scopes=("mcp:knowledge",),
+            resource_uri="https://mcp.getklai.com/mcp",
+        ),
+    ):
+        response = mcp_client.post("/mcp", headers=headers, content=body)
+
+    assert response.status_code == expected_status, response.text
+    if response.status_code != 200:
+        assert len(session_manager._server_instances) == sessions_before
+        return
+
+    session_headers = {
+        **headers,
+        "Mcp-Session-Id": response.headers["mcp-session-id"],
+        "MCP-Protocol-Version": "2025-06-18",
+    }
+    deleted = mcp_client.delete("/mcp", headers=session_headers)
+    assert deleted.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_sessionless_disconnect_returns_a_response_without_allocating_a_session() -> None:
+    """A client abort during the guard's body drain must not escape the ASGI app."""
+    import main
+
+    scope = cast(
+        Scope,
+        {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "https",
+            "path": "/mcp",
+            "raw_path": b"/mcp",
+            "query_string": b"",
+            "root_path": "",
+            "headers": [
+                (b"host", b"mcp.getklai.com"),
+                (b"authorization", b"Bearer klai_mcp_disconnect"),
+                (b"accept", b"application/json, text/event-stream"),
+                (b"content-type", b"application/json"),
+            ],
+            "client": ("127.0.0.1", 12345),
+            "server": ("mcp.getklai.com", 443),
+        },
+    )
+    sent: list[Message] = []
+
+    async def receive() -> Message:
+        return {"type": "http.disconnect"}
+
+    async def send(message: Message) -> None:
+        sent.append(message)
+
+    session_manager = main.mcp.session_manager
+    sessions_before = len(session_manager._server_instances)
+
+    await main.app(scope, receive, send)
+
+    assert sent[0]["type"] == "http.response.start"
+    assert sent[0]["status"] == 400
+    assert len(session_manager._server_instances) == sessions_before
+
+
+@pytest.mark.asyncio
+async def test_declared_oversized_sessionless_body_is_rejected_before_body_read() -> None:
+    """The outer guard must preserve the SDK's header-only body-limit rejection."""
+    import main
+
+    declared_size = main.mcp.session_manager.max_request_body_size + 1
+    scope = cast(
+        Scope,
+        {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "https",
+            "path": "/mcp",
+            "raw_path": b"/mcp",
+            "query_string": b"",
+            "root_path": "",
+            "headers": [
+                (b"host", b"mcp.getklai.com"),
+                (b"authorization", b"Bearer klai_mcp_oversized"),
+                (b"accept", b"application/json, text/event-stream"),
+                (b"content-type", b"application/json"),
+                (b"content-length", str(declared_size).encode("ascii")),
+            ],
+            "client": ("127.0.0.1", 12345),
+            "server": ("mcp.getklai.com", 443),
+        },
+    )
+    sent: list[Message] = []
+    receive_calls = 0
+
+    async def receive() -> Message:
+        nonlocal receive_calls
+        receive_calls += 1
+        raise AssertionError("oversized declared body must not be read")
+
+    async def send(message: Message) -> None:
+        sent.append(message)
+
+    session_manager = main.mcp.session_manager
+    sessions_before = len(session_manager._server_instances)
+
+    await main.app(scope, receive, send)
+
+    assert sent[0]["type"] == "http.response.start"
+    assert sent[0]["status"] == 413
+    assert receive_calls == 0
     assert len(session_manager._server_instances) == sessions_before
 
 

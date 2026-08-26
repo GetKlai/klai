@@ -51,7 +51,7 @@ from mcp.server.transport_security import (
     TransportSecurityMiddleware,
     TransportSecuritySettings,
 )
-from mcp.types import LATEST_PROTOCOL_VERSION, InitializeRequest
+from mcp.types import LATEST_PROTOCOL_VERSION, InitializeRequest, JSONRPCRequest
 
 from logging_setup import setup_logging
 from shield_compliance import check_compliance as _shield_check_compliance
@@ -1778,6 +1778,7 @@ async def shield_prepare_prompt(
 from starlette.applications import Starlette  # noqa: E402
 from starlette.middleware import Middleware  # noqa: E402
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint  # noqa: E402
+from starlette.requests import ClientDisconnect  # noqa: E402
 from starlette.requests import Request as StarletteRequest  # noqa: E402
 from starlette.responses import JSONResponse, Response  # noqa: E402
 from starlette.routing import Mount, Route  # noqa: E402
@@ -1999,14 +2000,30 @@ class _WWWAuthenticateMiddleware(BaseHTTPMiddleware):
                     # the stream without setting it and the SDK receives an
                     # empty body -- initialize would break, which is why the
                     # handshake test below exists.
+                    content_length = request.headers.get("content-length")
+                    if content_length is not None:
+                        try:
+                            declared_size = int(content_length)
+                        except ValueError:
+                            pass
+                        else:
+                            if declared_size > mcp.session_manager.max_request_body_size:
+                                return Response("Request body too large", status_code=413)
+
                     body = bytearray()
-                    async for chunk in request.stream():
-                        if len(body) + len(chunk) > mcp.session_manager.max_request_body_size:
-                            return Response("Request body too large", status_code=413)
-                        body.extend(chunk)
+                    try:
+                        async for chunk in request.stream():
+                            if len(body) + len(chunk) > mcp.session_manager.max_request_body_size:
+                                return Response("Request body too large", status_code=413)
+                            body.extend(chunk)
+                    except ClientDisconnect:
+                        return Response("Client disconnected", status_code=400)
                     request._body = bytes(body)
 
                     try:
+                        envelope = JSONRPCRequest.model_validate_json(request._body)
+                        if envelope.method != "initialize":
+                            raise ValueError
                         InitializeRequest.model_validate_json(request._body)
                     except ValueError:
                         return JSONResponse(
