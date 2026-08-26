@@ -41,7 +41,11 @@ FROM python:3.12-slim
 WORKDIR /repo/klai-connector
 
 # Apply security patches to base image OS packages (Trivy blocks the deploy
-# on unfixed CVEs shipped by python:3.12-slim, e.g. CVE-2026-53615)
+# on unfixed CVEs shipped by python:3.12-slim, e.g. CVE-2026-53615).
+# APT_REFRESH busts the GHA layer cache for this RUN: bump the date when a
+# fixed Debian package exists but the cached layer still ships the old one
+# (e.g. CVE-2026-14456, openssl 3.5.7-1~deb13u2 on 2026-08-26).
+ARG APT_REFRESH=2026-08-26
 RUN apt-get update && apt-get upgrade -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
