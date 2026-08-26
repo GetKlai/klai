@@ -242,9 +242,7 @@ async def main(
         # the rate line decay days into a build. Runs BEFORE any episode is
         # ingested; refuses loudly instead of starting an infeasible build.
         total_chars = sum(
-            len(text)
-            for row in to_process
-            for text in chunks_by_artifact.get(str(row["id"]), [])
+            len(text) for row in to_process for text in chunks_by_artifact.get(str(row["id"]), [])
         )
         try:
             current_edge_count = _get_current_edge_count(org_id)
@@ -536,8 +534,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Overrides the SPEC-GRAPH-SCALE-001 pre-flight refusal. The override "
-        "is logged.",
+        help="Overrides the SPEC-GRAPH-SCALE-001 pre-flight refusal. The override is logged.",
     )
     args = parser.parse_args()
     sys.exit(

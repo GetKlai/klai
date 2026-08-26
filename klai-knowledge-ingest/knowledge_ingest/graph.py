@@ -873,9 +873,7 @@ async def _maybe_warn_graph_scale_from_falkordb(org_id: str) -> None:
         # the episode semaphore — an optional warning must never be able to
         # block ingestion. The worker thread may linger until the socket dies,
         # which is acceptable for a once-per-org-per-hour hook.
-        current_edge_count = await asyncio.wait_for(
-            asyncio.to_thread(_count_edges), timeout=5.0
-        )
+        current_edge_count = await asyncio.wait_for(asyncio.to_thread(_count_edges), timeout=5.0)
         maybe_warn_graph_scale(org_id, current_edge_count)
     except Exception:
         logger.warning("graph_scale_warning_hook_failed", org_id=org_id, exc_info=True)
