@@ -26,3 +26,18 @@ datasources:
     secureJsonData:
       basicAuthPassword: $VICTORIALOGS_AUTH_PASSWORD
     editable: false
+
+  # Content-class logs (raw query text under 'full' telemetry, 7d retention).
+  # Separate instance because VictoriaLogs has no per-stream retention —
+  # see SPEC-PRIVACY-QUERY-SHADOW-001 Unit 8 and the victorialogs-content
+  # service in deploy/docker-compose.yml.
+  - name: VictoriaLogs Content (7d)
+    type: victoriametrics-logs-datasource
+    uid: victorialogs-content
+    url: http://victorialogs-content:9428
+    access: proxy
+    basicAuth: true
+    basicAuthUser: $VICTORIALOGS_AUTH_USER
+    secureJsonData:
+      basicAuthPassword: $VICTORIALOGS_AUTH_PASSWORD
+    editable: false

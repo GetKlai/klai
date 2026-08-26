@@ -106,6 +106,7 @@ volumes:
   glitchtip-data:
   victoriametrics-data:
   victorialogs-data:
+  victorialogs-content-data:   # SPEC-PRIVACY-QUERY-SHADOW-001 — 7d content-class log store
   grafana-data:
   gitea-data:
   qdrant-data:
@@ -1198,6 +1199,50 @@ services:
       # credentials go inline in the URL. The double-$ keeps Compose from
       # interpolating the variables — they're resolved by the shell inside
       # the container against its own env at runtime.
+      test:
+        - CMD-SHELL
+        - wget -q --spider "http://$$VICTORIALOGS_AUTH_USER:$$VICTORIALOGS_AUTH_PASSWORD@127.0.0.1:9428/health"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # SPEC-PRIVACY-QUERY-SHADOW-001 Unit 8 (redesigned 2026-08-26): the 7-day
+  # retention for retention_class=content logs (raw query text under 'full'
+  # telemetry mode). VictoriaLogs has no per-stream retention — the flag the
+  # original Unit 8 design named (-retention.streamConfig) never existed and
+  # the maintainer closed per-stream retention as won't-implement (2025-11,
+  # VictoriaMetrics/VictoriaLogs#15). The sanctioned pattern is one instance
+  # per retention class; Alloy routes content-class lines here and everything
+  # else to the 30d `victorialogs` instance. Volume is tiny: only
+  # retrieval_decision_record/query_rewrite events from full-mode tenants.
+  victorialogs-content:
+    image: victoriametrics/victoria-logs:v1.51.0
+    restart: unless-stopped
+    volumes:
+      - victorialogs-content-data:/vlogs-data
+    command:
+      - -storageDataPath=/vlogs-data
+      - -retentionPeriod=7d
+      - -httpListenAddr=:9428
+      - -httpAuth.username=${VICTORIALOGS_AUTH_USER}
+      - -httpAuth.password=${VICTORIALOGS_AUTH_PASSWORD}
+    # SPEC-SEC-ENVFILE-SCOPE-001 — same scoping rationale as `victorialogs`:
+    # flags carry the config; the process env only needs the auth pair for
+    # the authenticated healthcheck. No env_file.
+    environment:
+      VICTORIALOGS_AUTH_USER: ${VICTORIALOGS_AUTH_USER}
+      VICTORIALOGS_AUTH_PASSWORD: ${VICTORIALOGS_AUTH_PASSWORD}
+    networks:
+      - monitoring
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+    healthcheck:
+      # Same authenticated BusyBox-wget probe as `victorialogs` (see the
+      # comment there for the inline-credentials rationale).
       test:
         - CMD-SHELL
         - wget -q --spider "http://$$VICTORIALOGS_AUTH_USER:$$VICTORIALOGS_AUTH_PASSWORD@127.0.0.1:9428/health"

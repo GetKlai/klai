@@ -106,17 +106,18 @@ loki.process "extract_level" {
     values = { level = "" }
   }
 
-  // SPEC-PRIVACY-QUERY-SHADOW-001 REQ-10: extract retention_class so
-  // VictoriaLogs can route metadata-only events (default 30d retention)
-  // and content events (raw query text under 'full' mode, 7d retention)
-  // to different streams. The application emits "metadata" or "content"
-  // on retrieval_decision_record + query_rewrite events. Other events
-  // are unaffected — the label simply isn't set, so they fall through
-  // to the default retention class.
+  // SPEC-PRIVACY-QUERY-SHADOW-001 REQ-10: extract retention_class so the
+  // pipeline can route metadata-only events (30d retention) and content
+  // events (raw query text under 'full' mode, 7d retention) to different
+  // VictoriaLogs instances. The application emits "metadata" or "content"
+  // on retrieval_decision_record + query_rewrite events. Other events are
+  // unaffected — the label simply isn't set, so they route with metadata.
   //
-  // Operator runbook (deploy/victorialogs/retention.md, Unit 8) wires
-  // the per-stream retention on the VL side via -retention.streamConfig
-  // once this label is live in production logs.
+  // VictoriaLogs has no per-stream retention (the originally planned
+  // -retention.streamConfig flag never existed; per-stream retention was
+  // closed won't-implement upstream in 2025-11). Hence the split below:
+  // one 30d instance (victorialogs) and one 7d instance
+  // (victorialogs-content), each fed by its own filter branch.
   stage.json {
     expressions = { retention_class = "retention_class" }
   }
@@ -124,7 +125,42 @@ loki.process "extract_level" {
     values = { retention_class = "" }
   }
 
+  forward_to = [
+    loki.process.route_metadata.receiver,
+    loki.process.route_content.receiver,
+  ]
+}
+
+// ─── Retention routing (SPEC-PRIVACY-QUERY-SHADOW-001 Unit 8) ────────────────
+// Both branches receive every log line; each keeps only its own class.
+// content → victorialogs-content (7d). Everything else → victorialogs (30d).
+// A content line must never reach the 30d store — that is the privacy
+// contract this split exists for.
+
+loki.process "route_metadata" {
+  stage.match {
+    selector = "{retention_class=\"content\"}"
+
+    stage.drop {
+      expression          = ".*"
+      drop_counter_reason = "content_class_routed_to_7d_instance"
+    }
+  }
+
   forward_to = [loki.write.victorialogs.receiver]
+}
+
+loki.process "route_content" {
+  stage.match {
+    selector = "{retention_class!=\"content\"}"
+
+    stage.drop {
+      expression          = ".*"
+      drop_counter_reason = "metadata_class_routed_to_30d_instance"
+    }
+  }
+
+  forward_to = [loki.write.victorialogs_content.receiver]
 }
 
 // ─── Forward logs to VictoriaLogs ─────────────────────────────────────────────
@@ -134,6 +170,20 @@ loki.write "victorialogs" {
     // _msg_field=msg: use the "msg" JSON key as the main log message field.
     // Fixes MongoDB structured logs showing "missing _msg field" in Grafana.
     url = "http://victorialogs:9428/insert/loki/api/v1/push?_msg_field=msg"
+
+    basic_auth {
+      username = sys.env("VICTORIALOGS_AUTH_USER")
+      password = sys.env("VICTORIALOGS_AUTH_PASSWORD")
+    }
+  }
+}
+
+// 7d instance for retention_class=content lines (raw query text). Same auth
+// pair as the 30d instance — the credential boundary is the monitoring
+// network, not the instance split.
+loki.write "victorialogs_content" {
+  endpoint {
+    url = "http://victorialogs-content:9428/insert/loki/api/v1/push?_msg_field=msg"
 
     basic_auth {
       username = sys.env("VICTORIALOGS_AUTH_USER")

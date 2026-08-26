@@ -4,6 +4,15 @@
 All services → stdout (JSON via structlog) → Alloy (Docker socket) → VictoriaLogs (30d).
 Caddy also outputs JSON to stdout since SPEC-INFRA-004.
 
+Exception (since 2026-08-26, SPEC-PRIVACY-QUERY-SHADOW-001 Unit 8): log lines
+with `retention_class=content` (raw query text emitted only under 'full'
+telemetry mode) are routed by Alloy to a **separate 7-day instance**
+`victorialogs-content` and never reach the 30d store. VictoriaLogs has no
+per-stream retention (closed won't-implement upstream), so the split instance
+IS the retention mechanism. Query content-class logs via the Grafana
+datasource `VictoriaLogs Content (7d)` (uid `victorialogs-content`); the
+`victorialogs` MCP and the default datasource only see metadata-class logs.
+
 ## Cross-service trace correlation
 Caddy generates `X-Request-ID` per request via `request_header`. Portal-api reads it
 (or generates UUID fallback) and propagates to downstream services via `get_trace_headers()`
