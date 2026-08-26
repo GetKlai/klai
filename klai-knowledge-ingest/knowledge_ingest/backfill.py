@@ -32,11 +32,13 @@ import argparse
 import asyncio
 import json
 import logging
+import sys
 import time
 
 from qdrant_client import AsyncQdrantClient
 
 from knowledge_ingest import pg_store
+from knowledge_ingest.build_estimate import estimate_graph_build
 from knowledge_ingest.config import settings
 from knowledge_ingest.db import cross_org_admin_connection
 from knowledge_ingest.enrichment_policy import (
@@ -77,12 +79,45 @@ def _has_graphiti_episode_record(raw_extra: str | dict | None) -> bool:
     return bool(extra.get("graphiti_episode_id"))
 
 
+def _get_current_edge_count(org_id: str) -> int:
+    """Current RELATES_TO edge count for org_id, via the direct falkordb client.
+
+    Same pattern as ``graph.sweep_orphan_episodes_org_wide`` /
+    ``graph.wipe_org_graph``: the graphiti async driver returns empty result
+    sets for COUNT queries against FalkorDB (a shape mismatch between the
+    FalkorDB and Neo4j driver return types), so this goes around it with the
+    synchronous ``falkordb`` client instead.
+
+    Raises on import failure or query failure — SPEC-GRAPH-SCALE-001's
+    pre-flight refusal must never run against a guessed edge count. Callers
+    decide what to do with the failure (fail loudly by default; ``--force``
+    is the only sanctioned override).
+    """
+    from falkordb import FalkorDB as FalkorDBClient
+
+    # Explicit socket deadlines: the client defaults to blocking forever, so a
+    # FalkorDB that accepts the connection but never answers would hang the
+    # pre-flight instead of reaching the refusal/--force path.
+    client = FalkorDBClient(
+        host=settings.falkordb_host,
+        port=settings.falkordb_port,
+        socket_connect_timeout=2.0,
+        socket_timeout=5.0,
+    )
+    graph = client.select_graph(org_id)
+    result = graph.query("MATCH ()-[r:RELATES_TO]->() RETURN count(r) AS n")
+    if not result.result_set:
+        raise RuntimeError(f"FalkorDB edge-count query returned no result_set for org {org_id}")
+    return int(result.result_set[0][0] or 0)
+
+
 async def main(
     org_id: str,
     limit: int | None = None,
     kb_slugs: list[str] | None = None,
     concurrency: int = 1,
-) -> None:
+    force: bool = False,
+) -> int:
     qdrant = AsyncQdrantClient(
         url=settings.qdrant_url,
         api_key=settings.qdrant_api_key or None,
@@ -103,7 +138,7 @@ async def main(
         )
         if not exists:
             log.error("No artifacts for org %s — nothing to backfill", org_id)
-            return
+            return 0
         log.info("Org: %s", org_id)
 
         # ---- Get artifacts -------------------------------------------------
@@ -132,7 +167,7 @@ async def main(
                     ", ".join(missing),
                     ", ".join(sorted(known)),
                 )
-                return
+                return 0
             log.info("Knowledge bases: %s", ", ".join(sorted(kb_slugs)))
             rows = await conn.fetch(
                 """
@@ -166,7 +201,7 @@ async def main(
         )
         if not to_process:
             log.info("Nothing to do")
-            return
+            return 0
 
         if limit is not None:
             to_process = to_process[:limit]
@@ -199,6 +234,84 @@ async def main(
             total_points,
             len(chunks_by_artifact),
         )
+
+        # ---- SPEC-GRAPH-SCALE-001 REQ-1 — pre-flight build estimate --------
+        # graphiti resolves every extracted entity/edge against the ENTIRE
+        # existing tenant graph, so build time is quadratic in source-text
+        # volume. Without this, the only "estimate" is an operator noticing
+        # the rate line decay days into a build. Runs BEFORE any episode is
+        # ingested; refuses loudly instead of starting an infeasible build.
+        total_chars = sum(
+            len(text)
+            for row in to_process
+            for text in chunks_by_artifact.get(str(row["id"]), [])
+        )
+        try:
+            current_edge_count = _get_current_edge_count(org_id)
+        except Exception as exc:
+            if force:
+                log.warning(
+                    "operator override (--force): could not determine the current "
+                    "FalkorDB edge count for org %s (%s) — proceeding WITHOUT the "
+                    "SPEC-GRAPH-SCALE-001 pre-flight estimate",
+                    org_id,
+                    exc,
+                )
+                current_edge_count = None
+            else:
+                log.error(
+                    "Cannot run the SPEC-GRAPH-SCALE-001 pre-flight estimate: failed "
+                    "to read the current FalkorDB edge count for org %s (%s). No "
+                    "episode has been ingested. Re-run with --force to override.",
+                    org_id,
+                    exc,
+                )
+                return 1
+
+        if current_edge_count is not None:
+            estimate = estimate_graph_build(total_chars, current_edge_count)
+            if estimate.refusal:
+                if force:
+                    log.warning(
+                        "operator override (--force): %s — predicted_hours=%.1f "
+                        "predicted_final_edges=%d budget_hours=%.1f edge_ceiling=%d "
+                        "total_chars=%d current_edge_count=%d",
+                        estimate.refusal,
+                        estimate.predicted_hours,
+                        estimate.predicted_final_edges,
+                        estimate.budget_hours,
+                        estimate.edge_ceiling,
+                        total_chars,
+                        current_edge_count,
+                    )
+                else:
+                    log.error(
+                        "REFUSING build (SPEC-GRAPH-SCALE-001): %s — "
+                        "predicted_hours=%.1f predicted_final_edges=%d "
+                        "budget_hours=%.1f edge_ceiling=%d total_chars=%d "
+                        "current_edge_count=%d. No episode has been ingested. "
+                        "Re-run with --force to override.",
+                        estimate.refusal,
+                        estimate.predicted_hours,
+                        estimate.predicted_final_edges,
+                        estimate.budget_hours,
+                        estimate.edge_ceiling,
+                        total_chars,
+                        current_edge_count,
+                    )
+                    return 1
+            else:
+                log.info(
+                    "SPEC-GRAPH-SCALE-001 pre-flight estimate: predicted_hours=%.1f "
+                    "predicted_final_edges=%d (budget_hours=%.1f, edge_ceiling=%d, "
+                    "total_chars=%d, current_edge_count=%d)",
+                    estimate.predicted_hours,
+                    estimate.predicted_final_edges,
+                    estimate.budget_hours,
+                    estimate.edge_ceiling,
+                    total_chars,
+                    current_edge_count,
+                )
 
         # ---- Process (sequential) ------------------------------------------
         # ingest_episode() owns concurrency control via its own semaphore.
@@ -392,6 +505,7 @@ async def main(
             err_count,
             total_to_process,
         )
+        return 0
 
 
 if __name__ == "__main__":
@@ -419,12 +533,21 @@ if __name__ == "__main__":
         "sequential behaviour; raise it for a bulk rebuild. The real ceiling is "
         "the LiteLLM alias rpm/tpm, not this number.",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overrides the SPEC-GRAPH-SCALE-001 pre-flight refusal. The override "
+        "is logged.",
+    )
     args = parser.parse_args()
-    asyncio.run(
-        main(
-            org_id=args.org_id,
-            limit=args.limit,
-            kb_slugs=args.kb_slugs,
-            concurrency=args.concurrency,
+    sys.exit(
+        asyncio.run(
+            main(
+                org_id=args.org_id,
+                limit=args.limit,
+                kb_slugs=args.kb_slugs,
+                concurrency=args.concurrency,
+                force=args.force,
+            )
         )
     )

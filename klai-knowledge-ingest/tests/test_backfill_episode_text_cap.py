@@ -113,6 +113,7 @@ async def test_backfill_creates_and_records_every_episode_for_a_long_document():
         patch("knowledge_ingest.backfill.cross_org_admin_connection", return_value=ctx),
         patch("knowledge_ingest.backfill.AsyncQdrantClient", return_value=qdrant),
         patch("knowledge_ingest.backfill.ingest_episode", ingest_episode),
+        patch("knowledge_ingest.backfill._get_current_edge_count", return_value=0),
     ):
         await backfill.main(org_id="org-1")
 

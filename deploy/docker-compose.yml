@@ -1889,6 +1889,22 @@ services:
   falkordb:
     image: falkordb/falkordb:v4.20.3
     restart: unless-stopped
+    # SPEC-GRAPH-SCALE-001 REQ-2: the image bakes FALKORDB_ARGS="MAX_QUEUED_QUERIES 25
+    # TIMEOUT 1000 RESULTSET_SIZE 10000" into its own Dockerfile (FalkorDB/FalkorDB#1826),
+    # an undocumented 1 s read-query cap that graphiti's brute-force similarity scans
+    # exceeded from ~22k edges (84 accumulated timeouts by ~28k; the largest tenant now
+    # sits at ~30k edges, so this is steady state). `GRAPH.CONFIG SET TIMEOUT 5000` fixed
+    # it at runtime on 2026-08, but that reverts on every container recreate; this env
+    # var is the persistent form of exactly that proven setting. Only TIMEOUT changes
+    # vs the image defaults; MAX_QUEUED_QUERIES and RESULTSET_SIZE are restated because
+    # setting FALKORDB_ARGS replaces the baked-in value wholesale. Do NOT raise further:
+    # 15/30/60 s were tried and made throughput worse (slow queries occupy worker
+    # threads instead of failing fast) — 5000 is the smallest value that eliminated the
+    # failures. This is a stopgap buying headroom, not a fix; the real fix (ANN instead
+    # of brute-force scans) is SPEC-GRAPH-SCALE-001 REQ-3/4. Verify after deploy on a
+    # FRESHLY started container: redis-cli -p 6379 GRAPH.CONFIG GET TIMEOUT -> 5000.
+    environment:
+      FALKORDB_ARGS: "MAX_QUEUED_QUERIES 25 TIMEOUT 5000 RESULTSET_SIZE 10000"
     ports:
       - "127.0.0.1:6380:6379"
     volumes:
