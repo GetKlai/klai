@@ -247,6 +247,19 @@ mounts:
     backup: skip
     backup_method: skip
     retention: max_age_days:30
+
+  victorialogs-content:
+    service: victorialogs-content
+    kind: named
+    host: victorialogs-content-data
+    container_path: /vlogs-data
+    image: victoriametrics/victoria-logs:v1.51.0
+    category: data
+    data_path_source: image CMD (-storageDataPath=/vlogs-data)
+    pii: true
+    backup: skip
+    backup_method: skip
+    retention: max_age_days:7
     retention_enforced_by: '-retentionPeriod=30d flag on service cmd'
     notes: |
       Application logs. Retention enforced natively via -retentionPeriod=30d.
