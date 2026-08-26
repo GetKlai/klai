@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -263,17 +264,91 @@ async def test_group_by_field_missing_from_more_than_half_fails_explicitly() -> 
         )
 
 
-async def test_oversized_record_fails_with_group_and_record_index() -> None:
+async def test_oversized_record_becomes_a_dedicated_wrapped_document() -> None:
     adapter = JsonFeedAdapter()
     connector = _connector(group_by=["category"])
     refs, _, _ = await _list_payload(
         adapter,
-        [{"category": "prijzen", "name": "A", "description": "x" * 900}],
+        [
+            {"category": "prijzen", "name": "Kort", "description": "normale omschrijving"},
+            {"category": "prijzen", "name": "Lang", "description": "x" * 2_500},
+        ],
         connector,
     )
 
-    with pytest.raises(ValueError, match=r"group 'prijzen' record index 0"):
-        await adapter.fetch_document(refs[0], connector)
+    assert [ref.path for ref in refs] == [
+        "json-feed/connector-123/prijzen",
+        "json-feed/connector-123/prijzen--rlang",
+    ]
+    dedicated = refs[1]
+    assert dedicated.extra["json_feed_record_count"] == 1
+    content = (await adapter.fetch_document(dedicated, connector)).decode()
+    assert content.startswith("# JSON feed — prijzen\n\nVelden: category, name, description\n\n")
+    assert "**Lang**" in content
+    assert all(len(line) < 900 for line in content.splitlines())
+    # Wrapped segments are blank-line separated so the production chunker can
+    # cut at segment boundaries (its only soft boundary is "\n\n").
+    body = content.split("**Lang**", 1)[1]
+    assert "\n\n" in body
+    assert adapter.get_sync_metrics(connector) == {
+        "groups_total": 2,
+        "records_total": 2,
+        "duplicates_collapsed": 0,
+    }
+
+
+async def test_oversized_record_path_is_stable_under_feed_reorder() -> None:
+    adapter = JsonFeedAdapter()
+    connector = _connector(group_by=["category"])
+    records = [
+        {"category": "prijzen", "name": "Kort", "description": "normale omschrijving"},
+        {"category": "prijzen", "name": "Lang", "description": "x" * 2_500},
+    ]
+
+    first_refs, _, _ = await _list_payload(adapter, records, connector)
+    reordered = [
+        {"category": "prijzen", "name": "Extra", "description": "nog een record"},
+        *reversed(records),
+    ]
+    second_refs, _, _ = await _list_payload(adapter, reordered, connector)
+
+    assert "json-feed/connector-123/prijzen--rlang" in {ref.path for ref in first_refs}
+    assert "json-feed/connector-123/prijzen--rlang" in {ref.path for ref in second_refs}
+
+
+async def test_oversized_records_with_duplicate_labels_get_hash_suffixes() -> None:
+    adapter = JsonFeedAdapter()
+    connector = _connector(group_by=["category"])
+    refs, _, _ = await _list_payload(
+        adapter,
+        [
+            {"category": "prijzen", "name": "Lang", "description": "a" * 2_500},
+            {"category": "prijzen", "name": "Lang", "description": "b" * 2_500},
+        ],
+        connector,
+    )
+
+    paths = sorted(ref.path for ref in refs)
+    assert len(paths) == len(set(paths)) == 2
+    assert all(path.startswith("json-feed/connector-123/prijzen--rlang-") for path in paths)
+
+
+async def test_colliding_group_slugs_get_stable_hash_suffixes() -> None:
+    adapter = JsonFeedAdapter()
+    connector = _connector(group_by=["category"])
+    records = [
+        {"category": "VoIP/Trunk", "name": "Slash", "description": "Uitgebreide productinformatie"},
+        {"category": "VoIP Trunk", "name": "Spatie", "description": "Uitgebreide productinformatie"},
+    ]
+
+    first_refs, _, _ = await _list_payload(adapter, records, connector)
+    second_refs, _, _ = await _list_payload(adapter, list(reversed(records)), connector)
+
+    first_paths = {ref.extra["json_feed_group"]["category"]: ref.path for ref in first_refs}
+    second_paths = {ref.extra["json_feed_group"]["category"]: ref.path for ref in second_refs}
+    assert first_paths == second_paths
+    assert first_paths["VoIP Trunk"] == "json-feed/connector-123/voip-trunk"
+    assert re.fullmatch(r"json-feed/connector-123/voip-trunk-[0-9a-f]{6}", first_paths["VoIP/Trunk"])
 
 
 async def test_list_documents_requires_a_url() -> None:

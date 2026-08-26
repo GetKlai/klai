@@ -47,7 +47,7 @@ def setup_logging(level: str = "INFO", service_name: str = "klai-connector") -> 
 
     formatter = structlog.stdlib.ProcessorFormatter(
         processor=renderer,
-        foreign_pre_chain=shared_processors,
+        foreign_pre_chain=[structlog.stdlib.ExtraAdder(), *shared_processors],
     )
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(formatter)

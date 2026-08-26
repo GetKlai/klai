@@ -198,6 +198,14 @@ async def test_shrunken_listing_refuses_cleanup_and_preserves_baseline_for_recov
     assert refused_run.status == SyncStatus.COMPLETED
     ingest_client.delete_connector_document.assert_not_awaited()
     assert refused_run.cursor_state["synced_refs"] == sorted(ref.source_ref for ref in previous_refs)
+    assert refused_run.error_details == [
+        {
+            "warning": "stale_cleanup_refused_shrink",
+            "stale_cleanup_refused": True,
+            "previous_ref_count": 10,
+            "current_ref_count": 2,
+        }
+    ]
     refused = next(
         record for record in caplog.records if getattr(record, "event", None) == "stale_cleanup_refused_shrink"
     )

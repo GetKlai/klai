@@ -186,7 +186,7 @@ class SyncEngine:
         # accompanied by a ``continue`` that skips the success branch.
         skip_reasons: dict[str, int] = {}
         bytes_processed = 0
-        error_details: list[dict[str, str]] = []
+        error_details: list[dict[str, Any]] = []
 
         # Fetch connector config from portal (single source of truth).
         try:
@@ -435,6 +435,14 @@ class SyncEngine:
                     stale_refs = sorted(prev_synced_refs - current_refs)
                     if len(stale_refs) > max(1, len(prev_synced_refs) // 2):
                         stale_cleanup_refused = True
+                        error_details.append(
+                            {
+                                "warning": "stale_cleanup_refused_shrink",
+                                "stale_cleanup_refused": True,
+                                "previous_ref_count": len(prev_synced_refs),
+                                "current_ref_count": len(current_refs),
+                            }
+                        )
                         logger.warning(
                             "Refusing stale cleanup for connector %s after listing shrink",
                             connector_id,

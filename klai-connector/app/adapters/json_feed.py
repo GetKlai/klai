@@ -18,6 +18,7 @@ reads the cache and never downloads the feed again for each emitted document.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import math
 import re
@@ -372,9 +373,23 @@ class JsonFeedAdapter(BaseAdapter):
             )
             groups.setdefault(key, []).append((index, record))
 
+        keys_by_slug: dict[str, list[tuple[str, ...]]] = {}
+        for key in groups:
+            base_slug = "-".join(_slug(value) for value in key)
+            keys_by_slug.setdefault(base_slug, []).append(key)
+        resolved_slugs: dict[tuple[str, ...], str] = {}
+        for base_slug, colliding_keys in keys_by_slug.items():
+            for collision_index, key in enumerate(sorted(colliding_keys)):
+                suffix = ""
+                if collision_index > 0:
+                    raw_key = json.dumps(key, ensure_ascii=False, separators=(",", ":"))
+                    suffix = f"-{hashlib.sha256(raw_key.encode()).hexdigest()[:6]}"
+                resolved_slugs[key] = f"{base_slug}{suffix}"
+
         documents: dict[str, _RenderedDocument] = {}
-        for key, indexed_records in groups.items():
-            slug = "-".join(_slug(value) for value in key)
+        for key in sorted(groups):
+            indexed_records = groups[key]
+            slug = resolved_slugs[key]
             group_title = _group_title(group_by, key)
             group_values = dict(zip(group_by, key, strict=True))
             try:
@@ -454,10 +469,6 @@ class JsonFeedAdapter(BaseAdapter):
                 line = f"- **{label}**"
                 if pairs:
                     line += f" — {'; '.join(pairs)}"
-                if len(line) > _MAX_RECORD_LINE_CHARS:
-                    raise ValueError(
-                        f"rendered record line is {len(line)} characters; maximum is {_MAX_RECORD_LINE_CHARS}"
-                    )
             except (TypeError, ValueError) as exc:
                 raise ValueError(
                     f"Failed to render JSON feed group '{group_title}' record index {index}: {exc}"
@@ -486,29 +497,85 @@ class JsonFeedAdapter(BaseAdapter):
         max_chars: int,
     ) -> dict[str, _RenderedDocument]:
         intro = f"Velden: {', '.join(schema)}"
-        full_content = self._compose_document(title, intro, [record.line for record in records])
-        if len(full_content) <= max_chars:
-            parts = [records]
-        else:
-            part_limit = max_chars - _PART_SUFFIX_BUDGET
-            parts = self._partition_blocks(title, intro, records, part_limit)
-
         documents: dict[str, _RenderedDocument] = {}
-        total = len(parts)
-        for part_index, part in enumerate(parts, start=1):
-            part_slug = slug if total == 1 else f"{slug}--{part_index}"
-            part_title = title if total == 1 else f"{title} — deel {part_index}/{total}"
-            content = self._compose_document(part_title, intro, [record.line for record in part])
-            self._validate_document_size(content, max_chars)
-            path = f"json-feed/{connector_id}/{part_slug}"
-            documents[path] = _RenderedDocument(
-                content=content.encode("utf-8"),
-                extra={
-                    "json_feed_group": group_values,
-                    "json_feed_record_count": len(part),
-                },
-            )
+        regular_records = [record for record in records if len(record.line) <= _MAX_RECORD_LINE_CHARS]
+        oversized_records = [record for record in records if len(record.line) > _MAX_RECORD_LINE_CHARS]
+
+        if regular_records:
+            full_content = self._compose_document(title, intro, [record.line for record in regular_records])
+            if len(full_content) <= max_chars:
+                parts = [regular_records]
+            else:
+                part_limit = max_chars - _PART_SUFFIX_BUDGET
+                parts = self._partition_blocks(title, intro, regular_records, part_limit)
+
+            total = len(parts)
+            for part_index, part in enumerate(parts, start=1):
+                part_slug = slug if total == 1 else f"{slug}--{part_index}"
+                part_title = title if total == 1 else f"{title} — deel {part_index}/{total}"
+                content = self._compose_document(part_title, intro, [record.line for record in part])
+                self._validate_document_size(content, max_chars)
+                path = f"json-feed/{connector_id}/{part_slug}"
+                documents[path] = _RenderedDocument(
+                    content=content.encode("utf-8"),
+                    extra={
+                        "json_feed_group": group_values,
+                        "json_feed_record_count": len(part),
+                    },
+                )
+
+        # Path identity comes from the record label, not the feed index: a
+        # Supabase-style feed reorders on every upstream update, and an
+        # index-based path would rename (and thus re-embed) the document
+        # each time. Duplicate labels within one group get the same 6-char
+        # hash disambiguation as colliding group slugs.
+        oversized_paths: dict[str, list[_RenderedRecord]] = {}
+        for record in oversized_records:
+            label_slug = _slug(record.label)
+            oversized_paths.setdefault(label_slug, []).append(record)
+        for label_slug, label_records in oversized_paths.items():
+            for record in label_records:
+                suffix = label_slug
+                if len(label_records) > 1:
+                    digest = hashlib.sha256(record.line.encode("utf-8")).hexdigest()[:6]
+                    suffix = f"{label_slug}-{digest}"
+                content = self._compose_document(title, intro, [self._wrap_record_line(record.line)])
+                self._validate_document_size(content, max_chars)
+                path = f"json-feed/{connector_id}/{slug}--r{suffix}"
+                documents[path] = _RenderedDocument(
+                    content=content.encode("utf-8"),
+                    extra={
+                        "json_feed_group": group_values,
+                        "json_feed_record_count": 1,
+                    },
+                )
         return documents
+
+    @staticmethod
+    def _wrap_record_line(line: str) -> str:
+        """Wrap an oversized record at field boundaries, then hard-wrap long fields."""
+        limit = _MAX_RECORD_LINE_CHARS - 1
+        physical_lines: list[str] = []
+        current = ""
+        for field in line.split("; "):
+            separator = "; " if current else ""
+            if len(current) + len(separator) + len(field) <= limit:
+                current += separator + field
+                continue
+            if current:
+                physical_lines.append(current)
+                current = ""
+            while len(field) > limit:
+                physical_lines.append(field[:limit])
+                field = field[limit:]
+            current = field
+        if current:
+            physical_lines.append(current)
+        # Blank-line separation is load-bearing: the production chunker's only
+        # soft boundary is "\n\n" — a single "\n" is invisible to it and the
+        # wrap would be cosmetic (measured: 4/6 segments cut mid-value with
+        # "\n", 6/6 intact with "\n\n").
+        return "\n\n".join(physical_lines)
 
     @staticmethod
     def _partition_blocks(
