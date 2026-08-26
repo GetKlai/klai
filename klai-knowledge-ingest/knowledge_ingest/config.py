@@ -380,6 +380,28 @@ class Settings(BaseSettings):
     graphiti_llm_model: str = "klai-fast"
     graphiti_max_concurrent: int = 1  # concurrent episodes; increase with paid LLM plan
     graphiti_episode_delay: float = 10.0
+    # SPEC-GRAPH-SCALE-001 REQ-1 — pre-flight graph-build cost estimator
+    # constants. graphiti resolves every extracted entity/edge against the
+    # ENTIRE existing tenant graph via brute-force cosine scans, so build
+    # time is quadratic in source-text volume. Calibrated on the Voys
+    # tenant (largest known): 6,593,861 chars, 0 pre-existing edges -> ~20h
+    # sequential rebuild, ~17,400 new edges (~2,600 edges/Mchar). See
+    # knowledge_ingest/build_estimate.py and the SPEC's §1 scaling law.
+    # Constants are data, not code: REQ-6's future re-measurement of these
+    # values (after the ANN fix, REQ-4) is a config change, not a code one.
+    graph_build_hours_per_mchar: float = 1.25  # linear term "a" (extraction/LLM)
+    graph_build_quad_hours_per_mchar2: float = 0.27  # quadratic term "b" (resolution scans)
+    graph_edges_per_mchar: float = 2600.0  # measured new-edge density
+    graph_scan_us_per_edge: float = 15.6  # measured brute-force cosine-scan cost per edge
+    # Tail-to-average latency ratio for the edge ceiling. Timeouts were OBSERVED
+    # from ~22k edges under a 1000 ms cap, where the average scan was only
+    # ~344 us/edge * 22k = ~343 ms — the failing tail ran ~3x the average. The
+    # ceiling must be derived from the tail that actually times out, not the
+    # average that doesn't (Sol review 2026-08-26, verified against the SPEC's
+    # own ~110k-edges-at-5s wall in §1).
+    graph_scan_tail_factor: float = 3.0
+    graph_build_budget_hours: float = 48.0  # operator policy: refuse builds predicted past this
+    graph_falkordb_timeout_ms: int = 5000  # current runtime-raised FalkorDB query timeout
     # Portal integration for taxonomy (SPEC-KB-021)
     portal_url: str = "http://portal-api:8000"
     # Bearer token for outbound calls to portal-api internal endpoints

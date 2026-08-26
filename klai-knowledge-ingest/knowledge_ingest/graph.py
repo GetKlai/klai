@@ -37,6 +37,7 @@ from klai_kb_slugs import episode_name
 
 import knowledge_ingest.qdrant_store as qdrant_store
 from knowledge_ingest import _patch_graphiti
+from knowledge_ingest.build_estimate import maybe_warn_graph_scale, should_check_graph_scale
 from knowledge_ingest.config import settings
 from knowledge_ingest.llm_throttle import TokenBucketLimiter, shared_klai_fast_limiter
 
@@ -822,6 +823,77 @@ async def flush_entity_graph_data(
     )
 
 
+async def _maybe_warn_graph_scale_from_falkordb(org_id: str) -> None:
+    """Live-ingest hook for SPEC-GRAPH-SCALE-001's throttled scale warning.
+
+    ``should_check_graph_scale`` is consulted FIRST, before any FalkorDB I/O,
+    so the count query below — the only I/O this hook does — runs at most
+    once per org per hour per process; every other call on the hot ingest
+    path returns immediately.
+
+    Uses the direct ``falkordb`` Python client (same pattern as
+    ``sweep_orphan_episodes_org_wide`` / ``wipe_org_graph`` above: the
+    graphiti async driver returns empty result sets for COUNT queries against
+    FalkorDB), wrapped in ``asyncio.to_thread`` since the client is
+    synchronous.
+
+    Never raises: this is a non-fatal, best-effort warning on the ingest
+    success path. Any failure (missing dependency, FalkorDB unreachable,
+    malformed result) is caught and logged at warning level — it must never
+    fail an episode ingest.
+    """
+    if not should_check_graph_scale(org_id):
+        return
+    try:
+        from falkordb import FalkorDB as FalkorDBClient
+
+        def _count_edges() -> int:
+            # Socket deadlines: the client defaults to blocking forever.
+            client = FalkorDBClient(
+                host=settings.falkordb_host,
+                port=settings.falkordb_port,
+                socket_connect_timeout=2.0,
+                socket_timeout=5.0,
+            )
+            graph = client.select_graph(org_id)
+            result = graph.query("MATCH ()-[r:RELATES_TO]->() RETURN count(r) AS n")
+            if not result.result_set:
+                # A valid Cypher count() returns one row even on an empty
+                # graph; an empty result_set is external drift, not zero.
+                # Raising keeps it loud (fail-loudly): the except below logs
+                # it instead of silently suppressing a scale warning.
+                raise RuntimeError(
+                    f"FalkorDB edge-count query returned no result_set for org {org_id}"
+                )
+            return int(result.result_set[0][0] or 0)
+
+        # Hard deadline on the count query. The falkordb client has no default
+        # socket timeout, so a FalkorDB that accepts the connection but never
+        # answers would otherwise park this coroutine forever WHILE it holds
+        # the episode semaphore — an optional warning must never be able to
+        # block ingestion. The worker thread may linger until the socket dies,
+        # which is acceptable for a once-per-org-per-hour hook.
+        current_edge_count = await asyncio.wait_for(
+            asyncio.to_thread(_count_edges), timeout=5.0
+        )
+        maybe_warn_graph_scale(org_id, current_edge_count)
+    except Exception:
+        logger.warning("graph_scale_warning_hook_failed", org_id=org_id, exc_info=True)
+
+
+# Strong references to in-flight scale-warning tasks: asyncio only keeps weak
+# references to tasks, so a bare create_task could be garbage-collected
+# mid-flight. Bounded in practice by the once-per-org-per-hour throttle.
+_scale_warning_tasks: set[asyncio.Task[None]] = set()
+
+
+def _spawn_graph_scale_warning(org_id: str) -> None:
+    """Run the scale-warning hook without coupling it to the episode result."""
+    task = asyncio.create_task(_maybe_warn_graph_scale_from_falkordb(org_id))
+    _scale_warning_tasks.add(task)
+    task.add_done_callback(_scale_warning_tasks.discard)
+
+
 async def ingest_episode(
     artifact_id: str,
     document_text: str,
@@ -952,6 +1024,14 @@ async def ingest_episode(
                                 "entity_graph_data_failed",
                                 artifact_id=artifact_id,
                             )
+
+                # SPEC-GRAPH-SCALE-001 — throttled scale warning on the live
+                # ingest path. Fire-and-forget: the hook catches its own
+                # exceptions and has its own 5 s deadline, and it must never
+                # delay the episode result — a caller deadline (backfill's
+                # 600 s wait_for) landing here would lose an episode_id whose
+                # episode already committed to the graph.
+                _spawn_graph_scale_warning(org_id)
 
                 break
 
