@@ -10,6 +10,8 @@ import logging
 
 from klai_graphiti_compat import apply_falkordb_compat
 
+from knowledge_ingest.config import settings
+
 logger = logging.getLogger(__name__)
 
 _applied = False
@@ -21,7 +23,10 @@ def apply() -> None:
     if _applied:
         return
 
-    apply_falkordb_compat(initialize_databases=True)
+    apply_falkordb_compat(
+        initialize_databases=True,
+        ann_candidate_search=settings.graph_ann_enabled,
+    )
     _patch_node_dedup()
     _patch_bidirectional_edge_lookup()
     _applied = True

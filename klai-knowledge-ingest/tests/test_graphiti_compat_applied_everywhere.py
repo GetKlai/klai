@@ -40,6 +40,30 @@ def test_the_patch_is_idempotent():
     _patch_graphiti.apply()  # must not raise or stack
 
 
+def test_apply_passes_ann_flag_from_settings(monkeypatch):
+    from knowledge_ingest import _patch_graphiti
+
+    calls = []
+    monkeypatch.setattr(_patch_graphiti, "_applied", False)
+    monkeypatch.setattr(_patch_graphiti.settings, "graph_ann_enabled", True)
+    monkeypatch.setattr(
+        _patch_graphiti,
+        "apply_falkordb_compat",
+        lambda **kwargs: calls.append(kwargs),
+    )
+    monkeypatch.setattr(_patch_graphiti, "_patch_node_dedup", lambda: None)
+    monkeypatch.setattr(_patch_graphiti, "_patch_bidirectional_edge_lookup", lambda: None)
+
+    _patch_graphiti.apply()
+
+    assert calls == [
+        {
+            "initialize_databases": True,
+            "ann_candidate_search": True,
+        }
+    ]
+
+
 def test_the_shared_patch_still_rewrites_the_edge_search():
     """If graphiti changes the query, the shared rewrite must be revisited.
 

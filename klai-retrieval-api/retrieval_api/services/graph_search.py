@@ -28,7 +28,7 @@ from klai_kb_slugs import parse_episode_name
 from retrieval_api.config import settings
 
 # Patch the live Graphiti helper references before creating any client.
-apply_falkordb_compat()
+apply_falkordb_compat(ann_candidate_search=settings.graph_ann_enabled)
 
 logger = structlog.get_logger()
 
