@@ -15,7 +15,11 @@ Before editing, read:
 2. `.claude/rules/klai/design/styleguide.md` for shared brand principles.
 3. `.claude/rules/klai/design/portal-patterns.md` for the current portal-specific overrides and component patterns.
 4. `.claude/rules/klai/projects/portal-frontend.md` for frontend architecture, i18n, routing, and behavioral pitfalls.
-5. `klai-portal/docs/ui-components.md` when selecting or extending shared components.
+5. `klai-portal/frontend/DESIGN.md` when selecting or extending shared
+   components — the generated design contract for tokens, type scale, variants,
+   and guidelines. Never edit it by hand; regenerate with `npm run docs:design`.
+   The Rules Ledger in `klai-portal/frontend/docs/ui-standards.md` owns each
+   rule's ID, level, and verification mode.
 
 Verify any disputed rule against `klai-portal/frontend/src/index.css`, the relevant component in `src/components/ui/`, and nearby current pages. Update code and its owning rule together when intentional design changes make a rule stale.
 
@@ -27,7 +31,11 @@ Verify any disputed rule against `klai-portal/frontend/src/index.css`, the relev
 4. Use CSS variables for themeable or semantic color and typography. Follow `portal-patterns.md` for the deliberate v1 grayscale overrides.
 5. Preserve keyboard access, focus visibility, labels, loading states, empty states, and error feedback.
 6. Check narrow and wide layouts when changing page structure.
-7. Run the smallest relevant frontend tests, then typecheck and lint for the touched package.
+7. After adding or changing a shared component: update its header `@purpose`
+   (and `@guideline` for component-owned rules), render it in `/dev/ui`, and run
+   `npm run docs:components` and `npm run docs:design` so the generated
+   contract stays true.
+8. Run the smallest relevant frontend tests, then typecheck and lint for the touched package.
 
 ## Guardrails
 

@@ -5,26 +5,30 @@ paths:
   - "klai-portal/backend/app/static/**"
 ---
 
-# Portal Patterns
+# Portal UI Authoring Entry Point
 
-Canonical portal UI/UX standards now live at:
+Before writing portal UI, read both sources:
 
-`klai-portal/frontend/docs/ui-standards.md`
+- `klai-portal/frontend/DESIGN.md` is the generated design contract for tokens,
+  type scale, component variants, and guidelines. Never edit it by hand;
+  `scripts/generate-design-md.mjs` emits it and the build rejects stale output.
+- `klai-portal/frontend/docs/ui-standards.md` contains the Rules Ledger. Every
+  rule has a stable ID, level, and verification mode; component-owned rules
+  originate as `@guideline` comments on their UI components.
 
-This file is intentionally a compatibility entrypoint for agents/rule loaders
-that still read `.claude/rules/klai/design/portal-patterns.md`.
+Choose colours while authoring, not after lint: open the Colors section of
+`DESIGN.md` and apply its computed primary, secondary, non-text, and
+decorative-only gray roles. Semantic foregrounds use the documented `-text`
+tokens. Do not estimate contrast or pick a semantic foreground from its hue.
 
-If you change portal UI, read the canonical file first. If this file and the
-canonical file ever disagree, the canonical file wins and this file should be
-updated or kept as this pointer.
+Before introducing a layout or interaction, name and inspect the nearest
+comparable portal screen. Use the component contract in `DESIGN.md` instead of
+remembered variants or copied examples.
 
-Minimum non-negotiables:
+After adding or changing a shared component:
 
-- Use existing admin/app screens as the reference pattern before creating UI.
-- Admin detail pages use separate routes and a header-right `Button variant="ghost" size="sm"` back action.
-- Do not add drawers, sheets, or inline detail panels for admin entity flows.
-- Use underline tabs with URL search state where navigation needs to preserve the active tab.
-- Use `klai-hover` for interactive rows/lists/sidebar items.
-- Use semantic CSS tokens for success/warning/destructive states.
-- Use Paraglide for all user-visible strings.
-- Do not use `window.confirm`.
+1. Add or update its header `@purpose`; put any component-owned normative rule
+   there as `@guideline` with its ledger ID and level.
+2. Render the changed purpose, state, or variant in `/dev/ui`.
+3. From `klai-portal/frontend/`, run `npm run docs:components` and then
+   `npm run docs:design`; commit both generated outputs with the component.
