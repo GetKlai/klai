@@ -39,6 +39,8 @@ fi
 for expected in \
   "spec-kb-015-feedback-correlation-low	portal_feedback_correlation_stats" \
   "spec-kb-015-feedback-correlation-low	portal_orgs" \
+  "obs-meeting-bad-outcome-rate	portal_meeting_transcript_health" \
+  "obs-meeting-transcript-silence	portal_meeting_transcript_health" \
   "spec-priv-001-tenant-stuck-full	portal_telemetry_mode_changes" \
   "rag-eval-001-faithfulness-low	knowledge.rag_eval_results"; do
   if printf '%s\n' "$out" | grep -qF "$expected"; then

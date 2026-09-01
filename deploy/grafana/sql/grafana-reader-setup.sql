@@ -83,9 +83,37 @@ CREATE OR REPLACE VIEW portal_telemetry_mode_changes AS
 
 GRANT SELECT ON portal_telemetry_mode_changes TO grafana_reader;
 
+-- ── Meeting recording and transcript health ─────────────────────────────
+--
+-- vexa_meetings is a category-D RLS table. Its SELECT policy requires the
+-- app.current_org_id tenant GUC, which Grafana never sets: grafana_reader has
+-- SELECT on the base table but reads zero rows (verified in production on
+-- 2026-09-01: superuser 17 rows, grafana_reader 0). Granting the base table
+-- again would not fix that blackhole, and bypassing its RLS would expose
+-- meeting URLs, titles, transcript text, and user identifiers.
+--
+-- This superuser-owned, non-security-invoker view exposes only the four
+-- derived/operational fields the alert needs. The view owner evaluates the
+-- base table's RLS; grafana_reader never receives a wider base-table grant.
+CREATE OR REPLACE VIEW portal_meeting_transcript_health
+WITH (security_invoker = false, security_barrier = true) AS
+    SELECT status,
+           created_at,
+           updated_at AS outcome_at,
+           (
+               NULLIF(btrim(transcript_text), '') IS NOT NULL
+               OR jsonb_array_length(COALESCE(transcript_segments, '[]'::jsonb)) > 0
+           ) AS has_transcript
+      FROM vexa_meetings;
+
+REVOKE ALL ON portal_meeting_transcript_health FROM PUBLIC;
+GRANT USAGE ON SCHEMA public TO grafana_reader;
+GRANT SELECT ON portal_meeting_transcript_health TO grafana_reader;
+
 -- Verify after running (must return a non-zero count, not an error and not 0):
 --   SET ROLE grafana_reader;
 --   SELECT count(*) FROM portal_feedback_correlation_stats;
+--   SELECT count(*) FROM portal_meeting_transcript_health;
 --
 -- Audit which granted tables still read as empty for this role -- an RLS
 -- policy scoped to another role looks identical to "no data" from Grafana:
