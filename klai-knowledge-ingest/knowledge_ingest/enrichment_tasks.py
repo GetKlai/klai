@@ -380,7 +380,6 @@ def _register_tasks(procrastinate_app: Any) -> None:
         path: str = "",
         replace_stale: bool = False,
         resource_key: str | None = None,
-        document_text: str | None = None,
     ) -> None:
         """Ingest a document into the Graphiti knowledge graph.
 
@@ -397,18 +396,12 @@ def _register_tasks(procrastinate_app: Any) -> None:
 
         SPEC-INGEST-CONTENT-PG-001: re-reads ``document_text`` from PostgreSQL
         at execution time so document bodies never enter Procrastinate args.
-        The optional argument is accepted only for jobs queued before this
-        rollout and is deliberately ignored; remove it after one deploy window.
 
         SPEC-TI-003-FOLLOWUP-001 AC-1: opens a tenant_scoped_connection on
         ``org_id`` so artifact_exists + update_artifact_extra both run with
         the RLS GUC pinned to this tenant.
         """
         from knowledge_ingest import pg_store
-
-        # Rollout compatibility only: old queued jobs still contain this kwarg.
-        # Never use it, because Procrastinate persists and logs task arguments.
-        del document_text
 
         async with tenant_scoped_connection(org_id) as conn:
             artifact = await pg_store.read_artifact_for_enrichment(conn, artifact_id)
