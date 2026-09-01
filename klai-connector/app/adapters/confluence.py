@@ -45,7 +45,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 from typing import Any, cast
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qsl, urlparse
 
 import html2text
 from atlassian import ConfluenceV2
@@ -72,21 +72,32 @@ _MAX_PAGES_PER_SPACE = 100
 _PAGE_BATCH = 100
 
 
-def _next_cursor(payload: dict[str, Any]) -> str | None:
-    """Return the ``cursor`` query value from a v2 response's ``_links.next``.
+def _next_params(payload: dict[str, Any]) -> dict[str, str] | None:
+    """Return the query for the next v2 page, or None when this was the last.
 
-    v2 paginates by opaque cursor: the next page is advertised as a relative
-    URL under ``_links.next``. Absent link means this was the last page.
+    v2 advertises the next page as a relative URL under ``_links.next``, which
+    Confluence returns either as a plain string or as ``{"href": ...}``. Both
+    shapes are handled because ``ConfluenceBase._get_paged`` handles both, and
+    reading only one would stop a listing after its first page without saying
+    so. (It reads no ``Link:`` response header — that is not a shape this API
+    uses here.)
+
+    The whole query is carried over rather than just ``cursor``: the cursor is
+    opaque and Confluence may pin other parameters to it, which is again what
+    the SDK does for api_version 2.
     """
     links = payload.get("_links")
     if not isinstance(links, dict):
         return None
-    nxt = cast(dict[str, Any], links).get("next")
+    nxt: Any = cast(dict[str, Any], links).get("next")
+    if isinstance(nxt, dict):
+        nxt = cast(dict[str, Any], nxt).get("href")
     if not isinstance(nxt, str) or not nxt:
         return None
-    query = parse_qs(urlparse(nxt).query)
-    values = query.get("cursor") or []
-    return values[0] if values else None
+    query = urlparse(nxt).query
+    if not query:
+        return None
+    return dict(parse_qsl(query, keep_blank_values=True))
 
 
 def _paginate_v2(
@@ -124,18 +135,18 @@ def _paginate_v2(
             if isinstance(item, dict):
                 collected.append(cast(dict[str, Any], item))
 
-        cursor = _next_cursor(page)
+        next_query = _next_params(page)
         if len(collected) >= cap:
-            if len(collected) > cap or cursor:
+            if len(collected) > cap or next_query:
                 logger.warning(
                     "Confluence: %s truncated at %d — the remainder is not synced",
                     what,
                     cap,
                 )
             return collected[:cap]
-        if not cursor:
+        if next_query is None:
             return collected
-        request_params = {**params, "cursor": cursor}
+        request_params = next_query
 
     return collected[:cap]
 
@@ -433,14 +444,21 @@ class ConfluenceAdapter(BaseAdapter):
             Mapping of space key -> space id, in listing order.
         """
         params: dict[str, Any] = {"limit": _PAGE_BATCH}
+        cap = _MAX_SPACES
         if space_keys:
             params["keys"] = space_keys
+            # _MAX_SPACES bounds *discovery*, where the site decides how much
+            # work we take on. An explicit space_keys list is the operator
+            # deciding, and nothing in the portal caps its length — capping it
+            # here would drop the spaces past the hundredth and then report
+            # them as "not visible to this token", which is a lie about why.
+            cap = max(_MAX_SPACES, len(space_keys))
 
         spaces = _paginate_v2(
             client,
             client.get_endpoint("spaces"),
             params,
-            _MAX_SPACES,
+            cap,
             "space listing",
         )
 

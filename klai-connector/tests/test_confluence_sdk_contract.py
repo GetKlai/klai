@@ -32,6 +32,7 @@ from klai_image_storage.url_guard import _reset_dns_cache
 
 from app.adapters.confluence import (
     _MAX_PAGES_PER_SPACE,
+    _MAX_SPACES,
     _PAGE_BATCH,
     ConfluenceAdapter,
     _build_confluence_client,
@@ -135,12 +136,14 @@ class _FakeConfluenceCloud:
         storage_body: str = "",
         page_list_status: int = 200,
         page_size: int | None = None,
+        href_form_cursor: bool = False,
     ) -> None:
         self.spaces = spaces if spaces is not None else []
         self.pages = pages if pages is not None else []
         self.storage_body = storage_body
         self.page_list_status = page_list_status
         self.page_size = page_size
+        self.href_form_cursor = href_form_cursor
         self.urls: list[str] = []
 
     def _collection(
@@ -153,7 +156,10 @@ class _FakeConfluenceCloud:
         window = items[offset : offset + size]
         payload: dict[str, Any] = {"results": window}
         if offset + size < len(items):
-            payload["_links"] = {"next": f"{endpoint}?cursor={offset + size}"}
+            nxt = f"{endpoint}?cursor={offset + size}&limit={size}"
+            payload["_links"] = {
+                "next": {"href": nxt} if self.href_form_cursor else nxt
+            }
         return _response(payload)
 
     def handle(self, url: str) -> requests.Response:
@@ -368,6 +374,45 @@ class TestConfluenceV2HttpContract:
         assert len(refs) == _MAX_PAGES_PER_SPACE
         # One request, then stop — not three.
         assert len([u for u in fake.urls if "/wiki/api/v2/pages?" in u]) == 1
+
+    async def test_cursor_is_followed_in_the_href_form_too(self) -> None:
+        """``_links.next`` comes as a bare string or as ``{"href": ...}``.
+
+        ConfluenceBase._get_paged handles both. Reading only one would end a
+        listing after its first page without saying so.
+        """
+        fake = _FakeConfluenceCloud(
+            spaces=[{"id": "9001", "key": "ENG", "name": "Engineering"}],
+            pages=[_page(str(i)) for i in range(5)],
+            page_size=2,
+            href_form_cursor=True,
+        )
+        session_patch, dns_patch = self._patches(fake)
+        with session_patch, dns_patch:
+            refs = await ConfluenceAdapter(SimpleNamespace()).list_documents(_connector())
+
+        assert [r.ref for r in refs] == ["0", "1", "2", "3", "4"]
+
+    async def test_explicit_space_keys_are_not_capped_at_max_spaces(self) -> None:
+        """_MAX_SPACES bounds discovery, not an operator's explicit list.
+
+        Nothing in the portal caps space_keys. Capping the filtered listing
+        would drop the spaces past the hundredth and then report them as not
+        visible to the token, which misstates the reason.
+        """
+        keys = [f"S{i}" for i in range(_MAX_SPACES + 10)]
+        fake = _FakeConfluenceCloud(
+            spaces=[{"id": str(9000 + i), "key": k} for i, k in enumerate(keys)],
+            pages=[_page("1")],
+            page_size=50,
+        )
+        session_patch, dns_patch = self._patches(fake)
+        with session_patch, dns_patch:
+            refs = await ConfluenceAdapter(SimpleNamespace()).list_documents(
+                _connector(space_keys=keys)
+            )
+
+        assert len({r.path.split("/")[0] for r in refs}) == len(keys)
 
     async def test_fetch_document_reads_v2_storage_body(self) -> None:
         fake = _FakeConfluenceCloud(
