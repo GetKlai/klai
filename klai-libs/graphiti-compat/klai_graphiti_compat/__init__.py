@@ -3,6 +3,18 @@
 Remove each patch when its behavior ships in the supported graphiti-core range.
 The package deliberately does not replace Graphiti's group-routing or fulltext
 sanitization: 0.29.3 already owns those behaviors.
+
+| Patch | Replaces | Why | Pinned by |
+|---|---|---|---|
+| Edge fulltext rewrite | FalkorDB edge fulltext rematch through `MATCH` | Uses returned relationship endpoints directly, avoiding O(hits x edges) scans | `test_edge_fulltext_search_uses_endpoints_without_relationship_rematch` |
+| Driver clone/init | `FalkorDriver.__init__` schema task and constructor-backed clone | Initializes the actual tenant graph, keeps clone shallow | clone/init tests |
+| Database-init wrappers | selected `Graphiti` entry points | Ensures ingest-created tenant databases have indexes before writes | database initialization wrapper tests |
+| ANN candidate search | `edge_similarity_search` and `node_similarity_search` scans | Uses FalkorDB vector indexes for candidate generation with scan fallback for missing/index-shape errors | vector fast-path, fallback, and rebind-coverage tests |
+| ANN index creation | no graphiti vector DDL | Creates the indexes the ANN candidate search requires | vector index creation tests |
+
+Every graphiti-core version bump is a review event for this package: run this
+test suite against the new version FIRST; the rebind-coverage and reach tests
+are the tripwires.
 """
 
 from __future__ import annotations
@@ -10,24 +22,39 @@ from __future__ import annotations
 import asyncio
 import copy
 import functools
-import importlib
 import inspect
 import logging
 import sys
+import time
 from collections.abc import Awaitable, Callable
-from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # Klai uses bge-m3 embeddings for graphiti's 1024-dimensional vectors.
 GRAPHITI_VECTOR_DIMENSION = 1024
+_INDEX_ERROR_MARKERS = (
+    # Two live-measured FalkorDB index-shape errors, plus the db.idx.vector
+    # procedure-name prefix that covers "not registered" on older FalkorDB.
+    # The broad markers deliberately trade the risk of swallowing a genuine
+    # query regression into a logged brute-force fallback. Vector dimension
+    # mismatch deliberately re-raises: that is real misconfiguration and is
+    # guarded by test_embedder_dimension.py.
+    "db.idx.vector",
+    "invalid arguments for procedure",
+    "undefined attribute",
+)
+_INDEX_RETRY_SECONDS = 60.0
+_FALLBACK_LOG_SECONDS = 900.0
+_monotonic = time.monotonic
 
 _edge_search_patched = False
 _vector_search_patched = False
 _driver_clone_patched = False
 _initialization_wrappers_patched = False
 _ann_candidate_search_enabled = False
+_index_unavailable_until: dict[str, float] = {}
+_vector_fallback_last_logged: dict[str, float] = {}
 
 
 def apply_falkordb_compat(
@@ -185,6 +212,18 @@ def _patch_vector_candidate_search() -> None:
                 min_score,
             )
 
+        if limit <= 0:
+            return await original_edge_similarity(
+                driver,
+                search_vector,
+                source_node_uuid,
+                target_node_uuid,
+                search_filter,
+                group_ids,
+                limit,
+                min_score,
+            )
+
         filter_queries, filter_params = edge_search_filter_query_constructor(
             search_filter, driver.provider
         )
@@ -222,26 +261,8 @@ def _patch_vector_candidate_search() -> None:
             LIMIT $limit
             """
         )
-        try:
-            records, _, _ = await driver.execute_query(
-                cypher,
-                search_vector=search_vector,
-                k=4 * limit,
-                limit=limit,
-                min_score=min_score,
-                routing_="r",
-                **filter_params,
-            )
-        except Exception:
-            # Fall back to the brute-force original rather than fail. The
-            # dominant real cause is a vector index that does not exist yet or
-            # is still building ("Invalid arguments for procedure ..."):
-            # retrieval-api never creates indexes, and ingest's index build on
-            # an existing tenant takes longer than graphiti's retry budget —
-            # without this fallback a flag flip silently drops the graph leg
-            # (retrieval) or loses episodes (ingest) for exactly the window
-            # REQ-5 needs to be reversible in.
-            _log_vector_fallback(driver, "edge_similarity_search")
+        fn_name = "edge_similarity_search"
+        if _index_is_unavailable(driver, fn_name):
             return await original_edge_similarity(
                 driver,
                 search_vector,
@@ -252,6 +273,32 @@ def _patch_vector_candidate_search() -> None:
                 limit,
                 min_score,
             )
+        try:
+            records, _, _ = await driver.execute_query(
+                cypher,
+                search_vector=search_vector,
+                k=4 * limit,
+                limit=limit,
+                min_score=min_score,
+                routing_="r",
+                **filter_params,
+            )
+        except Exception as exc:
+            if not _is_index_shape_error(exc):
+                raise
+            _mark_index_unavailable(driver, fn_name)
+            _log_vector_fallback(driver, fn_name)
+            return await original_edge_similarity(
+                driver,
+                search_vector,
+                source_node_uuid,
+                target_node_uuid,
+                search_filter,
+                group_ids,
+                limit,
+                min_score,
+            )
+        _log_vector_recovered(driver, fn_name)
         return [get_entity_edge_from_record(record, driver.provider) for record in records]
 
     async def node_similarity_search(
@@ -263,6 +310,10 @@ def _patch_vector_candidate_search() -> None:
         min_score: float = search_utils.DEFAULT_MIN_SCORE,
     ) -> list[EntityNode]:
         if driver.provider != GraphProvider.FALKORDB or driver.search_interface:
+            return await original_node_similarity(
+                driver, search_vector, search_filter, group_ids, limit, min_score
+            )
+        if limit <= 0:
             return await original_node_similarity(
                 driver, search_vector, search_filter, group_ids, limit, min_score
             )
@@ -296,6 +347,11 @@ def _patch_vector_candidate_search() -> None:
             LIMIT $limit
             """
         )
+        fn_name = "node_similarity_search"
+        if _index_is_unavailable(driver, fn_name):
+            return await original_node_similarity(
+                driver, search_vector, search_filter, group_ids, limit, min_score
+            )
         try:
             records, _, _ = await driver.execute_query(
                 cypher,
@@ -306,12 +362,15 @@ def _patch_vector_candidate_search() -> None:
                 routing_="r",
                 **filter_params,
             )
-        except Exception:
-            # Same fallback rationale as the edge path above.
-            _log_vector_fallback(driver, "node_similarity_search")
+        except Exception as exc:
+            if not _is_index_shape_error(exc):
+                raise
+            _mark_index_unavailable(driver, fn_name)
+            _log_vector_fallback(driver, fn_name)
             return await original_node_similarity(
                 driver, search_vector, search_filter, group_ids, limit, min_score
             )
+        _log_vector_recovered(driver, fn_name)
         return [get_entity_node_from_record(record, driver.provider) for record in records]
 
     search_utils.edge_similarity_search = edge_similarity_search
@@ -327,51 +386,74 @@ def _patch_vector_candidate_search() -> None:
     logger.info("graphiti_falkor_vector_candidate_search_compat_applied")
 
 
-# Databases for which a vector-index fallback was already logged: the fallback
-# fires on every candidate search while an index is absent/building, which on
-# the ingest path is dozens of times per episode — one warning per database
-# per process is signal, the rest is noise.
-_vector_fallback_logged: set[str] = set()
+def _vector_database(driver: Any) -> str | None:
+    database = getattr(driver, "_database", None)
+    return None if database is None else str(database)
+
+
+def _vector_memo_key(driver: Any, fn_name: str) -> str | None:
+    database = _vector_database(driver)
+    return None if database is None else f"{database}:{fn_name}"
+
+
+def _is_index_shape_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    if "vector dimension mismatch" in message:
+        return False
+    return any(marker in message for marker in _INDEX_ERROR_MARKERS)
+
+
+def _index_is_unavailable(driver: Any, fn_name: str) -> bool:
+    key = _vector_memo_key(driver, fn_name)
+    if key is None:
+        return False
+    deadline = _index_unavailable_until.get(key)
+    return deadline is not None and _monotonic() < deadline
+
+
+def _mark_index_unavailable(driver: Any, fn_name: str) -> None:
+    key = _vector_memo_key(driver, fn_name)
+    if key is None:
+        return
+    _index_unavailable_until[key] = _monotonic() + _INDEX_RETRY_SECONDS
+
+
+def _log_vector_recovered(driver: Any, fn_name: str) -> None:
+    database = _vector_database(driver)
+    key = _vector_memo_key(driver, fn_name)
+    if database is None or key not in _index_unavailable_until:
+        return
+    _index_unavailable_until.pop(key, None)
+    _vector_fallback_last_logged.pop(key, None)
+    logger.info(
+        "graphiti_falkor_vector_search_recovered",
+        extra={"graphiti_database": database, "graphiti_fn": fn_name},
+    )
 
 
 def _log_vector_fallback(driver: Any, fn_name: str) -> None:
-    database = str(getattr(driver, "_database", "?"))
-    if database in _vector_fallback_logged:
-        return
-    _vector_fallback_logged.add(database)
+    database = _vector_database(driver) or "?"
+    key = _vector_memo_key(driver, fn_name)
+    if key is not None:
+        now = _monotonic()
+        last = _vector_fallback_last_logged.get(key)
+        if last is not None and now - last < _FALLBACK_LOG_SECONDS:
+            return
+        _vector_fallback_last_logged[key] = now
     logger.warning(
-        "graphiti_falkor_vector_search_fell_back_to_scan "
-        "database=%s fn=%s — vector index missing or still building; "
-        "brute-force scan used instead (SPEC-GRAPH-SCALE-001 REQ-4)",
-        database,
-        fn_name,
+        "graphiti_falkor_vector_search_fell_back_to_scan",
+        extra={"graphiti_database": database, "graphiti_fn": fn_name},
         exc_info=True,
     )
 
 
 def _rebind_graphiti_imports(name: str, original: Any, patched: Any) -> None:
-    import graphiti_core
+    """Rebind already-loaded graphiti importers of a patched search callable.
 
-    package_roots = [str(path) for path in getattr(graphiti_core, "__path__", [])]
-    for package_root in package_roots:
-        for source_path in Path(package_root).rglob("*.py"):
-            source = source_path.read_text(encoding="utf-8")
-            if name not in source:
-                continue
-            module_name = "graphiti_core." + str(source_path.relative_to(package_root))[
-                :-3
-            ].replace("/", ".")
-            if module_name.endswith(".__init__"):
-                module_name = module_name[: -len(".__init__")]
-            try:
-                importlib.import_module(module_name)
-            except Exception:
-                logger.debug(
-                    "graphiti_vector_search_import_discovery_skipped",
-                    extra={"graphiti_module": module_name},
-                    exc_info=True,
-                )
-
+    CI derives and imports every graphiti module that statically imports these
+    callables; runtime only sweeps loaded modules to avoid import-time side
+    effects while still fixing modules imported before the patch is applied.
+    """
     for module in list(sys.modules.values()):
         if getattr(module, name, None) is original:
             setattr(module, name, patched)
@@ -511,4 +593,4 @@ def _patch_database_initialization_wrappers() -> None:
     logger.info("graphiti_falkor_database_initialization_compat_applied")
 
 
-__all__ = ["apply_falkordb_compat"]
+__all__ = ["GRAPHITI_VECTOR_DIMENSION", "apply_falkordb_compat"]

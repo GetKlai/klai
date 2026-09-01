@@ -392,6 +392,12 @@ class Settings(BaseSettings):
     # values (after the ANN fix, REQ-4) is a config change, not a code one.
     graph_build_hours_per_mchar: float = 1.25  # linear term "a" (extraction/LLM)
     graph_build_quad_hours_per_mchar2: float = 0.27  # quadratic term "b" (resolution scans)
+    # Under ANN the largest-tenant in-situ figure (~34 ms, measured
+    # 2026-09-01, SPEC HISTORY 0.1.4) bounds the scan term. Candidate counts
+    # are capped at top-10/15, so the LLM-dedup term stays roughly constant.
+    # 0.0 is interim pending REQ-6's end-to-end re-measurement from real
+    # throughput; the budget-hours refusal still applies either way.
+    graph_build_quad_hours_per_mchar2_ann: float = 0.0
     graph_edges_per_mchar: float = 2600.0  # measured new-edge density
     graph_scan_us_per_edge: float = 15.6  # measured brute-force cosine-scan cost per edge
     # Tail-to-average latency ratio for the edge ceiling. Timeouts were OBSERVED

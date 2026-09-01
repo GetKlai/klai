@@ -33,6 +33,7 @@ except ImportError:
     _GRAPHITI_AVAILABLE = False  # graphiti-core not installed yet; added in /run SPEC-KB-011
 
 import structlog
+from klai_graphiti_compat import GRAPHITI_VECTOR_DIMENSION
 from klai_kb_slugs import episode_name
 
 import knowledge_ingest.qdrant_store as qdrant_store
@@ -474,7 +475,7 @@ def _get_graphiti() -> Graphiti:
                     base_url=f"{settings.tei_url}/v1",
                     api_key=api_key,
                     embedding_model="bge-m3",
-                    embedding_dim=1024,
+                    embedding_dim=GRAPHITI_VECTOR_DIMENSION,
                 )
             ),
             tei_base_url=settings.tei_url,

@@ -40,6 +40,28 @@ def test_calibration_point_final_edges_is_an_int():
     assert isinstance(estimate.predicted_final_edges, int)
 
 
+def test_ann_enabled_uses_linear_voys_estimate(monkeypatch):
+    monkeypatch.setattr(build_estimate.settings, "graph_ann_enabled", True)
+
+    estimate = estimate_graph_build(total_chars=6_593_861, current_edge_count=0)
+
+    assert abs(estimate.predicted_hours - 8.2) <= 0.1
+    assert estimate.refusal is None
+
+
+def test_ann_effective_false_uses_scan_estimate_even_when_flag_is_enabled(monkeypatch):
+    monkeypatch.setattr(build_estimate.settings, "graph_ann_enabled", True)
+
+    estimate = estimate_graph_build(
+        total_chars=6_593_861,
+        current_edge_count=0,
+        ann_effective=False,
+    )
+
+    assert abs(estimate.predicted_hours - 20.0) <= 0.5
+    assert estimate.refusal is None
+
+
 # ---------------------------------------------------------------------------
 # Refusal — predicted build time exceeds the operator budget
 # ---------------------------------------------------------------------------
@@ -84,6 +106,25 @@ def test_refusal_fires_near_the_edge_ceiling_even_with_a_small_corpus():
     assert estimate.predicted_final_edges > estimate.edge_ceiling
 
 
+def test_ann_enabled_skips_edge_ceiling_refusal(monkeypatch):
+    monkeypatch.setattr(build_estimate.settings, "graph_ann_enabled", True)
+    ceiling = estimate_graph_build(total_chars=0, current_edge_count=0).edge_ceiling
+
+    estimate = estimate_graph_build(total_chars=100_000, current_edge_count=ceiling - 10)
+
+    assert estimate.refusal is None
+    assert estimate.predicted_final_edges > estimate.edge_ceiling
+
+
+def test_ann_enabled_still_refuses_above_the_configured_budget(monkeypatch):
+    monkeypatch.setattr(build_estimate.settings, "graph_ann_enabled", True)
+
+    estimate = estimate_graph_build(total_chars=66_000_000, current_edge_count=0)
+
+    assert estimate.refusal is not None
+    assert estimate.predicted_hours > estimate.budget_hours
+
+
 def test_refusal_absent_comfortably_under_the_edge_ceiling():
     estimate = estimate_graph_build(total_chars=1000, current_edge_count=100)
     assert estimate.refusal is None
@@ -108,6 +149,17 @@ def test_warns_above_fifty_percent_of_the_edge_ceiling():
     assert kwargs["org_id"] == "org-a"
     assert kwargs["spec"] == "SPEC-GRAPH-SCALE-001"
     assert kwargs["edge_ceiling"] == ceiling
+
+
+def test_ann_enabled_keeps_edge_ceiling_growth_warning(monkeypatch):
+    monkeypatch.setattr(build_estimate.settings, "graph_ann_enabled", True)
+    ceiling = estimate_graph_build(total_chars=0, current_edge_count=0).edge_ceiling
+
+    with patch.object(build_estimate.logger, "warning") as mock_warn:
+        warned = maybe_warn_graph_scale("org-ann", current_edge_count=int(ceiling * 0.6))
+
+    assert warned is True
+    mock_warn.assert_called_once()
 
 
 def test_does_not_warn_below_fifty_percent_of_either_limit():
