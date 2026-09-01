@@ -23,7 +23,7 @@ catalog and be described here in the same change.
 
 The normative rules in this document are catalogued in the Rules Ledger at the
 end of this file, each with an ID, an RFC 2119 level and a declared
-verification mode. The count today: **55 rules — 13 automated, 4 assisted,
+verification mode. The count today: **56 rules — 14 automated, 4 assisted,
 34 manual, 4 deliberately unchecked.**
 
 The catalogue is maintained by hand. The ledger's own preamble says which of
@@ -47,6 +47,7 @@ These checks fail the build:
 | Border reset layer | `tests/design/border-layer-reset.test.ts` | The universal border-colour reset leaving `@layer base`, a second unlayered reset, or an inline TSX `borderColor` fix |
 | Documented text contrast | `tests/design/documented-contrast.test.ts` | A foreground named by the Colors section falling below 4.5:1 on a portal surface without a current documented exception, or an exception remaining after that foreground passes |
 | Visual component catalog | `e2e/visual/ui-catalog.visual.spec.ts`, runs in `npm run test:visual` | Any rendered `/dev/ui` section drifting from its Linux baseline; section names and count are derived from the page at runtime |
+| Accessible component catalog | `e2e/visual/ui-catalog.a11y.spec.ts`, runs in `npm run test:visual` | Any WCAG 2.1 A/AA axe finding on `/dev/ui` without an exact, reasoned exception, or an exception remaining after its finding disappears; failures are grouped by runtime-derived catalog section |
 
 Everything else is prose you are trusted to follow. The ledger says so per
 rule instead of leaving it implied. `manual` is an honest label rather
@@ -1143,6 +1144,7 @@ restatement of these rules, not a separate set.
 | KLAI-UI-053 | `DESIGN.md` is generated from the portal theme, component metadata and UI standards, and a stale committed artefact fails the build | must | automated | `tests/design/design-md-generated.test.ts` |
 | KLAI-UI-054 | A raw textual, dynamically typed or untyped `<input>` outside `src/components/ui/` is forbidden unless a local disable documents an unsupported owned-control variant | must-not | automated | `klai/no-raw-text-input` |
 | KLAI-UI-055 | Every rendered `<h2>` section in the DEV-only `/dev/ui` component catalog matches its Linux visual baseline | must | automated | `e2e/visual/ui-catalog.visual.spec.ts` |
+| KLAI-UI-056 | The DEV-only `/dev/ui` component catalog has no WCAG 2.1 A/AA axe findings without an exact, reasoned, current exception | must | automated | `e2e/visual/ui-catalog.a11y.spec.ts` |
 <!-- /generated:component-guidelines -->
 
 ### Retired IDs

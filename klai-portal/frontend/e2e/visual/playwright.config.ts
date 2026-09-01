@@ -9,7 +9,7 @@ const baseURL = `http://127.0.0.1:${port}`
  */
 export default defineConfig({
   testDir: '.',
-  testMatch: 'ui-catalog.visual.spec.ts',
+  testMatch: ['ui-catalog.visual.spec.ts', 'ui-catalog.a11y.spec.ts'],
   outputDir: 'test-results',
   snapshotPathTemplate: '{testDir}/__screenshots__/{arg}{ext}',
   fullyParallel: false,
@@ -34,7 +34,13 @@ export default defineConfig({
   },
   projects: [
     {
-      name: 'chromium',
+      name: 'visual-chromium',
+      testMatch: 'ui-catalog.visual.spec.ts',
+      use: { browserName: 'chromium' },
+    },
+    {
+      name: 'a11y-chromium',
+      testMatch: 'ui-catalog.a11y.spec.ts',
       use: { browserName: 'chromium' },
     },
   ],

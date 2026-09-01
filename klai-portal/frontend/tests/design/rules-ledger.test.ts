@@ -44,7 +44,7 @@ const ESLINT_CONFIG = path.join(FRONTEND_ROOT, 'eslint.config.js')
 const VITEST_CONFIG = path.join(FRONTEND_ROOT, 'vitest.config.ts')
 const ESLINT_RULES_DIR = path.join(FRONTEND_ROOT, 'eslint-rules')
 const DESIGN_TESTS_DIR = path.join(FRONTEND_ROOT, 'tests', 'design')
-const VISUAL_TESTS_DIR = path.join(FRONTEND_ROOT, 'e2e', 'visual')
+const CATALOG_TESTS_DIR = path.join(FRONTEND_ROOT, 'e2e', 'visual')
 
 /** This file. It guards the ledger; it is not itself a ledgered design rule. */
 const SELF = 'rules-ledger.test.ts'
@@ -334,15 +334,15 @@ describe('every design check is ledgered', () => {
     ).toEqual([])
   })
 
-  it('covers every visual test in e2e/visual/', () => {
+  it('covers every browser catalog check in e2e/visual/', () => {
     const unledgered = fs
-      .readdirSync(VISUAL_TESTS_DIR)
-      .filter((f) => /\.visual\.spec\.[jt]s$/.test(f))
+      .readdirSync(CATALOG_TESTS_DIR)
+      .filter((f) => /\.(?:visual|a11y)\.spec\.[jt]s$/.test(f))
       .filter((f) => !automatedRefs.has(`e2e/visual/${f}`))
 
     expect(
       unledgered,
-      'add a Rules Ledger row for every visual catalog check',
+      'add a Rules Ledger row for every browser catalog check',
     ).toEqual([])
   })
 
@@ -391,7 +391,7 @@ describe('the enforcement summary matches the ledger', () => {
     const inTable = new Set(
       [
         ...section.matchAll(
-          /`(klai\/[a-z-]+|(?:tests\/design|e2e\/visual)\/[a-z.-]+\.(?:test|spec)\.tsx?)`/g,
+          /`(klai\/[a-z-]+|(?:tests\/design|e2e\/visual)\/[a-z0-9.-]+\.(?:test|spec)\.tsx?)`/g,
         ),
       ].map((m) => m[1]),
     )
