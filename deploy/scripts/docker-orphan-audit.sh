@@ -271,7 +271,7 @@ if [[ -n "$CADDY_TENANTS_OK" ]]; then
         local h="$1"
         case "$h" in
             localhost|127.0.0.1) return 0 ;;
-            api-gateway|admin-api|meeting-api|runtime-api|transcription-api) return 0 ;;
+            transcription-api) return 0 ;;  # gpu-01 tunnel upstream, no local compose service
             h2c|http|https|h2|h3) return 0 ;;
         esac
         # Caddy named matchers start with @
