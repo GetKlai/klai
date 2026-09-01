@@ -23,7 +23,7 @@ catalog and be described here in the same change.
 
 The normative rules in this document are catalogued in the Rules Ledger at the
 end of this file, each with an ID, an RFC 2119 level and a declared
-verification mode. The count today: **50 rules — 8 automated, 4 assisted,
+verification mode. The count today: **51 rules — 9 automated, 4 assisted,
 34 manual, 4 deliberately unchecked.**
 
 The catalogue is maintained by hand. The ledger's own preamble says which of
@@ -42,6 +42,7 @@ These checks fail the build:
 | Widget default colour | `tests/design/widget-default-color.test.ts` | `WIDGET_DEFAULT_PRIMARY_COLOR` drifting from `--color-rl-accent`, or that literal being retyped elsewhere in `src/` |
 | OAuth consent palette | `tests/design/consent-page-tokens.test.ts` | A copied `--color-*` token in the backend consent page drifting from `index.css`, or an ad-hoc token appearing there |
 | Border reset layer | `tests/design/border-layer-reset.test.ts` | The universal border-colour reset leaving `@layer base`, a second unlayered reset, or an inline TSX `borderColor` fix |
+| Documented text contrast | `tests/design/documented-contrast.test.ts` | A foreground named by the Colors section falling below 4.5:1 on a portal surface without a current documented exception, or an exception remaining after that foreground passes |
 
 Everything else is prose you are trusted to follow. The ledger says so per
 rule instead of leaving it implied. `manual` is an honest label rather
@@ -1135,6 +1136,7 @@ restatement of these rules, not a separate set.
 | KLAI-UI-048 | The copied `--color-*` palette in `klai-portal/backend/app/static/oauth/consent.css` matches the tokens owned by `src/index.css` | must | automated | `tests/design/consent-page-tokens.test.ts` |
 | KLAI-UI-049 | A raw `<textarea>` outside `src/components/ui/` is forbidden | must-not | automated | `klai/no-raw-textarea` |
 | KLAI-UI-050 | The portal type scale is rem-based on a 110% root, so text, padding, control heights and column widths scale together; an absolute px font size does not scale and is a defect | must | manual | Reviewer step. Nothing yet stops a new `text-[Npx]` or a px `font-size` in `index.css` from being added |
+| KLAI-UI-051 | Foreground colours documented in the Colors section meet WCAG AA on both portal surfaces or carry a current, reasoned exception | must | automated | `tests/design/documented-contrast.test.ts` |
 
 ### Retired IDs
 

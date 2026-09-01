@@ -21,6 +21,46 @@ const THEME_BLOCK = /@theme[^{]*\{([\s\S]*?)\n\}/
 const COLOR_DECL = /--(color-[a-z0-9-]+)\s*:\s*([^;]+);/g
 const HEX = /^#[0-9a-fA-F]{3,8}$/
 
+/**
+ * Calculate the WCAG contrast ratio between two opaque sRGB colours.
+ *
+ * Three- and six-digit hex values are supported. Alpha-bearing colours are
+ * deliberately rejected because their contrast cannot be known without
+ * first compositing them onto a background.
+ *
+ * @param {string} firstHex
+ * @param {string} secondHex
+ * @returns {number}
+ */
+export function contrastRatio(firstHex, secondHex) {
+  const relativeLuminance = (hex) => {
+    const raw = hex.trim().replace(/^#/, '')
+    const expanded = raw.length === 3
+      ? [...raw].map((digit) => `${digit}${digit}`).join('')
+      : raw
+
+    if (!/^[0-9a-fA-F]{6}$/.test(expanded)) {
+      throw new TypeError(`contrastRatio expects an opaque 3- or 6-digit hex colour, received ${hex}`)
+    }
+
+    const channels = expanded.match(/.{2}/g).map((channel) => {
+      const srgb = Number.parseInt(channel, 16) / 255
+      return srgb <= 0.04045
+        ? srgb / 12.92
+        : ((srgb + 0.055) / 1.055) ** 2.4
+    })
+
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+  }
+
+  const first = relativeLuminance(firstHex)
+  const second = relativeLuminance(secondHex)
+  const lighter = Math.max(first, second)
+  const darker = Math.min(first, second)
+
+  return (lighter + 0.05) / (darker + 0.05)
+}
+
 function defaultCssPath() {
   const here = path.dirname(fileURLToPath(import.meta.url))
   return path.join(here, '..', 'src', 'index.css')
