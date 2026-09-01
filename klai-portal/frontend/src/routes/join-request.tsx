@@ -71,7 +71,7 @@ function JoinRequestPage() {
       <AuthPageLayout leftContent={leftContent} showLocale>
         <div className="flex flex-col items-center gap-4 text-center">
           <CheckCircle2 className="h-10 w-10 text-[var(--color-success)]" />
-          <p className="text-sm text-gray-400">
+          <p className="text-sm text-gray-600">
             {m.join_request_success()}
           </p>
         </div>
@@ -85,7 +85,7 @@ function JoinRequestPage() {
         <h2 className="text-xl font-semibold text-gray-900">
           {m.join_request_heading()}
         </h2>
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-gray-600">
           {m.join_request_body()}
         </p>
       </div>

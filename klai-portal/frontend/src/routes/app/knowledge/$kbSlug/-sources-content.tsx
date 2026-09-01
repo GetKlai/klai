@@ -35,7 +35,7 @@ function ConnectorContent({ data }: { data: ContentResponse }) {
   const items = data.items ?? []
   if (items.length === 0) {
     return (
-      <div className="pl-[60px] pr-4 pb-3 text-xs text-gray-400">
+      <div className="pl-[60px] pr-4 pb-3 text-xs text-gray-600">
         {m.kb_sources_content_empty_connector()}
       </div>
     )
@@ -44,15 +44,15 @@ function ConnectorContent({ data }: { data: ContentResponse }) {
     <div className="pl-[60px] pr-4 pb-3 space-y-1">
       {items.map((item) => (
         <div key={item.id} className="flex items-center gap-2 text-xs py-1.5">
-          <File className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+          <File className="h-3.5 w-3.5 text-gray-500 shrink-0" />
           <span className="text-gray-700 flex-1 truncate">{item.path}</span>
-          <span className="text-gray-400 shrink-0">
+          <span className="text-gray-600 shrink-0">
             {m.kb_sources_content_item_chunks({ count: String(item.chunks_count) })}
           </span>
         </div>
       ))}
       {data.total > items.length && (
-        <p className="text-xs text-gray-400 pt-1">
+        <p className="text-xs text-gray-600 pt-1">
           {m.kb_sources_content_overflow_items({ count: String(data.total - items.length) })}
         </p>
       )}
@@ -66,9 +66,9 @@ function UploadContent({ source, data }: { source: Source; data: ContentResponse
     if (source.source_url) {
       return (
         <div className="pl-[60px] pr-4 pb-3 flex items-center gap-2 text-xs">
-          <File className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+          <File className="h-3.5 w-3.5 text-gray-500 shrink-0" />
           <span className="text-gray-700 truncate">{source.source_url}</span>
-          <span className="text-gray-400 shrink-0">{m.kb_sources_content_url_badge()}</span>
+          <span className="text-gray-600 shrink-0">{m.kb_sources_content_url_badge()}</span>
         </div>
       )
     }
@@ -79,7 +79,7 @@ function UploadContent({ source, data }: { source: Source; data: ContentResponse
     // Don't claim "no chunks indexed" in the indexed-Gesynct case - that
     // contradicts the badge. Speak to the preview gap instead.
     return (
-      <div className="pl-[60px] pr-4 pb-3 text-xs text-gray-400">
+      <div className="pl-[60px] pr-4 pb-3 text-xs text-gray-600">
         {m.kb_sources_content_no_preview()}
       </div>
     )
@@ -88,7 +88,7 @@ function UploadContent({ source, data }: { source: Source; data: ContentResponse
     <div className="pl-[60px] pr-4 pb-3 space-y-2">
       {chunks.map((chunk) => (
         <div key={chunk.id} className="text-xs py-1.5">
-          <div className="flex items-center gap-2 text-gray-400 mb-0.5">
+          <div className="flex items-center gap-2 text-gray-600 mb-0.5">
             <span>{m.kb_sources_content_chunk_position({ pos: String(chunk.position + 1) })}</span>
             <span>·</span>
             <span>{m.kb_sources_content_chunk_tokens({ count: String(chunk.token_count) })}</span>
@@ -97,7 +97,7 @@ function UploadContent({ source, data }: { source: Source; data: ContentResponse
         </div>
       ))}
       {data.total > chunks.length && (
-        <p className="text-xs text-gray-400 pt-1">
+        <p className="text-xs text-gray-600 pt-1">
           {m.kb_sources_content_overflow_chunks({ count: String(data.total - chunks.length) })}
         </p>
       )}
@@ -110,7 +110,7 @@ export function SourceContent({ kbSlug, source }: DrillDownProps) {
 
   if (isLoading) {
     return (
-      <div className="pl-[60px] pr-4 pb-3 flex items-center gap-2 text-xs text-gray-400">
+      <div className="pl-[60px] pr-4 pb-3 flex items-center gap-2 text-xs text-gray-600">
         <Loader2 className="h-3 w-3 animate-spin" />
         {m.kb_sources_content_loading()}
       </div>

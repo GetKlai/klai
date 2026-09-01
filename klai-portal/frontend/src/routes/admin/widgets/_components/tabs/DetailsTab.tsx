@@ -97,7 +97,7 @@ export function DetailsTab({ widget }: Props) {
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="widget-description">{m.admin_widgets_details_role_scope_label()}</Label>
-            <p className="text-xs text-gray-400">{m.admin_widgets_details_role_scope_help()}</p>
+            <p className="text-xs text-gray-600">{m.admin_widgets_details_role_scope_help()}</p>
             <Textarea
               id="widget-description"
               value={description}
@@ -116,7 +116,7 @@ export function DetailsTab({ widget }: Props) {
           {templatesQuery.data && templatesQuery.data.length > 0 && (
             <div className="space-y-1.5">
               <Label htmlFor="widget-template">{m.admin_widgets_widget_template_label()}</Label>
-              <p className="text-xs text-gray-400">{m.admin_widgets_widget_template_help()}</p>
+              <p className="text-xs text-gray-600">{m.admin_widgets_widget_template_help()}</p>
               <Select
                 id="widget-template"
                 value={templateSlug}
@@ -132,7 +132,7 @@ export function DetailsTab({ widget }: Props) {
           )}
           <div className="space-y-1.5">
             <Label htmlFor="widget-system-prompt">{m.admin_widgets_widget_system_prompt_label()}</Label>
-            <p className="text-xs text-gray-400">{m.admin_widgets_widget_system_prompt_help()}</p>
+            <p className="text-xs text-gray-600">{m.admin_widgets_widget_system_prompt_help()}</p>
             <Textarea
               id="widget-system-prompt"
               value={systemPrompt}
@@ -170,6 +170,6 @@ export function DetailsTab({ widget }: Props) {
 
 function SectionHeading({ children }: { children: React.ReactNode }) {
   return (
-    <h3 className="text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-400 mb-3">{children}</h3>
+    <h3 className="text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-600 mb-3">{children}</h3>
   )
 }

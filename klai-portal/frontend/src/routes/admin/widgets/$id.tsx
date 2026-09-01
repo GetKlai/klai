@@ -67,7 +67,7 @@ function WidgetDetailPage() {
   if (isLoading) {
     return (
       <div className="p-6">
-        <p className="py-8 text-sm text-gray-400">
+        <p className="py-8 text-sm text-gray-600">
           <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
           {m.admin_widgets_loading()}
         </p>
@@ -116,7 +116,7 @@ function WidgetDetailPage() {
             {widget.name}
           </h1>
           {widget.description && (
-            <p className="text-sm text-gray-400 mt-1">
+            <p className="text-sm text-gray-600 mt-1">
               {widget.description}
             </p>
           )}

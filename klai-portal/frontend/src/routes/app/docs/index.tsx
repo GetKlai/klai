@@ -94,7 +94,7 @@ function DocsPage() {
               <ListRowContent>
                 <div className="flex items-baseline gap-2 flex-wrap">
                   <ListRowTitle>{kb.name}</ListRowTitle>
-                  <span className="inline-flex items-center gap-1 text-xs text-gray-400">
+                  <span className="inline-flex items-center gap-1 text-xs text-gray-600">
                     {kb.visibility === 'public' ? <Globe size={11} /> : <Lock size={11} />}
                     {kb.visibility === 'public' ? m.docs_kb_visibility_public() : m.docs_kb_visibility_private()}
                   </span>
@@ -134,7 +134,7 @@ function DocsPage() {
                 </ListRowIcon>
                 <ListRowContent>
                   <div className="flex items-baseline gap-2 flex-wrap">
-                    <ListRowTitle className="text-gray-400">{kb.name}</ListRowTitle>
+                    <ListRowTitle className="text-gray-600">{kb.name}</ListRowTitle>
                     <Badge variant="outline" className="text-[0.625rem] py-0 px-1.5">{m.docs_kb_locked_badge()}</Badge>
                   </div>
                 </ListRowContent>

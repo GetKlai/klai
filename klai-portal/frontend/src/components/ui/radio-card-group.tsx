@@ -78,7 +78,7 @@ export function RadioCardGroup({
             <div className="space-y-0.5">
               <p className="text-sm font-medium text-gray-900">{option.label}</p>
               {!compact && option.description && (
-                <p className="text-xs text-gray-400">{option.description}</p>
+                <p className="text-xs text-gray-600">{option.description}</p>
               )}
             </div>
           </label>

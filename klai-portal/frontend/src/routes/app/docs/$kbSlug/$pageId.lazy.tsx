@@ -309,7 +309,7 @@ function KBPageEditor() {
   // REQ-STA-04: Page not found UI - shown when UUID/slug is not in pageIndex
   if (pageNotFound) {
     return (
-      <div className="flex flex-col items-center justify-center h-full gap-4 text-gray-400">
+      <div className="flex flex-col items-center justify-center h-full gap-4 text-gray-600">
         <p className="text-lg font-medium">{m.docs_page_not_found()}</p>
         <p className="text-sm">{m.docs_page_not_found_desc()}</p>
         <button
@@ -410,7 +410,7 @@ function KBPageEditor() {
             className="w-[360px] max-w-[90vw] rounded-xl border border-gray-200 bg-[var(--color-card)] p-4 shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <p className="mb-2 text-xs text-gray-400">{m.docs_wikilink_connect()}</p>
+            <p className="mb-2 text-xs text-gray-600">{m.docs_wikilink_connect()}</p>
             <Input
               autoFocus
               placeholder={m.docs_wikilink_search_placeholder()}
@@ -442,7 +442,7 @@ function KBPageEditor() {
                   </button>
                 ))}
               {pageIndex.filter((p) => p.slug !== selectedPath).length === 0 && (
-                <p className="px-3 py-2 text-xs text-gray-400">{m.docs_wikilink_no_results()}</p>
+                <p className="px-3 py-2 text-xs text-gray-600">{m.docs_wikilink_no_results()}</p>
               )}
             </div>
           </div>

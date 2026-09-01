@@ -79,7 +79,7 @@ function SelectWorkspacePage() {
     return (
       <AuthPageLayout leftContent={leftContent} showLocale>
         <div className="flex items-center justify-center py-8">
-          <span className="text-sm text-gray-400">…</span>
+          <span className="text-sm text-gray-600">…</span>
         </div>
       </AuthPageLayout>
     )
@@ -113,7 +113,7 @@ function SelectWorkspacePage() {
         <h2 className="text-xl font-semibold text-gray-900">
           {m.select_workspace_heading()}
         </h2>
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-gray-600">
           {m.select_workspace_body()}
         </p>
       </div>
@@ -134,7 +134,7 @@ function SelectWorkspacePage() {
             <span className="block font-medium text-gray-900">
               {org.name}
             </span>
-            <span className="block text-xs text-gray-400">
+            <span className="block text-xs text-gray-600">
               {org.kind === 'domain_match'
                 ? org.auto_accept
                   ? m.select_workspace_join_auto_hint()

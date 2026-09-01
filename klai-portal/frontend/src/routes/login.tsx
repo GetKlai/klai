@@ -256,7 +256,7 @@ function LoginPage() {
             <h2 className="text-2xl font-semibold tracking-tight text-gray-900">
               {m.totp_heading()}
             </h2>
-            <p className="text-sm text-gray-400">
+            <p className="text-sm text-gray-600">
               {m.totp_subheading()}
             </p>
           </div>
@@ -291,7 +291,7 @@ function LoginPage() {
             </Button>
           </form>
 
-          <p className="text-center text-xs text-gray-400">
+          <p className="text-center text-xs text-gray-600">
             <button
               onClick={() => { setTotpStep(false); setTotpCode(''); setError(null) }}
               className="text-[var(--color-rl-accent-dark)] hover:underline"
@@ -307,7 +307,7 @@ function LoginPage() {
             <h2 className="text-2xl font-semibold tracking-tight text-gray-900">
               {m.login_heading()}
             </h2>
-            <p className="text-sm text-gray-400">
+            <p className="text-sm text-gray-600">
               {m.login_subheading()}
             </p>
           </div>
@@ -357,7 +357,7 @@ function LoginPage() {
           {/* Social login */}
           <div className="relative flex items-center gap-3 pt-1">
             <div className="h-px flex-1 bg-gray-200" />
-            <span className="text-xs tracking-wide text-gray-400">
+            <span className="text-xs tracking-wide text-gray-600">
               {m.login_or_continue_with()}
             </span>
             <div className="h-px flex-1 bg-gray-200" />
@@ -397,7 +397,7 @@ function LoginPage() {
             </button>
           </div>
 
-          <div className="flex items-center justify-between text-center text-xs text-gray-400">
+          <div className="flex items-center justify-between text-center text-xs text-gray-600">
             <Link
               to="/$locale/password/forgot"
               params={{ locale }}

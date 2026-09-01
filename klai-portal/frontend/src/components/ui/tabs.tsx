@@ -141,7 +141,7 @@ function Tabs<T extends string>({ tabs, value, onValueChange, className, ...prop
               'flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 pb-2 text-sm font-medium transition-colors',
               isActive
                 ? 'border-gray-900 text-gray-900'
-                : 'border-transparent text-gray-400 hover:text-gray-900',
+                : 'border-transparent text-gray-600 hover:text-gray-900',
             )}
           >
             {Icon && <Icon className="h-4 w-4" />}

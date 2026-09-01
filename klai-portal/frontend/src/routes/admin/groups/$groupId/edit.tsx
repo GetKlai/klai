@@ -155,7 +155,7 @@ function EditGroupPage() {
   if (groupLoading) {
     return (
       <div className="p-6">
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-gray-600">
           <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
           Loading...
         </p>
@@ -222,7 +222,7 @@ function EditGroupPage() {
               <Label className="mb-2 block">{m.admin_groups_members_title()}</Label>
 
               {currentMembers.length === 0 ? (
-                <p className="text-sm text-gray-400 mb-3">
+                <p className="text-sm text-gray-600 mb-3">
                   {m.admin_groups_members_empty()}
                 </p>
               ) : (
@@ -233,7 +233,7 @@ function EditGroupPage() {
                         <span className="text-sm text-gray-900">
                           {displayName(user)}
                         </span>
-                        <span className="text-xs text-gray-400 ml-2">
+                        <span className="text-xs text-gray-600 ml-2">
                           {user.email}
                         </span>
                       </div>

@@ -57,7 +57,7 @@ export function SecuritySettingsSection({
       </div>
       <form onSubmit={handleSubmit} className="space-y-6">
         {isLoading ? (
-          <p className="text-sm text-gray-400">{m.admin_users_loading()}</p>
+          <p className="text-sm text-gray-600">{m.admin_users_loading()}</p>
         ) : error ? (
           <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_fetch()}</p>
         ) : (
@@ -76,7 +76,7 @@ export function SecuritySettingsSection({
                 <option value="recommended">{m.admin_settings_mfa_recommended()}</option>
                 <option value="required">{m.admin_settings_mfa_required()}</option>
               </Select>
-              <p className="text-xs text-gray-400">
+              <p className="text-xs text-gray-600">
                 {selectedMfa === 'optional' && m.admin_settings_mfa_optional_hint()}
                 {selectedMfa === 'recommended' && m.admin_settings_mfa_recommended_hint()}
                 {selectedMfa === 'required' && m.admin_settings_mfa_required_hint()}
@@ -92,7 +92,7 @@ export function SecuritySettingsSection({
                   onChange={(event) => setAutoAcceptSameDomain(event.target.checked)}
                   label={m.admin_settings_auto_accept_label({ domain: settings.primary_domain })}
                 />
-                <p className="pl-7 text-xs text-gray-400">
+                <p className="pl-7 text-xs text-gray-600">
                   {autoAcceptSameDomain
                     ? m.admin_settings_auto_accept_hint_on()
                     : m.admin_settings_auto_accept_hint_off()}

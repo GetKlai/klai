@@ -38,7 +38,7 @@ function McpsNewPage() {
           <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
             {m.admin_mcps_new_title()}
           </h1>
-          <p className="text-sm text-gray-400">
+          <p className="text-sm text-gray-600">
             {m.admin_mcps_new_subtitle()}
           </p>
         </div>
@@ -72,7 +72,7 @@ function McpsNewPage() {
                 <DataTableCell>
                   <span className="font-medium">{server.display_name || server.id}</span>
                 </DataTableCell>
-                <DataTableCell className="text-gray-400">{server.description}</DataTableCell>
+                <DataTableCell className="text-gray-600">{server.description}</DataTableCell>
                 <DataTableCell align="right">
                   <RowActionGroup>
                     <BorderedRowActionIconButton

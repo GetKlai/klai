@@ -71,7 +71,7 @@ function SetupMFAPage() {
           <p className="text-xl font-semibold text-gray-900">
             {m.setup_mfa_done_heading()}
           </p>
-          <p className="text-sm text-gray-400">
+          <p className="text-sm text-gray-600">
             {m.setup_mfa_done_body()}
           </p>
         </div>
@@ -83,7 +83,7 @@ function SetupMFAPage() {
             <h2 className="text-xl font-semibold text-gray-900">
               {m.setup_mfa_heading()}
             </h2>
-            <p className="text-sm text-gray-400">
+            <p className="text-sm text-gray-600">
               {m.setup_mfa_subheading()}
             </p>
           </div>
@@ -128,7 +128,7 @@ function SetupMFAPage() {
               <button
                 type="button"
                 onClick={redirectAfterSetup}
-                className="text-xs text-gray-400 hover:text-[var(--color-rl-accent-dark)] hover:underline"
+                className="text-xs text-gray-600 hover:text-[var(--color-rl-accent-dark)] hover:underline"
               >
                 {m.setup_mfa_skip()}
               </button>

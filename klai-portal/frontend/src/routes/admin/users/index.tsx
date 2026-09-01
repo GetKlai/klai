@@ -122,15 +122,15 @@ function UsersPage() {
           )}
 
           {usersQuery.isLoading ? (
-            <p className="py-8 text-sm text-gray-400">
+            <p className="py-8 text-sm text-gray-600">
               {m.admin_users_loading()}
             </p>
           ) : users.length === 0 ? (
-            <p className="py-8 text-sm text-gray-400">
+            <p className="py-8 text-sm text-gray-600">
               {m.admin_users_empty()}
             </p>
           ) : controls.filteredCount === 0 ? (
-            <p className="py-8 text-sm text-gray-400">
+            <p className="py-8 text-sm text-gray-600">
               {m.list_no_results()}
             </p>
           ) : (

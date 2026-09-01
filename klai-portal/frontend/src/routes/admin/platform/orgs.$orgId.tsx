@@ -83,7 +83,7 @@ function PlatformOrgDetailPage() {
   if (isLoading) {
     return (
       <PageContainer width="4xl">
-        <p className="py-8 text-sm text-gray-400">
+        <p className="py-8 text-sm text-gray-600">
           <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
           {m.admin_shared_loading()}
         </p>
@@ -161,7 +161,7 @@ function PlatformOrgDetailPage() {
           <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
             {data.org.name}
           </h1>
-          <div className="mt-2 flex items-center gap-2 flex-wrap text-sm text-gray-400">
+          <div className="mt-2 flex items-center gap-2 flex-wrap text-sm text-gray-600">
             <span className="font-mono">{data.org.slug}</span>
             <span>·</span>
             <Badge variant="outline">{data.org.plan}</Badge>

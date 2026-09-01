@@ -272,7 +272,7 @@ export function GoogleDrivePicker({
     <div className="rounded-lg border border-gray-200 bg-white">
       <div className="border-b border-gray-200 px-3 py-2">
         <p className="text-sm font-medium text-gray-900">Kies wat je wilt syncen</p>
-        <p className="text-xs text-gray-400 mt-0.5">
+        <p className="text-xs text-gray-600 mt-0.5">
           Kies een map of losse ondersteunde bestanden. Docs, Sheets en Slides worden
           automatisch omgezet; video, audio, afbeeldingen en archives worden niet getoond.
         </p>

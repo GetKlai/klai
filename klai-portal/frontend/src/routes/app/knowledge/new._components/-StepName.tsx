@@ -69,14 +69,14 @@ export function StepName({
                 ].join(' ')}
               >
                 {type === 'org' ? (
-                  <Users className="h-4 w-4 text-gray-400" />
+                  <Users className="h-4 w-4 text-gray-500" />
                 ) : (
-                  <User className="h-4 w-4 text-gray-400" />
+                  <User className="h-4 w-4 text-gray-500" />
                 )}
                 <span className="text-sm font-medium text-gray-900">
                   {type === 'org' ? m.knowledge_new_scope_org() : m.knowledge_new_scope_personal()}
                 </span>
-                <span className="text-xs text-gray-400">
+                <span className="text-xs text-gray-600">
                   {type === 'org'
                     ? m.knowledge_new_scope_org_description()
                     : m.knowledge_new_scope_personal_description()}
@@ -105,7 +105,7 @@ export function StepName({
           onChange={(e) => handleSlugChange(e.target.value)}
           pattern="[a-z0-9\-]+"
         />
-        <p className="text-xs text-gray-400">
+        <p className="text-xs text-gray-600">
           {m.knowledge_new_slug_hint()}
         </p>
         {errorKey === 'conflict' && (

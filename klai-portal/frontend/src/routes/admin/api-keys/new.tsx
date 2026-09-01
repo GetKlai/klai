@@ -160,7 +160,7 @@ function NewApiKeyPage() {
       <form onSubmit={handleSubmit} className="space-y-6">
         {step === 'details' && (
           <section className="space-y-4">
-            <p className="text-sm text-gray-400">
+            <p className="text-sm text-gray-600">
               {m.admin_shared_wizard_details_intro()}
             </p>
             <div className="space-y-1.5">
@@ -202,7 +202,7 @@ function NewApiKeyPage() {
                 />
                 <div>
                   <span className="font-medium">{m.admin_api_keys_perm_chat()}</span>
-                  <p className="text-xs text-gray-400 mt-0.5">
+                  <p className="text-xs text-gray-600 mt-0.5">
                     {m.admin_api_keys_perm_chat_description()}
                   </p>
                 </div>
@@ -216,7 +216,7 @@ function NewApiKeyPage() {
                 />
                 <div>
                   <span className="font-medium">{m.admin_api_keys_perm_feedback()}</span>
-                  <p className="text-xs text-gray-400 mt-0.5">
+                  <p className="text-xs text-gray-600 mt-0.5">
                     {m.admin_api_keys_perm_feedback_description()}
                   </p>
                 </div>
@@ -230,7 +230,7 @@ function NewApiKeyPage() {
                 />
                 <div>
                   <span className="font-medium">{m.admin_api_keys_perm_knowledge_append()}</span>
-                  <p className="text-xs text-gray-400 mt-0.5">
+                  <p className="text-xs text-gray-600 mt-0.5">
                     {m.admin_api_keys_perm_knowledge_append_description()}
                   </p>
                 </div>
@@ -244,7 +244,7 @@ function NewApiKeyPage() {
                 />
                 <div>
                   <span className="font-medium">{m.admin_api_keys_perm_general_chat()}</span>
-                  <p className="text-xs text-gray-400 mt-0.5">
+                  <p className="text-xs text-gray-600 mt-0.5">
                     {m.admin_api_keys_perm_general_chat_description()}
                   </p>
                 </div>
@@ -255,7 +255,7 @@ function NewApiKeyPage() {
 
         {step === 'kbs' && (
           <section className="space-y-4">
-            <p className="text-sm text-gray-400">
+            <p className="text-sm text-gray-600">
               {m.admin_api_keys_wizard_kb_access_intro_api()}
             </p>
             <KbAccessEditor

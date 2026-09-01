@@ -101,7 +101,7 @@ function AdminProfileDetail() {
             {profileLabel}
           </h1>
           {profileDescription && (
-            <p className="text-sm text-gray-400">
+            <p className="text-sm text-gray-600">
               {profileDescription}
             </p>
           )}
@@ -177,14 +177,14 @@ function AdminProfileDetail() {
                       />
                     </DataTableCell>
                     <DataTableCell>{displayName(user)}</DataTableCell>
-                    <DataTableCell className="text-gray-400">{user.email}</DataTableCell>
+                    <DataTableCell className="text-gray-600">{user.email}</DataTableCell>
                     <DataTableCell className="w-28 whitespace-nowrap tabular-nums">
                       {formatDate(user.created_at)}
                     </DataTableCell>
                     <DataTableCell align="right" className="w-16">
                       {alreadyPersonal ? (
                         // No demote target on the lowest rung.
-                        <span className="text-xs text-gray-400">-</span>
+                        <span className="text-xs text-gray-600">-</span>
                       ) : (
                         <InlineDeleteConfirm
                           isConfirming={isConfirming}

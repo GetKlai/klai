@@ -260,7 +260,7 @@ function NewWidgetPage() {
                   <Label htmlFor="widget-description">
                     {m.admin_widgets_details_role_scope_label()}
                   </Label>
-                  <p className="text-xs text-gray-400">
+                  <p className="text-xs text-gray-600">
                     {m.admin_widgets_details_role_scope_help()}
                   </p>
                   <Textarea
@@ -287,7 +287,7 @@ function NewWidgetPage() {
                     <Label htmlFor="widget-template">
                       {m.admin_widgets_widget_template_label()}
                     </Label>
-                    <p className="text-xs text-gray-400">
+                    <p className="text-xs text-gray-600">
                       {m.admin_widgets_widget_template_help()}
                     </p>
                     <Select
@@ -311,7 +311,7 @@ function NewWidgetPage() {
                   <Label htmlFor="widget-system-prompt">
                     {m.admin_widgets_widget_system_prompt_label()}
                   </Label>
-                  <p className="text-xs text-gray-400">
+                  <p className="text-xs text-gray-600">
                     {m.admin_widgets_widget_system_prompt_help()}
                   </p>
                   <Textarea
@@ -341,7 +341,7 @@ function NewWidgetPage() {
 
         {step === 'kbs' && (
           <section className="space-y-4">
-            <p className="text-sm text-gray-400">
+            <p className="text-sm text-gray-600">
               {m.admin_widgets_wizard_kb_access_intro_widget()}
             </p>
             <KbAccessEditor
@@ -362,7 +362,7 @@ function NewWidgetPage() {
                 <Label htmlFor="widget-primary-color">
                   {m.admin_widgets_brand_color_label()}
                 </Label>
-                <p className="text-xs text-gray-400">
+                <p className="text-xs text-gray-600">
                   {m.admin_widgets_brand_color_help()}
                 </p>
                 <div className="flex items-center gap-2">
@@ -432,7 +432,7 @@ function NewWidgetPage() {
                 <Label htmlFor="widget-welcome">
                   {m.admin_widgets_welcome_label()}
                 </Label>
-                <p className="text-xs text-gray-400">
+                <p className="text-xs text-gray-600">
                   {m.admin_widgets_welcome_help()}
                 </p>
                 <Input
@@ -455,7 +455,7 @@ function NewWidgetPage() {
                 <Label htmlFor="widget-starters">
                   {m.admin_widgets_widget_starters_label()}
                 </Label>
-                <p className="text-xs text-gray-400">
+                <p className="text-xs text-gray-600">
                   {m.admin_widgets_widget_starters_help()}
                 </p>
                 <Textarea
@@ -467,7 +467,7 @@ function NewWidgetPage() {
                   rows={4}
                   placeholder={m.admin_widgets_widget_starters_placeholder()}
                 />
-                <p className="text-xs text-gray-400">
+                <p className="text-xs text-gray-600">
                   {starters.length}/{MAX_STARTERS}
                 </p>
               </div>
@@ -552,7 +552,7 @@ function NewWidgetPage() {
 
         {step === 'embed' && (
           <section className="space-y-4">
-            <p className="text-sm text-gray-400">
+            <p className="text-sm text-gray-600">
               Standaard werkt je widget overal. Wil je hem alleen op
               specifieke domeinen laten laden? Vul ze hieronder in - één
               per regel. Laat leeg om overal toe te staan.
@@ -585,7 +585,7 @@ function NewWidgetPage() {
             <div className="space-y-1.5">
               <Label htmlFor="widget-origins">
                 {m.admin_widgets_widget_origins_label()}
-                <span className="ml-2 text-xs font-normal text-gray-400">
+                <span className="ml-2 text-xs font-normal text-gray-600">
                   (optioneel)
                 </span>
               </Label>
@@ -603,7 +603,7 @@ function NewWidgetPage() {
                 className="font-mono"
               />
             </div>
-            <p className="text-xs text-gray-400 pt-2">
+            <p className="text-xs text-gray-600 pt-2">
               Na aanmaken vind je de share-link, embed-code en testknop op
               de Insluiten-tab van je widget - daar kun je deze lijst ook
               later nog aanpassen.
@@ -664,7 +664,7 @@ function NewWidgetPage() {
 
 function SectionHeading({ children }: { children: React.ReactNode }) {
   return (
-    <h3 className="text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-400 mb-3">
+    <h3 className="text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-600 mb-3">
       {children}
     </h3>
   )

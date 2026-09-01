@@ -90,7 +90,7 @@ function VerifyEmailPage() {
       {status === 'loading' && (
         <div className="space-y-4 text-center">
           <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-[var(--color-rl-accent)] border-t-transparent" />
-          <p className="text-sm text-gray-400">
+          <p className="text-sm text-gray-600">
             {m.verify_loading()}
           </p>
         </div>
@@ -103,7 +103,7 @@ function VerifyEmailPage() {
             <h1 className="text-xl font-semibold text-gray-900">
               {m.verify_success_heading()}
             </h1>
-            <p className="text-sm text-gray-400">
+            <p className="text-sm text-gray-600">
               {m.verify_success_body()}
             </p>
           </div>
@@ -121,11 +121,11 @@ function VerifyEmailPage() {
             <h1 className="text-xl font-semibold text-gray-900">
               {m.verify_error_heading()}
             </h1>
-            <p className="text-sm text-gray-400">
+            <p className="text-sm text-gray-600">
               {errorMessage ?? m.verify_error_invalid_link()}
             </p>
           </div>
-          <p className="text-xs text-gray-400">
+          <p className="text-xs text-gray-600">
             {m.verify_error_hint()}{' '}
             <a href="mailto:support@getklai.com" className="text-[var(--color-rl-accent-dark)] hover:underline">
               support@getklai.com

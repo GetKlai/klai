@@ -101,19 +101,19 @@ export function EditorHeader({
       />
       <div className="flex items-center gap-2 shrink-0">
         {saveStatus === 'saving' && (
-          <span className="flex items-center gap-1 text-xs text-gray-400">
+          <span className="flex items-center gap-1 text-xs text-gray-600">
             <Loader2 size={12} className="animate-spin" />
             {m.docs_editor_saving()}
           </span>
         )}
         {saveStatus === 'saved' && (
-          <span className="flex items-center gap-1 text-xs text-gray-400">
+          <span className="flex items-center gap-1 text-xs text-gray-600">
             <Check size={12} />
             {m.docs_editor_save()}
           </span>
         )}
         {saveStatus === 'renamed' && (
-          <span className="flex items-center gap-1 text-xs text-gray-400">
+          <span className="flex items-center gap-1 text-xs text-gray-600">
             <Check size={12} />
             {m.docs_editor_url_updated()}
           </span>
@@ -132,7 +132,7 @@ export function EditorHeader({
           </Button>
           {showMenu && (
             <div className="absolute right-0 top-8 z-10 w-48 rounded-lg border border-gray-200 bg-[var(--color-card)] shadow-md py-1">
-              <p className="px-3 py-1.5 text-xs text-gray-400">
+              <p className="px-3 py-1.5 text-xs text-gray-600">
                 Paginainstellingen
               </p>
               <button

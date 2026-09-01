@@ -153,7 +153,7 @@ function AddMemberPage() {
                               }}
                             >
                               <span>{label}</span>
-                              <span className="ml-auto text-xs text-gray-400">
+                              <span className="ml-auto text-xs text-gray-600">
                                 {u.email}
                               </span>
                             </CommandItem>

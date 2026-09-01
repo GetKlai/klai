@@ -149,7 +149,7 @@ export function InstructionsPage() {
         <div className="rounded-lg border border-dashed border-gray-200 py-16 text-center">
           <Sliders className="h-10 w-10 text-gray-300 mx-auto mb-3" />
           <p className="text-base font-medium text-gray-900">{m.instructions_empty_title()}</p>
-          <p className="text-sm text-gray-400 mt-1 max-w-md mx-auto">
+          <p className="text-sm text-gray-600 mt-1 max-w-md mx-auto">
             {m.instructions_empty_description()}
           </p>
           <Button

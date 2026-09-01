@@ -148,7 +148,7 @@ function SettingsTab() {
               disabled
               className="bg-[var(--color-secondary)] text-gray-400"
             />
-            <p className="text-xs text-gray-400">
+            <p className="text-xs text-gray-600">
               {m.knowledge_settings_slug_hint()}
             </p>
           </div>
@@ -173,7 +173,7 @@ function SettingsTab() {
             </div>
           )}
           {!isOwner && (
-            <p className="text-xs text-gray-400 pt-2">
+            <p className="text-xs text-gray-600 pt-2">
               {m.knowledge_settings_readonly_notice()}
             </p>
           )}
@@ -193,7 +193,7 @@ function SettingsTab() {
                   <ListRowTitle>{u.email || u.user_id}</ListRowTitle>
                 </ListRowContent>
                 <ListRowActions>
-                  <span className="text-xs text-gray-400 capitalize shrink-0">{u.role}</span>
+                  <span className="text-xs text-gray-600 capitalize shrink-0">{u.role}</span>
                 </ListRowActions>
               </ListRow>
             ))}
@@ -207,7 +207,7 @@ function SettingsTab() {
           <h2 className="text-sm font-semibold text-[var(--color-destructive)]">
             {m.knowledge_settings_danger_heading()}
           </h2>
-          <p className="text-sm text-gray-400">
+          <p className="text-sm text-gray-600">
             {m.knowledge_settings_danger_description()}
           </p>
           <div className="pt-2">

@@ -215,7 +215,7 @@ function AccountPage() {
         <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
           {m.account_heading()}
         </h1>
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-gray-600">
           {m.account_subtitle()}
         </p>
       </div>
@@ -229,13 +229,13 @@ function AccountPage() {
               <dl className="space-y-3">
                 {name && (
                   <div className="flex flex-col gap-1 sm:flex-row sm:gap-4">
-                    <dt className="w-32 shrink-0 text-sm text-gray-400">Naam</dt>
+                    <dt className="w-32 shrink-0 text-sm text-gray-600">Naam</dt>
                     <dd className="text-sm font-medium text-gray-900">{name}</dd>
                   </div>
                 )}
                 {email && (
                   <div className="flex flex-col gap-1 sm:flex-row sm:gap-4">
-                    <dt className="w-32 shrink-0 text-sm text-gray-400">E-mail</dt>
+                    <dt className="w-32 shrink-0 text-sm text-gray-600">E-mail</dt>
                     <dd className="text-sm font-medium text-gray-900">{email}</dd>
                   </div>
                 )}
@@ -247,7 +247,7 @@ function AccountPage() {
             <h2 className="text-sm font-medium text-gray-900 mb-2">
               {m.account_language_title()}
             </h2>
-            <p className="text-sm text-gray-400 mb-6">
+            <p className="text-sm text-gray-600 mb-6">
               {m.account_language_description()}
             </p>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
@@ -308,7 +308,7 @@ function AccountPage() {
         <div className="space-y-6">
           <div>
             <h2 className="text-sm font-medium text-gray-900 mb-2">{m.account_sar_title()}</h2>
-            <p className="text-sm text-gray-400 mb-4">
+            <p className="text-sm text-gray-600 mb-4">
               {m.account_sar_description()}
             </p>
             <Button
@@ -788,7 +788,7 @@ function FeedRow({
           <h3 className="truncate text-sm font-medium text-gray-900">{title}</h3>
         </div>
         <p className="mt-1 line-clamp-1 text-sm text-gray-500">{snippet}</p>
-        <p className="mt-1 text-xs text-gray-400">{date}</p>
+        <p className="mt-1 text-xs text-gray-600">{date}</p>
       </div>
     </button>
   )
@@ -826,7 +826,7 @@ function FeedbackFeedRow({
         ) : (
           <p className="mt-1 line-clamp-1 text-sm text-gray-500">{item.raw_text}</p>
         )}
-        <p className="mt-1 text-xs text-gray-400">
+        <p className="mt-1 text-xs text-gray-600">
           {m.account_feedback_updated()} {formatFeedbackDate(item.latest_update_at, locale)}
         </p>
       </div>
@@ -853,7 +853,7 @@ function PanelHeader({
     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
       <div>
         <h2 className="text-sm font-medium text-gray-900 mb-2">{title}</h2>
-        <p className="text-sm text-gray-400">{description}</p>
+        <p className="text-sm text-gray-600">{description}</p>
       </div>
       {unreadCount > 0 && (
         <Button

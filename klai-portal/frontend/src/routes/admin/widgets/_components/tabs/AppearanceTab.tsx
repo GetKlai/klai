@@ -88,7 +88,7 @@ export function AppearanceTab({ widget }: Props) {
         <SectionHeading>{m.admin_widgets_appearance_section_brand()}</SectionHeading>
         <div className="space-y-1.5 max-w-sm">
           <Label htmlFor="widget-primary-color">{m.admin_widgets_brand_color_label()}</Label>
-          <p className="text-xs text-gray-400">{m.admin_widgets_brand_color_help()}</p>
+          <p className="text-xs text-gray-600">{m.admin_widgets_brand_color_help()}</p>
           <div className="flex items-center gap-2">
             <Input
               id="widget-primary-color"
@@ -137,7 +137,7 @@ export function AppearanceTab({ widget }: Props) {
         <SectionHeading>{m.admin_widgets_appearance_section_welcome()}</SectionHeading>
         <div className="space-y-1.5">
           <Label htmlFor="widget-welcome">{m.admin_widgets_welcome_label()}</Label>
-          <p className="text-xs text-gray-400">{m.admin_widgets_welcome_help()}</p>
+          <p className="text-xs text-gray-600">{m.admin_widgets_welcome_help()}</p>
           <Input
             id="widget-welcome"
             value={welcome}
@@ -152,7 +152,7 @@ export function AppearanceTab({ widget }: Props) {
         <SectionHeading>{m.admin_widgets_appearance_section_starters()}</SectionHeading>
         <div className="space-y-1.5">
           <Label htmlFor="widget-starters">{m.admin_widgets_widget_starters_label()}</Label>
-          <p className="text-xs text-gray-400">{m.admin_widgets_widget_starters_help()}</p>
+          <p className="text-xs text-gray-600">{m.admin_widgets_widget_starters_help()}</p>
           <Textarea
             id="widget-starters"
             value={startersRaw}
@@ -160,7 +160,7 @@ export function AppearanceTab({ widget }: Props) {
             rows={4}
             placeholder={m.admin_widgets_widget_starters_placeholder()}
           />
-          <p className="text-xs text-gray-400">{starters.length}/{MAX_STARTERS}</p>
+          <p className="text-xs text-gray-600">{starters.length}/{MAX_STARTERS}</p>
         </div>
       </section>
 
@@ -222,6 +222,6 @@ export function AppearanceTab({ widget }: Props) {
 
 function SectionHeading({ children }: { children: React.ReactNode }) {
   return (
-    <h3 className="text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-400 mb-3">{children}</h3>
+    <h3 className="text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-600 mb-3">{children}</h3>
   )
 }

@@ -103,7 +103,7 @@ export function ProductUpdatesPopover() {
             <div className="flex items-start justify-between gap-3 border-b border-gray-200 px-4 py-3">
               <div className="min-w-0">
                 <h2 className="text-sm font-medium text-gray-900">{m.product_updates_title()}</h2>
-                <p className="mt-1 text-xs text-gray-400">
+                <p className="mt-1 text-xs text-gray-600">
                   {unreadCount > 0 ? m.product_updates_unread_count({ count: String(unreadCount) }) : m.product_updates_all_read()}
                 </p>
               </div>
@@ -130,7 +130,7 @@ export function ProductUpdatesPopover() {
               <ListLoadingState label={m.admin_shared_loading()} className="py-8" />
             ) : updatesQuery.error ? (
               updatesQuery.error instanceof ApiError && updatesQuery.error.status === 404 ? (
-                <div className="px-4 py-8 text-center text-sm text-gray-400">
+                <div className="px-4 py-8 text-center text-sm text-gray-600">
                   {m.product_updates_not_available()}
                 </div>
               ) : (
@@ -189,7 +189,7 @@ function ProductUpdateRow({
             <ListRowTitle className="text-sm">{update.title}</ListRowTitle>
           </div>
           <ListRowDescription>{update.body}</ListRowDescription>
-          <p className="mt-1 text-xs text-gray-400">
+          <p className="mt-1 text-xs text-gray-600">
             {formatProductUpdateDate(update.created_at, locale)}
           </p>
         </ListRowContent>
@@ -217,7 +217,7 @@ function ProductUpdateDetail({
 
       <div className="mt-4 border-b border-gray-200 pb-4">
         <h2 className="text-base font-display-bold text-gray-900">{update.title}</h2>
-        <p className="mt-1 text-xs text-gray-400">{formatProductUpdateDate(update.created_at, locale)}</p>
+        <p className="mt-1 text-xs text-gray-600">{formatProductUpdateDate(update.created_at, locale)}</p>
       </div>
 
       <p className="mt-4 whitespace-pre-wrap text-sm leading-relaxed text-gray-700">{update.body}</p>

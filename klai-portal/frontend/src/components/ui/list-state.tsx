@@ -55,7 +55,7 @@ interface ListEmptyStateProps extends Omit<ListStateProps, 'title'> {
 function ListEmptyState({ icon: Icon, title, description, className, ...props }: ListEmptyStateProps) {
   return (
     <ListState className={className} {...props}>
-      {Icon && <Icon className="mb-3 h-8 w-8 text-gray-400" aria-hidden="true" />}
+      {Icon && <Icon className="mb-3 h-8 w-8 text-gray-500" aria-hidden="true" />}
       <p>{title}</p>
       {description && (
         <p className="mt-1 max-w-sm text-xs text-[var(--color-muted-foreground)]">

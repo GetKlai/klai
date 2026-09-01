@@ -230,7 +230,7 @@ function PollingView({ dots }: { dots: string }) {
           {m.provisioning_polling_title()}
           {dots}
         </p>
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-gray-600">
           {m.provisioning_polling_subtitle()}
         </p>
       </div>
@@ -245,7 +245,7 @@ function ReadyView() {
       <p className="text-xl font-semibold text-gray-900">
         {m.provisioning_ready_title()}
       </p>
-      <p className="text-sm text-gray-400">
+      <p className="text-sm text-gray-600">
         {m.provisioning_ready_subtitle()}
       </p>
     </>
@@ -260,7 +260,7 @@ function RecoverableErrorView() {
         <p className="text-xl font-semibold text-gray-900">
           {m.provisioning_error_title()}
         </p>
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-gray-600">
           {m.provisioning_error_body()}
         </p>
       </div>
@@ -279,7 +279,7 @@ function FatalErrorView() {
         <p className="text-xl font-semibold text-gray-900">
           {m.provisioning_failed_title()}
         </p>
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-gray-600">
           {m.provisioning_failed_body()}{' '}
           <a
             href="mailto:support@getklai.com"

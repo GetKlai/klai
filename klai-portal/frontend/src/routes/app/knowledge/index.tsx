@@ -162,7 +162,7 @@ function KbRow({
                 Mijn
               </Badge>
             )}
-            <span className="text-xs text-gray-400">
+            <span className="text-xs text-gray-600">
               {statsLabel}
             </span>
           </div>

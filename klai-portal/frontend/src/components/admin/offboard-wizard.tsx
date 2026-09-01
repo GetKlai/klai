@@ -382,7 +382,7 @@ export function OffboardWizard({
                       className="flex items-start gap-2 border-y border-gray-200 py-3"
                       data-test-id="offboard-token-banner"
                     >
-                      <KeyRound className="mt-0.5 h-4 w-4 text-gray-400" />
+                      <KeyRound className="mt-0.5 h-4 w-4 text-gray-500" />
                       <div className="space-y-1">
                         <p className="font-medium text-gray-900">
                           {m.admin_users_wizard_tokens_title()}
@@ -421,7 +421,7 @@ export function OffboardWizard({
                             <p className="truncate font-medium text-gray-900">
                               {kb.name}
                             </p>
-                            <p className="truncate text-xs text-gray-400">
+                            <p className="truncate text-xs text-gray-600">
                               {kb.slug}
                             </p>
                           </div>

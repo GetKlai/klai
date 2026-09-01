@@ -72,14 +72,14 @@ export function ConnectorRow({
     <DataTableRow className="group klai-hover">
       <DataTableCell className="w-6 px-0 pr-2 align-top">
         <Tooltip className="leading-none mt-px" label={typeLabel}>
-          <Icon className="h-4 w-4 text-gray-400" />
+          <Icon className="h-4 w-4 text-gray-500" />
         </Tooltip>
       </DataTableCell>
       <DataTableCell className="align-top">
         <span className="font-medium text-gray-900">{connector.name}</span>
       </DataTableCell>
       <DataTableCell className="w-28 align-top">
-        <span className="text-xs text-gray-400">{typeLabel}</span>
+        <span className="text-xs text-gray-600">{typeLabel}</span>
       </DataTableCell>
       <DataTableCell className="w-32 align-top">
         <SyncStatusBadge
@@ -111,7 +111,7 @@ export function ConnectorRow({
           </div>
         )}
         {connector.last_sync_documents_ok != null && connector.last_sync_documents_ok > 0 && (
-          <p className="mt-0.5 text-xs text-gray-400 tabular-nums">
+          <p className="mt-0.5 text-xs text-gray-600 tabular-nums">
             {connector.last_sync_documents_ok.toLocaleString()} {m.connectors_documents_indexed()}
           </p>
         )}

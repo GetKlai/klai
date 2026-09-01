@@ -229,7 +229,7 @@ export function FeedbackMetaRow({
 }) {
   return (
     <div className="space-y-1">
-      <p className="text-xs font-medium text-gray-400">{label}</p>
+      <p className="text-xs font-medium text-gray-600">{label}</p>
       <div className="text-sm text-gray-900">{value || '-'}</div>
     </div>
   )

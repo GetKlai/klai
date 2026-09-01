@@ -75,7 +75,7 @@ export function TextSourceForm({ kbSlug, onBack }: TextSourceFormProps) {
           placeholder={m.knowledge_add_source_text_content_placeholder()}
           disabled={mutation.isPending || successful}
         />
-        <p className="text-xs text-gray-400 tabular-nums">
+        <p className="text-xs text-gray-600 tabular-nums">
           {content.length.toLocaleString()} / {MAX_CONTENT_CHARS.toLocaleString()}
         </p>
       </div>
@@ -102,7 +102,7 @@ export function TextSourceForm({ kbSlug, onBack }: TextSourceFormProps) {
         <button
           type="button"
           onClick={onBack}
-          className="text-sm text-gray-400 hover:text-gray-900 transition-colors"
+          className="text-sm text-gray-600 hover:text-gray-900 transition-colors"
         >
           {m.knowledge_add_source_back()}
         </button>

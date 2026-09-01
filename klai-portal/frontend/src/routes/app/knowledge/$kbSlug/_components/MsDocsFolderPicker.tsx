@@ -104,7 +104,7 @@ function ItemNode({
               e.stopPropagation()
               setExpanded((p) => !p)
             }}
-            className="inline-flex h-5 w-5 items-center justify-center text-gray-400 hover:text-gray-900"
+            className="inline-flex h-5 w-5 items-center justify-center text-gray-500 hover:text-gray-900"
             aria-label={expanded ? 'Inklappen' : 'Uitklappen'}
           >
             {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
@@ -125,12 +125,12 @@ function ItemNode({
         )}
         {isFolder ? (
           expanded ? (
-            <FolderOpen className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+            <FolderOpen className="h-3.5 w-3.5 text-gray-500 shrink-0" />
           ) : (
-            <Folder className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+            <Folder className="h-3.5 w-3.5 text-gray-500 shrink-0" />
           )
         ) : (
-          <File className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+          <File className="h-3.5 w-3.5 text-gray-500 shrink-0" />
         )}
         <span
           className={[
@@ -141,14 +141,14 @@ function ItemNode({
           {item.name}
         </span>
         {isFolder && item.child_count > 0 && (
-          <span className="text-[0.6875rem] text-gray-400 shrink-0">{item.child_count}</span>
+          <span className="text-[0.6875rem] text-gray-600 shrink-0">{item.child_count}</span>
         )}
       </div>
       {expanded && isFolder && (
         <div>
           {isLoading && (
             <div
-              className="flex items-center gap-2 text-xs text-gray-400 py-1"
+              className="flex items-center gap-2 text-xs text-gray-600 py-1"
               style={{ paddingLeft: `${(depth + 1) * 16 + 4}px` }}
             >
               <Loader2 className="h-3 w-3 animate-spin" />
@@ -157,7 +157,7 @@ function ItemNode({
           )}
           {data && data.folders.length === 0 && !isLoading && (
             <div
-              className="text-xs text-gray-400 italic py-1"
+              className="text-xs text-gray-600 italic py-1"
               style={{ paddingLeft: `${(depth + 1) * 16 + 4}px` }}
             >
               Leeg
@@ -263,7 +263,7 @@ export function MsDocsFolderPicker({
     <div className="rounded-lg border border-gray-200 bg-white">
       <div className="border-b border-gray-200 px-3 py-2">
         <p className="text-sm font-medium text-gray-900">Kies wat je wilt syncen</p>
-        <p className="text-xs text-gray-400 mt-0.5">
+        <p className="text-xs text-gray-600 mt-0.5">
           Klik op &#9656; om een map uit te klappen. Klik op een map om de hele map
           te syncen, of vink losse bestanden aan voor alleen die bestanden.
         </p>
@@ -277,12 +277,12 @@ export function MsDocsFolderPicker({
           ].join(' ')}
           onClick={selectWholeDrive}
         >
-          <Folder className="h-3.5 w-3.5 text-gray-400" />
+          <Folder className="h-3.5 w-3.5 text-gray-500" />
           <span className="text-sm text-gray-900">Hele drive (alles)</span>
         </div>
 
         {isLoading && (
-          <div className="flex items-center gap-2 px-2 py-2 text-xs text-gray-400">
+          <div className="flex items-center gap-2 px-2 py-2 text-xs text-gray-600">
             <Loader2 className="h-3 w-3 animate-spin" />
             Mappen laden…
           </div>
@@ -293,7 +293,7 @@ export function MsDocsFolderPicker({
           </div>
         )}
         {data?.folders.length === 0 && !isLoading && (
-          <div className="px-2 py-2 text-xs text-gray-400">Deze drive is leeg.</div>
+          <div className="px-2 py-2 text-xs text-gray-600">Deze drive is leeg.</div>
         )}
         {data?.folders.map((item) => (
           <ItemNode
@@ -312,7 +312,7 @@ export function MsDocsFolderPicker({
       </div>
 
       <div className="flex items-center justify-between gap-2 border-t border-gray-200 px-3 py-2">
-        <p className="text-xs text-gray-400 truncate">{summary}</p>
+        <p className="text-xs text-gray-600 truncate">{summary}</p>
         <div className="flex items-center gap-2 shrink-0">
           <Button type="button" size="sm" variant="outline" onClick={onCancel}>
             Annuleren

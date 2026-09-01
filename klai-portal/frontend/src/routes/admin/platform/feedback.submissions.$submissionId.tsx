@@ -37,7 +37,7 @@ function PlatformFeedbackSubmissionPage() {
   return (
     <PageContainer width="4xl" gap="8">
       {detail.isLoading && (
-        <p className="py-8 text-sm text-gray-400">
+        <p className="py-8 text-sm text-gray-600">
           <Loader2 className="mr-2 inline h-4 w-4 animate-spin" />
           {m.admin_shared_loading()}
         </p>

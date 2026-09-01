@@ -329,7 +329,7 @@ function UiCatalogPage() {
   if (!import.meta.env.DEV) {
     return (
       <PageContainer width="3xl">
-        <p className="text-sm text-gray-400">UI catalog is alleen lokaal beschikbaar.</p>
+        <p className="text-sm text-gray-600">UI catalog is alleen lokaal beschikbaar.</p>
       </PageContainer>
     )
   }
@@ -340,7 +340,7 @@ function UiCatalogPage() {
         <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
           UI catalog
         </h1>
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-gray-600">
           Lokale referentie voor list rows, row actions en basiscomponenten.
         </p>
       </div>
@@ -528,7 +528,7 @@ function UiCatalogPage() {
               </Button>
             }
           />
-          <p className="text-xs text-gray-400">
+          <p className="text-xs text-gray-600">
             Subtitel is gecapt op <code>sm:max-w-[60%]</code> zodat hij nooit
             onder de primaire actie doorloopt. Houd de subtitel kort; langere
             uitleg hoort in een <code>PageIntro</code> hieronder.
@@ -579,7 +579,7 @@ function UiCatalogPage() {
                 <span className="text-sm font-medium text-gray-900">{item.label}</span>
               </div>
               <p className="text-sm text-gray-500">{item.meaning}</p>
-              <p className="text-xs text-gray-400 sm:text-right">{item.examples}</p>
+              <p className="text-xs text-gray-600 sm:text-right">{item.examples}</p>
             </div>
           ))}
         </div>
@@ -608,7 +608,7 @@ function UiCatalogPage() {
             {actionKinds.map((action) => (
               <div key={action} className="flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1">
                 <RowActionIconButton label={action} action={action} />
-                <span className="text-xs text-gray-400">{action}</span>
+                <span className="text-xs text-gray-600">{action}</span>
               </div>
             ))}
           </div>
@@ -696,7 +696,7 @@ function UiCatalogPage() {
           <ListRow confirming={confirming} className={`grid items-center gap-x-3 px-4 ${dividerListGrid}`}>
             <ListRowContent>
               <div className="flex items-center gap-2">
-                <FileText className="h-4 w-4 shrink-0 text-gray-400" />
+                <FileText className="h-4 w-4 shrink-0 text-gray-500" />
                 <ListRowTitle className="text-sm font-sans font-medium">Inline delete confirm</ListRowTitle>
               </div>
               <ListRowDescription>De overlay houdt dezelfde action-cell breedte.</ListRowDescription>
@@ -824,7 +824,7 @@ function UiCatalogPage() {
             placeholder="Reageer op deze melding"
             sendLabel="Verstuur reactie"
           />
-          <p className="text-xs text-gray-400">
+          <p className="text-xs text-gray-600">
             Eén rustige tijdlijn: gegroepeerd per afzender en dag, met
             dag-scheiders en stille systeemregels (statuswijzigingen). Eigen
             berichten rechts (cream), Klai-team links (wit met rand). Eigen
@@ -838,7 +838,7 @@ function UiCatalogPage() {
       <Section title="Pagination">
         <div className="space-y-4">
           <Pagination page={demoPage} pageCount={10} onPageChange={setDemoPage} />
-          <p className="text-xs text-gray-400">
+          <p className="text-xs text-gray-600">
             Genummerde pagination (standaard): Vorige / klikbare paginanummers
             met <code>…</code> ellipsis / Volgende. Eerste en laatste pagina
             altijd zichtbaar, huidige pagina gemarkeerd en niet klikbaar,
@@ -883,19 +883,19 @@ function UiCatalogPage() {
       <Section title="Tabs">
         <div className="space-y-8">
           <div className="space-y-2">
-            <p className="text-xs text-gray-400">Standaard — alleen tekst (canon)</p>
+            <p className="text-xs text-gray-600">Standaard — alleen tekst (canon)</p>
             <Tabs tabs={tabItems} value={activeTab} onValueChange={setActiveTab} />
           </div>
           <div className="space-y-2">
-            <p className="text-xs text-gray-400">Met iconen (spaarzaam, voor detail/instellingen)</p>
+            <p className="text-xs text-gray-600">Met iconen (spaarzaam, voor detail/instellingen)</p>
             <Tabs tabs={tabItemsWithIcons} value={activeTab} onValueChange={setActiveTab} />
           </div>
           <div className="space-y-2">
-            <p className="text-xs text-gray-400">Met gewone aantallen</p>
+            <p className="text-xs text-gray-600">Met gewone aantallen</p>
             <Tabs tabs={tabItemsWithCount} value={activeTab} onValueChange={setActiveTab} />
           </div>
           <div className="space-y-2">
-            <p className="text-xs text-gray-400">Met meldingenteller</p>
+            <p className="text-xs text-gray-600">Met meldingenteller</p>
             <Tabs tabs={tabItemsWithNotifications} value={activeTab} onValueChange={setActiveTab} />
           </div>
           <p className="text-sm text-gray-500">Actieve tab: {activeTab}</p>

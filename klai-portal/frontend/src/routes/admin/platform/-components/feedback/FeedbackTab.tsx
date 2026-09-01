@@ -197,7 +197,7 @@ function FeedbackSubmissionRow({
             {feedbackKindLabel(item.event_type)}
           </Badge>
           {feedbackSignalLabel(item) && (
-            <span className="text-xs text-gray-400">{feedbackSignalLabel(item)}</span>
+            <span className="text-xs text-gray-600">{feedbackSignalLabel(item)}</span>
           )}
         </div>
       </DataTableCell>
@@ -211,10 +211,10 @@ function FeedbackSubmissionRow({
           {item.org_name ?? (item.org_id ? `#${item.org_id}` : '-')}
         </span>
         {item.org_slug && (
-          <p className="font-mono text-xs text-gray-400">{item.org_slug}</p>
+          <p className="font-mono text-xs text-gray-600">{item.org_slug}</p>
         )}
         {feedbackSubmissionReporterLabel(item) && (
-          <p className="mt-1 max-w-[180px] truncate text-xs text-gray-400">
+          <p className="mt-1 max-w-[180px] truncate text-xs text-gray-600">
             {feedbackSubmissionReporterLabel(item)}
           </p>
         )}
@@ -224,7 +224,7 @@ function FeedbackSubmissionRow({
           {item.raw_text ?? '-'}
         </p>
       </DataTableCell>
-      <DataTableCell className="whitespace-nowrap tabular-nums text-gray-400">
+      <DataTableCell className="whitespace-nowrap tabular-nums text-gray-600">
         {fmtDate(item.created_at)}
       </DataTableCell>
       <DataTableCell align="right">
@@ -285,7 +285,7 @@ function OpenItemsPanel({
         </div>
       </div>
       {items.isFetching && !items.isLoading && (
-        <p className="mb-2 text-xs text-gray-400">
+        <p className="mb-2 text-xs text-gray-600">
           <Loader2 className="mr-2 inline h-3 w-3 animate-spin" />
           {m.platform_feedback_items_refreshing()}
         </p>
@@ -321,7 +321,7 @@ function OpenItemsPanel({
                   <span className="block truncate font-medium text-gray-900">
                     {item.title}
                   </span>
-                  <span className="mt-1 block truncate text-xs text-gray-400">
+                  <span className="mt-1 block truncate text-xs text-gray-600">
                     {item.area}
                   </span>
                 </DataTableCell>
@@ -329,7 +329,7 @@ function OpenItemsPanel({
                   <span className="block truncate text-sm text-gray-900">
                     {feedbackItemReporterSummary(item)}
                   </span>
-                  <span className="mt-1 block text-xs text-gray-400">
+                  <span className="mt-1 block text-xs text-gray-600">
                     {m.platform_feedback_reporter_counts({
                       orgs: item.org_count,
                       users: item.user_count,
@@ -340,7 +340,7 @@ function OpenItemsPanel({
                   <Badge variant="outline">{feedbackItemStatusLabel(item.status)}</Badge>
                 </DataTableCell>
                 <DataTableCell>{feedbackItemKindLabel(item.kind)}</DataTableCell>
-                <DataTableCell className="whitespace-nowrap text-gray-400">
+                <DataTableCell className="whitespace-nowrap text-gray-600">
                   {fmtDate(item.updated_at)}
                 </DataTableCell>
                 <DataTableCell align="right">

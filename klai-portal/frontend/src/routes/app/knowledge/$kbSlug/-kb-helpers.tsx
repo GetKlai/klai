@@ -73,7 +73,7 @@ export function SyncStatusBadge({
         <Tooltip label={exact}>
           <div className="inline-flex flex-col items-start gap-1">
             <Badge variant="success" className="whitespace-nowrap">{m.admin_connectors_status_completed()}</Badge>
-            <span className="text-[0.6875rem] text-gray-400 whitespace-nowrap">{formatRelativeTime(lastSyncAt)}</span>
+            <span className="text-[0.6875rem] text-gray-600 whitespace-nowrap">{formatRelativeTime(lastSyncAt)}</span>
           </div>
         </Tooltip>
       )

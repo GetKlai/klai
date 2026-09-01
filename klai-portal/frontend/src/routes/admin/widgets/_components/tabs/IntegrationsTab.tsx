@@ -60,7 +60,7 @@ export function IntegrationsTab({ widget }: Props) {
         <h2 className="text-lg font-display-bold text-gray-900">
           {m.admin_widgets_integrations_title()}
         </h2>
-        <p className="max-w-2xl text-sm text-gray-400">
+        <p className="max-w-2xl text-sm text-gray-600">
           {m.admin_widgets_integrations_intro({ name: widget.name })}
         </p>
       </div>
@@ -146,7 +146,7 @@ export function IntegrationsTab({ widget }: Props) {
           </p>
           <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-3">
             <div className="rounded-md border border-gray-100 bg-gray-50 px-3 py-2">
-              <dt className="text-xs font-medium text-gray-400">
+              <dt className="text-xs font-medium text-gray-600">
                 {m.admin_widgets_integrations_target_label()}
               </dt>
               <dd className="mt-1 font-medium text-gray-800">
@@ -154,7 +154,7 @@ export function IntegrationsTab({ widget }: Props) {
               </dd>
             </div>
             <div className="rounded-md border border-gray-100 bg-gray-50 px-3 py-2">
-              <dt className="text-xs font-medium text-gray-400">
+              <dt className="text-xs font-medium text-gray-600">
                 {m.admin_widgets_integrations_channel_label()}
               </dt>
               <dd className="mt-1 font-medium text-gray-800">
@@ -162,7 +162,7 @@ export function IntegrationsTab({ widget }: Props) {
               </dd>
             </div>
             <div className="rounded-md border border-gray-100 bg-gray-50 px-3 py-2">
-              <dt className="text-xs font-medium text-gray-400">
+              <dt className="text-xs font-medium text-gray-600">
                 {m.admin_widgets_integrations_mode_label()}
               </dt>
               <dd className="mt-1 font-medium text-gray-800">
@@ -171,7 +171,7 @@ export function IntegrationsTab({ widget }: Props) {
             </div>
           </dl>
           {(status?.channel_account_id || status?.last_test_thread_id) && (
-            <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 text-xs text-gray-400">
+            <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 text-xs text-gray-600">
               {status?.channel_account_id && (
                 <span>
                   {m.admin_widgets_integrations_channel_account_label()}: {status.channel_account_id}

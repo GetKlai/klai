@@ -66,7 +66,7 @@ export function EmailOTPSetup({
             <h2 className="text-xl font-semibold text-gray-900">
               {m.setup_mfa_email_heading()}
             </h2>
-            <p className="text-sm text-gray-400">
+            <p className="text-sm text-gray-600">
               {m.setup_mfa_email_body({ email })}
             </p>
           </div>
@@ -81,7 +81,7 @@ export function EmailOTPSetup({
             <h2 className="text-xl font-semibold text-gray-900">
               {m.setup_mfa_email_code_heading()}
             </h2>
-            <p className="text-sm text-gray-400">
+            <p className="text-sm text-gray-600">
               {m.setup_mfa_email_code_body()}
             </p>
           </div>
@@ -131,7 +131,7 @@ export function EmailOTPSetup({
                   {m.setup_mfa_email_resend()}
                 </button>
               ) : (
-                <span className="text-xs text-gray-400">
+                <span className="text-xs text-gray-600">
                   {m.setup_mfa_email_resend()} ({Math.ceil(((state.resendAt ?? state.now) - state.now) / 1000)}s)
                 </span>
               )}

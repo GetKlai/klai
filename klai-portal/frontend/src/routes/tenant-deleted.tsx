@@ -22,7 +22,7 @@ function TenantDeletedPage() {
           <p className="text-xl font-semibold text-gray-900">
             {m.tenant_deleted_heading()}
           </p>
-          <p className="text-sm text-gray-400">
+          <p className="text-sm text-gray-600">
             {m.tenant_deleted_body()}
           </p>
         </div>

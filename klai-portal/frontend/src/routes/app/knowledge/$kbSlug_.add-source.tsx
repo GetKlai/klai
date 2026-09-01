@@ -62,7 +62,7 @@ function AddSourcePage() {
           {m.knowledge_add_source_back()}
         </Button>
       </div>
-      <p className="text-sm text-gray-400 mb-6">
+      <p className="text-sm text-gray-600 mb-6">
         {m.knowledge_add_source_subtitle()}
       </p>
 

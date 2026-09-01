@@ -68,7 +68,7 @@ function ForgotPasswordPage() {
           <p className="text-xl font-semibold text-gray-900">
             {m.forgot_done_heading()}
           </p>
-          <p className="text-sm text-gray-400">
+          <p className="text-sm text-gray-600">
             {m.forgot_done_body()}
           </p>
           <a href="/" className="block text-xs text-[var(--color-rl-accent-dark)] hover:underline pt-2">
@@ -81,7 +81,7 @@ function ForgotPasswordPage() {
             <h2 className="text-xl font-semibold text-gray-900">
               {m.forgot_heading()}
             </h2>
-            <p className="text-sm text-gray-400">
+            <p className="text-sm text-gray-600">
               {m.forgot_subheading()}
             </p>
           </div>
@@ -112,7 +112,7 @@ function ForgotPasswordPage() {
             </Button>
           </form>
 
-          <p className="text-center text-xs text-gray-400">
+          <p className="text-center text-xs text-gray-600">
             <a href="/" className="text-[var(--color-rl-accent-dark)] hover:underline">
               {m.forgot_back()}
             </a>

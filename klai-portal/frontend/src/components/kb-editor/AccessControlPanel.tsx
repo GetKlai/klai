@@ -38,7 +38,7 @@ export function AccessControlPanel({
           </span>
         </div>
         <button
-          className="text-xs text-gray-400 hover:text-gray-900"
+          className="text-xs text-gray-600 hover:text-gray-900"
           onClick={onClose}
         >
           {m.docs_access_close()}
@@ -131,7 +131,7 @@ export function AccessControlPanel({
             )}
           </Button>
           {accessSaveStatus === 'saved' && (
-            <span className="flex items-center gap-1 text-xs text-gray-400">
+            <span className="flex items-center gap-1 text-xs text-gray-600">
               <Check size={11} />{m.docs_access_saved()}
             </span>
           )}

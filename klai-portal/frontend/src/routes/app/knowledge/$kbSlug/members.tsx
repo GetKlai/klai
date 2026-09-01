@@ -93,12 +93,12 @@ function MembersTab() {
 
   if (isPersonal) {
     return (
-      <p className="text-sm text-gray-400">{m.knowledge_members_personal_kb_hint()}</p>
+      <p className="text-sm text-gray-600">{m.knowledge_members_personal_kb_hint()}</p>
     )
   }
 
   if (isLoading) {
-    return <p className="text-sm text-gray-400">{m.admin_connectors_loading()}</p>
+    return <p className="text-sm text-gray-600">{m.admin_connectors_loading()}</p>
   }
 
   const visibilityMode = kb ? deriveVisibilityMode(kb) : 'restricted'
@@ -155,13 +155,13 @@ function MembersTab() {
             type="checkbox"
             checked={allowContribute}
             onChange={handleContributeToggle}
-            className="mt-1 h-4 w-4 rounded border-gray-200 text-gray-400 focus:ring-[var(--color-ring)]"
+            className="mt-1 h-4 w-4 rounded border-gray-200 text-gray-500 focus:ring-[var(--color-ring)]"
           />
           <div>
             <span className="text-sm font-medium text-gray-900">
               {m.knowledge_sharing_contributor_toggle()}
             </span>
-            <p className="text-xs text-gray-400 mt-0.5">
+            <p className="text-xs text-gray-600 mt-0.5">
               {m.knowledge_sharing_contributor_toggle_description()}
             </p>
           </div>
@@ -223,7 +223,7 @@ function MembersTab() {
         ))}
       </InviteSection>
 
-      <p className="text-xs text-gray-400 italic">
+      <p className="text-xs text-gray-600 italic">
         {m.knowledge_sharing_creator_note({ name: '' })}
       </p>
 
@@ -307,10 +307,10 @@ function VisibilitySelector({ visibilityMode, onVisibilityChange }: VisibilitySe
                 : 'border-gray-200 hover:border-gray-300'
             }`}
           >
-            <Icon className="h-4 w-4 mt-0.5 shrink-0 text-gray-400" />
+            <Icon className="h-4 w-4 mt-0.5 shrink-0 text-gray-500" />
             <div>
               <span className="text-sm font-medium text-gray-900">{label}</span>
-              <p className="text-xs text-gray-400 mt-0.5">{description}</p>
+              <p className="text-xs text-gray-600 mt-0.5">{description}</p>
             </div>
           </button>
         ))}
@@ -322,7 +322,7 @@ function VisibilitySelector({ visibilityMode, onVisibilityChange }: VisibilitySe
 function VisibilitySummary({ visibilityMode }: { visibilityMode: VisibilityMode }) {
   const Icon = getVisibilityOptions().find((option) => option.mode === visibilityMode)?.icon ?? Lock
   return (
-    <div className="flex items-center gap-2 text-sm text-gray-400">
+    <div className="flex items-center gap-2 text-sm text-gray-600">
       <Icon className="h-4 w-4" />
       <span>
         {visibilityMode === 'public' && m.knowledge_sharing_visibility_public()}

@@ -61,7 +61,7 @@ export function DetailsTab({ apiKey }: Props) {
         </div>
         <div className="space-y-1.5">
           <Label>{m.admin_api_keys_col_key_prefix()}</Label>
-          <code className="block text-xs font-mono text-gray-400 py-2">
+          <code className="block text-xs font-mono text-gray-600 py-2">
             {apiKey.key_prefix}...
           </code>
         </div>

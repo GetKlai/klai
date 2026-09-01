@@ -21,13 +21,13 @@ export function OrganizationSettingsSection({
       </div>
       <div>
         {isLoading ? (
-          <p className="text-sm text-gray-400">{m.admin_users_loading()}</p>
+          <p className="text-sm text-gray-600">{m.admin_users_loading()}</p>
         ) : error ? (
           <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_fetch()}</p>
         ) : (
           <dl className="grid gap-4 sm:grid-cols-2">
             <div>
-              <dt className="text-xs font-medium uppercase tracking-wide text-gray-400">
+              <dt className="text-xs font-medium uppercase tracking-wide text-gray-600">
                 {m.admin_settings_org_name_label()}
               </dt>
               <dd className="mt-1 text-sm font-medium text-gray-900">
@@ -35,7 +35,7 @@ export function OrganizationSettingsSection({
               </dd>
             </div>
             <div>
-              <dt className="text-xs font-medium uppercase tracking-wide text-gray-400">
+              <dt className="text-xs font-medium uppercase tracking-wide text-gray-600">
                 {m.admin_settings_org_domain_label()}
               </dt>
               <dd className="mt-1 text-sm font-medium text-gray-900">

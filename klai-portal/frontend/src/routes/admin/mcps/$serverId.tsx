@@ -185,7 +185,7 @@ function McpEditPage() {
   if (isLoading) {
     return (
       <div className="p-6 max-w-lg">
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-gray-600">
           {m.admin_mcps_loading()}
         </p>
       </div>
@@ -219,7 +219,7 @@ function McpEditPage() {
           <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
             {server.display_name || server.id}
           </h1>
-          <p className="text-sm text-gray-400">{server.description}</p>
+          <p className="text-sm text-gray-600">{server.description}</p>
         </div>
         <Button type="button" variant="outline" size="sm" onClick={handleBack}>
           <ArrowLeft className="h-4 w-4 mr-2" />
@@ -255,7 +255,7 @@ function McpEditPage() {
         {successMsg && <p className="text-sm text-[var(--color-success)]">{successMsg}</p>}
         {errorMsg && <p className="text-sm text-[var(--color-destructive)]">{errorMsg}</p>}
 
-        <p className="text-xs text-gray-400">
+        <p className="text-xs text-gray-600">
           {m.admin_mcps_restart_notice()}
         </p>
 

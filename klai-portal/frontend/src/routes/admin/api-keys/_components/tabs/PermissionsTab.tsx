@@ -54,7 +54,7 @@ export function PermissionsTab({ apiKey }: Props) {
             />
             <div>
               <span className="font-medium">{m.admin_api_keys_perm_chat()}</span>
-              <p className="text-xs text-gray-400 mt-0.5">
+              <p className="text-xs text-gray-600 mt-0.5">
                 {m.admin_api_keys_perm_chat_description()}
               </p>
             </div>
@@ -68,7 +68,7 @@ export function PermissionsTab({ apiKey }: Props) {
             />
             <div>
               <span className="font-medium">{m.admin_api_keys_perm_feedback()}</span>
-              <p className="text-xs text-gray-400 mt-0.5">
+              <p className="text-xs text-gray-600 mt-0.5">
                 {m.admin_api_keys_perm_feedback_description()}
               </p>
             </div>
@@ -82,7 +82,7 @@ export function PermissionsTab({ apiKey }: Props) {
             />
             <div>
               <span className="font-medium">{m.admin_api_keys_perm_knowledge_append()}</span>
-              <p className="text-xs text-gray-400 mt-0.5">
+              <p className="text-xs text-gray-600 mt-0.5">
                 {m.admin_api_keys_perm_knowledge_append_description()}
               </p>
             </div>
@@ -96,7 +96,7 @@ export function PermissionsTab({ apiKey }: Props) {
             />
             <div>
               <span className="font-medium">{m.admin_api_keys_perm_general_chat()}</span>
-              <p className="text-xs text-gray-400 mt-0.5">
+              <p className="text-xs text-gray-600 mt-0.5">
                 {m.admin_api_keys_perm_general_chat_description()}
               </p>
             </div>

@@ -150,7 +150,7 @@ export function StatusBadge({ source }: { source: Source }) {
       return (
         <span className="inline-flex items-center gap-1.5">
           <Badge variant="secondary">{m.kb_status_bezig()}</Badge>
-          <span className="text-xs text-gray-400">
+          <span className="text-xs text-gray-600">
             {m.kb_status_bezig_elapsed({ minutes: String(minutes) })}
           </span>
         </span>

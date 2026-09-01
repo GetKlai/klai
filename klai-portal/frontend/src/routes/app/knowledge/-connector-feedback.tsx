@@ -131,7 +131,7 @@ export function PreviewClassificationFeedback({
       {classification === 'unknown' && onRetry && (
         <button
           type="button"
-          className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-900 transition-colors"
+          className="flex items-center gap-1 text-xs text-gray-600 hover:text-gray-900 transition-colors"
           onClick={onRetry}
         >
           Retry

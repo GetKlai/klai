@@ -111,7 +111,7 @@ const rowActionIconButtonVariants = cva(
   {
     variants: {
       tone: {
-        neutral: 'text-gray-400',
+        neutral: 'text-gray-500',
         primary: 'text-[var(--color-primary)]',
         info: 'text-[var(--color-info-text)]',
         danger: 'text-[var(--color-destructive)]',

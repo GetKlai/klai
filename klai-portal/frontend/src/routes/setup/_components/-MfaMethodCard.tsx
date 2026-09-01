@@ -39,7 +39,7 @@ export function MfaMethodCard({
               </span>
             )}
           </div>
-          <p className="text-xs text-gray-400">{description}</p>
+          <p className="text-xs text-gray-600">{description}</p>
         </div>
         {selected && (
           <div className="mt-0.5 shrink-0 text-[var(--color-rl-accent)]">

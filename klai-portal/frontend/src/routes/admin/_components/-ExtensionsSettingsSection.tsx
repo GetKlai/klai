@@ -60,7 +60,7 @@ export function ExtensionsSettingsSection() {
         <h2 className="text-base font-display-bold text-gray-900">
           {m.admin_settings_extensions_title()}
         </h2>
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-gray-600">
           {isPlatformAdmin
             ? m.admin_settings_extensions_description_platform()
             : m.admin_settings_extensions_description_tenant()}
@@ -68,7 +68,7 @@ export function ExtensionsSettingsSection() {
       </div>
       <form onSubmit={handleSubmit} className="space-y-4">
         {extensionsLoading ? (
-          <p className="text-sm text-gray-400">{m.admin_users_loading()}</p>
+          <p className="text-sm text-gray-600">{m.admin_users_loading()}</p>
         ) : extensionsError ? (
           <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_fetch()}</p>
         ) : !extensions ? null : (
@@ -80,7 +80,7 @@ export function ExtensionsSettingsSection() {
                   <li key={item.key} className="flex items-center justify-between gap-4 px-2 py-3">
                     <div className="min-w-0 flex-1">
                       <p className="text-[0.9375rem] font-display text-gray-900">{extensionLabel(item.key)}</p>
-                      <p className="text-xs text-gray-400 mt-0.5">{extensionDescription(item.key)}</p>
+                      <p className="text-xs text-gray-600 mt-0.5">{extensionDescription(item.key)}</p>
                     </div>
                     {item.manageable_by_caller ? (
                       <Checkbox
@@ -95,7 +95,7 @@ export function ExtensionsSettingsSection() {
                           'shrink-0 rounded-full px-3 py-0.5 text-xs font-medium',
                           item.enabled
                             ? 'bg-[var(--color-rl-cream)] text-[var(--color-rl-accent-dark)]'
-                            : 'bg-gray-100 text-gray-400',
+                            : 'bg-gray-100 text-gray-600',
                         ].join(' ')}
                       >
                         {item.enabled
@@ -108,7 +108,7 @@ export function ExtensionsSettingsSection() {
               })}
             </ul>
             {!isPlatformAdmin && (
-              <p className="text-xs text-gray-400">
+              <p className="text-xs text-gray-600">
                 {m.admin_settings_extensions_managed_by_klai()}
               </p>
             )}

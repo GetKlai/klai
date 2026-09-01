@@ -165,7 +165,7 @@ export function InlineEditRow({
           <div className="relative mt-1">
             <p
               className={cn(
-                'block truncate text-sm text-gray-400',
+                'block truncate text-sm text-gray-600',
                 isEditing && withDescription && 'invisible',
               )}
             >

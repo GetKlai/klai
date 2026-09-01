@@ -76,18 +76,18 @@ export function FileUploadForm({
             if (file) handleFile(file)
           }}
         />
-        <Upload className="mx-auto mb-3 h-8 w-8 text-gray-400" />
+        <Upload className="mx-auto mb-3 h-8 w-8 text-gray-500" />
         {selectedFile ? (
           <div>
             <p className="font-medium text-sm">{selectedFile.name}</p>
-            <p className="text-xs text-gray-400 mt-1">
+            <p className="text-xs text-gray-600 mt-1">
               {(selectedFile.size / 1024 / 1024).toFixed(1)} MB
             </p>
           </div>
         ) : (
           <div>
             <p className="text-sm font-medium">{m.app_transcribe_dropzone_label()}</p>
-            <p className="text-xs text-gray-400 mt-1">
+            <p className="text-xs text-gray-600 mt-1">
               {m.app_transcribe_dropzone_hint({
                 formats: 'WAV, MP3, M4A, OGG, WebM',
                 max: String(MAX_UPLOAD_MB),

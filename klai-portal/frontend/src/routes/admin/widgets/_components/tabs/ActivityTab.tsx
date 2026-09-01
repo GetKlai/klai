@@ -125,9 +125,9 @@ export function ActivityTab({ widget }: Props) {
       <div>
         <SectionHeading>{m.admin_widgets_activity_top_questions_title()}</SectionHeading>
         {statsQuery.isLoading ? (
-          <p className="text-sm text-gray-400">{m.admin_shared_loading()}</p>
+          <p className="text-sm text-gray-600">{m.admin_shared_loading()}</p>
         ) : (statsQuery.data?.top_queries ?? []).length === 0 ? (
-          <p className="text-sm text-gray-400">{m.admin_widgets_activity_no_questions()}</p>
+          <p className="text-sm text-gray-600">{m.admin_widgets_activity_no_questions()}</p>
         ) : (
           <ol className="space-y-2">
             {(statsQuery.data?.top_queries ?? []).map((q, idx) => (
@@ -136,7 +136,7 @@ export function ActivityTab({ widget }: Props) {
                 className="flex items-start justify-between gap-3 rounded-lg border border-gray-200 px-3 py-2.5"
               >
                 <span className="text-sm text-gray-900 truncate">{q.query}</span>
-                <span className="text-xs font-medium text-gray-400 tabular-nums shrink-0">
+                <span className="text-xs font-medium text-gray-600 tabular-nums shrink-0">
                   {q.count}×
                 </span>
               </li>
@@ -149,12 +149,12 @@ export function ActivityTab({ widget }: Props) {
       <div>
         <SectionHeading>{m.admin_widgets_activity_recent_conversations_title()}</SectionHeading>
         {convsQuery.isLoading ? (
-          <p className="text-sm text-gray-400">
+          <p className="text-sm text-gray-600">
             <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
             {m.admin_widgets_loading()}
           </p>
         ) : conversations.length === 0 ? (
-          <p className="text-sm text-gray-400">
+          <p className="text-sm text-gray-600">
             Nog geen gesprekken. Zodra iemand met de bot praat verschijnt
             het hier.
           </p>
@@ -168,16 +168,16 @@ export function ActivityTab({ widget }: Props) {
                   onClick={() => setOpenConvId(c.id)}
                   className="h-auto w-full justify-start rounded-none px-2 py-3.5 text-left"
                 >
-                  <MessageSquare className="h-4 w-4 mt-0.5 text-gray-400 shrink-0" />
+                  <MessageSquare className="h-4 w-4 mt-0.5 text-gray-500 shrink-0" />
                   <div className="flex-1 min-w-0">
                     <p className="truncate text-sm text-gray-900">
                       {c.first_user_query || (
-                        <span className="text-gray-400 italic">
+                        <span className="text-gray-600 italic">
                           (geen vraag opgeslagen)
                         </span>
                       )}
                     </p>
-                    <p className="mt-0.5 flex items-center gap-2 text-xs text-gray-400">
+                    <p className="mt-0.5 flex items-center gap-2 text-xs text-gray-600">
                       <span>{formatRelative(c.started_at)}</span>
                       <span>·</span>
                       <span>
@@ -216,7 +216,7 @@ export function ActivityTab({ widget }: Props) {
 
 function SectionHeading({ children }: { children: React.ReactNode }) {
   return (
-    <h3 className="text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-400 mb-3">
+    <h3 className="text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-600 mb-3">
       {children}
     </h3>
   )
@@ -233,12 +233,12 @@ function StatCard({
 }) {
   return (
     <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
-      <p className="text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-400">
+      <p className="text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-600">
         {label}
       </p>
       <p className="mt-1 text-2xl font-display-bold text-gray-900 tabular-nums">
         {loading ? (
-          <Loader2 className="inline h-4 w-4 animate-spin text-gray-400" />
+          <Loader2 className="inline h-4 w-4 animate-spin text-gray-500" />
         ) : value === undefined ? (
           '-'
         ) : (
@@ -274,7 +274,7 @@ function HourlySparkline({ data }: { data: number[] | undefined }) {
           )
         })}
       </div>
-      <div className="mt-1 flex justify-between text-[0.625rem] text-gray-400 tabular-nums">
+      <div className="mt-1 flex justify-between text-[0.625rem] text-gray-600 tabular-nums">
         <span>00</span>
         <span>06</span>
         <span>12</span>
@@ -313,7 +313,7 @@ function ConversationDrawer({
               Gesprek #{convId}
             </p>
             {query.data && (
-              <p className="text-xs text-gray-400">
+              <p className="text-xs text-gray-600">
                 {formatRelative(query.data.started_at)} ·{' '}
                 {query.data.message_count === 1
                   ? '1 bericht'
@@ -335,7 +335,7 @@ function ConversationDrawer({
 
         <div className="px-5 py-4 space-y-3">
           {query.isLoading && (
-            <p className="text-sm text-gray-400">
+            <p className="text-sm text-gray-600">
               <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
               Laden…
             </p>

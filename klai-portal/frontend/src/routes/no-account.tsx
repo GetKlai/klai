@@ -44,7 +44,7 @@ function NoAccountPage() {
         <h2 className="text-xl font-semibold text-gray-900">
           {m.no_account_heading()}
         </h2>
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-gray-600">
           {m.no_account_body()}
         </p>
       </div>

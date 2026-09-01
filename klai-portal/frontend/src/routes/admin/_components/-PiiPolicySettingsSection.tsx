@@ -176,7 +176,7 @@ export function PiiPolicySettingsSection({
       </div>
       <div className="space-y-4">
         {isLoading ? (
-          <p className="text-sm text-gray-400">{m.admin_users_loading()}</p>
+          <p className="text-sm text-gray-600">{m.admin_users_loading()}</p>
         ) : error ? (
           <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_fetch()}</p>
         ) : (
@@ -210,7 +210,7 @@ export function PiiPolicySettingsSection({
                       {group.entities.length > 1 && (
                         <button
                           type="button"
-                          className="shrink-0 self-center rounded-md p-1.5 text-gray-400 hover:bg-[var(--color-muted)]/60 hover:text-gray-900"
+                          className="shrink-0 self-center rounded-md p-1.5 text-gray-500 hover:bg-[var(--color-muted)]/60 hover:text-gray-900"
                           aria-expanded={expanded}
                           aria-label={
                             expanded
@@ -250,12 +250,12 @@ export function PiiPolicySettingsSection({
                 <ListRowContent>
                   <ListRowTitle>{m.admin_settings_pii_locked_title()}</ListRowTitle>
                   <ListRowDescription>{m.admin_settings_pii_locked_description()}</ListRowDescription>
-                  <p className="mt-1 text-xs text-gray-400">{m.admin_settings_pii_locked_reason()}</p>
+                  <p className="mt-1 text-xs text-gray-600">{m.admin_settings_pii_locked_reason()}</p>
                 </ListRowContent>
               </ListRow>
             </ListFrame>
             {!isTenantAdmin && (
-              <p className="text-xs text-gray-400">{m.admin_settings_pii_readonly_hint()}</p>
+              <p className="text-xs text-gray-600">{m.admin_settings_pii_readonly_hint()}</p>
             )}
           </>
         )}

@@ -62,7 +62,7 @@ function PublicBotPage() {
       <div className="fixed inset-0 z-[60] flex items-center justify-center bg-white px-6">
         <div className="max-w-md text-center">
           <p className="text-sm font-medium text-gray-900">{m.widget_chat_unavailable()}</p>
-          <p className="mt-1 text-xs text-gray-400">
+          <p className="mt-1 text-xs text-gray-600">
             {configQuery.error instanceof Error ? configQuery.error.message : m.admin_shared_error_generic()}
           </p>
         </div>

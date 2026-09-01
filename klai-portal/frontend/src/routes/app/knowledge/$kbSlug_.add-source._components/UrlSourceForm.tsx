@@ -31,7 +31,7 @@ export function UrlSourceForm({ kbSlug, onBack }: UrlSourceFormProps) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
-      <div className="flex items-center gap-2 text-gray-400">
+      <div className="flex items-center gap-2 text-gray-600">
         <Link2 className="h-5 w-5" />
         <p className="text-sm">{m.knowledge_add_source_url_hint()}</p>
       </div>
@@ -75,7 +75,7 @@ export function UrlSourceForm({ kbSlug, onBack }: UrlSourceFormProps) {
         <button
           type="button"
           onClick={onBack}
-          className="text-sm text-gray-400 hover:text-gray-900 transition-colors"
+          className="text-sm text-gray-600 hover:text-gray-900 transition-colors"
         >
           {m.knowledge_add_source_back()}
         </button>

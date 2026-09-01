@@ -69,7 +69,7 @@ function NewTenantPage() {
           {m.admin_users_cancel()}
         </Button>
       </div>
-      <p className="text-sm text-gray-400 mb-6">
+      <p className="text-sm text-gray-600 mb-6">
         {m.platform_new_tenant_description()}
       </p>
 

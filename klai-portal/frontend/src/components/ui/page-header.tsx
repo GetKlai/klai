@@ -31,7 +31,7 @@ function PageHeader({ title, count, description, actions, className, ...props }:
         <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
           {title}
           {count != null ? (
-            <span className="ml-2 font-display text-gray-400">({count})</span>
+            <span className="ml-2 font-display text-gray-600">({count})</span>
           ) : null}
         </h1>
         {actions ? (

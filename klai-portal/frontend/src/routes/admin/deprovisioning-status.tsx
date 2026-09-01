@@ -121,7 +121,7 @@ function PollingView({ isTimeout }: { isTimeout: boolean }) {
         <p className="text-xl font-semibold text-gray-900">
           {m.deprovisioning_status_heading()}
         </p>
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-gray-600">
           {isTimeout
             ? m.deprovisioning_status_timeout()
             : m.deprovisioning_status_subtitle()}
@@ -148,7 +148,7 @@ function FailedView({ step }: { step?: string }) {
           {m.deprovisioning_status_failed_heading()}
         </p>
         {step && (
-          <p className="text-sm text-gray-400">
+          <p className="text-sm text-gray-600">
             {m.deprovisioning_status_failed_step({ step })}
           </p>
         )}
@@ -171,7 +171,7 @@ function ErrorView() {
         <p className="text-xl font-semibold text-gray-900">
           {m.deprovisioning_status_failed_heading()}
         </p>
-        <p className="text-sm text-gray-400">{m.error_generic()}</p>
+        <p className="text-sm text-gray-600">{m.error_generic()}</p>
         <Button variant="link" size="sm" onClick={() => window.location.reload()}>
           {m.provisioning_error_retry()}
         </Button>

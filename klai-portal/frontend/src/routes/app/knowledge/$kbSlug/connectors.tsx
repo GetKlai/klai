@@ -232,7 +232,7 @@ function ConnectorsTab() {
             <AlertDialogDescription asChild>
               <div className="space-y-2 text-left">
                 <p>{m.admin_connectors_investigate_body()}</p>
-                <p className="text-xs text-gray-400">
+                <p className="text-xs text-gray-600">
                   {m.admin_connectors_investigate_hint()}
                 </p>
               </div>

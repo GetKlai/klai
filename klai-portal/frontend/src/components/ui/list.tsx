@@ -27,7 +27,7 @@ interface ListHeaderProps extends React.HTMLAttributes<HTMLDivElement> {}
 function ListHeader({ className, ...props }: ListHeaderProps) {
   return (
     <div
-      className={cn('grid items-center gap-4 px-4 py-3 text-xs font-medium text-gray-400', className)}
+      className={cn('grid items-center gap-4 px-4 py-3 text-xs font-medium text-gray-600', className)}
       {...props}
     />
   )
@@ -63,7 +63,7 @@ interface ListRowIconProps extends React.HTMLAttributes<HTMLDivElement> {}
 function ListRowIcon({ className, ...props }: ListRowIconProps) {
   return (
     <div
-      className={cn('flex h-8 w-8 shrink-0 items-center justify-center text-gray-400', className)}
+      className={cn('flex h-8 w-8 shrink-0 items-center justify-center text-gray-500', className)}
       {...props}
     />
   )
@@ -89,7 +89,7 @@ function ListRowTitle({ className, ...props }: ListRowTitleProps) {
 interface ListRowDescriptionProps extends React.HTMLAttributes<HTMLParagraphElement> {}
 
 function ListRowDescription({ className, ...props }: ListRowDescriptionProps) {
-  return <p className={cn('mt-1 truncate text-sm text-gray-400', className)} {...props} />
+  return <p className={cn('mt-1 truncate text-sm text-gray-600', className)} {...props} />
 }
 
 interface ListRowActionsProps extends React.HTMLAttributes<HTMLDivElement> {}

@@ -51,7 +51,7 @@ function EditInstructionRoute() {
   if (isLoading) {
     return (
       <PageContainer width="lg">
-        <p className="text-sm text-gray-400">{m.instructions_form_loading()}</p>
+        <p className="text-sm text-gray-600">{m.instructions_form_loading()}</p>
       </PageContainer>
     )
   }

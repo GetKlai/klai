@@ -332,7 +332,7 @@ export function FileUploadForm({ kbSlug, onBack }: FileUploadFormProps) {
         <p className="text-sm font-medium text-gray-900">
           {m.knowledge_add_source_file_drop_hint()}
         </p>
-        <p className="text-xs text-gray-400 mt-2">{FORMATS_LABEL} (max 200 MB per bestand)</p>
+        <p className="text-xs text-gray-600 mt-2">{FORMATS_LABEL} (max 200 MB per bestand)</p>
         <input
           ref={fileInputRef}
           type="file"
@@ -356,9 +356,9 @@ export function FileUploadForm({ kbSlug, onBack }: FileUploadFormProps) {
               key={`${file.name}-${String(i)}`}
               className="flex items-center gap-3 rounded-lg border border-gray-200 px-4 py-2.5"
             >
-              <FileText className="h-4 w-4 text-gray-400 shrink-0" />
+              <FileText className="h-4 w-4 text-gray-500 shrink-0" />
               <span className="flex-1 truncate text-sm text-gray-900">{file.name}</span>
-              <span className="text-xs text-gray-400 shrink-0">{fileSizeLabel(file.size)}</span>
+              <span className="text-xs text-gray-600 shrink-0">{fileSizeLabel(file.size)}</span>
               <button
                 type="button"
                 aria-label={`Remove ${file.name}`}
@@ -366,7 +366,7 @@ export function FileUploadForm({ kbSlug, onBack }: FileUploadFormProps) {
                   e.stopPropagation()
                   setSelectedFiles((prev) => prev.filter((_, j) => j !== i))
                 }}
-                className="text-xs text-gray-400 hover:text-[var(--color-destructive)] transition-colors"
+                className="text-xs text-gray-500 hover:text-[var(--color-destructive)] transition-colors"
               >
                 &times;
               </button>
@@ -383,13 +383,13 @@ export function FileUploadForm({ kbSlug, onBack }: FileUploadFormProps) {
               key={entry.id}
               className="flex items-center gap-3 rounded-lg border border-gray-200 px-4 py-2.5"
             >
-              <FileText className="h-4 w-4 text-gray-400 shrink-0" />
+              <FileText className="h-4 w-4 text-gray-500 shrink-0" />
               <span className="flex-1 truncate text-sm text-gray-900">{entry.filename}</span>
               {entry.status === 'done' && (
                 <span className="text-xs text-[var(--color-success)] shrink-0">Verwerkt</span>
               )}
               {(entry.status === 'processing' || entry.status === 'ingesting') && (
-                <span className="text-xs text-gray-400 shrink-0">Bezig met verwerken…</span>
+                <span className="text-xs text-gray-600 shrink-0">Bezig met verwerken…</span>
               )}
               {entry.status === 'failed' && (
                 <span className="text-xs text-[var(--color-destructive)] shrink-0">
@@ -417,7 +417,7 @@ export function FileUploadForm({ kbSlug, onBack }: FileUploadFormProps) {
           <button
             type="button"
             onClick={() => setClientRejections([])}
-            className="mt-2 text-xs text-gray-400 hover:text-gray-900"
+            className="mt-2 text-xs text-gray-600 hover:text-gray-900"
           >
             Sluiten
           </button>
@@ -457,7 +457,7 @@ export function FileUploadForm({ kbSlug, onBack }: FileUploadFormProps) {
         <button
           type="button"
           onClick={onBack}
-          className="text-sm text-gray-400 hover:text-gray-900 transition-colors"
+          className="text-sm text-gray-600 hover:text-gray-900 transition-colors"
         >
           {m.knowledge_add_source_back()}
         </button>

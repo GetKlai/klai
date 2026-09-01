@@ -108,7 +108,7 @@ export function SubdomainsTab({ search }: { search: string }) {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center py-16 text-sm text-gray-400">
+      <div className="flex items-center justify-center py-16 text-sm text-gray-600">
         <ListLoadingState label={m.platform_subdomains_loading()} />
       </div>
     )
@@ -121,7 +121,7 @@ export function SubdomainsTab({ search }: { search: string }) {
     )
   }
   if (filtered.length === 0) {
-    return <p className="py-16 text-center text-sm text-gray-400">{m.platform_subdomains_empty()}</p>
+    return <p className="py-16 text-center text-sm text-gray-600">{m.platform_subdomains_empty()}</p>
   }
 
   return (
@@ -133,7 +133,7 @@ export function SubdomainsTab({ search }: { search: string }) {
           <section key={section.category} className="space-y-3">
             <div>
               <h2 className="text-[0.9375rem] font-display-bold text-gray-900">{section.title()}</h2>
-              <p className="text-sm text-gray-400">{section.description()}</p>
+              <p className="text-sm text-gray-600">{section.description()}</p>
             </div>
             <DataTable>
               <DataTableHeader>
@@ -151,13 +151,13 @@ export function SubdomainsTab({ search }: { search: string }) {
                   <DataTableRow key={item.url}>
                     <DataTableCell>
                       <p className="font-mono text-xs text-gray-900">{item.subdomain || '(apex)'}</p>
-                      <p className="mt-1 text-xs text-gray-400">{item.description}</p>
+                      <p className="mt-1 text-xs text-gray-600">{item.description}</p>
                     </DataTableCell>
                     <DataTableCell>
                       <span className="text-sm">{item.label}</span>
                     </DataTableCell>
                     <DataTableCell>
-                      <span className="text-xs font-mono text-gray-400">{item.host}</span>
+                      <span className="text-xs font-mono text-gray-600">{item.host}</span>
                     </DataTableCell>
                     <DataTableCell>
                       <span className="text-sm text-gray-700">{item.owner}</span>
@@ -195,12 +195,12 @@ export function StatusTab() {
       <div className="rounded-xl border border-gray-200 bg-white px-5 py-5">
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <Activity className="h-5 w-5 shrink-0 text-gray-400" />
+            <Activity className="h-5 w-5 shrink-0 text-gray-500" />
             <div>
               <p className="text-[0.9375rem] font-display text-gray-900">
                 {m.platform_status_portal_api()}
               </p>
-              <p className="text-sm text-gray-400">
+              <p className="text-sm text-gray-600">
                 {m.platform_status_portal_api_description()}
               </p>
             </div>
@@ -218,12 +218,12 @@ export function StatusTab() {
       <div className="rounded-xl border border-gray-200 bg-white px-5 py-5">
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <Bug className="h-5 w-5 shrink-0 text-gray-400" />
+            <Bug className="h-5 w-5 shrink-0 text-gray-500" />
             <div>
               <p className="text-[0.9375rem] font-display text-gray-900">
                 {m.platform_user_errors()}
               </p>
-              <p className="mt-0.5 text-sm text-gray-400">
+              <p className="mt-0.5 text-sm text-gray-600">
                 {m.platform_user_errors_description()}
               </p>
             </div>
@@ -246,7 +246,7 @@ export function StatusTab() {
             <p className="text-[0.9375rem] font-display text-gray-900">
               {m.platform_full_service_status()}
             </p>
-            <p className="mt-0.5 text-sm text-gray-400">
+            <p className="mt-0.5 text-sm text-gray-600">
               {m.platform_full_service_status_description()}
             </p>
           </div>
@@ -312,7 +312,7 @@ export function UsersTab({
                   <Badge variant="secondary">{m.platform_admin()}</Badge>
                 )}
               </div>
-              {u.email && <p className="text-xs text-gray-400">{u.email}</p>}
+              {u.email && <p className="text-xs text-gray-600">{u.email}</p>}
             </DataTableCell>
             <DataTableCell>
               <div className="flex flex-wrap items-center gap-2">
@@ -325,7 +325,7 @@ export function UsersTab({
             <DataTableCell>
               <Badge variant="outline">{u.org_plan}</Badge>
             </DataTableCell>
-            <DataTableCell className="whitespace-nowrap tabular-nums text-gray-400">
+            <DataTableCell className="whitespace-nowrap tabular-nums text-gray-600">
               {fmtDate(u.created_at)}
             </DataTableCell>
             <DataTableCell align="right">
@@ -462,13 +462,13 @@ export function MessagesTab({
                     )}
                     <span className="font-medium">{thread.subject}</span>
                   </div>
-                  <p className="line-clamp-1 text-xs text-gray-400">
+                  <p className="line-clamp-1 text-xs text-gray-600">
                     {thread.latest_message_body}
                   </p>
                 </DataTableCell>
                 <DataTableCell>{thread.org_name ?? thread.org_slug ?? '-'}</DataTableCell>
                 <DataTableCell className="tabular-nums">{thread.recipient_count}</DataTableCell>
-                <DataTableCell className="whitespace-nowrap tabular-nums text-gray-400">
+                <DataTableCell className="whitespace-nowrap tabular-nums text-gray-600">
                   {fmtDate(thread.latest_message_at)}
                 </DataTableCell>
               </DataTableRow>
@@ -523,7 +523,7 @@ export function OrgsTab({
           >
             <DataTableCell>
               <span className="font-medium">{o.name}</span>
-              <p className="font-mono text-xs text-gray-400">{o.slug}</p>
+              <p className="font-mono text-xs text-gray-600">{o.slug}</p>
             </DataTableCell>
             <DataTableCell>
               <Badge variant="outline">{o.plan}</Badge>
@@ -540,7 +540,7 @@ export function OrgsTab({
                 {o.provisioning_status}
               </Badge>
             </DataTableCell>
-            <DataTableCell className="whitespace-nowrap tabular-nums text-gray-400">
+            <DataTableCell className="whitespace-nowrap tabular-nums text-gray-600">
               {fmtDate(o.created_at)}
             </DataTableCell>
           </DataTableRow>
@@ -637,7 +637,7 @@ export function KbTab({
           >
             <DataTableCell>
               <span className="font-medium">{kb.name}</span>
-              <p className="font-mono text-xs text-gray-400">{kb.slug}</p>
+              <p className="font-mono text-xs text-gray-600">{kb.slug}</p>
             </DataTableCell>
             <DataTableCell>{kb.org_name}</DataTableCell>
             <DataTableCell>
@@ -648,7 +648,7 @@ export function KbTab({
               </Badge>
             </DataTableCell>
             <DataTableCell>{kb.visibility}</DataTableCell>
-            <DataTableCell className="whitespace-nowrap tabular-nums text-gray-400">
+            <DataTableCell className="whitespace-nowrap tabular-nums text-gray-600">
               {fmtDate(kb.created_at)}
             </DataTableCell>
           </DataTableRow>
@@ -703,7 +703,7 @@ export function TemplatesTab({
                   <Badge variant="outline">{m.platform_inactive()}</Badge>
                 )}
               </div>
-              <p className="font-mono text-xs text-gray-400">{t.slug}</p>
+              <p className="font-mono text-xs text-gray-600">{t.slug}</p>
             </DataTableCell>
             <DataTableCell>{t.org_name}</DataTableCell>
             <DataTableCell>
@@ -714,7 +714,7 @@ export function TemplatesTab({
               </Badge>
             </DataTableCell>
             <DataTableCell>{t.created_by_name ?? t.created_by}</DataTableCell>
-            <DataTableCell className="whitespace-nowrap tabular-nums text-gray-400">
+            <DataTableCell className="whitespace-nowrap tabular-nums text-gray-600">
               {fmtDate(t.created_at)}
             </DataTableCell>
           </DataTableRow>
@@ -766,7 +766,7 @@ export function BotsTab({
             </DataTableCell>
             <DataTableCell>{b.org_name}</DataTableCell>
             <DataTableCell className="tabular-nums">{b.kb_count}</DataTableCell>
-            <DataTableCell className="whitespace-nowrap tabular-nums text-gray-400">
+            <DataTableCell className="whitespace-nowrap tabular-nums text-gray-600">
               {fmtDate(b.created_at)}
             </DataTableCell>
           </DataTableRow>
@@ -805,10 +805,10 @@ export function ChatErrorsTab({
               <Badge variant="destructive">{e.event_type}</Badge>
             </DataTableCell>
             <DataTableCell>{e.org_name ?? `#${e.org_id}`}</DataTableCell>
-            <DataTableCell className="max-w-md truncate text-gray-400">
+            <DataTableCell className="max-w-md truncate text-gray-600">
               {e.detail ?? '-'}
             </DataTableCell>
-            <DataTableCell className="whitespace-nowrap tabular-nums text-gray-400">
+            <DataTableCell className="whitespace-nowrap tabular-nums text-gray-600">
               {fmtDate(e.created_at)}
             </DataTableCell>
           </DataTableRow>

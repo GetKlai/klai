@@ -227,7 +227,7 @@ function MeetingDetailPage() {
   if (isLoading) {
     return (
       <div className="flex justify-center py-16">
-        <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+        <Loader2 className="h-6 w-6 animate-spin text-gray-500" />
       </div>
     )
   }
@@ -307,7 +307,7 @@ function MeetingDetailPage() {
         {ACTIVE_STATUSES.includes(meeting.status) ? (
           <Card>
             <CardContent className="pt-4">
-              <p className="text-sm text-gray-400">
+              <p className="text-sm text-gray-600">
                 {activeMeetingInfo(meeting.status)}
               </p>
             </CardContent>
@@ -337,7 +337,7 @@ function MeetingDetailPage() {
             <p className="text-sm font-medium text-[var(--color-destructive)]">
               {m.app_meetings_error_label()}
             </p>
-            <p className="mt-1 text-sm text-gray-400">
+            <p className="mt-1 text-sm text-gray-600">
               {meeting.error_message}
             </p>
           </CardContent>
@@ -419,7 +419,7 @@ function MeetingDetailPage() {
                 <p className="text-sm font-medium text-[var(--color-destructive)]">
                   {m.app_meetings_summary_error()}
                 </p>
-                <p className="mt-1 text-sm text-gray-400">{summaryError}</p>
+                <p className="mt-1 text-sm text-gray-600">{summaryError}</p>
               </CardContent>
             </Card>
           )}
@@ -454,7 +454,7 @@ function MeetingDetailPage() {
                       return (
                         <div key={i} className="flex gap-3">
                           {timestamp && (
-                            <span className="mt-0.5 shrink-0 whitespace-nowrap text-xs text-gray-400 tabular-nums">
+                            <span className="mt-0.5 shrink-0 whitespace-nowrap text-xs text-gray-600 tabular-nums">
                               [{timestamp}]
                             </span>
                           )}
@@ -470,7 +470,7 @@ function MeetingDetailPage() {
                   })()}
                 </div>
               ) : (
-                <p className="text-sm text-gray-400 whitespace-pre-wrap">
+                <p className="text-sm text-gray-600 whitespace-pre-wrap">
                   {meeting.transcript_text}
                 </p>
               )}
@@ -480,7 +480,7 @@ function MeetingDetailPage() {
       )}
 
       {meeting.status === 'done' && !hasTranscript && (
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-gray-600">
           {m.app_meetings_transcript_empty()}
         </p>
       )}

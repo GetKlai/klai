@@ -69,7 +69,7 @@ export function PasskeySetup({
         <h2 className="text-xl font-semibold text-gray-900">
           {m.setup_mfa_passkey_heading()}
         </h2>
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-gray-600">
           {m.setup_mfa_passkey_body()}
         </p>
       </div>

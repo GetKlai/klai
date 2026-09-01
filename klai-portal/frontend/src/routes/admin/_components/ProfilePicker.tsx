@@ -23,7 +23,7 @@ interface ProfilePickerProps {
  * - border-gray-200 unselected, border-gray-900 selected (no amber accent -
  *   "Amber NOT applied to active states in v1")
  * - bg-black/[0.06] selected layer, hover bg-black/5
- * - text-gray-900 prose, text-gray-400 muted
+ * - text-gray-900 prose, text-gray-600 muted
  */
 export function ProfilePicker({
   value,
@@ -72,7 +72,7 @@ export function ProfilePicker({
                   {labelFn ? labelFn() : role}
                 </p>
                 {!compact && (
-                  <p className="text-xs text-gray-400">
+                  <p className="text-xs text-gray-600">
                     {descFn ? descFn() : ''}
                   </p>
                 )}
@@ -82,7 +82,7 @@ export function ProfilePicker({
         })}
       </div>
       {disabled && disabledMessage && (
-        <p className="text-xs text-gray-400">{disabledMessage}</p>
+        <p className="text-xs text-gray-600">{disabledMessage}</p>
       )}
     </div>
   )

@@ -209,7 +209,7 @@ function PlatformConsole() {
           <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
             {m.platform_title()}
           </h1>
-          <p className="mt-1 text-sm text-gray-400">
+          <p className="mt-1 text-sm text-gray-600">
             {m.platform_description()}
           </p>
         </div>
@@ -313,7 +313,7 @@ function PlatformConsole() {
             stats ? (
               <>
                 {stats.new_feedback_count}{' '}
-                <span className="font-display text-gray-400">
+                <span className="font-display text-gray-600">
                   {m.platform_stat_new_feedback_unit()}
                 </span>
               </>
@@ -352,7 +352,7 @@ function PlatformConsole() {
 
       <div className="flex items-center gap-3">
         <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}

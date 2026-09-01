@@ -189,7 +189,7 @@ describe('InstructionFormPage - char counter', () => {
       </Wrapper>,
     )
     const counter = screen.getByTestId('prompt-char-count')
-    expect(counter.className).toContain('text-gray-400')
+    expect(counter.className).toContain('text-gray-600')
   })
 
   it('counter switches to amber at 7800+ chars', () => {

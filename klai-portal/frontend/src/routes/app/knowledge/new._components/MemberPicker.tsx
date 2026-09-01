@@ -87,7 +87,7 @@ export function MemberPicker({
             }
           }}
         >
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
           <Input
             value={groupSearch}
             onChange={(e) => setGroupSearch(e.target.value)}
@@ -135,7 +135,7 @@ export function MemberPicker({
               <button
                 type="button"
                 onClick={() => setInitialGroups((prev) => prev.filter((ig) => ig.id !== g.id))}
-                className="flex h-6 w-6 items-center justify-center text-gray-400 hover:text-[var(--color-destructive)] transition-colors"
+                className="flex h-6 w-6 items-center justify-center text-gray-500 hover:text-[var(--color-destructive)] transition-colors"
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -160,7 +160,7 @@ export function MemberPicker({
             }
           }}
         >
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
           <Input
             value={userSearch}
             onChange={(e) => setUserSearch(e.target.value)}
@@ -189,7 +189,7 @@ export function MemberPicker({
                   className="w-full px-3 py-2 text-left text-sm klai-hover"
                 >
                   <span className="text-gray-900">{u.display_name}</span>
-                  <span className="ml-2 text-xs text-gray-400">
+                  <span className="ml-2 text-xs text-gray-600">
                     {u.email}
                   </span>
                 </button>
@@ -204,7 +204,7 @@ export function MemberPicker({
           >
             <div>
               <span className="text-sm text-gray-900">{u.name}</span>
-              <span className="ml-2 text-xs text-gray-400">{u.email}</span>
+              <span className="ml-2 text-xs text-gray-600">{u.email}</span>
             </div>
             <div className="flex items-center gap-2">
               <RoleSelect
@@ -219,7 +219,7 @@ export function MemberPicker({
               <button
                 type="button"
                 onClick={() => setInitialUsers((prev) => prev.filter((iu) => iu.id !== u.id))}
-                className="flex h-6 w-6 items-center justify-center text-gray-400 hover:text-[var(--color-destructive)] transition-colors"
+                className="flex h-6 w-6 items-center justify-center text-gray-500 hover:text-[var(--color-destructive)] transition-colors"
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -228,7 +228,7 @@ export function MemberPicker({
         ))}
 
         {isRestrictedEmpty && (
-          <p className="text-xs text-gray-400">
+          <p className="text-xs text-gray-600">
             {m.knowledge_wizard_min_one_member()}
           </p>
         )}

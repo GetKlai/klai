@@ -78,7 +78,7 @@ export function AccountMenu() {
           <>
             <DropdownMenuLabel className="font-normal">
               {name && <p className="truncate text-sm font-medium text-gray-900">{name}</p>}
-              {email && <p className="truncate text-xs text-gray-400">{email}</p>}
+              {email && <p className="truncate text-xs text-gray-600">{email}</p>}
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
           </>

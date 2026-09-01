@@ -115,7 +115,7 @@ function AddTranscribePage() {
                 className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${
                   activeTab === tab
                     ? 'bg-[var(--color-background)] shadow-sm text-gray-900'
-                    : 'text-gray-400 hover:text-gray-900'
+                    : 'text-gray-600 hover:text-gray-900'
                 }`}
               >
                 {tab === 'record' ? m.app_transcribe_tab_record() : m.app_transcribe_tab_upload()}
@@ -143,7 +143,7 @@ function AddTranscribePage() {
           {error && <p className="text-sm text-[var(--color-destructive)]">{error}</p>}
 
           {isTranscribing && (
-            <p className="text-xs text-gray-400 text-center">
+            <p className="text-xs text-gray-600 text-center">
               <Loader2 className="mr-2 inline h-3 w-3 animate-spin" />
               {m.app_transcribe_processing_hint()}
             </p>

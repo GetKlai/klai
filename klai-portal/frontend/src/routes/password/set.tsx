@@ -172,7 +172,7 @@ function PasswordSetPage() {
           <p className="text-xl font-semibold text-gray-900">
             {m.set_done_heading()}
           </p>
-          <p className="text-sm text-gray-400">
+          <p className="text-sm text-gray-600">
             {m.set_done_body()}
           </p>
           {/* Anchor wrapped in Button styling - native browser navigation
@@ -188,7 +188,7 @@ function PasswordSetPage() {
             <h2 className="text-xl font-semibold text-gray-900">
               {m.set_invalid_link_heading()}
             </h2>
-            <p className="text-sm text-gray-400">
+            <p className="text-sm text-gray-600">
               {m.set_invalid_link_body()}
             </p>
           </div>
@@ -205,7 +205,7 @@ function PasswordSetPage() {
             <h2 className="text-xl font-semibold text-gray-900">
               {m.set_heading()}
             </h2>
-            <p className="text-sm text-gray-400">
+            <p className="text-sm text-gray-600">
               {passwordPolicy
                 ? m.set_subheading({ minLength: String(passwordPolicy.min_length) })
                 : m.set_subheading_loading()}
@@ -261,7 +261,7 @@ function PasswordSetPage() {
             </Button>
           </form>
 
-          <p className="text-center text-xs text-gray-400">
+          <p className="text-center text-xs text-gray-600">
             <a href="/" className="text-[var(--color-rl-accent-dark)] hover:underline">
               {m.set_back()}
             </a>
