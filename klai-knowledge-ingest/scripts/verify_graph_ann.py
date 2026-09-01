@@ -34,6 +34,7 @@ import sys
 import time
 
 import structlog
+from klai_graphiti_compat import GRAPHITI_VECTOR_DIMENSION
 
 from knowledge_ingest.config import settings
 
@@ -44,14 +45,13 @@ logger = structlog.get_logger()
 EDGE_LIMIT = 10  # RELEVANT_SCHEMA_LIMIT
 NODE_LIMIT = 15  # NODE_DEDUP_CANDIDATE_LIMIT
 OVERFETCH = 4
-DIMENSION = 1024  # bge-m3; must match GRAPHITI_VECTOR_DIMENSION in the compat package
 INDEX_BUILD_TIMEOUT_S = 600.0
 
 _INDEX_DDL = (
     "CREATE VECTOR INDEX FOR ()-[e:RELATES_TO]->() ON (e.fact_embedding) "
-    f"OPTIONS {{dimension:{DIMENSION}, similarityFunction:'cosine'}}",
+    f"OPTIONS {{dimension:{GRAPHITI_VECTOR_DIMENSION}, similarityFunction:'cosine'}}",
     "CREATE VECTOR INDEX FOR (n:Entity) ON (n.name_embedding) "
-    f"OPTIONS {{dimension:{DIMENSION}, similarityFunction:'cosine'}}",
+    f"OPTIONS {{dimension:{GRAPHITI_VECTOR_DIMENSION}, similarityFunction:'cosine'}}",
 )
 
 

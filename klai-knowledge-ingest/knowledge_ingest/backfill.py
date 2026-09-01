@@ -111,6 +111,44 @@ def _get_current_edge_count(org_id: str) -> int:
     return int(result.result_set[0][0] or 0)
 
 
+def _graph_ann_indexes_operational(org_id: str) -> bool:
+    """Return whether both graph vector indexes are present and OPERATIONAL."""
+    from falkordb import FalkorDB as FalkorDBClient
+
+    client = FalkorDBClient(
+        host=settings.falkordb_host,
+        port=settings.falkordb_port,
+        socket_connect_timeout=2.0,
+        socket_timeout=5.0,
+    )
+    graph = client.select_graph(org_id)
+    rows = graph.ro_query(
+        "CALL db.indexes() YIELD label, properties, types, status "
+        "RETURN label, properties, types, status"
+    ).result_set
+
+    def _has_vector_index(label: str, property_name: str) -> bool:
+        for row in rows:
+            row_label, properties, types, status = row
+            property_names = (
+                {str(prop) for prop in properties}
+                if isinstance(properties, (list, tuple, set))
+                else {str(properties)}
+            )
+            if (
+                str(row_label) == label
+                and property_name in property_names
+                and "VECTOR" in str(types)
+                and "OPERATIONAL" in str(status)
+            ):
+                return True
+        return False
+
+    return _has_vector_index("RELATES_TO", "fact_embedding") and _has_vector_index(
+        "Entity", "name_embedding"
+    )
+
+
 async def main(
     org_id: str,
     limit: int | None = None,
@@ -266,8 +304,44 @@ async def main(
                 )
                 return 1
 
+        ann_effective: bool | None = None
+        if current_edge_count is not None and settings.graph_ann_enabled:
+            try:
+                ann_effective = _graph_ann_indexes_operational(org_id)
+            except Exception as exc:
+                if force:
+                    log.warning(
+                        "operator override (--force): could not determine whether "
+                        "FalkorDB ANN indexes are operational for org %s (%s) — "
+                        "estimating with scan constants",
+                        org_id,
+                        exc,
+                    )
+                    ann_effective = False
+                else:
+                    log.error(
+                        "Cannot run the SPEC-GRAPH-SCALE-001 pre-flight estimate: "
+                        "failed to read FalkorDB ANN index state for org %s (%s). "
+                        "No episode has been ingested. Re-run with --force to override.",
+                        org_id,
+                        exc,
+                    )
+                    return 1
+            if ann_effective is False:
+                log.warning(
+                    "GRAPH_ANN_ENABLED is true but ANN vector indexes are missing or not "
+                    "operational for org %s; estimating with scan constants. Remedy: "
+                    "python -m scripts.verify_graph_ann --org-id %s",
+                    org_id,
+                    org_id,
+                )
+
         if current_edge_count is not None:
-            estimate = estimate_graph_build(total_chars, current_edge_count)
+            estimate = estimate_graph_build(
+                total_chars,
+                current_edge_count,
+                ann_effective=ann_effective,
+            )
             if estimate.refusal:
                 if force:
                     log.warning(

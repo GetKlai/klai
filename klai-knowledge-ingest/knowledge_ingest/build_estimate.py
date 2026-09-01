@@ -70,7 +70,11 @@ class BuildEstimate:
     refusal: str | None  # None = proceed; else human-readable reason
 
 
-def estimate_graph_build(total_chars: int, current_edge_count: int) -> BuildEstimate:
+def estimate_graph_build(
+    total_chars: int,
+    current_edge_count: int,
+    ann_effective: bool | None = None,
+) -> BuildEstimate:
     """Predict sequential graph-build time and refuse an infeasible build.
 
     Model: ``T = a*C + b*C**2`` for ``C`` in millions of characters (Mchar),
@@ -89,7 +93,12 @@ def estimate_graph_build(total_chars: int, current_edge_count: int) -> BuildEsti
     headroom under the timeout, not a hard boundary).
     """
     a = settings.graph_build_hours_per_mchar
-    b = settings.graph_build_quad_hours_per_mchar2
+    ann_enabled = settings.graph_ann_enabled if ann_effective is None else ann_effective
+    b = (
+        settings.graph_build_quad_hours_per_mchar2_ann
+        if ann_enabled
+        else settings.graph_build_quad_hours_per_mchar2
+    )
     edges_per_mchar = settings.graph_edges_per_mchar
     budget_hours = settings.graph_build_budget_hours
 
@@ -108,7 +117,7 @@ def estimate_graph_build(total_chars: int, current_edge_count: int) -> BuildEsti
             f"(predicted_final_edges={predicted_final_edges}, "
             f"edge_ceiling={edge_ceiling})"
         )
-    elif predicted_final_edges > edge_ceiling:
+    elif not ann_enabled and predicted_final_edges > edge_ceiling:
         refusal = (
             f"SPEC-GRAPH-SCALE-001: predicted final edge count "
             f"{predicted_final_edges} exceeds the FalkorDB-timeout-derived "
@@ -165,7 +174,12 @@ def maybe_warn_graph_scale(org_id: str, current_edge_count: int) -> bool:
     warning was actually logged this call.
     """
     a = settings.graph_build_hours_per_mchar
-    b = settings.graph_build_quad_hours_per_mchar2
+    ann_enabled = settings.graph_ann_enabled
+    b = (
+        settings.graph_build_quad_hours_per_mchar2_ann
+        if ann_enabled
+        else settings.graph_build_quad_hours_per_mchar2
+    )
     edges_per_mchar = settings.graph_edges_per_mchar
     budget_hours = settings.graph_build_budget_hours
 

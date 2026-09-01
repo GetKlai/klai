@@ -21,7 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from knowledge_ingest import backfill
+from knowledge_ingest import backfill, build_estimate
 from knowledge_ingest.build_estimate import estimate_graph_build
 
 
@@ -149,6 +149,76 @@ async def test_below_threshold_proceeds_without_a_force_flag():
 
     assert result == 0
     ingest_episode.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_ann_enabled_with_indexes_allows_edge_ceiling_scenario_without_force(monkeypatch):
+    monkeypatch.setattr(build_estimate.settings, "graph_ann_enabled", True)
+    conn = _conn_with_one_artifact()
+    qdrant = _qdrant_with_text(_SMALL_TEXT)
+    ingest_episode = AsyncMock(return_value="episode-1")
+
+    estimate = estimate_graph_build(
+        total_chars=len(_SMALL_TEXT), current_edge_count=_NEAR_CEILING_EDGE_COUNT
+    )
+    assert estimate.refusal is None
+    assert estimate.predicted_final_edges > estimate.edge_ceiling
+
+    with (
+        patch(
+            "knowledge_ingest.backfill.cross_org_admin_connection",
+            return_value=_admin_ctx(conn),
+        ),
+        patch("knowledge_ingest.backfill.AsyncQdrantClient", return_value=qdrant),
+        patch("knowledge_ingest.backfill.ingest_episode", ingest_episode),
+        patch(
+            "knowledge_ingest.backfill._get_current_edge_count",
+            return_value=_NEAR_CEILING_EDGE_COUNT,
+        ),
+        patch("knowledge_ingest.backfill._graph_ann_indexes_operational", return_value=True),
+    ):
+        result = await backfill.main(org_id="org-1")
+
+    assert result == 0
+    ingest_episode.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_ann_enabled_without_indexes_uses_scan_estimate_and_refuses(caplog, monkeypatch):
+    monkeypatch.setattr(build_estimate.settings, "graph_ann_enabled", True)
+    conn = _conn_with_one_artifact()
+    qdrant = _qdrant_with_text(_SMALL_TEXT)
+    ingest_episode = AsyncMock()
+
+    estimate = estimate_graph_build(
+        total_chars=len(_SMALL_TEXT),
+        current_edge_count=_NEAR_CEILING_EDGE_COUNT,
+        ann_effective=False,
+    )
+    assert estimate.refusal is not None
+
+    with (
+        patch(
+            "knowledge_ingest.backfill.cross_org_admin_connection",
+            return_value=_admin_ctx(conn),
+        ),
+        patch("knowledge_ingest.backfill.AsyncQdrantClient", return_value=qdrant),
+        patch("knowledge_ingest.backfill.ingest_episode", ingest_episode),
+        patch(
+            "knowledge_ingest.backfill._get_current_edge_count",
+            return_value=_NEAR_CEILING_EDGE_COUNT,
+        ),
+        patch("knowledge_ingest.backfill._graph_ann_indexes_operational", return_value=False),
+        caplog.at_level(logging.WARNING, logger="backfill"),
+    ):
+        result = await backfill.main(org_id="org-1")
+
+    assert result != 0
+    ingest_episode.assert_not_awaited()
+    assert any(
+        "python -m scripts.verify_graph_ann --org-id org-1" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 @pytest.mark.asyncio
