@@ -13,7 +13,11 @@ turned ``atlassian.Confluence`` into a dispatcher whose Cloud implementation
 no longer exposes ``get_page_by_id``, and whose remaining v1 compatibility
 shims build URLs without the REST api-root prefix. ``ConfluenceV2`` is the
 supported Cloud client: it resolves ``<base>/wiki/api/v2/...`` and keeps a
-typed ``get_page_by_id`` / ``get_pages`` / ``get_spaces`` surface.
+typed ``get_page_by_id`` surface. Its ``get_pages`` / ``get_spaces`` helpers
+are deliberately NOT used — both materialise a whole space or site before
+returning, so their ``limit`` bounds the batch size and nothing else. The
+listings here walk the v2 cursor through ``_paginate_v2`` instead, using
+``get_endpoint()`` so the endpoint names still come from the SDK.
 
 v2 differences that are visible in the DocumentRefs this adapter produces:
     * Pages are addressed by numeric **space id**, not by space key, so the
@@ -41,6 +45,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 from typing import Any, cast
+from urllib.parse import parse_qs, urlparse
 
 import html2text
 from atlassian import ConfluenceV2
@@ -58,13 +63,81 @@ _MAX_SPACES = 100
 
 # Maximum number of pages synced per space. Preserves the effective bound of
 # the pre-v5 call (``get_all_pages_from_space(space, start=0, limit=100)``
-# returned a single 100-item page). ``ConfluenceV2.get_pages`` follows the v2
-# cursor to the end of the space, so the bound is applied here instead — and
-# logged when it truncates, so a silently half-synced space is impossible.
+# returned a single 100-item page). ``_paginate_v2`` stops walking the cursor
+# once this many are collected, and logs when it truncates, so the bound holds
+# for API traffic too rather than only for what we keep.
 _MAX_PAGES_PER_SPACE = 100
 
 # Per-request page size for the v2 cursor pagination.
 _PAGE_BATCH = 100
+
+
+def _next_cursor(payload: dict[str, Any]) -> str | None:
+    """Return the ``cursor`` query value from a v2 response's ``_links.next``.
+
+    v2 paginates by opaque cursor: the next page is advertised as a relative
+    URL under ``_links.next``. Absent link means this was the last page.
+    """
+    links = payload.get("_links")
+    if not isinstance(links, dict):
+        return None
+    nxt = cast(dict[str, Any], links).get("next")
+    if not isinstance(nxt, str) or not nxt:
+        return None
+    query = parse_qs(urlparse(nxt).query)
+    values = query.get("cursor") or []
+    return values[0] if values else None
+
+
+def _paginate_v2(
+    client: Any,
+    endpoint: str,
+    params: dict[str, Any],
+    cap: int,
+    what: str,
+) -> list[dict[str, Any]]:
+    """Follow the v2 cursor until *cap* items are collected or pages run out.
+
+    The SDK's typed ``get_pages`` / ``get_spaces`` helpers materialise a whole
+    space or site before returning — ``limit`` is their per-request batch size,
+    not a total — so capping their result bounds only what we keep, never the
+    API traffic or the memory. This walks the cursor itself and stops early.
+
+    Errors are NOT swallowed. A listing that could not be completed is not a
+    listing: returning what happened to arrive would present a partial space as
+    the whole space, and the sync engine would then treat every page it never
+    saw as absent. The exception propagates to the sync runner, which marks the
+    run failed (``AGENTS.md`` "fail loudly").
+    """
+    collected: list[dict[str, Any]] = []
+    request_params = dict(params)
+
+    while True:
+        payload: Any = client.get(endpoint, params=request_params)
+        if not isinstance(payload, dict):
+            break
+        page = cast(dict[str, Any], payload)
+        batch = page.get("results")
+        if not isinstance(batch, list):
+            break
+        for item in cast(list[Any], batch):
+            if isinstance(item, dict):
+                collected.append(cast(dict[str, Any], item))
+
+        cursor = _next_cursor(page)
+        if len(collected) >= cap:
+            if len(collected) > cap or cursor:
+                logger.warning(
+                    "Confluence: %s truncated at %d — the remainder is not synced",
+                    what,
+                    cap,
+                )
+            return collected[:cap]
+        if not cursor:
+            return collected
+        request_params = {**params, "cursor": cursor}
+
+    return collected[:cap]
 
 
 def _build_confluence_client(
@@ -186,9 +259,11 @@ class ConfluenceAdapter(BaseAdapter):
 
         The v2 page endpoint filters by numeric space id, not by space key, so
         the spaces are resolved into a key -> id map first — via the v2 ``keys``
-        filter when space_keys is configured, otherwise a full listing capped
-        at _MAX_SPACES. Keys the token cannot see are logged and skipped rather
-        than failing the whole run.
+        filter when space_keys is configured, otherwise a listing capped at
+        _MAX_SPACES. Keys the token cannot see are logged and skipped rather
+        than failing the whole run; a listing that errors part-way does fail
+        the run, because a partial listing read as a complete one would make
+        every page it never saw look absent.
 
         Args:
             connector: Connector model instance with Confluence config.
@@ -350,46 +425,31 @@ class ConfluenceAdapter(BaseAdapter):
         _MAX_SPACES: an unfiltered listing could stop before reaching a
         configured space and silently sync nothing for it.
 
-        When *space_keys* is empty the full listing is used, capped at
-        _MAX_SPACES. ``get_spaces`` follows the v2 cursor to the end, so the
-        cap is applied to the materialised result and logged when it actually
-        truncates.
+        Pagination is walked here rather than through ``get_spaces``, which
+        materialises every space on the site before returning — see
+        ``_paginate_v2``.
 
         Returns:
             Mapping of space key -> space id, in listing order.
         """
+        params: dict[str, Any] = {"limit": _PAGE_BATCH}
         if space_keys:
-            raw: Any = client.get_spaces(keys=space_keys, limit=_MAX_SPACES)
-        else:
-            raw = client.get_spaces(limit=_MAX_SPACES)
+            params["keys"] = space_keys
 
-        results: list[Any]
-        if isinstance(raw, dict):
-            raw_dict: dict[str, Any] = cast(dict[str, Any], raw)
-            results = cast(list[Any], raw_dict.get("results") or [])
-        elif isinstance(raw, list):
-            results = cast(list[Any], raw)
-        else:
-            results = list(raw)  # pyright: ignore[reportUnknownArgumentType]
+        spaces = _paginate_v2(
+            client,
+            client.get_endpoint("spaces"),
+            params,
+            _MAX_SPACES,
+            "space listing",
+        )
 
         ids_by_key: dict[str, str] = {}
-        for space in results:
-            if not isinstance(space, dict):
-                continue
-            space_dict: dict[str, Any] = cast(dict[str, Any], space)
-            key: Any = space_dict.get("key")
-            space_id: Any = space_dict.get("id")
+        for space in spaces:
+            key: Any = space.get("key")
+            space_id: Any = space.get("id")
             if key and space_id and str(key) not in ids_by_key:
                 ids_by_key[str(key)] = str(space_id)
-
-        if not space_keys and len(ids_by_key) > _MAX_SPACES:
-            logger.warning(
-                "Confluence: %d spaces visible — truncated to _MAX_SPACES=%d; "
-                "the remainder is not synced",
-                len(ids_by_key),
-                _MAX_SPACES,
-            )
-            ids_by_key = dict(list(ids_by_key.items())[:_MAX_SPACES])
         return ids_by_key
 
     @staticmethod
@@ -400,45 +460,26 @@ class ConfluenceAdapter(BaseAdapter):
     ) -> list[dict[str, Any]]:
         """Fetch pages from a single Confluence space by space id (synchronous).
 
-        Wrapped via asyncio.to_thread() in async callers. Converts the
-        result to a list inside the thread to avoid generator leakage, then
-        truncates to _MAX_PAGES_PER_SPACE.
+        Wrapped via asyncio.to_thread() in async callers. Pagination stops at
+        _MAX_PAGES_PER_SPACE instead of walking the whole space — see
+        ``_paginate_v2``, which also explains why a failure mid-listing raises
+        rather than returning the pages that happened to arrive.
 
         *space_key* is carried only for logging — the v2 page endpoint filters
         on *space_id*.
         """
-        try:
-            raw: Any = client.get_pages(
-                space_id=space_id,
-                limit=_PAGE_BATCH,
-            )
-            pages: list[dict[str, Any]]
-            if isinstance(raw, list):
-                pages = cast(list[dict[str, Any]], raw)
-            elif isinstance(raw, dict):
-                raw_dict: dict[str, Any] = cast(dict[str, Any], raw)
-                pages = cast(list[dict[str, Any]], raw_dict.get("results") or [])
-            else:
-                pages = cast(list[dict[str, Any]], list(raw))
-        except Exception:
-            logger.warning(
-                "Confluence: failed to list pages in space %s (id=%s)",
-                space_key,
-                space_id,
-                exc_info=True,
-            )
-            return []
-
-        if len(pages) > _MAX_PAGES_PER_SPACE:
-            logger.warning(
-                "Confluence: space %s returned %d pages — truncated to "
-                "_MAX_PAGES_PER_SPACE=%d; the remainder is not synced",
-                space_key,
-                len(pages),
-                _MAX_PAGES_PER_SPACE,
-            )
-            pages = pages[:_MAX_PAGES_PER_SPACE]
-        return pages
+        return _paginate_v2(
+            client,
+            client.get_endpoint("page"),
+            {
+                "space-id": space_id,
+                "limit": _PAGE_BATCH,
+                "status": "current",
+                "body-format": "none",
+            },
+            _MAX_PAGES_PER_SPACE,
+            f"page listing for space {space_key}",
+        )
 
 
 # -- Module-level helpers (pure functions, no adapter state) ------------------

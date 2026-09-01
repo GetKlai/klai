@@ -173,6 +173,9 @@ def test_extract_config_space_keys_optional_defaults_empty(confluence_adapter: A
     assert cfg["space_keys"] == []
 
 
+_ENDPOINTS = {"spaces": "api/v2/spaces", "page": "api/v2/pages"}
+
+
 def _mock_v2_client(
     mock_confluence_cls: MagicMock,
     *,
@@ -180,22 +183,40 @@ def _mock_v2_client(
     pages_by_space_id: dict[str, list[dict[str, Any]]] | None = None,
     pages: list[dict[str, Any]] | None = None,
 ) -> MagicMock:
-    """Wire a MagicMock onto the Confluence Cloud v2 method surface.
+    """Wire a MagicMock onto the v2 surface the adapter actually calls.
 
-    The adapter lists spaces once to build a key -> id map, then asks for
-    pages per numeric space id.
+    The adapter walks the v2 cursor itself through ``client.get()`` rather than
+    using ``get_pages`` / ``get_spaces``, so those helpers cannot bound their
+    own traffic. It lists spaces once to build a key -> id map, then asks for
+    pages per numeric space id. This fake returns a single cursorless page,
+    which is the shape ``_paginate_v2`` treats as "last page".
     """
     mock_client = MagicMock()
     mock_confluence_cls.return_value = mock_client
-    mock_client.get_spaces.return_value = spaces
+    mock_client.get_endpoint.side_effect = lambda key, **_kw: _ENDPOINTS[key]
 
-    def _get_pages(*, space_id: str, **_kwargs: Any) -> list[dict[str, Any]]:
-        if pages_by_space_id is not None:
-            return pages_by_space_id.get(space_id, [])
-        return pages or []
+    def _get(endpoint: str, params: dict[str, Any] | None = None, **_kw: Any):
+        params = params or {}
+        if endpoint == _ENDPOINTS["spaces"]:
+            return {"results": spaces}
+        if endpoint == _ENDPOINTS["page"]:
+            space_id = str(params.get("space-id", ""))
+            if pages_by_space_id is not None:
+                return {"results": pages_by_space_id.get(space_id, [])}
+            return {"results": pages or []}
+        raise AssertionError(f"unexpected endpoint {endpoint}")
 
-    mock_client.get_pages.side_effect = _get_pages
+    mock_client.get.side_effect = _get
     return mock_client
+
+
+def _requested_space_ids(mock_client: MagicMock) -> set[str]:
+    """Space ids the adapter asked pages for, from the recorded GET calls."""
+    return {
+        str(call.kwargs["params"]["space-id"])
+        for call in mock_client.get.call_args_list
+        if call.args and call.args[0] == _ENDPOINTS["page"]
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -267,13 +288,11 @@ async def test_list_documents_empty_space_keys_lists_all_spaces(
     connector = _make_connector(_valid_config())  # no space_keys → empty
     refs = await confluence_adapter.list_documents(connector)
 
-    # Should have discovered spaces
-    mock_client.get_spaces.assert_called_once()
     # Pages are requested per numeric v2 space id, never by key.
-    requested_ids = {
-        call.kwargs["space_id"] for call in mock_client.get_pages.call_args_list
+    assert _requested_space_ids(mock_client) == {
+        _SPACE_IDS["ENG"],
+        _SPACE_IDS["DOCS"],
     }
-    assert requested_ids == {_SPACE_IDS["ENG"], _SPACE_IDS["DOCS"]}
     assert len(refs) >= 1
 
 

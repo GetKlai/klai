@@ -24,6 +24,7 @@ import json
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 import requests
@@ -31,7 +32,6 @@ from klai_image_storage.url_guard import _reset_dns_cache
 
 from app.adapters.confluence import (
     _MAX_PAGES_PER_SPACE,
-    _MAX_SPACES,
     _PAGE_BATCH,
     ConfluenceAdapter,
     _build_confluence_client,
@@ -73,11 +73,10 @@ class TestConfluenceSdkContract:
         [
             # fetch_document()
             ("get_page_by_id", ("12345",), {"body_format": "storage"}),
-            # _discover_all_spaces()
-            ("get_spaces", (), {"limit": _MAX_SPACES}),
-            ("get_spaces", (), {"keys": ["ENG"], "limit": _MAX_SPACES}),
-            # _fetch_all_pages_in_space()
-            ("get_pages", (), {"space_id": "9001", "limit": _PAGE_BATCH}),
+            # _paginate_v2(), used by both listings
+            ("get", ("api/v2/pages",), {"params": {"limit": _PAGE_BATCH}}),
+            ("get_endpoint", ("spaces",), {}),
+            ("get_endpoint", ("page",), {}),
         ],
     )
     def test_adapter_call_binds_against_real_client(
@@ -88,6 +87,12 @@ class TestConfluenceSdkContract:
         This is the check that fails on the next breaking major bump. v5
         removed ``get_page_by_id`` from the Cloud client and renamed the space
         and page listings; each of those would trip this test.
+
+        The listings go through ``get_endpoint`` + ``get`` rather than
+        ``get_pages`` / ``get_spaces``: those helpers page to the end before
+        returning, so they cannot honour a cap. Endpoint NAMES still come from
+        the SDK, which is what keeps this a contract rather than a hardcoded
+        URL.
         """
         client = self._client()
         method = getattr(client, method_name, None)
@@ -97,6 +102,13 @@ class TestConfluenceSdkContract:
         )
         # bind() raises TypeError when the parameter names have drifted.
         inspect.signature(method).bind(*args, **kwargs)
+
+
+    def test_endpoint_keys_resolve_to_the_v2_paths(self) -> None:
+        """The SDK must still map our endpoint keys to the v2 collections."""
+        client = self._client()
+        assert client.get_endpoint("spaces") == "api/v2/spaces"
+        assert client.get_endpoint("page") == "api/v2/pages"
 
 
 def _response(payload: dict[str, Any], status: int = 200) -> requests.Response:
@@ -122,23 +134,38 @@ class _FakeConfluenceCloud:
         pages: list[dict[str, Any]] | None = None,
         storage_body: str = "",
         page_list_status: int = 200,
+        page_size: int | None = None,
     ) -> None:
         self.spaces = spaces if spaces is not None else []
         self.pages = pages if pages is not None else []
         self.storage_body = storage_body
         self.page_list_status = page_list_status
+        self.page_size = page_size
         self.urls: list[str] = []
+
+    def _collection(
+        self, url: str, items: list[dict[str, Any]], endpoint: str
+    ) -> requests.Response:
+        """Serve one cursor page, advertising the next as v2 does."""
+        query = parse_qs(urlparse(url).query)
+        offset = int(query.get("cursor", ["0"])[0])
+        size = self.page_size or len(items) or 1
+        window = items[offset : offset + size]
+        payload: dict[str, Any] = {"results": window}
+        if offset + size < len(items):
+            payload["_links"] = {"next": f"{endpoint}?cursor={offset + size}"}
+        return _response(payload)
 
     def handle(self, url: str) -> requests.Response:
         self.urls.append(url)
         path = url.split("?", 1)[0]
 
         if path.endswith("/wiki/api/v2/spaces"):
-            return _response({"results": self.spaces})
+            return self._collection(url, self.spaces, "/wiki/api/v2/spaces")
         if path.endswith("/wiki/api/v2/pages"):
             if self.page_list_status != 200:
                 return _response({"message": "boom"}, status=self.page_list_status)
-            return _response({"results": self.pages})
+            return self._collection(url, self.pages, "/wiki/api/v2/pages")
         if "/wiki/api/v2/pages/" in path:
             page_id = path.rsplit("/", 1)[-1]
             return _response(
@@ -288,16 +315,59 @@ class TestConfluenceV2HttpContract:
 
         assert len(refs) == _MAX_PAGES_PER_SPACE
 
-    async def test_page_listing_failure_is_contained_to_the_space(self) -> None:
+    async def test_page_listing_failure_fails_the_run(self) -> None:
+        """A listing that errored is not a listing.
+
+        Swallowing it and returning the pages that happened to arrive would
+        present a partial space as the whole space, and the sync engine reads
+        every page it never saw as absent. The exception reaches the sync
+        runner, which marks the run FAILED.
+        """
         fake = _FakeConfluenceCloud(
             spaces=[{"id": "9001", "key": "ENG", "name": "Engineering"}],
             page_list_status=500,
         )
         session_patch, dns_patch = self._patches(fake)
+        with session_patch, dns_patch, pytest.raises(requests.HTTPError):
+            await ConfluenceAdapter(SimpleNamespace()).list_documents(_connector())
+
+    async def test_pagination_follows_the_cursor_across_pages(self) -> None:
+        """Pages beyond the first batch are collected, not dropped."""
+        fake = _FakeConfluenceCloud(
+            spaces=[{"id": "9001", "key": "ENG", "name": "Engineering"}],
+            pages=[_page(str(i)) for i in range(5)],
+            page_size=2,
+        )
+        session_patch, dns_patch = self._patches(fake)
         with session_patch, dns_patch:
             refs = await ConfluenceAdapter(SimpleNamespace()).list_documents(_connector())
 
-        assert refs == []
+        assert [r.ref for r in refs] == ["0", "1", "2", "3", "4"]
+        # 5 pages at 2 per request = 3 round-trips, and the cursor is carried.
+        page_calls = [u for u in fake.urls if "/wiki/api/v2/pages?" in u]
+        assert len(page_calls) == 3
+        assert any("cursor=" in u for u in page_calls)
+
+    async def test_pagination_stops_at_the_cap_instead_of_walking_the_space(
+        self,
+    ) -> None:
+        """The cap must bound the API traffic, not just what we keep.
+
+        Sol's review of the migration: capping the SDK's own result only
+        trimmed the list after it had already fetched the entire space.
+        """
+        fake = _FakeConfluenceCloud(
+            spaces=[{"id": "9001", "key": "ENG", "name": "Engineering"}],
+            pages=[_page(str(i)) for i in range(_MAX_PAGES_PER_SPACE * 3)],
+            page_size=_MAX_PAGES_PER_SPACE,
+        )
+        session_patch, dns_patch = self._patches(fake)
+        with session_patch, dns_patch:
+            refs = await ConfluenceAdapter(SimpleNamespace()).list_documents(_connector())
+
+        assert len(refs) == _MAX_PAGES_PER_SPACE
+        # One request, then stop — not three.
+        assert len([u for u in fake.urls if "/wiki/api/v2/pages?" in u]) == 1
 
     async def test_fetch_document_reads_v2_storage_body(self) -> None:
         fake = _FakeConfluenceCloud(
