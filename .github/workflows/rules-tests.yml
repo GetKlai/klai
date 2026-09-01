@@ -74,5 +74,10 @@ jobs:
         # no service .venv needed. uv brings pytest in via tool-run.
         run: uv tool run --with pytest --with pyyaml pytest rules/tests/ -v
 
+      - name: Run hook guard tests
+        # The public-github-mutation-guard is a security hook; its regression
+        # suite is plain unittest with no dependencies.
+        run: python3 .claude/hooks/klai/tests/public-github-mutation-guard.test.py
+
       - name: Check active agent knowledge
         run: bash scripts/check-agent-knowledge.sh

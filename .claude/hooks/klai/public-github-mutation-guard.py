@@ -96,6 +96,115 @@ class PushInvocation(NamedTuple):
     branch_context_known: bool
 
 
+class Heredoc(NamedTuple):
+    delimiter: str
+    strip_tabs: bool
+
+
+def _heredocs_declared_on(line: str) -> list[Heredoc]:
+    heredocs: list[Heredoc] = []
+    index = 0
+    while index < len(line):
+        character = line[index]
+        if character == "\\":
+            index += 2
+            continue
+        if line.startswith("$((", index) or line.startswith("((", index):
+            cursor = index + (3 if line.startswith("$((", index) else 2)
+            depth = 1
+            while cursor < len(line) and depth:
+                if line.startswith("((", cursor):
+                    depth += 1
+                    cursor += 2
+                elif line.startswith("))", cursor):
+                    depth -= 1
+                    cursor += 2
+                elif line[cursor] == "\\":
+                    cursor += 2
+                else:
+                    cursor += 1
+            index = cursor
+            continue
+        if character in {"'", '"'}:
+            quote = character
+            index += 1
+            while index < len(line):
+                if quote == '"' and line[index] == "\\":
+                    index += 2
+                elif line[index] == quote:
+                    index += 1
+                    break
+                else:
+                    index += 1
+            continue
+        if character == "#" and (
+            index == 0 or line[index - 1].isspace() or line[index - 1] in ";|&()"
+        ):
+            break
+        if not line.startswith("<<", index) or line.startswith("<<<", index):
+            index += 1
+            continue
+
+        cursor = index + 2
+        strip_tabs = cursor < len(line) and line[cursor] == "-"
+        if strip_tabs:
+            cursor += 1
+        while cursor < len(line) and line[cursor] in " \t":
+            cursor += 1
+        if cursor >= len(line) or line[cursor] in "\r\n;&|<>()":
+            index = cursor
+            continue
+
+        if line[cursor] in {"'", '"'}:
+            quote = line[cursor]
+            cursor += 1
+            delimiter_start = cursor
+            while cursor < len(line) and line[cursor] != quote:
+                cursor += 1
+            if cursor >= len(line):
+                index = cursor
+                continue
+            delimiter = line[delimiter_start:cursor]
+            cursor += 1
+            supported = quote == "'" or "\\" not in delimiter
+            supported = supported and (
+                cursor >= len(line)
+                or line[cursor].isspace()
+                or line[cursor] in ";&|<>()"
+            )
+        else:
+            delimiter_start = cursor
+            while cursor < len(line) and not (
+                line[cursor].isspace() or line[cursor] in ";&|<>()"
+            ):
+                cursor += 1
+            delimiter = line[delimiter_start:cursor]
+            supported = not any(character in delimiter for character in "'\"\\")
+
+        if delimiter and supported:
+            heredocs.append(Heredoc(delimiter, strip_tabs))
+        index = cursor
+    return heredocs
+
+
+def _without_heredoc_bodies(command: str) -> str:
+    cleaned_lines: list[str] = []
+    pending: list[Heredoc] = []
+    for line in command.splitlines(keepends=True):
+        if not pending:
+            cleaned_lines.append(line)
+            pending.extend(_heredocs_declared_on(line))
+            continue
+
+        content = line.rstrip("\r\n")
+        line_ending = line[len(content) :]
+        candidate = content.lstrip("\t") if pending[0].strip_tabs else content
+        if candidate == pending[0].delimiter:
+            pending.pop(0)
+        cleaned_lines.append(line_ending)
+    return "".join(cleaned_lines)
+
+
 def is_public_issue_mutation(command: str) -> bool:
     for match in re.finditer(r"\bgh\s+issue\s+([a-z-]+)\b", command, re.IGNORECASE):
         if match.group(1).lower() not in READ_ONLY_ISSUE_VERBS:
@@ -162,13 +271,10 @@ def _push_invocations(command: str) -> list[PushInvocation]:
     parsed_starts: set[int] = set()
     for match in GIT_PUSH.finditer(command):
         parsed_starts.add(match.start())
-        invocation = re.split(r"&&|\|\||[;|\n]", command[match.start() :], maxsplit=1)[
-            0
-        ]
+        invocation = re.split(
+            r"&&|\|\||[;|()\n]", command[match.start() :], maxsplit=1
+        )[0]
         cwd, branch_context_known = _branch_context(command, match.start())
-        if not branch_context_known:
-            invocations.append(PushInvocation(None, [], None, False))
-            continue
         try:
             tokens = shlex.split(invocation)
         except ValueError:
@@ -295,6 +401,7 @@ def main() -> int:
     command = payload.get("tool_input", {}).get("command", "")
     if not isinstance(command, str):
         return 0
+    command = _without_heredoc_bodies(command)
 
     if APPROVAL_MARKER not in command and is_public_issue_mutation(command):
         print(
