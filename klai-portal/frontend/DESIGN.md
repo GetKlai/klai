@@ -8,6 +8,7 @@ colors:
   rl-dark-60: "#19191899"
   rl-accent: "#fcaa2d"
   rl-accent-dark: "#a36404"
+  accent-text: "#7D4D03"
   rl-accent-hover: "#e89a1f"
   rl-cream: "#f3f2e7"
   rl-border: "#e3e2d8"
@@ -137,8 +138,9 @@ Use:
 - `klai-hover` for interactive hover states.
 - Semantic base tokens are for fills and borders. On a light surface, foregrounds
   use the matching `-text` token: `var(--color-success-text)` (7.30:1),
-  `var(--color-warning-text)` (6.73:1), and `var(--color-destructive-text)`
-  (6.15:1). Existing `var(--color-destructive)` foregrounds remain valid because
+  `var(--color-warning-text)` (6.73:1), `var(--color-destructive-text)`
+  (6.15:1), and `var(--color-accent-text)` (6.80:1 — measured on the amber
+  tint too, where `--color-rl-accent-dark` falls short at 4.28:1). Existing `var(--color-destructive)` foregrounds remain valid because
   the base token itself clears AA at 5.17:1.
 
 Do not use raw Tailwind semantic colors such as `text-green-*`, `text-red-*`,
