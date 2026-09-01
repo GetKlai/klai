@@ -40,12 +40,14 @@ def test_calibration_point_final_edges_is_an_int():
     assert isinstance(estimate.predicted_final_edges, int)
 
 
-def test_ann_enabled_uses_linear_voys_estimate(monkeypatch):
+def test_ann_enabled_uses_measured_voys_estimate(monkeypatch):
     monkeypatch.setattr(build_estimate.settings, "graph_ann_enabled", True)
 
     estimate = estimate_graph_build(total_chars=6_593_861, current_edge_count=0)
 
-    assert abs(estimate.predicted_hours - 8.2) <= 0.1
+    # Regression guard for the dangerous direction: the interim ANN constants
+    # under-predicted this corpus at ~8.2h, roughly 3x below the measured model.
+    assert abs(estimate.predicted_hours - 23.9) <= 0.5
     assert estimate.refusal is None
 
 
@@ -119,10 +121,26 @@ def test_ann_enabled_skips_edge_ceiling_refusal(monkeypatch):
 def test_ann_enabled_still_refuses_above_the_configured_budget(monkeypatch):
     monkeypatch.setattr(build_estimate.settings, "graph_ann_enabled", True)
 
-    estimate = estimate_graph_build(total_chars=66_000_000, current_edge_count=0)
+    under_budget = estimate_graph_build(total_chars=13_100_000, current_edge_count=0)
+    estimate = estimate_graph_build(total_chars=13_300_000, current_edge_count=0)
 
+    assert under_budget.refusal is None
+    assert 47.0 <= under_budget.predicted_hours < under_budget.budget_hours
     assert estimate.refusal is not None
-    assert estimate.predicted_hours > estimate.budget_hours
+    assert estimate.budget_hours < estimate.predicted_hours <= 49.0
+
+
+def test_ann_quadratic_term_is_wired_for_large_existing_graph(monkeypatch):
+    monkeypatch.setattr(build_estimate.settings, "graph_ann_enabled", True)
+
+    current_edges = 260_000
+    total_chars = 100_000
+    estimate = estimate_graph_build(total_chars=total_chars, current_edge_count=current_edges)
+
+    pure_linear_hours = build_estimate.settings.graph_build_hours_per_mchar_ann * (
+        total_chars / 1e6
+    )
+    assert estimate.predicted_hours > pure_linear_hours + 0.02
 
 
 def test_refusal_absent_comfortably_under_the_edge_ceiling():

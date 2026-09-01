@@ -18,6 +18,7 @@ roadmap: docs/architecture/retrieval-improvements-roadmap.md
 
 | Version | Date       | Author | Change |
 |---------|------------|--------|--------|
+| 0.1.7   | 2026-09-01 | Claude (Fable) + Codex/Sol | REQ-6 closed by direct measurement instead of waiting for organic throughput. `klai-knowledge-ingest/scripts/measure_graph_constants.py` is now in-tree and re-runnable; it was run on core-01 in a throwaway container against a throwaway FalkorDB loaded from the nightly dump, with the same 10 real Voys documents (97,012 chars total, 9,701 chars/doc avg) ingested twice through the full production pipeline, ANN enabled, inter-episode delay 0, and the first episode of each arm dropped as warm-up. Run A, empty graph: mean 116.8 s/doc, stdev 64.6, n=9. Run B, 30,236-edge graph: mean 117.8 s/doc, stdev 48.8, n=9. Delta: +1.0 s/doc, standard error 27.0 s, so the probe cannot resolve anything below ~54 s/doc (b < ~0.066). Derived constants: `a_ann=3.63 h/Mchar`, `b_ann=0.0012 h/Mchar²`. Finding: the pre-ANN single-point model mis-attributed ~11.7h of Voys's 20h to scan growth; ANN shows per-episode cost does not materially grow with graph size, and even pre-ANN brute-force scans cost only ~2 s/episode at 30k edges (45.6 ms/scan × ~46 scans, server-measured 2026-09-01). The production collapse from 88 to 22-34 docs/h was almost certainly the timeout-retry storm: a query exceeded FalkorDB's 1000 ms cap, failed the episode, and each retry re-ran ~26 LLM calls. REQ-2's 5 s timeout and REQ-4's ANN path both remove that mechanism. Dominant cost is LLM extraction per episode: ~117 s/doc. |
 | 0.1.6   | 2026-09-01 | Claude (Fable) + Codex/Sol | E-fix round after delta review: importer scanning now accumulates full parenthesized imports and asserts the installed `graphiti_core.search.search` importer plus `edge_similarity_search`; vector fallback memoization and recovery logging are keyed per `(database, graphiti_fn)`, recovery re-arms fallback warnings, and missing `_database` skips memoization; backfill estimation now keys ANN effectiveness off actual `CALL db.indexes()` state; growth warnings remain active under ANN; index-error markers and comments now match the two live-measured FalkorDB shapes plus the `db.idx.vector` procedure prefix. |
 | 0.1.5   | 2026-09-01 | Claude (Fable) + Codex/Sol | Hardening round SPEC-GRAPH-SCALE-001: ANN read fallback now discriminates FalkorDB index-shape errors, memoizes unavailable indexes per tenant graph, re-logs structured fallback warnings on a per-database budget, emits recovery signals, and guards k≤0; compat tests now cover node ANN fast paths, graphiti importer rebinding derived from installed graphiti source, and assert coverage for `graphiti_core.search.search` plus both patched similarity names; runtime rebind was simplified to a loaded-module sweep while CI owns drift detection; vector dimension is single-sourced from `GRAPHITI_VECTOR_DIMENSION`; and the build estimator is ANN-aware with an interim zero quadratic coefficient while retaining budget refusal. Item 5 is the interim REQ-6 step only — full constant re-measurement still follows from real post-ANN ingest throughput. |
 | 0.1.4   | 2026-09-01 | Claude (Fable) | REQ-5 rolled out to production. `GRAPH_ANN_ENABLED=true` in compose for knowledge-ingest + retrieval-api; `scripts/verify_graph_ann.py` (new) created the vector indexes and recall-gated them per tenant ON THE SERVER against live data — 42 graphs scanned, 19 non-empty verified, all passed the 0.95 mean-recall gate (largest tenant, 30,236 edges: edge recall 0.985 / node 0.997; index 1.7 ms vs 45.6 ms scan server-side). Live in-situ measurement in the running retrieval-api container: the patched edge candidate search returns in **~34 ms median** on the largest tenant vs 616–1,703 ms `graph_search_ms` observed on the scan path the same morning. Empty tenant graphs are skipped by the script; their indexes arrive automatically via `ensure_database_initialized` on first ingest, with fallback warnings logged per database per 15 minutes until the relevant index is operational. Remaining: REQ-6 re-measurement of the estimator constants once real post-ANN ingest throughput exists, plus the 0.1.3 checklist items. Process note recorded in project memory: the REQ-3 spike's local-Mac copy of production data violated convention — all spike work from now on runs on the server; the local copy was deleted 2026-09-01. |
@@ -189,9 +190,41 @@ Calibration **[derived from measured]**:
   the same order but smaller than the ~12 h the calibrated quadratic term
   implies. The gap (factor ~2–3) is real degradation the pure scan model does
   not capture: timeout-and-retry loops once queries crossed 1,000 ms, and
-  LLM dedup prompts that grow with candidate count are the two candidates
-  **[judgement — an instrumented probe run (REQ-6) attributes it; the
-  calibrated model is anchored to the measured 20 h either way]**.
+  LLM dedup prompts that grow with candidate count were the two candidates.
+  This split is now **superseded for the ANN regime** by REQ-6, but remains
+  the flag-off model because disabling ANN returns the timeout-retry regime
+  that the single production datapoint captured.
+
+REQ-6 direct measurement on 2026-09-01 refuted the old attribution for the
+ANN regime **[measured]**. The probe ingested the same 10 real Voys documents
+(97,012 chars total; 9,701 chars/doc avg) twice through the full production
+pipeline with ANN enabled, first into an empty graph and then into a
+30,236-edge graph, with the first episode of each arm dropped as warm-up:
+run A mean 116.8 s/doc (stdev 64.6, n=9), run B mean 117.8 s/doc (stdev
+48.8, n=9). The +1.0 s/doc delta has standard error 27.0 s, so the probe
+cannot resolve anything below ~54 s/doc; equivalently the true ANN quadratic
+constant is somewhere in `[0, ~0.066]`, with point estimate
+**b_ann = 0.0012 h/Mchar²**. Using 103.1 docs/Mchar and the production
+10 s inter-episode delay gives **a_ann = 3.63 h/Mchar**. The cross-check is
+Voys full rebuild size: `3.63 * 6.594 Mchar = 23.9 h`, consistent with the
+~20 h historical rebuild because that run had some concurrency.
+
+The conceptual finding is sharper than the constants: under ANN, per-episode
+cost does not materially grow with graph size. Even pre-ANN, the brute-force
+scans cost only ~2 s/episode at 30k edges (45.6 ms/scan × ~46 scans,
+server-measured 2026-09-01). The observed production collapse from 88 to
+22-34 docs/h was therefore almost certainly the timeout-retry storm: a query
+exceeding FalkorDB's 1000 ms cap failed the episode, and each retry re-ran
+~26 LLM calls. REQ-2's 5 s timeout and REQ-4's ANN path both remove that
+mechanism. The dominant cost is, and always was, LLM extraction per episode:
+~117 s/doc.
+
+The estimator now carries both regimes:
+
+- Flag off: `a=1.25 h/Mchar`, `b=0.27 h/Mchar²`, calibrated to the real
+  pre-ANN timeout-retry datapoint and deliberately retained.
+- ANN effective: `a_ann=3.63 h/Mchar`, `b_ann=0.0012 h/Mchar²`, measured by
+  the REQ-6 probe.
 
 Projections (sequential, current code, per tenant) **[derived]**:
 
@@ -218,15 +251,16 @@ edges — **fractionally above the largest existing tenant** **[measured +
 verified in source]**.
 
 **Threshold to refuse (REQ-1).** Refuse a full build whose predicted time
-exceeds an operator budget (default 48 h). Under the current constants that is
-**C ≈ 11M characters (~29,000 predicted edges, ~1.7× the largest tenant)**
-**[judgement — the 48 h budget is a policy choice; the formula, not the
-number, is what the pre-flight encodes, so the threshold moves automatically
-when REQ-6 re-measures the constants after the ANN fix]**. Independently,
-refuse when the predicted final edge count would push the per-scan tail past
-the configured FalkorDB timeout (edge count ≳ 0.6 × timeout / (15.6 µs ×
-tail factor 3) ≈ 64k edges at 5 s — the tail factor because failures were
-observed at ~22k edges where the *average* scan was only ~343 ms).
+exceeds an operator budget (default 48 h). With ANN effective, REQ-6's
+constants put that threshold at **C ≈ 13.2M characters**; with the flag off,
+the retained pre-ANN timeout-retry model still refuses at **C ≈ 11M
+characters (~29,000 predicted edges, ~1.7× the largest tenant)**. The 48 h
+budget is a policy choice; the formula, not the number, is what the
+pre-flight encodes. Independently, when ANN is not effective, refuse when the
+predicted final edge count would push the per-scan tail past the configured
+FalkorDB timeout (edge count ≳ 0.6 × timeout / (15.6 µs × tail factor 3) ≈
+64k edges at 5 s — the tail factor because failures were observed at ~22k
+edges where the *average* scan was only ~343 ms).
 
 ## 2. The levers, ranked
 
@@ -522,14 +556,15 @@ vs the exact scan, ≥ 40-episode ingest without empty-result anomalies, flag
 flip per tenant starting with the largest, rollback = flag. No period without
 graph retrieval at any point (the graph is never rebuilt or dropped).
 
-### REQ-6 — Re-measure and republish the scaling constants
+### REQ-6 — Re-measure and republish the scaling constants (done in 0.1.7)
 
-After REQ-4/5 on the largest tenant: an instrumented probe run measuring
-per-episode wall-clock split (LLM vs graph queries vs delay) at three graph
-sizes, updating the REQ-1 constants and the refusal threshold, and recording
-in this SPEC's HISTORY: the new sustainable corpus ceiling, and the lever-4
-gate verdict (resolution share of per-episode time — >30% reopens the batch
-pipeline question).
+Closed by the 2026-09-01 direct A/B probe recorded in HISTORY 0.1.7. The
+probe script is in-tree at
+`klai-knowledge-ingest/scripts/measure_graph_constants.py` and is
+re-runnable against a throwaway FalkorDB. It measured no resolvable
+graph-size growth under ANN, updated the REQ-1 constants and refusal
+threshold, and settled the lever-4 gate: resolution share is nowhere near
+the >30% threshold that would reopen the batch pipeline question.
 
 ## Acceptance criteria
 
@@ -551,9 +586,9 @@ pipeline question).
 - **AC-5** (REQ-5) Shadow-run artifact per migrated tenant: recall ≥ 0.95
   top-10, zero empty-result anomalies over ≥ 40 episodes, before/after
   `ingest_ms` distributions.
-- **AC-6** (REQ-6) Updated constants land in config with the probe data
-  linked from this SPEC's HISTORY; the pre-flight threshold changes
-  accordingly without code changes.
+- **AC-6** (REQ-6) Done in 0.1.7: updated constants landed in config with
+  the probe data linked from this SPEC's HISTORY; the pre-flight threshold
+  changes accordingly through config-backed estimator settings.
 
 ## Non-goals
 
@@ -605,7 +640,8 @@ pipeline question).
    historical always-0 defect is fully gone) — settled by a one-hour smoke
    test inside REQ-3.
 3. Exact attribution of the throughput-degradation gap (retries vs LLM prompt
-   growth) — settled by REQ-6's instrumented probe.
+   growth) — settled by REQ-6's instrumented probe: timeout-retry storm, not
+   scan time itself.
 4. Extracted entities/edges per episode distribution (the census multiplier)
    — settled by aggregating existing `graphiti_episode_ingested` log fields
    in VictoriaLogs; no new instrumentation needed.

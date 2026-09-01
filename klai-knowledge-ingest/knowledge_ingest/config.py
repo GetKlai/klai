@@ -382,22 +382,30 @@ class Settings(BaseSettings):
     graphiti_max_concurrent: int = 1  # concurrent episodes; increase with paid LLM plan
     graphiti_episode_delay: float = 10.0
     # SPEC-GRAPH-SCALE-001 REQ-1 — pre-flight graph-build cost estimator
-    # constants. graphiti resolves every extracted entity/edge against the
-    # ENTIRE existing tenant graph via brute-force cosine scans, so build
-    # time is quadratic in source-text volume. Calibrated on the Voys
-    # tenant (largest known): 6,593,861 chars, 0 pre-existing edges -> ~20h
-    # sequential rebuild, ~17,400 new edges (~2,600 edges/Mchar). See
+    # constants. The legacy flag-off constants remain calibrated to the one
+    # real pre-ANN datapoint: Voys, 6,593,861 chars, 0 pre-existing edges ->
+    # ~20h sequential rebuild, ~17,400 new edges (~2,600 edges/Mchar). Leave
+    # them alone: with GRAPH_ANN_ENABLED=false the timeout-retry regime they
+    # encode returns, even though REQ-6 later showed the split between the
+    # linear/quadratic terms was a single-point mis-attribution. See
     # knowledge_ingest/build_estimate.py and the SPEC's §1 scaling law.
-    # Constants are data, not code: REQ-6's future re-measurement of these
-    # values (after the ANN fix, REQ-4) is a config change, not a code one.
     graph_build_hours_per_mchar: float = 1.25  # linear term "a" (extraction/LLM)
     graph_build_quad_hours_per_mchar2: float = 0.27  # quadratic term "b" (resolution scans)
-    # Under ANN the largest-tenant in-situ figure (~34 ms, measured
-    # 2026-09-01, SPEC HISTORY 0.1.4) bounds the scan term. Candidate counts
-    # are capped at top-10/15, so the LLM-dedup term stays roughly constant.
-    # 0.0 is interim pending REQ-6's end-to-end re-measurement from real
-    # throughput; the budget-hours refusal still applies either way.
-    graph_build_quad_hours_per_mchar2_ann: float = 0.0
+    # REQ-6 measured ANN constants on core-01, 2026-09-01, in a throwaway
+    # container against a throwaway FalkorDB loaded from the nightly dump:
+    # same 10 real Voys docs, 97,012 chars total (9,701 chars/doc avg),
+    # full production pipeline, ANN enabled, inter-episode delay disabled,
+    # first episode dropped as warm-up. Run A empty graph: mean 116.8 s/doc,
+    # stdev 64.6, n=9. Run B 30,236-edge graph: mean 117.8 s/doc, stdev
+    # 48.8, n=9. Production delay is 10 s/doc, so a_ann =
+    # (116.8 + 10) / 3600 * 103.1 = 3.63 h/Mchar.
+    graph_build_hours_per_mchar_ann: float = 3.63
+    # REQ-6's marginal graph-size delta was +1.0 s/doc at C0=11.63
+    # Mchar-equivalent (30,236 / 2,600), giving b_ann = 0.0012 h/Mchar^2.
+    # The standard error was 27.0 s, so the probe cannot resolve deltas below
+    # ~54 s/doc; the true value is therefore somewhere in [0, ~0.066], with
+    # 0.0012 retained as the point estimate.
+    graph_build_quad_hours_per_mchar2_ann: float = 0.0012
     graph_edges_per_mchar: float = 2600.0  # measured new-edge density
     graph_scan_us_per_edge: float = 15.6  # measured brute-force cosine-scan cost per edge
     # Tail-to-average latency ratio for the edge ceiling. Timeouts were OBSERVED
