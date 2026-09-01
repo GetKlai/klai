@@ -1,5 +1,7 @@
 /**
  * @purpose Inline status labels
+ * @guideline KLAI-UI-044 must Status pills use `Badge` semantic variants,
+ * never ad-hoc tinted pills
  */
 import * as React from 'react'
 import { cva, type VariantProps } from 'class-variance-authority'

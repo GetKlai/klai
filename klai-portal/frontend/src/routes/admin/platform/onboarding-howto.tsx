@@ -95,7 +95,7 @@ function OnboardingHowtoPage() {
           {m.platform_back_to_platform()}
         </Button>
       </div>
-      <p className="mb-6 text-sm text-gray-400">
+      <p className="mb-6 text-sm text-gray-600">
         {m.platform_onboarding_description()}
       </p>
 

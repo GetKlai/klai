@@ -2,6 +2,8 @@
  * @purpose Metric tile (`StatCard`): uppercase label + large tabular value +
  * optional sub. Sizes default/sm, `tone` (default/warning/destructive), `alert`
  * frame, optional `onClick` to navigate
+ * @guideline KLAI-UI-038 must Metric tiles use `StatCard`; ordinary detail
+ * sections are not wrapped in decorative cards
  */
 import * as React from 'react'
 import { Loader2 } from 'lucide-react'
@@ -11,7 +13,7 @@ export type StatCardTone = 'default' | 'warning' | 'destructive'
 
 const toneTextClass: Record<StatCardTone, string> = {
   default: 'text-gray-900',
-  warning: 'text-[var(--color-warning)]',
+  warning: 'text-[var(--color-warning-text)]',
   destructive: 'text-[var(--color-destructive)]',
 }
 
@@ -61,7 +63,7 @@ function StatCard({
   )
   const body = (
     <>
-      <p className="text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-400">
+      <p className="text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-600">
         {label}
       </p>
       <p
@@ -79,7 +81,7 @@ function StatCard({
           value
         )}
       </p>
-      {sub && <p className="mt-1 text-xs text-gray-400">{sub}</p>}
+      {sub && <p className="mt-1 text-xs text-gray-600">{sub}</p>}
     </>
   )
   if (onClick) {

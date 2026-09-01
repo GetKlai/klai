@@ -18,13 +18,13 @@ export function HelpButton() {
             </h3>
             <button
               onClick={dismissIntro}
-              className="ml-2 text-gray-400 hover:text-gray-900"
+              className="ml-2 text-gray-500 hover:text-gray-900"
               aria-label="Sluiten"
             >
               <X className="h-4 w-4" />
             </button>
           </div>
-          <p className="px-4 pb-3 text-sm text-gray-400">
+          <p className="px-4 pb-3 text-sm text-gray-600">
             {introContent.description()}
           </p>
           <div className="border-t border-gray-200 px-4 py-3">

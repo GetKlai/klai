@@ -224,12 +224,12 @@ function SignupPage() {
           <p className="text-xl font-semibold text-gray-900">
             {m.signup_confirm_heading()}
           </p>
-          <p className="text-sm text-gray-400">
+          <p className="text-sm text-gray-600">
             {joinPending
               ? m.signup_join_confirm_body({ email: form.email })
               : m.signup_confirm_body({ email: form.email })}
           </p>
-          <p className="text-xs text-gray-400 opacity-70">
+          <p className="text-xs text-gray-600">
             {m.signup_confirm_hint()}
           </p>
           <Link
@@ -252,7 +252,7 @@ function SignupPage() {
           <h2 className="text-xl font-semibold text-gray-900">
             {m.signup_domain_match_heading()}
           </h2>
-          <p className="text-sm text-gray-400">
+          <p className="text-sm text-gray-600">
             {m.signup_domain_match_body({ domain: domainMatch })}
           </p>
         </div>
@@ -282,7 +282,7 @@ function SignupPage() {
           </Button>
         </div>
 
-        <p className="text-center text-xs text-gray-400">
+        <p className="text-center text-xs text-gray-600">
           <button
             type="button"
             onClick={() => { setDomainMatch(null); setError(null) }}
@@ -301,7 +301,7 @@ function SignupPage() {
         <h2 className="text-xl font-semibold text-gray-900">
           {m.signup_heading()}
         </h2>
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-gray-600">
           {m.signup_existing_account()}{' '}
           <Link to="/" className="font-medium text-[var(--color-rl-accent-dark)] underline">
             {m.signup_login_link()}
@@ -346,7 +346,7 @@ function SignupPage() {
 
       <div className="relative flex items-center gap-3">
         <div className="h-px flex-1 bg-gray-200" />
-        <span className="text-xs text-gray-400">{m.signup_or_continue_with()}</span>
+        <span className="text-xs text-gray-600">{m.signup_or_continue_with()}</span>
         <div className="h-px flex-1 bg-gray-200" />
       </div>
 
@@ -416,7 +416,7 @@ function SignupPage() {
             />
             <span>
               {m.signup_auto_accept_label({ domain: emailDomain })}
-              <span className="block text-xs text-gray-400">{m.signup_auto_accept_hint()}</span>
+              <span className="block text-xs text-gray-600">{m.signup_auto_accept_hint()}</span>
             </span>
           </label>
         )}
@@ -431,7 +431,7 @@ function SignupPage() {
         </Button>
       </form>
 
-      <p className="text-center text-xs text-gray-400">
+      <p className="text-center text-xs text-gray-600">
         {m.signup_privacy_text()}{' '}
         <a href="https://getklai.com/docs/legal/privacy" className="text-[var(--color-rl-accent-dark)] underline">
           {m.signup_privacy_link()}
@@ -490,7 +490,7 @@ function Field({
         required={required}
         className="w-full rounded-lg border border-gray-200 bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
       />
-      {hint && <p className="text-xs text-gray-400">{hint}</p>}
+      {hint && <p className="text-xs text-gray-600">{hint}</p>}
     </div>
   )
 }

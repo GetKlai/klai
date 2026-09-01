@@ -51,11 +51,11 @@ export function KBOverviewSections({ kbSlug }: { kbSlug: string }) {
     <div className="space-y-8">
       <DashboardSection icon={BookOpen} title={m.knowledge_detail_section_docs()}>
         {!kb.docs_enabled ? (
-          <p className="text-sm text-gray-400">{m.knowledge_detail_docs_not_enabled()}</p>
+          <p className="text-sm text-gray-600">{m.knowledge_detail_docs_not_enabled()}</p>
         ) : (
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <FileText className="h-4 w-4 text-gray-400" />
+              <FileText className="h-4 w-4 text-gray-500" />
               <span className="text-sm text-gray-900">{docsLabel}</span>
             </div>
             {kb.gitea_repo_slug && (
@@ -72,7 +72,7 @@ export function KBOverviewSections({ kbSlug }: { kbSlug: string }) {
       <DashboardSection icon={BarChart2} title={m.knowledge_detail_section_stats()}>
         <div className="flex gap-8 mb-5">
           <div>
-            <p className="text-xs text-gray-400 tracking-wide mb-1">{m.knowledge_detail_stats_search_index()}</p>
+            <p className="text-xs text-gray-600 tracking-wide mb-1">{m.knowledge_detail_stats_search_index()}</p>
             <p className="text-sm font-medium text-gray-900">
               {stats?.volume != null
                 ? m.knowledge_detail_volume({ count: String(stats.volume) })
@@ -80,7 +80,7 @@ export function KBOverviewSections({ kbSlug }: { kbSlug: string }) {
             </p>
           </div>
           <div>
-            <p className="text-xs text-gray-400 tracking-wide mb-1">{m.knowledge_detail_stats_queries()}</p>
+            <p className="text-xs text-gray-600 tracking-wide mb-1">{m.knowledge_detail_stats_queries()}</p>
             <p className="text-sm font-medium text-gray-900">
               {stats?.usage_last_30d != null
                 ? String(stats.usage_last_30d)
@@ -88,7 +88,7 @@ export function KBOverviewSections({ kbSlug }: { kbSlug: string }) {
             </p>
           </div>
           <div>
-            <p className="text-xs text-gray-400 tracking-wide mb-1">{m.knowledge_detail_stats_users()}</p>
+            <p className="text-xs text-gray-600 tracking-wide mb-1">{m.knowledge_detail_stats_users()}</p>
             <p className="text-sm font-medium text-gray-900">
               {stats?.unique_users_30d != null
                 ? String(stats.unique_users_30d)
@@ -96,7 +96,7 @@ export function KBOverviewSections({ kbSlug }: { kbSlug: string }) {
             </p>
           </div>
           <div>
-            <p className="text-xs text-gray-400 tracking-wide mb-1">{m.knowledge_detail_stats_active_days()}</p>
+            <p className="text-xs text-gray-600 tracking-wide mb-1">{m.knowledge_detail_stats_active_days()}</p>
             <p className="text-sm font-medium text-gray-900">
               {stats?.active_days_30d != null
                 ? m.knowledge_detail_active_days_value({ count: String(stats.active_days_30d) })
@@ -106,7 +106,7 @@ export function KBOverviewSections({ kbSlug }: { kbSlug: string }) {
           {user?.isAdmin === true && stats?.org_gap_count_7d != null && (
             <Link to="/app/gaps" className="group">
               <div>
-                <p className="text-xs text-gray-400 tracking-wide mb-1 flex items-center gap-1">
+                <p className="text-xs text-gray-600 tracking-wide mb-1 flex items-center gap-1">
                   <AlertTriangle className="h-3 w-3" />
                   {m.gaps_overview_tile()}
                 </p>
@@ -120,12 +120,12 @@ export function KBOverviewSections({ kbSlug }: { kbSlug: string }) {
 
         {/* Breakdown per database */}
         <div>
-          <p className="text-xs text-gray-400 tracking-wide mb-2">
+          <p className="text-xs text-gray-600 tracking-wide mb-2">
             {m.knowledge_detail_volume_breakdown_title()}
           </p>
           <div className="grid grid-cols-3 gap-3">
             <div className="flex items-start gap-2 rounded-lg border border-gray-200 p-3">
-              <Database className="h-4 w-4 text-gray-400 mt-0.5 shrink-0" />
+              <Database className="h-4 w-4 text-gray-500 mt-0.5 shrink-0" />
               <div>
                 <p className="text-xs font-medium text-gray-900">
                   {m.knowledge_detail_volume_sources()}
@@ -138,7 +138,7 @@ export function KBOverviewSections({ kbSlug }: { kbSlug: string }) {
               </div>
             </div>
             <div className="flex items-start gap-2 rounded-lg border border-gray-200 p-3">
-              <Search className="h-4 w-4 text-gray-400 mt-0.5 shrink-0" />
+              <Search className="h-4 w-4 text-gray-500 mt-0.5 shrink-0" />
               <div>
                 <p className="text-xs font-medium text-gray-900">
                   {m.knowledge_detail_volume_search_chunks()}
@@ -151,7 +151,7 @@ export function KBOverviewSections({ kbSlug }: { kbSlug: string }) {
               </div>
             </div>
             <div className="flex items-start gap-2 rounded-lg border border-gray-200 p-3">
-              <GitBranch className="h-4 w-4 text-gray-400 mt-0.5 shrink-0" />
+              <GitBranch className="h-4 w-4 text-gray-500 mt-0.5 shrink-0" />
               <div>
                 <p className="text-xs font-medium text-gray-900">
                   {m.knowledge_detail_volume_graph()}

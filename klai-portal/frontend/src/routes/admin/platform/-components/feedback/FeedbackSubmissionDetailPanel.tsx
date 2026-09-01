@@ -75,7 +75,7 @@ function TriageChoice({
       <Icon className="h-4 w-4 shrink-0" />
       <span className="flex min-w-0 flex-col">
         <span className="text-sm font-medium">{label}</span>
-        <span className="text-xs font-normal text-gray-400">{hint}</span>
+        <span className="text-xs font-normal text-gray-600">{hint}</span>
       </span>
     </Button>
   )
@@ -176,7 +176,7 @@ export function FeedbackSubmissionDetailPanel({
             ? m.platform_feedback_triage_title()
             : m.platform_feedback_submission_detail_title()}
         </h1>
-        <p className="mt-1 text-sm text-gray-400">
+        <p className="mt-1 text-sm text-gray-600">
           {item.org_name ?? item.org_slug ?? m.platform_feedback_unknown_organization()}
           {reporter ? ` · ${reporter}` : ''} · {fmtDate(item.created_at)}
         </p>
@@ -192,7 +192,7 @@ export function FeedbackSubmissionDetailPanel({
     <section className="space-y-2">
       <p className="whitespace-pre-wrap text-[0.9375rem] leading-7 text-gray-900">{reportText}</p>
       {item.page_url && (
-        <p className="truncate font-mono text-xs text-gray-400">{item.page_url}</p>
+        <p className="truncate font-mono text-xs text-gray-600">{item.page_url}</p>
       )}
     </section>
   )
@@ -251,14 +251,14 @@ export function FeedbackSubmissionDetailPanel({
             className="flex w-full items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white px-5 py-4 text-left klai-hover"
           >
             <span className="min-w-0">
-              <span className="block text-xs font-medium text-gray-400">
+              <span className="block text-xs font-medium text-gray-600">
                 {m.platform_feedback_belongs_to_item()}
               </span>
               <span className="mt-0.5 block truncate text-sm font-medium text-gray-900">
                 #{item.linked_item_id}
                 {item.linked_item_title ? ` · ${item.linked_item_title}` : ''}
               </span>
-              <span className="mt-0.5 block text-xs text-gray-400">
+              <span className="mt-0.5 block text-xs text-gray-600">
                 {feedbackStatusLabel(item.status)}
               </span>
             </span>
@@ -266,7 +266,7 @@ export function FeedbackSubmissionDetailPanel({
           </button>
         ) : (
           <section className="rounded-xl border border-gray-200 bg-white px-5 py-4">
-            <p className="text-xs font-medium text-gray-400">{m.platform_col_status()}</p>
+            <p className="text-xs font-medium text-gray-600">{m.platform_col_status()}</p>
             <p className="mt-1 text-sm font-medium text-gray-900">
               {feedbackStatusLabel(item.status)}
             </p>
@@ -345,7 +345,7 @@ export function FeedbackSubmissionDetailPanel({
           </div>
 
           <span className="relative block">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
             <Input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
@@ -369,7 +369,7 @@ export function FeedbackSubmissionDetailPanel({
                         </span>
                       )}
                       <p className="truncate text-sm font-medium text-gray-900">{row.title}</p>
-                      {row.meta && <p className="truncate text-xs text-gray-400">{row.meta}</p>}
+                      {row.meta && <p className="truncate text-xs text-gray-600">{row.meta}</p>}
                       {isClosedItem && (
                         <div className="mt-2">
                           <Checkbox
@@ -516,7 +516,7 @@ export function FeedbackSubmissionDetailPanel({
         </div>
         <button
           type="button"
-          className="text-xs text-gray-400 underline-offset-2 hover:text-gray-600 hover:underline"
+          className="text-xs text-gray-600 underline-offset-2 hover:text-gray-900 hover:underline"
           onClick={() => setMode('status')}
         >
           {m.platform_feedback_choice_status()}

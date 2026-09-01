@@ -24,7 +24,7 @@ export function SourceTypeGrid({ kbSlug, onSelectUpload }: SourceTypeGridProps) 
     <div className="space-y-6">
       {/* Upload group */}
       <section>
-        <h2 className="text-xs font-medium text-gray-400 mb-3 tracking-wide">
+        <h2 className="text-xs font-medium text-gray-600 mb-3 tracking-wide">
           {m.knowledge_add_source_group_upload()}
         </h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -41,12 +41,12 @@ export function SourceTypeGrid({ kbSlug, onSelectUpload }: SourceTypeGridProps) 
 
       {/* Connector group */}
       <section>
-        <h2 className="text-xs font-medium text-gray-400 mb-3 tracking-wide">
+        <h2 className="text-xs font-medium text-gray-600 mb-3 tracking-wide">
           {m.knowledge_add_source_group_connectors()}
         </h2>
         {!hasExternalConnectors ? (
           <Tooltip label={m.connector_type_locked_tooltip()}>
-            <div className="flex items-center gap-2 py-4 text-sm text-gray-400 opacity-60 cursor-default select-none">
+            <div className="flex items-center gap-2 py-4 text-sm text-gray-600 cursor-default select-none">
               <Lock className="h-4 w-4" />
               {m.connector_type_locked_tooltip()}
             </div>

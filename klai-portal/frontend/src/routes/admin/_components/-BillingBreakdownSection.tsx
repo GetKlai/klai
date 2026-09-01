@@ -121,7 +121,7 @@ export function BillingBreakdownSection() {
         )}
         {state.data && (
           <div className="space-y-2">
-            <div className="grid grid-cols-[1fr_auto_auto] gap-x-6 text-xs uppercase tracking-wide text-gray-400">
+            <div className="grid grid-cols-[1fr_auto_auto] gap-x-6 text-xs uppercase tracking-wide text-gray-600">
               <span>{m.admin_billing_breakdown_col_account_type()}</span>
               <span className="text-right">{m.admin_billing_breakdown_col_count()}</span>
               <span className="text-right">{m.admin_billing_breakdown_col_monthly()}</span>

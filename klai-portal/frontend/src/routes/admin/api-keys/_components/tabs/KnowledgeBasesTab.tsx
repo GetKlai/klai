@@ -42,7 +42,7 @@ export function KnowledgeBasesTab({ apiKey }: Props) {
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       <section className="space-y-4">
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-gray-600">
           {m.admin_api_keys_wizard_kb_access_intro_api()}
         </p>
         <KbAccessEditor

@@ -23,8 +23,8 @@ catalog and be described here in the same change.
 
 The normative rules in this document are catalogued in the Rules Ledger at the
 end of this file, each with an ID, an RFC 2119 level and a declared
-verification mode. The count today: **51 rules — 9 automated, 4 assisted,
-34 manual, 4 deliberately unchecked.**
+verification mode. The count today: **52 rules — 9 automated, 4 assisted,
+35 manual, 4 deliberately unchecked.**
 
 The catalogue is maintained by hand. The ledger's own preamble says which of
 its guarantees a test backs and which rely on you adding the row — read that
@@ -215,15 +215,15 @@ adjust the page container width instead of adding local offsets.
 ### Description length and `PageIntro`
 
 The `description` is a SHORT subtitle: a count or a single line. It sits below
-the title and is muted (`text-gray-400`). When a primary action is present,
+the title and uses the secondary text colour (`text-gray-600`). When a primary action is present,
 `PageHeader` caps it at `sm:max-w-[60%]` of the header width so the subtitle
 never runs under the right-aligned action — keep it short and this cap is
 never reached.
 
 When a list/overview page needs to actually explain the feature before the
 list, do NOT stretch the subtitle. Put the explanation in a `PageIntro` block
-below the header — plain text, no card, slightly more readable
-(`text-gray-600`) than the subtitle, with `space-y-3` between paragraphs. This
+below the header — plain text, no card, using the same readable secondary
+colour (`text-gray-600`), with `space-y-3` between paragraphs. This
 is the `/app/instructions` pattern: title + short subtitle + action, then an
 intro body.
 
@@ -252,7 +252,7 @@ page title.
     <h1 className="page-title text-[26px] font-display-bold text-gray-900">
       {title}
     </h1>
-    <p className="mt-1 text-sm text-gray-400">{description}</p>
+    <p className="mt-1 text-sm text-gray-600">{description}</p>
   </div>
   <Button type="button" variant="outline" size="sm" onClick={onBack}>
     <ArrowLeft className="h-4 w-4 mr-2" />
@@ -444,8 +444,8 @@ needs a different semantic.
 | `neutral` | `text-gray-400/500` | Utility, navigation, low-risk | rename, configure, open, view, copy, more, cancel |
 | `primary` | `var(--color-primary)` | Primary create / submit / send | add, send |
 | `info` | `var(--color-info-text)` | Information, progress, system context | info |
-| `success` | `var(--color-success)` | Positive status change or recovery | sync, save, reactivate |
-| `warning` | `var(--color-warning)` | Caution / reversible risky action | edit, retry, suspend |
+| `success` | `var(--color-success-text)` | Positive status change or recovery | sync, save, reactivate |
+| `warning` | `var(--color-warning-text)` | Caution / reversible risky action | edit, retry, suspend |
 | `danger` | `var(--color-destructive)` | Destructive or high-impact | delete, stop, leave, offboard |
 
 Note: `edit` is tone `warning` (amber) — editing is a reversible change that
@@ -902,13 +902,17 @@ The live render is the `/dev/ui` "Conversation" section.
 
 Use:
 
-- `text-gray-900` for primary text.
-- `text-gray-600` for explanatory body copy below a header (`PageIntro`).
-- `text-gray-400` for muted descriptions/metadata (the `PageHeader` subtitle).
+- `text-gray-900` — primary text — 16.85:1.
+- `text-gray-600` — muted / secondary text; the default — 7.18:1.
+- `text-gray-500` — icons and other non-text; clears the 3:1 non-text bar — 4.39:1.
+- `text-gray-400` — decorative and disabled only — 2.41:1.
 - `border-gray-200` for borders.
 - `klai-hover` for interactive hover states.
-- `var(--color-success)`, `var(--color-warning)`, `var(--color-destructive)`
-  for semantic states.
+- Semantic base tokens are for fills and borders. On a light surface, foregrounds
+  use the matching `-text` token: `var(--color-success-text)` (7.30:1),
+  `var(--color-warning-text)` (6.73:1), and `var(--color-destructive-text)`
+  (6.15:1). Existing `var(--color-destructive)` foregrounds remain valid because
+  the base token itself clears AA at 5.17:1.
 
 Do not use raw Tailwind semantic colors such as `text-green-*`, `text-red-*`,
 `bg-amber-*`, or `hover:bg-gray-50` in new portal UI.
@@ -921,13 +925,13 @@ system (see Row Actions And Action Tones).
 Status badges use the `Badge` component with a semantic variant. The semantic
 variants (`info`, `success`, `warning`, `destructive`) derive from the SAME
 primary tokens as the action tones — same hue, same meaning — kept soft via a
-10% tint background with the solid token as text:
+10% tint background with the darker `-text` token as foreground:
 
 ```
-success  → bg var(--color-success)/10   text var(--color-success)
-warning  → bg var(--color-warning)/10   text var(--color-warning)
-destructive → bg var(--color-destructive)/10 text var(--color-destructive)
-info     → bg var(--color-info)/10      text var(--color-info)
+success  → bg var(--color-success)/10   text var(--color-success-text)
+warning  → bg var(--color-warning)/10   text var(--color-warning-text)
+destructive → bg var(--color-destructive)/10 text var(--color-destructive-text)
+info     → bg var(--color-info)/10      text var(--color-info-text)
 ```
 
 So a green status badge and a green sync icon are the same green, just softer.
@@ -1050,11 +1054,7 @@ These patterns must not be copied:
 
 This table catalogues the normative rules above, each with a stable ID, an
 RFC 2119 level, and a declared verification mode. It answers "how much of this
-document is actually checked?" — a question the prose could not answer before,
-because nothing counted it.
-
-Be exact about what the ledger guarantees, because a ledger that overstates
-itself is the defect it exists to catch.
+document is actually checked?"
 
 **Machine-checked** by `tests/design/rules-ledger.test.ts`, which fails the
 build: that every `automated` row names a check that exists and is switched on
@@ -1063,13 +1063,10 @@ that every design check in the repo has a row; that active IDs are not retired;
 that the counts in What Is Enforced match these rows. Coverage cannot be
 claimed where it does not exist, in either direction.
 
-**Maintained by hand**, and worth knowing before you trust a count:
-
-- *Completeness against the prose.* Extracting normative sentences from prose
-  is not mechanically decidable, so a rule added to a section without a row
-  here goes unnoticed. Add the row in the same change.
-- *Retiring IDs.* When a row is deleted, add its ID to Retired IDs below. The
-  check then prevents that number from returning to the active table.
+Component guideline rows inside the generated markers come from the matching
+`src/components/ui/` header comments. The other rows and completeness against
+the prose remain maintained by hand. When a row is retired, add its ID to
+Retired IDs below so the number cannot return.
 
 Verification modes use the vocabulary from the Design System Doc Spec
 (`automated` / `assisted` / `manual`), plus one of our own:
@@ -1084,6 +1081,8 @@ Verification modes use the vocabulary from the Design System Doc Spec
 The Current Deprecated Patterns list above is the negative
 restatement of these rules, not a separate set.
 
+<!-- generated:component-guidelines -->
+<!-- generated:component-guideline-ids KLAI-UI-007 KLAI-UI-008 KLAI-UI-011 KLAI-UI-012 KLAI-UI-013 KLAI-UI-015 KLAI-UI-017 KLAI-UI-018 KLAI-UI-019 KLAI-UI-024 KLAI-UI-025 KLAI-UI-026 KLAI-UI-027 KLAI-UI-028 KLAI-UI-031 KLAI-UI-034 KLAI-UI-035 KLAI-UI-037 KLAI-UI-038 KLAI-UI-041 KLAI-UI-044 -->
 | ID | Rule | Level | Verification | Check / reason |
 |---|---|---|---|---|
 | KLAI-UI-001 | A hex literal in `className` that equals a token in `index.css` is a defect; reference the token instead | must-not | automated | `klai/no-hardcoded-brand-color` |
@@ -1137,6 +1136,8 @@ restatement of these rules, not a separate set.
 | KLAI-UI-049 | A raw `<textarea>` outside `src/components/ui/` is forbidden | must-not | automated | `klai/no-raw-textarea` |
 | KLAI-UI-050 | The portal type scale is rem-based on a 110% root, so text, padding, control heights and column widths scale together; an absolute px font size does not scale and is a defect | must | manual | Reviewer step. Nothing yet stops a new `text-[Npx]` or a px `font-size` in `index.css` from being added |
 | KLAI-UI-051 | Foreground colours documented in the Colors section meet WCAG AA on both portal surfaces or carry a current, reasoned exception | must | automated | `tests/design/documented-contrast.test.ts` |
+| KLAI-UI-052 | Semantic base colour tokens are used for fills and borders; foregrounds on light portal surfaces use the matching `-text` token, while the passing destructive base foreground remains valid | must | manual | The documented contrast check covers only colours named in the Colors section, so it does not catch a base token used as a foreground elsewhere |
+<!-- /generated:component-guidelines -->
 
 ### Retired IDs
 

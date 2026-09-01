@@ -24,7 +24,7 @@ export function WidgetToggleCard({
         <label htmlFor={id} className="block cursor-pointer text-sm font-medium text-gray-900">
           {label}
         </label>
-        <p className="text-xs text-gray-400">{help}</p>
+        <p className="text-xs text-gray-600">{help}</p>
       </div>
     </div>
   )

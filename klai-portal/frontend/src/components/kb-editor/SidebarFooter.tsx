@@ -54,7 +54,7 @@ export function SidebarFooter({
               {m.docs_kb_create()}
             </button>
             <button
-              className="h-7 px-2 flex items-center justify-center rounded-md text-gray-400 hover:bg-[var(--color-foreground)]/[0.04] transition-colors"
+              className="h-7 px-2 flex items-center justify-center rounded-md text-gray-500 hover:bg-[var(--color-foreground)]/[0.04] transition-colors"
               onClick={onNewPageCancel}
             >
               <X size={11} />
@@ -63,7 +63,7 @@ export function SidebarFooter({
         </div>
       ) : (
         <button
-          className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-gray-400 hover:bg-[var(--color-foreground)]/[0.04] hover:text-gray-900 rounded-md transition-colors"
+          className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-gray-600 hover:bg-[var(--color-foreground)]/[0.04] hover:text-gray-900 rounded-md transition-colors"
           onClick={onShowNewPage}
         >
           <Plus size={14} strokeWidth={1.5} />
@@ -82,7 +82,7 @@ export function SidebarFooter({
         }}
       />
       <button
-        className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-gray-400 hover:bg-[var(--color-foreground)]/[0.04] hover:text-gray-900 rounded-md transition-colors"
+        className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-gray-600 hover:bg-[var(--color-foreground)]/[0.04] hover:text-gray-900 rounded-md transition-colors"
         onClick={() => fileInputRef.current?.click()}
       >
         <Upload size={14} strokeWidth={1.5} />

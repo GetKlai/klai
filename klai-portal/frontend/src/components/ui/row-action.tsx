@@ -3,6 +3,8 @@
  * bordered hitbox — the default for row icon actions), `RowActionButton`,
  * `RowActionGroup` + the action→tone system. `RowActionIconButton` is the
  * low-level unbordered base, not the list/table default.
+ * @guideline KLAI-UI-019 must-not Row actions render through the `row-action`
+ * components, never a raw icon button
  */
 import * as React from 'react'
 import { Slot } from '@radix-ui/react-slot'
@@ -109,12 +111,12 @@ const rowActionIconButtonVariants = cva(
   {
     variants: {
       tone: {
-        neutral: 'text-gray-400',
+        neutral: 'text-gray-500',
         primary: 'text-[var(--color-primary)]',
         info: 'text-[var(--color-info-text)]',
         danger: 'text-[var(--color-destructive)]',
-        success: 'text-[var(--color-success)]',
-        warning: 'text-[var(--color-warning)]',
+        success: 'text-[var(--color-success-text)]',
+        warning: 'text-[var(--color-warning-text)]',
       },
     },
     defaultVariants: {
@@ -132,8 +134,8 @@ const rowActionButtonVariants = cva(
         primary: 'text-[var(--color-primary)]',
         info: 'text-[var(--color-info-text)]',
         danger: 'text-[var(--color-destructive)]',
-        success: 'text-[var(--color-success)]',
-        warning: 'text-[var(--color-warning)]',
+        success: 'text-[var(--color-success-text)]',
+        warning: 'text-[var(--color-warning-text)]',
       },
     },
     defaultVariants: {

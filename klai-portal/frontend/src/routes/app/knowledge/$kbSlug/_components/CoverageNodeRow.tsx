@@ -163,7 +163,7 @@ export function CoverageNodeRow({
               </span>
             )}
             {!isConfirmingDelete && !isEditing && (
-              <span className="text-xs text-gray-400 tabular-nums">
+              <span className="text-xs text-gray-600 tabular-nums">
                 {pct}%
               </span>
             )}
@@ -173,13 +173,13 @@ export function CoverageNodeRow({
           <Textarea
             value={editingDescription}
             onChange={(e) => setEditingDescription(e.target.value)}
-            className="mb-1 resize-none text-xs text-gray-400"
+            className="mb-1 resize-none text-xs text-gray-600"
             rows={2}
             placeholder={m.knowledge_taxonomy_node_description_placeholder()}
             onKeyDown={(e) => { if (e.key === 'Escape') onCancelEdit() }}
           />
         ) : node.description ? (
-          <p className="text-xs text-gray-400 mb-1 line-clamp-2">
+          <p className="text-xs text-gray-600 mb-1 line-clamp-2">
             {node.description}
           </p>
         ) : null}
@@ -191,11 +191,11 @@ export function CoverageNodeRow({
         />
       </div>
       <div className="flex items-center gap-3 mt-1.5">
-        <span className="text-xs text-gray-400">
+        <span className="text-xs text-gray-600">
           {m.knowledge_taxonomy_coverage_chunks({ count: String(node.chunk_count) })}
         </span>
         {node.gap_count > 0 && (
-          <span className="text-xs text-[var(--color-warning)]">
+          <span className="text-xs text-[var(--color-warning-text)]">
             {m.knowledge_taxonomy_coverage_gaps({ count: String(node.gap_count) })}
           </span>
         )}

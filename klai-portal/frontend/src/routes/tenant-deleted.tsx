@@ -15,14 +15,14 @@ function TenantDeletedPage() {
       <div className="w-full max-w-md space-y-6 px-6 text-center">
         <CheckCircle
           size={40}
-          className="mx-auto text-[var(--color-success)]"
+          className="mx-auto text-[var(--color-success-text)]"
           strokeWidth={1.5}
         />
         <div className="space-y-2">
           <p className="text-xl font-semibold text-gray-900">
             {m.tenant_deleted_heading()}
           </p>
-          <p className="text-sm text-gray-400">
+          <p className="text-sm text-gray-600">
             {m.tenant_deleted_body()}
           </p>
         </div>

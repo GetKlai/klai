@@ -87,7 +87,7 @@ export function PlatformMessageComposerPanel({
         <h2 className="text-sm font-display-bold text-gray-900">
           {m.platform_messages_compose_title()}
         </h2>
-        <p className="mt-1 text-sm text-gray-400">
+        <p className="mt-1 text-sm text-gray-600">
           {m.platform_messages_compose_description({ recipient: target.recipient })}
         </p>
       </div>

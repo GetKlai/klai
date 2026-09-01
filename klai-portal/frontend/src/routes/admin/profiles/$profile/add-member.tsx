@@ -115,7 +115,7 @@ function AddProfileMemberPage() {
 
       <Card>
         <CardContent className="pt-6">
-          <p className="mb-4 text-sm text-gray-400">
+          <p className="mb-4 text-sm text-gray-600">
             {profileLabel}
           </p>
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -154,7 +154,7 @@ function AddProfileMemberPage() {
                               }}
                             >
                               <span>{label}</span>
-                              <span className="ml-auto text-xs text-gray-400">
+                              <span className="ml-auto text-xs text-gray-600">
                                 {u.email}
                               </span>
                             </CommandItem>

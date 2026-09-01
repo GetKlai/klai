@@ -139,7 +139,7 @@ export function UserActions({
                       >
                         {profileLabel(targetRole)}
                         {user.role === targetRole && (
-                          <span className="ml-2 text-xs text-gray-400">
+                          <span className="ml-2 text-xs text-gray-600">
                             ({m.admin_settings_saved()})
                           </span>
                         )}

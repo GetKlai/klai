@@ -69,11 +69,11 @@ export function CoverageWidget({
     // chunk counts as untagged.
     return (
       <div className="space-y-3">
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-gray-600">
           {m.knowledge_taxonomy_coverage_empty()}
         </p>
         {isBackfilling ? (
-          <div className="inline-flex items-center gap-1.5 text-xs text-gray-400">
+          <div className="inline-flex items-center gap-1.5 text-xs text-gray-600">
             <Loader2 className="h-3 w-3 animate-spin" />
             <span>{m.knowledge_taxonomy_categorising_status()}</span>
           </div>
@@ -93,7 +93,7 @@ export function CoverageWidget({
                 }
               </Button>
               {isSuggesting && (
-                <p className="text-xs text-gray-400">
+                <p className="text-xs text-gray-600">
                   {m.knowledge_taxonomy_suggest_loading_hint()}
                 </p>
               )}
@@ -147,15 +147,15 @@ export function CoverageWidget({
       {coverage.untagged_count > 0 && (
         <div className="rounded-lg border border-dashed border-gray-200 p-3">
           <div className="flex items-center justify-between mb-1.5">
-            <span className="text-sm text-gray-400">
+            <span className="text-sm text-gray-600">
               {m.knowledge_taxonomy_coverage_untagged()}
             </span>
             <div className="flex items-center gap-2 shrink-0">
-              <span className="text-xs text-gray-400 tabular-nums">
+              <span className="text-xs text-gray-600 tabular-nums">
                 {untaggedPct}% {m.knowledge_taxonomy_coverage_untagged().toLowerCase()}
               </span>
               {isBackfilling ? (
-                <div className="inline-flex items-center gap-1 text-xs text-gray-400">
+                <div className="inline-flex items-center gap-1 text-xs text-gray-600">
                   <Loader2 className="h-3 w-3 animate-spin" />
                   <span>{m.knowledge_taxonomy_categorising_status()}</span>
                 </div>
@@ -206,7 +206,7 @@ export function CoverageWidget({
               style={{ width: `${untaggedPct}%` }}
             />
           </div>
-          <span className="text-xs text-gray-400 mt-1.5 block">
+          <span className="text-xs text-gray-600 mt-1.5 block">
             {m.knowledge_taxonomy_coverage_chunks({ count: String(coverage.untagged_count) })}
           </span>
         </div>

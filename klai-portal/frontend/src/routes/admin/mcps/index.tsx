@@ -147,7 +147,7 @@ function McpsListPage() {
                       )}
                     </div>
                   </DataTableCell>
-                  <DataTableCell className="text-gray-400">
+                  <DataTableCell className="text-gray-600">
                     {server.description}
                   </DataTableCell>
                   <DataTableCell

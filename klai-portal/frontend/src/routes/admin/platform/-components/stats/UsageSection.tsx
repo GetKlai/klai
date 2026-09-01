@@ -204,7 +204,7 @@ export function UsageSection({
               ? m.platform_usage_daily_trend()
               : m.platform_usage_weekly_trend()}
           </h2>
-          <p className="text-xs text-gray-400">
+          <p className="text-xs text-gray-600">
             {m.platform_usage_last_activity()}: {fmtDate(data.last_activity_at)}
           </p>
         </div>
@@ -311,7 +311,7 @@ function UsageBars({
                   style={{ height: barHeight(point.failed_requests) }}
                 />
               </div>
-              <span className="max-w-full truncate text-[0.625rem] text-gray-400">
+              <span className="max-w-full truncate text-[0.625rem] text-gray-600">
                 {point.label}
               </span>
             </div>

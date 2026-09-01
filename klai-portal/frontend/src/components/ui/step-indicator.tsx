@@ -1,5 +1,7 @@
 /**
  * @purpose Wizard step progress (`StepIndicator`)
+ * @guideline KLAI-UI-028 must Multi-step flows show progress with
+ * `StepIndicator`
  */
 import { Check } from 'lucide-react'
 

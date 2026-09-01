@@ -150,7 +150,7 @@ export function StatusBadge({ source }: { source: Source }) {
       return (
         <span className="inline-flex items-center gap-1.5">
           <Badge variant="secondary">{m.kb_status_bezig()}</Badge>
-          <span className="text-xs text-gray-400">
+          <span className="text-xs text-gray-600">
             {m.kb_status_bezig_elapsed({ minutes: String(minutes) })}
           </span>
         </span>
@@ -184,7 +184,7 @@ export function FailedItemsWarning({ source }: { source: Source }) {
   const failedCount = source.items_failed_count ?? 0
   if (failedCount <= 0) return null
   return (
-    <span className="text-xs text-[var(--color-warning)]">
+    <span className="text-xs text-[var(--color-warning-text)]">
       {m.kb_connector_failed_items({ count: String(failedCount) })}
     </span>
   )

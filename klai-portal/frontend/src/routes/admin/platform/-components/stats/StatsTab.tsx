@@ -141,7 +141,7 @@ export function StatsTab({
           ))}
         </div>
         {data && (
-          <p className="text-xs text-gray-400">
+          <p className="text-xs text-gray-600">
             {m.platform_usage_window({
               start: fmtWindowDate(data.start),
               end: fmtWindowDate(data.end, true),
@@ -208,7 +208,7 @@ export function StatsTab({
               >
                 <DataTableCell>
                   <span className="font-medium">{row.name}</span>
-                  <p className="font-mono text-xs text-gray-400">{row.slug}</p>
+                  <p className="font-mono text-xs text-gray-600">{row.slug}</p>
                   <div className="mt-1 flex gap-1">
                     <Badge variant="outline">{row.plan}</Badge>
                     <Badge variant="outline">{row.billing_status}</Badge>
@@ -221,7 +221,7 @@ export function StatsTab({
                 <DataTableCell className="tabular-nums text-[var(--color-destructive)]">{fmtNumber(row.failed_requests)}</DataTableCell>
                 <DataTableCell className="tabular-nums">{fmtCompact(row.total_tokens)}</DataTableCell>
                 <DataTableCell className="tabular-nums">{fmtSpend(row.spend_usd)}</DataTableCell>
-                <DataTableCell className="whitespace-nowrap tabular-nums text-gray-400">
+                <DataTableCell className="whitespace-nowrap tabular-nums text-gray-600">
                   {fmtDate(row.last_activity_at)}
                 </DataTableCell>
               </DataTableRow>

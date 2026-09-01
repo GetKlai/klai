@@ -4,6 +4,8 @@
  * separators, quiet system lines, Cmd/Enter send, inline edit of own messages,
  * back-right header. Shared by account "Mijn meldingen" + "Berichten" and the
  * platform-admin messages tab
+ * @guideline KLAI-UI-041 must Any user-to-Klai back-and-forth uses the
+ * `conversation` component; status changes are quiet system lines
  */
 import * as React from 'react'
 import { ArrowLeft, Check, Loader2, Pencil, Send, X } from 'lucide-react'
@@ -167,7 +169,7 @@ export function ConversationTimeline({
 
   if (loading) {
     return (
-      <div className="flex min-h-[200px] items-center justify-center gap-2 text-sm text-gray-400">
+      <div className="flex min-h-[200px] items-center justify-center gap-2 text-sm text-gray-600">
         <Loader2 className="h-4 w-4 animate-spin" />
         {m.admin_shared_loading()}
       </div>
@@ -176,7 +178,7 @@ export function ConversationTimeline({
 
   if (count === 0) {
     return (
-      <div className="flex min-h-[160px] items-center justify-center px-4 text-center text-sm text-gray-400">
+      <div className="flex min-h-[160px] items-center justify-center px-4 text-center text-sm text-gray-600">
         {emptyLabel ?? ''}
       </div>
     )
@@ -188,7 +190,7 @@ export function ConversationTimeline({
     <div className={cn('space-y-5', className)}>
       {days.map((bucket) => (
         <div key={bucket.day} className="space-y-4">
-          <p className="text-center text-xs text-gray-400">
+          <p className="text-center text-xs text-gray-600">
             {formatDaySeparator(bucket.at, locale)}
           </p>
 
@@ -320,7 +322,7 @@ function MessageGroupView({
   const isMe = group.side === 'me'
   return (
     <div className={cn('flex flex-col gap-1', isMe ? 'items-end' : 'items-start')}>
-      <p className="px-1 text-xs text-gray-400">
+      <p className="px-1 text-xs text-gray-600">
         {group.author} · {formatTime(group.at, locale)}
       </p>
       {group.bodies.map((message) => {
@@ -407,7 +409,7 @@ export function ConversationComposer({
         onKeyDown={handleKeyDown}
       />
       <div className="flex items-center justify-between gap-3">
-        <span className="text-xs text-gray-400">{m.account_conversation_send_hint()}</span>
+        <span className="text-xs text-gray-600">{m.account_conversation_send_hint()}</span>
         <Button type="button" disabled={!canSend} onClick={onSubmit}>
           {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
           {sendLabel}
@@ -468,7 +470,7 @@ export function ConversationPanel({
             <h2 className="truncate text-base font-display-bold text-gray-900">{title}</h2>
             {badge}
           </div>
-          {subtitle && <p className="mt-1 text-xs text-gray-400">{subtitle}</p>}
+          {subtitle && <p className="mt-1 text-xs text-gray-600">{subtitle}</p>}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {headerActions}

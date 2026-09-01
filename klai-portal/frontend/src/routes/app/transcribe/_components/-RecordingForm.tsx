@@ -145,7 +145,7 @@ export function RecordingForm({
 
   if (micPermission === 'requesting') {
     return (
-      <p className="text-sm text-gray-400">
+      <p className="text-sm text-gray-600">
         {m.app_transcribe_record_permission_request()}
       </p>
     )
@@ -188,7 +188,7 @@ export function RecordingForm({
         </Button>
 
         {recording && (
-          <span className="font-mono text-sm text-gray-400">
+          <span className="font-mono text-sm text-gray-600">
             {formatDuration(recordDuration)}
           </span>
         )}
@@ -212,7 +212,7 @@ export function RecordingForm({
       )}
 
       {!recording && !isTranscribing && (
-        <p className="text-xs text-gray-400">
+        <p className="text-xs text-gray-600">
           {m.app_transcribe_record_shortcut_hint()}
         </p>
       )}

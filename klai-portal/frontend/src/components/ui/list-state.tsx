@@ -1,6 +1,9 @@
 /**
  * @purpose List/table loading and empty states: `ListLoadingState`,
  * `ListEmptyState`
+ * @guideline KLAI-UI-018 must Collection loading and empty states use
+ * `list-state`; a failed query uses `QueryErrorState` with an explicit retry
+ * where one is available
  */
 import type { ElementType, HTMLAttributes, ReactNode } from 'react'
 import { Loader2 } from 'lucide-react'
@@ -12,7 +15,7 @@ function ListState({ className, ...props }: ListStateProps) {
   return (
     <div
       className={cn(
-        'flex flex-col items-center justify-center py-12 text-center text-sm text-gray-400',
+        'flex flex-col items-center justify-center py-12 text-center text-sm text-gray-600',
         className,
       )}
       {...props}
@@ -52,7 +55,7 @@ interface ListEmptyStateProps extends Omit<ListStateProps, 'title'> {
 function ListEmptyState({ icon: Icon, title, description, className, ...props }: ListEmptyStateProps) {
   return (
     <ListState className={className} {...props}>
-      {Icon && <Icon className="mb-3 h-8 w-8 text-gray-400" aria-hidden="true" />}
+      {Icon && <Icon className="mb-3 h-8 w-8 text-gray-500" aria-hidden="true" />}
       <p>{title}</p>
       {description && (
         <p className="mt-1 max-w-sm text-xs text-[var(--color-muted-foreground)]">

@@ -43,7 +43,7 @@ export function RotationTab({ apiKey }: Props) {
         <h2 className="text-sm font-medium text-gray-900 mb-2">
           {m.admin_api_keys_rotate_section_title()}
         </h2>
-        <p className="text-sm text-gray-400 mb-4">
+        <p className="text-sm text-gray-600 mb-4">
           {apiKey.rotated_to_key_id
             ? m.admin_api_keys_rotate_pending_description()
             : m.admin_api_keys_rotate_section_description()}
@@ -72,7 +72,7 @@ export function RotationTab({ apiKey }: Props) {
       </div>
 
       {apiKey.rotated_from_key_id && (
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-gray-600">
           {m.admin_api_keys_rotated_from_notice()}
         </p>
       )}

@@ -32,18 +32,18 @@ export function MemberRow(props: MemberRowProps) {
         <div>
           <span className="text-sm text-gray-900">{props.member.display_name ?? props.member.email ?? props.member.user_id}</span>
           {props.member.display_name && props.member.email && (
-            <span className="ml-2 text-xs text-gray-400">{props.member.email}</span>
+            <span className="ml-2 text-xs text-gray-600">{props.member.email}</span>
           )}
         </div>
       )}
 
       <div className="flex items-center gap-2">
-        <span className="text-xs text-gray-400">{props.member.role}</span>
+        <span className="text-xs text-gray-600">{props.member.role}</span>
         {isOwner && canRemove && (
           <button
             type="button"
             onClick={() => onRemove(props.member.id)}
-            className="flex h-6 w-6 items-center justify-center text-gray-400 hover:text-[var(--color-destructive)] transition-colors"
+            className="flex h-6 w-6 items-center justify-center text-gray-500 hover:text-[var(--color-destructive)] transition-colors"
             aria-label="Remove member"
           >
             <X className="h-3.5 w-3.5" />

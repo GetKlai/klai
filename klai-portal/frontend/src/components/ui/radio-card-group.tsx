@@ -1,5 +1,7 @@
 /**
  * @purpose Selectable radio option cards (`RadioCardGroup`)
+ * @guideline KLAI-UI-037 must A single-choice list whose options each need a
+ * label and a description uses `RadioCardGroup`
  */
 import { useId } from 'react'
 import { cn } from '@/lib/utils'
@@ -76,7 +78,7 @@ export function RadioCardGroup({
             <div className="space-y-0.5">
               <p className="text-sm font-medium text-gray-900">{option.label}</p>
               {!compact && option.description && (
-                <p className="text-xs text-gray-400">{option.description}</p>
+                <p className="text-xs text-gray-600">{option.description}</p>
               )}
             </div>
           </label>

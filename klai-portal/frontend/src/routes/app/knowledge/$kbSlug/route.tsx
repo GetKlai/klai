@@ -173,7 +173,7 @@ function KbLayout() {
 
   if (isError || !kb) {
     return (
-      <div className="mx-auto max-w-3xl px-6 pb-10 pt-10 text-gray-400">
+      <div className="mx-auto max-w-3xl px-6 pb-10 pt-10 text-gray-600">
         {m.knowledge_detail_not_found()}
       </div>
     )
@@ -198,7 +198,7 @@ function KbLayout() {
       </div>
 
       {kb.description && (
-        <p className="text-sm text-gray-400 mb-6">{kb.description}</p>
+        <p className="text-sm text-gray-600 mb-6">{kb.description}</p>
       )}
 
       {/* Tab bar */}
@@ -214,7 +214,7 @@ function KbLayout() {
                 className={`flex items-center gap-1.5 pb-3 text-sm font-medium border-b-2 transition-colors ${
                   isActive
                     ? 'border-gray-900 text-gray-900'
-                    : 'border-transparent text-gray-400 hover:text-gray-900'
+                    : 'border-transparent text-gray-600 hover:text-gray-900'
                 }`}
               >
                 <Icon className="h-4 w-4" />

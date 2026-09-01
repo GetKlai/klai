@@ -113,7 +113,7 @@ export function ProposalCard({
               <Badge variant={statusBadge.variant}>{statusBadge.label}</Badge>
               <Badge variant={typeInfo.variant}>{typeInfo.label()}</Badge>
               {proposal.confidence_score != null && (
-                <span className="text-xs text-gray-400">
+                <span className="text-xs text-gray-600">
                   {m.knowledge_taxonomy_proposals_col_confidence()}: {Math.round(proposal.confidence_score * 100)}%
                 </span>
               )}
@@ -164,11 +164,11 @@ export function ProposalCard({
               <>
                 <p className="text-sm font-medium text-gray-900">{proposal.title}</p>
                 {description && (
-                  <p className="text-xs text-gray-400 mt-0.5">
+                  <p className="text-xs text-gray-600 mt-0.5">
                     {description}
                   </p>
                 )}
-                <p className="text-xs text-gray-400 mt-0.5">
+                <p className="text-xs text-gray-600 mt-0.5">
                   {new Date(proposal.created_at).toLocaleDateString()}
                   {proposal.rejection_reason && (
                     <span className="ml-2">- {proposal.rejection_reason}</span>

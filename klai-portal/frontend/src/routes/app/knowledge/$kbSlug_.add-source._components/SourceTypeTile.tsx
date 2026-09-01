@@ -21,9 +21,9 @@ export function SourceTypeTile({ meta, kbSlug, onSelectUpload }: SourceTypeTileP
 
   const inner = (
     <div className={tileClasses} aria-disabled={!available}>
-      <Icon className="h-4 w-4 text-gray-400" />
+      <Icon className="h-4 w-4 text-gray-500" />
       <span className="text-sm font-medium text-gray-900">{label()}</span>
-      <span className="text-xs leading-5 text-gray-400">{subtitle()}</span>
+      <span className="text-xs leading-5 text-gray-600">{subtitle()}</span>
       {badges && badges.length > 0 && (
         <span className="mt-auto flex flex-wrap gap-1.5 pt-1">
           {badges.map((badge) => (

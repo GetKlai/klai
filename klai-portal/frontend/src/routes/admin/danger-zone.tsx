@@ -59,7 +59,7 @@ function DangerZonePage() {
           {m.danger_zone_back()}
         </Button>
       </div>
-      <p className="text-sm text-gray-400 -mt-4">{m.danger_zone_subtitle()}</p>
+      <p className="text-sm text-gray-600 -mt-4">{m.danger_zone_subtitle()}</p>
 
       <Card className="border-[var(--color-destructive)]/30">
         <CardHeader>

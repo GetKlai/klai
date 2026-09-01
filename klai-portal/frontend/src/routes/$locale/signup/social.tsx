@@ -144,7 +144,7 @@ function SocialSignupPage() {
           <h2 className="text-xl font-semibold text-gray-900">
             {m.social_domain_match_heading()}
           </h2>
-          <p className="text-sm text-gray-400">
+          <p className="text-sm text-gray-600">
             {m.social_domain_match_body({ domain: domainMatch.domain })}
           </p>
         </div>
@@ -157,7 +157,7 @@ function SocialSignupPage() {
             >
               <div>
                 <span className="block font-medium text-gray-900">{org.name}</span>
-                <span className="block text-xs text-gray-400">
+                <span className="block text-xs text-gray-600">
                   {org.auto_accept
                     ? m.select_workspace_join_auto_hint()
                     : m.select_workspace_request_hint()}
@@ -176,7 +176,7 @@ function SocialSignupPage() {
           </p>
         )}
 
-        <p className="text-center text-xs text-gray-400">
+        <p className="text-center text-xs text-gray-600">
           <button
             type="button"
             onClick={() => {
@@ -199,19 +199,19 @@ function SocialSignupPage() {
         <h2 className="text-xl font-semibold text-gray-900">
           {m.signup_social_heading()}
         </h2>
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-gray-600">
           {m.signup_social_subheading()}
         </p>
       </div>
 
       {/* Identity confirmation - read-only */}
       <div className="rounded-lg border border-gray-200 bg-[var(--color-muted)] px-3 py-2.5">
-        <p className="text-xs text-gray-400">
+        <p className="text-xs text-gray-600">
           {m.signup_social_identity_label()}
         </p>
         <p className="text-sm font-medium text-gray-900">{displayName}</p>
         {displayName !== email && (
-          <p className="text-xs text-gray-400">{email}</p>
+          <p className="text-xs text-gray-600">{email}</p>
         )}
       </div>
 
@@ -246,7 +246,7 @@ function SocialSignupPage() {
             />
             <span>
               {m.signup_auto_accept_label({ domain: emailDomain })}
-              <span className="block text-xs text-gray-400">{m.signup_auto_accept_hint()}</span>
+              <span className="block text-xs text-gray-600">{m.signup_auto_accept_hint()}</span>
             </span>
           </label>
         )}
@@ -274,7 +274,7 @@ function SocialSignupPage() {
         </Button>
       </form>
 
-      <p className="text-center text-xs text-gray-400">
+      <p className="text-center text-xs text-gray-600">
         {m.signup_privacy_text()}{' '}
         <a
           href="https://getklai.com/docs/legal/privacy"

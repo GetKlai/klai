@@ -28,7 +28,7 @@ export function TelemetrySettingsSection({
         </h2>
       </div>
       {isLoading ? (
-        <p className="text-sm text-gray-400">{m.admin_users_loading()}</p>
+        <p className="text-sm text-gray-600">{m.admin_users_loading()}</p>
       ) : error ? (
         <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_fetch()}</p>
       ) : (
@@ -47,7 +47,7 @@ export function TelemetrySettingsSection({
             <option value="shadow">{m.admin_settings_telemetry_shadow_name()}</option>
             <option value="full">{m.admin_settings_telemetry_full_name()}</option>
           </Select>
-          <p className="text-xs text-gray-400">
+          <p className="text-xs text-gray-600">
             {m.admin_settings_telemetry_help()}{' '}
             <a href="/app/docs/klai-help/8b57605d-675c-48cd-b33b-3ee1705c33a6" className="underline">
               {m.admin_settings_telemetry_privacy_link()}

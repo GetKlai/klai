@@ -186,7 +186,7 @@ export function InstructionFormPage({
       <div className="mb-6 flex items-start justify-between gap-3">
         <div className="space-y-1">
           <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">{title}</h1>
-          <p className="text-sm text-gray-400">{m.instructions_form_subtitle()}</p>
+          <p className="text-sm text-gray-600">{m.instructions_form_subtitle()}</p>
         </div>
         <Button
           type="button"
@@ -231,8 +231,8 @@ export function InstructionFormPage({
                 promptOverLimit
                   ? 'text-xs text-[var(--color-destructive)]'
                   : promptWarning
-                    ? 'text-xs text-[var(--color-warning)]'
-                    : 'text-xs text-gray-400'
+                    ? 'text-xs text-[var(--color-warning-text)]'
+                    : 'text-xs text-gray-600'
               }
               data-testid="prompt-char-count"
             >
@@ -261,7 +261,7 @@ export function InstructionFormPage({
             <option value="personal">{m.instructions_list_scope_personal()}</option>
           </Select>
           {!canManageOrgTemplates && (
-            <p className="text-xs text-gray-400">{m.instructions_form_scope_org_disabled_tooltip()}</p>
+            <p className="text-xs text-gray-600">{m.instructions_form_scope_org_disabled_tooltip()}</p>
           )}
         </div>
 

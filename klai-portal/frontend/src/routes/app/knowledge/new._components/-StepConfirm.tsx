@@ -54,28 +54,28 @@ export function StepConfirm({
         <CardContent className="pt-4">
           <div className="space-y-3 text-sm">
             <div className="flex items-start gap-2">
-              <Brain className="h-4 w-4 mt-0.5 text-gray-400" />
+              <Brain className="h-4 w-4 mt-0.5 text-gray-500" />
               <div>
                 <p className="font-medium text-gray-900">{data.name}</p>
-                <p className="text-xs text-gray-400">{data.slug}</p>
+                <p className="text-xs text-gray-600">{data.slug}</p>
               </div>
             </div>
 
             {data.description && (
-              <p className="text-gray-400 italic">
+              <p className="text-gray-600 italic">
                 &ldquo;{data.description}&rdquo;
               </p>
             )}
 
             {data.ownerType === 'org' && (
               <div className="flex items-center gap-2">
-                <VisibilityIcon className="h-4 w-4 text-gray-400" />
+                <VisibilityIcon className="h-4 w-4 text-gray-500" />
                 <span className="text-gray-900">{visibilityLabel}</span>
               </div>
             )}
 
             {data.ownerType === 'org' && data.visibilityMode !== 'restricted' && (
-              <p className="text-gray-400">
+              <p className="text-gray-600">
                 {m.knowledge_sharing_summary_org_default({
                   role: data.allowContribute ? 'contributor' : 'viewer',
                 })}
@@ -83,7 +83,7 @@ export function StepConfirm({
             )}
 
             {data.ownerType === 'user' && (
-              <p className="text-gray-400">
+              <p className="text-gray-600">
                 {m.knowledge_wizard_personal_only()}
               </p>
             )}
@@ -92,28 +92,28 @@ export function StepConfirm({
               (data.initialGroups.length > 0 || data.initialUsers.length > 0) && (
                 <div className="border-t border-gray-200 pt-2">
                   {data.visibilityMode === 'restricted' ? (
-                    <p className="text-xs font-medium text-gray-400 mb-1">
+                    <p className="text-xs font-medium text-gray-600 mb-1">
                       {m.knowledge_sharing_summary_only_shared()}
                     </p>
                   ) : (
-                    <p className="text-xs font-medium text-gray-400 mb-1">
+                    <p className="text-xs font-medium text-gray-600 mb-1">
                       {m.knowledge_wizard_extra_permissions_title()}:
                     </p>
                   )}
                   {data.initialGroups.map((g) => (
-                    <p key={g.id} className="text-xs text-gray-400 pl-3">
+                    <p key={g.id} className="text-xs text-gray-600 pl-3">
                       &bull; {g.name} ({g.role})
                     </p>
                   ))}
                   {data.initialUsers.map((u) => (
-                    <p key={u.id} className="text-xs text-gray-400 pl-3">
+                    <p key={u.id} className="text-xs text-gray-600 pl-3">
                       &bull; {u.name || u.email} ({u.role})
                     </p>
                   ))}
                 </div>
               )}
 
-            <p className="text-gray-400">
+            <p className="text-gray-600">
               {m.knowledge_sharing_summary_docs_auto()}
             </p>
           </div>
@@ -145,7 +145,7 @@ export function StepConfirm({
       )}
 
       {personalQuotaReached && (
-        <p className="text-sm text-gray-400 opacity-70">
+        <p className="text-sm text-gray-600">
           {m.kb_limit_tooltip_kb_count()}
         </p>
       )}

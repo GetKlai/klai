@@ -3,6 +3,9 @@
  * `border-gray-900` active underline. For state/search-param tabs.
  * Router-navigation tab bars (real sub-route links) use `Link` directly with
  * the same look.
+ * @guideline KLAI-UI-031 must A tab bar whose tabs are real sub-routes uses
+ * router links, not `Tabs`
+ * @rationale Router links preserve anchor semantics
  */
 import * as React from 'react'
 import { cn } from '@/lib/utils'
@@ -138,7 +141,7 @@ function Tabs<T extends string>({ tabs, value, onValueChange, className, ...prop
               'flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 pb-2 text-sm font-medium transition-colors',
               isActive
                 ? 'border-gray-900 text-gray-900'
-                : 'border-transparent text-gray-400 hover:text-gray-900',
+                : 'border-transparent text-gray-600 hover:text-gray-900',
             )}
           >
             {Icon && <Icon className="h-4 w-4" />}

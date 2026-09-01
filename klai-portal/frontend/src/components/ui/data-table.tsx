@@ -2,6 +2,9 @@
  * @purpose Admin table primitives: `DataTable`, `DataTableHeader`,
  * `DataTableBody`, `DataTableRow` (`interactive`/`confirming`),
  * `DataTableHead`, `DataTableCell` (`align`)
+ * @guideline KLAI-UI-017 must-not Admin tables use the `data-table` primitives,
+ * right-align the action column, and stop click propagation on that cell when
+ * the row itself is clickable
  */
 import * as React from 'react'
 import { cn } from '@/lib/utils'
@@ -60,7 +63,7 @@ function DataTableHead({ align = 'left', className, ...props }: DataTableHeadPro
   return (
     <th
       className={cn(
-        'px-4 py-3 text-left text-xs font-medium text-gray-400',
+        'px-4 py-3 text-left text-xs font-medium text-gray-600',
         align === 'right' && 'text-right',
         align === 'center' && 'text-center',
         className,

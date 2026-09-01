@@ -187,7 +187,7 @@ export function EmbedTab({ widget }: Props) {
               {m.admin_widgets_allow_any_origin_label()}
             </label>
             {allowAnyOrigin && (
-              <div className="flex items-start gap-1.5 text-xs text-[var(--color-warning)]">
+              <div className="flex items-start gap-1.5 text-xs text-[var(--color-warning-text)]">
                 <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
                 {m.admin_widgets_allow_any_origin_warning()}
               </div>
@@ -199,7 +199,7 @@ export function EmbedTab({ widget }: Props) {
           <Label htmlFor="widget-origins">
             {m.admin_widgets_widget_origins_label()}
           </Label>
-          <p className="text-xs text-gray-400">
+          <p className="text-xs text-gray-600">
             {m.admin_widgets_widget_origins_help()}
           </p>
           <Textarea
@@ -219,8 +219,8 @@ export function EmbedTab({ widget }: Props) {
             </p>
           )}
           {origins.length === 0 && !allowAnyOrigin && (
-            <div className="flex items-start gap-1.5 text-xs text-gray-400">
-              <Info className="h-3.5 w-3.5 shrink-0 mt-px text-gray-400" />
+            <div className="flex items-start gap-1.5 text-xs text-gray-600">
+              <Info className="h-3.5 w-3.5 shrink-0 mt-px text-gray-500" />
               {m.admin_widgets_widget_origins_empty_warning()}
             </div>
           )}

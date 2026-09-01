@@ -74,7 +74,7 @@ function AdminProfiles() {
           <div className="font-medium text-gray-900">
             {info.getValue()}
           </div>
-          <div className="text-xs text-gray-400">
+          <div className="text-xs text-gray-600">
             {info.row.original.description}
           </div>
         </div>

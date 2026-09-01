@@ -1,5 +1,8 @@
 /**
  * @purpose Form controls
+ * @guideline KLAI-UI-007 must-not Pages are built from
+ * `src/components/ui/`; a raw `input`, `select`, list row or delete
+ * confirmation with inline Tailwind is a defect
  */
 import * as React from 'react'
 import { ChevronDown } from 'lucide-react'
@@ -34,7 +37,7 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
           {children}
         </select>
         <ChevronDown
-          className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400"
+          className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500"
           aria-hidden="true"
         />
       </div>

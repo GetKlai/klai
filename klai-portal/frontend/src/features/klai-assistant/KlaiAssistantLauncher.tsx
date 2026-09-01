@@ -402,7 +402,7 @@ function IntakeForm<TPayload extends IntakePayload>({
   if (state === 'submitted') {
     return (
       <div className="flex min-h-72 flex-col items-center justify-center text-center">
-        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--color-success)]/10 text-[var(--color-success)]">
+        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--color-success)]/10 text-[var(--color-success-text)]">
           <CheckCircle2 className="h-6 w-6" />
         </div>
         <h3 className="mt-4 text-base font-semibold text-gray-900">

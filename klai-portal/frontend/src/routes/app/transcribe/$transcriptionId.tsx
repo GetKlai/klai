@@ -109,7 +109,7 @@ function TranscriptionDetailPage() {
   if (isLoading) {
     return (
       <div className="flex justify-center py-16">
-        <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+        <Loader2 className="h-6 w-6 animate-spin text-gray-500" />
       </div>
     )
   }
@@ -148,7 +148,7 @@ function TranscriptionDetailPage() {
               <Button variant="outline" size="sm" onClick={copyTranscript}>
                 {copied ? (
                   <>
-                    <CheckCheck className="mr-1.5 h-3.5 w-3.5 text-[var(--color-success)]" />
+                    <CheckCheck className="mr-1.5 h-3.5 w-3.5 text-[var(--color-success-text)]" />
                     {m.app_meetings_copy_done()}
                   </>
                 ) : (
@@ -165,7 +165,7 @@ function TranscriptionDetailPage() {
             </div>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-gray-400 whitespace-pre-wrap">
+            <p className="text-sm text-gray-600 whitespace-pre-wrap">
               {transcription.text}
             </p>
           </CardContent>
@@ -210,7 +210,7 @@ function TranscriptionDetailPage() {
               <p className="text-sm font-medium text-[var(--color-destructive)]">
                 {m.app_transcribe_summary_error()}
               </p>
-              <p className="mt-1 text-sm text-gray-400">{summarizeMutation.error.message}</p>
+              <p className="mt-1 text-sm text-gray-600">{summarizeMutation.error.message}</p>
             </CardContent>
           </Card>
         )}
@@ -225,7 +225,7 @@ function TranscriptionDetailPage() {
                 <Button variant="outline" size="sm" onClick={copySummaryText}>
                   {summaryCopied === 'text' ? (
                     <>
-                      <CheckCheck className="mr-1.5 h-3.5 w-3.5 text-[var(--color-success)]" />
+                      <CheckCheck className="mr-1.5 h-3.5 w-3.5 text-[var(--color-success-text)]" />
                       {m.app_transcribe_summary_copy_done()}
                     </>
                   ) : (
@@ -238,7 +238,7 @@ function TranscriptionDetailPage() {
                 <Button variant="outline" size="sm" onClick={copySummaryMarkdown}>
                   {summaryCopied === 'markdown' ? (
                     <>
-                      <CheckCheck className="mr-1.5 h-3.5 w-3.5 text-[var(--color-success)]" />
+                      <CheckCheck className="mr-1.5 h-3.5 w-3.5 text-[var(--color-success-text)]" />
                       {m.app_transcribe_summary_copy_done()}
                     </>
                   ) : (

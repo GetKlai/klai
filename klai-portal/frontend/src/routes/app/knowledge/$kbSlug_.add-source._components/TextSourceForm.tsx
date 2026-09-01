@@ -75,14 +75,14 @@ export function TextSourceForm({ kbSlug, onBack }: TextSourceFormProps) {
           placeholder={m.knowledge_add_source_text_content_placeholder()}
           disabled={mutation.isPending || successful}
         />
-        <p className="text-xs text-gray-400 tabular-nums">
+        <p className="text-xs text-gray-600 tabular-nums">
           {content.length.toLocaleString()} / {MAX_CONTENT_CHARS.toLocaleString()}
         </p>
       </div>
 
       {successful && (
         <div className="flex items-center gap-2 rounded-lg border border-[var(--color-success)] bg-[var(--color-success-bg)] px-4 py-3">
-          <CheckCircle2 className="h-4 w-4 text-[var(--color-success)] shrink-0" />
+          <CheckCircle2 className="h-4 w-4 text-[var(--color-success-text)] shrink-0" />
           <p className="text-sm text-[var(--color-success-text)]">
             {m.knowledge_add_source_success()}
           </p>
@@ -102,7 +102,7 @@ export function TextSourceForm({ kbSlug, onBack }: TextSourceFormProps) {
         <button
           type="button"
           onClick={onBack}
-          className="text-sm text-gray-400 hover:text-gray-900 transition-colors"
+          className="text-sm text-gray-600 hover:text-gray-900 transition-colors"
         >
           {m.knowledge_add_source_back()}
         </button>

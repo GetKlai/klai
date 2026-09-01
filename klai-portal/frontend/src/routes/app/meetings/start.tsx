@@ -150,7 +150,7 @@ function StartMeetingPage() {
             className={urlError ? 'border-[var(--color-destructive)]' : ''}
           />
           {platform && (
-            <p className="text-xs text-gray-400">
+            <p className="text-xs text-gray-600">
               Platform:{' '}
               <span className="font-medium text-gray-900">{platform}</span>
             </p>

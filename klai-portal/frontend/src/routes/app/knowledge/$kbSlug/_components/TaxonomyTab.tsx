@@ -257,8 +257,8 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
       {/* Active filters bar */}
       {hasFilter && (
         <div className="flex items-center flex-wrap gap-2">
-          <Filter className="h-3.5 w-3.5 text-gray-400 shrink-0" />
-          <span className="text-xs text-gray-400">{m.knowledge_taxonomy_filter_heading()}:</span>
+          <Filter className="h-3.5 w-3.5 text-gray-500 shrink-0" />
+          <span className="text-xs text-gray-600">{m.knowledge_taxonomy_filter_heading()}:</span>
           {activeNode && (
             <button
               type="button"
@@ -283,7 +283,7 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
           <button
             type="button"
             onClick={clearAllFilters}
-            className="text-xs text-gray-400 hover:text-gray-900 transition-colors ml-1"
+            className="text-xs text-gray-600 hover:text-gray-900 transition-colors ml-1"
           >
             {m.knowledge_taxonomy_filter_clear_all()}
           </button>
@@ -302,7 +302,7 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
               <button
                 type="button"
                 onClick={() => setActiveNodeId(null)}
-                className="text-xs text-gray-400 hover:text-gray-900 transition-colors"
+                className="text-xs text-gray-600 hover:text-gray-900 transition-colors"
               >
                 {m.knowledge_taxonomy_coverage_filter_clear()}
               </button>
@@ -317,7 +317,7 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
             </div>
           </div>
           {coverageQuery.isLoading && (
-            <p className="py-3 text-sm text-gray-400">
+            <p className="py-3 text-sm text-gray-600">
               <Loader2 className="inline h-4 w-4 animate-spin mr-1" />
               {m.knowledge_taxonomy_coverage_loading()}
             </p>
@@ -442,19 +442,19 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
             {m.knowledge_taxonomy_tags_heading()}
           </h2>
           {activeNodeId !== null && activeNode && (
-            <span className="text-xs text-gray-400">
+            <span className="text-xs text-gray-600">
               {m.knowledge_taxonomy_coverage_filter_active({ name: activeNode.name })}
             </span>
           )}
         </div>
         {topTagsQuery.isLoading && (
-          <p className="py-3 text-sm text-gray-400">
+          <p className="py-3 text-sm text-gray-600">
             <Loader2 className="inline h-4 w-4 animate-spin mr-1" />
             {m.knowledge_taxonomy_tags_loading()}
           </p>
         )}
         {topTagsQuery.data && topTagsQuery.data.tags.length === 0 && (
-          <p className="text-sm text-gray-400">
+          <p className="text-sm text-gray-600">
             {m.knowledge_taxonomy_tags_empty()}
           </p>
         )}

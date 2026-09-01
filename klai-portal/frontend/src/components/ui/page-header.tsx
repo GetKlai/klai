@@ -1,6 +1,12 @@
 /**
  * @purpose Page title, short subtitle/count, and right-aligned page action
  * (`PageHeader`); longer explanatory copy below the header uses `PageIntro`
+ * @guideline KLAI-UI-011 must List and overview pages use `PageHeader`;
+ * hand-roll a title/action row only for a genuinely custom layout
+ * @guideline KLAI-UI-012 must The `PageHeader` description is a short
+ * subtitle; longer explanation goes in `PageIntro`
+ * @guideline KLAI-UI-013 must-not Back and cancel actions are an outline small
+ * Button in the page header, never a loose link above the title
  */
 import type { HTMLAttributes, ReactNode } from 'react'
 import { cn } from '@/lib/utils'
@@ -25,7 +31,7 @@ function PageHeader({ title, count, description, actions, className, ...props }:
         <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
           {title}
           {count != null ? (
-            <span className="ml-2 font-display text-gray-400">({count})</span>
+            <span className="ml-2 font-display text-gray-600">({count})</span>
           ) : null}
         </h1>
         {actions ? (
@@ -38,7 +44,7 @@ function PageHeader({ title, count, description, actions, className, ...props }:
         // When a primary action sits on the title row, cap the description so
         // it never runs under the action. ~60% of the header width clears the
         // right-aligned action with margin to spare. Full width when no action.
-        <p className={cn('text-sm text-gray-400', actions ? 'sm:max-w-[60%]' : undefined)}>
+        <p className={cn('text-sm text-gray-600', actions ? 'sm:max-w-[60%]' : undefined)}>
           {description}
         </p>
       ) : null}
@@ -50,8 +56,8 @@ function PageHeader({ title, count, description, actions, className, ...props }:
 // `description` subtitle. Plain text, no card. Use this when a list/overview
 // page needs to explain the feature before the list (the /app/instructions
 // pattern). Keep the PageHeader `description` to a short subtitle and move the
-// real explanation here. Body text is `text-gray-600` (more readable than the
-// gray-400 subtitle); paragraphs are separated with `space-y-3`.
+// real explanation here. Body text uses the shared `text-gray-600` secondary
+// text colour; paragraphs are separated with `space-y-3`.
 function PageIntro({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return <div className={cn('space-y-3 text-sm text-gray-600', className)} {...props} />
 }

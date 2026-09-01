@@ -107,10 +107,10 @@ function ItemsTab() {
                 {item.assertion_mode ? (
                   <Badge variant="secondary">{item.assertion_mode}</Badge>
                 ) : (
-                  <span className="text-gray-400">-</span>
+                  <span className="text-gray-600">-</span>
                 )}
               </DataTableCell>
-              <DataTableCell className="text-gray-400">
+              <DataTableCell className="text-gray-600">
                 {new Date(item.created_at).toLocaleDateString()}
               </DataTableCell>
               <DataTableCell align="right">

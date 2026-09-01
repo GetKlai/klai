@@ -78,7 +78,7 @@ function ApiKeysPage() {
     columnHelper.accessor('key_prefix', {
       header: () => m.admin_api_keys_col_key_prefix(),
       cell: (info) => (
-        <code className="font-mono text-xs text-gray-400">
+        <code className="font-mono text-xs text-gray-600">
           {info.getValue()}...
         </code>
       ),
@@ -92,7 +92,7 @@ function ApiKeysPage() {
     columnHelper.accessor('last_used_at', {
       header: () => m.admin_api_keys_col_last_used(),
       cell: (info) => (
-        <span className="whitespace-nowrap tabular-nums text-gray-400">
+        <span className="whitespace-nowrap tabular-nums text-gray-600">
           {formatRelativeTime(info.getValue())}
         </span>
       ),

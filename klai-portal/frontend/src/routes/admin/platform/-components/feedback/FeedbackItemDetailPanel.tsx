@@ -96,7 +96,7 @@ export function FeedbackItemDetailPanel({
           <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
             {m.platform_feedback_item_title()}
           </h1>
-          <p className="mt-1 text-sm text-gray-400">
+          <p className="mt-1 text-sm text-gray-600">
             {m.platform_feedback_item_description()}
           </p>
         </div>
@@ -392,7 +392,7 @@ function FeedbackItemDetailForm({
           </p>
         )}
 
-        <p className="text-xs text-gray-400">
+        <p className="text-xs text-gray-600">
           {[
             feedbackItemKindLabel(item.kind),
             item.area,
@@ -405,12 +405,12 @@ function FeedbackItemDetailForm({
             .filter(Boolean)
             .join(' · ')}
         </p>
-        <p className="text-xs text-gray-400">
+        <p className="text-xs text-gray-600">
           {m.platform_col_created()} {fmtDate(item.created_at)} · {m.platform_feedback_col_updated()}{' '}
           {fmtDate(item.updated_at)}
         </p>
         {updateItem.isSuccess && !isEditing && (
-          <p className="text-sm text-[var(--color-success)]">
+          <p className="text-sm text-[var(--color-success-text)]">
             {m.platform_feedback_item_saved()}
           </p>
         )}
@@ -420,7 +420,7 @@ function FeedbackItemDetailForm({
         <section className="space-y-3 rounded-xl border border-gray-200 bg-white px-5 py-4">
           <div>
             <h3 className="text-sm font-medium text-gray-900">{m.platform_feedback_ask_info_title()}</h3>
-            <p className="mt-1 text-sm text-gray-400">{m.platform_feedback_ask_info_description()}</p>
+            <p className="mt-1 text-sm text-gray-600">{m.platform_feedback_ask_info_description()}</p>
           </div>
           <Textarea
             id={`feedback-item-ask-${item.id}`}
@@ -466,7 +466,7 @@ function FeedbackItemDetailForm({
       ) : (
         <details className="group rounded-xl border border-gray-200 bg-white">
           <summary className="flex min-h-12 cursor-pointer list-none items-center gap-3 px-4 py-3 text-sm text-gray-700 [&::-webkit-details-marker]:hidden">
-            <ChevronRight className="h-4 w-4 shrink-0 text-gray-400 transition-transform group-open:rotate-90" />
+            <ChevronRight className="h-4 w-4 shrink-0 text-gray-500 transition-transform group-open:rotate-90" />
             <span className="min-w-0 flex-1 font-medium">
               {m.platform_feedback_linked_feedback({ count: String(submissions.length) })}
             </span>
@@ -477,12 +477,12 @@ function FeedbackItemDetailForm({
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge variant="outline">{feedbackKindLabel(submission.event_type)}</Badge>
                   <Badge variant="secondary">{feedbackLinkTypeLabel(submission.link_type)}</Badge>
-                  <span className="text-xs text-gray-400">{fmtDate(submission.created_at)}</span>
+                  <span className="text-xs text-gray-600">{fmtDate(submission.created_at)}</span>
                 </div>
                 <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-900">
                   {submission.raw_text}
                 </p>
-                <div className="mt-2 grid gap-2 text-xs text-gray-400 sm:grid-cols-2">
+                <div className="mt-2 grid gap-2 text-xs text-gray-600 sm:grid-cols-2">
                   <span>
                     {submission.org_name ?? submission.org_slug ?? m.platform_feedback_unknown_organization()}
                     {feedbackSubmissionReporterLabel(submission)
@@ -515,7 +515,7 @@ function FeedbackItemDetailForm({
               {llmPromptLabel.button}
             </Button>
             {copyNotice && (
-              <p className="text-sm text-[var(--color-success)]">
+              <p className="text-sm text-[var(--color-success-text)]">
                 {copyNotice}
               </p>
             )}
@@ -598,13 +598,13 @@ function FeedbackItemDetailForm({
                   : resolveLabel.button}
           </Button>
           {resolveNotice && (
-            <p className="text-sm text-[var(--color-success)]">{resolveNotice}</p>
+            <p className="text-sm text-[var(--color-success-text)]">{resolveNotice}</p>
           )}
           {resolveError && (
             <p className="text-sm text-[var(--color-destructive)]">{resolveError}</p>
           )}
           {updateItem.isSuccess && status !== 'resolved' && (
-            <p className="text-sm text-[var(--color-success)]">
+            <p className="text-sm text-[var(--color-success-text)]">
               {m.platform_feedback_item_saved()}
             </p>
           )}

@@ -28,7 +28,7 @@ export function BillingField({
       <Label htmlFor={name}>
         {label}
         {!required && (
-          <span className="ml-1 text-xs text-gray-400 font-normal">{m.admin_billing_field_optional()}</span>
+          <span className="ml-1 text-xs text-gray-600 font-normal">{m.admin_billing_field_optional()}</span>
         )}
       </Label>
       <Input
@@ -40,7 +40,7 @@ export function BillingField({
         required={required}
         placeholder={placeholder}
       />
-      {hint && <p className="text-xs text-gray-400">{hint}</p>}
+      {hint && <p className="text-xs text-gray-600">{hint}</p>}
     </div>
   )
 }

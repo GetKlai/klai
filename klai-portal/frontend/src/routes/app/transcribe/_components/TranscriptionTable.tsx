@@ -99,7 +99,7 @@ function MetaText({ item }: { item: UnifiedItem }) {
   const parts = metaParts(item)
 
   return (
-    <span className="text-xs text-gray-400">
+    <span className="text-xs text-gray-600">
       {item.language && (
         <>
           <img
@@ -262,7 +262,7 @@ export function TranscriptionTable({
                 className={`grid items-center gap-x-3 gap-y-3 px-4 py-4 ${transcriptionListGrid}`}
               >
                 <div
-                  className="flex h-8 w-8 items-center justify-center rounded-md text-gray-400"
+                  className="flex h-8 w-8 items-center justify-center rounded-md text-gray-500"
                   aria-label={sourceLabel(item)}
                   title={sourceLabel(item)}
                 >
@@ -295,13 +295,13 @@ export function TranscriptionTable({
                             {item.title}
                           </ListRowTitle>
                         ) : (
-                          <ListRowTitle className="text-gray-400">
+                          <ListRowTitle className="text-gray-600">
                             {item.meeting_url ?? '\u2014'}
                           </ListRowTitle>
                         )}
                         {item.source === 'upload' && item.has_summary && (
                           <FileText
-                            className="h-3.5 w-3.5 shrink-0 text-gray-400"
+                            className="h-3.5 w-3.5 shrink-0 text-gray-500"
                             aria-label={m.app_transcribe_has_summary()}
                           />
                         )}

@@ -129,7 +129,7 @@ export function TreeItem({
         </button>
         <button
           type="button"
-          className="shrink-0 text-gray-400 hover:opacity-70"
+          className="shrink-0 text-gray-500 hover:opacity-70"
           onClick={onNewPageCancel}
           aria-label={m.docs_tree_cancel()}
         >
@@ -177,7 +177,7 @@ export function TreeItem({
               <ChevronRight
                 size={12}
                 strokeWidth={1.5}
-                className={`text-gray-400 transition-transform duration-150 ${isCollapsed ? '' : 'rotate-90'}`}
+                className={`text-gray-500 transition-transform duration-150 ${isCollapsed ? '' : 'rotate-90'}`}
               />
             </button>
           ) : (
@@ -202,7 +202,7 @@ export function TreeItem({
             <>
               <button
                 type="button"
-                className="flex items-center justify-center w-5 h-5 rounded hover:bg-[var(--color-foreground)]/[0.06] text-gray-400 hover:text-gray-900 transition-colors"
+                className="flex items-center justify-center w-5 h-5 rounded hover:bg-[var(--color-foreground)]/[0.06] text-gray-500 hover:text-gray-900 transition-colors"
                 onClick={() => onAddSubpage(nodePath)}
                 title={m.docs_pages_add_subpage()}
                 aria-label={m.docs_pages_add_subpage()}
@@ -213,7 +213,7 @@ export function TreeItem({
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
-                    className="flex items-center justify-center w-5 h-5 rounded hover:bg-[var(--color-foreground)]/[0.06] text-gray-400 hover:text-gray-900 transition-colors"
+                    className="flex items-center justify-center w-5 h-5 rounded hover:bg-[var(--color-foreground)]/[0.06] text-gray-500 hover:text-gray-900 transition-colors"
                     aria-label={m.docs_tree_more_options()}
                   >
                     <MoreHorizontal size={12} strokeWidth={1.5} />
@@ -251,7 +251,7 @@ export function TreeItem({
           )}
           {(hovered || menuOpen) && !isDraggingActive && (
             <span className="cursor-grab touch-none" {...attributes} {...listeners}>
-              <GripVertical size={12} strokeWidth={1.5} className="text-gray-400 opacity-30" />
+              <GripVertical size={12} strokeWidth={1.5} className="text-gray-500" />
             </span>
           )}
         </div>

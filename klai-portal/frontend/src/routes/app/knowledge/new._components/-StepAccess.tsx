@@ -55,12 +55,12 @@ export function StepAccess({
                 : 'border-gray-200 bg-[var(--color-card)] hover:border-gray-300',
             ].join(' ')}
           >
-            <Icon className="h-5 w-5 mt-0.5 text-gray-400" />
+            <Icon className="h-5 w-5 mt-0.5 text-gray-500" />
             <div>
               <span className="text-sm font-medium text-gray-900">
                 {title}
               </span>
-              <span className="block text-xs text-gray-400">{desc}</span>
+              <span className="block text-xs text-gray-600">{desc}</span>
             </div>
           </button>
         ))}

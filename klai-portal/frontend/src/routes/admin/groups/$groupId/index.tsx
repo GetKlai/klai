@@ -165,7 +165,7 @@ function AdminGroupDetail() {
             {groupData.name}
           </h1>
           {groupData.description && (
-            <p className="text-sm text-gray-400">
+            <p className="text-sm text-gray-600">
               {groupData.description}
             </p>
           )}
@@ -240,7 +240,7 @@ function AdminGroupDetail() {
                   return (
                     <DataTableRow key={member.zitadel_user_id} confirming={isConfirming}>
                       <DataTableCell>{displayName(user, member)}</DataTableCell>
-                      <DataTableCell className="text-gray-400">
+                      <DataTableCell className="text-gray-600">
                         {displayEmail(user)}
                       </DataTableCell>
                       <DataTableCell className="whitespace-nowrap tabular-nums">

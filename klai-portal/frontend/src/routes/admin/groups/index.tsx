@@ -59,7 +59,7 @@ function MemberAvatars({
   const visible = userIds.slice(0, 4)
   const extra = userIds.length - visible.length
   if (userIds.length === 0) {
-    return <span className="text-xs text-gray-400">-</span>
+    return <span className="text-xs text-gray-600">-</span>
   }
   return (
     <div className="flex items-center gap-1.5">
@@ -79,7 +79,7 @@ function MemberAvatars({
             <div
               key={uid}
               title={uid}
-              className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--color-muted)] text-xs font-medium text-gray-400"
+              className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--color-muted)] text-xs font-medium text-gray-600"
             >
               ??
             </div>
@@ -87,7 +87,7 @@ function MemberAvatars({
         )
       })}
       {extra > 0 && (
-        <div className="h-7 w-7 rounded-full flex items-center justify-center text-xs font-medium bg-[var(--color-muted)] text-gray-400">
+        <div className="h-7 w-7 rounded-full flex items-center justify-center text-xs font-medium bg-[var(--color-muted)] text-gray-600">
           +{extra}
         </div>
       )}
@@ -175,7 +175,7 @@ function AdminGroups() {
           <div className="flex items-center gap-2">
             <MemberAvatars userIds={memberIds} usersMap={usersMap} />
             {memberIds.length > 0 && (
-              <span className="text-xs text-gray-400">
+              <span className="text-xs text-gray-600">
                 {memberIds.length}
               </span>
             )}

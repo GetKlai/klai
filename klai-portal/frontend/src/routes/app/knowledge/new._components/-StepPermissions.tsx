@@ -42,13 +42,13 @@ export function StepPermissions({
                   onChange={(e) =>
                     setData((prev) => ({ ...prev, allowContribute: e.target.checked }))
                   }
-                  className="mt-1 h-4 w-4 rounded border-gray-200 text-gray-400 focus:ring-[var(--color-ring)]"
+                  className="mt-1 h-4 w-4 rounded border-gray-200 text-gray-500 focus:ring-[var(--color-ring)]"
                 />
                 <div>
                   <span className="text-sm font-medium text-gray-900">
                     {m.knowledge_wizard_contributor_checkbox()}
                   </span>
-                  <span className="block text-xs text-gray-400">
+                  <span className="block text-xs text-gray-600">
                     {m.knowledge_sharing_contributor_toggle_description()}
                   </span>
                 </div>
@@ -59,7 +59,7 @@ export function StepPermissions({
       )}
 
       {isRestricted && (
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-gray-600">
           {m.knowledge_wizard_restricted_desc()}
         </p>
       )}
@@ -69,7 +69,7 @@ export function StepPermissions({
           <p className="text-sm font-medium text-gray-900">
             {m.knowledge_wizard_extra_permissions_title()}
           </p>
-          <p className="text-xs text-gray-400">
+          <p className="text-xs text-gray-600">
             {m.knowledge_wizard_extra_permissions_desc()}
           </p>
         </div>
@@ -96,7 +96,7 @@ export function StepPermissions({
         isRestrictedEmpty={isRestricted ? isRestrictedEmpty : false}
       />
 
-      <p className="text-xs text-gray-400 italic">
+      <p className="text-xs text-gray-600 italic">
         {m.knowledge_wizard_owner_info()}
       </p>
     </div>

@@ -147,7 +147,7 @@ function Pagination({
           <span
             key={slot}
             aria-hidden="true"
-            className="inline-flex h-8 w-8 items-center justify-center text-sm text-gray-400"
+            className="inline-flex h-8 w-8 items-center justify-center text-sm text-gray-600"
           >
             …
           </span>

@@ -138,14 +138,14 @@ export function TenantFeaturesSection({
         <h2 className="text-base font-display-bold text-gray-900">
           {m.admin_settings_extensions_title()}
         </h2>
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-gray-600">
           {m.admin_settings_extensions_description_platform()}
         </p>
       </div>
 
       <form onSubmit={handleFeatureSubmit} className="space-y-4">
         {unlocks.isLoading ? (
-          <p className="text-sm text-gray-400">{m.admin_users_loading()}</p>
+          <p className="text-sm text-gray-600">{m.admin_users_loading()}</p>
         ) : unlocks.error ? (
           <p className="text-sm text-[var(--color-destructive)]">
             {m.admin_settings_error_fetch()}
@@ -164,7 +164,7 @@ export function TenantFeaturesSection({
                       <p className="text-[0.9375rem] font-display text-gray-900">
                         {extensionLabel(feature.key)}
                       </p>
-                      <p className="text-xs text-gray-400 mt-0.5">
+                      <p className="text-xs text-gray-600 mt-0.5">
                         {extensionDescription(feature.key)}
                       </p>
                     </div>
@@ -287,7 +287,7 @@ export function TenantDangerZone({ org }: { org: PlatformOrg }) {
                 setOpen(false)
                 setConfirmText('')
               }}
-              className="h-auto p-0 text-sm text-gray-400 no-underline hover:text-gray-900 hover:no-underline"
+              className="h-auto p-0 text-sm text-gray-600 no-underline hover:text-gray-900 hover:no-underline"
             >
               {m.admin_users_cancel()}
             </Button>
@@ -315,7 +315,7 @@ export function UsersSection({
   return (
     <section>
       <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-400">
+        <h2 className="text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-600">
           {m.platform_section_users({ count: users.length })}
         </h2>
         <Button
@@ -369,7 +369,7 @@ export function UsersSection({
                       {u.display_name || u.email || u.zitadel_user_id}
                     </span>
                     {u.email && (
-                      <p className="text-xs text-gray-400">{u.email}</p>
+                      <p className="text-xs text-gray-600">{u.email}</p>
                     )}
                   </DataTableCell>
                   <DataTableCell>
@@ -546,7 +546,7 @@ export function BotsSection({
 }) {
   return (
     <section>
-      <h2 className="mb-3 text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-400">
+      <h2 className="mb-3 text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-600">
         {m.platform_section_bots({ count: bots.length })}
       </h2>
       {bots.length === 0 ? (
@@ -577,7 +577,7 @@ export function BotsSection({
                   <span className="font-medium">{b.name}</span>
                 </DataTableCell>
                 <DataTableCell className="tabular-nums">{b.kb_count}</DataTableCell>
-                <DataTableCell className="whitespace-nowrap tabular-nums text-gray-400">
+                <DataTableCell className="whitespace-nowrap tabular-nums text-gray-600">
                   {fmtDate(b.created_at)}
                 </DataTableCell>
               </DataTableRow>
@@ -598,7 +598,7 @@ export function KnowledgeBasesSection({
 }) {
   return (
     <section>
-      <h2 className="mb-3 text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-400">
+      <h2 className="mb-3 text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-600">
         {m.platform_section_knowledge_bases({
           count: knowledgeBases.length,
         })}
@@ -620,7 +620,7 @@ export function KnowledgeBasesSection({
               <DataTableRow key={kb.id}>
                 <DataTableCell>
                   <span className="font-medium">{kb.name}</span>
-                  <p className="font-mono text-xs text-gray-400">{kb.slug}</p>
+                  <p className="font-mono text-xs text-gray-600">{kb.slug}</p>
                 </DataTableCell>
                 <DataTableCell>
                   <Badge variant="outline">
@@ -630,7 +630,7 @@ export function KnowledgeBasesSection({
                   </Badge>
                 </DataTableCell>
                 <DataTableCell>{kb.visibility}</DataTableCell>
-                <DataTableCell className="whitespace-nowrap tabular-nums text-gray-400">
+                <DataTableCell className="whitespace-nowrap tabular-nums text-gray-600">
                   {fmtDate(kb.created_at)}
                 </DataTableCell>
               </DataTableRow>
@@ -651,7 +651,7 @@ export function TemplatesSection({
 }) {
   return (
     <section>
-      <h2 className="mb-3 text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-400">
+      <h2 className="mb-3 text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-600">
         {m.platform_section_templates({ count: templates.length })}
       </h2>
       {templates.length === 0 ? (
@@ -676,7 +676,7 @@ export function TemplatesSection({
                       <Badge variant="outline">{m.platform_inactive()}</Badge>
                     )}
                   </div>
-                  <p className="font-mono text-xs text-gray-400">{t.slug}</p>
+                  <p className="font-mono text-xs text-gray-600">{t.slug}</p>
                 </DataTableCell>
                 <DataTableCell>
                   <Badge variant={t.scope === 'org' ? 'success' : 'outline'}>
@@ -686,7 +686,7 @@ export function TemplatesSection({
                   </Badge>
                 </DataTableCell>
                 <DataTableCell>{t.created_by_name ?? t.created_by}</DataTableCell>
-                <DataTableCell className="whitespace-nowrap tabular-nums text-gray-400">
+                <DataTableCell className="whitespace-nowrap tabular-nums text-gray-600">
                   {fmtDate(t.created_at)}
                 </DataTableCell>
               </DataTableRow>
@@ -795,7 +795,7 @@ function InviteForm({
           type="button"
           variant="link"
           onClick={onClose}
-          className="h-auto p-0 text-sm text-gray-400 no-underline hover:text-gray-900 hover:no-underline"
+          className="h-auto p-0 text-sm text-gray-600 no-underline hover:text-gray-900 hover:no-underline"
         >
           {m.admin_users_cancel()}
         </Button>

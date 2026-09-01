@@ -43,7 +43,7 @@ export function LanguageSettingsSection({
       </div>
       <form onSubmit={handleSubmit} className="space-y-4">
         {isLoading ? (
-          <p className="text-sm text-gray-400">{m.admin_users_loading()}</p>
+          <p className="text-sm text-gray-600">{m.admin_users_loading()}</p>
         ) : error ? (
           <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_fetch()}</p>
         ) : (

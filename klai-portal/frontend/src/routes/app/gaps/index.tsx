@@ -116,7 +116,7 @@ function GapsPage() {
           </h1>
         </div>
         <Tooltip label={m.capability_tooltip_knowledge_only()}>
-          <p className="text-sm text-gray-400">
+          <p className="text-sm text-gray-600">
             {m.capability_tooltip_knowledge_only()}
           </p>
         </Tooltip>
@@ -143,7 +143,7 @@ function GapsPage() {
         </Button>
       </div>
 
-      <p className="text-gray-400 mb-6 leading-relaxed">
+      <p className="text-gray-600 mb-6 leading-relaxed">
         {m.gaps_index_card_body()}
       </p>
 
@@ -209,13 +209,13 @@ function GapsPage() {
                       {gap.gap_type === 'hard' ? m.gaps_type_hard() : m.gaps_type_soft()}
                     </Badge>
                   </DataTableCell>
-                  <DataTableCell className="text-gray-400">
+                  <DataTableCell className="text-gray-600">
                     {gap.nearest_kb_slug ?? '—'}
                   </DataTableCell>
                   <DataTableCell align="right" className="font-medium tabular-nums">
                     {gap.occurrence_count}
                   </DataTableCell>
-                  <DataTableCell align="right" className="whitespace-nowrap tabular-nums text-gray-400">
+                  <DataTableCell align="right" className="whitespace-nowrap tabular-nums text-gray-600">
                     {new Date(gap.last_occurred).toLocaleDateString()}
                   </DataTableCell>
                   <DataTableCell align="right">

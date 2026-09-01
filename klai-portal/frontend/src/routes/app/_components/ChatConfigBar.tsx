@@ -171,7 +171,7 @@ export function ChatConfigBar() {
 
       {/* Chat met: (knowledge collections) */}
       <div className="flex items-center gap-2 min-w-0">
-        <span className="text-[0.8125rem] text-gray-400 whitespace-nowrap">{m.chatbar_chat_with()}</span>
+        <span className="text-[0.8125rem] text-gray-600 whitespace-nowrap">{m.chatbar_chat_with()}</span>
 
         <div className="relative z-50 min-w-0">
           <button
@@ -188,7 +188,7 @@ export function ChatConfigBar() {
           {collOpen && (
             <div className="absolute left-0 top-full z-50 mt-2 w-64 rounded-lg border border-gray-200 bg-white py-1.5 shadow-lg">
               <div className="flex items-center justify-between px-3 py-1.5">
-                <span className="text-[0.625rem] font-semibold tracking-wide text-gray-400">{m.chatbar_collections_label()}</span>
+                <span className="text-[0.625rem] font-semibold tracking-wide text-gray-600">{m.chatbar_collections_label()}</span>
                 <button
                   type="button"
                   onClick={toggleAll}
@@ -207,7 +207,7 @@ export function ChatConfigBar() {
                   className={`h-2 w-2 shrink-0 rounded-full ${pref.kb_personal_enabled ? 'bg-[var(--color-success)]' : 'bg-gray-200'}`}
                 />
                 <span
-                  className={pref.kb_personal_enabled ? 'text-gray-900 font-medium' : 'text-gray-400'}
+                  className={pref.kb_personal_enabled ? 'text-gray-900 font-medium' : 'text-gray-600'}
                 >
                   {m.chatbar_personal()}
                 </span>
@@ -227,7 +227,7 @@ export function ChatConfigBar() {
                     className={
                       currentSlugs.includes(kb.slug)
                         ? 'text-gray-900 font-medium'
-                        : 'text-gray-400'
+                        : 'text-gray-600'
                     }
                   >
                     {kb.name}
@@ -258,7 +258,7 @@ export function ChatConfigBar() {
           (deploy/litellm/klai_knowledge.py) reads it per-request and
           injects the corresponding system-prompt header. */}
       <div className="flex items-center gap-2 min-w-0">
-        <span className="text-[0.8125rem] text-gray-400 whitespace-nowrap">
+        <span className="text-[0.8125rem] text-gray-600 whitespace-nowrap">
           {m.chatbar_mode_label()}:
         </span>
         <div
@@ -309,7 +309,7 @@ export function ChatConfigBar() {
             onClick={() => setModeInfoOpen((v) => !v)}
             aria-label={`${m.chatbar_mode_label()} - uitleg`}
             aria-expanded={modeInfoOpen}
-            className="inline-flex h-5 w-5 items-center justify-center rounded-full text-gray-400 hover:text-gray-900 klai-hover"
+            className="inline-flex h-5 w-5 items-center justify-center rounded-full text-gray-500 hover:text-gray-900 klai-hover"
           >
             <Info className="h-3.5 w-3.5" strokeWidth={1.75} />
           </button>
@@ -331,7 +331,7 @@ export function ChatConfigBar() {
       {/* Instructions: multi-select. Hidden when backend has no instructions yet. */}
       {allInstructions.length > 0 && (
         <div className="flex items-center gap-2 min-w-0">
-          <span className="text-[0.8125rem] text-gray-400 whitespace-nowrap">
+          <span className="text-[0.8125rem] text-gray-600 whitespace-nowrap">
             {m.chatbar_instructions_label()}:
           </span>
 
@@ -352,7 +352,7 @@ export function ChatConfigBar() {
             {instrOpen && (
               <div className="absolute left-0 top-full z-50 mt-2 w-64 rounded-lg border border-gray-200 bg-white py-1.5 shadow-lg">
                 <div className="flex items-center justify-between px-3 py-1.5">
-                  <span className="text-[0.625rem] font-semibold tracking-wide text-gray-400">
+                  <span className="text-[0.625rem] font-semibold tracking-wide text-gray-600">
                     {m.chatbar_instructions_label()}
                   </span>
                   <button
@@ -375,7 +375,7 @@ export function ChatConfigBar() {
                       <span
                         className={`h-2 w-2 shrink-0 rounded-full ${active ? 'bg-[var(--color-success)]' : 'bg-gray-200'}`}
                       />
-                      <span className={active ? 'text-gray-900 font-medium' : 'text-gray-400'}>
+                      <span className={active ? 'text-gray-900 font-medium' : 'text-gray-600'}>
                         {t.name}
                       </span>
                     </button>

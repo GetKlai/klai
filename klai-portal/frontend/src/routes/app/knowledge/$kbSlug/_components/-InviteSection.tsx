@@ -68,7 +68,7 @@ export function InviteSection({
             }
           }}
         >
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-600" />
           <Input
             value={search}
             onChange={(e) => onSearchChange(e.target.value)}
@@ -98,7 +98,7 @@ export function InviteSection({
                       className="w-full px-3 py-2 text-left text-sm klai-hover"
                     >
                       <span className="text-gray-900">{user.display_name}</span>
-                      <span className="ml-2 text-xs text-gray-400">{user.email}</span>
+                      <span className="ml-2 text-xs text-gray-600">{user.email}</span>
                     </button>
                   ))}
             </div>
@@ -113,7 +113,7 @@ export function InviteSection({
       {children}
 
       {isEmpty && !isOwner && (
-        <p className="text-sm text-gray-400">{emptyReadOnlyMessage}</p>
+        <p className="text-sm text-gray-600">{emptyReadOnlyMessage}</p>
       )}
     </div>
   )

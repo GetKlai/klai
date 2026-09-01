@@ -66,7 +66,7 @@ export function CreatedKeyModal({
             className="shrink-0"
           >
             {copied ? (
-              <Check className="h-4 w-4 text-[var(--color-success)]" />
+              <Check className="h-4 w-4 text-[var(--color-success-text)]" />
             ) : (
               <Copy className="h-4 w-4" />
             )}
