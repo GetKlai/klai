@@ -1094,21 +1094,21 @@ restatement of these rules, not a separate set.
 | KLAI-UI-005 | The widget default primary colour equals `--color-rl-accent` and the literal is defined in exactly one place | must | automated | `tests/design/widget-default-color.test.ts` |
 | KLAI-UI-006 | A new or changed shared UI component is described here and rendered in `/dev/ui` in the same change | must | assisted | KLAI-UI-003 catches the module half; the catalog half is a reviewer step |
 | KLAI-UI-007 | Pages are built from `src/components/ui/`; a raw `input`, `select`, list row or delete confirmation with inline Tailwind is a defect | must-not | none | The raw `<input>` sites are ten instances of one auth-field pattern awaiting a design decision, plus two correct dark-variant widget inputs; `<select>`, list rows and delete confirmations are uncounted |
-| KLAI-UI-008 | `Button` is for an action; a raw `button` is for an interactive surface (clickable row, toggle, tree item) | must | none | Measured and rejected: 96 of 100 raw `button` elements outside `components/ui/` are the prescribed pattern. A rule here would flag 96 correct decisions |
+| KLAI-UI-008 | `Button` is for an action; a raw `button` is for an interactive surface (clickable row, toggle, tree item), plus the documented avatar, vendor SSO and unsupported-size editor controls | must | none | Measured and rejected: 96 of 100 raw `button` elements outside `components/ui/` are the prescribed pattern. A rule here would flag 96 correct decisions |
 | KLAI-UI-009 | The reference screen is named in the work notes before portal UI is edited | must | manual | Reviewer step; see Required Workflow |
-| KLAI-UI-010 | Each page type uses its documented container; unscoped `p-6` is not a page container | must | manual | Reviewer step; see Layout |
-| KLAI-UI-011 | List and overview pages use `PageHeader`, not a hand-rolled title/action row | must | manual | Reviewer step |
+| KLAI-UI-010 | Normal pages use their documented centered container and never unscoped `p-6`; an intentionally full-width parent or tool surface owns its own layout | must | manual | Reviewer step; see Layout |
+| KLAI-UI-011 | List and overview pages use `PageHeader`; hand-roll a title/action row only for a genuinely custom layout | must | manual | Reviewer step |
 | KLAI-UI-012 | The `PageHeader` description is a short subtitle; longer explanation goes in `PageIntro` | must | manual | Reviewer step |
 | KLAI-UI-013 | Back and cancel actions are an outline small Button in the page header, never a loose link above the title | must-not | manual | Reviewer step |
 | KLAI-UI-014 | The collection shape (divider list, list with header, data table) is picked by the user's job, not by habit | should | manual | Reviewer step; see Lists And Tables |
 | KLAI-UI-015 | A divider list gets `ListHeader` only when its rows carry two or more metadata columns beyond the title, and the header shares the row grid and padding at `lg` only | must | manual | Reviewer step |
-| KLAI-UI-016 | Overview search and pagination come from `useListControls`; a collection of ten or fewer items gets neither | must | assisted | `src/components/ui/__tests__/use-list-controls.test.tsx` proves the component threshold; a reviewer checks that pages use it |
-| KLAI-UI-017 | Admin tables use the `data-table` primitives; a hand-rolled table with manual cell padding is a defect | must-not | manual | Reviewer step |
-| KLAI-UI-018 | Loading, empty and error states for collections use `list-state` and `QueryErrorState` | must | manual | Reviewer step |
+| KLAI-UI-016 | Overview search and pagination come from `useListControls` at page size ten; ten or fewer items get neither, and beyond that search stays visible on the unfiltered count while the pager follows the filtered count | must | assisted | `src/components/ui/__tests__/use-list-controls.test.tsx` proves the component threshold; a reviewer checks that pages use it |
+| KLAI-UI-017 | Admin tables use the `data-table` primitives, right-align the action column, and stop click propagation on that cell when the row itself is clickable | must-not | manual | Reviewer step |
+| KLAI-UI-018 | Collection loading and empty states use `list-state`; a failed query uses `QueryErrorState` with an explicit retry where one is available | must | manual | Reviewer step |
 | KLAI-UI-019 | Row actions render through the `row-action` components, never a raw icon button | must-not | manual | Reviewer step |
-| KLAI-UI-020 | Icon, tone and tooltip derive from the `action` prop; icon colour is never picked by hand | must-not | manual | Reviewer step. The maps are single-sourced in `row-action.tsx` |
+| KLAI-UI-020 | Icon, tone and tooltip derive from the `action` prop and icon colour is never picked by hand; override `tone` only when a row genuinely needs a different semantic | must-not | manual | Reviewer step. The maps are single-sourced in `row-action.tsx` |
 | KLAI-UI-021 | Row actions are ordered toggle, refresh, open, edit, destructive; delete is always last | must | manual | Reviewer step |
-| KLAI-UI-022 | A row shows at most three direct controls; a fourth moves the tail into a `more` menu | must | manual | Reviewer step |
+| KLAI-UI-022 | A row shows at most three direct controls; at four the two highest-frequency stay visible and the rest move into a `more` menu in the same order, destructive last | must | manual | Reviewer step |
 | KLAI-UI-023 | A bordered row action icon uses `border border-current`, never a hardcoded border colour and never an inline style | must | manual | Reviewer step |
 | KLAI-UI-024 | Editing a row's name in place uses `InlineEditRow` and keeps zero layout shift | must | manual | Reviewer step. The ghost-and-overlay technique is why; see Inline Edit |
 | KLAI-UI-025 | Every small inline-row action pill renders through `InlineRowButton` | must | manual | Reviewer step |
@@ -1119,17 +1119,17 @@ restatement of these rules, not a separate set.
 | KLAI-UI-030 | Underline tabs use the owned `Tabs` component; the active tab is a strong dark underline and `Tabs` owns no state | must | assisted | `src/components/ui/__tests__/tabs.test.tsx` proves the component underline; a reviewer checks that pages use it |
 | KLAI-UI-031 | A tab bar whose tabs are real sub-routes uses router links, not `Tabs` | must | manual | Reviewer step. Anchor semantics are the reason |
 | KLAI-UI-032 | Pill tabs are not used on admin, account or detail surfaces | must-not | manual | Reviewer step |
-| KLAI-UI-033 | Admin entity detail is a route; no drawer, sheet, or inline detail form under a table row | must-not | manual | Reviewer step |
+| KLAI-UI-033 | A real entity or review view is its own route; introduce no drawer, sheet or inline detail panel in admin surfaces unless that exact module already uses them | must-not | manual | Reviewer step |
 | KLAI-UI-034 | Every form field has a `Label` with matching id and htmlFor | must | manual | Reviewer step |
 | KLAI-UI-035 | Search fields use `SearchInput`, never an `Input` with a hand-placed icon | must | manual | Reviewer step |
 | KLAI-UI-036 | `Select` width constraints go on `containerClassName`, not `className` | must | assisted | `src/components/ui/__tests__/select.test.tsx` proves the component sizing hook; a reviewer checks that pages use it |
-| KLAI-UI-037 | A single-choice list of labelled options uses `RadioCardGroup` | must | manual | Reviewer step |
+| KLAI-UI-037 | A single-choice list whose options each need a label and a description uses `RadioCardGroup` | must | manual | Reviewer step |
 | KLAI-UI-038 | Metric tiles use `StatCard`; ordinary detail sections are not wrapped in decorative cards | must | manual | Reviewer step |
-| KLAI-UI-039 | A settings tab has exactly one save button; sections stage into it and never persist on click | must | manual | Reviewer step. Both halves of this have already been got wrong on the privacy tab |
+| KLAI-UI-039 | A settings tab has exactly one save button; sections stage into it, never persist on click, and submit fires only the dirty mutations so an untouched value never rewrites its own audit trail | must | manual | Reviewer step. Both halves of this have already been got wrong on the privacy tab |
 | KLAI-UI-040 | Provenance below a chat answer is a closed-by-default inline disclosure row, not a card or a bold heading | must | manual | Reviewer step |
 | KLAI-UI-041 | Any user-to-Klai back-and-forth uses the `conversation` component; status changes are quiet system lines | must | manual | Reviewer step |
 | KLAI-UI-042 | The conversation composer sends on Cmd or Ctrl plus Enter, clears on success, and surfaces a send failure without discarding the typed text | must | manual | Reviewer step. Discarding typed text on a failed send loses the user's message |
-| KLAI-UI-043 | New portal UI uses the documented neutral scale and `klai-hover`; raw Tailwind semantic colours are not used | must-not | none | No count exists yet, and this document's own rule is not to enforce a pattern that has not been counted |
+| KLAI-UI-043 | New portal UI uses the documented neutral scale and raw Tailwind semantic colours are not used; `klai-hover` is for interactive row surfaces and never for a disclosure summary | must-not | none | No count exists yet, and this document's own rule is not to enforce a pattern that has not been counted |
 | KLAI-UI-044 | Status pills use `Badge` semantic variants, never ad-hoc tinted pills | must | manual | Reviewer step |
 | KLAI-UI-045 | Open and closed state markers use `ActionTag` with adjective labels, never verbs that imply clickability | must | manual | Reviewer step |
 | KLAI-UI-046 | The default border-colour reset stays inside `@layer base`; a border colour is never fixed with an inline style or a second unlayered override | must | automated | `tests/design/border-layer-reset.test.ts` |
