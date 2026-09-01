@@ -1,0 +1,201 @@
+# Meeting recording and transcript outcome alerts.
+#
+# These rules deliberately observe the persisted user-visible contract rather
+# than a Vexa bot error string. The bot containers emit unstructured lines with
+# no `level` field, and teaching Alloy one incident phrase would cover only that
+# implementation. A meeting row is written before the bot starts, so the DB
+# signals below cover failures in the bot, recording, STT, portal transcription,
+# and status finalisation paths.
+#
+# Production firing proof (read-only query, 2026-09-01): evaluating both rules
+# at 2026-08-28 12:00 UTC against the real vexa_meetings history returned:
+#   bad_outcome_rate = 100.0
+#   transcript_silence = 1
+# The only meeting in the preceding 24h was `done` with zero transcript
+# characters and zero transcript segments. Both thresholds below therefore
+# evaluate true, without matching the incident's error text.
+#
+# Datasource access: portal_meeting_transcript_health is a superuser-owned,
+# non-security-invoker view. See deploy/grafana/sql/grafana-reader-setup.sql.
+# It exposes status/timestamps/a derived boolean only; grafana_reader receives
+# public-schema USAGE and SELECT on the view, never an RLS bypass or a wider
+# grant on vexa_meetings.
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: meeting-recording-health
+    folder: Klai
+    interval: 10m
+    rules:
+
+      # A terminal result is unhealthy when the pipeline reports failed/error,
+      # or when it says done without producing any transcript content. The
+      # threshold is intentionally zero-tolerance: `done` is a success contract,
+      # and PR #1288 makes no-recording outcomes honest failures instead.
+      - uid: obs-meeting-bad-outcome-rate
+        title: meeting_recording_bad_outcome_rate
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: portal-postgres
+            queryType: ''
+            relativeTimeRange:
+              from: 86400
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: postgres
+                uid: portal-postgres
+              format: table
+              rawSql: |
+                SELECT count(*) FILTER (
+                           WHERE status IN ('failed', 'error')
+                              OR (status = 'done' AND NOT has_transcript)
+                       ) * 100.0 / NULLIF(count(*), 0) AS value
+                  FROM portal_meeting_transcript_health
+                 WHERE outcome_at >= now() - interval '24 hours'
+                   AND outcome_at <= now()
+                   AND status IN ('done', 'failed', 'error')
+                HAVING count(*) > 0
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 86400
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 86400
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        keepFiringFor: 1h
+        isPaused: false
+        labels:
+          severity: warning
+          spec: SPEC-OBS-001
+          service: meetings
+        annotations:
+          summary: 'A meeting ended failed or done without a transcript'
+          runbook_url: 'https://github.com/GetKlai/klai-infra/blob/main/docs/runbooks/platform-recovery.md'
+          description: |
+            At least one terminal meeting outcome in the last 24 hours was
+            `failed`/`error`, or was marked `done` without non-blank transcript
+            text or any transcript segment. The value is the percentage of
+            terminal outcomes that violated that contract; any non-zero value
+            alerts.
+
+            This is independent of error_message. It therefore catches the new
+            "ended before recording was confirmed" failure, bot-start errors,
+            transcription errors, and the old hollow `done` outcome.
+
+            Inspect the safe aggregate view first:
+              SELECT status, has_transcript, count(*)
+                FROM portal_meeting_transcript_health
+               WHERE outcome_at >= now() - interval '24 hours'
+               GROUP BY 1, 2 ORDER BY 1, 2;
+
+      # Absence-of-success, demand-gated. A terminal row proves demand
+      # immediately; a non-cancelled row that has not finished after four hours
+      # proves a stuck attempt. No meetings means value=0, not an alert.
+      - uid: obs-meeting-transcript-silence
+        title: meeting_transcript_silence
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: portal-postgres
+            queryType: ''
+            relativeTimeRange:
+              from: 86400
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: postgres
+                uid: portal-postgres
+              format: table
+              rawSql: |
+                SELECT CASE
+                         WHEN count(*) FILTER (
+                                  WHERE status IN ('done', 'failed', 'error')
+                                     OR (
+                                         status <> 'cancelled'
+                                         AND created_at <= now() - interval '4 hours'
+                                     )
+                              ) > 0
+                          AND count(*) FILTER (WHERE has_transcript) = 0
+                         THEN 1
+                         ELSE 0
+                       END AS value
+                  FROM portal_meeting_transcript_health
+                 WHERE created_at >= now() - interval '24 hours'
+                   AND created_at <= now()
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 86400
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 86400
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        keepFiringFor: 1h
+        isPaused: false
+        labels:
+          severity: warning
+          spec: SPEC-OBS-001
+          service: meetings
+        annotations:
+          summary: 'Meeting demand exists but no transcript succeeded in 24 hours'
+          runbook_url: 'https://github.com/GetKlai/klai-infra/blob/main/docs/runbooks/platform-recovery.md'
+          description: |
+            In the last 24 hours at least one meeting reached a terminal state,
+            or a non-cancelled attempt has been stuck for four hours, but not one
+            meeting produced non-blank transcript text or a transcript segment.
+
+            Tenants that simply held no meetings do not contribute demand, so a
+            quiet day stays healthy. This catches a system-wide silent pipeline
+            failure and also a component that leaves meetings non-terminal,
+            rather than only the STT error text from the 2026-08 incident.
+
+            Inspect the safe aggregate view first:
+              SELECT status, has_transcript, count(*)
+                FROM portal_meeting_transcript_health
+               WHERE created_at >= now() - interval '24 hours'
+               GROUP BY 1, 2 ORDER BY 1, 2;
