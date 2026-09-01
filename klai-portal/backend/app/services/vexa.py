@@ -18,6 +18,10 @@ from app.trace import get_trace_headers
 
 logger = structlog.get_logger()
 
+MAX_WAIT_FOR_ADMISSION_MS = 120_000
+NO_ONE_JOINED_TIMEOUT_MS = 120_000
+MAX_TIME_LEFT_ALONE_MS = 60_000
+
 
 class MeetingRef(NamedTuple):
     platform: str
@@ -108,9 +112,9 @@ class VexaClient:
             "recording_enabled": False,
             "bot_name": "Klai",
             "automatic_leave": {
-                "max_time_left_alone": 30000,  # 30s after everyone leaves
-                "no_one_joined_timeout": 120000,  # 2 min if no one joins
-                "max_wait_for_admission": 120000,  # 2 min in waiting room
+                "max_time_left_alone": MAX_TIME_LEFT_ALONE_MS,
+                "no_one_joined_timeout": NO_ONE_JOINED_TIMEOUT_MS,
+                "max_wait_for_admission": MAX_WAIT_FOR_ADMISSION_MS,
             },
         }
         if meeting_url:
@@ -133,11 +137,11 @@ class VexaClient:
         resp.raise_for_status()
 
     async def get_running_bots(self) -> list[dict]:
-        """Return the list of currently running bot containers from Vexa.
+        """Return Vexa's non-terminal meetings and their lifecycle status.
 
         Uses GET /bots/status which returns {"running_bots": [...]}.
-        Each entry has: platform, native_meeting_id, status, normalized_status, container_id.
-        Returns an empty list if the call fails — treated as "unknown, assume still running".
+        Vexa 0.12 entries expose the meeting FSM in `status`; older gateways may
+        only expose container-oriented `status` / `normalized_status` fields.
         """
         resp = await self._http.get("/bots/status", headers={**get_trace_headers()})
         resp.raise_for_status()
