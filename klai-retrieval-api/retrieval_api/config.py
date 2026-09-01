@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     falkordb_host: str = "falkordb"
     falkordb_port: int = 6379
     graphiti_enabled: bool = True
+    graph_ann_enabled: bool = False
     graph_search_timeout: float = 5.0
     graphiti_llm_model: str = "klai-fast"
 

@@ -13,6 +13,15 @@ from retrieval_api.services import graph_search
 from retrieval_api.services.evidence_pack import build_evidence_pack, chunk_source_key
 
 
+def test_graph_search_passes_ann_flag_without_database_initialization():
+    import inspect
+
+    source = inspect.getsource(graph_search)
+
+    assert "apply_falkordb_compat(ann_candidate_search=settings.graph_ann_enabled)" in source
+    assert "initialize_databases" not in source
+
+
 def _make_graph_result(
     uuid: str,
     fact: str,
