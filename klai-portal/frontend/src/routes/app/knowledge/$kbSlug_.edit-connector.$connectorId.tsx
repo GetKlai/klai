@@ -951,7 +951,7 @@ function EditConnectorPage() {
                   {requiresLogin === false && (
                     <div className="flex items-center justify-between rounded-lg border border-gray-200 px-4 py-3">
                       <div className="flex items-center gap-2 text-xs text-gray-600">
-                        <CheckCircle2 className="h-3.5 w-3.5 text-[var(--color-success)]" />
+                        <CheckCircle2 className="h-3.5 w-3.5 text-[var(--color-success-text)]" />
                         Public site - no login needed
                       </div>
                       <button
@@ -974,7 +974,7 @@ function EditConnectorPage() {
                   )}
                   {requiresLogin === true && authProbeResult?.classification === 'auth_ok' && (
                     <div className="flex items-center justify-between rounded-lg border border-[var(--color-success)]/30 bg-[var(--color-success)]/5 px-4 py-3">
-                      <div className="flex items-center gap-2 text-xs text-[var(--color-success)]">
+                      <div className="flex items-center gap-2 text-xs text-[var(--color-success-text)]">
                         <CheckCircle2 className="h-3.5 w-3.5" />
                         {wcAuthMode === 'saved' ? 'Logged in - saved authentication verified' : 'Logged in - cookies verified'}
                       </div>
@@ -1161,7 +1161,7 @@ function EditConnectorPage() {
                           auth-probe). Source of truth is ``authGuard`` state. */}
                       {previewResult.classification === 'success' && authGuard?.canary_url && (
                         <div className="rounded-lg border border-[var(--color-success)]/30 bg-[var(--color-success)]/5 p-3 space-y-2">
-                          <div className="flex gap-2 items-center text-xs text-[var(--color-success)]">
+                          <div className="flex gap-2 items-center text-xs text-[var(--color-success-text)]">
                             <Shield className="h-3.5 w-3.5 shrink-0" />
                             <span>Auth protection enabled</span>
                           </div>

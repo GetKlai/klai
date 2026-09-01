@@ -72,8 +72,8 @@ function McpTestButton({ serverId }: { serverId: string }) {
         <span className="flex items-center gap-1 text-sm">
           {result.status === 'ok' ? (
             <>
-              <CheckCircle className="h-4 w-4 text-[var(--color-success)]" />
-              <span className="text-[var(--color-success)]">
+              <CheckCircle className="h-4 w-4 text-[var(--color-success-text)]" />
+              <span className="text-[var(--color-success-text)]">
                 {m.admin_mcps_test_ok()}
                 {result.response_time_ms != null && ` (${result.response_time_ms}ms)`}
               </span>
@@ -252,7 +252,7 @@ function McpEditPage() {
           )
         })}
 
-        {successMsg && <p className="text-sm text-[var(--color-success)]">{successMsg}</p>}
+        {successMsg && <p className="text-sm text-[var(--color-success-text)]">{successMsg}</p>}
         {errorMsg && <p className="text-sm text-[var(--color-destructive)]">{errorMsg}</p>}
 
         <p className="text-xs text-gray-600">

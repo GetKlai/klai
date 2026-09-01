@@ -410,7 +410,7 @@ function FeedbackItemDetailForm({
           {fmtDate(item.updated_at)}
         </p>
         {updateItem.isSuccess && !isEditing && (
-          <p className="text-sm text-[var(--color-success)]">
+          <p className="text-sm text-[var(--color-success-text)]">
             {m.platform_feedback_item_saved()}
           </p>
         )}
@@ -515,7 +515,7 @@ function FeedbackItemDetailForm({
               {llmPromptLabel.button}
             </Button>
             {copyNotice && (
-              <p className="text-sm text-[var(--color-success)]">
+              <p className="text-sm text-[var(--color-success-text)]">
                 {copyNotice}
               </p>
             )}
@@ -598,13 +598,13 @@ function FeedbackItemDetailForm({
                   : resolveLabel.button}
           </Button>
           {resolveNotice && (
-            <p className="text-sm text-[var(--color-success)]">{resolveNotice}</p>
+            <p className="text-sm text-[var(--color-success-text)]">{resolveNotice}</p>
           )}
           {resolveError && (
             <p className="text-sm text-[var(--color-destructive)]">{resolveError}</p>
           )}
           {updateItem.isSuccess && status !== 'resolved' && (
-            <p className="text-sm text-[var(--color-success)]">
+            <p className="text-sm text-[var(--color-success-text)]">
               {m.platform_feedback_item_saved()}
             </p>
           )}

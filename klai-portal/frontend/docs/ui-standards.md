@@ -23,8 +23,8 @@ catalog and be described here in the same change.
 
 The normative rules in this document are catalogued in the Rules Ledger at the
 end of this file, each with an ID, an RFC 2119 level and a declared
-verification mode. The count today: **51 rules — 9 automated, 4 assisted,
-34 manual, 4 deliberately unchecked.**
+verification mode. The count today: **52 rules — 9 automated, 4 assisted,
+35 manual, 4 deliberately unchecked.**
 
 The catalogue is maintained by hand. The ledger's own preamble says which of
 its guarantees a test backs and which rely on you adding the row — read that
@@ -444,8 +444,8 @@ needs a different semantic.
 | `neutral` | `text-gray-400/500` | Utility, navigation, low-risk | rename, configure, open, view, copy, more, cancel |
 | `primary` | `var(--color-primary)` | Primary create / submit / send | add, send |
 | `info` | `var(--color-info-text)` | Information, progress, system context | info |
-| `success` | `var(--color-success)` | Positive status change or recovery | sync, save, reactivate |
-| `warning` | `var(--color-warning)` | Caution / reversible risky action | edit, retry, suspend |
+| `success` | `var(--color-success-text)` | Positive status change or recovery | sync, save, reactivate |
+| `warning` | `var(--color-warning-text)` | Caution / reversible risky action | edit, retry, suspend |
 | `danger` | `var(--color-destructive)` | Destructive or high-impact | delete, stop, leave, offboard |
 
 Note: `edit` is tone `warning` (amber) — editing is a reversible change that
@@ -908,8 +908,11 @@ Use:
 - `text-gray-400` — decorative and disabled only — 2.41:1.
 - `border-gray-200` for borders.
 - `klai-hover` for interactive hover states.
-- `var(--color-success)`, `var(--color-warning)`, `var(--color-destructive)`
-  for semantic states.
+- Semantic base tokens are for fills and borders. On a light surface, foregrounds
+  use the matching `-text` token: `var(--color-success-text)` (7.30:1),
+  `var(--color-warning-text)` (6.73:1), and `var(--color-destructive-text)`
+  (6.15:1). Existing `var(--color-destructive)` foregrounds remain valid because
+  the base token itself clears AA at 5.17:1.
 
 Do not use raw Tailwind semantic colors such as `text-green-*`, `text-red-*`,
 `bg-amber-*`, or `hover:bg-gray-50` in new portal UI.
@@ -922,13 +925,13 @@ system (see Row Actions And Action Tones).
 Status badges use the `Badge` component with a semantic variant. The semantic
 variants (`info`, `success`, `warning`, `destructive`) derive from the SAME
 primary tokens as the action tones — same hue, same meaning — kept soft via a
-10% tint background with the solid token as text:
+10% tint background with the darker `-text` token as foreground:
 
 ```
-success  → bg var(--color-success)/10   text var(--color-success)
-warning  → bg var(--color-warning)/10   text var(--color-warning)
-destructive → bg var(--color-destructive)/10 text var(--color-destructive)
-info     → bg var(--color-info)/10      text var(--color-info)
+success  → bg var(--color-success)/10   text var(--color-success-text)
+warning  → bg var(--color-warning)/10   text var(--color-warning-text)
+destructive → bg var(--color-destructive)/10 text var(--color-destructive-text)
+info     → bg var(--color-info)/10      text var(--color-info-text)
 ```
 
 So a green status badge and a green sync icon are the same green, just softer.
@@ -1133,6 +1136,7 @@ restatement of these rules, not a separate set.
 | KLAI-UI-049 | A raw `<textarea>` outside `src/components/ui/` is forbidden | must-not | automated | `klai/no-raw-textarea` |
 | KLAI-UI-050 | The portal type scale is rem-based on a 110% root, so text, padding, control heights and column widths scale together; an absolute px font size does not scale and is a defect | must | manual | Reviewer step. Nothing yet stops a new `text-[Npx]` or a px `font-size` in `index.css` from being added |
 | KLAI-UI-051 | Foreground colours documented in the Colors section meet WCAG AA on both portal surfaces or carry a current, reasoned exception | must | automated | `tests/design/documented-contrast.test.ts` |
+| KLAI-UI-052 | Semantic base colour tokens are used for fills and borders; foregrounds on light portal surfaces use the matching `-text` token, while the passing destructive base foreground remains valid | must | manual | The documented contrast check covers only colours named in the Colors section, so it does not catch a base token used as a foreground elsewhere |
 <!-- /generated:component-guidelines -->
 
 ### Retired IDs

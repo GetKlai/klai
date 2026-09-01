@@ -303,7 +303,7 @@ export function FileUploadForm({ kbSlug, onBack }: FileUploadFormProps) {
       {/* Success banner */}
       {allDone && (
         <div className="flex items-center gap-2 rounded-lg border border-[var(--color-success)] bg-[var(--color-success-bg)] px-4 py-3">
-          <CheckCircle2 className="h-4 w-4 text-[var(--color-success)] shrink-0" />
+          <CheckCircle2 className="h-4 w-4 text-[var(--color-success-text)] shrink-0" />
           <p className="text-sm text-[var(--color-success-text)]">
             {m.knowledge_add_source_file_success()}
           </p>
@@ -386,7 +386,7 @@ export function FileUploadForm({ kbSlug, onBack }: FileUploadFormProps) {
               <FileText className="h-4 w-4 text-gray-500 shrink-0" />
               <span className="flex-1 truncate text-sm text-gray-900">{entry.filename}</span>
               {entry.status === 'done' && (
-                <span className="text-xs text-[var(--color-success)] shrink-0">Verwerkt</span>
+                <span className="text-xs text-[var(--color-success-text)] shrink-0">Verwerkt</span>
               )}
               {(entry.status === 'processing' || entry.status === 'ingesting') && (
                 <span className="text-xs text-gray-600 shrink-0">Bezig met verwerken…</span>
@@ -427,8 +427,8 @@ export function FileUploadForm({ kbSlug, onBack }: FileUploadFormProps) {
       {/* Server-side per-file skipped */}
       {serverSkipped.length > 0 && (
         <div className="rounded-lg border border-[var(--color-warning)] bg-[var(--color-warning-bg)] p-3">
-          <p className="text-sm font-medium text-[var(--color-warning)] mb-1">Niet verwerkt:</p>
-          <ul className="text-xs text-[var(--color-warning)] space-y-0.5">
+          <p className="text-sm font-medium text-[var(--color-warning-text)] mb-1">Niet verwerkt:</p>
+          <ul className="text-xs text-[var(--color-warning-text)] space-y-0.5">
             {serverSkipped.map((r, i) => (
               <li key={`${r.filename}-${String(i)}`}>
                 {r.filename} - {reasonToMessage(r.reason)}

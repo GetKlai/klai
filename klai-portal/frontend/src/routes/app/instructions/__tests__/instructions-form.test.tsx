@@ -200,7 +200,7 @@ describe('InstructionFormPage - char counter', () => {
       </Wrapper>,
     )
     const counter = screen.getByTestId('prompt-char-count')
-    expect(counter.className).toContain('text-[var(--color-warning)]')
+    expect(counter.className).toContain('text-[var(--color-warning-text)]')
   })
 
   it('counter switches to destructive at 8001+ chars', () => {

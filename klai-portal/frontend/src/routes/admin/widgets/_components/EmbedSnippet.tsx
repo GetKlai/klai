@@ -37,7 +37,7 @@ export function EmbedSnippet({ widgetId, title, welcomeMessage }: EmbedSnippetPr
         >
           {copied ? (
             <>
-              <Check className="h-3.5 w-3.5 text-[var(--color-success)]" />
+              <Check className="h-3.5 w-3.5 text-[var(--color-success-text)]" />
               {m.admin_widgets_widget_embed_copied()}
             </>
           ) : (

@@ -231,7 +231,7 @@ export function InstructionFormPage({
                 promptOverLimit
                   ? 'text-xs text-[var(--color-destructive)]'
                   : promptWarning
-                    ? 'text-xs text-[var(--color-warning)]'
+                    ? 'text-xs text-[var(--color-warning-text)]'
                     : 'text-xs text-gray-600'
               }
               data-testid="prompt-char-count"

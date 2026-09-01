@@ -165,7 +165,7 @@ function SettingsTab() {
                 {updateMutation.isPending ? m.knowledge_settings_saving() : m.knowledge_settings_save()}
               </Button>
               {showSaved && (
-                <span className="flex items-center gap-1 text-sm text-[var(--color-success)]">
+                <span className="flex items-center gap-1 text-sm text-[var(--color-success-text)]">
                   <Check className="h-4 w-4" />
                   {m.knowledge_settings_saved()}
                 </span>

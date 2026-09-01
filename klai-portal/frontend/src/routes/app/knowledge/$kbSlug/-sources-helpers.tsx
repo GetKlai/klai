@@ -184,7 +184,7 @@ export function FailedItemsWarning({ source }: { source: Source }) {
   const failedCount = source.items_failed_count ?? 0
   if (failedCount <= 0) return null
   return (
-    <span className="text-xs text-[var(--color-warning)]">
+    <span className="text-xs text-[var(--color-warning-text)]">
       {m.kb_connector_failed_items({ count: String(failedCount) })}
     </span>
   )

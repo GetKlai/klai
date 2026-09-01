@@ -195,7 +195,7 @@ export function CoverageNodeRow({
           {m.knowledge_taxonomy_coverage_chunks({ count: String(node.chunk_count) })}
         </span>
         {node.gap_count > 0 && (
-          <span className="text-xs text-[var(--color-warning)]">
+          <span className="text-xs text-[var(--color-warning-text)]">
             {m.knowledge_taxonomy_coverage_gaps({ count: String(node.gap_count) })}
           </span>
         )}

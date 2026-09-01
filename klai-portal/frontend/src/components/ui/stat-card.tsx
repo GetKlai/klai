@@ -13,7 +13,7 @@ export type StatCardTone = 'default' | 'warning' | 'destructive'
 
 const toneTextClass: Record<StatCardTone, string> = {
   default: 'text-gray-900',
-  warning: 'text-[var(--color-warning)]',
+  warning: 'text-[var(--color-warning-text)]',
   destructive: 'text-[var(--color-destructive)]',
 }
 

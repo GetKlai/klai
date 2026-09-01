@@ -115,8 +115,8 @@ const rowActionIconButtonVariants = cva(
         primary: 'text-[var(--color-primary)]',
         info: 'text-[var(--color-info-text)]',
         danger: 'text-[var(--color-destructive)]',
-        success: 'text-[var(--color-success)]',
-        warning: 'text-[var(--color-warning)]',
+        success: 'text-[var(--color-success-text)]',
+        warning: 'text-[var(--color-warning-text)]',
       },
     },
     defaultVariants: {
@@ -134,8 +134,8 @@ const rowActionButtonVariants = cva(
         primary: 'text-[var(--color-primary)]',
         info: 'text-[var(--color-info-text)]',
         danger: 'text-[var(--color-destructive)]',
-        success: 'text-[var(--color-success)]',
-        warning: 'text-[var(--color-warning)]',
+        success: 'text-[var(--color-success-text)]',
+        warning: 'text-[var(--color-warning-text)]',
       },
     },
     defaultVariants: {

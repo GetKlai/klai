@@ -148,7 +148,7 @@ function TranscriptionDetailPage() {
               <Button variant="outline" size="sm" onClick={copyTranscript}>
                 {copied ? (
                   <>
-                    <CheckCheck className="mr-1.5 h-3.5 w-3.5 text-[var(--color-success)]" />
+                    <CheckCheck className="mr-1.5 h-3.5 w-3.5 text-[var(--color-success-text)]" />
                     {m.app_meetings_copy_done()}
                   </>
                 ) : (
@@ -225,7 +225,7 @@ function TranscriptionDetailPage() {
                 <Button variant="outline" size="sm" onClick={copySummaryText}>
                   {summaryCopied === 'text' ? (
                     <>
-                      <CheckCheck className="mr-1.5 h-3.5 w-3.5 text-[var(--color-success)]" />
+                      <CheckCheck className="mr-1.5 h-3.5 w-3.5 text-[var(--color-success-text)]" />
                       {m.app_transcribe_summary_copy_done()}
                     </>
                   ) : (
@@ -238,7 +238,7 @@ function TranscriptionDetailPage() {
                 <Button variant="outline" size="sm" onClick={copySummaryMarkdown}>
                   {summaryCopied === 'markdown' ? (
                     <>
-                      <CheckCheck className="mr-1.5 h-3.5 w-3.5 text-[var(--color-success)]" />
+                      <CheckCheck className="mr-1.5 h-3.5 w-3.5 text-[var(--color-success-text)]" />
                       {m.app_transcribe_summary_copy_done()}
                     </>
                   ) : (

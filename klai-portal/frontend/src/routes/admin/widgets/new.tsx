@@ -575,7 +575,7 @@ function NewWidgetPage() {
                   {m.admin_widgets_allow_any_origin_label()}
                 </label>
                 {form.allow_any_origin && (
-                  <div className="flex items-start gap-1.5 text-xs text-[var(--color-warning)]">
+                  <div className="flex items-start gap-1.5 text-xs text-[var(--color-warning-text)]">
                     <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
                     {m.admin_widgets_allow_any_origin_warning()}
                   </div>

@@ -15,7 +15,7 @@ function TenantDeletedPage() {
       <div className="w-full max-w-md space-y-6 px-6 text-center">
         <CheckCircle
           size={40}
-          className="mx-auto text-[var(--color-success)]"
+          className="mx-auto text-[var(--color-success-text)]"
           strokeWidth={1.5}
         />
         <div className="space-y-2">

@@ -115,7 +115,7 @@ export function SaveToKnowledgeModal({
 
         {savedSlug ? (
           <div className="space-y-3">
-            <p className="text-sm text-[var(--color-success)]">{m.knowledge_save_success()}</p>
+            <p className="text-sm text-[var(--color-success-text)]">{m.knowledge_save_success()}</p>
             <a
               href="/app/docs"
               className="inline-flex items-center gap-1 text-sm text-[var(--color-accent)] hover:underline"

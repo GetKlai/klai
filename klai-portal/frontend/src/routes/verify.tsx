@@ -99,7 +99,7 @@ function VerifyEmailPage() {
       {status === 'success' && (
         <div className="space-y-6 text-center">
           <div className="space-y-3">
-            <CheckCircle className="mx-auto h-12 w-12 text-[var(--color-success)]" />
+            <CheckCircle className="mx-auto h-12 w-12 text-[var(--color-success-text)]" />
             <h1 className="text-xl font-semibold text-gray-900">
               {m.verify_success_heading()}
             </h1>

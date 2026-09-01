@@ -27,7 +27,7 @@ function JoinRequestSentPage() {
   return (
     <AuthPageLayout leftContent={leftContent} showLocale>
       <div className="flex flex-col items-center gap-4 text-center">
-        <CheckCircle2 className="h-10 w-10 text-[var(--color-success)]" />
+        <CheckCircle2 className="h-10 w-10 text-[var(--color-success-text)]" />
         <p className="text-sm text-gray-600">
           {m.join_request_success()}
         </p>
