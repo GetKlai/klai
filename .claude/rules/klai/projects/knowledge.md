@@ -153,33 +153,40 @@ stores.
 auto-clean on the current code path (after the 2026-04-30 fix). Garage images
 remain a known gap — see SPEC-CONNECTOR-CLEANUP-001 follow-up notes.
 
-## Connector-delete leaves in-flight enrichment jobs behind (HIGH)
+## Connector-scoped async jobs require a resource key and fence (HIGH)
 
-`delete_connector_artifacts` + `qdrant_store.delete_connector` only remove rows
-that EXIST at the moment of the call. Any `enrich-bulk` / `graphiti-bulk`
-Procrastinate job that is already enqueued for the same artifact_ids will
-keep running afterwards and silently write NEW rows into Qdrant (and
-knowledge graph) with the same `source_connector_id`. Net result: a freshly
-deleted connector regrows Qdrant chunks for several minutes while the queue
-drains. Observed on Redcactus E2E — post-delete, Qdrant chunk count climbed
-from 15 → 26 → 40+ as ~76 queued enrichment jobs finished.
+Every Procrastinate job that can write connector-owned knowledge carries the
+same top-level authority key for its sync generation:
+`connector:{org_id}:{kb_slug}:{connector_id}:{generation}`. This applies to
+`crawl-jobs`, `enrich-bulk`, and `graphiti-bulk`. Artifact-scoped jobs keep
+`artifact_id` as their work item and also carry `resource_key`; the artifact
+row stores the key in `extra`.
 
-**Why:** Ingest enqueues enrichment asynchronously; enrichment reads only
-from `extra_payload` so it has no visibility into whether the owning
-artifact still exists.
+Delete/rebuild first changes the generation fence, then requests cancellation
+by exact `args->>'resource_key'` for live `todo`/`doing` jobs. Cancellation uses
+`abort=True, delete_job=False`; abort-requested running jobs remain `doing`
+until they cooperate and then become `aborted`. Never query or count the legacy
+`aborting` status. A one-deploy compatibility fallback may match old enrichment
+and Graphiti jobs by top-level `artifact_id`, but resource keys are the primary
+index.
 
-**Prevention:** A proper fix requires either:
-1. Cancelling in-flight Procrastinate jobs scoped to the deleted artifact_ids
-   at delete time (`cancel_job_by_id` for every queued enrich/graphiti task),
-   or
-2. Adding an existence check at the top of every enrichment task that
-   aborts if the artifact has been deleted since enqueue.
+Cancellation is best effort. Each writer must check the fence before expensive
+work and again immediately before Qdrant/Graphiti writes. Artifact existence is
+a secondary guard: an existing artifact can still belong to a stale generation.
+Fence lookup errors fail closed. Crawl per-page checks use the <=5 second cache
+to avoid a database roundtrip per page; enrichment and Graphiti pre-write checks
+are fresh.
 
-Option 1 is cleaner (no wasted LLM/embedding calls). Until either lands,
-callers should delete → wait for enrich-bulk queue to drain → re-run Qdrant
-`delete_connector` as a second pass. Tracked for follow-up; not
-auto-retriable because procrastinate job cancellation is a separate API
-surface.
+Runbook query for one generation (Procrastinate 3.x vocabulary):
+
+```sql
+SELECT status, count(*)
+FROM procrastinate_jobs
+WHERE args->>'resource_key' = 'connector:<org>:<kb>:<connector>:<generation>'
+  AND status IN ('todo', 'doing', 'cancelled', 'aborted', 'failed', 'succeeded')
+GROUP BY status
+ORDER BY status;
+```
 
 ## Graph-first, content-second for bulk crawls (HIGH)
 

@@ -28,7 +28,12 @@ import structlog
 
 from knowledge_ingest import graph as graph_module
 from knowledge_ingest import pg_store, qdrant_store
+from knowledge_ingest.connector_state import mark_connector_resource_deleting
 from knowledge_ingest.db import get_pool, tenant_scoped_connection
+from knowledge_ingest.resource_jobs import (
+    cancel_jobs_by_resource_key,
+    connector_resource_key,
+)
 
 logger = structlog.get_logger()
 
@@ -96,21 +101,69 @@ async def _list_artifact_ids(
     return [r["id"] for r in rows]
 
 
-async def _cancel_enrichment_jobs(proc_app: Any, connector_id: str) -> int:
-    """Cancel queued + in-flight enrich_document_* jobs for this connector.
+async def _list_resource_keys(
+    conn: asyncpg.Connection, org_id: str, kb_slug: str, connector_id: str
+) -> list[str]:
+    """Snapshot connector generations represented by artifacts or crawl runs."""
+    artifact_rows = await conn.fetch(
+        """
+        SELECT DISTINCT extra::jsonb->>'resource_key' AS resource_key
+          FROM knowledge.artifacts
+         WHERE org_id = $1
+           AND kb_slug = $2
+           AND extra::jsonb->>'source_connector_id' = $3
+           AND extra::jsonb->>'resource_key' IS NOT NULL
+        """,
+        org_id,
+        kb_slug,
+        connector_id,
+    )
+    crawl_rows = await conn.fetch(
+        """
+        SELECT DISTINCT config::jsonb->>'generation' AS generation
+          FROM knowledge.crawl_jobs
+         WHERE org_id = $1
+           AND kb_slug = $2
+           AND config::jsonb->>'connector_id' = $3
+           AND config::jsonb->>'generation' IS NOT NULL
+        """,
+        org_id,
+        kb_slug,
+        connector_id,
+    )
+    current_generation = await conn.fetchval(
+        """
+        SELECT current_generation
+          FROM knowledge.connector_resource_fences
+         WHERE org_id = $1 AND kb_slug = $2 AND connector_id = $3
+        """,
+        org_id,
+        kb_slug,
+        connector_id,
+    )
+    keys = {str(row["resource_key"]) for row in artifact_rows}
+    keys.update(
+        connector_resource_key(org_id, kb_slug, connector_id, row["generation"])
+        for row in crawl_rows
+    )
+    if current_generation is not None:
+        keys.add(connector_resource_key(org_id, kb_slug, connector_id, current_generation))
+    return sorted(keys)
 
-    Filter: ``args->'extra_payload'->>'source_connector_id' = connector_id``.
-    Procrastinate ``cancel_job_by_id_async`` is per-id — we discover IDs
-    via a single SELECT then loop.
 
-    ``abort=True`` marks running jobs for asyncio.CancelledError delivery
-    via Postgres NOTIFY (Procrastinate native). ``delete_job=True`` purges
-    the row from the queue table after cancellation so it never replays.
+async def _cancel_enrichment_jobs(proc_app: Any, artifact_ids: list[str]) -> int:
+    """Cancel legacy artifact-only enrichment jobs during rollout.
+
+    New jobs are cancelled by exact resource key. This fallback intentionally
+    matches only jobs without one, using the pre-cleanup artifact-id snapshot.
+    Procrastinate cancellation is per-id, so discover the IDs once and loop.
 
     SPEC-TI-003-FOLLOWUP-001 AC-2 exception: this query targets the
     procrastinate_jobs table, not knowledge.*, so a raw pool acquire
     is allowed here.
     """
+    if not artifact_ids:
+        return 0
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -118,17 +171,18 @@ async def _cancel_enrichment_jobs(proc_app: Any, connector_id: str) -> int:
             SELECT id FROM procrastinate_jobs
              WHERE task_name = ANY($1::text[])
                AND status IN ('todo', 'doing')
-               AND args->'extra_payload'->>'source_connector_id' = $2
+               AND args->>'resource_key' IS NULL
+               AND args->>'artifact_id' = ANY($2::text[])
             """,
             list(_ENRICHMENT_TASKS),
-            connector_id,
+            artifact_ids,
         )
     job_ids = [int(r["id"]) for r in rows]
 
     cancelled = 0
     for jid in job_ids:
         try:
-            await proc_app.job_manager.cancel_job_by_id_async(jid, abort=True, delete_job=True)
+            await proc_app.job_manager.cancel_job_by_id_async(jid, abort=True, delete_job=False)
             cancelled += 1
         except Exception:
             # Job may have just transitioned from todo->doing->finished
@@ -137,7 +191,7 @@ async def _cancel_enrichment_jobs(proc_app: Any, connector_id: str) -> int:
             logger.warning(
                 "cancel_job_failed",
                 job_id=jid,
-                connector_id=connector_id,
+                artifact_ids=artifact_ids,
                 exc_info=True,
             )
     return cancelled
@@ -164,6 +218,7 @@ async def _cancel_graphiti_jobs(proc_app: Any, artifact_ids: list[str]) -> int:
             SELECT id FROM procrastinate_jobs
              WHERE task_name = ANY($1::text[])
                AND status IN ('todo', 'doing')
+               AND args->>'resource_key' IS NULL
                AND args->>'artifact_id' = ANY($2::text[])
             """,
             list(_GRAPHITI_TASKS),
@@ -174,7 +229,7 @@ async def _cancel_graphiti_jobs(proc_app: Any, artifact_ids: list[str]) -> int:
     cancelled = 0
     for jid in job_ids:
         try:
-            await proc_app.job_manager.cancel_job_by_id_async(jid, abort=True, delete_job=True)
+            await proc_app.job_manager.cancel_job_by_id_async(jid, abort=True, delete_job=False)
             cancelled += 1
         except Exception:
             logger.warning("cancel_graphiti_job_failed", job_id=jid, exc_info=True)
@@ -223,11 +278,20 @@ async def purge_connector(
     async with tenant_scoped_connection(org_id) as conn:
         # Step 1: capture artifact UUIDs before they vanish.
         artifact_ids = await _list_artifact_ids(conn, org_id, kb_slug, connector_id)
+        resource_keys = await _list_resource_keys(conn, org_id, kb_slug, connector_id)
         log.info("connector_purge_step_artifacts_listed", count=len(artifact_ids))
 
-        # Step 2: cancel enrichment jobs (uses extra_payload.source_connector_id).
-        # Runs against procrastinate_jobs -- own pool acquire inside the helper.
-        enrichment_cancelled = await _cancel_enrichment_jobs(proc_app, connector_id)
+        # Resource keys are the primary ownership index. Artifact ids remain a
+        # one-deploy compatibility fallback for jobs queued before this contract.
+        for resource_key in resource_keys:
+            await mark_connector_resource_deleting(conn, resource_key)
+        pool = await get_pool()
+        resource_cancelled = 0
+        for resource_key in resource_keys:
+            cancellation = await cancel_jobs_by_resource_key(proc_app, pool, resource_key)
+            resource_cancelled += cancellation.jobs_cancelled
+
+        enrichment_cancelled = await _cancel_enrichment_jobs(proc_app, artifact_ids)
         log.info(
             "connector_purge_step_enrichment_jobs_cancelled",
             cancelled=enrichment_cancelled,
@@ -370,6 +434,18 @@ async def purge_connector(
 
         s3_images_deleted += janitor_s3_deleted
 
+        # Keep the row in deleting state throughout every cross-store cleanup.
+        # Once cleanup is complete, absence is the durable "deleted" fence.
+        await conn.execute(
+            """
+            DELETE FROM knowledge.connector_resource_fences
+             WHERE org_id = $1 AND kb_slug = $2 AND connector_id = $3
+            """,
+            org_id,
+            kb_slug,
+            connector_id,
+        )
+
         # NOTE: connector.sync_runs cleanup is invoked by the portal-side
         # delete-orchestration BEFORE it asks knowledge-ingest to purge. That
         # keeps cross-service auth + tenant-scoping aligned with how the rest
@@ -378,7 +454,7 @@ async def purge_connector(
         # becomes redundant (the portal_connectors row delete cascades).
 
         report = CleanupReport(
-            enrichment_jobs_cancelled=enrichment_cancelled,
+            enrichment_jobs_cancelled=enrichment_cancelled + resource_cancelled,
             graphiti_jobs_cancelled=graphiti_cancelled,
             artifacts_deleted=artifacts_deleted,
             crawl_jobs_deleted=crawl_jobs_deleted,

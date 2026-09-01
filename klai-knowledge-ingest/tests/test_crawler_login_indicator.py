@@ -200,6 +200,7 @@ class TestRunCrawlJobAuthWall:
             login_indicator_selector="#login-form",
             authenticated_context=True,
             connector_id=None,
+            resource_key=None,
         )
 
         # Verify at least one UPDATE marked the job as failed with auth_wall_detected.
@@ -292,6 +293,7 @@ class TestRunCrawlJobAuthWall:
             login_indicator_selector=None,
             authenticated_context=True,
             connector_id=None,
+            resource_key=None,
         )
 
         terminal_updates = [

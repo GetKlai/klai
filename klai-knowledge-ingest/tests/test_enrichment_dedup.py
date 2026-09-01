@@ -42,6 +42,10 @@ def _make_mock_app(side_effect=None):
     mock_app = MagicMock()
     mock_app.enrich_document_bulk = task_fn
     mock_app.enrich_document_interactive = interactive_task_fn
+    graphiti_configured = MagicMock()
+    graphiti_configured.defer_async = AsyncMock(return_value=None)
+    mock_app.ingest_graphiti_episode.configure = MagicMock(return_value=graphiti_configured)
+    mock_app.graphiti_configured = graphiti_configured
     return mock_app, task_fn, configured
 
 
@@ -54,7 +58,7 @@ def _make_mock_conn() -> MagicMock:
     return conn
 
 
-def _base_patches(mock_app, *, enrichment_enabled: bool = True):
+def _base_patches(mock_app, *, enrichment_enabled: bool = True, graphiti_enabled: bool = False):
     """Return a context manager stack with all ingest_document dependencies mocked.
 
     SPEC-TI-003-FOLLOWUP-001: ingest_document now takes conn explicitly,
@@ -147,7 +151,7 @@ def _base_patches(mock_app, *, enrichment_enabled: bool = True):
         ):
             # Disable the graphiti enqueue branch — these tests focus on
             # the enrichment-defer contract, not the FalkorDB pipeline.
-            mock_settings.graphiti_enabled = False
+            mock_settings.graphiti_enabled = graphiti_enabled
             mock_settings.chunk_size = 1500
             mock_settings.chunk_overlap = 200
             mock_settings.enrichment_enabled = True
@@ -307,6 +311,37 @@ async def test_connector_ingest_still_finishes_raw_index_as_synced():
 
     assert result["status"] == "ok"
     calls.set_ingest_status.assert_awaited_once_with(conn, "art-test", "org-1", "synced")
+
+
+@pytest.mark.asyncio
+async def test_connector_ingest_threads_resource_key_to_artifact_and_writer_jobs():
+    from knowledge_ingest.models import IngestRequest
+    from knowledge_ingest.routes.ingest import ingest_document
+
+    mock_app, _, enrichment_configured = _make_mock_app()
+    conn = _make_mock_conn()
+    req = IngestRequest(
+        org_id="org-1",
+        kb_slug="my-kb",
+        path="connector/page.md",
+        content="# Connector page\n\nContent.",
+        source_type="connector",
+        source_connector_id="connector-1",
+        resource_generation="sync-run-42",
+        content_type="plain_text",
+    )
+
+    async with _base_patches(mock_app, graphiti_enabled=True):
+        await ingest_document(conn, req)
+
+    resource_key = "connector:org-1:my-kb:connector-1:sync-run-42"
+    assert enrichment_configured.defer_async.await_args.kwargs == {
+        "artifact_id": "art-test",
+        "resource_key": resource_key,
+    }
+    assert (
+        mock_app.graphiti_configured.defer_async.await_args.kwargs["resource_key"] == resource_key
+    )
 
 
 @pytest.mark.asyncio

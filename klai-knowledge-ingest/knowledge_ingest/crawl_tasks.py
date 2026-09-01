@@ -55,6 +55,7 @@ def register_crawl_tasks(procrastinate_app: Any) -> None:
         content_selector: str | None = None,
         login_indicator_selector: str | None = None,
         connector_id: str | None = None,
+        resource_key: str | None = None,
         canary_url: str | None = None,
         canary_fingerprint: str | None = None,
         discovery_seed_url: str | None = None,
@@ -101,6 +102,7 @@ def register_crawl_tasks(procrastinate_app: Any) -> None:
             canary_url=canary_url,
             canary_fingerprint=canary_fingerprint,
             connector_id=connector_id,
+            resource_key=resource_key,
         )
 
     procrastinate_app.run_crawl = run_crawl  # type: ignore[attr-defined]

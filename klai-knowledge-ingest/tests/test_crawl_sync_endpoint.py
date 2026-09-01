@@ -112,6 +112,14 @@ def _client_with_patches(pool: MagicMock):
             client.headers.update(
                 {"X-Internal-Secret": os.environ["KNOWLEDGE_INGEST_SECRET"]},
             )
+            original_post = client.post
+
+            def post_with_generation(url, **kwargs):
+                if url == "/ingest/v1/crawl/sync" and isinstance(kwargs.get("json"), dict):
+                    kwargs["json"].setdefault("generation", "test-sync-run")
+                return original_post(url, **kwargs)
+
+            client.post = post_with_generation
             yield client, defer_async
 
 
@@ -208,6 +216,7 @@ class TestCrawlSyncEndpoint:
                 "/ingest/v1/crawl/sync",
                 json={
                     "connector_id": sent_connector_id,
+                    "generation": "sync-run-42",
                     "org_id": "42",
                     "kb_slug": "support",
                     "base_url": "https://help.voys.nl",
@@ -241,6 +250,7 @@ class TestCrawlSyncEndpoint:
         defer_mock.assert_awaited_once()
         kwargs = defer_mock.await_args.kwargs
         assert kwargs["connector_id"] == sent_connector_id
+        assert kwargs["resource_key"] == (f"connector:42:support:{sent_connector_id}:sync-run-42")
         assert "cookies" not in kwargs
         for plaintext in expected_cookies:
             # Strong guarantee: the raw cookie value never appears in any kwarg.

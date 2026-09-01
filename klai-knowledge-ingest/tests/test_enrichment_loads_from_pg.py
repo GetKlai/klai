@@ -605,16 +605,13 @@ async def test_load_and_enrich_skips_superseded_artifact():
 # ---------------------------------------------------------------------------
 
 
-def test_task_variants_have_single_arg_signature():
-    """SPEC-INGEST-CONTENT-PG-001: the public task signature must be
-    ``(artifact_id: str)`` — anything else means task-args still carry
-    content and the audit finding 1 race regression is back.
-    """
+def test_task_variants_only_carry_artifact_id_and_resource_key():
+    """Content stays in PostgreSQL; the ownership fence is the only metadata arg."""
     import inspect
 
     from knowledge_ingest import enrichment_tasks
 
     sig = inspect.signature(enrichment_tasks._load_and_enrich)
     params = list(sig.parameters.values())
-    assert len(params) == 1, f"_load_and_enrich must take 1 param, got {params}"
-    assert params[0].name == "artifact_id"
+    assert [param.name for param in params] == ["artifact_id", "resource_key"]
+    assert params[1].default is None
