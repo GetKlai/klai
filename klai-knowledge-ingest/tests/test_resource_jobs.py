@@ -1,6 +1,7 @@
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from structlog.testing import capture_logs
 
 from knowledge_ingest.queues import CRAWL_JOBS, ENRICH_BULK, GRAPHITI_BULK
 from knowledge_ingest.resource_jobs import (
@@ -85,7 +86,7 @@ async def test_live_job_lookup_filters_exact_resource_key_and_3x_live_statuses()
 async def test_cancel_jobs_preserves_rows_and_requests_abort() -> None:
     pool, _ = _pool_with_rows([{"id": 11}])
     proc_app = MagicMock()
-    proc_app.job_manager.cancel_job_by_id_async = AsyncMock()
+    proc_app.job_manager.cancel_job_by_id_async = AsyncMock(return_value=True)
 
     report = await cancel_jobs_by_resource_key(proc_app, pool, "connector:o:k:c:g")
 
@@ -93,6 +94,22 @@ async def test_cancel_jobs_preserves_rows_and_requests_abort() -> None:
     proc_app.job_manager.cancel_job_by_id_async.assert_awaited_once_with(
         11, abort=True, delete_job=False
     )
+
+
+@pytest.mark.asyncio
+async def test_cancel_jobs_counts_false_result_as_failed_to_cancel() -> None:
+    pool, _ = _pool_with_rows([{"id": 11}])
+    proc_app = MagicMock()
+    proc_app.job_manager.cancel_job_by_id_async = AsyncMock(return_value=False)
+
+    with capture_logs() as logs:
+        report = await cancel_jobs_by_resource_key(proc_app, pool, "connector:o:k:c:g")
+
+    assert (report.jobs_found, report.jobs_cancelled, report.jobs_failed_to_cancel) == (1, 0, 1)
+    event = next(log for log in logs if log["event"] == "connector_resource_jobs_cancel_requested")
+    assert event["jobs_found"] == 1
+    assert event["jobs_cancelled"] == 0
+    assert event["jobs_failed_to_cancel"] == 1
 
 
 @pytest.mark.asyncio

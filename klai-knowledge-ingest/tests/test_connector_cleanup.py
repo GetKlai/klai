@@ -14,7 +14,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from knowledge_ingest.connector_cleanup import CleanupReport, _list_resource_keys, purge_connector
-from knowledge_ingest.resource_jobs import connector_resource_key
+from knowledge_ingest.queues import CRAWL_JOBS, ENRICH_BULK, GRAPHITI_BULK
+from knowledge_ingest.resource_jobs import ResourceJobCancellation, connector_resource_key
 
 
 @pytest.fixture
@@ -28,19 +29,32 @@ def mocked_proc_app() -> MagicMock:
 
 @pytest.mark.asyncio
 async def test_purge_connector_orders_steps_correctly(mocked_proc_app: MagicMock) -> None:
-    """Verify the canonical order: snapshot artifact-ids -> cancel enrichment ->
+    """Verify the canonical order: snapshot resource keys -> cancel enrichment ->
     cancel graphiti -> snapshot episode-ids -> delete pg artifacts ->
     delete pg crawl_jobs -> delete falkor episodes -> delete qdrant.
 
-    Failure to preserve this order = regrow bug. Specifically, snapshotting
-    artifact-ids must happen BEFORE artifacts deletion, otherwise the
-    graphiti-cancel step has no IDs to filter procrastinate-jobs by.
+    Failure to preserve this order = regrow bug. Resource-key cancellation
+    must happen before deleting connector-owned data.
     """
     call_order: list[str] = []
 
     async def fake_list_artifact_ids(*_a: object, **_kw: object) -> list[str]:
         call_order.append("list_artifact_ids")
         return ["artifact-1", "artifact-2"]
+
+    async def fake_list_resource_keys(*_a: object, **_kw: object) -> list[str]:
+        call_order.append("list_resource_keys")
+        return ["connector:org-zid:support:conn-uuid:generation-1"]
+
+    async def fake_cancel_jobs(
+        *_a: object, queues: tuple[str, ...], **_kw: object
+    ) -> ResourceJobCancellation:
+        if queues == (CRAWL_JOBS, ENRICH_BULK):
+            call_order.append("cancel_enrichment_jobs")
+            return ResourceJobCancellation(3, 2, 1)
+        assert queues == (GRAPHITI_BULK,)
+        call_order.append("cancel_graphiti_jobs")
+        return ResourceJobCancellation(1, 1, 0)
 
     async def fake_get_pool() -> MagicMock:
         # No-op pool: the cancel-jobs step uses raw SQL via the pool, but
@@ -95,6 +109,14 @@ async def test_purge_connector_orders_steps_correctly(mocked_proc_app: MagicMock
         patch(
             "knowledge_ingest.connector_cleanup._list_artifact_ids",
             side_effect=fake_list_artifact_ids,
+        ),
+        patch(
+            "knowledge_ingest.connector_cleanup._list_resource_keys",
+            side_effect=fake_list_resource_keys,
+        ),
+        patch(
+            "knowledge_ingest.connector_cleanup.cancel_jobs_by_resource_key",
+            side_effect=fake_cancel_jobs,
         ),
         patch(
             "knowledge_ingest.connector_cleanup.get_pool",
@@ -157,6 +179,9 @@ async def test_purge_connector_orders_steps_correctly(mocked_proc_app: MagicMock
     # SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-05 + REQ-06.
     assert call_order == [
         "list_artifact_ids",
+        "list_resource_keys",
+        "cancel_enrichment_jobs",
+        "cancel_graphiti_jobs",
         "get_connector_episode_ids",
         "get_orphan_image_keys_for_connector",
         "delete_connector_artifacts",
@@ -170,6 +195,8 @@ async def test_purge_connector_orders_steps_correctly(mocked_proc_app: MagicMock
     assert report.artifacts_deleted == 2
     assert report.crawl_jobs_deleted == 1
     assert report.falkor_episodes_deleted == 1
+    assert report.enrichment_jobs_cancelled == 2
+    assert report.graphiti_jobs_cancelled == 1
 
 
 @pytest.mark.asyncio

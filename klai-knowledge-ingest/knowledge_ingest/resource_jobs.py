@@ -92,12 +92,15 @@ async def cancel_jobs_by_resource_key(
     failed = 0
     for job_id in job_ids:
         try:
-            await proc_app.job_manager.cancel_job_by_id_async(
+            was_cancelled = await proc_app.job_manager.cancel_job_by_id_async(
                 job_id,
                 abort=True,
                 delete_job=False,
             )
-            cancelled += 1
+            if was_cancelled:
+                cancelled += 1
+            else:
+                failed += 1
         except Exception:
             failed += 1
             logger.warning(

@@ -73,7 +73,7 @@ Branch: `fix/SPEC-CONNECTOR-CANCEL-001`
 2. Add `cancel_jobs_by_resource_key(proc_app, resource_key, queues)` using `cancel_job_by_id_async(..., abort=True, delete_job=False)`.
 3. Filter `status IN ('todo', 'doing')` (Procrastinate 3.x: `aborting` is legacy/unused; abort-requested jobs stay `doing`).
 4. Replace connector cleanup's artifact-id/json-path cancellation with resource-key cancellation where payloads exist. Note: the current `_cancel_enrichment_jobs` filter on `args->'extra_payload'->>'source_connector_id'` is dead code (enrichment args carry only `artifact_id` since SPEC-INGEST-CONTENT-PG-001) — remove it, don't preserve it.
-5. Keep a compatibility fallback for old queued jobs that do not yet carry `resource_key` during rollout: match enrichment/graphiti jobs via `args->>'artifact_id' = ANY(<snapshot ids>)` using the artifact-id snapshot that purge already takes. Remove the fallback in a follow-up after one deploy window.
+5. [x] Keep a compatibility fallback for old queued jobs that do not yet carry `resource_key` during rollout: match enrichment/graphiti jobs via `args->>'artifact_id' = ANY(<snapshot ids>)` using the artifact-id snapshot that purge already takes. Removed on 2026-09-01 after production verification found zero live legacy jobs without `resource_key`.
 
 **Exit:** cancellation is exact-match on `args->>'resource_key'`, not `args::text LIKE`.
 
