@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -49,6 +49,14 @@ class TestRetrieveEndpoint:
         import logging
 
         caplog.set_level(logging.INFO)
+        observed_step_latencies: dict[str, list[float]] = {}
+
+        def capture_step_metric(*, step: str) -> MagicMock:
+            metric = MagicMock()
+            metric.observe.side_effect = lambda value: observed_step_latencies.setdefault(
+                step, []
+            ).append(value)
+            return metric
 
         with (
             patch(
@@ -118,6 +126,10 @@ class TestRetrieveEndpoint:
                 "retrieval_api.api.retrieve.build_evidence_pack",
                 wraps=build_evidence_pack,
             ) as mock_evidence_pack,
+            patch(
+                "retrieval_api.api.retrieve.step_latency_seconds.labels",
+                side_effect=capture_step_metric,
+            ),
         ):
             # Enable reranker so the rerank mock is actually called
             mock_settings.reranker_enabled = True
@@ -201,8 +213,15 @@ class TestRetrieveEndpoint:
             "embed",
             "gate",
             "router",
+            "qdrant_search",
             "graph_search",
             "link_expand",
+            "rerank",
+            "quality_floor",
+            "source_select",
+            "quality_boost",
+            "parent_lookup",
+            "response_build",
             "confidence_band",
             "total",
         ]
@@ -212,10 +231,28 @@ class TestRetrieveEndpoint:
             "duration_ms": 0.0,
             "skipped_reason": "disabled_by_config",
         }
-        assert trace_steps[4]["status"] == "skipped"
-        assert trace_steps[4]["skipped_reason"] == "disabled_by_config"
         assert trace_steps[5]["status"] == "skipped"
-        assert trace_steps[5]["skipped_reason"] == "no_candidate_urls"
+        assert trace_steps[5]["skipped_reason"] == "disabled_by_config"
+        assert trace_steps[6]["status"] == "skipped"
+        assert trace_steps[6]["skipped_reason"] == "no_candidate_urls"
+        rerank_step = trace_steps[7]
+        assert rerank_step["candidates_in"] == 1
+        assert rerank_step["candidates_out"] == 1
+        assert rerank_step["link_expand_boost_enabled"] is False
+        assert rerank_step["link_expand_boost_factor"] == 1.0
+        assert rerank_step["link_expand_boosted_count"] == 0
+        steps_by_name = {step["name"]: step for step in trace_steps}
+        for trace_name, metric_name in (
+            ("coreference", "coref"),
+            ("embed", "embed"),
+            ("qdrant_search", "qdrant"),
+            ("link_expand", "link_expand"),
+            ("rerank", "rerank"),
+            ("total", "total"),
+        ):
+            assert observed_step_latencies[metric_name] == [
+                pytest.approx(steps_by_name[trace_name]["duration_ms"] / 1000, abs=6e-7)
+            ]
         assert "coreference_rewrite" not in decision_record.msg
 
     def test_retrieve_passes_effective_telemetry_level_to_coreference(
@@ -733,6 +770,15 @@ class TestGraphMetadata:
         import logging
 
         caplog.set_level(logging.INFO)
+        observed_step_latencies: dict[str, list[float]] = {}
+
+        def capture_step_metric(*, step: str) -> MagicMock:
+            metric = MagicMock()
+            metric.observe.side_effect = lambda value: observed_step_latencies.setdefault(
+                step, []
+            ).append(value)
+            return metric
+
         graph_chunk = {
             "chunk_id": "graph:edge-1",
             "text": "Graph edge fact",
@@ -771,6 +817,10 @@ class TestGraphMetadata:
                 new_callable=AsyncMock,
                 return_value=[graph_chunk],
             ),
+            patch(
+                "retrieval_api.api.retrieve.step_latency_seconds.labels",
+                side_effect=capture_step_metric,
+            ),
             patch("retrieval_api.api.retrieve.settings") as mock_settings,
         ):
             mock_settings.retrieval_candidates = 60
@@ -802,6 +852,10 @@ class TestGraphMetadata:
                 f"Record attrs: {rec.__dict__}"
             )
         assert "graph:edge-1" in rec_attrs
+        graph_step = next(step for step in rec.msg["trace_steps"] if step["name"] == "graph_search")
+        assert observed_step_latencies["graph"] == [
+            pytest.approx(graph_step["duration_ms"] / 1000, abs=6e-7)
+        ]
 
 
 class TestRetrievalTraceEndpoint:
@@ -937,13 +991,18 @@ class TestLinkExpandInstrumentation:
     internal state into the response.
     """
 
-    def test_link_expanded_flag_does_not_leak_to_response(self, client, sample_retrieve_request):
+    def test_link_expanded_flag_does_not_leak_and_boost_is_traced(
+        self, client, sample_retrieve_request, caplog
+    ):
         """Internal `_link_expanded` flag MUST NOT appear in any ChunkResult field.
 
         ChunkResult is a Pydantic model with explicit fields. The build loop in
         retrieve.py:325-360 reads only listed keys, so the underscore-prefixed
         flag stays internal. This test pins that contract.
         """
+        import logging
+
+        caplog.set_level(logging.INFO)
         seed_chunk = {
             "chunk_id": "seed-1",
             "text": "Seed text",
@@ -1034,7 +1093,7 @@ class TestLinkExpandInstrumentation:
             # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1 / REQ-3
             mock_settings.confidence_band_high_threshold = 0.60
             mock_settings.confidence_band_low_threshold = 0.30
-            mock_settings.link_expand_score_boost = 1.00
+            mock_settings.link_expand_score_boost = 1.20
             resp = client.post("/retrieve", json=sample_retrieve_request)
 
         assert resp.status_code == 200
@@ -1046,6 +1105,11 @@ class TestLinkExpandInstrumentation:
                 f"Internal flag leaked into response: {chunk}. "
                 "F3 phase 1 contract: instrumentation MUST stay internal."
             )
+        record = next(r for r in caplog.records if "retrieval_decision_record" in r.getMessage())
+        rerank_step = next(step for step in record.msg["trace_steps"] if step["name"] == "rerank")
+        assert rerank_step["link_expand_boost_enabled"] is True
+        assert rerank_step["link_expand_boost_factor"] == 1.2
+        assert rerank_step["link_expand_boosted_count"] == 1
 
     def test_decision_record_link_expand_block_emitted(
         self, client, sample_retrieve_request, caplog
