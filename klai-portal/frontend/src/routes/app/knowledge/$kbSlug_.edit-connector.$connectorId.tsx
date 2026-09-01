@@ -8,6 +8,7 @@ import {
   CheckCircle2, Loader2, Sparkles, Settings, ChevronDown, ChevronRight, KeyRound,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Alert } from '@/components/ui/alert'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { StepIndicator, type StepItem } from '@/components/ui/step-indicator'
@@ -973,19 +974,20 @@ function EditConnectorPage() {
                     </div>
                   )}
                   {requiresLogin === true && authProbeResult?.classification === 'auth_ok' && (
-                    <div className="flex items-center justify-between rounded-lg border border-[var(--color-success)]/30 bg-[var(--color-success)]/5 px-4 py-3">
-                      <div className="flex items-center gap-2 text-xs text-[var(--color-success-text)]">
-                        <CheckCircle2 className="h-3.5 w-3.5" />
-                        {wcAuthMode === 'saved' ? 'Logged in - saved authentication verified' : 'Logged in - cookies verified'}
+                    <Alert variant="success" size="sm">
+                      <div className="flex items-center justify-between">
+                        <span>
+                          {wcAuthMode === 'saved' ? 'Logged in - saved authentication verified' : 'Logged in - cookies verified'}
+                        </span>
+                        <button
+                          type="button"
+                          className="text-xs text-gray-600 hover:text-gray-900"
+                          onClick={() => setWcStep('auth-setup')}
+                        >
+                          {wcAuthMode === 'saved' ? 'Change authentication' : 'Edit cookies'}
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        className="text-xs text-gray-600 hover:text-gray-900"
-                        onClick={() => setWcStep('auth-setup')}
-                      >
-                        {wcAuthMode === 'saved' ? 'Change authentication' : 'Edit cookies'}
-                      </button>
-                    </div>
+                    </Alert>
                   )}
 
                   {/* Preview URL */}
