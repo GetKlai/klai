@@ -182,6 +182,41 @@ class TestRetrieveEndpoint:
         assert "top_item_chunk_ids" in decision_attrs
         assert decision_record.msg["confidence_band"] == "high"
         assert "confidence_band_corroborated" not in decision_record.msg
+        assert [
+            (chunk["chunk_id"], chunk["score"], chunk["reranker_score"]) for chunk in data["chunks"]
+        ] == [("c1", 0.9, 0.95)]
+        assert {
+            key: value
+            for key, value in data["metadata"].items()
+            if key not in {"retrieval_ms", "rerank_ms"}
+        } == {
+            "candidates_retrieved": 1,
+            "reranked_to": 1,
+            "graph_results_count": 0,
+            "graph_search_ms": None,
+        }
+        trace_steps = decision_record.msg["trace_steps"]
+        assert [step["name"] for step in trace_steps] == [
+            "coreference",
+            "embed",
+            "gate",
+            "router",
+            "graph_search",
+            "link_expand",
+            "confidence_band",
+            "total",
+        ]
+        assert trace_steps[2] == {
+            "name": "gate",
+            "status": "skipped",
+            "duration_ms": 0.0,
+            "skipped_reason": "disabled_by_config",
+        }
+        assert trace_steps[4]["status"] == "skipped"
+        assert trace_steps[4]["skipped_reason"] == "disabled_by_config"
+        assert trace_steps[5]["status"] == "skipped"
+        assert trace_steps[5]["skipped_reason"] == "no_candidate_urls"
+        assert "coreference_rewrite" not in decision_record.msg
 
     def test_retrieve_passes_effective_telemetry_level_to_coreference(
         self, client, sample_retrieve_request
@@ -767,6 +802,133 @@ class TestGraphMetadata:
                 f"Record attrs: {rec.__dict__}"
             )
         assert "graph:edge-1" in rec_attrs
+
+
+class TestRetrievalTraceEndpoint:
+    """Endpoint contracts that cannot be proven by the trace helper alone."""
+
+    def test_graph_search_error_is_safe_and_response_stays_qdrant_based(
+        self, client, sample_retrieve_request, caplog
+    ):
+        import logging
+
+        caplog.set_level(logging.INFO)
+        qdrant_chunk = {
+            "chunk_id": "qdrant-1",
+            "text": "Qdrant result",
+            "score": 0.9,
+            "artifact_id": "a1",
+            "content_type": "policy",
+            "context_prefix": None,
+            "scope": "org",
+            "valid_at": None,
+            "invalid_at": None,
+            "ingested_at": None,
+            "assertion_mode": None,
+        }
+        with (
+            patch(
+                "retrieval_api.api.retrieve.coreference.resolve",
+                new_callable=AsyncMock,
+                return_value="resolved query",
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_single",
+                new_callable=AsyncMock,
+                return_value=[0.1, 0.2],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_sparse",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "retrieval_api.api.retrieve.search.hybrid_search",
+                new_callable=AsyncMock,
+                return_value=[qdrant_chunk],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.graph_search.search",
+                new_callable=AsyncMock,
+                side_effect=TimeoutError("private query text"),
+            ),
+            patch("retrieval_api.api.retrieve.settings") as mock_settings,
+        ):
+            mock_settings.ranking_contract_mode = "active"
+            mock_settings.retrieval_candidates = 60
+            mock_settings.reranker_enabled = False
+            mock_settings.graphiti_enabled = True
+            mock_settings.link_expand_enabled = False
+            mock_settings.link_expand_score_boost = 1.0
+            mock_settings.source_quota_enabled = False
+            mock_settings.router_enabled = False
+            mock_settings.retrieval_quality_floor = 0.05
+            mock_settings.confidence_band_high_threshold = 0.60
+            mock_settings.confidence_band_low_threshold = 0.30
+            response = client.post("/retrieve", json=sample_retrieve_request)
+
+        assert response.status_code == 200
+        assert [chunk["chunk_id"] for chunk in response.json()["chunks"]] == ["qdrant-1"]
+        record = next(
+            item for item in caplog.records if "retrieval_decision_record" in item.getMessage()
+        )
+        graph_step = next(
+            step for step in record.msg["trace_steps"] if step["name"] == "graph_search"
+        )
+        assert graph_step["status"] == "error"
+        assert graph_step["error_type"] == "TimeoutError"
+        assert "private query text" not in repr(graph_step)
+        assert "traceback" not in repr(graph_step).lower()
+
+    def test_trace_render_failure_does_not_fail_retrieve(
+        self, client, sample_retrieve_request, caplog
+    ):
+        import logging
+
+        caplog.set_level(logging.ERROR)
+        with (
+            patch(
+                "retrieval_api.api.retrieve.coreference.resolve",
+                new_callable=AsyncMock,
+                return_value="resolved query",
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_single",
+                new_callable=AsyncMock,
+                return_value=[0.1, 0.2],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_sparse",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "retrieval_api.api.retrieve.search.hybrid_search",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.RetrievalTrace.to_decision_record",
+                side_effect=RuntimeError("render failed"),
+            ),
+            patch("retrieval_api.api.retrieve.settings") as mock_settings,
+        ):
+            mock_settings.ranking_contract_mode = "active"
+            mock_settings.retrieval_candidates = 60
+            mock_settings.reranker_enabled = False
+            mock_settings.graphiti_enabled = False
+            mock_settings.link_expand_enabled = False
+            mock_settings.link_expand_score_boost = 1.0
+            mock_settings.source_quota_enabled = False
+            mock_settings.router_enabled = False
+            mock_settings.retrieval_quality_floor = 0.05
+            mock_settings.confidence_band_high_threshold = 0.60
+            mock_settings.confidence_band_low_threshold = 0.30
+            response = client.post("/retrieve", json=sample_retrieve_request)
+
+        assert response.status_code == 200
+        assert response.json()["retrieval_bypassed"] is False
+        assert any("retrieval_trace_emit_failed" in item.getMessage() for item in caplog.records)
 
 
 class TestLinkExpandInstrumentation:
