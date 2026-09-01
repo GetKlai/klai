@@ -23,6 +23,7 @@ references:
 
 | Datum | Versie | Wijziging |
 |-------|--------|-----------|
+| 2026-09-01 | 0.1.1 | Implementation note: op origin/main zijn de gate- en evidence-tier-stappen inmiddels uit de pipeline verwijderd (commit 2ce085277, "remove retired retrieval experiments"). De trace rendert voor die stappen compatibiliteitsdefaults / een skipped step; er is geen gate-gedrag heringevoerd. AC-3 is daardoor niet runtime-bereikbaar en geldt als vervallen zolang de gate retired is. |
 | 2026-05-08 | 0.1.0 | Initial draft. Introduceert `RetrievalTrace` en kleine step wrappers rond `/retrieve` als incrementele vervanging voor ad-hoc mutaties op `decision_record`, met behoud van het bestaande `retrieval_decision_record` logcontract. |
 
 ---
