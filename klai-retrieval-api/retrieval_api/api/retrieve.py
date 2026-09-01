@@ -646,30 +646,32 @@ async def retrieve(
     if settings.graphiti_enabled:
         t_graph = time.perf_counter()
         graph_task = asyncio.create_task(graph_search.search(query_resolved, req.org_id, top_k=20))
-    else:
-        trace.mark_skipped("graph_search", "disabled_by_config")
 
-    raw_results = await qdrant_coro
-    qdrant_ms = (time.perf_counter() - t_qdrant) * 1000
-    step_latency_seconds.labels(step="qdrant").observe(time.perf_counter() - t_qdrant)
+    async with trace.step("qdrant_search", started_at=t_qdrant) as qdrant_step:
+        raw_results = await qdrant_coro
+        qdrant_step.meta("candidates_returned", len(raw_results))
+    qdrant_ms = qdrant_step.duration_ms
+    step_latency_seconds.labels(step="qdrant").observe(qdrant_ms / 1000)
     decision_record["search_ms"] = round(qdrant_ms, 1)
 
     if graph_task is not None and t_graph is not None:
         try:
             async with trace.step("graph_search", started_at=t_graph) as graph_step:
                 graph_results = await graph_task
-                graph_search_ms = (time.perf_counter() - t_graph) * 1000
-                step_latency_seconds.labels(step="graph").observe(graph_search_ms / 1000)
                 graph_results_count = len(graph_results)
                 graph_step.meta("candidates_returned", graph_results_count)
                 if graph_results:
                     await _label_graph_results(graph_results, req)
                     graph_candidate_ids = {r["chunk_id"] for r in graph_results}
                     raw_results = _rrf_merge(raw_results, graph_results)
+            graph_search_ms = graph_step.duration_ms
+            step_latency_seconds.labels(step="graph").observe(graph_search_ms / 1000)
         except Exception:
             # SPEC-SEC-HYGIENE-001 REQ-43.3: exc_info=True preserves the
             # traceback that the previous `error=str(exc)` dropped (TRY401).
             logger.warning("Graph search task failed", exc_info=True)
+    else:
+        trace.mark_skipped("graph_search", "disabled_by_config")
 
     candidates_retrieved = len(raw_results)
     decision_record["search_candidates_count"] = candidates_retrieved
@@ -721,7 +723,7 @@ async def retrieve(
                     c["_link_expanded"] = True
                 raw_results = raw_results + new_chunks
 
-        link_expand_ms = (time.perf_counter() - t_expand) * 1000
+        link_expand_ms = link_expand_step.duration_ms
         step_latency_seconds.labels(step="link_expand").observe(link_expand_ms / 1000)
         logger.debug(
             "link_expand",
@@ -758,8 +760,11 @@ async def retrieve(
         t_rerank = time.perf_counter()
         rerank_input = raw_results[: settings.reranker_candidates]
         rerank_top_n = min(len(rerank_input), max(req.top_k, req.top_k * 3))
-        reranked = await reranker.rerank(query_resolved, rerank_input, rerank_top_n)
-        rerank_ms = (time.perf_counter() - t_rerank) * 1000
+        async with trace.step("rerank", started_at=t_rerank) as rerank_step:
+            rerank_step.meta("candidates_in", len(rerank_input))
+            reranked = await reranker.rerank(query_resolved, rerank_input, rerank_top_n)
+            rerank_step.meta("candidates_out", len(reranked))
+        rerank_ms = rerank_step.duration_ms
         step_latency_seconds.labels(step="rerank").observe(rerank_ms / 1000)
         reranked_to = len(reranked)
         decision_record["rerank_ms"] = round(rerank_ms, 1)
@@ -769,6 +774,12 @@ async def retrieve(
     else:
         reranked = raw_results[: req.top_k]
         reranked_to = len(reranked)
+        rerank_step = trace.mark_skipped(
+            "rerank",
+            "no_candidates" if not raw_results else "reranker_disabled",
+            candidates_in=len(raw_results),
+            candidates_out=reranked_to,
+        )
 
     # REQ-RANK-01/04: in active mode every serving chunk gets the single
     # ranking truth; in shadow mode the field stays ABSENT on serving
@@ -787,11 +798,27 @@ async def retrieve(
     # reranker boost. Applied AFTER rerank and BEFORE quality-floor so
     # expanded chunks get a fair shot at surviving source-aware-select.
     # Default boost=1.00 is a no-op until operator tunes the env var.
+    link_expand_boost_enabled = (
+        settings.link_expand_enabled and settings.link_expand_score_boost > 1.0
+    )
+    link_expand_boosted_count = sum(
+        1
+        for chunk in reranked
+        if link_expand_boost_enabled
+        and chunk.get("_link_expanded")
+        and (
+            isinstance(chunk.get("final_rank_score"), (int, float))
+            or isinstance(chunk.get("reranker_score"), (int, float))
+        )
+    )
     reranked = _apply_link_expand_boost(
         reranked,
         boost=settings.link_expand_score_boost,
         enabled=settings.link_expand_enabled,
     )
+    rerank_step.meta("link_expand_boost_enabled", link_expand_boost_enabled)
+    rerank_step.meta("link_expand_boost_factor", settings.link_expand_score_boost)
+    rerank_step.meta("link_expand_boosted_count", link_expand_boosted_count)
     if settings.reranker_enabled:
         reranked, page_context_boosted = _apply_page_context_boost(
             reranked,
@@ -807,9 +834,13 @@ async def retrieve(
     # could burn a diversity slot. The default floor (0.05) cannot
     # accidentally filter neutral 0.5 chunks; an operator must set the
     # threshold > 0.5 explicitly.
-    reranked, quality_floor_filtered = filter_quality_floor(
-        reranked, floor=settings.retrieval_quality_floor
-    )
+    with trace.step("quality_floor") as quality_floor_step:
+        quality_floor_step.meta("candidates_in", len(reranked))
+        reranked, quality_floor_filtered = filter_quality_floor(
+            reranked, floor=settings.retrieval_quality_floor
+        )
+        quality_floor_step.meta("candidates_out", len(reranked))
+        quality_floor_step.meta("filtered_count", quality_floor_filtered)
     decision_record["quality_floor_filtered"] = quality_floor_filtered
     if quality_floor_filtered > 0:
         # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-08 — labelled by org_id so
@@ -826,34 +857,51 @@ async def retrieve(
     excluded_preferred_kb_slugs = (
         {personal_kb_slug(req.user_id)} if req.scope == "both" and req.user_id else None
     )
-    if settings.source_quota_enabled:
-        reranked, source_meta = source_aware_select(
-            reranked,
-            top_n=req.top_k,
-            max_per_source=settings.source_quota_max_per_source,
-            preferred_labels=router_selected,
-            preferred_kb_slugs=set(req.kb_slugs) if req.kb_slugs else None,
-            excluded_preferred_kb_slugs=excluded_preferred_kb_slugs,
-            source_preference_boost=settings.source_preference_boost,
-        )
-    else:
-        source_meta = {
-            "source_select_mode": "disabled",
-            "source_counts": {},
-            "preference_applied": False,
-            "preferred_labels": [],
-            "boost": settings.source_preference_boost,
-            "pack_without_preference": [],
-            "suppressed_count": 0,
-            "max_score_inversion": 0.0,
-        }
+    with trace.step("source_select") as source_select_step:
+        source_select_step.meta("candidates_in", len(reranked))
+        if settings.source_quota_enabled:
+            reranked, source_meta = source_aware_select(
+                reranked,
+                top_n=req.top_k,
+                max_per_source=settings.source_quota_max_per_source,
+                preferred_labels=router_selected,
+                preferred_kb_slugs=set(req.kb_slugs) if req.kb_slugs else None,
+                excluded_preferred_kb_slugs=excluded_preferred_kb_slugs,
+                source_preference_boost=settings.source_preference_boost,
+            )
+        else:
+            source_select_step.skip("disabled_by_config")
+            source_meta = {
+                "source_select_mode": "disabled",
+                "source_counts": {},
+                "preference_applied": False,
+                "preferred_labels": [],
+                "boost": settings.source_preference_boost,
+                "pack_without_preference": [],
+                "suppressed_count": 0,
+                "max_score_inversion": 0.0,
+            }
+        source_select_step.meta("candidates_out", len(reranked))
+        source_select_step.meta("mode", source_meta["source_select_mode"])
+        source_select_step.meta("preference_applied", source_meta["preference_applied"])
+        source_select_step.meta("suppressed_count", source_meta["suppressed_count"])
+        source_select_step.meta("max_score_inversion", source_meta["max_score_inversion"])
     decision_record["source_select"] = source_meta
 
     # 5c. Quality score boost (SPEC-KB-015 REQ-KB-015-19,20,21)
-    reranked = quality_boost(reranked, contract_active=ranking_contract_mode == "active")
-    decision_record["quality_boost_applied"] = any(
-        r.get("feedback_count", 0) >= 3 for r in reranked
-    )
+    with trace.step("quality_boost") as quality_boost_step:
+        quality_boost_step.meta("candidates_in", len(reranked))
+        reranked = quality_boost(reranked, contract_active=ranking_contract_mode == "active")
+        quality_boost_applied = any(r.get("feedback_count", 0) >= 3 for r in reranked)
+        quality_boosted_count = sum(
+            1
+            for chunk in reranked
+            if isinstance(chunk.get("feedback_count", 0), (int, float))
+            and chunk.get("feedback_count", 0) >= 3
+        )
+        quality_boost_step.meta("candidates_out", len(reranked))
+        quality_boost_step.meta("boosted_count", quality_boosted_count)
+    decision_record["quality_boost_applied"] = quality_boost_applied
     if ranking_shadow_preview is not None:
         # REQ-RANK-04 shadow diff: replay the FULL post-rerank pipeline
         # (same steps, same settings) on the preview so "new" is what
@@ -939,49 +987,56 @@ async def retrieve(
     from retrieval_api.services import parent_lookup
 
     parent_id_per_serving: list[int | None] = [r.get("parent_chunk_id") for r in serving]
-    parent_text_by_id = await parent_lookup.fetch_parents(
-        pid for pid in parent_id_per_serving if pid is not None
-    )
+    parent_ids_requested = [pid for pid in parent_id_per_serving if pid is not None]
+    async with trace.step("parent_lookup") as parent_lookup_step:
+        parent_text_by_id = await parent_lookup.fetch_parents(parent_ids_requested)
+        parent_lookup_step.meta("parent_ids_requested", len(parent_ids_requested))
+        parent_lookup_step.meta("parents_found", len(parent_text_by_id))
 
     # 7. Build ChunkResult objects (with parent-text swap when available)
     chunks_out = []
-    for r in serving:
-        pid = r.get("parent_chunk_id")
-        if pid is not None and pid in parent_text_by_id:
-            display_text = parent_text_by_id[pid]
-            is_parent = True
-        else:
-            display_text = r["text"]
-            is_parent = False
-        chunks_out.append(
-            ChunkResult(
-                chunk_id=r["chunk_id"],
-                artifact_id=r.get("artifact_id"),
-                content_type=r.get("content_type"),
-                text=display_text,
-                context_prefix=r.get("context_prefix"),
-                heading_path=r.get("heading_path"),
-                score=r.get("final_rank_score", r["score"])
-                if ranking_contract_mode == "active"
-                else r["score"],
-                reranker_score=r.get("reranker_score"),
-                scope=r.get("scope"),
-                valid_at=r.get("valid_at"),
-                invalid_at=r.get("invalid_at"),
-                ingested_at=r.get("ingested_at"),
-                assertion_mode=r.get("assertion_mode"),
-                source_ref=r.get("source_ref"),
-                source_connector_id=r.get("source_connector_id"),
-                source_url=r.get("source_url"),
-                kb_slug=r.get("kb_slug"),
-                source_label=r.get("source_label"),
-                title=r.get("title"),
-                original_filename=r.get("original_filename"),
-                image_urls=payload_list(r, "image_urls") or None,
-                entity_names=payload_list(r, "entity_names") or None,
-                is_parent_text=is_parent,
+    parent_text_chunks = 0
+    with trace.step("response_build") as response_build_step:
+        for r in serving:
+            pid = r.get("parent_chunk_id")
+            if pid is not None and pid in parent_text_by_id:
+                display_text = parent_text_by_id[pid]
+                is_parent = True
+                parent_text_chunks += 1
+            else:
+                display_text = r["text"]
+                is_parent = False
+            chunks_out.append(
+                ChunkResult(
+                    chunk_id=r["chunk_id"],
+                    artifact_id=r.get("artifact_id"),
+                    content_type=r.get("content_type"),
+                    text=display_text,
+                    context_prefix=r.get("context_prefix"),
+                    heading_path=r.get("heading_path"),
+                    score=r.get("final_rank_score", r["score"])
+                    if ranking_contract_mode == "active"
+                    else r["score"],
+                    reranker_score=r.get("reranker_score"),
+                    scope=r.get("scope"),
+                    valid_at=r.get("valid_at"),
+                    invalid_at=r.get("invalid_at"),
+                    ingested_at=r.get("ingested_at"),
+                    assertion_mode=r.get("assertion_mode"),
+                    source_ref=r.get("source_ref"),
+                    source_connector_id=r.get("source_connector_id"),
+                    source_url=r.get("source_url"),
+                    kb_slug=r.get("kb_slug"),
+                    source_label=r.get("source_label"),
+                    title=r.get("title"),
+                    original_filename=r.get("original_filename"),
+                    image_urls=payload_list(r, "image_urls") or None,
+                    entity_names=payload_list(r, "entity_names") or None,
+                    is_parent_text=is_parent,
+                )
             )
-        )
+        response_build_step.meta("chunks_built", len(chunks_out))
+        response_build_step.meta("parent_text_chunks", parent_text_chunks)
 
     retrieval_ms = (time.perf_counter() - t0) * 1000
     step_latency_seconds.labels(step="total").observe(retrieval_ms / 1000)

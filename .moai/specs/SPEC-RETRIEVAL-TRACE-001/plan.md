@@ -2,7 +2,7 @@
 id: SPEC-RETRIEVAL-TRACE-001
 plan_for: spec.md
 created: 2026-05-08
-updated: 2026-05-08
+updated: 2026-09-01
 author: Mark Vletter
 ---
 
@@ -117,26 +117,25 @@ Migrate optional steps where explicit skip/error state is highest value:
 
 Preserve all existing log lines and metrics. The trace adds shape; it does not replace operational warnings yet.
 
-**This unit is the end of the first implementation PR.** Units 5 and 6 below are an explicit follow-up PR, to start only after Units 1-4 have landed and proven stable.
+**This unit was the end of the first implementation PR.** Units 5 and the metrics part of Unit 6 were completed after Units 1-4 landed and proved stable.
 
-## 5. Unit 5 -- Candidate-transform steps (FOLLOW-UP PR — not in first implementation)
+## 5. Unit 5 -- Candidate-transform steps (DONE)
 
-Wrap the remaining candidate-transform sections:
+Wrapped the remaining live candidate-transform sections:
 
 - `qdrant_search`
 - `rerank`
 - `quality_floor`
 - `source_select`
 - `quality_boost`
-- `evidence_tier`
 - `parent_lookup`
 - `response_build`
 
-At this point remove duplicated timing variables only when the trace value is already proven by tests. Do not combine behavioral refactors with this unit.
+The retired `evidence_tier` experiment was not reintroduced. Duplicated timing variables were removed only where tests prove the trace and metric use the same measured duration. No behavioral refactor was combined with this unit.
 
-## 6. Unit 6 -- Metrics cleanup and docs (docs part lands with the first PR; metrics-dedup part follows Unit 5)
+## 6. Unit 6 -- Metrics cleanup and docs (DONE)
 
-Where a step duration is recorded in both trace and `step_latency_seconds`, use a single measured duration for both. Do not rename metrics or labels.
+Where a step duration is recorded in both trace and `step_latency_seconds`, the implementation now uses a single measured duration for both. No metrics or labels were renamed.
 
 Add a short PR note or code comment near `RetrievalTrace`:
 
@@ -163,14 +162,14 @@ No migrations, no frontend changes, no LiteLLM-hook changes, no deploy config ch
 
 ## 8. Pre-merge checklist
 
-- [ ] Existing flat `retrieval_decision_record` keys preserved.
-- [ ] `trace_steps` present and ordered in at least one happy-path log assertion.
+- [x] Existing flat `retrieval_decision_record` keys preserved.
+- [x] `trace_steps` present and ordered in at least one happy-path log assertion.
 - [ ] Gate-bypass path marks downstream retrieval steps skipped.
-- [ ] Graph-search fail-open path records `status=error` and still returns response.
-- [ ] `telemetry_level=shadow` and `off` render no raw/resolved query text.
-- [ ] Existing Prometheus metric names and labels unchanged.
-- [ ] Focused retrieval-api tests pass.
-- [ ] PR description states this is observability-only and includes no ranking behavior change.
+- [x] Graph-search fail-open path records `status=error` and still returns response.
+- [x] `telemetry_level=shadow` and `off` render no raw/resolved query text.
+- [x] Existing Prometheus metric names and labels unchanged.
+- [x] Focused retrieval-api tests pass.
+- [x] PR description states this is observability-only and includes no ranking behavior change.
 
 ## 9. Rollback
 

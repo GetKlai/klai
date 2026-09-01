@@ -88,6 +88,53 @@ def test_non_full_render_removes_top_level_and_step_content(level: str) -> None:
     assert record["retention_class"] == "metadata"
 
 
+@pytest.mark.parametrize(
+    ("level", "expected_retention", "content_expected"),
+    [
+        ("off", "metadata", False),
+        ("shadow", "metadata", False),
+        ("full", "content", True),
+    ],
+)
+def test_all_candidate_transform_steps_render_safely_at_every_telemetry_level(
+    level: str,
+    expected_retention: str,
+    content_expected: bool,
+) -> None:
+    trace = _populated_trace(level)
+    trace.content("query_text", "private raw query")
+    safe_details = {
+        "qdrant_search": {"candidates_returned": 4},
+        "rerank": {
+            "candidates_in": 4,
+            "candidates_out": 3,
+            "link_expand_boost_enabled": True,
+            "link_expand_boost_factor": 1.2,
+            "link_expand_boosted_count": 1,
+        },
+        "quality_floor": {"candidates_in": 3, "candidates_out": 2, "filtered_count": 1},
+        "source_select": {"candidates_in": 2, "candidates_out": 2, "mode": "diversify"},
+        "quality_boost": {"candidates_in": 2, "candidates_out": 2, "boosted_count": 1},
+        "parent_lookup": {"parent_ids_requested": 1, "parents_found": 1},
+        "response_build": {"chunks_built": 2, "parent_text_chunks": 1},
+    }
+    for name, details in safe_details.items():
+        trace.record_ok(name, 1.0, **details)
+
+    record = trace.to_decision_record()
+
+    assert [step["name"] for step in record["trace_steps"]] == list(safe_details)
+    assert record["retention_class"] == expected_retention
+    assert ("query_text" in record) is content_expected
+    assert ("coreference_rewrite" in record) is content_expected
+    for content_value in ("private raw query", "raw question", "resolved question"):
+        assert (content_value in repr(record)) is content_expected
+    for step in record["trace_steps"]:
+        assert "private raw query" not in repr(step)
+        assert "chunk_id" not in repr(step)
+        assert "https://" not in repr(step)
+
+
 def test_steps_keep_pipeline_order_and_stable_skip_reason() -> None:
     trace = _populated_trace("shadow")
     trace.record_ok("coreference", 1.0, source="caller")
