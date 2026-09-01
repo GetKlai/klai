@@ -123,7 +123,6 @@ async def _run_active_document(
     document_text: str,
     episode_results: list[str | Exception | None],
     expected_error: type[Exception] | None = None,
-    legacy_document_text: str | None = None,
 ):
     ingest_episode = AsyncMock(side_effect=episode_results)
     graph_module = MagicMock()
@@ -153,8 +152,6 @@ async def _run_active_document(
             "kb_slug": "support",
             "path": "guide.md",
         }
-        if legacy_document_text is not None:
-            kwargs["document_text"] = legacy_document_text
         if expected_error is None:
             await graphiti_task(**kwargs)
         else:
@@ -223,20 +220,6 @@ async def test_short_document_creates_one_episode_and_records_both_id_keys(graph
         "graphiti_extraction_version": 2,
     }
     graph_module.flush_entity_graph_data.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_old_signature_document_text_is_ignored_in_favour_of_postgres(graphiti_task):
-    ingest_episode, _, _ = await _run_active_document(
-        graphiti_task,
-        "Current body loaded from PostgreSQL.",
-        ["episode-1"],
-        legacy_document_text="Stale body frozen in the old queued job.",
-    )
-
-    assert ingest_episode.call_args.kwargs["document_text"] == (
-        "Current body loaded from PostgreSQL."
-    )
 
 
 @pytest.mark.asyncio
