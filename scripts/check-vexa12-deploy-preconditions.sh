@@ -45,7 +45,11 @@
 
 set -eu
 
-BOT_IMAGE="vexaai/vexa-bot:v0.12.22"
+# Must equal BROWSER_IMAGE on vexa12-runtime in deploy/docker-compose.yml.
+# This script is piped over SSH and runs on the host with no repo checkout,
+# so it cannot read that value -- the equality is asserted in CI instead, by
+# deploy/scripts/tests/check-vexa12-preconditions.test.sh. Bump both together.
+BOT_IMAGE="vexaai/vexa-bot:v0.12.26"
 FAIL=0
 
 say_fail() { echo "FAIL: $1"; echo "      fix: $2"; FAIL=1; }

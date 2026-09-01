@@ -525,7 +525,7 @@ mounts:
     kind: named
     host: runtime-api-docker-socket
     container_path: /var/run
-    image: vexaai/v012-runtime:v0.12.22
+    image: vexaai/v012-runtime:v0.12.26
     category: ephemeral
     data_path_source: runtime Unix socket bridge
     pii: false

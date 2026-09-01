@@ -122,6 +122,22 @@ else
 fi
 
 echo
+echo "── the pinned bot image must match compose ──"
+# The script hardcodes BOT_IMAGE because it is piped over SSH and runs on a host
+# with no checkout. That makes it drift silently: on 2026-09-01 compose moved to
+# v0.12.26 while this still read v0.12.22, so the readiness check would have
+# confirmed the presence of an image the runtime no longer spawns -- green, and
+# wrong, which is this suite's entire subject.
+COMPOSE_BOT=$(grep -oE 'BROWSER_IMAGE:[[:space:]]+vexaai/vexa-bot:[^[:space:]]+' \
+  "$REPO_ROOT/deploy/docker-compose.yml" | sed 's/.*[[:space:]]//')
+SCRIPT_BOT=$(grep -oE '^BOT_IMAGE="[^"]+"' "$SCRIPT" | sed 's/^BOT_IMAGE="//; s/"$//')
+if [ -n "$COMPOSE_BOT" ] && [ "$COMPOSE_BOT" = "$SCRIPT_BOT" ]; then
+  pass "bot image matches compose ($SCRIPT_BOT)"
+else
+  fail "bot image drift: script has '$SCRIPT_BOT', compose has '$COMPOSE_BOT'"
+fi
+
+echo
 COUNT=$(wc -l < "$FAILFILE" | tr -d ' ')
 if [ "$COUNT" -eq 0 ]; then
   echo "All assertions passed."

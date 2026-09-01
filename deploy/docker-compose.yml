@@ -1645,7 +1645,7 @@ services:
       - no-new-privileges:true
 
   # ══════════════════════════════════════════════════════════════════════════
-  # Vexa 0.12.22 — meeting capture (SPEC-VEXA-004)
+  # Vexa 0.12.26 — meeting capture (SPEC-VEXA-004)
   #
   # Migrated from 0.10.6.3.14 on 2026-08-14. The old stack ran in parallel until a
   # real meeting was proven end to end (bot joined, Dutch transcript with speaker
@@ -1673,7 +1673,7 @@ services:
   # cannot pull it — POST /containers/create fails with "No such image". The bot
   # image is an env value, not a compose service, so `compose up` does not fetch it
   # either. Run on core-01:
-  #     docker pull vexaai/vexa-bot:v0.12.22
+  #     docker pull vexaai/vexa-bot:v0.12.26
   # Checked — not enforced — by scripts/check-vexa12-deploy-preconditions.sh,
   # which is an operator command run by hand over SSH. No pipeline runs it, so
   # nothing stops a deploy that skipped the pull.
@@ -1708,7 +1708,7 @@ services:
   # order + additive column/index sync, never dropping). meeting-api depends on
   # it being healthy so the tables exist before the first query.
   vexa12-admin-api:
-    image: vexaai/v012-admin-api:v0.12.22
+    image: vexaai/v012-admin-api:v0.12.26
     restart: unless-stopped
     environment:
       DB_HOST: postgres
@@ -1748,11 +1748,11 @@ services:
   # mounts the raw docker.sock; we do not). Reuses the existing socat bridge —
   # its listener is `fork,reuseaddr`, so a second client is fine.
   vexa12-runtime:
-    image: vexaai/v012-runtime:v0.12.22
+    image: vexaai/v012-runtime:v0.12.26
     restart: unless-stopped
     environment:
       DOCKER_NETWORK: vexa12-bots
-      BROWSER_IMAGE: vexaai/vexa-bot:v0.12.22
+      BROWSER_IMAGE: vexaai/vexa-bot:v0.12.26
       # Agent/worker images are the 0.12 "second kind" — not deployed by Klai.
       AGENT_IMAGE: ""
       AGENT_WORKER_IMAGE: ""
@@ -1782,7 +1782,7 @@ services:
 
   # ─── Vexa 0.12 meeting-api (bot lifecycle + transcript collector) ───────
   vexa12-meeting-api:
-    image: vexaai/v012-meeting-api:v0.12.22
+    image: vexaai/v012-meeting-api:v0.12.26
     restart: unless-stopped
     environment:
       DB_HOST: postgres
