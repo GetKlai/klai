@@ -79,3 +79,25 @@ async def test_client_sends_x_user_id() -> None:
     """0.12 rejects a spawn without X-User-Id (401 Invalid user identity)."""
     client = VexaClient()
     assert client._http.headers.get("X-User-Id") == VexaClient.VEXA_USER_ID
+
+
+@pytest.mark.anyio
+async def test_bot_leave_deadlines_match_the_portal_lifecycle_contract() -> None:
+    """Unadmitted bots get 2 minutes; admitted empty meetings get the promised 60-second grace."""
+    client = VexaClient()
+    response = httpx.Response(
+        201,
+        json={"id": 9},
+        request=httpx.Request("POST", "http://meeting-api:8080/bots"),
+    )
+    with patch.object(client, "_http") as http:
+        http.post = AsyncMock(return_value=response)
+
+        await client.start_bot("google_meet", "abc-def-ghi")
+
+    payload = http.post.await_args.kwargs["json"]
+    assert payload["automatic_leave"] == {
+        "max_time_left_alone": 60_000,
+        "no_one_joined_timeout": 120_000,
+        "max_wait_for_admission": 120_000,
+    }

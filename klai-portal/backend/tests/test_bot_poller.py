@@ -37,7 +37,9 @@ class _TrackedMeeting:
     session is gone.
     """
 
-    _COLUMN_ATTRS = frozenset({"id", "org_id", "meeting_url", "status", "ended_at", "vexa_meeting_id"})
+    _COLUMN_ATTRS = frozenset(
+        {"id", "org_id", "meeting_url", "status", "ended_at", "started_at", "created_at", "vexa_meeting_id"}
+    )
 
     def __init__(self, *, post_exit_flag: list[bool], **columns: object) -> None:
         # Use object.__setattr__ so __getattr__ doesn't trip on our init.
@@ -63,7 +65,9 @@ def _mk_meeting(
     platform: str = "google_meet",
     native_id: str = "abc-def-ghi",
     status: str = "recording",
+    started_at: datetime | None = None,
 ) -> _TrackedMeeting:
+    started_at = started_at or datetime.now(UTC)
     return _TrackedMeeting(
         post_exit_flag=post_exit_flag,
         id=meeting_id or uuid.uuid4(),
@@ -71,6 +75,8 @@ def _mk_meeting(
         meeting_url=f"https://meet.google.com/{native_id}",
         status=status,
         ended_at=None,
+        started_at=started_at,
+        created_at=started_at,
         vexa_meeting_id=42,
     )
 
@@ -109,6 +115,55 @@ def test_stuck_meetings_stmt_includes_rows_without_vexa_meeting_id() -> None:
     assert "vexa_meetings.vexa_meeting_id IS NOT NULL" not in compiled
     assert "vexa_meetings.ended_at <" in compiled
     assert "vexa_meetings.created_at <" in compiled
+
+
+@pytest.mark.asyncio
+async def test_vexa_lifecycle_status_is_preserved_for_reconciliation(monkeypatch) -> None:
+    """The poller must retain Vexa's meeting FSM status instead of reducing it to container liveness."""
+    post_exit = [False]
+    active = [_mk_meeting(post_exit_flag=post_exit, status="joining")]
+    monkeypatch.setattr(
+        bot_poller.vexa,
+        "get_running_bots",
+        AsyncMock(
+            return_value=[
+                {
+                    "platform": "google_meet",
+                    "native_meeting_id": "abc-def-ghi",
+                    "status": "active",
+                }
+            ]
+        ),
+    )
+
+    result = await bot_poller._fetch_running_keys_safe(active)
+
+    assert result == {("google_meet", "abc-def-ghi"): "active"}
+
+
+@pytest.mark.asyncio
+async def test_legacy_runtime_status_does_not_confirm_recording(monkeypatch) -> None:
+    """A legacy container-only status proves liveness but cannot prove meeting admission."""
+    post_exit = [False]
+    active = [_mk_meeting(post_exit_flag=post_exit, status="joining")]
+    monkeypatch.setattr(
+        bot_poller.vexa,
+        "get_running_bots",
+        AsyncMock(
+            return_value=[
+                {
+                    "platform": "google_meet",
+                    "native_meeting_id": "abc-def-ghi",
+                    "status": "Up 3 minutes",
+                    "normalized_status": "active",
+                }
+            ]
+        ),
+    )
+
+    result = await bot_poller._fetch_running_keys_safe(active)
+
+    assert result == {("google_meet", "abc-def-ghi"): None}
 
 
 @pytest.mark.asyncio
@@ -152,6 +207,41 @@ async def test_handle_meeting_ended_rearms_tenant_context_after_stopping_commit(
     assert events == ["commit", "set_tenant", "run_transcription", "commit"]
 
 
+@pytest.mark.asyncio
+async def test_disappeared_unadmitted_bot_fails_without_transcription(monkeypatch) -> None:
+    """A bot that vanished before any active signal did not produce a confirmed recording."""
+    meeting_id = uuid.uuid4()
+    meeting = MagicMock(status="joining", ended_at=None, error_message=None)
+    db = MagicMock()
+    db.scalar = AsyncMock(return_value=meeting)
+    db.commit = AsyncMock()
+
+    @asynccontextmanager
+    async def _tenant_session(_org_id):
+        yield db
+
+    run_transcription = AsyncMock()
+    monkeypatch.setattr(bot_poller, "tenant_scoped_session", _tenant_session)
+    monkeypatch.setattr(bot_poller, "set_tenant", AsyncMock())
+    monkeypatch.setattr(bot_poller, "run_transcription", run_transcription)
+    monkeypatch.setattr(bot_poller, "cleanup_recording", AsyncMock())
+
+    snap = bot_poller._ActiveMeetingSnapshot(
+        id=meeting_id,
+        org_id=42,
+        meeting_url="https://meet.google.com/abc-def-ghi",
+        status="joining",
+    )
+
+    await bot_poller._handle_meeting_ended(snap)
+
+    assert meeting.status == "failed"
+    assert meeting.ended_at is not None
+    assert meeting.error_message == "Bot ended before recording was confirmed"
+    db.commit.assert_awaited_once()
+    run_transcription.assert_not_awaited()
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -179,7 +269,7 @@ async def test_poll_once_does_not_access_orm_after_session_exit(monkeypatch):
     monkeypatch.setattr(
         bot_poller,
         "_fetch_running_keys_safe",
-        AsyncMock(return_value={("google_meet", "abc-def-ghi")}),
+        AsyncMock(return_value={("google_meet", "abc-def-ghi"): "awaiting_admission"}),
     )
     handle_ended = AsyncMock()
     recover_stuck = AsyncMock()
@@ -210,7 +300,7 @@ async def test_running_bot_does_not_report_recording_before_admission(monkeypatc
     monkeypatch.setattr(
         bot_poller,
         "_fetch_running_keys_safe",
-        AsyncMock(return_value={("google_meet", "abc-def-ghi")}),
+        AsyncMock(return_value={("google_meet", "abc-def-ghi"): "awaiting_admission"}),
     )
     tenant_session = MagicMock()
     monkeypatch.setattr(bot_poller, "tenant_scoped_session", tenant_session)
@@ -220,6 +310,104 @@ async def test_running_bot_does_not_report_recording_before_admission(monkeypatc
     await bot_poller._poll_once()
 
     tenant_session.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_active_vexa_status_reports_recording_after_admission(monkeypatch) -> None:
+    """Only Vexa's active lifecycle state proves that the bot reached the meeting."""
+    post_exit = [False]
+    meeting = _mk_meeting(post_exit_flag=post_exit, status="joining", org_id=7)
+    scoped_meeting = MagicMock(status="joining")
+    scoped_db = MagicMock()
+    scoped_db.scalar = AsyncMock(return_value=scoped_meeting)
+    scoped_db.commit = AsyncMock()
+
+    @asynccontextmanager
+    async def _tenant_session(_org_id):
+        yield scoped_db
+
+    monkeypatch.setattr(bot_poller, "cross_org_session", _mk_cross_org_session([meeting], [], post_exit))
+    monkeypatch.setattr(
+        bot_poller,
+        "_fetch_running_keys_safe",
+        AsyncMock(return_value={("google_meet", "abc-def-ghi"): "active"}),
+    )
+    monkeypatch.setattr(bot_poller, "tenant_scoped_session", _tenant_session)
+    monkeypatch.setattr(bot_poller, "_handle_meeting_ended", AsyncMock())
+    monkeypatch.setattr(bot_poller, "_recover_stuck_meeting", AsyncMock())
+
+    await bot_poller._poll_once()
+
+    assert scoped_meeting.status == "recording"
+    scoped_db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("vexa_status", ["awaiting_admission", None])
+async def test_joining_meeting_times_out_even_while_vexa_bot_is_still_running(monkeypatch, vexa_status) -> None:
+    """A live bot container must not keep an unadmitted meeting active forever."""
+    post_exit = [False]
+    started_at = datetime.now(UTC) - timedelta(seconds=181)
+    meeting = _mk_meeting(post_exit_flag=post_exit, status="joining", org_id=7, started_at=started_at)
+    scoped_meeting = MagicMock(status="joining", ended_at=None, error_message=None)
+    scoped_db = MagicMock()
+    scoped_db.scalar = AsyncMock(return_value=scoped_meeting)
+    scoped_db.commit = AsyncMock()
+
+    @asynccontextmanager
+    async def _tenant_session(_org_id):
+        yield scoped_db
+
+    stop_bot = AsyncMock()
+    monkeypatch.setattr(bot_poller, "cross_org_session", _mk_cross_org_session([meeting], [], post_exit))
+    monkeypatch.setattr(
+        bot_poller,
+        "_fetch_running_keys_safe",
+        AsyncMock(return_value={("google_meet", "abc-def-ghi"): vexa_status}),
+    )
+    monkeypatch.setattr(bot_poller, "tenant_scoped_session", _tenant_session)
+    monkeypatch.setattr(bot_poller.vexa, "stop_bot", stop_bot)
+    monkeypatch.setattr(bot_poller, "_handle_meeting_ended", AsyncMock())
+    monkeypatch.setattr(bot_poller, "_recover_stuck_meeting", AsyncMock())
+
+    await bot_poller._poll_once()
+
+    assert scoped_meeting.status == "failed"
+    assert scoped_meeting.ended_at is not None
+    assert scoped_meeting.error_message == "Bot was not admitted within 3 minutes"
+    stop_bot.assert_awaited_once_with("google_meet", "abc-def-ghi")
+
+
+@pytest.mark.asyncio
+async def test_joining_timeout_retries_when_vexa_stop_fails(monkeypatch) -> None:
+    """Do not report a terminal timeout while the overdue upstream workload could still be running."""
+    post_exit = [False]
+    started_at = datetime.now(UTC) - timedelta(seconds=181)
+    meeting = _mk_meeting(post_exit_flag=post_exit, status="joining", org_id=7, started_at=started_at)
+    scoped_meeting = MagicMock(status="joining")
+    scoped_db = MagicMock()
+    scoped_db.scalar = AsyncMock(return_value=scoped_meeting)
+    scoped_db.commit = AsyncMock()
+
+    @asynccontextmanager
+    async def _tenant_session(_org_id):
+        yield scoped_db
+
+    monkeypatch.setattr(bot_poller, "cross_org_session", _mk_cross_org_session([meeting], [], post_exit))
+    monkeypatch.setattr(
+        bot_poller,
+        "_fetch_running_keys_safe",
+        AsyncMock(return_value={("google_meet", "abc-def-ghi"): "awaiting_admission"}),
+    )
+    monkeypatch.setattr(bot_poller, "tenant_scoped_session", _tenant_session)
+    monkeypatch.setattr(bot_poller.vexa, "stop_bot", AsyncMock(side_effect=RuntimeError("upstream unavailable")))
+    monkeypatch.setattr(bot_poller, "_handle_meeting_ended", AsyncMock())
+    monkeypatch.setattr(bot_poller, "_recover_stuck_meeting", AsyncMock())
+
+    await bot_poller._poll_once()
+
+    assert scoped_meeting.status == "joining"
+    scoped_db.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -238,7 +426,7 @@ async def test_poll_once_handles_meeting_ended_when_bot_gone(monkeypatch):
     monkeypatch.setattr(
         bot_poller,
         "_fetch_running_keys_safe",
-        AsyncMock(return_value=set()),  # empty → bot has ended
+        AsyncMock(return_value={}),  # empty → bot has ended
     )
     handle_ended = AsyncMock()
     monkeypatch.setattr(bot_poller, "_handle_meeting_ended", handle_ended)
@@ -316,6 +504,8 @@ async def test_poll_once_skips_meeting_with_unparseable_url(monkeypatch):
         meeting_url="not-a-valid-meeting-url",
         status="recording",
         ended_at=None,
+        started_at=datetime.now(UTC),
+        created_at=datetime.now(UTC),
         vexa_meeting_id=None,
     )
 
@@ -324,7 +514,7 @@ async def test_poll_once_skips_meeting_with_unparseable_url(monkeypatch):
         "cross_org_session",
         _mk_cross_org_session([meeting], [], post_exit),
     )
-    monkeypatch.setattr(bot_poller, "_fetch_running_keys_safe", AsyncMock(return_value=set()))
+    monkeypatch.setattr(bot_poller, "_fetch_running_keys_safe", AsyncMock(return_value={}))
     handle_ended = AsyncMock()
     monkeypatch.setattr(bot_poller, "_handle_meeting_ended", handle_ended)
     monkeypatch.setattr(bot_poller, "_recover_stuck_meeting", AsyncMock())
