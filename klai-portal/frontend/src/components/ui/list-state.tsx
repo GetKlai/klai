@@ -1,6 +1,9 @@
 /**
  * @purpose List/table loading and empty states: `ListLoadingState`,
  * `ListEmptyState`
+ * @guideline KLAI-UI-018 must Collection loading and empty states use
+ * `list-state`; a failed query uses `QueryErrorState` with an explicit retry
+ * where one is available
  */
 import type { ElementType, HTMLAttributes, ReactNode } from 'react'
 import { Loader2 } from 'lucide-react'

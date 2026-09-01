@@ -1,5 +1,8 @@
 /**
  * @purpose Form controls
+ * @guideline KLAI-UI-007 must-not Pages are built from
+ * `src/components/ui/`; a raw `input`, `select`, list row or delete
+ * confirmation with inline Tailwind is a defect
  */
 import * as React from 'react'
 import { cn } from '@/lib/utils'

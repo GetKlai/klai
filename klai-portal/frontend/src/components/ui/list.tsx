@@ -2,6 +2,9 @@
  * @purpose List primitives: `ListFrame`, `ListHeader`, `ListRow`,
  * `ListRowContent`, `ListRowTitle`, `ListRowDescription`, `ListRowActions`,
  * `ListRowIcon`, `ListRowChevron`
+ * @guideline KLAI-UI-015 must A divider list gets `ListHeader` only when its
+ * rows carry two or more metadata columns beyond the title, and the header
+ * shares the row grid and padding at `lg` only
  */
 import * as React from 'react'
 import { Slot } from '@radix-ui/react-slot'

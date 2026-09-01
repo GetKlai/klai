@@ -1,6 +1,10 @@
 /**
  * @purpose Canonical inline edit for a list row (`InlineEditRow`): name +
  * optional description, zero layout shift, owns Save/Cancel
+ * @guideline KLAI-UI-024 must Editing a row's name in place uses
+ * `InlineEditRow` and keeps zero layout shift
+ * @rationale The ghost-and-overlay technique keeps the row from shifting; see
+ * Inline Edit
  */
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { Check, Loader2, X } from 'lucide-react'

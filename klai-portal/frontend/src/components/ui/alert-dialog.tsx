@@ -1,5 +1,7 @@
 /**
  * @purpose Centered confirm dialog for destructive actions outside rows
+ * @guideline KLAI-UI-027 must A destructive action outside a row uses
+ * `alert-dialog`
  */
 import * as React from 'react'
 import * as AlertDialogPrimitive from '@radix-ui/react-alert-dialog'

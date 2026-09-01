@@ -1,5 +1,8 @@
 /**
  * @purpose Inline destructive confirmation inside a row (no layout shift)
+ * @guideline KLAI-UI-026 must A row-level destructive confirm uses
+ * `InlineDeleteConfirm`, and the row is tinted while confirming
+ * @rationale An untinted row shows a hard seam under the overlay
  */
 import { Loader2, Trash2, X } from 'lucide-react'
 import { InlineRowButton } from '@/components/ui/inline-row-button'

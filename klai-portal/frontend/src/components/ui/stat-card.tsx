@@ -2,6 +2,8 @@
  * @purpose Metric tile (`StatCard`): uppercase label + large tabular value +
  * optional sub. Sizes default/sm, `tone` (default/warning/destructive), `alert`
  * frame, optional `onClick` to navigate
+ * @guideline KLAI-UI-038 must Metric tiles use `StatCard`; ordinary detail
+ * sections are not wrapped in decorative cards
  */
 import * as React from 'react'
 import { Loader2 } from 'lucide-react'

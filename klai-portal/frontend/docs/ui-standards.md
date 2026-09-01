@@ -1050,11 +1050,7 @@ These patterns must not be copied:
 
 This table catalogues the normative rules above, each with a stable ID, an
 RFC 2119 level, and a declared verification mode. It answers "how much of this
-document is actually checked?" — a question the prose could not answer before,
-because nothing counted it.
-
-Be exact about what the ledger guarantees, because a ledger that overstates
-itself is the defect it exists to catch.
+document is actually checked?"
 
 **Machine-checked** by `tests/design/rules-ledger.test.ts`, which fails the
 build: that every `automated` row names a check that exists and is switched on
@@ -1063,13 +1059,10 @@ that every design check in the repo has a row; that active IDs are not retired;
 that the counts in What Is Enforced match these rows. Coverage cannot be
 claimed where it does not exist, in either direction.
 
-**Maintained by hand**, and worth knowing before you trust a count:
-
-- *Completeness against the prose.* Extracting normative sentences from prose
-  is not mechanically decidable, so a rule added to a section without a row
-  here goes unnoticed. Add the row in the same change.
-- *Retiring IDs.* When a row is deleted, add its ID to Retired IDs below. The
-  check then prevents that number from returning to the active table.
+Component guideline rows inside the generated markers come from the matching
+`src/components/ui/` header comments. The other rows and completeness against
+the prose remain maintained by hand. When a row is retired, add its ID to
+Retired IDs below so the number cannot return.
 
 Verification modes use the vocabulary from the Design System Doc Spec
 (`automated` / `assisted` / `manual`), plus one of our own:
@@ -1084,6 +1077,8 @@ Verification modes use the vocabulary from the Design System Doc Spec
 The Current Deprecated Patterns list above is the negative
 restatement of these rules, not a separate set.
 
+<!-- generated:component-guidelines -->
+<!-- generated:component-guideline-ids KLAI-UI-007 KLAI-UI-008 KLAI-UI-011 KLAI-UI-012 KLAI-UI-013 KLAI-UI-015 KLAI-UI-017 KLAI-UI-018 KLAI-UI-019 KLAI-UI-024 KLAI-UI-025 KLAI-UI-026 KLAI-UI-027 KLAI-UI-028 KLAI-UI-031 KLAI-UI-034 KLAI-UI-035 KLAI-UI-037 KLAI-UI-038 KLAI-UI-041 KLAI-UI-044 -->
 | ID | Rule | Level | Verification | Check / reason |
 |---|---|---|---|---|
 | KLAI-UI-001 | A hex literal in `className` that equals a token in `index.css` is a defect; reference the token instead | must-not | automated | `klai/no-hardcoded-brand-color` |
@@ -1137,6 +1132,7 @@ restatement of these rules, not a separate set.
 | KLAI-UI-049 | A raw `<textarea>` outside `src/components/ui/` is forbidden | must-not | automated | `klai/no-raw-textarea` |
 | KLAI-UI-050 | The portal type scale is rem-based on a 110% root, so text, padding, control heights and column widths scale together; an absolute px font size does not scale and is a defect | must | manual | Reviewer step. Nothing yet stops a new `text-[Npx]` or a px `font-size` in `index.css` from being added |
 | KLAI-UI-051 | Foreground colours documented in the Colors section meet WCAG AA on both portal surfaces or carry a current, reasoned exception | must | automated | `tests/design/documented-contrast.test.ts` |
+<!-- /generated:component-guidelines -->
 
 ### Retired IDs
 

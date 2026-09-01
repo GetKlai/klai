@@ -1,5 +1,7 @@
 /**
  * @purpose Form controls
+ * @guideline KLAI-UI-034 must Every form field has a `Label` with matching id
+ * and htmlFor
  */
 import * as React from 'react'
 import { cn } from '@/lib/utils'

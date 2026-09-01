@@ -1,5 +1,7 @@
 /**
  * @purpose Selectable radio option cards (`RadioCardGroup`)
+ * @guideline KLAI-UI-037 must A single-choice list whose options each need a
+ * label and a description uses `RadioCardGroup`
  */
 import { useId } from 'react'
 import { cn } from '@/lib/utils'

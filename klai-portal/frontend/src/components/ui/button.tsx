@@ -1,6 +1,12 @@
 /**
  * @purpose All buttons. Use for an action; a clickable row or toggle is an
  * interactive surface and uses a raw `button` instead.
+ * @guideline KLAI-UI-008 must `Button` is for an action; a raw `button` is for
+ * an interactive surface (clickable row, toggle, tree item), plus the
+ * documented avatar, vendor SSO and unsupported-size editor controls
+ * @rationale Measured and rejected: 96 of 100 raw `button` elements outside
+ * `components/ui/` are the prescribed pattern. A rule here would flag 96
+ * correct decisions
  *
  * Portal v1 spine (SPEC-PORTAL-REDESIGN-002):
  * - rounded-full (pill), sentence-case (no uppercase, no tracking-wider)

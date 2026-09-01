@@ -1,5 +1,7 @@
 /**
  * @purpose Text input with a leading search icon (`SearchInput`)
+ * @guideline KLAI-UI-035 must Search fields use `SearchInput`, never an
+ * `Input` with a hand-placed icon
  */
 import * as React from 'react'
 import { Search } from 'lucide-react'

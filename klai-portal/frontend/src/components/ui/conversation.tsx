@@ -4,6 +4,8 @@
  * separators, quiet system lines, Cmd/Enter send, inline edit of own messages,
  * back-right header. Shared by account "Mijn meldingen" + "Berichten" and the
  * platform-admin messages tab
+ * @guideline KLAI-UI-041 must Any user-to-Klai back-and-forth uses the
+ * `conversation` component; status changes are quiet system lines
  */
 import * as React from 'react'
 import { ArrowLeft, Check, Loader2, Pencil, Send, X } from 'lucide-react'

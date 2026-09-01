@@ -2,6 +2,8 @@
  * @purpose The single source for small inline-row action pills
  * (`InlineRowButton`): Save/Cancel, Delete/Cancel, Approve/Deny. Tones:
  * success/destructive/neutral
+ * @guideline KLAI-UI-025 must Every small inline-row action pill renders
+ * through `InlineRowButton`
  */
 import { Button, type ButtonProps } from '@/components/ui/button'
 import { cn } from '@/lib/utils'

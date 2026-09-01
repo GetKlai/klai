@@ -3,6 +3,8 @@
  * bordered hitbox — the default for row icon actions), `RowActionButton`,
  * `RowActionGroup` + the action→tone system. `RowActionIconButton` is the
  * low-level unbordered base, not the list/table default.
+ * @guideline KLAI-UI-019 must-not Row actions render through the `row-action`
+ * components, never a raw icon button
  */
 import * as React from 'react'
 import { Slot } from '@radix-ui/react-slot'
