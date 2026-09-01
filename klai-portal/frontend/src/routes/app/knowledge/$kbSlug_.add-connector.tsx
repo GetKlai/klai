@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { SiGithub, SiNotion, SiGoogledrive, SiAirtable, SiConfluence } from '@icons-pack/react-simple-icons'
 import { Button } from '@/components/ui/button'
+import { Alert } from '@/components/ui/alert'
 import { StepIndicator, type StepItem } from '@/components/ui/step-indicator'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -983,19 +984,18 @@ function AddConnectorPage() {
                       </div>
                     )}
                     {requiresLogin === true && authProbeResult?.classification === 'auth_ok' && (
-                      <div className="flex items-center justify-between rounded-lg border border-[var(--color-success)]/30 bg-[var(--color-success)]/5 px-4 py-3">
-                        <div className="flex items-center gap-2 text-xs text-[var(--color-success-text)]">
-                          <CheckCircle2 className="h-3.5 w-3.5" />
-                          Logged in - cookies verified
+                      <Alert variant="success" size="sm">
+                        <div className="flex items-center justify-between">
+                          <span>Logged in - cookies verified</span>
+                          <button
+                            type="button"
+                            className="text-xs text-gray-600 hover:text-gray-900"
+                            onClick={() => setWcStep('auth-setup')}
+                          >
+                            Edit cookies
+                          </button>
                         </div>
-                        <button
-                          type="button"
-                          className="text-xs text-gray-600 hover:text-gray-900"
-                          onClick={() => setWcStep('auth-setup')}
-                        >
-                          Edit cookies
-                        </button>
-                      </div>
+                      </Alert>
                     )}
 
                     {/* Preview URL */}

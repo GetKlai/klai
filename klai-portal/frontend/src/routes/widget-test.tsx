@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowLeft, AlertTriangle, Info, Loader2 } from 'lucide-react'
+import { ArrowLeft, Loader2 } from 'lucide-react'
+import { Alert } from '@/components/ui/alert'
 
 // Public widget-test page - TWD's WidgetTest.vue equivalent. Loads
 // klai-chat.js with the widget's data-widget-id so the floating chat
@@ -126,12 +127,11 @@ function WidgetTestEmbedPage() {
             </div>
           )}
           {scriptStatus === 'error' && (
-            <div className="mb-5 flex items-center gap-3 rounded-lg border border-[var(--color-destructive)]/30 bg-[var(--color-destructive)]/5 p-4">
-              <AlertTriangle className="h-5 w-5 text-[var(--color-destructive)]" />
-              <span className="text-sm text-[var(--color-destructive)]">
+            <Alert variant="destructive" className="mb-5">
+              <span>
                 Kon widget-script niet laden.
               </span>
-            </div>
+            </Alert>
           )}
 
           <p className="mb-5 text-sm leading-relaxed text-[var(--color-rl-dark)]/70">
@@ -153,16 +153,15 @@ function WidgetTestEmbedPage() {
           </div>
 
           {/* Hint */}
-          <div className="mt-5 flex items-start gap-3 rounded-lg border border-[var(--color-rl-border)] bg-[var(--color-rl-accent)]/10 p-4">
-            <Info className="mt-0.5 h-5 w-5 shrink-0 text-[var(--color-rl-accent-dark)]" />
-            <p className="text-sm text-[var(--color-rl-dark)]/80">
+          <Alert variant="info" className="mt-5">
+            <p>
               Plak deze snippet vóór de{' '}
               <code className="rounded bg-white px-1 py-0.5 font-mono text-xs">
                 &lt;/body&gt;
               </code>{' '}
               tag op je site. De widget verschijnt automatisch rechtsonder.
             </p>
-          </div>
+          </Alert>
         </div>
       </main>
     </div>

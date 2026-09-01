@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
-import { CheckCircle2, FileText, Upload } from 'lucide-react'
+import { FileText, Upload } from 'lucide-react'
+import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import * as m from '@/paraglide/messages'
 import { ApiError, apiFetch } from '@/lib/apiFetch'
@@ -302,12 +303,11 @@ export function FileUploadForm({ kbSlug, onBack }: FileUploadFormProps) {
     <div className="space-y-6">
       {/* Success banner */}
       {allDone && (
-        <div className="flex items-center gap-2 rounded-lg border border-[var(--color-success)] bg-[var(--color-success-bg)] px-4 py-3">
-          <CheckCircle2 className="h-4 w-4 text-[var(--color-success-text)] shrink-0" />
-          <p className="text-sm text-[var(--color-success-text)]">
+        <Alert variant="success">
+          <p>
             {m.knowledge_add_source_file_success()}
           </p>
-        </div>
+        </Alert>
       )}
 
       {/* Drop zone */}

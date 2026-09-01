@@ -2,7 +2,8 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useAuth } from '@/lib/auth'
 import { useQuery, useQueries } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
-import { Plus, CheckCircle2, AlertTriangle, X } from 'lucide-react'
+import { Plus, X } from 'lucide-react'
+import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
   DataTable,
@@ -144,22 +145,24 @@ function ConnectorsTab() {
   return (
     <div className="space-y-3">
       {showOAuthBanner && (
-        <div className="flex gap-2 items-center rounded-lg border border-[var(--color-success)]/30 bg-[var(--color-success)]/5 p-3 text-xs text-[var(--color-success-text)]">
-          <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-          <span className="flex-1">{m.admin_connectors_oauth_success()}</span>
-          <button onClick={() => setShowOAuthBanner(false)} aria-label={m.admin_connectors_dismiss()} className="hover:opacity-70 transition-opacity">
-            <X className="h-3 w-3" />
-          </button>
-        </div>
+        <Alert variant="success" size="sm">
+          <div className="flex items-center gap-2">
+            <span className="flex-1">{m.admin_connectors_oauth_success()}</span>
+            <button onClick={() => setShowOAuthBanner(false)} aria-label={m.admin_connectors_dismiss()} className="hover:opacity-70 transition-opacity">
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        </Alert>
       )}
       {showOAuthFailedBanner && (
-        <div className="flex gap-2 items-center rounded-lg border border-[var(--color-destructive)]/30 bg-[var(--color-destructive)]/5 p-3 text-xs text-[var(--color-destructive)]">
-          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-          <span className="flex-1">{m.admin_connectors_oauth_failed()}</span>
-          <button onClick={() => setShowOAuthFailedBanner(false)} aria-label={m.admin_connectors_dismiss()} className="hover:opacity-70 transition-opacity">
-            <X className="h-3 w-3" />
-          </button>
-        </div>
+        <Alert variant="destructive" size="sm">
+          <div className="flex items-center gap-2">
+            <span className="flex-1">{m.admin_connectors_oauth_failed()}</span>
+            <button onClick={() => setShowOAuthFailedBanner(false)} aria-label={m.admin_connectors_dismiss()} className="hover:opacity-70 transition-opacity">
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        </Alert>
       )}
       {connectors.length > 0 && (
         <DataTable className="table-fixed">
