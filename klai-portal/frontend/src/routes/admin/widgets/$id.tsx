@@ -22,6 +22,7 @@ import { EmbedTab } from './_components/tabs/EmbedTab'
 import { IntegrationsTab } from './_components/tabs/IntegrationsTab'
 import { ActivityTab } from './_components/tabs/ActivityTab'
 import { DangerTab } from './_components/tabs/DangerTab'
+import { PageContainer } from '@/components/ui/page-container'
 
 type TabId = 'details' | 'kbs' | 'appearance' | 'embed' | 'integrations' | 'activity' | 'danger'
 
@@ -108,7 +109,7 @@ function WidgetDetailPage() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl px-6 pt-4 pb-10 space-y-8">
+    <PageContainer width="4xl" gap="8">
       <div className="flex items-start gap-3">
         <div className="flex-1">
           <h1 className="page-title text-[26px] font-display-bold text-gray-900">
@@ -147,6 +148,6 @@ function WidgetDetailPage() {
       )}
       {activeTab === 'activity' && <ActivityTab widget={widget} />}
       {activeTab === 'danger' && <DangerTab widget={widget} />}
-    </div>
+    </PageContainer>
   )
 }

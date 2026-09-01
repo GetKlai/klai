@@ -28,6 +28,7 @@ import { FeedbackTab } from './-components/feedback/FeedbackTab'
 import { StatsTab } from './-components/stats/StatsTab'
 import { StatCard } from '@/components/ui/stat-card'
 import type { PlatformTab, PlatformUsageRange } from './-types'
+import { PageContainer } from '@/components/ui/page-container'
 
 const VALID_TABS = new Set<PlatformTab>([
   'users',
@@ -202,7 +203,7 @@ function PlatformConsole() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl space-y-8 px-6 pt-4 pb-10">
+    <PageContainer width="6xl" gap="8">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="page-title text-[26px] font-display-bold text-gray-900">
@@ -401,6 +402,6 @@ function PlatformConsole() {
       {tab === 'chat-errors' && <ChatErrorsTab fmtDate={fmtDate} />}
       {tab === 'status' && <StatusTab />}
       {tab === 'subdomains' && <SubdomainsTab search={search} />}
-    </div>
+    </PageContainer>
   )
 }

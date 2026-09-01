@@ -133,6 +133,7 @@ Generated from source comments by `npm run docs:components`; do not edit by hand
 | `list` | List primitives: `ListFrame`, `ListHeader`, `ListRow`, `ListRowContent`, `ListRowTitle`, `ListRowDescription`, `ListRowActions`, `ListRowIcon`, `ListRowChevron` | Yes |
 | `LocaleSwitcher` | NL/EN language toggle (`LocaleSwitcher`). Navigates to the sibling locale URL on `/nl/…` and `/en/…` routes, and updates locale state only elsewhere. Used on the unauthenticated routes (login, signup, verify) | Yes |
 | `multi-select` | Multi-value select | Yes |
+| `page-container` | Centered page container (`PageContainer`) with owned page padding; authors choose the content width and vertical rhythm | Yes |
 | `page-header` | Page title, short subtitle/count, and right-aligned page action (`PageHeader`); longer explanatory copy below the header uses `PageIntro` | Yes |
 | `pagination` | Numbered pager for overviews (`Pagination`): previous, clickable page numbers with `…` truncation, next; current page highlighted and not clickable. Controlled; pair with `useListControls` | Yes |
 | `popover` | Menus, popovers, command/combobox | Yes |
@@ -175,17 +176,14 @@ Reference screens:
 
 ## Layout
 
-| Page type | Container |
-|---|---|
-| List / overview | `mx-auto max-w-3xl px-6 pt-4 pb-10` |
-| Form / create | `mx-auto max-w-lg px-6 pt-4 pb-10` |
-| Admin detail with tabs | `mx-auto max-w-4xl px-6 pt-4 pb-10 space-y-8` |
-| Platform overview | `mx-auto max-w-6xl px-6 pt-4 pb-10 space-y-8` |
+Page containers use `PageContainer`. It owns centering and page padding;
+authors choose only the content width and vertical rhythm through `width` and
+`gap`. Do not hand-write `mx-auto px-6 pt-4 pb-10` on normal pages.
 
 Do not use unscoped `p-6` for normal pages. Pages are centered unless the
-existing parent surface is intentionally full-width. Authenticated page
-containers use `pt-6 pb-10` so page headings sit in visual rhythm with the
-sidebar navigation; full-width tool surfaces such as chat own their own layout.
+existing parent surface is intentionally full-width. `PageContainer` keeps
+page headings in visual rhythm with the sidebar navigation; full-width tool
+surfaces such as chat own their own layout.
 
 ## Headers And Page Actions
 
@@ -1096,7 +1094,7 @@ restatement of these rules, not a separate set.
 | KLAI-UI-007 | Pages are built from `src/components/ui/`; a raw `input`, `select`, list row or delete confirmation with inline Tailwind is a defect | must-not | none | The raw `<input>` sites are ten instances of one auth-field pattern awaiting a design decision, plus two correct dark-variant widget inputs; `<select>`, list rows and delete confirmations are uncounted |
 | KLAI-UI-008 | `Button` is for an action; a raw `button` is for an interactive surface (clickable row, toggle, tree item), plus the documented avatar, vendor SSO and unsupported-size editor controls | must | none | Measured and rejected: 96 of 100 raw `button` elements outside `components/ui/` are the prescribed pattern. A rule here would flag 96 correct decisions |
 | KLAI-UI-009 | The reference screen is named in the work notes before portal UI is edited | must | manual | Reviewer step; see Required Workflow |
-| KLAI-UI-010 | Normal pages use their documented centered container and never unscoped `p-6`; an intentionally full-width parent or tool surface owns its own layout | must | manual | Reviewer step; see Layout |
+| KLAI-UI-010 | Normal page containers use `PageContainer`; padding and centering are not hand-written, and an intentionally full-width parent or tool surface owns its own layout | must | manual | Reviewer step; see Layout |
 | KLAI-UI-011 | List and overview pages use `PageHeader`; hand-roll a title/action row only for a genuinely custom layout | must | manual | Reviewer step |
 | KLAI-UI-012 | The `PageHeader` description is a short subtitle; longer explanation goes in `PageIntro` | must | manual | Reviewer step |
 | KLAI-UI-013 | Back and cancel actions are an outline small Button in the page header, never a loose link above the title | must-not | manual | Reviewer step |

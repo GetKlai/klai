@@ -31,6 +31,7 @@ import { getLocale } from '@/paraglide/runtime'
 import { datetime } from '@/paraglide/registry'
 import { useApiKeys, useDeleteApiKey } from './-hooks'
 import type { ApiKeyResponse } from './-types'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/admin/api-keys/')({
   component: ApiKeysPage,
@@ -139,7 +140,7 @@ function ApiKeysPage() {
   })
 
   return (
-    <div className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-6">
+    <PageContainer width="3xl" gap="6">
       <PageHeader
         title={m.admin_api_keys_title()}
         count={!isLoading && !error ? apiKeys.length : undefined}
@@ -241,6 +242,6 @@ function ApiKeysPage() {
           )}
         </>
       )}
-    </div>
+    </PageContainer>
   )
 }

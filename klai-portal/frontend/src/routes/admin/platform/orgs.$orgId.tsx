@@ -29,6 +29,7 @@ import {
 } from './-components/OrgDetailSections'
 import { UsageSection } from './-components/stats/UsageSection'
 import type { PlatformUsageRange } from './-types'
+import { PageContainer } from '@/components/ui/page-container'
 
 type TabId = 'features' | 'users' | 'bots' | 'knowledge-bases' | 'templates' | 'usage' | 'danger'
 
@@ -81,23 +82,23 @@ function PlatformOrgDetailPage() {
 
   if (isLoading) {
     return (
-      <div className="mx-auto max-w-4xl px-6 pt-4 pb-10">
+      <PageContainer width="4xl">
         <p className="py-8 text-sm text-gray-400">
           <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
           {m.admin_shared_loading()}
         </p>
-      </div>
+      </PageContainer>
     )
   }
 
   if (error) {
     return (
-      <div className="mx-auto max-w-4xl px-6 pt-4 pb-10">
+      <PageContainer width="4xl">
         <QueryErrorState
           error={error instanceof Error ? error : new Error(String(error))}
           onRetry={() => void refetch()}
         />
-      </div>
+      </PageContainer>
     )
   }
 
@@ -154,7 +155,7 @@ function PlatformOrgDetailPage() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl px-6 pt-4 pb-10 space-y-8">
+    <PageContainer width="4xl" gap="8">
       <div className="flex items-start justify-between gap-3">
         <div>
           <h1 className="page-title text-[26px] font-display-bold text-gray-900">
@@ -222,6 +223,6 @@ function PlatformOrgDetailPage() {
         <UsageSection orgId={orgId} range={range} fmtDate={fmtDate} />
       )}
       {activeTab === 'danger' && <TenantDangerZone org={data.org} />}
-    </div>
+    </PageContainer>
   )
 }

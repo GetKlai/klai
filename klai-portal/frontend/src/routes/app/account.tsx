@@ -14,6 +14,7 @@ import { ConversationPanel, type ConversationEntry } from '@/components/ui/conve
 import { useLocale } from '@/lib/locale'
 import * as m from '@/paraglide/messages'
 import { ApiError, apiFetch } from '@/lib/apiFetch'
+import { PageContainer } from '@/components/ui/page-container'
 
 type TabId = 'settings' | 'messages' | 'feedback' | 'advanced'
 
@@ -209,7 +210,7 @@ function AccountPage() {
   }
 
   return (
-    <div className="mx-auto max-w-2xl px-6 pt-4 pb-10 space-y-8">
+    <PageContainer width="2xl" gap="8">
       <div className="space-y-1">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {m.account_heading()}
@@ -329,7 +330,7 @@ function AccountPage() {
           </div>
         </div>
       )}
-    </div>
+    </PageContainer>
   )
 }
 

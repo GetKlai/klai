@@ -31,6 +31,7 @@ import {
 import { userDisplayName } from './-users-helpers'
 import { UserActions } from './_components/UserActions'
 import { UsersTable } from './_components/UsersTable'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/admin/users/')({
   component: UsersPage,
@@ -76,7 +77,7 @@ function UsersPage() {
     : undefined
 
   return (
-    <div className="mx-auto max-w-4xl px-6 pt-4 pb-10 space-y-6">
+    <PageContainer width="4xl" gap="6">
       <PageHeader
         title={m.admin_users_heading()}
         count={!usersQuery.isLoading && !usersQuery.error ? users.length : undefined}
@@ -209,6 +210,6 @@ function UsersPage() {
           </AlertDialog>
         </>
       )}
-    </div>
+    </PageContainer>
   )
 }

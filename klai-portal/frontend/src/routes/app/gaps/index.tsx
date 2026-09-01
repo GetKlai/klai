@@ -24,6 +24,7 @@ import { ProductGuard } from '@/components/layout/ProductGuard'
 import { RoleGuard } from '@/components/layout/RoleGuard'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { Tooltip } from '@/components/ui/tooltip'
+import { PageContainer } from '@/components/ui/page-container'
 
 type GapsSearch = { days?: number; gapType?: string }
 const VALID_DAYS = new Set([7, 14, 30, 60, 90])
@@ -126,7 +127,7 @@ function GapsPage() {
   const gaps = data?.gaps ?? []
 
   return (
-    <div className="mx-auto max-w-3xl px-6 pt-4 pb-10">
+    <PageContainer width="3xl">
       <div className="flex items-start justify-between mb-6">
         <div className="flex items-center gap-3">
           <AlertTriangle className="h-7 w-7 text-gray-900" />
@@ -272,6 +273,6 @@ function GapsPage() {
           </DataTableBody>
         </DataTable>
       )}
-    </div>
+    </PageContainer>
   )
 }

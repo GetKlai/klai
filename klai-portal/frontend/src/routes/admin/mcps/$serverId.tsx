@@ -9,6 +9,7 @@ import { apiFetch } from '@/lib/apiFetch'
 import { queryLogger } from '@/lib/logger'
 import * as m from '@/paraglide/messages'
 import { useMcpServers, mcpServersQueryKey, type McpServer } from './_api'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/admin/mcps/$serverId')({
   component: McpEditPage,
@@ -212,7 +213,7 @@ function McpEditPage() {
   // --- Form -----------------------------------------------------------------
 
   return (
-    <div className="mx-auto max-w-lg px-6 pt-4 pb-10">
+    <PageContainer width="lg">
       <div className="flex items-start justify-between mb-6">
         <div className="space-y-1">
           <h1 className="page-title text-[26px] font-display-bold text-gray-900">
@@ -269,6 +270,6 @@ function McpEditPage() {
           )}
         </div>
       </form>
-    </div>
+    </PageContainer>
   )
 }

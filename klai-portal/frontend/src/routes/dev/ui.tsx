@@ -100,6 +100,7 @@ import { StepIndicator } from '@/components/ui/step-indicator'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, type TabItem } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/dev/ui')({
   component: UiCatalogPage,
@@ -327,14 +328,14 @@ function UiCatalogPage() {
 
   if (!import.meta.env.DEV) {
     return (
-      <div className="mx-auto max-w-3xl px-6 pt-4 pb-10">
+      <PageContainer width="3xl">
         <p className="text-sm text-gray-400">UI catalog is alleen lokaal beschikbaar.</p>
-      </div>
+      </PageContainer>
     )
   }
 
   return (
-    <main className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-10">
+    <PageContainer width="3xl" gap="10">
       <div className="space-y-1">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           UI catalog
@@ -495,6 +496,25 @@ function UiCatalogPage() {
           </div>
         </div>
       </Section>
+      <Section title="Page container">
+        <p className="text-sm text-gray-500">
+          <strong>PageContainer</strong> owns centering and page padding
+          (<code>mx-auto px-6 pt-4 pb-10</code>). The two choices an author
+          makes are the content width and the vertical rhythm. The bars below
+          show each width at the same scale; the wider ones run past this
+          catalog page, which is itself a <code>3xl</code> container.
+        </p>
+        <div className="space-y-2">
+          {(['lg', 'xl', '2xl', '3xl', '4xl', '6xl'] as const).map((width) => (
+            <PageContainer key={width} width={width} className="!py-0 !px-0">
+              <div className="rounded-md border border-gray-200 bg-[var(--color-secondary)] px-3 py-2 text-xs text-gray-600">
+                width=&quot;{width}&quot;
+              </div>
+            </PageContainer>
+          ))}
+        </div>
+      </Section>
+
       <Section title="Page header">
         <div className="space-y-6">
           <PageHeader
@@ -1212,6 +1232,6 @@ function UiCatalogPage() {
         </div>
       </Section>
       </div>
-    </main>
+    </PageContainer>
   )
 }

@@ -17,6 +17,7 @@ import * as m from '@/paraglide/messages'
 import { useCreateWidget } from './-hooks'
 import type { WidgetConfig } from './-types'
 import { KbAccessEditor } from './_components/KbAccessEditor'
+import { PageContainer } from '@/components/ui/page-container'
 
 // Create flow walks through the SAME sections the edit page exposes
 // (Algemeen / Kennisbanken / Vormgeving / Insluiten) so the admin
@@ -211,7 +212,7 @@ function NewWidgetPage() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl px-6 pt-4 pb-10">
+    <PageContainer width="3xl">
       <div className="flex items-start justify-between mb-6">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {m.admin_widgets_create()}
@@ -657,7 +658,7 @@ function NewWidgetPage() {
           )}
         </div>
       </form>
-    </div>
+    </PageContainer>
   )
 }
 

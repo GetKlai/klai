@@ -39,6 +39,7 @@ import {
 import { AuthProbeFeedback, PreviewClassificationFeedback } from './-connector-feedback'
 import { CookieRowsInput } from '@/components/knowledge/CookieRowsInput'
 import { kbQueryKeys } from '@/lib/kb-query-keys'
+import { PageContainer } from '@/components/ui/page-container'
 
 const CONNECTOR_TYPES: {
   type: ConnectorType
@@ -369,7 +370,7 @@ function AddConnectorPage() {
   }
 
   return (
-    <div className="mx-auto max-w-xl px-6 pt-4 pb-10">
+    <PageContainer width="xl">
       {/* Page header */}
       <div className="flex items-center justify-between mb-6">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
@@ -1271,7 +1272,7 @@ function AddConnectorPage() {
             )}
 
       </div>
-    </div>
+    </PageContainer>
   )
 }
 

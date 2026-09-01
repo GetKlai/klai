@@ -10,6 +10,7 @@ import { PermissionsTab } from './_components/tabs/PermissionsTab'
 import { KnowledgeBasesTab } from './_components/tabs/KnowledgeBasesTab'
 import { RotationTab } from './_components/tabs/RotationTab'
 import { DangerTab } from './_components/tabs/DangerTab'
+import { PageContainer } from '@/components/ui/page-container'
 
 type TabId = 'details' | 'permissions' | 'kbs' | 'rotation' | 'danger'
 
@@ -78,7 +79,7 @@ function ApiKeyDetailPage() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl px-6 pt-4 pb-10 space-y-8">
+    <PageContainer width="4xl" gap="8">
       <div className="flex items-start gap-3">
         <div className="flex-1">
           <h1 className="page-title text-[26px] font-display-bold text-gray-900">
@@ -108,6 +109,6 @@ function ApiKeyDetailPage() {
       {activeTab === 'kbs' && <KnowledgeBasesTab apiKey={apiKey} />}
       {activeTab === 'rotation' && <RotationTab apiKey={apiKey} />}
       {activeTab === 'danger' && <DangerTab apiKey={apiKey} />}
-    </div>
+    </PageContainer>
   )
 }

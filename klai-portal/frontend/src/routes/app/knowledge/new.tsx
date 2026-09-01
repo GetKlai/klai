@@ -18,6 +18,7 @@ import {
   useKnowledgeWizardMembers,
 } from './new._wizard-hooks'
 import type { Step, WizardData, WizardErrorKey } from './new._types'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/app/knowledge/new')({
   component: () => (
@@ -101,7 +102,7 @@ function NewKnowledgeBasePage() {
   }
 
   return (
-    <div className="mx-auto max-w-lg px-6 pt-4 pb-10">
+    <PageContainer width="lg">
       <div className="flex items-start justify-between mb-6">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {m.knowledge_new_heading()}
@@ -168,7 +169,7 @@ function NewKnowledgeBasePage() {
           </Button>
         </div>
       )}
-    </div>
+    </PageContainer>
   )
 }
 

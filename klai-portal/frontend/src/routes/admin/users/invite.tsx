@@ -11,6 +11,7 @@ import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { PROFILE_LADDER, type ProfileRole } from '@/lib/profiles'
 import { cleanErrorMessage } from '../_components/errors'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/admin/users/invite')({
   component: InviteUserPage,
@@ -118,7 +119,7 @@ function InviteUserPage() {
   const msgs = m as unknown as Record<string, (() => string) | undefined>
 
   return (
-    <div className="mx-auto max-w-lg px-6 pt-4 pb-10">
+    <PageContainer width="lg">
       <div className="flex items-start justify-between mb-6">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {m.admin_users_invite_button()}
@@ -250,6 +251,6 @@ function InviteUserPage() {
           </Button>
         </div>
       </form>
-    </div>
+    </PageContainer>
   )
 }

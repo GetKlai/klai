@@ -6,6 +6,7 @@ import { useAuth } from '@/lib/auth'
 import { fetchMe } from '@/lib/api-me'
 import { useProtectedRoute } from '@/hooks/useProtectedRoute'
 import { ADMIN_NAV_ITEMS, adminNavItemIsVisible } from './-nav'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/admin/')({
   component: AdminHome,
@@ -32,7 +33,7 @@ function AdminHome() {
   )
 
   return (
-    <div className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-8">
+    <PageContainer width="3xl" gap="8">
       <div className="space-y-1">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {m.admin_home_heading()}
@@ -64,6 +65,6 @@ function AdminHome() {
           </a>
         ))}
       </div>
-    </div>
+    </PageContainer>
   )
 }

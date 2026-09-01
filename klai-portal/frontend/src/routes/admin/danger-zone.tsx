@@ -9,6 +9,7 @@ import { useAuth } from '@/lib/auth'
 import { useQuery } from '@tanstack/react-query'
 import { apiFetch } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/admin/danger-zone')({
   component: DangerZonePage,
@@ -45,7 +46,7 @@ function DangerZonePage() {
   }
 
   return (
-    <div className="mx-auto max-w-lg px-6 pt-4 pb-10 space-y-6">
+    <PageContainer width="lg" gap="6">
       <div className="flex items-center justify-between mb-6">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {m.danger_zone_heading()}
@@ -88,6 +89,6 @@ function DangerZonePage() {
           orgName={org.name}
         />
       )}
-    </div>
+    </PageContainer>
   )
 }

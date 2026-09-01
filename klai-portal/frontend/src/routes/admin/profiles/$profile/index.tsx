@@ -24,6 +24,7 @@ import { PROFILE_LADDER, type ProfileRole } from '@/lib/profiles'
 import { UserAvatar, displayName } from '../../_components/UserAvatar'
 import { cleanErrorMessage } from '../../_components/errors'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/admin/profiles/$profile/')({
   component: AdminProfileDetail,
@@ -92,7 +93,7 @@ function AdminProfileDetail() {
   })
 
   return (
-    <div className="mx-auto max-w-2xl px-6 pt-4 pb-10 space-y-6">
+    <PageContainer width="2xl" gap="6">
       {/* Header */}
       <div className="flex items-start justify-between">
         <div className="space-y-2">
@@ -213,6 +214,6 @@ function AdminProfileDetail() {
           </DataTable>
         )}
       </section>
-    </div>
+    </PageContainer>
   )
 }

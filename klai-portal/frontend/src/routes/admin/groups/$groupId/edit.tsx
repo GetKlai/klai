@@ -12,6 +12,7 @@ import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/admin/groups/$groupId/edit')({
   component: EditGroupPage,
@@ -171,7 +172,7 @@ function EditGroupPage() {
   }
 
   return (
-    <div className="mx-auto max-w-lg px-6 pt-4 pb-10">
+    <PageContainer width="lg">
       <div className="flex items-start justify-between mb-6">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {m.admin_groups_edit()}
@@ -309,6 +310,6 @@ function EditGroupPage() {
           </form>
         </CardContent>
       </Card>
-    </div>
+    </PageContainer>
   )
 }

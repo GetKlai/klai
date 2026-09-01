@@ -45,6 +45,7 @@ import {
   previewUrlOnDetailsAdvance,
   VALID_STEPS,
 } from './-connector-constants'
+import { PageContainer } from '@/components/ui/page-container'
 
 // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-1 / REQ-5: edit wizard uses the same
 // 5-step flow as add-connector. ?step=auth|selector deep-link into the wizard.
@@ -623,7 +624,7 @@ function EditConnectorPage() {
   }
 
   return (
-    <div className="mx-auto max-w-lg px-6 pt-4 pb-10">
+    <PageContainer width="lg">
       <div className="flex items-start justify-between mb-6">
         <div className="space-y-1.5">
           <h1 className="page-title text-[26px] font-display-bold text-gray-900">
@@ -1563,6 +1564,6 @@ function EditConnectorPage() {
           {!connector && (
             <p className="text-sm text-gray-400">{m.admin_connectors_loading()}</p>
           )}
-    </div>
+    </PageContainer>
   )
 }

@@ -22,6 +22,7 @@ import {
 import { ListLoadingState } from '@/components/ui/list-state'
 import { apiFetch } from '@/lib/apiFetch'
 import { PROFILE_LADDER, type ProfileRole } from '@/lib/profiles'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/admin/profiles/')({
   component: AdminProfiles,
@@ -115,7 +116,7 @@ function AdminProfiles() {
   })
 
   return (
-    <div className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-6">
+    <PageContainer width="3xl" gap="6">
       <PageHeader
         title={m.admin_profiles_title()}
         count={rows.length}
@@ -179,6 +180,6 @@ function AdminProfiles() {
           </DataTableBody>
         </DataTable>
       )}
-    </div>
+    </PageContainer>
   )
 }

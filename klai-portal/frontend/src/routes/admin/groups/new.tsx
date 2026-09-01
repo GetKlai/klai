@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import * as m from '@/paraglide/messages'
 import { apiFetch, ApiError } from '@/lib/apiFetch'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/admin/groups/new')({
   component: NewGroupPage,
@@ -58,7 +59,7 @@ function NewGroupPage() {
   }
 
   return (
-    <div className="mx-auto max-w-lg px-6 pt-4 pb-10">
+    <PageContainer width="lg">
       <div className="flex items-start justify-between mb-6">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {m.admin_groups_create()}
@@ -114,6 +115,6 @@ function NewGroupPage() {
           </Button>
         </div>
       </form>
-    </div>
+    </PageContainer>
   )
 }

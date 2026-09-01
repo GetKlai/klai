@@ -26,6 +26,7 @@ import { SearchInput } from '@/components/ui/search-input'
 import { useListControls } from '@/components/ui/use-list-controls'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import * as m from '@/paraglide/messages'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/app/instructions/')({
   component: () => (
@@ -107,7 +108,7 @@ export function InstructionsPage() {
     : m.instructions_list_create_personal_button()
 
   return (
-    <div className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-6">
+    <PageContainer width="3xl" gap="6">
       <PageHeader
         title={m.instructions_page_title()}
         count={instructionsQuery.data ? instructions.length : undefined}
@@ -273,6 +274,6 @@ export function InstructionsPage() {
           )}
         </>
       )}
-    </div>
+    </PageContainer>
   )
 }

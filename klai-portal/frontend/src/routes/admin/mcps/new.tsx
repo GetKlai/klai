@@ -14,6 +14,7 @@ import { ListLoadingState, ListEmptyState } from '@/components/ui/list-state'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import * as m from '@/paraglide/messages'
 import { useMcpServers } from './_api'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/admin/mcps/new')({
   component: McpsNewPage,
@@ -31,7 +32,7 @@ function McpsNewPage() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl px-6 pt-4 pb-10 space-y-6">
+    <PageContainer width="6xl" gap="6">
       <div className="flex items-start justify-between">
         <div className="space-y-1">
           <h1 className="page-title text-[26px] font-display-bold text-gray-900">
@@ -91,6 +92,6 @@ function McpsNewPage() {
           </DataTableBody>
         </DataTable>
       )}
-    </div>
+    </PageContainer>
   )
 }

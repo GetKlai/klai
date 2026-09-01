@@ -21,6 +21,7 @@ import type {
   MeetingListResponse,
   UnifiedItem,
 } from './_types'
+import { PageContainer } from '@/components/ui/page-container'
 
 type TranscribeSearch = { search?: string }
 
@@ -170,7 +171,7 @@ function TranscribePage() {
   const totalCount = (transcriptionsData?.total ?? 0) + (meetingsData?.total ?? 0)
 
   return (
-    <div className="mx-auto max-w-4xl px-6 pt-4 pb-10 space-y-6">
+    <PageContainer width="4xl" gap="6">
       <PageHeader
         title={m.app_tool_transcribe_title()}
         count={!isLoading && !queryError ? totalCount : undefined}
@@ -269,6 +270,6 @@ function TranscribePage() {
           )}
         </>
       )}
-    </div>
+    </PageContainer>
   )
 }

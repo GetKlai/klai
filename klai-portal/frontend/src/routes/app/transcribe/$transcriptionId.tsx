@@ -9,6 +9,7 @@ import { ArrowLeft, Loader2, Copy, CheckCheck, Download } from 'lucide-react'
 import Markdown from 'react-markdown'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/app/transcribe/$transcriptionId')({
   component: TranscriptionDetailPage,
@@ -122,7 +123,7 @@ function TranscriptionDetailPage() {
   )
 
   return (
-    <div className="mx-auto max-w-3xl px-6 pt-4 pb-10">
+    <PageContainer width="3xl">
       <div className="flex items-start justify-between mb-6">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {displayTitle}
@@ -257,6 +258,6 @@ function TranscriptionDetailPage() {
           </Card>
         )}
       </div>
-    </div>
+    </PageContainer>
   )
 }

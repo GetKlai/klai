@@ -2,6 +2,7 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { ArrowLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import * as m from '@/paraglide/messages'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/admin/platform/onboarding-howto')({
   component: OnboardingHowtoPage,
@@ -79,7 +80,7 @@ function OnboardingHowtoPage() {
   ]
 
   return (
-    <div className="mx-auto max-w-3xl px-6 pt-4 pb-10">
+    <PageContainer width="3xl">
       <div className="mb-2 flex items-start justify-between gap-3">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {m.platform_onboarding_title()}
@@ -123,6 +124,6 @@ function OnboardingHowtoPage() {
           {m.platform_create_tenant()}
         </Button>
       </div>
-    </div>
+    </PageContainer>
   )
 }

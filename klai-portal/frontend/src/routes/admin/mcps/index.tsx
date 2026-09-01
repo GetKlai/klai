@@ -23,6 +23,7 @@ import { apiFetch } from '@/lib/apiFetch'
 import { queryLogger } from '@/lib/logger'
 import * as m from '@/paraglide/messages'
 import { useMcpServers, mcpServersQueryKey, type McpServer } from './_api'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/admin/mcps/')({
   component: McpsListPage,
@@ -66,7 +67,7 @@ function McpsListPage() {
   })
 
   return (
-    <div className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-6">
+    <PageContainer width="3xl" gap="6">
       <PageHeader
         title={m.admin_mcps_title()}
         count={!isLoading && !error ? enabledServers.length : undefined}
@@ -193,6 +194,6 @@ function McpsListPage() {
           )}
         </>
       )}
-    </div>
+    </PageContainer>
   )
 }

@@ -13,6 +13,7 @@ import { ProductGuard } from '@/components/layout/ProductGuard'
 import { apiFetch } from '@/lib/apiFetch'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { DOCS_BASE, getOrgSlug } from '@/lib/kb-editor/tree-utils'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/app/docs/$kbSlug_/edit')({
   component: () => (
@@ -78,7 +79,7 @@ function EditKBPage() {
   }
 
   return (
-    <div className="mx-auto max-w-lg px-6 pt-4 pb-10">
+    <PageContainer width="lg">
       <div className="flex items-start justify-between mb-6">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {m.docs_kb_edit_modal_title()}
@@ -138,6 +139,6 @@ function EditKBPage() {
           </form>
         </CardContent>
       </Card>
-    </div>
+    </PageContainer>
   )
 }

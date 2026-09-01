@@ -9,6 +9,7 @@ import { Loader2, ArrowLeft, Info, X } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 import { apiFetch } from '@/lib/apiFetch'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/app/meetings/start')({
   component: () => (
@@ -77,7 +78,7 @@ function StartMeetingPage() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl px-6 pt-4 pb-10">
+    <PageContainer width="3xl">
       <div className="flex items-start justify-between mb-6">
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {m.app_meetings_start_title()}
@@ -203,6 +204,6 @@ function StartMeetingPage() {
           )}
         </Button>
       </form>
-    </div>
+    </PageContainer>
   )
 }

@@ -11,6 +11,7 @@ import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import * as m from '@/paraglide/messages'
+import { PageContainer } from '@/components/ui/page-container'
 
 // Shared form for new + edit. Container, buttons and field styling follow
 // .claude/rules/klai/design/portal-patterns.md. The admin-gate for
@@ -181,7 +182,7 @@ export function InstructionFormPage({
   const title = mode === 'new' ? m.instructions_form_new_title() : m.instructions_form_edit_title()
 
   return (
-    <div className="mx-auto max-w-lg px-6 pt-4 pb-10">
+    <PageContainer width="lg">
       <div className="mb-6 flex items-start justify-between gap-3">
         <div className="space-y-1">
           <h1 className="page-title text-[26px] font-display-bold text-gray-900">{title}</h1>
@@ -277,6 +278,6 @@ export function InstructionFormPage({
           </Button>
         </div>
       </form>
-    </div>
+    </PageContainer>
   )
 }

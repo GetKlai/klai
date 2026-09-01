@@ -20,6 +20,7 @@ import { BorderedRowActionIconButton } from '@/components/ui/row-action'
 import * as m from '@/paraglide/messages'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 import { apiFetch } from '@/lib/apiFetch'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/app/docs/')({
   component: () => (
@@ -52,7 +53,7 @@ function DocsPage() {
   const lockedKbs = kbs.filter((kb) => !kb.is_accessible)
 
   return (
-    <div className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-8">
+    <PageContainer width="3xl" gap="8">
       <PageHeader
         title={m.docs_kbs_title()}
         count={!isLoading && !error ? accessibleKbs.length : undefined}
@@ -142,6 +143,6 @@ function DocsPage() {
           ))}
         </ListFrame>
       )}
-    </div>
+    </PageContainer>
   )
 }
