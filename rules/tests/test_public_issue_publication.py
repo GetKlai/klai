@@ -229,18 +229,42 @@ def test_hook_blocks_unapproved_pushes_that_can_mutate_main(command: str) -> Non
         "gh pr checks 42",
         "gh pr diff 42",
         "gh pr checkout 42",
-        "git push -u origin HEAD",
-        "git push --force origin HEAD",
         "git push origin feature/foo",
         "git push -u origin fix/publication-guard",
         "git push origin HEAD:refs/heads/fix/publication-guard",
-        "git push",
     ],
 )
-def test_hook_allows_read_only_pr_commands_and_feature_branch_pushes(
+def test_hook_allows_read_only_pr_commands_and_named_feature_branch_pushes(
     command: str,
 ) -> None:
     result = _run_hook(command)
+
+    assert result.returncode == 0
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["git push -u origin HEAD", "git push --force origin HEAD", "git push"],
+)
+def test_hook_allows_head_pushes_from_a_feature_branch(
+    command: str, tmp_path: Path
+) -> None:
+    """HEAD-relative pushes depend on the checked-out branch, so pin it.
+
+    These three were asserted without controlling the branch. That passed on a
+    feature worktree and on a detached PR checkout, and failed on main -- where
+    the hook is right to block them. The test was reading its environment
+    rather than the contract. Its sibling below pins main; this one pins a
+    feature branch, so both outcomes are asserted deliberately.
+    """
+    subprocess.run(
+        ["git", "init", "--initial-branch=feature/guard-context", str(tmp_path)],
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+
+    result = _run_hook(command, cwd=tmp_path)
 
     assert result.returncode == 0
 
