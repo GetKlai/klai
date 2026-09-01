@@ -6,6 +6,7 @@
   "scripts": {
     "i18n:compile": "paraglide-js compile --project ./project.inlang --outdir ./src/paraglide",
     "docs:components": "node scripts/generate-component-reference.mjs",
+    "docs:design": "node scripts/generate-design-md.mjs",
     "dev": "npm run i18n:compile && vite",
     "build": "rm -rf src/paraglide node_modules/.tmp && npm run i18n:compile && tsc -b --force && vite build",
     "preview": "vite preview",

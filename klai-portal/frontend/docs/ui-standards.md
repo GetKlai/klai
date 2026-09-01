@@ -23,7 +23,7 @@ catalog and be described here in the same change.
 
 The normative rules in this document are catalogued in the Rules Ledger at the
 end of this file, each with an ID, an RFC 2119 level and a declared
-verification mode. The count today: **52 rules — 9 automated, 4 assisted,
+verification mode. The count today: **53 rules — 10 automated, 4 assisted,
 35 manual, 4 deliberately unchecked.**
 
 The catalogue is maintained by hand. The ledger's own preamble says which of
@@ -38,6 +38,7 @@ These checks fail the build:
 | `klai/no-window-confirm` | `eslint-rules/`, runs in `npm run lint` | `window.confirm` / `alert` / `prompt`. Use `InlineDeleteConfirm` or `AlertDialog` |
 | `klai/no-raw-textarea` | `eslint-rules/`, runs in `npm run lint` | A raw `<textarea>` outside `src/components/ui/`. Use `Textarea` from `@/components/ui/textarea` |
 | Generated component reference | `tests/design/component-reference-generated.test.ts` | The generated table is stale relative to the UI module source comments or `cva(...)` variants |
+| Generated `DESIGN.md` | `tests/design/design-md-generated.test.ts` | The committed design document is stale relative to the theme, UI module metadata, or UI standards |
 | Rule-doc token values | `tests/design/rule-doc-token-values.test.ts` | A hex quoted in `.claude/rules/klai/design/*.md` that no longer matches `index.css` |
 | Widget default colour | `tests/design/widget-default-color.test.ts` | `WIDGET_DEFAULT_PRIMARY_COLOR` drifting from `--color-rl-accent`, or that literal being retyped elsewhere in `src/` |
 | OAuth consent palette | `tests/design/consent-page-tokens.test.ts` | A copied `--color-*` token in the backend consent page drifting from `index.css`, or an ad-hoc token appearing there |
@@ -1137,6 +1138,7 @@ restatement of these rules, not a separate set.
 | KLAI-UI-050 | The portal type scale is rem-based on a 110% root, so text, padding, control heights and column widths scale together; an absolute px font size does not scale and is a defect | must | manual | Reviewer step. Nothing yet stops a new `text-[Npx]` or a px `font-size` in `index.css` from being added |
 | KLAI-UI-051 | Foreground colours documented in the Colors section meet WCAG AA on both portal surfaces or carry a current, reasoned exception | must | automated | `tests/design/documented-contrast.test.ts` |
 | KLAI-UI-052 | Semantic base colour tokens are used for fills and borders; foregrounds on light portal surfaces use the matching `-text` token, while the passing destructive base foreground remains valid | must | manual | The documented contrast check covers only colours named in the Colors section, so it does not catch a base token used as a foreground elsewhere |
+| KLAI-UI-053 | `DESIGN.md` is generated from the portal theme, component metadata and UI standards, and a stale committed artefact fails the build | must | automated | `tests/design/design-md-generated.test.ts` |
 <!-- /generated:component-guidelines -->
 
 ### Retired IDs
