@@ -1,3 +1,6 @@
+/**
+ * @purpose Multi-value select
+ */
 import * as React from 'react'
 import { Check, ChevronDown, X } from 'lucide-react'
 

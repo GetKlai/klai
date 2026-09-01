@@ -325,7 +325,7 @@ export function WidgetChatSurface({
           </div>
           <div className="min-w-0">
             <h2 className={`truncate text-sm font-display-medium leading-none ${isDark ? 'text-[var(--color-rl-bg)]' : 'text-gray-900'}`}>{botName}</h2>
-            <p className={`mt-0.5 flex items-center gap-1 text-[11px] leading-none ${isDark ? 'text-[var(--color-rl-bg)]/50' : 'text-gray-400'}`}>
+            <p className={`mt-0.5 flex items-center gap-1 text-[0.6875rem] leading-none ${isDark ? 'text-[var(--color-rl-bg)]/50' : 'text-gray-400'}`}>
               <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--color-success)]" />
               {m.widget_chat_status_online()}
             </p>
@@ -334,10 +334,10 @@ export function WidgetChatSurface({
         <div className="flex items-center gap-1.5">
           <Button
             type="button"
-            variant="ghost"
+            variant="outline"
             size="sm"
             onClick={newConversation}
-            className="h-8 rounded-lg pl-2.5 pr-3 text-[13px]"
+            className="h-8 rounded-lg pl-2.5 pr-3 text-[0.8125rem]"
           >
             <Pencil className="h-3.5 w-3.5" strokeWidth={2} />
             <span className="hidden sm:inline">{m.widget_chat_new_conversation()}</span>
@@ -345,10 +345,10 @@ export function WidgetChatSurface({
           {shareUrl && (
             <Button
               type="button"
-              variant="ghost"
+              variant="outline"
               size="sm"
               onClick={copyShareLink}
-              className="h-8 rounded-lg pl-2.5 pr-3 text-[13px]"
+              className="h-8 rounded-lg pl-2.5 pr-3 text-[0.8125rem]"
             >
               <Share2 className="h-3.5 w-3.5" strokeWidth={2} />
               <span className="hidden sm:inline">
@@ -359,7 +359,7 @@ export function WidgetChatSurface({
           {onClose && (
             <Button
               type="button"
-              variant="ghost"
+              variant="outline"
               size="icon"
               onClick={onClose}
               aria-label={m.widget_chat_close()}
@@ -393,7 +393,7 @@ export function WidgetChatSurface({
                       type="button"
                       variant="secondary"
                       onClick={() => void sendMessage(starter)}
-                      className={`h-auto rounded-xl px-4 py-2.5 text-[13px] ${isDark ? 'bg-white/10 text-[var(--color-rl-bg)] hover:bg-white/15' : 'bg-[var(--color-rl-cream)] text-gray-700 hover:bg-[var(--color-rl-cream)]/70'}`}
+                      className={`h-auto rounded-xl px-4 py-2.5 text-[0.8125rem] ${isDark ? 'bg-white/10 text-[var(--color-rl-bg)] hover:bg-white/15' : 'bg-[var(--color-rl-cream)] text-gray-700 hover:bg-[var(--color-rl-cream)]/70'}`}
                     >
                       {starter}
                     </Button>
@@ -468,7 +468,7 @@ export function WidgetChatSurface({
               placeholder={m.widget_chat_input_placeholder()}
               rows={1}
               disabled={isStreaming}
-              className={`max-h-40 min-h-[28px] flex-1 resize-none border-0 bg-transparent px-0 py-1.5 text-[15px] leading-6 focus:ring-0 ${isDark ? 'text-[var(--color-rl-bg)] placeholder:text-[var(--color-rl-bg)]/35' : 'text-gray-900'}`}
+              className={`max-h-40 min-h-[28px] flex-1 resize-none border-0 bg-transparent px-0 py-1.5 text-[0.9375rem] leading-6 focus:ring-0 ${isDark ? 'text-[var(--color-rl-bg)] placeholder:text-[var(--color-rl-bg)]/35' : 'text-gray-900'}`}
             />
             <Button
               type="submit"
@@ -486,7 +486,7 @@ export function WidgetChatSurface({
             </Button>
           </form>
           {!hideDisclaimer && (
-            <p className={`mt-2.5 text-center text-[11px] ${isDark ? 'text-[var(--color-rl-bg)]/45' : 'text-gray-400'}`}>
+            <p className={`mt-2.5 text-center text-[0.6875rem] ${isDark ? 'text-[var(--color-rl-bg)]/45' : 'text-gray-400'}`}>
               {m.widget_ai_disclaimer()}
             </p>
           )}
@@ -526,7 +526,7 @@ function MessageBubble({
             : 'max-w-[75%] rounded-2xl rounded-br-md px-4 py-2.5 text-white'}
           style={{ backgroundColor: primaryColor }}
         >
-          <p className="whitespace-pre-line break-words text-[14px] leading-relaxed">
+          <p className="whitespace-pre-line break-words text-[0.875rem] leading-relaxed">
             {message.content}
           </p>
         </div>
@@ -544,7 +544,7 @@ function MessageBubble({
           <MessageSquare className="h-4 w-4" style={{ color: primaryColor }} strokeWidth={2} />
         </div>
         <div className="min-w-0 flex-1">
-          <div className={`whitespace-pre-line break-words text-[14px] leading-[1.75] ${isDark ? 'text-[var(--color-rl-bg)]' : 'text-gray-900'}`}>
+          <div className={`whitespace-pre-line break-words text-[0.875rem] leading-[1.75] ${isDark ? 'text-[var(--color-rl-bg)]' : 'text-gray-900'}`}>
             {message.content || (isStreaming && isLast ? '…' : '')}
           </div>
           <SourceDetails message={message} showSources={showSources} showMeta={showMeta} isDark={isDark} />
@@ -558,7 +558,7 @@ function MessageBubble({
       {message.content ? (
         <div>
           <div className={`max-w-[75%] rounded-2xl rounded-bl-md px-4 py-2.5 ${isDark ? 'bg-white/10' : 'bg-[var(--color-rl-cream)]'}`}>
-            <div className={`whitespace-pre-line break-words text-[14px] leading-[1.6] ${isDark ? 'text-[var(--color-rl-bg)]' : 'text-gray-900'}`}>
+            <div className={`whitespace-pre-line break-words text-[0.875rem] leading-[1.6] ${isDark ? 'text-[var(--color-rl-bg)]' : 'text-gray-900'}`}>
               {message.content}
             </div>
           </div>
@@ -615,7 +615,7 @@ function SourceDetails({
                     className={`inline-flex max-w-full items-center gap-2 rounded-full border px-2.5 py-1.5 text-xs no-underline transition-colors ${isDark ? 'border-white/10 bg-white/5 text-[var(--color-rl-bg)] hover:bg-white/10' : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'}`}
                   >
                     <span
-                      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-white"
+                      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[0.625rem] font-semibold text-white"
                       style={{ backgroundColor: 'var(--color-rl-dark)' }}
                     >
                       {source.label}
@@ -625,7 +625,7 @@ function SourceDetails({
                 ) : (
                   <span className={`inline-flex max-w-full items-center gap-2 rounded-full border px-2.5 py-1.5 text-xs ${isDark ? 'border-white/10 bg-white/5 text-[var(--color-rl-bg)]/70' : 'border-gray-200 bg-white text-gray-600'}`}>
                     <span
-                      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-white"
+                      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[0.625rem] font-semibold text-white"
                       style={{ backgroundColor: 'var(--color-rl-dark)' }}
                     >
                       {source.label}
@@ -647,7 +647,7 @@ function SourceDetails({
               {activity.length > 0 ? activityCountLabel : sourceCountLabel}
             </span>
           </summary>
-          <div className={`space-y-2 px-3 pb-3 text-[11px] leading-relaxed ${isDark ? 'text-[var(--color-rl-bg)]/55' : 'text-gray-500'}`}>
+          <div className={`space-y-2 px-3 pb-3 text-[0.6875rem] leading-relaxed ${isDark ? 'text-[var(--color-rl-bg)]/55' : 'text-gray-500'}`}>
             {sources.length > 0 && (
               <p>
                 {sources.length === 1

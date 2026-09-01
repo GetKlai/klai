@@ -1,3 +1,6 @@
+/**
+ * @purpose Menus, popovers, command/combobox
+ */
 import * as React from 'react'
 import * as PopoverPrimitive from '@radix-ui/react-popover'
 

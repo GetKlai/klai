@@ -1,3 +1,6 @@
+/**
+ * @purpose Centered confirm dialog for destructive actions outside rows
+ */
 import * as React from 'react'
 import * as AlertDialogPrimitive from '@radix-ui/react-alert-dialog'
 

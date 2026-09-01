@@ -1,3 +1,8 @@
+/**
+ * @purpose Slide-over. **Forbidden** for admin entity detail (see Detail And
+ * Edit)
+ * @canonical restricted
+ */
 import * as React from 'react'
 import * as SheetPrimitive from '@radix-ui/react-dialog'
 import { cva, type VariantProps } from 'class-variance-authority'

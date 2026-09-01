@@ -5,6 +5,7 @@ import { ProductGuard } from '@/components/layout/ProductGuard'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import * as m from '@/paraglide/messages'
 import { InstructionFormPage, type InstructionFormState, type InstructionScope } from './-instruction-form'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/app/instructions/$slug/edit')({
   component: () => (
@@ -49,17 +50,17 @@ function EditInstructionRoute() {
 
   if (isLoading) {
     return (
-      <div className="mx-auto max-w-lg px-6 pt-4 pb-10">
+      <PageContainer width="lg">
         <p className="text-sm text-gray-400">{m.instructions_form_loading()}</p>
-      </div>
+      </PageContainer>
     )
   }
 
   if (isError || !data) {
     return (
-      <div className="mx-auto max-w-lg px-6 pt-4 pb-10">
+      <PageContainer width="lg">
         <QueryErrorState error={error ?? new Error('Unknown error')} onRetry={() => void refetch()} />
-      </div>
+      </PageContainer>
     )
   }
 

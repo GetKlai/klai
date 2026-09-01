@@ -1,6 +1,7 @@
 import { User, Users } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 import * as m from '@/paraglide/messages'
 import type { WizardData, WizardDataSetter, WizardErrorKey } from '../new._types'
 
@@ -116,13 +117,13 @@ export function StepName({
 
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="kb-description">{m.knowledge_wizard_description_label()}</Label>
-        <textarea
+        <Textarea
           id="kb-description"
           value={data.description}
           onChange={(e) => setData((prev) => ({ ...prev, description: e.target.value }))}
           placeholder={m.knowledge_wizard_description_placeholder()}
           rows={3}
-          className="w-full rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)] disabled:cursor-not-allowed disabled:opacity-50 resize-none"
+          className="rounded-md resize-none"
         />
       </div>
     </div>

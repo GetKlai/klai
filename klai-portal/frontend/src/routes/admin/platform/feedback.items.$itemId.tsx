@@ -2,6 +2,7 @@ import { createFileRoute, useNavigate, useParams } from '@tanstack/react-router'
 import { getLocale } from '@/paraglide/runtime'
 import { datetime } from '@/paraglide/registry'
 import { FeedbackItemDetailPanel } from './-components/feedback/FeedbackItemDetailPanel'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/admin/platform/feedback/items/$itemId')({
   component: PlatformFeedbackItemPage,
@@ -26,12 +27,12 @@ function PlatformFeedbackItemPage() {
     void navigate({ to: '/admin/platform', search: { tab: 'feedback' } })
 
   return (
-    <div className="mx-auto max-w-4xl space-y-8 px-6 pt-4 pb-10">
+    <PageContainer width="4xl" gap="8">
       <FeedbackItemDetailPanel
         itemId={Number.isFinite(id) ? id : -1}
         fmtDate={fmtDate}
         onClose={backToPlatform}
       />
-    </div>
+    </PageContainer>
   )
 }

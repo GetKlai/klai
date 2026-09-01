@@ -99,7 +99,7 @@ export function CookieRowsInput({
             {showRemove && (
               <Button
                 type="button"
-                variant="ghost"
+                variant="outline"
                 size="sm"
                 aria-label={`Remove cookie ${index + 1}`}
                 onClick={() => removeRow(index)}

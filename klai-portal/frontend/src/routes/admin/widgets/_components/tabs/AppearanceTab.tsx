@@ -117,12 +117,12 @@ export function AppearanceTab({ widget }: Props) {
                 onClick={() => setTheme(t)}
                 role="radio"
                 aria-checked={theme === t}
-                variant="ghost"
+                variant="outline"
                 size="sm"
                 className={
                   theme === t
-                    ? 'rounded-full bg-gray-900 px-4 py-1.5 text-[12px] font-medium text-white transition-colors'
-                    : 'rounded-full px-4 py-1.5 text-[12px] text-gray-500 hover:text-gray-900 klai-hover'
+                    ? 'rounded-full bg-gray-900 px-4 py-1.5 text-[0.75rem] font-medium text-white transition-colors'
+                    : 'rounded-full px-4 py-1.5 text-[0.75rem] text-gray-500 hover:text-gray-900 klai-hover'
                 }
               >
                 {t === 'light' ? m.admin_widgets_theme_light() : m.admin_widgets_theme_dark()}
@@ -190,12 +190,12 @@ export function AppearanceTab({ widget }: Props) {
               onClick={() => setWidgetPosition(p)}
               role="radio"
               aria-checked={widgetPosition === p}
-              variant="ghost"
+              variant="outline"
               size="sm"
               className={
                 widgetPosition === p
-                  ? 'rounded-full bg-gray-900 px-4 py-1.5 text-[12px] font-medium text-white transition-colors'
-                  : 'rounded-full px-4 py-1.5 text-[12px] text-gray-500 hover:text-gray-900 klai-hover'
+                  ? 'rounded-full bg-gray-900 px-4 py-1.5 text-[0.75rem] font-medium text-white transition-colors'
+                  : 'rounded-full px-4 py-1.5 text-[0.75rem] text-gray-500 hover:text-gray-900 klai-hover'
               }
             >
               {p === 'left' ? m.admin_widgets_position_left() : m.admin_widgets_position_right()}
@@ -222,6 +222,6 @@ export function AppearanceTab({ widget }: Props) {
 
 function SectionHeading({ children }: { children: React.ReactNode }) {
   return (
-    <h3 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-400 mb-3">{children}</h3>
+    <h3 className="text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-400 mb-3">{children}</h3>
   )
 }

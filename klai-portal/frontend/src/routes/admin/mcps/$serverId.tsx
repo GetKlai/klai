@@ -9,6 +9,7 @@ import { apiFetch } from '@/lib/apiFetch'
 import { queryLogger } from '@/lib/logger'
 import * as m from '@/paraglide/messages'
 import { useMcpServers, mcpServersQueryKey, type McpServer } from './_api'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/admin/mcps/$serverId')({
   component: McpEditPage,
@@ -194,7 +195,7 @@ function McpEditPage() {
   if (isError || !server) {
     return (
       <div className="p-6 max-w-lg space-y-4">
-        <Button type="button" variant="ghost" size="sm" onClick={handleBack}>
+        <Button type="button" variant="outline" size="sm" onClick={handleBack}>
           <ArrowLeft className="h-4 w-4 mr-2" />
           {m.admin_mcps_back()}
         </Button>
@@ -212,15 +213,15 @@ function McpEditPage() {
   // --- Form -----------------------------------------------------------------
 
   return (
-    <div className="mx-auto max-w-lg px-6 pt-4 pb-10">
+    <PageContainer width="lg">
       <div className="flex items-start justify-between mb-6">
         <div className="space-y-1">
-          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+          <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
             {server.display_name || server.id}
           </h1>
           <p className="text-sm text-gray-400">{server.description}</p>
         </div>
-        <Button type="button" variant="ghost" size="sm" onClick={handleBack}>
+        <Button type="button" variant="outline" size="sm" onClick={handleBack}>
           <ArrowLeft className="h-4 w-4 mr-2" />
           {m.admin_mcps_back()}
         </Button>
@@ -269,6 +270,6 @@ function McpEditPage() {
           )}
         </div>
       </form>
-    </div>
+    </PageContainer>
   )
 }

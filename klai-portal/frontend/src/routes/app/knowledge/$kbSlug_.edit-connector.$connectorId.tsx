@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { StepIndicator, type StepItem } from '@/components/ui/step-indicator'
+import { Textarea } from '@/components/ui/textarea'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { MS_SITE_URL_PATTERN } from '@/lib/ms-docs'
@@ -44,6 +45,7 @@ import {
   previewUrlOnDetailsAdvance,
   VALID_STEPS,
 } from './-connector-constants'
+import { PageContainer } from '@/components/ui/page-container'
 
 // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-1 / REQ-5: edit wizard uses the same
 // 5-step flow as add-connector. ?step=auth|selector deep-link into the wizard.
@@ -622,17 +624,17 @@ function EditConnectorPage() {
   }
 
   return (
-    <div className="mx-auto max-w-lg px-6 pt-4 pb-10">
+    <PageContainer width="lg">
       <div className="flex items-start justify-between mb-6">
         <div className="space-y-1.5">
-          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+          <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
             {m.admin_connectors_edit_title()}
           </h1>
           {connector && (
             <p className="text-sm text-gray-400">{connector.name}</p>
           )}
         </div>
-        <Button type="button" variant="ghost" size="sm" onClick={goBack}>
+        <Button type="button" variant="outline" size="sm" onClick={goBack}>
           <ArrowLeft className="h-4 w-4 mr-2" />
           {m.admin_connectors_cancel()}
         </Button>
@@ -713,7 +715,7 @@ function EditConnectorPage() {
                     >
                       {m.admin_connectors_webcrawler_next()}
                     </Button>
-                    <Button type="button" size="sm" variant="ghost" onClick={goBack}>
+                    <Button type="button" size="sm" variant="outline" onClick={goBack}>
                       {m.admin_connectors_cancel()}
                     </Button>
                   </div>
@@ -771,7 +773,7 @@ function EditConnectorPage() {
                     >
                       {m.admin_connectors_webcrawler_next()}
                     </Button>
-                    <Button type="button" size="sm" variant="ghost" onClick={() => setWcStep('details')}>
+                    <Button type="button" size="sm" variant="outline" onClick={() => setWcStep('details')}>
                       {m.admin_connectors_webcrawler_back()}
                     </Button>
                   </div>
@@ -797,7 +799,7 @@ function EditConnectorPage() {
                         <Button
                           type="button"
                           size="sm"
-                          variant="ghost"
+                          variant="outline"
                           onClick={() => {
                             setWcAuthMode('saved')
                             setWcCookieRows([])
@@ -841,7 +843,7 @@ function EditConnectorPage() {
                           <Button
                             type="button"
                             size="sm"
-                            variant="ghost"
+                            variant="outline"
                           onClick={() => {
                             startReplacingSavedCookies()
                           }}
@@ -851,7 +853,7 @@ function EditConnectorPage() {
                           <Button
                             type="button"
                             size="sm"
-                            variant="ghost"
+                            variant="outline"
                             onClick={() => {
                               setRequiresLogin(false)
                               setWcCookieRows([])
@@ -933,7 +935,7 @@ function EditConnectorPage() {
                     <Button
                       type="button"
                       size="sm"
-                      variant="ghost"
+                      variant="outline"
                       onClick={() => setWcStep(hasSavedWebCrawlerCredentials ? 'details' : 'auth-question')}
                     >
                       {m.admin_connectors_webcrawler_back()}
@@ -1220,7 +1222,7 @@ function EditConnectorPage() {
                     <Button
                       type="button"
                       size="sm"
-                      variant="ghost"
+                      variant="outline"
                       onClick={() => setWcStep(requiresLogin ? 'auth-setup' : 'auth-question')}
                     >
                       {m.admin_connectors_webcrawler_back()}
@@ -1249,7 +1251,7 @@ function EditConnectorPage() {
                     >
                       {updateMutation.isPending ? m.admin_connectors_create_submit_loading() : m.admin_connectors_save()}
                     </Button>
-                    <Button type="button" size="sm" variant="ghost" onClick={() => setWcStep('selector')}>
+                    <Button type="button" size="sm" variant="outline" onClick={() => setWcStep('selector')}>
                       {m.admin_connectors_webcrawler_back()}
                     </Button>
                   </div>
@@ -1309,13 +1311,13 @@ function EditConnectorPage() {
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="edit-conn-notion-dbs">{m.admin_connectors_notion_database_ids()}</Label>
-                <textarea
+                <Textarea
                   id="edit-conn-notion-dbs"
                   rows={3}
                   placeholder={m.admin_connectors_notion_database_ids_placeholder()}
                   value={notionConfig.database_ids}
                   onChange={(e) => setNotionConfig((p) => ({ ...p, database_ids: e.target.value }))}
-                  className="w-full rounded-lg border border-gray-200 bg-[var(--color-input)] px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)] resize-none"
+                  className="bg-[var(--color-input)] resize-none"
                 />
               </div>
               <div className="space-y-1.5">
@@ -1562,6 +1564,6 @@ function EditConnectorPage() {
           {!connector && (
             <p className="text-sm text-gray-400">{m.admin_connectors_loading()}</p>
           )}
-    </div>
+    </PageContainer>
   )
 }

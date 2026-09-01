@@ -5,10 +5,11 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Alert } from '@/components/ui/alert'
-import { Loader2, ArrowLeft, Info, X } from 'lucide-react'
+import { Loader2, ArrowLeft, X } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 import { apiFetch } from '@/lib/apiFetch'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/app/meetings/start')({
   component: () => (
@@ -77,57 +78,60 @@ function StartMeetingPage() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl px-6 pt-4 pb-10">
+    <PageContainer width="3xl">
       <div className="flex items-start justify-between mb-6">
-        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+        <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
           {m.app_meetings_start_title()}
         </h1>
-        <Button type="button" variant="ghost" size="sm" onClick={() => navigate({ to: '/app/transcribe' })}>
+        <Button type="button" variant="outline" size="sm" onClick={() => navigate({ to: '/app/transcribe' })}>
           <ArrowLeft className="h-4 w-4 mr-2" />
           {m.app_meetings_back()}
         </Button>
       </div>
 
       {showOnboarding && (
-        <div className="mb-4 rounded-lg border border-gray-200 bg-[var(--color-secondary)] p-4">
+        <Alert variant="info" className="mb-4">
           <div className="flex items-start gap-3">
-            <Info className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-rl-accent)]" />
-            <div className="flex-1 space-y-3 text-sm">
+            <div className="flex-1 space-y-3">
               <p className="font-medium text-gray-900">
                 {m.app_meetings_start_onboarding_title()}
               </p>
               <div className="space-y-0.5">
-                <p className="text-xs font-medium text-gray-900">
+                <p className="font-medium text-gray-900">
                   {m.app_meetings_start_onboarding_url_heading()}
                 </p>
-                <p className="text-xs text-gray-400">
+                <p className="text-sm text-gray-600">
                   {m.app_meetings_start_onboarding_url_body()}
                 </p>
               </div>
               <div className="space-y-0.5">
-                <p className="text-xs font-medium text-gray-900">
+                <p className="font-medium text-gray-900">
                   {m.app_meetings_start_onboarding_invite_heading()}
                 </p>
-                <p className="text-xs text-gray-400">
+                <p className="text-sm text-gray-600">
                   {m.app_meetings_start_onboarding_invite_body()}
                 </p>
               </div>
-              <button
+              <Button
+                type="button"
+                variant="link"
+                size="sm"
                 onClick={dismissOnboarding}
-                className="text-xs font-medium text-[var(--color-rl-accent)] hover:text-gray-900 transition-colors"
+                className="-ml-4 text-gray-900 underline underline-offset-2"
               >
                 {m.app_meetings_start_onboarding_dismiss()}
-              </button>
+              </Button>
             </div>
             <button
+              type="button"
               onClick={dismissOnboarding}
-              className="shrink-0 rounded p-1 text-gray-400 hover:bg-gray-200 hover:text-gray-900 transition-colors"
+              className="shrink-0 rounded p-1 text-gray-500 hover:bg-gray-200 hover:text-gray-900 transition-colors"
               aria-label={m.app_meetings_start_onboarding_dismiss()}
             >
               <X className="h-4 w-4" />
             </button>
           </div>
-        </div>
+        </Alert>
       )}
 
       <form onSubmit={handleSubmit} className="space-y-5">
@@ -203,6 +207,6 @@ function StartMeetingPage() {
           )}
         </Button>
       </form>
-    </div>
+    </PageContainer>
   )
 }

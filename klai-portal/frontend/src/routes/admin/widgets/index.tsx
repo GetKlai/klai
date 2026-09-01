@@ -20,6 +20,7 @@ import { BorderedRowActionIconButton, RowActionGroup } from '@/components/ui/row
 import * as m from '@/paraglide/messages'
 import { useWidgets, useDeleteWidget } from './-hooks'
 import type { WidgetResponse } from './-types'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/admin/widgets/')({
   component: WidgetsPage,
@@ -37,7 +38,7 @@ function WidgetsPage() {
   const widgets: WidgetResponse[] = Array.isArray(data) ? data : []
 
   return (
-    <div className="mx-auto max-w-4xl px-6 pt-4 pb-10 space-y-6">
+    <PageContainer width="4xl" gap="6">
       <PageHeader
         title={m.admin_widgets_title()}
         count={!isLoading && !error ? widgets.length : undefined}
@@ -171,6 +172,6 @@ function WidgetsPage() {
           })}
         </ListFrame>
       )}
-    </div>
+    </PageContainer>
   )
 }

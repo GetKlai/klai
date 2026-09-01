@@ -93,14 +93,14 @@ export function FeedbackItemDetailPanel({
     <div className="space-y-6">
       <div className="flex items-start gap-3">
         <div className="flex-1">
-          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+          <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
             {m.platform_feedback_item_title()}
           </h1>
           <p className="mt-1 text-sm text-gray-400">
             {m.platform_feedback_item_description()}
           </p>
         </div>
-        <Button type="button" variant="ghost" size="sm" onClick={onClose}>
+        <Button type="button" variant="outline" size="sm" onClick={onClose}>
           <ArrowLeft className="h-4 w-4 mr-2" />
           {m.platform_back_to_feedback()}
         </Button>
@@ -380,7 +380,7 @@ function FeedbackItemDetailForm({
                 )}
                 {m.admin_shared_save()}
               </Button>
-              <Button type="button" variant="ghost" size="sm" onClick={cancelEdit}>
+              <Button type="button" variant="outline" size="sm" onClick={cancelEdit}>
                 <X className="h-4 w-4" />
                 {m.admin_users_cancel()}
               </Button>
@@ -433,7 +433,7 @@ function FeedbackItemDetailForm({
           <div className="flex items-center justify-end gap-2">
             <Button
               type="button"
-              variant="ghost"
+              variant="outline"
               size="sm"
               onClick={() => {
                 setAskOpen(false)
@@ -615,7 +615,7 @@ function FeedbackItemDetailForm({
       <div className="flex items-center justify-between pt-2">
         <Button
           type="button"
-          variant="ghost"
+          variant="outline"
           size="sm"
           disabled={itemStepIndex === 0}
           onClick={previousItemStep}

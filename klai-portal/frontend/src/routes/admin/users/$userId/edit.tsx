@@ -31,6 +31,7 @@ import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { PROFILE_LADDER, type ProfileRole } from '@/lib/profiles'
 import { ProfilePicker } from '../../_components/ProfilePicker'
 import { cleanErrorMessage } from '../../_components/errors'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/admin/users/$userId/edit')({
   component: EditUserPage,
@@ -129,10 +130,10 @@ function EditUserPage() {
   }
 
   return (
-    <div className="mx-auto max-w-lg px-6 pt-4 pb-10 space-y-6">
+    <PageContainer width="lg" gap="6">
       <div className="flex items-start justify-between">
         <div className="space-y-2">
-          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+          <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
             {m.admin_users_edit_heading()}
           </h1>
           <p className="text-sm text-gray-400">
@@ -141,7 +142,7 @@ function EditUserPage() {
         </div>
         <Button
           type="button"
-          variant="ghost"
+          variant="outline"
           size="sm"
           onClick={() => void navigate({ to: '/admin/users' })}
         >
@@ -271,6 +272,6 @@ function EditUserPage() {
           )}
         </div>
       )}
-    </div>
+    </PageContainer>
   )
 }

@@ -133,7 +133,7 @@ export function StatsTab({
               key={option}
               type="button"
               size="sm"
-              variant={option === range ? 'default' : 'ghost'}
+              variant={option === range ? 'default' : 'outline'}
               onClick={() => onRangeChange(option)}
             >
               {rangeLabel(option)}

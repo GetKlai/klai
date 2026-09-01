@@ -33,6 +33,7 @@ import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 import { kbQueryKeys } from '@/lib/kb-query-keys'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/app/knowledge/')({
   component: () => (
@@ -157,7 +158,7 @@ function KbRow({
           <div className="flex items-baseline gap-2 flex-wrap">
             <ListRowTitle>{kb.name}</ListRowTitle>
             {isMine && (
-              <Badge variant="secondary" className="text-[10px] py-0 px-1.5">
+              <Badge variant="secondary" className="text-[0.625rem] py-0 px-1.5">
                 Mijn
               </Badge>
             )}
@@ -238,7 +239,7 @@ function KnowledgePage() {
   const totalCount = allKbs.length
 
   return (
-    <div className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-8">
+    <PageContainer width="3xl" gap="8">
       <PageHeader
         title={m.kb_list_title()}
         count={!kbsLoading && !kbsError ? totalCount : undefined}
@@ -311,6 +312,6 @@ function KnowledgePage() {
           onPageChange={controls.setPage}
         />
       )}
-    </div>
+    </PageContainer>
   )
 }

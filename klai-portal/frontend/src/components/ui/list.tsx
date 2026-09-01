@@ -1,3 +1,8 @@
+/**
+ * @purpose List primitives: `ListFrame`, `ListHeader`, `ListRow`,
+ * `ListRowContent`, `ListRowTitle`, `ListRowDescription`, `ListRowActions`,
+ * `ListRowIcon`, `ListRowChevron`
+ */
 import * as React from 'react'
 import { Slot } from '@radix-ui/react-slot'
 import { ChevronRight } from 'lucide-react'
@@ -72,7 +77,7 @@ interface ListRowTitleProps extends React.HTMLAttributes<HTMLSpanElement> {}
 function ListRowTitle({ className, ...props }: ListRowTitleProps) {
   return (
     <span
-      className={cn('truncate text-[15px] font-display text-gray-900', className)}
+      className={cn('truncate text-[0.9375rem] font-display text-gray-900', className)}
       {...props}
     />
   )

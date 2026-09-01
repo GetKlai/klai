@@ -1,3 +1,8 @@
+/**
+ * @purpose Metric tile (`StatCard`): uppercase label + large tabular value +
+ * optional sub. Sizes default/sm, `tone` (default/warning/destructive), `alert`
+ * frame, optional `onClick` to navigate
+ */
 import * as React from 'react'
 import { Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -56,7 +61,7 @@ function StatCard({
   )
   const body = (
     <>
-      <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-400">
+      <p className="text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-400">
         {label}
       </p>
       <p

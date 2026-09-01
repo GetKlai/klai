@@ -1,3 +1,6 @@
+/**
+ * @purpose Inline destructive confirmation inside a row (no layout shift)
+ */
 import { Loader2, Trash2, X } from 'lucide-react'
 import { InlineRowButton } from '@/components/ui/inline-row-button'
 import type { ReactNode } from 'react'

@@ -21,21 +21,42 @@ catalog and be described here in the same change.
 
 ## What Is Enforced (and what is not)
 
-Most of this document is prose you are trusted to follow. Three parts are not:
+The normative rules in this document are catalogued in the Rules Ledger at the
+end of this file, each with an ID, an RFC 2119 level and a declared
+verification mode. The count today: **51 rules — 9 automated, 4 assisted,
+34 manual, 4 deliberately unchecked.**
+
+The catalogue is maintained by hand. The ledger's own preamble says which of
+its guarantees a test backs and which rely on you adding the row — read that
+before quoting a number from here.
+
+These checks fail the build:
 
 | Check | Where | Fails on |
 |---|---|---|
 | `klai/no-hardcoded-brand-color` | `eslint-rules/`, runs in `npm run lint` | A hex in `className` that equals a token in `index.css`. Use `bg-[var(--color-rl-dark)]`. Third-party brand marks (Google, HubSpot) never match, by design |
 | `klai/no-window-confirm` | `eslint-rules/`, runs in `npm run lint` | `window.confirm` / `alert` / `prompt`. Use `InlineDeleteConfirm` or `AlertDialog` |
-| Component table completeness | `tests/design/ui-standards-coverage.test.ts` | A module in `src/components/ui/` missing from the table below, or a table row whose module no longer exists |
+| `klai/no-raw-textarea` | `eslint-rules/`, runs in `npm run lint` | A raw `<textarea>` outside `src/components/ui/`. Use `Textarea` from `@/components/ui/textarea` |
+| Generated component reference | `tests/design/component-reference-generated.test.ts` | The generated table is stale relative to the UI module source comments or `cva(...)` variants |
+| Rule-doc token values | `tests/design/rule-doc-token-values.test.ts` | A hex quoted in `.claude/rules/klai/design/*.md` that no longer matches `index.css` |
+| Widget default colour | `tests/design/widget-default-color.test.ts` | `WIDGET_DEFAULT_PRIMARY_COLOR` drifting from `--color-rl-accent`, or that literal being retyped elsewhere in `src/` |
+| OAuth consent palette | `tests/design/consent-page-tokens.test.ts` | A copied `--color-*` token in the backend consent page drifting from `index.css`, or an ad-hoc token appearing there |
+| Border reset layer | `tests/design/border-layer-reset.test.ts` | The universal border-colour reset leaving `@layer base`, a second unlayered reset, or an inline TSX `borderColor` fix |
+| Documented text contrast | `tests/design/documented-contrast.test.ts` | A foreground named by the Colors section falling below 4.5:1 on a portal surface without a current documented exception, or an exception remaining after that foreground passes |
 
-Everything else in this file is unenforced on purpose.
+Everything else is prose you are trusted to follow. The ledger says so per
+rule instead of leaving it implied. `manual` is an honest label rather
+than a TODO — most of this document is judgement no check can make. `none` is
+the different one: a rule we decided not to check, with the reason written down
+beside it.
 
 Raw `<button>` is not linted because it is not a violation. See Component
 Library Reference: 96 of 100 uses are the prescribed pattern for interactive
-rows, and the remaining four are correct too. Raw `<input>`/`<textarea>` in
-forms IS a violation, and is also not linted yet — that is a known backlog
-item of ~21 sites, not a rule waiting to be written.
+rows, and the remaining four are correct too. Raw `<textarea>` is linted and
+the count outside `components/ui/` is zero. Raw `<input>` is not linted: ten
+sites are one consistent auth-field pattern awaiting a design decision, and
+two widget inputs deliberately implement a dark-mode variant the owned
+`Input` cannot express.
 
 Do not add enforcement for a pattern you have not first counted. The button
 rule that was nearly written here would have flagged 96 correct decisions.
@@ -74,48 +95,64 @@ vendors dictate (`login.tsx`), and kb-editor chrome at `h-7`, which no
 96 correct decisions, and a rule that noisy gets switched off along with the
 rules that work.
 
-The same count found the opposite for form fields: roughly 11 raw text,
-password and email `<input>` elements and 10 raw `<textarea>` elements
-bypass the owned components, including in admin create forms
-(`admin/groups/new.tsx`, `admin/api-keys/new.tsx`). Those are real
-violations. Checkbox and radio inputs inside composed controls
-(`RadioCardGroup`, permission pickers) are not.
+A 2026-09 follow-up sweep reduced raw `<textarea>` elements outside
+`components/ui/` to zero and added a lint guard. Twelve raw text, password and
+email `<input>` elements remain, and only ten of them are debt: one consistent
+auth-field pattern across login, signup, password and 2FA setup, awaiting a
+design decision because converting it means converting its hand-rolled
+`<label>` too. The other two are correct — the widget chat surface implements
+a dark-mode variant the owned `Input` cannot express. Checkbox and radio
+inputs inside composed controls (`RadioCardGroup`, permission pickers) are not
+violations either.
 
+Generated from source comments by `npm run docs:components`; do not edit by hand.
+
+<!-- generated:component-reference -->
 | Component | Purpose | Canonical? |
 |---|---|---|
-| `button` | All buttons (variants: default/secondary/ghost/outline/destructive; sizes: default/sm/icon) | Yes |
-| `page-header` | Page title, short subtitle/count, and right-aligned page action (`PageHeader`); longer explanatory copy below the header uses `PageIntro` | Yes |
-| `badge` | Inline status labels (secondary/success/warning/destructive/outline) | Yes |
-| `action-tag` | Compact open/closed action-state tag (`ActionTag`, states: `open`, `closed`) | Yes |
-| `alert` | Inline semantic callout (`Alert`, variants: info/success/warning/destructive; sizes: default/sm). Soft tint + auto icon, for wizard/form feedback and inline warnings — not a toast, not a modal | Yes |
-| `input` `select` `textarea` `label` `checkbox` `switch` | Form controls | Yes |
-| `search-input` | Text input with a leading search icon (`SearchInput`) | Yes |
-| `row-action` | List/table row actions: `BorderedRowActionIconButton` (visible bordered hitbox — the default for row icon actions), `RowActionButton`, `RowActionGroup` + the action→tone system. `RowActionIconButton` is the low-level unbordered base, not the list/table default. | Yes |
-| `data-table` | Admin table primitives: `DataTable`, `DataTableHeader`, `DataTableBody`, `DataTableRow` (`interactive`/`confirming`), `DataTableHead`, `DataTableCell` (`align`) | Yes |
-| `list` | List primitives: `ListFrame`, `ListHeader`, `ListRow`, `ListRowContent`, `ListRowTitle`, `ListRowDescription`, `ListRowActions`, `ListRowIcon`, `ListRowChevron` | Yes |
-| `list-state` | List/table loading and empty states: `ListLoadingState`, `ListEmptyState` | Yes |
-| `pagination` | Numbered pager for overviews (`Pagination`): previous, clickable page numbers with `…` truncation, next; current page highlighted and not clickable. Controlled; pair with `useListControls` | Yes |
-| `use-list-controls` | Hook (`useListControls`) encoding the search/pagination threshold + paging math for overviews | Yes |
-| `inline-row-button` | The single source for small inline-row action pills (`InlineRowButton`): Save/Cancel, Delete/Cancel, Approve/Deny. Tones: success/destructive/neutral | Yes |
-| `inline-edit-row` | Canonical inline edit for a list row (`InlineEditRow`): name + optional description, zero layout shift, owns Save/Cancel | Yes |
-| `inline-delete-confirm` | Inline destructive confirmation inside a row (no layout shift) | Yes |
-| `inline-edit` | Low-level single-field click-to-edit overlay, for custom row layouts that own their own buttons. Prefer `InlineEditRow` for new rows | Yes |
-| `radio-card-group` | Selectable radio option cards (`RadioCardGroup`) | Yes |
-| `step-indicator` | Wizard step progress (`StepIndicator`) | Yes |
-| `tabs` | Underline tabs (`Tabs`): text + optional icon/count, strong `border-gray-900` active underline. For state/search-param tabs. Router-navigation tab bars (real sub-route links) use `Link` directly with the same look. | Yes |
+| `action-tag` | Compact open/closed action-state tag (`ActionTag`) (states: open/closed) | Yes |
 | `alert-dialog` | Centered confirm dialog for destructive actions outside rows | Yes |
-| `dialog` | Generic modal | Yes |
-| `dropdown-menu` `popover` `command` | Menus, popovers, command/combobox | Yes |
-| `multi-select` | Multi-value select | Yes |
-| `tooltip` | Hover/focus tooltips (used by `row-action`) | Yes |
-| `LocaleSwitcher` | NL/EN language toggle (`LocaleSwitcher`). Navigates to the sibling locale URL on `/nl/…` and `/en/…` routes, and updates locale state only elsewhere. Used on the unauthenticated routes (login, signup, verify) | Yes |
-| `sonner` | Toasts (`toast()` feedback) | Yes |
+| `alert` | Inline semantic callout (`Alert`). Soft tint + auto icon, for wizard/form feedback and inline warnings — not a toast, not a modal (variants: info/success/warning/destructive; sizes: sm/default) | Yes |
+| `badge` | Inline status labels (variants: default/secondary/accent/outline/success/warning/destructive/info) | Yes |
+| `button` | All buttons. Use for an action; a clickable row or toggle is an interactive surface and uses a raw `button` instead. (variants: default/secondary/outline/destructive/link; sizes: default/sm/lg/icon) | Yes |
 | `card` | Framed repeated items / stat blocks | Yes |
+| `checkbox` | Form controls | Yes |
+| `command` | Menus, popovers, command/combobox | Yes |
 | `conversation` | Message timeline + composer + panel (`ConversationTimeline`, `ConversationComposer`, `ConversationPanel`): sender-grouped bubbles, day separators, quiet system lines, Cmd/Enter send, inline edit of own messages, back-right header. Shared by account "Mijn meldingen" + "Berichten" and the platform-admin messages tab | Yes |
-| `stat-card` | Metric tile (`StatCard`): uppercase label + large tabular value + optional sub. Sizes default/sm, `tone` (default/warning/destructive), `alert` frame, optional `onClick` to navigate | Yes |
+| `data-table` | Admin table primitives: `DataTable`, `DataTableHeader`, `DataTableBody`, `DataTableRow` (`interactive`/`confirming`), `DataTableHead`, `DataTableCell` (`align`) | Yes |
+| `delete-kb-modal` | Feature-specific destructive modals (not generic) | Feature |
+| `delete-org-modal` | Feature-specific destructive modals (not generic) | Feature |
+| `dialog` | Generic modal | Yes |
+| `dropdown-menu` | Menus, popovers, command/combobox | Yes |
+| `inline-delete-confirm` | Inline destructive confirmation inside a row (no layout shift) | Yes |
+| `inline-edit-row` | Canonical inline edit for a list row (`InlineEditRow`): name + optional description, zero layout shift, owns Save/Cancel | Yes |
+| `inline-edit` | Low-level single-field click-to-edit overlay, for custom row layouts that own their own buttons. Prefer `InlineEditRow` for new rows | Yes |
+| `inline-row-button` | The single source for small inline-row action pills (`InlineRowButton`): Save/Cancel, Delete/Cancel, Approve/Deny. Tones: success/destructive/neutral | Yes |
+| `input` | Form controls | Yes |
+| `label` | Form controls | Yes |
+| `list-state` | List/table loading and empty states: `ListLoadingState`, `ListEmptyState` | Yes |
+| `list` | List primitives: `ListFrame`, `ListHeader`, `ListRow`, `ListRowContent`, `ListRowTitle`, `ListRowDescription`, `ListRowActions`, `ListRowIcon`, `ListRowChevron` | Yes |
+| `LocaleSwitcher` | NL/EN language toggle (`LocaleSwitcher`). Navigates to the sibling locale URL on `/nl/…` and `/en/…` routes, and updates locale state only elsewhere. Used on the unauthenticated routes (login, signup, verify) | Yes |
+| `multi-select` | Multi-value select | Yes |
+| `page-container` | Centered page container (`PageContainer`) with owned page padding; authors choose the content width and vertical rhythm | Yes |
+| `page-header` | Page title, short subtitle/count, and right-aligned page action (`PageHeader`); longer explanatory copy below the header uses `PageIntro` | Yes |
+| `pagination` | Numbered pager for overviews (`Pagination`): previous, clickable page numbers with `…` truncation, next; current page highlighted and not clickable. Controlled; pair with `useListControls` | Yes |
+| `popover` | Menus, popovers, command/combobox | Yes |
 | `query-error-state` | Standard error block for failed queries | Yes |
-| `sheet` | Slide-over. **Forbidden** for admin entity detail (see Detail And Edit) | Restricted |
-| `delete-kb-modal` `delete-org-modal` | Feature-specific destructive modals (not generic) | Feature |
+| `radio-card-group` | Selectable radio option cards (`RadioCardGroup`) | Yes |
+| `row-action` | List/table row actions: `BorderedRowActionIconButton` (visible bordered hitbox — the default for row icon actions), `RowActionButton`, `RowActionGroup` + the action→tone system. `RowActionIconButton` is the low-level unbordered base, not the list/table default. (tones: neutral/primary/info/danger/success/warning) | Yes |
+| `search-input` | Text input with a leading search icon (`SearchInput`) | Yes |
+| `select` | Form controls | Yes |
+| `sheet` | Slide-over. **Forbidden** for admin entity detail (see Detail And Edit) (sides: top/bottom/left/right) | Restricted |
+| `sonner` | Toasts (`toast()` feedback) | Yes |
+| `stat-card` | Metric tile (`StatCard`): uppercase label + large tabular value + optional sub. Sizes default/sm, `tone` (default/warning/destructive), `alert` frame, optional `onClick` to navigate | Yes |
+| `step-indicator` | Wizard step progress (`StepIndicator`) | Yes |
+| `switch` | Form controls | Yes |
+| `tabs` | Underline tabs (`Tabs`): text + optional icon/count, strong `border-gray-900` active underline. For state/search-param tabs. Router-navigation tab bars (real sub-route links) use `Link` directly with the same look. | Yes |
+| `textarea` | Form controls | Yes |
+| `tooltip` | Hover/focus tooltips (used by `row-action`) | Yes |
+| `use-list-controls` | Hook (`useListControls`) encoding the search/pagination threshold + paging math for overviews | Yes |
+<!-- /generated:component-reference -->
 
 Tabs are the owned `tabs` component (see Tabs).
 
@@ -140,17 +177,14 @@ Reference screens:
 
 ## Layout
 
-| Page type | Container |
-|---|---|
-| List / overview | `mx-auto max-w-3xl px-6 pt-4 pb-10` |
-| Form / create | `mx-auto max-w-lg px-6 pt-4 pb-10` |
-| Admin detail with tabs | `mx-auto max-w-4xl px-6 pt-4 pb-10 space-y-8` |
-| Platform overview | `mx-auto max-w-6xl px-6 pt-4 pb-10 space-y-8` |
+Page containers use `PageContainer`. It owns centering and page padding;
+authors choose only the content width and vertical rhythm through `width` and
+`gap`. Do not hand-write `mx-auto px-6 pt-4 pb-10` on normal pages.
 
 Do not use unscoped `p-6` for normal pages. Pages are centered unless the
-existing parent surface is intentionally full-width. Authenticated page
-containers use `pt-6 pb-10` so page headings sit in visual rhythm with the
-sidebar navigation; full-width tool surfaces such as chat own their own layout.
+existing parent surface is intentionally full-width. `PageContainer` keeps
+page headings in visual rhythm with the sidebar navigation; full-width tool
+surfaces such as chat own their own layout.
 
 ## Headers And Page Actions
 
@@ -209,7 +243,7 @@ users) use only the short subtitle.
 ## Back Actions
 
 Back/cancel actions belong in the page header, on the right side, using
-`Button variant="ghost" size="sm"`. Do not place a loose back link above the
+`Button variant="outline" size="sm"`. Do not place a loose back link above the
 page title.
 
 ```tsx
@@ -220,7 +254,7 @@ page title.
     </h1>
     <p className="mt-1 text-sm text-gray-400">{description}</p>
   </div>
-  <Button type="button" variant="ghost" size="sm" onClick={onBack}>
+  <Button type="button" variant="outline" size="sm" onClick={onBack}>
     <ArrowLeft className="h-4 w-4 mr-2" />
     {backLabel}
   </Button>
@@ -553,7 +587,7 @@ Why it looks the way it does (do not regress these):
 Every small inline-row action pill — Save/Cancel, Delete/Cancel, Approve/Deny —
 renders through `InlineRowButton`, the single source of truth for their size
 and tone. Standard: `h-6 text-xs` with `size-3` icons. Tones: `success`
-(green-filled), `destructive` (red-filled), `neutral` (ghost). Never hand-roll
+(green-filled), `destructive` (red-filled), `neutral` (outline). Never hand-roll
 a `h-6 text-[10px]`/`text-xs` Button pill again — it drifts.
 
 ```tsx
@@ -604,8 +638,8 @@ Rules:
   this for you; a raw `<tr>`/`<div>` row must add
   `bg-[var(--color-hover)]` on the confirming branch (see
   `TranscriptionTable`, `SourceRow`).
-- The confirm button is destructive-filled with the action label; cancel is a
-  ghost `X`. Both render through `InlineRowButton` (the shared inline-pill) —
+- The confirm button is destructive-filled with the action label; cancel is an
+  outline `X`. Both render through `InlineRowButton` (the shared inline-pill) —
   do not restyle.
 - For destructive actions that are NOT in a row (e.g. a whole page or card),
   use `alert-dialog` instead.
@@ -716,7 +750,7 @@ Every field needs `Label` plus matching `id`/`htmlFor`.
   the left text padding. Do not re-add a native arrow or a second icon.
 - **Inline value edits** in a list row use `InlineEditRow` (see "Inline Edit
   (rows)" above): it edits a name + optional description with zero layout
-  shift and owns the green Save + ghost Cancel via `InlineRowButton`. The
+  shift and owns the green Save + outline Cancel via `InlineRowButton`. The
   amber edit trigger is a bordered action icon (`border border-current`),
   matching the row-action look. `InlineEdit` (the low-level single-field
   overlay) stays available for custom rows that own their own button layout.
@@ -1011,3 +1045,100 @@ These patterns must not be copied:
 - Hand-rolled semantic callouts with raw `amber-*`/`red-*`/`green-*` Tailwind
   (icon + message in a tinted box). Use `Alert` semantic variants.
 - A delete-confirm overlay on an untinted row. Tint the row while confirming.
+
+## Rules Ledger
+
+This table catalogues the normative rules above, each with a stable ID, an
+RFC 2119 level, and a declared verification mode. It answers "how much of this
+document is actually checked?" — a question the prose could not answer before,
+because nothing counted it.
+
+Be exact about what the ledger guarantees, because a ledger that overstates
+itself is the defect it exists to catch.
+
+**Machine-checked** by `tests/design/rules-ledger.test.ts`, which fails the
+build: that every `automated` row names a check that exists and is switched on
+in `eslint.config.js`; that named test files exist and Vitest collects them;
+that every design check in the repo has a row; that active IDs are not retired;
+that the counts in What Is Enforced match these rows. Coverage cannot be
+claimed where it does not exist, in either direction.
+
+**Maintained by hand**, and worth knowing before you trust a count:
+
+- *Completeness against the prose.* Extracting normative sentences from prose
+  is not mechanically decidable, so a rule added to a section without a row
+  here goes unnoticed. Add the row in the same change.
+- *Retiring IDs.* When a row is deleted, add its ID to Retired IDs below. The
+  check then prevents that number from returning to the active table.
+
+Verification modes use the vocabulary from the Design System Doc Spec
+(`automated` / `assisted` / `manual`), plus one of our own:
+
+| Mode | Meaning |
+|---|---|
+| `automated` | A check runs in `npm run lint` or `npm run test` and fails the build. The Check column names it. |
+| `assisted` | A tool surfaces candidates; a human still decides. |
+| `manual` | A reviewer applies it. Nothing catches a violation. |
+| `none` | We decided not to check it. The Check column says why. Not the same as "not looked at". |
+
+The Current Deprecated Patterns list above is the negative
+restatement of these rules, not a separate set.
+
+| ID | Rule | Level | Verification | Check / reason |
+|---|---|---|---|---|
+| KLAI-UI-001 | A hex literal in `className` that equals a token in `index.css` is a defect; reference the token instead | must-not | automated | `klai/no-hardcoded-brand-color` |
+| KLAI-UI-002 | `window.confirm`, `window.alert` and `window.prompt` are never used | must-not | automated | `klai/no-window-confirm` |
+| KLAI-UI-003 | The Component Library Reference is generated from `src/components/ui/`, and a stale table fails the build | must | automated | `tests/design/component-reference-generated.test.ts` |
+| KLAI-UI-004 | Hex values quoted in the always-loaded design rule docs match `index.css` | must | automated | `tests/design/rule-doc-token-values.test.ts` |
+| KLAI-UI-005 | The widget default primary colour equals `--color-rl-accent` and the literal is defined in exactly one place | must | automated | `tests/design/widget-default-color.test.ts` |
+| KLAI-UI-006 | A new or changed shared UI component is described here and rendered in `/dev/ui` in the same change | must | assisted | KLAI-UI-003 catches the module half; the catalog half is a reviewer step |
+| KLAI-UI-007 | Pages are built from `src/components/ui/`; a raw `input`, `select`, list row or delete confirmation with inline Tailwind is a defect | must-not | none | The raw `<input>` sites are ten instances of one auth-field pattern awaiting a design decision, plus two correct dark-variant widget inputs; `<select>`, list rows and delete confirmations are uncounted |
+| KLAI-UI-008 | `Button` is for an action; a raw `button` is for an interactive surface (clickable row, toggle, tree item), plus the documented avatar, vendor SSO and unsupported-size editor controls | must | none | Measured and rejected: 96 of 100 raw `button` elements outside `components/ui/` are the prescribed pattern. A rule here would flag 96 correct decisions |
+| KLAI-UI-009 | The reference screen is named in the work notes before portal UI is edited | must | manual | Reviewer step; see Required Workflow |
+| KLAI-UI-010 | Normal page containers use `PageContainer`; padding and centering are not hand-written, and an intentionally full-width parent or tool surface owns its own layout | must | manual | Reviewer step; see Layout |
+| KLAI-UI-011 | List and overview pages use `PageHeader`; hand-roll a title/action row only for a genuinely custom layout | must | manual | Reviewer step |
+| KLAI-UI-012 | The `PageHeader` description is a short subtitle; longer explanation goes in `PageIntro` | must | manual | Reviewer step |
+| KLAI-UI-013 | Back and cancel actions are an outline small Button in the page header, never a loose link above the title | must-not | manual | Reviewer step |
+| KLAI-UI-014 | The collection shape (divider list, list with header, data table) is picked by the user's job, not by habit | should | manual | Reviewer step; see Lists And Tables |
+| KLAI-UI-015 | A divider list gets `ListHeader` only when its rows carry two or more metadata columns beyond the title, and the header shares the row grid and padding at `lg` only | must | manual | Reviewer step |
+| KLAI-UI-016 | Overview search and pagination come from `useListControls` at page size ten; ten or fewer items get neither, and beyond that search stays visible on the unfiltered count while the pager follows the filtered count | must | assisted | `src/components/ui/__tests__/use-list-controls.test.tsx` proves the component threshold; a reviewer checks that pages use it |
+| KLAI-UI-017 | Admin tables use the `data-table` primitives, right-align the action column, and stop click propagation on that cell when the row itself is clickable | must-not | manual | Reviewer step |
+| KLAI-UI-018 | Collection loading and empty states use `list-state`; a failed query uses `QueryErrorState` with an explicit retry where one is available | must | manual | Reviewer step |
+| KLAI-UI-019 | Row actions render through the `row-action` components, never a raw icon button | must-not | manual | Reviewer step |
+| KLAI-UI-020 | Icon, tone and tooltip derive from the `action` prop and icon colour is never picked by hand; override `tone` only when a row genuinely needs a different semantic | must-not | manual | Reviewer step. The maps are single-sourced in `row-action.tsx` |
+| KLAI-UI-021 | Row actions are ordered toggle, refresh, open, edit, destructive; delete is always last | must | manual | Reviewer step |
+| KLAI-UI-022 | A row shows at most three direct controls; at four the two highest-frequency stay visible and the rest move into a `more` menu in the same order, destructive last | must | manual | Reviewer step |
+| KLAI-UI-023 | A bordered row action icon uses `border border-current`, never a hardcoded border colour and never an inline style | must | manual | Reviewer step |
+| KLAI-UI-024 | Editing a row's name in place uses `InlineEditRow` and keeps zero layout shift | must | manual | Reviewer step. The ghost-and-overlay technique is why; see Inline Edit |
+| KLAI-UI-025 | Every small inline-row action pill renders through `InlineRowButton` | must | manual | Reviewer step |
+| KLAI-UI-026 | A row-level destructive confirm uses `InlineDeleteConfirm`, and the row is tinted while confirming | must | manual | Reviewer step. An untinted row shows a hard seam under the overlay |
+| KLAI-UI-027 | A destructive action outside a row uses `alert-dialog` | must | manual | Reviewer step |
+| KLAI-UI-028 | Multi-step flows show progress with `StepIndicator` | must | manual | Reviewer step |
+| KLAI-UI-029 | A wizard step containing a password or secret field is wrapped in a form with an advancing submit | must | manual | Reviewer step. Browser autofill depends on it |
+| KLAI-UI-030 | Underline tabs use the owned `Tabs` component; the active tab is a strong dark underline and `Tabs` owns no state | must | assisted | `src/components/ui/__tests__/tabs.test.tsx` proves the component underline; a reviewer checks that pages use it |
+| KLAI-UI-031 | A tab bar whose tabs are real sub-routes uses router links, not `Tabs` | must | manual | Reviewer step. Anchor semantics are the reason |
+| KLAI-UI-032 | Pill tabs are not used on admin, account or detail surfaces | must-not | manual | Reviewer step |
+| KLAI-UI-033 | A real entity or review view is its own route; introduce no drawer, sheet or inline detail panel in admin surfaces unless that exact module already uses them | must-not | manual | Reviewer step |
+| KLAI-UI-034 | Every form field has a `Label` with matching id and htmlFor | must | manual | Reviewer step |
+| KLAI-UI-035 | Search fields use `SearchInput`, never an `Input` with a hand-placed icon | must | manual | Reviewer step |
+| KLAI-UI-036 | `Select` width constraints go on `containerClassName`, not `className` | must | assisted | `src/components/ui/__tests__/select.test.tsx` proves the component sizing hook; a reviewer checks that pages use it |
+| KLAI-UI-037 | A single-choice list whose options each need a label and a description uses `RadioCardGroup` | must | manual | Reviewer step |
+| KLAI-UI-038 | Metric tiles use `StatCard`; ordinary detail sections are not wrapped in decorative cards | must | manual | Reviewer step |
+| KLAI-UI-039 | A settings tab has exactly one save button; sections stage into it, never persist on click, and submit fires only the dirty mutations so an untouched value never rewrites its own audit trail | must | manual | Reviewer step. Both halves of this have already been got wrong on the privacy tab |
+| KLAI-UI-040 | Provenance below a chat answer is a closed-by-default inline disclosure row, not a card or a bold heading | must | manual | Reviewer step |
+| KLAI-UI-041 | Any user-to-Klai back-and-forth uses the `conversation` component; status changes are quiet system lines | must | manual | Reviewer step |
+| KLAI-UI-042 | The conversation composer sends on Cmd or Ctrl plus Enter, clears on success, and surfaces a send failure without discarding the typed text | must | manual | Reviewer step. Discarding typed text on a failed send loses the user's message |
+| KLAI-UI-043 | New portal UI uses the documented neutral scale and raw Tailwind semantic colours are not used; `klai-hover` is for interactive row surfaces and never for a disclosure summary | must-not | none | No count exists yet, and this document's own rule is not to enforce a pattern that has not been counted |
+| KLAI-UI-044 | Status pills use `Badge` semantic variants, never ad-hoc tinted pills | must | manual | Reviewer step |
+| KLAI-UI-045 | Open and closed state markers use `ActionTag` with adjective labels, never verbs that imply clickability | must | manual | Reviewer step |
+| KLAI-UI-046 | The default border-colour reset stays inside `@layer base`; a border colour is never fixed with an inline style or a second unlayered override | must | automated | `tests/design/border-layer-reset.test.ts` |
+| KLAI-UI-047 | All user-visible strings go through Paraglide messages | must | none | Not counted, and a check would have to separate user-visible strings from internal ones |
+| KLAI-UI-048 | The copied `--color-*` palette in `klai-portal/backend/app/static/oauth/consent.css` matches the tokens owned by `src/index.css` | must | automated | `tests/design/consent-page-tokens.test.ts` |
+| KLAI-UI-049 | A raw `<textarea>` outside `src/components/ui/` is forbidden | must-not | automated | `klai/no-raw-textarea` |
+| KLAI-UI-050 | The portal type scale is rem-based on a 110% root, so text, padding, control heights and column widths scale together; an absolute px font size does not scale and is a defect | must | manual | Reviewer step. Nothing yet stops a new `text-[Npx]` or a px `font-size` in `index.css` from being added |
+| KLAI-UI-051 | Foreground colours documented in the Colors section meet WCAG AA on both portal surfaces or carry a current, reasoned exception | must | automated | `tests/design/documented-contrast.test.ts` |
+
+### Retired IDs
+
+No IDs are retired yet. This list is intentionally empty; add each future
+retired ID as a bullet so its number cannot be reused.

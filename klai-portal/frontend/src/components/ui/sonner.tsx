@@ -1,3 +1,6 @@
+/**
+ * @purpose Toasts (`toast()` feedback)
+ */
 import {
   CircleCheck,
   Info,

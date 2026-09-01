@@ -186,10 +186,10 @@ function KbLayout() {
     <div className="mx-auto max-w-3xl px-6 pb-10">
       {/* Title strip - h-[66px] aligns the KB name with the sidebar logo */}
       <div className="flex h-[66px] items-center justify-between gap-4">
-        <h1 className="page-title text-[26px] font-display-bold text-gray-900 leading-none truncate">
+        <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900 leading-none truncate">
           {kb.name}
         </h1>
-        <Button asChild variant="ghost" size="sm">
+        <Button asChild variant="outline" size="sm">
           <Link to="/app/knowledge">
             <ArrowLeft className="h-4 w-4 mr-2" />
             {m.kb_detail_back()}

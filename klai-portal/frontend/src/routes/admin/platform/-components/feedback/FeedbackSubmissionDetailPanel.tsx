@@ -171,7 +171,7 @@ export function FeedbackSubmissionDetailPanel({
   const header = (
     <div className="flex items-start gap-3">
       <div className="flex-1">
-        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+        <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
           {canTriage
             ? m.platform_feedback_triage_title()
             : m.platform_feedback_submission_detail_title()}
@@ -181,7 +181,7 @@ export function FeedbackSubmissionDetailPanel({
           {reporter ? ` · ${reporter}` : ''} · {fmtDate(item.created_at)}
         </p>
       </div>
-      <Button type="button" variant="ghost" size="sm" onClick={onClose}>
+      <Button type="button" variant="outline" size="sm" onClick={onClose}>
         <ArrowLeft className="h-4 w-4 mr-2" />
         {m.platform_back_to_feedback()}
       </Button>
@@ -190,7 +190,7 @@ export function FeedbackSubmissionDetailPanel({
 
   const reportBlock = (
     <section className="space-y-2">
-      <p className="whitespace-pre-wrap text-[15px] leading-7 text-gray-900">{reportText}</p>
+      <p className="whitespace-pre-wrap text-[0.9375rem] leading-7 text-gray-900">{reportText}</p>
       {item.page_url && (
         <p className="truncate font-mono text-xs text-gray-400">{item.page_url}</p>
       )}
@@ -275,7 +275,7 @@ export function FeedbackSubmissionDetailPanel({
         <div className="flex items-center justify-between border-t border-gray-200 pt-4">
           <Button
             type="button"
-            variant="ghost"
+            variant="outline"
             size="sm"
             className="text-[var(--color-destructive)] hover:text-[var(--color-destructive)]"
             disabled={busy}
@@ -338,7 +338,7 @@ export function FeedbackSubmissionDetailPanel({
             <h2 className="text-sm font-medium text-gray-900">
               {m.platform_feedback_product_step_title()}
             </h2>
-            <Button type="button" variant="ghost" size="sm" onClick={() => setMode('menu')}>
+            <Button type="button" variant="outline" size="sm" onClick={() => setMode('menu')}>
               <ArrowLeft className="h-4 w-4 mr-2" />
               {m.platform_feedback_back()}
             </Button>
@@ -435,7 +435,7 @@ export function FeedbackSubmissionDetailPanel({
             <h2 className="text-sm font-medium text-gray-900">
               {m.platform_feedback_choice_status()}
             </h2>
-            <Button type="button" variant="ghost" size="sm" onClick={() => setMode('menu')}>
+            <Button type="button" variant="outline" size="sm" onClick={() => setMode('menu')}>
               <ArrowLeft className="h-4 w-4 mr-2" />
               {m.platform_feedback_back()}
             </Button>
@@ -526,7 +526,7 @@ export function FeedbackSubmissionDetailPanel({
       <div className="flex border-t border-gray-200 pt-4">
         <Button
           type="button"
-          variant="ghost"
+          variant="outline"
           size="sm"
           className="text-[var(--color-destructive)] hover:text-[var(--color-destructive)]"
           disabled={busy}

@@ -123,7 +123,7 @@ export function EditorHeader({
         )}
         <div className="relative" ref={menuRef}>
           <Button
-            variant="ghost"
+            variant="outline"
             size="sm"
             className="h-7 w-7 p-0"
             onClick={() => setShowMenu((v) => !v)}

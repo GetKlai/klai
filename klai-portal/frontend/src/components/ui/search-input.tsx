@@ -1,3 +1,6 @@
+/**
+ * @purpose Text input with a leading search icon (`SearchInput`)
+ */
 import * as React from 'react'
 import { Search } from 'lucide-react'
 import { cn } from '@/lib/utils'

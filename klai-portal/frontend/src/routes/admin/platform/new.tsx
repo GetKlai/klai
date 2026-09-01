@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import * as m from '@/paraglide/messages'
 import { usePlatformCreateTenant } from './-hooks'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/admin/platform/new')({
   component: NewTenantPage,
@@ -53,14 +54,14 @@ function NewTenantPage() {
   }
 
   return (
-    <div className="mx-auto max-w-lg px-6 pt-4 pb-10">
+    <PageContainer width="lg">
       <div className="flex items-start justify-between gap-3 mb-2">
-        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+        <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
           {m.platform_new_tenant_title()}
         </h1>
         <Button
           type="button"
-          variant="ghost"
+          variant="outline"
           size="sm"
           onClick={() => void navigate({ to: '/admin/platform' })}
         >
@@ -144,6 +145,6 @@ function NewTenantPage() {
           </Button>
         </div>
       </form>
-    </div>
+    </PageContainer>
   )
 }

@@ -1,12 +1,17 @@
+/**
+ * @purpose The single source for small inline-row action pills
+ * (`InlineRowButton`): Save/Cancel, Delete/Cancel, Approve/Deny. Tones:
+ * success/destructive/neutral
+ */
 import { Button, type ButtonProps } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
 export type InlineRowButtonTone = 'success' | 'destructive' | 'neutral'
 
 /**
- * Tone overrides on top of the ghost base. Filled tones drop the ghost border
+ * Tone overrides on top of the outline base. Filled tones drop the outline border
  * and use opacity-on-hover (the established inline-pill convention) instead of
- * the ghost background swap.
+ * the outline background swap.
  */
 const TONE: Record<InlineRowButtonTone, string> = {
   success:
@@ -28,7 +33,7 @@ export interface InlineRowButtonProps extends Omit<ButtonProps, 'variant' | 'siz
  * Before this component the exact same `h-6 … px-2 gap-1` Button was copy-pasted
  * across 8+ sites (InlineEditRow, InlineDeleteConfirm, SourceRow rename,
  * TranscriptionTable, join-requests, CoverageNodeRow), which let the text size
- * drift (text-[10px] vs text-xs). Everything now flows through here so the size
+ * drift (text-[0.625rem] vs text-xs). Everything now flows through here so the size
  * lives in ONE place. Standard size: `h-6 text-xs` with `size-3` icons.
  *
  * Pass the icon + label as children; the caller owns the spinner-vs-icon swap.
@@ -36,7 +41,7 @@ export interface InlineRowButtonProps extends Omit<ButtonProps, 'variant' | 'siz
 export function InlineRowButton({ tone = 'neutral', className, ...props }: InlineRowButtonProps) {
   return (
     <Button
-      variant="ghost"
+      variant="outline"
       size="sm"
       className={cn('h-6 gap-1 px-2 text-xs [&_svg]:size-3', TONE[tone], className)}
       {...props}

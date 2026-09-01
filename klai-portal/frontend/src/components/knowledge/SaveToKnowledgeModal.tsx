@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
+import { Textarea } from '@/components/ui/textarea'
 import { DOCS_BASE, getOrgSlug, slugify } from '@/lib/kb-editor/tree-utils'
 import { apiFetch } from '@/lib/apiFetch'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
@@ -163,7 +164,7 @@ export function SaveToKnowledgeModal({
 
             <div className="space-y-1.5">
               <Label htmlFor="save-source">{m.knowledge_save_field_source()}</Label>
-              <textarea
+              <Textarea
                 id="save-source"
                 value={sourceNote}
                 onChange={(e) => setSourceNote(e.target.value)}
@@ -185,7 +186,7 @@ export function SaveToKnowledgeModal({
             )}
 
             <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-              <Button variant="ghost" onClick={onClose} disabled={saveMutation.isPending}>
+              <Button variant="outline" onClick={onClose} disabled={saveMutation.isPending}>
                 {m.docs_kb_cancel()}
               </Button>
               <Button

@@ -19,6 +19,7 @@ import {
   isAddTranscribeTab,
   type AddTranscribeTab,
 } from './-add-helpers'
+import { PageContainer } from '@/components/ui/page-container'
 
 type AddTranscribeSearch = { tab?: AddTranscribeTab }
 
@@ -77,12 +78,12 @@ function AddTranscribePage() {
   }
 
   return (
-    <div className="mx-auto max-w-lg px-6 pt-4 pb-10">
+    <PageContainer width="lg">
       <div className="flex items-start justify-between mb-6">
-        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+        <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
           {m.app_transcribe_add_title()}
         </h1>
-        <Button type="button" variant="ghost" size="sm" onClick={() => navigate({ to: '/app/transcribe' })}>
+        <Button type="button" variant="outline" size="sm" onClick={() => navigate({ to: '/app/transcribe' })}>
           <ArrowLeft className="h-4 w-4 mr-2" />
           {m.app_transcribe_back()}
         </Button>
@@ -156,6 +157,6 @@ function AddTranscribePage() {
           onBack={clearFeedback}
         />
       </div>
-    </div>
+    </PageContainer>
   )
 }

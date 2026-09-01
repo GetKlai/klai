@@ -1,4 +1,6 @@
 /**
+ * @purpose Form controls
+ *
  * Checkbox component - styled native checkbox matching the design system.
  * No Radix dependency needed; wraps a standard <input type="checkbox">.
  */

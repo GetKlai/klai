@@ -110,7 +110,7 @@ export function ProductUpdatesPopover() {
               {unreadCount > 0 && (
                 <Button
                   type="button"
-                  variant="ghost"
+                  variant="outline"
                   size="sm"
                   className="shrink-0"
                   onClick={() => markAllReadMutation.mutate()}
@@ -210,7 +210,7 @@ function ProductUpdateDetail({
 }) {
   return (
     <div className="max-h-[32rem] overflow-y-auto px-4 py-4">
-      <Button type="button" variant="ghost" size="sm" className="-ml-2 h-8 px-3" onClick={onBack}>
+      <Button type="button" variant="outline" size="sm" className="-ml-2 h-8 px-3" onClick={onBack}>
         <ArrowLeft className="h-4 w-4" />
         {m.product_updates_back()}
       </Button>

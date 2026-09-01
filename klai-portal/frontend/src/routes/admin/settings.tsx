@@ -8,6 +8,7 @@ import { PrivacySettingsTab } from './_components/-PrivacySettingsTab'
 import { SecuritySettingsSection } from './_components/-SecuritySettingsSection'
 import { useAdminSettings } from './-settings-hooks'
 import * as m from '@/paraglide/messages'
+import { PageContainer } from '@/components/ui/page-container'
 
 type TabId = 'general' | 'security' | 'privacy' | 'features'
 
@@ -47,9 +48,9 @@ function AdminSettingsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl px-6 pt-4 pb-10 space-y-8" data-help-id="admin-settings-general">
+    <PageContainer width="4xl" gap="8" data-help-id="admin-settings-general">
       <div className="space-y-1">
-        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+        <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
           {m.admin_settings_heading()}
         </h1>
       </div>
@@ -74,6 +75,6 @@ function AdminSettingsPage() {
         <PrivacySettingsTab settings={settings} isLoading={isLoading} error={error} />
       )}
       {activeTab === 'features' && <ExtensionsSettingsSection />}
-    </div>
+    </PageContainer>
   )
 }

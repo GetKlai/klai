@@ -141,7 +141,7 @@ function ItemNode({
           {item.name}
         </span>
         {isFolder && item.child_count > 0 && (
-          <span className="text-[11px] text-gray-400 shrink-0">{item.child_count}</span>
+          <span className="text-[0.6875rem] text-gray-400 shrink-0">{item.child_count}</span>
         )}
       </div>
       {expanded && isFolder && (
@@ -314,7 +314,7 @@ export function MsDocsFolderPicker({
       <div className="flex items-center justify-between gap-2 border-t border-gray-200 px-3 py-2">
         <p className="text-xs text-gray-400 truncate">{summary}</p>
         <div className="flex items-center gap-2 shrink-0">
-          <Button type="button" size="sm" variant="ghost" onClick={onCancel}>
+          <Button type="button" size="sm" variant="outline" onClick={onCancel}>
             Annuleren
           </Button>
           <Button

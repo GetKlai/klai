@@ -24,6 +24,7 @@ describe('WIDGET_DEFAULT_PRIMARY_COLOR', () => {
     // Guards the dedupe: a re-introduced literal elsewhere in src/ means the
     // four-copy drift is back.
     const offenders: string[] = []
+    const quotedLiteral = new RegExp(`(['"])${WIDGET_DEFAULT_PRIMARY_COLOR}\\1`, 'i')
 
     const walk = (dir: string) => {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -33,9 +34,9 @@ describe('WIDGET_DEFAULT_PRIMARY_COLOR', () => {
           walk(full)
           continue
         }
-        if (!/\.tsx?$/.test(entry.name)) continue
+        if (!/\.[jt]sx?$/.test(entry.name)) continue
         if (full.endsWith(path.join('config', 'appearance.ts'))) continue
-        if (fs.readFileSync(full, 'utf8').includes(`'${WIDGET_DEFAULT_PRIMARY_COLOR}'`)) {
+        if (quotedLiteral.test(fs.readFileSync(full, 'utf8'))) {
           offenders.push(path.relative(SRC_ROOT, full))
         }
       }

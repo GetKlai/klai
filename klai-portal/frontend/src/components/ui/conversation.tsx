@@ -1,3 +1,10 @@
+/**
+ * @purpose Message timeline + composer + panel (`ConversationTimeline`,
+ * `ConversationComposer`, `ConversationPanel`): sender-grouped bubbles, day
+ * separators, quiet system lines, Cmd/Enter send, inline edit of own messages,
+ * back-right header. Shared by account "Mijn meldingen" + "Berichten" and the
+ * platform-admin messages tab
+ */
 import * as React from 'react'
 import { ArrowLeft, Check, Loader2, Pencil, Send, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -465,7 +472,7 @@ export function ConversationPanel({
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {headerActions}
-          <Button type="button" variant="ghost" size="sm" onClick={onBack}>
+          <Button type="button" variant="outline" size="sm" onClick={onBack}>
             <ArrowLeft className="h-4 w-4 mr-2" />
             {m.account_conversation_back()}
           </Button>

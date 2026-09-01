@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/app/integrations')({
   component: IntegrationsPage,
@@ -51,9 +52,9 @@ function IntegrationsPage() {
   const hasNoTokens = !isLoading && activeTokens.length === 0
 
   return (
-    <div className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-6">
+    <PageContainer width="3xl" gap="6">
       <div className="space-y-1">
-        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+        <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
           {m.integrations_heading()}
         </h1>
         <p className="text-sm text-gray-400">
@@ -116,7 +117,7 @@ function IntegrationsPage() {
                 <div className="flex gap-2 shrink-0">
                   <Button
                     size="sm"
-                    variant="ghost"
+                    variant="outline"
                     onClick={() => setConfirmingId(null)}
                     disabled={revokeMutation.isPending}
                   >
@@ -172,7 +173,7 @@ function IntegrationsPage() {
           </CardContent>
         </Card>
       ))}
-    </div>
+    </PageContainer>
   )
 }
 

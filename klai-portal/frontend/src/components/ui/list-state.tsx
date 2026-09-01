@@ -1,3 +1,7 @@
+/**
+ * @purpose List/table loading and empty states: `ListLoadingState`,
+ * `ListEmptyState`
+ */
 import type { ElementType, HTMLAttributes, ReactNode } from 'react'
 import { Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'

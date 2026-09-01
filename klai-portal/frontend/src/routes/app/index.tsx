@@ -4,6 +4,7 @@ import { ChevronRight } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { getAccessibleAppTools } from './-app-tools'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/app/')({
   component: AppHome,
@@ -30,9 +31,9 @@ function AppHome() {
   const accessibleTools = getAccessibleAppTools(products)
 
   return (
-    <div className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-8">
+    <PageContainer width="3xl" gap="8">
       <div className="space-y-1" data-help-id="home-greeting">
-        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+        <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
           {getGreeting(userName)}
         </h1>
         <p className="text-sm text-gray-400">
@@ -55,7 +56,7 @@ function AppHome() {
                   <tool.icon className="h-4 w-4" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <span className="text-[15px] font-display text-gray-900">
+                  <span className="text-[0.9375rem] font-display text-gray-900">
                     {tool.title()}
                   </span>
                   <p className="text-xs text-gray-400 mt-0.5">
@@ -68,6 +69,6 @@ function AppHome() {
           </div>
         </div>
       )}
-    </div>
+    </PageContainer>
   )
 }

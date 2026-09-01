@@ -95,7 +95,7 @@ function SelectWorkspacePage() {
               : m.select_workspace_session_expired()}
           </p>
           <Button
-            variant="ghost"
+            variant="outline"
             size="lg"
             className="w-full"
             onClick={() => window.location.replace('/')}

@@ -1,3 +1,6 @@
+/**
+ * @purpose Standard error block for failed queries
+ */
 import { AlertCircle, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import * as m from '@/paraglide/messages'

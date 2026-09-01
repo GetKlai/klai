@@ -69,7 +69,7 @@ function NoAccountPage() {
         </Button>
       )}
 
-      <Button asChild variant="ghost" size="lg" className="w-full gap-3">
+      <Button asChild variant="outline" size="lg" className="w-full gap-3">
         <a href="/">
           {m.no_account_cta()}
           <LogIn size={16} />

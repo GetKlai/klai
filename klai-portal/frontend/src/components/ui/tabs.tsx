@@ -1,3 +1,9 @@
+/**
+ * @purpose Underline tabs (`Tabs`): text + optional icon/count, strong
+ * `border-gray-900` active underline. For state/search-param tabs.
+ * Router-navigation tab bars (real sub-route links) use `Link` directly with
+ * the same look.
+ */
 import * as React from 'react'
 import { cn } from '@/lib/utils'
 
@@ -141,7 +147,7 @@ function Tabs<T extends string>({ tabs, value, onValueChange, className, ...prop
               <span
                 aria-label={badge.label}
                 className={cn(
-                  'ml-0.5 inline-flex min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-medium leading-5',
+                  'ml-0.5 inline-flex min-w-5 items-center justify-center rounded-full px-1.5 text-[0.6875rem] font-medium leading-5',
                   badge.tone !== 'neutral' ? 'text-white' : null,
                   tabCountToneClass[badge.tone],
                 )}

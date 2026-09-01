@@ -42,8 +42,8 @@ export function Sidebar({ navItems }: SidebarProps) {
     return (
       <span
         className={cn(
-          'ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-[var(--color-destructive)] px-1.5 text-[11px] font-medium leading-5 text-white',
-          collapsed && 'absolute translate-x-3 -translate-y-2 px-1 min-w-4 leading-4 text-[10px]'
+          'ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-[var(--color-destructive)] px-1.5 text-[0.6875rem] font-medium leading-5 text-white',
+          collapsed && 'absolute translate-x-3 -translate-y-2 px-1 min-w-4 leading-4 text-[0.625rem]'
         )}
         aria-label={label}
       >

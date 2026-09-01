@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 import * as m from '@/paraglide/messages'
 import type { ApiKeyDetailResponse } from '../../-types'
 import { useUpdateApiKey } from '../../-hooks'
@@ -50,12 +51,12 @@ export function DetailsTab({ apiKey }: Props) {
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="api-key-description">{m.admin_shared_field_description()}</Label>
-          <textarea
+          <Textarea
             id="api-key-description"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             rows={3}
-            className="w-full rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)]"
+            className="rounded-md"
           />
         </div>
         <div className="space-y-1.5">

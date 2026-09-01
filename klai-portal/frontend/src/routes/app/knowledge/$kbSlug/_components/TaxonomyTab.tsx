@@ -363,7 +363,7 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
               <Button type="submit" size="sm" disabled={createNodeMutation.isPending || !newNodeName.trim()}>
                 {m.knowledge_taxonomy_node_add_submit()}
               </Button>
-              <Button type="button" size="sm" variant="ghost" onClick={() => { setShowAddRoot(false); setAddParentId(null); setNewNodeName('') }}>
+              <Button type="button" size="sm" variant="outline" onClick={() => { setShowAddRoot(false); setAddParentId(null); setNewNodeName('') }}>
                 {m.knowledge_taxonomy_node_add_cancel()}
               </Button>
             </form>

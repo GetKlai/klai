@@ -8,8 +8,10 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
+import { Textarea } from '@/components/ui/textarea'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import * as m from '@/paraglide/messages'
+import { PageContainer } from '@/components/ui/page-container'
 
 // Shared form for new + edit. Container, buttons and field styling follow
 // .claude/rules/klai/design/portal-patterns.md. The admin-gate for
@@ -180,15 +182,15 @@ export function InstructionFormPage({
   const title = mode === 'new' ? m.instructions_form_new_title() : m.instructions_form_edit_title()
 
   return (
-    <div className="mx-auto max-w-lg px-6 pt-4 pb-10">
+    <PageContainer width="lg">
       <div className="mb-6 flex items-start justify-between gap-3">
         <div className="space-y-1">
-          <h1 className="page-title text-[26px] font-display-bold text-gray-900">{title}</h1>
+          <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">{title}</h1>
           <p className="text-sm text-gray-400">{m.instructions_form_subtitle()}</p>
         </div>
         <Button
           type="button"
-          variant="ghost"
+          variant="outline"
           size="sm"
           onClick={() => void navigate({ to: backPath })}
         >
@@ -237,12 +239,12 @@ export function InstructionFormPage({
               {m.instructions_form_prompt_char_count({ current: String(promptLength) })}
             </span>
           </div>
-          <textarea
+          <Textarea
             id="instruction-prompt"
             value={form.prompt_text}
             placeholder={m.instructions_form_prompt_placeholder()}
             onChange={(e) => setForm((f) => ({ ...f, prompt_text: e.target.value }))}
-            className="w-full min-h-[200px] max-h-[480px] rounded-lg border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)] resize-y"
+            className="min-h-[200px] max-h-[480px] resize-y"
           />
         </div>
 
@@ -276,6 +278,6 @@ export function InstructionFormPage({
           </Button>
         </div>
       </form>
-    </div>
+    </PageContainer>
   )
 }

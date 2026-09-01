@@ -1,3 +1,6 @@
+/**
+ * @purpose Hover/focus tooltips (used by `row-action`)
+ */
 import { useState, useRef, type ReactNode } from 'react'
 
 interface TooltipProps {

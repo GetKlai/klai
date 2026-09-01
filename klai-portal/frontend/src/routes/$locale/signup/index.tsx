@@ -272,7 +272,7 @@ function SignupPage() {
             {!loading && <ArrowRight size={16} />}
           </Button>
           <Button
-            variant="ghost"
+            variant="outline"
             size="lg"
             className="w-full"
             disabled={loading}

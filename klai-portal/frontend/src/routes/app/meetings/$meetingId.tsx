@@ -13,6 +13,7 @@ import { ProductGuard } from '@/components/layout/ProductGuard'
 import { apiFetch } from '@/lib/apiFetch'
 import { activeMeetingInfoKind } from './-status-copy'
 import { formatSegmentTimestamp, relativeSegmentSeconds } from './-transcript-timestamp'
+import { PageContainer } from '@/components/ui/page-container'
 
 type TabId = 'summary' | 'transcript'
 
@@ -281,11 +282,11 @@ function MeetingDetailPage() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl px-6 pt-4 pb-10">
+    <PageContainer width="3xl">
       <div className="mb-6 flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="page-title text-[26px] font-display-bold leading-tight text-gray-900">
+            <h1 className="page-title text-[1.625rem] font-display-bold leading-tight text-gray-900">
               {meetingTitle}
             </h1>
             <StatusBadge status={meeting.status} />
@@ -293,7 +294,7 @@ function MeetingDetailPage() {
         </div>
         <Button
           type="button"
-          variant="ghost"
+          variant="outline"
           size="sm"
           onClick={() => navigate({ to: '/app/transcribe' })}
         >
@@ -484,6 +485,6 @@ function MeetingDetailPage() {
         </p>
       )}
       </div>
-    </div>
+    </PageContainer>
   )
 }

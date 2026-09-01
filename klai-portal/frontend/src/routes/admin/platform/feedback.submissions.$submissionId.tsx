@@ -6,6 +6,7 @@ import { datetime } from '@/paraglide/registry'
 import * as m from '@/paraglide/messages'
 import { usePlatformFeedbackSubmission } from './-hooks'
 import { FeedbackSubmissionDetailPanel } from './-components/feedback/FeedbackSubmissionDetailPanel'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/admin/platform/feedback/submissions/$submissionId')({
   component: PlatformFeedbackSubmissionPage,
@@ -34,7 +35,7 @@ function PlatformFeedbackSubmissionPage() {
     void navigate({ to: '/admin/platform', search: { tab: 'feedback' } })
 
   return (
-    <div className="mx-auto max-w-4xl space-y-8 px-6 pt-4 pb-10">
+    <PageContainer width="4xl" gap="8">
       {detail.isLoading && (
         <p className="py-8 text-sm text-gray-400">
           <Loader2 className="mr-2 inline h-4 w-4 animate-spin" />
@@ -56,6 +57,6 @@ function PlatformFeedbackSubmissionPage() {
           onClose={backToPlatform}
         />
       )}
-    </div>
+    </PageContainer>
   )
 }

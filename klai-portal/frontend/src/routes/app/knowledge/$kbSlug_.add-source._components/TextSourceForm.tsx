@@ -3,6 +3,7 @@ import { CheckCircle2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 import * as m from '@/paraglide/messages'
 import { useSourceSubmit } from './useSourceSubmit'
 
@@ -65,7 +66,7 @@ export function TextSourceForm({ kbSlug, onBack }: TextSourceFormProps) {
         <Label htmlFor="source-content">
           {m.knowledge_add_source_text_content_label()}
         </Label>
-        <textarea
+        <Textarea
           id="source-content"
           required
           rows={12}
@@ -73,7 +74,6 @@ export function TextSourceForm({ kbSlug, onBack }: TextSourceFormProps) {
           onChange={(e) => setContent(e.target.value)}
           placeholder={m.knowledge_add_source_text_content_placeholder()}
           disabled={mutation.isPending || successful}
-          className="w-full rounded-lg border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)] disabled:cursor-not-allowed disabled:opacity-50"
         />
         <p className="text-xs text-gray-400 tabular-nums">
           {content.length.toLocaleString()} / {MAX_CONTENT_CHARS.toLocaleString()}

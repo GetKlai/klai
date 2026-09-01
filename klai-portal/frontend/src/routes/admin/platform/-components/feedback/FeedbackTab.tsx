@@ -41,7 +41,7 @@ export function FeedbackTab({
       <Button
         type="button"
         size="sm"
-        variant={feedbackView === 'inbox' ? 'default' : 'ghost'}
+        variant={feedbackView === 'inbox' ? 'default' : 'outline'}
         onClick={() => setFeedbackView('inbox')}
       >
         {m.platform_feedback_view_inbox()}
@@ -49,7 +49,7 @@ export function FeedbackTab({
       <Button
         type="button"
         size="sm"
-        variant={feedbackView === 'items' ? 'default' : 'ghost'}
+        variant={feedbackView === 'items' ? 'default' : 'outline'}
         onClick={() => setFeedbackView('items')}
       >
         {m.platform_feedback_view_items()}

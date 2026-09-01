@@ -9,6 +9,7 @@ import { FileUploadForm } from './$kbSlug_.add-source._components/FileUploadForm
 import { UrlSourceForm } from './$kbSlug_.add-source._components/UrlSourceForm'
 import { TextSourceForm } from './$kbSlug_.add-source._components/TextSourceForm'
 import type { UploadType } from './$kbSlug_.add-source._components/source-types'
+import { PageContainer } from '@/components/ui/page-container'
 
 // -- Types -------------------------------------------------------------------
 
@@ -50,13 +51,13 @@ function AddSourcePage() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl px-6 pt-4 pb-10">
+    <PageContainer width="3xl">
       {/* Page header */}
       <div className="flex items-center justify-between mb-2">
-        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+        <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
           {m.knowledge_add_source_title()}
         </h1>
-        <Button type="button" variant="ghost" size="sm" onClick={goBack}>
+        <Button type="button" variant="outline" size="sm" onClick={goBack}>
           <ArrowLeft className="h-4 w-4 mr-2" />
           {m.knowledge_add_source_back()}
         </Button>
@@ -87,6 +88,6 @@ function AddSourcePage() {
           onBack={() => setSelectedUpload(null)}
         />
       )}
-    </div>
+    </PageContainer>
   )
 }

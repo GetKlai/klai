@@ -30,6 +30,7 @@ import * as m from '@/paraglide/messages'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import { apiFetch } from '@/lib/apiFetch'
 import { UserAvatar } from '@/routes/admin/_components/UserAvatar'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/admin/groups/')({
   component: AdminGroups,
@@ -237,7 +238,7 @@ function AdminGroups() {
   })
 
   return (
-    <div className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-6">
+    <PageContainer width="3xl" gap="6">
       <PageHeader
         title={m.admin_groups_title()}
         count={!isLoading && !error ? groups.length : undefined}
@@ -331,6 +332,6 @@ function AdminGroups() {
           )}
         </>
       )}
-    </div>
+    </PageContainer>
   )
 }

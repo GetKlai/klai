@@ -20,6 +20,7 @@ import { useListControls } from '@/components/ui/use-list-controls'
 import { apiFetch } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
 import { adminLogger } from '@/lib/logger'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/admin/join-requests')({
   component: AdminJoinRequestsPage,
@@ -75,7 +76,7 @@ function AdminJoinRequestsPage() {
   })
 
   return (
-    <div className="mx-auto max-w-3xl px-6 pt-4 pb-10 space-y-6">
+    <PageContainer width="3xl" gap="6">
       <PageHeader
         title={m.admin_join_requests_title()}
         count={!isLoading && !error ? requests.length : undefined}
@@ -150,6 +151,6 @@ function AdminJoinRequestsPage() {
           )}
         </>
       )}
-    </div>
+    </PageContainer>
   )
 }

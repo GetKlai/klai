@@ -24,6 +24,7 @@ import * as m from '@/paraglide/messages'
 import { getLocale } from '@/paraglide/runtime'
 import { datetime } from '@/paraglide/registry'
 import { apiFetch } from '@/lib/apiFetch'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/admin/groups/$groupId/')({
   component: AdminGroupDetail,
@@ -141,26 +142,26 @@ function AdminGroupDetail() {
 
   if (groupLoading) {
     return (
-      <div className="mx-auto max-w-2xl px-6 pt-4 pb-10">
+      <PageContainer width="2xl">
         <ListLoadingState label={m.admin_shared_loading()} />
-      </div>
+      </PageContainer>
     )
   }
 
   if (!groupData) {
     return (
-      <div className="mx-auto max-w-2xl px-6 pt-4 pb-10">
+      <PageContainer width="2xl">
         <ListEmptyState title={m.admin_groups_not_found()} />
-      </div>
+      </PageContainer>
     )
   }
 
   return (
-    <div className="mx-auto max-w-2xl px-6 pt-4 pb-10 space-y-6">
+    <PageContainer width="2xl" gap="6">
       {/* Header */}
       <div className="flex items-start justify-between">
         <div className="space-y-2">
-          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+          <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
             {groupData.name}
           </h1>
           {groupData.description && (
@@ -183,7 +184,7 @@ function AdminGroupDetail() {
             />
           )}
           <Button
-            variant="ghost"
+            variant="outline"
             size="sm"
             onClick={() => navigate({ to: '/admin/groups' })}
           >
@@ -271,6 +272,6 @@ function AdminGroupDetail() {
           )}
         </CardContent>
       </Card>
-    </div>
+    </PageContainer>
   )
 }

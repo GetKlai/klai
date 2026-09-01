@@ -11,6 +11,7 @@ import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { DOCS_BASE, getOrgSlug } from '@/lib/kb-editor/tree-utils'
+import { PageContainer } from '@/components/ui/page-container'
 
 export const Route = createFileRoute('/app/docs/new')({
   component: NewKBPage,
@@ -45,14 +46,14 @@ function NewKBPage() {
   }
 
   return (
-    <div className="mx-auto max-w-lg px-6 pt-4 pb-10">
+    <PageContainer width="lg">
       <div className="flex items-start justify-between mb-6">
-        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+        <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
           {m.docs_kbs_new()}
         </h1>
         <Button
           type="button"
-          variant="ghost"
+          variant="outline"
           size="sm"
           onClick={() => navigate({ to: '/app/docs' })}
         >
@@ -106,6 +107,6 @@ function NewKBPage() {
           </form>
         </CardContent>
       </Card>
-    </div>
+    </PageContainer>
   )
 }
