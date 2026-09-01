@@ -45,10 +45,12 @@ REDIS=$(resolve_container redis)
 # (replaces the legacy vexa-bot-manager monolith — SPEC-VEXA-001/003).
 # api-gateway healthcheck is self-only (no dependency probe), so meeting-api,
 # runtime-api and admin-api are monitored separately below.
-MEETING=$(resolve_container api-gateway)
-MEETING_API=$(resolve_container meeting-api)
-MEETING_RUNTIME=$(resolve_container runtime-api)
-MEETING_ADMIN=$(resolve_container admin-api)
+# vexa12 stack (SPEC-VEXA-004) dropped the api-gateway; vexa12-meeting-api is
+# the front door now, so the "Meeting service" monitor tracks that container.
+MEETING=$(resolve_container vexa12-meeting-api)
+MEETING_API=$(resolve_container vexa12-meeting-api)
+MEETING_RUNTIME=$(resolve_container vexa12-runtime)
+MEETING_ADMIN=$(resolve_container vexa12-admin-api)
 GARAGE=$(resolve_container garage)
 CAL_COM=$(resolve_container cal-com)
 VAULTWARDEN=$(resolve_container vaultwarden)
