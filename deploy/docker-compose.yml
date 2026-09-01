@@ -72,17 +72,18 @@ networks:
     driver: bridge
     # Split the address space so the firewall can tell a service from a bot.
     #
-    # Bots and vexa12-meeting-api share this network by design — the runtime's
-    # DOCKER_NETWORK puts each bot alongside redis and meeting-api, which is the
-    # name a bot dials for its callback. But meeting-api also reaches the
-    # transcription endpoint on the host, and bots must not. With one flat /16 of
-    # dynamic addresses there was no way to express that: the INPUT exception for
-    # tcp/8000 had to cover the whole subnet, every ephemeral bot included
-    # (SPEC-SEC-022 REQ-2).
+    # Bots and the trusted Vexa services share this network by design — the
+    # runtime's DOCKER_NETWORK puts each bot alongside redis and meeting-api,
+    # which is the name a bot dials for its callback. The bot process also sends
+    # captured PCM to STT itself, but bots must not reach host ports directly.
+    # A fixed-address TCP proxy below exposes only host tcp/8000; the INPUT
+    # exception is scoped to that proxy. With one flat /16 of dynamic addresses
+    # there would be no way to distinguish it from an ephemeral bot.
     #
     # ip_range confines dynamic allocation to the upper half, so a bot can never
-    # be handed an address out of the lower half. meeting-api is pinned there and
-    # the firewall exception narrows from ~65k addresses to one.
+    # be handed an address out of the lower half. Trusted services are pinned
+    # there and the firewall exception narrows from ~65k addresses to the STT
+    # proxy's single address.
     ipam:
       config:
         - subnet: 172.29.0.0/16
@@ -1702,6 +1703,31 @@ services:
       timeout: 5s
       retries: 3
 
+  # The bot process performs the STT POST itself. Bots cannot use the host-bound
+  # GPU tunnel directly: harden-docker-user.sh default-denies the whole dynamic
+  # bot address pool. This byte-only proxy is the narrow capability they need —
+  # one listener, one fixed destination, no environment or secret surface. Its
+  # fixed address is the sole tcp/8000 exception in the host INPUT firewall.
+  vexa12-transcription-proxy:
+    image: alpine/socat:1.8.1.3
+    restart: unless-stopped
+    command: >
+      TCP-LISTEN:8000,fork,reuseaddr
+      TCP:172.18.0.1:8000,connect-timeout=5
+    init: true
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      vexa12-bots:
+        ipv4_address: 172.29.0.11
+    deploy:
+      resources:
+        limits:
+          memory: 32M
+
   # ─── Vexa 0.12 admin-api (schema owner) ─────────────────────────────────
   # Klai calls none of its endpoints. It runs because ensure_schema() lives here
   # and converges vexa_v012 to the SQLAlchemy metadata at boot (create_all in FK
@@ -1804,7 +1830,9 @@ services:
       RECORDING_ENABLED: "false"
       TRANSCRIBE_ENABLED: "true"
       BOT_AUTHENTICATED: "false"
-      TRANSCRIPTION_SERVICE_URL: http://172.18.0.1:8000/v1/audio/transcriptions
+      # The bot itself performs this POST. Use the single-destination proxy;
+      # direct host access from the dynamic bot pool is denied by INPUT policy.
+      TRANSCRIPTION_SERVICE_URL: http://vexa12-transcription-proxy:8000/v1/audio/transcriptions
       TRANSCRIPTION_SERVICE_TOKEN: ${WHISPER_SERVICE_TOKEN:-internal}
       # Storage backend: Garage speaks S3. Unused while RECORDING_ENABLED=false,
       # but the service still wants the config to boot (same as 0.10).
@@ -1846,6 +1874,8 @@ services:
         condition: service_healthy   # schema owner — tables must exist first
       vexa12-runtime:
         condition: service_started
+      vexa12-transcription-proxy:
+        condition: service_started
     networks:
       # NOT klai-net — see the vexa12-portal network comment. meeting-api's network
       # membership is its only authorization boundary.
@@ -1854,9 +1884,8 @@ services:
       vexa12-internal: {} # reaches vexa12-admin-api without exposing it to bots
       vexa12-storage: {}  # reaches garage for the S3 config it boots with
       vexa12-bots:
-        # Outside the ip_range on this network, so no bot can ever receive this
-        # address. harden-docker-user.sh allows only this IP to reach the host's
-        # transcription port (SPEC-SEC-022 REQ-2).
+        # Trusted control-plane address outside the dynamic bot pool. Only the
+        # transcription proxy's separate .11 address may reach host tcp/8000.
         ipv4_address: 172.29.0.10
         aliases:
           - meeting-api   # the name a spawned 0.12 bot dials for its callback

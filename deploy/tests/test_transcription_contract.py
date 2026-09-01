@@ -54,7 +54,22 @@ def test_scribe_and_vexa_share_transcription_backend_origin():
     meeting_endpoint = urlparse(meeting_env["TRANSCRIPTION_SERVICE_URL"])
 
     assert meeting_endpoint.path == "/v1/audio/transcriptions"
-    assert (meeting_endpoint.scheme, meeting_endpoint.hostname, meeting_endpoint.port) == (
+
+    # Vexa reaches the backend through vexa12-transcription-proxy: bots are
+    # default-denied to host ports (SPEC-SEC-022 REQ-2) and the bot process
+    # makes the STT call itself, so a fixed-address socat hop is the only way
+    # in. The contract is still "the same backend as scribe" -- it just has to
+    # be followed one hop, which also pins the proxy at the right destination.
+    proxy = compose["services"].get(meeting_endpoint.hostname)
+    if proxy is not None:
+        destination = str(proxy["command"]).split("TCP:", 1)[1].split(",", 1)[0]
+        proxy_host, _, proxy_port = destination.rpartition(":")
+        effective_host, effective_port = proxy_host, int(proxy_port)
+        assert meeting_endpoint.port == 8000, "the proxy listener is tcp/8000"
+    else:
+        effective_host, effective_port = meeting_endpoint.hostname, meeting_endpoint.port
+
+    assert (meeting_endpoint.scheme, effective_host, effective_port) == (
         scribe_base.scheme,
         scribe_base.hostname,
         scribe_base.port,

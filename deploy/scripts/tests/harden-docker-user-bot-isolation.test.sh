@@ -29,16 +29,16 @@ FAIL=0
 
 run_script() {
     # $1 = subnet the docker stub reports ("" = network not found)
-    # $2 = meeting-api's address on that network ("" = pin missing)
+    # $2 = transcription proxy's address on that network ("" = pin missing)
     local subnet="$1"
-    local MEETING_IP="${2-172.29.0.10}"
+    local PROXY_IP="${2-172.29.0.11}"
     local tmp; tmp="$(mktemp -d)"
 
     cat > "$tmp/docker" <<STUB
 #!/usr/bin/env bash
 case "\$*" in
   *IPAM*)      [ -n "$subnet" ] && echo "$subnet" ;;
-  *meeting-api*) [ -n "$MEETING_IP" ] && echo "$MEETING_IP" ;;
+  *transcription-proxy*) [ -n "$PROXY_IP" ] && echo "$PROXY_IP" ;;
 esac
 exit 0
 STUB
@@ -91,8 +91,8 @@ check "the SPEC's stale 172.27.0.0/16 is not used" \
 check "a default DROP is installed for the bot subnet" \
     bash -c 'echo "$0" | grep -q -- "-I INPUT 1 -s 172.29.0.0/16 -j DROP"' "$LAST_CALLS"
 
-check "transcription (8000) is excepted for the pinned address only" \
-    bash -c 'echo "$0" | grep -q -- "-I INPUT 1 -s 172.29.0.10 -p tcp --dport 8000 -j ACCEPT"' "$LAST_CALLS"
+check "transcription (8000) is excepted for the pinned proxy only" \
+    bash -c 'echo "$0" | grep -q -- "-I INPUT 1 -s 172.29.0.11 -p tcp --dport 8000 -j ACCEPT"' "$LAST_CALLS"
 
 check "the whole subnet is NOT excepted — that would cover every bot" \
     bash -c '! echo "$0" | grep -q -- "-I INPUT 1 -s 172.29.0.0/16 -p tcp --dport 8000"' "$LAST_CALLS"
@@ -105,7 +105,7 @@ check "the old whole-subnet exception is cleared on re-run" \
 check "the exception is inserted after the DROP, so it lands above it" \
     bash -c '
       drop=$(echo "$0" | grep -n -- "-I INPUT 1 -s 172.29.0.0/16 -j DROP" | tail -1 | cut -d: -f1)
-      acc=$(echo "$0" | grep -n -- "-I INPUT 1 -s 172.29.0.10 -p tcp --dport 8000" | tail -1 | cut -d: -f1)
+      acc=$(echo "$0" | grep -n -- "-I INPUT 1 -s 172.29.0.11 -p tcp --dport 8000" | tail -1 | cut -d: -f1)
       [ -n "$drop" ] && [ -n "$acc" ] && [ "$acc" -gt "$drop" ]' "$LAST_CALLS"
 
 check "established host-initiated connections are accepted above the DROP" \

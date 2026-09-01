@@ -64,18 +64,18 @@ iptables -L DOCKER-USER -n --line-numbers
 # a new host port later is covered without anyone remembering to add it.
 #
 # The exception is tcp/8000, the transcription endpoint, and it is scoped to one
-# address. vexa12-meeting-api carries TRANSCRIPTION_SERVICE_URL pointing there
-# and shares this network with the bots by design — the runtime puts each bot
-# alongside redis and meeting-api, which is the name it dials for its callback.
+# address: vexa12-transcription-proxy. Vexa bots POST their captured PCM to STT
+# themselves, so meeting-api passes them the proxy's in-network URL. The proxy
+# has one fixed TCP destination and no environment or secret surface.
 #
 # So the boundary cannot be drawn per network; it is drawn inside it. The compose
 # file confines dynamic allocation on vexa12-bots to 172.29.128.0/17 and pins
-# meeting-api at 172.29.0.10, outside that pool. A bot can never be handed that
-# address, so allowing it grants nothing to a compromised browser.
+# the transcription proxy at 172.29.0.11, outside that pool. A bot can never be
+# handed that address, so allowing it grants nothing to a compromised browser.
 #
 # Read the pinned address from Docker rather than repeating the literal — if the
-# compose pin is ever dropped, MEETING_API_IP comes back empty and the exception
-# is simply not installed, which fails closed.
+# compose pin is ever dropped, TRANSCRIPTION_PROXY_IP comes back empty and the
+# exception is simply not installed, which fails closed.
 #
 # The subnet is read from Docker rather than hardcoded: 172.29.0.0/16 today, but
 # the SPEC was written against 172.27.0.0/16 and that range now belongs to a
@@ -95,7 +95,7 @@ fi
 echo ""
 echo "Restricting $BOTS_NET ($BOTS_CIDR) → host ..."
 
-MEETING_API_IP="$(docker inspect klai-core-vexa12-meeting-api-1 \
+TRANSCRIPTION_PROXY_IP="$(docker inspect klai-core-vexa12-transcription-proxy-1 \
     --format '{{range $k,$v := .NetworkSettings.Networks}}{{if eq $k "vexa12-bots"}}{{$v.IPAddress}}{{end}}{{end}}' \
     2>/dev/null || true)"
 
@@ -103,21 +103,21 @@ MEETING_API_IP="$(docker inspect klai-core-vexa12-meeting-api-1 \
 # whole-subnet form too — it is what this script installed before the pin
 # existed, and leaving it behind would keep every bot excepted.
 while iptables -D INPUT -s "$BOTS_CIDR" -p tcp --dport 8000 -j ACCEPT 2>/dev/null; do :; done
-[ -n "$MEETING_API_IP" ] && \
-    while iptables -D INPUT -s "$MEETING_API_IP" -p tcp --dport 8000 -j ACCEPT 2>/dev/null; do :; done
+[ -n "$TRANSCRIPTION_PROXY_IP" ] && \
+    while iptables -D INPUT -s "$TRANSCRIPTION_PROXY_IP" -p tcp --dport 8000 -j ACCEPT 2>/dev/null; do :; done
 while iptables -D INPUT -s "$BOTS_CIDR" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null; do :; done
 while iptables -D INPUT -s "$BOTS_CIDR" -j DROP 2>/dev/null; do :; done
 
 # Rules are inserted at position 1, so later inserts land above earlier ones.
 iptables -I INPUT 1 -s "$BOTS_CIDR" -j DROP
 iptables -I INPUT 1 -s "$BOTS_CIDR" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-if [ -z "$MEETING_API_IP" ]; then
-    echo "  WARNING: vexa12-meeting-api has no vexa12-bots address — transcription" >&2
+if [ -z "$TRANSCRIPTION_PROXY_IP" ]; then
+    echo "  WARNING: vexa12-transcription-proxy has no vexa12-bots address — transcription" >&2
     echo "           exception NOT installed. Meetings will fail until this resolves." >&2
     exit 1
 fi
-iptables -I INPUT 1 -s "$MEETING_API_IP" -p tcp --dport 8000 -j ACCEPT
-echo "  transcription exception: $MEETING_API_IP only"
+iptables -I INPUT 1 -s "$TRANSCRIPTION_PROXY_IP" -p tcp --dport 8000 -j ACCEPT
+echo "  transcription exception: $TRANSCRIPTION_PROXY_IP only"
 
 echo "Done. INPUT rules for $BOTS_CIDR:"
 iptables -L INPUT -n --line-numbers | grep -E "^(num|[0-9]+ .*${BOTS_CIDR//./\\.})" || true
