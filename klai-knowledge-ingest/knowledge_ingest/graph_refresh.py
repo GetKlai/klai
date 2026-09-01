@@ -125,7 +125,6 @@ async def _refresh_stale_graph(
             queueing_lock=f"graphiti:{artifact_id}",
         ).defer_async(
             artifact_id=artifact_id,
-            document_text=indexable_content,
             org_id=org_id,
             content_type=content_type,
             belief_time_start=belief_time_start,

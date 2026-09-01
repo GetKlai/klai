@@ -373,7 +373,6 @@ def _register_tasks(procrastinate_app: Any) -> None:
     )
     async def ingest_graphiti_episode(
         artifact_id: str,
-        document_text: str,
         org_id: str,
         content_type: str,
         belief_time_start: int,
@@ -381,6 +380,7 @@ def _register_tasks(procrastinate_app: Any) -> None:
         path: str = "",
         replace_stale: bool = False,
         resource_key: str | None = None,
+        document_text: str | None = None,
     ) -> None:
         """Ingest a document into the Graphiti knowledge graph.
 
@@ -395,14 +395,10 @@ def _register_tasks(procrastinate_app: Any) -> None:
         ``source_connector_id`` arg, so the artifact-presence check is the
         canonical signal here.
 
-        Supersession guard: ``document_text`` is frozen at enqueue time, so a
-        job dequeued after a newer ingest replaced its artifact would write
-        stale content. Existence alone does not catch this — superseded rows
-        are retained — and since #1152 named episodes ``doc:<kb_slug>:<path>``
-        the stale episode shares its name with the active version, so retrieval
-        resolves it and cites the live page for content that only existed in
-        the old one. ``_enrich_document`` guards the same window with
-        ``artifact_is_active``; this mirrors it.
+        SPEC-INGEST-CONTENT-PG-001: re-reads ``document_text`` from PostgreSQL
+        at execution time so document bodies never enter Procrastinate args.
+        The optional argument is accepted only for jobs queued before this
+        rollout and is deliberately ignored; remove it after one deploy window.
 
         SPEC-TI-003-FOLLOWUP-001 AC-1: opens a tenant_scoped_connection on
         ``org_id`` so artifact_exists + update_artifact_extra both run with
@@ -410,17 +406,30 @@ def _register_tasks(procrastinate_app: Any) -> None:
         """
         from knowledge_ingest import pg_store
 
+        # Rollout compatibility only: old queued jobs still contain this kwarg.
+        # Never use it, because Procrastinate persists and logs task arguments.
+        del document_text
+
         async with tenant_scoped_connection(org_id) as conn:
-            if not await pg_store.artifact_exists(conn, artifact_id):
+            artifact = await pg_store.read_artifact_for_enrichment(conn, artifact_id)
+            if artifact is None and not await pg_store.artifact_exists(conn, artifact_id):
                 logger.info(
                     "graphiti_aborted_artifact_missing",
                     artifact_id=artifact_id,
                     org_id=org_id,
                 )
                 return
-            if not await pg_store.artifact_is_active(conn, artifact_id):
+            if artifact is None:
                 logger.info(
                     "graphiti_aborted_artifact_superseded",
+                    artifact_id=artifact_id,
+                    org_id=org_id,
+                )
+                return
+            document_text = artifact["extra"].get("document_text", "") or ""
+            if not document_text:
+                logger.info(
+                    "graphiti_aborted_no_document_text",
                     artifact_id=artifact_id,
                     org_id=org_id,
                 )

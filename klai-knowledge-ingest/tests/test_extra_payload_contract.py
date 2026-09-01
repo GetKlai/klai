@@ -164,12 +164,13 @@ def _build_request(
     source_connector_id: str | None = None,
     source_ref: str | None = None,
     source_domain: str | None = None,
+    content: str = "# Hello\nWorld",
 ) -> IngestRequest:
     return IngestRequest(
         org_id="org-contract",
         kb_slug="kb-contract",
         path="docs/page.md",
-        content="# Hello\nWorld",
+        content=content,
         source_type=source_type,
         content_type="kb_article",
         source_connector_id=source_connector_id,
@@ -179,7 +180,10 @@ def _build_request(
 
 
 async def _run_with_mocks(
-    req: IngestRequest, mock_proc_app: _MockProcApp
+    req: IngestRequest,
+    mock_proc_app: _MockProcApp,
+    *,
+    graphiti_enabled: bool = False,
 ) -> tuple[dict, AsyncMock]:
     """Run ``ingest_document`` with all I/O mocked so the test only
     exercises the Phase-1 extra_payload assembly.
@@ -269,7 +273,7 @@ async def _run_with_mocks(
         ),
         patch("knowledge_ingest.routes.ingest.settings") as mock_settings,
     ):
-        mock_settings.graphiti_enabled = False  # skip graphiti enqueue
+        mock_settings.graphiti_enabled = graphiti_enabled
         mock_settings.chunk_size = 1500
         mock_settings.chunk_overlap = 200
         mock_settings.enrichment_enabled = True
@@ -278,6 +282,20 @@ async def _run_with_mocks(
 
         result = await ingest_document(conn, req)
         return result, update_extra_mock
+
+
+@pytest.mark.asyncio
+async def test_graphiti_enqueue_does_not_carry_document_text():
+    document_text = "# Private connector page\n\n" + ("Customer-only body. " * 20)
+    req = _build_request(source_type="notion", content=document_text)
+    proc_app = _MockProcApp()
+
+    result, _ = await _run_with_mocks(req, proc_app, graphiti_enabled=True)
+
+    assert result["status"] == "ok"
+    assert proc_app.defer_kwargs is not None
+    assert "document_text" not in proc_app.defer_kwargs
+    assert document_text not in repr(proc_app.defer_kwargs)
 
 
 # ---------------------------------------------------------------------------

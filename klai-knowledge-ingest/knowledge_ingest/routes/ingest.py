@@ -1006,7 +1006,6 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
             queueing_lock=f"graphiti:{artifact_id}",
         ).defer_async(
             artifact_id=artifact_id,
-            document_text=indexable_content,
             org_id=req.org_id,
             content_type=req.content_type,
             belief_time_start=kf["belief_time_start"],
