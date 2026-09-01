@@ -1,6 +1,20 @@
 # Gitleaks configuration for the Klai monorepo
 title = "klai gitleaks config"
 
+[extend]
+# Keep GitLeaks' maintained credential and private-key rules as the single
+# source of truth for both repository scans and the public disclosure guard.
+useDefault = true
+
+[[rules]]
+id = "klai-mcp-token"
+description = "Klai MCP access or refresh token"
+# The public prefix is not a secret. Match only the complete 32-byte
+# token_urlsafe payload used by app.services.mcp_oauth.
+regex = '''\bklai_mcp_(?:rt_)?([A-Za-z0-9_-]{43})\b'''
+secretGroup = 1
+entropy = 3.5
+
 [allowlist]
 description = "Allowlist for known false positives and test fixtures"
 regexes = [
