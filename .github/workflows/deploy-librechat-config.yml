@@ -21,6 +21,11 @@ permissions:
 
 jobs:
   sync-librechat-config:
+    # Production sync over SSH. Guarded on main for the same reason as every
+    # deploy job: workflow_dispatch accepts any ref, and without this a
+    # dispatch from a feature branch would sync that branch's compose and
+    # config to core-01. A deliberate dispatch on main still works.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     steps:

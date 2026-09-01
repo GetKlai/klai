@@ -207,12 +207,12 @@ jobs:
           context: .
           file: klai-knowledge-ingest/Dockerfile
           push: true
-          # `:latest` is published ONLY on push to main. PR builds publish
-          # only the SHA tag so `docker pull :latest` cannot accidentally
-          # pull PR-build code. Mirrors klai-connector / klai-mailer.
+          # `:latest` is published only for main. The SHA tag stays
+          # unconditional so non-main builds cannot overwrite production's
+          # mutable tag.
           tags: |
             ghcr.io/getklai/knowledge-ingest:${{ github.sha }}
-            ${{ github.event_name == 'push' && 'ghcr.io/getklai/knowledge-ingest:latest' || '' }}
+            ${{ github.ref == 'refs/heads/main' && 'ghcr.io/getklai/knowledge-ingest:latest' || '' }}
           # GHA layer cache disabled: it failed to invalidate on source code changes.
           # Builds are fast enough (~1 min) without caching.
 
@@ -267,6 +267,7 @@ jobs:
           sarif_file: 'trivy-results.sarif'
 
   deploy:
+    if: github.ref == 'refs/heads/main'
     # `needs: scan` ensures the Trivy gate from SPEC-CI-TRIVY-POLICY-001 REQ-2
     # can actually block the rollout: this step used to be the tail of
     # build-push, so a failing scan could not stop it from deploying.
