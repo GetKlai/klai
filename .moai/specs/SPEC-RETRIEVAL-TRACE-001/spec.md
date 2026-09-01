@@ -1,6 +1,6 @@
 ---
 id: SPEC-RETRIEVAL-TRACE-001
-version: "0.2.0"
+version: "0.3.0"
 status: draft
 created: 2026-05-08
 updated: 2026-09-01
@@ -23,6 +23,7 @@ references:
 
 | Datum | Versie | Wijziging |
 |-------|--------|-----------|
+| 2026-09-01 | 0.3.0 | De `/retrieve`-handler is conform A4 gedragbehoudend opgesplitst in functies per pipelinestap, met één kleine mutable state-dataclass en zonder pipelineframework, stepklassen, registry of config-driven dispatch. |
 | 2026-09-01 | 0.2.0 | De trace is compleet voor alle live `/retrieve`-pipelinestappen. De kandidaattransformaties zijn gewrapt en gedeelde Prometheus-/trace-duren worden eenmaal gemeten; retired gate/evidence-tier-gedrag is niet heringevoerd. |
 | 2026-09-01 | 0.1.1 | Implementation note: op origin/main zijn de gate- en evidence-tier-stappen inmiddels uit de pipeline verwijderd (commit 2ce085277, "remove retired retrieval experiments"). De trace rendert voor die stappen compatibiliteitsdefaults / een skipped step; er is geen gate-gedrag heringevoerd. AC-3 is daardoor niet runtime-bereikbaar en geldt als vervallen zolang de gate retired is. |
 | 2026-05-08 | 0.1.0 | Initial draft. Introduceert `RetrievalTrace` en kleine step wrappers rond `/retrieve` als incrementele vervanging voor ad-hoc mutaties op `decision_record`, met behoud van het bestaande `retrieval_decision_record` logcontract. |
