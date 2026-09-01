@@ -940,10 +940,11 @@ function UiCatalogPage() {
             <Label htmlFor="catalog-description">Beschrijving</Label>
             <Textarea id="catalog-description" defaultValue="Compacte portal UI met rustige padding." />
           </div>
-          <label className="flex items-center gap-2 text-sm text-gray-900">
-            <Checkbox checked={checked} onChange={(event) => setChecked(event.currentTarget.checked)} />
-            Subtiele kleur voor herkenning
-          </label>
+          <Checkbox
+            label="Subtiele kleur voor herkenning"
+            checked={checked}
+            onChange={(event) => setChecked(event.currentTarget.checked)}
+          />
           <div className="flex items-center justify-between gap-4 sm:col-span-2">
             <Label htmlFor="catalog-switch" className="cursor-pointer">
               Automatisch accepteren
