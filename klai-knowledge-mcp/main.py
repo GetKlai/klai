@@ -828,6 +828,13 @@ _TRANSPORT_SECURITY = TransportSecuritySettings(
         "127.0.0.1",
         "127.0.0.1:8080",
     ],
+    # Browser-direct MCP clients are intentionally out of scope. The public
+    # clients are native/server-side MCP hosts; OAuth opens the portal in a
+    # browser for consent, then redirects back to the MCP client. LibreChat is
+    # server-side too. Keep this explicit: an empty list rejects every request
+    # that carries Origin while preserving origin-less clients. Adding even the
+    # resource's own origin is a product-surface expansion, not a config fix.
+    allowed_origins=[],
 )
 _TRANSPORT_SECURITY_VALIDATOR = TransportSecurityMiddleware(_TRANSPORT_SECURITY)
 

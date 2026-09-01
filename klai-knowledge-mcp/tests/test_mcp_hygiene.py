@@ -191,16 +191,31 @@ def test_rejected_foreign_hosts_do_not_consume_mcp_sessions(mcp_client: TestClie
     assert len(session_manager._server_instances) == sessions_before
 
 
-def test_rejected_foreign_origins_do_not_consume_mcp_sessions(mcp_client: TestClient) -> None:
-    """The adjacent Origin rejection must happen before session allocation too."""
+@pytest.mark.parametrize(
+    "origin",
+    (
+        "https://mcp.getklai.com",
+        "https://my.getklai.com",
+        "https://evil.example.com",
+    ),
+    ids=("resource-origin", "portal-origin", "foreign-origin"),
+)
+def test_browser_origins_are_deliberately_rejected_without_consuming_mcp_sessions(
+    mcp_client: TestClient,
+    origin: str,
+) -> None:
+    """Browser-direct MCP is out of scope, so every present Origin is rejected."""
     import main
+
+    assert main._TRANSPORT_SECURITY.allowed_origins == []
+    assert "allowed_origins" in main._TRANSPORT_SECURITY.model_fields_set
 
     headers = {
         "Accept": "application/json, text/event-stream",
         "Content-Type": "application/json",
         "Authorization": "Bearer klai_mcp_test-token-never-verified",
         "Host": "mcp.getklai.com",
-        "Origin": "https://evil.example.com",
+        "Origin": origin,
     }
     body = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
 
