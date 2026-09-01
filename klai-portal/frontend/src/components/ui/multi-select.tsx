@@ -74,7 +74,7 @@ export function MultiSelect({
             {selectedLabels.map((label, i) => (
               <span
                 key={value[i]}
-                className="inline-flex items-center gap-1 rounded-sm bg-[var(--color-accent)]/10 px-1.5 py-0.5 text-xs font-medium text-[var(--color-accent)]"
+                className="inline-flex items-center gap-1 rounded-sm bg-[var(--color-accent)]/10 px-1.5 py-0.5 text-xs font-medium text-[var(--color-accent-text)]"
               >
                 {label}
                 <span

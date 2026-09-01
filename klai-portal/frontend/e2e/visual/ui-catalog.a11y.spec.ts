@@ -22,20 +22,6 @@ type DocumentedException = Pick<CatalogFinding, 'rule' | 'section' | 'target'> &
  */
 const DOCUMENTED_EXCEPTIONS: DocumentedException[] = [
   {
-    rule: 'color-contrast',
-    section: 'Conversation',
-    target: '.bg-\\[var\\(--color-secondary\\)\\].px-3.py-1',
-    reason:
-      'Real component debt: the day-separator pill sets text-gray-500 — the documented non-text colour — as text on the secondary tint, 4.39:1 against the 4.5:1 bar. Fix as its own unit (gray-600).',
-  },
-  {
-    rule: 'color-contrast',
-    section: 'Selection inputs',
-    target: '.bg-\\[var\\(--color-accent\\)\\]\\/10',
-    reason:
-      'Real component debt: the multi-select chip uses the amber accent as its text colour on a 10% amber tint — the exact combination the styleguide bans. Fix as its own unit (--color-rl-accent-dark).',
-  },
-  {
     rule: 'nested-interactive',
     section: 'Selection inputs',
     target: '.min-h-9',

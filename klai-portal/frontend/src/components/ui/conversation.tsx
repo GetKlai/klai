@@ -197,7 +197,7 @@ export function ConversationTimeline({
           {bucket.blocks.map((block, index) =>
             'label' in block ? (
               <div key={`sys-${block.id}`} className="flex justify-center">
-                <span className="rounded-full bg-[var(--color-secondary)] px-3 py-1 text-xs text-gray-500">
+                <span className="rounded-full bg-[var(--color-secondary)] px-3 py-1 text-xs text-gray-600">
                   {block.label}
                 </span>
               </div>
