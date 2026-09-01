@@ -2,6 +2,8 @@ import { useEffect, useReducer } from 'react'
 import { ArrowRight } from 'lucide-react'
 import QRCode from 'react-qr-code'
 import { Button } from '@/components/ui/button'
+import { Field } from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
 import { apiFetch } from '@/lib/apiFetch'
 import { authLogger } from '@/lib/logger'
 import * as m from '@/paraglide/messages'
@@ -93,12 +95,8 @@ export function TOTPSetup({
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-1">
-              <label htmlFor="totp-code" className="block text-sm font-medium text-gray-900">
-                {m.setup_2fa_field_code()}
-              </label>
-              <input
-                id="totp-code"
+            <Field id="totp-code" label={m.setup_2fa_field_code()}>
+              <Input
                 type="text"
                 inputMode="numeric"
                 pattern="[0-9]*"
@@ -108,9 +106,9 @@ export function TOTPSetup({
                 required
                 autoComplete="one-time-code"
                 autoFocus
-                className="w-full rounded-lg border border-gray-200 bg-[var(--color-background)] px-3 py-2 text-center font-mono text-base tracking-widest outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
+                className="text-center font-mono text-base tracking-widest"
               />
-            </div>
+            </Field>
             {state.submitError && (
               <p className="rounded-lg bg-[var(--color-destructive-bg)] px-3 py-2 text-sm text-[var(--color-destructive-text)]">{state.submitError}</p>
             )}

@@ -1,6 +1,8 @@
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { Field } from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
 import { ArrowRight } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { AuthPageLayout } from '@/components/layout/AuthPageLayout'
@@ -216,24 +218,16 @@ function SocialSignupPage() {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="space-y-1">
-          <label
-            htmlFor="company_name"
-            className="block text-sm font-medium text-gray-900"
-          >
-            {m.signup_social_company_label()}
-          </label>
-          <input
-            id="company_name"
+        <Field id="company_name" label={m.signup_social_company_label()}>
+          <Input
             name="company_name"
             type="text"
             value={companyName}
             onChange={(e) => setCompanyName(e.target.value)}
             required
             autoFocus
-            className="w-full rounded-lg border border-gray-200 bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
           />
-        </div>
+        </Field>
 
         {/* SPEC-AUTH-010 R5: founder's auto-accept choice (server-side guarded). */}
         {emailDomain && (

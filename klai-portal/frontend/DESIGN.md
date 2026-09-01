@@ -83,6 +83,7 @@ components:
   delete-org-modal: {}
   dialog: {}
   dropdown-menu: {}
+  field: {}
   inline-delete-confirm: {}
   inline-edit-row: {}
   inline-edit: {}
@@ -331,6 +332,12 @@ Generic modal
 ### `dropdown-menu`
 
 Menus, popovers, command/combobox
+
+### `field`
+
+Labeled form-field composition with automatic control association and feedback
+
+- **must (KLAI-UI-034):** Every form field has a `Label` with matching id and htmlFor
 
 ### `inline-delete-confirm`
 

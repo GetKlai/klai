@@ -64,6 +64,7 @@ import {
 } from '@/components/ui/data-table'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { InlineEditRow } from '@/components/ui/inline-edit-row'
+import { Field } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { MultiSelect } from '@/components/ui/multi-select'
@@ -899,6 +900,17 @@ function UiCatalogPage() {
             <Tabs tabs={tabItemsWithNotifications} value={activeTab} onValueChange={setActiveTab} />
           </div>
           <p className="text-sm text-gray-500">Actieve tab: {activeTab}</p>
+        </div>
+      </Section>
+
+      <Section title="Field">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Automatisch gekoppeld label" hint="Field genereert de id wanneer die ontbreekt.">
+            <Input defaultValue="Klai component" />
+          </Field>
+          <Field id="catalog-field-error" label="Veld met fout" error="Controleer deze waarde.">
+            <Input defaultValue="Onjuiste waarde" />
+          </Field>
         </div>
       </Section>
 

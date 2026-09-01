@@ -1,6 +1,6 @@
 # SPEC-DESIGN-SOURCE-001 — The design contract rests on code
 
-**Status:** accepted · **Area:** klai-portal/frontend · **Opened:** 2026-09-01
+**Status:** implemented · **Area:** klai-portal/frontend · **Opened:** 2026-09-01 · **Landed:** 2026-09-01
 
 ## Problem
 
@@ -96,3 +96,44 @@ answer we have. The judgement layer is unsolved industry-wide.
   prose is the correct place for them.
 - Adopting DSDS or DESIGN.md as an authoring format.
 - Writing lint rules for patterns that have not been counted.
+
+## Implementation status (2026-09-01)
+
+All three units are on main.
+
+- **Unit 1** — documented-contrast check: PR #1285 follow-up work in #1293
+  (`a234887c6`). Exceptions now hold only `text-gray-400` and `text-gray-500`.
+- **Unit 2** — 21 component rules moved onto their components, ledger rows
+  generated: #1293 (`d4ea5a77a`). All 51 rows byte-identical through the move.
+- **Unit 3** — DESIGN.md emitted from the theme, component metadata and UI
+  standards: #1298 (`940bd201c`). Committed artefact, staleness-checked.
+
+Landed beside the units, same PRs: the full `text-gray-400` migration
+(601 → 6, all six WCAG-exempt), the semantic `-text` foreground fix
+(46 sites), and nine hand-rolled callouts onto `Alert` (#1297).
+
+Ledger at landing: 53 rules — 10 automated, 4 assisted, 35 manual,
+4 deliberately unchecked. It was 3 automated checks and unlabelled prose at
+the start of the day.
+
+## Follow-on work, tracked here so it is not re-litigated
+
+1. **`Field` component + the last ten raw auth inputs.** One consistent
+   hand-rolled label+input pattern across login, signup, password and 2FA
+   setup. Absorb into a `Field` primitive with the exact current appearance,
+   then lock with a lint rule mirroring `klai/no-raw-textarea`. The two
+   widget chat inputs stay raw by documented decision (dark-mode variant).
+2. **Authoring-time integration.** Point the always-loaded design rules and
+   the `klai-portal-ui` skill at `DESIGN.md` and the ledger, so agents get
+   the contract at write time instead of build-fail time.
+3. **Verification gaps.** The nine converted callouts sit on OAuth/upload
+   success states no local stack reaches; the `e2e` job is path-filtered off
+   frontend design changes. Both mean "CI green" still does not mean "seen".
+4. **Hook defect.** `public-github-mutation-guard.py` misclassifies a
+   feature-branch push inside a compound command as a main push. Found
+   2026-09-01; fix needs its own reviewed change, not a drive-by.
+5. **Local bootstrap.** A working `make dev-bootstrap` needs: dev-up →
+   extract only the `_rls_current_org_id()` definition → migrate → all
+   post_deploy scripts → backend. Backend-owned; the widget post_deploy
+   scripts also fail on tables this chain does not create.
+
