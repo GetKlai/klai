@@ -134,6 +134,7 @@ class TestFireAndForgetDelegation:
         assert call_kwargs["connector_id"] == str(connector_id)
         assert call_kwargs["org_id"] == "100000000000000002"
         assert call_kwargs["kb_slug"] == "support"
+        assert call_kwargs["generation"] == str(sync_run_id)
 
         # AC-01.1: cursor_state stores remote_job_id; status stays RUNNING.
         assert sync_run.cursor_state == {
@@ -235,6 +236,7 @@ class TestCrawlSyncClientContract:
             connector_id="abc",
             org_id="100000000000000002",
             kb_slug="support",
+            generation="sync-run-42",
             config={
                 "base_url": "https://help.voys.nl",
                 "max_pages": 20,
@@ -252,6 +254,7 @@ class TestCrawlSyncClientContract:
         assert body["connector_id"] == "abc"
         assert body["org_id"] == "100000000000000002"
         assert body["kb_slug"] == "support"
+        assert body["generation"] == "sync-run-42"
         assert body["base_url"] == "https://help.voys.nl"
         assert body["max_pages"] == 20
         assert body["max_depth"] == 2

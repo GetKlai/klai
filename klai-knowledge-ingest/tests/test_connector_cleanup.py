@@ -13,7 +13,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from knowledge_ingest.connector_cleanup import CleanupReport, purge_connector
+from knowledge_ingest.connector_cleanup import CleanupReport, _list_resource_keys, purge_connector
+from knowledge_ingest.resource_jobs import connector_resource_key
 
 
 @pytest.fixture
@@ -190,3 +191,14 @@ async def test_cleanup_report_serialises_for_logging() -> None:
     assert d["crawl_jobs_deleted"] == 2
     assert d["falkor_episodes_deleted"] == 15
     assert d["sync_runs_deleted"] is None
+
+
+@pytest.mark.asyncio
+async def test_resource_key_snapshot_includes_current_fence_without_artifacts() -> None:
+    conn = MagicMock()
+    conn.fetch = AsyncMock(side_effect=[[], []])
+    conn.fetchval = AsyncMock(return_value="sync-run-42")
+
+    keys = await _list_resource_keys(conn, "org-zid", "support", "conn-uuid")
+
+    assert keys == [connector_resource_key("org-zid", "support", "conn-uuid", "sync-run-42")]

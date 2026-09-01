@@ -192,3 +192,9 @@ def test_client_content_limit_matches_knowledge_ingest_request_contract() -> Non
     )
 
     assert downstream_limit == MAX_INGEST_CONTENT_CHARS
+
+
+def test_connector_payload_forwards_sync_generation() -> None:
+    payload = _build_payload(**_base_kwargs(), resource_generation="sync-run-42")
+
+    assert payload["resource_generation"] == "sync-run-42"

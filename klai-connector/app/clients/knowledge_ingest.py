@@ -29,6 +29,7 @@ def _build_payload(
     content: str,
     source_connector_id: str,
     source_ref: str,
+    resource_generation: str | None = None,
     source_url: str = "",
     content_type: str = "unknown",
     image_urls: list[str] | None = None,
@@ -52,6 +53,8 @@ def _build_payload(
         "content_type": content_type,
         "source_type": source_type,
     }
+    if resource_generation:
+        payload["resource_generation"] = resource_generation
     # user_id: connector owner's Zitadel user_id. Required by knowledge-ingest's
     # personal-KB owner-binding check (personal_kb_owner_mismatch). Without it,
     # syncs to a personal-{user} KB return 403.
@@ -116,6 +119,7 @@ class KnowledgeIngestClient:
         connector_type: str = "",
         user_id: str | None = None,
         document_extra: dict[str, object] | None = None,
+        resource_generation: str | None = None,
     ) -> None:
         """Send a parsed document to knowledge-ingest for embedding.
 
@@ -165,6 +169,7 @@ class KnowledgeIngestClient:
             content=content,
             source_connector_id=source_connector_id,
             source_ref=source_ref,
+            resource_generation=resource_generation,
             source_url=source_url,
             content_type=content_type,
             image_urls=image_urls,
@@ -252,6 +257,7 @@ class CrawlSyncClient:
         connector_id: str,
         org_id: str,
         kb_slug: str,
+        generation: str,
         config: dict,
     ) -> dict:
         """Enqueue a bulk crawl via ``POST /ingest/v1/crawl/sync``.
@@ -267,6 +273,7 @@ class CrawlSyncClient:
             "connector_id": connector_id,
             "org_id": org_id,
             "kb_slug": kb_slug,
+            "generation": generation,
             "base_url": config["base_url"],
             "max_pages": int(config.get("max_pages", 200)),
             "max_depth": int(config.get("max_depth", 3)),

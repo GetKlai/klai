@@ -60,6 +60,7 @@ from knowledge_ingest.reason_codes import (
     FetchReasonCode,
     PersistSkipReason,
 )
+from knowledge_ingest.resource_jobs import parse_connector_resource_key
 from knowledge_ingest.utils.auth_wall_classifier import classify_auth_wall
 from knowledge_ingest.utils.auth_wall_detector import (
     AuthWallSignal,
@@ -800,6 +801,7 @@ async def run_crawl_job(
     canary_url: str | None = None,
     canary_fingerprint: str | None = None,
     connector_id: str | None = None,
+    resource_key: str | None = None,
     discovery_seed_url: str | None = None,
 ) -> None:
     """
@@ -1137,6 +1139,22 @@ async def run_crawl_job(
 
         for result in results:
             url = result.url
+            if resource_key:
+                from knowledge_ingest.connector_state import (
+                    FenceState,
+                    check_connector_resource_fence,
+                )
+
+                fence_state = await check_connector_resource_fence(resource_key)
+                if fence_state is not FenceState.ACTIVE:
+                    logger.warning(
+                        "connector_resource_job_skipped",
+                        resource_key=resource_key,
+                        fence_state=fence_state.value,
+                        job_id=job_id,
+                        url=url,
+                    )
+                    continue
             # SPEC-CRAWLER-004 Fase B: detect login-indicator trigger.
             # crawl4ai returns success=False when the injected wait_for times
             # out on the login selector; surfacing that as AuthWallDetected
@@ -1159,6 +1177,7 @@ async def run_crawl_job(
                             login_indicator_selector=login_indicator_selector,
                             authenticated_context=bool(cookies or login_indicator_selector),
                             connector_id=connector_id,
+                            resource_key=resource_key,
                         )
                         pages_done += 1
                     except AuthWallDetected:
@@ -1499,6 +1518,7 @@ async def _ingest_crawl_result(
     login_indicator_selector: str | None = None,
     authenticated_context: bool = False,
     connector_id: str | None = None,
+    resource_key: str | None = None,
 ) -> None:
     """Process a crawl result: dedup, extract links, ingest.
 
@@ -1783,6 +1803,8 @@ async def _ingest_crawl_result(
         # Before this, every crawl chunk had source_connector_id=None and
         # neither Qdrant nor artifact delete matched.
         extra["source_connector_id"] = connector_id
+        if resource_key:
+            extra["resource_key"] = resource_key
     if is_pdf and front_matter:
         extra["front_matter"] = front_matter
 
@@ -1850,6 +1872,10 @@ async def _ingest_crawl_result(
             content_type=content_type,
             synthesis_depth=1,
             extra=extra,
+            source_connector_id=connector_id,
+            resource_generation=(
+                parse_connector_resource_key(resource_key).generation if resource_key else None
+            ),
         ),
     )
 

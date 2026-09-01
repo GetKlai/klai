@@ -37,6 +37,7 @@ class IngestRequest(BaseModel):
     chunks: list[str] | None = None  # Pre-computed chunks (used with skip_chunking=True)
     content_hash: str | None = None  # Optional full-source hash for pre-chunked/truncated content
     source_connector_id: str | None = None  # ID of the connector that produced this document
+    resource_generation: str | None = None  # Caller-supplied connector sync generation
     source_ref: str | None = None  # Source reference (e.g. URL, Notion page ID, repo path)
     synthesis_depth: int | None = None  # Optional override (adapters set this explicitly)
     # Connector-level hint: expected modes for this source

@@ -38,7 +38,12 @@ from knowledge_ingest.connector_cookies import (
     ConnectorOrgMismatchError,
     load_connector_cookies,
 )
-from knowledge_ingest.db import get_pool
+from knowledge_ingest.connector_state import (
+    activate_connector_resource,
+    get_current_connector_resource_key,
+)
+from knowledge_ingest.db import get_pool, tenant_scoped_connection
+from knowledge_ingest.resource_jobs import cancel_jobs_by_resource_key, connector_resource_key
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -56,6 +61,7 @@ class CrawlSyncRequest(BaseModel):
     """
 
     connector_id: uuid.UUID
+    generation: str
     org_id: str
     kb_slug: str
     base_url: str
@@ -225,6 +231,12 @@ async def crawl_sync(req: CrawlSyncRequest) -> CrawlSyncResponse:
     from knowledge_ingest import enrichment_tasks
 
     proc_app = enrichment_tasks.get_app()
+    resource_key = connector_resource_key(req.org_id, req.kb_slug, req.connector_id, req.generation)
+    async with tenant_scoped_connection(req.org_id) as conn:
+        old_resource_key = await get_current_connector_resource_key(conn, resource_key)
+        await activate_connector_resource(conn, resource_key)
+    if old_resource_key and old_resource_key != resource_key:
+        await cancel_jobs_by_resource_key(proc_app, pool, old_resource_key)
     await proc_app.run_crawl.defer_async(  # type: ignore[attr-defined]
         job_id=job_id,
         org_id=req.org_id,
@@ -241,6 +253,7 @@ async def crawl_sync(req: CrawlSyncRequest) -> CrawlSyncResponse:
         # REQ-05.4: connector_id only — plaintext cookies never enter the
         # Procrastinate args column or the worker's "Starting job" log.
         connector_id=str(req.connector_id),
+        resource_key=resource_key,
         canary_url=req.canary_url,
         canary_fingerprint=req.canary_fingerprint,
     )

@@ -394,6 +394,7 @@ class SyncEngine:
                             path=ref.path,
                             content=text,
                             source_connector_id=str(connector_id),
+                            resource_generation=str(sync_run_id),
                             source_ref=ref.source_ref,
                             source_url=ref.source_url,
                             content_type=ref.content_type,
@@ -674,6 +675,7 @@ class SyncEngine:
                     connector_id=str(connector_id),
                     org_id=portal_config.zitadel_org_id,
                     kb_slug=portal_config.kb_slug,
+                    generation=str(sync_run_id),
                     config=portal_config.config,
                 )
                 remote_job_id = enqueue_resp["job_id"]

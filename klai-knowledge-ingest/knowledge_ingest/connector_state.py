@@ -19,10 +19,12 @@ chunk that becomes orphan data.
 from __future__ import annotations
 
 import time
+from enum import StrEnum
 
 import structlog
 
-from knowledge_ingest.db import get_pool
+from knowledge_ingest.db import get_pool, tenant_scoped_connection
+from knowledge_ingest.resource_jobs import parse_connector_resource_key
 
 logger = structlog.get_logger()
 
@@ -34,6 +36,126 @@ _CACHE_TTL_SECONDS = 5.0
 
 # {connector_id: (state, expires_at_monotonic)}
 _state_cache: dict[str, tuple[str, float]] = {}
+
+
+class FenceState(StrEnum):
+    ACTIVE = "active"
+    STALE_GENERATION = "stale_generation"
+    DELETING = "deleting"
+    DELETED = "deleted"
+    UNKNOWN_ERROR = "unknown_error"
+
+
+_fence_cache: dict[str, tuple[FenceState, float]] = {}
+
+
+async def activate_connector_resource(conn, resource_key: str) -> None:
+    resource = parse_connector_resource_key(resource_key)
+    await conn.execute(
+        """
+        INSERT INTO knowledge.connector_resource_fences
+            (org_id, kb_slug, connector_id, current_generation, state, updated_at)
+        VALUES ($1, $2, $3, $4, 'active', now())
+        ON CONFLICT (org_id, kb_slug, connector_id) DO UPDATE
+          SET current_generation = EXCLUDED.current_generation,
+              state = 'active',
+              updated_at = now()
+        """,
+        resource.org_id,
+        resource.kb_slug,
+        resource.connector_id,
+        resource.generation,
+    )
+    _fence_cache.pop(resource_key, None)
+
+
+async def get_current_connector_resource_key(conn, resource_key: str) -> str | None:
+    resource = parse_connector_resource_key(resource_key)
+    generation = await conn.fetchval(
+        """
+        SELECT current_generation
+          FROM knowledge.connector_resource_fences
+         WHERE org_id = $1 AND kb_slug = $2 AND connector_id = $3
+        """,
+        resource.org_id,
+        resource.kb_slug,
+        resource.connector_id,
+    )
+    if generation is None:
+        return None
+    from knowledge_ingest.resource_jobs import connector_resource_key
+
+    return connector_resource_key(
+        resource.org_id, resource.kb_slug, resource.connector_id, generation
+    )
+
+
+async def mark_connector_resource_deleting(conn, resource_key: str) -> None:
+    resource = parse_connector_resource_key(resource_key)
+    await conn.execute(
+        """
+        UPDATE knowledge.connector_resource_fences
+           SET state = 'deleting', updated_at = now()
+         WHERE org_id = $1
+           AND kb_slug = $2
+           AND connector_id = $3
+           AND current_generation = $4
+        """,
+        resource.org_id,
+        resource.kb_slug,
+        resource.connector_id,
+        resource.generation,
+    )
+    _fence_cache.pop(resource_key, None)
+
+
+async def check_connector_resource_fence(resource_key: str, *, fresh: bool = False) -> FenceState:
+    """Fail closed unless this is the connector's active current generation."""
+    now = time.monotonic()
+    cached = _fence_cache.get(resource_key)
+    if not fresh and cached is not None and cached[1] > now:
+        return cached[0]
+    try:
+        resource = parse_connector_resource_key(resource_key)
+        async with tenant_scoped_connection(resource.org_id) as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT f.current_generation,
+                       f.state,
+                       p.state AS connector_state
+                  FROM knowledge.connector_resource_fences AS f
+                  LEFT JOIN portal_connectors AS p ON p.id = f.connector_id::uuid
+                 WHERE f.org_id = $1 AND f.kb_slug = $2 AND f.connector_id = $3
+                """,
+                resource.org_id,
+                resource.kb_slug,
+                resource.connector_id,
+            )
+    except Exception:
+        logger.warning(
+            "connector_resource_fence_lookup_failed",
+            resource_key=resource_key,
+            exc_info=True,
+        )
+        return FenceState.UNKNOWN_ERROR
+
+    if row is None:
+        result = FenceState.DELETED
+    elif row.get("connector_state", "active") is None:
+        result = FenceState.DELETED
+    elif row.get("connector_state", "active") != "active":
+        result = FenceState.DELETING
+    elif str(row["current_generation"]) != resource.generation:
+        result = FenceState.STALE_GENERATION
+    elif row["state"] == "deleting":
+        result = FenceState.DELETING
+    elif row["state"] == "active":
+        result = FenceState.ACTIVE
+    else:
+        result = FenceState.UNKNOWN_ERROR
+    if not fresh:
+        _fence_cache[resource_key] = (result, now + _CACHE_TTL_SECONDS)
+    return result
 
 
 async def connector_is_active(connector_id: str | None) -> bool:
@@ -103,5 +225,6 @@ def invalidate_cache(connector_id: str | None = None) -> None:
     """
     if connector_id is None:
         _state_cache.clear()
+        _fence_cache.clear()
     else:
         _state_cache.pop(connector_id, None)

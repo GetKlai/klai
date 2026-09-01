@@ -131,7 +131,7 @@ def init_app(connector: Any) -> Any:
     return _procrastinate_app
 
 
-async def _load_and_enrich(artifact_id: str) -> None:
+async def _load_and_enrich(artifact_id: str, resource_key: str | None = None) -> None:
     """SPEC-INGEST-CONTENT-PG-001 (audit finding 1): single entry point for
     both enrichment task variants.
 
@@ -168,6 +168,9 @@ async def _load_and_enrich(artifact_id: str) -> None:
         return
 
     extra: dict = artifact["extra"] or {}
+    resource_key = resource_key or extra.get("resource_key")
+    if await _resource_fence_blocks(resource_key, artifact_id=artifact_id, fresh=False):
+        return
     document_text: str = extra.get("document_text", "") or ""
     prechunked_skip = enrichment_skip_reason(
         chunk_count=int(extra.get("docling_chunk_count") or 0),
@@ -244,7 +247,30 @@ async def _load_and_enrich(artifact_id: str) -> None:
         parents=parents_serialised,
         parent_index_per_child=parent_index_per_child,
         heading_path_per_child=heading_path_per_child,
+        resource_key=resource_key,
     )
+
+
+async def _resource_fence_blocks(
+    resource_key: str | None, *, artifact_id: str, fresh: bool
+) -> bool:
+    if not resource_key:
+        return False
+    from knowledge_ingest.connector_state import (
+        FenceState,
+        check_connector_resource_fence,
+    )
+
+    state = await check_connector_resource_fence(resource_key, fresh=fresh)
+    if state is FenceState.ACTIVE:
+        return False
+    logger.warning(
+        "connector_resource_job_skipped",
+        artifact_id=artifact_id,
+        resource_key=resource_key,
+        fence_state=state.value,
+    )
+    return True
 
 
 class ArtifactIndexStatusUpdateError(RuntimeError):
@@ -328,12 +354,12 @@ def _register_tasks(procrastinate_app: Any) -> None:
         # jobs, so ride out the whole 429 burst a concurrent crawl produces.
         retry=procrastinate.RetryStrategy(max_attempts=5, exponential_wait=4),
     )
-    async def enrich_document_bulk(artifact_id: str) -> None:
+    async def enrich_document_bulk(artifact_id: str, resource_key: str | None = None) -> None:
         """Enrich chunks for crawl/import jobs (lower priority).
 
         SPEC-INGEST-CONTENT-PG-001: takes only ``artifact_id``.
         """
-        await _load_and_enrich(artifact_id)
+        await _load_and_enrich(artifact_id, resource_key)
 
     # Expose task functions via app attributes for use in ingest.py
     procrastinate_app.enrich_document_interactive = enrich_document_interactive  # type: ignore[attr-defined]
@@ -354,6 +380,7 @@ def _register_tasks(procrastinate_app: Any) -> None:
         kb_slug: str = "",
         path: str = "",
         replace_stale: bool = False,
+        resource_key: str | None = None,
     ) -> None:
         """Ingest a document into the Graphiti knowledge graph.
 
@@ -397,6 +424,8 @@ def _register_tasks(procrastinate_app: Any) -> None:
                     artifact_id=artifact_id,
                     org_id=org_id,
                 )
+                return
+            if await _resource_fence_blocks(resource_key, artifact_id=artifact_id, fresh=False):
                 return
             from knowledge_ingest import graph as graph_module
 
@@ -466,6 +495,8 @@ def _register_tasks(procrastinate_app: Any) -> None:
                             org_id=org_id,
                         )
                         return
+                if await _resource_fence_blocks(resource_key, artifact_id=artifact_id, fresh=True):
+                    return
                 episode_id = await graph_module.ingest_episode(
                     artifact_id=artifact_id,
                     document_text=episode_text,
@@ -489,6 +520,9 @@ def _register_tasks(procrastinate_app: Any) -> None:
                         f"{part_index + 1} of {len(episode_parts)}"
                     )
                 episode_ids.append(episode_id)
+                if await _resource_fence_blocks(resource_key, artifact_id=artifact_id, fresh=True):
+                    await graph_module.delete_kb_episodes(org_id, [episode_id])
+                    return
                 # A worker retry starts with a fresh Python list, so the SQL
                 # append must retain IDs written before a mid-loop worker kill.
                 await pg_store.append_graphiti_episode_id(conn, artifact_id, episode_id)
@@ -519,6 +553,8 @@ def _register_tasks(procrastinate_app: Any) -> None:
                 )
             except Exception:
                 logger.exception("entity_graph_data_failed", artifact_id=artifact_id)
+            if await _resource_fence_blocks(resource_key, artifact_id=artifact_id, fresh=True):
+                return
             await pg_store.update_artifact_extra(
                 conn,
                 artifact_id,
@@ -546,6 +582,7 @@ async def _enrich_document(
     parents: list[dict] | None = None,
     parent_index_per_child: list[int | None] | None = None,
     heading_path_per_child: list[str] | None = None,
+    resource_key: str | None = None,
 ) -> None:
     """
     Core enrichment logic shared by both task variants.
@@ -723,7 +760,10 @@ async def _enrich_document(
                     if parent_idx is not None and 0 <= parent_idx < len(inserted_ids):
                         parent_chunk_ids[i] = inserted_ids[parent_idx]
 
-        # Step 4: Upsert enriched chunks to Qdrant
+        # Step 4: Upsert enriched chunks to Qdrant. This checkpoint is fresh;
+        # the earlier pre-LLM check may be served from the <=5s cache.
+        if await _resource_fence_blocks(resource_key, artifact_id=artifact_id, fresh=True):
+            return
         t0 = time.monotonic()
         await qdrant_store.upsert_enriched_chunks(
             org_id=org_id,

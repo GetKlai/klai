@@ -43,7 +43,7 @@ from knowledge_ingest.clustering import classify_by_centroid, load_centroids
 from knowledge_ingest.config import settings
 from knowledge_ingest.content_labeler import generate_content_label
 from knowledge_ingest.content_profiles import get_profile
-from knowledge_ingest.db import tenant_scoped_connection
+from knowledge_ingest.db import get_pool, tenant_scoped_connection
 from knowledge_ingest.docs_provenance import build_docs_source_extra
 from knowledge_ingest.document_normalizer import normalize_document_for_chunking
 from knowledge_ingest.enrichment_policy import (
@@ -61,6 +61,7 @@ from knowledge_ingest.models import (
     UpdateKBVisibilityRequest,
 )
 from knowledge_ingest.portal_client import fetch_taxonomy_nodes
+from knowledge_ingest.resource_jobs import connector_resource_key
 from knowledge_ingest.source_profiles import (
     SourceKnowledgeProfile,
     resolve_source_knowledge_profile,
@@ -100,6 +101,7 @@ def _sanitize_ingest_request(req: IngestRequest) -> None:
     req.chunks = _strip_postgres_nul(req.chunks)
     req.content_hash = _strip_postgres_nul(req.content_hash)
     req.source_connector_id = _strip_postgres_nul(req.source_connector_id)
+    req.resource_generation = _strip_postgres_nul(req.resource_generation)
     req.source_ref = _strip_postgres_nul(req.source_ref)
     req.kb_name = _strip_postgres_nul(req.kb_name)
     req.connector_type = _strip_postgres_nul(req.connector_type)
@@ -390,7 +392,11 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
     # source_connector_id pass through unchanged.
     if req.source_connector_id:
         source_connector_id = req.source_connector_id
-        from knowledge_ingest.connector_state import connector_is_active
+        from knowledge_ingest.connector_state import (
+            activate_connector_resource,
+            connector_is_active,
+            get_current_connector_resource_key,
+        )
 
         if not await connector_is_active(source_connector_id):
             logger.info(
@@ -405,6 +411,29 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
                 "reason": "connector deleting or deleted",
                 "chunks": 0,
             }
+        if req.resource_generation:
+            resource_key = connector_resource_key(
+                req.org_id,
+                req.kb_slug,
+                req.source_connector_id,
+                req.resource_generation,
+            )
+            if req.source_type != "crawl":
+                old_resource_key = await get_current_connector_resource_key(conn, resource_key)
+                await activate_connector_resource(conn, resource_key)
+                if old_resource_key and old_resource_key != resource_key:
+                    from knowledge_ingest import enrichment_tasks
+                    from knowledge_ingest.resource_jobs import cancel_jobs_by_resource_key
+
+                    await cancel_jobs_by_resource_key(
+                        enrichment_tasks.get_app(),
+                        await get_pool(),
+                        old_resource_key,
+                    )
+        else:
+            resource_key = None
+    else:
+        resource_key = None
 
     # Early exit if indexable content is unchanged since last ingest. Docs pages
     # are stored as BlockNote JSON for editor fidelity; hash the normalized
@@ -792,6 +821,8 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
     visibility = await kb_config.get_kb_visibility(conn, req.org_id, req.kb_slug)
 
     extra_payload: dict = {"title": title, "artifact_id": artifact_id}
+    if resource_key:
+        extra_payload["resource_key"] = resource_key
 
     # SPEC-RAG-REBUILD-KB-001 follow-up: persist the original document
     # body on the artifact row so future rebuild_kb runs don't need to
@@ -913,7 +944,10 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
 
             await task_fn.configure(
                 queueing_lock=f"{req.org_id}:{req.kb_slug}:{req.path}:{artifact_id}",
-            ).defer_async(artifact_id=artifact_id)
+            ).defer_async(
+                artifact_id=artifact_id,
+                **({"resource_key": resource_key} if resource_key else {}),
+            )
         except AlreadyEnqueued:
             logger.info(
                 "enrichment_already_queued",
@@ -978,6 +1012,7 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
             belief_time_start=kf["belief_time_start"],
             kb_slug=req.kb_slug,
             path=req.path,
+            **({"resource_key": resource_key} if resource_key else {}),
         )
 
     ingest_ms = int((time.monotonic() - t_ingest) * 1000)
