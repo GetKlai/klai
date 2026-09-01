@@ -23,7 +23,7 @@ catalog and be described here in the same change.
 
 The normative rules in this document are catalogued in the Rules Ledger at the
 end of this file, each with an ID, an RFC 2119 level and a declared
-verification mode. The count today: **53 rules — 10 automated, 4 assisted,
+verification mode. The count today: **54 rules — 11 automated, 4 assisted,
 35 manual, 4 deliberately unchecked.**
 
 The catalogue is maintained by hand. The ledger's own preamble says which of
@@ -36,6 +36,7 @@ These checks fail the build:
 |---|---|---|
 | `klai/no-hardcoded-brand-color` | `eslint-rules/`, runs in `npm run lint` | A hex in `className` that equals a token in `index.css`. Use `bg-[var(--color-rl-dark)]`. Third-party brand marks (Google, HubSpot) never match, by design |
 | `klai/no-window-confirm` | `eslint-rules/`, runs in `npm run lint` | `window.confirm` / `alert` / `prompt`. Use `InlineDeleteConfirm` or `AlertDialog` |
+| `klai/no-raw-text-input` | `eslint-rules/`, runs in `npm run lint` | A raw textual, dynamically typed, or untyped `<input>` outside `src/components/ui/`. Use `Input` or another owned control; documented widget dark-mode exceptions are locally disabled |
 | `klai/no-raw-textarea` | `eslint-rules/`, runs in `npm run lint` | A raw `<textarea>` outside `src/components/ui/`. Use `Textarea` from `@/components/ui/textarea` |
 | Generated component reference | `tests/design/component-reference-generated.test.ts` | The generated table is stale relative to the UI module source comments or `cva(...)` variants |
 | Generated `DESIGN.md` | `tests/design/design-md-generated.test.ts` | The committed design document is stale relative to the theme, UI module metadata, or UI standards |
@@ -53,11 +54,10 @@ beside it.
 
 Raw `<button>` is not linted because it is not a violation. See Component
 Library Reference: 96 of 100 uses are the prescribed pattern for interactive
-rows, and the remaining four are correct too. Raw `<textarea>` is linted and
-the count outside `components/ui/` is zero. Raw `<input>` is not linted: ten
-sites are one consistent auth-field pattern awaiting a design decision, and
-two widget inputs deliberately implement a dark-mode variant the owned
-`Input` cannot express.
+rows, and the remaining four are correct too. Raw `<textarea>` and textual
+`<input>` are linted. The raw text-control count outside `components/ui/` is
+zero except for two locally disabled widget inputs that deliberately implement
+a dark-mode variant the owned `Input` cannot express.
 
 Do not add enforcement for a pattern you have not first counted. The button
 rule that was nearly written here would have flagged 96 correct decisions.
@@ -97,14 +97,12 @@ vendors dictate (`login.tsx`), and kb-editor chrome at `h-7`, which no
 rules that work.
 
 A 2026-09 follow-up sweep reduced raw `<textarea>` elements outside
-`components/ui/` to zero and added a lint guard. Twelve raw text, password and
-email `<input>` elements remain, and only ten of them are debt: one consistent
-auth-field pattern across login, signup, password and 2FA setup, awaiting a
-design decision because converting it means converting its hand-rolled
-`<label>` too. The other two are correct — the widget chat surface implements
-a dark-mode variant the owned `Input` cannot express. Checkbox and radio
-inputs inside composed controls (`RadioCardGroup`, permission pickers) are not
-violations either.
+`components/ui/` to zero and added a lint guard. The next sweep absorbed the
+ten consistent auth label/input sites into `Field` and added the matching input
+guard. Two raw textual inputs remain by documented decision: the widget chat
+surface implements a dark-mode variant the owned `Input` cannot express, and
+each site carries a local reasoned disable. Checkbox and radio inputs inside
+composed controls (`RadioCardGroup`, permission pickers) are not violations.
 
 Generated from source comments by `npm run docs:components`; do not edit by hand.
 
@@ -125,6 +123,7 @@ Generated from source comments by `npm run docs:components`; do not edit by hand
 | `delete-org-modal` | Feature-specific destructive modals (not generic) | Feature |
 | `dialog` | Generic modal | Yes |
 | `dropdown-menu` | Menus, popovers, command/combobox | Yes |
+| `field` | Labeled form-field composition with automatic control association and feedback | Yes |
 | `inline-delete-confirm` | Inline destructive confirmation inside a row (no layout shift) | Yes |
 | `inline-edit-row` | Canonical inline edit for a list row (`InlineEditRow`): name + optional description, zero layout shift, owns Save/Cancel | Yes |
 | `inline-edit` | Low-level single-field click-to-edit overlay, for custom row layouts that own their own buttons. Prefer `InlineEditRow` for new rows | Yes |
@@ -736,13 +735,14 @@ destructive actions.
 
 Use owned UI components from `src/components/ui/`.
 
-Every field needs `Label` plus matching `id`/`htmlFor`.
+Text fields use `Field` to compose the label, control, and optional hint or
+error. `Field` clones an explicit id onto the control or generates one, so the
+rendered `Label` always has a matching `htmlFor`.
 
 ```tsx
-<div className="space-y-1.5">
-  <Label htmlFor="field-id">Label</Label>
-  <Input id="field-id" value={value} onChange={...} />
-</div>
+<Field id="field-id" label="Label" hint="Optional guidance">
+  <Input value={value} onChange={...} />
+</Field>
 ```
 
 - **Search fields** use `SearchInput` (leading magnifier icon), never a bare
@@ -1092,7 +1092,7 @@ restatement of these rules, not a separate set.
 | KLAI-UI-004 | Hex values quoted in the always-loaded design rule docs match `index.css` | must | automated | `tests/design/rule-doc-token-values.test.ts` |
 | KLAI-UI-005 | The widget default primary colour equals `--color-rl-accent` and the literal is defined in exactly one place | must | automated | `tests/design/widget-default-color.test.ts` |
 | KLAI-UI-006 | A new or changed shared UI component is described here and rendered in `/dev/ui` in the same change | must | assisted | KLAI-UI-003 catches the module half; the catalog half is a reviewer step |
-| KLAI-UI-007 | Pages are built from `src/components/ui/`; a raw `input`, `select`, list row or delete confirmation with inline Tailwind is a defect | must-not | none | The raw `<input>` sites are ten instances of one auth-field pattern awaiting a design decision, plus two correct dark-variant widget inputs; `<select>`, list rows and delete confirmations are uncounted |
+| KLAI-UI-007 | Pages are built from `src/components/ui/`; a raw `input`, `select`, list row or delete confirmation with inline Tailwind is a defect | must-not | none | The raw textual-input half is paid and the two widget exceptions carry local reasoned disables; `<select>`, list rows and delete confirmations remain uncounted |
 | KLAI-UI-008 | `Button` is for an action; a raw `button` is for an interactive surface (clickable row, toggle, tree item), plus the documented avatar, vendor SSO and unsupported-size editor controls | must | none | Measured and rejected: 96 of 100 raw `button` elements outside `components/ui/` are the prescribed pattern. A rule here would flag 96 correct decisions |
 | KLAI-UI-009 | The reference screen is named in the work notes before portal UI is edited | must | manual | Reviewer step; see Required Workflow |
 | KLAI-UI-010 | Normal page containers use `PageContainer`; padding and centering are not hand-written, and an intentionally full-width parent or tool surface owns its own layout | must | manual | Reviewer step; see Layout |
@@ -1139,6 +1139,7 @@ restatement of these rules, not a separate set.
 | KLAI-UI-051 | Foreground colours documented in the Colors section meet WCAG AA on both portal surfaces or carry a current, reasoned exception | must | automated | `tests/design/documented-contrast.test.ts` |
 | KLAI-UI-052 | Semantic base colour tokens are used for fills and borders; foregrounds on light portal surfaces use the matching `-text` token, while the passing destructive base foreground remains valid | must | manual | The documented contrast check covers only colours named in the Colors section, so it does not catch a base token used as a foreground elsewhere |
 | KLAI-UI-053 | `DESIGN.md` is generated from the portal theme, component metadata and UI standards, and a stale committed artefact fails the build | must | automated | `tests/design/design-md-generated.test.ts` |
+| KLAI-UI-054 | A raw textual, dynamically typed or untyped `<input>` outside `src/components/ui/` is forbidden unless a local disable documents an unsupported owned-control variant | must-not | automated | `klai/no-raw-text-input` |
 <!-- /generated:component-guidelines -->
 
 ### Retired IDs

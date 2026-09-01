@@ -1,6 +1,8 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useEffect, useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { Field } from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
 import { ArrowRight, CheckCircle } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { AuthPageLayout } from '@/components/layout/AuthPageLayout'
@@ -352,14 +354,14 @@ function SignupPage() {
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <div className="grid grid-cols-2 gap-3">
-          <Field
+          <SignupField
             label={m.signup_field_first_name()}
             name="first_name"
             value={form.first_name}
             onChange={(v) => setForm((f) => ({ ...f, first_name: v }))}
             required
           />
-          <Field
+          <SignupField
             label={m.signup_field_last_name()}
             name="last_name"
             value={form.last_name}
@@ -367,14 +369,14 @@ function SignupPage() {
             required
           />
         </div>
-        <Field
+        <SignupField
           label={m.signup_field_company()}
           name="company_name"
           value={form.company_name}
           onChange={(v) => setForm((f) => ({ ...f, company_name: v }))}
           required
         />
-        <Field
+        <SignupField
           label={m.signup_field_email()}
           name="email"
           type="email"
@@ -382,7 +384,7 @@ function SignupPage() {
           onChange={(v) => setForm((f) => ({ ...f, email: v }))}
           required
         />
-        <Field
+        <SignupField
           label={m.signup_field_password()}
           name="password"
           type="password"
@@ -459,7 +461,7 @@ function readSignupError(data: unknown, status: number) {
   return m.signup_error_server({ status: String(status) })
 }
 
-function Field({
+function SignupField({
   label,
   name,
   type = 'text',
@@ -477,20 +479,14 @@ function Field({
   required?: boolean
 }) {
   return (
-    <div className="space-y-1">
-      <label htmlFor={name} className="block text-sm font-medium text-gray-900">
-        {label}
-      </label>
-      <input
-        id={name}
+    <Field id={name} label={label} hint={hint}>
+      <Input
         name={name}
         type={type}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         required={required}
-        className="w-full rounded-lg border border-gray-200 bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
       />
-      {hint && <p className="text-xs text-gray-600">{hint}</p>}
-    </div>
+    </Field>
   )
 }

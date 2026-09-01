@@ -431,6 +431,7 @@ export function WidgetChatSurface({
                 {m.widget_chat_user_info_help()}
               </p>
               <div className="grid gap-2 sm:grid-cols-2">
+                {/* eslint-disable-next-line klai/no-raw-text-input -- dark-mode variant the owned Input cannot express */}
                 <input
                   type="text"
                   autoComplete="name"
@@ -439,6 +440,7 @@ export function WidgetChatSurface({
                   placeholder={m.widget_chat_user_info_name()}
                   className={`min-w-0 rounded-xl border px-3 py-2 text-sm outline-none transition-colors focus:border-gray-300 ${isDark ? 'border-white/10 bg-white/5 text-[var(--color-rl-bg)] placeholder:text-[var(--color-rl-bg)]/35' : 'border-gray-200 bg-white text-gray-900 placeholder:text-gray-600'}`}
                 />
+                {/* eslint-disable-next-line klai/no-raw-text-input -- dark-mode variant the owned Input cannot express */}
                 <input
                   type="email"
                   autoComplete="email"

@@ -1,6 +1,8 @@
 import { useEffect, useReducer } from 'react'
 import { ArrowRight, Mail } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Field } from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
 import { apiFetch } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
 import { canResendEmailOtp, createInitialEmailOtpState, emailOtpReducer } from './-mfa-state'
@@ -87,12 +89,8 @@ export function EmailOTPSetup({
           </div>
 
           <form onSubmit={handleVerify} className="space-y-4">
-            <div className="space-y-1">
-              <label htmlFor="email-otp-code" className="block text-sm font-medium text-gray-900">
-                {m.setup_mfa_email_field_code()}
-              </label>
-              <input
-                id="email-otp-code"
+            <Field id="email-otp-code" label={m.setup_mfa_email_field_code()}>
+              <Input
                 type="text"
                 inputMode="numeric"
                 pattern="[0-9]*"
@@ -102,9 +100,9 @@ export function EmailOTPSetup({
                 required
                 autoComplete="one-time-code"
                 autoFocus
-                className="w-full rounded-lg border border-gray-200 bg-[var(--color-background)] px-3 py-2 text-center font-mono text-base tracking-widest outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
+                className="text-center font-mono text-base tracking-widest"
               />
-            </div>
+            </Field>
 
             {state.error && (
               <p className="rounded-lg bg-[var(--color-destructive-bg)] px-3 py-2 text-sm text-[var(--color-destructive-text)]">{state.error}</p>

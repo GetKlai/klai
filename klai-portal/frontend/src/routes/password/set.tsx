@@ -1,6 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { Field } from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
 import { KeyRound } from 'lucide-react'
 import * as m from '@/paraglide/messages'
 import { useLocale } from '@/lib/locale'
@@ -214,19 +216,16 @@ function PasswordSetPage() {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-1">
-              <label htmlFor="password" className="block text-sm font-medium text-gray-900">
-                {m.set_field_password()}
-              </label>
-              <input
-                id="password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                autoComplete="new-password"
-                autoFocus
-                className="w-full rounded-lg border border-gray-200 bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
-              />
+              <Field id="password" label={m.set_field_password()}>
+                <Input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  autoComplete="new-password"
+                  autoFocus
+                />
+              </Field>
               <PasswordStrengthMeter
                 score={passwordStrength.score}
                 issues={passwordStrength.issues}
@@ -237,20 +236,15 @@ function PasswordSetPage() {
               />
             </div>
 
-            <div className="space-y-1">
-              <label htmlFor="confirm" className="block text-sm font-medium text-gray-900">
-                {m.set_field_confirm()}
-              </label>
-              <input
-                id="confirm"
+            <Field id="confirm" label={m.set_field_confirm()}>
+              <Input
                 type="password"
                 value={confirm}
                 onChange={(e) => setConfirm(e.target.value)}
                 required
                 autoComplete="new-password"
-                className="w-full rounded-lg border border-gray-200 bg-[var(--color-background)] px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-[var(--color-ring)]"
               />
-            </div>
+            </Field>
 
             {error && (
               <p className="rounded-lg bg-[var(--color-destructive-bg)] px-3 py-2 text-sm text-[var(--color-destructive-text)]">{error}</p>
