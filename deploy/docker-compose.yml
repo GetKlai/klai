@@ -853,7 +853,7 @@ services:
   # compose file once the team is in. Admin token in SOPS (env-first per
   # validator-env-parity).
   vaultwarden:
-    image: vaultwarden/server:1.37.1
+    image: vaultwarden/server:1.37.2
     restart: unless-stopped
     environment:
       DOMAIN: "https://vault.getklai.com"
@@ -1278,7 +1278,7 @@ services:
       - monitoring
 
   alloy:
-    image: grafana/alloy:v1.18.1
+    image: grafana/alloy:v1.19.0
     restart: unless-stopped
     volumes:
       - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
@@ -1894,7 +1894,7 @@ services:
   # The previous /data mount was cosmetic and caused total graph loss on 2026-04-19
   # when the container was recreated during the falkordb:latest -> v4.18.1 pin (5d12587e).
   falkordb:
-    image: falkordb/falkordb:v4.20.3
+    image: falkordb/falkordb:v4.20.4
     restart: unless-stopped
     # SPEC-GRAPH-SCALE-001 REQ-2: the image bakes FALKORDB_ARGS="MAX_QUEUED_QUERIES 25
     # TIMEOUT 1000 RESULTSET_SIZE 10000" into its own Dockerfile (FalkorDB/FalkorDB#1826),
