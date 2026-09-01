@@ -37,6 +37,39 @@ assert_contains "$workflow" \
   "RENOVATE_X_GITHUB_HOST_RULES: 'true'" \
   'Renovate must pass its GitHub App token to GitHub Packages lookups'
 
+# Renovate checks a newly written branch before GitHub Actions has necessarily
+# published its check-runs. Its GitHub check-run cache is process-local, so a
+# fresh Renovate process after the required workflow completes is the safe
+# nudge: failed quality still blocks the merge, while successful quality gets
+# observed without waiting for (or racing) the next cron run.
+assert_line "$quality_workflow" \
+  'name: Required quality' \
+  'the quality workflow name must stay aligned with the Renovate completion trigger'
+assert_line "$workflow" \
+  '  workflow_run:' \
+  'Renovate must be nudged after the required quality workflow completes'
+assert_line "$workflow" \
+  "    workflows: ['Required quality']" \
+  'the Renovate nudge must follow the required quality workflow'
+assert_line "$workflow" \
+  '    types: [completed]' \
+  'the Renovate nudge must wait until the required quality workflow is complete'
+assert_line "$workflow" \
+  "    branches: ['renovate/**']" \
+  'quality completions must only nudge Renovate for Renovate branches'
+assert_line "$workflow" \
+  '  group: renovate-automerge' \
+  'Renovate runs must be serialized so completion nudges cannot race each other'
+assert_line "$workflow" \
+  '  cancel-in-progress: false' \
+  'a completion nudge must not interrupt a Renovate run that is already updating branches'
+assert_line "$workflow" \
+  "      github.event_name != 'workflow_run' ||" \
+  'scheduled and manual Renovate runs must remain enabled'
+assert_line "$workflow" \
+  '      github.event.workflow_run.head_repository.full_name == github.repository' \
+  'fork quality runs must not trigger a privileged Renovate nudge'
+
 assert_contains "$config" \
   "matchPackageNames: ['ghcr.io/getklai/librechat']" \
   'the digest-only Klai LibreChat image must have an explicit Renovate policy'

@@ -12,6 +12,15 @@ on:
     # ready-to-merge for up to seven days. A run is ~2 minutes and does
     # nothing when there is nothing to do.
     - cron: '7 * * * *'
+  # A branch update and Renovate's check-run query can be only seconds apart.
+  # GitHub Actions may not have published any check-runs yet, so that run
+  # correctly leaves the PR yellow. Nudge Renovate again once the required
+  # workflow has completed; the normal branch-status gate still decides
+  # whether quality passed and the PR may merge.
+  workflow_run:
+    workflows: ['Required quality']
+    types: [completed]
+    branches: ['renovate/**']
   workflow_dispatch:
     inputs:
       logLevel:
@@ -21,8 +30,21 @@ on:
         default: info
         required: false
 
+# A batch can complete quality for several Renovate branches together. Keep
+# one run active and coalesce completion nudges behind it so two app instances
+# never update the same branch concurrently. Do not cancel a run mid-update.
+concurrency:
+  group: renovate-automerge
+  cancel-in-progress: false
+
 jobs:
   renovate:
+    # workflow_run carries secrets even when the triggering workflow came from
+    # a fork. This job only checks out main, but do not let an untrusted fork
+    # trigger the privileged app-token flow at all.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       # Only what the token-minting step needs. Renovate itself acts as the
