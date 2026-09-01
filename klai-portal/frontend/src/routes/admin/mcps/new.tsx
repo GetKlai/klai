@@ -35,7 +35,7 @@ function McpsNewPage() {
     <PageContainer width="6xl" gap="6">
       <div className="flex items-start justify-between">
         <div className="space-y-1">
-          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+          <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
             {m.admin_mcps_new_title()}
           </h1>
           <p className="text-sm text-gray-400">

@@ -30,7 +30,7 @@ function Step({
       >
         {n}
       </span>
-      <h3 className="text-[17px] font-display text-gray-900">{title}</h3>
+      <h3 className="text-[1.0625rem] font-display text-gray-900">{title}</h3>
       <p className="mt-1.5 text-sm leading-relaxed text-gray-700">{body}</p>
       <p className="mt-3 rounded-md border-l-[3px] border-[var(--color-success)] bg-[var(--color-success-bg)] px-3 py-2 text-sm text-[var(--color-success-text)]">
         {expect}
@@ -82,7 +82,7 @@ function OnboardingHowtoPage() {
   return (
     <PageContainer width="3xl">
       <div className="mb-2 flex items-start justify-between gap-3">
-        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+        <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
           {m.platform_onboarding_title()}
         </h1>
         <Button
@@ -100,7 +100,7 @@ function OnboardingHowtoPage() {
       </p>
 
       <section className="space-y-2">
-        <h2 className="text-[19px] font-display-bold text-gray-900">
+        <h2 className="text-[1.1875rem] font-display-bold text-gray-900">
           {m.platform_onboarding_before_you_start()}
         </h2>
         <ul className="list-disc space-y-1 pl-5 text-sm text-gray-700">

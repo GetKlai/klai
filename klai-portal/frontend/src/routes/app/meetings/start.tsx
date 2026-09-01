@@ -80,7 +80,7 @@ function StartMeetingPage() {
   return (
     <PageContainer width="3xl">
       <div className="flex items-start justify-between mb-6">
-        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+        <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
           {m.app_meetings_start_title()}
         </h1>
         <Button type="button" variant="outline" size="sm" onClick={() => navigate({ to: '/app/transcribe' })}>

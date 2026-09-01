@@ -214,7 +214,7 @@ function NewWidgetPage() {
   return (
     <PageContainer width="3xl">
       <div className="flex items-start justify-between mb-6">
-        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+        <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
           {m.admin_widgets_create()}
         </h1>
         <Button
@@ -410,8 +410,8 @@ function NewWidgetPage() {
                       size="sm"
                       className={
                         form.theme === t
-                          ? 'rounded-full bg-gray-900 px-4 py-1.5 text-[12px] font-medium text-white transition-colors'
-                          : 'rounded-full px-4 py-1.5 text-[12px] text-gray-500 hover:text-gray-900 klai-hover'
+                          ? 'rounded-full bg-gray-900 px-4 py-1.5 text-[0.75rem] font-medium text-white transition-colors'
+                          : 'rounded-full px-4 py-1.5 text-[0.75rem] text-gray-500 hover:text-gray-900 klai-hover'
                       }
                     >
                       {t === 'light'
@@ -536,8 +536,8 @@ function NewWidgetPage() {
                     size="sm"
                     className={
                       form.widget_position === pos
-                        ? 'rounded-full bg-gray-900 px-4 py-1.5 text-[12px] font-medium text-white transition-colors'
-                        : 'rounded-full px-4 py-1.5 text-[12px] text-gray-500 hover:text-gray-900 klai-hover'
+                        ? 'rounded-full bg-gray-900 px-4 py-1.5 text-[0.75rem] font-medium text-white transition-colors'
+                        : 'rounded-full px-4 py-1.5 text-[0.75rem] text-gray-500 hover:text-gray-900 klai-hover'
                     }
                   >
                     {pos === 'left'
@@ -664,7 +664,7 @@ function NewWidgetPage() {
 
 function SectionHeading({ children }: { children: React.ReactNode }) {
   return (
-    <h3 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-400 mb-3">
+    <h3 className="text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-400 mb-3">
       {children}
     </h3>
   )

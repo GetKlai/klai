@@ -83,8 +83,8 @@ export function ActivityTab({ widget }: Props) {
             onClick={() => setPeriod(opt.value)}
             className={
               period === opt.value
-                ? 'rounded-full bg-gray-900 px-4 py-1.5 text-[12px] font-medium text-white transition-colors'
-                : 'rounded-full px-4 py-1.5 text-[12px] text-gray-500 hover:text-gray-900 klai-hover'
+                ? 'rounded-full bg-gray-900 px-4 py-1.5 text-[0.75rem] font-medium text-white transition-colors'
+                : 'rounded-full px-4 py-1.5 text-[0.75rem] text-gray-500 hover:text-gray-900 klai-hover'
             }
           >
             {opt.label}
@@ -216,7 +216,7 @@ export function ActivityTab({ widget }: Props) {
 
 function SectionHeading({ children }: { children: React.ReactNode }) {
   return (
-    <h3 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-400 mb-3">
+    <h3 className="text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-400 mb-3">
       {children}
     </h3>
   )
@@ -233,7 +233,7 @@ function StatCard({
 }) {
   return (
     <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-400">
+      <p className="text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-400">
         {label}
       </p>
       <p className="mt-1 text-2xl font-display-bold text-gray-900 tabular-nums">
@@ -274,7 +274,7 @@ function HourlySparkline({ data }: { data: number[] | undefined }) {
           )
         })}
       </div>
-      <div className="mt-1 flex justify-between text-[10px] text-gray-400 tabular-nums">
+      <div className="mt-1 flex justify-between text-[0.625rem] text-gray-400 tabular-nums">
         <span>00</span>
         <span>06</span>
         <span>12</span>
@@ -366,7 +366,7 @@ function ConversationDrawer({
                           target="_blank"
                           rel="noopener noreferrer"
                           title={s.title}
-                          className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-700 klai-hover"
+                          className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[0.6875rem] text-gray-700 klai-hover"
                         >
                           <span className="font-medium">({s.label})</span>
                           <span className="truncate max-w-[12rem]">{s.title}</span>
@@ -374,7 +374,7 @@ function ConversationDrawer({
                       ) : (
                         <span
                           title={s.title}
-                          className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-700"
+                          className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[0.6875rem] text-gray-700"
                         >
                           <span className="font-medium">({s.label})</span>
                           <span className="truncate max-w-[12rem]">{s.title}</span>

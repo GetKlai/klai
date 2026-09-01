@@ -22,7 +22,7 @@ function PageHeader({ title, count, description, actions, className, ...props }:
   return (
     <div className={cn('space-y-1', className)} {...props}>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+        <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
           {title}
           {count != null ? (
             <span className="ml-2 font-display text-gray-400">({count})</span>

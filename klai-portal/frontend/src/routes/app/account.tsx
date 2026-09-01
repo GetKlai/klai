@@ -212,7 +212,7 @@ function AccountPage() {
   return (
     <PageContainer width="2xl" gap="8">
       <div className="space-y-1">
-        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+        <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
           {m.account_heading()}
         </h1>
         <p className="text-sm text-gray-400">

@@ -286,7 +286,7 @@ function MeetingDetailPage() {
       <div className="mb-6 flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="page-title text-[26px] font-display-bold leading-tight text-gray-900">
+            <h1 className="page-title text-[1.625rem] font-display-bold leading-tight text-gray-900">
               {meetingTitle}
             </h1>
             <StatusBadge status={meeting.status} />

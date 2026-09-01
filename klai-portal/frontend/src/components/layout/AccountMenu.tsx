@@ -61,7 +61,7 @@ export function AccountMenu() {
           type="button"
           data-testid="user-menu"
           aria-label={m.sidebar_account()}
-          className="relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-rl-dark)] text-[11px] font-medium text-white outline-none transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-[var(--color-rl-accent)]"
+          className="relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-rl-dark)] text-[0.6875rem] font-medium text-white outline-none transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-[var(--color-rl-accent)]"
         >
           {initials || <User className="h-4 w-4" strokeWidth={1.75} />}
           {unreadCount > 0 && (
@@ -89,7 +89,7 @@ export function AccountMenu() {
             <UserCircle className="h-4 w-4" />
             {m.sidebar_account()}
           {unreadCount > 0 && (
-              <span className="ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-[var(--color-success)] px-1.5 text-[11px] font-medium leading-5 text-white">
+              <span className="ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-[var(--color-success)] px-1.5 text-[0.6875rem] font-medium leading-5 text-white">
                 {unreadCount}
               </span>
             )}

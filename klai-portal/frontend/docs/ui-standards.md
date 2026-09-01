@@ -23,8 +23,8 @@ catalog and be described here in the same change.
 
 The normative rules in this document are catalogued in the Rules Ledger at the
 end of this file, each with an ID, an RFC 2119 level and a declared
-verification mode. The count today: **49 rules — 8 automated, 4 assisted,
-33 manual, 4 deliberately unchecked.**
+verification mode. The count today: **50 rules — 8 automated, 4 assisted,
+34 manual, 4 deliberately unchecked.**
 
 The catalogue is maintained by hand. The ledger's own preamble says which of
 its guarantees a test backs and which rely on you adding the row — read that
@@ -1134,6 +1134,7 @@ restatement of these rules, not a separate set.
 | KLAI-UI-047 | All user-visible strings go through Paraglide messages | must | none | Not counted, and a check would have to separate user-visible strings from internal ones |
 | KLAI-UI-048 | The copied `--color-*` palette in `klai-portal/backend/app/static/oauth/consent.css` matches the tokens owned by `src/index.css` | must | automated | `tests/design/consent-page-tokens.test.ts` |
 | KLAI-UI-049 | A raw `<textarea>` outside `src/components/ui/` is forbidden | must-not | automated | `klai/no-raw-textarea` |
+| KLAI-UI-050 | The portal type scale is rem-based on a 110% root, so text, padding, control heights and column widths scale together; an absolute px font size does not scale and is a defect | must | manual | Reviewer step. Nothing yet stops a new `text-[Npx]` or a px `font-size` in `index.css` from being added |
 
 ### Retired IDs
 

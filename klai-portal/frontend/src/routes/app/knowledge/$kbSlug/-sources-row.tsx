@@ -94,7 +94,7 @@ export function SourceRow({ source, expanded, onToggle, kbSlug, editablePageId }
             onSave={saveRename}
             onCancel={cancelRename}
             isSaving={renameMutation.isPending}
-            inputClassName="text-[15px] font-display"
+            inputClassName="text-[0.9375rem] font-display"
           >
             <button
               type="button"

@@ -185,7 +185,7 @@ export function InstructionFormPage({
     <PageContainer width="lg">
       <div className="mb-6 flex items-start justify-between gap-3">
         <div className="space-y-1">
-          <h1 className="page-title text-[26px] font-display-bold text-gray-900">{title}</h1>
+          <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">{title}</h1>
           <p className="text-sm text-gray-400">{m.instructions_form_subtitle()}</p>
         </div>
         <Button

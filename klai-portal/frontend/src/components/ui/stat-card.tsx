@@ -61,7 +61,7 @@ function StatCard({
   )
   const body = (
     <>
-      <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-400">
+      <p className="text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-400">
         {label}
       </p>
       <p

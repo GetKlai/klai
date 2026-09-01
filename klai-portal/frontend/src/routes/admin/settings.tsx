@@ -50,7 +50,7 @@ function AdminSettingsPage() {
   return (
     <PageContainer width="4xl" gap="8" data-help-id="admin-settings-general">
       <div className="space-y-1">
-        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+        <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
           {m.admin_settings_heading()}
         </h1>
       </div>

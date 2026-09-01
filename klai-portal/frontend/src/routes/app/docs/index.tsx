@@ -135,7 +135,7 @@ function DocsPage() {
                 <ListRowContent>
                   <div className="flex items-baseline gap-2 flex-wrap">
                     <ListRowTitle className="text-gray-400">{kb.name}</ListRowTitle>
-                    <Badge variant="outline" className="text-[10px] py-0 px-1.5">{m.docs_kb_locked_badge()}</Badge>
+                    <Badge variant="outline" className="text-[0.625rem] py-0 px-1.5">{m.docs_kb_locked_badge()}</Badge>
                   </div>
                 </ListRowContent>
               </ListRow>

@@ -79,7 +79,7 @@ export function ExtensionsSettingsSection() {
                 return (
                   <li key={item.key} className="flex items-center justify-between gap-4 px-2 py-3">
                     <div className="min-w-0 flex-1">
-                      <p className="text-[15px] font-display text-gray-900">{extensionLabel(item.key)}</p>
+                      <p className="text-[0.9375rem] font-display text-gray-900">{extensionLabel(item.key)}</p>
                       <p className="text-xs text-gray-400 mt-0.5">{extensionDescription(item.key)}</p>
                     </div>
                     {item.manageable_by_caller ? (

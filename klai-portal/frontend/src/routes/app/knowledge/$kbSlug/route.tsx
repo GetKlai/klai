@@ -186,7 +186,7 @@ function KbLayout() {
     <div className="mx-auto max-w-3xl px-6 pb-10">
       {/* Title strip - h-[66px] aligns the KB name with the sidebar logo */}
       <div className="flex h-[66px] items-center justify-between gap-4">
-        <h1 className="page-title text-[26px] font-display-bold text-gray-900 leading-none truncate">
+        <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900 leading-none truncate">
           {kb.name}
         </h1>
         <Button asChild variant="outline" size="sm">

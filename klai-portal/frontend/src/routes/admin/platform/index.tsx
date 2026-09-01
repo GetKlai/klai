@@ -206,7 +206,7 @@ function PlatformConsole() {
     <PageContainer width="6xl" gap="8">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+          <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
             {m.platform_title()}
           </h1>
           <p className="mt-1 text-sm text-gray-400">

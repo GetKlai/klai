@@ -170,6 +170,6 @@ export function DetailsTab({ widget }: Props) {
 
 function SectionHeading({ children }: { children: React.ReactNode }) {
   return (
-    <h3 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-400 mb-3">{children}</h3>
+    <h3 className="text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-400 mb-3">{children}</h3>
   )
 }

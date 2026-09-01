@@ -216,7 +216,7 @@ function McpEditPage() {
     <PageContainer width="lg">
       <div className="flex items-start justify-between mb-6">
         <div className="space-y-1">
-          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+          <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
             {server.display_name || server.id}
           </h1>
           <p className="text-sm text-gray-400">{server.description}</p>

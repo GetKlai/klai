@@ -135,7 +135,7 @@ export function InlineEditRow({
         <div className="relative">
           <span
             className={cn(
-              'block truncate text-[15px] font-display text-gray-900',
+              'block truncate text-[0.9375rem] font-display text-gray-900',
               isEditing && 'invisible',
             )}
           >
@@ -150,7 +150,7 @@ export function InlineEditRow({
               disabled={isSaving}
               placeholder={namePlaceholder}
               aria-label={namePlaceholder ?? value}
-              className={cn(overlayInput, 'text-[15px] font-display')}
+              className={cn(overlayInput, 'text-[0.9375rem] font-display')}
             />
           ) : null}
         </div>

@@ -33,7 +33,7 @@ export interface InlineRowButtonProps extends Omit<ButtonProps, 'variant' | 'siz
  * Before this component the exact same `h-6 … px-2 gap-1` Button was copy-pasted
  * across 8+ sites (InlineEditRow, InlineDeleteConfirm, SourceRow rename,
  * TranscriptionTable, join-requests, CoverageNodeRow), which let the text size
- * drift (text-[10px] vs text-xs). Everything now flows through here so the size
+ * drift (text-[0.625rem] vs text-xs). Everything now flows through here so the size
  * lives in ONE place. Standard size: `h-6 text-xs` with `size-3` icons.
  *
  * Pass the icon + label as children; the caller owns the spinner-vs-icon swap.

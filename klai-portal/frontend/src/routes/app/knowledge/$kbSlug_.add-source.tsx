@@ -54,7 +54,7 @@ function AddSourcePage() {
     <PageContainer width="3xl">
       {/* Page header */}
       <div className="flex items-center justify-between mb-2">
-        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+        <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
           {m.knowledge_add_source_title()}
         </h1>
         <Button type="button" variant="outline" size="sm" onClick={goBack}>

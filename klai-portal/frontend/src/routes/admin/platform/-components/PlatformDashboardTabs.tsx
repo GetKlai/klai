@@ -132,7 +132,7 @@ export function SubdomainsTab({ search }: { search: string }) {
         return (
           <section key={section.category} className="space-y-3">
             <div>
-              <h2 className="text-[15px] font-display-bold text-gray-900">{section.title()}</h2>
+              <h2 className="text-[0.9375rem] font-display-bold text-gray-900">{section.title()}</h2>
               <p className="text-sm text-gray-400">{section.description()}</p>
             </div>
             <DataTable>
@@ -197,7 +197,7 @@ export function StatusTab() {
           <div className="flex items-center gap-3">
             <Activity className="h-5 w-5 shrink-0 text-gray-400" />
             <div>
-              <p className="text-[15px] font-display text-gray-900">
+              <p className="text-[0.9375rem] font-display text-gray-900">
                 {m.platform_status_portal_api()}
               </p>
               <p className="text-sm text-gray-400">
@@ -220,7 +220,7 @@ export function StatusTab() {
           <div className="flex items-center gap-3">
             <Bug className="h-5 w-5 shrink-0 text-gray-400" />
             <div>
-              <p className="text-[15px] font-display text-gray-900">
+              <p className="text-[0.9375rem] font-display text-gray-900">
                 {m.platform_user_errors()}
               </p>
               <p className="mt-0.5 text-sm text-gray-400">
@@ -243,7 +243,7 @@ export function StatusTab() {
       <div className="rounded-xl border border-gray-200 bg-white px-5 py-5">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <p className="text-[15px] font-display text-gray-900">
+            <p className="text-[0.9375rem] font-display text-gray-900">
               {m.platform_full_service_status()}
             </p>
             <p className="mt-0.5 text-sm text-gray-400">

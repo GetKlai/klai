@@ -373,7 +373,7 @@ function AddConnectorPage() {
     <PageContainer width="xl">
       {/* Page header */}
       <div className="flex items-center justify-between mb-6">
-        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+        <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
           {m.admin_connectors_add_title()}
         </h1>
         <Button type="button" variant="outline" size="sm" onClick={goBack}>
@@ -586,7 +586,7 @@ function AddConnectorPage() {
                         {['Docs', 'Sheets', 'Slides', 'PDF', 'Office', 'Text'].map((type) => (
                           <span
                             key={type}
-                            className="rounded-md border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[11px] leading-4 text-gray-500"
+                            className="rounded-md border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[0.6875rem] leading-4 text-gray-500"
                           >
                             {type}
                           </span>

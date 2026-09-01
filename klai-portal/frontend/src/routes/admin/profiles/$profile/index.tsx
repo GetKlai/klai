@@ -97,7 +97,7 @@ function AdminProfileDetail() {
       {/* Header */}
       <div className="flex items-start justify-between">
         <div className="space-y-2">
-          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+          <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
             {profileLabel}
           </h1>
           {profileDescription && (

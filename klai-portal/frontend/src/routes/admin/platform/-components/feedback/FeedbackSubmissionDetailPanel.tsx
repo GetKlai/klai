@@ -171,7 +171,7 @@ export function FeedbackSubmissionDetailPanel({
   const header = (
     <div className="flex items-start gap-3">
       <div className="flex-1">
-        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+        <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
           {canTriage
             ? m.platform_feedback_triage_title()
             : m.platform_feedback_submission_detail_title()}
@@ -190,7 +190,7 @@ export function FeedbackSubmissionDetailPanel({
 
   const reportBlock = (
     <section className="space-y-2">
-      <p className="whitespace-pre-wrap text-[15px] leading-7 text-gray-900">{reportText}</p>
+      <p className="whitespace-pre-wrap text-[0.9375rem] leading-7 text-gray-900">{reportText}</p>
       {item.page_url && (
         <p className="truncate font-mono text-xs text-gray-400">{item.page_url}</p>
       )}

@@ -158,7 +158,7 @@ function PlatformOrgDetailPage() {
     <PageContainer width="4xl" gap="8">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+          <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
             {data.org.name}
           </h1>
           <div className="mt-2 flex items-center gap-2 flex-wrap text-sm text-gray-400">

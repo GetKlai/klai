@@ -93,7 +93,7 @@ export function FeedbackItemDetailPanel({
     <div className="space-y-6">
       <div className="flex items-start gap-3">
         <div className="flex-1">
-          <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+          <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
             {m.platform_feedback_item_title()}
           </h1>
           <p className="mt-1 text-sm text-gray-400">

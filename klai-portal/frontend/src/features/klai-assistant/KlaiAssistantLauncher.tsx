@@ -180,7 +180,7 @@ function KlaiAssistantPanel({
             <h2 className="truncate text-sm font-semibold text-[var(--color-rl-dark)]">
               {m.klai_assistant_title()}
             </h2>
-            <p className="truncate text-[11px] text-[var(--color-rl-dark)]/70">
+            <p className="truncate text-[0.6875rem] text-[var(--color-rl-dark)]/70">
               {m.klai_assistant_subtitle()}
             </p>
           </div>

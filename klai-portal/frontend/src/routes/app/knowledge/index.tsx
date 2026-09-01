@@ -158,7 +158,7 @@ function KbRow({
           <div className="flex items-baseline gap-2 flex-wrap">
             <ListRowTitle>{kb.name}</ListRowTitle>
             {isMine && (
-              <Badge variant="secondary" className="text-[10px] py-0 px-1.5">
+              <Badge variant="secondary" className="text-[0.625rem] py-0 px-1.5">
                 Mijn
               </Badge>
             )}

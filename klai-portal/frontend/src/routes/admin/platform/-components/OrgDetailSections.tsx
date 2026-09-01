@@ -161,7 +161,7 @@ export function TenantFeaturesSection({
                     className="flex items-center justify-between gap-4 px-2 py-3"
                   >
                     <div className="min-w-0 flex-1">
-                      <p className="text-[15px] font-display text-gray-900">
+                      <p className="text-[0.9375rem] font-display text-gray-900">
                         {extensionLabel(feature.key)}
                       </p>
                       <p className="text-xs text-gray-400 mt-0.5">
@@ -226,7 +226,7 @@ export function TenantDangerZone({ org }: { org: PlatformOrg }) {
 
   return (
     <section className="rounded-xl border border-[var(--color-destructive)]/30 bg-white p-5">
-      <h2 className="mb-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--color-destructive)]">
+      <h2 className="mb-1 text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-[var(--color-destructive)]">
         {m.platform_danger_zone()}
       </h2>
       <p className="text-sm text-gray-500">{m.platform_danger_description()}</p>
@@ -315,7 +315,7 @@ export function UsersSection({
   return (
     <section>
       <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-400">
+        <h2 className="text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-400">
           {m.platform_section_users({ count: users.length })}
         </h2>
         <Button
@@ -546,7 +546,7 @@ export function BotsSection({
 }) {
   return (
     <section>
-      <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-400">
+      <h2 className="mb-3 text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-400">
         {m.platform_section_bots({ count: bots.length })}
       </h2>
       {bots.length === 0 ? (
@@ -598,7 +598,7 @@ export function KnowledgeBasesSection({
 }) {
   return (
     <section>
-      <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-400">
+      <h2 className="mb-3 text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-400">
         {m.platform_section_knowledge_bases({
           count: knowledgeBases.length,
         })}
@@ -651,7 +651,7 @@ export function TemplatesSection({
 }) {
   return (
     <section>
-      <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-400">
+      <h2 className="mb-3 text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-400">
         {m.platform_section_templates({ count: templates.length })}
       </h2>
       {templates.length === 0 ? (

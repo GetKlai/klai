@@ -29,7 +29,7 @@ export function SourceTypeTile({ meta, kbSlug, onSelectUpload }: SourceTypeTileP
           {badges.map((badge) => (
             <span
               key={badge}
-              className="rounded-md border border-gray-200 bg-white px-1.5 py-0.5 text-[11px] leading-4 text-gray-500"
+              className="rounded-md border border-gray-200 bg-white px-1.5 py-0.5 text-[0.6875rem] leading-4 text-gray-500"
             >
               {badge}
             </span>

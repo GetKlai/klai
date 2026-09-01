@@ -35,7 +35,7 @@ function AdminHome() {
   return (
     <PageContainer width="3xl" gap="8">
       <div className="space-y-1">
-        <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+        <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
           {m.admin_home_heading()}
         </h1>
         <p className="text-sm text-gray-400">
@@ -54,7 +54,7 @@ function AdminHome() {
               <section.icon className="h-4 w-4" />
             </div>
             <div className="min-w-0 flex-1">
-              <span className="text-[15px] font-display text-gray-900">
+              <span className="text-[0.9375rem] font-display text-gray-900">
                 {section.label}
               </span>
               <p className="text-xs text-gray-400 mt-0.5">
