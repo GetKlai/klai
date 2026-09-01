@@ -1429,6 +1429,13 @@ services:
       FALKORDB_HOST: falkordb
       FALKORDB_PORT: "6379"
       GRAPHITI_ENABLED: "true"
+      # SPEC-GRAPH-SCALE-001 REQ-5: ANN candidate search via the FalkorDB
+      # vector index instead of brute-force cosine scans. Safe to enable
+      # before indexes exist: the compat layer falls back to the scan (=
+      # today's behavior) per query and picks the index up the moment it
+      # appears. Indexes are created + recall-verified per tenant by
+      # `docker exec klai-core-knowledge-ingest-1 python -m scripts.verify_graph_ann`.
+      GRAPH_ANN_ENABLED: "true"
       # Back to the code default after measurement: over 10,151 graph
       # searches in 30 days the mean was 252 ms and the worst case
       # 2,679 ms, so 5s leaves ~2x headroom on the observed peak. The
@@ -1954,6 +1961,13 @@ services:
       FALKORDB_HOST: falkordb
       FALKORDB_PORT: "6379"
       GRAPHITI_ENABLED: "true"
+      # SPEC-GRAPH-SCALE-001 REQ-5: ANN candidate search via the FalkorDB
+      # vector index instead of brute-force cosine scans. Safe to enable
+      # before indexes exist: the compat layer falls back to the scan (=
+      # today's behavior) per query and picks the index up the moment it
+      # appears. Indexes are created + recall-verified per tenant by
+      # `docker exec klai-core-knowledge-ingest-1 python -m scripts.verify_graph_ann`.
+      GRAPH_ANN_ENABLED: "true"
       # Mistral Small is 100 RPM / 100k TPM for our production key. Graphiti
       # performs several sequential LLM calls per episode, while enrichment and
       # user-facing traffic share the same klai-fast upstream budget.
