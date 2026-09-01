@@ -37,6 +37,24 @@ export function MultiSelect({
   className,
 }: MultiSelectProps) {
   const [open, setOpen] = React.useState(false)
+  const triggerRef = React.useRef<HTMLButtonElement>(null)
+  const removeButtonRefs = React.useRef(new Map<string, HTMLButtonElement>())
+  const pendingFocusRef = React.useRef<{
+    removedValue: string
+    nextValue: string | null
+  } | null>(null)
+
+  React.useLayoutEffect(() => {
+    const pendingFocus = pendingFocusRef.current
+    if (!pendingFocus || value.includes(pendingFocus.removedValue)) return
+
+    const nextButton = pendingFocus.nextValue
+      ? removeButtonRefs.current.get(pendingFocus.nextValue)
+      : undefined
+    const focusTarget = nextButton ?? triggerRef.current
+    focusTarget?.focus()
+    pendingFocusRef.current = null
+  }, [value])
 
   function toggle(optionValue: string) {
     if (value.includes(optionValue)) {
@@ -46,9 +64,14 @@ export function MultiSelect({
     }
   }
 
-  function remove(optionValue: string, e: React.MouseEvent) {
-    e.stopPropagation()
-    onChange(value.filter((v) => v !== optionValue))
+  function remove(optionValue: string) {
+    const removedIndex = value.indexOf(optionValue)
+    const nextValue = value.filter((v) => v !== optionValue)
+    pendingFocusRef.current = {
+      removedValue: optionValue,
+      nextValue: nextValue[removedIndex] ?? nextValue[removedIndex - 1] ?? null,
+    }
+    onChange(nextValue)
   }
 
   const selectedLabels = value
@@ -56,43 +79,49 @@ export function MultiSelect({
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          aria-expanded={open}
-          className={cn(
-            'flex min-h-9 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-1.5 text-sm shadow-sm ring-offset-background',
-            'hover:border-[var(--color-accent)]/50 focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)]',
-            'disabled:cursor-not-allowed disabled:opacity-50',
-            className
-          )}
-        >
-          <div className="flex flex-wrap gap-1">
-            {selectedLabels.length === 0 && (
+      <div
+        className={cn(
+          'relative flex min-h-9 w-full flex-wrap items-center gap-1 rounded-md border border-input bg-background px-3 py-1.5 pr-9 text-sm shadow-sm ring-offset-background',
+          'hover:border-[var(--color-accent)]/50',
+          className
+        )}
+      >
+        <PopoverTrigger asChild>
+          <button
+            ref={triggerRef}
+            type="button"
+            aria-expanded={open}
+            className="absolute inset-0 z-0 flex items-center justify-between rounded-md px-3 focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
+          >
+            {selectedLabels.length === 0 ? (
               <span className="text-[var(--color-muted-foreground)]">{placeholder}</span>
+            ) : (
+              <span className="sr-only">{selectedLabels.join(', ')}</span>
             )}
-            {selectedLabels.map((label, i) => (
-              <span
-                key={value[i]}
-                className="inline-flex items-center gap-1 rounded-sm bg-[var(--color-accent)]/10 px-1.5 py-0.5 text-xs font-medium text-[var(--color-accent-text)]"
-              >
-                {label}
-                <span
-                  role="button"
-                  aria-label={`Verwijder ${label}`}
-                  tabIndex={0}
-                  onClick={(e) => remove(value[i], e)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') remove(value[i], e as unknown as React.MouseEvent) }}
-                  className="cursor-pointer opacity-60 hover:opacity-100"
-                >
-                  <X className="h-3 w-3" />
-                </span>
-              </span>
-            ))}
-          </div>
-          <ChevronDown className="ml-2 h-4 w-4 shrink-0 text-[var(--color-muted-foreground)]" />
-        </button>
-      </PopoverTrigger>
+            <ChevronDown className="ml-2 h-4 w-4 shrink-0 text-[var(--color-muted-foreground)]" />
+          </button>
+        </PopoverTrigger>
+        {selectedLabels.map((label, i) => (
+          <span
+            key={value[i]}
+            className="pointer-events-none relative z-10 inline-flex items-center gap-1 rounded-sm bg-[var(--color-accent)]/10 px-1.5 py-0.5 text-xs font-medium text-[var(--color-accent-text)]"
+          >
+            {label}
+            <button
+              ref={(button) => {
+                if (button) removeButtonRefs.current.set(value[i], button)
+                else removeButtonRefs.current.delete(value[i])
+              }}
+              type="button"
+              aria-label={`Verwijder ${label}`}
+              onClick={() => remove(value[i])}
+              className="pointer-events-auto cursor-pointer rounded-sm opacity-60 hover:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-accent)]"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </span>
+        ))}
+      </div>
       <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
         <Command>
           <CommandInput placeholder="Zoeken..." />

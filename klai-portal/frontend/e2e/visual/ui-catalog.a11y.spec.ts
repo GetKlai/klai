@@ -20,15 +20,7 @@ type DocumentedException = Pick<CatalogFinding, 'rule' | 'section' | 'target'> &
  * identifies one exact axe node and needs an honest reason. The reverse guard
  * below fails as soon as the matching violation stops occurring.
  */
-const DOCUMENTED_EXCEPTIONS: DocumentedException[] = [
-  {
-    rule: 'nested-interactive',
-    section: 'Selection inputs',
-    target: '.min-h-9',
-    reason:
-      'Real component debt: the multi-select trigger is a button that contains the interactive chip-remove controls. Needs a structural fix (chips outside the trigger, or listbox semantics), its own unit.',
-  },
-]
+const DOCUMENTED_EXCEPTIONS: DocumentedException[] = []
 
 function targetName(node: AxeNode): string {
   return node.target
