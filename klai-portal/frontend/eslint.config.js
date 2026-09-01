@@ -9,6 +9,7 @@ import noCrossRouteImport from './eslint-rules/no-cross-route-import.js'
 import noHardcodedBrandColor from './eslint-rules/no-hardcoded-brand-color.js'
 import noRawTextInput from './eslint-rules/no-raw-text-input.js'
 import noRawTextarea from './eslint-rules/no-raw-textarea.js'
+import noSemanticBaseForeground from './eslint-rules/no-semantic-base-foreground.js'
 import noWindowConfirm from './eslint-rules/no-window-confirm.js'
 
 export default defineConfig([
@@ -30,6 +31,7 @@ export default defineConfig([
           'no-hardcoded-brand-color': noHardcodedBrandColor,
           'no-raw-text-input': noRawTextInput,
           'no-raw-textarea': noRawTextarea,
+          'no-semantic-base-foreground': noSemanticBaseForeground,
           'no-window-confirm': noWindowConfirm,
         },
       },
@@ -55,6 +57,7 @@ export default defineConfig([
       'klai/no-hardcoded-brand-color': 'error',
       'klai/no-raw-text-input': 'error',
       'klai/no-raw-textarea': 'error',
+      'klai/no-semantic-base-foreground': 'error',
       'klai/no-window-confirm': 'error',
       // TanStack Router uses async functions in route config (beforeLoad, loader)
       '@typescript-eslint/no-misused-promises': [

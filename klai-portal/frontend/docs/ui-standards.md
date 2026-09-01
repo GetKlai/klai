@@ -23,8 +23,8 @@ catalog and be described here in the same change.
 
 The normative rules in this document are catalogued in the Rules Ledger at the
 end of this file, each with an ID, an RFC 2119 level and a declared
-verification mode. The count today: **54 rules — 11 automated, 4 assisted,
-35 manual, 4 deliberately unchecked.**
+verification mode. The count today: **55 rules — 13 automated, 4 assisted,
+34 manual, 4 deliberately unchecked.**
 
 The catalogue is maintained by hand. The ledger's own preamble says which of
 its guarantees a test backs and which rely on you adding the row — read that
@@ -38,6 +38,7 @@ These checks fail the build:
 | `klai/no-window-confirm` | `eslint-rules/`, runs in `npm run lint` | `window.confirm` / `alert` / `prompt`. Use `InlineDeleteConfirm` or `AlertDialog` |
 | `klai/no-raw-text-input` | `eslint-rules/`, runs in `npm run lint` | A raw textual, dynamically typed, or untyped `<input>` outside `src/components/ui/`. Use `Input` or another owned control; documented widget dark-mode exceptions are locally disabled |
 | `klai/no-raw-textarea` | `eslint-rules/`, runs in `npm run lint` | A raw `<textarea>` outside `src/components/ui/`. Use `Textarea` from `@/components/ui/textarea` |
+| `klai/no-semantic-base-foreground` | `eslint-rules/`, runs in `npm run lint` | `success`, `warning` or `info` base tokens used in an arbitrary-value `text-` utility. Use the matching `-text` token; destructive is exempt because its base foreground clears AA |
 | Generated component reference | `tests/design/component-reference-generated.test.ts` | The generated table is stale relative to the UI module source comments or `cva(...)` variants |
 | Generated `DESIGN.md` | `tests/design/design-md-generated.test.ts` | The committed design document is stale relative to the theme, UI module metadata, or UI standards |
 | Rule-doc token values | `tests/design/rule-doc-token-values.test.ts` | A hex quoted in `.claude/rules/klai/design/*.md` that no longer matches `index.css` |
@@ -45,6 +46,7 @@ These checks fail the build:
 | OAuth consent palette | `tests/design/consent-page-tokens.test.ts` | A copied `--color-*` token in the backend consent page drifting from `index.css`, or an ad-hoc token appearing there |
 | Border reset layer | `tests/design/border-layer-reset.test.ts` | The universal border-colour reset leaving `@layer base`, a second unlayered reset, or an inline TSX `borderColor` fix |
 | Documented text contrast | `tests/design/documented-contrast.test.ts` | A foreground named by the Colors section falling below 4.5:1 on a portal surface without a current documented exception, or an exception remaining after that foreground passes |
+| Visual component catalog | `e2e/visual/ui-catalog.visual.spec.ts`, runs in `npm run test:visual` | Any rendered `/dev/ui` section drifting from its Linux baseline; section names and count are derived from the page at runtime |
 
 Everything else is prose you are trusted to follow. The ledger says so per
 rule instead of leaving it implied. `manual` is an honest label rather
@@ -1074,7 +1076,7 @@ Verification modes use the vocabulary from the Design System Doc Spec
 
 | Mode | Meaning |
 |---|---|
-| `automated` | A check runs in `npm run lint` or `npm run test` and fails the build. The Check column names it. |
+| `automated` | A check runs in `npm run lint`, `npm run test` or `npm run test:visual` and fails the build. The Check column names it. |
 | `assisted` | A tool surfaces candidates; a human still decides. |
 | `manual` | A reviewer applies it. Nothing catches a violation. |
 | `none` | We decided not to check it. The Check column says why. Not the same as "not looked at". |
@@ -1137,9 +1139,10 @@ restatement of these rules, not a separate set.
 | KLAI-UI-049 | A raw `<textarea>` outside `src/components/ui/` is forbidden | must-not | automated | `klai/no-raw-textarea` |
 | KLAI-UI-050 | The portal type scale is rem-based on a 110% root, so text, padding, control heights and column widths scale together; an absolute px font size does not scale and is a defect | must | manual | Reviewer step. Nothing yet stops a new `text-[Npx]` or a px `font-size` in `index.css` from being added |
 | KLAI-UI-051 | Foreground colours documented in the Colors section meet WCAG AA on both portal surfaces or carry a current, reasoned exception | must | automated | `tests/design/documented-contrast.test.ts` |
-| KLAI-UI-052 | Semantic base colour tokens are used for fills and borders; foregrounds on light portal surfaces use the matching `-text` token, while the passing destructive base foreground remains valid | must | manual | The documented contrast check covers only colours named in the Colors section, so it does not catch a base token used as a foreground elsewhere |
+| KLAI-UI-052 | Semantic base colour tokens are used for fills and borders; foregrounds on light portal surfaces use the matching `-text` token, while the passing destructive base foreground remains valid | must | automated | `klai/no-semantic-base-foreground`; destructive is deliberately exempt because its base foreground clears AA at 5.17:1 |
 | KLAI-UI-053 | `DESIGN.md` is generated from the portal theme, component metadata and UI standards, and a stale committed artefact fails the build | must | automated | `tests/design/design-md-generated.test.ts` |
 | KLAI-UI-054 | A raw textual, dynamically typed or untyped `<input>` outside `src/components/ui/` is forbidden unless a local disable documents an unsupported owned-control variant | must-not | automated | `klai/no-raw-text-input` |
+| KLAI-UI-055 | Every rendered `<h2>` section in the DEV-only `/dev/ui` component catalog matches its Linux visual baseline | must | automated | `e2e/visual/ui-catalog.visual.spec.ts` |
 <!-- /generated:component-guidelines -->
 
 ### Retired IDs

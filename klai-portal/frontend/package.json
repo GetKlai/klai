@@ -17,6 +17,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:e2e:dev": "playwright test",
+    "test:visual": "playwright test -c e2e/visual/playwright.config.ts",
+    "test:visual:update": "docker run --rm --init --ipc=host -v \"$PWD:/work\" -v klai-portal-visual-node-modules:/work/node_modules -v klai-portal-visual-npm-cache:/root/.npm -w /work mcr.microsoft.com/playwright:v1.62.1-noble bash -lc 'npm ci && rm -rf node_modules/.vite && npm run i18n:compile && npx playwright test -c e2e/visual/playwright.config.ts --update-snapshots'",
     "test:e2e:prod": "playwright test -c e2e/prod-tenant/_config/playwright.prod.config.ts",
     "test:e2e:prod:voys": "cross-env E2E_MODE=voys-attached E2E_BASE_URL=https://voys.getklai.com playwright test -c e2e/prod-tenant/_config/playwright.prod.config.ts",
     "e2e:capture-session": "tsx e2e/prod-tenant/_lib/capture-voys-session.ts",
