@@ -1,3 +1,8 @@
+/**
+ * @purpose Admin table primitives: `DataTable`, `DataTableHeader`,
+ * `DataTableBody`, `DataTableRow` (`interactive`/`confirming`),
+ * `DataTableHead`, `DataTableCell` (`align`)
+ */
 import * as React from 'react'
 import { cn } from '@/lib/utils'
 

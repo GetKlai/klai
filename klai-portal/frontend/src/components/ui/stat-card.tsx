@@ -1,3 +1,8 @@
+/**
+ * @purpose Metric tile (`StatCard`): uppercase label + large tabular value +
+ * optional sub. Sizes default/sm, `tone` (default/warning/destructive), `alert`
+ * frame, optional `onClick` to navigate
+ */
 import * as React from 'react'
 import { Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'

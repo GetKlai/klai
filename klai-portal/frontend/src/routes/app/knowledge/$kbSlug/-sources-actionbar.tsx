@@ -42,7 +42,7 @@ export function SourcesActionBar({
       actions={
         <div className="flex items-center gap-2">
           {showEditorLink && (
-            <Button asChild variant="ghost" size="sm">
+            <Button asChild variant="outline" size="sm">
               <Link to="/app/docs/$kbSlug" params={{ kbSlug }}>
                 <NotebookPen className="h-4 w-4" />
                 {m.kb_sources_action_open_editor()}
@@ -51,7 +51,7 @@ export function SourcesActionBar({
           )}
           {connectorSources.length > 0 && (
             <Button
-              variant="ghost"
+              variant="outline"
               size="sm"
               onClick={() => syncAll.mutate()}
               disabled={syncAll.isPending}

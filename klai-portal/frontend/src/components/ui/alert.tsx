@@ -1,3 +1,7 @@
+/**
+ * @purpose Inline semantic callout (`Alert`). Soft tint + auto icon, for
+ * wizard/form feedback and inline warnings — not a toast, not a modal
+ */
 import * as React from 'react'
 import { cva, type VariantProps } from 'class-variance-authority'
 import {

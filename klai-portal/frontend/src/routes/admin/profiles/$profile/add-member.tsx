@@ -101,7 +101,7 @@ function AddProfileMemberPage() {
         </h1>
         <Button
           type="button"
-          variant="ghost"
+          variant="outline"
           size="sm"
           onClick={() =>
             navigate({ to: '/admin/profiles/$profile', params: { profile: profileRole } })

@@ -1,3 +1,9 @@
+/**
+ * @purpose List/table row actions: `BorderedRowActionIconButton` (visible
+ * bordered hitbox — the default for row icon actions), `RowActionButton`,
+ * `RowActionGroup` + the action→tone system. `RowActionIconButton` is the
+ * low-level unbordered base, not the list/table default.
+ */
 import * as React from 'react'
 import { Slot } from '@radix-ui/react-slot'
 import {

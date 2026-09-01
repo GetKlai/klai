@@ -1,3 +1,8 @@
+/**
+ * @purpose Numbered pager for overviews (`Pagination`): previous, clickable
+ * page numbers with `…` truncation, next; current page highlighted and not
+ * clickable. Controlled; pair with `useListControls`
+ */
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import * as m from '@/paraglide/messages'

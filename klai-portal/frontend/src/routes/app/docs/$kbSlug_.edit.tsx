@@ -85,7 +85,7 @@ function EditKBPage() {
         </h1>
         <Button
           type="button"
-          variant="ghost"
+          variant="outline"
           size="sm"
           onClick={() => navigate({ to: '/app/docs' })}
         >

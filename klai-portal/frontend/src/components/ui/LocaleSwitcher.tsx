@@ -1,3 +1,8 @@
+/**
+ * @purpose NL/EN language toggle (`LocaleSwitcher`). Navigates to the sibling
+ * locale URL on `/nl/…` and `/en/…` routes, and updates locale state only
+ * elsewhere. Used on the unauthenticated routes (login, signup, verify)
+ */
 import { useNavigate } from '@tanstack/react-router'
 import { useLocale } from '@/lib/locale'
 

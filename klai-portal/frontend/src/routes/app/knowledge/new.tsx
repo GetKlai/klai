@@ -109,7 +109,7 @@ function NewKnowledgeBasePage() {
         {step === 1 ? (
           <Button
             type="button"
-            variant="ghost"
+            variant="outline"
             size="sm"
             onClick={() => void navigate({ to: '/app/knowledge' })}
           >
@@ -117,7 +117,7 @@ function NewKnowledgeBasePage() {
             {m.knowledge_wizard_cancel()}
           </Button>
         ) : (
-          <Button type="button" variant="ghost" size="sm" onClick={handleBack}>
+          <Button type="button" variant="outline" size="sm" onClick={handleBack}>
             <ArrowLeft className="h-4 w-4 mr-2" />
             {m.knowledge_wizard_back()}
           </Button>

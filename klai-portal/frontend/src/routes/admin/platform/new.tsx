@@ -60,7 +60,7 @@ function NewTenantPage() {
         </h1>
         <Button
           type="button"
-          variant="ghost"
+          variant="outline"
           size="sm"
           onClick={() => void navigate({ to: '/admin/platform' })}
         >

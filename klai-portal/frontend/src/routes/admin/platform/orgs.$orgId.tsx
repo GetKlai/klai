@@ -181,7 +181,7 @@ function PlatformOrgDetailPage() {
         </div>
         <Button
           type="button"
-          variant="ghost"
+          variant="outline"
           size="sm"
           onClick={() => void navigate({ to: '/admin/platform' })}
         >

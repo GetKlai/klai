@@ -100,7 +100,7 @@ export function FeedbackItemDetailPanel({
             {m.platform_feedback_item_description()}
           </p>
         </div>
-        <Button type="button" variant="ghost" size="sm" onClick={onClose}>
+        <Button type="button" variant="outline" size="sm" onClick={onClose}>
           <ArrowLeft className="h-4 w-4 mr-2" />
           {m.platform_back_to_feedback()}
         </Button>
@@ -380,7 +380,7 @@ function FeedbackItemDetailForm({
                 )}
                 {m.admin_shared_save()}
               </Button>
-              <Button type="button" variant="ghost" size="sm" onClick={cancelEdit}>
+              <Button type="button" variant="outline" size="sm" onClick={cancelEdit}>
                 <X className="h-4 w-4" />
                 {m.admin_users_cancel()}
               </Button>
@@ -433,7 +433,7 @@ function FeedbackItemDetailForm({
           <div className="flex items-center justify-end gap-2">
             <Button
               type="button"
-              variant="ghost"
+              variant="outline"
               size="sm"
               onClick={() => {
                 setAskOpen(false)
@@ -615,7 +615,7 @@ function FeedbackItemDetailForm({
       <div className="flex items-center justify-between pt-2">
         <Button
           type="button"
-          variant="ghost"
+          variant="outline"
           size="sm"
           disabled={itemStepIndex === 0}
           onClick={previousItemStep}

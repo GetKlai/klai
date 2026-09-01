@@ -1,3 +1,7 @@
+/**
+ * @purpose Low-level single-field click-to-edit overlay, for custom row layouts
+ * that own their own buttons. Prefer `InlineEditRow` for new rows
+ */
 import { type KeyboardEvent, type ReactNode } from 'react'
 
 interface InlineEditProps {

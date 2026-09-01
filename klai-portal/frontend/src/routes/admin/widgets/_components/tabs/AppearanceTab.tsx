@@ -117,7 +117,7 @@ export function AppearanceTab({ widget }: Props) {
                 onClick={() => setTheme(t)}
                 role="radio"
                 aria-checked={theme === t}
-                variant="ghost"
+                variant="outline"
                 size="sm"
                 className={
                   theme === t
@@ -190,7 +190,7 @@ export function AppearanceTab({ widget }: Props) {
               onClick={() => setWidgetPosition(p)}
               role="radio"
               aria-checked={widgetPosition === p}
-              variant="ghost"
+              variant="outline"
               size="sm"
               className={
                 widgetPosition === p

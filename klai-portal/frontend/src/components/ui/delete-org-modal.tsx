@@ -1,3 +1,7 @@
+/**
+ * @purpose Feature-specific destructive modals (not generic)
+ * @canonical feature
+ */
 import { useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { useMutation } from '@tanstack/react-query'

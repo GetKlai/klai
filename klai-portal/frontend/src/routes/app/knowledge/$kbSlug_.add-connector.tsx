@@ -11,6 +11,7 @@ import { StepIndicator, type StepItem } from '@/components/ui/step-indicator'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { MS_SITE_URL_PATTERN } from '@/lib/ms-docs'
@@ -374,7 +375,7 @@ function AddConnectorPage() {
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {m.admin_connectors_add_title()}
         </h1>
-        <Button type="button" variant="ghost" size="sm" onClick={goBack}>
+        <Button type="button" variant="outline" size="sm" onClick={goBack}>
           <ArrowLeft className="h-4 w-4 mr-2" />
           {m.admin_connectors_cancel()}
         </Button>
@@ -481,7 +482,7 @@ function AddConnectorPage() {
                   <Button type="submit" size="sm" disabled={createMutation.isPending}>
                     {createMutation.isPending ? m.admin_connectors_create_submit_loading() : m.admin_connectors_create_submit()}
                   </Button>
-                  <Button type="button" size="sm" variant="ghost" onClick={() => setSelectedType(null)}>
+                  <Button type="button" size="sm" variant="outline" onClick={() => setSelectedType(null)}>
                     {m.admin_connectors_webcrawler_back()}
                   </Button>
                 </div>
@@ -519,9 +520,9 @@ function AddConnectorPage() {
                     </div>
                     <div className="space-y-1.5">
                       <Label htmlFor="notion-db-ids">{m.admin_connectors_notion_database_ids()}</Label>
-                      <textarea
+                      <Textarea
                         id="notion-db-ids"
-                        className="flex min-h-[80px] w-full rounded-md border border-gray-200 bg-[var(--color-input)] px-3 py-2 text-sm placeholder:text-gray-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
+                        className="flex min-h-[80px] rounded-md bg-[var(--color-input)] focus:ring-0 focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
                         placeholder={m.admin_connectors_notion_database_ids_placeholder()}
                         value={notionConfig.database_ids}
                         onChange={(e) => setNotionConfig((p) => ({ ...p, database_ids: e.target.value }))}
@@ -531,7 +532,7 @@ function AddConnectorPage() {
                       <Button type="submit" size="sm" disabled={!name || !notionConfig.access_token}>
                         {m.admin_connectors_webcrawler_next()}
                       </Button>
-                      <Button type="button" size="sm" variant="ghost" onClick={() => setSelectedType(null)}>
+                      <Button type="button" size="sm" variant="outline" onClick={() => setSelectedType(null)}>
                         {m.admin_connectors_webcrawler_back()}
                       </Button>
                     </div>
@@ -552,7 +553,7 @@ function AddConnectorPage() {
                       <Button type="submit" size="sm" disabled={createMutation.isPending}>
                         {createMutation.isPending ? m.admin_connectors_create_submit_loading() : m.admin_connectors_create_submit()}
                       </Button>
-                      <Button type="button" size="sm" variant="ghost" onClick={() => setNotionStep('credentials')}>
+                      <Button type="button" size="sm" variant="outline" onClick={() => setNotionStep('credentials')}>
                         {m.admin_connectors_webcrawler_back()}
                       </Button>
                     </div>
@@ -616,7 +617,7 @@ function AddConnectorPage() {
                   <Button type="submit" size="sm" disabled={createGoogleDriveMutation.isPending || !name}>
                     {createGoogleDriveMutation.isPending ? m.admin_connectors_google_drive_connecting() : m.admin_connectors_google_drive_connect()}
                   </Button>
-                  <Button type="button" size="sm" variant="ghost" onClick={() => setSelectedType(null)}>
+                  <Button type="button" size="sm" variant="outline" onClick={() => setSelectedType(null)}>
                     {m.admin_connectors_webcrawler_back()}
                   </Button>
                 </div>
@@ -675,7 +676,7 @@ function AddConnectorPage() {
                   <Button type="submit" size="sm" disabled={createMsDocsMutation.isPending || !name}>
                     {createMsDocsMutation.isPending ? m.admin_connectors_ms_docs_connecting() : m.admin_connectors_ms_docs_connect()}
                   </Button>
-                  <Button type="button" size="sm" variant="ghost" onClick={() => setSelectedType(null)}>
+                  <Button type="button" size="sm" variant="outline" onClick={() => setSelectedType(null)}>
                     {m.admin_connectors_webcrawler_back()}
                   </Button>
                 </div>
@@ -713,7 +714,7 @@ function AddConnectorPage() {
                   <Button type="submit" size="sm" disabled={createMutation.isPending || !name || !airtableConfig.api_key || !airtableConfig.base_id || !airtableConfig.table_names}>
                     {createMutation.isPending ? m.admin_connectors_create_submit_loading() : m.admin_connectors_create_submit()}
                   </Button>
-                  <Button type="button" size="sm" variant="ghost" onClick={() => setSelectedType(null)}>
+                  <Button type="button" size="sm" variant="outline" onClick={() => setSelectedType(null)}>
                     {m.admin_connectors_webcrawler_back()}
                   </Button>
                 </div>
@@ -751,7 +752,7 @@ function AddConnectorPage() {
                   <Button type="submit" size="sm" disabled={createMutation.isPending || !name || !confluenceConfig.base_url || !confluenceConfig.email || !confluenceConfig.api_token}>
                     {createMutation.isPending ? m.admin_connectors_create_submit_loading() : m.admin_connectors_create_submit()}
                   </Button>
-                  <Button type="button" size="sm" variant="ghost" onClick={() => setSelectedType(null)}>
+                  <Button type="button" size="sm" variant="outline" onClick={() => setSelectedType(null)}>
                     {m.admin_connectors_webcrawler_back()}
                   </Button>
                 </div>
@@ -779,7 +780,7 @@ function AddConnectorPage() {
                   <Button type="submit" size="sm" disabled={createMutation.isPending || !name || !jsonFeedConfig.url.trim()}>
                     {createMutation.isPending ? m.admin_connectors_create_submit_loading() : m.admin_connectors_create_submit()}
                   </Button>
-                  <Button type="button" size="sm" variant="ghost" onClick={() => setSelectedType(null)}>
+                  <Button type="button" size="sm" variant="outline" onClick={() => setSelectedType(null)}>
                     {m.admin_connectors_webcrawler_back()}
                   </Button>
                 </div>
@@ -820,7 +821,7 @@ function AddConnectorPage() {
                       >
                         {m.admin_connectors_webcrawler_next()}
                       </Button>
-                      <Button type="button" size="sm" variant="ghost" onClick={() => setSelectedType(null)}>
+                      <Button type="button" size="sm" variant="outline" onClick={() => setSelectedType(null)}>
                         {m.admin_connectors_webcrawler_back()}
                       </Button>
                     </div>
@@ -878,7 +879,7 @@ function AddConnectorPage() {
                       >
                         {m.admin_connectors_webcrawler_next()}
                       </Button>
-                      <Button type="button" size="sm" variant="ghost" onClick={() => setWcStep('details')}>
+                      <Button type="button" size="sm" variant="outline" onClick={() => setWcStep('details')}>
                         {m.admin_connectors_webcrawler_back()}
                       </Button>
                     </div>
@@ -951,7 +952,7 @@ function AddConnectorPage() {
                       <Button
                         type="button"
                         size="sm"
-                        variant="ghost"
+                        variant="outline"
                         onClick={() => setWcStep('auth-question')}
                       >
                         {m.admin_connectors_webcrawler_back()}
@@ -1236,7 +1237,7 @@ function AddConnectorPage() {
                       <Button
                         type="button"
                         size="sm"
-                        variant="ghost"
+                        variant="outline"
                         onClick={() =>
                           setWcStep(requiresLogin ? 'auth-setup' : 'auth-question')
                         }
@@ -1262,7 +1263,7 @@ function AddConnectorPage() {
                       <Button type="submit" size="sm" disabled={createMutation.isPending}>
                         {createMutation.isPending ? m.admin_connectors_create_submit_loading() : m.admin_connectors_create_submit()}
                       </Button>
-                      <Button type="button" size="sm" variant="ghost" onClick={() => setWcStep('selector')}>{m.admin_connectors_webcrawler_back()}</Button>
+                      <Button type="button" size="sm" variant="outline" onClick={() => setWcStep('selector')}>{m.admin_connectors_webcrawler_back()}</Button>
                     </div>
                   </form>
                 )}

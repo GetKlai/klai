@@ -122,7 +122,7 @@ function WidgetDetailPage() {
         </div>
         <Button
           type="button"
-          variant="ghost"
+          variant="outline"
           size="sm"
           onClick={() => navigate({ to: '/admin/widgets' })}
         >

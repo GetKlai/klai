@@ -183,7 +183,7 @@ function AdminGroupDetail() {
             />
           )}
           <Button
-            variant="ghost"
+            variant="outline"
             size="sm"
             onClick={() => navigate({ to: '/admin/groups' })}
           >

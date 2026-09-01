@@ -1,8 +1,9 @@
 /**
- * `.claude/rules/klai/design/tokens.md` quotes hex values from `index.css` in
- * a markdown table. It carries `paths: "**"`, so it loads into EVERY agent
- * session in this monorepo, for every file. It is the single most-read design
- * document we have, and nothing connects it to the stylesheet it mirrors.
+ * `.claude/rules/klai/design/*.md` quotes hex values from `index.css` in
+ * markdown tables. `tokens.md` carries `paths: "**"`, so it loads into EVERY
+ * agent session in this monorepo, for every file. It is the single most-read
+ * design document we have, and nothing connects it to the stylesheet it
+ * mirrors.
  *
  * A wrong value there is worse than a missing one. An agent that reads
  * `--color-rl-accent` is `#fcaa2d` when the stylesheet says otherwise will
@@ -25,11 +26,12 @@ import { describe, it, expect } from 'vitest'
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = path.join(HERE, '..', '..', '..', '..')
 const CSS = path.join(HERE, '..', '..', 'src', 'index.css')
-
-const RULE_DOCS = [
-  '.claude/rules/klai/design/tokens.md',
-  '.claude/rules/klai/design/styleguide.md',
-]
+const RULE_DOCS_DIR = path.join(REPO_ROOT, '.claude', 'rules', 'klai', 'design')
+const RULE_DOCS = fs
+  .readdirSync(RULE_DOCS_DIR, { withFileTypes: true })
+  .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
+  .map((entry) => path.relative(REPO_ROOT, path.join(RULE_DOCS_DIR, entry.name)))
+  .sort()
 
 /** Every `--color-*: #hex;` declaration in the portal stylesheet. */
 function stylesheetColors(): Map<string, string> {

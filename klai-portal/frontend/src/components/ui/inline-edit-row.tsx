@@ -1,3 +1,7 @@
+/**
+ * @purpose Canonical inline edit for a list row (`InlineEditRow`): name +
+ * optional description, zero layout shift, owns Save/Cancel
+ */
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { Check, Loader2, X } from 'lucide-react'
 import { InlineRowButton } from '@/components/ui/inline-row-button'

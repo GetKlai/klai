@@ -334,7 +334,7 @@ export function WidgetChatSurface({
         <div className="flex items-center gap-1.5">
           <Button
             type="button"
-            variant="ghost"
+            variant="outline"
             size="sm"
             onClick={newConversation}
             className="h-8 rounded-lg pl-2.5 pr-3 text-[13px]"
@@ -345,7 +345,7 @@ export function WidgetChatSurface({
           {shareUrl && (
             <Button
               type="button"
-              variant="ghost"
+              variant="outline"
               size="sm"
               onClick={copyShareLink}
               className="h-8 rounded-lg pl-2.5 pr-3 text-[13px]"
@@ -359,7 +359,7 @@ export function WidgetChatSurface({
           {onClose && (
             <Button
               type="button"
-              variant="ghost"
+              variant="outline"
               size="icon"
               onClick={onClose}
               aria-label={m.widget_chat_close()}

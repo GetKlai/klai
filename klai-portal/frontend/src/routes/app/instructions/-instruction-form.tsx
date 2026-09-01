@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
+import { Textarea } from '@/components/ui/textarea'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import * as m from '@/paraglide/messages'
 
@@ -188,7 +189,7 @@ export function InstructionFormPage({
         </div>
         <Button
           type="button"
-          variant="ghost"
+          variant="outline"
           size="sm"
           onClick={() => void navigate({ to: backPath })}
         >
@@ -237,12 +238,12 @@ export function InstructionFormPage({
               {m.instructions_form_prompt_char_count({ current: String(promptLength) })}
             </span>
           </div>
-          <textarea
+          <Textarea
             id="instruction-prompt"
             value={form.prompt_text}
             placeholder={m.instructions_form_prompt_placeholder()}
             onChange={(e) => setForm((f) => ({ ...f, prompt_text: e.target.value }))}
-            className="w-full min-h-[200px] max-h-[480px] rounded-lg border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)] resize-y"
+            className="min-h-[200px] max-h-[480px] resize-y"
           />
         </div>
 

@@ -134,7 +134,7 @@ function GapsPage() {
             {m.gaps_page_title()}
           </h1>
         </div>
-        <Button variant="ghost" size="sm" asChild>
+        <Button variant="outline" size="sm" asChild>
           <Link to="/app/knowledge">
             <ArrowLeft className="h-4 w-4 mr-2" />
             {m.knowledge_page_intro_heading()}

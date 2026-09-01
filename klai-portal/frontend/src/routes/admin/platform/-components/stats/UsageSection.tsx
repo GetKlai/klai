@@ -276,7 +276,7 @@ function UsageBars({
           <Button
             type="button"
             size="sm"
-            variant={granularity === 'daily' ? 'default' : 'ghost'}
+            variant={granularity === 'daily' ? 'default' : 'outline'}
             className="h-7 px-3 text-xs"
             onClick={() => setGranularity('daily')}
           >
@@ -285,7 +285,7 @@ function UsageBars({
           <Button
             type="button"
             size="sm"
-            variant={granularity === 'weekly' ? 'default' : 'ghost'}
+            variant={granularity === 'weekly' ? 'default' : 'outline'}
             className="h-7 px-3 text-xs"
             onClick={() => setGranularity('weekly')}
           >

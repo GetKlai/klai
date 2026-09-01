@@ -189,7 +189,7 @@ function KbLayout() {
         <h1 className="page-title text-[26px] font-display-bold text-gray-900 leading-none truncate">
           {kb.name}
         </h1>
-        <Button asChild variant="ghost" size="sm">
+        <Button asChild variant="outline" size="sm">
           <Link to="/app/knowledge">
             <ArrowLeft className="h-4 w-4 mr-2" />
             {m.kb_detail_back()}

@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 import * as m from '@/paraglide/messages'
 import { apiFetch, ApiError } from '@/lib/apiFetch'
 
@@ -64,7 +65,7 @@ function NewGroupPage() {
         </h1>
         <Button
           type="button"
-          variant="ghost"
+          variant="outline"
           size="sm"
           onClick={() => navigate({ to: '/admin/groups' })}
         >
@@ -92,13 +93,13 @@ function NewGroupPage() {
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="group-description">{m.admin_groups_description()}</Label>
-          <textarea
+          <Textarea
             id="group-description"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder={m.admin_groups_description_placeholder()}
             rows={3}
-            className="w-full rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)] disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-md"
           />
         </div>
         {createMutation.error && createMutation.error.message !== 'duplicate' && (

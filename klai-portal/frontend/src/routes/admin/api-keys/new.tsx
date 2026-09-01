@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { StepIndicator, type StepItem } from '@/components/ui/step-indicator'
+import { Textarea } from '@/components/ui/textarea'
 import * as m from '@/paraglide/messages'
 import { useCreateApiKey } from './-hooks'
 import type { AccessLevel } from './-types'
@@ -142,7 +143,7 @@ function NewApiKeyPage() {
         </h1>
         <Button
           type="button"
-          variant="ghost"
+          variant="outline"
           size="sm"
           onClick={() => navigate({ to: '/admin/api-keys' })}
         >
@@ -177,12 +178,12 @@ function NewApiKeyPage() {
               <Label htmlFor="api-key-description">
                 {m.admin_shared_field_description()}
               </Label>
-              <textarea
+              <Textarea
                 id="api-key-description"
                 value={form.description}
                 onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))}
                 rows={3}
-                className="w-full rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--color-ring)]"
+                className="rounded-md"
               />
             </div>
           </section>
@@ -277,7 +278,7 @@ function NewApiKeyPage() {
         )}
 
         <div className="flex items-center justify-between pt-2">
-          <Button type="button" variant="ghost" size="sm" onClick={handlePrevious} disabled={currentIndex === 0}>
+          <Button type="button" variant="outline" size="sm" onClick={handlePrevious} disabled={currentIndex === 0}>
             <ArrowLeft className="h-4 w-4 mr-2" />
             {m.admin_shared_wizard_previous()}
           </Button>

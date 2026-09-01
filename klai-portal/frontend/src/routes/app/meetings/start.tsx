@@ -82,7 +82,7 @@ function StartMeetingPage() {
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {m.app_meetings_start_title()}
         </h1>
-        <Button type="button" variant="ghost" size="sm" onClick={() => navigate({ to: '/app/transcribe' })}>
+        <Button type="button" variant="outline" size="sm" onClick={() => navigate({ to: '/app/transcribe' })}>
           <ArrowLeft className="h-4 w-4 mr-2" />
           {m.app_meetings_back()}
         </Button>

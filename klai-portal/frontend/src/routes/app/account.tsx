@@ -311,7 +311,7 @@ function AccountPage() {
               {m.account_sar_description()}
             </p>
             <Button
-              variant="ghost"
+              variant="outline"
               size="sm"
               onClick={() => sarMutation.mutate()}
               disabled={sarMutation.isPending}
@@ -857,7 +857,7 @@ function PanelHeader({
       {unreadCount > 0 && (
         <Button
           type="button"
-          variant="ghost"
+          variant="outline"
           size="sm"
           className="w-fit shrink-0"
           onClick={onMarkAllRead}

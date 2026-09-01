@@ -56,7 +56,7 @@ function AddSourcePage() {
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {m.knowledge_add_source_title()}
         </h1>
-        <Button type="button" variant="ghost" size="sm" onClick={goBack}>
+        <Button type="button" variant="outline" size="sm" onClick={goBack}>
           <ArrowLeft className="h-4 w-4 mr-2" />
           {m.knowledge_add_source_back()}
         </Button>

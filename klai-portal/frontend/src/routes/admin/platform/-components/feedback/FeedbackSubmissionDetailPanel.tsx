@@ -181,7 +181,7 @@ export function FeedbackSubmissionDetailPanel({
           {reporter ? ` · ${reporter}` : ''} · {fmtDate(item.created_at)}
         </p>
       </div>
-      <Button type="button" variant="ghost" size="sm" onClick={onClose}>
+      <Button type="button" variant="outline" size="sm" onClick={onClose}>
         <ArrowLeft className="h-4 w-4 mr-2" />
         {m.platform_back_to_feedback()}
       </Button>
@@ -275,7 +275,7 @@ export function FeedbackSubmissionDetailPanel({
         <div className="flex items-center justify-between border-t border-gray-200 pt-4">
           <Button
             type="button"
-            variant="ghost"
+            variant="outline"
             size="sm"
             className="text-[var(--color-destructive)] hover:text-[var(--color-destructive)]"
             disabled={busy}
@@ -338,7 +338,7 @@ export function FeedbackSubmissionDetailPanel({
             <h2 className="text-sm font-medium text-gray-900">
               {m.platform_feedback_product_step_title()}
             </h2>
-            <Button type="button" variant="ghost" size="sm" onClick={() => setMode('menu')}>
+            <Button type="button" variant="outline" size="sm" onClick={() => setMode('menu')}>
               <ArrowLeft className="h-4 w-4 mr-2" />
               {m.platform_feedback_back()}
             </Button>
@@ -435,7 +435,7 @@ export function FeedbackSubmissionDetailPanel({
             <h2 className="text-sm font-medium text-gray-900">
               {m.platform_feedback_choice_status()}
             </h2>
-            <Button type="button" variant="ghost" size="sm" onClick={() => setMode('menu')}>
+            <Button type="button" variant="outline" size="sm" onClick={() => setMode('menu')}>
               <ArrowLeft className="h-4 w-4 mr-2" />
               {m.platform_feedback_back()}
             </Button>
@@ -526,7 +526,7 @@ export function FeedbackSubmissionDetailPanel({
       <div className="flex border-t border-gray-200 pt-4">
         <Button
           type="button"
-          variant="ghost"
+          variant="outline"
           size="sm"
           className="text-[var(--color-destructive)] hover:text-[var(--color-destructive)]"
           disabled={busy}

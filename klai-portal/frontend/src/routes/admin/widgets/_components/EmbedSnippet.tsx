@@ -30,7 +30,7 @@ export function EmbedSnippet({ widgetId, title, welcomeMessage }: EmbedSnippetPr
         </span>
         <Button
           type="button"
-          variant="ghost"
+          variant="outline"
           size="sm"
           onClick={handleCopy}
           className="h-7 text-xs gap-1.5"

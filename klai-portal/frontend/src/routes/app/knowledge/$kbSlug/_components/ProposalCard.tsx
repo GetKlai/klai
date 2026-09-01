@@ -152,7 +152,7 @@ export function ProposalCard({
                   <Button
                     type="button"
                     size="sm"
-                    variant="ghost"
+                    variant="outline"
                     className="h-7 text-xs px-2.5"
                     onClick={onCancelEdit}
                   >

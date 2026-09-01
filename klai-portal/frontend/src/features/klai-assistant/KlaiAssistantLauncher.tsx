@@ -164,7 +164,7 @@ function KlaiAssistantPanel({
           {showBack && (
             <Button
               type="button"
-              variant="ghost"
+              variant="outline"
               size="icon"
               onClick={() => onModeChange('home')}
               aria-label={m.klai_assistant_back()}
@@ -187,7 +187,7 @@ function KlaiAssistantPanel({
         </div>
         <Button
           type="button"
-          variant="ghost"
+          variant="outline"
           size="icon"
           onClick={onClose}
           aria-label={m.klai_assistant_close()}

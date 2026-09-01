@@ -51,7 +51,7 @@ function DangerZonePage() {
           {m.danger_zone_heading()}
         </h1>
         <Button
-          variant="ghost"
+          variant="outline"
           size="sm"
           onClick={() => void navigate({ to: '/admin' })}
         >

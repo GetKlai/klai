@@ -1,3 +1,6 @@
+/**
+ * @purpose Selectable radio option cards (`RadioCardGroup`)
+ */
 import { useId } from 'react'
 import { cn } from '@/lib/utils'
 

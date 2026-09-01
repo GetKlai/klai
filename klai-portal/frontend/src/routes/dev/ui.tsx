@@ -530,8 +530,8 @@ function UiCatalogPage() {
         <div className="flex flex-wrap items-center gap-3">
           <Button>Default</Button>
           <Button variant="secondary">Secondary</Button>
-          <Button variant="ghost">Ghost</Button>
           <Button variant="outline">Outline</Button>
+          <Button variant="link">Link</Button>
           <Button variant="destructive">Destructive</Button>
           <Button size="sm">
             <Sparkles />
@@ -1043,7 +1043,7 @@ function UiCatalogPage() {
 
           <Popover>
             <PopoverTrigger asChild>
-              <Button variant="ghost">Popover</Button>
+              <Button variant="outline">Popover</Button>
             </PopoverTrigger>
             <PopoverContent>
               <p className="text-sm text-gray-500">Zwevend paneel op een trigger.</p>

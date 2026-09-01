@@ -123,7 +123,7 @@ function InviteUserPage() {
         <h1 className="page-title text-[26px] font-display-bold text-gray-900">
           {m.admin_users_invite_button()}
         </h1>
-        <Button type="button" variant="ghost" size="sm" onClick={handleCancel}>
+        <Button type="button" variant="outline" size="sm" onClick={handleCancel}>
           <ArrowLeft className="h-4 w-4 mr-2" />
           {m.admin_users_cancel()}
         </Button>

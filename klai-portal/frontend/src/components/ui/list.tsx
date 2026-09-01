@@ -1,3 +1,8 @@
+/**
+ * @purpose List primitives: `ListFrame`, `ListHeader`, `ListRow`,
+ * `ListRowContent`, `ListRowTitle`, `ListRowDescription`, `ListRowActions`,
+ * `ListRowIcon`, `ListRowChevron`
+ */
 import * as React from 'react'
 import { Slot } from '@radix-ui/react-slot'
 import { ChevronRight } from 'lucide-react'

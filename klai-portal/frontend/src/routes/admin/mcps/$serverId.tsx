@@ -194,7 +194,7 @@ function McpEditPage() {
   if (isError || !server) {
     return (
       <div className="p-6 max-w-lg space-y-4">
-        <Button type="button" variant="ghost" size="sm" onClick={handleBack}>
+        <Button type="button" variant="outline" size="sm" onClick={handleBack}>
           <ArrowLeft className="h-4 w-4 mr-2" />
           {m.admin_mcps_back()}
         </Button>
@@ -220,7 +220,7 @@ function McpEditPage() {
           </h1>
           <p className="text-sm text-gray-400">{server.description}</p>
         </div>
-        <Button type="button" variant="ghost" size="sm" onClick={handleBack}>
+        <Button type="button" variant="outline" size="sm" onClick={handleBack}>
           <ArrowLeft className="h-4 w-4 mr-2" />
           {m.admin_mcps_back()}
         </Button>

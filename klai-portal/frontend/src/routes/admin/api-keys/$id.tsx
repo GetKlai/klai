@@ -92,7 +92,7 @@ function ApiKeyDetailPage() {
         </div>
         <Button
           type="button"
-          variant="ghost"
+          variant="outline"
           size="sm"
           onClick={() => navigate({ to: '/admin/api-keys' })}
         >

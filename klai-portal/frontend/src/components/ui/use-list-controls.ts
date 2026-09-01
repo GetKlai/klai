@@ -1,3 +1,7 @@
+/**
+ * @purpose Hook (`useListControls`) encoding the search/pagination threshold +
+ * paging math for overviews
+ */
 import { useMemo, useState } from 'react'
 
 export interface UseListControlsOptions<T> {

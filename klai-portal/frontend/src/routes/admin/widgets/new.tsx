@@ -218,7 +218,7 @@ function NewWidgetPage() {
         </h1>
         <Button
           type="button"
-          variant="ghost"
+          variant="outline"
           size="sm"
           onClick={() => navigate({ to: '/admin/widgets' })}
         >
@@ -405,7 +405,7 @@ function NewWidgetPage() {
                       onClick={() => setForm((p) => ({ ...p, theme: t }))}
                       role="radio"
                       aria-checked={form.theme === t}
-                      variant="ghost"
+                      variant="outline"
                       size="sm"
                       className={
                         form.theme === t
@@ -531,7 +531,7 @@ function NewWidgetPage() {
                     }
                     role="radio"
                     aria-checked={form.widget_position === pos}
-                    variant="ghost"
+                    variant="outline"
                     size="sm"
                     className={
                       form.widget_position === pos
@@ -627,7 +627,7 @@ function NewWidgetPage() {
         <div className="flex items-center justify-between pt-2 border-t border-gray-200 pt-4">
           <Button
             type="button"
-            variant="ghost"
+            variant="outline"
             size="sm"
             onClick={handlePrevious}
             disabled={currentIndex === 0}

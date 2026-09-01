@@ -128,7 +128,7 @@ function TranscriptionDetailPage() {
           {displayTitle}
         </h1>
         <Button
-          variant="ghost"
+          variant="outline"
           size="sm"
           onClick={() => navigate({ to: '/app/transcribe' })}
         >

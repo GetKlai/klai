@@ -60,7 +60,7 @@ export function CreatedKeyModal({
           </code>
           <Button
             type="button"
-            variant="ghost"
+            variant="outline"
             size="sm"
             onClick={() => void handleCopy()}
             className="shrink-0"

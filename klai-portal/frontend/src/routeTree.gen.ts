@@ -9,170 +9,110 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as WidgetTestRouteImport } from './routes/widget-test'
-import { Route as VerifyRouteImport } from './routes/verify'
-import { Route as TenantDeletedRouteImport } from './routes/tenant-deleted'
-import { Route as SignupRouteImport } from './routes/signup'
-import { Route as SelectWorkspaceRouteImport } from './routes/select-workspace'
-import { Route as ProvisioningRouteImport } from './routes/provisioning'
-import { Route as NoAccountRouteImport } from './routes/no-account'
-import { Route as LoginRouteImport } from './routes/login'
-import { Route as LoggedOutRouteImport } from './routes/logged-out'
-import { Route as JoinRequestRouteImport } from './routes/join-request'
-import { Route as CallbackRouteImport } from './routes/callback'
-import { Route as AppRouteRouteImport } from './routes/app/route'
-import { Route as AdminRouteRouteImport } from './routes/admin/route'
-import { Route as LocaleRouteRouteImport } from './routes/$locale/route'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as AppIndexRouteImport } from './routes/app/index'
-import { Route as AdminIndexRouteImport } from './routes/admin/index'
-import { Route as SetupMfaRouteImport } from './routes/setup/mfa'
-import { Route as Setup2faRouteImport } from './routes/setup/2fa'
-import { Route as PasswordSetRouteImport } from './routes/password/set'
-import { Route as PasswordForgotRouteImport } from './routes/password/forgot'
-import { Route as JoinRequestSentRouteImport } from './routes/join-request/sent'
-import { Route as DevUiRouteImport } from './routes/dev/ui'
-import { Route as BotWidgetIdRouteImport } from './routes/bot/$widgetId'
-import { Route as AppScribeRouteImport } from './routes/app/scribe'
-import { Route as AppIntegrationsRouteImport } from './routes/app/integrations'
-import { Route as AppFocusRouteImport } from './routes/app/focus'
-import { Route as AppChatRouteImport } from './routes/app/chat'
-import { Route as AppAccountRouteImport } from './routes/app/account'
-import { Route as AdminSettingsRouteImport } from './routes/admin/settings'
-import { Route as AdminJoinRequestsRouteImport } from './routes/admin/join-requests'
-import { Route as AdminDeprovisioningStatusRouteImport } from './routes/admin/deprovisioning-status'
-import { Route as AdminDangerZoneRouteImport } from './routes/admin/danger-zone'
-import { Route as AdminBillingRouteImport } from './routes/admin/billing'
+import { Route as LocaleRouteRouteImport } from './routes/$locale/route'
+import { Route as AdminRouteRouteImport } from './routes/admin/route'
+import { Route as AppRouteRouteImport } from './routes/app/route'
+import { Route as CallbackRouteImport } from './routes/callback'
+import { Route as JoinRequestRouteImport } from './routes/join-request'
+import { Route as LoggedOutRouteImport } from './routes/logged-out'
+import { Route as LoginRouteImport } from './routes/login'
+import { Route as NoAccountRouteImport } from './routes/no-account'
+import { Route as ProvisioningRouteImport } from './routes/provisioning'
+import { Route as SelectWorkspaceRouteImport } from './routes/select-workspace'
+import { Route as SignupRouteImport } from './routes/signup'
+import { Route as TenantDeletedRouteImport } from './routes/tenant-deleted'
+import { Route as VerifyRouteImport } from './routes/verify'
+import { Route as WidgetTestRouteImport } from './routes/widget-test'
 import { Route as LocaleSignupRouteImport } from './routes/$locale/signup'
-import { Route as AppTranscribeIndexRouteImport } from './routes/app/transcribe/index'
-import { Route as AppKnowledgeIndexRouteImport } from './routes/app/knowledge/index'
-import { Route as AppInstructionsIndexRouteImport } from './routes/app/instructions/index'
-import { Route as AppGapsIndexRouteImport } from './routes/app/gaps/index'
-import { Route as AppDocsIndexRouteImport } from './routes/app/docs/index'
-import { Route as AdminWidgetsIndexRouteImport } from './routes/admin/widgets/index'
-import { Route as AdminUsersIndexRouteImport } from './routes/admin/users/index'
-import { Route as AdminProfilesIndexRouteImport } from './routes/admin/profiles/index'
-import { Route as AdminPlatformIndexRouteImport } from './routes/admin/platform/index'
-import { Route as AdminMcpsIndexRouteImport } from './routes/admin/mcps/index'
-import { Route as AdminInstructionsIndexRouteImport } from './routes/admin/instructions/index'
-import { Route as AdminGroupsIndexRouteImport } from './routes/admin/groups/index'
-import { Route as AdminApiKeysIndexRouteImport } from './routes/admin/api-keys/index'
-import { Route as LocaleSignupIndexRouteImport } from './routes/$locale/signup/index'
-import { Route as AppTranscribeAddRouteImport } from './routes/app/transcribe/add'
-import { Route as AppTranscribeTranscriptionIdRouteImport } from './routes/app/transcribe/$transcriptionId'
-import { Route as AppMeetingsStartRouteImport } from './routes/app/meetings/start'
-import { Route as AppMeetingsMeetingIdRouteImport } from './routes/app/meetings/$meetingId'
-import { Route as AppKnowledgeNewRouteImport } from './routes/app/knowledge/new'
-import { Route as AppInstructionsNewRouteImport } from './routes/app/instructions/new'
-import { Route as AppFocusSplatRouteImport } from './routes/app/focus/$'
-import { Route as AppDocsNewRouteImport } from './routes/app/docs/new'
-import { Route as AdminWidgetsNewRouteImport } from './routes/admin/widgets/new'
-import { Route as AdminWidgetsIdRouteImport } from './routes/admin/widgets/$id'
-import { Route as AdminUsersInviteRouteImport } from './routes/admin/users/invite'
-import { Route as AdminPlatformOnboardingHowtoRouteImport } from './routes/admin/platform/onboarding-howto'
-import { Route as AdminPlatformNewRouteImport } from './routes/admin/platform/new'
-import { Route as AdminMcpsNewRouteImport } from './routes/admin/mcps/new'
-import { Route as AdminMcpsServerIdRouteImport } from './routes/admin/mcps/$serverId'
-import { Route as AdminInstructionsNewRouteImport } from './routes/admin/instructions/new'
-import { Route as AdminGroupsNewRouteImport } from './routes/admin/groups/new'
-import { Route as AdminApiKeysNewRouteImport } from './routes/admin/api-keys/new'
-import { Route as AdminApiKeysIdRouteImport } from './routes/admin/api-keys/$id'
-import { Route as LocaleSignupSocialRouteImport } from './routes/$locale/signup/social'
+import { Route as AdminIndexRouteImport } from './routes/admin/index'
+import { Route as AdminBillingRouteImport } from './routes/admin/billing'
+import { Route as AdminDangerZoneRouteImport } from './routes/admin/danger-zone'
+import { Route as AdminDeprovisioningStatusRouteImport } from './routes/admin/deprovisioning-status'
+import { Route as AdminJoinRequestsRouteImport } from './routes/admin/join-requests'
+import { Route as AdminSettingsRouteImport } from './routes/admin/settings'
+import { Route as AppIndexRouteImport } from './routes/app/index'
+import { Route as AppAccountRouteImport } from './routes/app/account'
+import { Route as AppChatRouteImport } from './routes/app/chat'
+import { Route as AppFocusRouteImport } from './routes/app/focus'
+import { Route as AppIntegrationsRouteImport } from './routes/app/integrations'
+import { Route as AppScribeRouteImport } from './routes/app/scribe'
+import { Route as BotWidgetIdRouteImport } from './routes/bot/$widgetId'
+import { Route as DevUiRouteImport } from './routes/dev/ui'
+import { Route as JoinRequestSentRouteImport } from './routes/join-request/sent'
+import { Route as PasswordForgotRouteImport } from './routes/password/forgot'
+import { Route as PasswordSetRouteImport } from './routes/password/set'
+import { Route as Setup2faRouteImport } from './routes/setup/2fa'
+import { Route as SetupMfaRouteImport } from './routes/setup/mfa'
 import { Route as LocalePasswordForgotRouteImport } from './routes/$locale/password/forgot'
-import { Route as AppKnowledgeKbSlugRouteRouteImport } from './routes/app/knowledge/$kbSlug/route'
+import { Route as LocaleSignupIndexRouteImport } from './routes/$locale/signup/index'
+import { Route as LocaleSignupSocialRouteImport } from './routes/$locale/signup/social'
+import { Route as AdminApiKeysIndexRouteImport } from './routes/admin/api-keys/index'
+import { Route as AdminApiKeysIdRouteImport } from './routes/admin/api-keys/$id'
+import { Route as AdminApiKeysNewRouteImport } from './routes/admin/api-keys/new'
+import { Route as AdminGroupsIndexRouteImport } from './routes/admin/groups/index'
+import { Route as AdminGroupsNewRouteImport } from './routes/admin/groups/new'
+import { Route as AdminInstructionsIndexRouteImport } from './routes/admin/instructions/index'
+import { Route as AdminInstructionsNewRouteImport } from './routes/admin/instructions/new'
+import { Route as AdminMcpsIndexRouteImport } from './routes/admin/mcps/index'
+import { Route as AdminMcpsServerIdRouteImport } from './routes/admin/mcps/$serverId'
+import { Route as AdminMcpsNewRouteImport } from './routes/admin/mcps/new'
+import { Route as AdminPlatformIndexRouteImport } from './routes/admin/platform/index'
+import { Route as AdminPlatformNewRouteImport } from './routes/admin/platform/new'
+import { Route as AdminPlatformOnboardingHowtoRouteImport } from './routes/admin/platform/onboarding-howto'
+import { Route as AdminProfilesIndexRouteImport } from './routes/admin/profiles/index'
+import { Route as AdminUsersIndexRouteImport } from './routes/admin/users/index'
+import { Route as AdminUsersInviteRouteImport } from './routes/admin/users/invite'
+import { Route as AdminWidgetsIndexRouteImport } from './routes/admin/widgets/index'
+import { Route as AdminWidgetsIdRouteImport } from './routes/admin/widgets/$id'
+import { Route as AdminWidgetsNewRouteImport } from './routes/admin/widgets/new'
+import { Route as AppDocsIndexRouteImport } from './routes/app/docs/index'
 import { Route as AppDocsKbSlugRouteRouteImport } from './routes/app/docs/$kbSlug/route'
-import { Route as AppKnowledgeKbSlugIndexRouteImport } from './routes/app/knowledge/$kbSlug/index'
-import { Route as AppDocsKbSlugIndexRouteImport } from './routes/app/docs/$kbSlug/index'
-import { Route as AdminProfilesProfileIndexRouteImport } from './routes/admin/profiles/$profile/index'
+import { Route as AppDocsNewRouteImport } from './routes/app/docs/new'
+import { Route as AppFocusSplatRouteImport } from './routes/app/focus/$'
+import { Route as AppGapsIndexRouteImport } from './routes/app/gaps/index'
+import { Route as AppInstructionsIndexRouteImport } from './routes/app/instructions/index'
+import { Route as AppInstructionsNewRouteImport } from './routes/app/instructions/new'
+import { Route as AppKnowledgeIndexRouteImport } from './routes/app/knowledge/index'
+import { Route as AppKnowledgeKbSlugRouteRouteImport } from './routes/app/knowledge/$kbSlug/route'
+import { Route as AppKnowledgeNewRouteImport } from './routes/app/knowledge/new'
+import { Route as AppMeetingsMeetingIdRouteImport } from './routes/app/meetings/$meetingId'
+import { Route as AppMeetingsStartRouteImport } from './routes/app/meetings/start'
+import { Route as AppTranscribeIndexRouteImport } from './routes/app/transcribe/index'
+import { Route as AppTranscribeTranscriptionIdRouteImport } from './routes/app/transcribe/$transcriptionId'
+import { Route as AppTranscribeAddRouteImport } from './routes/app/transcribe/add'
 import { Route as AdminGroupsGroupIdIndexRouteImport } from './routes/admin/groups/$groupId/index'
-import { Route as AppKnowledgeKbSlugAddSourceRouteImport } from './routes/app/knowledge/$kbSlug_.add-source'
-import { Route as AppKnowledgeKbSlugAddConnectorRouteImport } from './routes/app/knowledge/$kbSlug_.add-connector'
-import { Route as AppKnowledgeKbSlugTaxonomyRouteImport } from './routes/app/knowledge/$kbSlug/taxonomy'
-import { Route as AppKnowledgeKbSlugSourcesRouteImport } from './routes/app/knowledge/$kbSlug/sources'
-import { Route as AppKnowledgeKbSlugSettingsRouteImport } from './routes/app/knowledge/$kbSlug/settings'
-import { Route as AppKnowledgeKbSlugOverviewRouteImport } from './routes/app/knowledge/$kbSlug/overview'
-import { Route as AppKnowledgeKbSlugMembersRouteImport } from './routes/app/knowledge/$kbSlug/members'
-import { Route as AppKnowledgeKbSlugItemsRouteImport } from './routes/app/knowledge/$kbSlug/items'
-import { Route as AppKnowledgeKbSlugInsightsRouteImport } from './routes/app/knowledge/$kbSlug/insights'
-import { Route as AppKnowledgeKbSlugConnectorsRouteImport } from './routes/app/knowledge/$kbSlug/connectors'
-import { Route as AppKnowledgeKbSlugAdvancedRouteImport } from './routes/app/knowledge/$kbSlug/advanced'
-import { Route as AppInstructionsSlugEditRouteImport } from './routes/app/instructions/$slug.edit'
-import { Route as AppDocsKbSlugEditRouteImport } from './routes/app/docs/$kbSlug_.edit'
-import { Route as AppDocsKbSlugPageIdRouteImport } from './routes/app/docs/$kbSlug/$pageId'
-import { Route as AdminWidgetsIdTestRouteImport } from './routes/admin/widgets/$id_.test'
-import { Route as AdminUsersUserIdEditRouteImport } from './routes/admin/users/$userId/edit'
-import { Route as AdminProfilesProfileAddMemberRouteImport } from './routes/admin/profiles/$profile/add-member'
-import { Route as AdminPlatformOrgsOrgIdRouteImport } from './routes/admin/platform/orgs.$orgId'
-import { Route as AdminInstructionsSlugEditRouteImport } from './routes/admin/instructions/$slug.edit'
-import { Route as AdminGroupsGroupIdEditRouteImport } from './routes/admin/groups/$groupId/edit'
 import { Route as AdminGroupsGroupIdAddMemberRouteImport } from './routes/admin/groups/$groupId/add-member'
-import { Route as AppKnowledgeKbSlugEditConnectorConnectorIdRouteImport } from './routes/app/knowledge/$kbSlug_.edit-connector.$connectorId'
-import { Route as AdminPlatformFeedbackSubmissionsSubmissionIdRouteImport } from './routes/admin/platform/feedback.submissions.$submissionId'
+import { Route as AdminGroupsGroupIdEditRouteImport } from './routes/admin/groups/$groupId/edit'
+import { Route as AdminInstructionsSlugEditRouteImport } from './routes/admin/instructions/$slug.edit'
+import { Route as AdminPlatformOrgsOrgIdRouteImport } from './routes/admin/platform/orgs.$orgId'
+import { Route as AdminProfilesProfileIndexRouteImport } from './routes/admin/profiles/$profile/index'
+import { Route as AdminProfilesProfileAddMemberRouteImport } from './routes/admin/profiles/$profile/add-member'
+import { Route as AdminUsersUserIdEditRouteImport } from './routes/admin/users/$userId/edit'
+import { Route as AdminWidgetsIdTestRouteImport } from './routes/admin/widgets/$id_.test'
+import { Route as AppDocsKbSlugIndexRouteImport } from './routes/app/docs/$kbSlug/index'
+import { Route as AppDocsKbSlugPageIdRouteImport } from './routes/app/docs/$kbSlug/$pageId'
+import { Route as AppDocsKbSlugEditRouteImport } from './routes/app/docs/$kbSlug_.edit'
+import { Route as AppInstructionsSlugEditRouteImport } from './routes/app/instructions/$slug.edit'
+import { Route as AppKnowledgeKbSlugIndexRouteImport } from './routes/app/knowledge/$kbSlug/index'
+import { Route as AppKnowledgeKbSlugAdvancedRouteImport } from './routes/app/knowledge/$kbSlug/advanced'
+import { Route as AppKnowledgeKbSlugConnectorsRouteImport } from './routes/app/knowledge/$kbSlug/connectors'
+import { Route as AppKnowledgeKbSlugInsightsRouteImport } from './routes/app/knowledge/$kbSlug/insights'
+import { Route as AppKnowledgeKbSlugItemsRouteImport } from './routes/app/knowledge/$kbSlug/items'
+import { Route as AppKnowledgeKbSlugMembersRouteImport } from './routes/app/knowledge/$kbSlug/members'
+import { Route as AppKnowledgeKbSlugOverviewRouteImport } from './routes/app/knowledge/$kbSlug/overview'
+import { Route as AppKnowledgeKbSlugSettingsRouteImport } from './routes/app/knowledge/$kbSlug/settings'
+import { Route as AppKnowledgeKbSlugSourcesRouteImport } from './routes/app/knowledge/$kbSlug/sources'
+import { Route as AppKnowledgeKbSlugTaxonomyRouteImport } from './routes/app/knowledge/$kbSlug/taxonomy'
+import { Route as AppKnowledgeKbSlugAddConnectorRouteImport } from './routes/app/knowledge/$kbSlug_.add-connector'
+import { Route as AppKnowledgeKbSlugAddSourceRouteImport } from './routes/app/knowledge/$kbSlug_.add-source'
 import { Route as AdminPlatformFeedbackItemsItemIdRouteImport } from './routes/admin/platform/feedback.items.$itemId'
+import { Route as AdminPlatformFeedbackSubmissionsSubmissionIdRouteImport } from './routes/admin/platform/feedback.submissions.$submissionId'
+import { Route as AppKnowledgeKbSlugEditConnectorConnectorIdRouteImport } from './routes/app/knowledge/$kbSlug_.edit-connector.$connectorId'
 
-const WidgetTestRoute = WidgetTestRouteImport.update({
-  id: '/widget-test',
-  path: '/widget-test',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const VerifyRoute = VerifyRouteImport.update({
-  id: '/verify',
-  path: '/verify',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const TenantDeletedRoute = TenantDeletedRouteImport.update({
-  id: '/tenant-deleted',
-  path: '/tenant-deleted',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SignupRoute = SignupRouteImport.update({
-  id: '/signup',
-  path: '/signup',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SelectWorkspaceRoute = SelectWorkspaceRouteImport.update({
-  id: '/select-workspace',
-  path: '/select-workspace',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ProvisioningRoute = ProvisioningRouteImport.update({
-  id: '/provisioning',
-  path: '/provisioning',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const NoAccountRoute = NoAccountRouteImport.update({
-  id: '/no-account',
-  path: '/no-account',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LoginRoute = LoginRouteImport.update({
-  id: '/login',
-  path: '/login',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LoggedOutRoute = LoggedOutRouteImport.update({
-  id: '/logged-out',
-  path: '/logged-out',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const JoinRequestRoute = JoinRequestRouteImport.update({
-  id: '/join-request',
-  path: '/join-request',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const CallbackRoute = CallbackRouteImport.update({
-  id: '/callback',
-  path: '/callback',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AppRouteRoute = AppRouteRouteImport.update({
-  id: '/app',
-  path: '/app',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AdminRouteRoute = AdminRouteRouteImport.update({
-  id: '/admin',
-  path: '/admin',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LocaleRouteRoute = LocaleRouteRouteImport.update({
@@ -180,89 +120,89 @@ const LocaleRouteRoute = LocaleRouteRouteImport.update({
   path: '/$locale',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const AdminRouteRoute = AdminRouteRouteImport.update({
+  id: '/admin',
+  path: '/admin',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AppIndexRoute = AppIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => AppRouteRoute,
+const AppRouteRoute = AppRouteRouteImport.update({
+  id: '/app',
+  path: '/app',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CallbackRoute = CallbackRouteImport.update({
+  id: '/callback',
+  path: '/callback',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const JoinRequestRoute = JoinRequestRouteImport.update({
+  id: '/join-request',
+  path: '/join-request',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoggedOutRoute = LoggedOutRouteImport.update({
+  id: '/logged-out',
+  path: '/logged-out',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const NoAccountRoute = NoAccountRouteImport.update({
+  id: '/no-account',
+  path: '/no-account',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProvisioningRoute = ProvisioningRouteImport.update({
+  id: '/provisioning',
+  path: '/provisioning',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SelectWorkspaceRoute = SelectWorkspaceRouteImport.update({
+  id: '/select-workspace',
+  path: '/select-workspace',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SignupRoute = SignupRouteImport.update({
+  id: '/signup',
+  path: '/signup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TenantDeletedRoute = TenantDeletedRouteImport.update({
+  id: '/tenant-deleted',
+  path: '/tenant-deleted',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const VerifyRoute = VerifyRouteImport.update({
+  id: '/verify',
+  path: '/verify',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WidgetTestRoute = WidgetTestRouteImport.update({
+  id: '/widget-test',
+  path: '/widget-test',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LocaleSignupRoute = LocaleSignupRouteImport.update({
+  id: '/signup',
+  path: '/signup',
+  getParentRoute: () => LocaleRouteRoute,
 } as any)
 const AdminIndexRoute = AdminIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => AdminRouteRoute,
 } as any)
-const SetupMfaRoute = SetupMfaRouteImport.update({
-  id: '/setup/mfa',
-  path: '/setup/mfa',
-  getParentRoute: () => rootRouteImport,
-} as any).lazy(() => import('./routes/setup/mfa.lazy').then((d) => d.Route))
-const Setup2faRoute = Setup2faRouteImport.update({
-  id: '/setup/2fa',
-  path: '/setup/2fa',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PasswordSetRoute = PasswordSetRouteImport.update({
-  id: '/password/set',
-  path: '/password/set',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PasswordForgotRoute = PasswordForgotRouteImport.update({
-  id: '/password/forgot',
-  path: '/password/forgot',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const JoinRequestSentRoute = JoinRequestSentRouteImport.update({
-  id: '/sent',
-  path: '/sent',
-  getParentRoute: () => JoinRequestRoute,
-} as any)
-const DevUiRoute = DevUiRouteImport.update({
-  id: '/dev/ui',
-  path: '/dev/ui',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const BotWidgetIdRoute = BotWidgetIdRouteImport.update({
-  id: '/bot/$widgetId',
-  path: '/bot/$widgetId',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AppScribeRoute = AppScribeRouteImport.update({
-  id: '/scribe',
-  path: '/scribe',
-  getParentRoute: () => AppRouteRoute,
-} as any)
-const AppIntegrationsRoute = AppIntegrationsRouteImport.update({
-  id: '/integrations',
-  path: '/integrations',
-  getParentRoute: () => AppRouteRoute,
-} as any)
-const AppFocusRoute = AppFocusRouteImport.update({
-  id: '/focus',
-  path: '/focus',
-  getParentRoute: () => AppRouteRoute,
-} as any)
-const AppChatRoute = AppChatRouteImport.update({
-  id: '/chat',
-  path: '/chat',
-  getParentRoute: () => AppRouteRoute,
-} as any)
-const AppAccountRoute = AppAccountRouteImport.update({
-  id: '/account',
-  path: '/account',
-  getParentRoute: () => AppRouteRoute,
-} as any)
-const AdminSettingsRoute = AdminSettingsRouteImport.update({
-  id: '/settings',
-  path: '/settings',
+const AdminBillingRoute = AdminBillingRouteImport.update({
+  id: '/billing',
+  path: '/billing',
   getParentRoute: () => AdminRouteRoute,
-} as any)
-const AdminJoinRequestsRoute = AdminJoinRequestsRouteImport.update({
-  id: '/join-requests',
-  path: '/join-requests',
+} as any).lazy(() => import('./routes/admin/billing.lazy').then((d) => d.Route))
+const AdminDangerZoneRoute = AdminDangerZoneRouteImport.update({
+  id: '/danger-zone',
+  path: '/danger-zone',
   getParentRoute: () => AdminRouteRoute,
 } as any)
 const AdminDeprovisioningStatusRoute =
@@ -271,74 +211,109 @@ const AdminDeprovisioningStatusRoute =
     path: '/deprovisioning-status',
     getParentRoute: () => AdminRouteRoute,
   } as any)
-const AdminDangerZoneRoute = AdminDangerZoneRouteImport.update({
-  id: '/danger-zone',
-  path: '/danger-zone',
+const AdminJoinRequestsRoute = AdminJoinRequestsRouteImport.update({
+  id: '/join-requests',
+  path: '/join-requests',
   getParentRoute: () => AdminRouteRoute,
 } as any)
-const AdminBillingRoute = AdminBillingRouteImport.update({
-  id: '/billing',
-  path: '/billing',
+const AdminSettingsRoute = AdminSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
   getParentRoute: () => AdminRouteRoute,
-} as any).lazy(() => import('./routes/admin/billing.lazy').then((d) => d.Route))
-const LocaleSignupRoute = LocaleSignupRouteImport.update({
-  id: '/signup',
-  path: '/signup',
+} as any)
+const AppIndexRoute = AppIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppAccountRoute = AppAccountRouteImport.update({
+  id: '/account',
+  path: '/account',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppChatRoute = AppChatRouteImport.update({
+  id: '/chat',
+  path: '/chat',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppFocusRoute = AppFocusRouteImport.update({
+  id: '/focus',
+  path: '/focus',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppIntegrationsRoute = AppIntegrationsRouteImport.update({
+  id: '/integrations',
+  path: '/integrations',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppScribeRoute = AppScribeRouteImport.update({
+  id: '/scribe',
+  path: '/scribe',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const BotWidgetIdRoute = BotWidgetIdRouteImport.update({
+  id: '/bot/$widgetId',
+  path: '/bot/$widgetId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DevUiRoute = DevUiRouteImport.update({
+  id: '/dev/ui',
+  path: '/dev/ui',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const JoinRequestSentRoute = JoinRequestSentRouteImport.update({
+  id: '/sent',
+  path: '/sent',
+  getParentRoute: () => JoinRequestRoute,
+} as any)
+const PasswordForgotRoute = PasswordForgotRouteImport.update({
+  id: '/password/forgot',
+  path: '/password/forgot',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PasswordSetRoute = PasswordSetRouteImport.update({
+  id: '/password/set',
+  path: '/password/set',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const Setup2faRoute = Setup2faRouteImport.update({
+  id: '/setup/2fa',
+  path: '/setup/2fa',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SetupMfaRoute = SetupMfaRouteImport.update({
+  id: '/setup/mfa',
+  path: '/setup/mfa',
+  getParentRoute: () => rootRouteImport,
+} as any).lazy(() => import('./routes/setup/mfa.lazy').then((d) => d.Route))
+const LocalePasswordForgotRoute = LocalePasswordForgotRouteImport.update({
+  id: '/password/forgot',
+  path: '/password/forgot',
   getParentRoute: () => LocaleRouteRoute,
 } as any)
-const AppTranscribeIndexRoute = AppTranscribeIndexRouteImport.update({
-  id: '/transcribe/',
-  path: '/transcribe/',
-  getParentRoute: () => AppRouteRoute,
+const LocaleSignupIndexRoute = LocaleSignupIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => LocaleSignupRoute,
 } as any)
-const AppKnowledgeIndexRoute = AppKnowledgeIndexRouteImport.update({
-  id: '/knowledge/',
-  path: '/knowledge/',
-  getParentRoute: () => AppRouteRoute,
+const LocaleSignupSocialRoute = LocaleSignupSocialRouteImport.update({
+  id: '/social',
+  path: '/social',
+  getParentRoute: () => LocaleSignupRoute,
 } as any)
-const AppInstructionsIndexRoute = AppInstructionsIndexRouteImport.update({
-  id: '/instructions/',
-  path: '/instructions/',
-  getParentRoute: () => AppRouteRoute,
-} as any)
-const AppGapsIndexRoute = AppGapsIndexRouteImport.update({
-  id: '/gaps/',
-  path: '/gaps/',
-  getParentRoute: () => AppRouteRoute,
-} as any)
-const AppDocsIndexRoute = AppDocsIndexRouteImport.update({
-  id: '/docs/',
-  path: '/docs/',
-  getParentRoute: () => AppRouteRoute,
-} as any)
-const AdminWidgetsIndexRoute = AdminWidgetsIndexRouteImport.update({
-  id: '/widgets/',
-  path: '/widgets/',
+const AdminApiKeysIndexRoute = AdminApiKeysIndexRouteImport.update({
+  id: '/api-keys/',
+  path: '/api-keys/',
   getParentRoute: () => AdminRouteRoute,
 } as any)
-const AdminUsersIndexRoute = AdminUsersIndexRouteImport.update({
-  id: '/users/',
-  path: '/users/',
+const AdminApiKeysIdRoute = AdminApiKeysIdRouteImport.update({
+  id: '/api-keys/$id',
+  path: '/api-keys/$id',
   getParentRoute: () => AdminRouteRoute,
 } as any)
-const AdminProfilesIndexRoute = AdminProfilesIndexRouteImport.update({
-  id: '/profiles/',
-  path: '/profiles/',
-  getParentRoute: () => AdminRouteRoute,
-} as any)
-const AdminPlatformIndexRoute = AdminPlatformIndexRouteImport.update({
-  id: '/platform/',
-  path: '/platform/',
-  getParentRoute: () => AdminRouteRoute,
-} as any)
-const AdminMcpsIndexRoute = AdminMcpsIndexRouteImport.update({
-  id: '/mcps/',
-  path: '/mcps/',
-  getParentRoute: () => AdminRouteRoute,
-} as any)
-const AdminInstructionsIndexRoute = AdminInstructionsIndexRouteImport.update({
-  id: '/instructions/',
-  path: '/instructions/',
+const AdminApiKeysNewRoute = AdminApiKeysNewRouteImport.update({
+  id: '/api-keys/new',
+  path: '/api-keys/new',
   getParentRoute: () => AdminRouteRoute,
 } as any)
 const AdminGroupsIndexRoute = AdminGroupsIndexRouteImport.update({
@@ -346,70 +321,44 @@ const AdminGroupsIndexRoute = AdminGroupsIndexRouteImport.update({
   path: '/groups/',
   getParentRoute: () => AdminRouteRoute,
 } as any)
-const AdminApiKeysIndexRoute = AdminApiKeysIndexRouteImport.update({
-  id: '/api-keys/',
-  path: '/api-keys/',
+const AdminGroupsNewRoute = AdminGroupsNewRouteImport.update({
+  id: '/groups/new',
+  path: '/groups/new',
   getParentRoute: () => AdminRouteRoute,
 } as any)
-const LocaleSignupIndexRoute = LocaleSignupIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => LocaleSignupRoute,
+const AdminInstructionsIndexRoute = AdminInstructionsIndexRouteImport.update({
+  id: '/instructions/',
+  path: '/instructions/',
+  getParentRoute: () => AdminRouteRoute,
 } as any)
-const AppTranscribeAddRoute = AppTranscribeAddRouteImport.update({
-  id: '/transcribe/add',
-  path: '/transcribe/add',
-  getParentRoute: () => AppRouteRoute,
-} as any)
-const AppTranscribeTranscriptionIdRoute =
-  AppTranscribeTranscriptionIdRouteImport.update({
-    id: '/transcribe/$transcriptionId',
-    path: '/transcribe/$transcriptionId',
-    getParentRoute: () => AppRouteRoute,
-  } as any)
-const AppMeetingsStartRoute = AppMeetingsStartRouteImport.update({
-  id: '/meetings/start',
-  path: '/meetings/start',
-  getParentRoute: () => AppRouteRoute,
-} as any)
-const AppMeetingsMeetingIdRoute = AppMeetingsMeetingIdRouteImport.update({
-  id: '/meetings/$meetingId',
-  path: '/meetings/$meetingId',
-  getParentRoute: () => AppRouteRoute,
-} as any)
-const AppKnowledgeNewRoute = AppKnowledgeNewRouteImport.update({
-  id: '/knowledge/new',
-  path: '/knowledge/new',
-  getParentRoute: () => AppRouteRoute,
-} as any)
-const AppInstructionsNewRoute = AppInstructionsNewRouteImport.update({
+const AdminInstructionsNewRoute = AdminInstructionsNewRouteImport.update({
   id: '/instructions/new',
   path: '/instructions/new',
-  getParentRoute: () => AppRouteRoute,
-} as any)
-const AppFocusSplatRoute = AppFocusSplatRouteImport.update({
-  id: '/$',
-  path: '/$',
-  getParentRoute: () => AppFocusRoute,
-} as any)
-const AppDocsNewRoute = AppDocsNewRouteImport.update({
-  id: '/docs/new',
-  path: '/docs/new',
-  getParentRoute: () => AppRouteRoute,
-} as any)
-const AdminWidgetsNewRoute = AdminWidgetsNewRouteImport.update({
-  id: '/widgets/new',
-  path: '/widgets/new',
   getParentRoute: () => AdminRouteRoute,
 } as any)
-const AdminWidgetsIdRoute = AdminWidgetsIdRouteImport.update({
-  id: '/widgets/$id',
-  path: '/widgets/$id',
+const AdminMcpsIndexRoute = AdminMcpsIndexRouteImport.update({
+  id: '/mcps/',
+  path: '/mcps/',
   getParentRoute: () => AdminRouteRoute,
 } as any)
-const AdminUsersInviteRoute = AdminUsersInviteRouteImport.update({
-  id: '/users/invite',
-  path: '/users/invite',
+const AdminMcpsServerIdRoute = AdminMcpsServerIdRouteImport.update({
+  id: '/mcps/$serverId',
+  path: '/mcps/$serverId',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminMcpsNewRoute = AdminMcpsNewRouteImport.update({
+  id: '/mcps/new',
+  path: '/mcps/new',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminPlatformIndexRoute = AdminPlatformIndexRouteImport.update({
+  id: '/platform/',
+  path: '/platform/',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminPlatformNewRoute = AdminPlatformNewRouteImport.update({
+  id: '/platform/new',
+  path: '/platform/new',
   getParentRoute: () => AdminRouteRoute,
 } as any)
 const AdminPlatformOnboardingHowtoRoute =
@@ -418,54 +367,39 @@ const AdminPlatformOnboardingHowtoRoute =
     path: '/platform/onboarding-howto',
     getParentRoute: () => AdminRouteRoute,
   } as any)
-const AdminPlatformNewRoute = AdminPlatformNewRouteImport.update({
-  id: '/platform/new',
-  path: '/platform/new',
+const AdminProfilesIndexRoute = AdminProfilesIndexRouteImport.update({
+  id: '/profiles/',
+  path: '/profiles/',
   getParentRoute: () => AdminRouteRoute,
 } as any)
-const AdminMcpsNewRoute = AdminMcpsNewRouteImport.update({
-  id: '/mcps/new',
-  path: '/mcps/new',
+const AdminUsersIndexRoute = AdminUsersIndexRouteImport.update({
+  id: '/users/',
+  path: '/users/',
   getParentRoute: () => AdminRouteRoute,
 } as any)
-const AdminMcpsServerIdRoute = AdminMcpsServerIdRouteImport.update({
-  id: '/mcps/$serverId',
-  path: '/mcps/$serverId',
+const AdminUsersInviteRoute = AdminUsersInviteRouteImport.update({
+  id: '/users/invite',
+  path: '/users/invite',
   getParentRoute: () => AdminRouteRoute,
 } as any)
-const AdminInstructionsNewRoute = AdminInstructionsNewRouteImport.update({
-  id: '/instructions/new',
-  path: '/instructions/new',
+const AdminWidgetsIndexRoute = AdminWidgetsIndexRouteImport.update({
+  id: '/widgets/',
+  path: '/widgets/',
   getParentRoute: () => AdminRouteRoute,
 } as any)
-const AdminGroupsNewRoute = AdminGroupsNewRouteImport.update({
-  id: '/groups/new',
-  path: '/groups/new',
+const AdminWidgetsIdRoute = AdminWidgetsIdRouteImport.update({
+  id: '/widgets/$id',
+  path: '/widgets/$id',
   getParentRoute: () => AdminRouteRoute,
 } as any)
-const AdminApiKeysNewRoute = AdminApiKeysNewRouteImport.update({
-  id: '/api-keys/new',
-  path: '/api-keys/new',
+const AdminWidgetsNewRoute = AdminWidgetsNewRouteImport.update({
+  id: '/widgets/new',
+  path: '/widgets/new',
   getParentRoute: () => AdminRouteRoute,
 } as any)
-const AdminApiKeysIdRoute = AdminApiKeysIdRouteImport.update({
-  id: '/api-keys/$id',
-  path: '/api-keys/$id',
-  getParentRoute: () => AdminRouteRoute,
-} as any)
-const LocaleSignupSocialRoute = LocaleSignupSocialRouteImport.update({
-  id: '/social',
-  path: '/social',
-  getParentRoute: () => LocaleSignupRoute,
-} as any)
-const LocalePasswordForgotRoute = LocalePasswordForgotRouteImport.update({
-  id: '/password/forgot',
-  path: '/password/forgot',
-  getParentRoute: () => LocaleRouteRoute,
-} as any)
-const AppKnowledgeKbSlugRouteRoute = AppKnowledgeKbSlugRouteRouteImport.update({
-  id: '/knowledge/$kbSlug',
-  path: '/knowledge/$kbSlug',
+const AppDocsIndexRoute = AppDocsIndexRouteImport.update({
+  id: '/docs/',
+  path: '/docs/',
   getParentRoute: () => AppRouteRoute,
 } as any)
 const AppDocsKbSlugRouteRoute = AppDocsKbSlugRouteRouteImport.update({
@@ -473,139 +407,75 @@ const AppDocsKbSlugRouteRoute = AppDocsKbSlugRouteRouteImport.update({
   path: '/docs/$kbSlug',
   getParentRoute: () => AppRouteRoute,
 } as any)
-const AppKnowledgeKbSlugIndexRoute = AppKnowledgeKbSlugIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
+const AppDocsNewRoute = AppDocsNewRouteImport.update({
+  id: '/docs/new',
+  path: '/docs/new',
+  getParentRoute: () => AppRouteRoute,
 } as any)
-const AppDocsKbSlugIndexRoute = AppDocsKbSlugIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => AppDocsKbSlugRouteRoute,
+const AppFocusSplatRoute = AppFocusSplatRouteImport.update({
+  id: '/$',
+  path: '/$',
+  getParentRoute: () => AppFocusRoute,
 } as any)
-const AdminProfilesProfileIndexRoute =
-  AdminProfilesProfileIndexRouteImport.update({
-    id: '/profiles/$profile/',
-    path: '/profiles/$profile/',
-    getParentRoute: () => AdminRouteRoute,
+const AppGapsIndexRoute = AppGapsIndexRouteImport.update({
+  id: '/gaps/',
+  path: '/gaps/',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppInstructionsIndexRoute = AppInstructionsIndexRouteImport.update({
+  id: '/instructions/',
+  path: '/instructions/',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppInstructionsNewRoute = AppInstructionsNewRouteImport.update({
+  id: '/instructions/new',
+  path: '/instructions/new',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppKnowledgeIndexRoute = AppKnowledgeIndexRouteImport.update({
+  id: '/knowledge/',
+  path: '/knowledge/',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppKnowledgeKbSlugRouteRoute = AppKnowledgeKbSlugRouteRouteImport.update({
+  id: '/knowledge/$kbSlug',
+  path: '/knowledge/$kbSlug',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppKnowledgeNewRoute = AppKnowledgeNewRouteImport.update({
+  id: '/knowledge/new',
+  path: '/knowledge/new',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppMeetingsMeetingIdRoute = AppMeetingsMeetingIdRouteImport.update({
+  id: '/meetings/$meetingId',
+  path: '/meetings/$meetingId',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppMeetingsStartRoute = AppMeetingsStartRouteImport.update({
+  id: '/meetings/start',
+  path: '/meetings/start',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppTranscribeIndexRoute = AppTranscribeIndexRouteImport.update({
+  id: '/transcribe/',
+  path: '/transcribe/',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppTranscribeTranscriptionIdRoute =
+  AppTranscribeTranscriptionIdRouteImport.update({
+    id: '/transcribe/$transcriptionId',
+    path: '/transcribe/$transcriptionId',
+    getParentRoute: () => AppRouteRoute,
   } as any)
+const AppTranscribeAddRoute = AppTranscribeAddRouteImport.update({
+  id: '/transcribe/add',
+  path: '/transcribe/add',
+  getParentRoute: () => AppRouteRoute,
+} as any)
 const AdminGroupsGroupIdIndexRoute = AdminGroupsGroupIdIndexRouteImport.update({
   id: '/groups/$groupId/',
   path: '/groups/$groupId/',
-  getParentRoute: () => AdminRouteRoute,
-} as any)
-const AppKnowledgeKbSlugAddSourceRoute =
-  AppKnowledgeKbSlugAddSourceRouteImport.update({
-    id: '/knowledge/$kbSlug_/add-source',
-    path: '/knowledge/$kbSlug/add-source',
-    getParentRoute: () => AppRouteRoute,
-  } as any)
-const AppKnowledgeKbSlugAddConnectorRoute =
-  AppKnowledgeKbSlugAddConnectorRouteImport.update({
-    id: '/knowledge/$kbSlug_/add-connector',
-    path: '/knowledge/$kbSlug/add-connector',
-    getParentRoute: () => AppRouteRoute,
-  } as any)
-const AppKnowledgeKbSlugTaxonomyRoute =
-  AppKnowledgeKbSlugTaxonomyRouteImport.update({
-    id: '/taxonomy',
-    path: '/taxonomy',
-    getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
-  } as any)
-const AppKnowledgeKbSlugSourcesRoute =
-  AppKnowledgeKbSlugSourcesRouteImport.update({
-    id: '/sources',
-    path: '/sources',
-    getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
-  } as any)
-const AppKnowledgeKbSlugSettingsRoute =
-  AppKnowledgeKbSlugSettingsRouteImport.update({
-    id: '/settings',
-    path: '/settings',
-    getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
-  } as any)
-const AppKnowledgeKbSlugOverviewRoute =
-  AppKnowledgeKbSlugOverviewRouteImport.update({
-    id: '/overview',
-    path: '/overview',
-    getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
-  } as any)
-const AppKnowledgeKbSlugMembersRoute =
-  AppKnowledgeKbSlugMembersRouteImport.update({
-    id: '/members',
-    path: '/members',
-    getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
-  } as any)
-const AppKnowledgeKbSlugItemsRoute = AppKnowledgeKbSlugItemsRouteImport.update({
-  id: '/items',
-  path: '/items',
-  getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
-} as any)
-const AppKnowledgeKbSlugInsightsRoute =
-  AppKnowledgeKbSlugInsightsRouteImport.update({
-    id: '/insights',
-    path: '/insights',
-    getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
-  } as any)
-const AppKnowledgeKbSlugConnectorsRoute =
-  AppKnowledgeKbSlugConnectorsRouteImport.update({
-    id: '/connectors',
-    path: '/connectors',
-    getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
-  } as any)
-const AppKnowledgeKbSlugAdvancedRoute =
-  AppKnowledgeKbSlugAdvancedRouteImport.update({
-    id: '/advanced',
-    path: '/advanced',
-    getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
-  } as any)
-const AppInstructionsSlugEditRoute = AppInstructionsSlugEditRouteImport.update({
-  id: '/instructions/$slug/edit',
-  path: '/instructions/$slug/edit',
-  getParentRoute: () => AppRouteRoute,
-} as any)
-const AppDocsKbSlugEditRoute = AppDocsKbSlugEditRouteImport.update({
-  id: '/docs/$kbSlug_/edit',
-  path: '/docs/$kbSlug/edit',
-  getParentRoute: () => AppRouteRoute,
-} as any)
-const AppDocsKbSlugPageIdRoute = AppDocsKbSlugPageIdRouteImport.update({
-  id: '/$pageId',
-  path: '/$pageId',
-  getParentRoute: () => AppDocsKbSlugRouteRoute,
-} as any).lazy(() =>
-  import('./routes/app/docs/$kbSlug/$pageId.lazy').then((d) => d.Route),
-)
-const AdminWidgetsIdTestRoute = AdminWidgetsIdTestRouteImport.update({
-  id: '/widgets/$id_/test',
-  path: '/widgets/$id/test',
-  getParentRoute: () => AdminRouteRoute,
-} as any)
-const AdminUsersUserIdEditRoute = AdminUsersUserIdEditRouteImport.update({
-  id: '/users/$userId/edit',
-  path: '/users/$userId/edit',
-  getParentRoute: () => AdminRouteRoute,
-} as any)
-const AdminProfilesProfileAddMemberRoute =
-  AdminProfilesProfileAddMemberRouteImport.update({
-    id: '/profiles/$profile/add-member',
-    path: '/profiles/$profile/add-member',
-    getParentRoute: () => AdminRouteRoute,
-  } as any)
-const AdminPlatformOrgsOrgIdRoute = AdminPlatformOrgsOrgIdRouteImport.update({
-  id: '/platform/orgs/$orgId',
-  path: '/platform/orgs/$orgId',
-  getParentRoute: () => AdminRouteRoute,
-} as any)
-const AdminInstructionsSlugEditRoute =
-  AdminInstructionsSlugEditRouteImport.update({
-    id: '/instructions/$slug/edit',
-    path: '/instructions/$slug/edit',
-    getParentRoute: () => AdminRouteRoute,
-  } as any)
-const AdminGroupsGroupIdEditRoute = AdminGroupsGroupIdEditRouteImport.update({
-  id: '/groups/$groupId/edit',
-  path: '/groups/$groupId/edit',
   getParentRoute: () => AdminRouteRoute,
 } as any)
 const AdminGroupsGroupIdAddMemberRoute =
@@ -614,11 +484,141 @@ const AdminGroupsGroupIdAddMemberRoute =
     path: '/groups/$groupId/add-member',
     getParentRoute: () => AdminRouteRoute,
   } as any)
-const AppKnowledgeKbSlugEditConnectorConnectorIdRoute =
-  AppKnowledgeKbSlugEditConnectorConnectorIdRouteImport.update({
-    id: '/knowledge/$kbSlug_/edit-connector/$connectorId',
-    path: '/knowledge/$kbSlug/edit-connector/$connectorId',
+const AdminGroupsGroupIdEditRoute = AdminGroupsGroupIdEditRouteImport.update({
+  id: '/groups/$groupId/edit',
+  path: '/groups/$groupId/edit',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminInstructionsSlugEditRoute =
+  AdminInstructionsSlugEditRouteImport.update({
+    id: '/instructions/$slug/edit',
+    path: '/instructions/$slug/edit',
+    getParentRoute: () => AdminRouteRoute,
+  } as any)
+const AdminPlatformOrgsOrgIdRoute = AdminPlatformOrgsOrgIdRouteImport.update({
+  id: '/platform/orgs/$orgId',
+  path: '/platform/orgs/$orgId',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminProfilesProfileIndexRoute =
+  AdminProfilesProfileIndexRouteImport.update({
+    id: '/profiles/$profile/',
+    path: '/profiles/$profile/',
+    getParentRoute: () => AdminRouteRoute,
+  } as any)
+const AdminProfilesProfileAddMemberRoute =
+  AdminProfilesProfileAddMemberRouteImport.update({
+    id: '/profiles/$profile/add-member',
+    path: '/profiles/$profile/add-member',
+    getParentRoute: () => AdminRouteRoute,
+  } as any)
+const AdminUsersUserIdEditRoute = AdminUsersUserIdEditRouteImport.update({
+  id: '/users/$userId/edit',
+  path: '/users/$userId/edit',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminWidgetsIdTestRoute = AdminWidgetsIdTestRouteImport.update({
+  id: '/widgets/$id_/test',
+  path: '/widgets/$id/test',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AppDocsKbSlugIndexRoute = AppDocsKbSlugIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppDocsKbSlugRouteRoute,
+} as any)
+const AppDocsKbSlugPageIdRoute = AppDocsKbSlugPageIdRouteImport.update({
+  id: '/$pageId',
+  path: '/$pageId',
+  getParentRoute: () => AppDocsKbSlugRouteRoute,
+} as any).lazy(() =>
+  import('./routes/app/docs/$kbSlug/$pageId.lazy').then((d) => d.Route),
+)
+const AppDocsKbSlugEditRoute = AppDocsKbSlugEditRouteImport.update({
+  id: '/docs/$kbSlug_/edit',
+  path: '/docs/$kbSlug/edit',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppInstructionsSlugEditRoute = AppInstructionsSlugEditRouteImport.update({
+  id: '/instructions/$slug/edit',
+  path: '/instructions/$slug/edit',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppKnowledgeKbSlugIndexRoute = AppKnowledgeKbSlugIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
+} as any)
+const AppKnowledgeKbSlugAdvancedRoute =
+  AppKnowledgeKbSlugAdvancedRouteImport.update({
+    id: '/advanced',
+    path: '/advanced',
+    getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
+  } as any)
+const AppKnowledgeKbSlugConnectorsRoute =
+  AppKnowledgeKbSlugConnectorsRouteImport.update({
+    id: '/connectors',
+    path: '/connectors',
+    getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
+  } as any)
+const AppKnowledgeKbSlugInsightsRoute =
+  AppKnowledgeKbSlugInsightsRouteImport.update({
+    id: '/insights',
+    path: '/insights',
+    getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
+  } as any)
+const AppKnowledgeKbSlugItemsRoute = AppKnowledgeKbSlugItemsRouteImport.update({
+  id: '/items',
+  path: '/items',
+  getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
+} as any)
+const AppKnowledgeKbSlugMembersRoute =
+  AppKnowledgeKbSlugMembersRouteImport.update({
+    id: '/members',
+    path: '/members',
+    getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
+  } as any)
+const AppKnowledgeKbSlugOverviewRoute =
+  AppKnowledgeKbSlugOverviewRouteImport.update({
+    id: '/overview',
+    path: '/overview',
+    getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
+  } as any)
+const AppKnowledgeKbSlugSettingsRoute =
+  AppKnowledgeKbSlugSettingsRouteImport.update({
+    id: '/settings',
+    path: '/settings',
+    getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
+  } as any)
+const AppKnowledgeKbSlugSourcesRoute =
+  AppKnowledgeKbSlugSourcesRouteImport.update({
+    id: '/sources',
+    path: '/sources',
+    getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
+  } as any)
+const AppKnowledgeKbSlugTaxonomyRoute =
+  AppKnowledgeKbSlugTaxonomyRouteImport.update({
+    id: '/taxonomy',
+    path: '/taxonomy',
+    getParentRoute: () => AppKnowledgeKbSlugRouteRoute,
+  } as any)
+const AppKnowledgeKbSlugAddConnectorRoute =
+  AppKnowledgeKbSlugAddConnectorRouteImport.update({
+    id: '/knowledge/$kbSlug_/add-connector',
+    path: '/knowledge/$kbSlug/add-connector',
     getParentRoute: () => AppRouteRoute,
+  } as any)
+const AppKnowledgeKbSlugAddSourceRoute =
+  AppKnowledgeKbSlugAddSourceRouteImport.update({
+    id: '/knowledge/$kbSlug_/add-source',
+    path: '/knowledge/$kbSlug/add-source',
+    getParentRoute: () => AppRouteRoute,
+  } as any)
+const AdminPlatformFeedbackItemsItemIdRoute =
+  AdminPlatformFeedbackItemsItemIdRouteImport.update({
+    id: '/platform/feedback/items/$itemId',
+    path: '/platform/feedback/items/$itemId',
+    getParentRoute: () => AdminRouteRoute,
   } as any)
 const AdminPlatformFeedbackSubmissionsSubmissionIdRoute =
   AdminPlatformFeedbackSubmissionsSubmissionIdRouteImport.update({
@@ -626,11 +626,11 @@ const AdminPlatformFeedbackSubmissionsSubmissionIdRoute =
     path: '/platform/feedback/submissions/$submissionId',
     getParentRoute: () => AdminRouteRoute,
   } as any)
-const AdminPlatformFeedbackItemsItemIdRoute =
-  AdminPlatformFeedbackItemsItemIdRouteImport.update({
-    id: '/platform/feedback/items/$itemId',
-    path: '/platform/feedback/items/$itemId',
-    getParentRoute: () => AdminRouteRoute,
+const AppKnowledgeKbSlugEditConnectorConnectorIdRoute =
+  AppKnowledgeKbSlugEditConnectorConnectorIdRouteImport.update({
+    id: '/knowledge/$kbSlug_/edit-connector/$connectorId',
+    path: '/knowledge/$kbSlug/edit-connector/$connectorId',
+    getParentRoute: () => AppRouteRoute,
   } as any)
 
 export interface FileRoutesByFullPath {
@@ -1265,95 +1265,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/widget-test': {
-      id: '/widget-test'
-      path: '/widget-test'
-      fullPath: '/widget-test'
-      preLoaderRoute: typeof WidgetTestRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/verify': {
-      id: '/verify'
-      path: '/verify'
-      fullPath: '/verify'
-      preLoaderRoute: typeof VerifyRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/tenant-deleted': {
-      id: '/tenant-deleted'
-      path: '/tenant-deleted'
-      fullPath: '/tenant-deleted'
-      preLoaderRoute: typeof TenantDeletedRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/signup': {
-      id: '/signup'
-      path: '/signup'
-      fullPath: '/signup'
-      preLoaderRoute: typeof SignupRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/select-workspace': {
-      id: '/select-workspace'
-      path: '/select-workspace'
-      fullPath: '/select-workspace'
-      preLoaderRoute: typeof SelectWorkspaceRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/provisioning': {
-      id: '/provisioning'
-      path: '/provisioning'
-      fullPath: '/provisioning'
-      preLoaderRoute: typeof ProvisioningRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/no-account': {
-      id: '/no-account'
-      path: '/no-account'
-      fullPath: '/no-account'
-      preLoaderRoute: typeof NoAccountRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/login': {
-      id: '/login'
-      path: '/login'
-      fullPath: '/login'
-      preLoaderRoute: typeof LoginRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/logged-out': {
-      id: '/logged-out'
-      path: '/logged-out'
-      fullPath: '/logged-out'
-      preLoaderRoute: typeof LoggedOutRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/join-request': {
-      id: '/join-request'
-      path: '/join-request'
-      fullPath: '/join-request'
-      preLoaderRoute: typeof JoinRequestRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/callback': {
-      id: '/callback'
-      path: '/callback'
-      fullPath: '/callback'
-      preLoaderRoute: typeof CallbackRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/app': {
-      id: '/app'
-      path: '/app'
-      fullPath: '/app'
-      preLoaderRoute: typeof AppRouteRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/admin': {
-      id: '/admin'
-      path: '/admin'
-      fullPath: '/admin'
-      preLoaderRoute: typeof AdminRouteRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/$locale': {
@@ -1363,137 +1279,109 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LocaleRouteRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/admin': {
+      id: '/admin'
+      path: '/admin'
+      fullPath: '/admin'
+      preLoaderRoute: typeof AdminRouteRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/app/': {
-      id: '/app/'
-      path: '/'
-      fullPath: '/app/'
-      preLoaderRoute: typeof AppIndexRouteImport
-      parentRoute: typeof AppRouteRoute
+    '/app': {
+      id: '/app'
+      path: '/app'
+      fullPath: '/app'
+      preLoaderRoute: typeof AppRouteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/callback': {
+      id: '/callback'
+      path: '/callback'
+      fullPath: '/callback'
+      preLoaderRoute: typeof CallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/join-request': {
+      id: '/join-request'
+      path: '/join-request'
+      fullPath: '/join-request'
+      preLoaderRoute: typeof JoinRequestRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/logged-out': {
+      id: '/logged-out'
+      path: '/logged-out'
+      fullPath: '/logged-out'
+      preLoaderRoute: typeof LoggedOutRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/no-account': {
+      id: '/no-account'
+      path: '/no-account'
+      fullPath: '/no-account'
+      preLoaderRoute: typeof NoAccountRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/provisioning': {
+      id: '/provisioning'
+      path: '/provisioning'
+      fullPath: '/provisioning'
+      preLoaderRoute: typeof ProvisioningRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/select-workspace': {
+      id: '/select-workspace'
+      path: '/select-workspace'
+      fullPath: '/select-workspace'
+      preLoaderRoute: typeof SelectWorkspaceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/signup': {
+      id: '/signup'
+      path: '/signup'
+      fullPath: '/signup'
+      preLoaderRoute: typeof SignupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/tenant-deleted': {
+      id: '/tenant-deleted'
+      path: '/tenant-deleted'
+      fullPath: '/tenant-deleted'
+      preLoaderRoute: typeof TenantDeletedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/verify': {
+      id: '/verify'
+      path: '/verify'
+      fullPath: '/verify'
+      preLoaderRoute: typeof VerifyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/widget-test': {
+      id: '/widget-test'
+      path: '/widget-test'
+      fullPath: '/widget-test'
+      preLoaderRoute: typeof WidgetTestRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/$locale/signup': {
+      id: '/$locale/signup'
+      path: '/signup'
+      fullPath: '/$locale/signup'
+      preLoaderRoute: typeof LocaleSignupRouteImport
+      parentRoute: typeof LocaleRouteRoute
     }
     '/admin/': {
       id: '/admin/'
       path: '/'
       fullPath: '/admin/'
       preLoaderRoute: typeof AdminIndexRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
-    '/setup/mfa': {
-      id: '/setup/mfa'
-      path: '/setup/mfa'
-      fullPath: '/setup/mfa'
-      preLoaderRoute: typeof SetupMfaRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/setup/2fa': {
-      id: '/setup/2fa'
-      path: '/setup/2fa'
-      fullPath: '/setup/2fa'
-      preLoaderRoute: typeof Setup2faRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/password/set': {
-      id: '/password/set'
-      path: '/password/set'
-      fullPath: '/password/set'
-      preLoaderRoute: typeof PasswordSetRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/password/forgot': {
-      id: '/password/forgot'
-      path: '/password/forgot'
-      fullPath: '/password/forgot'
-      preLoaderRoute: typeof PasswordForgotRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/join-request/sent': {
-      id: '/join-request/sent'
-      path: '/sent'
-      fullPath: '/join-request/sent'
-      preLoaderRoute: typeof JoinRequestSentRouteImport
-      parentRoute: typeof JoinRequestRoute
-    }
-    '/dev/ui': {
-      id: '/dev/ui'
-      path: '/dev/ui'
-      fullPath: '/dev/ui'
-      preLoaderRoute: typeof DevUiRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/bot/$widgetId': {
-      id: '/bot/$widgetId'
-      path: '/bot/$widgetId'
-      fullPath: '/bot/$widgetId'
-      preLoaderRoute: typeof BotWidgetIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/app/scribe': {
-      id: '/app/scribe'
-      path: '/scribe'
-      fullPath: '/app/scribe'
-      preLoaderRoute: typeof AppScribeRouteImport
-      parentRoute: typeof AppRouteRoute
-    }
-    '/app/integrations': {
-      id: '/app/integrations'
-      path: '/integrations'
-      fullPath: '/app/integrations'
-      preLoaderRoute: typeof AppIntegrationsRouteImport
-      parentRoute: typeof AppRouteRoute
-    }
-    '/app/focus': {
-      id: '/app/focus'
-      path: '/focus'
-      fullPath: '/app/focus'
-      preLoaderRoute: typeof AppFocusRouteImport
-      parentRoute: typeof AppRouteRoute
-    }
-    '/app/chat': {
-      id: '/app/chat'
-      path: '/chat'
-      fullPath: '/app/chat'
-      preLoaderRoute: typeof AppChatRouteImport
-      parentRoute: typeof AppRouteRoute
-    }
-    '/app/account': {
-      id: '/app/account'
-      path: '/account'
-      fullPath: '/app/account'
-      preLoaderRoute: typeof AppAccountRouteImport
-      parentRoute: typeof AppRouteRoute
-    }
-    '/admin/settings': {
-      id: '/admin/settings'
-      path: '/settings'
-      fullPath: '/admin/settings'
-      preLoaderRoute: typeof AdminSettingsRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
-    '/admin/join-requests': {
-      id: '/admin/join-requests'
-      path: '/join-requests'
-      fullPath: '/admin/join-requests'
-      preLoaderRoute: typeof AdminJoinRequestsRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
-    '/admin/deprovisioning-status': {
-      id: '/admin/deprovisioning-status'
-      path: '/deprovisioning-status'
-      fullPath: '/admin/deprovisioning-status'
-      preLoaderRoute: typeof AdminDeprovisioningStatusRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
-    '/admin/danger-zone': {
-      id: '/admin/danger-zone'
-      path: '/danger-zone'
-      fullPath: '/admin/danger-zone'
-      preLoaderRoute: typeof AdminDangerZoneRouteImport
       parentRoute: typeof AdminRouteRoute
     }
     '/admin/billing': {
@@ -1503,103 +1391,131 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminBillingRouteImport
       parentRoute: typeof AdminRouteRoute
     }
-    '/$locale/signup': {
-      id: '/$locale/signup'
-      path: '/signup'
-      fullPath: '/$locale/signup'
-      preLoaderRoute: typeof LocaleSignupRouteImport
+    '/admin/danger-zone': {
+      id: '/admin/danger-zone'
+      path: '/danger-zone'
+      fullPath: '/admin/danger-zone'
+      preLoaderRoute: typeof AdminDangerZoneRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/deprovisioning-status': {
+      id: '/admin/deprovisioning-status'
+      path: '/deprovisioning-status'
+      fullPath: '/admin/deprovisioning-status'
+      preLoaderRoute: typeof AdminDeprovisioningStatusRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/join-requests': {
+      id: '/admin/join-requests'
+      path: '/join-requests'
+      fullPath: '/admin/join-requests'
+      preLoaderRoute: typeof AdminJoinRequestsRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/settings': {
+      id: '/admin/settings'
+      path: '/settings'
+      fullPath: '/admin/settings'
+      preLoaderRoute: typeof AdminSettingsRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/app/': {
+      id: '/app/'
+      path: '/'
+      fullPath: '/app/'
+      preLoaderRoute: typeof AppIndexRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/account': {
+      id: '/app/account'
+      path: '/account'
+      fullPath: '/app/account'
+      preLoaderRoute: typeof AppAccountRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/chat': {
+      id: '/app/chat'
+      path: '/chat'
+      fullPath: '/app/chat'
+      preLoaderRoute: typeof AppChatRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/focus': {
+      id: '/app/focus'
+      path: '/focus'
+      fullPath: '/app/focus'
+      preLoaderRoute: typeof AppFocusRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/integrations': {
+      id: '/app/integrations'
+      path: '/integrations'
+      fullPath: '/app/integrations'
+      preLoaderRoute: typeof AppIntegrationsRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/scribe': {
+      id: '/app/scribe'
+      path: '/scribe'
+      fullPath: '/app/scribe'
+      preLoaderRoute: typeof AppScribeRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/bot/$widgetId': {
+      id: '/bot/$widgetId'
+      path: '/bot/$widgetId'
+      fullPath: '/bot/$widgetId'
+      preLoaderRoute: typeof BotWidgetIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dev/ui': {
+      id: '/dev/ui'
+      path: '/dev/ui'
+      fullPath: '/dev/ui'
+      preLoaderRoute: typeof DevUiRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/join-request/sent': {
+      id: '/join-request/sent'
+      path: '/sent'
+      fullPath: '/join-request/sent'
+      preLoaderRoute: typeof JoinRequestSentRouteImport
+      parentRoute: typeof JoinRequestRoute
+    }
+    '/password/forgot': {
+      id: '/password/forgot'
+      path: '/password/forgot'
+      fullPath: '/password/forgot'
+      preLoaderRoute: typeof PasswordForgotRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/password/set': {
+      id: '/password/set'
+      path: '/password/set'
+      fullPath: '/password/set'
+      preLoaderRoute: typeof PasswordSetRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/setup/2fa': {
+      id: '/setup/2fa'
+      path: '/setup/2fa'
+      fullPath: '/setup/2fa'
+      preLoaderRoute: typeof Setup2faRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/setup/mfa': {
+      id: '/setup/mfa'
+      path: '/setup/mfa'
+      fullPath: '/setup/mfa'
+      preLoaderRoute: typeof SetupMfaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/$locale/password/forgot': {
+      id: '/$locale/password/forgot'
+      path: '/password/forgot'
+      fullPath: '/$locale/password/forgot'
+      preLoaderRoute: typeof LocalePasswordForgotRouteImport
       parentRoute: typeof LocaleRouteRoute
-    }
-    '/app/transcribe/': {
-      id: '/app/transcribe/'
-      path: '/transcribe'
-      fullPath: '/app/transcribe/'
-      preLoaderRoute: typeof AppTranscribeIndexRouteImport
-      parentRoute: typeof AppRouteRoute
-    }
-    '/app/knowledge/': {
-      id: '/app/knowledge/'
-      path: '/knowledge'
-      fullPath: '/app/knowledge/'
-      preLoaderRoute: typeof AppKnowledgeIndexRouteImport
-      parentRoute: typeof AppRouteRoute
-    }
-    '/app/instructions/': {
-      id: '/app/instructions/'
-      path: '/instructions'
-      fullPath: '/app/instructions/'
-      preLoaderRoute: typeof AppInstructionsIndexRouteImport
-      parentRoute: typeof AppRouteRoute
-    }
-    '/app/gaps/': {
-      id: '/app/gaps/'
-      path: '/gaps'
-      fullPath: '/app/gaps/'
-      preLoaderRoute: typeof AppGapsIndexRouteImport
-      parentRoute: typeof AppRouteRoute
-    }
-    '/app/docs/': {
-      id: '/app/docs/'
-      path: '/docs'
-      fullPath: '/app/docs/'
-      preLoaderRoute: typeof AppDocsIndexRouteImport
-      parentRoute: typeof AppRouteRoute
-    }
-    '/admin/widgets/': {
-      id: '/admin/widgets/'
-      path: '/widgets'
-      fullPath: '/admin/widgets/'
-      preLoaderRoute: typeof AdminWidgetsIndexRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
-    '/admin/users/': {
-      id: '/admin/users/'
-      path: '/users'
-      fullPath: '/admin/users/'
-      preLoaderRoute: typeof AdminUsersIndexRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
-    '/admin/profiles/': {
-      id: '/admin/profiles/'
-      path: '/profiles'
-      fullPath: '/admin/profiles/'
-      preLoaderRoute: typeof AdminProfilesIndexRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
-    '/admin/platform/': {
-      id: '/admin/platform/'
-      path: '/platform'
-      fullPath: '/admin/platform/'
-      preLoaderRoute: typeof AdminPlatformIndexRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
-    '/admin/mcps/': {
-      id: '/admin/mcps/'
-      path: '/mcps'
-      fullPath: '/admin/mcps/'
-      preLoaderRoute: typeof AdminMcpsIndexRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
-    '/admin/instructions/': {
-      id: '/admin/instructions/'
-      path: '/instructions'
-      fullPath: '/admin/instructions/'
-      preLoaderRoute: typeof AdminInstructionsIndexRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
-    '/admin/groups/': {
-      id: '/admin/groups/'
-      path: '/groups'
-      fullPath: '/admin/groups/'
-      preLoaderRoute: typeof AdminGroupsIndexRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
-    '/admin/api-keys/': {
-      id: '/admin/api-keys/'
-      path: '/api-keys'
-      fullPath: '/admin/api-keys/'
-      preLoaderRoute: typeof AdminApiKeysIndexRouteImport
-      parentRoute: typeof AdminRouteRoute
     }
     '/$locale/signup/': {
       id: '/$locale/signup/'
@@ -1608,130 +1524,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LocaleSignupIndexRouteImport
       parentRoute: typeof LocaleSignupRoute
     }
-    '/app/transcribe/add': {
-      id: '/app/transcribe/add'
-      path: '/transcribe/add'
-      fullPath: '/app/transcribe/add'
-      preLoaderRoute: typeof AppTranscribeAddRouteImport
-      parentRoute: typeof AppRouteRoute
+    '/$locale/signup/social': {
+      id: '/$locale/signup/social'
+      path: '/social'
+      fullPath: '/$locale/signup/social'
+      preLoaderRoute: typeof LocaleSignupSocialRouteImport
+      parentRoute: typeof LocaleSignupRoute
     }
-    '/app/transcribe/$transcriptionId': {
-      id: '/app/transcribe/$transcriptionId'
-      path: '/transcribe/$transcriptionId'
-      fullPath: '/app/transcribe/$transcriptionId'
-      preLoaderRoute: typeof AppTranscribeTranscriptionIdRouteImport
-      parentRoute: typeof AppRouteRoute
-    }
-    '/app/meetings/start': {
-      id: '/app/meetings/start'
-      path: '/meetings/start'
-      fullPath: '/app/meetings/start'
-      preLoaderRoute: typeof AppMeetingsStartRouteImport
-      parentRoute: typeof AppRouteRoute
-    }
-    '/app/meetings/$meetingId': {
-      id: '/app/meetings/$meetingId'
-      path: '/meetings/$meetingId'
-      fullPath: '/app/meetings/$meetingId'
-      preLoaderRoute: typeof AppMeetingsMeetingIdRouteImport
-      parentRoute: typeof AppRouteRoute
-    }
-    '/app/knowledge/new': {
-      id: '/app/knowledge/new'
-      path: '/knowledge/new'
-      fullPath: '/app/knowledge/new'
-      preLoaderRoute: typeof AppKnowledgeNewRouteImport
-      parentRoute: typeof AppRouteRoute
-    }
-    '/app/instructions/new': {
-      id: '/app/instructions/new'
-      path: '/instructions/new'
-      fullPath: '/app/instructions/new'
-      preLoaderRoute: typeof AppInstructionsNewRouteImport
-      parentRoute: typeof AppRouteRoute
-    }
-    '/app/focus/$': {
-      id: '/app/focus/$'
-      path: '/$'
-      fullPath: '/app/focus/$'
-      preLoaderRoute: typeof AppFocusSplatRouteImport
-      parentRoute: typeof AppFocusRoute
-    }
-    '/app/docs/new': {
-      id: '/app/docs/new'
-      path: '/docs/new'
-      fullPath: '/app/docs/new'
-      preLoaderRoute: typeof AppDocsNewRouteImport
-      parentRoute: typeof AppRouteRoute
-    }
-    '/admin/widgets/new': {
-      id: '/admin/widgets/new'
-      path: '/widgets/new'
-      fullPath: '/admin/widgets/new'
-      preLoaderRoute: typeof AdminWidgetsNewRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
-    '/admin/widgets/$id': {
-      id: '/admin/widgets/$id'
-      path: '/widgets/$id'
-      fullPath: '/admin/widgets/$id'
-      preLoaderRoute: typeof AdminWidgetsIdRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
-    '/admin/users/invite': {
-      id: '/admin/users/invite'
-      path: '/users/invite'
-      fullPath: '/admin/users/invite'
-      preLoaderRoute: typeof AdminUsersInviteRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
-    '/admin/platform/onboarding-howto': {
-      id: '/admin/platform/onboarding-howto'
-      path: '/platform/onboarding-howto'
-      fullPath: '/admin/platform/onboarding-howto'
-      preLoaderRoute: typeof AdminPlatformOnboardingHowtoRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
-    '/admin/platform/new': {
-      id: '/admin/platform/new'
-      path: '/platform/new'
-      fullPath: '/admin/platform/new'
-      preLoaderRoute: typeof AdminPlatformNewRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
-    '/admin/mcps/new': {
-      id: '/admin/mcps/new'
-      path: '/mcps/new'
-      fullPath: '/admin/mcps/new'
-      preLoaderRoute: typeof AdminMcpsNewRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
-    '/admin/mcps/$serverId': {
-      id: '/admin/mcps/$serverId'
-      path: '/mcps/$serverId'
-      fullPath: '/admin/mcps/$serverId'
-      preLoaderRoute: typeof AdminMcpsServerIdRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
-    '/admin/instructions/new': {
-      id: '/admin/instructions/new'
-      path: '/instructions/new'
-      fullPath: '/admin/instructions/new'
-      preLoaderRoute: typeof AdminInstructionsNewRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
-    '/admin/groups/new': {
-      id: '/admin/groups/new'
-      path: '/groups/new'
-      fullPath: '/admin/groups/new'
-      preLoaderRoute: typeof AdminGroupsNewRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
-    '/admin/api-keys/new': {
-      id: '/admin/api-keys/new'
-      path: '/api-keys/new'
-      fullPath: '/admin/api-keys/new'
-      preLoaderRoute: typeof AdminApiKeysNewRouteImport
+    '/admin/api-keys/': {
+      id: '/admin/api-keys/'
+      path: '/api-keys'
+      fullPath: '/admin/api-keys/'
+      preLoaderRoute: typeof AdminApiKeysIndexRouteImport
       parentRoute: typeof AdminRouteRoute
     }
     '/admin/api-keys/$id': {
@@ -1741,25 +1545,130 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminApiKeysIdRouteImport
       parentRoute: typeof AdminRouteRoute
     }
-    '/$locale/signup/social': {
-      id: '/$locale/signup/social'
-      path: '/social'
-      fullPath: '/$locale/signup/social'
-      preLoaderRoute: typeof LocaleSignupSocialRouteImport
-      parentRoute: typeof LocaleSignupRoute
+    '/admin/api-keys/new': {
+      id: '/admin/api-keys/new'
+      path: '/api-keys/new'
+      fullPath: '/admin/api-keys/new'
+      preLoaderRoute: typeof AdminApiKeysNewRouteImport
+      parentRoute: typeof AdminRouteRoute
     }
-    '/$locale/password/forgot': {
-      id: '/$locale/password/forgot'
-      path: '/password/forgot'
-      fullPath: '/$locale/password/forgot'
-      preLoaderRoute: typeof LocalePasswordForgotRouteImport
-      parentRoute: typeof LocaleRouteRoute
+    '/admin/groups/': {
+      id: '/admin/groups/'
+      path: '/groups'
+      fullPath: '/admin/groups/'
+      preLoaderRoute: typeof AdminGroupsIndexRouteImport
+      parentRoute: typeof AdminRouteRoute
     }
-    '/app/knowledge/$kbSlug': {
-      id: '/app/knowledge/$kbSlug'
-      path: '/knowledge/$kbSlug'
-      fullPath: '/app/knowledge/$kbSlug'
-      preLoaderRoute: typeof AppKnowledgeKbSlugRouteRouteImport
+    '/admin/groups/new': {
+      id: '/admin/groups/new'
+      path: '/groups/new'
+      fullPath: '/admin/groups/new'
+      preLoaderRoute: typeof AdminGroupsNewRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/instructions/': {
+      id: '/admin/instructions/'
+      path: '/instructions'
+      fullPath: '/admin/instructions/'
+      preLoaderRoute: typeof AdminInstructionsIndexRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/instructions/new': {
+      id: '/admin/instructions/new'
+      path: '/instructions/new'
+      fullPath: '/admin/instructions/new'
+      preLoaderRoute: typeof AdminInstructionsNewRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/mcps/': {
+      id: '/admin/mcps/'
+      path: '/mcps'
+      fullPath: '/admin/mcps/'
+      preLoaderRoute: typeof AdminMcpsIndexRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/mcps/$serverId': {
+      id: '/admin/mcps/$serverId'
+      path: '/mcps/$serverId'
+      fullPath: '/admin/mcps/$serverId'
+      preLoaderRoute: typeof AdminMcpsServerIdRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/mcps/new': {
+      id: '/admin/mcps/new'
+      path: '/mcps/new'
+      fullPath: '/admin/mcps/new'
+      preLoaderRoute: typeof AdminMcpsNewRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/platform/': {
+      id: '/admin/platform/'
+      path: '/platform'
+      fullPath: '/admin/platform/'
+      preLoaderRoute: typeof AdminPlatformIndexRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/platform/new': {
+      id: '/admin/platform/new'
+      path: '/platform/new'
+      fullPath: '/admin/platform/new'
+      preLoaderRoute: typeof AdminPlatformNewRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/platform/onboarding-howto': {
+      id: '/admin/platform/onboarding-howto'
+      path: '/platform/onboarding-howto'
+      fullPath: '/admin/platform/onboarding-howto'
+      preLoaderRoute: typeof AdminPlatformOnboardingHowtoRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/profiles/': {
+      id: '/admin/profiles/'
+      path: '/profiles'
+      fullPath: '/admin/profiles/'
+      preLoaderRoute: typeof AdminProfilesIndexRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/users/': {
+      id: '/admin/users/'
+      path: '/users'
+      fullPath: '/admin/users/'
+      preLoaderRoute: typeof AdminUsersIndexRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/users/invite': {
+      id: '/admin/users/invite'
+      path: '/users/invite'
+      fullPath: '/admin/users/invite'
+      preLoaderRoute: typeof AdminUsersInviteRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/widgets/': {
+      id: '/admin/widgets/'
+      path: '/widgets'
+      fullPath: '/admin/widgets/'
+      preLoaderRoute: typeof AdminWidgetsIndexRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/widgets/$id': {
+      id: '/admin/widgets/$id'
+      path: '/widgets/$id'
+      fullPath: '/admin/widgets/$id'
+      preLoaderRoute: typeof AdminWidgetsIdRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/widgets/new': {
+      id: '/admin/widgets/new'
+      path: '/widgets/new'
+      fullPath: '/admin/widgets/new'
+      preLoaderRoute: typeof AdminWidgetsNewRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/app/docs/': {
+      id: '/app/docs/'
+      path: '/docs'
+      fullPath: '/app/docs/'
+      preLoaderRoute: typeof AppDocsIndexRouteImport
       parentRoute: typeof AppRouteRoute
     }
     '/app/docs/$kbSlug': {
@@ -1769,172 +1678,102 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppDocsKbSlugRouteRouteImport
       parentRoute: typeof AppRouteRoute
     }
-    '/app/knowledge/$kbSlug/': {
-      id: '/app/knowledge/$kbSlug/'
-      path: '/'
-      fullPath: '/app/knowledge/$kbSlug/'
-      preLoaderRoute: typeof AppKnowledgeKbSlugIndexRouteImport
-      parentRoute: typeof AppKnowledgeKbSlugRouteRoute
+    '/app/docs/new': {
+      id: '/app/docs/new'
+      path: '/docs/new'
+      fullPath: '/app/docs/new'
+      preLoaderRoute: typeof AppDocsNewRouteImport
+      parentRoute: typeof AppRouteRoute
     }
-    '/app/docs/$kbSlug/': {
-      id: '/app/docs/$kbSlug/'
-      path: '/'
-      fullPath: '/app/docs/$kbSlug/'
-      preLoaderRoute: typeof AppDocsKbSlugIndexRouteImport
-      parentRoute: typeof AppDocsKbSlugRouteRoute
+    '/app/focus/$': {
+      id: '/app/focus/$'
+      path: '/$'
+      fullPath: '/app/focus/$'
+      preLoaderRoute: typeof AppFocusSplatRouteImport
+      parentRoute: typeof AppFocusRoute
     }
-    '/admin/profiles/$profile/': {
-      id: '/admin/profiles/$profile/'
-      path: '/profiles/$profile'
-      fullPath: '/admin/profiles/$profile/'
-      preLoaderRoute: typeof AdminProfilesProfileIndexRouteImport
-      parentRoute: typeof AdminRouteRoute
+    '/app/gaps/': {
+      id: '/app/gaps/'
+      path: '/gaps'
+      fullPath: '/app/gaps/'
+      preLoaderRoute: typeof AppGapsIndexRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/instructions/': {
+      id: '/app/instructions/'
+      path: '/instructions'
+      fullPath: '/app/instructions/'
+      preLoaderRoute: typeof AppInstructionsIndexRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/instructions/new': {
+      id: '/app/instructions/new'
+      path: '/instructions/new'
+      fullPath: '/app/instructions/new'
+      preLoaderRoute: typeof AppInstructionsNewRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/knowledge/': {
+      id: '/app/knowledge/'
+      path: '/knowledge'
+      fullPath: '/app/knowledge/'
+      preLoaderRoute: typeof AppKnowledgeIndexRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/knowledge/$kbSlug': {
+      id: '/app/knowledge/$kbSlug'
+      path: '/knowledge/$kbSlug'
+      fullPath: '/app/knowledge/$kbSlug'
+      preLoaderRoute: typeof AppKnowledgeKbSlugRouteRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/knowledge/new': {
+      id: '/app/knowledge/new'
+      path: '/knowledge/new'
+      fullPath: '/app/knowledge/new'
+      preLoaderRoute: typeof AppKnowledgeNewRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/meetings/$meetingId': {
+      id: '/app/meetings/$meetingId'
+      path: '/meetings/$meetingId'
+      fullPath: '/app/meetings/$meetingId'
+      preLoaderRoute: typeof AppMeetingsMeetingIdRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/meetings/start': {
+      id: '/app/meetings/start'
+      path: '/meetings/start'
+      fullPath: '/app/meetings/start'
+      preLoaderRoute: typeof AppMeetingsStartRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/transcribe/': {
+      id: '/app/transcribe/'
+      path: '/transcribe'
+      fullPath: '/app/transcribe/'
+      preLoaderRoute: typeof AppTranscribeIndexRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/transcribe/$transcriptionId': {
+      id: '/app/transcribe/$transcriptionId'
+      path: '/transcribe/$transcriptionId'
+      fullPath: '/app/transcribe/$transcriptionId'
+      preLoaderRoute: typeof AppTranscribeTranscriptionIdRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/transcribe/add': {
+      id: '/app/transcribe/add'
+      path: '/transcribe/add'
+      fullPath: '/app/transcribe/add'
+      preLoaderRoute: typeof AppTranscribeAddRouteImport
+      parentRoute: typeof AppRouteRoute
     }
     '/admin/groups/$groupId/': {
       id: '/admin/groups/$groupId/'
       path: '/groups/$groupId'
       fullPath: '/admin/groups/$groupId/'
       preLoaderRoute: typeof AdminGroupsGroupIdIndexRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
-    '/app/knowledge/$kbSlug_/add-source': {
-      id: '/app/knowledge/$kbSlug_/add-source'
-      path: '/knowledge/$kbSlug/add-source'
-      fullPath: '/app/knowledge/$kbSlug/add-source'
-      preLoaderRoute: typeof AppKnowledgeKbSlugAddSourceRouteImport
-      parentRoute: typeof AppRouteRoute
-    }
-    '/app/knowledge/$kbSlug_/add-connector': {
-      id: '/app/knowledge/$kbSlug_/add-connector'
-      path: '/knowledge/$kbSlug/add-connector'
-      fullPath: '/app/knowledge/$kbSlug/add-connector'
-      preLoaderRoute: typeof AppKnowledgeKbSlugAddConnectorRouteImport
-      parentRoute: typeof AppRouteRoute
-    }
-    '/app/knowledge/$kbSlug/taxonomy': {
-      id: '/app/knowledge/$kbSlug/taxonomy'
-      path: '/taxonomy'
-      fullPath: '/app/knowledge/$kbSlug/taxonomy'
-      preLoaderRoute: typeof AppKnowledgeKbSlugTaxonomyRouteImport
-      parentRoute: typeof AppKnowledgeKbSlugRouteRoute
-    }
-    '/app/knowledge/$kbSlug/sources': {
-      id: '/app/knowledge/$kbSlug/sources'
-      path: '/sources'
-      fullPath: '/app/knowledge/$kbSlug/sources'
-      preLoaderRoute: typeof AppKnowledgeKbSlugSourcesRouteImport
-      parentRoute: typeof AppKnowledgeKbSlugRouteRoute
-    }
-    '/app/knowledge/$kbSlug/settings': {
-      id: '/app/knowledge/$kbSlug/settings'
-      path: '/settings'
-      fullPath: '/app/knowledge/$kbSlug/settings'
-      preLoaderRoute: typeof AppKnowledgeKbSlugSettingsRouteImport
-      parentRoute: typeof AppKnowledgeKbSlugRouteRoute
-    }
-    '/app/knowledge/$kbSlug/overview': {
-      id: '/app/knowledge/$kbSlug/overview'
-      path: '/overview'
-      fullPath: '/app/knowledge/$kbSlug/overview'
-      preLoaderRoute: typeof AppKnowledgeKbSlugOverviewRouteImport
-      parentRoute: typeof AppKnowledgeKbSlugRouteRoute
-    }
-    '/app/knowledge/$kbSlug/members': {
-      id: '/app/knowledge/$kbSlug/members'
-      path: '/members'
-      fullPath: '/app/knowledge/$kbSlug/members'
-      preLoaderRoute: typeof AppKnowledgeKbSlugMembersRouteImport
-      parentRoute: typeof AppKnowledgeKbSlugRouteRoute
-    }
-    '/app/knowledge/$kbSlug/items': {
-      id: '/app/knowledge/$kbSlug/items'
-      path: '/items'
-      fullPath: '/app/knowledge/$kbSlug/items'
-      preLoaderRoute: typeof AppKnowledgeKbSlugItemsRouteImport
-      parentRoute: typeof AppKnowledgeKbSlugRouteRoute
-    }
-    '/app/knowledge/$kbSlug/insights': {
-      id: '/app/knowledge/$kbSlug/insights'
-      path: '/insights'
-      fullPath: '/app/knowledge/$kbSlug/insights'
-      preLoaderRoute: typeof AppKnowledgeKbSlugInsightsRouteImport
-      parentRoute: typeof AppKnowledgeKbSlugRouteRoute
-    }
-    '/app/knowledge/$kbSlug/connectors': {
-      id: '/app/knowledge/$kbSlug/connectors'
-      path: '/connectors'
-      fullPath: '/app/knowledge/$kbSlug/connectors'
-      preLoaderRoute: typeof AppKnowledgeKbSlugConnectorsRouteImport
-      parentRoute: typeof AppKnowledgeKbSlugRouteRoute
-    }
-    '/app/knowledge/$kbSlug/advanced': {
-      id: '/app/knowledge/$kbSlug/advanced'
-      path: '/advanced'
-      fullPath: '/app/knowledge/$kbSlug/advanced'
-      preLoaderRoute: typeof AppKnowledgeKbSlugAdvancedRouteImport
-      parentRoute: typeof AppKnowledgeKbSlugRouteRoute
-    }
-    '/app/instructions/$slug/edit': {
-      id: '/app/instructions/$slug/edit'
-      path: '/instructions/$slug/edit'
-      fullPath: '/app/instructions/$slug/edit'
-      preLoaderRoute: typeof AppInstructionsSlugEditRouteImport
-      parentRoute: typeof AppRouteRoute
-    }
-    '/app/docs/$kbSlug_/edit': {
-      id: '/app/docs/$kbSlug_/edit'
-      path: '/docs/$kbSlug/edit'
-      fullPath: '/app/docs/$kbSlug/edit'
-      preLoaderRoute: typeof AppDocsKbSlugEditRouteImport
-      parentRoute: typeof AppRouteRoute
-    }
-    '/app/docs/$kbSlug/$pageId': {
-      id: '/app/docs/$kbSlug/$pageId'
-      path: '/$pageId'
-      fullPath: '/app/docs/$kbSlug/$pageId'
-      preLoaderRoute: typeof AppDocsKbSlugPageIdRouteImport
-      parentRoute: typeof AppDocsKbSlugRouteRoute
-    }
-    '/admin/widgets/$id_/test': {
-      id: '/admin/widgets/$id_/test'
-      path: '/widgets/$id/test'
-      fullPath: '/admin/widgets/$id/test'
-      preLoaderRoute: typeof AdminWidgetsIdTestRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
-    '/admin/users/$userId/edit': {
-      id: '/admin/users/$userId/edit'
-      path: '/users/$userId/edit'
-      fullPath: '/admin/users/$userId/edit'
-      preLoaderRoute: typeof AdminUsersUserIdEditRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
-    '/admin/profiles/$profile/add-member': {
-      id: '/admin/profiles/$profile/add-member'
-      path: '/profiles/$profile/add-member'
-      fullPath: '/admin/profiles/$profile/add-member'
-      preLoaderRoute: typeof AdminProfilesProfileAddMemberRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
-    '/admin/platform/orgs/$orgId': {
-      id: '/admin/platform/orgs/$orgId'
-      path: '/platform/orgs/$orgId'
-      fullPath: '/admin/platform/orgs/$orgId'
-      preLoaderRoute: typeof AdminPlatformOrgsOrgIdRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
-    '/admin/instructions/$slug/edit': {
-      id: '/admin/instructions/$slug/edit'
-      path: '/instructions/$slug/edit'
-      fullPath: '/admin/instructions/$slug/edit'
-      preLoaderRoute: typeof AdminInstructionsSlugEditRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
-    '/admin/groups/$groupId/edit': {
-      id: '/admin/groups/$groupId/edit'
-      path: '/groups/$groupId/edit'
-      fullPath: '/admin/groups/$groupId/edit'
-      preLoaderRoute: typeof AdminGroupsGroupIdEditRouteImport
       parentRoute: typeof AdminRouteRoute
     }
     '/admin/groups/$groupId/add-member': {
@@ -1944,12 +1783,173 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminGroupsGroupIdAddMemberRouteImport
       parentRoute: typeof AdminRouteRoute
     }
-    '/app/knowledge/$kbSlug_/edit-connector/$connectorId': {
-      id: '/app/knowledge/$kbSlug_/edit-connector/$connectorId'
-      path: '/knowledge/$kbSlug/edit-connector/$connectorId'
-      fullPath: '/app/knowledge/$kbSlug/edit-connector/$connectorId'
-      preLoaderRoute: typeof AppKnowledgeKbSlugEditConnectorConnectorIdRouteImport
+    '/admin/groups/$groupId/edit': {
+      id: '/admin/groups/$groupId/edit'
+      path: '/groups/$groupId/edit'
+      fullPath: '/admin/groups/$groupId/edit'
+      preLoaderRoute: typeof AdminGroupsGroupIdEditRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/instructions/$slug/edit': {
+      id: '/admin/instructions/$slug/edit'
+      path: '/instructions/$slug/edit'
+      fullPath: '/admin/instructions/$slug/edit'
+      preLoaderRoute: typeof AdminInstructionsSlugEditRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/platform/orgs/$orgId': {
+      id: '/admin/platform/orgs/$orgId'
+      path: '/platform/orgs/$orgId'
+      fullPath: '/admin/platform/orgs/$orgId'
+      preLoaderRoute: typeof AdminPlatformOrgsOrgIdRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/profiles/$profile/': {
+      id: '/admin/profiles/$profile/'
+      path: '/profiles/$profile'
+      fullPath: '/admin/profiles/$profile/'
+      preLoaderRoute: typeof AdminProfilesProfileIndexRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/profiles/$profile/add-member': {
+      id: '/admin/profiles/$profile/add-member'
+      path: '/profiles/$profile/add-member'
+      fullPath: '/admin/profiles/$profile/add-member'
+      preLoaderRoute: typeof AdminProfilesProfileAddMemberRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/users/$userId/edit': {
+      id: '/admin/users/$userId/edit'
+      path: '/users/$userId/edit'
+      fullPath: '/admin/users/$userId/edit'
+      preLoaderRoute: typeof AdminUsersUserIdEditRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/widgets/$id_/test': {
+      id: '/admin/widgets/$id_/test'
+      path: '/widgets/$id/test'
+      fullPath: '/admin/widgets/$id/test'
+      preLoaderRoute: typeof AdminWidgetsIdTestRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/app/docs/$kbSlug/': {
+      id: '/app/docs/$kbSlug/'
+      path: '/'
+      fullPath: '/app/docs/$kbSlug/'
+      preLoaderRoute: typeof AppDocsKbSlugIndexRouteImport
+      parentRoute: typeof AppDocsKbSlugRouteRoute
+    }
+    '/app/docs/$kbSlug/$pageId': {
+      id: '/app/docs/$kbSlug/$pageId'
+      path: '/$pageId'
+      fullPath: '/app/docs/$kbSlug/$pageId'
+      preLoaderRoute: typeof AppDocsKbSlugPageIdRouteImport
+      parentRoute: typeof AppDocsKbSlugRouteRoute
+    }
+    '/app/docs/$kbSlug_/edit': {
+      id: '/app/docs/$kbSlug_/edit'
+      path: '/docs/$kbSlug/edit'
+      fullPath: '/app/docs/$kbSlug/edit'
+      preLoaderRoute: typeof AppDocsKbSlugEditRouteImport
       parentRoute: typeof AppRouteRoute
+    }
+    '/app/instructions/$slug/edit': {
+      id: '/app/instructions/$slug/edit'
+      path: '/instructions/$slug/edit'
+      fullPath: '/app/instructions/$slug/edit'
+      preLoaderRoute: typeof AppInstructionsSlugEditRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/knowledge/$kbSlug/': {
+      id: '/app/knowledge/$kbSlug/'
+      path: '/'
+      fullPath: '/app/knowledge/$kbSlug/'
+      preLoaderRoute: typeof AppKnowledgeKbSlugIndexRouteImport
+      parentRoute: typeof AppKnowledgeKbSlugRouteRoute
+    }
+    '/app/knowledge/$kbSlug/advanced': {
+      id: '/app/knowledge/$kbSlug/advanced'
+      path: '/advanced'
+      fullPath: '/app/knowledge/$kbSlug/advanced'
+      preLoaderRoute: typeof AppKnowledgeKbSlugAdvancedRouteImport
+      parentRoute: typeof AppKnowledgeKbSlugRouteRoute
+    }
+    '/app/knowledge/$kbSlug/connectors': {
+      id: '/app/knowledge/$kbSlug/connectors'
+      path: '/connectors'
+      fullPath: '/app/knowledge/$kbSlug/connectors'
+      preLoaderRoute: typeof AppKnowledgeKbSlugConnectorsRouteImport
+      parentRoute: typeof AppKnowledgeKbSlugRouteRoute
+    }
+    '/app/knowledge/$kbSlug/insights': {
+      id: '/app/knowledge/$kbSlug/insights'
+      path: '/insights'
+      fullPath: '/app/knowledge/$kbSlug/insights'
+      preLoaderRoute: typeof AppKnowledgeKbSlugInsightsRouteImport
+      parentRoute: typeof AppKnowledgeKbSlugRouteRoute
+    }
+    '/app/knowledge/$kbSlug/items': {
+      id: '/app/knowledge/$kbSlug/items'
+      path: '/items'
+      fullPath: '/app/knowledge/$kbSlug/items'
+      preLoaderRoute: typeof AppKnowledgeKbSlugItemsRouteImport
+      parentRoute: typeof AppKnowledgeKbSlugRouteRoute
+    }
+    '/app/knowledge/$kbSlug/members': {
+      id: '/app/knowledge/$kbSlug/members'
+      path: '/members'
+      fullPath: '/app/knowledge/$kbSlug/members'
+      preLoaderRoute: typeof AppKnowledgeKbSlugMembersRouteImport
+      parentRoute: typeof AppKnowledgeKbSlugRouteRoute
+    }
+    '/app/knowledge/$kbSlug/overview': {
+      id: '/app/knowledge/$kbSlug/overview'
+      path: '/overview'
+      fullPath: '/app/knowledge/$kbSlug/overview'
+      preLoaderRoute: typeof AppKnowledgeKbSlugOverviewRouteImport
+      parentRoute: typeof AppKnowledgeKbSlugRouteRoute
+    }
+    '/app/knowledge/$kbSlug/settings': {
+      id: '/app/knowledge/$kbSlug/settings'
+      path: '/settings'
+      fullPath: '/app/knowledge/$kbSlug/settings'
+      preLoaderRoute: typeof AppKnowledgeKbSlugSettingsRouteImport
+      parentRoute: typeof AppKnowledgeKbSlugRouteRoute
+    }
+    '/app/knowledge/$kbSlug/sources': {
+      id: '/app/knowledge/$kbSlug/sources'
+      path: '/sources'
+      fullPath: '/app/knowledge/$kbSlug/sources'
+      preLoaderRoute: typeof AppKnowledgeKbSlugSourcesRouteImport
+      parentRoute: typeof AppKnowledgeKbSlugRouteRoute
+    }
+    '/app/knowledge/$kbSlug/taxonomy': {
+      id: '/app/knowledge/$kbSlug/taxonomy'
+      path: '/taxonomy'
+      fullPath: '/app/knowledge/$kbSlug/taxonomy'
+      preLoaderRoute: typeof AppKnowledgeKbSlugTaxonomyRouteImport
+      parentRoute: typeof AppKnowledgeKbSlugRouteRoute
+    }
+    '/app/knowledge/$kbSlug_/add-connector': {
+      id: '/app/knowledge/$kbSlug_/add-connector'
+      path: '/knowledge/$kbSlug/add-connector'
+      fullPath: '/app/knowledge/$kbSlug/add-connector'
+      preLoaderRoute: typeof AppKnowledgeKbSlugAddConnectorRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/knowledge/$kbSlug_/add-source': {
+      id: '/app/knowledge/$kbSlug_/add-source'
+      path: '/knowledge/$kbSlug/add-source'
+      fullPath: '/app/knowledge/$kbSlug/add-source'
+      preLoaderRoute: typeof AppKnowledgeKbSlugAddSourceRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/admin/platform/feedback/items/$itemId': {
+      id: '/admin/platform/feedback/items/$itemId'
+      path: '/platform/feedback/items/$itemId'
+      fullPath: '/admin/platform/feedback/items/$itemId'
+      preLoaderRoute: typeof AdminPlatformFeedbackItemsItemIdRouteImport
+      parentRoute: typeof AdminRouteRoute
     }
     '/admin/platform/feedback/submissions/$submissionId': {
       id: '/admin/platform/feedback/submissions/$submissionId'
@@ -1958,12 +1958,12 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminPlatformFeedbackSubmissionsSubmissionIdRouteImport
       parentRoute: typeof AdminRouteRoute
     }
-    '/admin/platform/feedback/items/$itemId': {
-      id: '/admin/platform/feedback/items/$itemId'
-      path: '/platform/feedback/items/$itemId'
-      fullPath: '/admin/platform/feedback/items/$itemId'
-      preLoaderRoute: typeof AdminPlatformFeedbackItemsItemIdRouteImport
-      parentRoute: typeof AdminRouteRoute
+    '/app/knowledge/$kbSlug_/edit-connector/$connectorId': {
+      id: '/app/knowledge/$kbSlug_/edit-connector/$connectorId'
+      path: '/knowledge/$kbSlug/edit-connector/$connectorId'
+      fullPath: '/app/knowledge/$kbSlug/edit-connector/$connectorId'
+      preLoaderRoute: typeof AppKnowledgeKbSlugEditConnectorConnectorIdRouteImport
+      parentRoute: typeof AppRouteRoute
     }
   }
 }

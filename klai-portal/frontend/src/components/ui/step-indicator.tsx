@@ -1,3 +1,6 @@
+/**
+ * @purpose Wizard step progress (`StepIndicator`)
+ */
 import { Check } from 'lucide-react'
 
 export interface StepItem {

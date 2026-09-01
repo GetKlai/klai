@@ -1,3 +1,9 @@
+/**
+ * @purpose Underline tabs (`Tabs`): text + optional icon/count, strong
+ * `border-gray-900` active underline. For state/search-param tabs.
+ * Router-navigation tab bars (real sub-route links) use `Link` directly with
+ * the same look.
+ */
 import * as React from 'react'
 import { cn } from '@/lib/utils'
 

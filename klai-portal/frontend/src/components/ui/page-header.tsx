@@ -1,3 +1,7 @@
+/**
+ * @purpose Page title, short subtitle/count, and right-aligned page action
+ * (`PageHeader`); longer explanatory copy below the header uses `PageIntro`
+ */
 import type { HTMLAttributes, ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 

@@ -116,7 +116,7 @@ function IntegrationsPage() {
                 <div className="flex gap-2 shrink-0">
                   <Button
                     size="sm"
-                    variant="ghost"
+                    variant="outline"
                     onClick={() => setConfirmingId(null)}
                     disabled={revokeMutation.isPending}
                   >

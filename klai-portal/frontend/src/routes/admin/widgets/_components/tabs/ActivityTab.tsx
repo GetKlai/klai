@@ -76,7 +76,7 @@ export function ActivityTab({ widget }: Props) {
           <Button
             key={opt.value}
             type="button"
-            variant="ghost"
+            variant="outline"
             size="sm"
             role="radio"
             aria-checked={period === opt.value}
@@ -164,7 +164,7 @@ export function ActivityTab({ widget }: Props) {
               <li key={c.id}>
                 <Button
                   type="button"
-                  variant="ghost"
+                  variant="outline"
                   onClick={() => setOpenConvId(c.id)}
                   className="h-auto w-full justify-start rounded-none px-2 py-3.5 text-left"
                 >
@@ -324,7 +324,7 @@ function ConversationDrawer({
           <Button
             type="button"
             onClick={onClose}
-            variant="ghost"
+            variant="outline"
             size="icon"
             className="h-8 w-8 text-gray-500"
             aria-label="Sluiten"

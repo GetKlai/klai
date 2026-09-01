@@ -41,7 +41,7 @@ function McpsNewPage() {
             {m.admin_mcps_new_subtitle()}
           </p>
         </div>
-        <Button type="button" variant="ghost" size="sm" onClick={handleBack}>
+        <Button type="button" variant="outline" size="sm" onClick={handleBack}>
           <ArrowLeft className="h-4 w-4 mr-2" />
           {m.admin_mcps_back()}
         </Button>
