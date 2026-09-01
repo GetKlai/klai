@@ -112,7 +112,6 @@ async def test_unchanged_content_with_legacy_graph_rules_queues_replacement() ->
     }
     app.ingest_graphiti_episode.defer_async.assert_awaited_once_with(
         artifact_id=_ARTIFACT_ID,
-        document_text=req.content,
         org_id=_ORG_ID,
         content_type="kb_article",
         belief_time_start=1_755_820_800,
@@ -120,6 +119,7 @@ async def test_unchanged_content_with_legacy_graph_rules_queues_replacement() ->
         path=_PATH,
         replace_stale=True,
     )
+    assert req.content not in repr(app.ingest_graphiti_episode.defer_async.await_args.kwargs)
 
 
 @pytest.mark.asyncio
@@ -292,6 +292,9 @@ async def _run_graphiti_task(graphiti_task: object, *, replace_stale: bool = Fal
     graph_module.flush_entity_graph_data = AsyncMock(return_value=None)
 
     store = MagicMock()
+    store.read_artifact_for_enrichment = AsyncMock(
+        return_value={"extra": {"document_text": "Klai routes calls to the right colleague."}}
+    )
     store.artifact_exists = AsyncMock(return_value=True)
     store.artifact_is_active = AsyncMock(return_value=True)
     store.get_episode_ids_for_document_history = AsyncMock(
@@ -317,7 +320,6 @@ async def _run_graphiti_task(graphiti_task: object, *, replace_stale: bool = Fal
     ):
         await graphiti_task(
             artifact_id=_ARTIFACT_ID,
-            document_text="Klai routes calls to the right colleague.",
             org_id=_ORG_ID,
             content_type="kb_article",
             belief_time_start=1_755_820_800,

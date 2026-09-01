@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 import sys
 import uuid
 
@@ -9,6 +10,60 @@ import structlog
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
+
+_REDACTED = "<redacted>"
+_CONTENT_FIELD_NAMES = frozenset(
+    {
+        "body_text",
+        "content_body",
+        "document_text",
+        "page_content",
+        "raw_content",
+    }
+)
+_CONTENT_ASSIGNMENT_RE = re.compile(
+    rf"(?P<prefix>['\"]?(?:{'|'.join(sorted(_CONTENT_FIELD_NAMES))})['\"]?\s*[:=]\s*)"
+    r"(?P<quote>['\"])(?:\\.|(?!(?P=quote)).)*(?P=quote)",
+    re.DOTALL,
+)
+
+
+def _redact_content_assignments(value: str) -> str:
+    if not any(field in value for field in _CONTENT_FIELD_NAMES):
+        return value
+
+    def _replacement(match: re.Match[str]) -> str:
+        quote = match.group("quote")
+        return f"{match.group('prefix')}{quote}{_REDACTED}{quote}"
+
+    return _CONTENT_ASSIGNMENT_RE.sub(_replacement, value)
+
+
+def _redact_nested_content(value: object) -> object:
+    if isinstance(value, dict):
+        for key, nested_value in value.items():
+            if isinstance(key, str) and key.casefold() in _CONTENT_FIELD_NAMES:
+                value[key] = _REDACTED
+            else:
+                value[key] = _redact_nested_content(nested_value)
+        return value
+    if isinstance(value, list):
+        for index, nested_value in enumerate(value):
+            value[index] = _redact_nested_content(nested_value)
+        return value
+    if isinstance(value, tuple):
+        return tuple(_redact_nested_content(item) for item in value)
+    if isinstance(value, str):
+        return _redact_content_assignments(value)
+    return value
+
+
+def redact_content_fields(
+    _logger: object, _method_name: str, event_dict: dict[str, object]
+) -> dict[str, object]:
+    """Redact document bodies from structured fields and rendered task messages."""
+    _redact_nested_content(event_dict)
+    return event_dict
 
 
 def setup_logging(service_name: str = "knowledge-ingest") -> None:
@@ -30,6 +85,7 @@ def setup_logging(service_name: str = "knowledge-ingest") -> None:
         structlog.processors.TimeStamper(fmt="iso"),
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
+        redact_content_fields,
     ]
 
     if log_format == "console":

@@ -1,9 +1,8 @@
-"""A graphiti job for a superseded artifact must not write its frozen text.
+"""A graphiti job for a superseded artifact must not write stale text.
 
 Contract: the graph may only hold episodes for the version of a document that
-is currently active. A queued ``ingest_graphiti_episode`` carries the document
-text as a task argument, frozen at enqueue time, so a job that is dequeued
-after a newer ingest superseded its artifact would store stale content.
+is currently active. ``ingest_graphiti_episode`` therefore reloads the active
+artifact body from PostgreSQL at execution time and soft-skips superseded rows.
 
 Why this became user-visible in #1152: episodes used to be named after the
 artifact_id, so a stale episode was simply unresolvable -- a dead end. Since
@@ -87,6 +86,11 @@ async def _run(
     graph_module.flush_entity_graph_data = AsyncMock(return_value=None)
 
     pg_store = MagicMock()
+    pg_store.read_artifact_for_enrichment = AsyncMock(
+        return_value={"extra": {"document_text": "current content from PostgreSQL"}}
+        if active
+        else None
+    )
     pg_store.artifact_exists = AsyncMock(return_value=exists)
     pg_store.artifact_is_active = AsyncMock(return_value=active)
     pg_store.update_artifact_extra = AsyncMock(return_value=None)
@@ -106,7 +110,6 @@ async def _run(
     ):
         await graphiti_task(
             artifact_id=_ARTIFACT_ID,
-            document_text="content that only existed in the superseded version",
             org_id=_ORG_ID,
             content_type="text/markdown",
             belief_time_start=0,
@@ -120,6 +123,7 @@ async def _run_active_document(
     document_text: str,
     episode_results: list[str | Exception | None],
     expected_error: type[Exception] | None = None,
+    legacy_document_text: str | None = None,
 ):
     ingest_episode = AsyncMock(side_effect=episode_results)
     graph_module = MagicMock()
@@ -128,6 +132,9 @@ async def _run_active_document(
     graph_module.flush_entity_graph_data = AsyncMock(return_value=None)
 
     pg_store = MagicMock()
+    pg_store.read_artifact_for_enrichment = AsyncMock(
+        return_value={"extra": {"document_text": document_text}}
+    )
     pg_store.artifact_exists = AsyncMock(return_value=True)
     pg_store.artifact_is_active = AsyncMock(return_value=True)
     pg_store.update_artifact_extra = AsyncMock(return_value=None)
@@ -140,13 +147,14 @@ async def _run_active_document(
     ):
         kwargs = {
             "artifact_id": _ARTIFACT_ID,
-            "document_text": document_text,
             "org_id": _ORG_ID,
             "content_type": "text/markdown",
             "belief_time_start": 0,
             "kb_slug": "support",
             "path": "guide.md",
         }
+        if legacy_document_text is not None:
+            kwargs["document_text"] = legacy_document_text
         if expected_error is None:
             await graphiti_task(**kwargs)
         else:
@@ -215,6 +223,20 @@ async def test_short_document_creates_one_episode_and_records_both_id_keys(graph
         "graphiti_extraction_version": 2,
     }
     graph_module.flush_entity_graph_data.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_old_signature_document_text_is_ignored_in_favour_of_postgres(graphiti_task):
+    ingest_episode, _, _ = await _run_active_document(
+        graphiti_task,
+        "Current body loaded from PostgreSQL.",
+        ["episode-1"],
+        legacy_document_text="Stale body frozen in the old queued job.",
+    )
+
+    assert ingest_episode.call_args.kwargs["document_text"] == (
+        "Current body loaded from PostgreSQL."
+    )
 
 
 @pytest.mark.asyncio
@@ -290,7 +312,10 @@ async def test_deletion_between_episode_parts_aborts_before_the_next_write(graph
     graph_module.flush_entity_graph_data = AsyncMock(return_value=None)
     graph_module.delete_kb_episodes = AsyncMock(return_value=None)
     pg_store = MagicMock()
-    pg_store.artifact_exists = AsyncMock(side_effect=[True, True, True, False])
+    pg_store.read_artifact_for_enrichment = AsyncMock(
+        return_value={"extra": {"document_text": f"{paragraph}\n\n{paragraph}\n\n{paragraph}"}}
+    )
+    pg_store.artifact_exists = AsyncMock(side_effect=[True, True, False])
     pg_store.artifact_is_active = AsyncMock(return_value=True)
     pg_store.update_artifact_extra = AsyncMock(return_value=None)
     pg_store.append_graphiti_episode_id = AsyncMock(return_value=None)
@@ -302,7 +327,6 @@ async def test_deletion_between_episode_parts_aborts_before_the_next_write(graph
     ):
         await graphiti_task(
             artifact_id=_ARTIFACT_ID,
-            document_text=f"{paragraph}\n\n{paragraph}\n\n{paragraph}",
             org_id=_ORG_ID,
             content_type="text/markdown",
             belief_time_start=0,
@@ -312,7 +336,7 @@ async def test_deletion_between_episode_parts_aborts_before_the_next_write(graph
 
     assert ingest_episode.await_count == 2
     graph_module.delete_kb_episodes.assert_awaited_once_with(_ORG_ID, ["episode-2"])
-    assert pg_store.artifact_exists.await_count == 4
+    assert pg_store.artifact_exists.await_count == 3
 
 
 @pytest.mark.asyncio
