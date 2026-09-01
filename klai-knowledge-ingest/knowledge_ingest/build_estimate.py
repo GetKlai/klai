@@ -17,9 +17,8 @@ This module gives two things:
   successful episode, so an operator hears about the approaching wall while
   a connector's corpus is still growing gradually, not only at rebuild time.
 
-All model constants are read from ``config.py`` settings, not hardcoded here
-— REQ-6's future re-measurement of the scaling constants is a config change,
-not a code change.
+All model constants are read from ``config.py`` settings, not hardcoded here;
+REQ-6's measured scaling constants landed as config-backed data.
 """
 
 from __future__ import annotations
@@ -92,8 +91,12 @@ def estimate_graph_build(
     (edge_ceiling = 0.6 * timeout / scan_us_per_edge; the 0.6 is tail
     headroom under the timeout, not a hard boundary).
     """
-    a = settings.graph_build_hours_per_mchar
     ann_enabled = settings.graph_ann_enabled if ann_effective is None else ann_effective
+    a = (
+        settings.graph_build_hours_per_mchar_ann
+        if ann_enabled
+        else settings.graph_build_hours_per_mchar
+    )
     b = (
         settings.graph_build_quad_hours_per_mchar2_ann
         if ann_enabled
@@ -173,8 +176,12 @@ def maybe_warn_graph_scale(org_id: str, current_edge_count: int) -> bool:
     at most one warning per org per hour per process. Returns True iff a
     warning was actually logged this call.
     """
-    a = settings.graph_build_hours_per_mchar
     ann_enabled = settings.graph_ann_enabled
+    a = (
+        settings.graph_build_hours_per_mchar_ann
+        if ann_enabled
+        else settings.graph_build_hours_per_mchar
+    )
     b = (
         settings.graph_build_quad_hours_per_mchar2_ann
         if ann_enabled
