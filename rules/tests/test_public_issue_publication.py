@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
+import shlex
 import subprocess
 import textwrap
+from pathlib import Path
 
 import pytest
 import yaml
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
@@ -31,6 +31,15 @@ def _run_hook(
         capture_output=True,
         check=False,
         cwd=cwd,
+        text=True,
+    )
+
+
+def _init_git_repo(path: Path, branch: str) -> None:
+    subprocess.run(
+        ["git", "init", f"--initial-branch={branch}", str(path)],
+        capture_output=True,
+        check=True,
         text=True,
     )
 
@@ -207,10 +216,18 @@ def test_hook_blocks_unapproved_public_pr_mutations(command: str) -> None:
     "command",
     [
         "git push origin main",
+        "git push --force origin main",
+        "git push --set-upstream origin main",
         "git push --force-with-lease origin HEAD:main",
+        "git push origin HEAD:refs/heads/main",
         "git push origin fix/publication-guard:refs/heads/main",
+        "git push origin deadbeef:refs/heads/main",
+        "git push origin +deadbeef:refs/heads/main",
+        "git push origin +main",
         "git push origin --delete main",
+        "git push --all",
         "git push --all origin",
+        "git push --mirror",
         "git push --mirror origin",
     ],
 )
@@ -230,8 +247,14 @@ def test_hook_blocks_unapproved_pushes_that_can_mutate_main(command: str) -> Non
         "gh pr diff 42",
         "gh pr checkout 42",
         "git push origin feature/foo",
+        "git push --force origin feature/foo",
         "git push -u origin fix/publication-guard",
+        "git push --set-upstream origin feature/foo",
         "git push origin HEAD:refs/heads/fix/publication-guard",
+        "git push origin deadbeef:refs/heads/fix/publication-guard",
+        "git push origin +deadbeef:refs/heads/fix/publication-guard",
+        "git push origin +feature/foo",
+        "git push origin --delete feature/foo",
     ],
 )
 def test_hook_allows_read_only_pr_commands_and_named_feature_branch_pushes(
@@ -244,41 +267,54 @@ def test_hook_allows_read_only_pr_commands_and_named_feature_branch_pushes(
 
 @pytest.mark.parametrize(
     "command",
-    ["git push -u origin HEAD", "git push --force origin HEAD", "git push"],
+    [
+        "git push",
+        "git push --force",
+        "git push -f",
+        "git push origin",
+        "git push origin HEAD",
+        "git push --force origin HEAD",
+        "git push -f origin HEAD",
+        "git push -u origin HEAD",
+        "git push --set-upstream origin HEAD",
+    ],
 )
 def test_hook_allows_head_pushes_from_a_feature_branch(
     command: str, tmp_path: Path
 ) -> None:
     """HEAD-relative pushes depend on the checked-out branch, so pin it.
 
-    These three were asserted without controlling the branch. That passed on a
-    feature worktree and on a detached PR checkout, and failed on main -- where
-    the hook is right to block them. The test was reading its environment
+    These forms were once asserted without controlling the branch. That passed
+    on a feature worktree and on a detached PR checkout, and failed on main --
+    where the hook is right to block them. The test was reading its environment
     rather than the contract. Its sibling below pins main; this one pins a
     feature branch, so both outcomes are asserted deliberately.
     """
-    subprocess.run(
-        ["git", "init", "--initial-branch=feature/guard-context", str(tmp_path)],
-        capture_output=True,
-        check=True,
-        text=True,
-    )
+    _init_git_repo(tmp_path, "feature/guard-context")
 
     result = _run_hook(command, cwd=tmp_path)
 
     assert result.returncode == 0
 
 
-@pytest.mark.parametrize("command", ["git push", "git push --force origin HEAD"])
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git push",
+        "git push --force",
+        "git push -f",
+        "git push origin",
+        "git push origin HEAD",
+        "git push --force origin HEAD",
+        "git push -f origin HEAD",
+        "git push -u origin HEAD",
+        "git push --set-upstream origin HEAD",
+    ],
+)
 def test_hook_resolves_head_pushes_to_main(
     command: str, tmp_path: Path
 ) -> None:
-    subprocess.run(
-        ["git", "init", "--initial-branch=main", str(tmp_path)],
-        capture_output=True,
-        check=True,
-        text=True,
-    )
+    _init_git_repo(tmp_path, "main")
 
     result = _run_hook(command, cwd=tmp_path)
 
@@ -286,11 +322,96 @@ def test_hook_resolves_head_pushes_to_main(
     assert "public main branch push" in result.stderr
 
 
-def test_hook_fails_open_when_head_branch_cannot_be_resolved(tmp_path: Path) -> None:
+def test_hook_blocks_when_head_branch_cannot_be_resolved(tmp_path: Path) -> None:
     result = _run_hook("git push --force origin HEAD", cwd=tmp_path)
 
-    assert result.returncode == 0
+    assert result.returncode == 2
     assert "symbolic-ref" in HOOK.read_text()
+
+
+def test_hook_resolves_head_in_leading_cd_worktree(tmp_path: Path) -> None:
+    session_repo = tmp_path / "session-main"
+    feature_repo = tmp_path / "target feature"
+    _init_git_repo(session_repo, "main")
+    _init_git_repo(feature_repo, "feature/worktree-target")
+
+    command = f"cd {shlex.quote(str(feature_repo))} && git push -u origin HEAD"
+    result = _run_hook(command, cwd=session_repo)
+
+    assert result.returncode == 0
+
+
+def test_hook_blocks_head_in_leading_cd_main_worktree(tmp_path: Path) -> None:
+    session_repo = tmp_path / "session-feature"
+    main_repo = tmp_path / "target main"
+    _init_git_repo(session_repo, "feature/session")
+    _init_git_repo(main_repo, "main")
+
+    command = f"cd {shlex.quote(str(main_repo))} && git push origin HEAD"
+    result = _run_hook(command, cwd=session_repo)
+
+    assert result.returncode == 2
+    assert "public main branch push" in result.stderr
+
+
+def test_hook_blocks_branch_dependent_push_in_unsupported_shell_context(
+    tmp_path: Path,
+) -> None:
+    session_repo = tmp_path / "session-feature"
+    main_repo = tmp_path / "target-main"
+    _init_git_repo(session_repo, "feature/session")
+    _init_git_repo(main_repo, "main")
+
+    command = f"(cd {shlex.quote(str(main_repo))} && git push origin HEAD)"
+    result = _run_hook(command, cwd=session_repo)
+
+    assert result.returncode == 2
+    assert "public main branch push" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("branch", "expected_exit"),
+    [("feature/git-c-target", 0), ("main", 2)],
+)
+def test_hook_resolves_head_in_git_c_worktree(
+    branch: str, expected_exit: int, tmp_path: Path
+) -> None:
+    target_repo = tmp_path / branch.replace("/", "-")
+    _init_git_repo(target_repo, branch)
+
+    result = _run_hook(
+        f"git -C {shlex.quote(str(target_repo))} push origin HEAD", cwd=tmp_path
+    )
+
+    assert result.returncode == expected_exit
+
+
+def test_hook_prefers_explicit_refspec_destination_over_current_branch(
+    tmp_path: Path,
+) -> None:
+    _init_git_repo(tmp_path, "main")
+
+    result = _run_hook(
+        "git push origin HEAD:refs/heads/fix/explicit-target", cwd=tmp_path
+    )
+
+    assert result.returncode == 0
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git push --unknown-option origin feature/guard",
+        "git --no-pager push origin feature/guard",
+        "git push origin refs/heads/*:refs/heads/*",
+        "git push origin deadbeef:",
+    ],
+)
+def test_hook_blocks_push_shapes_with_ambiguous_destinations(command: str) -> None:
+    result = _run_hook(command)
+
+    assert result.returncode == 2
+    assert "public main branch push" in result.stderr
 
 
 @pytest.mark.parametrize(
