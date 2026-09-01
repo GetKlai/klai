@@ -44,6 +44,7 @@ const ESLINT_CONFIG = path.join(FRONTEND_ROOT, 'eslint.config.js')
 const VITEST_CONFIG = path.join(FRONTEND_ROOT, 'vitest.config.ts')
 const ESLINT_RULES_DIR = path.join(FRONTEND_ROOT, 'eslint-rules')
 const DESIGN_TESTS_DIR = path.join(FRONTEND_ROOT, 'tests', 'design')
+const VISUAL_TESTS_DIR = path.join(FRONTEND_ROOT, 'e2e', 'visual')
 
 /** This file. It guards the ledger; it is not itself a ledgered design rule. */
 const SELF = 'rules-ledger.test.ts'
@@ -140,7 +141,10 @@ function missingCheckFiles(
 
   for (const row of checkRows) {
     for (const ref of codeSpans(row.check)) {
-      const isPath = ref.startsWith('src/') || ref.startsWith('tests/')
+      const isPath =
+        ref.startsWith('src/') ||
+        ref.startsWith('tests/') ||
+        ref.startsWith('e2e/')
       if (pathsOnly && !isPath) continue
 
       if (ref.startsWith('klai/')) {
@@ -298,6 +302,7 @@ describe('ledgered test checks', () => {
   const testRefs = rows
     .filter((r) => r.verification === 'automated' || r.verification === 'assisted')
     .flatMap((r) => codeSpans(r.check).map((ref) => ({ id: r.id, ref })))
+    .filter(({ ref }) => ref.startsWith('tests/'))
     .filter(({ ref }) => /\.(?:test|spec)\.[jt]sx?$/.test(ref))
 
   it('are collected by Vitest', () => {
@@ -326,6 +331,18 @@ describe('every design check is ledgered', () => {
     expect(
       unledgered,
       'add a Rules Ledger row naming this check, or the document under-reports its own coverage',
+    ).toEqual([])
+  })
+
+  it('covers every visual test in e2e/visual/', () => {
+    const unledgered = fs
+      .readdirSync(VISUAL_TESTS_DIR)
+      .filter((f) => /\.visual\.spec\.[jt]s$/.test(f))
+      .filter((f) => !automatedRefs.has(`e2e/visual/${f}`))
+
+    expect(
+      unledgered,
+      'add a Rules Ledger row for every visual catalog check',
     ).toEqual([])
   })
 
@@ -374,7 +391,7 @@ describe('the enforcement summary matches the ledger', () => {
     const inTable = new Set(
       [
         ...section.matchAll(
-          /`(klai\/[a-z-]+|tests\/design\/[a-z-]+\.(?:test|spec)\.tsx?)`/g,
+          /`(klai\/[a-z-]+|(?:tests\/design|e2e\/visual)\/[a-z.-]+\.(?:test|spec)\.tsx?)`/g,
         ),
       ].map((m) => m[1]),
     )
