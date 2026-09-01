@@ -110,6 +110,32 @@
     commitMessageAction: 'Refresh lock files',
   },
 
+  // Renovate's docker-compose manager only reads `image:` keys. The Vexa bot
+  // is pinned in an ENV value instead — `BROWSER_IMAGE: vexaai/vexa-bot:<v>` on
+  // vexa12-runtime — because the runtime spawns bot containers itself rather
+  // than Compose starting them. So Renovate moved the three vexa `image:` refs
+  // and silently left the bot behind, which is how PR #1240 came to propose a
+  // 0.12.23 runtime driving a 0.12.22 bot. Vexa is pre-1.0 and publishes no
+  // changelog, so a patch-level protocol change between the two is not
+  // something a reviewer can rule out.
+  //
+  // This makes the pin visible so the whole set moves as one PR. It does NOT
+  // make the upgrade automatic: deploy/docker-compose.yml documents that the
+  // bot image must be pulled on core-01 BEFORE the first spawn, because
+  // docker-socket-proxy has IMAGES disabled (SPEC-SEC-024) and `compose up`
+  // never fetches an env-valued image. Nothing in the pipeline enforces that,
+  // so a Vexa bump stays a deliberate operation with a manual step.
+  customManagers: [
+    {
+      customType: 'regex',
+      managerFilePatterns: ['/^deploy/docker-compose\\.yml$/'],
+      matchStrings: [
+        'BROWSER_IMAGE:\\s+(?<depName>vexaai/vexa-bot):(?<currentValue>\\S+)',
+      ],
+      datasourceTemplate: 'docker',
+    },
+  ],
+
   packageRules: [
     {
       description:
