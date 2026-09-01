@@ -302,6 +302,13 @@ async def stop_meeting(
     if meeting.status not in ACTIVE_STATUSES:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Meeting is not active")
 
+    # Persist the stop intent before Vexa's DELETE: destroying the workload can
+    # synchronously deliver bot.failed, and a later local commit would overwrite
+    # that terminal callback with "stopping".
+    meeting.status = "stopping"
+    meeting.ended_at = datetime.now(UTC)
+    await db.commit()
+
     ref = parse_meeting_url(meeting.meeting_url)
     if ref:
         try:
@@ -311,9 +318,6 @@ async def stop_meeting(
                 "Vexa stop_bot failed, continuing", meeting_id=str(meeting.id), error=str(exc), exc_info=True
             )
 
-    meeting.status = "stopping"
-    meeting.ended_at = datetime.now(UTC)
-    await db.commit()
     # See start_meeting: no post-commit refresh — RLS tenant context is gone
     # after commit, and expire_on_commit=False keeps the mutated fields intact.
     return await _build_meeting_response(meeting, db)
@@ -831,7 +835,11 @@ async def vexa_webhook(
         meeting = await scoped_db.merge(meeting)
 
         if payload.status is not None and payload.status != "completed":
-            if portal_status and meeting.status != portal_status and meeting.status != "stopping":
+            if (
+                portal_status
+                and meeting.status != portal_status
+                and (meeting.status != "stopping" or portal_status == "failed")
+            ):
                 meeting.status = portal_status
                 await scoped_db.commit()
                 logger.info(

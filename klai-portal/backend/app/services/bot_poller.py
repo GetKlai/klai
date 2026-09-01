@@ -54,25 +54,6 @@ def _snapshot(m: VexaMeeting) -> _ActiveMeetingSnapshot:
     return _ActiveMeetingSnapshot(id=m.id, org_id=m.org_id, meeting_url=m.meeting_url, status=m.status)
 
 
-async def _upgrade_joining_to_recording(meeting_id: uuid.UUID, org_id: int) -> None:
-    """Set meeting status joining→recording when the bot is confirmed active.
-
-    Runs in a tenant-scoped session so vexa_meetings' UPDATE RLS policy
-    accepts the write. Caller holds the meeting id and provides org_id.
-    """
-    async with tenant_scoped_session(org_id) as db:
-        m = await db.scalar(
-            select(VexaMeeting).where(
-                VexaMeeting.id == meeting_id,
-                VexaMeeting.status == "joining",
-            )
-        )
-        if m is not None:
-            m.status = "recording"
-            await db.commit()
-            logger.info("Bot poll: bot active, updated status joining→recording", meeting_id=str(meeting_id))
-
-
 async def _handle_meeting_ended(snap: _ActiveMeetingSnapshot) -> None:
     """Bot is gone from Vexa — transition meeting to stopping and run transcription.
 
@@ -201,8 +182,6 @@ async def _poll_once() -> None:
             continue
 
         if (ref.platform, ref.native_meeting_id) in running_keys:
-            if snap.status == "joining" and snap.org_id is not None:
-                await _upgrade_joining_to_recording(snap.id, snap.org_id)
             continue  # bot is still running
 
         await _handle_meeting_ended(snap)

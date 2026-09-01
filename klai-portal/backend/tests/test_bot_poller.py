@@ -181,10 +181,8 @@ async def test_poll_once_does_not_access_orm_after_session_exit(monkeypatch):
         "_fetch_running_keys_safe",
         AsyncMock(return_value={("google_meet", "abc-def-ghi")}),
     )
-    upgrade = AsyncMock()
     handle_ended = AsyncMock()
     recover_stuck = AsyncMock()
-    monkeypatch.setattr(bot_poller, "_upgrade_joining_to_recording", upgrade)
     monkeypatch.setattr(bot_poller, "_handle_meeting_ended", handle_ended)
     monkeypatch.setattr(bot_poller, "_recover_stuck_meeting", recover_stuck)
 
@@ -193,15 +191,13 @@ async def test_poll_once_does_not_access_orm_after_session_exit(monkeypatch):
 
     # Bot is still running (platform/native_id in running_keys) and status is
     # "recording" — so no helper should fire.
-    upgrade.assert_not_awaited()
     handle_ended.assert_not_awaited()
     recover_stuck.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_poll_once_upgrades_joining_to_recording(monkeypatch):
-    """When the bot is running and status is 'joining', upgrade to 'recording'
-    — and pass primitives, not ORM instances, to the helper."""
+async def test_running_bot_does_not_report_recording_before_admission(monkeypatch):
+    """A running container proves liveness, not admission to the meeting."""
     post_exit = [False]
     mid = uuid.uuid4()
     meeting = _mk_meeting(post_exit_flag=post_exit, meeting_id=mid, status="joining", org_id=7)
@@ -216,14 +212,14 @@ async def test_poll_once_upgrades_joining_to_recording(monkeypatch):
         "_fetch_running_keys_safe",
         AsyncMock(return_value={("google_meet", "abc-def-ghi")}),
     )
-    upgrade = AsyncMock()
-    monkeypatch.setattr(bot_poller, "_upgrade_joining_to_recording", upgrade)
+    tenant_session = MagicMock()
+    monkeypatch.setattr(bot_poller, "tenant_scoped_session", tenant_session)
     monkeypatch.setattr(bot_poller, "_handle_meeting_ended", AsyncMock())
     monkeypatch.setattr(bot_poller, "_recover_stuck_meeting", AsyncMock())
 
     await bot_poller._poll_once()
 
-    upgrade.assert_awaited_once_with(mid, 7)
+    tenant_session.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -246,7 +242,6 @@ async def test_poll_once_handles_meeting_ended_when_bot_gone(monkeypatch):
     )
     handle_ended = AsyncMock()
     monkeypatch.setattr(bot_poller, "_handle_meeting_ended", handle_ended)
-    monkeypatch.setattr(bot_poller, "_upgrade_joining_to_recording", AsyncMock())
     monkeypatch.setattr(bot_poller, "_recover_stuck_meeting", AsyncMock())
 
     await bot_poller._poll_once()
@@ -274,7 +269,6 @@ async def test_poll_once_recovers_stuck_meetings(monkeypatch):
     recover_stuck = AsyncMock()
     monkeypatch.setattr(bot_poller, "_recover_stuck_meeting", recover_stuck)
     monkeypatch.setattr(bot_poller, "_handle_meeting_ended", AsyncMock())
-    monkeypatch.setattr(bot_poller, "_upgrade_joining_to_recording", AsyncMock())
 
     await bot_poller._poll_once()
 
@@ -303,7 +297,6 @@ async def test_poll_once_skips_end_detection_when_running_keys_none(monkeypatch)
     recover_stuck = AsyncMock()
     monkeypatch.setattr(bot_poller, "_handle_meeting_ended", handle_ended)
     monkeypatch.setattr(bot_poller, "_recover_stuck_meeting", recover_stuck)
-    monkeypatch.setattr(bot_poller, "_upgrade_joining_to_recording", AsyncMock())
 
     await bot_poller._poll_once()
 
@@ -334,7 +327,6 @@ async def test_poll_once_skips_meeting_with_unparseable_url(monkeypatch):
     monkeypatch.setattr(bot_poller, "_fetch_running_keys_safe", AsyncMock(return_value=set()))
     handle_ended = AsyncMock()
     monkeypatch.setattr(bot_poller, "_handle_meeting_ended", handle_ended)
-    monkeypatch.setattr(bot_poller, "_upgrade_joining_to_recording", AsyncMock())
     monkeypatch.setattr(bot_poller, "_recover_stuck_meeting", AsyncMock())
 
     await bot_poller._poll_once()
