@@ -118,16 +118,16 @@ jobs:
           # source. Same pattern as klai-knowledge-ingest.
           context: .
           file: klai-knowledge-mcp/Dockerfile
-          push: ${{ github.event_name == 'push' }}
+          push: ${{ github.event_name != 'pull_request' }}
           tags: |
-            ghcr.io/getklai/klai-knowledge-mcp:latest
             ghcr.io/getklai/klai-knowledge-mcp:${{ github.sha }}
+            ${{ github.ref == 'refs/heads/main' && 'ghcr.io/getklai/klai-knowledge-mcp:latest' || '' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
   scan:
     needs: build-push
-    if: github.event_name == 'push'
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       security-events: write
@@ -177,6 +177,7 @@ jobs:
           sarif_file: 'trivy-results.sarif'
 
   deploy:
+    if: github.ref == 'refs/heads/main'
     # `needs: scan` ensures the Trivy gate from SPEC-CI-TRIVY-POLICY-001 REQ-2
     # can actually block the rollout: this step used to be the tail of
     # build-push, so a failing scan could not stop it from deploying.

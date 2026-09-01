@@ -90,8 +90,8 @@ jobs:
           context: ./klai-docs
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ github.ref == 'refs/heads/main' && format('{0}/{1}:latest', env.REGISTRY, env.IMAGE_NAME) || '' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -147,6 +147,7 @@ jobs:
           sarif_file: 'trivy-results.sarif'
 
   deploy:
+    if: github.ref == 'refs/heads/main'
     # `needs: scan` ensures Trivy gate from SPEC-CI-TRIVY-POLICY-001 REQ-2
     # actually blocks production deploy: if scan job exits 1 on a HIGH/CRIT
     # finding, deploy is skipped.
