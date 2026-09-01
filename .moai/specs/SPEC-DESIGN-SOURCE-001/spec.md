@@ -118,22 +118,42 @@ the start of the day.
 
 ## Follow-on work, tracked here so it is not re-litigated
 
-1. **`Field` component + the last ten raw auth inputs.** One consistent
-   hand-rolled label+input pattern across login, signup, password and 2FA
-   setup. Absorb into a `Field` primitive with the exact current appearance,
-   then lock with a lint rule mirroring `klai/no-raw-textarea`. The two
-   widget chat inputs stay raw by documented decision (dark-mode variant).
-2. **Authoring-time integration.** Point the always-loaded design rules and
-   the `klai-portal-ui` skill at `DESIGN.md` and the ledger, so agents get
-   the contract at write time instead of build-fail time.
-3. **Verification gaps.** The nine converted callouts sit on OAuth/upload
-   success states no local stack reaches; the `e2e` job is path-filtered off
-   frontend design changes. Both mean "CI green" still does not mean "seen".
-4. **Hook defect.** `public-github-mutation-guard.py` misclassifies a
-   feature-branch push inside a compound command as a main push. Found
-   2026-09-01; fix needs its own reviewed change, not a drive-by.
-5. **Local bootstrap.** A working `make dev-bootstrap` needs: dev-up →
+This section is the coordination queue. Updated 2026-09-01 end of day; items
+completed that same day are recorded with their PR and removed from the open
+list.
+
+Done, on main: `Field` + the raw-text-input lock (#1299), authoring-time
+integration of the generated contract into the agent instruction surfaces
+(#1300), visual snapshot CI over `/dev/ui` plus the semantic-base-foreground
+lock (#1302), the axe accessibility audit gating deploys (#1303), and the
+audit's colour debt including the new measured `--color-accent-text` token
+(#1304). Ledger at close: 56 rules — 14 automated, 4 assisted.
+
+Open:
+
+1. **Merge #1301** (mutation-guard fix). Green, reviewed, deliberately left
+   for a human: it loosens the hook that polices the author's own public
+   mutations, and the author should not also be the merger.
+2. **Multi-select `nested-interactive`.** The one remaining audit exception:
+   the trigger is a button containing interactive chip-remove controls.
+   Structural fix (chips outside the trigger, or listbox semantics).
+3. **Cross-surface count + styleguide correction, one unit.** The widget,
+   shield-extension and website carry their own copies of brand values; count
+   per copy what shares and what deliberately diverges before any lock. The
+   shared styleguide also still recommends `--color-rl-accent-dark` for text,
+   which #1304 measured false on tints (4.28:1) — correct it in the same
+   reviewed unit, since it is a shared file.
+4. **Hard-to-reach states into the catalog.** Render the OAuth success/error
+   banners and upload confirmations as `/dev/ui` sections; the visual and axe
+   suites then cover the nine converted callouts that sit behind flows no
+   local stack reaches.
+5. **Field spacing decision.** Field defaults to the auth screens'
+   `space-y-1`; the Forms section documents `space-y-1.5`. One must win before
+   Field spreads beyond auth. Judgement call, not agent work.
+6. **Reviewer convention: cite ledger IDs.** One documentation line; yields
+   free adoption data over time, revisit measurement only when that data
+   exists.
+7. **Local bootstrap.** A working `make dev-bootstrap` needs: dev-up →
    extract only the `_rls_current_org_id()` definition → migrate → all
    post_deploy scripts → backend. Backend-owned; the widget post_deploy
    scripts also fail on tables this chain does not create.
-
