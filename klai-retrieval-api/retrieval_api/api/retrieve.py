@@ -56,6 +56,7 @@ from retrieval_api.services.router import fetch_source_catalog, route_to_sources
 from retrieval_api.services.tei import embed_single, embed_sparse
 from retrieval_api.services.telemetry import write_shadow
 from retrieval_api.services.tenant_telemetry import get_canonical_level, resolve_effective_level
+from retrieval_api.tracing import RetrievalTrace
 from retrieval_api.util.payload import payload_list
 
 logger = structlog.get_logger(__name__)
@@ -477,6 +478,21 @@ async def retrieve(
     structlog.contextvars.bind_contextvars(telemetry_level=effective_level)
 
     t0 = time.perf_counter()
+    request_id = structlog.contextvars.get_contextvars().get("request_id") or str(uuid.uuid4())
+    trace = RetrievalTrace(
+        request_id=request_id,
+        org_id=req.org_id,
+        scope=req.scope,
+        telemetry_level=effective_level,
+        started_at=t0,
+    )
+    # Gate and evidence-tier experiments were retired in August 2026. Keep
+    # their flat compatibility fields truthful without restoring either
+    # behavior: retrieval never bypasses and evidence shadow mode is inactive.
+    trace.meta("gate_margin", None)
+    trace.meta("gate_bypassed", False)
+    trace.meta("gate_ms", 0.0)
+    trace.meta("evidence_shadow_mode", False)
     # @MX:NOTE: [AUTO] Shadow log for parameter tuning (SPEC-KB-021 Change 4).
     # decision_record accumulates timing + decision data throughout the pipeline
     # and is emitted as retrieval_decision_record at the end of the request.
@@ -499,25 +515,34 @@ async def retrieve(
         # (a 0.0 sample would skew p50/p95 toward zero). coref_ms stays 0.0 for
         # the decision_record + retrieve log.
         coref_ms = 0.0
-        decision_record["coreference_rewrite"] = {
-            "original": req.raw_query,
-            "resolved": query_resolved,
-            "source": "caller",
-        }
-        decision_record["coreference_ms"] = 0.0
+        trace.content(
+            "coreference_rewrite",
+            {
+                "original": req.raw_query,
+                "resolved": query_resolved,
+                "source": "caller",
+            },
+        )
+        trace.meta("coreference_ms", 0.0)
+        trace.record_ok("coreference", 0.0, source="caller")
     else:
         t_coref = time.perf_counter()
-        query_resolved = await coreference.resolve(
-            req.query, req.conversation_history, telemetry_level=effective_level
+        async with trace.step("coreference", started_at=t_coref) as coreference_step:
+            query_resolved = await coreference.resolve(
+                req.query, req.conversation_history, telemetry_level=effective_level
+            )
+            coreference_step.meta("source", "retrieval-api")
+        coref_ms = coreference_step.duration_ms
+        step_latency_seconds.labels(step="coref").observe(coref_ms / 1000)
+        trace.content(
+            "coreference_rewrite",
+            {
+                "original": req.query,
+                "resolved": query_resolved,
+                "source": "retrieval-api",
+            },
         )
-        coref_ms = (time.perf_counter() - t_coref) * 1000
-        step_latency_seconds.labels(step="coref").observe(time.perf_counter() - t_coref)
-        decision_record["coreference_rewrite"] = {
-            "original": req.query,
-            "resolved": query_resolved,
-            "source": "retrieval-api",
-        }
-        decision_record["coreference_ms"] = round(coref_ms, 1)
+        trace.meta("coreference_ms", round(coref_ms, 1))
 
     # 2. Embed resolved query (dense + sparse in parallel). When coreference /
     # query rewrite changed the query, also embed the user's pre-rewrite
@@ -526,18 +551,24 @@ async def retrieve(
     # name like "Salesforce" — that an over-eager rewrite would otherwise drop
     # from the candidate pool, where the reranker can no longer recover them.
     t_embed = time.perf_counter()
-    raw_query = req.raw_query if req.raw_query and req.raw_query != query_resolved else None
-    embed_coros = [embed_single(query_resolved), embed_sparse(query_resolved)]
-    if raw_query is not None:
-        embed_coros += [embed_single(raw_query), embed_sparse(raw_query)]
-    embedded = await asyncio.gather(*embed_coros)
-    query_vector, sparse_vector = embedded[0], embedded[1]
-    raw_query_vector = embedded[2] if raw_query is not None else None
-    raw_sparse_vector = embedded[3] if raw_query is not None else None
-    embed_ms = (time.perf_counter() - t_embed) * 1000
-    step_latency_seconds.labels(step="embed").observe(time.perf_counter() - t_embed)
-    decision_record["embedding_ms"] = round(embed_ms, 1)
+    async with trace.step("embed", started_at=t_embed) as embed_step:
+        raw_query = req.raw_query if req.raw_query and req.raw_query != query_resolved else None
+        embed_coros = [embed_single(query_resolved), embed_sparse(query_resolved)]
+        if raw_query is not None:
+            embed_coros += [embed_single(raw_query), embed_sparse(raw_query)]
+        embedded = await asyncio.gather(*embed_coros)
+        query_vector, sparse_vector = embedded[0], embedded[1]
+        raw_query_vector = embedded[2] if raw_query is not None else None
+        raw_sparse_vector = embedded[3] if raw_query is not None else None
+        embed_step.meta("raw_query_leg_applied", raw_query is not None)
+    embed_ms = embed_step.duration_ms
+    step_latency_seconds.labels(step="embed").observe(embed_ms / 1000)
+    trace.meta("embedding_ms", round(embed_ms, 1))
     decision_record["raw_query_leg_applied"] = raw_query is not None
+
+    # The retired gate has no runtime work. Its explicit skipped step keeps the
+    # trace vocabulary stable without reintroducing retrieval bypass behavior.
+    trace.mark_skipped("gate", "disabled_by_config")
 
     chunks_out: list[ChunkResult] = []
     candidates_retrieved = 0
@@ -564,29 +595,40 @@ async def retrieve(
     # 3b. Query router — identifies relevant sources for post-rerank selection
     router_meta: dict = {"router_decision": None, "router_layer_used": "skipped"}
     router_selected: set[str] | None = None
-    if settings.router_enabled and req.scope in ("org", "both"):
-        source_label_catalog = await fetch_source_catalog(req.org_id, req.kb_slugs)
-        if len(source_label_catalog) >= settings.router_min_source_label_count:
-            routing = await route_to_sources(
-                query_resolved=query_resolved,
-                query_vector=query_vector,
-                org_id=req.org_id,
-                source_label_catalog=source_label_catalog,
-                margin_single=settings.router_margin_single,
-                margin_dual=settings.router_margin_dual,
-                llm_fallback=settings.router_llm_fallback,
-                centroid_ttl_seconds=settings.router_centroid_ttl_seconds,
-                kb_slugs=req.kb_slugs,
-            )
-            if routing.selected_source_labels:
-                router_selected = set(routing.selected_source_labels)
-            router_meta = {
-                "router_decision": routing.selected_source_labels,
-                "router_layer_used": routing.layer_used,
-                "router_margin": routing.margin,
-                "router_centroid_cache_hit": routing.cache_hit,
-            }
-    decision_record["router"] = router_meta
+    async with trace.step("router") as router_step:
+        if not settings.router_enabled:
+            router_step.skip("disabled_by_config")
+        elif req.scope not in ("org", "both"):
+            router_step.skip("scope_not_applicable")
+        else:
+            source_label_catalog = await fetch_source_catalog(req.org_id, req.kb_slugs)
+            if len(source_label_catalog) < settings.router_min_source_label_count:
+                router_step.skip(
+                    "insufficient_source_labels",
+                    source_label_count=len(source_label_catalog),
+                )
+            else:
+                routing = await route_to_sources(
+                    query_resolved=query_resolved,
+                    query_vector=query_vector,
+                    org_id=req.org_id,
+                    source_label_catalog=source_label_catalog,
+                    margin_single=settings.router_margin_single,
+                    margin_dual=settings.router_margin_dual,
+                    llm_fallback=settings.router_llm_fallback,
+                    centroid_ttl_seconds=settings.router_centroid_ttl_seconds,
+                    kb_slugs=req.kb_slugs,
+                )
+                if routing.selected_source_labels:
+                    router_selected = set(routing.selected_source_labels)
+                router_meta = {
+                    "router_decision": routing.selected_source_labels,
+                    "router_layer_used": routing.layer_used,
+                    "router_margin": routing.margin,
+                    "router_centroid_cache_hit": routing.cache_hit,
+                }
+        router_step.meta("router_layer_used", router_meta["router_layer_used"])
+    trace.meta("router", router_meta)
 
     # 4. Search — Qdrant + Graphiti in parallel (AC-5)
     t_qdrant = time.perf_counter()
@@ -604,6 +646,8 @@ async def retrieve(
     if settings.graphiti_enabled:
         t_graph = time.perf_counter()
         graph_task = asyncio.create_task(graph_search.search(query_resolved, req.org_id, top_k=20))
+    else:
+        trace.mark_skipped("graph_search", "disabled_by_config")
 
     raw_results = await qdrant_coro
     qdrant_ms = (time.perf_counter() - t_qdrant) * 1000
@@ -612,14 +656,16 @@ async def retrieve(
 
     if graph_task is not None and t_graph is not None:
         try:
-            graph_results = await graph_task
-            graph_search_ms = (time.perf_counter() - t_graph) * 1000
-            step_latency_seconds.labels(step="graph").observe(graph_search_ms / 1000)
-            graph_results_count = len(graph_results)
-            if graph_results:
-                await _label_graph_results(graph_results, req)
-                graph_candidate_ids = {r["chunk_id"] for r in graph_results}
-                raw_results = _rrf_merge(raw_results, graph_results)
+            async with trace.step("graph_search", started_at=t_graph) as graph_step:
+                graph_results = await graph_task
+                graph_search_ms = (time.perf_counter() - t_graph) * 1000
+                step_latency_seconds.labels(step="graph").observe(graph_search_ms / 1000)
+                graph_results_count = len(graph_results)
+                graph_step.meta("candidates_returned", graph_results_count)
+                if graph_results:
+                    await _label_graph_results(graph_results, req)
+                    graph_candidate_ids = {r["chunk_id"] for r in graph_results}
+                    raw_results = _rrf_merge(raw_results, graph_results)
         except Exception:
             # SPEC-SEC-HYGIENE-001 REQ-43.3: exc_info=True preserves the
             # traceback that the previous `error=str(exc)` dropped (TRY401).
@@ -629,41 +675,51 @@ async def retrieve(
     decision_record["search_candidates_count"] = candidates_retrieved
 
     # 4b. Link expansion (SPEC-CRAWLER-003 R14-R16)
-    if settings.link_expand_enabled and raw_results:
+    if not settings.link_expand_enabled:
+        link_expand_step = trace.mark_skipped("link_expand", "disabled_by_config")
+    elif not raw_results:
+        link_expand_step = trace.mark_skipped("link_expand", "no_candidates")
+    else:
         t_expand = time.perf_counter()
-        seed_chunks = raw_results[: settings.link_expand_seed_k]
-        candidate_urls: list[str] = []
-        seen_urls: set[str] = set()
-        for chunk in seed_chunks:
-            for url in payload_list(chunk, "links_to"):
-                if url not in seen_urls:
-                    seen_urls.add(url)
-                    candidate_urls.append(url)
+        async with trace.step("link_expand", started_at=t_expand) as link_expand_step:
+            seed_chunks = raw_results[: settings.link_expand_seed_k]
+            candidate_urls: list[str] = []
+            seen_urls: set[str] = set()
+            for chunk in seed_chunks:
+                for url in payload_list(chunk, "links_to"):
+                    if url not in seen_urls:
+                        seen_urls.add(url)
+                        candidate_urls.append(url)
+                    if len(candidate_urls) >= settings.link_expand_max_urls:
+                        break
                 if len(candidate_urls) >= settings.link_expand_max_urls:
                     break
-            if len(candidate_urls) >= settings.link_expand_max_urls:
-                break
 
-        # F3 phase 1: capture seed chunk_ids before expansion so we can
-        # measure later how many of the served top-k were original-seed
-        # vs newly-expanded vs neither.
-        link_expand_seed_chunk_ids = {c["chunk_id"] for c in seed_chunks}
-        link_expand_candidate_urls = len(candidate_urls)
+            # F3 phase 1: capture seed chunk_ids before expansion so we can
+            # measure later how many of the served top-k were original-seed
+            # vs newly-expanded vs neither.
+            link_expand_seed_chunk_ids = {c["chunk_id"] for c in seed_chunks}
+            link_expand_candidate_urls = len(candidate_urls)
+            link_expand_step.meta("seed_k", len(seed_chunks))
+            link_expand_step.meta("candidate_urls", link_expand_candidate_urls)
 
-        if candidate_urls:
-            expansion_chunks = await search.fetch_chunks_by_urls(
-                candidate_urls, req, settings.link_expand_candidates
-            )
-            existing_ids = {r["chunk_id"] for r in raw_results}
-            new_chunks = [c for c in expansion_chunks if c["chunk_id"] not in existing_ids]
-            link_expand_count = len(new_chunks)
-            # F3 phase 1: tag the expansion chunks. Underscore prefix
-            # keeps the field internal — Pydantic ChunkResult ignores
-            # unknown fields by default and the build loop only reads
-            # explicit keys, so this never leaks to the response body.
-            for c in new_chunks:
-                c["_link_expanded"] = True
-            raw_results = raw_results + new_chunks
+            if not candidate_urls:
+                link_expand_step.skip("no_candidate_urls")
+            else:
+                expansion_chunks = await search.fetch_chunks_by_urls(
+                    candidate_urls, req, settings.link_expand_candidates
+                )
+                existing_ids = {r["chunk_id"] for r in raw_results}
+                new_chunks = [c for c in expansion_chunks if c["chunk_id"] not in existing_ids]
+                link_expand_count = len(new_chunks)
+                link_expand_step.meta("expanded_added", link_expand_count)
+                # F3 phase 1: tag the expansion chunks. Underscore prefix
+                # keeps the field internal — Pydantic ChunkResult ignores
+                # unknown fields by default and the build loop only reads
+                # explicit keys, so this never leaks to the response body.
+                for c in new_chunks:
+                    c["_link_expanded"] = True
+                raw_results = raw_results + new_chunks
 
         link_expand_ms = (time.perf_counter() - t_expand) * 1000
         step_latency_seconds.labels(step="link_expand").observe(link_expand_ms / 1000)
@@ -677,11 +733,18 @@ async def retrieve(
     # 4c. Authority boost (SPEC-CRAWLER-003 R17), retained only for
     # ranking-contract shadow comparison. Active mode serves by the
     # post-rerank final_rank_score contract instead.
-    if ranking_contract_mode == "shadow" and settings.link_expand_enabled and raw_results:
+    authority_boost_enabled = (
+        ranking_contract_mode == "shadow" and settings.link_expand_enabled and bool(raw_results)
+    )
+    authority_boosted_count = 0
+    if authority_boost_enabled:
         for r in raw_results:
             incoming = r.get("incoming_link_count") or 0
             if incoming > 0:
                 r["score"] = r["score"] + settings.link_authority_boost * math.log(1 + incoming)
+                authority_boosted_count += 1
+    link_expand_step.meta("authority_boost_enabled", authority_boost_enabled)
+    link_expand_step.meta("authority_boosted_count", authority_boosted_count)
 
     raw_results, page_context_candidate_boosted = _apply_page_context_boost(
         raw_results,
@@ -927,13 +990,15 @@ async def retrieve(
 
     # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1 — confidence band on the
     # served chunks so downstream consumers can decide how strongly to answer.
-    confidence_band: ConfidenceBand = _compute_confidence_band(
-        serving,
-        high_threshold=settings.confidence_band_high_threshold,
-        low_threshold=settings.confidence_band_low_threshold,
-        reranker_enabled=settings.reranker_enabled,
-    )
-    decision_record["confidence_band"] = confidence_band
+    t_confidence = time.perf_counter()
+    with trace.step("confidence_band", started_at=t_confidence):
+        confidence_band: ConfidenceBand = _compute_confidence_band(
+            serving,
+            high_threshold=settings.confidence_band_high_threshold,
+            low_threshold=settings.confidence_band_low_threshold,
+            reranker_enabled=settings.reranker_enabled,
+        )
+    trace.meta("confidence_band", confidence_band)
     retrieval_confidence_band_total.labels(band=confidence_band, org_id=req.org_id).inc()
 
     evidence_query = (
@@ -972,7 +1037,8 @@ async def retrieve(
         outcome = "hit" if graph_in_top_k_ids else "miss"
         retrieval_graph_top_k_total.labels(outcome=outcome, org_id=req.org_id).inc()
 
-    decision_record["total_ms"] = round(retrieval_ms, 1)
+    trace.meta("total_ms", round(retrieval_ms, 1))
+    trace.record_ok("total", retrieval_ms)
 
     # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-5: gate raw-query content on
     # decision_record. In off + shadow mode, strip the coreference
@@ -985,29 +1051,19 @@ async def retrieve(
     # 'content' events to a 7d-retention stream and 'metadata' events
     # to the existing 30d stream (operator-side VictoriaLogs config —
     # follow-up runbook in Unit 8).
-    if effective_level != "full" and "coreference_rewrite" in decision_record:
-        decision_record.pop("coreference_rewrite", None)
-        decision_record["retention_class"] = "metadata"
+    if effective_level != "full":
         telemetry_level_decisions_total.labels(
             level=effective_level, decision="metadata_only"
         ).inc()
     elif effective_level == "full":
-        decision_record["retention_class"] = "content"
         telemetry_level_decisions_total.labels(level="full", decision="content_emitted").inc()
-    else:
-        # off mode without coreference_rewrite already in the record.
-        decision_record["retention_class"] = "metadata"
 
     try:
-        logger.info(
-            "retrieval_decision_record",
-            org_id=req.org_id,
-            scope=req.scope,
-            telemetry_level=effective_level,
-            **decision_record,
-        )
+        for key, value in decision_record.items():
+            trace.meta(key, value)
+        logger.info("retrieval_decision_record", **trace.to_log_kwargs())
     except Exception:
-        logger.exception("decision_record_emit_failed")
+        logger.exception("retrieval_trace_emit_failed")
 
     # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-7: shadow-store INSERT for shadow
     # + full modes. Fire-and-forget — failures are counted in
@@ -1020,9 +1076,7 @@ async def retrieve(
     # missing rows would silently degrade observability and bias the
     # dashboards' decision counters.
     if effective_level in ("shadow", "full"):
-        request_id_for_shadow = structlog.contextvars.get_contextvars().get("request_id") or str(
-            uuid.uuid4()
-        )
+        request_id_for_shadow = trace.request_id
         chunk_ids_for_shadow = [c.chunk_id for c in chunks_out]
         reranker_scores = [c.reranker_score for c in chunks_out if c.reranker_score is not None]
         reranker_top1 = max(reranker_scores) if reranker_scores else None
