@@ -215,15 +215,15 @@ adjust the page container width instead of adding local offsets.
 ### Description length and `PageIntro`
 
 The `description` is a SHORT subtitle: a count or a single line. It sits below
-the title and is muted (`text-gray-400`). When a primary action is present,
+the title and uses the secondary text colour (`text-gray-600`). When a primary action is present,
 `PageHeader` caps it at `sm:max-w-[60%]` of the header width so the subtitle
 never runs under the right-aligned action — keep it short and this cap is
 never reached.
 
 When a list/overview page needs to actually explain the feature before the
 list, do NOT stretch the subtitle. Put the explanation in a `PageIntro` block
-below the header — plain text, no card, slightly more readable
-(`text-gray-600`) than the subtitle, with `space-y-3` between paragraphs. This
+below the header — plain text, no card, using the same readable secondary
+colour (`text-gray-600`), with `space-y-3` between paragraphs. This
 is the `/app/instructions` pattern: title + short subtitle + action, then an
 intro body.
 
@@ -252,7 +252,7 @@ page title.
     <h1 className="page-title text-[26px] font-display-bold text-gray-900">
       {title}
     </h1>
-    <p className="mt-1 text-sm text-gray-400">{description}</p>
+    <p className="mt-1 text-sm text-gray-600">{description}</p>
   </div>
   <Button type="button" variant="outline" size="sm" onClick={onBack}>
     <ArrowLeft className="h-4 w-4 mr-2" />
@@ -902,9 +902,10 @@ The live render is the `/dev/ui` "Conversation" section.
 
 Use:
 
-- `text-gray-900` for primary text.
-- `text-gray-600` for explanatory body copy below a header (`PageIntro`).
-- `text-gray-400` for muted descriptions/metadata (the `PageHeader` subtitle).
+- `text-gray-900` — primary text — 16.85:1.
+- `text-gray-600` — muted / secondary text; the default — 7.18:1.
+- `text-gray-500` — icons and other non-text; clears the 3:1 non-text bar — 4.39:1.
+- `text-gray-400` — decorative and disabled only — 2.41:1.
 - `border-gray-200` for borders.
 - `klai-hover` for interactive hover states.
 - `var(--color-success)`, `var(--color-warning)`, `var(--color-destructive)`

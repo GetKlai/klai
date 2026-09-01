@@ -44,7 +44,7 @@ function PageHeader({ title, count, description, actions, className, ...props }:
         // When a primary action sits on the title row, cap the description so
         // it never runs under the action. ~60% of the header width clears the
         // right-aligned action with margin to spare. Full width when no action.
-        <p className={cn('text-sm text-gray-400', actions ? 'sm:max-w-[60%]' : undefined)}>
+        <p className={cn('text-sm text-gray-600', actions ? 'sm:max-w-[60%]' : undefined)}>
           {description}
         </p>
       ) : null}
@@ -56,8 +56,8 @@ function PageHeader({ title, count, description, actions, className, ...props }:
 // `description` subtitle. Plain text, no card. Use this when a list/overview
 // page needs to explain the feature before the list (the /app/instructions
 // pattern). Keep the PageHeader `description` to a short subtitle and move the
-// real explanation here. Body text is `text-gray-600` (more readable than the
-// gray-400 subtitle); paragraphs are separated with `space-y-3`.
+// real explanation here. Body text uses the shared `text-gray-600` secondary
+// text colour; paragraphs are separated with `space-y-3`.
 function PageIntro({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return <div className={cn('space-y-3 text-sm text-gray-600', className)} {...props} />
 }

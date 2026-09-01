@@ -63,7 +63,7 @@ function StatCard({
   )
   const body = (
     <>
-      <p className="text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-400">
+      <p className="text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-600">
         {label}
       </p>
       <p
@@ -81,7 +81,7 @@ function StatCard({
           value
         )}
       </p>
-      {sub && <p className="mt-1 text-xs text-gray-400">{sub}</p>}
+      {sub && <p className="mt-1 text-xs text-gray-600">{sub}</p>}
     </>
   )
   if (onClick) {

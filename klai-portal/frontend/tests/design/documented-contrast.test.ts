@@ -21,6 +21,7 @@ const AA_NORMAL_TEXT = 4.5
 const TAILWIND_TEXT_COLORS = new Map([
   ['text-gray-900', '#111827'],
   ['text-gray-600', '#4b5563'],
+  ['text-gray-500', '#6b7280'],
   ['text-gray-400', '#9ca3af'],
 ])
 
@@ -29,7 +30,11 @@ const PORTAL_SURFACES = ['--color-background', '--color-secondary']
 const DOCUMENTED_EXCEPTIONS = new Map([
   [
     'text-gray-400',
-    "The portal's default secondary colour at ~605 uses. Replacing it is a counted migration, not a sweep; see SPEC-DESIGN-SOURCE-001.",
+    'Documented for decorative and disabled use only; it does not carry information in those roles.',
+  ],
+  [
+    'text-gray-500',
+    'The documented non-text colour; it clears the 3:1 contrast bar that applies to icons and other informative non-text.',
   ],
   [
     '--color-success',

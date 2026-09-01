@@ -63,7 +63,7 @@ function DataTableHead({ align = 'left', className, ...props }: DataTableHeadPro
   return (
     <th
       className={cn(
-        'px-4 py-3 text-left text-xs font-medium text-gray-400',
+        'px-4 py-3 text-left text-xs font-medium text-gray-600',
         align === 'right' && 'text-right',
         align === 'center' && 'text-center',
         className,

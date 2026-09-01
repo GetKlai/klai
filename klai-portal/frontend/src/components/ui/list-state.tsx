@@ -15,7 +15,7 @@ function ListState({ className, ...props }: ListStateProps) {
   return (
     <div
       className={cn(
-        'flex flex-col items-center justify-center py-12 text-center text-sm text-gray-400',
+        'flex flex-col items-center justify-center py-12 text-center text-sm text-gray-600',
         className,
       )}
       {...props}
