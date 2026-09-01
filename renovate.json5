@@ -296,15 +296,29 @@
     },
     {
       description:
-        'eslint (klai-docs only): pinned below 10 — eslint-config-next 16.3.1 \
-        pulls in eslint-plugin-react 7.37.5, whose lib/util/version.js still \
-        calls context.getFilename(). ESLint 10 removed that method, so \
-        `eslint .` throws "contextOrFilename.getFilename is not a function" \
-        while loading the very first React rule and the quality-docs job never \
-        gets as far as linting (proven by PR #1161). 7.37.5 is the latest \
-        release, so there is nothing to bump to and nothing in klai-docs to \
-        edit around it. klai-portal/frontend is already on eslint 10 and is \
-        unaffected — it does not use eslint-config-next. \
+        'eslint (klai-docs only): pinned below 10 — eslint-config-next pulls \
+        in eslint-plugin-react, whose lib/util/version.js still calls \
+        context.getFilename(). ESLint 10 removed that method, so `eslint .` \
+        throws "contextOrFilename.getFilename is not a function" while loading \
+        the very first React rule and quality-docs never gets as far as \
+        linting. klai-portal/frontend is already on eslint 10 and is \
+        unaffected — it does not use eslint-config-next, which is why this \
+        rule is scoped by matchFileNames rather than applied repo-wide. \
+        \
+        Re-verified 2026-09-01 against the current chain, not inferred from \
+        peer ranges: eslint 10.9.1 + eslint-config-next 16.3.4 reproduces the \
+        same crash. eslint-plugin-react is still 7.37.5 (April 2025) and its \
+        `next` dist-tag is a 2018 release candidate, so there is no \
+        prerelease route either. \
+        \
+        Do not reach for a fork or a patch step to get around this: it is a \
+        dev-only linter and the upstream fixes already exist as PRs. Lift the \
+        ceiling — delete this entry, do not raise the number — once all four \
+        hold: (1) eslint-plugin-react publishes a stable release carrying \
+        upstream #4022 with an eslint-10 peer, (2) eslint-plugin-import \
+        publishes its already-merged #3230, (3) eslint-plugin-jsx-a11y \
+        declares ^10 support, and (4) a plain `npm ci` without forcing plus \
+        `npm run lint` in klai-docs both pass. \
         Tracking: GetKlai/klai#1184',
       matchManagers: ['npm'],
       matchPackageNames: ['eslint'],
