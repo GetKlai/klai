@@ -212,7 +212,7 @@ async def _ingest_and_finish(view: KBUploadView, *, result: docling_client.Docli
 
     title = file_upload.derive_title(view.filename, view.extension)
     source_content_hash = view.source_ref.removeprefix("file:sha256:")
-    # ``ingest_path`` is ``source_ref`` for a normal upload and the replaced
+    # ``document_path`` is ``source_ref`` for a normal upload and the replaced
     # source's path for a replacement — see KBUpload.target_path. Ingesting
     # under the original path is what makes knowledge-ingest supersede the
     # old artifact instead of adding a second one beside it. ``content_hash``
@@ -221,7 +221,7 @@ async def _ingest_and_finish(view: KBUploadView, *, result: docling_client.Docli
     payload: dict[str, object] = {
         "org_id": org_zitadel_id,
         "kb_slug": kb_slug,
-        "path": view.ingest_path,
+        "path": view.document_path,
         "content": result.content,
         "content_hash": source_content_hash,
         "title": title,

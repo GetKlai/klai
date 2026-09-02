@@ -1204,7 +1204,7 @@ def _is_upload_missing_active_artifact(upload: KBUpload, active_artifact_ids: se
     version as a broken source next to the live one.
     """
     artifact_id = str(upload.artifact_id or "")
-    document_path = str(upload.target_path or upload.source_ref or "")
+    document_path = str(upload.document_path or "")
     if artifact_id and artifact_id in active_artifact_ids:
         return False
     if document_path and document_path in active_paths:
@@ -1741,7 +1741,7 @@ async def delete_kb_upload(
                 db,
                 kb_id=kb.id,
                 org_id=perms.org_id,
-                path=upload.target_path or upload.source_ref,
+                path=upload.document_path,
                 except_id=upload.id,
             )
 

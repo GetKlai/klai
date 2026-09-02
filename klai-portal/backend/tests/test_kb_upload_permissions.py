@@ -431,6 +431,9 @@ def _make_kb_upload(
     upload.created_by = created_by
     upload.source_ref = source_ref
     upload.target_path = target_path
+    # Mirror KBUpload.document_path: a bare MagicMock attribute would be a
+    # truthy object, and every consumer keys the document on this.
+    upload.document_path = target_path or source_ref
     return upload
 
 

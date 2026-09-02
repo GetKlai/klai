@@ -145,6 +145,9 @@ def _make_upload(
     # fixture row look like a replacement.
     upload.target_path = target_path
     upload.created_at = datetime(2026, 5, 10, tzinfo=UTC)
+    # Mirror KBUpload.document_path: a bare MagicMock attribute would be a
+    # truthy object, and every consumer keys the document on this.
+    upload.document_path = target_path or source_ref
     return upload
 
 

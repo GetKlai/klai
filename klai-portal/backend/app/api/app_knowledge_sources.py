@@ -934,7 +934,18 @@ async def replace_file_source(
             },
         )
 
-    target_path = tracked.ingest_path
+    target_path = tracked.document_path
+    if await kb_uploads_repo.has_pending_replacement(
+        db,
+        kb_id=kb.id,
+        org_id=perms.org_id,
+        document_path=target_path,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error_code": "replace_already_running"},
+        )
+
     if pipeline == "text":
         entry, skip = await _ingest_text_bytes(
             body=body,

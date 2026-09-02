@@ -44,6 +44,7 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -111,3 +112,23 @@ class KBUpload(Base):
         nullable=False,
         server_default=func.now(),
     )
+
+    @hybrid_property
+    def document_path(self) -> str:
+        """The key this upload's content lives under in knowledge-ingest.
+
+        ``target_path`` for a replacement, ``source_ref`` for a first upload.
+        Every version of one source shares this value — it is what ties a
+        replacement to the source it overwrites, what the poller ingests
+        under, and what a delete has to clear.
+
+        A hybrid so the same name works on a loaded row and inside a query;
+        spelling ``target_path or source_ref`` by hand at each call site is
+        how one of them ends up disagreeing with the others.
+        """
+        return self.target_path or self.source_ref
+
+    @document_path.inplace.expression
+    @classmethod
+    def _document_path_expr(cls):
+        return func.coalesce(cls.target_path, cls.source_ref)

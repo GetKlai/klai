@@ -18,10 +18,10 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
-from sqlalchemy import and_, delete, or_, select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.kb_uploads import KBUpload
@@ -34,6 +34,12 @@ STATUS_PROCESSING = "processing"
 STATUS_INGESTING = "ingesting"
 STATUS_DONE = "done"
 STATUS_FAILED = "failed"
+
+#: How long an in-flight replacement holds its claim on a source. Chosen
+#: above knowledge-ingest's 30-minute stale-artifact reaper so a replacement
+#: that is merely slow still blocks, while one whose docling task died stops
+#: blocking instead of freezing the source for good.
+REPLACEMENT_CLAIM_TTL = timedelta(minutes=45)
 
 _TERMINAL_STATUSES: frozenset[str] = frozenset({STATUS_DONE, STATUS_FAILED})
 _PENDING_STATUSES: frozenset[str] = frozenset({STATUS_PROCESSING, STATUS_INGESTING})
@@ -71,13 +77,12 @@ class KBUploadView:
         return self.status in _TERMINAL_STATUSES
 
     @property
-    def ingest_path(self) -> str:
-        """Document key this upload ingests under.
+    def document_path(self) -> str:
+        """Mirror of :attr:`KBUpload.document_path` on the read-projection.
 
-        ``target_path`` for a replacement (the path of the source being
-        overwritten), ``source_ref`` for a normal upload. Knowledge-ingest
-        supersedes whatever artifact is active under that key, so returning
-        the original path is what turns an upload into a replace.
+        Knowledge-ingest supersedes whatever artifact is active under this
+        key, so returning the replaced source's path is what turns an upload
+        into a replace.
         """
         return self.target_path or self.source_ref
 
@@ -214,6 +219,17 @@ async def get_view_by_artifact(
     passing through ``kb_uploads``. That absence is what gates "can this
     source be replaced by uploading a file?".
 
+    Also returns None for a SUPERSEDED version. Every version a source has
+    ever had keeps its own done row, so without this a stale tab could
+    address the source through an artifact id that is two versions old. That
+    is not just an addressing quirk: the permission check downstream reads
+    ``created_by`` off the row it gets back, so an old row would let whoever
+    uploaded v1 overwrite content someone else put there in v2 — a source
+    they are not allowed to delete. Newness is judged on rows that actually
+    produced an artifact, so a no-op replacement (identical content, which
+    knowledge-ingest dedupes and answers without an artifact_id) does not
+    make the live version unaddressable.
+
     The session must be tenant-scoped (cat-D RLS filters cross-org rows);
     ``org_id`` + ``kb_id`` are still pinned so a valid artifact id from
     another KB in the same org cannot be addressed here.
@@ -230,7 +246,64 @@ async def get_view_by_artifact(
         .limit(1)
     )
     row = result.scalar_one_or_none()
-    return _to_view(row) if row is not None else None
+    if row is None:
+        return None
+
+    newer = await db.execute(
+        select(KBUpload.id)
+        .where(
+            KBUpload.kb_id == kb_id,
+            KBUpload.org_id == org_id,
+            KBUpload.document_path == row.document_path,
+            KBUpload.status == STATUS_DONE,
+            KBUpload.artifact_id.is_not(None),
+            KBUpload.artifact_id != "",
+            KBUpload.created_at > row.created_at,
+        )
+        .limit(1)
+    )
+    if newer.scalar_one_or_none() is not None:
+        return None
+    return _to_view(row)
+
+
+async def has_pending_replacement(
+    db: AsyncSession,
+    *,
+    kb_id: int,
+    org_id: int,
+    document_path: str,
+) -> bool:
+    """True when a replacement for this source is already being processed.
+
+    Accepting a second one is not a duplicate-work problem, it is a
+    correctness problem: both ingest under the same document key, and the
+    winner is whichever docling task finishes last — which can be the file
+    the user picked FIRST. Better to refuse and say so.
+
+    Bounded by :data:`REPLACEMENT_CLAIM_TTL`, and that bound is the point.
+    Nothing moves a kb_uploads row out of ``processing``/``ingesting`` when
+    a docling task never goes terminal — the poller deliberately leaves it
+    for the next tick, forever. An unbounded check would turn that stall
+    into a source that can never be replaced again, and the user cannot
+    clear the stalled attempt either: an in-flight replacement is folded
+    into the row of the source it replaces, so it has no row to delete.
+    After the TTL the stale attempt stops blocking; if it ever does land it
+    is superseded by whatever replaced it in the meantime.
+    """
+    cutoff = datetime.now(UTC) - REPLACEMENT_CLAIM_TTL
+    result = await db.execute(
+        select(KBUpload.id)
+        .where(
+            KBUpload.kb_id == kb_id,
+            KBUpload.org_id == org_id,
+            KBUpload.target_path == document_path,
+            KBUpload.status.in_(_PENDING_STATUSES),
+            KBUpload.updated_at > cutoff,
+        )
+        .limit(1)
+    )
+    return result.scalar_one_or_none() is not None
 
 
 async def delete_rows_for_document(
@@ -257,10 +330,7 @@ async def delete_rows_for_document(
     conditions = [
         KBUpload.kb_id == kb_id,
         KBUpload.org_id == org_id,
-        or_(
-            KBUpload.target_path == path,
-            and_(KBUpload.target_path.is_(None), KBUpload.source_ref == path),
-        ),
+        KBUpload.document_path == path,
     ]
     if except_id is not None:
         conditions.append(KBUpload.id != except_id)

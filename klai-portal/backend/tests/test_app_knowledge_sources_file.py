@@ -830,10 +830,12 @@ class _ReplacePatches(_FilePatches):
         role: str = "owner",
         manages_all_sources: bool = True,
         ingest_artifact_id: str = "art-replacement",
+        pending_replacement: bool = False,
     ) -> None:
         super().__init__(role=role, ingest_artifact_id=ingest_artifact_id)
         self.tracked = tracked
         self.manages_all_sources = manages_all_sources
+        self.pending_replacement = pending_replacement
 
     def __enter__(self) -> _ReplacePatches:
         super().__enter__()
@@ -847,6 +849,12 @@ class _ReplacePatches(_FilePatches):
             patch(
                 "app.api.app_knowledge_sources.grants_kb_source_manage",
                 MagicMock(return_value=self.manages_all_sources),
+            )
+        )
+        self.stack.enter_context(
+            patch(
+                "app.api.app_knowledge_sources.kb_uploads_repo.has_pending_replacement",
+                AsyncMock(return_value=self.pending_replacement),
             )
         )
         return self
@@ -1063,5 +1071,35 @@ class TestReplaceFileSource:
 
         assert excinfo.value.status_code == 400
         assert excinfo.value.detail["error_code"] == "empty_content"
+        assert patches.mock_ingest is not None
+        patches.mock_ingest.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_refuses_a_second_replacement_while_one_is_processing(self) -> None:
+        """Two in flight for one source means the LAST to finish wins.
+
+        With docling that can easily be the file the user picked first, so
+        the outcome would depend on queue timing rather than on intent.
+        """
+        from app.api.app_knowledge_sources import replace_file_source
+
+        kb = _make_kb()
+        db = _make_db_mock(kb)
+        tracked = _make_upload_view(source_ref=_ORIGINAL_PATH, artifact_id="art-old")
+
+        with (
+            _ReplacePatches(tracked=tracked, pending_replacement=True) as patches,
+            pytest.raises(HTTPException) as excinfo,
+        ):
+            await replace_file_source(
+                kb_slug="personal",
+                artifact_id="art-old",
+                request=_replace_request("sip.md", b"# Derde poging\n", "text/markdown"),
+                perms=_make_perms(),
+                db=db,
+            )
+
+        assert excinfo.value.status_code == 409
+        assert excinfo.value.detail == {"error_code": "replace_already_running"}
         assert patches.mock_ingest is not None
         patches.mock_ingest.assert_not_awaited()
