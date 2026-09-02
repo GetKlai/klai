@@ -26,6 +26,12 @@ end of this file, each with an ID, an RFC 2119 level and a declared
 verification mode. The count today: **59 rules — 17 automated, 4 assisted,
 34 manual, 4 deliberately unchecked.**
 
+When a review comment invokes a rule from this document, cite its ledger ID
+(for example "KLAI-UI-022"). That costs nothing in the moment and makes rule
+adoption measurable for free: a search over PR history then shows which rules
+reviews actually lean on — data that should exist before anyone proposes
+heavier compliance measurement.
+
 The catalogue is maintained by hand. The ledger's own preamble says which of
 its guarantees a test backs and which rely on you adding the row — read that
 before quoting a number from here.
