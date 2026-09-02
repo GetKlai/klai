@@ -162,13 +162,22 @@ async def mark_done(
     *,
     upload_id: uuid.UUID,
     artifact_id: str,
-) -> None:
-    """Transition a row to ``done`` with the resulting artifact id."""
-    await db.execute(
+) -> bool:
+    """Transition a row to ``done`` with the resulting artifact id.
+
+    Returns False when the row was no longer pending — deleted with its
+    source, or retired to ``failed`` to free a stalled claim — which happened
+    while the ingest call was in flight. The caller owns the artifact that
+    call just created and has to undo it: reporting ``done`` for a row that
+    took zero updates is the "best-effort success" the root AGENTS.md
+    forbids, and the artifact would be a source the user thought was gone.
+    """
+    result = await db.execute(
         update(KBUpload)
-        .where(KBUpload.id == upload_id)
+        .where(KBUpload.id == upload_id, KBUpload.status.in_(_PENDING_STATUSES))
         .values(status=STATUS_DONE, artifact_id=artifact_id, updated_at=_now())
     )
+    return int(cast("CursorResult[Any]", result).rowcount or 0) > 0
 
 
 async def mark_failed(
@@ -185,11 +194,48 @@ async def mark_failed(
     )
 
 
-async def mark_ingesting(db: AsyncSession, *, upload_id: uuid.UUID) -> None:
-    """Transition ``processing`` → ``ingesting`` once docling finishes."""
-    await db.execute(
-        update(KBUpload).where(KBUpload.id == upload_id).values(status=STATUS_INGESTING, updated_at=_now())
+async def mark_ingesting(db: AsyncSession, *, upload_id: uuid.UUID) -> bool:
+    """Transition ``processing`` → ``ingesting`` once docling finishes.
+
+    Returns False when the row was not in ``processing`` any more, which is
+    the poller's signal to stop working on it. The status is part of the
+    WHERE clause on purpose: a row can be retired to ``failed`` (a stalled
+    claim being cleared) or deleted (its source removed) while the poller is
+    mid-tick, and an id-only UPDATE would quietly revive it.
+    """
+    result = await db.execute(
+        update(KBUpload)
+        .where(KBUpload.id == upload_id, KBUpload.status == STATUS_PROCESSING)
+        .values(status=STATUS_INGESTING, updated_at=_now())
     )
+    return int(cast("CursorResult[Any]", result).rowcount or 0) > 0
+
+
+async def is_still_pending(db: AsyncSession, *, upload_id: uuid.UUID, org_id: int) -> bool:
+    """True when this row still wants the poller to finish it.
+
+    Read immediately before the external ingest call, because that call is
+    the irreversible step. Between ``list_pending`` and here the row can have
+    been deleted (its source removed) or retired to ``failed`` (a stalled
+    claim cleared to let a newer replacement through); ingesting anyway
+    re-creates a source the user deleted, or drops a revived task on top of
+    the replacement that superseded it.
+
+    Note this only narrows the window — it cannot close it, because the
+    ingest call it guards is not part of any transaction. ``mark_done``
+    carries the same condition and compensates when it loses the race.
+
+    ``org_id`` is pinned rather than left to RLS alone, per
+    ``.claude/rules/klai/projects/portal-security.md``.
+    """
+    result = await db.execute(
+        select(KBUpload.id).where(
+            KBUpload.id == upload_id,
+            KBUpload.org_id == org_id,
+            KBUpload.status.in_(_PENDING_STATUSES),
+        )
+    )
+    return result.scalar_one_or_none() is not None
 
 
 async def get_view(db: AsyncSession, *, upload_id: uuid.UUID) -> KBUploadView | None:

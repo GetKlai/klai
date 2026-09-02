@@ -82,6 +82,9 @@ class _PollerPatches:
         ingest_side_effect: Exception | None = None,
         kb: object | None = None,
         org: object | None = None,
+        claim_kept: bool = True,
+        still_pending: bool = True,
+        finalised: bool = True,
     ) -> None:
         self.poll_result = poll_result
         self.poll_side_effect = poll_side_effect
@@ -92,6 +95,9 @@ class _PollerPatches:
         self.ingest_side_effect = ingest_side_effect
         self.kb = kb
         self.org = org
+        self.claim_kept = claim_kept
+        self.still_pending = still_pending
+        self.finalised = finalised
         self.stack = ExitStack()
         self.mock_poll: AsyncMock | None = None
         self.mock_result: AsyncMock | None = None
@@ -99,6 +105,8 @@ class _PollerPatches:
         self.mock_mark_done: AsyncMock | None = None
         self.mock_mark_failed: AsyncMock | None = None
         self.mock_mark_ingesting: AsyncMock | None = None
+        self.mock_still_pending: AsyncMock | None = None
+        self.mock_delete_artifact: AsyncMock | None = None
 
     def __enter__(self) -> _PollerPatches:
         self.mock_poll = AsyncMock(return_value=self.poll_result, side_effect=self.poll_side_effect)
@@ -125,9 +133,9 @@ class _PollerPatches:
             )
         )
 
-        self.mock_mark_done = AsyncMock(return_value=None)
+        self.mock_mark_done = AsyncMock(return_value=self.finalised)
         self.mock_mark_failed = AsyncMock(return_value=None)
-        self.mock_mark_ingesting = AsyncMock(return_value=None)
+        self.mock_mark_ingesting = AsyncMock(return_value=self.claim_kept)
         self.stack.enter_context(patch("app.services.kb_upload_poller.kb_uploads_repo.mark_done", self.mock_mark_done))
         self.stack.enter_context(
             patch("app.services.kb_upload_poller.kb_uploads_repo.mark_failed", self.mock_mark_failed)
@@ -136,6 +144,23 @@ class _PollerPatches:
             patch(
                 "app.services.kb_upload_poller.kb_uploads_repo.mark_ingesting",
                 self.mock_mark_ingesting,
+            )
+        )
+        # Patched unconditionally: an unpatched compensation path would fire
+        # a real HTTP call whose failure the handler swallows, which is how a
+        # test goes green while exercising the wrong branch.
+        self.mock_delete_artifact = AsyncMock(return_value=None)
+        self.stack.enter_context(
+            patch(
+                "app.services.kb_upload_poller.knowledge_ingest_client.delete_kb_upload",
+                self.mock_delete_artifact,
+            )
+        )
+        self.mock_still_pending = AsyncMock(return_value=self.still_pending)
+        self.stack.enter_context(
+            patch(
+                "app.services.kb_upload_poller.kb_uploads_repo.is_still_pending",
+                self.mock_still_pending,
             )
         )
 
@@ -530,3 +555,117 @@ class TestReplacementRows:
 
         assert patches.mock_mark_done is not None
         assert patches.mock_mark_done.call_args.kwargs["artifact_id"] == "art-replacement"
+
+
+class TestAbandonedRows:
+    """A tick that started before the row was retired must not finish it.
+
+    Two things can happen to a kb_uploads row while the poller holds a view
+    of it: the source gets deleted (the row goes with it), or a stalled
+    replacement claim is cleared to let a newer one through (the row goes to
+    ``failed``). Completing the ingest anyway re-creates a source the user
+    deleted, or lands a dead task on top of the replacement that superseded
+    it — in both cases content reappears that nobody asked for.
+    """
+
+    @pytest.mark.asyncio
+    async def test_stops_when_the_row_is_no_longer_processing(self) -> None:
+        view = _view(status=STATUS_PROCESSING)
+        with _PollerPatches(
+            poll_result=DoclingPollResult(
+                task_id="task-1",
+                status=DoclingTaskStatus.SUCCESS,
+                terminal=True,
+                error_message=None,
+                queue_position=None,
+            ),
+            markdown="# converted",
+            claim_kept=False,
+        ) as patches:
+            await kb_upload_poller._process_processing_row(view)
+
+        assert patches.mock_ingest is not None
+        patches.mock_ingest.assert_not_awaited()
+        assert patches.mock_mark_done is not None
+        patches.mock_mark_done.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_stops_between_the_claim_and_the_ingest(self) -> None:
+        """The gap that matters: the ingest call is the irreversible step."""
+        view = _view(status=STATUS_PROCESSING)
+        with _PollerPatches(
+            poll_result=DoclingPollResult(
+                task_id="task-1",
+                status=DoclingTaskStatus.SUCCESS,
+                terminal=True,
+                error_message=None,
+                queue_position=None,
+            ),
+            markdown="# converted",
+            still_pending=False,
+        ) as patches:
+            await kb_upload_poller._process_processing_row(view)
+
+        assert patches.mock_still_pending is not None
+        patches.mock_still_pending.assert_awaited_once()
+        assert patches.mock_ingest is not None
+        patches.mock_ingest.assert_not_awaited()
+        assert patches.mock_mark_done is not None
+        patches.mock_mark_done.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_retry_of_an_abandoned_row_also_stops(self) -> None:
+        """The ingesting-state retry path shares the same guard."""
+        view = _view(status=STATUS_INGESTING)
+        with _PollerPatches(markdown="# converted", still_pending=False) as patches:
+            await kb_upload_poller._process_ingesting_row(view)
+
+        assert patches.mock_ingest is not None
+        patches.mock_ingest.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_undoes_the_artifact_when_cancelled_during_the_ingest(self) -> None:
+        """The preflight cannot cover the ingest call — it is not in a
+        transaction. When finalisation finds the row gone, the artifact that
+        call just created belongs to nobody: keeping it resurrects a deleted
+        source, or leaves a dead task's content on top of the replacement
+        that superseded it.
+        """
+        view = _view(status=STATUS_PROCESSING)
+        with _PollerPatches(
+            poll_result=DoclingPollResult(
+                task_id="task-1",
+                status=DoclingTaskStatus.SUCCESS,
+                terminal=True,
+                error_message=None,
+                queue_position=None,
+            ),
+            markdown="# converted",
+            ingest_artifact="art-orphan",
+            finalised=False,
+        ) as patches:
+            await kb_upload_poller._process_processing_row(view)
+
+        assert patches.mock_ingest is not None
+        patches.mock_ingest.assert_awaited_once()
+        assert patches.mock_delete_artifact is not None
+        patches.mock_delete_artifact.assert_awaited_once()
+        assert patches.mock_delete_artifact.await_args.args[2] == "art-orphan"
+
+    @pytest.mark.asyncio
+    async def test_a_normal_completion_undoes_nothing(self) -> None:
+        view = _view(status=STATUS_PROCESSING)
+        with _PollerPatches(
+            poll_result=DoclingPollResult(
+                task_id="task-1",
+                status=DoclingTaskStatus.SUCCESS,
+                terminal=True,
+                error_message=None,
+                queue_position=None,
+            ),
+            markdown="# converted",
+        ) as patches:
+            await kb_upload_poller._process_processing_row(view)
+
+        assert patches.mock_delete_artifact is not None
+        patches.mock_delete_artifact.assert_not_awaited()

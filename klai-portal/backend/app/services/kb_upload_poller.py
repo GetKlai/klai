@@ -126,8 +126,13 @@ async def _process_processing_row(view: KBUploadView) -> None:
         return
 
     async with tenant_scoped_session(view.org_id) as db:
-        await kb_uploads_repo.mark_ingesting(db, upload_id=view.id)
+        claimed = await kb_uploads_repo.mark_ingesting(db, upload_id=view.id)
         await db.commit()
+    if not claimed:
+        # Retired or deleted while this tick was running — see
+        # kb_uploads_repo.mark_ingesting.
+        logger.info("kb_upload_abandoned", upload_id=str(view.id), phase="mark_ingesting")
+        return
 
     await _ingest_and_finish(view, result=result)
 
@@ -254,6 +259,22 @@ async def _ingest_and_finish(view: KBUploadView, *, result: docling_client.Docli
     if kb_owner_type == "user":
         payload["user_id"] = view.created_by
 
+    # Last check before the irreversible step. The row can have been deleted
+    # (its source removed) or retired to failed (a stalled claim cleared for a
+    # newer replacement) since this tick picked it up; ingesting anyway
+    # re-creates a source the user deleted, or lands a revived task on top of
+    # the replacement that superseded it.
+    async with tenant_scoped_session(view.org_id) as db:
+        still_wanted = await kb_uploads_repo.is_still_pending(db, upload_id=view.id, org_id=view.org_id)
+    if not still_wanted:
+        logger.info(
+            "kb_upload_abandoned",
+            upload_id=str(view.id),
+            phase="pre_ingest",
+            kb_slug=kb_slug,
+        )
+        return
+
     try:
         artifact_id = await knowledge_ingest_client.ingest_document(payload)
     except (httpx.HTTPStatusError, httpx.RequestError):
@@ -267,8 +288,34 @@ async def _ingest_and_finish(view: KBUploadView, *, result: docling_client.Docli
         return
 
     async with tenant_scoped_session(view.org_id) as db:
-        await kb_uploads_repo.mark_done(db, upload_id=view.id, artifact_id=artifact_id)
+        finalised = await kb_uploads_repo.mark_done(db, upload_id=view.id, artifact_id=artifact_id)
         await db.commit()
+
+    if not finalised:
+        # The row was deleted or retired WHILE the ingest call was running,
+        # so the preflight above could not catch it — that call is not part
+        # of any transaction. We own the artifact it just created and it
+        # belongs to nobody: keeping it resurrects a source the user deleted,
+        # or leaves a dead task's content on top of the replacement that
+        # superseded it. Undo it, and never report this as done.
+        try:
+            await knowledge_ingest_client.delete_kb_upload(org_zitadel_id, kb_slug, artifact_id)
+        except Exception:
+            logger.exception(
+                "kb_upload_orphan_artifact",
+                upload_id=str(view.id),
+                artifact_id=artifact_id,
+                kb_slug=kb_slug,
+            )
+        else:
+            logger.warning(
+                "kb_upload_cancelled_during_ingest",
+                upload_id=str(view.id),
+                artifact_id=artifact_id,
+                kb_slug=kb_slug,
+            )
+        return
+
     logger.info(
         "kb_upload_done",
         upload_id=str(view.id),
