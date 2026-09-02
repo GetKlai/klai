@@ -9,6 +9,7 @@ import {
   Plus,
   Settings,
   Sparkles,
+  X,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -991,6 +992,80 @@ function UiCatalogPage() {
               </Alert>
             ))}
           </div>
+        </div>
+      </Section>
+
+      <Section title="Callouts in context">
+        <div className="max-w-xl space-y-4">
+          <div className="space-y-2">
+            <Alert variant="success" size="sm">
+              <div className="flex items-center gap-2">
+                <span className="flex-1">Connector succesvol verbonden.</span>
+                <button
+                  type="button"
+                  aria-label="Sluiten"
+                  className="transition-opacity hover:opacity-70"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            </Alert>
+            <Alert variant="destructive" size="sm">
+              <div className="flex items-center gap-2">
+                <span className="flex-1">
+                  Verbinden mislukt. Probeer het nog eens of neem contact op met support als het
+                  blijft fout gaan.
+                </span>
+                <button
+                  type="button"
+                  aria-label="Sluiten"
+                  className="transition-opacity hover:opacity-70"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            </Alert>
+          </div>
+
+          <Alert variant="success">
+            <p>Toegevoegd aan kennisbank</p>
+          </Alert>
+
+          <Alert variant="info">
+            <div className="flex items-start gap-3">
+              <div className="flex-1 space-y-3">
+                <p className="font-medium text-gray-900">Twee manieren om een opname te starten</p>
+                <div className="space-y-0.5">
+                  <p className="font-medium text-gray-900">Link plakken</p>
+                  <p className="text-sm text-gray-600">
+                    Voer een Google Meet-, Zoom- of Teams-link in en klik op Bot starten.
+                  </p>
+                </div>
+                <div className="space-y-0.5">
+                  <p className="font-medium text-gray-900">Uitnodigen via agenda</p>
+                  <p className="text-sm text-gray-600">
+                    Voeg meet@getklai.com toe als gast in je agenda-uitnodiging. Klai sluit
+                    automatisch aan op het geplande tijdstip - geen portalactie nodig.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="link"
+                  size="sm"
+                  className="-ml-4 text-gray-900 underline underline-offset-2"
+                >
+                  Begrepen
+                </Button>
+              </div>
+              <button
+                type="button"
+                className="shrink-0 rounded p-1 text-gray-500 transition-colors hover:bg-gray-200 hover:text-gray-900"
+                aria-label="Begrepen"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </Alert>
         </div>
       </Section>
 
