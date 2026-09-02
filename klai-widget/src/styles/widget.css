@@ -5,6 +5,7 @@
      Override via css_variables from widget config. */
   --klai-primary-color: #fcaa2d;          /* rl-accent (amber) */
   --klai-primary-hover: #e89a1f;          /* rl-accent-hover */
+  --klai-link-color: #7D4D03;             /* accent-text */
   --klai-primary-text-color: var(--klai-text-color);
   --klai-text-color: #191918;             /* rl-dark */
   --klai-text-muted: #19191899;           /* rl-dark-60 */
@@ -62,7 +63,7 @@
 }
 
 .klai-bubble:focus-visible {
-  outline: 3px solid var(--klai-primary-color);
+  outline: 3px solid var(--klai-text-color);
   outline-offset: 3px;
 }
 
@@ -207,6 +208,11 @@
   background: color-mix(in srgb, var(--klai-primary-text-color) 20%, transparent);
 }
 
+.klai-icon-btn:focus-visible {
+  outline: 2px solid var(--klai-primary-text-color);
+  outline-offset: 2px;
+}
+
 .klai-icon-btn:disabled {
   cursor: not-allowed;
   opacity: 0.45;
@@ -259,8 +265,9 @@
 }
 
 .klai-close-btn:focus-visible {
-  outline: 2px solid var(--klai-primary-color);
+  outline: 2px solid var(--klai-primary-text-color);
   outline-offset: 2px;
+  opacity: 1;
 }
 
 .klai-close-btn svg {
@@ -305,10 +312,13 @@
 }
 
 .klai-conversation-close-btn:hover:not(:disabled),
-.klai-new-conversation-btn:hover:not(:disabled),
+.klai-new-conversation-btn:hover:not(:disabled) {
+  border-color: var(--klai-primary-color);
+}
+
 .klai-conversation-close-btn:focus-visible,
 .klai-new-conversation-btn:focus-visible {
-  border-color: var(--klai-primary-color);
+  border-color: var(--klai-text-color);
 }
 
 .klai-conversation-close-btn:disabled,
@@ -327,7 +337,7 @@
 }
 
 .klai-conversation-empty {
-  color: var(--klai-text-muted);
+  color: color-mix(in srgb, var(--klai-text-color) 72%, transparent);
   font-size: 12px;
   line-height: 1.35;
   padding: 8px 2px;
@@ -354,6 +364,11 @@
   background: var(--klai-background-color);
 }
 
+.klai-conversation-item:focus-visible {
+  outline: 2px solid var(--klai-text-color);
+  outline-offset: 1px;
+}
+
 .klai-conversation-item:disabled {
   cursor: default;
 }
@@ -369,9 +384,15 @@
 }
 
 .klai-conversation-meta {
-  color: var(--klai-text-muted);
+  color: color-mix(in srgb, var(--klai-text-color) 72%, transparent);
   font-size: 11px;
   line-height: 1.2;
+}
+
+.klai-conversation-item:hover:not(:disabled) .klai-conversation-meta,
+.klai-conversation-item:focus-visible .klai-conversation-meta,
+.klai-conversation-item--active .klai-conversation-meta {
+  color: var(--klai-text-muted);
 }
 
 .klai-new-conversation-btn {
@@ -434,7 +455,7 @@
 .klai-agent-name {
   display: block;
   margin-bottom: 3px;
-  color: var(--klai-text-muted);
+  color: color-mix(in srgb, var(--klai-text-color) 72%, transparent);
   font-size: 11px;
   font-weight: 600;
   line-height: 1.2;
@@ -478,7 +499,7 @@
 }
 
 .klai-handoff-name-input:focus {
-  border-color: var(--klai-primary-color);
+  border-color: var(--klai-text-color);
 }
 
 .klai-handoff-btn {
@@ -495,9 +516,13 @@
   transition: border-color 150ms ease, background-color 150ms ease;
 }
 
-.klai-handoff-btn:hover:not(:disabled),
-.klai-handoff-btn:focus-visible {
+.klai-handoff-btn:hover:not(:disabled) {
   border-color: var(--klai-primary-color);
+  background: color-mix(in srgb, var(--klai-primary-color) 10%, transparent);
+}
+
+.klai-handoff-btn:focus-visible {
+  border-color: var(--klai-text-color);
   background: color-mix(in srgb, var(--klai-primary-color) 10%, transparent);
 }
 
@@ -511,7 +536,7 @@
 .klai-markdown p:last-child { margin-bottom: 0; }
 .klai-markdown strong { font-weight: 600; }
 .klai-markdown em { font-style: italic; }
-.klai-markdown a { color: var(--klai-primary-color); text-decoration: underline; }
+.klai-markdown a { color: var(--klai-link-color); text-decoration: underline; }
 .klai-markdown a.klai-citation {
   white-space: nowrap;
   font-weight: 600;
@@ -547,7 +572,7 @@
   align-items: center;
   gap: 8px;
   cursor: pointer;
-  color: var(--klai-text-muted);
+  color: color-mix(in srgb, var(--klai-text-color) 72%, transparent);
   list-style: none;
   user-select: none;
 }
@@ -588,7 +613,7 @@
   flex-shrink: 0;
   font-size: 11px;
   line-height: 1.2;
-  color: var(--klai-text-muted);
+  color: color-mix(in srgb, var(--klai-text-color) 72%, transparent);
 }
 
 .klai-sources-list {
@@ -626,7 +651,7 @@
 }
 
 .klai-sources-link--document {
-  color: var(--klai-text-muted);
+  color: color-mix(in srgb, var(--klai-text-color) 72%, transparent);
 }
 
 .klai-sources-number {
@@ -664,7 +689,7 @@
   align-items: flex-start;
   gap: 8px;
   margin: 0;
-  color: var(--klai-text-muted);
+  color: color-mix(in srgb, var(--klai-text-color) 72%, transparent);
   font-size: 11.5px;
   line-height: 1.35;
 }
@@ -674,7 +699,7 @@
   height: 7px;
   margin-top: 4px;
   border-radius: 50%;
-  background-color: var(--klai-primary-color);
+  background-color: color-mix(in srgb, var(--klai-primary-color) 65%, var(--klai-text-color));
   flex-shrink: 0;
 }
 
@@ -711,7 +736,7 @@
   align-self: center;
   text-align: center;
   font-size: 13px;
-  color: #dc2626;
+  color: #B91C1C;
   padding: 8px 12px;
   background-color: #fef2f2;
   border-radius: 8px;
@@ -736,7 +761,7 @@
 .klai-typing-dot {
   width: 6px;
   height: 6px;
-  background-color: var(--klai-text-muted);
+  background-color: color-mix(in srgb, var(--klai-text-color) 72%, transparent);
   border-radius: 50%;
   animation: klai-bounce 1.2s ease-in-out infinite;
   opacity: 0.7;
@@ -753,7 +778,7 @@
 @keyframes klai-bounce {
   0%, 60%, 100% {
     transform: translateY(0);
-    opacity: 0.5;
+    opacity: 0.7;
   }
   30% {
     transform: translateY(-5px);
@@ -805,7 +830,7 @@
 
 .klai-user-info-input:focus {
   outline: none;
-  border-color: var(--klai-primary-color);
+  border-color: var(--klai-text-color);
 }
 
 .klai-user-info-input::placeholder {
@@ -867,7 +892,7 @@
 
 .klai-textarea:focus {
   outline: none;
-  border-color: var(--klai-primary-color);
+  border-color: var(--klai-text-color);
 }
 
 .klai-textarea::placeholder {
@@ -909,7 +934,7 @@
 
 .klai-send-btn:focus-visible,
 .klai-stop-btn:focus-visible {
-  outline: 2px solid var(--klai-primary-color);
+  outline: 2px solid var(--klai-text-color);
   outline-offset: 2px;
 }
 
@@ -921,7 +946,7 @@
 
 .klai-stop-btn {
   background-color: #fef2f2;
-  color: #dc2626;
+  color: #B91C1C;
 }
 
 .klai-stop-btn:hover {
