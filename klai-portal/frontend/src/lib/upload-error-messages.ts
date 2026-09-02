@@ -101,6 +101,8 @@ export function uploadReasonToMessage(reason: string): string {
       return 'Deze bron komt niet van een geüpload bestand en kan niet worden vervangen.'
     case 'replace_already_running':
       return 'Er wordt al een nieuw bestand voor deze bron verwerkt. Wacht tot dat klaar is.'
+    case 'replace_superseded':
+      return 'Iemand anders heeft deze bron net vervangen. Ververs de lijst en probeer opnieuw.'
     case 'not_your_upload':
       return 'Je kunt alleen bestanden vervangen die je zelf hebt toegevoegd.'
     default:

@@ -16,12 +16,13 @@ responsible for opening it via the right tenant context:
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.kb_uploads import KBUpload
@@ -35,10 +36,10 @@ STATUS_INGESTING = "ingesting"
 STATUS_DONE = "done"
 STATUS_FAILED = "failed"
 
-#: How long an in-flight replacement holds its claim on a source. Chosen
-#: above knowledge-ingest's 30-minute stale-artifact reaper so a replacement
-#: that is merely slow still blocks, while one whose docling task died stops
-#: blocking instead of freezing the source for good.
+#: How long an in-flight replacement holds its claim on a source before it
+#: is retired as stalled. Chosen above knowledge-ingest's 30-minute
+#: stale-artifact reaper so a replacement that is merely slow keeps its
+#: claim, while one whose docling task died stops freezing the source.
 REPLACEMENT_CLAIM_TTL = timedelta(minutes=45)
 
 _TERMINAL_STATUSES: frozenset[str] = frozenset({STATUS_DONE, STATUS_FAILED})
@@ -267,31 +268,73 @@ async def get_view_by_artifact(
     return _to_view(row)
 
 
-async def has_pending_replacement(
+def replacement_lock_key(kb_id: int, document_path: str) -> int:
+    """Stable 64-bit advisory-lock key for one source.
+
+    Hashed in Python rather than with ``hashtextextended`` so the key does
+    not depend on a Postgres internal whose algorithm is not part of any
+    contract. Signed because ``pg_try_advisory_xact_lock`` takes a bigint.
+    """
+    digest = hashlib.blake2b(f"kb:{kb_id}:{document_path}".encode(), digest_size=8).digest()
+    return int.from_bytes(digest, "big", signed=True)
+
+
+async def claim_replacement_slot(
     db: AsyncSession,
     *,
     kb_id: int,
     org_id: int,
     document_path: str,
 ) -> bool:
-    """True when a replacement for this source is already being processed.
+    """Take the exclusive right to start a replacement for this source.
 
-    Accepting a second one is not a duplicate-work problem, it is a
-    correctness problem: both ingest under the same document key, and the
-    winner is whichever docling task finishes last — which can be the file
-    the user picked FIRST. Better to refuse and say so.
+    Returns True when the caller may proceed, False when a replacement is
+    already under way.
 
-    Bounded by :data:`REPLACEMENT_CLAIM_TTL`, and that bound is the point.
-    Nothing moves a kb_uploads row out of ``processing``/``ingesting`` when
-    a docling task never goes terminal — the poller deliberately leaves it
-    for the next tick, forever. An unbounded check would turn that stall
-    into a source that can never be replaced again, and the user cannot
-    clear the stalled attempt either: an in-flight replacement is folded
-    into the row of the source it replaces, so it has no row to delete.
-    After the TTL the stale attempt stops blocking; if it ever does land it
-    is superseded by whatever replaced it in the meantime.
+    Why a lock and not just a SELECT: two requests can both find nothing
+    pending before either inserts its tracking row, and then both ingest
+    under the same document key. The winner is whichever docling task
+    finishes last, which can be the file the user picked FIRST — the
+    outcome stops being a function of intent and becomes one of queue
+    timing. Checking and claiming have to be one step.
+
+    The lock is transaction-scoped, so it covers exactly the window that
+    matters: from this check until the caller's tracking row is committed.
+    It is not held for the minutes the replacement itself takes — the row
+    is what blocks during those, and this function is what makes sure the
+    row is written without a competitor slipping in first.
+
+    ``try`` rather than a blocking acquire: a competitor holding the lock
+    IS the answer to "is one already running?", and there is no reason to
+    make the user wait through someone else's docling submit to be told so.
+
+    Stalled attempts are retired here, under the same lock. Nothing else
+    moves a kb_uploads row out of ``processing``/``ingesting`` when its
+    docling task never goes terminal — the poller deliberately leaves it
+    for the next tick, forever — so without this a single stall would make
+    the source unreplaceable for good, and the user could not clear it
+    either: an in-flight replacement is folded into the row of the source
+    it replaces, so it has no row of its own to delete. Marking it failed
+    also takes it out of ``list_pending``, which stops a task that revives
+    after the TTL from landing on top of a newer replacement.
     """
+    locked = await db.execute(select(func.pg_try_advisory_xact_lock(replacement_lock_key(kb_id, document_path))))
+    if not locked.scalar_one():
+        return False
+
     cutoff = datetime.now(UTC) - REPLACEMENT_CLAIM_TTL
+    await db.execute(
+        update(KBUpload)
+        .where(
+            KBUpload.kb_id == kb_id,
+            KBUpload.org_id == org_id,
+            KBUpload.target_path == document_path,
+            KBUpload.status.in_(_PENDING_STATUSES),
+            KBUpload.updated_at <= cutoff,
+        )
+        .values(status=STATUS_FAILED, failure_reason="replace_timed_out", updated_at=_now())
+    )
+
     result = await db.execute(
         select(KBUpload.id)
         .where(
@@ -299,11 +342,10 @@ async def has_pending_replacement(
             KBUpload.org_id == org_id,
             KBUpload.target_path == document_path,
             KBUpload.status.in_(_PENDING_STATUSES),
-            KBUpload.updated_at > cutoff,
         )
         .limit(1)
     )
-    return result.scalar_one_or_none() is not None
+    return result.scalar_one_or_none() is None
 
 
 async def delete_rows_for_document(

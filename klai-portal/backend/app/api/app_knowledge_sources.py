@@ -867,7 +867,9 @@ async def replace_file_source(
 
     Permission pad mirrors delete: contributor+ on the KB, and a plain
     contributor may only replace an upload they created (owners, platform
-    admins and kb_managers on an org KB may replace any).
+    admins and kb_managers on an org KB may replace any). That check runs on
+    the row resolved AFTER the claim, so it cannot be satisfied by a version
+    that someone else has already replaced.
 
     Not accepted here: archives (one file in, N sources out — that is an
     add, not a replace) and the not-yet-supported ``.doc`` path.
@@ -898,20 +900,6 @@ async def replace_file_source(
             detail={"error_code": "source_not_replaceable"},
         )
 
-    role = await get_user_role_for_kb(
-        kb_id=kb.id,
-        user_id=perms.user_id,
-        db=db,
-        default_org_role=kb.default_org_role,
-        kb_org_id=kb.org_id,
-        kb_created_by=kb.created_by,
-    )
-    if not grants_kb_source_manage(kb, perms, role) and tracked.created_by != perms.user_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error_code": "not_your_upload"},
-        )
-
     upload = incoming[0]
     filename = file_upload.sanitize_filename(upload.filename)
     body = await upload.read(file_upload.MAX_BINARY_FILE_BYTES + 1)
@@ -935,7 +923,11 @@ async def replace_file_source(
         )
 
     target_path = tracked.document_path
-    if await kb_uploads_repo.has_pending_replacement(
+    # Check-and-claim in one step, and hold it until this request's tracking
+    # row is committed. Two replacements landing on the same document key let
+    # queue timing decide which file wins, which can be the one the user
+    # picked first.
+    if not await kb_uploads_repo.claim_replacement_slot(
         db,
         kb_id=kb.id,
         org_id=perms.org_id,
@@ -944,6 +936,42 @@ async def replace_file_source(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={"error_code": "replace_already_running"},
+        )
+
+    # Re-resolve the source now that nobody else can start a replacement for
+    # it. The first lookup happened before the claim, and a SYNCHRONOUS text
+    # replacement finishes as ``done`` without ever being pending — so it can
+    # slip in between, and the row read earlier is then a version that no
+    # longer exists. Acting on it would overwrite the version that replaced
+    # it, using the previous uploader's identity: exactly the ownership hole
+    # ``get_view_by_artifact`` refuses to open, reached through a race
+    # instead. The document key is stable across versions, so the claim taken
+    # above still covers this source.
+    tracked = await kb_uploads_repo.get_view_by_artifact(
+        db,
+        kb_id=kb.id,
+        org_id=perms.org_id,
+        artifact_id=artifact_id,
+    )
+    if tracked is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error_code": "replace_superseded"},
+        )
+
+    # Ownership is checked against the row we are actually about to replace.
+    role = await get_user_role_for_kb(
+        kb_id=kb.id,
+        user_id=perms.user_id,
+        db=db,
+        default_org_role=kb.default_org_role,
+        kb_org_id=kb.org_id,
+        kb_created_by=kb.created_by,
+    )
+    if not grants_kb_source_manage(kb, perms, role) and tracked.created_by != perms.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error_code": "not_your_upload"},
         )
 
     if pipeline == "text":

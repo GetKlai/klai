@@ -144,50 +144,87 @@ class TestDocumentPath:
         assert view.document_path == row.document_path
 
 
-class TestHasPendingReplacement:
-    @pytest.mark.asyncio
-    async def test_true_while_one_is_processing(self) -> None:
-        db = _db(uuid.uuid4())
-        assert await kb_uploads_repo.has_pending_replacement(db, kb_id=42, org_id=1, document_path="file:sha256:v1")
+class TestClaimReplacementSlot:
+    """The claim is check-and-take in one step; see the repo docstring."""
+
+    @staticmethod
+    def _claim_db(*, lock_acquired: bool, pending_id: object) -> AsyncMock:
+        """Stub the three statements the claim issues, in order."""
+        db = AsyncMock()
+        lock_result = MagicMock()
+        lock_result.scalar_one = MagicMock(return_value=lock_acquired)
+        expire_result = MagicMock()
+        pending_result = MagicMock()
+        pending_result.scalar_one_or_none = MagicMock(return_value=pending_id)
+        db.execute = AsyncMock(side_effect=[lock_result, expire_result, pending_result])
+        return db
 
     @pytest.mark.asyncio
-    async def test_false_when_the_source_is_idle(self) -> None:
-        db = _db(None)
-        assert not await kb_uploads_repo.has_pending_replacement(db, kb_id=42, org_id=1, document_path="file:sha256:v1")
+    async def test_granted_when_the_source_is_idle(self) -> None:
+        db = self._claim_db(lock_acquired=True, pending_id=None)
+        assert await kb_uploads_repo.claim_replacement_slot(db, kb_id=42, org_id=1, document_path="file:sha256:v1")
 
     @pytest.mark.asyncio
-    async def test_a_stalled_attempt_stops_blocking_after_the_ttl(self) -> None:
+    async def test_refused_while_a_replacement_is_processing(self) -> None:
+        db = self._claim_db(lock_acquired=True, pending_id=uuid.uuid4())
+        assert not await kb_uploads_repo.claim_replacement_slot(db, kb_id=42, org_id=1, document_path="file:sha256:v1")
+
+    @pytest.mark.asyncio
+    async def test_refused_without_asking_when_a_competitor_holds_the_lock(self) -> None:
+        """A competitor mid-claim IS the answer to "is one already running?".
+
+        It must not wait for their docling submit to find that out, and it
+        must not fall through to the row check — their row does not exist
+        yet, which is exactly the race the lock closes.
+        """
+        db = self._claim_db(lock_acquired=False, pending_id=None)
+        assert not await kb_uploads_repo.claim_replacement_slot(db, kb_id=42, org_id=1, document_path="file:sha256:v1")
+        assert db.execute.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_retires_a_stalled_attempt_before_deciding(self) -> None:
         """A dead docling task must not freeze the source for good.
 
-        Nothing moves a kb_uploads row out of processing/ingesting when its
-        task never goes terminal, and the user cannot clear it by hand — an
+        Nothing else moves a row out of processing/ingesting when its task
+        never goes terminal, and the user cannot clear it by hand — an
         in-flight replacement is folded into the row of the source it
-        replaces, so there is no row to delete. Without the cutoff the first
-        stall would make that source permanently unreplaceable.
+        replaces, so it has no row to delete. Marking it failed also takes
+        it out of list_pending, so a task that revives after the TTL cannot
+        land on top of a newer replacement.
         """
         from sqlalchemy.dialects import postgresql
 
-        db = _db(None)
-        await kb_uploads_repo.has_pending_replacement(db, kb_id=42, org_id=1, document_path="file:sha256:v1")
+        db = self._claim_db(lock_acquired=True, pending_id=None)
+        await kb_uploads_repo.claim_replacement_slot(db, kb_id=42, org_id=1, document_path="file:sha256:v1")
 
-        query = db.execute.await_args.args[0]
-        sql = str(query.compile(dialect=postgresql.dialect())).lower()
-        assert "updated_at >" in sql
-        cutoff = next(v for v in query.compile().params.values() if isinstance(v, datetime))
-        age = datetime.now(UTC) - cutoff
-        assert age >= kb_uploads_repo.REPLACEMENT_CLAIM_TTL
+        expire = db.execute.await_args_list[1].args[0]
+        sql = str(expire.compile(dialect=postgresql.dialect())).lower()
+        assert sql.startswith("update kb_uploads")
+        assert "updated_at <=" in sql
+        cutoff = next(v for v in expire.compile().params.values() if isinstance(v, datetime))
+        assert datetime.now(UTC) - cutoff >= kb_uploads_repo.REPLACEMENT_CLAIM_TTL
         # Above knowledge-ingest's 30-minute stale reaper, so a merely slow
-        # replacement still holds its claim.
+        # replacement keeps its claim.
         assert kb_uploads_repo.REPLACEMENT_CLAIM_TTL > timedelta(minutes=30)
 
-    @pytest.mark.asyncio
-    async def test_only_in_flight_rows_count(self) -> None:
-        """A finished earlier version must not freeze the source forever."""
-        from sqlalchemy.dialects import postgresql
 
-        db = _db(None)
-        await kb_uploads_repo.has_pending_replacement(db, kb_id=42, org_id=1, document_path="file:sha256:v1")
+class TestReplacementLockKey:
+    def test_the_key_is_stable_for_one_source(self) -> None:
+        a = kb_uploads_repo.replacement_lock_key(42, "file:sha256:v1")
+        b = kb_uploads_repo.replacement_lock_key(42, "file:sha256:v1")
+        assert a == b
 
-        sql = str(db.execute.await_args.args[0].compile(dialect=postgresql.dialect())).lower()
-        assert "status in" in sql
-        assert "target_path" in sql
+    def test_different_sources_get_different_keys(self) -> None:
+        assert kb_uploads_repo.replacement_lock_key(42, "file:sha256:v1") != kb_uploads_repo.replacement_lock_key(
+            42, "file:sha256:v2"
+        )
+
+    def test_the_same_path_in_another_kb_is_a_different_lock(self) -> None:
+        """Two KBs holding identical content must not block each other."""
+        assert kb_uploads_repo.replacement_lock_key(42, "file:sha256:v1") != kb_uploads_repo.replacement_lock_key(
+            43, "file:sha256:v1"
+        )
+
+    def test_the_key_fits_a_postgres_bigint(self) -> None:
+        key = kb_uploads_repo.replacement_lock_key(2**31, "file:sha256:" + "f" * 64)
+        assert -(2**63) <= key < 2**63

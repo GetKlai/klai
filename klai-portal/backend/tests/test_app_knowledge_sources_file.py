@@ -836,13 +836,15 @@ class _ReplacePatches(_FilePatches):
         self.tracked = tracked
         self.manages_all_sources = manages_all_sources
         self.pending_replacement = pending_replacement
+        self.mock_get_view: AsyncMock | None = None
 
     def __enter__(self) -> _ReplacePatches:
         super().__enter__()
+        self.mock_get_view = AsyncMock(return_value=self.tracked)
         self.stack.enter_context(
             patch(
                 "app.api.app_knowledge_sources.kb_uploads_repo.get_view_by_artifact",
-                AsyncMock(return_value=self.tracked),
+                self.mock_get_view,
             )
         )
         self.stack.enter_context(
@@ -853,8 +855,8 @@ class _ReplacePatches(_FilePatches):
         )
         self.stack.enter_context(
             patch(
-                "app.api.app_knowledge_sources.kb_uploads_repo.has_pending_replacement",
-                AsyncMock(return_value=self.pending_replacement),
+                "app.api.app_knowledge_sources.kb_uploads_repo.claim_replacement_slot",
+                AsyncMock(return_value=not self.pending_replacement),
             )
         )
         return self
@@ -1103,3 +1105,63 @@ class TestReplaceFileSource:
         assert excinfo.value.detail == {"error_code": "replace_already_running"}
         assert patches.mock_ingest is not None
         patches.mock_ingest.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_refuses_when_the_source_was_replaced_while_we_waited(self) -> None:
+        """The version is re-checked once nobody else can start a replacement.
+
+        A synchronous text replacement finishes as ``done`` without ever
+        being pending, so it can land between the first lookup and the
+        claim. Acting on the row read earlier would overwrite the version
+        that replaced it, under the previous uploader's identity.
+        """
+        from app.api.app_knowledge_sources import replace_file_source
+
+        kb = _make_kb()
+        db = _make_db_mock(kb)
+        tracked = _make_upload_view(source_ref=_ORIGINAL_PATH, artifact_id="art-old")
+
+        with _ReplacePatches(tracked=tracked) as patches, pytest.raises(HTTPException) as excinfo:
+            # Present on the first lookup, superseded by the second.
+            assert patches.mock_get_view is not None
+            patches.mock_get_view.side_effect = [tracked, None]
+            await replace_file_source(
+                kb_slug="personal",
+                artifact_id="art-old",
+                request=_replace_request("sip.md", b"# Te laat\n", "text/markdown"),
+                perms=_make_perms(),
+                db=db,
+            )
+
+        assert excinfo.value.status_code == 409
+        assert excinfo.value.detail == {"error_code": "replace_superseded"}
+        assert patches.mock_ingest is not None
+        patches.mock_ingest.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_ownership_is_judged_on_the_row_resolved_under_the_claim(self) -> None:
+        """Not on the one read before it — that row may be a stale version."""
+        from app.api.app_knowledge_sources import replace_file_source
+
+        kb = _make_kb()
+        db = _make_db_mock(kb)
+        mine = _make_upload_view(source_ref=_ORIGINAL_PATH, artifact_id="art-old")
+        theirs = replace(mine, created_by="someone-else")
+
+        with (
+            _ReplacePatches(tracked=mine, role="contributor", manages_all_sources=False) as patches,
+            pytest.raises(HTTPException) as excinfo,
+        ):
+            # Mine on the first read, theirs once the claim is held.
+            assert patches.mock_get_view is not None
+            patches.mock_get_view.side_effect = [mine, theirs]
+            await replace_file_source(
+                kb_slug="personal",
+                artifact_id="art-old",
+                request=_replace_request("sip.md", b"# Update\n", "text/markdown"),
+                perms=_make_perms(),
+                db=db,
+            )
+
+        assert excinfo.value.status_code == 403
+        assert excinfo.value.detail == {"error_code": "not_your_upload"}
