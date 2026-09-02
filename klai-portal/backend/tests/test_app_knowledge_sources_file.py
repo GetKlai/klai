@@ -793,11 +793,15 @@ def _replace_request(filename: str, content: bytes, content_type: str) -> Reques
     """Multipart request with the single ``file`` part the replace route reads."""
     boundary = "----klai-replace-boundary"
     body = (
-        f"--{boundary}\r\n"
-        f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
-        f"Content-Type: {content_type}\r\n"
-        "\r\n"
-    ).encode() + content + f"\r\n--{boundary}--\r\n".encode()
+        (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+            f"Content-Type: {content_type}\r\n"
+            "\r\n"
+        ).encode()
+        + content
+        + f"\r\n--{boundary}--\r\n".encode()
+    )
 
     async def receive() -> dict[str, object]:
         return {"type": "http.request", "body": body, "more_body": False}

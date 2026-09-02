@@ -1190,9 +1190,7 @@ def _unfinished_uploads(tracked: list[KBUpload], active_paths: set[str]) -> list
     cannot touch the live source because a replacement carries no
     ``artifact_id`` of its own.
     """
-    return [
-        u for u in tracked if u.status in _VISIBLE_UPLOAD_STATUSES and not _is_folded_replacement(u, active_paths)
-    ]
+    return [u for u in tracked if u.status in _VISIBLE_UPLOAD_STATUSES and not _is_folded_replacement(u, active_paths)]
 
 
 def _is_upload_missing_active_artifact(upload: KBUpload, active_artifact_ids: set[str], active_paths: set[str]) -> bool:
@@ -1391,9 +1389,7 @@ async def list_kb_sources(
         status_changed_dt = (
             datetime.fromtimestamp(int(status_changed_unix), tz=dt.UTC) if status_changed_unix is not None else None
         )
-        index_status, last_sync_at = _upload_sync_fields(
-            upload, replacement_starts.get(path), status_changed_dt
-        )
+        index_status, last_sync_at = _upload_sync_fields(upload, replacement_starts.get(path), status_changed_dt)
         sources.append(
             SourceOut(
                 kind="upload",
