@@ -1,26 +1,26 @@
-"""add target_path to kb_uploads (replace-a-source support)
+"""kb_uploads.target_path marker (replace-a-source support).
+
+The DDL itself runs as the klai superuser in
+``post_deploy_b7c1d2e3f4a5_kb_uploads_target_path.sql`` because
+``kb_uploads`` is klai-owned: ``post_deploy_85e5d0a7cb98_kb_uploads_rls.sql``
+does ``ALTER TABLE public.kb_uploads OWNER TO klai`` so it can FORCE ROW
+LEVEL SECURITY, and FORCE RLS requires ownership. portal_api — the role
+alembic runs as — therefore cannot ALTER TABLE it. Putting the ADD COLUMN
+in ``upgrade()`` aborts the container at its entrypoint with
+``must be owner of table kb_uploads`` (observed on deploy of 3126c181d).
+
+See ``.claude/rules/klai/projects/portal-security.md`` — owner-only DDL on
+a FORCE-RLS table belongs in post_deploy SQL, application-role-safe DDL
+only in ``upgrade()``.
+
+This file exists only so alembic can advance its head past 76f43911a5ba.
 
 Revision ID: b7c1d2e3f4a5
 Revises: 76f43911a5ba
 Create Date: 2026-09-02
-
-A normal upload ingests under ``path = source_ref``, which is the sha256 of
-the file's own bytes. That makes every re-upload of a CHANGED file a brand
-new document key, so the old source stays live next to the new one — the
-reason users delete the source and add it again to update it.
-
-``target_path`` overrides the document key for one upload: it holds the path
-of the source being replaced. Knowledge-ingest's ``ingest_document`` already
-supersedes the active artifact under a path (soft-delete + create +
-superseded_by + Qdrant clear), so ingesting under the original path IS the
-replace — one row, no gap, no duplicate.
-
-NULL for normal uploads, which keeps their ``path = source_ref`` behaviour
-untouched.
 """
 
-import sqlalchemy as sa
-from alembic import op
+from __future__ import annotations
 
 revision = "b7c1d2e3f4a5"
 down_revision = "76f43911a5ba"
@@ -29,20 +29,11 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "kb_uploads",
-        sa.Column("target_path", sa.String(length=128), nullable=True),
-    )
-    # The poller and the sources list both look rows up by the path they are
-    # about to overwrite, always scoped to one KB.
-    op.create_index(
-        "ix_kb_uploads_target_path",
-        "kb_uploads",
-        ["org_id", "kb_id", "target_path"],
-        postgresql_where=sa.text("target_path IS NOT NULL"),
-    )
+    """No-op marker. The schema change is applied via the sibling
+    post_deploy SQL by the klai superuser.
+    """
+    # Intentionally empty: see post_deploy_b7c1d2e3f4a5_kb_uploads_target_path.sql
 
 
 def downgrade() -> None:
-    op.drop_index("ix_kb_uploads_target_path", table_name="kb_uploads")
-    op.drop_column("kb_uploads", "target_path")
+    """No-op marker. The schema rollback is applied via SQL as klai superuser."""
