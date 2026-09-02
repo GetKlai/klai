@@ -5,10 +5,9 @@ import { useState, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
 import {
   ArrowLeft, Shield,
-  CheckCircle2, Loader2, Sparkles, Settings, ChevronDown, ChevronRight, KeyRound,
+  Loader2, Sparkles, Settings, ChevronDown, ChevronRight,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Alert } from '@/components/ui/alert'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { StepIndicator, type StepItem } from '@/components/ui/step-indicator'
@@ -17,13 +16,18 @@ import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { MS_SITE_URL_PATTERN } from '@/lib/ms-docs'
 import type { ConnectorSummary, CookieRow } from './$kbSlug/-kb-types'
-import { CookieRowsInput } from '@/components/knowledge/CookieRowsInput'
 import { GoogleDrivePicker } from './$kbSlug/_components/GoogleDrivePicker'
 import { MsDocsFolderPicker } from './$kbSlug/_components/MsDocsFolderPicker'
+import { PreviewClassificationFeedback } from './-connector-feedback'
+import { AiSelectorStep } from './-connector-shared/AiSelectorStep'
+import { CrawlerAuthSetupStep } from './-connector-shared/CrawlerAuthSetupStep'
+import { CrawlerAuthStatus, type CrawlerAuthStatusState } from './-connector-shared/CrawlerAuthStatus'
 import {
-  AuthProbeFeedback,
-  PreviewClassificationFeedback,
-} from './-connector-feedback'
+  buildCrawlerCookies,
+  previewCrawlerPage,
+  probeCrawlerAuth,
+  type CrawlerAuthPayload,
+} from './-connector-shared/api'
 import { kbQueryKeys } from '@/lib/kb-query-keys'
 import type {
   AirtableConfig,
@@ -209,20 +213,6 @@ function EditConnectorPage() {
     }
   }
 
-  function buildCookies(): unknown[] | undefined {
-    const filled = wcCookieRows.filter((r) => r.name.trim() && r.value.trim())
-    if (filled.length === 0) return undefined
-    const domain = (() => {
-      try { return new URL(webcrawlerConfig.base_url).hostname } catch { return '' }
-    })()
-    return filled.map((r) => ({
-      name: r.name.trim(),
-      value: r.value.trim(),
-      domain,
-      path: '/',
-    }))
-  }
-
   function savedCookieNameRows(): CookieRow[] {
     const names = savedCredentialMetadata?.cookie_names ?? []
     return names.map((name) => ({ name, value: '' }))
@@ -396,7 +386,7 @@ function EditConnectorPage() {
         // Replacement cookies are the only secret values sent from the client.
         // Saved credentials stay server-side and are referenced only by connector id.
         if (requiresLogin === true && wcAuthMode === 'replace') {
-          const cookies = buildCookies()
+          const cookies = buildCrawlerCookies(wcCookieRows, webcrawlerConfig.base_url)
           if (cookies) config.cookies = cookies
         }
         if (clearSavedCredentials) body.clear_credentials = true
@@ -465,31 +455,8 @@ function EditConnectorPage() {
 
   // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-3 - edit wizard preview mutation.
   const previewMutation = useMutation({
-    mutationFn: async ({
-      url,
-      content_selector,
-      try_ai,
-      cookies,
-      use_saved_credentials,
-    }: {
-      url: string
-      content_selector?: string
-      try_ai?: boolean
-      cookies?: unknown[]
-      use_saved_credentials?: boolean
-    }) => {
-      return apiFetch<PreviewResult>(`/api/app/knowledge-bases/${kbSlug}/connectors/crawl-preview`, {
-        method: 'POST',
-        body: JSON.stringify({
-          url,
-          content_selector: content_selector || null,
-          try_ai: try_ai ?? false,
-          cookies: use_saved_credentials ? null : (cookies || null),
-          connector_id: use_saved_credentials ? connectorId : null,
-          use_saved_credentials: use_saved_credentials === true,
-        }),
-      })
-    },
+    mutationFn: (request: Parameters<typeof previewCrawlerPage>[1]) =>
+      previewCrawlerPage(kbSlug, request, connectorId),
     onSuccess: (data) => {
       setPreviewResult(data)
       setPreviewError(null)
@@ -515,25 +482,8 @@ function EditConnectorPage() {
 
   // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-2 - edit wizard auth probe.
   const authProbeMutation = useMutation({
-    mutationFn: async ({
-      url,
-      cookies,
-      use_saved_credentials,
-    }: {
-      url: string
-      cookies?: unknown[]
-      use_saved_credentials?: boolean
-    }) => {
-      return apiFetch<AuthProbeResult>(`/api/app/knowledge-bases/${kbSlug}/connectors/auth-probe`, {
-        method: 'POST',
-        body: JSON.stringify({
-          url,
-          cookies: use_saved_credentials ? null : (cookies || null),
-          connector_id: use_saved_credentials ? connectorId : null,
-          use_saved_credentials: use_saved_credentials === true,
-        }),
-      })
-    },
+    mutationFn: (request: Parameters<typeof probeCrawlerAuth>[1]) =>
+      probeCrawlerAuth(kbSlug, request, connectorId),
     onSuccess: (data) => {
       setAuthProbeResult(data)
       setAuthProbeError(null)
@@ -557,8 +507,39 @@ function EditConnectorPage() {
     if (requiresLogin === true && wcAuthMode === 'saved') {
       return { use_saved_credentials: true }
     }
-    return { cookies: buildCookies() }
+    return { cookies: buildCrawlerCookies(wcCookieRows, webcrawlerConfig.base_url) }
   }
+
+  function runAuthProbe(payload: CrawlerAuthPayload) {
+    setAuthProbeResult(null)
+    setAuthProbeError(null)
+    authProbeMutation.mutate({
+      url: joinSeedUrl(webcrawlerConfig.base_url, webcrawlerConfig.path_prefix),
+      ...payload,
+    })
+  }
+
+  const crawlerAuthStatus: CrawlerAuthStatusState | null = requiresLogin === false
+    ? {
+        kind: 'public',
+        onChange: () => {
+          if (hasSavedWebCrawlerCredentials) {
+            setRequiresLogin(true)
+            setWcAuthMode('saved')
+            setClearSavedCredentials(false)
+            setWcStep('auth-setup')
+          } else {
+            setWcStep('auth-question')
+          }
+        },
+      }
+    : requiresLogin === true && authProbeResult?.classification === 'auth_ok'
+      ? {
+          kind: 'authenticated',
+          credentialKind: wcAuthMode === 'saved' ? 'saved' : 'cookies',
+          onChange: () => setWcStep('auth-setup'),
+        }
+      : null
 
   function renderError() {
     if (!updateMutation.error) return null
@@ -783,212 +764,61 @@ function EditConnectorPage() {
 
               {/* Step 3: Auth setup - REQ-2 auth-probe */}
               {wcStep === 'auth-setup' && (
-                <div className="space-y-4">
-                  <div className="rounded-lg border border-gray-200 p-4 space-y-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-medium text-gray-900">
-                          Authentication cookies
-                        </p>
-                        {hasSavedWebCrawlerCredentials && (
-                          <p className="text-xs text-gray-600">
-                            Saved cookies are encrypted and stay hidden.
-                          </p>
-                        )}
-                      </div>
-                      {hasSavedWebCrawlerCredentials && wcAuthMode === 'replace' && (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            setWcAuthMode('saved')
-                            setWcCookieRows([])
-                            setClearSavedCredentials(false)
-                            invalidateAuthProbe()
-                            invalidatePreview()
-                          }}
-                        >
-                          Use saved
-                        </Button>
-                      )}
-                    </div>
-
-                    {hasSavedWebCrawlerCredentials && wcAuthMode === 'saved' ? (
-                      <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-3 space-y-3">
-                        <div className="flex items-center gap-2 text-sm text-gray-900">
-                          <KeyRound className="h-4 w-4 text-gray-500" />
-                          Saved authentication configured
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            disabled={authProbeMutation.isPending || !webcrawlerConfig.base_url}
-                            onClick={() => {
-                              setAuthProbeResult(null)
-                              setAuthProbeError(null)
-                              authProbeMutation.mutate({
-                                url: joinSeedUrl(webcrawlerConfig.base_url, webcrawlerConfig.path_prefix),
-                                use_saved_credentials: true,
-                              })
-                            }}
-                          >
-                            {authProbeMutation.isPending ? (
-                              <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />Testing...</>
-                            ) : (
-                              'Test saved authentication'
-                            )}
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                          onClick={() => {
-                            startReplacingSavedCookies()
-                          }}
-                        >
-                          Replace cookies
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => {
-                              setRequiresLogin(false)
-                              setWcCookieRows([])
-                              setClearSavedCredentials(true)
-                              invalidateAuthProbe()
-                              invalidatePreview()
-                              setWcStep('selector')
-                            }}
-                          >
-                            Use without login
-                          </Button>
-                        </div>
-                      </div>
-                    ) : (
-                      <>
-                        <CookieRowsInput
-                          idPrefix="edit-wc-cookie"
-                          value={wcCookieRows}
-                          onChange={(rows) => {
-                            setWcCookieRows(rows)
-                            setClearSavedCredentials(false)
-                            invalidateAuthProbe()
-                            invalidatePreview()
-                          }}
-                        />
-                        {hasSavedWebCrawlerCredentials && (savedCredentialMetadata?.cookie_names?.length ?? 0) > 0 && (
-                          <p className="text-xs text-gray-600">
-                            Cookie names are prefilled from saved authentication. Paste fresh values only.
-                          </p>
-                        )}
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          disabled={authProbeMutation.isPending || !webcrawlerConfig.base_url}
-                          onClick={() => {
-                            setAuthProbeResult(null)
-                            setAuthProbeError(null)
-                            authProbeMutation.mutate({
-                              url: joinSeedUrl(webcrawlerConfig.base_url, webcrawlerConfig.path_prefix),
-                              cookies: buildCookies(),
-                            })
-                          }}
-                        >
-                          {authProbeMutation.isPending ? (
-                            <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />Testing...</>
-                          ) : (
-                            'Test authentication'
-                          )}
-                        </Button>
-                      </>
-                    )}
-                  </div>
-
-                  {authProbeError && (
-                    <p className="text-sm text-[var(--color-destructive)]">{authProbeError}</p>
-                  )}
-
-                  {authProbeResult && (
-                    <AuthProbeFeedback result={authProbeResult} />
-                  )}
-
-                  <div className="flex gap-2 pt-1">
-                    <Button
-                      type="button"
-                      size="sm"
-                      disabled={authProbeResult?.classification !== 'auth_ok'}
-                      onClick={() => {
-                        // Carry auth_guard forward in its own state slot - selector step
-                        // (5) starts EMPTY (previewResult stays null) so no amber
-                        // "Preview service did not respond" renders before the operator
-                        // has clicked Run preview. Save reads ``authGuard`` directly.
-                        setAuthGuard(authProbeResult?.auth_guard ?? null)
-                        setWcStep('selector')
+                <CrawlerAuthSetupStep
+                  baseUrl={webcrawlerConfig.base_url}
+                  mode={hasSavedWebCrawlerCredentials && wcAuthMode === 'saved'
+                    ? {
+                        kind: 'saved',
+                        onReplace: startReplacingSavedCookies,
+                        onUseWithoutLogin: () => {
+                          setRequiresLogin(false)
+                          setWcCookieRows([])
+                          setClearSavedCredentials(true)
+                          invalidateAuthProbe()
+                          invalidatePreview()
+                          setWcStep('selector')
+                        },
+                      }
+                    : {
+                        kind: 'cookies',
+                        idPrefix: 'edit-wc-cookie',
+                        rows: wcCookieRows,
+                        onChange: (rows) => {
+                          setWcCookieRows(rows)
+                          setClearSavedCredentials(false)
+                          invalidateAuthProbe()
+                          invalidatePreview()
+                        },
+                        savedCredentials: hasSavedWebCrawlerCredentials
+                          ? {
+                              hasPrefilledNames: (savedCredentialMetadata?.cookie_names?.length ?? 0) > 0,
+                              onUseSaved: () => {
+                                setWcAuthMode('saved')
+                                setWcCookieRows([])
+                                setClearSavedCredentials(false)
+                                invalidateAuthProbe()
+                                invalidatePreview()
+                              },
+                            }
+                          : undefined,
                       }}
-                    >
-                      {m.admin_connectors_webcrawler_next()}
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setWcStep(hasSavedWebCrawlerCredentials ? 'details' : 'auth-question')}
-                    >
-                      {m.admin_connectors_webcrawler_back()}
-                    </Button>
-                  </div>
-                </div>
+                  isPending={authProbeMutation.isPending}
+                  error={authProbeError}
+                  result={authProbeResult}
+                  onProbe={runAuthProbe}
+                  onNext={(nextAuthGuard) => {
+                    setAuthGuard(nextAuthGuard)
+                    setWcStep('selector')
+                  }}
+                  onBack={() => setWcStep(hasSavedWebCrawlerCredentials ? 'details' : 'auth-question')}
+                />
               )}
 
               {/* Step 4: Selector - REQ-3 preview, gates save on classification === success */}
               {wcStep === 'selector' && (
                 <div className="space-y-4">
                   {/* Auth status reminder */}
-                  {requiresLogin === false && (
-                    <div className="flex items-center justify-between rounded-lg border border-gray-200 px-4 py-3">
-                      <div className="flex items-center gap-2 text-xs text-gray-600">
-                        <CheckCircle2 className="h-3.5 w-3.5 text-[var(--color-success-text)]" />
-                        Public site - no login needed
-                      </div>
-                      <button
-                        type="button"
-                        className="text-xs text-gray-600 hover:text-gray-900"
-                        onClick={() => {
-                          if (hasSavedWebCrawlerCredentials) {
-                            setRequiresLogin(true)
-                            setWcAuthMode('saved')
-                            setClearSavedCredentials(false)
-                            setWcStep('auth-setup')
-                          } else {
-                            setWcStep('auth-question')
-                          }
-                        }}
-                      >
-                        Actually, it needs login
-                      </button>
-                    </div>
-                  )}
-                  {requiresLogin === true && authProbeResult?.classification === 'auth_ok' && (
-                    <Alert variant="success" size="sm">
-                      <div className="flex items-center justify-between">
-                        <span>
-                          {wcAuthMode === 'saved' ? 'Logged in - saved authentication verified' : 'Logged in - cookies verified'}
-                        </span>
-                        <button
-                          type="button"
-                          className="text-xs text-gray-600 hover:text-gray-900"
-                          onClick={() => setWcStep('auth-setup')}
-                        >
-                          {wcAuthMode === 'saved' ? 'Change authentication' : 'Edit cookies'}
-                        </button>
-                      </div>
-                    </Alert>
-                  )}
+                  <CrawlerAuthStatus status={crawlerAuthStatus} />
 
                   {/* Preview URL */}
                   <div className="space-y-1.5">
@@ -1098,47 +928,20 @@ function EditConnectorPage() {
                         }}
                       />
 
-                      {/* AI-detected selector badge + "Use this selector" CTA */}
-                      {previewResult.selector_source === 'ai' && previewResult.content_selector && (
-                        <div className="rounded-lg border border-gray-200 bg-black/[0.06] p-3 space-y-2">
-                          <div className="flex gap-2 items-center text-xs text-gray-600">
-                            <Sparkles className="h-3.5 w-3.5 shrink-0" />
-                            <span>{m.admin_connectors_webcrawler_ai_selector_detected({ selector: previewResult.content_selector, count: String(previewResult.word_count) })}</span>
-                          </div>
-                          {webcrawlerConfig.content_selector !== previewResult.content_selector && (
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              className="text-xs h-7"
-                              onClick={() => {
-                                setWebcrawlerConfig((p) => ({ ...p, content_selector: previewResult.content_selector! }))
-                                setShowAdvancedSelector(true)
-                              }}
-                            >
-                              {m.admin_connectors_webcrawler_ai_selector_use()}
-                            </Button>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Inline "Try AI find selector" CTA for applicable classifications */}
-                      {(previewResult.classification === 'selector_required' || previewResult.classification === 'selector_returns_empty') &&
-                        previewResult.selector_source !== 'ai' &&
-                        previewResult.selector_source !== 'ai_failed' && (
-                        <button
-                          type="button"
-                          className="flex items-center gap-1 text-xs text-gray-600 hover:text-gray-900 transition-colors disabled:opacity-50"
-                          disabled={previewMutation.isPending}
-                          onClick={() => {
-                            invalidatePreview()
-                            previewMutation.mutate({ url: wcPreviewUrl, try_ai: true, ...previewAuthPayload() })
-                          }}
-                        >
-                          <Sparkles className="h-3 w-3" />
-                          {m.admin_connectors_webcrawler_try_ai()}
-                        </button>
-                      )}
+                      <AiSelectorStep
+                        result={previewResult}
+                        currentSelector={webcrawlerConfig.content_selector}
+                        canTryAi
+                        isPending={previewMutation.isPending}
+                        onUseSelector={(selector) => {
+                          setWebcrawlerConfig((p) => ({ ...p, content_selector: selector }))
+                          setShowAdvancedSelector(true)
+                        }}
+                        onTryAi={() => {
+                          invalidatePreview()
+                          previewMutation.mutate({ url: wcPreviewUrl, try_ai: true, ...previewAuthPayload() })
+                        }}
+                      />
 
                       {/* Extracted markdown body - success only */}
                       {previewResult.classification === 'success' && previewResult.word_count > 0 && (

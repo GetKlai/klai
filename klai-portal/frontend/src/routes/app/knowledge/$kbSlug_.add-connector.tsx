@@ -7,7 +7,6 @@ import {
 } from 'lucide-react'
 import { SiGithub, SiNotion, SiGoogledrive, SiAirtable, SiConfluence } from '@icons-pack/react-simple-icons'
 import { Button } from '@/components/ui/button'
-import { Alert } from '@/components/ui/alert'
 import { StepIndicator, type StepItem } from '@/components/ui/step-indicator'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -37,8 +36,16 @@ import {
   previewUrlOnDetailsAdvance,
   VALID_PRESELECT_TYPES,
 } from './-connector-constants'
-import { AuthProbeFeedback, PreviewClassificationFeedback } from './-connector-feedback'
-import { CookieRowsInput } from '@/components/knowledge/CookieRowsInput'
+import { PreviewClassificationFeedback } from './-connector-feedback'
+import { AiSelectorStep } from './-connector-shared/AiSelectorStep'
+import { CrawlerAuthSetupStep } from './-connector-shared/CrawlerAuthSetupStep'
+import { CrawlerAuthStatus, type CrawlerAuthStatusState } from './-connector-shared/CrawlerAuthStatus'
+import {
+  buildCrawlerCookies,
+  previewCrawlerPage,
+  probeCrawlerAuth,
+  type CrawlerAuthPayload,
+} from './-connector-shared/api'
 import { kbQueryKeys } from '@/lib/kb-query-keys'
 import { PageContainer } from '@/components/ui/page-container'
 
@@ -136,23 +143,6 @@ function AddConnectorPage() {
   // pre-pop bug).
   const [authGuard, setAuthGuard] = useState<AuthGuardSuggestion | null>(null)
 
-  function buildCookies(): unknown[] | undefined {
-    // Filter out empty rows (operator clicked "+ Add another cookie" but didn't
-    // fill it in). Domain + path are derived from base_url at submit time so
-    // operators don't have to know about URL hostnames.
-    const filled = wcCookieRows.filter((r) => r.name.trim() && r.value.trim())
-    if (filled.length === 0) return undefined
-    const domain = (() => {
-      try { return new URL(webcrawlerConfig.base_url).hostname } catch { return '' }
-    })()
-    return filled.map((r) => ({
-      name: r.name.trim(),
-      value: r.value.trim(),
-      domain,
-      path: '/',
-    }))
-  }
-
   function goBack() {
     void navigate({ to: '/app/knowledge/$kbSlug', params: { kbSlug }, search: { tab: 'connectors' } })
   }
@@ -185,7 +175,7 @@ function AddConnectorPage() {
         ) {
           config.discovery_seed_url = wcPreviewUrl
         }
-        const cookies = buildCookies()
+        const cookies = buildCrawlerCookies(wcCookieRows, webcrawlerConfig.base_url)
         if (cookies) config.cookies = cookies
         // SPEC-CRAWL-004: include auto-detected auth guard values. Source is
         // ``authGuard`` state - initialized from auth-probe at step 4 → 5
@@ -303,15 +293,8 @@ function AddConnectorPage() {
   const [previewError, setPreviewError] = useState<string | null>(null)
 
   const previewMutation = useMutation({
-    mutationFn: async ({ url, content_selector, try_ai, cookies }: { url: string; content_selector?: string; try_ai?: boolean; cookies?: unknown[] }) => {
-      // Use PreviewResult itself rather than restating its shape: this
-      // duplicate silently drifted when the backend gained the site-sample
-      // counts, and only surfaced as a type error at build time.
-      return apiFetch<PreviewResult & { url: string }>(`/api/app/knowledge-bases/${kbSlug}/connectors/crawl-preview`, {
-        method: 'POST',
-        body: JSON.stringify({ url, content_selector: content_selector || null, try_ai: try_ai ?? false, cookies: cookies || null }),
-      })
-    },
+    mutationFn: (request: Parameters<typeof previewCrawlerPage>[1]) =>
+      previewCrawlerPage(kbSlug, request),
     onSuccess: (data) => {
       setPreviewResult(data)
       setPreviewError(null)
@@ -340,15 +323,8 @@ function AddConnectorPage() {
 
   // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-2: hits /connectors/auth-probe.
   const authProbeMutation = useMutation({
-    mutationFn: async ({ url, cookies }: { url: string; cookies?: unknown[] }) => {
-      return apiFetch<AuthProbeResult>(
-        `/api/app/knowledge-bases/${kbSlug}/connectors/auth-probe`,
-        {
-          method: 'POST',
-          body: JSON.stringify({ url, cookies: cookies || null }),
-        },
-      )
-    },
+    mutationFn: (request: Parameters<typeof probeCrawlerAuth>[1]) =>
+      probeCrawlerAuth(kbSlug, request),
     onSuccess: (data) => {
       setAuthProbeResult(data)
       setAuthProbeError(null)
@@ -369,6 +345,21 @@ function AddConnectorPage() {
     setPreviewResult(null)
     setPreviewError(null)
   }
+
+  function runAuthProbe(payload: CrawlerAuthPayload) {
+    setAuthProbeResult(null)
+    setAuthProbeError(null)
+    authProbeMutation.mutate({
+      url: joinSeedUrl(webcrawlerConfig.base_url, webcrawlerConfig.path_prefix),
+      ...payload,
+    })
+  }
+
+  const crawlerAuthStatus: CrawlerAuthStatusState | null = requiresLogin === false
+    ? { kind: 'public', onChange: () => setWcStep('auth-question') }
+    : requiresLogin === true && authProbeResult?.classification === 'auth_ok'
+      ? { kind: 'authenticated', credentialKind: 'cookies', onChange: () => setWcStep('auth-setup') }
+      : null
 
   return (
     <PageContainer width="xl">
@@ -891,76 +882,28 @@ function AddConnectorPage() {
                 {/* Step 4: Auth setup - only reached when requiresLogin === true.
                     Hits REQ-2 /connectors/auth-probe; gates on classification === auth_ok. */}
                 {wcStep === 'auth-setup' && (
-                  <div className="space-y-4">
-                    <div className="rounded-lg border border-gray-200 p-4 space-y-3">
-                      <p className="text-sm font-medium text-gray-900">
-                        Authentication cookies
-                      </p>
-                      <CookieRowsInput
-                        idPrefix="add-wc-cookie"
-                        value={wcCookieRows}
-                        onChange={(rows) => {
-                          setWcCookieRows(rows)
-                          invalidateAuthProbe()
-                          invalidatePreview()
-                        }}
-                      />
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        disabled={authProbeMutation.isPending || !webcrawlerConfig.base_url}
-                        onClick={() => {
-                          setAuthProbeResult(null)
-                          setAuthProbeError(null)
-                          authProbeMutation.mutate({
-                            url: joinSeedUrl(webcrawlerConfig.base_url, webcrawlerConfig.path_prefix),
-                            cookies: buildCookies(),
-                          })
-                        }}
-                      >
-                        {authProbeMutation.isPending ? (
-                          <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />Testing...</>
-                        ) : (
-                          'Test authentication'
-                        )}
-                      </Button>
-                    </div>
-
-                    {authProbeError && (
-                      <p className="text-sm text-[var(--color-destructive)]">{authProbeError}</p>
-                    )}
-
-                    {authProbeResult && (
-                      <AuthProbeFeedback result={authProbeResult} />
-                    )}
-
-                    <div className="flex gap-2 pt-1">
-                      <Button
-                        type="button"
-                        size="sm"
-                        disabled={authProbeResult?.classification !== 'auth_ok'}
-                        onClick={() => {
-                          // Carry auth_guard forward in its own state slot - selector step
-                          // (5) starts EMPTY (previewResult stays null) so no amber
-                          // "Preview service did not respond" renders before the operator
-                          // has clicked Run preview. Save reads ``authGuard`` directly.
-                          setAuthGuard(authProbeResult?.auth_guard ?? null)
-                          setWcStep('selector')
-                        }}
-                      >
-                        {m.admin_connectors_webcrawler_next()}
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() => setWcStep('auth-question')}
-                      >
-                        {m.admin_connectors_webcrawler_back()}
-                      </Button>
-                    </div>
-                  </div>
+                  <CrawlerAuthSetupStep
+                    baseUrl={webcrawlerConfig.base_url}
+                    mode={{
+                      kind: 'cookies',
+                      idPrefix: 'add-wc-cookie',
+                      rows: wcCookieRows,
+                      onChange: (rows) => {
+                        setWcCookieRows(rows)
+                        invalidateAuthProbe()
+                        invalidatePreview()
+                      },
+                    }}
+                    isPending={authProbeMutation.isPending}
+                    error={authProbeError}
+                    result={authProbeResult}
+                    onProbe={runAuthProbe}
+                    onNext={(nextAuthGuard) => {
+                      setAuthGuard(nextAuthGuard)
+                      setWcStep('selector')
+                    }}
+                    onBack={() => setWcStep('auth-question')}
+                  />
                 )}
 
                 {/* Step 5: Selector - runs preview, gates on REQ-3 classification === success. */}
@@ -968,35 +911,7 @@ function AddConnectorPage() {
                   <div className="space-y-4">
                     {/* Auth status reminder - public sites get a banner here, authenticated
                         sites land here only after auth-setup returned auth_ok. */}
-                    {requiresLogin === false && (
-                      <div className="flex items-center justify-between rounded-lg border border-gray-200 px-4 py-3">
-                        <div className="flex items-center gap-2 text-xs text-gray-600">
-                          <CheckCircle2 className="h-3.5 w-3.5 text-[var(--color-success-text)]" />
-                          Public site - no login needed
-                        </div>
-                        <button
-                          type="button"
-                          className="text-xs text-gray-600 hover:text-gray-900"
-                          onClick={() => setWcStep('auth-question')}
-                        >
-                          Actually, it needs login
-                        </button>
-                      </div>
-                    )}
-                    {requiresLogin === true && authProbeResult?.classification === 'auth_ok' && (
-                      <Alert variant="success" size="sm">
-                        <div className="flex items-center justify-between">
-                          <span>Logged in - cookies verified</span>
-                          <button
-                            type="button"
-                            className="text-xs text-gray-600 hover:text-gray-900"
-                            onClick={() => setWcStep('auth-setup')}
-                          >
-                            Edit cookies
-                          </button>
-                        </div>
-                      </Alert>
-                    )}
+                    <CrawlerAuthStatus status={crawlerAuthStatus} />
 
                     {/* Preview URL */}
                     <>
@@ -1049,7 +964,7 @@ function AddConnectorPage() {
                         disabled={previewMutation.isPending || !wcPreviewUrl}
                         onClick={() => {
                           invalidatePreview()
-                          previewMutation.mutate({ url: wcPreviewUrl, content_selector: webcrawlerConfig.content_selector, cookies: buildCookies() })
+                          previewMutation.mutate({ url: wcPreviewUrl, content_selector: webcrawlerConfig.content_selector, cookies: buildCrawlerCookies(wcCookieRows, webcrawlerConfig.base_url) })
                         }}
                       >
                         {previewMutation.isPending
@@ -1064,7 +979,7 @@ function AddConnectorPage() {
                           disabled={previewMutation.isPending || !wcPreviewUrl}
                           onClick={() => {
                             invalidatePreview()
-                            previewMutation.mutate({ url: wcPreviewUrl, try_ai: true, cookies: buildCookies() })
+                            previewMutation.mutate({ url: wcPreviewUrl, try_ai: true, cookies: buildCrawlerCookies(wcCookieRows, webcrawlerConfig.base_url) })
                           }}
                         >
                           <Sparkles className="h-3 w-3" />
@@ -1099,55 +1014,28 @@ function AddConnectorPage() {
                           reason={previewResult.classification_reason}
                           onRetry={() => {
                             invalidatePreview()
-                            previewMutation.mutate({ url: wcPreviewUrl, content_selector: webcrawlerConfig.content_selector, cookies: buildCookies() })
+                            previewMutation.mutate({ url: wcPreviewUrl, content_selector: webcrawlerConfig.content_selector, cookies: buildCrawlerCookies(wcCookieRows, webcrawlerConfig.base_url) })
                           }}
                         />
 
-                        {/* Affordance: AI-detected selector badge + "Use this selector" CTA.
-                            Shown for success and selector_required/empty when AI found something. */}
-                        {previewResult.selector_source === 'ai' && previewResult.content_selector && (
-                          <div className="rounded-lg border border-gray-200 bg-black/[0.06] p-3 space-y-2">
-                            <div className="flex gap-2 items-center text-xs text-gray-600">
-                              <Sparkles className="h-3.5 w-3.5 shrink-0" />
-                              <span>{m.admin_connectors_webcrawler_ai_selector_detected({ selector: previewResult.content_selector, count: String(previewResult.word_count) })}</span>
-                            </div>
-                            {webcrawlerConfig.content_selector !== previewResult.content_selector && (
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                className="text-xs h-7"
-                                onClick={() => {
-                                  setWebcrawlerConfig((p) => ({ ...p, content_selector: previewResult.content_selector! }))
-                                  setShowAdvancedSelector(true)
-                                }}
-                              >
-                                {m.admin_connectors_webcrawler_ai_selector_use()}
-                              </Button>
-                            )}
-                          </div>
-                        )}
-
-                        {/* Affordance: inline "Try AI find selector" CTA for
-                            selector_required / selector_returns_empty when no selector is set
-                            and AI was not the source. */}
-                        {(previewResult.classification === 'selector_required' || previewResult.classification === 'selector_returns_empty') &&
-                          !webcrawlerConfig.content_selector &&
-                          previewResult.selector_source !== 'ai' &&
-                          previewResult.selector_source !== 'ai_failed' && (
-                          <button
-                            type="button"
-                            className="flex items-center gap-1 text-xs text-gray-600 hover:text-gray-900 transition-colors disabled:opacity-50"
-                            disabled={previewMutation.isPending}
-                            onClick={() => {
-                              invalidatePreview()
-                              previewMutation.mutate({ url: wcPreviewUrl, try_ai: true, cookies: buildCookies() })
-                            }}
-                          >
-                            <Sparkles className="h-3 w-3" />
-                            {m.admin_connectors_webcrawler_try_ai()}
-                          </button>
-                        )}
+                        <AiSelectorStep
+                          result={previewResult}
+                          currentSelector={webcrawlerConfig.content_selector}
+                          canTryAi={!webcrawlerConfig.content_selector}
+                          isPending={previewMutation.isPending}
+                          onUseSelector={(selector) => {
+                            setWebcrawlerConfig((p) => ({ ...p, content_selector: selector }))
+                            setShowAdvancedSelector(true)
+                          }}
+                          onTryAi={() => {
+                            invalidatePreview()
+                            previewMutation.mutate({
+                              url: wcPreviewUrl,
+                              try_ai: true,
+                              cookies: buildCrawlerCookies(wcCookieRows, webcrawlerConfig.base_url),
+                            })
+                          }}
+                        />
 
                         {/* Affordance: extracted markdown body as proof - success only.
                             Shows what the crawler will actually store. */}
