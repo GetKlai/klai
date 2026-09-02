@@ -8,7 +8,7 @@ FRONTEND_PORT ?= $(if $(CONDUCTOR_PORT),$(CONDUCTOR_PORT),5174)
 BACKEND_PORT ?= $(if $(CONDUCTOR_PORT),$(shell expr $(CONDUCTOR_PORT) + 1),8010)
 FRONTEND_URL ?= http://localhost:$(FRONTEND_PORT)
 
-.PHONY: help setup local-dev-status e2e-prod-status dev-up dev-down dev-reset dev-status dev-logs seed postdeploy backend frontend migrate lint check
+.PHONY: help setup local-dev-status e2e-prod-status dev-up dev-down dev-reset dev-bootstrap dev-status dev-logs seed postdeploy backend frontend migrate lint check
 
 # ── Help ─────────────────────────────────────────────────────────────────────
 
@@ -47,10 +47,9 @@ setup: ## First-time setup: copy env files, generate keys, install dependencies
 	@echo "============================================"
 	@echo "  Setup complete! Next steps:"
 	@echo ""
-	@echo "  1. make dev-up               (start Docker services)"
-	@echo "  2. make migrate              (run database migrations)"
-	@echo "  3. make backend              (start API — auto-creates dev user)"
-	@echo "  4. make frontend             (start Vite dev server)"
+	@echo "  1. make dev-bootstrap        (start services and prepare the database)"
+	@echo "  2. make backend              (start API — auto-creates dev user)"
+	@echo "  3. make frontend             (start Vite dev server)"
 	@echo ""
 	@echo "  That's it! No env editing needed for standalone mode."
 	@echo "  For AI features: add ANTHROPIC_API_KEY to .env.dev"
@@ -75,7 +74,30 @@ dev-down: ## Stop Docker services (keep data)
 
 dev-reset: ## Stop services AND delete all data volumes (clean start)
 	$(COMPOSE) down -v
-	@echo "All volumes removed. Run 'make dev-up && make migrate' to start fresh."
+	@echo "All volumes removed. Run 'make dev-bootstrap' to start fresh."
+
+dev-bootstrap: ## Bootstrap a local database (services, migrations, RLS post-deploy SQL)
+	@LOG=$$(mktemp "$${TMPDIR:-/tmp}/klai-dev-up.XXXXXX"); \
+	trap 'rm -f "$$LOG"' EXIT; \
+	echo "==> [1/4] Starting local Docker services..."; \
+	if $(MAKE) --no-print-directory dev-up >"$$LOG" 2>&1; then \
+		cat "$$LOG"; \
+		echo "[OK] [REQUIRED] Docker services started."; \
+	else \
+		cat "$$LOG"; \
+		if grep -Eiq 'address already in use|port is already allocated|Bind for .* failed' "$$LOG"; then \
+			echo "[WARN] [TOLERATED] A Docker service hit a host-port collision; continuing because PostgreSQL alone is sufficient."; \
+		else \
+			echo "[ERROR] [REQUIRED] make dev-up failed for a reason other than a recognized host-port collision." >&2; \
+			exit 1; \
+		fi; \
+	fi; \
+	CTR="$(PG_CONTAINER)"; \
+	if [ -z "$$CTR" ]; then \
+		echo "[ERROR] [REQUIRED] No PostgreSQL container found after make dev-up." >&2; \
+		exit 1; \
+	fi; \
+	scripts/dev-bootstrap.sh "$$CTR"
 
 dev-status: ## Show status of Docker services
 	$(COMPOSE) ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}"
