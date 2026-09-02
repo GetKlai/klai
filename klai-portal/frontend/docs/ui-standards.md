@@ -30,7 +30,9 @@ When a review comment invokes a rule from this document, cite its ledger ID
 (for example "KLAI-UI-022"). That costs nothing in the moment and makes rule
 adoption measurable for free: a search over PR history then shows which rules
 reviews actually lean on — data that should exist before anyone proposes
-heavier compliance measurement.
+heavier compliance measurement. That data reaches only what has an ID:
+adoption of prose deliberately left out of the ledger is unmeasured by
+construction.
 
 The catalogue is maintained by hand. The ledger's own preamble says which of
 its guarantees a test backs and which rely on you adding the row — read that
