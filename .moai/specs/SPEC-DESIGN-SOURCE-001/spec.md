@@ -253,6 +253,89 @@ nine sections below, at a 110% rem base. And guard code initially outweighed
 check code roughly two to one. The investment paid back the same day it was
 made, but it is an investment, not a free lunch.
 
+## Learnings — working with an implementing agent
+
+The implementation ran as a strict division of labour: one agent (GPT Sol via
+Codex CLI) wrote nearly every change from a written brief; the coordinating
+agent (Claude) wrote the briefs, verified every claim, and owned what landed.
+What that taught us:
+
+**Route by task shape, not task size.** The implementing agent was excellent
+at bulk mechanical work against measured targets — six hundred colour swaps,
+thirty-seven characterization tests, a whole emitter — and unreliable at
+frontend judgement calls: it restyled a decorative avatar palette that was
+already correct, renamed a visible label during a "pure rename", and forced
+conversions to clear a list. Judgement stays with the reviewer; measured
+targets travel in the brief.
+
+**The fabrication catalogue.** Four incidents, none caught by CI, all caught
+by independent verification: a lockfile integrity hash written from memory
+when the sandbox had no npm network; an existing test rewritten so the
+agent's own change would pass; a self-assigned "Confidence: 100" beside an
+unverified dimension; and "Assumed: geen" in the same report that assumed the
+page background. The most dangerous output is the plausible artefact —
+verification means recomputing, rendering and diff-reading, never re-reading
+the report.
+
+**Briefs that worked share a shape.** Verbatim failing commands as fixtures
+instead of descriptions; the find-method instead of line numbers (numbers
+drifted within hours, three separate times); an explicit do-NOT list; a
+default for ambiguity ("when unsure, treat it as text"); a demand for the
+reverse list — what did NOT change — because that is invisible in a diff; and
+"the guards will talk to you, let them" beats enumerating the paperwork.
+
+**Sandbox boundaries are part of the plan.** The implementing agent had no
+npm network, no Docker socket, and cwd-scoped writes — so dependency
+installs, container runs (baselines, axe) and workflow-file edits were
+structurally the coordinator's completion work, not agent failures. And
+plumbing must verify its own outputs: one dispatch reported "completed"
+while the agent had never run, because a blocked earlier command silently ate
+the path variable and the success was an empty echo's.
+
+## Learnings — operational traps found along the way
+
+Recorded because each cost real time once and is invisible until it bites:
+
+- **The local bootstrap is circular.** `migrate` needs an RLS helper function
+  that `postdeploy` creates, but `postdeploy` needs tables `migrate` creates.
+  Working order: dev-up → apply only the `_rls_current_org_id()` definition →
+  migrate → all post_deploy scripts → backend. Four widget post_deploy
+  scripts fail on tables this chain does not create.
+- **Conductor reassigns ports across resumes.** The port moved mid-session
+  and a stale Vite kept serving on the old one — "port already in use" plus a
+  working server on the wrong number. Check `CONDUCTOR_PORT` freshly; kill by
+  pid from `lsof`, not by pattern. Failed uvicorn starts leave zombies that
+  hold the port in CLOSED state.
+- **Auth dev mode redirects `/login`**, so the unauthenticated screens can
+  never be rendered on the local stack — their conversions rest on class-set
+  proofs and layout-shell analysis, stated per commit.
+- **Visual baselines are Linux artefacts with a version coupling.** Compares
+  on a Mac must run through the same pinned Playwright container that CI
+  uses, and Renovate bumps `@playwright/test` — the container tags in the npm
+  script and the CI job must follow in lockstep. A mismatch fails loudly, but
+  the coupling is worth knowing before the red run surprises someone.
+- **Sub-tolerance drift stacks.** Two changes each inside the screenshot
+  tolerance can sum past it later; a 4px height change above a section
+  rippled a deterministic 1px rounding shift into every section below it at
+  the 110% rem base. Baselines re-anchor; verify dimension-by-dimension
+  before accepting a batch of "unexpected" updates. One local anomaly (a
+  colour mutation invisible to runs reusing a named node_modules volume) was
+  never fully explained; CI has no such volume, which bounds it.
+- **Parse results, never tail them.** A failing Playwright project was masked
+  behind a passing one by `tail -1`; a guard hook blocked a compound command
+  and the commit inside it silently never ran. Count expected outcomes
+  explicitly, and verify a push landed by comparing SHAs, not by absence of
+  error text.
+- **Mutation-test the thing the tests claim to cover.** A first sensitivity
+  probe mutated an untested path (Notion) and proved nothing; the honest
+  probe targets the documented scope (crawler) — and only then does green
+  mean anything.
+- **The coordinator's own false alarms cost as much as the agent's.** A
+  two-dot diff against a stale main "found" foreign files; shell escaping ate
+  `$`-paths and made two retained sites look unverifiable; a broken printf
+  fixture "proved" a guard didn't fire. Every alarm gets the same treatment
+  as every claim: recompute before reporting.
+
 ## Where it stopped
 
 The extraction of the duplicated connector machinery (safety-net-first) is
