@@ -44,7 +44,7 @@ function Field({
   })
 
   return (
-    <div className={cn('space-y-1', className)} {...props}>
+    <div className={cn('space-y-1.5', className)} {...props}>
       <Label htmlFor={controlId}>{label}</Label>
       {control}
       {feedback && (
