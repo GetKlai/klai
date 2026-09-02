@@ -138,16 +138,17 @@ shield-extension contrast fixes; the Field rhythm decision (1.5 won); the
 connector characterization net (37 tests) and the extraction it protected
 (−309 route lines, shared machinery single-sourced).
 
-Still open, ordinary backlog rather than design-system work:
+All three remaining backlog items closed on 2026-09-02, on main: the
+hard-to-reach callout states render in the catalog and both suites cover them
+(`ebafadb28`); reviewers cite ledger IDs (`16479fab4`); and
+`make dev-bootstrap` implements the recorded order with failure classes
+distinguished on screen, proven idempotent and fresh on a real database
+(`ac1afc581`) — where the real fresh run immediately caught a filename
+allowlist that had drifted the day it was written, replaced by matching the
+error itself.
 
-1. **Hard-to-reach states into the catalog.** Render the OAuth success/error
-   banners and upload confirmations as `/dev/ui` sections so the visual and
-   axe suites cover the nine converted callouts no local stack reaches.
-2. **Reviewer convention: cite ledger IDs.** One documentation line; yields
-   free adoption data over time.
-3. **Local bootstrap.** `make dev-bootstrap` per the recorded order.
-   Backend-owned. The widget post_deploy scripts also fail on tables the
-   chain does not create.
+Nothing is open. Future work under this spec starts with the rule the
+learnings end on: no incident, no check.
 
 ## Learnings — working with an implementing agent
 
