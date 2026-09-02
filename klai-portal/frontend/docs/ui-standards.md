@@ -1084,6 +1084,13 @@ Component guideline rows inside the generated markers come from the matching
 the prose remain maintained by hand. When a row is retired, add its ID to
 Retired IDs below so the number cannot return.
 
+What earns a row: a clause gets its own row when it states an obligation an
+agent could violate while honouring every other row. A qualifier, exception,
+or anatomical detail travels in the row of the rule it conditions — a rule and
+its escape clause are one requirement, not two. Where one row deliberately
+carries several obligations about the same surface, the row must name each
+half explicitly, so no half can silently drop out.
+
 Verification modes use the vocabulary from the Design System Doc Spec
 (`automated` / `assisted` / `manual`), plus one of our own:
 

@@ -52,8 +52,9 @@ covers. If one of them is violated in review, that violation is the incident
 that earns it an ID. Cost of acting now: 9 more hand-maintained rows, each a
 new drift surface.
 
-**Proposed preamble criterion** (replacing the implicit row-count heuristic;
-prose, not a check — to land in a later change, not this one):
+**Preamble criterion** (replacing the implicit row-count heuristic; prose,
+not a check — landed in the ledger preamble in the follow-up commit after
+this review):
 
 > A clause gets its own row when it states an obligation an agent could
 > violate while honouring every other row. A qualifier, exception, or
