@@ -14,6 +14,12 @@ export interface Source {
   created_at: string | null
   /** Upload-only: pending / synced / failed from Track 3 backend. */
   index_status?: string | null
+  /**
+   * Upload-only: this source came from a file upload, so a newer file can
+   * overwrite it in place. False for URL / pasted-text / docs-page sources,
+   * which have no file to replace.
+   */
+  can_replace?: boolean
 }
 
 export interface SourcesResponse {

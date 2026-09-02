@@ -9,7 +9,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { apiFetch } from '@/lib/apiFetch'
 import { queryLogger } from '@/lib/logger'
-import { kbQueryKeys } from '@/lib/kb-query-keys'
+import { invalidateKnowledgeSourceLists, kbQueryKeys } from '@/lib/kb-query-keys'
 import type { Source } from './-sources-types'
 
 /**
@@ -95,6 +95,43 @@ export function useSourceRename(kbSlug: string, source: Source, onDone: () => vo
     },
     onError: (err) =>
       queryLogger.error('Source rename failed', {
+        kbSlug,
+        sourceId: source.id,
+        err,
+      }),
+  })
+}
+
+/**
+ * Replace an uploaded source's file with a newer one.
+ *
+ * The customer flow this removes: delete the source, then add the updated
+ * file again. A normal upload is keyed on the sha256 of its own bytes, so an
+ * EDITED file always lands as a second source; this endpoint ingests the new
+ * file under the ORIGINAL source's path instead, which knowledge-ingest
+ * treats as a new version of that document.
+ *
+ * Text files (.md / .txt / .csv) are done when the call returns. Documents on
+ * the docling path come back as `processing`; the row keeps its existing
+ * "Bezig" badge and the sources list polls until the new version lands. Both
+ * cases are covered by invalidating the source lists here.
+ */
+export function useSourceReplace(kbSlug: string, source: Source) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (file: File) => {
+      const body = new FormData()
+      body.append('file', file)
+      return apiFetch<{ id: string, filename: string, status: string }>(
+        `/api/app/knowledge-bases/${kbSlug}/uploads/${source.id}/replace`,
+        { method: 'POST', body },
+      )
+    },
+    onSuccess: () => {
+      invalidateKnowledgeSourceLists(queryClient, kbSlug)
+    },
+    onError: (err) =>
+      queryLogger.error('Source replace failed', {
         kbSlug,
         sourceId: source.id,
         err,

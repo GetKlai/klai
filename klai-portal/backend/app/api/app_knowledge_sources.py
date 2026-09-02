@@ -33,7 +33,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from starlette.datastructures import UploadFile
+from starlette.datastructures import FormData, UploadFile
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.formparsers import MultiPartException
 
@@ -49,7 +49,7 @@ from app.services import (
     kb_uploads_repo,
     knowledge_ingest_client,
 )
-from app.services.access import get_user_role_for_kb
+from app.services.access import get_user_role_for_kb, grants_kb_source_manage
 from app.services.kb_quota import assert_can_add_item_to_kb
 from app.services.source_extractors.exceptions import (
     InvalidContentError,
@@ -131,8 +131,16 @@ async def _get_writable_kb_or_raise(
     kb_slug: str,
     perms: UserPermissions,
     db: AsyncSession,
+    *,
+    check_quota: bool = True,
 ) -> PortalKnowledgeBase:
-    """Resolve the KB, assert caller has contributor+ role, and quota is OK."""
+    """Resolve the KB, assert caller has contributor+ role, and quota is OK.
+
+    ``check_quota=False`` is for writes that do not add a source: replacing
+    one leaves the KB's item count exactly where it was, so charging it
+    against the quota would lock a full KB out of updating what it already
+    holds.
+    """
     result = await db.execute(
         select(PortalKnowledgeBase).where(
             PortalKnowledgeBase.org_id == perms.org_id,
@@ -170,9 +178,10 @@ async def _get_writable_kb_or_raise(
             detail="Write access to this knowledge base is required",
         )
 
-    org = await _load_org_or_500(db, perms.org_id)
-    # Raises HTTP 403 with error_code=kb_quota_items_exceeded when at limit.
-    await assert_can_add_item_to_kb(kb, org, role=perms.role.value)
+    if check_quota:
+        org = await _load_org_or_500(db, perms.org_id)
+        # Raises HTTP 403 with error_code=kb_quota_items_exceeded when at limit.
+        await assert_can_add_item_to_kb(kb, org, role=perms.role.value)
     return kb
 
 
@@ -187,12 +196,20 @@ async def _forward_ingest(
     source_ref: str,
     extra: dict,
     user_id: str | None = None,
+    path: str | None = None,
 ) -> str:
-    """Build the IngestRequest payload and post it to knowledge-ingest."""
+    """Build the IngestRequest payload and post it to knowledge-ingest.
+
+    ``path`` defaults to ``source_ref`` — the two are the same thing for a
+    first ingest. A REPLACE passes the existing source's path instead, which
+    is what makes knowledge-ingest supersede that artifact (soft-delete +
+    create + ``superseded_by`` + Qdrant clear) rather than add a second one.
+    """
     payload: dict = {
         "org_id": zitadel_org_id,
         "kb_slug": kb.slug,
-        "path": source_ref,  # unique per logical source; stable across re-submits
+        # unique per logical source; stable across re-submits and replacements
+        "path": path or source_ref,
         "content": content,
         "title": title,
         "source_type": source_type,
@@ -401,11 +418,15 @@ async def _ingest_text_bytes(
     org: Any,
     perms: UserPermissions,
     db: AsyncSession,
+    target_path: str | None = None,
 ) -> tuple[FileUploadEntry | None, FileUploadSkippedEntry | None]:
     """Decode + ingest a text-path payload synchronously.
 
     Returns a one-of: either an accepted entry (status="done") OR a
     skipped entry. Never raises — all error paths surface via ``skipped``.
+
+    ``target_path`` set = this upload replaces the source living under that
+    path; see ``KBUpload.target_path``.
     """
     try:
         validated = file_upload.validate_text_upload(filename, body)
@@ -420,11 +441,13 @@ async def _ingest_text_bytes(
         source_type="file",
         content_type="plain_text",
         source_ref=validated.source_ref,
+        path=target_path,
         extra={
             "original_filename": filename,
             "extension": ext,
             "bytes": validated.bytes_count,
             "pipeline": "text",
+            "replaced_source": target_path is not None,
         },
         user_id=perms.user_id if kb.owner_type == "user" else None,
     )
@@ -439,6 +462,7 @@ async def _ingest_text_bytes(
         mime="text/plain",
         bytes_count=validated.bytes_count,
         source_ref=validated.source_ref,
+        target_path=target_path,
         status=kb_uploads_repo.STATUS_DONE,
         artifact_id=artifact_id,
     )
@@ -462,6 +486,7 @@ async def _ingest_docling_bytes(
     kb: PortalKnowledgeBase,
     perms: UserPermissions,
     db: AsyncSession,
+    target_path: str | None = None,
 ) -> tuple[FileUploadEntry | None, FileUploadSkippedEntry | None]:
     """Magic-byte-validate + submit a docling-path payload.
 
@@ -499,8 +524,13 @@ async def _ingest_docling_bytes(
         mime=validated.mime,
         bytes_count=validated.bytes_count,
         source_ref=validated.source_ref,
+        target_path=target_path,
         status=kb_uploads_repo.STATUS_PROCESSING,
         docling_task_id=submission.task_id,
+        # artifact_id stays NULL until this upload produces one. Pointing it
+        # at the artifact being replaced would be read as "this row owns that
+        # artifact", and deleting a FAILED replacement would then cascade into
+        # deleting the perfectly healthy source it never managed to replace.
     )
     return (
         FileUploadEntry(
@@ -615,6 +645,54 @@ async def _dispatch_blob(
     return accepted, skipped
 
 
+async def _read_upload_form(request: Request, *, max_files: int) -> FormData:
+    """Parse a multipart body with Klai's per-part size cap.
+
+    Override Starlette's 1 MB default per-part cap. Adding 4 KiB accounts
+    for the multipart envelope (boundary, headers, CRLFs).
+
+    Every failure surfaces as a structured ``error_code`` the frontend can
+    translate, never as a 500.
+    """
+    try:
+        return await request.form(
+            max_files=max_files,
+            max_part_size=file_upload.MAX_BINARY_FILE_BYTES + 4 * 1024,
+        )
+    except (MultiPartException, StarletteHTTPException) as exc:
+        error_text = str(getattr(exc, "detail", None) or exc)
+        if "Too many files" in error_text or "maximum number of files" in error_text:
+            logger.warning("kb_upload_form_too_many_files", error=error_text)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error_code": "too_many_files",
+                    "max": max_files,
+                },
+            ) from exc
+
+        logger.warning("kb_upload_form_parse_failed", error=error_text, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail={
+                "error_code": "file_too_large",
+                "max_bytes": file_upload.MAX_BINARY_FILE_BYTES,
+            },
+        ) from exc
+    except Exception as exc:
+        # Unexpected parser/transport errors land here.
+        # The most common is the user uploading > 200 MB; surface as
+        # 413 with the structured error code rather than 500.
+        logger.warning("kb_upload_form_parse_failed", error=str(exc), exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail={
+                "error_code": "file_too_large",
+                "max_bytes": file_upload.MAX_BINARY_FILE_BYTES,
+            },
+        ) from exc
+
+
 @router.post(
     "/knowledge-bases/{kb_slug}/sources/file",
     response_model=FileSourcesIngestedResponse,
@@ -664,46 +742,7 @@ async def add_file_source(
     subclass, so ``isinstance(starlette_obj, fastapi.UploadFile)`` returns
     ``False`` and silently filters every parsed file out of the list.
     """
-    # Override Starlette's 1 MB default per-part cap. Adding 4 KiB
-    # accounts for the multipart envelope (boundary, headers, CRLFs).
-    try:
-        form = await request.form(
-            max_files=_MAX_FILES_PER_REQUEST,
-            max_part_size=file_upload.MAX_BINARY_FILE_BYTES + 4 * 1024,
-        )
-    except (MultiPartException, StarletteHTTPException) as exc:
-        error_text = str(getattr(exc, "detail", None) or exc)
-        if "Too many files" in error_text or "maximum number of files" in error_text:
-            logger.warning("kb_upload_form_too_many_files", error=error_text)
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={
-                    "error_code": "too_many_files",
-                    "max": _MAX_FILES_PER_REQUEST,
-                },
-            ) from exc
-
-        logger.warning("kb_upload_form_parse_failed", error=error_text, exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
-            detail={
-                "error_code": "file_too_large",
-                "max_bytes": file_upload.MAX_BINARY_FILE_BYTES,
-            },
-        ) from exc
-    except Exception as exc:
-        # Unexpected parser/transport errors land here.
-        # The most common is the user uploading > 200 MB; surface as
-        # 413 with the structured error code rather than 500.
-        logger.warning("kb_upload_form_parse_failed", error=str(exc), exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
-            detail={
-                "error_code": "file_too_large",
-                "max_bytes": file_upload.MAX_BINARY_FILE_BYTES,
-            },
-        ) from exc
-
+    form = await _read_upload_form(request, max_files=_MAX_FILES_PER_REQUEST)
     files: list[UploadFile] = [v for v in form.getlist("files") if isinstance(v, UploadFile)]
 
     if not files:
@@ -792,6 +831,165 @@ async def add_file_source(
         duration_ms=int((time.monotonic() - start) * 1000),
     )
     return FileSourcesIngestedResponse(uploads=accepted, skipped=skipped)
+
+
+# --- Replace endpoint ------------------------------------------------------
+
+
+@router.post(
+    "/knowledge-bases/{kb_slug}/uploads/{artifact_id}/replace",
+    response_model=FileUploadEntry,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(get_kb_with_access)],
+)
+async def replace_file_source(
+    kb_slug: str,
+    artifact_id: str,
+    request: Request,
+    perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
+) -> FileUploadEntry:
+    """Overwrite one uploaded source with a newer file.
+
+    The gap this closes: a normal upload ingests under
+    ``path = sha256(bytes)``, so an EDITED file is a different path and
+    therefore a second source. Users were deleting the source and adding it
+    again to update it (feedback item 28, Voys). This route ingests the new
+    file under the ORIGINAL source's path, which knowledge-ingest already
+    treats as a new version — it closes the active artifact, creates the
+    replacement, links ``superseded_by`` and clears the old Qdrant points.
+    One row throughout, no window where the source is missing.
+
+    Restricted to sources that came from a file upload: the ``kb_uploads``
+    row IS the eligibility check. URL sources re-fetch via sync, pasted text
+    and docs pages are edited in the editor, and connector items belong to
+    their connector.
+
+    Permission pad mirrors delete: contributor+ on the KB, and a plain
+    contributor may only replace an upload they created (owners, platform
+    admins and kb_managers on an org KB may replace any).
+
+    Not accepted here: archives (one file in, N sources out — that is an
+    add, not a replace) and the not-yet-supported ``.doc`` path.
+    """
+    form = await _read_upload_form(request, max_files=1)
+    incoming = [v for v in form.getlist("file") if isinstance(v, UploadFile)]
+    if not incoming:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error_code": "no_files"},
+        )
+
+    start = time.monotonic()
+    # Replacing does not add a source, so it must not be charged against the
+    # per-KB item quota — a full KB may still update what it already holds.
+    kb = await _get_writable_kb_or_raise(kb_slug, perms, db, check_quota=False)
+    org = await _load_org_or_500(db, perms.org_id)
+
+    tracked = await kb_uploads_repo.get_view_by_artifact(
+        db,
+        kb_id=kb.id,
+        org_id=perms.org_id,
+        artifact_id=artifact_id,
+    )
+    if tracked is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error_code": "source_not_replaceable"},
+        )
+
+    role = await get_user_role_for_kb(
+        kb_id=kb.id,
+        user_id=perms.user_id,
+        db=db,
+        default_org_role=kb.default_org_role,
+        kb_org_id=kb.org_id,
+        kb_created_by=kb.created_by,
+    )
+    if not grants_kb_source_manage(kb, perms, role) and tracked.created_by != perms.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error_code": "not_your_upload"},
+        )
+
+    upload = incoming[0]
+    filename = file_upload.sanitize_filename(upload.filename)
+    body = await upload.read(file_upload.MAX_BINARY_FILE_BYTES + 1)
+
+    try:
+        ext, pipeline = file_upload.classify_extension(filename)
+    except HTTPException as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error_code": _failure_reason_from(exc), "filename": filename},
+        ) from exc
+
+    if pipeline not in ("text", "docling"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error_code": ("archive_not_replaceable" if pipeline == "archive" else "phase_pending"),
+                "filename": filename,
+                "extension": ext,
+            },
+        )
+
+    target_path = tracked.ingest_path
+    if pipeline == "text":
+        entry, skip = await _ingest_text_bytes(
+            body=body,
+            filename=filename,
+            ext=ext,
+            kb=kb,
+            org=org,
+            perms=perms,
+            db=db,
+            target_path=target_path,
+        )
+    else:
+        entry, skip = await _ingest_docling_bytes(
+            body=body,
+            filename=filename,
+            ext=ext,
+            kb=kb,
+            perms=perms,
+            db=db,
+            target_path=target_path,
+        )
+
+    if entry is None:
+        logger.info(
+            "kb_source_replace_rejected",
+            org_id=org.zitadel_org_id,
+            kb_slug=kb_slug,
+            artifact_id=artifact_id,
+            filename=filename,
+            failure_reason=skip.reason if skip else "invalid",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error_code": skip.reason if skip else "invalid",
+                "skipped": [skip.model_dump()] if skip else [],
+            },
+        )
+
+    # Commit the kb_uploads write while the request session still carries the
+    # tenant GUC — see the same note on the file-upload route.
+    await db.commit()
+
+    logger.info(
+        "kb_source_replaced",
+        org_id=org.zitadel_org_id,
+        kb_slug=kb_slug,
+        artifact_id=artifact_id,
+        upload_id=str(entry.id),
+        filename=filename,
+        pipeline=pipeline,
+        status=entry.status,
+        duration_ms=int((time.monotonic() - start) * 1000),
+    )
+    return entry
 
 
 # --- Status polling endpoint -----------------------------------------------

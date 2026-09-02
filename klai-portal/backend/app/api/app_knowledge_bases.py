@@ -26,7 +26,7 @@ from app.models.kb_uploads import KBUpload
 from app.models.knowledge_bases import PortalGroupKBAccess, PortalKnowledgeBase, PortalUserKBAccess
 from app.models.portal import PortalUser
 from app.models.retrieval_gaps import PortalRetrievalGap
-from app.services import docs_client, knowledge_ingest_client
+from app.services import docs_client, kb_uploads_repo, knowledge_ingest_client
 from app.services.access import (
     get_user_role_for_kb,
     grants_kb_source_manage,
@@ -49,6 +49,7 @@ ADMIN_OVERRIDE_VALUE = "I-WAS-NOT-CREATOR"
 logger = structlog.get_logger()
 _QDRANT_COLLECTION = "klai_knowledge"
 _VISIBLE_UPLOAD_STATUSES: tuple[str, ...] = ("processing", "ingesting", "failed")
+_PENDING_UPLOAD_STATUSES: tuple[str, ...] = ("processing", "ingesting")
 
 
 async def _get_non_system_group_or_404(group_id: int, org_id: int, db: AsyncSession) -> PortalGroup:
@@ -1032,6 +1033,7 @@ class SourceOut(BaseModel):
     last_sync_at: datetime | None = None
     created_at: datetime | None = None  # for uploads — sort key
     index_status: str | None = None  # "synced", "pending", or "not_synced" for uploads; None for connectors
+    can_replace: bool = False  # upload came from a file and can be overwritten by a newer file
 
 
 class SourcesResponse(BaseModel):
@@ -1115,12 +1117,99 @@ def _upload_type_label(content_type: str) -> str:
     return content_type.replace("_", " ").title()
 
 
+def _replaceable_artifact_ids(tracked: list[KBUpload]) -> set[str]:
+    """Artifacts that came from a file upload, so a newer file can overwrite them.
+
+    URL sources, pasted text and docs pages never pass through ``kb_uploads``,
+    and there is no file to replace them with — they re-fetch or get edited.
+    """
+    return {str(u.artifact_id) for u in tracked if u.status == "done" and u.artifact_id}
+
+
+def _replacement_starts(tracked: list[KBUpload]) -> dict[str, datetime]:
+    """When the in-flight replacement for each document key was submitted.
+
+    A replacement has no artifact of its own until it lands, so the path it
+    targets is the only thing tying it to the source on screen. The timestamp
+    matters as much as the key: the row it folds into carries the OLD
+    artifact's dates, so reporting those while pending makes a source last
+    indexed a week ago show "Hangt al 11384m" the second a replace starts —
+    the exact badge the ``index_status_changed_at`` plumbing exists to avoid.
+
+    ``tracked`` arrives newest-first, so the first hit per key wins.
+    """
+    starts: dict[str, datetime] = {}
+    for u in tracked:
+        if u.target_path and u.status in _PENDING_UPLOAD_STATUSES:
+            starts.setdefault(str(u.target_path), u.created_at)
+    return starts
+
+
+def _is_folded_replacement(upload: KBUpload, active_paths: set[str]) -> bool:
+    """True when this in-flight row is already shown as the source it replaces."""
+    return bool(upload.target_path) and upload.status in _PENDING_UPLOAD_STATUSES and upload.target_path in active_paths
+
+
+def _upload_sync_fields(
+    upload: dict,
+    replacing_since: datetime | None,
+    status_changed_dt: datetime | None,
+) -> tuple[str, datetime | None]:
+    """``(index_status, last_sync_at)`` for one active upload artifact.
+
+    A replacement in flight reports ``pending`` so the row keeps its existing
+    "Bezig" badge and polling: the source stays on screen with its current
+    content, and neither disappears nor doubles while the new file is being
+    processed. It reports the replacement's own start time, because the badge
+    measures elapsed time from this field to decide whether the work is stuck.
+    """
+    if replacing_since is not None:
+        return "pending", replacing_since
+    return str(upload.get("index_status") or "synced"), status_changed_dt
+
+
+def _stale_done_uploads(
+    tracked: list[KBUpload],
+    active_artifact_ids: set[str],
+    active_paths: set[str],
+) -> list[KBUpload]:
+    """Finished uploads whose artifact is no longer active on the ingest side."""
+    return [
+        u
+        for u in tracked
+        if u.status == "done" and _is_upload_missing_active_artifact(u, active_artifact_ids, active_paths)
+    ]
+
+
+def _unfinished_uploads(tracked: list[KBUpload], active_paths: set[str]) -> list[KBUpload]:
+    """Upload rows that deserve a row of their own on the sources list.
+
+    In-flight replacements are excluded — they are already shown as the
+    source they are replacing. A FAILED replacement is NOT excluded: the user
+    has to see the attempt to be able to clear it, and deleting that row
+    cannot touch the live source because a replacement carries no
+    ``artifact_id`` of its own.
+    """
+    return [
+        u for u in tracked if u.status in _VISIBLE_UPLOAD_STATUSES and not _is_folded_replacement(u, active_paths)
+    ]
+
+
 def _is_upload_missing_active_artifact(upload: KBUpload, active_artifact_ids: set[str], active_paths: set[str]) -> bool:
+    """True when a finished upload has no live source behind it any more.
+
+    The fallback keys on the DOCUMENT path — ``target_path`` for a
+    replacement, ``source_ref`` for a first upload — not on the row's own
+    content hash. Every version a source has ever had keeps a ``done`` row,
+    and each of those rows points at an artifact that a later version
+    superseded; matching on the row's own hash would surface every previous
+    version as a broken source next to the live one.
+    """
     artifact_id = str(upload.artifact_id or "")
-    source_ref = str(upload.source_ref or "")
+    document_path = str(upload.target_path or upload.source_ref or "")
     if artifact_id and artifact_id in active_artifact_ids:
         return False
-    if source_ref and source_ref in active_paths:
+    if document_path and document_path in active_paths:
         return False
     return True
 
@@ -1198,6 +1287,23 @@ async def list_kb_sources(
     sources: list[SourceOut] = []
     active_upload_artifact_ids: set[str] = set()
     active_upload_paths: set[str] = set()
+
+    # kb_uploads rows for this KB, loaded once and read by the three upload
+    # branches below: which artifacts came from a file (and can therefore be
+    # replaced), which of them are currently being replaced, which finished
+    # uploads lost their artifact, and which uploads are still in flight.
+    tracked_result = await db.execute(
+        select(KBUpload)
+        .where(
+            KBUpload.org_id == org.id,
+            KBUpload.kb_id == kb.id,
+            KBUpload.status.in_((*_VISIBLE_UPLOAD_STATUSES, "done")),
+        )
+        .order_by(KBUpload.created_at.desc())
+    )
+    tracked_uploads = list(tracked_result.scalars().all())
+    replaceable_artifact_ids = _replaceable_artifact_ids(tracked_uploads)
+    replacement_starts = _replacement_starts(tracked_uploads)
 
     # 1) Connector rows: merge knowledge-ingest counts with portal display data.
     seen_connector_ids: set[str] = set()
@@ -1285,6 +1391,9 @@ async def list_kb_sources(
         status_changed_dt = (
             datetime.fromtimestamp(int(status_changed_unix), tz=dt.UTC) if status_changed_unix is not None else None
         )
+        index_status, last_sync_at = _upload_sync_fields(
+            upload, replacement_starts.get(path), status_changed_dt
+        )
         sources.append(
             SourceOut(
                 kind="upload",
@@ -1297,8 +1406,9 @@ async def list_kb_sources(
                 chunks_count=int(upload.get("chunks_count") or 0),
                 status=None,
                 created_at=created_at_dt,
-                last_sync_at=status_changed_dt,
-                index_status=str(upload.get("index_status") or "synced"),
+                last_sync_at=last_sync_at,
+                index_status=index_status,
+                can_replace=artifact_id in replaceable_artifact_ids,
             )
         )
 
@@ -1307,29 +1417,10 @@ async def list_kb_sources(
     # active artifact/Qdrant side disappeared later. Show the row as not_synced
     # instead of making the user's source vanish; if an artifact_id exists the
     # normal reindex button can repair it.
-    done_upload_rows_result = await db.execute(
-        select(KBUpload)
-        .where(
-            KBUpload.org_id == org.id,
-            KBUpload.kb_id == kb.id,
-            KBUpload.status == "done",
-        )
-        .order_by(KBUpload.created_at.desc())
-    )
-    for upload in done_upload_rows_result.scalars().all():
-        if _is_upload_missing_active_artifact(upload, active_upload_artifact_ids, active_upload_paths):
-            sources.append(_stale_done_upload_source(upload))
+    for upload in _stale_done_uploads(tracked_uploads, active_upload_artifact_ids, active_upload_paths):
+        sources.append(_stale_done_upload_source(upload))
 
-    upload_rows_result = await db.execute(
-        select(KBUpload)
-        .where(
-            KBUpload.org_id == org.id,
-            KBUpload.kb_id == kb.id,
-            KBUpload.status.in_(_VISIBLE_UPLOAD_STATUSES),
-        )
-        .order_by(KBUpload.created_at.desc())
-    )
-    for upload in upload_rows_result.scalars().all():
+    for upload in _unfinished_uploads(tracked_uploads, active_upload_paths):
         sources.append(
             SourceOut(
                 kind="upload",
@@ -1601,6 +1692,7 @@ async def delete_kb_upload(
     caller_user_id = None if manages_all_sources else perms.user_id
 
     async def delete_tracked_upload(upload: KBUpload) -> None:
+        also_removed = 0
         # Contributor ownership check for in-flight uploads — mirrors
         # knowledge-ingest's X-User-ID gate on the artifact-side delete.
         if not manages_all_sources and upload.created_by != perms.user_id:
@@ -1639,6 +1731,24 @@ async def delete_kb_upload(
                         detail="Could not clean up artifact",
                     ) from exc
 
+            # This row owned the live source, so the whole document goes with
+            # it: every OTHER tracking row for the same key, in any state. An
+            # earlier version left behind resurfaces the deleted source as a
+            # stale row, once per version it ever had; a replacement left
+            # behind gets finished by the poller minutes later and re-creates
+            # the source the user just removed.
+            #
+            # Deliberately inside the artifact branch: discarding a FAILED
+            # replacement (no artifact of its own) must not cancel the retry
+            # the user started for the same source.
+            also_removed = await kb_uploads_repo.delete_rows_for_document(
+                db,
+                kb_id=kb.id,
+                org_id=perms.org_id,
+                path=upload.target_path or upload.source_ref,
+                except_id=upload.id,
+            )
+
         await db.delete(upload)
         await db.commit()
         logger.info(
@@ -1648,6 +1758,7 @@ async def delete_kb_upload(
             upload_id=str(upload.id),
             had_artifact=bool(upload.artifact_id),
             status_at_delete=upload.status,
+            also_removed_rows=also_removed,
         )
         return
 

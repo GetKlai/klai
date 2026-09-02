@@ -19,12 +19,15 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
-from sqlalchemy import select, update
+from sqlalchemy import and_, delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.kb_uploads import KBUpload
+
+if TYPE_CHECKING:
+    from sqlalchemy import CursorResult
 
 # Status enum — must match the alembic CHECK constraint.
 STATUS_PROCESSING = "processing"
@@ -59,10 +62,24 @@ class KBUploadView:
     artifact_id: str | None
     created_at: datetime
     updated_at: datetime
+    #: Set only for a replacement upload; see ``KBUpload.target_path``.
+    #: Last, with a default, so existing constructors stay valid.
+    target_path: str | None = None
 
     @property
     def is_terminal(self) -> bool:
         return self.status in _TERMINAL_STATUSES
+
+    @property
+    def ingest_path(self) -> str:
+        """Document key this upload ingests under.
+
+        ``target_path`` for a replacement (the path of the source being
+        overwritten), ``source_ref`` for a normal upload. Knowledge-ingest
+        supersedes whatever artifact is active under that key, so returning
+        the original path is what turns an upload into a replace.
+        """
+        return self.target_path or self.source_ref
 
 
 def _to_view(row: KBUpload) -> KBUploadView:
@@ -76,6 +93,7 @@ def _to_view(row: KBUpload) -> KBUploadView:
         mime=row.mime,
         bytes=row.bytes,
         source_ref=row.source_ref,
+        target_path=row.target_path,
         status=row.status,
         failure_reason=row.failure_reason,
         docling_task_id=row.docling_task_id,
@@ -97,6 +115,7 @@ async def create_upload(
     bytes_count: int,
     source_ref: str,
     status: str,
+    target_path: str | None = None,
     docling_task_id: str | None = None,
     artifact_id: str | None = None,
     failure_reason: str | None = None,
@@ -116,6 +135,7 @@ async def create_upload(
         mime=mime,
         bytes=bytes_count,
         source_ref=source_ref,
+        target_path=target_path,
         status=status,
         docling_task_id=docling_task_id,
         artifact_id=artifact_id,
@@ -174,6 +194,80 @@ async def get_view(db: AsyncSession, *, upload_id: uuid.UUID) -> KBUploadView | 
     result = await db.execute(select(KBUpload).where(KBUpload.id == upload_id))
     row = result.scalar_one_or_none()
     return _to_view(row) if row is not None else None
+
+
+async def get_view_by_artifact(
+    db: AsyncSession,
+    *,
+    kb_id: int,
+    org_id: int,
+    artifact_id: str,
+) -> KBUploadView | None:
+    """Fetch the tracking row that produced ``artifact_id``, if any.
+
+    Only rows in ``done`` match: an in-flight row's ``artifact_id`` is the
+    artifact it is about to REPLACE, not one it produced, and answering with
+    it would let a caller replace a source that is already being replaced.
+
+    Returns None for artifacts with no tracking row — URL sources, pasted
+    text and docs pages all land in ``knowledge.artifacts`` without ever
+    passing through ``kb_uploads``. That absence is what gates "can this
+    source be replaced by uploading a file?".
+
+    The session must be tenant-scoped (cat-D RLS filters cross-org rows);
+    ``org_id`` + ``kb_id`` are still pinned so a valid artifact id from
+    another KB in the same org cannot be addressed here.
+    """
+    result = await db.execute(
+        select(KBUpload)
+        .where(
+            KBUpload.kb_id == kb_id,
+            KBUpload.org_id == org_id,
+            KBUpload.artifact_id == artifact_id,
+            KBUpload.status == STATUS_DONE,
+        )
+        .order_by(KBUpload.created_at.desc())
+        .limit(1)
+    )
+    row = result.scalar_one_or_none()
+    return _to_view(row) if row is not None else None
+
+
+async def delete_rows_for_document(
+    db: AsyncSession,
+    *,
+    kb_id: int,
+    org_id: int,
+    path: str,
+    except_id: uuid.UUID | None = None,
+) -> int:
+    """Drop every tracking row for one document key. Returns the count.
+
+    Called when the source itself is deleted. A source that has been replaced
+    owns one row per version it ever had, plus possibly a replacement still in
+    flight, and both kinds cause the deleted source to come back: an earlier
+    version resurfaces it as a stale row on the next list, and a pending one
+    gets finished by the poller, which ingests a fresh artifact under the path
+    that was just removed.
+
+    ``path`` is the document key, so rows are matched on ``target_path`` for a
+    replacement and on ``source_ref`` for a first upload. ``except_id`` skips
+    the row the caller deletes itself through the ORM.
+    """
+    conditions = [
+        KBUpload.kb_id == kb_id,
+        KBUpload.org_id == org_id,
+        or_(
+            KBUpload.target_path == path,
+            and_(KBUpload.target_path.is_(None), KBUpload.source_ref == path),
+        ),
+    ]
+    if except_id is not None:
+        conditions.append(KBUpload.id != except_id)
+    result = await db.execute(delete(KBUpload).where(*conditions))
+    # CursorResult exposes rowcount; the Result base class does not, so the
+    # cast keeps the type checker honest about what a DELETE returns.
+    return int(cast("CursorResult[Any]", result).rowcount or 0)
 
 
 async def list_pending(

@@ -129,6 +129,7 @@ def _make_upload(
     *,
     artifact_id: str | None = None,
     source_ref: str = "file:sha256:upload",
+    target_path: str | None = None,
 ) -> MagicMock:
     upload = MagicMock()
     upload.id = uuid4()
@@ -140,6 +141,9 @@ def _make_upload(
     upload.status = status
     upload.artifact_id = artifact_id
     upload.source_ref = source_ref
+    # Explicit: a bare MagicMock attribute is truthy, which would make every
+    # fixture row look like a replacement.
+    upload.target_path = target_path
     upload.created_at = datetime(2026, 5, 10, tzinfo=UTC)
     return upload
 
@@ -152,11 +156,11 @@ def _make_sources_db(
     db = AsyncMock()
     conn_query_result = MagicMock()
     conn_query_result.scalars.return_value.all.return_value = connectors
-    done_upload_query_result = MagicMock()
-    done_upload_query_result.scalars.return_value.all.return_value = done_uploads or []
-    upload_query_result = MagicMock()
-    upload_query_result.scalars.return_value.all.return_value = uploads or []
-    db.execute.side_effect = [conn_query_result, done_upload_query_result, upload_query_result]
+    # list_kb_sources loads every kb_uploads row for the KB in ONE query and
+    # splits it by status afterwards, so both fixture lists land here.
+    tracked_query_result = MagicMock()
+    tracked_query_result.scalars.return_value.all.return_value = [*(done_uploads or []), *(uploads or [])]
+    db.execute.side_effect = [conn_query_result, tracked_query_result]
     return db
 
 
@@ -693,3 +697,298 @@ def test_get_kb_sources_uses_canonical_not_derived_timeout() -> None:
     assert "timeout=_DERIVED_READ_TIMEOUT" not in body, (
         "get_kb_sources must NOT use _DERIVED_READ_TIMEOUT (1s) — see 2026-05-28 personal-KB silent-empty regression."
     )
+
+
+@pytest.mark.asyncio
+async def test_list_kb_sources_marks_file_uploads_replaceable() -> None:
+    """Only sources backed by a kb_uploads row can be overwritten by a file.
+
+    A URL source lands in the same uploads aggregate but never passes through
+    kb_uploads, so offering "replace file" on it would 404 on click.
+    """
+    from app.api.app_knowledge_bases import list_kb_sources
+
+    org = _make_org()
+    kb = _make_kb()
+    tracked = _make_upload(
+        filename="sip.md",
+        status="done",
+        artifact_id="art-file",
+        source_ref="file:sha256:original",
+    )
+    db = _make_sources_db([], done_uploads=[tracked])
+
+    aggregates = {
+        "connectors": [],
+        "uploads": [
+            {
+                "id": "art-file",
+                "path": "file:sha256:original",
+                "display_name": "sip.md",
+                "content_type": "plain_text",
+                "created_at": 1700000000,
+                "chunks_count": 3,
+            },
+            {
+                "id": "art-url",
+                "path": "https://example.com/page",
+                "display_name": "Voorbeeldpagina",
+                "source_url": "https://example.com/page",
+                "content_type": "web_page",
+                "created_at": 1700000001,
+                "chunks_count": 2,
+            },
+        ],
+    }
+
+    with (
+        patch("app.api.app_knowledge_bases._load_org_or_500", new=AsyncMock(return_value=org)),
+        patch("app.api.app_knowledge_bases._get_kb_or_404", new=AsyncMock(return_value=kb)),
+        patch(
+            "app.api.app_knowledge_bases.knowledge_ingest_client.get_kb_sources",
+            new=AsyncMock(return_value=aggregates),
+        ),
+    ):
+        result = await list_kb_sources(kb_slug="kb-a", perms=_make_perms(), db=db)
+
+    by_id = {s.id: s for s in result.sources}
+    assert by_id["art-file"].can_replace is True
+    assert by_id["art-url"].can_replace is False
+
+
+@pytest.mark.asyncio
+async def test_list_kb_sources_folds_an_in_flight_replacement_into_its_source() -> None:
+    """While a replacement processes, the source stays as ONE pending row.
+
+    A second row would read as "my source got duplicated"; dropping the
+    original would read as "my source disappeared". Neither is true — the old
+    content is still live and answering until the new version lands.
+    """
+    from app.api.app_knowledge_bases import list_kb_sources
+
+    org = _make_org()
+    kb = _make_kb()
+    original = _make_upload(
+        filename="handleiding.pdf",
+        status="done",
+        artifact_id="art-file",
+        source_ref="file:sha256:original",
+    )
+    replacement = _make_upload(
+        filename="handleiding-v2.pdf",
+        status="processing",
+        source_ref="file:sha256:v2",
+        target_path="file:sha256:original",
+    )
+    db = _make_sources_db([], uploads=[replacement], done_uploads=[original])
+
+    aggregates = {
+        "connectors": [],
+        "uploads": [
+            {
+                "id": "art-file",
+                "path": "file:sha256:original",
+                "display_name": "handleiding.pdf",
+                "content_type": "pdf",
+                "created_at": 1700000000,
+                "chunks_count": 12,
+                "index_status": "synced",
+            },
+        ],
+    }
+
+    with (
+        patch("app.api.app_knowledge_bases._load_org_or_500", new=AsyncMock(return_value=org)),
+        patch("app.api.app_knowledge_bases._get_kb_or_404", new=AsyncMock(return_value=kb)),
+        patch(
+            "app.api.app_knowledge_bases.knowledge_ingest_client.get_kb_sources",
+            new=AsyncMock(return_value=aggregates),
+        ),
+    ):
+        result = await list_kb_sources(kb_slug="kb-a", perms=_make_perms(), db=db)
+
+    assert len(result.sources) == 1
+    row = result.sources[0]
+    assert row.id == "art-file"
+    assert row.name == "handleiding.pdf"
+    assert row.index_status == "pending"
+    # The elapsed-time badge measures from last_sync_at. Reporting the OLD
+    # artifact's timestamp would print "Hangt al 11384m" the second a replace
+    # starts on a source indexed days ago.
+    assert row.last_sync_at == replacement.created_at
+
+
+@pytest.mark.asyncio
+async def test_list_kb_sources_still_shows_a_failed_replacement() -> None:
+    """A failed replacement gets its own row so the user can clear it."""
+    from app.api.app_knowledge_bases import list_kb_sources
+
+    org = _make_org()
+    kb = _make_kb()
+    original = _make_upload(
+        filename="handleiding.pdf",
+        status="done",
+        artifact_id="art-file",
+        source_ref="file:sha256:original",
+    )
+    failed = _make_upload(
+        filename="handleiding-v2.pdf",
+        status="failed",
+        source_ref="file:sha256:v2",
+        target_path="file:sha256:original",
+    )
+    db = _make_sources_db([], uploads=[failed], done_uploads=[original])
+
+    aggregates = {
+        "connectors": [],
+        "uploads": [
+            {
+                "id": "art-file",
+                "path": "file:sha256:original",
+                "display_name": "handleiding.pdf",
+                "content_type": "pdf",
+                "created_at": 1700000000,
+                "chunks_count": 12,
+                "index_status": "synced",
+            },
+        ],
+    }
+
+    with (
+        patch("app.api.app_knowledge_bases._load_org_or_500", new=AsyncMock(return_value=org)),
+        patch("app.api.app_knowledge_bases._get_kb_or_404", new=AsyncMock(return_value=kb)),
+        patch(
+            "app.api.app_knowledge_bases.knowledge_ingest_client.get_kb_sources",
+            new=AsyncMock(return_value=aggregates),
+        ),
+    ):
+        result = await list_kb_sources(kb_slug="kb-a", perms=_make_perms(), db=db)
+
+    assert len(result.sources) == 2
+    live = next(s for s in result.sources if s.id == "art-file")
+    assert live.index_status == "synced"
+    attempt = next(s for s in result.sources if s.id != "art-file")
+    assert attempt.name == "handleiding-v2.pdf"
+    assert attempt.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_list_kb_sources_hides_superseded_versions_of_a_replaced_source() -> None:
+    """Every earlier version keeps a done row; none of them is a broken source.
+
+    Their artifact was superseded by the replacement, so an artifact-id match
+    fails — only keying the fallback on the document path keeps them quiet.
+    Without it a twice-replaced source shows one red "Probleem" row per
+    previous version next to the live one.
+    """
+    from app.api.app_knowledge_bases import list_kb_sources
+
+    org = _make_org()
+    kb = _make_kb()
+    first = _make_upload(
+        filename="sip-v1.md",
+        status="done",
+        artifact_id="art-v1",
+        source_ref="file:sha256:original",
+    )
+    second = _make_upload(
+        filename="sip-v2.md",
+        status="done",
+        artifact_id="art-v2",
+        source_ref="file:sha256:v2",
+        target_path="file:sha256:original",
+    )
+    third = _make_upload(
+        filename="sip-v3.md",
+        status="done",
+        artifact_id="art-v3",
+        source_ref="file:sha256:v3",
+        target_path="file:sha256:original",
+    )
+    db = _make_sources_db([], done_uploads=[third, second, first])
+
+    aggregates = {
+        "connectors": [],
+        "uploads": [
+            {
+                "id": "art-v3",
+                "path": "file:sha256:original",
+                "display_name": "sip-v3.md",
+                "content_type": "plain_text",
+                "created_at": 1700000000,
+                "chunks_count": 5,
+                "index_status": "synced",
+            },
+        ],
+    }
+
+    with (
+        patch("app.api.app_knowledge_bases._load_org_or_500", new=AsyncMock(return_value=org)),
+        patch("app.api.app_knowledge_bases._get_kb_or_404", new=AsyncMock(return_value=kb)),
+        patch(
+            "app.api.app_knowledge_bases.knowledge_ingest_client.get_kb_sources",
+            new=AsyncMock(return_value=aggregates),
+        ),
+    ):
+        result = await list_kb_sources(kb_slug="kb-a", perms=_make_perms(), db=db)
+
+    assert len(result.sources) == 1
+    assert result.sources[0].id == "art-v3"
+    assert result.sources[0].index_status == "synced"
+
+
+@pytest.mark.asyncio
+async def test_list_kb_sources_ignores_a_no_op_replacement_row() -> None:
+    """Replacing a file with identical content is a no-op, not a broken source.
+
+    knowledge-ingest dedupes on content and answers without an artifact_id, so
+    the row lands with an empty one. Keyed on its own hash it would look like a
+    finished upload whose artifact vanished — a phantom row beside the source
+    that is, in fact, perfectly fine.
+    """
+    from app.api.app_knowledge_bases import list_kb_sources
+
+    org = _make_org()
+    kb = _make_kb()
+    original = _make_upload(
+        filename="sip.md",
+        status="done",
+        artifact_id="art-file",
+        source_ref="file:sha256:original",
+    )
+    no_op = _make_upload(
+        filename="sip.md",
+        status="done",
+        artifact_id="",
+        source_ref="file:sha256:same-content",
+        target_path="file:sha256:original",
+    )
+    db = _make_sources_db([], done_uploads=[no_op, original])
+
+    aggregates = {
+        "connectors": [],
+        "uploads": [
+            {
+                "id": "art-file",
+                "path": "file:sha256:original",
+                "display_name": "sip.md",
+                "content_type": "plain_text",
+                "created_at": 1700000000,
+                "chunks_count": 5,
+                "index_status": "synced",
+            },
+        ],
+    }
+
+    with (
+        patch("app.api.app_knowledge_bases._load_org_or_500", new=AsyncMock(return_value=org)),
+        patch("app.api.app_knowledge_bases._get_kb_or_404", new=AsyncMock(return_value=kb)),
+        patch(
+            "app.api.app_knowledge_bases.knowledge_ingest_client.get_kb_sources",
+            new=AsyncMock(return_value=aggregates),
+        ),
+    ):
+        result = await list_kb_sources(kb_slug="kb-a", perms=_make_perms(), db=db)
+
+    assert len(result.sources) == 1
+    assert result.sources[0].id == "art-file"

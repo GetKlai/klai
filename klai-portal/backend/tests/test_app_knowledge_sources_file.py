@@ -23,6 +23,7 @@ import io
 import uuid
 import zipfile
 from contextlib import ExitStack
+from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -95,6 +96,7 @@ def _make_upload_view(
     artifact_id: str | None = "art-1",
     docling_task_id: str | None = None,
     failure_reason: str | None = None,
+    target_path: str | None = None,
 ) -> KBUploadView:
     from datetime import UTC, datetime
 
@@ -114,6 +116,7 @@ def _make_upload_view(
         artifact_id=artifact_id,
         created_at=datetime.now(UTC),
         updated_at=datetime.now(UTC),
+        target_path=target_path,
     )
 
 
@@ -781,3 +784,280 @@ class TestStatusEndpoint:
                     db=db,
                 )
             assert excinfo.value.status_code == 404
+
+
+# --- Replace an existing source --------------------------------------------
+
+
+def _replace_request(filename: str, content: bytes, content_type: str) -> Request:
+    """Multipart request with the single ``file`` part the replace route reads."""
+    boundary = "----klai-replace-boundary"
+    body = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+        f"Content-Type: {content_type}\r\n"
+        "\r\n"
+    ).encode() + content + f"\r\n--{boundary}--\r\n".encode()
+
+    async def receive() -> dict[str, object]:
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/",
+            "headers": [
+                (b"content-type", f"multipart/form-data; boundary={boundary}".encode()),
+                (b"content-length", str(len(body)).encode("ascii")),
+            ],
+        },
+        receive,
+    )
+
+
+class _ReplacePatches(_FilePatches):
+    """``_FilePatches`` plus the artifact→kb_uploads lookup the route needs."""
+
+    def __init__(
+        self,
+        *,
+        tracked: KBUploadView | None,
+        role: str = "owner",
+        manages_all_sources: bool = True,
+        ingest_artifact_id: str = "art-replacement",
+    ) -> None:
+        super().__init__(role=role, ingest_artifact_id=ingest_artifact_id)
+        self.tracked = tracked
+        self.manages_all_sources = manages_all_sources
+
+    def __enter__(self) -> _ReplacePatches:
+        super().__enter__()
+        self.stack.enter_context(
+            patch(
+                "app.api.app_knowledge_sources.kb_uploads_repo.get_view_by_artifact",
+                AsyncMock(return_value=self.tracked),
+            )
+        )
+        self.stack.enter_context(
+            patch(
+                "app.api.app_knowledge_sources.grants_kb_source_manage",
+                MagicMock(return_value=self.manages_all_sources),
+            )
+        )
+        return self
+
+
+_ORIGINAL_PATH = "file:sha256:original"
+
+
+class TestReplaceFileSource:
+    @pytest.mark.asyncio
+    async def test_text_replacement_ingests_under_original_path(self) -> None:
+        """The whole point: new content, SAME document key.
+
+        Ingesting under the original path is what makes knowledge-ingest
+        supersede the live artifact instead of adding a second source next to
+        it — the delete-and-re-add dance this feature removes.
+        """
+        from app.api.app_knowledge_sources import replace_file_source
+
+        kb = _make_kb()
+        db = _make_db_mock(kb)
+        tracked = _make_upload_view(source_ref=_ORIGINAL_PATH, artifact_id="art-old")
+
+        with _ReplacePatches(tracked=tracked) as patches:
+            entry = await replace_file_source(
+                kb_slug="personal",
+                artifact_id="art-old",
+                request=_replace_request("sip.md", b"# Nieuwe versie\n", "text/markdown"),
+                perms=_make_perms(),
+                db=db,
+            )
+
+        assert entry.status == "done"
+        assert entry.artifact_id == "art-replacement"
+
+        assert patches.mock_ingest is not None
+        payload = patches.mock_ingest.call_args.args[0]
+        assert payload["path"] == _ORIGINAL_PATH
+        assert payload["content"] == "# Nieuwe versie\n"
+        # source_ref stays content-addressed on the NEW bytes; only the
+        # document key is inherited from the source being replaced.
+        assert payload["source_ref"].startswith("file:sha256:")
+        assert payload["source_ref"] != _ORIGINAL_PATH
+        assert payload["extra"]["replaced_source"] is True
+
+        assert patches.mock_create_upload is not None
+        kwargs = patches.mock_create_upload.call_args.kwargs
+        assert kwargs["target_path"] == _ORIGINAL_PATH
+        assert kwargs["status"] == STATUS_DONE
+
+    @pytest.mark.asyncio
+    async def test_replacement_chain_keeps_the_first_path(self) -> None:
+        """Replacing an already-replaced source must not drift to a new key.
+
+        The tracking row of a replacement holds the original path in
+        ``target_path``; its own ``source_ref`` is the hash of the file it
+        carried. Following ``source_ref`` here would fork the document.
+        """
+        from app.api.app_knowledge_sources import replace_file_source
+
+        kb = _make_kb()
+        db = _make_db_mock(kb)
+        tracked = _make_upload_view(
+            source_ref="file:sha256:second-version",
+            artifact_id="art-second",
+            target_path=_ORIGINAL_PATH,
+        )
+
+        with _ReplacePatches(tracked=tracked) as patches:
+            await replace_file_source(
+                kb_slug="personal",
+                artifact_id="art-second",
+                request=_replace_request("sip.md", b"# Derde versie\n", "text/markdown"),
+                perms=_make_perms(),
+                db=db,
+            )
+
+        assert patches.mock_ingest is not None
+        assert patches.mock_ingest.call_args.args[0]["path"] == _ORIGINAL_PATH
+
+    @pytest.mark.asyncio
+    async def test_pdf_replacement_carries_target_path_to_the_poller(self) -> None:
+        """Docling replacements ingest later; the row must remember the key."""
+        from app.api.app_knowledge_sources import replace_file_source
+
+        kb = _make_kb()
+        db = _make_db_mock(kb)
+        tracked = _make_upload_view(source_ref=_ORIGINAL_PATH, artifact_id="art-old")
+
+        with _ReplacePatches(tracked=tracked) as patches:
+            entry = await replace_file_source(
+                kb_slug="personal",
+                artifact_id="art-old",
+                request=_replace_request("handleiding.pdf", _TINY_PDF, "application/pdf"),
+                perms=_make_perms(),
+                db=db,
+            )
+
+        assert entry.status == STATUS_PROCESSING
+        assert patches.mock_create_upload is not None
+        kwargs = patches.mock_create_upload.call_args.kwargs
+        assert kwargs["target_path"] == _ORIGINAL_PATH
+        # No artifact_id: a failed replacement must not be able to cascade a
+        # delete into the healthy source it never replaced.
+        assert kwargs.get("artifact_id") is None
+
+    @pytest.mark.asyncio
+    async def test_replace_does_not_charge_the_kb_item_quota(self) -> None:
+        """A full KB must still be able to update what it already holds."""
+        from app.api.app_knowledge_sources import replace_file_source
+
+        kb = _make_kb()
+        db = _make_db_mock(kb)
+        tracked = _make_upload_view(source_ref=_ORIGINAL_PATH, artifact_id="art-old")
+
+        with (
+            _ReplacePatches(tracked=tracked),
+            patch(
+                "app.api.app_knowledge_sources.assert_can_add_item_to_kb",
+                AsyncMock(side_effect=AssertionError("quota must not be checked on replace")),
+            ),
+        ):
+            await replace_file_source(
+                kb_slug="personal",
+                artifact_id="art-old",
+                request=_replace_request("sip.md", b"# Update\n", "text/markdown"),
+                perms=_make_perms(),
+                db=db,
+            )
+
+    @pytest.mark.asyncio
+    async def test_404_when_source_has_no_upload_row(self) -> None:
+        """URL / pasted-text / docs sources have no file to replace."""
+        from app.api.app_knowledge_sources import replace_file_source
+
+        kb = _make_kb()
+        db = _make_db_mock(kb)
+
+        with _ReplacePatches(tracked=None), pytest.raises(HTTPException) as excinfo:
+            await replace_file_source(
+                kb_slug="personal",
+                artifact_id="art-url-source",
+                request=_replace_request("sip.md", b"# Update\n", "text/markdown"),
+                perms=_make_perms(),
+                db=db,
+            )
+
+        assert excinfo.value.status_code == 404
+        assert excinfo.value.detail == {"error_code": "source_not_replaceable"}
+
+    @pytest.mark.asyncio
+    async def test_contributor_cannot_replace_someone_elses_upload(self) -> None:
+        from app.api.app_knowledge_sources import replace_file_source
+
+        kb = _make_kb()
+        db = _make_db_mock(kb)
+        tracked = _make_upload_view(source_ref=_ORIGINAL_PATH, artifact_id="art-old")
+        tracked = replace(tracked, created_by="someone-else")
+
+        with (
+            _ReplacePatches(tracked=tracked, role="contributor", manages_all_sources=False),
+            pytest.raises(HTTPException) as excinfo,
+        ):
+            await replace_file_source(
+                kb_slug="personal",
+                artifact_id="art-old",
+                request=_replace_request("sip.md", b"# Update\n", "text/markdown"),
+                perms=_make_perms(),
+                db=db,
+            )
+
+        assert excinfo.value.status_code == 403
+        assert excinfo.value.detail == {"error_code": "not_your_upload"}
+
+    @pytest.mark.asyncio
+    async def test_archive_cannot_replace_a_single_source(self) -> None:
+        """One archive expands into many sources — that is an add, not a replace."""
+        from app.api.app_knowledge_sources import replace_file_source
+
+        kb = _make_kb()
+        db = _make_db_mock(kb)
+        tracked = _make_upload_view(source_ref=_ORIGINAL_PATH, artifact_id="art-old")
+        archive_bytes = _build_zip([("a.md", b"# A")])
+
+        with _ReplacePatches(tracked=tracked), pytest.raises(HTTPException) as excinfo:
+            await replace_file_source(
+                kb_slug="personal",
+                artifact_id="art-old",
+                request=_replace_request("bundle.zip", archive_bytes, "application/zip"),
+                perms=_make_perms(),
+                db=db,
+            )
+
+        assert excinfo.value.status_code == 400
+        assert excinfo.value.detail["error_code"] == "archive_not_replaceable"
+
+    @pytest.mark.asyncio
+    async def test_unreadable_file_surfaces_the_reason(self) -> None:
+        """A rejected replacement leaves the existing source untouched."""
+        from app.api.app_knowledge_sources import replace_file_source
+
+        kb = _make_kb()
+        db = _make_db_mock(kb)
+        tracked = _make_upload_view(source_ref=_ORIGINAL_PATH, artifact_id="art-old")
+
+        with _ReplacePatches(tracked=tracked) as patches, pytest.raises(HTTPException) as excinfo:
+            await replace_file_source(
+                kb_slug="personal",
+                artifact_id="art-old",
+                request=_replace_request("leeg.md", b"   \n", "text/markdown"),
+                perms=_make_perms(),
+                db=db,
+            )
+
+        assert excinfo.value.status_code == 400
+        assert excinfo.value.detail["error_code"] == "empty_content"
+        assert patches.mock_ingest is not None
+        patches.mock_ingest.assert_not_awaited()

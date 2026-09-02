@@ -18,7 +18,12 @@ import { renderHook, waitFor } from '@testing-library/react'
 import { type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { useSourceDelete, useSourceRename, useSourceSync } from '../-sources-hooks'
+import {
+  useSourceDelete,
+  useSourceRename,
+  useSourceReplace,
+  useSourceSync,
+} from '../-sources-hooks'
 import type { Source } from '../-sources-types'
 
 vi.mock('@/lib/apiFetch', () => ({
@@ -179,5 +184,40 @@ describe('useSourceRename', () => {
     result.current.mutate('new-name.pdf')
     await waitFor(() => expect(result.current.isError).toBe(true))
     expect(onDone).not.toHaveBeenCalled()
+  })
+})
+
+describe('useSourceReplace', () => {
+  beforeEach(() => {
+    apiFetchMock.mockReset()
+  })
+  afterEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('posts the picked file as multipart to the replace endpoint', async () => {
+    apiFetchMock.mockResolvedValue({ id: 'upl-1', filename: 'sip.md', status: 'done' })
+    const wrapper = makeWrapper()
+    const { result } = renderHook(() => useSourceReplace('kb-a', uploadSource()), { wrapper })
+
+    const file = new File(['# nieuwe versie'], 'sip.md', { type: 'text/markdown' })
+    result.current.mutate(file)
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+    const [path, options] = apiFetchMock.mock.calls[0] as [string, { method: string, body: FormData }]
+    expect(path).toBe('/api/app/knowledge-bases/kb-a/uploads/art-1/replace')
+    expect(options.method).toBe('POST')
+    // FormData, not JSON: the backend reads the part named `file`.
+    expect(options.body).toBeInstanceOf(FormData)
+    expect(options.body.get('file')).toBe(file)
+  })
+
+  it('surfaces a failure instead of reporting success', async () => {
+    apiFetchMock.mockRejectedValue(new Error('400 bad request'))
+    const wrapper = makeWrapper()
+    const { result } = renderHook(() => useSourceReplace('kb-a', uploadSource()), { wrapper })
+
+    result.current.mutate(new File(['x'], 'sip.md'))
+    await waitFor(() => expect(result.current.isError).toBe(true))
   })
 })

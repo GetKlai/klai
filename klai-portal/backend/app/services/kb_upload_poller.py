@@ -212,10 +212,16 @@ async def _ingest_and_finish(view: KBUploadView, *, result: docling_client.Docli
 
     title = file_upload.derive_title(view.filename, view.extension)
     source_content_hash = view.source_ref.removeprefix("file:sha256:")
+    # ``ingest_path`` is ``source_ref`` for a normal upload and the replaced
+    # source's path for a replacement — see KBUpload.target_path. Ingesting
+    # under the original path is what makes knowledge-ingest supersede the
+    # old artifact instead of adding a second one beside it. ``content_hash``
+    # stays the NEW file's hash, so the "content unchanged" early-exit still
+    # skips a replacement that carries the same bytes.
     payload: dict[str, object] = {
         "org_id": org_zitadel_id,
         "kb_slug": kb_slug,
-        "path": view.source_ref,
+        "path": view.ingest_path,
         "content": result.content,
         "content_hash": source_content_hash,
         "title": title,
@@ -229,6 +235,7 @@ async def _ingest_and_finish(view: KBUploadView, *, result: docling_client.Docli
             "mime": view.mime,
             "bytes": view.bytes,
             "pipeline": "docling",
+            "replaced_source": view.target_path is not None,
             "docling_task_id": view.docling_task_id,
             "docling_chunk_count": result.chunk_count,
             "document_text_truncated": result.chunks is not None,
@@ -268,6 +275,7 @@ async def _ingest_and_finish(view: KBUploadView, *, result: docling_client.Docli
         artifact_id=artifact_id,
         kb_slug=kb_slug,
         bytes=view.bytes,
+        replaced_source=view.target_path is not None,
     )
 
 

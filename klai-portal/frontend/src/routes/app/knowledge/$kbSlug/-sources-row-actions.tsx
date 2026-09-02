@@ -15,7 +15,7 @@
  * sources match admin divider-list actions.
  */
 import { useNavigate } from '@tanstack/react-router'
-import { Link as LinkIcon, Loader2, NotebookPen, Pencil, Settings, Trash2 } from 'lucide-react'
+import { FileUp, Link as LinkIcon, Loader2, NotebookPen, Pencil, Settings, Trash2 } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -43,6 +43,9 @@ interface SourceRowActionsProps {
   editablePageId: string | null
   isRenaming: boolean
   onStartRename: () => void
+  /** Opens the file picker for "replace file". Null = not replaceable. */
+  onStartReplace: (() => void) | null
+  isReplacing: boolean
   expanded: boolean
   onToggle: () => void
   confirmingDelete: boolean
@@ -55,6 +58,8 @@ export function SourceRowActions({
   editablePageId,
   isRenaming,
   onStartRename,
+  onStartReplace,
+  isReplacing,
   expanded,
   onToggle,
   confirmingDelete,
@@ -150,6 +155,13 @@ export function SourceRowActions({
               <DropdownMenuItem onSelect={onStartRename}>
                 <Pencil />
                 {m.kb_sources_row_rename_tooltip()}
+              </DropdownMenuItem>
+            )}
+
+            {onStartReplace !== null && (
+              <DropdownMenuItem disabled={isReplacing} onSelect={onStartReplace}>
+                {isReplacing ? <Loader2 className="animate-spin" /> : <FileUp />}
+                {m.kb_sources_row_replace_file()}
               </DropdownMenuItem>
             )}
 

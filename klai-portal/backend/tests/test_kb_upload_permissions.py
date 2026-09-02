@@ -64,12 +64,17 @@ def _make_db(
     db.delete = AsyncMock()
     id_result = MagicMock()
     id_result.scalar_one_or_none = MagicMock(return_value=kb_upload)
+    # Deleting a tracked upload also cancels any in-flight replacement for the
+    # same source, which is one more execute() — a DELETE returning a rowcount.
+    id_result.rowcount = 0
     if artifact_upload is None:
         db.execute = AsyncMock(return_value=id_result)
     else:
         artifact_result = MagicMock()
         artifact_result.scalar_one_or_none = MagicMock(return_value=artifact_upload)
-        db.execute = AsyncMock(side_effect=[id_result, artifact_result])
+        cancel_result = MagicMock()
+        cancel_result.rowcount = 0
+        db.execute = AsyncMock(side_effect=[id_result, artifact_result, cancel_result])
     return db
 
 
@@ -416,12 +421,16 @@ def _make_kb_upload(
     artifact_id: str | None = None,
     status_value: str = "processing",
     created_by: str = _USER_ID,
+    source_ref: str = "file:sha256:upload",
+    target_path: str | None = None,
 ) -> MagicMock:
     upload = MagicMock()
     upload.id = upload_id
     upload.artifact_id = artifact_id
     upload.status = status_value
     upload.created_by = created_by
+    upload.source_ref = source_ref
+    upload.target_path = target_path
     return upload
 
 
@@ -945,3 +954,160 @@ async def test_delete_processing_upload_contributor_other_user_403() -> None:
 
     assert exc_info.value.status_code == 403
     db.delete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_delete_clears_every_tracking_row_for_the_deleted_document() -> None:
+    """Deleting a source drops every version row AND any pending replacement.
+
+    A version left behind resurfaces the deleted source as a stale row; a
+    replacement left behind gets finished by the poller minutes later and
+    re-creates the source the user removed, with content they never approved.
+    """
+    from app.api.app_knowledge_bases import delete_kb_upload
+
+    org = _make_org()
+    kb = _make_kb()
+    perms = make_perms(role="admin", user_id=_OWNER_USER_ID, org_id=_ORG_ID)
+    upload = _make_kb_upload(
+        artifact_id=_ARTIFACT_ID,
+        status_value="done",
+        source_ref="file:sha256:original",
+    )
+    db = _make_db(kb_upload=upload)
+
+    with (
+        patch(
+            "app.api.app_knowledge_bases._load_org_or_500",
+            new=AsyncMock(return_value=org),
+        ),
+        patch(
+            "app.api.app_knowledge_bases._get_kb_or_404",
+            new=AsyncMock(return_value=kb),
+        ),
+        patch(
+            "app.api.app_knowledge_bases.get_user_role_for_kb",
+            new=AsyncMock(return_value="owner"),
+        ),
+        patch(
+            "app.api.app_knowledge_bases.knowledge_ingest_client.delete_kb_upload",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.api.app_knowledge_bases.kb_uploads_repo.delete_rows_for_document",
+            new=AsyncMock(return_value=1),
+        ) as mock_cancel,
+    ):
+        await delete_kb_upload(
+            kb_slug=_KB_SLUG,
+            upload_or_artifact_id=str(upload.id),
+            perms=perms,
+            db=db,
+        )
+
+    mock_cancel.assert_awaited_once()
+    assert mock_cancel.await_args.kwargs["path"] == "file:sha256:original"
+    assert mock_cancel.await_args.kwargs["except_id"] == upload.id
+
+
+@pytest.mark.asyncio
+async def test_delete_keys_cleanup_on_the_document_path_not_the_row_hash() -> None:
+    """The document key of a replacement row is its target_path, not source_ref."""
+    from app.api.app_knowledge_bases import delete_kb_upload
+
+    org = _make_org()
+    kb = _make_kb()
+    perms = make_perms(role="admin", user_id=_OWNER_USER_ID, org_id=_ORG_ID)
+    upload = _make_kb_upload(
+        artifact_id=_ARTIFACT_ID,
+        status_value="done",
+        source_ref="file:sha256:second-version",
+        target_path="file:sha256:original",
+    )
+    db = _make_db(kb_upload=upload)
+
+    with (
+        patch(
+            "app.api.app_knowledge_bases._load_org_or_500",
+            new=AsyncMock(return_value=org),
+        ),
+        patch(
+            "app.api.app_knowledge_bases._get_kb_or_404",
+            new=AsyncMock(return_value=kb),
+        ),
+        patch(
+            "app.api.app_knowledge_bases.get_user_role_for_kb",
+            new=AsyncMock(return_value="owner"),
+        ),
+        patch(
+            "app.api.app_knowledge_bases.knowledge_ingest_client.delete_kb_upload",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.api.app_knowledge_bases.kb_uploads_repo.delete_rows_for_document",
+            new=AsyncMock(return_value=0),
+        ) as mock_cancel,
+    ):
+        await delete_kb_upload(
+            kb_slug=_KB_SLUG,
+            upload_or_artifact_id=str(upload.id),
+            perms=perms,
+            db=db,
+        )
+
+    assert mock_cancel.await_args.kwargs["path"] == "file:sha256:original"
+
+
+@pytest.mark.asyncio
+async def test_discarding_a_failed_replacement_leaves_the_retry_alone() -> None:
+    """Clearing a failed attempt must not cancel the retry for the same source.
+
+    The failed row carries no artifact of its own — the live source is still
+    there and untouched. Running the document-wide cleanup here would delete
+    the replacement the user started right after the failure.
+    """
+    from app.api.app_knowledge_bases import delete_kb_upload
+
+    org = _make_org()
+    kb = _make_kb()
+    perms = make_perms(role="admin", user_id=_OWNER_USER_ID, org_id=_ORG_ID)
+    failed_attempt = _make_kb_upload(
+        artifact_id=None,
+        status_value="failed",
+        source_ref="file:sha256:attempt",
+        target_path="file:sha256:original",
+    )
+    db = _make_db(kb_upload=failed_attempt)
+
+    with (
+        patch(
+            "app.api.app_knowledge_bases._load_org_or_500",
+            new=AsyncMock(return_value=org),
+        ),
+        patch(
+            "app.api.app_knowledge_bases._get_kb_or_404",
+            new=AsyncMock(return_value=kb),
+        ),
+        patch(
+            "app.api.app_knowledge_bases.get_user_role_for_kb",
+            new=AsyncMock(return_value="owner"),
+        ),
+        patch(
+            "app.api.app_knowledge_bases.knowledge_ingest_client.delete_kb_upload",
+            new=AsyncMock(return_value=None),
+        ) as mock_ingest_delete,
+        patch(
+            "app.api.app_knowledge_bases.kb_uploads_repo.delete_rows_for_document",
+            new=AsyncMock(return_value=0),
+        ) as mock_cleanup,
+    ):
+        await delete_kb_upload(
+            kb_slug=_KB_SLUG,
+            upload_or_artifact_id=str(failed_attempt.id),
+            perms=perms,
+            db=db,
+        )
+
+    mock_cleanup.assert_not_awaited()
+    mock_ingest_delete.assert_not_awaited()
+    db.delete.assert_awaited_once_with(failed_attempt)

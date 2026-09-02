@@ -38,6 +38,7 @@ def _view(
     docling_task_id: str | None = "task-1",
     org_id: int = 1,
     kb_id: int = 42,
+    target_path: str | None = None,
 ) -> KBUploadView:
     return KBUploadView(
         id=uuid.uuid4(),
@@ -55,6 +56,7 @@ def _view(
         artifact_id=None,
         created_at=datetime.now(UTC),
         updated_at=datetime.now(UTC),
+        target_path=target_path,
     )
 
 
@@ -300,6 +302,9 @@ class TestProcessingState:
         ingest_payload = patches.mock_ingest.call_args.args[0]  # type: ignore[union-attr]
         assert ingest_payload["content"] == "# converted"
         assert ingest_payload["content_hash"] == "abc"
+        # A normal upload is its own document key.
+        assert ingest_payload["path"] == "file:sha256:abc"
+        assert ingest_payload["extra"]["replaced_source"] is False
         assert ingest_payload["source_type"] == "file"
         assert ingest_payload["content_type"] == "document"
         assert ingest_payload["extra"]["pipeline"] == "docling"
@@ -490,3 +495,38 @@ class TestPollerLoop:
         mock_processing.assert_called_once_with(processing_view)
         mock_ingesting.assert_called_once_with(ingesting_view)
         # Terminal status is a no-op.
+
+
+class TestReplacementRows:
+    """A row with ``target_path`` overwrites an existing source."""
+
+    @pytest.mark.asyncio
+    async def test_ingests_under_the_replaced_path_with_the_new_content_hash(self) -> None:
+        """Path from the replaced source, content_hash from the NEW file.
+
+        Sending the old hash would trip knowledge-ingest's "content unchanged"
+        early-exit and the replacement would silently do nothing.
+        """
+        view = _view(status=STATUS_PROCESSING, target_path="file:sha256:original")
+        with _PollerPatches(
+            poll_result=DoclingPollResult(
+                task_id="task-1",
+                status=DoclingTaskStatus.SUCCESS,
+                terminal=True,
+                error_message=None,
+                queue_position=None,
+            ),
+            markdown="# nieuwe versie",
+            ingest_artifact="art-replacement",
+        ) as patches:
+            await kb_upload_poller._process_processing_row(view)
+
+        assert patches.mock_ingest is not None
+        payload = patches.mock_ingest.call_args.args[0]
+        assert payload["path"] == "file:sha256:original"
+        assert payload["source_ref"] == "file:sha256:abc"
+        assert payload["content_hash"] == "abc"
+        assert payload["extra"]["replaced_source"] is True
+
+        assert patches.mock_mark_done is not None
+        assert patches.mock_mark_done.call_args.kwargs["artifact_id"] == "art-replacement"

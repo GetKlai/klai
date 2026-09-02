@@ -17,7 +17,7 @@
  * shared `<InlineRowButton>` for Save/Cancel (the single source of truth
  * for inline-row action pills — see ui-standards.md).
  */
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Check, Loader2, X } from 'lucide-react'
 import { InlineRowButton } from '@/components/ui/inline-row-button'
 import { InlineEdit } from '@/components/ui/inline-edit'
@@ -30,10 +30,15 @@ import {
   ListRowTitle,
 } from '@/components/ui/list'
 import * as m from '@/paraglide/messages'
+import {
+  UPLOAD_REPLACE_ACCEPT_ATTR,
+  uploadErrorCode,
+  uploadReasonToMessage,
+} from '@/lib/upload-error-messages'
 import { SourceContent } from './-sources-content'
 import { SourceRowActions } from './-sources-row-actions'
 import { FailedItemsWarning, SourceIcon, StatusBadge } from './-sources-helpers'
-import { useSourceRename } from './-sources-hooks'
+import { useSourceRename, useSourceReplace } from './-sources-hooks'
 import type { Source } from './-sources-types'
 
 interface SourceRowProps {
@@ -54,6 +59,16 @@ export function SourceRow({ source, expanded, onToggle, kbSlug, editablePageId }
   // Failures keep the overlay open so the user can retry without re-typing
   // (mirrors the pre-rename behaviour from PR #574).
   const renameMutation = useSourceRename(kbSlug, source, () => setIsRenaming(false))
+
+  // Replace-file: the menu item clicks this hidden input, the change handler
+  // posts the picked file. Keeping the input here (not in the action cluster)
+  // matches rename — the trigger lives in the menu, the state lives in the row.
+  const replaceInputRef = useRef<HTMLInputElement>(null)
+  const replaceMutation = useSourceReplace(kbSlug, source)
+  const canReplace = source.kind === 'upload' && source.can_replace === true
+  const replaceError = replaceMutation.error
+    ? uploadReasonToMessage(uploadErrorCode(replaceMutation.error))
+    : null
 
   function startRename() {
     setDraftName(source.name)
@@ -126,6 +141,8 @@ export function SourceRow({ source, expanded, onToggle, kbSlug, editablePageId }
             editablePageId={editablePageId}
             isRenaming={isRenaming}
             onStartRename={startRename}
+            onStartReplace={canReplace ? () => replaceInputRef.current?.click() : null}
+            isReplacing={replaceMutation.isPending}
             expanded={expanded}
             onToggle={onToggle}
             confirmingDelete={confirmingDelete}
@@ -149,6 +166,24 @@ export function SourceRow({ source, expanded, onToggle, kbSlug, editablePageId }
           )}
         </ListRowActions>
       </ListRow>
+      {canReplace && (
+        <input
+          ref={replaceInputRef}
+          type="file"
+          accept={UPLOAD_REPLACE_ACCEPT_ATTR}
+          className="sr-only"
+          tabIndex={-1}
+          aria-label={m.kb_sources_row_replace_file()}
+          onChange={(e) => {
+            const file = e.target.files?.[0]
+            e.target.value = ''
+            if (file) replaceMutation.mutate(file)
+          }}
+        />
+      )}
+      {replaceError !== null && (
+        <p className="px-4 pb-3 text-sm text-[var(--color-destructive)]">{replaceError}</p>
+      )}
       {expanded && <SourceContent kbSlug={kbSlug} source={source} />}
     </div>
   )

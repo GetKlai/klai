@@ -16,6 +16,16 @@ ingestion pipeline. The row's lifecycle:
 The frontend polls a row by ``id`` (UUID) via
 ``GET /api/app/knowledge-bases/{kb}/sources/file/{id}/status`` until
 the row reaches a terminal state.
+
+``target_path`` marks a row as a REPLACEMENT for an existing source
+(SPEC-free change, GetKlai/klai feedback item 28). A normal upload
+ingests under ``path = source_ref`` — the sha256 of its own bytes — so an
+edited file lands as a second source next to the old one. A replacement
+ingests under the ORIGINAL source's path instead, which is exactly what
+knowledge-ingest's ``ingest_document`` treats as a new version: it closes
+the active artifact, creates the replacement, links ``superseded_by`` and
+clears the old Qdrant points. ``source_ref`` still holds the new file's
+own content hash, so it stays content-addressed.
 """
 
 from __future__ import annotations
@@ -62,6 +72,13 @@ class KBUpload(Base):
             postgresql_where="docling_task_id IS NOT NULL",
         ),
         Index("ix_kb_uploads_source_ref", "org_id", "kb_id", "source_ref"),
+        Index(
+            "ix_kb_uploads_target_path",
+            "org_id",
+            "kb_id",
+            "target_path",
+            postgresql_where="target_path IS NOT NULL",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
@@ -76,6 +93,10 @@ class KBUpload(Base):
     mime: Mapped[str] = mapped_column(String(127), nullable=False)
     bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     source_ref: Mapped[str] = mapped_column(String(128), nullable=False)
+    #: Document key to ingest under, when this upload REPLACES an existing
+    #: source. NULL for a normal upload, which ingests under ``source_ref``.
+    #: See the module docstring.
+    target_path: Mapped[str | None] = mapped_column(String(128), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     failure_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
     docling_task_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
