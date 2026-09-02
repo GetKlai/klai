@@ -23,7 +23,7 @@ catalog and be described here in the same change.
 
 The normative rules in this document are catalogued in the Rules Ledger at the
 end of this file, each with an ID, an RFC 2119 level and a declared
-verification mode. The count today: **56 rules — 14 automated, 4 assisted,
+verification mode. The count today: **59 rules — 17 automated, 4 assisted,
 34 manual, 4 deliberately unchecked.**
 
 The catalogue is maintained by hand. The ledger's own preamble says which of
@@ -43,7 +43,10 @@ These checks fail the build:
 | Generated `DESIGN.md` | `tests/design/design-md-generated.test.ts` | The committed design document is stale relative to the theme, UI module metadata, or UI standards |
 | Rule-doc token values | `tests/design/rule-doc-token-values.test.ts` | A hex quoted in `.claude/rules/klai/design/*.md` that no longer matches `index.css` |
 | Widget default colour | `tests/design/widget-default-color.test.ts` | `WIDGET_DEFAULT_PRIMARY_COLOR` drifting from `--color-rl-accent`, or that literal being retyped elsewhere in `src/` |
+| Widget brand palette | `tests/design/widget-brand-tokens.test.ts` | Any of the seven copied `:host` brand defaults in `klai-widget` drifting from its explicit portal-token alias |
 | OAuth consent palette | `tests/design/consent-page-tokens.test.ts` | A copied `--color-*` token in the backend consent page drifting from `index.css`, or an ad-hoc token appearing there |
+| Shield core palette | `tests/design/shield-core-tokens.test.ts` | A copied popup or sidepanel core brand value drifting from its explicit portal-token alias; Shield's divergent semantic palette stays outside the lock |
+| Shield SVG brand fills | `tests/design/shield-svg-brand.test.ts` | An inventoried hex fill in a Shield SVG drifting from its portal brand token, the inventory becoming empty, or a portal-value fill appearing outside the inventory |
 | Border reset layer | `tests/design/border-layer-reset.test.ts` | The universal border-colour reset leaving `@layer base`, a second unlayered reset, or an inline TSX `borderColor` fix |
 | Documented text contrast | `tests/design/documented-contrast.test.ts` | A foreground named by the Colors section falling below 4.5:1 on a portal surface without a current documented exception, or an exception remaining after that foreground passes |
 | Visual component catalog | `e2e/visual/ui-catalog.visual.spec.ts`, runs in `npm run test:visual` | Any rendered `/dev/ui` section drifting from its Linux baseline; section names and count are derived from the page at runtime |
@@ -1146,6 +1149,9 @@ restatement of these rules, not a separate set.
 | KLAI-UI-054 | A raw textual, dynamically typed or untyped `<input>` outside `src/components/ui/` is forbidden unless a local disable documents an unsupported owned-control variant | must-not | automated | `klai/no-raw-text-input` |
 | KLAI-UI-055 | Every rendered `<h2>` section in the DEV-only `/dev/ui` component catalog matches its Linux visual baseline | must | automated | `e2e/visual/ui-catalog.visual.spec.ts` |
 | KLAI-UI-056 | The DEV-only `/dev/ui` component catalog has no WCAG 2.1 A/AA axe findings without an exact, reasoned, current exception | must | automated | `e2e/visual/ui-catalog.a11y.spec.ts` |
+| KLAI-UI-057 | The seven copied brand defaults in `klai-widget/src/styles/widget.css` match their explicit portal-token aliases | must | automated | `tests/design/widget-brand-tokens.test.ts` |
+| KLAI-UI-058 | The copied core brand values in the Klai Shield popup and sidepanel match their explicit portal-token aliases; the divergent semantic palette is excluded | must | automated | `tests/design/shield-core-tokens.test.ts` |
+| KLAI-UI-059 | Every inventoried hex brand fill in the Klai Shield SVG assets matches its explicit portal token and the inventory cannot pass empty | must | automated | `tests/design/shield-svg-brand.test.ts` |
 <!-- /generated:component-guidelines -->
 
 ### Retired IDs

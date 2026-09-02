@@ -35,11 +35,12 @@ Klai should feel calm, confident, and warm. Not a startup shouting for attention
 |---|---|---|
 | `--color-rl-bg` | `#fffef2` | Body background. Warm ivory. |
 | `--color-rl-dark` | `#191918` | Primary text, headings, dark overlays. |
-| `--color-rl-dark-60` | `#19191899` | Body/paragraph text (60% opacity dark). |
+| `--color-rl-dark-60` | `#19191899` | Readable muted text on ivory only (4.57:1); it fails normal text on cream (4.42:1). |
 | `--color-rl-dark-30` | `#1919184d` | Muted text, placeholders (30% opacity). |
 | `--color-rl-dark-10` | `#1919181a` | Subtle borders, ghost button borders (10% opacity). |
 | `--color-rl-accent` | `#fcaa2d` | Primary CTA buttons, section dots, badges, list markers. |
-| `--color-rl-accent-dark` | `#a36404` | Dark amber for text links that need contrast. |
+| `--color-rl-accent-dark` | `#a36404` | Dark amber text on ivory/plain light only (4.73:1); it fails on cream (4.26:1) and amber tints (4.28:1). |
+| `--color-accent-text` | `#7D4D03` | Portal accent text on cream, tints or at small sizes (6.36:1 on cream; 6.39:1 on the amber tint). |
 | `--color-rl-cream` | `#f3f2e7` | Card backgrounds, sidebar, input fields. |
 | `--color-rl-border` | `#e3e2d8` | Card borders, dividers, table rules. |
 | `--color-rl-border-light` | `#d1d0c666` | Subtle borders with transparency. |
@@ -50,10 +51,11 @@ Klai should feel calm, confident, and warm. Not a startup shouting for attention
 | Token | Class | Usage |
 |---|---|---|
 | Primary text | `text-rl-dark` | Headings, card titles, strong emphasis. |
-| Body text | `text-rl-dark-60` or `text-rl-dark/60` | Paragraphs, descriptions. |
-| Muted text | `text-rl-dark/40` | Section labels, trusted-by logos, nav links. |
+| Readable muted text | `text-rl-dark-60` or `text-rl-dark/60` | Ivory only (4.57:1); it fails normal text on cream at 4.42:1, so use a surface-verified darker foreground there. |
+| Decorative-only text | `text-rl-dark/40` | Non-informative decoration only; never labels, nav links or other informative text (2.53:1 on ivory). |
 | Disabled/placeholder | `text-rl-dark/30` or `text-rl-dark/20` | Sidebar metadata, inactive items. |
-| On dark bg | `text-white`, `text-white/60`, `text-white/40` | CTA sections with painting overlay. |
+| Readable text on dark bg | `text-white` or `text-white/60` | CTA sections with painting overlay; white/60 passes normal text at 6.97:1. |
+| Decorative-only on dark bg | `text-white/40` | Non-informative decoration only; it fails normal text at 3.81:1. |
 
 ### Semantic colors (in components)
 
@@ -71,7 +73,9 @@ Klai should feel calm, confident, and warm. Not a startup shouting for attention
 | `#191918` on `#fffef2` | Excellent contrast |
 | `#191918` on `#f3f2e7` | Excellent contrast |
 | `#fcaa2d` on `#191918` (button text on accent bg) | Good contrast |
-| `#fcaa2d` as text on `#fffef2` | **Fails AA - use as background only, or use `#a36404` for text** |
+| `#fcaa2d` as text on `#fffef2` | **Fails AA - use as background only** |
+| `#a36404` as text on `#fffef2` | Passes at 4.73:1; use only on ivory/plain light, not cream or amber tints |
+| `#7D4D03` as text on cream or amber tint | Portal accent text; passes at 6.36:1 and 6.39:1 respectively |
 
 ---
 
@@ -84,8 +88,8 @@ One font family (Parabole) in multiple weights, plus Decima Mono for labels.
 > `"Parabole Trial Regular Text"` at 400 here and `"Parabole Medium"` at 500
 > in the portal, and `--font-display-medium` does not exist in the portal at
 > all. When you are editing `klai-portal/**`, the font tokens in
-> `tokens.md` win over this section. Colors, radii, logo and anti-patterns in
-> this file ARE shared and apply to both.
+> `tokens.md` win over this section. Colors, logo and anti-patterns in this
+> file are shared except where a section is explicitly marked website-only.
 >
 > Source of truth: `klai-website/src/styles/global.css` for the values below,
 > `klai-portal/frontend/src/index.css` for the portal.
@@ -115,12 +119,18 @@ This creates the calligraphic emphasis on key words. Always used with `not-itali
 
 ## Inline text links
 
-Light background: `text-rl-dark`, underline `decoration-rl-accent/60`, hover `text-rl-accent`.
+Light background: `text-rl-dark`, underline `decoration-rl-accent/60`. Hover must stay legible: darken to the portal's `text-accent-text` on cream or tints; never change informative text to amber.
 Dark background: `text-white/70`, hover `text-white`.
 
 ---
 
 ## Border radius
+
+> [HARD] **The table below keeps the WEBSITE values and Tailwind names.** Do
+> not translate them one-for-one into portal tokens or px. The portal uses a
+> 110% rem base and maps `--radius-sm` to 0.375rem, `--radius-md` to 0.5rem,
+> `--radius-lg` to 0.75rem and `--radius-xl` to 1rem; use the portal's token
+> name from `index.css` / `DESIGN.md` instead of the website label or px note.
 
 | Token | Value | Tailwind | Used for |
 |---|---|---|---|
@@ -145,7 +155,7 @@ Height: `h-5` (20px) in nav. Never distort or tint.
 ## Rules and constraints
 
 1. **Never** use Parabole Bold for body text. It is reserved for emphasis (names, trust logos).
-2. **Never** use `#fcaa2d` as text color on light backgrounds - it fails contrast. Use as background or use `#a36404` for text.
+2. **Never** use `#fcaa2d` as text color on light backgrounds - it fails contrast. Use it as a background. For text, `#a36404` is limited to ivory/plain light; on cream, tints or at small sizes use the portal's `--color-accent-text` (`#7D4D03`).
 3. **Never** add new colors without updating `global.css` and this file.
 4. **Never** use animations for decoration. Scroll-triggered opacity and hover responses only.
 5. **Never** use stock photos. Product screenshots or painting backgrounds only.
