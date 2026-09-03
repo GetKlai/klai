@@ -44,6 +44,15 @@ A nested `AGENTS.md` closer to the file you edit overrides anything here.
   works (the 5-minute fix if one exists); escalate to a bigger design only when
   the problem demands it. No SPEC for something that affects 1–5 people. State
   explicitly what you deliberately did NOT do.
+- **tests earn their lines** — A test's job is to fail when the contract
+  breaks. The name states the contract, the body proves it. Default to a
+  one-line docstring or none; spend a longer one only where a future reader
+  would otherwise delete the test as pointless, and keep it to two sentences.
+  Parametrise same-shape cases instead of copying them. A review finding earns
+  a test only when you fixed it AND it has a failure mode no existing test
+  covers — a round of review is not a test quota. Before reporting done, state
+  the source-line and test-line counts of the diff; if tests exceed ~2x the
+  source, say why before continuing.
 - **verify-changes-landed** — Before reporting done: `git diff --stat` (right
   files?), service health/logs (running new code?), and a Playwright
   click-through for any UI change (real user flow works?).
