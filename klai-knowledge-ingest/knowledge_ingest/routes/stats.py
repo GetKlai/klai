@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from knowledge_ingest.config import settings
 from knowledge_ingest.db import tenant_scoped_connection
 from knowledge_ingest.identity import assert_caller_identity_tenant_only
+from knowledge_ingest.pg_store import _SENTINEL
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -55,11 +56,22 @@ async def get_source_count(
     try:
         verified_org_id = await assert_caller_identity_tenant_only(request, claimed_org_id=org_id)
         async with tenant_scoped_connection(verified_org_id) as conn:
+            # `belief_time_end = _SENTINEL` is this codebase's active-artifact
+            # test (pg_store, rebuild_tasks, list_kb_sources). It is load-bearing
+            # here: `soft_delete_artifact` closes a deleted row by setting
+            # belief_time_end and leaves superseded_by NULL, so counting on
+            # supersession alone kept every deleted upload in the tenant's
+            # `max_items_per_kb` budget forever -- on a KB that reads as empty.
+            # Measured 2026-09-03: the e2e tenant showed 20/20 with 1 real item.
+            # superseded_by stays in the predicate as defence in depth; the
+            # sentinel is what makes the count correct.
             count = await conn.fetchval(
                 "SELECT COUNT(*) FROM knowledge.artifacts "
-                "WHERE org_id = $1 AND kb_slug = $2 AND superseded_by IS NULL",
+                "WHERE org_id = $1 AND kb_slug = $2 "
+                "AND belief_time_end = $3 AND superseded_by IS NULL",
                 verified_org_id,
                 kb_slug,
+                _SENTINEL,
             )
         return SourceCountResponse(source_count=count)
     except Exception:
