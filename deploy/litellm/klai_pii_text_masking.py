@@ -207,6 +207,74 @@ def restore_text(
     return _PLACEHOLDER_RE.sub(_sub, text)
 
 
+def find_restorable_placeholders(text: str, restore_map: dict[str, str]) -> set[str]:
+    """Which placeholders in ``text`` this ``restore_map`` can put back.
+
+    Telemetry only — no caller mutates anything based on this. Deliberately a
+    separate function rather than a second return value on ``restore_text``:
+    that one carries REQ-8's never-restore guarantee and has a dozen call
+    sites pinning its exact shape, and a counter is not worth reopening it.
+
+    Call it on the text BEFORE restoring. The result is then exactly the set
+    of masked values the model returned verbatim, which is REQ-0b's survival
+    rate measured continuously instead of once in a Phase 0 harness. A
+    placeholder the model mangled (changed case, inserted a space, dropped
+    the angle brackets) does not match and therefore did NOT survive — which
+    is correct: it will not be restored either, and the user sees the damage.
+
+    A **set**, not a count, because a model that mentions the same placeholder
+    twice would otherwise push the caller's tally above the number of values
+    that were masked, and "unrestored" would go negative. Survival is a
+    property of a value, not of how often the answer names it.
+
+    Placeholders absent from ``restore_map`` are not included. That excludes
+    the never-restore set by construction — ``mask_text`` never writes those
+    into the map — so this never reports a credential or a BSN as "restored".
+    """
+    return {
+        match.group(0) for match in _PLACEHOLDER_RE.finditer(text) if match.group(0) in restore_map
+    }
+
+
+# Case-INSENSITIVE, and tolerant of the spacing a model adds when it retypes a
+# token instead of copying it. Deliberately looser than ``_PLACEHOLDER_RE``:
+# that one decides what gets substituted and must be exact, this one decides
+# what gets counted as damage and should catch the near-misses.
+_LEAKED_PLACEHOLDER_RE = re.compile(r"<\s*([A-Za-z][A-Za-z0-9_]*)_(\d+)\s*>")
+
+
+def count_leaked_placeholders(text: str, *, never_restore_entities: frozenset[str]) -> int:
+    """Placeholder-shaped tokens still visible in ``text`` AFTER restoring.
+
+    Call it on the text the user will actually see. Anything it finds is
+    damage: a value that was masked on the way out and did not come back, so
+    the reader gets ``<IBAN_CODE_1>`` where a bank account belonged.
+
+    ``never_restore_entities`` are excluded because ``<SECRET_1>`` and
+    ``<NL_BSN_1>`` are SUPPOSED to remain — that is REQ-8's never-return set
+    working, not a failure.
+
+    This exists because the obvious metric is wrong. ``masked - survived``
+    counts every masked value the model did not echo, and in ordinary chat a
+    model answers about one thing and never mentions the other five — so that
+    number is dominated by values whose absence harms nobody. REQ-0b's 95.8%
+    came from a harness that explicitly asked the model to repeat every token;
+    production has no such instruction, so the same subtraction does not mean
+    the same thing here. What is unambiguous is a placeholder the user can
+    see, and that is what this counts.
+
+    Known false-positive class, accepted: prose or code containing a literal
+    ``<word_123>`` is counted. It is rare in answer text, and the failure
+    direction is a slightly over-reported damage counter rather than a silent
+    one.
+    """
+    return sum(
+        1
+        for match in _LEAKED_PLACEHOLDER_RE.finditer(text)
+        if match.group(1).upper() not in never_restore_entities
+    )
+
+
 # ---------------------------------------------------------------------------
 # Streaming chunk-boundary safety (REQ-8's own addendum to REQ-8)
 # ---------------------------------------------------------------------------
