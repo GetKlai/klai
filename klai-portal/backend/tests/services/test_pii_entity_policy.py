@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from app.services.pii_entity_policy import (
+    PII_DEFAULT_MASKED_ENTITIES,
     PII_NEVER_RESTORE_ENTITIES,
     PII_RETURN_SET_ENTITIES,
     PiiEntityPolicyError,
@@ -107,3 +108,53 @@ class TestConstraintMatchesPython:
         block = source.split("pii_masked_entities <@ ARRAY[", 1)[1].split("]::text[]", 1)[0]
         in_constraint = set(re.findall(r"'([A-Z_]+)'", block))
         assert in_constraint == set(PII_RETURN_SET_ENTITIES)
+
+
+class TestDefaultOnIsSingleSourced:
+    """SPEC-PRIVACY-PII-POLICY-ADMIN-001 D2 — default-on, stated three times.
+
+    ``PII_DEFAULT_MASKED_ENTITIES`` is the source; migration ``d3a91c47f5b2``
+    and ``PortalOrg.pii_masked_entities.server_default`` are SQL literals that
+    cannot import it. Nothing stops the three from drifting except this class,
+    and a drift is silent in exactly the worst direction: a tenant created
+    after the drift gets a different default than a tenant backfilled before
+    it, and neither the UI nor the enforcement path can tell.
+    """
+
+    def test_default_is_the_whole_return_set(self):
+        assert set(PII_DEFAULT_MASKED_ENTITIES) == set(PII_RETURN_SET_ENTITIES)
+        assert list(PII_DEFAULT_MASKED_ENTITIES) == sorted(PII_DEFAULT_MASKED_ENTITIES)
+
+    def test_default_excludes_the_unconditional_and_forbidden_entities(self):
+        """The column stores per-org state only — SECRET/NL_BSN/PERSON never enter it."""
+        assert not set(PII_DEFAULT_MASKED_ENTITIES) & set(PII_NEVER_RESTORE_ENTITIES)
+        assert "PERSON" not in PII_DEFAULT_MASKED_ENTITIES
+
+    def test_migration_default_literal_matches_the_constant(self):
+        migration = (
+            Path(__file__).resolve().parents[2]
+            / "alembic"
+            / "versions"
+            / "d3a91c47f5b2_pii_masked_entities_default_on.py"
+        )
+        source = migration.read_text(encoding="utf-8")
+        block = source.split("_DEFAULT_ENTITIES_SQL = (", 1)[1].split(")", 1)[0]
+        in_migration = re.findall(r"'([A-Z_]+)'", block)
+        assert in_migration == list(PII_DEFAULT_MASKED_ENTITIES)
+
+    def test_model_server_default_matches_the_constant(self):
+        from app.models.portal import PortalOrg
+
+        server_default = PortalOrg.__table__.c.pii_masked_entities.server_default
+        assert server_default is not None
+        in_server_default = re.findall(r"'([A-Z_]+)'", str(server_default.arg))
+        assert in_server_default == list(PII_DEFAULT_MASKED_ENTITIES)
+
+    def test_orm_default_gives_a_new_org_the_whole_set(self):
+        """The three ``PortalOrg(...)`` call sites omit the field, so this is
+        what a tenant created through signup or the platform console gets."""
+        from app.models.portal import PortalOrg
+
+        column_default = PortalOrg.__table__.c.pii_masked_entities.default
+        assert column_default is not None and column_default.is_callable
+        assert column_default.arg(None) == list(PII_DEFAULT_MASKED_ENTITIES)

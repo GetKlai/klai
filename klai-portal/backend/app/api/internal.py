@@ -967,12 +967,13 @@ async def admin_set_telemetry_level(
 class OrgPiiEntitiesResponse(BaseModel):
     """Wire shape consumed by ``deploy/litellm/klai_pii_org_policy.py``.
 
-    That client reads exactly one key — ``payload.get("enabled_entities")``
-    (``klai_pii_org_policy.py:141``) — and drops the whole response unless it is
-    a ``list`` (line 142-143). ``enabled_entities`` is therefore load-bearing:
-    renaming it, nesting it, or returning a mapping makes the client fail closed
-    to the empty policy, which is indistinguishable from "this org opted into
-    nothing". ``org_id`` is echoed back for operator debuggability only; no
+    That client reads exactly one key — ``payload.get("enabled_entities")`` —
+    and drops the whole response unless it is a ``list``. ``enabled_entities``
+    is therefore load-bearing: renaming it, nesting it, or returning a mapping
+    sends the client down its degraded path, where it serves that org's last
+    successfully resolved policy, or the platform default set for an org it has
+    never resolved. So a shape change here does not fail loudly — it pins every
+    tenant to a stale or default policy for as long as the shape is wrong. ``org_id`` is echoed back for operator debuggability only; no
     caller reads it.
     """
 
@@ -982,6 +983,16 @@ class OrgPiiEntitiesResponse(BaseModel):
     # production — see the handler docstring and TestOrgIdSpace.
     org_id: str
     enabled_entities: list[str]
+    # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-1 — this tenant's telemetry mode, so the
+    # enforcement side can honour it without a second round trip to a second
+    # endpoint. It is carried here rather than fetched separately because the
+    # PII stack already calls this endpoint once per org per cache TTL, and a
+    # tenant on ``off`` must not have PII counters emitted about it.
+    #
+    # A client that does not know this field ignores it; a client that does
+    # must treat its ABSENCE as ``off`` rather than as a default, so an older
+    # portal-api in a rolling deploy cannot cause emission it never authorised.
+    telemetry_level: str
 
 
 @router.get("/v1/orgs/{org_id}/pii-entities", response_model=OrgPiiEntitiesResponse)
@@ -1000,10 +1011,12 @@ async def get_org_pii_entities(
     per-org state and the enforcement side adds them itself
     (``klai_pii_entities.effective_enabled_entities``).
 
-    **Default.** An org that predates the column, or one that has opted into
-    nothing, returns ``[]``. That is REQ-7's stated default ("per-org, default
-    off"), not a degraded answer — the column is ``NOT NULL DEFAULT '{}'``, so
-    there is no NULL case to distinguish.
+    **Empty is a choice, not a default.** Since 2026-09-03 the column defaults
+    to the whole return set for every org, new and existing
+    (SPEC-PRIVACY-PII-POLICY-ADMIN-001 D2, migration ``d3a91c47f5b2``), so
+    ``[]`` now means a tenant admin switched every type off — not that nobody
+    has configured anything. Either way this endpoint reports what is stored;
+    the column is ``NOT NULL``, so there is no NULL case to distinguish.
 
     **``org_id`` is the ZITADEL org id, not the portal integer PK.** That is
     what the caller has: LiteLLM carries it in team-key metadata and every
@@ -1023,8 +1036,11 @@ async def get_org_pii_entities(
 
     **404 on unknown org** matches the existing internal-endpoint convention
     (``get_org_admin_email``, ``get_kb_metadata_internal``). The client treats
-    any non-2xx as the empty policy, so an unknown org degrades to default-off
-    rather than to a wrong tenant's policy.
+    any non-2xx as a degraded resolution: that org's last known policy, or the
+    platform default set if it has never had one. Never another tenant's
+    policy — the degraded cache is keyed by the same org id as the fetch. Note
+    the consequence for a deleted org: the client keeps masking under its last
+    policy until its cache entry ages out of the worker.
 
     There is deliberately **no write endpoint** in this change. The opt-in is set
     by an operator (SQL / operator tooling) until a UI lands; the domain is
@@ -1035,7 +1051,11 @@ async def get_org_pii_entities(
     await _require_internal_token(request)
 
     result = await db.execute(
-        select(PortalOrg.id, PortalOrg.pii_masked_entities).where(PortalOrg.zitadel_org_id == org_id)
+        select(
+            PortalOrg.id,
+            PortalOrg.pii_masked_entities,
+            PortalOrg.telemetry_level,
+        ).where(PortalOrg.zitadel_org_id == org_id)
     )
     row = result.first()
     if row is None:
@@ -1046,7 +1066,7 @@ async def get_org_pii_entities(
         await _audit_internal_call(request, org_id=None)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Org not found")
 
-    portal_pk, stored_raw = row[0], row[1]
+    portal_pk, stored_raw, telemetry_level = row[0], row[1], row[2]
     await set_tenant(db, portal_pk)
     stored = stored_raw or []
     enabled = sanitize_stored_entities(stored)
@@ -1070,7 +1090,7 @@ async def get_org_pii_entities(
     # in the structlog event above, where operators correlate it with
     # `pii_observed org_id=...` from the LiteLLM side.
     await _audit_internal_call(request, org_id=portal_pk)
-    return OrgPiiEntitiesResponse(org_id=org_id, enabled_entities=enabled)
+    return OrgPiiEntitiesResponse(org_id=org_id, enabled_entities=enabled, telemetry_level=telemetry_level)
 
 
 class PageSavedNotification(BaseModel):

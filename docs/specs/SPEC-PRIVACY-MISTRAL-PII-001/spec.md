@@ -564,6 +564,15 @@ exception naming the statute.
 Default-off for the rest is deliberate: an agent asking "klopt IBAN NL91 ABNA 0417 1643 00?"
 needs the model to see it.
 
+**Superseded, 2026-09-03.** That default is now **on** for every tenant
+(SPEC-PRIVACY-PII-POLICY-ADMIN-001 D2, migration `d3a91c47f5b2`). The IBAN argument above is
+withdrawn in D2 and the withdrawal is worth repeating here, because it is the one that reads
+wrong at first glance: `IBAN_CODE` is in the return set, so the agent still sees the IBAN in
+their own message and again in the restored answer — only Mistral does not, so there is no
+workflow cost. Per-entity, per-org configurability is unchanged: a tenant admin can still
+switch any of the seven off. `SECRET` and `NL_BSN` are unaffected — still unconditional,
+still not stored per org.
+
 #### REQ-8 — placeholders are typed, numbered, and restored for the return set (ubiquitous)
 
 **THE anonymizer SHALL** use `replace` with a typed, **instance-numbered** placeholder —
