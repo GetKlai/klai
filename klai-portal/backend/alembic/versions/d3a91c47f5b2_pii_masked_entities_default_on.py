@@ -52,9 +52,6 @@ script. That is why this migration may contain DML at all, where
 
 from __future__ import annotations
 
-# ruff: noqa: S608  -- the only interpolated value is the module-level literal
-# below; nothing here is user-controlled input.
-
 from alembic import op
 
 # revision identifiers, used by Alembic.
@@ -63,29 +60,45 @@ down_revision = "b7c1d2e3f4a5"
 branch_labels = None
 depends_on = None
 
-# Kept in step with ``app.services.pii_entity_policy.PII_DEFAULT_MASKED_ENTITIES``
-# by ``tests/services/test_pii_entity_policy.py::TestDefaultOnIsSingleSourced``.
-_DEFAULT_ENTITIES_SQL = (
-    "ARRAY['CREDIT_CARD', 'EMAIL_ADDRESS', 'IBAN_CODE', 'NL_BTW', 'NL_KVK', 'NL_POSTCODE', 'PHONE_NUMBER']::text[]"
-)
+# The entity list below is written out in full in both statements rather than
+# interpolated from a constant. An f-string would have read better and did, until
+# Semgrep's sqlalchemy-execute-raw-query rule blocked CI on it: the rule cannot
+# tell a module-level literal from user input, and suppressing a SQL-injection
+# rule to keep a nicer-looking string is the wrong trade in a migration. Spelling
+# it out removes the question. The list is kept in step with
+# ``app.services.pii_entity_policy.PII_DEFAULT_MASKED_ENTITIES`` by
+# ``tests/services/test_pii_entity_policy.py::TestDefaultOnIsSingleSourced``,
+# which parses this file.
 
 
 def upgrade() -> None:
     """Make the full return set the default, and give it to every existing org."""
     op.execute(
-        f"""
+        """
         ALTER TABLE public.portal_orgs
-            ALTER COLUMN pii_masked_entities SET DEFAULT {_DEFAULT_ENTITIES_SQL};
+            ALTER COLUMN pii_masked_entities SET DEFAULT ARRAY[
+                'CREDIT_CARD', 'EMAIL_ADDRESS', 'IBAN_CODE', 'NL_BTW',
+                'NL_KVK', 'NL_POSTCODE', 'PHONE_NUMBER'
+            ]::text[];
         """
     )
 
     op.execute(
-        f"""
+        """
         UPDATE public.portal_orgs
-           SET pii_masked_entities = {_DEFAULT_ENTITIES_SQL}
+           SET pii_masked_entities = ARRAY[
+                'CREDIT_CARD', 'EMAIL_ADDRESS', 'IBAN_CODE', 'NL_BTW',
+                'NL_KVK', 'NL_POSTCODE', 'PHONE_NUMBER'
+           ]::text[]
          WHERE NOT (
-                   pii_masked_entities @> {_DEFAULT_ENTITIES_SQL}
-               AND pii_masked_entities <@ {_DEFAULT_ENTITIES_SQL}
+                   pii_masked_entities @> ARRAY[
+                        'CREDIT_CARD', 'EMAIL_ADDRESS', 'IBAN_CODE', 'NL_BTW',
+                        'NL_KVK', 'NL_POSTCODE', 'PHONE_NUMBER'
+                   ]::text[]
+               AND pii_masked_entities <@ ARRAY[
+                        'CREDIT_CARD', 'EMAIL_ADDRESS', 'IBAN_CODE', 'NL_BTW',
+                        'NL_KVK', 'NL_POSTCODE', 'PHONE_NUMBER'
+                   ]::text[]
          );
         """
     )

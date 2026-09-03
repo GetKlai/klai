@@ -138,9 +138,13 @@ class TestDefaultOnIsSingleSourced:
             / "d3a91c47f5b2_pii_masked_entities_default_on.py"
         )
         source = migration.read_text(encoding="utf-8")
-        block = source.split("_DEFAULT_ENTITIES_SQL = (", 1)[1].split(")", 1)[0]
-        in_migration = re.findall(r"'([A-Z_]+)'", block)
-        assert in_migration == list(PII_DEFAULT_MASKED_ENTITIES)
+        # Every ARRAY[...] literal in the migration must be the same list, in
+        # the same order. They are spelled out rather than interpolated (see the
+        # comment in the migration), so this checks all of them, not just one.
+        arrays = re.findall(r"ARRAY\[(.*?)\]::text\[\]", source, re.DOTALL)
+        assert arrays, "migration no longer contains an ARRAY[...] literal"
+        for block in arrays:
+            assert re.findall(r"'([A-Z_]+)'", block) == list(PII_DEFAULT_MASKED_ENTITIES)
 
     def test_model_server_default_matches_the_constant(self):
         from app.models.portal import PortalOrg
