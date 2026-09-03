@@ -81,6 +81,7 @@ from typing import Any, NamedTuple
 import httpx
 from litellm.integrations.custom_logger import CustomLogger
 
+from klai_kb_request_context import request_metadata as _request_metadata
 from klai_pii_entities import NEVER_RESTORE_ENTITIES, effective_enabled_entities
 from klai_pii_map_store import PiiMapStore
 from klai_pii_org_policy import resolve_org_pii_context
@@ -290,6 +291,41 @@ class PiiAnalyzerUnavailable(RuntimeError):
     SOME exception to propagate for the request to fail; it does not
     require a particular exception type.
     """
+
+
+# LiteLLM sets this role when a request authenticates with LITELLM_MASTER_KEY.
+# Anyone holding that key is already the proxy admin, so letting it name a
+# tenant grants nothing it could not do anyway.
+_PROXY_ADMIN_ROLE = "proxy_admin"
+
+# Written by klai_kb_query_rewrite._rewrite_call_metadata on the loopback
+# self-call. See that module for why the field exists.
+_DELEGATED_ORG_ID_KEY = "_klai_delegated_org_id"
+
+
+def _delegated_org_id(user_api_key_dict: Any, data: dict[str, Any]) -> Any:
+    """Tenant identity asserted by the proxy about a call it makes to itself.
+
+    Klai's own internal calls -- today the query rewrite -- re-enter the proxy
+    over loopback authenticated with the master key. The master key belongs to
+    no tenant, so ``_org_id_from_key`` finds nothing and enforcement skips the
+    request. That is how the user's own question reached Mistral unmasked on
+    the very call that rewrites it, while the same text was masked on the main
+    call. The org is known at that call site; it just was not travelling.
+
+    The assertion is honoured ONLY for ``proxy_admin``. A tenant key that puts
+    this field in its request body is ignored, because a body is not
+    authenticated and an org id chosen by the caller would let one tenant pick
+    another tenant's (possibly laxer) masking policy and misattribute this
+    request's telemetry to them.
+    """
+    role = getattr(user_api_key_dict, "user_role", None)
+    role = getattr(role, "value", role)  # LitellmUserRoles enum or plain str
+    if role != _PROXY_ADMIN_ROLE:
+        return None
+    if not isinstance(data, dict):
+        return None
+    return _request_metadata(data).get(_DELEGATED_ORG_ID_KEY) or None
 
 
 def _org_id_from_key(user_api_key_dict: Any) -> Any:
@@ -643,7 +679,9 @@ class KlaiPiiEnforcer(CustomLogger):
         if not isinstance(messages, list) or not messages:
             return data
 
-        org_id = _org_id_from_key(user_api_key_dict)
+        org_id = _org_id_from_key(user_api_key_dict) or _delegated_org_id(
+            user_api_key_dict, data
+        )
         if not _org_is_enforced(org_id):
             # Activation hardening: KLAI_PII_ENFORCE is on globally, but
             # this org (or a request with no org_id at all) is not in
@@ -728,7 +766,7 @@ class KlaiPiiEnforcer(CustomLogger):
                     restored, never_restore_entities=NEVER_RESTORE_ENTITIES
                 )
                 _set_content(message, restored)
-        org_id, telemetry_level = await self._resolve_telemetry_level(user_api_key_dict)
+        org_id, telemetry_level = await self._resolve_telemetry_level(user_api_key_dict, data)
         self._log_restore_outcome(
             org_id,
             telemetry_level,
@@ -802,7 +840,9 @@ class KlaiPiiEnforcer(CustomLogger):
             # _resolve_telemetry_level for why it cannot move into the
             # `finally`, and the pre-seeding above for why it cannot move out
             # of the `try`.
-            org_id, telemetry_level = await self._resolve_telemetry_level(user_api_key_dict)
+            org_id, telemetry_level = await self._resolve_telemetry_level(
+                user_api_key_dict, request_data
+            )
             async for item in response:
                 for idx, choice in enumerate(_get_choices(item)):
                     delta = _get_field(choice, "delta")
@@ -871,7 +911,9 @@ class KlaiPiiEnforcer(CustomLogger):
             )
 
     @staticmethod
-    async def _resolve_telemetry_level(user_api_key_dict: Any) -> tuple[Any, str]:
+    async def _resolve_telemetry_level(
+        user_api_key_dict: Any, data: dict[str, Any] | None = None
+    ) -> tuple[Any, str]:
         """``(org_id, telemetry_level)`` for this request, resolved up front.
 
         The streaming hook calls this BEFORE its first ``yield``, on purpose.
@@ -890,7 +932,9 @@ class KlaiPiiEnforcer(CustomLogger):
         """
         org_id: Any = None
         try:
-            org_id = _org_id_from_key(user_api_key_dict)
+            org_id = _org_id_from_key(user_api_key_dict) or _delegated_org_id(
+                user_api_key_dict, data or {}
+            )
             if not org_id:
                 return None, _TELEMETRY_LEVEL_SILENT
             context = await resolve_org_pii_context(org_id)

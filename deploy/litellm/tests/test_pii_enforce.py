@@ -1517,7 +1517,7 @@ async def test_cancellation_before_the_first_chunk_still_discards_the_map(monkey
     call_id = "call-cancelled-early"
     mod._pii_map_store.put(call_id, {"<IBAN_CODE_1>": _TELEMETRY_IBAN})
 
-    async def _never_resolves(_user_api_key_dict):
+    async def _never_resolves(_user_api_key_dict, _data=None):
         await asyncio.sleep(3600)
 
     monkeypatch.setattr(
@@ -1651,3 +1651,99 @@ async def test_a_never_restore_placeholder_is_not_counted_as_leaked(monkeypatch,
     assert "survived=1" in lines[0]
     assert "leaked=0" in lines[0]
 
+
+
+# ===========================================================================
+# 15. Delegated tenant identity on the proxy's own loopback calls
+# ===========================================================================
+def _admin_key():
+    uak = MagicMock()
+    uak.metadata = {}
+    uak.user_role = "proxy_admin"
+    return uak
+
+
+async def _pre_call(mod, key, data):
+    return await mod.klai_pii_enforcer.async_pre_call_hook(key, None, data, "acompletion")
+
+
+def _iban_request(mod, monkeypatch, metadata):
+    text = f"Betaal op {_TELEMETRY_IBAN} graag."
+    start = text.index(_TELEMETRY_IBAN)
+    _install_analyzer(
+        mod,
+        monkeypatch,
+        _ScriptedAnalyzerClient(
+            script={
+                text: [
+                    {
+                        "entity_type": "IBAN_CODE",
+                        "start": start,
+                        "end": start + len(_TELEMETRY_IBAN),
+                        "score": 1.0,
+                    }
+                ]
+            }
+        ),
+    )
+    _stub_org_policy(mod, monkeypatch, frozenset({"IBAN_CODE"}))
+    return {
+        "litellm_call_id": "call-delegated",
+        "metadata": metadata,
+        "messages": [{"role": "user", "content": text}],
+    }
+
+
+@pytest.mark.asyncio
+async def test_master_key_may_name_the_tenant_it_is_acting_for(monkeypatch):
+    """The query rewrite re-enters the proxy on the master key.
+
+    Before this, that call had no org and was skipped -- so the user's question
+    went to Mistral in full on the one call that is nothing but their question.
+    """
+    mod = _load_telemetry_enforcer(monkeypatch)
+    data = _iban_request(mod, monkeypatch, {"_klai_delegated_org_id": _TELEMETRY_ORG})
+
+    out = await _pre_call(mod, _admin_key(), data)
+
+    assert _TELEMETRY_IBAN not in str(out["messages"])
+    assert "<IBAN_CODE_1>" in str(out["messages"])
+
+
+@pytest.mark.asyncio
+async def test_a_tenant_key_cannot_name_a_different_tenant(monkeypatch):
+    """A request body is not authenticated. Honouring it would let one tenant
+    pick another's masking policy and misattribute this request's telemetry."""
+    mod = _load_telemetry_enforcer(monkeypatch)
+    data = _iban_request(mod, monkeypatch, {"_klai_delegated_org_id": _TELEMETRY_ORG})
+    tenant_key = MagicMock()
+    tenant_key.metadata = {}
+    tenant_key.user_role = "internal_user"
+
+    out = await _pre_call(mod, tenant_key, data)
+
+    assert _TELEMETRY_IBAN in str(out["messages"])
+
+
+@pytest.mark.asyncio
+async def test_the_key_wins_when_both_are_present(monkeypatch):
+    """An authenticated identity is never overridden by a body field."""
+    mod = _load_telemetry_enforcer(monkeypatch)
+    data = _iban_request(mod, monkeypatch, {"_klai_delegated_org_id": "someone-else"})
+    key = _user_api_key(_TELEMETRY_ORG)
+    key.user_role = "proxy_admin"
+
+    resolved = mod._org_id_from_key(key) or mod._delegated_org_id(key, data)
+
+    assert resolved == _TELEMETRY_ORG
+
+
+@pytest.mark.asyncio
+async def test_master_key_without_a_delegation_is_still_not_enforced(monkeypatch):
+    """Unchanged for every other master-key caller: no identity, no masking."""
+    mod = _load_telemetry_enforcer(monkeypatch)
+    data = _iban_request(mod, monkeypatch, {"_klai_openai_passthrough": True})
+
+    out = await _pre_call(mod, _admin_key(), data)
+
+    assert _TELEMETRY_IBAN in str(out["messages"])

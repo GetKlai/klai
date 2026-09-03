@@ -287,6 +287,9 @@ async def _run_one_sample(
         history=[],
         taxonomy_trees=[],
         pasted_correspondence=pasted_correspondence,
+        # Same loopback self-call as production: without the org this canary's
+        # real-user-shaped query reaches Mistral unmasked.
+        org_id=canary.org_zitadel_id,
     )
     skipped = meta.get("skipped")
     if skipped is not None:
