@@ -23,7 +23,8 @@ Derivation rules, evaluated in this order (first match wins):
    assistant answer after it, OR it consists of exactly one exchange
    (question + answer) that was never followed up on within the quiet period
    and the visitor did not rate the answer positively.
-3. ``resolved`` — the conversation ends on an assistant answer carrying a
+3. ``resolved`` — ONLY on an explicit positive signal. The conversation ends
+   on an assistant answer carrying a
    positive rating (``rating='thumbsUp'``), OR it ends on an assistant answer
    and the visitor asked nothing further within the quiet period. A positive
    rating is checked before the one-exchange rule: an explicit satisfaction
@@ -128,23 +129,31 @@ def derive_outcome(
     if last_assistant is not None and is_broad_knowledge_answer(last_assistant.content):
         return "escalated"
 
-    # 2. Abandoned: ends on an unanswered visitor message.
+    # 2. Abandoned: ends on an unanswered visitor message — but only once the
+    # conversation has actually gone quiet. A question posted seconds ago is
+    # one the assistant is still answering, not one the visitor walked away
+    # from. The caller re-checks this per conversation on top of the SQL
+    # cutoff, so a message that lands mid-pass cannot be mislabelled.
     if last_turn.role == "user":
-        return "abandoned"
+        return "abandoned" if quiet_period_elapsed else "unknown"
 
     # 3. Resolved (explicit signal): ends on an answer the visitor rated up.
     if last_assistant is not None and last_assistant.rating == "thumbsUp":
         return "resolved"
 
-    # 2b. Abandoned: exactly one exchange and no follow-up within the window.
-    user_turns = [t for t in turns if t.role == "user"]
-    if len(user_turns) == 1 and len(turns) == 2:
-        return "abandoned" if quiet_period_elapsed else "unknown"
-
-    # 3b. Resolved (absence signal): answer stood, nothing asked after it.
-    if last_turn.role == "assistant":
-        return "resolved" if quiet_period_elapsed else "unknown"
-
+    # Everything below here used to read silence as a signal, in both
+    # directions: a single question+answer counted as 'abandoned' (a bounce),
+    # and any conversation ending on an answer counted as 'resolved'. Those
+    # two rules together meant the label tracked TURN COUNT, not outcome — one
+    # good answer that satisfied the visitor scored 'abandoned', while three
+    # bad answers the visitor gave up on scored 'resolved'. With thumbs
+    # response rates at 2-8%, those rules decided almost every row.
+    #
+    # A visitor who leaves without saying anything has told us nothing. That is
+    # 'unknown', and a large unknown share is the honest reading: it is the
+    # signal that we need the LLM-as-judge pass the research recommends
+    # (docs/research/help-page-chatbot-voys.md § 6.2), not a gap to paper over
+    # with a guess.
     return "unknown"
 
 

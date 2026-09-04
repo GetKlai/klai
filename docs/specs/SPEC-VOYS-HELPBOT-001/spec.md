@@ -1,7 +1,7 @@
 ---
 id: SPEC-VOYS-HELPBOT-001
-version: "0.4.0"
-status: built, pending review
+version: "0.5.0"
+status: built, reviewed, open items recorded
 created: 2026-09-04
 updated: 2026-09-04
 author: Claude (Opus 5), commissioned by Mark Vletter
@@ -19,6 +19,7 @@ implementation_branch: feat/voys-helpbot-integratie
 
 | Version | Date | Change |
 |---|---|---|
+| 0.5.0 | 2026-09-04 | Independent holistic review (Fable) against the intent rather than the checklist. It found the measurement instrument inverted: REQ-5 labelled a single good exchange 'abandoned' and any conversation ending on an answer 'resolved', so the label tracked turn count, not outcome — and with thumbs at 2-8% response those two rules decided nearly every row. The defect came from brief A.6, i.e. from the same party that wrote the brief and approved the result. Fixed by refusing to read silence as a signal in either direction; a large 'unknown' share is now the honest reading and the argument for the LLM-as-judge pass. Also fixed: a red CI gate nobody had run (the vendored prompt copy lagged the canonical one) and an appointment promise that shipped unconditionally to every tenant. Corrected an overclaim in the research: REQ-2 relieves the mint limit, it does not remove the 60 rpm chat limit, so G-14 is partial, not void. |
 | 0.4.0 | 2026-09-04 | All eight requirements built and merged. REQ-4 was tuned a second time after Mark supplied the official brand documentation: eight principles turned out to be independently confirmed by the measurement, one contradiction (apologies) was resolved by register rather than by picking a side, and three things the help pages could not show were added. REQ-7 shipped with a sharper dividing line than specified — one decidable test instead of a list. One medium defect recorded rather than fixed: a broad-mode answer lands in the `escalated` outcome bucket. |
 | 0.3.0 | 2026-09-04 | REQ-6 rewritten before implementation. The escalation contract flipped twice on the same day and the reason matters for anyone reading the code: v0.2.0 forbade offering a human at all, because the only handoff (HubSpot) is pinned to tenant `getklai` (G-1). Mark then corrected the premise — an API integration with the support partner is coming that will offer appointment booking *inside* the chat, and until it lands we redirect to the partner's existing booking module. So the bot may offer an appointment again, but must not name a URL itself; the widget owns the link. REQ-7 (broad-mode consent switch) added from Mark's observation that non-strict answers know more but are less certain. |
 | 0.2.0 | 2026-09-04 | REQ-2 (facade) added, replacing "raise the mint limit" as the answer to G-14 after online research: 3-10% of visitors ever open a chat widget, so 90-97% of session-token mints are waste. REQ-4 (support prompt) written with an explicit ban on offering a human, matching the then-known constraint. |
@@ -141,7 +142,17 @@ derived by a background pass from signals we already have, and exposed as a
 distribution on the stats endpoint without changing existing fields.
 
 The derivation is explicitly a heuristic and must be documented as such: it says
-where a conversation ended, not whether the visitor's problem was solved. Volume
+where a conversation ended, not whether the visitor's problem was solved.
+
+**Corrected after review.** The first implementation followed brief A.6, which
+told it to read a single exchange as a bounce and any conversation ending on an
+answer as resolved. Those two rules made the label track turn count: one good
+answer scored 'abandoned', three bad ones the visitor gave up on scored
+'resolved'. Silence is no longer read as a signal in either direction. Only an
+explicit thumbs-up gives 'resolved'; only an unanswered question, once the
+conversation has gone quiet, gives 'abandoned'. Everything else is 'unknown',
+and a large unknown share is the point — it is the case for the LLM-as-judge
+pass, not a hole to fill with a guess. Volume
 metrics alone steer toward "the visitor gave up", which the market literature
 puts 20-30 points away from real resolution.
 
@@ -269,6 +280,35 @@ denied at the permission layer, verified by a test that attempted a commit and
 was refused. Work therefore always arrives as an unstaged diff for review.
 
 # 7. Open
+
+Recorded by the holistic review and deliberately not fixed here — they need a
+decision rather than a patch:
+
+- **The citation firewall discards most of what REQ-4 adds.** Any answer without
+  a selected source is replaced by the fixed refusal, and a clarifying question,
+  an honest "not in the articles", an apology or an appointment offer has no
+  source by definition. A large part of the brand-voice prompt therefore never
+  reaches the visitor on this path. This is the concrete cost of the two
+  parallel chat paths (§2, research §5.4); the reviewer advises fixing it as a
+  requirement on the shared answer-policy layer rather than patching path B.
+- **Broad mode is sticky and can degrade later grounded answers.** Consent holds
+  for the conversation and also triggers on a soft gap, so a follow-up with
+  weak-but-usable chunks is forced broad. Consider hard-gap-only, or per-turn
+  consent.
+- **Admin preview traffic registers knowledge gaps**, while stats and outcome
+  already exclude preview conversations. Small fix, real dashboard pollution.
+- **The pilot cannot be configured in the portal**: no UI for `support_mode`,
+  `booking_url` or the outcome distribution. API or database only for now.
+- **The most-shown sentence of the bot is off-brand.** The fixed refusal reads
+  "Neem voor een vast antwoord contact op met de support", which the brand
+  document lists under what does not work — and because it bypasses the prompt,
+  the tone work cannot reach it.
+- **Gap rows carry a 7-day retention** while widget messages get 90, so the
+  editorial signal expires faster than the conversations it came from.
+- **A broad answer lands in the `escalated` bucket.** Reviewer's counter: no
+  migration needed — the marker is in the content, so the stats endpoint can
+  count broad answers separately and `derive_outcome` can leave them `unknown`.
+
 
 - All eight requirements are merged on `feat/voys-helpbot-integratie`. Nothing is pushed.
 - Pilot configuration (widget, KB scope, allowed origins, conversation

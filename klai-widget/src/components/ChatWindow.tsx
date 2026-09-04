@@ -82,9 +82,15 @@ export function ChatWindow(props: ChatWindowProps) {
     // reads wrong mid-sentence. No/blank name → the prepared no-org
     // variant, so the sentence never renders a hole.
     const botName = chatState.config?.name?.trim();
-    setAiDisclosureText(
-      botName ? t().aiDisclosure.replace("{name}", botName) : t().aiDisclosureNoOrg,
-    );
+    const notice = botName
+      ? t().aiDisclosure.replace("{name}", botName)
+      : t().aiDisclosureNoOrg;
+    // The AI notice is unconditional — it is the Article 50 requirement. The
+    // appointment sentence is not: it only holds where a booking route is
+    // actually configured. Appending it everywhere would promise every other
+    // tenant's visitors a person they have no way to reach.
+    const booking = props.bookingUrl ? t().aiDisclosureBooking : "";
+    setAiDisclosureText(notice + booking);
   }, 150);
   onCleanup(() => window.clearTimeout(disclosureTimer));
 

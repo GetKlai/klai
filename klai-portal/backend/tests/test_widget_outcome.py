@@ -80,20 +80,22 @@ def test_derive_escalated_on_broad_mode_answer_even_with_thumbs_up():
 
 def test_broad_marker_mid_text_does_not_escalate():
     """Only a LEADING label marks the answer as broad. An ordinary grounded
-    answer that happens to quote the marker phrase stays resolved."""
+    answer that happens to quote the marker phrase is not escalated; without an
+    explicit signal it stays 'unknown'."""
     turns = [
         _turn("user", "hoe werkt de bot"),
         _turn("assistant", "De bot zoekt in helpartikelen."),
         _turn("user", "citaten?"),
         _turn("assistant", 'Het artikel zegt: "Algemene kennis — niet afkomstig uit onze helpartikelen."'),
     ]
-    assert derive_outcome(turns, has_handoff=False, quiet_period_elapsed=True) == "resolved"
+    assert derive_outcome(turns, has_handoff=False, quiet_period_elapsed=True) == "unknown"
 
 
 def test_broad_answer_followed_by_grounded_answer_is_resolved():
     """The rule reads the LAST assistant answer: if the strict bot answered
     from the articles afterwards, the earlier broad fallback doesn't pin the
-    conversation to escalated."""
+    conversation to escalated. Without a thumbs-up it is 'unknown', not
+    'resolved' — silence is not consent."""
     from klai_chat_prompts import broad_mode_answer_marker
 
     broad = f"{broad_mode_answer_marker('hoe lang duurt portering')}\n\nIn NL meestal 1 werkdag."
@@ -103,7 +105,7 @@ def test_broad_answer_followed_by_grounded_answer_is_resolved():
         _turn("user", "staat dat ook in jullie artikelen?"),
         _turn("assistant", "Ja: according to [1] up to 5 business days."),
     ]
-    assert derive_outcome(turns, has_handoff=False, quiet_period_elapsed=True) == "resolved"
+    assert derive_outcome(turns, has_handoff=False, quiet_period_elapsed=True) == "unknown"
 
 
 def test_derive_abandoned_when_ends_on_unanswered_question():
@@ -116,10 +118,14 @@ def test_derive_abandoned_when_ends_on_unanswered_question():
     assert derive_outcome(turns, has_handoff=False, quiet_period_elapsed=True) == "abandoned"
 
 
-def test_derive_abandoned_single_exchange_no_followup():
-    """Exactly one question+answer, no follow-up, no rating = bounce = abandoned."""
+def test_single_exchange_without_signal_is_unknown():
+    """One question, one answer, then silence. That is the SHAPE OF A GOOD
+    helpdesk answer as much as of a bounce — the visitor got what they came
+    for and left. Reading it as 'abandoned' made the label track turn count
+    instead of outcome, so it is 'unknown' until a judge or a thumb says
+    otherwise."""
     turns = [_turn("user", "openingstijden"), _turn("assistant", "ma-vr 9-17h")]
-    assert derive_outcome(turns, has_handoff=False, quiet_period_elapsed=True) == "abandoned"
+    assert derive_outcome(turns, has_handoff=False, quiet_period_elapsed=True) == "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -133,15 +139,17 @@ def test_derive_resolved_positive_rating():
     assert derive_outcome(turns, has_handoff=False, quiet_period_elapsed=True) == "resolved"
 
 
-def test_derive_resolved_multi_turn_no_followup():
-    """Multiple turns ending on an answer with no further question = resolved."""
+def test_multi_turn_ending_on_answer_is_unknown():
+    """Ending on an answer proves nothing on its own: it is equally the shape
+    of a visitor who gave up after three poor replies. Only an explicit signal
+    promotes a conversation to 'resolved'."""
     turns = [
         _turn("user", "bezorgkosten"),
         _turn("assistant", "€4,95"),
         _turn("user", "gratis vanaf?"),
         _turn("assistant", "vanaf €50"),
     ]
-    assert derive_outcome(turns, has_handoff=False, quiet_period_elapsed=True) == "resolved"
+    assert derive_outcome(turns, has_handoff=False, quiet_period_elapsed=True) == "unknown"
 
 
 def test_derive_thumbs_up_beats_single_turn_abandonment():
@@ -274,7 +282,7 @@ async def test_loop_labels_only_the_owning_org():
         result = await wo._outcome_run_once()
 
     # org 1's conversation got a label via org 1's session only.
-    assert org1.updates == {100: "abandoned"}  # single exchange, no rating
+    assert org1.updates == {100: "unknown"}  # single exchange, no explicit signal
     assert org2.updates == {}
     assert result["labelled_count"] == 1
 
