@@ -807,6 +807,23 @@ class TopQuery(BaseModel):
     count: int
 
 
+class OutcomeCounts(BaseModel):
+    """Conversation counts per heuristic outcome label over the stats window.
+
+    Labels are written by the widget-outcome background loop
+    (app/services/widget_outcome.py) — a heuristic, not a per-conversation
+    verdict. ``unlabeled`` counts conversations whose outcome has not been
+    determined yet (still active or not yet processed); it normally shrinks
+    as the loop catches up with the quiet period.
+    """
+
+    resolved: int = 0
+    escalated: int = 0
+    abandoned: int = 0
+    unknown: int = 0
+    unlabeled: int = 0
+
+
 class WidgetStats(BaseModel):
     period: Literal["7d", "30d", "all"]
     total_conversations: int
@@ -815,6 +832,7 @@ class WidgetStats(BaseModel):
     top_queries: list[TopQuery]
     # 24 buckets, hour-of-day. Aggregated across all days in window.
     hourly_activity: list[int]
+    outcome_counts: OutcomeCounts = Field(default_factory=OutcomeCounts)
 
 
 def _period_cutoff(period: str) -> datetime | None:
@@ -967,9 +985,10 @@ async def widget_activity_stats(
 ) -> WidgetStats:
     """Aggregate metrics for the Activiteit tab.
 
-    Three queries: totals, top 10 first-user-queries, and 24 hourly
-    buckets. The ``period`` filter scopes everything to a rolling
-    window of 7 / 30 days, or all-time.
+    Four queries: totals, top 10 first-user-queries, 24 hourly buckets,
+    and the outcome distribution (heuristic labels written by
+    app/services/widget_outcome.py). The ``period`` filter scopes
+    everything to a rolling window of 7 / 30 days, or all-time.
 
     REQ-16: audit-trail endpoints accept soft-deleted widgets so the
     admin Activity tab keeps surfacing history after a widget is wiped.
@@ -1066,6 +1085,36 @@ async def widget_activity_stats(
         if 0 <= row.hour <= 23:
             hourly[row.hour] = row.c
 
+    if cutoff is not None:
+        outcome_result = await db.execute(
+            text(
+                "SELECT outcome, COUNT(*) AS c "
+                "FROM widget_conversations "
+                "WHERE widget_id = CAST(:widget_id AS uuid) "
+                "AND is_preview = false "
+                "AND started_at >= :cutoff "
+                "GROUP BY outcome"
+            ),
+            params,
+        )
+    else:
+        outcome_result = await db.execute(
+            text(
+                "SELECT outcome, COUNT(*) AS c "
+                "FROM widget_conversations "
+                "WHERE widget_id = CAST(:widget_id AS uuid) "
+                "AND is_preview = false "
+                "GROUP BY outcome"
+            ),
+            params,
+        )
+    outcome_counts = OutcomeCounts()
+    for row in outcome_result.all():
+        if row.outcome is None:
+            outcome_counts.unlabeled = row.c
+        elif row.outcome in ("resolved", "escalated", "abandoned", "unknown"):
+            setattr(outcome_counts, row.outcome, row.c)
+
     return WidgetStats(
         period=period,
         total_conversations=total_conversations,
@@ -1073,4 +1122,5 @@ async def widget_activity_stats(
         avg_messages_per_conversation=avg,
         top_queries=top_queries,
         hourly_activity=hourly,
+        outcome_counts=outcome_counts,
     )
