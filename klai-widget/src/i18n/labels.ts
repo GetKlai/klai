@@ -13,7 +13,15 @@ export interface WidgetLabels {
   messagesLabel: string
   errorGeneric: string
   errorSessionExpired: string
+  // Accuracy footer; hideable per widget via hide_disclaimer (white-label).
   disclaimer: string
+  // EU AI Act art. 50 notice — NOT hideable, see ChatWindow hero.
+  // aiDisclosure carries the {name} placeholder (per-tenant bot name from
+  // the widget config); aiDisclosureNoOrg is the same notice for widgets
+  // without a name, so the sentence never renders a hole.
+  aiDisclosure: string
+  aiDisclosureNoOrg: string
+  bookingButton: string
   handoffButton: string
   handoffConnecting: string
   handoffConnected: string
@@ -47,6 +55,11 @@ const nl: WidgetLabels = {
   errorGeneric: "Er ging iets mis. Probeer het opnieuw.",
   errorSessionExpired: "Sessie verlopen. Herlaad de pagina.",
   disclaimer: "AI-antwoorden kunnen fouten bevatten. Verifieer belangrijke informatie altijd bij de bron.",
+  aiDisclosure:
+    "Je praat met een AI-assistent die veel weet over {name} en waar mogelijk de bronnen bij zijn antwoord zet. Kom je er samen niet uit, dan kun je een afspraak inplannen met een medewerker die je persoonlijk verderhelpt.",
+  aiDisclosureNoOrg:
+    "Je praat met een AI-assistent die waar mogelijk de bronnen bij zijn antwoord zet. Kom je er samen niet uit, dan kun je een afspraak inplannen met een medewerker die je persoonlijk verderhelpt.",
+  bookingButton: "Plan een afspraak",
   handoffButton: "Praat met een medewerker",
   handoffConnecting: "Ik verbind je met een medewerker.",
   handoffConnected: "Je bent verbonden met een medewerker.",
@@ -80,6 +93,11 @@ const en: WidgetLabels = {
   errorGeneric: "Something went wrong. Please try again.",
   errorSessionExpired: "Session expired. Reload the page.",
   disclaimer: "AI answers can contain mistakes. Always verify important information at the source.",
+  aiDisclosure:
+    "You are chatting with an AI assistant that knows a lot about {name} and adds sources to its answers where it can. If you don't work it out together, you can schedule an appointment with an employee who will help you personally.",
+  aiDisclosureNoOrg:
+    "You are chatting with an AI assistant that adds sources to its answers where it can. If you don't work it out together, you can schedule an appointment with an employee who will help you personally.",
+  bookingButton: "Schedule an appointment",
   handoffButton: "Talk to a human",
   handoffConnecting: "I am connecting you with a human agent.",
   handoffConnected: "You are connected with a human agent.",

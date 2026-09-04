@@ -565,6 +565,42 @@
   opacity: 0.6;
 }
 
+/* Interim appointment redirect bar — booking_url set (see ChatWindow).
+   Outlined pill matching the handoff button; hidden entirely when the
+   config field is empty, so no layout shift for existing widgets. */
+.klai-booking-bar {
+  display: flex;
+  justify-content: center;
+  padding: 8px 12px 0;
+  flex-shrink: 0;
+}
+
+.klai-booking-btn {
+  display: inline-block;
+  border: 1px solid var(--klai-border-color);
+  border-radius: 8px;
+  background: var(--klai-background-color);
+  color: var(--klai-text-color);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  padding: 8px 12px;
+  text-decoration: none;
+  cursor: pointer;
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+
+.klai-booking-btn:hover {
+  border-color: var(--klai-primary-color);
+  background: color-mix(in srgb, var(--klai-primary-color) 10%, transparent);
+}
+
+.klai-booking-btn:focus-visible {
+  border-color: var(--klai-text-color);
+  background: color-mix(in srgb, var(--klai-primary-color) 10%, transparent);
+}
+
 /* Markdown in assistant messages */
 .klai-markdown p { margin: 0 0 8px; }
 .klai-markdown p:last-child { margin-bottom: 0; }
@@ -1064,6 +1100,17 @@
   color: var(--klai-text-muted);
   margin: 4px 0 0;
   max-width: 280px;
+}
+
+/* EU AI Act art. 50 notice — always rendered next to the welcome line,
+   never gated on hide_disclaimer. Same muted register as the subtitle so
+   it reads as legal notice, not marketing copy. */
+.klai-hero-ai-disclosure {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--klai-text-muted);
+  margin: 10px 0 0;
+  max-width: 300px;
 }
 
 .klai-hero .klai-starters {

@@ -13,6 +13,7 @@ import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 import httpx
 import structlog
@@ -2649,6 +2650,32 @@ def _hubspot_handoff_enabled_for_widget(
     )
 
 
+def _widget_booking_url(widget_config_data: dict[str, Any]) -> str:
+    """INTERIM — remove together with ``booking_url`` when the chat booking
+    API integration replaces the support-partner redirect.
+
+    Return the widget's booking URL for the visitor-facing appointment
+    button, or ``""`` to hide it. The stored value is admin input that
+    lands in an ``href`` in a visitor's browser, so only absolute http(s)
+    URLs are delivered at all: ``javascript:``, other schemes, relative
+    and malformed values are dropped here, before the widget ever sees
+    them. An unset field changes nothing about the payload's behaviour.
+    """
+    url = widget_config_data.get("booking_url")
+    if not isinstance(url, str):
+        return ""
+    url = url.strip()
+    if not url:
+        return ""
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return ""
+    if parsed.scheme.lower() not in ("http", "https") or not parsed.netloc:
+        return ""
+    return url
+
+
 # ---------------------------------------------------------------------------
 # GET /partner/v1/widget-config  (SPEC-WIDGET-001 Task 2)
 # Public endpoint — NO auth dependency
@@ -2815,6 +2842,8 @@ async def widget_config(
         "show_meta": widget_config_data.get("show_meta", False),
         "page_context_enabled": widget_config_data.get("page_context_enabled", False),
         "support_mode": widget_config_data.get("support_mode", False),
+        # Interim appointment redirect (booking API pending) — see _widget_booking_url.
+        "booking_url": _widget_booking_url(widget_config_data),
         "handoff": {
             "hubspot": {
                 "enabled": _hubspot_handoff_enabled_for_widget(
@@ -2926,6 +2955,8 @@ async def public_bot_config(
         "show_meta": widget_config_data.get("show_meta", False),
         "page_context_enabled": widget_config_data.get("page_context_enabled", False),
         "support_mode": widget_config_data.get("support_mode", False),
+        # Interim appointment redirect (booking API pending) — see _widget_booking_url.
+        "booking_url": _widget_booking_url(widget_config_data),
         "name": widget_row.name,
         "description": widget_row.description or "",
         "handoff": {

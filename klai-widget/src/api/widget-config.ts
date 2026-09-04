@@ -7,8 +7,16 @@ export interface WidgetConfig {
   session_expires_at: string;
   // TWD-style empty-state chips. Admin-configured, 0-6 entries.
   conversation_starters?: string[];
-  // White-label flag to hide the AI-disclaimer footer.
+  // White-label flag to hide the AI-accuracy-disclaimer footer. Does NOT
+  // hide the EU AI Act art. 50 notice (labels.aiDisclosure) — that one is
+  // mandatory and always rendered.
   hide_disclaimer?: boolean;
+  // INTERIM appointment redirect — remove once the chat booking API
+  // integration lands. Booking-module URL of the support partner, rendered
+  // as the "schedule an appointment" button. The server only delivers
+  // absolute http(s) values (partner.py _widget_booking_url), so this can
+  // go straight into an href. Unset/empty → no button, current behaviour.
+  booking_url?: string;
   // TWD-pattern: header avatar + empty-state hero need the bot name
   // and a short description ("Assistent voor X — informatie over Y").
   name?: string;

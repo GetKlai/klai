@@ -107,27 +107,32 @@ def test_support_prompt_forbids_company_commitments():
         assert term in text
 
 
-def test_support_prompt_escalates_to_support_without_a_human_handoff():
+def test_support_prompt_escalates_with_an_appointment_offer_not_a_transfer():
     text = SUPPORT_CHAT_SYSTEM_PROMPT
-    # No "talk to an agent" affordance exists in this setup.
+    # Transfer stays impossible (and may not even be suggested), but the
+    # bot may offer a personal appointment — the interim booking redirect
+    # until the chat booking API integration lands.
     assert "cannot transfer this chat to a person" in text
-    assert "must NOT offer to" in text
+    assert "must NOT suggest that you can" in text
+    assert "schedule an appointment with a human employee" in text
+    assert "help the visitor further personally" in text
     # Frustration / repeat complaints / cancel / outage / pricing / contract
-    # all route to the support department.
+    # / honest-but-unfindable answers all trigger the appointment offer.
     assert "frustrated" in text
+    assert "repeats the same complaint" in text
     assert "wants to cancel" in text
     assert "reports an outage" in text
     assert "pricing or contract question" in text
-    assert "support department" in text
-    assert "contact details on this website" in text
+    assert "after an honest attempt" in text
 
 
-def test_support_prompt_does_not_invent_contact_details():
-    # The phone/e-mail ban is explicit: no specific number or address may be
-    # fabricated, since none is provided in the prompt.
+def test_support_prompt_offers_appointment_without_contact_details():
+    # The offer is phrased as an action the visitor takes; the widget ships
+    # the button/link, so the model itself names no phone, e-mail or URL.
     text = SUPPORT_CHAT_SYSTEM_PROMPT
-    assert "Do NOT invent or display a specific phone number" in text
-    assert "you do not have one" in text
+    assert "do NOT name a phone" in text
+    assert "e-mail address or a URL yourself" in text
+    assert "the widget renders the booking button or link" in text
 
 
 def test_support_prompt_keeps_source_citation_backend_managed():

@@ -92,6 +92,7 @@ export function ChatBubble(props: ChatBubbleProps = {}) {
           conversationStarters={chatState.config?.conversation_starters}
           hideDisclaimer={chatState.config?.hide_disclaimer}
           welcomeMessage={chatState.config?.welcome_message}
+          bookingUrl={chatState.config?.booking_url}
           collectUserInfo={chatState.config?.collect_user_info}
           manageHandoffStream={false}
         />
