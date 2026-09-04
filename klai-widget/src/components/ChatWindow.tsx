@@ -11,6 +11,8 @@ import {
   startAssistantMessage,
   appendToLastMessage,
   setLastMessageSources,
+  setLastMessageBroadMode,
+  setBroadMode,
   appendLastMessageActivity,
   finishStreaming,
   setError,
@@ -156,6 +158,112 @@ export function ChatWindow(props: ChatWindowProps) {
     });
   };
 
+  // One streamed bot turn. The consent flag and retrieval-query override
+  // travel with the request; JSON.stringify drops them when unset, so
+  // regular strict traffic is byte-identical to before broad mode existed.
+  const streamBotTurn = async (opts: { retrievalQuery?: string } = {}) => {
+    const turnId = createTurnId();
+    startAssistantMessage(turnId);
+
+    abortController = new AbortController();
+
+    await streamChat({
+      endpoint: chatState.config!.chat_endpoint,
+      token: chatState.sessionToken,
+      widgetId: chatState.widgetId,
+      messages: withVisitorInfo(chatState.messages.slice(0, -1)),
+      widgetTurnId: turnId,
+      broadMode: chatState.broadMode || undefined,
+      retrievalQuery: opts.retrievalQuery,
+      pageContext: chatState.config?.page_context_enabled ? collectPageContext() : undefined,
+      abortController,
+      callbacks: {
+        onToken: (token) => {
+          appendToLastMessage(token);
+        },
+        onSources: (sources) => {
+          setLastMessageSources(sources);
+        },
+        onActivity: (activity) => {
+          appendLastMessageActivity(activity);
+        },
+        onBroadMode: (mode) => {
+          setLastMessageBroadMode(mode);
+        },
+        onDone: () => {
+          finishStreaming();
+          abortController = null;
+        },
+        onError: (error) => {
+          finishStreaming();
+          abortController = null;
+          setError(
+            error.message.includes("Origin")
+              ? t().errorSessionExpired
+              : t().errorGeneric
+          );
+        },
+      },
+    });
+  };
+
+  // ── Helpdesk broad mode: consent handling ────────────────────────────
+  // Consent is only ever a complete, unpunctuated affirmation typed right
+  // after the bot offered it, or a click on the offer button. An exact
+  // word-list match (no fuzzy "does it contain ja") keeps "ja, maar ik
+  // liever niet" a normal message the strict bot can answer.
+
+  const BROAD_CONSENT_WORDS = new Set([
+    "ja", "jawel", "jazeker", "ja zeker", "ja graag", "ja dat mag", "ja doe maar",
+    "doe maar", "graag", "ok", "oke", "oké", "akkoord", "ga maar", "ga door",
+    "yes", "yeah", "yep", "yes please", "please", "sure", "of course", "go ahead", "y",
+  ]);
+
+  const isBroadConsentText = (text: string): boolean => {
+    const normalized = text
+      .toLowerCase()
+      .replace(/[.,!?;:'"`"“”‘’\u00b7()\[\]]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    return BROAD_CONSENT_WORDS.has(normalized);
+  };
+
+  // The last message the bot actually said something in — empty streaming
+  // placeholders don't count and don't hide an offer one turn older.
+  const lastBotAnswerIndex = (): number => {
+    for (let i = chatState.messages.length - 1; i >= 0; i--) {
+      const message = chatState.messages[i];
+      if (message.role === "assistant" && message.content.trim()) return i;
+    }
+    return -1;
+  };
+
+  const questionBefore = (index: number): string => {
+    for (let i = index - 1; i >= 0; i--) {
+      const message = chatState.messages[i];
+      if (message.role === "user" && message.content.trim()) return message.content;
+    }
+    return "";
+  };
+
+  const runBroadConsentTurn = async (question: string) => {
+    setBroadMode(true);
+    // Retrieval on this turn runs against the original question, not the
+    // consent text: the knowledge gap must keep being recorded for what the
+    // visitor actually asked.
+    await streamBotTurn({ retrievalQuery: question || undefined });
+  };
+
+  const handleBroadConsentClick = async (offerIndex: number) => {
+    if (!canSend()) return;
+    clearError();
+    addUserMessage(t().broadConsentMessage);
+    if (textareaRef) {
+      textareaRef.style.height = "auto";
+    }
+    await runBroadConsentTurn(questionBefore(offerIndex));
+  };
+
   const handleSend = async (override?: string) => {
     const content = (override ?? inputValue()).trim();
     if (!content || !canSend()) return;
@@ -181,44 +289,17 @@ export function ChatWindow(props: ChatWindowProps) {
       return;
     }
 
-    const turnId = createTurnId();
-    startAssistantMessage(turnId);
+    // A bare "yes" answering the bot's broad-mode offer is consent, not a
+    // question: run the same turn the offer button would.
+    if (!chatState.broadMode && isBroadConsentText(content)) {
+      const answerIndex = lastBotAnswerIndex();
+      if (answerIndex >= 0 && chatState.messages[answerIndex].broadMode === "offer") {
+        await runBroadConsentTurn(questionBefore(answerIndex));
+        return;
+      }
+    }
 
-    abortController = new AbortController();
-
-    await streamChat({
-      endpoint: chatState.config!.chat_endpoint,
-      token: chatState.sessionToken,
-      widgetId: chatState.widgetId,
-      messages: withVisitorInfo(chatState.messages.slice(0, -1)),
-      widgetTurnId: turnId,
-      pageContext: chatState.config?.page_context_enabled ? collectPageContext() : undefined,
-      abortController,
-      callbacks: {
-        onToken: (token) => {
-          appendToLastMessage(token);
-        },
-        onSources: (sources) => {
-          setLastMessageSources(sources);
-        },
-        onActivity: (activity) => {
-          appendLastMessageActivity(activity);
-        },
-        onDone: () => {
-          finishStreaming();
-          abortController = null;
-        },
-        onError: (error) => {
-          finishStreaming();
-          abortController = null;
-          setError(
-            error.message.includes("Origin")
-              ? t().errorSessionExpired
-              : t().errorGeneric
-          );
-        },
-      },
-    });
+    await streamBotTurn();
   };
 
   const handleStop = () => {
@@ -515,7 +596,34 @@ export function ChatWindow(props: ChatWindowProps) {
           messages={chatState.messages}
           isStreaming={chatState.isStreaming}
           error={chatState.error}
+          onBroadConsent={(offerIndex) => void handleBroadConsentClick(offerIndex)}
         />
+      </Show>
+
+      {/* Broad-mode indicator: once the visitor consented (or ever received
+        a labelled broad answer in this conversation), the mode stays
+        visible and switchable. Turning it off returns the bot to strict
+        help-articles-only answers immediately; turning it back on is a
+        fresh explicit click. */}
+      <Show
+        when={
+          hasUserTurn() &&
+          (chatState.broadMode || chatState.messages.some((m) => m.broadMode === "answer"))
+        }
+      >
+        <div class="klai-broad-status">
+          <span class="klai-broad-status-label">
+            {chatState.broadMode ? t().broadModeOnLabel : t().broadModePausedLabel}
+          </span>
+          <button
+            type="button"
+            class="klai-broad-toggle-btn"
+            disabled={chatState.isStreaming || chatState.conversationStatus === "closed"}
+            onClick={() => setBroadMode(!chatState.broadMode)}
+          >
+            {chatState.broadMode ? t().broadModeOffButton : t().broadModeOnButton}
+          </button>
+        </div>
       </Show>
 
       <Show when={chatState.handoffActive}>

@@ -13,7 +13,12 @@ Derivation rules, evaluated in this order (first match wins):
    conversation, OR the last assistant answer is the canned helpdesk refusal
    that directs the visitor to support (``no_citable_sources_message(...,
    helpdesk=True)`` — the exact string the chat stores when it could not
-   answer, in either language).
+   answer, in either language), OR the last assistant answer is a consented
+   broad-mode general-knowledge answer (``is_broad_knowledge_answer`` — the
+   stored label from ``broad_mode_answer_marker``). A broad answer means the
+   help articles could not; that is a knowledge gap the dashboard must count
+   as escalated even when the visitor was helpful enough to opt in, and even
+   when they rated the answer thumbsUp (rule 1 runs before rule 3).
 2. ``abandoned`` — the conversation ends on a visitor message with no
    assistant answer after it, OR it consists of exactly one exchange
    (question + answer) that was never followed up on within the quiet period
@@ -49,7 +54,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 import structlog
-from klai_chat_prompts import no_citable_sources_message
+from klai_chat_prompts import is_broad_knowledge_answer, no_citable_sources_message
 from sqlalchemy import text
 
 from app.core.config import settings
@@ -112,10 +117,15 @@ def derive_outcome(
     last_turn = turns[-1]
     last_assistant = next((t for t in reversed(turns) if t.role == "assistant"), None)
 
-    # 1. Escalated: live human handoff, or the assistant pointed to support.
+    # 1. Escalated: live human handoff, the assistant pointed to support, or
+    # the assistant had to fall back to labelled general knowledge (the help
+    # articles did not answer — thumbsUp on such an answer does not make it
+    # a KB resolution, so this precedes the rating rule).
     if has_handoff:
         return "escalated"
     if last_assistant is not None and last_assistant.content.strip() in _SUPPORT_REFERRAL_TEXTS:
+        return "escalated"
+    if last_assistant is not None and is_broad_knowledge_answer(last_assistant.content):
         return "escalated"
 
     # 2. Abandoned: ends on an unanswered visitor message.

@@ -91,7 +91,7 @@ def _fake_tenant_session(captured: dict[str, Any], org: _FakeOrg | None = None):
     return _session
 
 
-async def _call_retrieve_context(**overrides: Any) -> tuple[list[dict], str, list[dict]]:
+async def _call_retrieve_context(**overrides: Any) -> tuple[list[dict], str, list[dict], bool]:
     kwargs: dict[str, Any] = {
         "org_id": 42,
         "zitadel_org_id": "zit-org-1",
@@ -119,7 +119,7 @@ async def test_widget_hard_gap_registers_gap_event(monkeypatch):
     monkeypatch.setattr("app.services.partner_chat.tenant_scoped_session", _fake_tenant_session(captured))
 
     with patch("app.services.partner_chat.record_gap_event", AsyncMock()) as mock_record:
-        chunks, _, _ = await _call_retrieve_context()
+        chunks, _, _, _broad = await _call_retrieve_context()
         await _drain_gap_tasks()
 
     assert chunks == []
@@ -158,7 +158,7 @@ async def test_widget_good_results_registers_no_gap_event(monkeypatch):
     monkeypatch.setattr("app.services.partner_chat.tenant_scoped_session", _fake_tenant_session(captured))
 
     with patch("app.services.partner_chat.record_gap_event", AsyncMock()) as mock_record:
-        chunks, _, _ = await _call_retrieve_context()
+        chunks, _, _, _broad = await _call_retrieve_context()
         await _drain_gap_tasks()
 
     assert len(chunks) == 1
@@ -215,7 +215,7 @@ async def test_widget_gap_soft_classification_with_none_scores(monkeypatch):
     monkeypatch.setattr("app.services.partner_chat.tenant_scoped_session", _fake_tenant_session(captured))
 
     with patch("app.services.partner_chat.record_gap_event", AsyncMock()) as mock_record:
-        chunks, _, _ = await _call_retrieve_context()
+        chunks, _, _, _broad = await _call_retrieve_context()
         await _drain_gap_tasks()
 
     assert len(chunks) == 1
@@ -240,7 +240,7 @@ async def test_widget_gap_write_failure_does_not_break_chat(monkeypatch):
         "app.services.partner_chat.record_gap_event",
         AsyncMock(side_effect=RuntimeError("database is down")),
     ):
-        chunks, system_prompt, trusted_sources = await _call_retrieve_context()
+        chunks, system_prompt, trusted_sources, _broad = await _call_retrieve_context()
         await _drain_gap_tasks()
 
     assert chunks == []

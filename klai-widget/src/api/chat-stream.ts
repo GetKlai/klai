@@ -3,6 +3,13 @@ import { fetchWidgetConfig, KlaiWidgetError } from "./widget-config";
 
 export type MessageRating = "thumbsUp" | "thumbsDown";
 
+/** Broad-mode signal for one assistant turn, from ``delta.broad_mode``:
+ * "offer" = the answer is the canned helpdesk refusal and the widget may
+ * invite the visitor to consent to general-knowledge answers; "answer" =
+ * this is a consented general-knowledge answer (the visible label is part
+ * of the stored content, the flag drives UI state only). */
+export type BroadModeSignal = "offer" | "answer";
+
 export interface Message {
   role: "user" | "assistant" | "agent";
   content: string;
@@ -16,6 +23,8 @@ export interface Message {
   turnId?: string;
   /** Visitor thumbs rating for this answer; null/undefined = not rated. */
   rating?: MessageRating | null;
+  /** Set from the stream signal above; only bot answers carry one. */
+  broadMode?: BroadModeSignal;
 }
 
 export interface MessageSource {
@@ -44,6 +53,7 @@ export interface StreamCallbacks {
   onToken: (token: string) => void;
   onSources?: (sources: MessageSource[]) => void;
   onActivity?: (activity: AgentActivity[]) => void;
+  onBroadMode?: (mode: BroadModeSignal) => void;
   onDone: () => void;
   onError: (error: KlaiWidgetError | Error) => void;
 }
@@ -57,6 +67,15 @@ interface ChatStreamOptions {
   /** Client-generated id for the assistant turn being generated; stored
    * server-side on the audit row so feedback buttons can address it. */
   widgetTurnId?: string;
+  /** Visitor's broad-mode consent for this conversation. Dropped from the
+   * body when falsy, so strict (default) traffic is byte-identical to the
+   * pre-feature request and old backends never see the field. */
+  broadMode?: boolean;
+  /** Retrieval query override for this turn (``knowledge.query``). The
+   * consent turn sends the visitor's original question here: the last
+   * user message would be the consent text itself, and both the article
+   * retrieval and the knowledge-gap event must record the real question. */
+  retrievalQuery?: string;
   callbacks: StreamCallbacks;
   abortController?: AbortController;
 }
@@ -233,7 +252,18 @@ export function normalizeAgentActivity(rawActivity: unknown): AgentActivity[] {
 }
 
 export async function streamChat(options: ChatStreamOptions): Promise<void> {
-  const { endpoint, token, messages, widgetId, pageContext, widgetTurnId, callbacks, abortController } = options;
+  const {
+    endpoint,
+    token,
+    messages,
+    widgetId,
+    pageContext,
+    widgetTurnId,
+    broadMode,
+    retrievalQuery,
+    callbacks,
+    abortController,
+  } = options;
   let currentToken = token;
   let retried = false;
 
@@ -252,6 +282,8 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
           // Dropped by JSON.stringify when absent — old backends and
           // partner-style callers never see the field.
           widget_turn_id: widgetTurnId,
+          broad_mode: broadMode || undefined,
+          knowledge: retrievalQuery ? { query: retrievalQuery } : undefined,
         }),
         signal: abortController?.signal,
         onopen: async (response) => {
@@ -281,7 +313,7 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
             | {
                 error?: { message?: string };
                 choices?: Array<{
-                  delta?: { content?: string; sources?: unknown; activity?: unknown };
+                  delta?: { content?: string; sources?: unknown; activity?: unknown; broad_mode?: unknown };
                   finish_reason?: string;
                 }>;
               }
@@ -290,7 +322,7 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
             parsed = JSON.parse(event.data) as {
               error?: { message?: string };
               choices?: Array<{
-                delta?: { content?: string; sources?: unknown; activity?: unknown };
+                delta?: { content?: string; sources?: unknown; activity?: unknown; broad_mode?: unknown };
                 finish_reason?: string;
               }>;
             };
@@ -315,6 +347,12 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
           const activity = normalizeAgentActivity(delta?.activity);
           if (activity.length > 0) {
             callbacks.onActivity?.(activity);
+          }
+          // Strict allowlist: anything other than the two known signals
+          // (future backend values included) is ignored, never guessed at.
+          const broadModeSignal = delta?.broad_mode;
+          if (broadModeSignal === "offer" || broadModeSignal === "answer") {
+            callbacks.onBroadMode?.(broadModeSignal);
           }
           if (parsed.choices?.[0]?.finish_reason === "stop") {
             callbacks.onDone();

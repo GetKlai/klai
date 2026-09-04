@@ -191,7 +191,7 @@ async def _run_chat_completions(*, support_mode_flag: bool, stream: bool):
         yield b"data: [DONE]\n\n"
 
     with (
-        patch("app.api.partner.retrieve_context", return_value=([], "prompt", [])) as mock_retrieve,
+        patch("app.api.partner.retrieve_context", return_value=([], "prompt", [], False)) as mock_retrieve,
         patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=False)),
         patch(
             "app.api.partner._widget_support_mode_enabled",

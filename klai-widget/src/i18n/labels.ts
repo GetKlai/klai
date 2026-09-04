@@ -42,6 +42,20 @@ export interface WidgetLabels {
   conversationActive: string
   conversationHandoff: string
   noPreviousConversations: string
+  // Helpdesk broad mode: shown only after the backend marks a refusal with
+  // the offer signal (help articles came up empty). The button's click sends
+  // broadConsentMessage as the visitor's turn, so it reads as natural
+  // first-person speech.
+  broadOfferPrompt: string
+  broadOfferButton: string
+  broadConsentMessage: string
+  // Indicator bar, shown while consent is on or after any broad answer in
+  // this conversation. Turning mode off/on from there is equally explicit;
+  // the label states what the mode actually does.
+  broadModeOnLabel: string
+  broadModeOffButton: string
+  broadModePausedLabel: string
+  broadModeOnButton: string
 }
 
 const nl: WidgetLabels = {
@@ -80,6 +94,14 @@ const nl: WidgetLabels = {
   conversationActive: "Actief",
   conversationHandoff: "Live support",
   noPreviousConversations: "Nog geen eerdere gesprekken.",
+  broadOfferPrompt:
+    "Ik kon dit niet in de helpartikelen vinden. Zal ik het breder opzoeken? Je krijgt dan een algemeen antwoord, duidelijk gelabeld als niet-afkomstig uit onze artikelen.",
+  broadOfferButton: "Ja, kijk breder",
+  broadConsentMessage: "Ja, kijk breder.",
+  broadModeOnLabel: "Brede modus aan — antwoorden buiten de helpartikelen zijn gelabeld.",
+  broadModeOffButton: "Zet uit",
+  broadModePausedLabel: "Brede modus uit — de bot antwoordt weer alleen uit de helpartikelen.",
+  broadModeOnButton: "Zet aan",
 }
 
 const en: WidgetLabels = {
@@ -118,6 +140,14 @@ const en: WidgetLabels = {
   conversationActive: "Active",
   conversationHandoff: "Live support",
   noPreviousConversations: "No previous conversations yet.",
+  broadOfferPrompt:
+    "I couldn't find this in our help articles. Want me to look wider? You'll get a general answer, clearly labelled as not coming from our articles.",
+  broadOfferButton: "Yes, look broader",
+  broadConsentMessage: "Yes, look broader.",
+  broadModeOnLabel: "Broad mode on — answers outside the help articles are labelled.",
+  broadModeOffButton: "Turn off",
+  broadModePausedLabel: "Broad mode off — the bot again answers only from the help articles.",
+  broadModeOnButton: "Turn on",
 }
 
 const locales: Record<string, WidgetLabels> = { nl, en }

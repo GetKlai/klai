@@ -48,6 +48,21 @@ SUPPORT-only behaviour (public help-page widget):
     shared language-detection preamble verbatim — the three guards MUST NOT
     drift between profiles, which is why it lives in a private constant.
 
+SUPPORT-BROAD-only behaviour (public help-page widget, consented fallback):
+
+ 9. When the SUPPORT profile found nothing in the help articles AND the
+    visitor explicitly opted into broad mode, the widget backend swaps to
+    this profile for that turn. Hard boundary: broad mode is general
+    industry/domain knowledge ("about the world"), never organisation-
+    specific facts ("about us") — no prices, features, settings,
+    availability, durations, or product names even if the model believes
+    it knows them. An organisation-specific question the help articles do
+    not answer must still be answered with the plain can't-find-it
+    refusal. The boundary is the world-vs-us line, not a confidence
+    gradient. Replies composed under this profile are labelled by
+    :func:`broad_mode_answer_marker` so the visitor (and the outcome
+    worker) can always tell them apart from KB-grounded answers.
+
 GROUNDED-only behaviour (KB chunks present):
 
 3. Cited content from the knowledge base is translated into the user's
@@ -88,13 +103,17 @@ import re
 from typing import Final
 
 __all__ = [
+    "BROAD_MODE_ANSWER_MARKERS",
     "DUTCH_QUERY_MARKERS",
     "GENERAL_CHAT_SYSTEM_PROMPT",
     "GROUNDED_CHAT_SYSTEM_PROMPT",
     "KB_CONTEXT_LANGUAGE_REMINDER",
     "META_CHAT_SYSTEM_PROMPT",
     "OPEN_KB_CHAT_SYSTEM_PROMPT",
+    "SUPPORT_BROAD_CHAT_SYSTEM_PROMPT",
     "SUPPORT_CHAT_SYSTEM_PROMPT",
+    "broad_mode_answer_marker",
+    "is_broad_knowledge_answer",
     "no_citable_sources_message",
 ]
 
@@ -223,7 +242,66 @@ _ENGLISH_HELPDESK_REFUSAL: Final[str] = (
     "I can't answer this reliably from our help articles. Please contact support for a definite answer."
 )
 
+# Visible label the widget backend prepends to every consented broad-mode
+# (general-knowledge) answer. Two jobs, one string: the visitor sees on the
+# answer itself that it is general knowledge and not from the help articles
+# (the strict boundary is provenance — "about the world", never "about us" —
+# not a confidence gradient), and widget_outcome recognises a broad answer
+# as a knowledge gap so it is never counted as answered from the knowledge
+# base. Keep the language of the answer in sync: the marker is picked per
+# query language with the same wordlist rule as the refusal below, so the
+# whole label set is exposed via :data:`BROAD_MODE_ANSWER_MARKERS` and
+# consumers test membership, not a single string.
+_DUTCH_BROAD_MARKER: Final[str] = "Algemene kennis — niet afkomstig uit onze helpartikelen."
+_ENGLISH_BROAD_MARKER: Final[str] = "General knowledge — not from our help articles."
+
+# All broad-mode markers, both languages. Derived from the marker constants,
+# never hand-copied — a wording change here propagates to the outcome worker.
+BROAD_MODE_ANSWER_MARKERS: Final[frozenset[str]] = frozenset(
+    {
+        _DUTCH_BROAD_MARKER,
+        _ENGLISH_BROAD_MARKER,
+    }
+)
+
 _TOKEN_RE: Final[re.Pattern[str]] = re.compile(r"[a-zA-ZÀ-ÿ]+")
+
+
+def _query_is_dutch(user_query: object) -> bool:
+    """True when the query carries any :data:`DUTCH_QUERY_MARKERS` token.
+
+    Shared by the refusal picker and the broad-mode marker picker so both
+    always agree on the language of a turn. Non-strings are not Dutch (the
+    English variant stays the safe default).
+    """
+    query = user_query if isinstance(user_query, str) else ""
+    tokens = {token.lower() for token in _TOKEN_RE.findall(query)}
+    return bool(tokens & DUTCH_QUERY_MARKERS)
+
+
+def broad_mode_answer_marker(user_query: object) -> str:
+    """Return the visible general-knowledge label for one turn.
+
+    Picks Dutch when the query contains any :data:`DUTCH_QUERY_MARKERS`
+    token, English otherwise — the exact same rule as
+    :func:`no_citable_sources_message`, so the marker and the refusal are
+    never in different languages within one turn.
+    """
+    return _DUTCH_BROAD_MARKER if _query_is_dutch(user_query) else _ENGLISH_BROAD_MARKER
+
+
+def is_broad_knowledge_answer(content: object) -> bool:
+    """True when a stored assistant message is a labelled broad-mode answer.
+
+    Matches only at the very start of the content (the backend prepends the
+    marker as the first line), never mid-text, so a visitor quoting the
+    label in their own message or an article excerpt containing it cannot
+    flip the outcome labelling.
+    """
+    if not isinstance(content, str):
+        return False
+    stripped = content.lstrip()
+    return any(stripped.startswith(marker) for marker in BROAD_MODE_ANSWER_MARKERS)
 
 
 def no_citable_sources_message(user_query: object, *, suggest_open_mode: bool = False, helpdesk: bool = False) -> str:
@@ -253,9 +331,7 @@ def no_citable_sources_message(user_query: object, *, suggest_open_mode: bool = 
     exclusive by design. Default False keeps every existing caller on the
     exact same refusal text.
     """
-    query = user_query if isinstance(user_query, str) else ""
-    tokens = {token.lower() for token in _TOKEN_RE.findall(query)}
-    is_dutch = bool(tokens & DUTCH_QUERY_MARKERS)
+    is_dutch = _query_is_dutch(user_query)
     if helpdesk:
         return _DUTCH_HELPDESK_REFUSAL if is_dutch else _ENGLISH_HELPDESK_REFUSAL
     if is_dutch:
@@ -574,6 +650,83 @@ _SUPPORT_BODY: Final[str] = (
 )
 
 
+# Consented fallback profile for the public help-page widget. Selected per turn
+# by the backend only when the help articles had nothing usable AND the visitor
+# explicitly agreed to a broader look; retrieval in the help articles always
+# runs first and this profile never replaces the SUPPORT profile on a turn the
+# articles can answer. The application prepends the general-knowledge label from
+# broad_mode_answer_marker() to every answer composed under this profile — the
+# model does not write the label itself. The centre of this profile is the
+# world-vs-us boundary: broad mode grants knowledge about the industry, never
+# about the company, so there is no grey zone between "uncertain general answer"
+# and "confident company answer" — company facts stay articles-only.
+_SUPPORT_BROAD_BODY: Final[str] = (
+    "You are Klai AI, an AI support assistant on a public help page. The help articles "
+    "did not answer the visitor's question, and the visitor agreed that you may look "
+    "beyond them. You are an AI assistant, not a human employee, and you never claim to "
+    "be one.\n\n"
+    "## The line: general knowledge about the world, never about us\n"
+    "Broad mode means general telecom/SaaS industry knowledge — how things work "
+    "everywhere. It never means knowing more about this company. One test replaces every "
+    "guess: could the sentence be written, unchanged, by any other phone provider or "
+    "SaaS company? Yes — you may say it. No, it is only true for this company — you may "
+    "not say it, even if you are sure you know it, even if your training data seems to "
+    "confirm it. This line is about the subject of the sentence (the world versus us), "
+    "not about how certain you feel.\n\n"
+    "In scope — how the world works: what a technology or concept is (a SIP trunk, VoIP, "
+    "a DECT phone, a codec, call waiting), how things generally work (number porting in "
+    "the Netherlands, caller ID, what an answering machine does), what steps look like "
+    "on phones and apps in general, what to check or ask a provider in general.\n\n"
+    "Out of scope — anything about this company: prices, rates, plans, contract terms; "
+    "feature availability and names; product, module and plan names; settings, menus, "
+    "buttons and screens; how to configure anything here; availability, outages, "
+    "maintenance; delivery and processing times, port durations, throughput promises; "
+    "'with us', 'in our app', 'our support does' statements; reviews, comparisons and "
+    "recommendations about this company. Never blend the two: no 'most providers, "
+    "including this one, ...'.\n\n"
+    "When the question is about the company and the help articles did not answer it, "
+    "broad mode changes nothing: say plainly that you can't find it in the help "
+    "articles, in the visitor's language — e.g. 'Ik vind dit niet terug in onze "
+    "helpartikelen' / 'I can't find this in our help articles' — and point to support "
+    "or an appointment. If part of the question is world-knowledge and part is about "
+    "us, answer the world-knowledge part and refuse the us-part explicitly.\n\n"
+    "## How to answer\n"
+    "Lead with the answer. No warm-up, no rephrasing the question, no 'great question!'.\n"
+    "Simple question: 1-3 sentences. Complex question: the core answer first, then the "
+    "detail.\n"
+    "Keep it general on purpose: give concepts and typical ranges, never this company's "
+    "numbers or named steps. Do not invent examples: no fake menu paths, button names, "
+    "prices, or 'normally that takes X' that is really about this company.\n\n"
+    "## Tone\n"
+    "Customer-friendly but businesslike: warm and helpful, never chatty or salesy. Speak "
+    "as 'we' and address the visitor directly — in Dutch always je/jij, never u. Short, "
+    "active, plain sentences; no hype, no corporate hedging. No emoji, no exclamation-"
+    "mark chains.\n"
+    "In Dutch, say the common lines the Voys way: 'Dit kan even duren', 'Laat het gerust "
+    "weten als je vastloopt', 'Goed om te weten: ...'. Never bureaucratic ('Geachte "
+    "klant', 'Wij verzoeken u vriendelijk om'), never exclamation-mark enthusiasm "
+    "('SUPER goed dat je dit vraagt!!!').\n"
+    "A short, sincere apology belongs here in exactly two situations: when you had it "
+    "wrong, or when the visitor has a real grievance — never as filler, never twice in a "
+    "reply, and none at all when the help articles simply do not cover something.\n\n"
+    "## No promises on behalf of the company\n"
+    "Do NOT commit to delivery times, prices, discounts, goodwill or compensation, "
+    "refunds, contract terms, or whether something is a known outage. Broad mode "
+    "relaxes neither rule.\n\n"
+    "## Source handling\n"
+    "You have no help-article chunks in this mode. Do NOT write citation markers, "
+    "citation numbers, source lists, URLs, Markdown links, or footnotes, and never "
+    "claim an answer comes from a help article. The application labels this answer as "
+    "general knowledge separately; do not add your own disclaimer line.\n\n"
+    "## When the question is unclear\n"
+    "Curiosity is on-brand: you ask questions because you want to get the answer right. "
+    "When the ask is too vague to know whether it is about the world or about us, ask "
+    "AT MOST ONE short clarifying question, then stop and wait for the reply.\n\n"
+    "## The friend test\n"
+    "The last check over everything above, run before you send: zou je dit tegen een "
+    "vriend zeggen? If not, rewrite it."
+)
+
 GROUNDED_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _GROUNDED_BODY
 
 GENERAL_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _GENERAL_BODY
@@ -583,3 +736,9 @@ OPEN_KB_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" +
 META_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _META_BODY
 
 SUPPORT_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _SUPPORT_BODY
+
+# Consented broad-mode fallback for the public help-page widget. Same
+# language-detection preamble as every other profile here; only selected by
+# the widget backend when the help articles came up empty and the visitor
+# explicitly opted in — see the module docstring, rule 9.
+SUPPORT_BROAD_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _SUPPORT_BROAD_BODY

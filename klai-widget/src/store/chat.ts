@@ -1,6 +1,6 @@
 import { createStore } from "solid-js/store";
 import type { WidgetConfig } from "../api/widget-config";
-import type { AgentActivity, Message, MessageRating, MessageSource } from "../api/chat-stream";
+import type { AgentActivity, BroadModeSignal, Message, MessageRating, MessageSource } from "../api/chat-stream";
 import { normalizeAgentActivity, normalizeMessageSources } from "../api/chat-stream";
 
 export type ConversationStatus = "active" | "handoff_active" | "closed";
@@ -38,6 +38,12 @@ export interface ChatState {
   rememberIdentity: boolean;
   conversationStatus: ConversationStatus;
   conversations: ConversationListItem[];
+  // Helpdesk broad mode: the visitor consented for this conversation to
+  // receive labelled general-knowledge answers when the help articles come
+  // up short. Off by default and per conversation — consent is never a
+  // site-wide or cross-conversation setting, and it is only ever requested
+  // by a backend offer on a real knowledge gap.
+  broadMode: boolean;
 }
 
 // Stored identity is wiped after this many milliseconds. The visitor's
@@ -55,6 +61,10 @@ interface PersistedConversation {
   status: ConversationStatus;
   createdAt: number;
   updatedAt: number;
+  // Optional field inside schema version 3: entries written before broad
+  // mode exist and read back as consent-off (normalizeConversation pins
+  // it); newer entries read by older widget builds simply ignore the key.
+  broadMode?: boolean;
 }
 
 interface PersistedWidgetStateV1 {
@@ -111,6 +121,7 @@ const initialState: ChatState = {
   rememberIdentity: false,
   conversationStatus: "active",
   conversations: [],
+  broadMode: false,
 };
 
 export const [chatState, setChatState] = createStore<ChatState>(initialState);
@@ -206,6 +217,7 @@ function normalizeConversation(value: Partial<PersistedConversation>): Persisted
     status,
     createdAt: Number(value.createdAt || now),
     updatedAt: Number(value.updatedAt || now),
+    broadMode: value.broadMode === true,
   };
 }
 
@@ -319,6 +331,7 @@ function snapshotCurrentConversation(status = chatState.conversationStatus): Per
     status: handoffActive ? "handoff_active" : status,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
+    broadMode: chatState.broadMode,
   };
 }
 
@@ -416,6 +429,7 @@ export function initStore(widgetId: string, config: WidgetConfig, clientSessionI
     rememberIdentity: persisted?.identity != null,
     conversationStatus: conversation.status,
     conversations: conversationList(),
+    broadMode: conversation.broadMode === true,
   });
   schedulePersist();
 }
@@ -451,6 +465,7 @@ export function switchConversation(config: WidgetConfig, conversationId: string)
     agentName: existing.agentName,
     conversationStatus: existing.status,
     conversations: conversationList(),
+    broadMode: existing.broadMode === true,
   });
   schedulePersist();
 }
@@ -485,6 +500,7 @@ export function startNewConversation(config: WidgetConfig, conversationId: strin
     agentName: null,
     conversationStatus: "active",
     conversations: conversationList(),
+    broadMode: false,
   });
   schedulePersist();
 }
@@ -552,6 +568,31 @@ export function startAssistantMessage(turnId: string): void {
 
 export function setMessageRating(index: number, rating: MessageRating | null): void {
   setChatState("messages", index, "rating", rating);
+  schedulePersist();
+}
+
+/** Visitor (or the indicator's on-button) gave broad-mode consent for this
+ * conversation. Turning it off is always available and equally explicit;
+ * the flag only selects the fallback profile for later turns — retrieval
+ * runs first regardless, so a broad answer can never mask a gap event. */
+export function setBroadMode(value: boolean): void {
+  setChatState("broadMode", value);
+  schedulePersist();
+}
+
+/** Records the backend's per-turn broad-mode signal ("offer" after an
+ * unanswerable helpdesk refusal, "answer" for a labelled general-knowledge
+ * answer) on the assistant message being streamed. Persisted with the
+ * conversation so reloads keep the message-level UI state. */
+export function setLastMessageBroadMode(mode: BroadModeSignal): void {
+  setChatState("messages", (msgs) => {
+    const updated = [...msgs];
+    const last = updated[updated.length - 1];
+    if (last && last.role === "assistant") {
+      updated[updated.length - 1] = { ...last, broadMode: mode };
+    }
+    return updated;
+  });
   schedulePersist();
 }
 

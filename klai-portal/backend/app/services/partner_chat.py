@@ -33,7 +33,9 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from klai_chat_prompts import (
     GROUNDED_CHAT_SYSTEM_PROMPT,
     KB_CONTEXT_LANGUAGE_REMINDER,
+    SUPPORT_BROAD_CHAT_SYSTEM_PROMPT,
     SUPPORT_CHAT_SYSTEM_PROMPT,
+    broad_mode_answer_marker,
 )
 from klai_chat_prompts import (
     no_citable_sources_message as _no_citable_sources_message,
@@ -1276,6 +1278,11 @@ def _sse_activity_delta(activity: list[dict[str, str | int]]) -> bytes:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
 
 
+def _sse_broad_mode_delta(mode: str) -> bytes:
+    payload = {"choices": [{"delta": {"broad_mode": mode}}]}
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
+
+
 def _sse_error_frame(message: str) -> bytes:
     """OpenAI-compatible SSE error frame.
 
@@ -1519,6 +1526,7 @@ def _compose_backend_managed_answer(
     web_chunks: list[dict] | None = None,
     web_query: str | None = None,
     helpdesk: bool = False,
+    broad: bool = False,
 ) -> tuple[str, list[dict], dict[str, Any]]:
     """Compose the answer with KB and (optionally) web sources as separate tiers.
 
@@ -1537,7 +1545,25 @@ def _compose_backend_managed_answer(
     ``helpdesk`` selects the customer-facing refusal wording (help articles +
     offer to reach support) instead of the internal-team "kennisbronnen" phrasing.
     Default False keeps every existing caller's refusal text identical.
+
+    ``broad`` marks a consented general-knowledge turn on the helpdesk widget:
+    the model had the SUPPORT_BROAD profile, no article context was injected,
+    and web search never runs for widget keys — so there is no evidence tier
+    for the citation firewall to select from. The answer is labelled as general
+    knowledge here (never by the model) and returns with empty sources. Public
+    refusal decisions additionally carry ``broad_mode`` ("answer" / "offer") so
+    the stream wrapper can emit the matching widget signal.
     """
+    if broad:
+        if not text.strip():
+            # The model produced nothing even with the broad profile; stay on
+            # the honest refusal. No offer signal: consent already happened.
+            return _no_citable_sources_message(user_query, helpdesk=helpdesk), [], {
+                "reason": "broad_mode_no_output",
+            }
+        marker = broad_mode_answer_marker(user_query)
+        return f"{marker}\n\n{text.strip()}", [], {"reason": "broad_mode_answer", "broad_mode": "answer"}
+
     composed = compose_answer_with_trusted_sources(
         text,
         trusted_sources or [],
@@ -1545,7 +1571,10 @@ def _compose_backend_managed_answer(
         evidence_chunks=citation_chunks or [],
     )
     if not composed.content:
-        return _no_citable_sources_message(user_query, helpdesk=helpdesk), [], composed.decision
+        decision = dict(composed.decision)
+        if helpdesk:
+            decision["broad_mode"] = "offer"
+        return _no_citable_sources_message(user_query, helpdesk=helpdesk), [], decision
 
     kb_sources = [{**source, "origin": "kb"} for source in composed.sources]
     web_sources: list[dict] = []
@@ -1571,6 +1600,8 @@ def _compose_backend_managed_answer(
 
     sources = _renumber_sources(kb_sources + web_sources)
     if not sources:
+        if helpdesk:
+            decision["broad_mode"] = "offer"
         return _no_citable_sources_message(user_query, helpdesk=helpdesk), [], decision
     return composed.content, sources, decision
 
@@ -1618,6 +1649,7 @@ async def _chat_completion_streaming_with_composed_citations(
     web_query: str | None = None,
     emit_sources: bool = True,
     support_mode: bool = False,
+    broad_mode: bool = False,
 ) -> AsyncGenerator[bytes]:
     """Collect text, compose deterministic citations, then stream once.
 
@@ -1628,6 +1660,12 @@ async def _chat_completion_streaming_with_composed_citations(
     Marker mode buffers the whole upstream response before emitting anything, so
     an upstream failure (LiteLLM mid-restart / 5xx) happens pre-first-byte and is
     surfaced as a clean SSE error frame instead of a broken stream.
+
+    ``broad_mode`` is the API layer's decision (see ``_broad_mode_active``) that
+    this turn is a consented general-knowledge answer; it reaches the composer
+    unchanged. Both the composer's answer label and its offer signal on a public
+    refusal surface as a ``delta.broad_mode`` frame before content, so the widget
+    can label the message or render the consent button without parsing prose.
     """
     raw_text_parts: list[str] = []
     chat_url = f"{settings.litellm_base_url}/v1/chat/completions"
@@ -1689,6 +1727,7 @@ async def _chat_completion_streaming_with_composed_citations(
         web_chunks,
         web_query,
         helpdesk=support_mode,
+        broad=broad_mode,
     )
     if safety_reason := output_safety_violation("".join(raw_text_parts)):
         logger.warning(
@@ -1707,6 +1746,12 @@ async def _chat_completion_streaming_with_composed_citations(
         decision=decision,
     )
     _log_citation_rescues(decision, org_id=org_id)
+    # Safety refusals above replace the decision dict, so no broad signal
+    # survives on a blocked turn — deliberate: a blocked answer neither
+    # labels itself general knowledge nor invites the visitor to broaden.
+    broad_signal = decision.get("broad_mode") if isinstance(decision, dict) else None
+    if broad_signal in ("offer", "answer"):
+        yield _sse_broad_mode_delta(broad_signal)
     if citation_chunks:
         yield _sse_activity_delta(
             [
@@ -1761,6 +1806,22 @@ async def _chat_completion_streaming_with_composed_citations(
     )
 
 
+def _broad_mode_active(chunks: list[dict], *, support_mode: bool, broad_consent: bool) -> bool:
+    """Single source of truth for "answer this turn from general knowledge".
+
+    True only for a public help-page widget (``support_mode``) whose visitor
+    explicitly consented (``broad_consent``) AND whose help-article retrieval
+    came up empty or weak — measured with the exact same
+    :func:`classify_gap` call that fires the gap event, so a broad answer and
+    a knowledge-gap row always mean the same turn. Retrieval itself is never
+    skipped: this decides the fallback profile for the turn, not whether we
+    searched. It runs once, inside ``retrieve_context``, and the resulting
+    flag travels to the API layer as the fourth tuple element — the prompt
+    the model saw and the label the visitor gets can therefore never disagree.
+    """
+    return bool(support_mode and broad_consent and classify_gap(chunks) is not None)
+
+
 def _build_system_prompt(
     chunks: list[dict],
     original_system: str | None = None,
@@ -1768,17 +1829,26 @@ def _build_system_prompt(
     page_context: PageContext | None = None,
     backend_managed_citations: bool = False,
     support_mode: bool = False,
+    broad_mode: bool = False,
 ) -> str:
     """Build a grounded system prompt augmented with retrieved context chunks.
 
     ``support_mode`` swaps the default profile from the internal-team GROUNDED
     prompt to the customer-facing SUPPORT_CHAT_SYSTEM_PROMPT for public
-    help-page widgets. It only changes the default: an explicit
-    ``original_system`` from the caller still wins, and the widget behaviour
-    instructions, page context, safety hierarchy, and source-handling below are
-    unchanged in either mode.
+    help-page widgets. ``broad_mode`` (only meaningful with ``support_mode``)
+    swaps further to the consented general-knowledge fallback
+    SUPPORT_BROAD_CHAT_SYSTEM_PROMPT; callers must also pass an empty chunk
+    list so no help-article context is injected on a broad turn. Both flags
+    only change the default: an explicit ``original_system`` from the caller
+    still wins, and the widget behaviour instructions, page context, safety
+    hierarchy, and source-handling below are unchanged in every mode.
     """
-    default_prompt = SUPPORT_CHAT_SYSTEM_PROMPT if support_mode else GROUNDED_CHAT_SYSTEM_PROMPT
+    if support_mode and broad_mode:
+        default_prompt = SUPPORT_BROAD_CHAT_SYSTEM_PROMPT
+    elif support_mode:
+        default_prompt = SUPPORT_CHAT_SYSTEM_PROMPT
+    else:
+        default_prompt = GROUNDED_CHAT_SYSTEM_PROMPT
     base = original_system or default_prompt
     widget_system_prompt = (widget_system_prompt or "").strip()
     if widget_system_prompt:
@@ -1951,10 +2021,22 @@ async def retrieve_context(
     top_k: int = 8,
     retrieval_enabled: bool = True,
     support_mode: bool = False,
-) -> tuple[list[dict], str, list[dict[str, Any]]]:
-    """Call retrieval-api and return (chunks, augmented_system_prompt).
+    broad_mode: bool = False,
+) -> tuple[list[dict], str, list[dict[str, Any]], bool]:
+    """Call retrieval-api and return (chunks, augmented_system_prompt, trusted_sources, broad).
 
     Follows the pattern from deploy/litellm/klai_knowledge.py.
+
+    ``broad_mode`` is the helpdesk widget's per-turn visitor consent. When it
+    combines with ``support_mode`` AND a real retrieval attempt that produced a
+    hard or soft gap, the turn answers from general knowledge instead: the
+    prompt swaps to the SUPPORT_BROAD profile with no article context, the
+    returned trusted_sources are emptied so nothing downstream can cite, and
+    the fourth tuple element is True (the caller labels the answer). The gap
+    event still fires — a broad answer is still a knowledge gap. Every early
+    return (retrieval off, no query, no retrieval url, identity-assertion
+    degradation) yields broad=False: no consented broad answer is served
+    without an actual retrieval attempt that came up short.
 
     ``partner_user_id`` (F2 audit cleanup, 2026-05-06): when given, attached
     to the /retrieve body as ``user_id``. retrieval-api recognizes the
@@ -1998,6 +2080,7 @@ async def retrieve_context(
                 support_mode=support_mode,
             ),
             [],
+            False,
         )
 
     conversation_history = _build_conversation_history(messages)
@@ -2036,6 +2119,7 @@ async def retrieve_context(
                 support_mode=support_mode,
             ),
             [],
+            False,
         )
 
     # SPEC-SEC-010 REQ-6.1: authenticate to retrieval-api with the dedicated
@@ -2078,6 +2162,7 @@ async def retrieve_context(
                     support_mode=support_mode,
                 ),
                 [],
+                False,
             )
         result = resp.json()
     retrieval_ms = int((time.perf_counter() - retrieval_started) * 1000)
@@ -2103,13 +2188,20 @@ async def retrieve_context(
     if blocked_chunk_count:
         chunks = safe_chunks
         trusted_sources = _filter_trusted_sources_for_chunks(trusted_sources, chunks)
+    # Consented general-knowledge fallback: decided here, on the same
+    # post-safety-filter chunks the gap event sees, and surfaced to the caller
+    # as the fourth tuple element so the prompt swap and the answer label can
+    # never disagree. On a broad turn no article context is injected and no
+    # sources can be cited, regardless of what the weak chunks might support.
+    broad = _broad_mode_active(chunks, support_mode=support_mode, broad_consent=broad_mode)
     system_prompt = _build_system_prompt(
-        chunks,
+        [] if broad else chunks,
         original_system,
         widget_system_prompt,
         page_context=cleaned_page_context,
         backend_managed_citations=backend_managed_citations,
         support_mode=support_mode,
+        broad_mode=broad,
     )
 
     # --- Gap detection (KB-014) ---
@@ -2125,7 +2217,7 @@ async def retrieve_context(
         retrieval_ms=retrieval_ms,
     )
 
-    return chunks, system_prompt, trusted_sources
+    return chunks, system_prompt, ([] if broad else trusted_sources), broad
 
 
 def _extract_completion_text(body: dict) -> str:
@@ -2161,12 +2253,18 @@ async def chat_completion_non_streaming(
     source_query: str | None = None,
     page_context: PageContext | None = None,
     support_mode: bool = False,
+    broad_mode: bool = False,
 ) -> dict:
     """Forward to LiteLLM and return complete response as dict.
 
     POST to litellm with stream=false. Emits the
     ``chat_synthesis_complete`` log event before returning so
     cross-lingual correctness is observable on every call (REQ-07).
+
+    ``broad_mode`` is the API layer's per-turn general-knowledge decision
+    (only ever True for the consented helpdesk widget); on the marker path it
+    reaches the composer, and the resulting signal surfaces as
+    ``message.broad_mode`` ("answer" | "offer") for non-streaming widget use.
     """
     augmented_messages = _augment_messages_with_system_prompt(messages, system_prompt, page_context)
 
@@ -2245,6 +2343,7 @@ async def chat_completion_non_streaming(
                     web_chunks,
                     web_query,
                     helpdesk=support_mode,
+                    broad=broad_mode,
                 )
                 logger.info(
                     "partner_chat_citation_selection_decision",
@@ -2255,6 +2354,8 @@ async def chat_completion_non_streaming(
                 _log_citation_rescues(decision, org_id=org_id)
                 message["content"] = rendered_content
                 message["sources"] = sources
+                if isinstance(decision, dict) and decision.get("broad_mode") in ("offer", "answer"):
+                    message["broad_mode"] = decision["broad_mode"]
         stripped_links = 0
     else:
         stripped_links = _sanitize_completion_body(
@@ -2316,12 +2417,17 @@ async def chat_completion_streaming(
     emit_sources: bool = True,
     page_context: PageContext | None = None,
     support_mode: bool = False,
+    broad_mode: bool = False,
 ) -> AsyncGenerator[bytes]:
     """Stream LiteLLM SSE response with backend-managed KB citations.
 
     Marker mode is the current partner/widget API path: it buffers the model
     output, runs the deterministic citation composer, then emits only sources
     that support the final answer. Link mode is the legacy sanitizer path.
+
+    ``broad_mode`` is the API layer's per-turn general-knowledge decision
+    (see ``_broad_mode_active``); it only affects the marker path and is
+    ignored by the legacy link sanitizer.
     """
 
     augmented_messages = _augment_messages_with_system_prompt(messages, system_prompt, page_context)
@@ -2340,6 +2446,7 @@ async def chat_completion_streaming(
             web_query=web_query,
             emit_sources=emit_sources,
             support_mode=support_mode,
+            broad_mode=broad_mode,
         ):
             yield chunk
         return

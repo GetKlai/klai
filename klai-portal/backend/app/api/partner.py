@@ -197,6 +197,15 @@ class ChatCompletionsRequest(BaseModel):
     # embedding retrieval and is often a long labelled blob that returns nothing
     # from a keyword engine. Falls back to the last user message when omitted.
     web_search_query: str | None = Field(default=None, max_length=_MAX_WEB_SEARCH_QUERY_CHARS)
+    # Per-turn visitor consent for the helpdesk widget's broad mode: when this
+    # turn's help-article retrieval comes up empty or weak, answer from general
+    # domain knowledge instead of refusing — labelled as general knowledge,
+    # never citing help articles, and never for company-specific claims (the
+    # boundary lives in the prompt profile). Honoured only while the widget
+    # runs in support mode; ignored for partner API keys, whose behaviour is
+    # unchanged. Retrieval always runs first regardless, so knowledge gaps
+    # keep being recorded even when a broad answer follows.
+    broad_mode: bool = False
     # Widget feedback addressing: the widget client generates one random hex
     # id per assistant turn and sends it here; the audit writer stores it on
     # the assistant ``widget_messages`` row, and POST /partner/v1/widget/
@@ -1717,7 +1726,13 @@ async def chat_completions(  # noqa: C901
     )
 
     try:
-        chunks, system_prompt, trusted_sources = await retrieve_context(
+        # ``broad`` (4th element) is retrieve_context's per-turn decision:
+        # support mode + visitor consent + a real retrieval attempt that
+        # produced a gap. It drives the no-chunks handoff below so a broad
+        # answer can neither cite weak chunks nor show a misleading
+        # "passages gevonden" activity. The retrieval log still records the
+        # real (weak) chunks: retrieval genuinely ran.
+        chunks, system_prompt, trusted_sources, broad_turn = await retrieve_context(
             org_id=auth.org_id,
             zitadel_org_id=auth.zitadel_org_id,
             kb_slugs=kb_slugs,
@@ -1728,6 +1743,7 @@ async def chat_completions(  # noqa: C901
             page_context=page_context,
             backend_managed_citations=True,
             support_mode=support_mode,
+            broad_mode=bool(request.broad_mode),
             retrieval_query=knowledge.query if knowledge is not None else None,
             top_k=knowledge.top_k if knowledge is not None and knowledge.top_k is not None else 8,
             retrieval_enabled=knowledge.enabled if knowledge is not None else True,
@@ -1846,7 +1862,7 @@ async def chat_completions(  # noqa: C901
             allowed_source_urls=allowed_source_urls,
             citation_source_urls=citation_source_urls,
             citation_source_metadata=citation_source_metadata,
-            citation_chunks=chunks,
+            citation_chunks=[] if broad_turn else chunks,
             web_chunks=web_chunks,
             web_query=web_query,
             trusted_sources=trusted_sources,
@@ -1855,6 +1871,7 @@ async def chat_completions(  # noqa: C901
             emit_sources=knowledge.include_sources if knowledge is not None else True,
             page_context=page_context,
             support_mode=support_mode,
+            broad_mode=broad_turn,
         )
         if audit_ready:
             streaming_gen = _audit_streaming_wrapper(
@@ -1881,7 +1898,7 @@ async def chat_completions(  # noqa: C901
         allowed_source_urls=allowed_source_urls,
         citation_source_urls=citation_source_urls,
         citation_source_metadata=citation_source_metadata,
-        citation_chunks=chunks,
+        citation_chunks=[] if broad_turn else chunks,
         web_chunks=web_chunks,
         web_query=web_query,
         trusted_sources=trusted_sources,
@@ -1889,6 +1906,7 @@ async def chat_completions(  # noqa: C901
         source_query=knowledge.query if knowledge is not None else None,
         page_context=page_context,
         support_mode=support_mode,
+        broad_mode=broad_turn,
     )
     if knowledge is not None and not knowledge.include_sources:
         for choice in result.get("choices") or []:

@@ -158,6 +158,10 @@ interface MessageListProps {
   messages: Message[];
   isStreaming: boolean;
   error: string | null;
+  /** Offered after a helpdesk refusal the articles could not answer: the
+   * click hands the refusal's message index back so the parent can resolve
+   * the original question for retrieval and run the consent turn. */
+  onBroadConsent?: (offerIndex: number) => void;
 }
 
 export function MessageList(props: MessageListProps) {
@@ -205,10 +209,23 @@ export function MessageList(props: MessageListProps) {
               }).catch(() => undefined);
             }
           };
+          // The broad-mode offer stays live only while the refusal is still
+          // the current answer: any later visitor message or bot answer
+          // retires the button (the backend re-offers if a new gap appears).
+          const offerLive =
+            message.broadMode === "offer" &&
+            !chatState.broadMode &&
+            props.messages
+              .slice(index() + 1)
+              .every((m) => m.role === "assistant" && !m.content.trim());
           return (
             <Show when={!isEmpty}>
               <div
-                class={`klai-message klai-message--${message.role}`}
+                class={
+                  message.broadMode === "answer" && message.role === "assistant"
+                    ? `klai-message klai-message--${message.role} klai-message--broad`
+                    : `klai-message klai-message--${message.role}`
+                }
                 aria-label={`${message.role === "user" ? "You" : message.role === "agent" ? "Agent" : "Assistant"}: ${message.content}`}
               >
                 {message.role === "user" ? (
@@ -222,6 +239,23 @@ export function MessageList(props: MessageListProps) {
                   </>
                 )}
               </div>
+              {/* Consent invitation under the refusal bubble. The refusal
+                itself stays the stored, byte-identical helpdesk text — this
+                block is widget-rendered UI (i18n), not chat content, so the
+                escalation analytics keep matching the canned string. */}
+              <Show when={offerLive}>
+                <div class="klai-broad-offer">
+                  <p class="klai-broad-offer-text">{t().broadOfferPrompt}</p>
+                  <button
+                    type="button"
+                    class="klai-broad-offer-btn"
+                    disabled={props.isStreaming}
+                    onClick={() => props.onBroadConsent?.(index())}
+                  >
+                    {t().broadOfferButton}
+                  </button>
+                </div>
+              </Show>
               <Show when={message.role === "assistant" && message.turnId}>
                 <div class="klai-feedback" role="group" aria-label={t().feedbackGroupLabel}>
                   <button

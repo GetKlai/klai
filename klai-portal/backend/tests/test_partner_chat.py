@@ -357,7 +357,7 @@ async def test_partial_kb_id_resolution_proceeds_with_resolved_subset():
 
     with structlog.testing.capture_logs() as cap:
         with (
-            patch("app.api.partner.retrieve_context", return_value=([], "prompt", [])) as mock_retrieve,
+            patch("app.api.partner.retrieve_context", return_value=([], "prompt", [], False)) as mock_retrieve,
             patch("app.api.partner.chat_completion_non_streaming", return_value=litellm_response),
             patch("app.api.partner.asyncio"),
         ):
@@ -400,7 +400,7 @@ async def test_key_with_kb_access_and_no_requested_ids_passes_slugs_to_retrieval
     }
 
     with (
-        patch("app.api.partner.retrieve_context", return_value=([], "prompt", [])) as mock_retrieve,
+        patch("app.api.partner.retrieve_context", return_value=([], "prompt", [], False)) as mock_retrieve,
         patch("app.api.partner.chat_completion_non_streaming", return_value=litellm_response),
         patch("app.api.partner.asyncio"),
     ):
@@ -533,7 +533,7 @@ async def test_happy_path_non_streaming():
     }
 
     with (
-        patch("app.api.partner.retrieve_context", return_value=([{"chunk_id": "c1", "text": "ctx"}], "prompt", [])),
+        patch("app.api.partner.retrieve_context", return_value=([{"chunk_id": "c1", "text": "ctx"}], "prompt", [], False)),
         patch("app.api.partner.chat_completion_non_streaming", return_value=litellm_response),
         patch("app.api.partner.asyncio"),
     ):
@@ -570,7 +570,7 @@ async def test_retrieval_log_scheduled():
     with (
         patch(
             "app.api.partner.retrieve_context",
-            return_value=([{"chunk_id": "c1", "text": "ctx", "reranker_score": 0.9}], "prompt", []),
+            return_value=([{"chunk_id": "c1", "text": "ctx", "reranker_score": 0.9}], "prompt", [], False),
         ),
         patch("app.api.partner.chat_completion_non_streaming", return_value=litellm_response),
         patch("app.api.partner.asyncio") as mock_asyncio,
@@ -609,7 +609,7 @@ async def test_kb_id_to_slug_translation():
     }
 
     with (
-        patch("app.api.partner.retrieve_context", return_value=([], "prompt", [])) as mock_retrieve,
+        patch("app.api.partner.retrieve_context", return_value=([], "prompt", [], False)) as mock_retrieve,
         patch("app.api.partner.chat_completion_non_streaming", return_value=litellm_response),
         patch("app.api.partner.asyncio"),
     ):
@@ -652,7 +652,7 @@ async def test_knowledge_options_override_retrieval_query_kbs_and_top_k():
     }
 
     with (
-        patch("app.api.partner.retrieve_context", return_value=([], "prompt", [])) as mock_retrieve,
+        patch("app.api.partner.retrieve_context", return_value=([], "prompt", [], False)) as mock_retrieve,
         patch("app.api.partner.chat_completion_non_streaming", return_value=litellm_response) as mock_chat,
         patch("app.api.partner.asyncio"),
     ):
@@ -758,7 +758,7 @@ async def test_streaming_returns_event_stream_content_type():
         yield b"data: [DONE]\n\n"
 
     with (
-        patch("app.api.partner.retrieve_context", return_value=([{"chunk_id": "c1", "text": "ctx"}], "prompt", [])),
+        patch("app.api.partner.retrieve_context", return_value=([{"chunk_id": "c1", "text": "ctx"}], "prompt", [], False)),
         patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()),
         patch("app.api.partner.asyncio"),
     ):
@@ -817,6 +817,7 @@ async def test_widget_streaming_uses_structured_citation_mode():
                         "url": "https://www.getklai.com/docs/legal/privacy",
                     }
                 ],
+                False,  # broad-turn flag (4-tuple from retrieve_context)
             ),
         ) as mock_retrieve,
         patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=True)),
@@ -873,7 +874,7 @@ async def test_widget_page_context_ignored_when_disabled():
         yield b"data: [DONE]\n\n"
 
     with (
-        patch("app.api.partner.retrieve_context", return_value=([], "prompt", [])) as mock_retrieve,
+        patch("app.api.partner.retrieve_context", return_value=([], "prompt", [], False)) as mock_retrieve,
         patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=False)),
         patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()),
         patch("app.api.partner.asyncio"),
@@ -923,6 +924,7 @@ async def test_partner_streaming_uses_backend_managed_citations():
                         "url": "https://www.getklai.com/docs/klai-help/invite-and-remove-people",
                     }
                 ],
+                False,  # broad-turn flag (4-tuple from retrieve_context)
             ),
         ) as mock_retrieve,
         patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()) as chat_stream,
@@ -961,7 +963,7 @@ async def test_streaming_chunks_forwarded():
             yield chunk
 
     with (
-        patch("app.api.partner.retrieve_context", return_value=([{"chunk_id": "c1", "text": "ctx"}], "prompt", [])),
+        patch("app.api.partner.retrieve_context", return_value=([{"chunk_id": "c1", "text": "ctx"}], "prompt", [], False)),
         patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()),
         patch("app.api.partner.asyncio"),
     ):
@@ -997,7 +999,7 @@ async def test_streaming_done_terminator():
         yield b"data: [DONE]\n\n"
 
     with (
-        patch("app.api.partner.retrieve_context", return_value=([], "prompt", [])),
+        patch("app.api.partner.retrieve_context", return_value=([], "prompt", [], False)),
         patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()),
         patch("app.api.partner.asyncio"),
     ):
@@ -1031,7 +1033,7 @@ async def test_streaming_retrieval_log_fires():
         yield b"data: [DONE]\n\n"
 
     with (
-        patch("app.api.partner.retrieve_context", return_value=([{"chunk_id": "c1"}], "prompt", [])),
+        patch("app.api.partner.retrieve_context", return_value=([{"chunk_id": "c1"}], "prompt", [], False)),
         patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()),
         patch("app.api.partner.asyncio") as mock_asyncio,
     ):
@@ -2919,7 +2921,7 @@ async def test_retrieve_context_can_disable_retrieval(monkeypatch):
     fake_settings.retrieval_api_internal_secret = "secret"
     fake_settings.internal_secret = "fallback"
 
-    chunks, system_prompt, trusted_sources = await retrieve_context(
+    chunks, system_prompt, trusted_sources, _broad = await retrieve_context(
         org_id=42,
         zitadel_org_id="z-1",
         kb_slugs=["support"],
@@ -3031,7 +3033,7 @@ async def test_retrieve_context_degrades_identity_assertion_403_to_no_kb(monkeyp
     fake_settings.retrieval_api_internal_secret = "secret"
     fake_settings.internal_secret = "fallback"
 
-    chunks, system_prompt, trusted_sources = await retrieve_context(
+    chunks, system_prompt, trusted_sources, _broad = await retrieve_context(
         org_id=42,
         zitadel_org_id="z-1",
         kb_slugs=[],
@@ -3186,7 +3188,7 @@ async def test_retrieve_context_drops_unsafe_page_context(monkeypatch):
     fake_settings.retrieval_api_internal_secret = "secret"
     fake_settings.internal_secret = "fallback"
 
-    _, system_prompt, _ = await retrieve_context(
+    _, system_prompt, _, _broad = await retrieve_context(
         org_id=42,
         zitadel_org_id="z-1",
         kb_slugs=[],
@@ -3266,7 +3268,7 @@ async def test_retrieve_context_drops_unsafe_retrieved_chunks(monkeypatch):
     fake_settings.retrieval_api_internal_secret = "secret"
     fake_settings.internal_secret = "fallback"
 
-    chunks, system_prompt, trusted_sources = await retrieve_context(
+    chunks, system_prompt, trusted_sources, _broad = await retrieve_context(
         org_id=42,
         zitadel_org_id="z-1",
         kb_slugs=[],

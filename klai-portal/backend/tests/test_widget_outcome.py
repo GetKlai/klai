@@ -3,7 +3,8 @@
 Covers:
   AC-O.1 — derive_outcome rules: one test per outcome value
            (escalated / abandoned / resolved / unknown) and the
-           precedence edges (handoff, support-refusal, thumbsUp vs one-turn).
+           precedence edges (handoff, support-refusal, broad-mode answer,
+           thumbsUp vs one-turn).
   AC-O.2 — the background loop is tenant-scoped: a conversation in org 1
            is never labelled through org 2's RLS session, and a cross-tenant
            candidate row is never written by another org's pass.
@@ -61,6 +62,48 @@ def test_derive_escalated_when_last_answer_refers_to_support():
 # ---------------------------------------------------------------------------
 # AC-O.1 — abandoned
 # ---------------------------------------------------------------------------
+
+
+def test_derive_escalated_on_broad_mode_answer_even_with_thumbs_up():
+    """A consented general-knowledge answer means the help articles did NOT
+    answer — that is a knowledge gap. The stored marker label escalates it,
+    before the rating rule, so a friendly 👍 cannot turn it into 'resolved'."""
+    from klai_chat_prompts import broad_mode_answer_marker
+
+    answer = f"{broad_mode_answer_marker('wat is een sip trunk')}\n\nEen SIP trunk is een virtuele lijn."
+    turns = [
+        _turn("user", "wat is een sip trunk"),
+        _turn("assistant", answer, rating="thumbsUp"),
+    ]
+    assert derive_outcome(turns, has_handoff=False) == "escalated"
+
+
+def test_broad_marker_mid_text_does_not_escalate():
+    """Only a LEADING label marks the answer as broad. An ordinary grounded
+    answer that happens to quote the marker phrase stays resolved."""
+    turns = [
+        _turn("user", "hoe werkt de bot"),
+        _turn("assistant", "De bot zoekt in helpartikelen."),
+        _turn("user", "citaten?"),
+        _turn("assistant", 'Het artikel zegt: "Algemene kennis — niet afkomstig uit onze helpartikelen."'),
+    ]
+    assert derive_outcome(turns, has_handoff=False, quiet_period_elapsed=True) == "resolved"
+
+
+def test_broad_answer_followed_by_grounded_answer_is_resolved():
+    """The rule reads the LAST assistant answer: if the strict bot answered
+    from the articles afterwards, the earlier broad fallback doesn't pin the
+    conversation to escalated."""
+    from klai_chat_prompts import broad_mode_answer_marker
+
+    broad = f"{broad_mode_answer_marker('hoe lang duurt portering')}\n\nIn NL meestal 1 werkdag."
+    turns = [
+        _turn("user", "hoe lang duurt portering"),
+        _turn("assistant", broad),
+        _turn("user", "staat dat ook in jullie artikelen?"),
+        _turn("assistant", "Ja: according to [1] up to 5 business days."),
+    ]
+    assert derive_outcome(turns, has_handoff=False, quiet_period_elapsed=True) == "resolved"
 
 
 def test_derive_abandoned_when_ends_on_unanswered_question():
