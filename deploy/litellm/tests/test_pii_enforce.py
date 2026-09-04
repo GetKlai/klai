@@ -9,6 +9,7 @@ import is mocked so KlaiPiiEnforcer's CustomLogger base class resolves.
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 import types
 from types import SimpleNamespace
@@ -66,19 +67,29 @@ def _user_api_key(org_id=None):
     return uak
 
 
-def _stub_org_policy(mod, monkeypatch, policy: frozenset[str] | dict[str, frozenset[str]]):
-    """Replace resolve_org_entity_policy with a deterministic stub.
+def _stub_org_policy(
+    mod,
+    monkeypatch,
+    policy: frozenset[str] | dict[str, frozenset[str]],
+    telemetry_level: str = "shadow",
+):
+    """Replace resolve_org_pii_context with a deterministic stub.
 
     ``policy`` may be a single frozenset (same answer for every org) or a
     dict keyed by org_id for multi-org (cross-tenant) tests.
+
+    ``telemetry_level`` defaults to ``shadow`` — the production default for a
+    tenant that has not changed it — so the existing masking tests exercise
+    the path where telemetry IS emitted, and the emitter cannot silently break
+    without a test noticing.
     """
+    from klai_pii_org_policy import OrgPiiContext
 
     async def _resolve(org_id):
-        if isinstance(policy, dict):
-            return policy.get(org_id, frozenset())
-        return policy
+        entities = policy.get(org_id, frozenset()) if isinstance(policy, dict) else policy
+        return OrgPiiContext(entities=entities, telemetry_level=telemetry_level)
 
-    monkeypatch.setattr(mod, "resolve_org_entity_policy", _resolve)
+    monkeypatch.setattr(mod, "resolve_org_pii_context", _resolve)
 
 
 # ---------------------------------------------------------------------------
@@ -1233,3 +1244,506 @@ async def test_oversized_payload_through_the_real_pre_call_hook_masks_the_whole_
     user_message = [m for m in result["messages"] if m.get("role") == "user"][0]
     assert bsn not in user_message["content"]
     assert "<NL_BSN_1>" in user_message["content"]
+
+
+# ===========================================================================
+# 14. Telemetry — metadata only, and only for a tenant that allows it
+# ===========================================================================
+_TELEMETRY_IBAN = "NL91ABNA0417164300"
+
+
+_TELEMETRY_ORG = "org-telemetry"
+
+
+def _load_telemetry_enforcer(monkeypatch):
+    return _load_enforcer(
+        monkeypatch, enforce=True, extra_env={"KLAI_PII_ENFORCE_ORG_IDS": _TELEMETRY_ORG}
+    )
+
+
+async def _mask_one_iban(mod, monkeypatch, *, telemetry_level):
+    """Run the real pre-call hook over a message with one IBAN in it."""
+    text = f"Betaal op {_TELEMETRY_IBAN} graag."
+    start = text.index(_TELEMETRY_IBAN)
+    client = _ScriptedAnalyzerClient(
+        script={
+            text: [
+                {
+                    "entity_type": "IBAN_CODE",
+                    "start": start,
+                    "end": start + len(_TELEMETRY_IBAN),
+                    "score": 1.0,
+                }
+            ]
+        }
+    )
+    _install_analyzer(mod, monkeypatch, client)
+    _stub_org_policy(
+        mod, monkeypatch, frozenset({"IBAN_CODE"}), telemetry_level=telemetry_level
+    )
+    data = {"messages": [{"role": "user", "content": text}], "litellm_call_id": "call-telemetry"}
+    return await mod.klai_pii_enforcer.async_pre_call_hook(
+        _user_api_key(_TELEMETRY_ORG), None, data, "acompletion"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("level", ["shadow", "full"])
+async def test_mask_telemetry_reports_counts_for_a_tenant_that_allows_it(
+    monkeypatch, caplog, level
+):
+    mod = _load_telemetry_enforcer(monkeypatch)
+    with caplog.at_level(logging.INFO):
+        await _mask_one_iban(mod, monkeypatch, telemetry_level=level)
+
+    masked_lines = [r.getMessage() for r in caplog.records if "pii_masked" in r.getMessage()]
+    assert len(masked_lines) == 1
+    assert "'IBAN_CODE': 1" in masked_lines[0]
+    assert "restorable=1" in masked_lines[0]
+
+
+@pytest.mark.asyncio
+async def test_mask_telemetry_is_silent_for_a_tenant_on_off(monkeypatch, caplog):
+    """``off`` means zero telemetry — a counter about a tenant is still telemetry."""
+    mod = _load_telemetry_enforcer(monkeypatch)
+    with caplog.at_level(logging.INFO):
+        data = await _mask_one_iban(mod, monkeypatch, telemetry_level="off")
+
+    assert not [r for r in caplog.records if "pii_masked" in r.getMessage()]
+    # Masking itself still happened — telemetry is gated, enforcement is not.
+    assert _TELEMETRY_IBAN not in str(data["messages"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("level", ["off", "shadow", "full"])
+async def test_no_telemetry_line_ever_contains_the_masked_value(monkeypatch, caplog, level):
+    """The whole point. A log line that leaks the IBAN defeats the feature."""
+    mod = _load_telemetry_enforcer(monkeypatch)
+    with caplog.at_level(logging.DEBUG):
+        await _mask_one_iban(mod, monkeypatch, telemetry_level=level)
+
+    for record in caplog.records:
+        assert _TELEMETRY_IBAN not in record.getMessage()
+
+
+@pytest.mark.asyncio
+async def test_restore_telemetry_counts_a_surviving_placeholder(monkeypatch, caplog):
+    mod = _load_enforcer(monkeypatch, enforce=True)
+    _stub_org_policy(mod, monkeypatch, frozenset({"IBAN_CODE"}), telemetry_level="shadow")
+    call_id = "call-restore-survived"
+    mod._pii_map_store.put(call_id, {"<IBAN_CODE_1>": _TELEMETRY_IBAN})
+
+    with caplog.at_level(logging.INFO):
+        await mod.klai_pii_enforcer.async_post_call_success_hook(
+            {"litellm_call_id": call_id},
+            _user_api_key(_TELEMETRY_ORG),
+            _response("Het rekeningnummer is <IBAN_CODE_1> volgens de mail."),
+        )
+
+    lines = [r.getMessage() for r in caplog.records if "pii_restored" in r.getMessage()]
+    assert len(lines) == 1
+    assert "expected=1" in lines[0]
+    assert "survived=1" in lines[0]
+    assert "leaked=0" in lines[0]
+
+
+@pytest.mark.asyncio
+async def test_restore_telemetry_counts_a_placeholder_the_model_mangled(monkeypatch, caplog):
+    """REQ-0b's failure mode: the model did not hand the token back verbatim.
+
+    The user sees damage and nothing else notices. This counter is the only
+    production signal that it happened.
+    """
+    mod = _load_enforcer(monkeypatch, enforce=True)
+    _stub_org_policy(mod, monkeypatch, frozenset({"IBAN_CODE"}), telemetry_level="shadow")
+    call_id = "call-restore-mangled"
+    mod._pii_map_store.put(call_id, {"<IBAN_CODE_1>": _TELEMETRY_IBAN})
+
+    with caplog.at_level(logging.INFO):
+        await mod.klai_pii_enforcer.async_post_call_success_hook(
+            {"litellm_call_id": call_id},
+            _user_api_key(_TELEMETRY_ORG),
+            _response("Het rekeningnummer is <iban_code_1> volgens de mail."),
+        )
+
+    lines = [r.getMessage() for r in caplog.records if "pii_restored" in r.getMessage()]
+    assert len(lines) == 1
+    assert "survived=0" in lines[0]
+    assert "leaked=1" in lines[0]
+
+
+@pytest.mark.asyncio
+async def test_restore_telemetry_counts_once_across_stream_chunks(monkeypatch, caplog):
+    """A placeholder split across chunks must not be counted twice.
+
+    ``split_safe_tail`` returns the already-restored tail, which the next
+    iteration prepends — so a naive counter that re-scanned the buffer every
+    round would double-count. This pins that it does not.
+    """
+    mod = _load_enforcer(monkeypatch, enforce=True)
+    _stub_org_policy(mod, monkeypatch, frozenset({"IBAN_CODE"}), telemetry_level="shadow")
+    call_id = "call-restore-stream"
+    mod._pii_map_store.put(call_id, {"<IBAN_CODE_1>": _TELEMETRY_IBAN})
+
+    with caplog.at_level(logging.INFO):
+        chunks = await _drain(
+            mod.klai_pii_enforcer.async_post_call_streaming_iterator_hook(
+                _user_api_key(_TELEMETRY_ORG),
+                _achunks("Het nummer is <IBAN_C", "ODE_1> volgens de mail."),
+                {"litellm_call_id": call_id},
+            )
+        )
+
+    assert _TELEMETRY_IBAN in _all_content(chunks)
+    lines = [r.getMessage() for r in caplog.records if "pii_restored" in r.getMessage()]
+    assert len(lines) == 1
+    assert "expected=1" in lines[0]
+    assert "survived=1" in lines[0]
+    assert "streamed=True" in lines[0]
+    assert "completed=True" in lines[0]
+
+
+@pytest.mark.asyncio
+async def test_restore_telemetry_is_silent_for_a_tenant_on_off(monkeypatch, caplog):
+    mod = _load_enforcer(monkeypatch, enforce=True)
+    _stub_org_policy(mod, monkeypatch, frozenset({"IBAN_CODE"}), telemetry_level="off")
+    call_id = "call-restore-off"
+    mod._pii_map_store.put(call_id, {"<IBAN_CODE_1>": _TELEMETRY_IBAN})
+
+    with caplog.at_level(logging.INFO):
+        response = await mod.klai_pii_enforcer.async_post_call_success_hook(
+            {"litellm_call_id": call_id},
+            _user_api_key(_TELEMETRY_ORG),
+            _response("Het rekeningnummer is <IBAN_CODE_1>."),
+        )
+
+    assert not [r for r in caplog.records if "pii_restored" in r.getMessage()]
+    # Restore itself is not gated on telemetry.
+    assert _TELEMETRY_IBAN in response.choices[0].message.content
+
+
+@pytest.mark.asyncio
+async def test_restore_telemetry_marks_an_interrupted_stream_as_incomplete(monkeypatch, caplog):
+    """A stream that dies halfway is exactly when tokens go out unrestored.
+
+    Emitting nothing there would blind the counter to its own worst case, so
+    the line is emitted with ``completed=False`` rather than skipped.
+    """
+    mod = _load_enforcer(monkeypatch, enforce=True)
+    _stub_org_policy(mod, monkeypatch, frozenset({"IBAN_CODE"}), telemetry_level="shadow")
+    call_id = "call-restore-interrupted"
+    mod._pii_map_store.put(call_id, {"<IBAN_CODE_1>": _TELEMETRY_IBAN})
+
+    async def _dying_stream():
+        yield _chunk("Het nummer is ")
+        raise RuntimeError("upstream died")
+
+    with caplog.at_level(logging.INFO):
+        with pytest.raises(RuntimeError):
+            await _drain(
+                mod.klai_pii_enforcer.async_post_call_streaming_iterator_hook(
+                    _user_api_key(_TELEMETRY_ORG), _dying_stream(), {"litellm_call_id": call_id}
+                )
+            )
+
+    lines = [r.getMessage() for r in caplog.records if "pii_restored" in r.getMessage()]
+    assert len(lines) == 1
+    assert "completed=False" in lines[0]
+
+
+@pytest.mark.asyncio
+async def test_restore_telemetry_failure_does_not_break_the_response(monkeypatch, caplog):
+    """A telemetry bug must not turn a served answer into an error."""
+    mod = _load_enforcer(monkeypatch, enforce=True)
+
+    async def _boom(org_id):
+        raise RuntimeError("portal-api on fire")
+
+    monkeypatch.setattr(mod, "resolve_org_pii_context", _boom)
+    call_id = "call-restore-boom"
+    mod._pii_map_store.put(call_id, {"<IBAN_CODE_1>": _TELEMETRY_IBAN})
+
+    response = await mod.klai_pii_enforcer.async_post_call_success_hook(
+        {"litellm_call_id": call_id},
+        _user_api_key(_TELEMETRY_ORG),
+        _response("Het rekeningnummer is <IBAN_CODE_1>."),
+    )
+
+    assert _TELEMETRY_IBAN in response.choices[0].message.content
+
+
+@pytest.mark.asyncio
+async def test_restore_telemetry_survives_a_client_disconnect(monkeypatch, caplog):
+    """Closing the stream early must not raise, and must still report.
+
+    A ``finally`` in an async generator runs under ``GeneratorExit`` when the
+    consumer goes away. Awaiting there raises "async generator ignored
+    GeneratorExit" — a client hangup turned into a server error. The telemetry
+    level is therefore resolved before the first yield and the emitter is
+    synchronous; this test is what fails if either changes back.
+    """
+    mod = _load_enforcer(monkeypatch, enforce=True)
+    _stub_org_policy(mod, monkeypatch, frozenset({"IBAN_CODE"}), telemetry_level="shadow")
+    call_id = "call-restore-disconnect"
+    mod._pii_map_store.put(call_id, {"<IBAN_CODE_1>": _TELEMETRY_IBAN})
+
+    agen = mod.klai_pii_enforcer.async_post_call_streaming_iterator_hook(
+        _user_api_key(_TELEMETRY_ORG),
+        _achunks("Het nummer is ", "<IBAN_CODE_1>", " en dat was het."),
+        {"litellm_call_id": call_id},
+    )
+    with caplog.at_level(logging.INFO):
+        await agen.__anext__()
+        await agen.aclose()
+
+    lines = [r.getMessage() for r in caplog.records if "pii_restored" in r.getMessage()]
+    assert len(lines) == 1
+    assert "completed=False" in lines[0]
+    # REQ-11 still holds on the abandoned-stream path.
+    assert mod._pii_map_store.get(call_id) is None
+
+
+@pytest.mark.asyncio
+async def test_cancellation_before_the_first_chunk_still_discards_the_map(monkeypatch):
+    """REQ-11: the placeholder→value map is the only place the raw PII lives.
+
+    The telemetry-level resolve is an await that happens before the first
+    chunk. If it sat outside the `try`, a task cancelled during it would end
+    the generator without running the `finally` — leaving the map in process
+    memory until the TTL sweep. It sits inside the `try` for exactly that
+    reason.
+    """
+    mod = _load_enforcer(monkeypatch, enforce=True)
+    call_id = "call-cancelled-early"
+    mod._pii_map_store.put(call_id, {"<IBAN_CODE_1>": _TELEMETRY_IBAN})
+
+    async def _never_resolves(_user_api_key_dict, _data=None):
+        await asyncio.sleep(3600)
+
+    monkeypatch.setattr(
+        mod.KlaiPiiEnforcer, "_resolve_telemetry_level", staticmethod(_never_resolves)
+    )
+
+    agen = mod.klai_pii_enforcer.async_post_call_streaming_iterator_hook(
+        _user_api_key(_TELEMETRY_ORG), _achunks("hallo"), {"litellm_call_id": call_id}
+    )
+    task = asyncio.create_task(agen.__anext__())
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await agen.aclose()
+
+    assert mod._pii_map_store.get(call_id) is None
+
+
+@pytest.mark.asyncio
+async def test_a_consumer_that_stops_after_the_last_chunk_reports_completed(
+    monkeypatch, caplog
+):
+    """`completed` marks a partial tally, not a partial delivery.
+
+    Once the flush has run the count is final; a consumer that takes the last
+    item and walks away has not truncated anything, so reporting
+    completed=False there would be noise in the one field that exists to mark
+    a genuinely partial count.
+    """
+    mod = _load_enforcer(monkeypatch, enforce=True)
+    _stub_org_policy(mod, monkeypatch, frozenset({"IBAN_CODE"}), telemetry_level="shadow")
+    call_id = "call-consumer-stops"
+    mod._pii_map_store.put(call_id, {"<IBAN_CODE_1>": _TELEMETRY_IBAN})
+
+    agen = mod.klai_pii_enforcer.async_post_call_streaming_iterator_hook(
+        _user_api_key(_TELEMETRY_ORG),
+        _achunks("Het nummer is <IBAN_CODE_1>", " en dat was het."),
+        {"litellm_call_id": call_id},
+    )
+    with caplog.at_level(logging.INFO):
+        received = []
+        try:
+            while True:
+                received.append(await agen.__anext__())
+                if len(received) == 2:  # everything the hook will ever emit
+                    break
+        except StopAsyncIteration:  # pragma: no cover - defensive
+            pass
+        await agen.aclose()
+
+    lines = [r.getMessage() for r in caplog.records if "pii_restored" in r.getMessage()]
+    assert len(lines) == 1
+    assert "completed=True" in lines[0]
+    assert "survived=1" in lines[0]
+
+
+@pytest.mark.asyncio
+async def test_a_value_the_model_never_mentions_is_not_reported_as_damage(monkeypatch, caplog):
+    """The metric this replaced would have called this a restore failure.
+
+    Three values masked, the model answers about none of them. Nothing reached
+    the user damaged, so `leaked` is 0 — even though `expected - survived` is
+    3. That subtraction is the shape this started out with; in ordinary chat it
+    is dominated by values whose absence harms nobody, which would have buried
+    the real failures under routine answers.
+    """
+    mod = _load_enforcer(monkeypatch, enforce=True)
+    _stub_org_policy(mod, monkeypatch, frozenset({"IBAN_CODE"}), telemetry_level="shadow")
+    call_id = "call-never-mentioned"
+    mod._pii_map_store.put(
+        call_id,
+        {
+            "<IBAN_CODE_1>": _TELEMETRY_IBAN,
+            "<EMAIL_ADDRESS_1>": "jan@example.nl",
+            "<PHONE_NUMBER_1>": "0612345678",
+        },
+    )
+
+    with caplog.at_level(logging.INFO):
+        await mod.klai_pii_enforcer.async_post_call_success_hook(
+            {"litellm_call_id": call_id},
+            _user_api_key(_TELEMETRY_ORG),
+            _response("Ja, dat klopt."),
+        )
+
+    lines = [r.getMessage() for r in caplog.records if "pii_restored" in r.getMessage()]
+    assert len(lines) == 1
+    assert "expected=3" in lines[0]
+    assert "survived=0" in lines[0]
+    assert "leaked=0" in lines[0]
+
+
+@pytest.mark.asyncio
+async def test_a_mangled_placeholder_the_user_can_see_counts_as_leaked(monkeypatch, caplog):
+    """The case the counter exists for: the reader gets angle brackets."""
+    mod = _load_enforcer(monkeypatch, enforce=True)
+    _stub_org_policy(mod, monkeypatch, frozenset({"IBAN_CODE"}), telemetry_level="shadow")
+    call_id = "call-leaked"
+    mod._pii_map_store.put(call_id, {"<IBAN_CODE_1>": _TELEMETRY_IBAN})
+
+    with caplog.at_level(logging.INFO):
+        restored = await mod.klai_pii_enforcer.async_post_call_success_hook(
+            {"litellm_call_id": call_id},
+            _user_api_key(_TELEMETRY_ORG),
+            _response("Het rekeningnummer is <iban_code_1>."),
+        )
+
+    assert "<iban_code_1>" in restored.choices[0].message.content  # really is visible
+    lines = [r.getMessage() for r in caplog.records if "pii_restored" in r.getMessage()]
+    assert "survived=0" in lines[0]
+    assert "leaked=1" in lines[0]
+
+
+@pytest.mark.asyncio
+async def test_a_never_restore_placeholder_is_not_counted_as_leaked(monkeypatch, caplog):
+    """`<NL_BSN_1>` staying put is REQ-8 working, not damage."""
+    mod = _load_enforcer(monkeypatch, enforce=True)
+    _stub_org_policy(mod, monkeypatch, frozenset({"IBAN_CODE"}), telemetry_level="shadow")
+    call_id = "call-never-restore"
+    mod._pii_map_store.put(call_id, {"<IBAN_CODE_1>": _TELEMETRY_IBAN})
+
+    with caplog.at_level(logging.INFO):
+        await mod.klai_pii_enforcer.async_post_call_success_hook(
+            {"litellm_call_id": call_id},
+            _user_api_key(_TELEMETRY_ORG),
+            _response("Het BSN <NL_BSN_1> hoort bij <IBAN_CODE_1>."),
+        )
+
+    lines = [r.getMessage() for r in caplog.records if "pii_restored" in r.getMessage()]
+    assert "survived=1" in lines[0]
+    assert "leaked=0" in lines[0]
+
+
+
+# ===========================================================================
+# 15. Delegated tenant identity on the proxy's own loopback calls
+# ===========================================================================
+def _admin_key():
+    uak = MagicMock()
+    uak.metadata = {}
+    uak.user_role = "proxy_admin"
+    return uak
+
+
+async def _pre_call(mod, key, data):
+    return await mod.klai_pii_enforcer.async_pre_call_hook(key, None, data, "acompletion")
+
+
+def _iban_request(mod, monkeypatch, metadata):
+    text = f"Betaal op {_TELEMETRY_IBAN} graag."
+    start = text.index(_TELEMETRY_IBAN)
+    _install_analyzer(
+        mod,
+        monkeypatch,
+        _ScriptedAnalyzerClient(
+            script={
+                text: [
+                    {
+                        "entity_type": "IBAN_CODE",
+                        "start": start,
+                        "end": start + len(_TELEMETRY_IBAN),
+                        "score": 1.0,
+                    }
+                ]
+            }
+        ),
+    )
+    _stub_org_policy(mod, monkeypatch, frozenset({"IBAN_CODE"}))
+    return {
+        "litellm_call_id": "call-delegated",
+        "metadata": metadata,
+        "messages": [{"role": "user", "content": text}],
+    }
+
+
+@pytest.mark.asyncio
+async def test_master_key_may_name_the_tenant_it_is_acting_for(monkeypatch):
+    """The query rewrite re-enters the proxy on the master key.
+
+    Before this, that call had no org and was skipped -- so the user's question
+    went to Mistral in full on the one call that is nothing but their question.
+    """
+    mod = _load_telemetry_enforcer(monkeypatch)
+    data = _iban_request(mod, monkeypatch, {"_klai_delegated_org_id": _TELEMETRY_ORG})
+
+    out = await _pre_call(mod, _admin_key(), data)
+
+    assert _TELEMETRY_IBAN not in str(out["messages"])
+    assert "<IBAN_CODE_1>" in str(out["messages"])
+
+
+@pytest.mark.asyncio
+async def test_a_tenant_key_cannot_name_a_different_tenant(monkeypatch):
+    """A request body is not authenticated. Honouring it would let one tenant
+    pick another's masking policy and misattribute this request's telemetry."""
+    mod = _load_telemetry_enforcer(monkeypatch)
+    data = _iban_request(mod, monkeypatch, {"_klai_delegated_org_id": _TELEMETRY_ORG})
+    tenant_key = MagicMock()
+    tenant_key.metadata = {}
+    tenant_key.user_role = "internal_user"
+
+    out = await _pre_call(mod, tenant_key, data)
+
+    assert _TELEMETRY_IBAN in str(out["messages"])
+
+
+@pytest.mark.asyncio
+async def test_the_key_wins_when_both_are_present(monkeypatch):
+    """An authenticated identity is never overridden by a body field."""
+    mod = _load_telemetry_enforcer(monkeypatch)
+    data = _iban_request(mod, monkeypatch, {"_klai_delegated_org_id": "someone-else"})
+    key = _user_api_key(_TELEMETRY_ORG)
+    key.user_role = "proxy_admin"
+
+    resolved = mod._org_id_from_key(key) or mod._delegated_org_id(key, data)
+
+    assert resolved == _TELEMETRY_ORG
+
+
+@pytest.mark.asyncio
+async def test_master_key_without_a_delegation_is_still_not_enforced(monkeypatch):
+    """Unchanged for every other master-key caller: no identity, no masking."""
+    mod = _load_telemetry_enforcer(monkeypatch)
+    data = _iban_request(mod, monkeypatch, {"_klai_openai_passthrough": True})
+
+    out = await _pre_call(mod, _admin_key(), data)
+
+    assert _TELEMETRY_IBAN in str(out["messages"])

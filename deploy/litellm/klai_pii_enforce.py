@@ -75,16 +75,25 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from collections import Counter
 from typing import Any, NamedTuple
 
 import httpx
 from litellm.integrations.custom_logger import CustomLogger
 
+from klai_kb_request_context import request_metadata as _request_metadata
 from klai_pii_entities import NEVER_RESTORE_ENTITIES, effective_enabled_entities
 from klai_pii_map_store import PiiMapStore
-from klai_pii_org_policy import resolve_org_entity_policy
+from klai_pii_org_policy import resolve_org_pii_context
 from klai_pii_restore_eval import VERBATIM_TOKEN_SYSTEM_INSTRUCTION
-from klai_pii_text_masking import DetectedSpan, mask_text, restore_text, split_safe_tail
+from klai_pii_text_masking import (
+    DetectedSpan,
+    count_leaked_placeholders,
+    find_restorable_placeholders,
+    mask_text,
+    restore_text,
+    split_safe_tail,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -282,6 +291,41 @@ class PiiAnalyzerUnavailable(RuntimeError):
     SOME exception to propagate for the request to fail; it does not
     require a particular exception type.
     """
+
+
+# LiteLLM sets this role when a request authenticates with LITELLM_MASTER_KEY.
+# Anyone holding that key is already the proxy admin, so letting it name a
+# tenant grants nothing it could not do anyway.
+_PROXY_ADMIN_ROLE = "proxy_admin"
+
+# Written by klai_kb_query_rewrite._rewrite_call_metadata on the loopback
+# self-call. See that module for why the field exists.
+_DELEGATED_ORG_ID_KEY = "_klai_delegated_org_id"
+
+
+def _delegated_org_id(user_api_key_dict: Any, data: dict[str, Any]) -> Any:
+    """Tenant identity asserted by the proxy about a call it makes to itself.
+
+    Klai's own internal calls -- today the query rewrite -- re-enter the proxy
+    over loopback authenticated with the master key. The master key belongs to
+    no tenant, so ``_org_id_from_key`` finds nothing and enforcement skips the
+    request. That is how the user's own question reached Mistral unmasked on
+    the very call that rewrites it, while the same text was masked on the main
+    call. The org is known at that call site; it just was not travelling.
+
+    The assertion is honoured ONLY for ``proxy_admin``. A tenant key that puts
+    this field in its request body is ignored, because a body is not
+    authenticated and an org id chosen by the caller would let one tenant pick
+    another tenant's (possibly laxer) masking policy and misattribute this
+    request's telemetry to them.
+    """
+    role = getattr(user_api_key_dict, "user_role", None)
+    role = getattr(role, "value", role)  # LitellmUserRoles enum or plain str
+    if role != _PROXY_ADMIN_ROLE:
+        return None
+    if not isinstance(data, dict):
+        return None
+    return _request_metadata(data).get(_DELEGATED_ORG_ID_KEY) or None
 
 
 def _org_id_from_key(user_api_key_dict: Any) -> Any:
@@ -505,6 +549,27 @@ async def _analyze_spans(http: httpx.AsyncClient, text: str, language: str) -> l
     return await _analyze_spans_chunked(http, text, language)
 
 
+# ---------------------------------------------------------------------------
+# Telemetry (metadata only, per-tenant gated)
+# ---------------------------------------------------------------------------
+# What masking actually did, per request: entity types and counts, never a
+# value and never a fragment of the payload. That keeps every line emitted
+# here in the SAME retention class as `pii_observed` (metadata, 30d) and
+# creates no `retention_class=content` line, so nothing routes to the 7-day
+# content store and the `full` telemetry mode buys no extra detail. Stated as
+# a decision rather than an omission: the masked text is still the user's
+# whole message minus the PII, so logging it would be logging the query.
+#
+# A tenant on `telemetry_level=off` gets nothing at all, including the counts.
+# `off` means zero telemetry (SPEC-PRIVACY-QUERY-SHADOW-001 REQ-1) and a
+# counter about a tenant is still telemetry about that tenant.
+_TELEMETRY_LEVEL_SILENT = "off"
+
+
+def _emits_telemetry(telemetry_level: str) -> bool:
+    return telemetry_level != _TELEMETRY_LEVEL_SILENT
+
+
 async def _mask_messages(
     http: httpx.AsyncClient,
     messages: list[Any],
@@ -614,7 +679,9 @@ class KlaiPiiEnforcer(CustomLogger):
         if not isinstance(messages, list) or not messages:
             return data
 
-        org_id = _org_id_from_key(user_api_key_dict)
+        org_id = _org_id_from_key(user_api_key_dict) or _delegated_org_id(
+            user_api_key_dict, data
+        )
         if not _org_is_enforced(org_id):
             # Activation hardening: KLAI_PII_ENFORCE is on globally, but
             # this org (or a request with no org_id at all) is not in
@@ -623,8 +690,8 @@ class KlaiPiiEnforcer(CustomLogger):
             # everyone". No analyzer call, no map entry, byte-identical
             # passthrough, same as the flag being off entirely.
             return data
-        org_policy = await resolve_org_entity_policy(org_id)
-        enabled_entities = effective_enabled_entities(org_policy)
+        org_context = await resolve_org_pii_context(org_id)
+        enabled_entities = effective_enabled_entities(org_context.entities)
 
         try:
             async with httpx.AsyncClient(timeout=_HTTPX_CLIENT_TIMEOUT_SECONDS) as http:
@@ -653,6 +720,15 @@ class KlaiPiiEnforcer(CustomLogger):
         if restore_map and call_id:
             _pii_map_store.put(call_id, restore_map)
 
+        if _emits_telemetry(org_context.telemetry_level):
+            logger.info(
+                "pii_masked org_id=%s call_type=%s masked_counts=%s restorable=%s",
+                org_id,
+                call_type,
+                dict(sorted(Counter(masked_types).items())),
+                len(restore_map),
+            )
+
         # REQ-0b: mandatory whenever masking is active — measured to take
         # PHONE_NUMBER survival from 58.3% to 95.8%. Reusing the EXACT
         # instruction text Phase 0 measured, not a re-translation, so the
@@ -676,14 +752,30 @@ class KlaiPiiEnforcer(CustomLogger):
         if not restore_map:
             return None
 
+        survived: set[str] = set()
+        leaked = 0
         for choice in _get_choices(response):
             message = _get_field(choice, "message")
             content = _get_content(message)
             if content:
-                _set_content(
-                    message,
-                    restore_text(content, restore_map, never_restore_entities=NEVER_RESTORE_ENTITIES),
+                survived |= find_restorable_placeholders(content, restore_map)
+                restored = restore_text(
+                    content, restore_map, never_restore_entities=NEVER_RESTORE_ENTITIES
                 )
+                leaked += count_leaked_placeholders(
+                    restored, never_restore_entities=NEVER_RESTORE_ENTITIES
+                )
+                _set_content(message, restored)
+        org_id, telemetry_level = await self._resolve_telemetry_level(user_api_key_dict, data)
+        self._log_restore_outcome(
+            org_id,
+            telemetry_level,
+            restore_map,
+            survived,
+            leaked,
+            streamed=False,
+            completed=True,
+        )
         return response
 
     async def async_post_call_streaming_iterator_hook(
@@ -718,7 +810,39 @@ class KlaiPiiEnforcer(CustomLogger):
         # whatever text is still held back at stream end.
         buffers: dict[int, str] = {}
         pending_item: Any = None
+        # Collected BEFORE each restore. Two things make the tally right: the
+        # set (a model that names one placeholder twice must not push the
+        # count past what was masked) and the ordering (split_safe_tail hands
+        # back the ALREADY-restored tail, which is what the next iteration
+        # prepends, so a placeholder resolved in round N is simply absent from
+        # round N+1's buffer).
+        #
+        # The loop is therefore the ONLY place that can find anything: by the
+        # time the end-of-stream flush runs, split_safe_tail has already
+        # restored every complete placeholder and the held-back tail can only
+        # hold a partial one, which does not match. The scan down there mirrors
+        # the defensive restore_text beside it and is expected to find nothing
+        # — do not read it as a second counting mechanism.
+        survived: set[str] = set()
+        # Counted on the text as EMITTED, after restoring — this is what the
+        # reader sees, and a placeholder still standing there is the actual
+        # user-visible damage. See count_leaked_placeholders for why this and
+        # not `expected - survived`.
+        leaked = 0
+        completed = False
+        # Pre-seeded so the `finally` below can reference them even if the
+        # resolve inside the `try` never completes — a task cancelled during
+        # that await must still reach REQ-11's map discard.
+        org_id: Any = None
+        telemetry_level = _TELEMETRY_LEVEL_SILENT
         try:
+            # Resolved inside the try but BEFORE the first yield: see
+            # _resolve_telemetry_level for why it cannot move into the
+            # `finally`, and the pre-seeding above for why it cannot move out
+            # of the `try`.
+            org_id, telemetry_level = await self._resolve_telemetry_level(
+                user_api_key_dict, request_data
+            )
             async for item in response:
                 for idx, choice in enumerate(_get_choices(item)):
                     delta = _get_field(choice, "delta")
@@ -726,8 +850,12 @@ class KlaiPiiEnforcer(CustomLogger):
                         continue
                     content = _get_content(delta) or ""
                     buffered = buffers.get(idx, "") + content
+                    survived |= find_restorable_placeholders(buffered, restore_map)
                     safe, buffers[idx] = split_safe_tail(
                         buffered, restore_map, NEVER_RESTORE_ENTITIES
+                    )
+                    leaked += count_leaked_placeholders(
+                        safe, never_restore_entities=NEVER_RESTORE_ENTITIES
                     )
                     _set_content(delta, safe)
                 if pending_item is not None:
@@ -739,16 +867,132 @@ class KlaiPiiEnforcer(CustomLogger):
                     delta = _get_field(choice, "delta")
                     leftover = buffers.get(idx, "")
                     if delta is not None and leftover:
+                        survived |= find_restorable_placeholders(leftover, restore_map)
                         restored_tail = restore_text(
                             leftover, restore_map, never_restore_entities=NEVER_RESTORE_ENTITIES
+                        )
+                        leaked += count_leaked_placeholders(
+                            restored_tail, never_restore_entities=NEVER_RESTORE_ENTITIES
                         )
                         existing = _get_content(delta) or ""
                         _set_content(delta, existing + restored_tail)
                     buffers[idx] = ""
+                # Set BEFORE the last yield, not after: at this point every
+                # buffer is flushed and the tally is final, so only delivery
+                # remains. A consumer that stops iterating once it has the
+                # last item would otherwise close the generator at that yield
+                # and make the line read `completed=False` with nothing
+                # actually incomplete — noise in the one field that exists to
+                # mark a partial count.
+                completed = True
                 yield pending_item
+            else:
+                # The upstream stream yielded nothing at all. There is no
+                # delivery left to truncate, so the tally is complete — a model
+                # that answered with silence is not a partial count.
+                completed = True
         finally:
             if call_id:
                 _pii_map_store.discard(call_id)  # REQ-11: success AND error path
+            # Emitted in `finally` on purpose: a stream that died halfway is
+            # exactly when placeholders are left unrestored in what the user
+            # already saw, so that case must not be the one that logs nothing.
+            # `completed=False` marks the count as partial rather than as a
+            # survival failure. Synchronous — nothing in this block may
+            # suspend, or a client disconnect becomes a server error.
+            self._log_restore_outcome(
+                org_id,
+                telemetry_level,
+                restore_map,
+                survived,
+                leaked,
+                streamed=True,
+                completed=completed,
+            )
+
+    @staticmethod
+    async def _resolve_telemetry_level(
+        user_api_key_dict: Any, data: dict[str, Any] | None = None
+    ) -> tuple[Any, str]:
+        """``(org_id, telemetry_level)`` for this request, resolved up front.
+
+        The streaming hook calls this BEFORE its first ``yield``, on purpose.
+        The restore tally is only complete once the stream has ended, so the
+        line that reports it is emitted from a ``finally`` — and awaiting
+        there is not safe. When a client disconnects, the async generator is
+        closed with a ``GeneratorExit`` thrown at the yield point, and a
+        ``finally`` that suspends on an await raises "async generator ignored
+        GeneratorExit", turning an ordinary client hangup into a server-side
+        error. So the only await lives here, where suspending is ordinary,
+        and ``_log_restore_outcome`` is synchronous.
+
+        Never raises. A tenant whose telemetry mode cannot be resolved is
+        silent, not loud — same direction as every other fail-closed default
+        in this stack.
+        """
+        org_id: Any = None
+        try:
+            org_id = _org_id_from_key(user_api_key_dict) or _delegated_org_id(
+                user_api_key_dict, data or {}
+            )
+            if not org_id:
+                return None, _TELEMETRY_LEVEL_SILENT
+            context = await resolve_org_pii_context(org_id)
+            return org_id, context.telemetry_level
+        except Exception:
+            # org_id is bound before the call that can fail, so the line names
+            # WHICH tenant fell silent — without it this warning says only
+            # that some tenant somewhere stopped being measured.
+            logger.warning("pii_telemetry_level_unresolved org_id=%s", org_id, exc_info=True)
+            return None, _TELEMETRY_LEVEL_SILENT
+
+    @staticmethod
+    def _log_restore_outcome(
+        org_id: Any,
+        telemetry_level: str,
+        restore_map: dict[str, str],
+        survived: set[str],
+        leaked: int,
+        *,
+        streamed: bool,
+        completed: bool,
+    ) -> None:
+        """Emit what restore actually did for one request, or emit nothing.
+
+        Three numbers, deliberately NOT two:
+
+        - ``expected`` — values masked on the way out and restorable.
+        - ``survived`` — how many of those the model handed back as an intact
+          placeholder, so we could put the real value back.
+        - ``leaked`` — placeholder-shaped tokens still visible in what the
+          user receives. This is the damage signal.
+
+        ``expected - survived`` is deliberately NOT reported as damage, which
+        is the shape this started out with and got wrong. A model answering
+        one question does not echo the other five masked values, and their
+        absence harms nobody; subtracting would have made a routine answer
+        look like a restore failure and buried the real ones. REQ-0b's 95.8%
+        came from a harness that asked the model to repeat every token —
+        production carries no such instruction, so the same arithmetic does
+        not carry the same meaning. ``leaked`` is the number that means
+        something without an assumption behind it.
+
+        Silent for a tenant on ``telemetry_level=off``, and silent when the
+        tenant's telemetry mode could not be established at all. Synchronous
+        by design — see ``_resolve_telemetry_level``.
+        """
+        if not org_id or not _emits_telemetry(telemetry_level):
+            return
+        logger.info(
+            "pii_restored org_id=%s expected=%s survived=%s leaked=%s "
+            "streamed=%s completed=%s",
+            org_id,
+            len(restore_map),
+            len(survived),
+            leaked,
+            streamed,
+            completed,
+        )
 
     async def async_post_call_failure_hook(
         self,

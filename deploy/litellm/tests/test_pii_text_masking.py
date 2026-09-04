@@ -6,6 +6,7 @@ from klai_pii_entities import NEVER_RESTORE_ENTITIES, RETURN_SET_ENTITIES
 from klai_pii_text_masking import (
     TAIL_LEN,
     DetectedSpan,
+    find_restorable_placeholders,
     mask_text,
     restore_text,
     split_safe_tail,
@@ -481,3 +482,56 @@ def test_identical_span_and_score_never_restore_entity_wins():
         )
         assert "<NL_BSN_1>" in result.masked_text, result.masked_text
         assert result.restore_map == {}, "a never-restore value must not be restorable"
+
+
+# ---------------------------------------------------------------------------
+# find_restorable_placeholders — REQ-0b survival, measured in production
+# ---------------------------------------------------------------------------
+def test_find_restorable_placeholders_counts_only_what_the_map_can_restore():
+    restore_map = {"<IBAN_CODE_1>": "NL91ABNA0417164300", "<EMAIL_ADDRESS_1>": "jan@example.nl"}
+    text = "Zie <IBAN_CODE_1> en <EMAIL_ADDRESS_1> en <PHONE_NUMBER_9>."
+
+    # PHONE_NUMBER_9 is a well-formed placeholder that this map cannot restore,
+    # so it is not a surviving token — it is a token that will reach the user
+    # as literal angle-bracket text.
+    assert len(find_restorable_placeholders(text, restore_map)) == 2
+
+
+def test_find_restorable_placeholders_never_counts_a_never_restore_entity():
+    """mask_text never puts SECRET/NL_BSN in the map, so they cannot be counted
+    as 'restored' — which is what stops this counter from ever suggesting a
+    credential came back."""
+    restore_map = {"<IBAN_CODE_1>": "NL91ABNA0417164300"}
+    text = "Sleutel <SECRET_1>, BSN <NL_BSN_1>, rekening <IBAN_CODE_1>."
+
+    assert len(find_restorable_placeholders(text, restore_map)) == 1
+
+
+def test_find_restorable_placeholders_ignores_a_mangled_placeholder():
+    """The model changed the case. It will not be restored, so it did not survive."""
+    restore_map = {"<IBAN_CODE_1>": "NL91ABNA0417164300"}
+
+    assert len(find_restorable_placeholders("Zie <iban_code_1>.", restore_map)) == 0
+    assert len(find_restorable_placeholders("Zie < IBAN_CODE_1 >.", restore_map)) == 0
+
+
+def test_find_restorable_placeholders_is_zero_after_restore():
+    """Counting before-and-after is what makes the streaming counter safe from
+    double counting: once restored, the placeholder is simply gone."""
+    restore_map = {"<IBAN_CODE_1>": "NL91ABNA0417164300"}
+    text = "Zie <IBAN_CODE_1>."
+    restored = restore_text(text, restore_map, never_restore_entities=NEVER_RESTORE_ENTITIES)
+
+    assert len(find_restorable_placeholders(text, restore_map)) == 1
+    assert len(find_restorable_placeholders(restored, restore_map)) == 0
+
+
+def test_find_restorable_placeholders_dedupes_a_repeated_placeholder():
+    """A model that names the same placeholder twice must not push the caller's
+    survival tally above the number of values that were actually masked —
+    which would make ``unrestored`` negative in the telemetry line."""
+    restore_map = {"<IBAN_CODE_1>": "NL91ABNA0417164300"}
+    text = "Zie <IBAN_CODE_1>, ik herhaal: <IBAN_CODE_1>."
+
+    assert find_restorable_placeholders(text, restore_map) == {"<IBAN_CODE_1>"}
+    assert len(find_restorable_placeholders(text, restore_map)) == len(restore_map)

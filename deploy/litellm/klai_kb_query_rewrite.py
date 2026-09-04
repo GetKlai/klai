@@ -333,12 +333,37 @@ def _finalize_distilled_rewrite(
     return rewritten
 
 
+# SPEC-PRIVACY-MISTRAL-PII-001 REQ-7 -- delegated tenant identity.
+#
+# The rewrite is the proxy calling ITSELF over loopback with LITELLM_MASTER_KEY
+# (see QUERY_REWRITE_API_KEY / QUERY_REWRITE_URL above). The master key belongs
+# to no tenant, so the PII enforcer -- which reads org_id from the authenticated
+# key and nowhere else -- saw no org and skipped masking. The user's own
+# question therefore reached Mistral in full on exactly the call that rewrites
+# it, while the same question was masked on the main call.
+#
+# The org is known at the call site (klai_knowledge reads it from the caller's
+# team key), so it travels with the request. `klai_pii_enforce` accepts this
+# field ONLY when the request is authenticated as proxy_admin, i.e. by the
+# master key -- which is us. A tenant key cannot use it to claim another
+# tenant's policy.
+_DELEGATED_ORG_ID_KEY = "_klai_delegated_org_id"
+
+
+def _rewrite_call_metadata(org_id: str | None) -> dict:
+    metadata: dict = {"_klai_openai_passthrough": True}
+    if org_id:
+        metadata[_DELEGATED_ORG_ID_KEY] = str(org_id)
+    return metadata
+
+
 async def rewrite_query(
     raw_query: str,
     history: list[dict],
     *,
     allow_empty_history: bool = False,
     pasted_correspondence: bool = False,
+    org_id: str | None = None,
     _transport: httpx.AsyncBaseTransport | None = None,
 ) -> tuple[str, dict]:
     """Return ``(rewritten_query, debug_meta)`` — falls back to ``raw_query`` on failure.
@@ -383,7 +408,7 @@ async def rewrite_query(
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 200,
         "temperature": 0.0,
-        "metadata": {"_klai_openai_passthrough": True},
+        "metadata": _rewrite_call_metadata(org_id),
     }
     headers = {
         "Authorization": f"Bearer {QUERY_REWRITE_API_KEY}",
@@ -589,6 +614,7 @@ async def rewrite_and_classify(
     taxonomy_trees: dict[str, list[dict]] | list[dict],
     *,
     pasted_correspondence: bool = False,
+    org_id: str | None = None,
     _transport: httpx.AsyncBaseTransport | None = None,
 ) -> tuple[str, list[int], dict]:
     """Return ``(rewritten_query, classified_node_ids, debug_meta)`` in one LLM call.
@@ -622,6 +648,7 @@ async def rewrite_and_classify(
             history,
             allow_empty_history=True,
             pasted_correspondence=pasted_correspondence,
+            org_id=org_id,
             _transport=_transport,
         )
         return rewritten, [], rewrite_meta
@@ -643,7 +670,7 @@ async def rewrite_and_classify(
         "max_tokens": 300,
         "temperature": 0.0,
         "response_format": {"type": "json_object"},
-        "metadata": {"_klai_openai_passthrough": True},
+        "metadata": _rewrite_call_metadata(org_id),
     }
     headers = {
         "Authorization": f"Bearer {QUERY_REWRITE_API_KEY}",

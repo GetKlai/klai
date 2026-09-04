@@ -3,7 +3,11 @@
 Pinned behaviour:
 - No bearer / wrong bearer → 401 from ``_require_internal_token``, before any DB work.
 - Correct bearer → the handler proceeds (the token gate is not accidentally strict).
-- Org with no opt-in → ``enabled_entities == []`` (REQ-7 "per-org, default off").
+- Org with an empty stored set → ``enabled_entities == []``. Since
+  SPEC-PRIVACY-PII-POLICY-ADMIN-001 D2 that means a tenant admin switched
+  every type off, not "nobody has chosen yet" — the whole return set is the
+  default (migration ``d3a91c47f5b2``). The endpoint is unchanged either way:
+  it reports what is stored.
 - Org with an opt-in → exactly that set, sorted.
 - A stored value outside REQ-7's return set (``PERSON`` / ``SECRET`` / unknown)
   never reaches the wire.
@@ -53,11 +57,12 @@ class _FakeOrgDb:
     instead of quietly passing.
     """
 
-    def __init__(self, rows: dict[str, list[str]]):
+    def __init__(self, rows: dict[str, list[str]], telemetry_level: str = "shadow"):
         # Keyed on the ZITADEL org id — the id the caller actually has. See
         # test_zitadel_org_id_is_the_lookup_key for why this is not the
         # portal integer PK.
         self._rows = rows
+        self._telemetry_level = telemetry_level
         self.queried_org_ids: list[str] = []
         self._pk_for = {org: index + 1 for index, org in enumerate(sorted(rows))}
 
@@ -68,9 +73,11 @@ class _FakeOrgDb:
 
         stored = self._rows.get(org_id)
         result = MagicMock()
-        # The handler selects (PortalOrg.id, PortalOrg.pii_masked_entities):
-        # the PK for set_tenant, the array for the response.
-        result.first.return_value = None if stored is None else (self._pk_for[org_id], stored)
+        # The handler selects (PortalOrg.id, PortalOrg.pii_masked_entities,
+        # PortalOrg.telemetry_level): the PK for set_tenant, the array for the
+        # response, and the tenant's telemetry mode so the enforcement side can
+        # honour it without a second round trip.
+        result.first.return_value = None if stored is None else (self._pk_for[org_id], stored, self._telemetry_level)
         return result
 
 
@@ -138,8 +145,8 @@ class TestAuth:
 
 class TestPolicyResponse:
     @pytest.mark.asyncio
-    async def test_org_without_opt_in_returns_empty_set(self, patched_internal):
-        """REQ-7 default-off, including for orgs that predate the column."""
+    async def test_org_with_everything_switched_off_returns_empty_set(self, patched_internal):
+        """An empty stored set is a legal tenant choice, not a missing default."""
         db = _FakeOrgDb({"372801852200189907": []})
 
         response = await patched_internal.get_org_pii_entities(
@@ -312,3 +319,27 @@ class TestOrgIdSpace:
             await patched_internal.get_org_pii_entities(org_id="999999999999999999", request=_make_request(), db=db)
 
         assert patched_internal._audit_internal_call.await_args.kwargs["org_id"] is None
+
+
+class TestTelemetryLevelPassthrough:
+    """SPEC-PRIVACY-QUERY-SHADOW-001 REQ-1 — the tenant's telemetry mode rides along.
+
+    The enforcement side needs it to decide whether it may emit PII counters
+    about this tenant at all. It travels on this response rather than on a
+    second endpoint because the PII stack already calls this one once per org
+    per cache TTL, and adding a second fetch would give the two answers
+    independent cache lifetimes — a tenant could be masked under one view of
+    its settings and logged under another.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("level", ["off", "shadow", "full"])
+    async def test_stored_level_is_returned_verbatim(self, patched_internal, level):
+        db = _FakeOrgDb({"372801852200189969": ["IBAN_CODE"]}, telemetry_level=level)
+
+        response = await patched_internal.get_org_pii_entities(
+            org_id="372801852200189969", request=_make_request(), db=db
+        )
+
+        assert response.telemetry_level == level
+        assert response.enabled_entities == ["IBAN_CODE"]

@@ -1,9 +1,9 @@
 ---
 id: SPEC-PRIVACY-PII-POLICY-ADMIN-001
-version: "0.7.0"
+version: "0.8.0"
 status: draft
 created: 2026-08-21
-updated: 2026-08-21
+updated: 2026-09-03
 author: Mark Vletter
 priority: high
 related:
@@ -18,6 +18,7 @@ roadmap: docs/architecture/knowledge-rag-improvement-plan.md
 
 | Version | Date       | Author       | Change |
 |---------|------------|--------------|--------|
+| 0.8.0   | 2026-09-03 | Mark Vletter | **D2 shipped: the return set is on by default, for every tenant.** Migration `d3a91c47f5b2` sets the column DEFAULT to all seven types and backfills all 45 existing orgs; before it, exactly one tenant (Voys) had opted in and 44 sat on `{}`. This is PR 7 of the handoff table landing ahead of PR 3, which inverts the intended order and should be read as a debt, not a shortcut: without the platform defaults table there is no inherited default and no platform floor, so "on for everyone" is a column default plus a one-time UPDATE. The moment a tenant switches a type off, the column can no longer distinguish that choice from a tenant who was never backfilled — which is why the migration's downgrade restores the DEFAULT and deliberately leaves the data alone. It also departs from REQ-7's "staged, not flipped", by owner decision. What makes the departure defensible rather than merely instructed: the presidio `/analyze` call already runs on every org-attributed request, because `SECRET` and `NL_BSN` are unconditional, so default-on adds no analyzer call, no latency, no capacity and no new fail-closed surface — only the substitution changes, and every entity in the return set is restored, so the user's own text is never lost. What it does NOT change is the coverage limit measured the same day: over 2026-08-04..09-03 the observer recorded 3,058 of 3,114 detections (98%) on requests carrying no `org_id` — the internal `klai-fast` path (query rewrite, Graphiti KB extraction) that enforcement never reaches by design. Flipping every tenant moves the remaining 2%. The bigger minimisation win is attributing that internal path, and this SPEC does not do it. One consequence of the flip that only surfaced under review: the LiteLLM policy client failed CLOSED to an empty policy on any portal-api error, which was the documented state under default-off and is a silent unmasking under default-on — portal-api can be down while LiteLLM keeps serving chat. It now degrades instead: the tenant's own last resolved policy, or the default set for a tenant it has never resolved (a worker restarted mid-outage). Over-masking costs a worse answer for the length of an incident and the value is restored either way; under-masking cannot be taken back. Also added, gated on the tenant's existing `telemetry_level` and silent on `off`: per-request counts of what was masked, and how many placeholders reached the user unrestored. That second number is the first production signal for REQ-0b's survival rate, which has not been measured since the Phase 0 harness. | 
 | 0.7.0   | 2026-08-21 | Mark Vletter | Adds D8 on end-user disclosure, which contradicts the obvious design and says why. An icon with hover text is what the evidence argues against: SOUPS 2021 (n=683) found plain text beat every alternative and icons had a **negative** effect on perceived security versus no icon; browser padlock comprehension measures 5-11%. Worse for our intent, telling people they are protected is documented to make them share **more** sensitive data — which would work against the data minimisation this SPEC exists for. Salesforce's Einstein Trust Layer, architecturally identical (mask before the model, unmask after), shows the end user nothing. So: no icon, no per-message badge; one line of plain text once per session, naming what happens rather than reassuring, linking once to the help centre; kept separate from the AI Act Art. 50 disclosure. Records the thing this does not fix — a user whose answer is subtly worse still has no way to know why — and names the conditional, answer-attached signal that would, as its own decision rather than smuggling it in. |
 | 0.6.0   | 2026-08-21 | Mark Vletter | Product answers folded in. Rights: `ProfileRole.ADMIN` confirmed, no new `Capability`. No confirmation dialog on toggling — it is a settings page and a modal per switch trains people to dismiss modals. Adds **D6**: the UI groups entities (contact, financial, company, location, plus a locked always-on row) instead of listing them, because seven toggles becomes twenty once BE/DE land and nobody reasons in `NL_BTW` versus `NL_KVK`. Storage stays per entity — grouping is presentational, and baking it into the model would make regrouping a migration and lose the mixed state. A collapsed per-entity view stays for the real-but-rare cases a group cannot express. Adds **D7**: the allow-list exists at both levels, unioned, with the platform list audited as heavily as a version publish and shown as inherited in the tenant UI — otherwise a tenant files a detection bug that is actually a platform exclusion. |
 | 0.5.0   | 2026-08-21 | Mark Vletter | REQ-13 reframed. 0.4.0 wrote the limitations defensively, which implies the platform needed this feature to be compliant — untrue, and it sells the existing position short. Klai's GDPR position rests on EU-only processing, the DPA, telemetry modes and retention; this is **voluntary data minimisation**, done because it is decent, not because something was missing. The factual points stay — names are not detected, only postcode and city, the context around a masked value remains, none of it touches what Klai stores — because an admin choosing what to enable needs to know where detection ends. Two hard rules survive the reframe for non-tone reasons: "anonymous" is factually wrong for pseudonymised data (Art. 4(5)) in any register, and the page must not claim a toggle makes anyone compliant — not because compliance is in doubt, but because that is not what compliance rests on, in either direction. |
@@ -55,7 +56,7 @@ Established by inventory, not assumption. Every claim is `file:line`-anchored in
 
 | | State |
 |---|---|
-| Detection | 9 entity types live. `NEVER_RESTORE = {SECRET, NL_BSN}` unconditional; `RETURN_SET` = 7 types, per-org, default **off** |
+| Detection | 9 entity types live. `NEVER_RESTORE = {SECRET, NL_BSN}` unconditional; `RETURN_SET` = 7 types, per-org, default **on** since 2026-09-03 (migration `d3a91c47f5b2`, D2). An empty stored set now means a tenant switched everything off, not that nobody chose |
 | Storage | `portal_orgs.pii_masked_entities text[]`, CHECK-constrained to the return set |
 | Write path | **Does not exist.** Operator SQL only |
 | Validation | `validate_entity_selection()` exists and is unwired. Its own docstring says every future write path must call it |
@@ -474,6 +475,18 @@ per-entity detection counts per tenant before widening, and **SHALL NOT** be app
 tenants in one change.
 
 The observer has been counting since Phase 2 of the pipeline SPEC. That data is the input.
+
+**Overridden, 2026-09-03.** This requirement was not met. On an explicit owner decision the
+seven types were flipped for all 45 tenants in one migration (`d3a91c47f5b2`) rather than
+staged. The requirement text stays because the reasoning behind it stays true — a staged
+rollout is what you want when the change carries per-tenant risk. The argument for
+overriding it is that this one does not: the analyzer call already runs for every
+org-attributed request (`SECRET`/`NL_BSN` are unconditional), so no tenant acquires a new
+dependency, a new latency cost or a new failure mode; only the substitution changes, and
+every affected entity is restored in the response. The residual risk is answer quality
+under over-masking, which staging would have *measured* rather than prevented — and which
+`PHONE_NUMBER`, the one entity here with no checksum, dominates. Treat that as the open
+item this override leaves behind.
 
 #### REQ-8 — `PERSON` is gated on evidence that does not exist yet (state-driven)
 

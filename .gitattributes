@@ -1,3 +1,7 @@
 * text=auto eol=lf
 *.sh text eol=lf
 *.py text eol=lf
+
+# pen.dev design sources are JSON. Committed as text, never CRLF-converted,
+# so a diff between design and code stays readable.
+*.pen text eol=lf

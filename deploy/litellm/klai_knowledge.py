@@ -873,6 +873,11 @@ class KlaiKnowledgeHook(CustomLogger):
             conversation_history,
             trees_for_classify,
             pasted_correspondence=latest_turn_correspondence,
+            # The rewrite re-enters the proxy on the master key, which carries
+            # no tenant. Without this the PII enforcer cannot attribute that
+            # call and leaves the user's question unmasked -- on the one call
+            # whose entire payload IS the user's question.
+            org_id=org_id,
         )
         # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-6: gate raw query content out of
         # the query_rewrite log line in 'off' / 'shadow' mode. Operators keep

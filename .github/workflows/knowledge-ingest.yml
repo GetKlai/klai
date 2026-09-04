@@ -39,7 +39,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.0.1
         with:
-          version: "0.12.6"
+          version: "0.12.7"
           python-version: "3.12"
           enable-cache: true
       # Dependency vulnerability gate. This service had 8 findings that went
@@ -107,7 +107,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.0.1
         with:
-          version: "0.12.6"
+          version: "0.12.7"
           python-version: "3.12"
           enable-cache: true
       - name: Prepare Alembic version schema
@@ -163,7 +163,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v10.0.1
         with:
-          version: "0.12.6"
+          version: "0.12.7"
           enable-cache: true
 
       - name: Guard — single alembic head (knowledge schema)

@@ -14,8 +14,9 @@ REQ-7 splits the entity set in two:
   preference; a BSN needs a statutory basis, which is a lawfulness question and
   not a checkbox). They are rejected by ``validate_entity_selection`` for that
   reason, not because they are unknown.
-- ``PII_RETURN_SET_ENTITIES`` are per-org, default off, and restored in the
-  response when enabled.
+- ``PII_RETURN_SET_ENTITIES`` are per-org and restored in the response when
+  enabled. ON by default since 2026-09-03 (SPEC-PRIVACY-PII-POLICY-ADMIN-001
+  D2) — see ``PII_DEFAULT_MASKED_ENTITIES`` below.
 
 ``PERSON`` is deliberately absent from both sets. REQ-9 forbids enabling it
 before a GLiNER-era survival re-run exists, and no PERSON detector is deployed
@@ -37,7 +38,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-# REQ-7: per-org, default off, restored when enabled. Mirrors
+# REQ-7: per-org, restored when enabled. Default-ON since D2 — the default
+# itself is ``PII_DEFAULT_MASKED_ENTITIES`` below. Mirrors
 # ``RETURN_SET_ENTITIES`` in ``deploy/litellm/klai_pii_entities.py``.
 PII_RETURN_SET_ENTITIES: frozenset[str] = frozenset(
     {
@@ -50,6 +52,18 @@ PII_RETURN_SET_ENTITIES: frozenset[str] = frozenset(
         "NL_POSTCODE",
     }
 )
+
+# SPEC-PRIVACY-PII-POLICY-ADMIN-001 D2 — the value a tenant gets when nobody
+# has chosen: the WHOLE return set, on. This inverts REQ-7's original
+# "per-org, default off", deliberately and by owner decision (2026-09-03);
+# migration ``d3a91c47f5b2`` sets it as the column DEFAULT and backfills every
+# existing row. A tenant admin can still switch any individual type off — the
+# default is a starting position, not a floor.
+#
+# Sorted so the tuple, the migration's array literal and the model's
+# ``server_default`` are byte-comparable; ``TestDefaultOnIsSingleSourced``
+# fails if any of the three drifts.
+PII_DEFAULT_MASKED_ENTITIES: tuple[str, ...] = tuple(sorted(PII_RETURN_SET_ENTITIES))
 
 # REQ-7: unconditional for every org, never restored, never per-org settable.
 # Mirrors ``NEVER_RESTORE_ENTITIES`` in ``deploy/litellm/klai_pii_entities.py``.
@@ -102,8 +116,9 @@ def validate_entity_selection(values: Iterable[str]) -> frozenset[str]:
 def sanitize_stored_entities(values: Iterable[str] | None) -> list[str]:
     """Read path: the stored value, narrowed to REQ-7's return set, sorted.
 
-    Defensive rather than trusting: the column is ``NOT NULL DEFAULT '{}'`` and
-    CHECK-constrained, so in practice this is an identity transform. It still
+    Defensive rather than trusting: the column is ``NOT NULL``, CHECK-constrained
+    and defaults to the full return set, so in practice this is an identity
+    transform. It still
     intersects, because the alternative is that one bad row — a constraint
     dropped during an incident, a superuser backfill, a future column reuse —
     puts ``PERSON`` or ``SECRET`` on the wire, and the enforcement side treats

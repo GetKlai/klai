@@ -461,7 +461,12 @@ async def summarize_transcription(
 
     try:
         summary_result = await summarizer.summarize_transcription(
-            record.text, body.recording_type, language
+            record.text,
+            body.recording_type,
+            language,
+            # Scribe calls LiteLLM on the master key, which names no tenant.
+            # Without this the transcript reaches Mistral unmasked.
+            org_id=caller.org_id,
         )
     except httpx.HTTPStatusError as exc:
         logger.error("LiteLLM HTTP error during summarization: %s", exc)

@@ -45,6 +45,13 @@ jobs:
       - name: Lint (ESLint)
         run: npm run lint
 
+      # pen.dev design tokens are generated one-way out of src/index.css, so a
+      # .pen file can silently fall behind a token change. This also fails on a
+      # committed `fileToken`: the pen.dev CLI injects one on every save, it
+      # ties the file to a cloud workspace, and this repository is public.
+      - name: Design token drift (pen.dev)
+        run: node scripts/generate-pen-variables.mjs --check
+
       # Paraglide generates src/paraglide at build time and it is gitignored,
       # so the suite cannot import `@/paraglide/messages` without this step —
       # every test file fails to load and the run reports a green-looking

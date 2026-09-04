@@ -20,6 +20,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
 
+# Single-sourced from the service module (stdlib-only, so no import cycle) —
+# the same tuple backs migration ``d3a91c47f5b2`` and the ``server_default``
+# on ``PortalOrg.pii_masked_entities``.
+from app.services.pii_entity_policy import PII_DEFAULT_MASKED_ENTITIES
+
 DEFAULT_PLATFORM_UNLOCKED_FEATURES: tuple[str, ...] = ("partner_api", "scribe", "widgets")
 
 
@@ -146,9 +151,15 @@ class PortalOrg(Base):
         server_default="shadow",
     )
     # @MX:NOTE: SPEC-PRIVACY-MISTRAL-PII-001 REQ-7 — the REQ-7 return-set entity
-    # types this tenant has opted into having masked on the Mistral call path.
-    # Empty for every org that predates this column, which IS REQ-7's default
-    # ("per-org, default off") rather than a missing backfill.
+    # types masked for this tenant on the Mistral call path.
+    #
+    # The whole return set is ON by default since 2026-09-03
+    # (SPEC-PRIVACY-PII-POLICY-ADMIN-001 D2, migration ``d3a91c47f5b2``), for
+    # existing rows and for new ones. REQ-7's original "per-org, default off"
+    # is history — an empty array now means a tenant admin switched everything
+    # off via ``PATCH /api/orgs/me/pii-entities``, not that nobody has chosen
+    # yet. The two are indistinguishable in this column by construction, which
+    # is why the migration's downgrade restores the DEFAULT but not the data.
     #
     # Same storage shape as ``platform_unlocked_features`` above: a bounded set
     # of opted-in string flags is a text[] column on this table, not a side
@@ -161,8 +172,11 @@ class PortalOrg(Base):
     pii_masked_entities: Mapped[list[str]] = mapped_column(
         ARRAY(Text()),
         nullable=False,
-        default=list,
-        server_default=sa.text("'{}'::text[]"),
+        default=lambda: list(PII_DEFAULT_MASKED_ENTITIES),
+        server_default=sa.text(
+            "ARRAY['CREDIT_CARD', 'EMAIL_ADDRESS', 'IBAN_CODE', 'NL_BTW', "
+            "'NL_KVK', 'NL_POSTCODE', 'PHONE_NUMBER']::text[]"
+        ),
     )
     # @MX:NOTE: SPEC-PRIVACY-PII-POLICY-ADMIN-001 D1/REQ-3 — per-tenant PII
     # allow-list (the subtractive model). Each element:

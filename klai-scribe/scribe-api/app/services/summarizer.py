@@ -138,25 +138,46 @@ def get_synthesis_prompt(recording_type: str) -> str:
     return _RECORDING_SYNTHESIS_SYSTEM
 
 
-async def _call_llm(system: str, user: str, model: str, temperature: float = 0.1) -> str:
+# SPEC-PRIVACY-MISTRAL-PII-001 REQ-7 -- delegated tenant identity.
+#
+# Scribe posts to LiteLLM with the master key, which belongs to no tenant. The
+# PII enforcer reads org_id from the authenticated key and nowhere else, so it
+# could not attribute these calls and skipped masking -- while the payload is a
+# meeting transcript, the densest personal data Klai handles. The org is known
+# here (CallerIdentity.org_id is the canonical Zitadel org id, the same id space
+# the enforcer resolves policy against), so it travels with the request.
+#
+# LiteLLM honours this field only for proxy_admin callers; see
+# ``deploy/litellm/klai_pii_enforce.py::_delegated_org_id``.
+_DELEGATED_ORG_ID_KEY = "_klai_delegated_org_id"
+
+
+async def _call_llm(
+    system: str, user: str, model: str, temperature: float = 0.1, org_id: str | None = None
+) -> str:
     """Call LiteLLM chat completions endpoint and return the response content."""
+    payload: dict = {
+        "model": model,
+        "temperature": temperature,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+    }
+    if org_id:
+        payload["metadata"] = {_DELEGATED_ORG_ID_KEY: str(org_id)}
     resp = await _http_client.post(
         f"{settings.litellm_base_url}/v1/chat/completions",
         headers={"Authorization": f"Bearer {settings.litellm_master_key}"},
-        json={
-            "model": model,
-            "temperature": temperature,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-        },
+        json=payload,
     )
     resp.raise_for_status()
     return resp.json()["choices"][0]["message"]["content"]
 
 
-async def extract_facts(transcript: str, recording_type: str, language: str) -> dict:
+async def extract_facts(
+    transcript: str, recording_type: str, language: str, org_id: str | None = None
+) -> dict:
     """Run extraction prompt; return structured facts dict."""
     lang_name = _LANGUAGE_NAMES.get(language or "en", "English")
     decision = _safety_decision(transcript, phase=SafetyPhase.CONTEXT)
@@ -165,7 +186,9 @@ async def extract_facts(transcript: str, recording_type: str, language: str) -> 
     system = _with_untrusted_transcript_guard(get_extraction_prompt(recording_type))
     user_prompt = f"Transcript ({lang_name}):\n\n{transcript}"
 
-    raw = await _call_llm(system, user_prompt, model=settings.extraction_model, temperature=0.1)
+    raw = await _call_llm(
+        system, user_prompt, model=settings.extraction_model, temperature=0.1, org_id=org_id
+    )
 
     # Parse JSON -- strip markdown code fences if present
     raw = raw.strip()
@@ -174,7 +197,9 @@ async def extract_facts(transcript: str, recording_type: str, language: str) -> 
     return json.loads(raw)
 
 
-async def synthesize_summary(facts: dict, recording_type: str, language: str) -> str:
+async def synthesize_summary(
+    facts: dict, recording_type: str, language: str, org_id: str | None = None
+) -> str:
     """Run synthesis prompt; return Markdown summary string."""
     lang_name = _LANGUAGE_NAMES.get(language or "en", "English")
     system = _with_untrusted_transcript_guard(get_synthesis_prompt(recording_type))
@@ -182,7 +207,9 @@ async def synthesize_summary(facts: dict, recording_type: str, language: str) ->
         f"Write the summary in {lang_name}.\n\n"
         f"Extracted facts:\n{json.dumps(facts, ensure_ascii=False, indent=2)}"
     )
-    markdown = await _call_llm(system, user_prompt, model=settings.synthesis_model, temperature=0.3)
+    markdown = await _call_llm(
+        system, user_prompt, model=settings.synthesis_model, temperature=0.3, org_id=org_id
+    )
     decision = _safety_decision(markdown, phase=SafetyPhase.OUTPUT)
     if not decision.allowed:
         logger.warning("scribe_summary_output_blocked reason=%s", decision.reason)
@@ -194,10 +221,11 @@ async def summarize_transcription(
     text: str,
     recording_type: str,
     language: str,
+    org_id: str | None = None,
 ) -> dict:
     """Orchestrate extraction + synthesis; return summary_json dict."""
-    facts = await extract_facts(text, recording_type, language)
-    markdown = await synthesize_summary(facts, recording_type, language)
+    facts = await extract_facts(text, recording_type, language, org_id=org_id)
+    markdown = await synthesize_summary(facts, recording_type, language, org_id=org_id)
 
     if recording_type == "meeting":
         return {

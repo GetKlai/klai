@@ -12,7 +12,11 @@ REQ-7's two-tier policy, encoded structurally rather than by convention:
 - ``NEVER_RESTORE_ENTITIES`` (``SECRET``, ``NL_BSN``) are masked for every
   org, unconditionally, and never restored. ``effective_enabled_entities()``
   always includes them regardless of org policy content.
-- ``RETURN_SET_ENTITIES`` are per-org, default off, restored when enabled.
+- ``RETURN_SET_ENTITIES`` are per-org and restored when enabled. They are
+  ON by default for every tenant since 2026-09-03
+  (SPEC-PRIVACY-PII-POLICY-ADMIN-001 D2); the default lives in portal-api
+  (``app.services.pii_entity_policy.PII_DEFAULT_MASKED_ENTITIES``), not
+  here — this module only classifies, it does not decide.
 - ``PERSON`` is deliberately absent from both sets. REQ-0b's PERSON half is
   unmeasurable today (REQ-2 disables SpacyRecognizer, GLiNER/REQ-9 is not
   deployed), so REQ-9 forbids enabling it before that re-run exists.
@@ -32,7 +36,8 @@ from __future__ import annotations
 # is an incident; a BSN is not Klai's to hold without a statutory basis.
 NEVER_RESTORE_ENTITIES: frozenset[str] = frozenset({"SECRET", "NL_BSN"})
 
-# REQ-7: per-org, default off, restored when enabled. PERSON is NOT a member
+# REQ-7: per-org, restored when enabled, default-on since D2 (the default
+# itself is portal-api's). PERSON is NOT a member
 # of this set — see module docstring. Do not add it here before REQ-9's
 # gate (a GLiNER-era survival re-run showing PERSON >= 95%) is satisfied.
 RETURN_SET_ENTITIES: frozenset[str] = frozenset(
@@ -59,7 +64,7 @@ def effective_enabled_entities(org_policy: frozenset[str] | set[str]) -> frozens
     """The entity types that should be masked for one request.
 
     ``org_policy`` is the set of RETURN_SET entities this org has opted
-    into (REQ-7's "per-org, default off"). The result always contains the
+    into. The result always contains the
     two unconditional entities regardless of what ``org_policy`` says, and
     can never contain PERSON regardless of what ``org_policy`` says — both
     guarantees fall out of set intersection against ``RETURN_SET_ENTITIES``
