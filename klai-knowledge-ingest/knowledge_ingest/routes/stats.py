@@ -56,19 +56,25 @@ async def get_source_count(
     try:
         verified_org_id = await assert_caller_identity_tenant_only(request, claimed_org_id=org_id)
         async with tenant_scoped_connection(verified_org_id) as conn:
-            # `belief_time_end = _SENTINEL` is this codebase's active-artifact
-            # test (pg_store, rebuild_tasks, list_kb_sources). It is load-bearing
-            # here: `soft_delete_artifact` closes a deleted row by setting
-            # belief_time_end and leaves superseded_by NULL, so counting on
-            # supersession alone kept every deleted upload in the tenant's
-            # `max_items_per_kb` budget forever -- on a KB that reads as empty.
-            # Measured 2026-09-03: the e2e tenant showed 20/20 with 1 real item.
-            # superseded_by stays in the predicate as defence in depth; the
-            # sentinel is what makes the count correct.
+            # `belief_time_end = _SENTINEL` is this codebase's ONE active-artifact
+            # test -- pg_store, rebuild_tasks, list_kb_sources and the
+            # `uq_artifacts_active_path` index all use it and nothing else. The
+            # quota must ask the same question the Sources tab answers, or the
+            # two drift: this endpoint used to count `superseded_by IS NULL`
+            # instead, which is "has no replacement", not "still exists". A
+            # deleted upload has neither, so every delete leaked a slot from
+            # `max_items_per_kb` permanently, on a KB that reads as empty
+            # (e2e tenant, 2026-09-03: 20/20 with 1 real item).
+            #
+            # Keeping `superseded_by IS NULL` alongside the sentinel was the
+            # first version of this fix. It is deliberately gone: a second
+            # condition here is a second definition of "live", and an active row
+            # that somehow carried a replacement link would show in the Sources
+            # tab while escaping the quota. Two definitions of live is what
+            # caused the original bug; adding one back to feel safer repeats it.
             count = await conn.fetchval(
                 "SELECT COUNT(*) FROM knowledge.artifacts "
-                "WHERE org_id = $1 AND kb_slug = $2 "
-                "AND belief_time_end = $3 AND superseded_by IS NULL",
+                "WHERE org_id = $1 AND kb_slug = $2 AND belief_time_end = $3",
                 verified_org_id,
                 kb_slug,
                 _SENTINEL,

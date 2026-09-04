@@ -75,6 +75,11 @@ def test_a_deleted_artifact_does_not_consume_quota(client, captured):
         "the active-artifact sentinel must be bound as a parameter, matching "
         "list_kb_sources and rebuild_tasks"
     )
+    assert "superseded_by" not in seen["query"], (
+        "the quota must ask the same question the Sources tab answers. A second "
+        "condition here is a second definition of 'live', which is what caused "
+        "the leak this test guards"
+    )
 
 
 def test_the_count_is_still_scoped_to_one_tenant_and_kb(client, captured):
