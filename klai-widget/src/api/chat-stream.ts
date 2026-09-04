@@ -1,6 +1,8 @@
 import { fetchEventSource } from "@microsoft/fetch-event-source";
 import { fetchWidgetConfig, KlaiWidgetError } from "./widget-config";
 
+export type MessageRating = "thumbsUp" | "thumbsDown";
+
 export interface Message {
   role: "user" | "assistant" | "agent";
   content: string;
@@ -8,6 +10,12 @@ export interface Message {
   id?: number;
   agentName?: string;
   activity?: AgentActivity[];
+  /** Client-generated id sent with the chat request as ``widget_turn_id``;
+   * lets POST /partner/v1/widget/feedback address this assistant turn.
+   * Only assistant answers produced by the bot carry one. */
+  turnId?: string;
+  /** Visitor thumbs rating for this answer; null/undefined = not rated. */
+  rating?: MessageRating | null;
 }
 
 export interface MessageSource {
@@ -46,6 +54,9 @@ interface ChatStreamOptions {
   messages: Message[];
   widgetId: string;
   pageContext?: PageContext;
+  /** Client-generated id for the assistant turn being generated; stored
+   * server-side on the audit row so feedback buttons can address it. */
+  widgetTurnId?: string;
   callbacks: StreamCallbacks;
   abortController?: AbortController;
 }
@@ -222,7 +233,7 @@ export function normalizeAgentActivity(rawActivity: unknown): AgentActivity[] {
 }
 
 export async function streamChat(options: ChatStreamOptions): Promise<void> {
-  const { endpoint, token, messages, widgetId, pageContext, callbacks, abortController } = options;
+  const { endpoint, token, messages, widgetId, pageContext, widgetTurnId, callbacks, abortController } = options;
   let currentToken = token;
   let retried = false;
 
@@ -238,6 +249,9 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
           messages,
           stream: true,
           page_context: pageContext,
+          // Dropped by JSON.stringify when absent — old backends and
+          // partner-style callers never see the field.
+          widget_turn_id: widgetTurnId,
         }),
         signal: abortController?.signal,
         onopen: async (response) => {

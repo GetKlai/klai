@@ -1,6 +1,6 @@
 import { createStore } from "solid-js/store";
 import type { WidgetConfig } from "../api/widget-config";
-import type { AgentActivity, Message, MessageSource } from "../api/chat-stream";
+import type { AgentActivity, Message, MessageRating, MessageSource } from "../api/chat-stream";
 import { normalizeAgentActivity, normalizeMessageSources } from "../api/chat-stream";
 
 export type ConversationStatus = "active" | "handoff_active" | "closed";
@@ -523,15 +523,35 @@ export function clearStoredIdentity(): void {
   schedulePersist();
 }
 
+// Client-side identifier for one assistant turn. It travels with the chat
+// request as ``widget_turn_id``, is stored on the assistant row in
+// widget_messages, and is what POST /partner/v1/widget/feedback addresses —
+// lowercase hex so the backend pattern (^[0-9a-f]{16,64}$) accepts it.
+export function createTurnId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID().replace(/-/g, "");
+  }
+  let id = "";
+  while (id.length < 32) {
+    id += Math.random().toString(16).slice(2);
+  }
+  return id.slice(0, 32);
+}
+
 export function addUserMessage(content: string): void {
   setChatState("messages", (msgs) => [...msgs, { role: "user", content }]);
   setChatState("conversationStatus", chatState.handoffActive ? "handoff_active" : "active");
   schedulePersist();
 }
 
-export function startAssistantMessage(): void {
-  setChatState("messages", (msgs) => [...msgs, { role: "assistant", content: "" }]);
+export function startAssistantMessage(turnId: string): void {
+  setChatState("messages", (msgs) => [...msgs, { role: "assistant", content: "", turnId }]);
   setChatState("isStreaming", true);
+  schedulePersist();
+}
+
+export function setMessageRating(index: number, rating: MessageRating | null): void {
+  setChatState("messages", index, "rating", rating);
   schedulePersist();
 }
 

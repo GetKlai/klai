@@ -196,6 +196,13 @@ class ChatCompletionsRequest(BaseModel):
     # embedding retrieval and is often a long labelled blob that returns nothing
     # from a keyword engine. Falls back to the last user message when omitted.
     web_search_query: str | None = Field(default=None, max_length=_MAX_WEB_SEARCH_QUERY_CHARS)
+    # Widget feedback addressing: the widget client generates one random hex
+    # id per assistant turn and sends it here; the audit writer stores it on
+    # the assistant ``widget_messages`` row, and POST /partner/v1/widget/
+    # feedback later addresses the turn with it. Ignored for partner API keys
+    # (their chat turns are not audited to widget_messages), so partner
+    # behaviour is unchanged.
+    widget_turn_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{16,64}$")
 
 
 class PartnerFeedbackRequest(BaseModel):
@@ -411,6 +418,7 @@ async def _audit_streaming_wrapper(
     session_key: str,
     loaded_origin: str | None = None,
     is_preview: bool = False,
+    turn_id: str | None = None,
 ) -> AsyncGenerator[bytes]:
     """Tee the SSE stream, capture composed text + sources, log the
     assistant turn once the generator completes.
@@ -444,6 +452,7 @@ async def _audit_streaming_wrapper(
                     sources=composed_sources or None,
                     loaded_origin=loaded_origin,
                     is_preview=is_preview,
+                    turn_id=turn_id,
                 )
             )
             _pending.add(task)
@@ -1829,6 +1838,7 @@ async def chat_completions(  # noqa: C901
                 session_key=audit_session_key,  # type: ignore[arg-type]
                 loaded_origin=http_request.headers.get("origin") or None,
                 is_preview=getattr(auth, "is_preview", False),
+                turn_id=request.widget_turn_id,
             )
         return StreamingResponse(
             content=streaming_gen,
@@ -1871,6 +1881,7 @@ async def chat_completions(  # noqa: C901
                     sources=assistant_sources,
                     loaded_origin=http_request.headers.get("origin") or None,
                     is_preview=getattr(auth, "is_preview", False),
+                    turn_id=request.widget_turn_id,
                 )
             )
             _pending.add(task)
@@ -2365,6 +2376,118 @@ async def submit_feedback(
     )
 
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# POST /partner/v1/widget/feedback  (widget thumbs up/down)
+# ---------------------------------------------------------------------------
+
+# Separate sliding window from the per-widget 60/min auth bucket in
+# _auth_via_session_token — feedback must not be able to starve the chat
+# path, and chat volume must not silently absorb (or block) ratings.
+_WIDGET_FEEDBACK_RATE_LIMIT_PER_MINUTE = 12
+
+
+class WidgetFeedbackRequest(BaseModel):
+    # Same shape as ChatCompletionsRequest.widget_turn_id — the client-
+    # generated identifier stored on the assistant widget_messages row.
+    turn_id: str = Field(..., pattern=r"^[0-9a-f]{16,64}$")
+    # None withdraws the rating again (second click on the active button).
+    rating: Literal["thumbsUp", "thumbsDown"] | None = None
+
+
+@router.post("/widget/feedback")
+async def submit_widget_feedback(
+    request: WidgetFeedbackRequest,
+    auth: PartnerAuthContext = Depends(get_partner_key),
+    db: AsyncSession = Depends(get_db),
+):
+    """Record a visitor thumbs rating on one assistant answer of the
+    caller's own widget conversation.
+
+    Why a dedicated endpoint instead of opening POST /partner/v1/feedback
+    to widget tokens: that endpoint is built for authenticated partner
+    integrations — it correlates retrieval logs by time window, inserts
+    into portal_feedback_events, schedules Qdrant quality updates, and
+    emits product events. Flipping ``feedback: True`` in the widget
+    session permissions would expose that whole side-effect pipeline to
+    every anonymous browser holding a widget JWT — a new abuse surface —
+    and its addressing model (caller-supplied free-form message_id) does
+    not match widget audit rows at all. Partner API-key behaviour on
+    /partner/v1/feedback stays byte-identical. Here the mutation is one
+    scoped UPDATE on widget_messages, addressed by the turn id the chat
+    request already carried.
+
+    Tenant scoping: conversation + org are taken from the verified JWT
+    (session_key + wgt_id), never from the request body. A turn_id from
+    another visitor's conversation or another org simply matches no row
+    → 404 (existence-non-disclosing, and RLS Cat-D on widget_messages /
+    widget_conversations is the second layer).
+    """
+    # 1. Widget sessions only. Partner keys are rejected here explicitly:
+    #    auth.permissions cannot express "widget-only" (a partner key row
+    #    with feedback=False and a widget JWT both lack the permission),
+    #    and widget JWTs always carry a session_key while key auth never does.
+    if not str(auth.key_id).startswith("wgt_") or not auth.session_key:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": {"type": "permission_error", "message": "Insufficient permissions"}},
+        )
+
+    # 2. Per-session sliding-window rate limit (app/services/partner_rate_limit).
+    redis_pool = await get_redis_pool()
+    if redis_pool is not None:
+        allowed, retry_after = await check_rate_limit(
+            redis_pool,
+            f"widget_feedback:{auth.key_id}:{auth.session_key}",
+            limit_per_minute=_WIDGET_FEEDBACK_RATE_LIMIT_PER_MINUTE,
+        )
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={"error": {"type": "rate_limit_error", "message": "Rate limit exceeded"}},
+                headers={"Retry-After": str(retry_after)},
+            )
+
+    # 3. Stamp the rating on the assistant row of THIS session's conversation.
+    #    Raw text() SQL follows the widget_audit convention (RLS-guarded
+    #    tables avoid ORM implicit RETURNING). rowcount==0 means the turn id
+    #    matched no assistant row in the caller's own conversation/org —
+    #    including foreign turn ids replayed from another tenant.
+    result = await db.execute(
+        text(
+            """
+            UPDATE widget_messages AS m
+               SET rating = :rating
+              FROM widget_conversations AS c
+             WHERE c.id = m.conversation_id
+               AND m.role = 'assistant'
+               AND m.turn_id = :turn_id
+               AND m.org_id = :org_id
+               AND c.org_id = :org_id
+               AND c.session_key = :session_key
+               AND c.widget_id = (
+                   SELECT w.id FROM widgets AS w
+                    WHERE w.widget_id = :wgt_id AND w.org_id = :org_id
+               )
+            """
+        ),
+        {
+            "rating": request.rating,
+            "turn_id": request.turn_id,
+            "org_id": auth.org_id,
+            "session_key": auth.session_key,
+            "wgt_id": str(auth.key_id),
+        },
+    )
+    if result.rowcount == 0:  # type: ignore[attr-defined]
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"type": "not_found", "message": "Feedback target not found"}},
+        )
+    await db.commit()
+
+    return {"ok": True, "rating": request.rating}
 
 
 # ---------------------------------------------------------------------------

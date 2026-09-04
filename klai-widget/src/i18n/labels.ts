@@ -27,6 +27,9 @@ export interface WidgetLabels {
   conversationHistory: string
   newConversation: string
   closeConversation: string
+  feedbackGroupLabel: string
+  feedbackHelpful: string
+  feedbackNotHelpful: string
   conversationClosed: string
   conversationActive: string
   conversationHandoff: string
@@ -57,6 +60,9 @@ const nl: WidgetLabels = {
   conversationHistory: "Gesprekken",
   newConversation: "Nieuw gesprek",
   closeConversation: "Sluit gesprek",
+  feedbackGroupLabel: "Beoordeel dit antwoord",
+  feedbackHelpful: "Nuttig",
+  feedbackNotHelpful: "Niet nuttig",
   conversationClosed: "Gesprek gesloten",
   conversationActive: "Actief",
   conversationHandoff: "Live support",
@@ -87,6 +93,9 @@ const en: WidgetLabels = {
   conversationHistory: "Conversations",
   newConversation: "New conversation",
   closeConversation: "Close conversation",
+  feedbackGroupLabel: "Rate this answer",
+  feedbackHelpful: "Helpful",
+  feedbackNotHelpful: "Not helpful",
   conversationClosed: "Conversation closed",
   conversationActive: "Active",
   conversationHandoff: "Live support",

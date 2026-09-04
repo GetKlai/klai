@@ -1107,6 +1107,62 @@
   cursor: not-allowed;
 }
 
+/* ── Feedback row ──────────────────────────────────────────────────
+   Thumbs-up / thumbs-down under each assistant answer. Subtle when
+   untouched; the chosen thumb keeps the brand colour so the rating
+   stays visible after the click (and after a reload — the rating is
+   persisted with the conversation). */
+.klai-feedback {
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: -8px 0 0;
+}
+
+.klai-feedback-btn {
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--klai-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.75;
+  transition: opacity 150ms ease, color 150ms ease, background-color 150ms ease;
+}
+
+.klai-feedback-btn:hover {
+  opacity: 1;
+  color: var(--klai-text-color);
+  background: color-mix(in srgb, var(--klai-primary-text-color) 12%, transparent);
+}
+
+.klai-feedback-btn:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--klai-primary-text-color);
+  outline-offset: 2px;
+}
+
+.klai-feedback-btn--active {
+  opacity: 1;
+  color: var(--klai-primary-color);
+  background: color-mix(in srgb, var(--klai-primary-color) 14%, transparent);
+}
+
+.klai-feedback-btn svg {
+  width: 13px;
+  height: 13px;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+}
+
 /* ── AI-disclaimer footer ───────────────────────────────────────── */
 .klai-disclaimer {
   margin: 0;

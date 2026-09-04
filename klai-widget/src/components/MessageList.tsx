@@ -2,9 +2,10 @@ import { For, Show } from "solid-js";
 import DOMPurify from "dompurify";
 import snarkdown from "snarkdown";
 import { TypingIndicator } from "./TypingIndicator";
-import { chatState } from "../store/chat";
+import { chatState, setMessageRating } from "../store/chat";
+import { sendTurnFeedback } from "../api/feedback";
 import { t } from "../i18n/labels";
-import type { Message, MessageSource } from "../api/chat-stream";
+import type { Message, MessageRating, MessageSource } from "../api/chat-stream";
 import { normalizeSourceUrl } from "../api/chat-stream";
 
 const MALFORMED_CITATION_RE = /(^|[^\[])\b(\d+)\((https?:\/\/[^)\s]+)\)/g;
@@ -178,7 +179,7 @@ export function MessageList(props: MessageListProps) {
       aria-live="polite"
     >
       <For each={props.messages}>
-        {(message) => {
+        {(message, index) => {
           // Skip ANY empty assistant message (streaming placeholder OR
           // an empty welcome_message seeded by the store).
           const isEmpty =
@@ -188,6 +189,22 @@ export function MessageList(props: MessageListProps) {
           const showMeta = chatState.config?.show_meta === true;
           const sources = message.sources ?? [];
           const activity = message.activity ?? [];
+
+          // Re-clicking the active thumb withdraws the rating. Sending is
+          // fire-and-forget: feedback is secondary to the conversation, so
+          // a failed request never blocks the chat or shows an error — the
+          // choice stays visible locally and persists across reloads.
+          const rate = (rating: MessageRating) => {
+            const next = message.rating === rating ? null : rating;
+            setMessageRating(index(), next);
+            if (message.turnId) {
+              void sendTurnFeedback({
+                token: chatState.sessionToken,
+                turnId: message.turnId,
+                rating: next,
+              }).catch(() => undefined);
+            }
+          };
           return (
             <Show when={!isEmpty}>
               <div
@@ -205,6 +222,46 @@ export function MessageList(props: MessageListProps) {
                   </>
                 )}
               </div>
+              <Show when={message.role === "assistant" && message.turnId}>
+                <div class="klai-feedback" role="group" aria-label={t().feedbackGroupLabel}>
+                  <button
+                    type="button"
+                    class={
+                      message.rating === "thumbsUp"
+                        ? "klai-feedback-btn klai-feedback-btn--active"
+                        : "klai-feedback-btn"
+                    }
+                    aria-pressed={message.rating === "thumbsUp"}
+                    aria-label={t().feedbackHelpful}
+                    title={t().feedbackHelpful}
+                    onClick={() => rate("thumbsUp")}
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3z" />
+                      <path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    class={
+                      message.rating === "thumbsDown"
+                        ? "klai-feedback-btn klai-feedback-btn--active"
+                        : "klai-feedback-btn"
+                    }
+                    aria-pressed={message.rating === "thumbsDown"}
+                    aria-label={t().feedbackNotHelpful}
+                    title={t().feedbackNotHelpful}
+                    onClick={() => rate("thumbsDown")}
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <g transform="rotate(180 12 12)">
+                        <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3z" />
+                        <path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" />
+                      </g>
+                    </svg>
+                  </button>
+                </div>
+              </Show>
               <Show
                 when={
                   message.role === "assistant" &&

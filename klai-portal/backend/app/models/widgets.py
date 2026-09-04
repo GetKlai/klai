@@ -172,3 +172,14 @@ class WidgetMessage(Base):
     sources: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Client-generated per-turn identifier (widget chat requests carry it as
+    # ``widget_turn_id``; only the assistant row stores it). It is how
+    # POST /partner/v1/widget/feedback addresses the answer the visitor
+    # rated — the row id itself is never exposed to the browser.
+    # DDL + unique partial index live in
+    # post_deploy_f4a8c2e6b1d9_widget_messages_feedback.sql (klai-owned table).
+    turn_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Visitor thumbs rating for this assistant answer: 'thumbsUp' /
+    # 'thumbsDown' / NULL (no rating or withdrawn). CHECK constraints restrict
+    # the values to assistant rows only — see the same post-deploy SQL.
+    rating: Mapped[str | None] = mapped_column(String(16), nullable=True)

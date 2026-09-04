@@ -7,6 +7,7 @@ import {
   addUserMessage,
   closeCurrentConversation,
   createConversationSessionId,
+  createTurnId,
   startAssistantMessage,
   appendToLastMessage,
   setLastMessageSources,
@@ -157,7 +158,8 @@ export function ChatWindow(props: ChatWindowProps) {
       return;
     }
 
-    startAssistantMessage();
+    const turnId = createTurnId();
+    startAssistantMessage(turnId);
 
     abortController = new AbortController();
 
@@ -166,6 +168,7 @@ export function ChatWindow(props: ChatWindowProps) {
       token: chatState.sessionToken,
       widgetId: chatState.widgetId,
       messages: withVisitorInfo(chatState.messages.slice(0, -1)),
+      widgetTurnId: turnId,
       pageContext: chatState.config?.page_context_enabled ? collectPageContext() : undefined,
       abortController,
       callbacks: {
