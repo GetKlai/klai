@@ -225,3 +225,7 @@ codeindex-src/
 # Generated during the Klai LibreChat image build (SPEC-LIBRECHAT-PATCH-MODEL-001).
 # The real manifest lives inside the built image and as a CI artifact.
 deploy/librechat/build-manifest.json
+
+# pen.dev CLI scratch output (preview PNGs, agent working files).
+.pencil/
+.pencil-output/

@@ -1,0 +1,750 @@
+{
+  "version": "2.17",
+  "children": [
+    {
+      "type": "frame",
+      "id": "n6X8IU",
+      "x": 0,
+      "y": 0,
+      "name": "/no-account",
+      "clip": true,
+      "width": 1440,
+      "height": 900,
+      "fill": "$color-background",
+      "children": [
+        {
+          "type": "frame",
+          "id": "DhMw5",
+          "name": "Left panel (branding)",
+          "clip": true,
+          "width": 720,
+          "height": "fill_container",
+          "fill": [
+            {
+              "type": "image",
+              "enabled": true,
+              "url": "../../public/bg-1.webp",
+              "mode": "fill"
+            },
+            {
+              "type": "gradient",
+              "gradientType": "linear",
+              "enabled": true,
+              "rotation": 180,
+              "size": {
+                "height": 1
+              },
+              "colors": [
+                {
+                  "color": "#19191859",
+                  "position": 0
+                },
+                {
+                  "color": "#1919188c",
+                  "position": 0.25
+                },
+                {
+                  "color": "#191918c7",
+                  "position": 0.45
+                },
+                {
+                  "color": "#191918cc",
+                  "position": 0.8
+                },
+                {
+                  "color": "#191918e0",
+                  "position": 1
+                }
+              ]
+            }
+          ],
+          "layout": "vertical",
+          "padding": 61.6,
+          "justifyContent": "space_between",
+          "children": [
+            {
+              "type": "frame",
+              "id": "OCXZy",
+              "name": "Logo row",
+              "width": "fill_container",
+              "children": [
+                {
+                  "id": "WIwC8",
+                  "type": "ref",
+                  "ref": "klai:rVH6g",
+                  "name": "klai-logo-white.svg",
+                  "width": 99.3,
+                  "height": 30.8,
+                  "fill": "$color-white"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "m76dcE",
+              "name": "Hero copy",
+              "width": 492.8,
+              "layout": "vertical",
+              "gap": 26.4,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "Cx4hy",
+                  "name": "Heading",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "I6abo",
+                      "name": "Heading line 1",
+                      "fill": "$color-rl-cream",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Account",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans-preview",
+                      "fontSize": 26.4,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "rxAva",
+                      "name": "Heading highlight",
+                      "fill": "$color-rl-accent",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "niet bekend",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans-preview",
+                      "fontSize": 26.4,
+                      "fontWeight": "600"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "sGyiG",
+                  "name": "Hero body",
+                  "fill": "$color-rl-cream",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Maak bewust een Klai-account aan of kies een ander account om mee in te loggen.",
+                  "lineHeight": 1.625,
+                  "fontFamily": "$font-sans-preview",
+                  "fontSize": 17.6,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "fqXqM",
+              "name": "Copyright",
+              "opacity": 0.6,
+              "fill": "$color-rl-cream",
+              "content": "© Klai. Privé AI voor Europese teams.",
+              "fontFamily": "$font-sans-preview",
+              "fontSize": 13.2,
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "G42OR6",
+          "name": "Right panel",
+          "width": 720,
+          "height": "fill_container",
+          "layout": "vertical",
+          "padding": [
+            52.8,
+            35.2
+          ],
+          "justifyContent": "center",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "FScjX",
+              "name": "Form column",
+              "width": 422.4,
+              "layout": "vertical",
+              "gap": 35.2,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "M962e",
+                  "name": "Header row",
+                  "width": "fill_container",
+                  "justifyContent": "end",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "KVZpm",
+                      "name": "LocaleSwitcher",
+                      "fill": "$tw-gray-700",
+                      "content": "NL",
+                      "fontFamily": "$font-sans-preview",
+                      "fontSize": 15.4,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "HQUKX",
+                  "name": "Copy",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 17.6,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "wp0BA",
+                      "name": "Heading",
+                      "fill": "$tw-gray-900",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Geen Klai-account gevonden",
+                      "fontFamily": "$font-sans-preview",
+                      "fontSize": 22,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "ckUur",
+                      "name": "Body",
+                      "fill": "$tw-gray-600",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "We kennen dit account nog niet bij Klai. Maak een account aan of log in met een ander account.",
+                      "lineHeight": 1.6,
+                      "fontFamily": "$font-sans-preview",
+                      "fontSize": 15.4,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "id": "T4uhUH",
+                  "type": "ref",
+                  "ref": "klai:JLiG2",
+                  "name": "Button primary (size=lg, w-full)",
+                  "width": "fill_container",
+                  "height": 52.8,
+                  "padding": [
+                    8.8,
+                    35.2
+                  ],
+                  "gap": 13.2,
+                  "descendants": {
+                    "klai:xbH0m": {
+                      "content": "Account aanmaken met dit account"
+                    },
+                    "klai:vcWrX": {
+                      "enabled": true,
+                      "icon": "user-plus",
+                      "width": 16,
+                      "height": 16
+                    }
+                  }
+                },
+                {
+                  "id": "t3xqIW",
+                  "type": "ref",
+                  "ref": "klai:xDOD0",
+                  "name": "Button outline (size=lg, w-full)",
+                  "width": "fill_container",
+                  "height": 52.8,
+                  "padding": [
+                    8.8,
+                    35.2
+                  ],
+                  "gap": 13.2,
+                  "descendants": {
+                    "klai:ystYi": {
+                      "content": "Inloggen met ander account"
+                    },
+                    "klai:ro6pB": {
+                      "enabled": true,
+                      "icon": "log-in",
+                      "width": 16,
+                      "height": 16
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variables": {
+    "color-accent": {
+      "type": "color",
+      "value": "#fcaa2d"
+    },
+    "color-accent-foreground": {
+      "type": "color",
+      "value": "#191918"
+    },
+    "color-accent-text": {
+      "type": "color",
+      "value": "#7d4d03"
+    },
+    "color-accent-tint-10": {
+      "type": "color",
+      "value": "#fcaa2d1a"
+    },
+    "color-accent-tint-50": {
+      "type": "color",
+      "value": "#fcaa2d80"
+    },
+    "color-active": {
+      "type": "color",
+      "value": "#ffffff"
+    },
+    "color-background": {
+      "type": "color",
+      "value": "#faf9f6"
+    },
+    "color-border": {
+      "type": "color",
+      "value": "#e8e6de"
+    },
+    "color-card": {
+      "type": "color",
+      "value": "#faf9f6"
+    },
+    "color-card-foreground": {
+      "type": "color",
+      "value": "#191918"
+    },
+    "color-destructive": {
+      "type": "color",
+      "value": "#c0392b"
+    },
+    "color-destructive-bg": {
+      "type": "color",
+      "value": "#fef2f2"
+    },
+    "color-destructive-text": {
+      "type": "color",
+      "value": "#b91c1c"
+    },
+    "color-destructive-tint-10": {
+      "type": "color",
+      "value": "#c0392b1a"
+    },
+    "color-destructive-tint-20": {
+      "type": "color",
+      "value": "#c0392b33"
+    },
+    "color-destructive-tint-30": {
+      "type": "color",
+      "value": "#c0392b4d"
+    },
+    "color-destructive-tint-5": {
+      "type": "color",
+      "value": "#c0392b0d"
+    },
+    "color-destructive-tint-90": {
+      "type": "color",
+      "value": "#c0392be6"
+    },
+    "color-foreground": {
+      "type": "color",
+      "value": "#191918"
+    },
+    "color-foreground-tint-3": {
+      "type": "color",
+      "value": "#19191808"
+    },
+    "color-foreground-tint-4": {
+      "type": "color",
+      "value": "#1919180a"
+    },
+    "color-foreground-tint-6": {
+      "type": "color",
+      "value": "#1919180f"
+    },
+    "color-hover": {
+      "type": "color",
+      "value": "#ffffff"
+    },
+    "color-info": {
+      "type": "color",
+      "value": "#2563eb"
+    },
+    "color-info-bg": {
+      "type": "color",
+      "value": "#eff6ff"
+    },
+    "color-info-text": {
+      "type": "color",
+      "value": "#1d4ed8"
+    },
+    "color-info-tint-10": {
+      "type": "color",
+      "value": "#2563eb1a"
+    },
+    "color-info-tint-30": {
+      "type": "color",
+      "value": "#2563eb4d"
+    },
+    "color-info-tint-5": {
+      "type": "color",
+      "value": "#2563eb0d"
+    },
+    "color-input": {
+      "type": "color",
+      "value": "#f5f4ef"
+    },
+    "color-muted": {
+      "type": "color",
+      "value": "#f5f4ef"
+    },
+    "color-muted-foreground": {
+      "type": "color",
+      "value": "#19191899"
+    },
+    "color-muted-foreground-tint-10": {
+      "type": "color",
+      "value": "#1919180f"
+    },
+    "color-muted-tint-30": {
+      "type": "color",
+      "value": "#f5f4ef4d"
+    },
+    "color-muted-tint-40": {
+      "type": "color",
+      "value": "#f5f4ef66"
+    },
+    "color-muted-tint-60": {
+      "type": "color",
+      "value": "#f5f4ef99"
+    },
+    "color-popover": {
+      "type": "color",
+      "value": "#ffffff"
+    },
+    "color-popover-foreground": {
+      "type": "color",
+      "value": "#191918"
+    },
+    "color-primary": {
+      "type": "color",
+      "value": "#fcaa2d"
+    },
+    "color-primary-foreground": {
+      "type": "color",
+      "value": "#191918"
+    },
+    "color-ring": {
+      "type": "color",
+      "value": "#fcaa2d"
+    },
+    "color-rl-accent": {
+      "type": "color",
+      "value": "#fcaa2d"
+    },
+    "color-rl-accent-dark": {
+      "type": "color",
+      "value": "#a36404"
+    },
+    "color-rl-accent-hover": {
+      "type": "color",
+      "value": "#e89a1f"
+    },
+    "color-rl-accent-tint-10": {
+      "type": "color",
+      "value": "#fcaa2d1a"
+    },
+    "color-rl-accent-tint-15": {
+      "type": "color",
+      "value": "#fcaa2d26"
+    },
+    "color-rl-accent-tint-20": {
+      "type": "color",
+      "value": "#fcaa2d33"
+    },
+    "color-rl-accent-tint-40": {
+      "type": "color",
+      "value": "#fcaa2d66"
+    },
+    "color-rl-accent-tint-5": {
+      "type": "color",
+      "value": "#fcaa2d0d"
+    },
+    "color-rl-accent-tint-50": {
+      "type": "color",
+      "value": "#fcaa2d80"
+    },
+    "color-rl-bg": {
+      "type": "color",
+      "value": "#fffef2"
+    },
+    "color-rl-bg-tint-35": {
+      "type": "color",
+      "value": "#fffef259"
+    },
+    "color-rl-bg-tint-40": {
+      "type": "color",
+      "value": "#fffef266"
+    },
+    "color-rl-bg-tint-45": {
+      "type": "color",
+      "value": "#fffef273"
+    },
+    "color-rl-bg-tint-50": {
+      "type": "color",
+      "value": "#fffef280"
+    },
+    "color-rl-bg-tint-55": {
+      "type": "color",
+      "value": "#fffef28c"
+    },
+    "color-rl-bg-tint-60": {
+      "type": "color",
+      "value": "#fffef299"
+    },
+    "color-rl-bg-tint-65": {
+      "type": "color",
+      "value": "#fffef2a6"
+    },
+    "color-rl-bg-tint-70": {
+      "type": "color",
+      "value": "#fffef2b3"
+    },
+    "color-rl-bg-tint-75": {
+      "type": "color",
+      "value": "#fffef2bf"
+    },
+    "color-rl-bg-tint-95": {
+      "type": "color",
+      "value": "#fffef2f2"
+    },
+    "color-rl-border": {
+      "type": "color",
+      "value": "#e3e2d8"
+    },
+    "color-rl-cream": {
+      "type": "color",
+      "value": "#f3f2e7"
+    },
+    "color-rl-cream-tint-60": {
+      "type": "color",
+      "value": "#f3f2e799"
+    },
+    "color-rl-cream-tint-70": {
+      "type": "color",
+      "value": "#f3f2e7b3"
+    },
+    "color-rl-dark": {
+      "type": "color",
+      "value": "#191918"
+    },
+    "color-rl-dark-60": {
+      "type": "color",
+      "value": "#19191899"
+    },
+    "color-rl-dark-tint-10": {
+      "type": "color",
+      "value": "#1919181a"
+    },
+    "color-rl-dark-tint-50": {
+      "type": "color",
+      "value": "#19191880"
+    },
+    "color-rl-dark-tint-60": {
+      "type": "color",
+      "value": "#19191899"
+    },
+    "color-rl-dark-tint-70": {
+      "type": "color",
+      "value": "#191918b3"
+    },
+    "color-secondary": {
+      "type": "color",
+      "value": "#f5f4ef"
+    },
+    "color-secondary-foreground": {
+      "type": "color",
+      "value": "#191918"
+    },
+    "color-sidebar": {
+      "type": "color",
+      "value": "#f5f4ef"
+    },
+    "color-sidebar-accent": {
+      "type": "color",
+      "value": "#ffffff"
+    },
+    "color-sidebar-accent-foreground": {
+      "type": "color",
+      "value": "#191918"
+    },
+    "color-sidebar-border": {
+      "type": "color",
+      "value": "#e3e2d8"
+    },
+    "color-sidebar-foreground": {
+      "type": "color",
+      "value": "#191918"
+    },
+    "color-sidebar-foreground-tint-70": {
+      "type": "color",
+      "value": "#191918b3"
+    },
+    "color-sidebar-muted-foreground": {
+      "type": "color",
+      "value": "#19191866"
+    },
+    "color-success": {
+      "type": "color",
+      "value": "#27ae60"
+    },
+    "color-success-bg": {
+      "type": "color",
+      "value": "#d1fae5"
+    },
+    "color-success-text": {
+      "type": "color",
+      "value": "#065f46"
+    },
+    "color-success-tint-10": {
+      "type": "color",
+      "value": "#27ae601a"
+    },
+    "color-success-tint-30": {
+      "type": "color",
+      "value": "#27ae604d"
+    },
+    "color-success-tint-5": {
+      "type": "color",
+      "value": "#27ae600d"
+    },
+    "color-warning": {
+      "type": "color",
+      "value": "#d97706"
+    },
+    "color-warning-bg": {
+      "type": "color",
+      "value": "#fffbeb"
+    },
+    "color-warning-subtle": {
+      "type": "color",
+      "value": "#fef3c7"
+    },
+    "color-warning-text": {
+      "type": "color",
+      "value": "#92400e"
+    },
+    "color-warning-tint-10": {
+      "type": "color",
+      "value": "#d977061a"
+    },
+    "color-warning-tint-30": {
+      "type": "color",
+      "value": "#d977064d"
+    },
+    "color-warning-tint-5": {
+      "type": "color",
+      "value": "#d977060d"
+    },
+    "color-white": {
+      "type": "color",
+      "value": "#ffffff"
+    },
+    "font-display": {
+      "type": "string",
+      "value": "Parabole Medium"
+    },
+    "font-display-bold": {
+      "type": "string",
+      "value": "Parabole Bold"
+    },
+    "font-display-bold-preview": {
+      "type": "string",
+      "value": "Schibsted Grotesk"
+    },
+    "font-display-preview": {
+      "type": "string",
+      "value": "Schibsted Grotesk"
+    },
+    "font-mono": {
+      "type": "string",
+      "value": "Decima Mono"
+    },
+    "font-mono-preview": {
+      "type": "string",
+      "value": "DM Mono"
+    },
+    "font-sans": {
+      "type": "string",
+      "value": "Parabole Regular"
+    },
+    "font-sans-preview": {
+      "type": "string",
+      "value": "Schibsted Grotesk"
+    },
+    "radius-lg": {
+      "type": "number",
+      "value": 13.2
+    },
+    "radius-md": {
+      "type": "number",
+      "value": 8.8
+    },
+    "radius-sm": {
+      "type": "number",
+      "value": 6.6
+    },
+    "radius-xl": {
+      "type": "number",
+      "value": 17.6
+    },
+    "root-font-size": {
+      "type": "number",
+      "value": 17.6
+    },
+    "spacing-unit": {
+      "type": "number",
+      "value": 4.4
+    },
+    "tw-gray-100": {
+      "type": "color",
+      "value": "#f3f4f6"
+    },
+    "tw-gray-200": {
+      "type": "color",
+      "value": "#e5e7eb"
+    },
+    "tw-gray-50": {
+      "type": "color",
+      "value": "#f9fafb"
+    },
+    "tw-gray-600": {
+      "type": "color",
+      "value": "#4a5565"
+    },
+    "tw-gray-700": {
+      "type": "color",
+      "value": "#364153"
+    },
+    "tw-gray-800": {
+      "type": "color",
+      "value": "#1e2939"
+    },
+    "tw-gray-900": {
+      "type": "color",
+      "value": "#101828"
+    }
+  },
+  "imports": {
+    "klai": "../klai.lib.pen"
+  }
+}

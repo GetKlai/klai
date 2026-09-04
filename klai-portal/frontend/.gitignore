@@ -34,3 +34,12 @@ e2e/prod-tenant/_config/playwright-report-prod-tenant/
 *.sln
 *.sw?
 src/paraglide/
+
+# pen.dev (design/) — the .pen sources ARE committed; the renders are not.
+design/exports/
+design/**/*.png
+design/**/*.jpg
+design/**/*.jpeg
+design/**/*.webp
+design/**/*.pdf
+design/**/*.html
