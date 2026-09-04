@@ -6,6 +6,11 @@
 > opdracht — Qwen 3.8 Flash-Next (structuur, code-inventaris, extern onderzoek)
 > en Claude Opus 5 (gap-loop, capaciteitsanalyse, marktcijfers). Waar de twee
 > elkaar tegenspraken is het verschil nagerekend tegen de bron; zie § 5.4.
+> Uitvoering: dit document is de onderzoeksbasis, niet de werkvoorraad. Wat we
+> daadwerkelijk bouwen — requirements, beslissingen, omkeringen, verificatie —
+> staat in `docs/specs/SPEC-VOYS-HELPBOT-001/spec.md`. Werk dat plan daar bij,
+> niet hier, anders lopen de twee uiteen. De gatentabel in § 8 draagt sinds
+> 2026-09-04 een statuskolom die naar de bijbehorende requirement verwijst.
 > Onderzoeksmethode: alles hieronder volgt broncode op deze checkout (`main` @ `e3fb3de4a`), repo-docs en externe bronnen die op 2026-09-03 zijn opgehaald. Interne claims dragen `bestand:regel`; externe claims een URL. Wat niet geverifieerd is, staat expliciet bij § 10.
 
 ---
@@ -23,7 +28,7 @@
 5. **Eén harde blocker voor de Voys-pilot:** de HubSpot-handoff is vastgezet op tenant `getklai` en origin `getklai.getklai.com` (`klai-portal/backend/app/api/partner.py:106-107, 2485-2501`). Een Voys-eigen handoff naar Voys-support bestaat niet; de pilot start zonder handoff, of die gating wordt multi-tenant gemaakt. Zie § 8, G-1.
 6. **De feedback-loop ontbreekt op de widget zelf.** Er is géén thumbs-up/down in de widget-UI, géén feedback-kolom op `widget_messages`, en `/partner/v1/feedback` is een partner-API-key-endpoint — niet gekoppeld aan widget-sessies. Voor een publieke helpdesk is dit dé bron van waarheid over wat de bot niet kan. Zie § 8, G-3.
 7. **De rol van Voys als testtenant is historisch sterk:** de 41-NL-query evalsuite staat op de Voys-support-KB (`deploy/litellm/eval_suites/chat.yaml:3-13`), en alle incidenten die de retrieval- en answer-policy-laag gescherpt hebben, dragen "Voys" in de commentaren (§ 4). De helpdesk-pilot sluit aan op bestaand, beproefd werk.
-8. **Aanbevolen route:** Fase 0 = no-code pilot op help.voys.nl (widget + NL helpdesk-instructies, § 9.1) met wekelijkse transcript-review; Fase 1 = vijf gerichte dev-steps (refusal-herstyling naar customer-tone, confidence-band-portability, thumbs + opslag, AI Act-disclosure, evalsuite uitbreiden naar path B); Fase 2 = één orchestratiepad (parallelle implementaties samenvoegen).
+8. **Aanbevolen route** (uitvoering en actuele status: `docs/specs/SPEC-VOYS-HELPBOT-001/spec.md`)**:** Fase 0 = no-code pilot op help.voys.nl (widget + NL helpdesk-instructies, § 9.1) met wekelijkse transcript-review; Fase 1 = vijf gerichte dev-steps (refusal-herstyling naar customer-tone, confidence-band-portability, thumbs + opslag, AI Act-disclosure, evalsuite uitbreiden naar path B); Fase 2 = één orchestratiepad (parallelle implementaties samenvoegen).
 
 ---
 
@@ -283,24 +288,24 @@ De widget kent daarvoor nu maar één ingang: het 4000-char `system_prompt`-veld
 
 ## 8. Gap-analyse voor de Voys-pilot
 
-| ID | Gap | Ernst | Bewijs |
-|---|---|---|---|
-| G-1 | **Handoff geblokkeerd voor Voys**: `_HUBSPOT_HANDOFF_DEV_TENANT_SLUG="getklai"`, origin-whitelist `getklai.getklai.com`, HubSpot-config wijst naar Klai-eigen inbox | **Blocker** (pilot zonder escalatie kan, maar "Praat met een medewerker" faalt dan) | `partner.py:106-107, 2117-2149, 2485-2501`; `core/config.py:189-198`; compose `:1055` |
-| G-2 | Widget-path mist answer-beleid (rewrite/brand-bridging, low-confidence, multi-question, strict) | hoog | § 5.2 |
-| G-3 | Geen feedback-loop op de widget (geen thumbs in UI, geen kolom op `widget_messages`, `/feedback` is partner-key-only) | hoog | § 2.1; `partner.py:2289-2301` + `require_permission("feedback")` |
-| G-4 | Geen outcome-meting (resolved/escalated/abandoned) op conversaties; alleen volume/top-queries | hoog | `models/widgets.py:101-145`; `admin_widgets.py:804-811` |
-| G-5 | Interne toon/jargon in basis-prompts en refusal; persona-conflict in de instructielaag | hoog | § 7 |
-| G-6 | Geen eval-harness voor path B (widget) — alle kwaliteitsmetingen gaan via pad A | hoog | § 5.2 |
-| G-7 | Parallelle paden = driftgevaar; synchronisatie via handmatige comments | midden | `docker-compose.yml:966-971`; docstring-referenties |
-| G-8 | Instructies: één vrij veld, geen structuur/versioning/testpad/usage-meting | midden | § 6.1 vs `admin_widgets.py:76` |
-| G-9 | Page-context excerpt = aanvalsvector (injectie via hostpagina) — deels gemitigeerd | midden | § 6.3 |
-| G-10 | AI Act-artikel-50-disclosure niet expliciet ingericht (alleen nauwkeurigheid-disclaimer) | midden | § 6.4; `labels.ts` (`disclaimer`) |
-| G-11 | Content-bron-kloof: help.voys.nl (Super/Notion, externe crawl) vs klai-docs (Gitea, ingest) vs interne support-KB; oud/tegenstrijdig materiaal levert conflicterende antwoorden op | midden | § 3; corroboration-laag is uitgesteld (zie [README](README.md) §3) |
-| G-12 | Twee chat-bubbels rechtsonder op help.voys.nl (Nerds booking-widget) | laag (UX) | HTML-fetch § 3 |
-| G-14 | **Rate limits zijn per widget, niet per bezoeker**: chat 60 rpm hardcoded en gedeeld door alle bezoekers, sessie-mint 10/min, geen caching op `/widget-config` | **Blocker voor publiek verkeer** | § 5.6; `partner_dependencies.py:210`; `partner.py:2577` |
-| G-15 | **Widget-pad voedt de gap-registratie niet**: gap-events komen alleen uit de LiteLLM-hook, dus het gaten-dashboard ziet geen klantvragen | hoog (en goedkoop te dichten) | § 5.5; `klai_knowledge.py:1412` vs geen "gap" in `partner_chat.py` |
-| G-16 | Widget mint bij elke paginaweergave een sessietoken, ook voor de 90-97% die nooit chat; geen facade/lazy-load | hoog (lost G-14 op én versnelt de helppagina's) | § 9.1 stap 8 |
-| G-13 | Widget heeft geen server-side conversation state (client post hele history; server schrijft alleen een audit-spur) → beperkte context-recovery en geen "resume" over apparaten | laag (pilot-fase) | § 6.5 vs `chat-stream.ts:237-241` |
+| ID | Gap | Ernst | Status | Bewijs |
+|---|---|---|---|---|
+| G-1 | **Handoff geblokkeerd voor Voys**: `_HUBSPOT_HANDOFF_DEV_TENANT_SLUG="getklai"`, origin-whitelist `getklai.getklai.com`, HubSpot-config wijst naar Klai-eigen inbox | **Blocker** (pilot zonder escalatie kan, maar "Praat met een medewerker" faalt dan) | deels — REQ-6 (boekings-redirect) | `partner.py:106-107, 2117-2149, 2485-2501`; `core/config.py:189-198`; compose `:1055` |
+| G-2 | Widget-path mist answer-beleid (rewrite/brand-bridging, low-confidence, multi-question, strict) | hoog | open | § 5.2 |
+| G-3 | Geen feedback-loop op de widget (geen thumbs in UI, geen kolom op `widget_messages`, `/feedback` is partner-key-only) | hoog | **gebouwd** — REQ-3 | § 2.1; `partner.py:2289-2301` + `require_permission("feedback")` |
+| G-4 | Geen outcome-meting (resolved/escalated/abandoned) op conversaties; alleen volume/top-queries | hoog | in aanbouw — REQ-5 | `models/widgets.py:101-145`; `admin_widgets.py:804-811` |
+| G-5 | Interne toon/jargon in basis-prompts en refusal; persona-conflict in de instructielaag | hoog | **gebouwd** — REQ-4 | § 7 |
+| G-6 | Geen eval-harness voor path B (widget) — alle kwaliteitsmetingen gaan via pad A | hoog | open | § 5.2 |
+| G-7 | Parallelle paden = driftgevaar; synchronisatie via handmatige comments | midden | open | `docker-compose.yml:966-971`; docstring-referenties |
+| G-8 | Instructies: één vrij veld, geen structuur/versioning/testpad/usage-meting | midden | open | § 6.1 vs `admin_widgets.py:76` |
+| G-9 | Page-context excerpt = aanvalsvector (injectie via hostpagina) — deels gemitigeerd | midden | open | § 6.3 |
+| G-10 | AI Act-artikel-50-disclosure niet expliciet ingericht (alleen nauwkeurigheid-disclaimer) | midden | in aanbouw — REQ-6 | § 6.4; `labels.ts` (`disclaimer`) |
+| G-11 | Content-bron-kloof: help.voys.nl (Super/Notion, externe crawl) vs klai-docs (Gitea, ingest) vs interne support-KB; oud/tegenstrijdig materiaal levert conflicterende antwoorden op | midden | open | § 3; corroboration-laag is uitgesteld (zie [README](README.md) §3) |
+| G-12 | Twee chat-bubbels rechtsonder op help.voys.nl (Nerds booking-widget) | laag (UX) | open | HTML-fetch § 3 |
+| G-14 | **Rate limits zijn per widget, niet per bezoeker**: chat 60 rpm hardcoded en gedeeld door alle bezoekers, sessie-mint 10/min, geen caching op `/widget-config` | **Blocker voor publiek verkeer** | **vervallen** — opgelost door REQ-2 | § 5.6; `partner_dependencies.py:210`; `partner.py:2577` |
+| G-15 | **Widget-pad voedt de gap-registratie niet**: gap-events komen alleen uit de LiteLLM-hook, dus het gaten-dashboard ziet geen klantvragen | hoog (en goedkoop te dichten) | **gebouwd** — REQ-1 | § 5.5; `klai_knowledge.py:1412` vs geen "gap" in `partner_chat.py` |
+| G-16 | Widget mint bij elke paginaweergave een sessietoken, ook voor de 90-97% die nooit chat; geen facade/lazy-load | hoog (lost G-14 op én versnelt de helppagina's) | **gebouwd** — REQ-2 | § 9.1 stap 8 |
+| G-13 | Widget heeft geen server-side conversation state (client post hele history; server schrijft alleen een audit-spur) → beperkte context-recovery en geen "resume" over apparaten | laag (pilot-fase) | open | § 6.5 vs `chat-stream.ts:237-241` |
 
 **Wat al wél klopt** (en dus niet gebouwd hoeft te worden): anonieme maar tenant-gebinde auth, default-deny origins, rate-limits, retention, audit-met-sources, NL/EN-widget, streaming-citaten, agent-activiteit, HubSpot-flow end-to-end getest (binnen één tenant), share-link `/bot/`, preview-vlagging die testdata uit productie-stats houdt, WCAG-conforme defaults, 200 kB-budget, safety-filters, deterministische refusal, taalcontract (3 guards) — dat is een solide chat-infrastructuur; hij is alleen **voor een ander oppervlak afgesteld**.
 
@@ -369,14 +374,17 @@ geen URLs.
 9. **Capaciteit vóór livegang regelen (G-14):** een per-bezoeker-dimensie naast de per-widget-limiet, en `/widget-config` cachebaar maken of het sessietoken hergebruiken over pagina-navigaties. Zonder dit loopt een helpcentrum met echt verkeer vast op 60 rpm gedeeld en 10 mints/min. Dit is het enige Fase 0-item dat wél dev-werk is.
 10. **Meetplan vanaf dag 1:** wekelijkse handmatige review van de eerste 50 transcripts (admin Activity-tab); definitie vóór start afgesproken: *contained* = gesprek zonder handoff én geen vervolg-ticket binnen 48 uur op hetzelfde onderwerp (afgeleid van de Rasa-formule, § 6.2); noteer top-queries uit stats en label ze "goed / fout / content ontbreekt".
 
-### 9.2 Fase 1 — kleine dev-steps (elk ≤ 1 week, volgorde = prioriteit)
+### 9.2 Fase 1 — verplaatst naar de SPEC
 
-1. **Customer-tone refusal + persona-contract (G-5):** `no_citable_sources_message` een helpdeskvariant geven (per widget-config: `refusal_style: "internal|helpdesk"`), en in de lib vastleggen dat widget-instructies de Klai-voice mogen vervangen — of een `HELPDESK_*`-prompt toevoegen. Locaties: `klai-libs/chat-prompts/__init__.py:134-182`, `partner_chat.py:1751-1806`.
-2. **Thumbs + opslag + uitkomst (G-3, G-4):** feedbackknoppen in `MessageList.tsx` (widget), een endpoint op de widget-JWT-route (`/partner/v1/widget-feedback`, met dezelfde correlatie-opbouw als partner `/feedback`: `partner.py:2289+`), `rating` op `widget_messages` of een events-tabel; conversatie-kolom `outcome` (contained/handed_off/abandoned) gevuld uit audit + handoff-status. Dit maakt containment/deflection berekenbaar (§ 6.2).
-3. **AI Act-disclosure (G-10):** "AI-assistent" expliciet in kop/welkomstboodschap van de widget, gestandaardiseerd in de template (`labels.ts`; config `welcome_message`).
-4. **Pad-B beleids-laag (G-2, eerste slice):** `confidence_band` uit de `/retrieve`-respons doorgeven aan `_build_system_prompt` en dezelfde low-confidence-injectietekst gebruiken die path A kent (`klai_kb_confidence_policy.py`-constants → shared lib). Multi-question fan-out pas doen als de transcripts (uit het meetplan) laten zien dat samengestelde vragen in de praktijk voorkomen.
-5. **Gap-events op pad B (G-15):** `classify_gap` + `fire_n` aanroepen vanuit `partner_chat.retrieve_context`, met een `caller_client_id` die widget-verkeer onderscheidt. Hangt aan een bestaand, werkend dashboard — laagste inspanning, hoogste redactionele opbrengst van dit hele document. Doe dit vóór de eval-harness: het vertelt je wélke vragen je moet kunnen beantwoorden.
-6. **Handoff multi-tenant maken (G-1):** de `_HUBSPOT_HANDOFF_DEV_TENANT_SLUG`-gate verbreden naar "widget heeft eigen HubSpot-integratie", met per-tenant HubSpot-app (of Klai-hosted custom channel per tenant). Dit is het grootste dev-item; alleen doen als de pilot om escalatie vraagt.
+De vijf dev-stappen die hier stonden zijn overgenomen als requirements in
+`docs/specs/SPEC-VOYS-HELPBOT-001/spec.md` (REQ-1 t/m REQ-8), inclusief de
+briefs waarmee ze gebouwd zijn en de beslissingen die onderweg zijn omgedraaid.
+Ze staan hier bewust niet meer: één plan op twee plekken bijhouden loopt uit
+elkaar, en de SPEC is de plek waar de status per onderdeel klopt.
+
+Wat hier wél blijft staan is § 9.1 hierboven — de no-code pilotconfiguratie is
+beheerwerk in de portal, valt expliciet buiten de scope van de SPEC, en vraagt
+iemand die de Voys-inhoud kent.
 
 ### 9.3 Fase 2 — structureel (na de pilot-beslissing)
 
