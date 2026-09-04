@@ -18,8 +18,10 @@ user query and the model response so VictoriaLogs gets
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
+import time
 from collections.abc import AsyncGenerator
 from typing import Any, Literal
 from urllib.parse import urlparse, urlunparse
@@ -37,6 +39,7 @@ from klai_chat_prompts import (
 )
 
 from app.core.config import Settings
+from app.core.database import tenant_scoped_session
 from app.services.citations import (
     compose_answer_with_trusted_sources,
     evidence_pack_items_as_chunks,
@@ -44,6 +47,8 @@ from app.services.citations import (
     source_url_key,
     trusted_sources_from_evidence_pack,
 )
+from app.services.gap_classification import classify_gap
+from app.services.gap_events import record_gap_event
 from app.services.llm_safety_adapter import (
     check_context_text,
     check_model_output,
@@ -1818,6 +1823,101 @@ def _is_retrieval_identity_assertion_error(exc: httpx.HTTPStatusError) -> bool:
     return isinstance(detail, dict) and detail.get("error") == "identity_assertion_failed"
 
 
+# Traffic split on portal_retrieval_gaps.caller_client_id (SPEC-MCP-RETRIEVAL-001
+# REQ-9 convention): NULL = LibreChat (LiteLLM hook), an OAuth client_id =
+# third-party MCP client. This pad registers gap events under the fixed
+# sentinel ``widget-chat`` so the gaps dashboard can separate widget /
+# partner-chatpad traffic from both. The whole partner path shares the label:
+# non-widget API-key traffic can be drilled down further via its
+# ``partner:<key-id>`` user_id.
+_WIDGET_GAP_CALLER_CLIENT_ID = "widget-chat"
+# portal_retrieval_gaps.user_id is NOT NULL. Widget visitors are anonymous —
+# partner_user_id is only set for UUID partner keys (see the F2 hotfix note
+# in app.api.partner.chat_completions) — so widget rows carry this sentinel.
+_WIDGET_ANONYMOUS_USER_ID = "widget:anonymous"
+
+# Strong references for fire-and-forget gap writes; without them the event
+# loop can GC a task before it runs (same pattern as _pending in
+# app.api.partner).
+_pending_gap_tasks: set[asyncio.Task[None]] = set()
+
+
+def _schedule_gap_event(
+    *,
+    org_id: int,
+    zitadel_org_id: str,
+    partner_user_id: str | None,
+    query_text: str,
+    chunks: list[dict],
+    retrieval_ms: int,
+) -> None:
+    """Gap detection + fire-and-forget registration for the widget / partner pad.
+
+    The LiteLLM hook only sees LibreChat traffic; this pad retrieves
+    in-process and must classify and register its own gap events. Unlike
+    the hook there is no user_id precondition: anonymous widget visitors
+    are exactly the traffic this stream captures. Never raises — gap
+    registration must not block or fail the chat answer (the write itself
+    additionally has its own handler in ``_write``).
+
+    Payload derivation mirrors ``fire_gap_event`` in
+    deploy/litellm/klai_retrieval_telemetry.py (top_score, nearest_kb_slug
+    only for 'soft', chunks_retrieved) but writes through the shared
+    in-process service instead of an HTTP POST to portal-api — this module
+    runs inside portal-api itself, so a loopback call would be pointless.
+
+    ``nearest_kb_slug`` stays None in practice: the evidence-pack chunks on
+    this path carry no ``metadata.kb_slug`` (unlike the hook's raw chunks),
+    so the async taxonomy classification never triggers for widget rows.
+    """
+    try:
+        gap_type = classify_gap(chunks)
+        if gap_type is None:
+            return
+        top_chunk = max(chunks, key=lambda c: c.get("reranker_score") or c.get("score", 0.0)) if chunks else None
+        top_score = (top_chunk.get("reranker_score") or top_chunk.get("score")) if top_chunk else None
+        nearest_kb_slug = top_chunk.get("metadata", {}).get("kb_slug") if top_chunk and gap_type == "soft" else None
+
+        async def _write() -> None:
+            try:
+                async with tenant_scoped_session(org_id) as session:
+                    result = await record_gap_event(
+                        session,
+                        zitadel_org_id=zitadel_org_id,
+                        user_id=partner_user_id or _WIDGET_ANONYMOUS_USER_ID,
+                        query_text=query_text,
+                        gap_type=gap_type,
+                        top_score=top_score,
+                        nearest_kb_slug=nearest_kb_slug,
+                        chunks_retrieved=len(chunks),
+                        retrieval_ms=retrieval_ms,
+                        caller_client_id=_WIDGET_GAP_CALLER_CLIENT_ID,
+                    )
+                    # 'skipped' (telemetry off) is expected policy; 'not_found'
+                    # means org_id and zitadel_org_id disagree — a real defect
+                    # that must not pass silently.
+                    if result.outcome == "not_found":
+                        logger.warning(
+                            "partner_chat_gap_event_org_unresolved",
+                            org_id=org_id,
+                            zitadel_org_id=zitadel_org_id,
+                            gap_type=gap_type,
+                        )
+            except Exception:
+                logger.warning(
+                    "partner_chat_gap_event_write_failed",
+                    org_id=org_id,
+                    gap_type=gap_type,
+                    exc_info=True,
+                )
+
+        task = asyncio.create_task(_write())
+        _pending_gap_tasks.add(task)
+        task.add_done_callback(_pending_gap_tasks.discard)
+    except Exception:
+        logger.warning("partner_chat_gap_detection_failed", org_id=org_id, exc_info=True)
+
+
 async def retrieve_context(
     org_id: int,
     zitadel_org_id: str,
@@ -1925,6 +2025,7 @@ async def retrieve_context(
     # the header was never added here. See pitfalls →
     # retrieve-caller-service-header-mismatch.
     retrieval_secret = settings.retrieval_api_internal_secret or settings.internal_secret
+    retrieval_started = time.perf_counter()
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.post(
             f"{retrieval_url}/retrieve",
@@ -1957,6 +2058,7 @@ async def retrieve_context(
                 [],
             )
         result = resp.json()
+    retrieval_ms = int((time.perf_counter() - retrieval_started) * 1000)
 
     evidence_pack = result.get("evidence_pack")
     chunks = evidence_pack_items_as_chunks(evidence_pack)
@@ -1985,6 +2087,19 @@ async def retrieve_context(
         widget_system_prompt,
         page_context=cleaned_page_context,
         backend_managed_citations=backend_managed_citations,
+    )
+
+    # --- Gap detection (KB-014) ---
+    # Classification runs on the chunks that actually entered the prompt
+    # (post safety-filter); registration is fire-and-forget and non-raising
+    # — see _schedule_gap_event.
+    _schedule_gap_event(
+        org_id=org_id,
+        zitadel_org_id=zitadel_org_id,
+        partner_user_id=partner_user_id,
+        query_text=query,
+        chunks=chunks,
+        retrieval_ms=retrieval_ms,
     )
 
     return chunks, system_prompt, trusted_sources

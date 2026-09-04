@@ -49,6 +49,18 @@ def _mock_retrieval_log(monkeypatch):
     monkeypatch.setattr("app.api.partner.write_retrieval_log", MagicMock())
 
 
+@pytest.fixture(autouse=True)
+def _mock_gap_event_scheduling(monkeypatch):
+    """Keep gap-event registration out of request-shape tests.
+
+    Empty-chunk mock responses ARE hard gaps; without this, every
+    retrieve_context test in this module would schedule a fire-and-forget
+    gap write against a real DB session. The widget gap path is covered in
+    its own module (test_gap_events_widget.py) with the scheduler live.
+    """
+    monkeypatch.setattr("app.services.partner_chat._schedule_gap_event", MagicMock())
+
+
 # ---------------------------------------------------------------------------
 # TASK-008: Non-streaming chat completions
 # ---------------------------------------------------------------------------
