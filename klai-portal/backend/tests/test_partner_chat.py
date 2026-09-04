@@ -533,7 +533,9 @@ async def test_happy_path_non_streaming():
     }
 
     with (
-        patch("app.api.partner.retrieve_context", return_value=([{"chunk_id": "c1", "text": "ctx"}], "prompt", [], False)),
+        patch(
+            "app.api.partner.retrieve_context", return_value=([{"chunk_id": "c1", "text": "ctx"}], "prompt", [], False)
+        ),
         patch("app.api.partner.chat_completion_non_streaming", return_value=litellm_response),
         patch("app.api.partner.asyncio"),
     ):
@@ -758,7 +760,9 @@ async def test_streaming_returns_event_stream_content_type():
         yield b"data: [DONE]\n\n"
 
     with (
-        patch("app.api.partner.retrieve_context", return_value=([{"chunk_id": "c1", "text": "ctx"}], "prompt", [], False)),
+        patch(
+            "app.api.partner.retrieve_context", return_value=([{"chunk_id": "c1", "text": "ctx"}], "prompt", [], False)
+        ),
         patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()),
         patch("app.api.partner.asyncio"),
     ):
@@ -963,7 +967,9 @@ async def test_streaming_chunks_forwarded():
             yield chunk
 
     with (
-        patch("app.api.partner.retrieve_context", return_value=([{"chunk_id": "c1", "text": "ctx"}], "prompt", [], False)),
+        patch(
+            "app.api.partner.retrieve_context", return_value=([{"chunk_id": "c1", "text": "ctx"}], "prompt", [], False)
+        ),
         patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()),
         patch("app.api.partner.asyncio"),
     ):

@@ -564,7 +564,9 @@ async def _call_non_streaming(monkeypatch, model_text: str, **kwargs):
             return {
                 "id": "chatcmpl-1",
                 "object": "chat.completion",
-                "choices": [{"index": 0, "message": {"role": "assistant", "content": model_text}, "finish_reason": "stop"}],
+                "choices": [
+                    {"index": 0, "message": {"role": "assistant", "content": model_text}, "finish_reason": "stop"}
+                ],
             }
 
     class _MockClient:

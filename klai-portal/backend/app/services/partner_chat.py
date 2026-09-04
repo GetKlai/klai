@@ -1558,9 +1558,13 @@ def _compose_backend_managed_answer(
         if not text.strip():
             # The model produced nothing even with the broad profile; stay on
             # the honest refusal. No offer signal: consent already happened.
-            return _no_citable_sources_message(user_query, helpdesk=helpdesk), [], {
-                "reason": "broad_mode_no_output",
-            }
+            return (
+                _no_citable_sources_message(user_query, helpdesk=helpdesk),
+                [],
+                {
+                    "reason": "broad_mode_no_output",
+                },
+            )
         marker = broad_mode_answer_marker(user_query)
         return f"{marker}\n\n{text.strip()}", [], {"reason": "broad_mode_answer", "broad_mode": "answer"}
 
