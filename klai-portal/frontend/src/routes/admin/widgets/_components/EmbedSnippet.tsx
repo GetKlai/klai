@@ -8,12 +8,13 @@ interface EmbedSnippetProps {
   widgetId: string
   title?: string
   welcomeMessage?: string
+  primaryColor?: string
 }
 
-export function EmbedSnippet({ widgetId, title, welcomeMessage }: EmbedSnippetProps) {
+export function EmbedSnippet({ widgetId, title, welcomeMessage, primaryColor }: EmbedSnippetProps) {
   const [copied, setCopied] = useState(false)
 
-  const snippet = buildWidgetEmbedSnippet(widgetId, title, welcomeMessage)
+  const snippet = buildWidgetEmbedSnippet(widgetId, title, welcomeMessage, primaryColor)
 
   function handleCopy() {
     void navigator.clipboard.writeText(snippet).then(() => {
