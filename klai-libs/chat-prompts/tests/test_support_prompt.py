@@ -24,8 +24,12 @@ def test_support_prompt_is_non_empty():
 
 
 def test_support_prompt_carries_critical_marker_and_identity():
+    """The bot introduces itself as THIS organisation's assistant. It must not
+    name the vendor that built it: on a customer's own help page the visitor is
+    talking to that customer, not to a product they have never heard of."""
     assert "[CRITICAL]" in SUPPORT_CHAT_SYSTEM_PROMPT
-    assert "Klai AI" in SUPPORT_CHAT_SYSTEM_PROMPT
+    assert "AI support assistant" in SUPPORT_CHAT_SYSTEM_PROMPT
+    assert "Klai" not in SUPPORT_CHAT_SYSTEM_PROMPT
 
 
 def test_support_prompt_shares_language_preamble_byte_for_byte():
@@ -95,8 +99,14 @@ def test_support_prompt_keeps_multi_part_behaviour():
 
 def test_support_prompt_procedures_keep_source_labels():
     text = SUPPORT_CHAT_SYSTEM_PROMPT
-    assert "numbered steps" in text
+    assert "one action per line" in text
     assert "exactly as they appear in the help article" in text
+    # Style rules measured from the real help articles (REQ-8): a warning
+    # belongs before the steps, a procedure closes with its result, and an
+    # unnamed element is described rather than given an invented name.
+    assert "Let op:" in text
+    assert "Je hebt nu" in text
+    assert "kruisje" in text
 
 
 def test_support_prompt_forbids_company_commitments():
