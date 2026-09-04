@@ -181,7 +181,7 @@ def test_compose_partner_refusal_does_not_tag_offer():
 def test_compose_grounded_helpdesk_answer_carries_no_broad_signal():
     chunk = _good_chunk()
     answer = "Je reset het wachtwoord via Instellingen > Beveiliging. [1]"
-    text, sources, decision = _compose_backend_managed_answer(
+    _text, sources, decision = _compose_backend_managed_answer(
         answer,
         [{"label": "1", "title": "Reset", "url": "https://example.com/reset", "evidence_ids": ["c1"]}],
         [chunk],
