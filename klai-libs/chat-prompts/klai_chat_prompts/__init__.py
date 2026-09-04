@@ -234,12 +234,22 @@ _ENGLISH_OPEN_MODE_HINT: Final[str] = " Try Open mode for an answer based on gen
 # words: no "kennisbank"/"knowledge sources" jargon a website visitor does
 # not recognise, and an explicit offer to reach support instead of the
 # internal Open-mode hint (the widget has no Strict/Open toggle).
+# This sentence bypasses the system prompt entirely: it is substituted after
+# generation whenever no source survived the citation firewall, so none of the
+# tone work in SUPPORT_CHAT_SYSTEM_PROMPT can reach it. That makes it the most
+# frequently shown line the bot has, and it therefore carries the brand voice
+# on its own. "Neem contact op met onze klantenservice afdeling" is listed
+# under what does NOT work in the brand documentation
+# (docs/research/voys-tone-of-voice.md § 10); the phrasing below follows the
+# measured house style instead — plain, second person, and it names the next
+# step rather than a department.
 _DUTCH_HELPDESK_REFUSAL: Final[str] = (
-    "Ik kan dit niet betrouwbaar beantwoorden op basis van onze helpartikelen. "
-    "Neem voor een vast antwoord contact op met de support."
+    "Dit vind ik niet terug in onze helpartikelen. "
+    "Wil je het zeker weten, plan dan een afspraak met een medewerker — die helpt je persoonlijk verder."
 )
 _ENGLISH_HELPDESK_REFUSAL: Final[str] = (
-    "I can't answer this reliably from our help articles. Please contact support for a definite answer."
+    "I can't find this in our help articles. "
+    "If you want to be sure, schedule an appointment with someone who can help you personally."
 )
 
 # Visible label the widget backend prepends to every consented broad-mode

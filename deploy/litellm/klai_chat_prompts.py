@@ -220,11 +220,12 @@ _ENGLISH_OPEN_MODE_HINT: Final[str] = " Try Open mode for an answer based on gen
 # not recognise, and an explicit offer to reach support instead of the
 # internal Open-mode hint (the widget has no Strict/Open toggle).
 _DUTCH_HELPDESK_REFUSAL: Final[str] = (
-    "Ik kan dit niet betrouwbaar beantwoorden op basis van onze helpartikelen. "
-    "Neem voor een vast antwoord contact op met de support."
+    "Dit vind ik niet terug in onze helpartikelen. "
+    "Wil je het zeker weten, plan dan een afspraak met een medewerker — die helpt je persoonlijk verder."
 )
 _ENGLISH_HELPDESK_REFUSAL: Final[str] = (
-    "I can't answer this reliably from our help articles. Please contact support for a definite answer."
+    "I can't find this in our help articles. "
+    "If you want to be sure, schedule an appointment with someone who can help you personally."
 )
 
 _TOKEN_RE: Final[re.Pattern[str]] = re.compile(r"[a-zA-ZÀ-ÿ]+")

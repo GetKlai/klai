@@ -100,10 +100,13 @@ def test_suggest_open_mode_true_non_string_query_falls_through_english() -> None
 # ─── helpdesk variant (public help-page widget) ──────────────────────────
 
 _DUTCH_HELPDESK = (
-    "Ik kan dit niet betrouwbaar beantwoorden op basis van onze helpartikelen. "
-    "Neem voor een vast antwoord contact op met de support."
+    "Dit vind ik niet terug in onze helpartikelen. "
+    "Wil je het zeker weten, plan dan een afspraak met een medewerker — die helpt je persoonlijk verder."
 )
-_ENGLISH_HELPDESK = "I can't answer this reliably from our help articles. Please contact support for a definite answer."
+_ENGLISH_HELPDESK = (
+    "I can't find this in our help articles. "
+    "If you want to be sure, schedule an appointment with someone who can help you personally."
+)
 
 
 @pytest.mark.parametrize("query", ["Waarom lukt dit niet?", "Hoe vraag ik een refund aan?", "WAAROM?"])
@@ -146,9 +149,18 @@ def test_helpdesk_variant_never_uses_kb_jargon(helpdesk: bool) -> None:
         assert "knowledge source" not in lowered
 
 
-def test_helpdesk_variant_offers_support_contact() -> None:
-    assert "support" in no_citable_sources_message("Why not?", helpdesk=True).lower()
-    assert "contact op met de support" in no_citable_sources_message("Waarom?", helpdesk=True)
+def test_helpdesk_variant_names_the_next_step() -> None:
+    """The refusal bypasses the system prompt, so it carries the brand voice on
+    its own. It must point at a concrete next step the visitor can take — an
+    appointment — rather than at a department, which the brand documentation
+    lists under what does not work."""
+    en = no_citable_sources_message("Why not?", helpdesk=True).lower()
+    assert "appointment" in en
+    nl = no_citable_sources_message("Waarom?", helpdesk=True).lower()
+    assert "afspraak" in nl
+    # And never the phrasing the brand doc rejects.
+    assert "klantenservice afdeling" not in nl
+    assert "contact op met de support" not in nl
 
 
 def test_helpdesk_default_leaves_existing_callers_untouched() -> None:

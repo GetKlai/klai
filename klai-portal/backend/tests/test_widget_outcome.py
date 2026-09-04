@@ -64,10 +64,13 @@ def test_derive_escalated_when_last_answer_refers_to_support():
 # ---------------------------------------------------------------------------
 
 
-def test_derive_escalated_on_broad_mode_answer_even_with_thumbs_up():
-    """A consented general-knowledge answer means the help articles did NOT
-    answer — that is a knowledge gap. The stored marker label escalates it,
-    before the rating rule, so a friendly 👍 cannot turn it into 'resolved'."""
+def test_broad_mode_answer_with_thumbs_up_is_resolved():
+    """A thumbs-up is the strongest signal this system has. A visitor who opted
+    into general knowledge and then rated the answer up did get helped —
+    whatever the source. Whether our own content covered it is a separate
+    question, and the gap registry answers that one on exactly these turns.
+    Earlier this returned 'escalated', which inflated the escalation rate with
+    conversations where nobody was routed anywhere."""
     from klai_chat_prompts import broad_mode_answer_marker
 
     answer = f"{broad_mode_answer_marker('wat is een sip trunk')}\n\nEen SIP trunk is een virtuele lijn."
@@ -75,7 +78,7 @@ def test_derive_escalated_on_broad_mode_answer_even_with_thumbs_up():
         _turn("user", "wat is een sip trunk"),
         _turn("assistant", answer, rating="thumbsUp"),
     ]
-    assert derive_outcome(turns, has_handoff=False) == "escalated"
+    assert derive_outcome(turns, has_handoff=False) == "resolved"
 
 
 def test_broad_marker_mid_text_does_not_escalate():

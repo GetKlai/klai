@@ -106,9 +106,14 @@ def test_broad_needs_support_mode_and_consent_and_a_gap():
     assert _broad_mode_active([], support_mode=True, broad_consent=True) is True
 
 
-def test_broad_fires_on_hard_and_soft_gaps_only():
+def test_broad_fires_on_hard_gaps_only():
+    """Consent is permission to fall back, not an instruction to stop using the
+    articles. A soft gap means retrieval DID return something — weak, but it can
+    still carry a grounded answer through the rescue thresholds — so it stays
+    grounded. Treating soft as broad made one "what is DECT?" turn every later
+    question into general knowledge with the chunks thrown away."""
     assert _broad_mode_active([], support_mode=True, broad_consent=True) is True  # hard
-    assert _broad_mode_active([_weak_chunk()], support_mode=True, broad_consent=True) is True  # soft
+    assert _broad_mode_active([_weak_chunk()], support_mode=True, broad_consent=True) is False  # soft
     assert _broad_mode_active([_good_chunk()], support_mode=True, broad_consent=True) is False
 
 
@@ -304,19 +309,20 @@ async def test_retrieve_consent_plus_gap_swaps_profile_and_clears_sources(monkey
 
 
 @pytest.mark.asyncio
-async def test_retrieve_consent_soft_gap_also_broad_and_chunks_not_injected(monkeypatch):
-    """Weak-but-present retrieval (soft gap) still triggers broad mode, and the
-    weak chunks must NOT leak into the prompt or the trusted sources."""
+async def test_retrieve_consent_soft_gap_stays_grounded(monkeypatch):
+    """Weak-but-present retrieval (soft gap) stays GROUNDED even with consent
+    given. The articles did return something; the rescue thresholds downstream
+    decide whether it can carry an answer. Consent is permission to fall back
+    when there is nothing, not a switch that discards what retrieval found."""
     _patch_retrieve(monkeypatch, _EVIDENCE_PACK_WEAK)
     _stub_gap_writer(monkeypatch)
 
     chunks, prompt, trusted_sources, broad = await _retrieve(support_mode=True, broad_mode=True)
 
-    assert broad is True
-    assert len(chunks) == 1  # returned for the retrieval log — retrieval really ran
-    assert trusted_sources == []
-    assert "Onzeker stukje over iets anders." not in prompt
-    assert SUPPORT_BROAD_CHAT_SYSTEM_PROMPT in prompt
+    assert broad is False
+    assert len(chunks) == 1
+    assert trusted_sources != []  # the weak chunk is still a candidate source
+    assert SUPPORT_BROAD_CHAT_SYSTEM_PROMPT not in prompt
 
 
 @pytest.mark.asyncio

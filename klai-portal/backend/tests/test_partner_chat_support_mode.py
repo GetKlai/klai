@@ -19,6 +19,7 @@ from helpers import FakeKB, FakeResult, make_partner_auth
 from klai_chat_prompts import (
     GROUNDED_CHAT_SYSTEM_PROMPT,
     SUPPORT_CHAT_SYSTEM_PROMPT,
+    no_citable_sources_message,
 )
 
 from app.services.partner_chat import (
@@ -31,10 +32,10 @@ from app.services.partner_chat import (
 _GROUNDED_ONLY = "senior colleague"
 _SUPPORT_ONLY = "AI support assistant"
 
-_HELPDESK_DUTCH = (
-    "Ik kan dit niet betrouwbaar beantwoorden op basis van onze helpartikelen. "
-    "Neem voor een vast antwoord contact op met de support."
-)
+# Derived from the single source of truth rather than copied: a hardcoded copy
+# here silently pins the wording and fails the day the brand voice changes,
+# which is exactly what happened when this text was rewritten.
+_HELPDESK_DUTCH = no_citable_sources_message("Waarom lukt dit niet?", helpdesk=True)
 _INTERNAL_DUTCH = "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
 
 
@@ -129,7 +130,7 @@ def test_compose_refusal_helpdesk_english_for_non_dutch_query():
         helpdesk=True,
     )
     assert "help articles" in text
-    assert "support" in text.lower()
+    assert "appointment" in text.lower()
 
 
 # ─── _widget_support_mode_enabled flag reader ───────────────────────────

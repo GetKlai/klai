@@ -1818,8 +1818,18 @@ def _broad_mode_active(chunks: list[dict], *, support_mode: bool, broad_consent:
     searched. It runs once, inside ``retrieve_context``, and the resulting
     flag travels to the API layer as the fourth tuple element — the prompt
     the model saw and the label the visitor gets can therefore never disagree.
+
+    Only a HARD gap qualifies: retrieval returned nothing at all. A soft gap
+    means the articles did return something, just weakly, and those chunks can
+    still carry a grounded answer through the rescue thresholds. Treating soft
+    as broad made the consent sticky in the wrong way — after one "what is
+    DECT?" a follow-up that the articles *could* answer was forced into
+    general knowledge with the chunks thrown away. Consent is permission to
+    fall back, not an instruction to stop using the articles; retrieval keeps
+    winning whenever it has anything to offer, so the visitor never has to
+    think about which mode they are in.
     """
-    return bool(support_mode and broad_consent and classify_gap(chunks) is not None)
+    return bool(support_mode and broad_consent and classify_gap(chunks) == "hard")
 
 
 def _build_system_prompt(
@@ -1938,6 +1948,7 @@ def _schedule_gap_event(
     query_text: str,
     chunks: list[dict],
     retrieval_ms: int,
+    is_preview: bool = False,
 ) -> None:
     """Gap detection + fire-and-forget registration for the widget / partner pad.
 
@@ -1958,6 +1969,12 @@ def _schedule_gap_event(
     this path carry no ``metadata.kb_slug`` (unlike the hook's raw chunks),
     so the async taxonomy classification never triggers for widget rows.
     """
+    # Admin preview traffic never reaches the gaps dashboard. Stats and the
+    # outcome label already exclude preview conversations, so letting it in
+    # here would fill the editorial backlog with whatever an admin typed while
+    # testing their own widget against their own content.
+    if is_preview:
+        return
     try:
         gap_type = classify_gap(chunks)
         if gap_type is None:
@@ -2022,6 +2039,7 @@ async def retrieve_context(
     retrieval_enabled: bool = True,
     support_mode: bool = False,
     broad_mode: bool = False,
+    is_preview: bool = False,
 ) -> tuple[list[dict], str, list[dict[str, Any]], bool]:
     """Call retrieval-api and return (chunks, augmented_system_prompt, trusted_sources, broad).
 
@@ -2215,6 +2233,7 @@ async def retrieve_context(
         query_text=query,
         chunks=chunks,
         retrieval_ms=retrieval_ms,
+        is_preview=is_preview,
     )
 
     return chunks, system_prompt, ([] if broad else trusted_sources), broad

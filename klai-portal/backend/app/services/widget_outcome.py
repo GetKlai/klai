@@ -9,35 +9,36 @@ and the quiet period (``settings.widget_outcome_quiet_period_minutes``).
 
 Derivation rules, evaluated in this order (first match wins):
 
-1. ``escalated`` — a ``widget_handoff_sessions`` row is attached to the
-   conversation, OR the last assistant answer is the canned helpdesk refusal
-   that directs the visitor to support (``no_citable_sources_message(...,
-   helpdesk=True)`` — the exact string the chat stores when it could not
-   answer, in either language), OR the last assistant answer is a consented
-   broad-mode general-knowledge answer (``is_broad_knowledge_answer`` — the
-   stored label from ``broad_mode_answer_marker``). A broad answer means the
-   help articles could not; that is a knowledge gap the dashboard must count
-   as escalated even when the visitor was helpful enough to opt in, and even
-   when they rated the answer thumbsUp (rule 1 runs before rule 3).
-2. ``abandoned`` — the conversation ends on a visitor message with no
-   assistant answer after it, OR it consists of exactly one exchange
-   (question + answer) that was never followed up on within the quiet period
-   and the visitor did not rate the answer positively.
-3. ``resolved`` — ONLY on an explicit positive signal. The conversation ends
-   on an assistant answer carrying a
-   positive rating (``rating='thumbsUp'``), OR it ends on an assistant answer
-   and the visitor asked nothing further within the quiet period. A positive
-   rating is checked before the one-exchange rule: an explicit satisfaction
-   signal outweighs the single-turn bounce heuristic.
-4. ``unknown`` — none of the above closes (e.g. the messages of an old
-   conversation were already purged by the retention worker).
+1. ``escalated`` — the visitor was routed out of the bot: a
+   ``widget_handoff_sessions`` row is attached, or the last assistant answer is
+   the canned helpdesk refusal that points at support (the exact string the
+   chat stores when it could not ground a reply, in either language).
+2. ``abandoned`` — the conversation ends on a visitor message with no assistant
+   answer after it, and the conversation has gone quiet. A question posted
+   seconds ago is one the assistant is still answering.
+3. ``resolved`` — ONLY on an explicit positive signal: the last assistant
+   answer carries ``rating='thumbsUp'``. This outranks the broad-mode rule:
+   a visitor who opted into general knowledge and then rated the answer up
+   did get helped, whatever the source.
+4. ``unknown`` — everything else, including an unrated broad-mode answer.
 
-**WARNING: this is a heuristic, not a verdict.** "resolved" does NOT mean the
-visitor's real-world problem was solved — it means the conversation ended on
-an assistant answer without further questions or escalation signals. A visitor
-who silently gave up after a confident-sounding wrong answer is labelled
-resolved. Use the distribution as a directional funnel metric for the helpdesk,
-never as per-conversation truth.
+**Silence is not a signal, in either direction.** An earlier version read a
+single question-and-answer as a bounce and any conversation ending on an answer
+as resolved. Those two rules together made the label track turn count rather
+than outcome: one good answer scored 'abandoned', three bad ones the visitor
+gave up on scored 'resolved'. With thumbs response rates at 2-8% they decided
+almost every row. A visitor who leaves without saying anything has told us
+nothing, so that is 'unknown'.
+
+**A large 'unknown' share is the honest reading**, not a hole to fill with a
+guess. It is the argument for the LLM-as-judge pass the research recommends
+(docs/research/help-page-chatbot-voys.md § 6.2), which can read a transcript
+and say something a turn-counting rule cannot.
+
+**This remains a heuristic, not a verdict.** 'resolved' means the visitor
+pressed thumbs-up on the last answer, not that their real-world problem was
+solved. Use the distribution as a directional funnel metric, never as
+per-conversation truth.
 
 Worker design mirrors ``widget_messages_retention.py`` (periodic loop,
 resilient, cancellable) with one deliberate difference: the labelling UPDATEs
@@ -118,15 +119,11 @@ def derive_outcome(
     last_turn = turns[-1]
     last_assistant = next((t for t in reversed(turns) if t.role == "assistant"), None)
 
-    # 1. Escalated: live human handoff, the assistant pointed to support, or
-    # the assistant had to fall back to labelled general knowledge (the help
-    # articles did not answer — thumbsUp on such an answer does not make it
-    # a KB resolution, so this precedes the rating rule).
+    # 1. Escalated: the visitor was routed out of the bot — a live human
+    # handoff, or the assistant referring them to support.
     if has_handoff:
         return "escalated"
     if last_assistant is not None and last_assistant.content.strip() in _SUPPORT_REFERRAL_TEXTS:
-        return "escalated"
-    if last_assistant is not None and is_broad_knowledge_answer(last_assistant.content):
         return "escalated"
 
     # 2. Abandoned: ends on an unanswered visitor message — but only once the
@@ -138,8 +135,21 @@ def derive_outcome(
         return "abandoned" if quiet_period_elapsed else "unknown"
 
     # 3. Resolved (explicit signal): ends on an answer the visitor rated up.
+    # This is checked BEFORE the broad-mode rule below, deliberately: a
+    # thumbs-up is the strongest signal this system has, and a visitor who
+    # opted into general knowledge and then said the answer helped did get
+    # helped. Whether our own content covered it is a different question, and
+    # the gap registry answers that one on exactly these turns.
     if last_assistant is not None and last_assistant.rating == "thumbsUp":
         return "resolved"
+
+    # A consented broad-mode answer without a rating is NOT an escalation:
+    # nobody was routed anywhere. It is also not a KB resolution — the help
+    # articles came up empty, which is why broad mode engaged at all. Counting
+    # it as 'escalated' inflated that rate and buried real handoffs in the same
+    # pile.
+    if last_assistant is not None and is_broad_knowledge_answer(last_assistant.content):
+        return "unknown"
 
     # Everything below here used to read silence as a signal, in both
     # directions: a single question+answer counted as 'abandoned' (a bounce),

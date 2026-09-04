@@ -1744,6 +1744,7 @@ async def chat_completions(  # noqa: C901
             backend_managed_citations=True,
             support_mode=support_mode,
             broad_mode=bool(request.broad_mode),
+            is_preview=getattr(auth, "is_preview", False),
             retrieval_query=knowledge.query if knowledge is not None else None,
             top_k=knowledge.top_k if knowledge is not None and knowledge.top_k is not None else 8,
             retrieval_enabled=knowledge.enabled if knowledge is not None else True,
