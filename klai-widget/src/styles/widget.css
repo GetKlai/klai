@@ -73,6 +73,40 @@
   fill: var(--klai-primary-text-color);
 }
 
+/* Facade loading state — spinner replacing the glyph inside the
+   bubble while the deferred config fetch is in flight. */
+.klai-bubble-spinner {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2.5px solid color-mix(in srgb, var(--klai-primary-text-color) 30%, transparent);
+  border-top-color: var(--klai-primary-text-color);
+  animation: klai-spin 0.7s linear infinite;
+}
+
+@keyframes klai-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Facade error state — shown above the bubble when the deferred
+   config fetch failed; clicking the bubble retries the fetch. */
+.klai-facade-error {
+  position: fixed;
+  bottom: 88px;
+  right: var(--klai-widget-right);
+  left: var(--klai-widget-left);
+  max-width: 260px;
+  padding: 10px 14px;
+  border-radius: var(--klai-border-radius);
+  border: 1px solid #fecaca;
+  background-color: #fef2f2;
+  color: #B91C1C;
+  font-family: var(--klai-font-family);
+  font-size: 13px;
+  line-height: 1.4;
+  z-index: var(--klai-z-index);
+}
+
 .klai-bubble-badge {
   position: absolute;
   top: -4px;

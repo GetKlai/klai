@@ -4,10 +4,12 @@ export function buildWidgetEmbedSnippet(
   widgetId: string,
   title?: string,
   welcomeMessage?: string,
+  primaryColor?: string,
 ): string {
   const attrs: string[] = [`  src="${WIDGET_SCRIPT_URL}"`]
   attrs.push(`  data-widget-id="${widgetId}"`)
   if (title) attrs.push(`  data-title="${title}"`)
   if (welcomeMessage) attrs.push(`  data-welcome="${welcomeMessage}"`)
+  if (primaryColor) attrs.push(`  data-primary-color="${primaryColor}"`)
   return `<script\n${attrs.join('\n')}\n></script>`
 }

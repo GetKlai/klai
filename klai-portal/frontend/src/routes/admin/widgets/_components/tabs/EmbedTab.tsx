@@ -51,6 +51,7 @@ export function EmbedTab({ widget }: Props) {
     widget.widget_id,
     config.title || undefined,
     config.welcome_message || undefined,
+    config.primary_color || undefined,
   )
 
   function copyShareLink() {
