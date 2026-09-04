@@ -133,7 +133,7 @@ diff, because the change reorders the file.
 
 Brief: appendix A.5 · Commit `6af411d`
 
-## REQ-5 — Conversation outcome label · wip · G-4
+## REQ-5 — Conversation outcome label · done · G-4
 
 `widget_conversations.outcome` in `resolved|escalated|abandoned|unknown|NULL`,
 derived by a background pass from signals we already have, and exposed as a
@@ -144,7 +144,7 @@ where a conversation ended, not whether the visitor's problem was solved. Volume
 metrics alone steer toward "the visitor gave up", which the market literature
 puts 20-30 points away from real resolution.
 
-Brief: appendix A.6
+Brief: appendix A.6 · Commit `c9f6f77`
 
 ## REQ-6 — AI disclosure and appointment escalation · wip · G-10, G-1 (partial)
 
@@ -192,7 +192,7 @@ does not transfer — a help-page visitor does not know what "strict" means and
 will not go looking for a setting. The offer has to come from the bot, at the
 moment it is relevant.
 
-## REQ-8 — Voys tone of voice · wip
+## REQ-8 — Voys tone of voice · done
 
 A written profile derived from the actual Voys help articles and marketing
 pages, with every claim backed by a quote and a URL, distinguishing the
@@ -200,9 +200,20 @@ marketing register from the support register and stating which one the bot
 follows. Delivers a block of at most 25 imperative Dutch lines that can go
 straight into REQ-4's prompt.
 
-Brief: appendix A.8
+Brief: appendix A.8 · Commit `2335ed6` · Levert `docs/research/voys-tone-of-voice.md`
 
-# 4. Decisions worth preserving
+# 4. Settled decisions — do not re-open
+
+**Escalation goes to the support partner, never to a phone number.** Today via
+their booking form (a redirect from the widget); later via their API so the
+appointment can be booked inside the chat. The bot never states a phone number
+or e-mail address — not even one that appears verbatim in a help article it
+just cited. This was restated three times in the same session, so it is written
+down here: the tone-of-voice profile observes that Voys' own articles sometimes
+close with the support number, and that observation does not transfer to the
+bot. Article style and product policy are different things.
+
+# 5. Other decisions worth preserving
 
 **Measurement before configuration.** REQ-1 and REQ-3 come before the pilot is
 switched on, because a bot you cannot measure teaches you nothing and the
@@ -220,13 +231,13 @@ service were checked against `HEAD` and found pre-existing (raw query text
 reaching taxonomy classification in shadow mode; an unretained
 `asyncio.create_task`), so they are backlog, not scope.
 
-# 5. Verification
+# 6. Verification
 
 All gates run by Claude on the merged branch, not taken from builder reports.
 
 | Gate | Result |
 |---|---|
-| `pytest tests/ -q` (portal backend) | 3821 passed, 0 failed (baseline 3796) |
+| `pytest tests/ -q` (portal backend) | 3834 passed, 0 failed (baseline 3796) |
 | chat-prompts tests | 102 passed |
 | `npm run build` (widget) | exit 0 |
 | `npm run check-size` | 34.3 kB gzipped, limit 200 kB |
@@ -236,9 +247,9 @@ Every builder ran under an agent profile that cannot commit, push or stash —
 denied at the permission layer, verified by a test that attempted a commit and
 was refused. Work therefore always arrives as an unstaged diff for review.
 
-# 6. Open
+# 7. Open
 
-- REQ-5, REQ-6, REQ-8 in progress; REQ-7 specified only.
+- REQ-6 in progress; REQ-7 specified only. REQ-1 t/m REQ-5 en REQ-8 zijn samengevoegd op de implementatietak.
 - Pilot configuration (widget, KB scope, allowed origins, conversation
   starters) — admin work, needs Voys content knowledge.
 - **Assumption to verify:** the support partner's booking module is reachable
