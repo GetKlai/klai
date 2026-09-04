@@ -39,18 +39,21 @@ interface ChatWindowProps {
   onClose: () => void;
   inline?: boolean;
   conversationStarters?: string[];
+  // White-label toggle for the accuracy footer only — it must never hide
+  // the EU AI Act art. 50 notice in the hero.
   hideDisclaimer?: boolean;
   welcomeMessage?: string;
+  bookingUrl?: string;
   collectUserInfo?: boolean;
   manageHandoffStream?: boolean;
 }
 
 // TWD-pattern widget chrome:
 //   header  → primary-color bg, avatar + title + description, close
-//   hero    → centered icon + welcome line + starter chips (only when
-//             the conversation hasn't started yet)
+//   hero    → centered icon + welcome line + mandatory AI notice +
+//             starter chips (only when the conversation hasn't started yet)
 //   input   → pill textarea + small primary-color send button
-//   footer  → AI disclaimer (white-label toggle hides it)
+//   footer  → AI accuracy disclaimer (white-label toggle hides it)
 export function ChatWindow(props: ChatWindowProps) {
   const [inputValue, setInputValue] = createSignal("");
   const [visitorName, setVisitorName] = createSignal(chatState.visitorName);
@@ -62,6 +65,26 @@ export function ChatWindow(props: ChatWindowProps) {
   let handoffStreamToken: string | null = null;
   let textareaRef: HTMLTextAreaElement | undefined;
   const seenHandoffMessageIds = new Set<number>();
+
+  // The art. 50 notice doubles as a screen-reader announcement on window
+  // open. Screen readers only reliably announce a live region whose
+  // content CHANGES after the region is already in the DOM — text shipped
+  // in the same mount as the region itself is skipped. So the hero renders
+  // the (empty) status region immediately and fills the text one beat
+  // later; closing and reopening the window re-announces it.
+  const [aiDisclosureText, setAiDisclosureText] = createSignal("");
+  const disclosureTimer = window.setTimeout(() => {
+    // Fill the notice with the tenant's own bot name. config.name is the
+    // per-widget display name the admin API requires (non-empty); the
+    // header title is only a caption and may be generic wording that
+    // reads wrong mid-sentence. No/blank name → the prepared no-org
+    // variant, so the sentence never renders a hole.
+    const botName = chatState.config?.name?.trim();
+    setAiDisclosureText(
+      botName ? t().aiDisclosure.replace("{name}", botName) : t().aiDisclosureNoOrg,
+    );
+  }, 150);
+  onCleanup(() => window.clearTimeout(disclosureTimer));
 
   const connectHandoffStream = () => {
     if (props.manageHandoffStream === false || !chatState.sessionToken) {
@@ -458,6 +481,18 @@ export function ChatWindow(props: ChatWindowProps) {
           <Show when={props.description}>
             <p class="klai-hero-subtitle">{props.description}</p>
           </Show>
+          {/* EU AI Act art. 50 notice: visitors must know they are talking
+              to an AI system, perceptibly, at first interaction. Deliberately
+              NOT gated on hide_disclaimer — that flag is a white-label toggle
+              for the accuracy footer ("AI-antwoorden kunnen fouten bevatten…")
+              and a legal disclosure cannot be switched off per widget. It also
+              sits NEXT TO the configurable welcome_message rather than inside
+              it, so a customer can rewrite the greeting without ever dropping
+              the notice. role="status" + the deferred fill above announce it
+              to screen readers when the window opens. */}
+          <p class="klai-hero-ai-disclosure" role="status" aria-live="polite">
+            {aiDisclosureText()}
+          </p>
           <Show when={(props.conversationStarters?.length ?? 0) > 0}>
             <div class="klai-starters">
               {props.conversationStarters!.map((s) => (
@@ -519,6 +554,26 @@ export function ChatWindow(props: ChatWindowProps) {
           >
             {t().handoffButton}
           </button>
+        </div>
+      </Show>
+
+      {/* INTERIM appointment redirect until the chat booking API
+          integration lands: the SUPPORT prompt offers a personal
+          appointment on escalation, the button here executes the
+          redirect to the support partner's booking module. booking_url
+          is server-validated to absolute http(s) before delivery
+          (partner.py _widget_booking_url), so it is safe as an href.
+          Unset → no element rendered, current behaviour unchanged. */}
+      <Show when={props.bookingUrl?.trim()}>
+        <div class="klai-booking-bar">
+          <a
+            class="klai-booking-btn"
+            href={props.bookingUrl!.trim()}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {t().bookingButton}
+          </a>
         </div>
       </Show>
 

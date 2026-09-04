@@ -81,7 +81,9 @@ class WidgetConfig(BaseModel):
     conversation_starters: list[str] = Field(default_factory=list, max_length=6)
     # When true, the widget hides the "AI-antwoorden kunnen fouten
     # bevatten…" footer (white-label / power-user flag, matches the
-    # "Verberg 'Powered by'" pattern in the TWD editor).
+    # "Verberg 'Powered by'" pattern in the TWD editor). It does NOT hide
+    # the EU AI Act art. 50 AI notice in the empty state — that one is
+    # mandatory and not switchable per widget.
     hide_disclaimer: bool = False
     # Optional reference to a Template (app/templates) — when set, the
     # template's prompt_text is appended to system_prompt at runtime so
@@ -102,6 +104,12 @@ class WidgetConfig(BaseModel):
     # variant instead of the internal-team GROUNDED wording. Off by default
     # so existing widgets keep their current behaviour.
     support_mode: bool = False
+    # INTERIM SOLUTION — replace when the chat booking API integration lands.
+    # Booking-module URL of the support partner, shown by the widget as an
+    # "appointment" redirect. Admin input that ends up in a visitor-facing
+    # href, so only http(s) values are delivered (partner.py validates at
+    # the widget-config endpoints). Unset → the widget shows no button.
+    booking_url: str | None = None
     widget_position: str = "right"  # 'left' | 'right'
     integrations: WidgetIntegrations = Field(default_factory=lambda: WidgetIntegrations())
 
@@ -193,6 +201,7 @@ def _widget_to_response(widget: Widget, kb_access_count: int) -> WidgetResponse:
             collect_user_info=config.get("collect_user_info", False),
             page_context_enabled=config.get("page_context_enabled", False),
             support_mode=config.get("support_mode", False),
+            booking_url=config.get("booking_url"),
             widget_position=config.get("widget_position", "right"),
             integrations=config.get("integrations", {}),
         ),
