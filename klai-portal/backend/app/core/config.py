@@ -369,6 +369,11 @@ class Settings(BaseSettings):
     # Rows older than this many days are deleted daily by the background loop.
     widget_messages_retention_days: int = 90  # PORTAL_API_WIDGET_MESSAGES_RETENTION_DAYS
 
+    # Conversations quiet for at least this many minutes get an outcome
+    # label ('resolved' / 'escalated' / 'abandoned' / 'unknown') by the
+    # widget-outcome background loop (app/services/widget_outcome.py).
+    widget_outcome_quiet_period_minutes: int = 60  # PORTAL_API_WIDGET_OUTCOME_QUIET_PERIOD_MINUTES
+
     # CORS — explicit allowlist of trusted origins for credentialed requests.
     # SPEC-SEC-CORS-001 REQ-1.6: cors_allow_origin_regex removed. The runtime
     # CORS check is the fixed first-party regex in KlaiCORSMiddleware (REQ-1.2)
