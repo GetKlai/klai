@@ -139,6 +139,49 @@ async def test_widget_config_returns_page_context_enabled():
 
 
 @pytest.mark.asyncio
+async def test_widget_config_returns_support_mode():
+    widget = FakeWidget()
+    widget.widget_config["support_mode"] = True
+    org = FakeOrg()
+    db = _make_db_chain(widget, org, [1])
+    request = _make_request("https://example.com")
+
+    with (
+        patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.get_redis_pool"),
+        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner.set_tenant", new=AsyncMock()),
+        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
+    ):
+        mock_settings.widget_jwt_secret = "shared-secret"
+
+        response = await widget_config(id=widget.widget_id, request=request, db=db)
+
+    assert json.loads(response.body.decode())["support_mode"] is True
+
+
+@pytest.mark.asyncio
+async def test_widget_config_support_mode_defaults_false():
+    widget = FakeWidget()  # no support_mode key set
+    org = FakeOrg()
+    db = _make_db_chain(widget, org, [1])
+    request = _make_request("https://example.com")
+
+    with (
+        patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.get_redis_pool"),
+        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner.set_tenant", new=AsyncMock()),
+        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
+    ):
+        mock_settings.widget_jwt_secret = "shared-secret"
+
+        response = await widget_config(id=widget.widget_id, request=request, db=db)
+
+    assert json.loads(response.body.decode())["support_mode"] is False
+
+
+@pytest.mark.asyncio
 async def test_widget_config_hubspot_handoff_visible_only_for_getklai_origin():
     widget = FakeWidget()
     widget.widget_config["allowed_origins"] = ["https://getklai.getklai.com"]

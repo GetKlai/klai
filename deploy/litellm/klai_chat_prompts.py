@@ -36,6 +36,16 @@ Behaviour encoded in both prompts (per SPEC REQ-01):
    - A clearly switched substantive message DOES switch the response
      language and stays switched.
 
+SUPPORT-only behaviour (public help-page widget):
+
+8. Same KB grounding as GROUNDED, but for an external visitor on a help page
+   rather than an internal colleague: customer-friendly businesslike tone,
+   no "kennisbank"/"knowledge base" in user-facing wording (say "help
+   articles"), one short clarifying question when the ask is vague, and a
+   strict no-promises / support-referral rule. Reuses the shared
+   language-detection preamble verbatim — the three guards MUST NOT drift
+   between profiles, which is why it lives in a private constant.
+
 GROUNDED-only behaviour (KB chunks present):
 
 3. Cited content from the knowledge base is translated into the user's
@@ -82,6 +92,7 @@ __all__ = [
     "KB_CONTEXT_LANGUAGE_REMINDER",
     "META_CHAT_SYSTEM_PROMPT",
     "OPEN_KB_CHAT_SYSTEM_PROMPT",
+    "SUPPORT_CHAT_SYSTEM_PROMPT",
     "no_citable_sources_message",
 ]
 
@@ -97,59 +108,123 @@ __all__ = [
 # Dutch words that double as English nicknames or noun fragments
 # (e.g. "ben" / "Ben", "kan" / "Khan") are intentionally excluded to keep
 # false-positive rate near zero on English queries.
-DUTCH_QUERY_MARKERS: Final[frozenset[str]] = frozenset({
-    # Articles
-    "de", "het", "een",
-    # Personal pronouns
-    "ik", "jij", "je", "wij", "jullie", "zij", "mij", "jou", "ons",
-    # Possessive pronouns
-    "mijn", "jouw", "onze",
-    # Demonstratives
-    "deze", "dit",
-    # Forms of "zijn" (to be) — Dutch-only conjugations
-    "bent", "zijn", "waren",
-    # Forms of "hebben" (to have)
-    "heb", "hebt", "heeft", "hebben", "hadden",
-    # Modal verbs — Dutch-only conjugations
-    "kunt", "kunnen", "konden",
-    "moet", "moeten", "moest", "moesten",
-    "zal", "zult", "zullen", "zou", "zouden",
-    # Forms of "worden" (passive / become)
-    "wordt", "worden", "werd", "werden",
-    # Common verbs — Dutch-only conjugations
-    "gaat", "gaan", "staat", "staan", "doet", "doen",
-    # Question words
-    "wie", "wat", "waar", "wanneer", "waarom", "hoe",
-    "welke", "welk", "hoeveel",
-    # Negation
-    "niet", "geen",
-    # Common prepositions / connectives — Dutch-only spellings
-    "naar", "uit", "voor", "bij", "tegen", "tussen",
-    "omdat", "maar", "want", "dus", "echter",
-    # Klai-domain vocabulary (high-signal for our chat surface)
-    "kennisbank", "kennisbanken", "bronnen", "gegevens",
-    "vraag", "antwoord", "klopt", "aanmaken",
-})
+DUTCH_QUERY_MARKERS: Final[frozenset[str]] = frozenset(
+    {
+        # Articles
+        "de",
+        "het",
+        "een",
+        # Personal pronouns
+        "ik",
+        "jij",
+        "je",
+        "wij",
+        "jullie",
+        "zij",
+        "mij",
+        "jou",
+        "ons",
+        # Possessive pronouns
+        "mijn",
+        "jouw",
+        "onze",
+        # Demonstratives
+        "deze",
+        "dit",
+        # Forms of "zijn" (to be) — Dutch-only conjugations
+        "bent",
+        "zijn",
+        "waren",
+        # Forms of "hebben" (to have)
+        "heb",
+        "hebt",
+        "heeft",
+        "hebben",
+        "hadden",
+        # Modal verbs — Dutch-only conjugations
+        "kunt",
+        "kunnen",
+        "konden",
+        "moet",
+        "moeten",
+        "moest",
+        "moesten",
+        "zal",
+        "zult",
+        "zullen",
+        "zou",
+        "zouden",
+        # Forms of "worden" (passive / become)
+        "wordt",
+        "worden",
+        "werd",
+        "werden",
+        # Common verbs — Dutch-only conjugations
+        "gaat",
+        "gaan",
+        "staat",
+        "staan",
+        "doet",
+        "doen",
+        # Question words
+        "wie",
+        "wat",
+        "waar",
+        "wanneer",
+        "waarom",
+        "hoe",
+        "welke",
+        "welk",
+        "hoeveel",
+        # Negation
+        "niet",
+        "geen",
+        # Common prepositions / connectives — Dutch-only spellings
+        "naar",
+        "uit",
+        "voor",
+        "bij",
+        "tegen",
+        "tussen",
+        "omdat",
+        "maar",
+        "want",
+        "dus",
+        "echter",
+        # Klai-domain vocabulary (high-signal for our chat surface)
+        "kennisbank",
+        "kennisbanken",
+        "bronnen",
+        "gegevens",
+        "vraag",
+        "antwoord",
+        "klopt",
+        "aanmaken",
+    }
+)
 
-_DUTCH_REFUSAL: Final[str] = (
-    "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
+_DUTCH_REFUSAL: Final[str] = "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
+_ENGLISH_REFUSAL: Final[str] = "I cannot answer this reliably from the available knowledge sources."
+_DUTCH_OPEN_MODE_HINT: Final[str] = " Probeer het in Open-modus voor een antwoord op basis van algemene kennis."
+_ENGLISH_OPEN_MODE_HINT: Final[str] = " Try Open mode for an answer based on general knowledge."
+
+# Helpdesk variant of the strict-mode refusal, for the public help-page
+# widget. Same bilingual contract as the base refusal, but in customer
+# words: no "kennisbank"/"knowledge sources" jargon a website visitor does
+# not recognise, and an explicit offer to reach support instead of the
+# internal Open-mode hint (the widget has no Strict/Open toggle).
+_DUTCH_HELPDESK_REFUSAL: Final[str] = (
+    "Ik kan dit niet betrouwbaar beantwoorden op basis van onze helpartikelen. "
+    "Neem voor een vast antwoord contact op met de support."
 )
-_ENGLISH_REFUSAL: Final[str] = (
-    "I cannot answer this reliably from the available knowledge sources."
-)
-_DUTCH_OPEN_MODE_HINT: Final[str] = (
-    " Probeer het in Open-modus voor een antwoord op basis van algemene kennis."
-)
-_ENGLISH_OPEN_MODE_HINT: Final[str] = (
-    " Try Open mode for an answer based on general knowledge."
+_ENGLISH_HELPDESK_REFUSAL: Final[str] = (
+    "I can't answer this reliably from our help articles. Please contact support for a definite answer."
 )
 
 _TOKEN_RE: Final[re.Pattern[str]] = re.compile(r"[a-zA-ZÀ-ÿ]+")
 
 
-def no_citable_sources_message(
-    user_query: object, *, suggest_open_mode: bool = False
-) -> str:
+def no_citable_sources_message(user_query: object, *, suggest_open_mode: bool = False, helpdesk: bool = False) -> str:
     """Pick the language for the canned strict-mode refusal.
 
     Returns the Dutch refusal when the query contains any token from
@@ -168,23 +243,29 @@ def no_citable_sources_message(
     — partner_chat.py (path B, widget/partner API) and retrieval-api's
     ``/chat`` (path C) — must leave this False; the hint would reference a
     switch their caller cannot use.
+
+    ``helpdesk`` returns the public-widget variant instead: customer words
+    ("helpartikelen" / "help articles", never "kennisbank"/"kennisbronnen")
+    plus an offer to contact support. It ignores ``suggest_open_mode`` —
+    the help-page widget has no Open-mode toggle, so the two are mutually
+    exclusive by design. Default False keeps every existing caller on the
+    exact same refusal text.
     """
     query = user_query if isinstance(user_query, str) else ""
-    if not query:
-        base = _ENGLISH_REFUSAL
-        hint = _ENGLISH_OPEN_MODE_HINT
+    tokens = {token.lower() for token in _TOKEN_RE.findall(query)}
+    is_dutch = bool(tokens & DUTCH_QUERY_MARKERS)
+    if helpdesk:
+        return _DUTCH_HELPDESK_REFUSAL if is_dutch else _ENGLISH_HELPDESK_REFUSAL
+    if is_dutch:
+        base, hint = _DUTCH_REFUSAL, _DUTCH_OPEN_MODE_HINT
     else:
-        tokens = {token.lower() for token in _TOKEN_RE.findall(query)}
-        if tokens & DUTCH_QUERY_MARKERS:
-            base, hint = _DUTCH_REFUSAL, _DUTCH_OPEN_MODE_HINT
-        else:
-            base, hint = _ENGLISH_REFUSAL, _ENGLISH_OPEN_MODE_HINT
+        base, hint = _ENGLISH_REFUSAL, _ENGLISH_OPEN_MODE_HINT
     return base + hint if suggest_open_mode else base
 
 
 # Shared language-detection contract (SPEC-RAG-MULTILINGUAL-CHAT-001
-# REQ-01). Private — all three public prompts compose this preamble
-# verbatim so the three guards can never drift between modes.
+# REQ-01). Private — every public prompt composes this preamble verbatim
+# so the three guards can never drift between modes.
 _LANGUAGE_DETECTION_PREAMBLE: Final[str] = (
     "[CRITICAL] Detect the language of the user's most recent SUBSTANTIVE message and respond "
     "in that exact language. Apply these three guards:\n"
@@ -393,6 +474,78 @@ _META_BODY: Final[str] = (
     "or similar filler."
 )
 
+# Public help-page widget profile. Same grounding contract as GROUNDED
+# (KB chunks in scope, model writes no citation markers, application adds
+# sources), but authored for an external visitor rather than an internal
+# colleague: warm-but-businesslike customer tone, plain "help articles"
+# wording instead of "kennisbank"/"knowledge base", one clarifying question
+# when the ask is vague, and hard rules against company commitments and
+# against pretending a human hand-off exists. Reuses the shared language-
+# detection preamble verbatim, like every other profile here.
+_SUPPORT_BODY: Final[str] = (
+    "You are Klai AI, an AI support assistant on a public help page. You answer visitor "
+    "questions from the help-article chunks provided. You are an AI assistant, not a human "
+    "employee, and you never claim to be one. The help articles may be in a different "
+    "language than the visitor's question (often Dutch). Translate cited content into the "
+    "visitor's language naturally. Do NOT apologize for source-language differences. Do NOT "
+    "add translator disclaimers. Do NOT transliterate proper names — keep them as written in "
+    "the source.\n\n"
+    "## How to answer\n"
+    "Open with a brief, natural greeting on the first reply; after that lead with the answer. "
+    "No rephrasing the question, no filler like 'great question!'.\n"
+    "Simple question: 1-3 sentences. Complex question: the core answer first, then the detail.\n"
+    "Procedural answers: give numbered steps and keep the button, menu, and field labels "
+    "exactly as they appear in the help article — do not rename or paraphrase them.\n\n"
+    "## Tone\n"
+    "Customer-friendly but businesslike: warm and helpful, never chatty or salesy. Address the "
+    "visitor in the second person (in Dutch: je/jij). No emoji, no exclamation-mark chains, no "
+    "hype, no corporate hedging.\n\n"
+    "## When the question is unclear\n"
+    "If the question is too vague to answer from the help articles, ask AT MOST ONE short "
+    "clarifying question, then stop and wait for the reply. Never ask several questions at once "
+    "and never guess an answer you could not ground.\n\n"
+    "## When the answer isn't there\n"
+    "Say it plainly, in the visitor's language, in customer words. Do NOT use the word "
+    "'kennisbank' or 'knowledge base' — a visitor does not know what that is. Example: 'Ik vind "
+    "dit niet terug in onze helpartikelen' / 'I can't find this in our help articles'. Don't "
+    "guess and don't fill the gap with general knowledge. Offer to point the visitor to support "
+    "for a definite answer.\n\n"
+    "## Multi-part questions\n"
+    "When the visitor's message contains multiple questions (a numbered list, bulleted "
+    "questions, or several question marks), answer PER QUESTION:\n"
+    "- Number your answers to match the visitor's questions, in the order they asked them. The "
+    "number of answers MUST equal the number of questions asked.\n"
+    "- Judge coverage per question: answer a question only when the help articles support it; "
+    "for every uncovered question, say plainly in the visitor's language that you can't find it "
+    "in the help articles.\n"
+    "- Never merge, drop, or replace questions, and never invent questions the visitor did not "
+    "ask.\n"
+    "- A partially covered question gets the covered part plus an explicit note on what the "
+    "help articles do not answer.\n\n"
+    "## No promises on behalf of the company\n"
+    "Do NOT commit to delivery times, prices, discounts, goodwill or compensation, refunds, "
+    "contract terms, or whether something is a known outage. You can relay only what a help "
+    "article actually states. When the visitor needs a binding answer, say so and point them to "
+    "support.\n\n"
+    "## Escalation and frustration\n"
+    "You cannot transfer this chat to a person and you must NOT offer to. When the visitor is "
+    "frustrated, repeats the same complaint, wants to cancel, reports an outage, or asks a "
+    "pricing or contract question, stay calm and brief and refer them to the support department "
+    "via the contact details on this website. Do NOT invent or display a specific phone number "
+    "or e-mail address — you do not have one; tell them to use the contact information shown on "
+    "the site.\n\n"
+    "## Source handling\n"
+    "Do NOT write citation markers, citation numbers, source lists, URLs, Markdown links, or "
+    "footnotes. The application renders trusted sources separately from retrieved metadata "
+    "after generation. Use the chunks to answer, and if sources contradict each other, say so — "
+    "don't pick a side silently.\n\n"
+    "## Numbers and derived values\n"
+    "A number, duration, limit, price, or version that appears in a help article in a DIFFERENT "
+    "context than the visitor's question is NOT evidence for that question. Never present such "
+    "a value as the answer; either leave it out or state that the article mentions it for "
+    "another topic."
+)
+
 
 GROUNDED_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _GROUNDED_BODY
 
@@ -401,3 +554,5 @@ GENERAL_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" +
 OPEN_KB_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _OPEN_KB_BODY
 
 META_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _META_BODY
+
+SUPPORT_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _SUPPORT_BODY

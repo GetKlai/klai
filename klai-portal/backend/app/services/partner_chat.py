@@ -33,6 +33,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from klai_chat_prompts import (
     GROUNDED_CHAT_SYSTEM_PROMPT,
     KB_CONTEXT_LANGUAGE_REMINDER,
+    SUPPORT_CHAT_SYSTEM_PROMPT,
 )
 from klai_chat_prompts import (
     no_citable_sources_message as _no_citable_sources_message,
@@ -1517,6 +1518,7 @@ def _compose_backend_managed_answer(
     user_query: str,
     web_chunks: list[dict] | None = None,
     web_query: str | None = None,
+    helpdesk: bool = False,
 ) -> tuple[str, list[dict], dict[str, Any]]:
     """Compose the answer with KB and (optionally) web sources as separate tiers.
 
@@ -1531,6 +1533,10 @@ def _compose_backend_managed_answer(
     actually retrieved for) — NOT ``user_query``, which on the support route is
     the long KB-retrieval blob and would reject relevant web sources as
     "query_not_supported".
+
+    ``helpdesk`` selects the customer-facing refusal wording (help articles +
+    offer to reach support) instead of the internal-team "kennisbronnen" phrasing.
+    Default False keeps every existing caller's refusal text identical.
     """
     composed = compose_answer_with_trusted_sources(
         text,
@@ -1539,7 +1545,7 @@ def _compose_backend_managed_answer(
         evidence_chunks=citation_chunks or [],
     )
     if not composed.content:
-        return _no_citable_sources_message(user_query), [], composed.decision
+        return _no_citable_sources_message(user_query, helpdesk=helpdesk), [], composed.decision
 
     kb_sources = [{**source, "origin": "kb"} for source in composed.sources]
     web_sources: list[dict] = []
@@ -1565,7 +1571,7 @@ def _compose_backend_managed_answer(
 
     sources = _renumber_sources(kb_sources + web_sources)
     if not sources:
-        return _no_citable_sources_message(user_query), [], decision
+        return _no_citable_sources_message(user_query, helpdesk=helpdesk), [], decision
     return composed.content, sources, decision
 
 
@@ -1611,6 +1617,7 @@ async def _chat_completion_streaming_with_composed_citations(
     web_chunks: list[dict] | None = None,
     web_query: str | None = None,
     emit_sources: bool = True,
+    support_mode: bool = False,
 ) -> AsyncGenerator[bytes]:
     """Collect text, compose deterministic citations, then stream once.
 
@@ -1681,6 +1688,7 @@ async def _chat_completion_streaming_with_composed_citations(
         user_query,
         web_chunks,
         web_query,
+        helpdesk=support_mode,
     )
     if safety_reason := output_safety_violation("".join(raw_text_parts)):
         logger.warning(
@@ -1759,9 +1767,19 @@ def _build_system_prompt(
     widget_system_prompt: str | None = None,
     page_context: PageContext | None = None,
     backend_managed_citations: bool = False,
+    support_mode: bool = False,
 ) -> str:
-    """Build a grounded system prompt augmented with retrieved context chunks."""
-    base = original_system or GROUNDED_CHAT_SYSTEM_PROMPT
+    """Build a grounded system prompt augmented with retrieved context chunks.
+
+    ``support_mode`` swaps the default profile from the internal-team GROUNDED
+    prompt to the customer-facing SUPPORT_CHAT_SYSTEM_PROMPT for public
+    help-page widgets. It only changes the default: an explicit
+    ``original_system`` from the caller still wins, and the widget behaviour
+    instructions, page context, safety hierarchy, and source-handling below are
+    unchanged in either mode.
+    """
+    default_prompt = SUPPORT_CHAT_SYSTEM_PROMPT if support_mode else GROUNDED_CHAT_SYSTEM_PROMPT
+    base = original_system or default_prompt
     widget_system_prompt = (widget_system_prompt or "").strip()
     if widget_system_prompt:
         base = (
@@ -1932,6 +1950,7 @@ async def retrieve_context(
     retrieval_query: str | None = None,
     top_k: int = 8,
     retrieval_enabled: bool = True,
+    support_mode: bool = False,
 ) -> tuple[list[dict], str, list[dict[str, Any]]]:
     """Call retrieval-api and return (chunks, augmented_system_prompt).
 
@@ -1976,6 +1995,7 @@ async def retrieve_context(
                 widget_system_prompt=widget_system_prompt,
                 page_context=cleaned_page_context,
                 backend_managed_citations=backend_managed_citations,
+                support_mode=support_mode,
             ),
             [],
         )
@@ -2013,6 +2033,7 @@ async def retrieve_context(
                 widget_system_prompt,
                 page_context=cleaned_page_context,
                 backend_managed_citations=backend_managed_citations,
+                support_mode=support_mode,
             ),
             [],
         )
@@ -2054,6 +2075,7 @@ async def retrieve_context(
                     widget_system_prompt=widget_system_prompt,
                     page_context=cleaned_page_context,
                     backend_managed_citations=backend_managed_citations,
+                    support_mode=support_mode,
                 ),
                 [],
             )
@@ -2087,6 +2109,7 @@ async def retrieve_context(
         widget_system_prompt,
         page_context=cleaned_page_context,
         backend_managed_citations=backend_managed_citations,
+        support_mode=support_mode,
     )
 
     # --- Gap detection (KB-014) ---
@@ -2137,6 +2160,7 @@ async def chat_completion_non_streaming(
     citation_output: CitationOutput = "links",
     source_query: str | None = None,
     page_context: PageContext | None = None,
+    support_mode: bool = False,
 ) -> dict:
     """Forward to LiteLLM and return complete response as dict.
 
@@ -2220,6 +2244,7 @@ async def chat_completion_non_streaming(
                     user_query_for_safety,
                     web_chunks,
                     web_query,
+                    helpdesk=support_mode,
                 )
                 logger.info(
                     "partner_chat_citation_selection_decision",
@@ -2290,6 +2315,7 @@ async def chat_completion_streaming(
     source_query: str | None = None,
     emit_sources: bool = True,
     page_context: PageContext | None = None,
+    support_mode: bool = False,
 ) -> AsyncGenerator[bytes]:
     """Stream LiteLLM SSE response with backend-managed KB citations.
 
@@ -2313,6 +2339,7 @@ async def chat_completion_streaming(
             web_chunks=web_chunks,
             web_query=web_query,
             emit_sources=emit_sources,
+            support_mode=support_mode,
         ):
             yield chunk
         return
