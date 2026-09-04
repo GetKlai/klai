@@ -97,6 +97,11 @@ class WidgetConfig(BaseModel):
     show_meta: bool = False
     collect_user_info: bool = False
     page_context_enabled: bool = False
+    # When true, the public help-page widget answers with the customer-
+    # facing SUPPORT_CHAT_SYSTEM_PROMPT profile and the helpdesk refusal
+    # variant instead of the internal-team GROUNDED wording. Off by default
+    # so existing widgets keep their current behaviour.
+    support_mode: bool = False
     widget_position: str = "right"  # 'left' | 'right'
     integrations: WidgetIntegrations = Field(default_factory=lambda: WidgetIntegrations())
 
@@ -187,6 +192,7 @@ def _widget_to_response(widget: Widget, kb_access_count: int) -> WidgetResponse:
             show_meta=config.get("show_meta", False),
             collect_user_info=config.get("collect_user_info", False),
             page_context_enabled=config.get("page_context_enabled", False),
+            support_mode=config.get("support_mode", False),
             widget_position=config.get("widget_position", "right"),
             integrations=config.get("integrations", {}),
         ),

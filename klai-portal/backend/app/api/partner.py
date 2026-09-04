@@ -388,6 +388,27 @@ async def _widget_page_context_enabled(auth: PartnerAuthContext, db: AsyncSessio
     return bool(config.get("page_context_enabled")) if isinstance(config, dict) else False
 
 
+async def _widget_support_mode_enabled(auth: PartnerAuthContext, db: AsyncSession) -> bool:
+    """Return whether this widget answers as a public help-page assistant.
+
+    Same shape as :func:`_widget_page_context_enabled`: a private widget_config
+    flag read only for widget JWT callers. When true, the chat uses the
+    customer-facing ``SUPPORT_CHAT_SYSTEM_PROMPT`` profile and the helpdesk
+    refusal variant; when false/absent the internal-team GROUNDED wording is
+    kept unchanged.
+    """
+    if not str(auth.key_id).startswith("wgt_"):
+        return False
+    result = await db.execute(
+        select(Widget.widget_config).where(
+            Widget.widget_id == auth.key_id,
+            Widget.org_id == auth.org_id,
+        )
+    )
+    config = result.scalar_one_or_none() or {}
+    return bool(config.get("support_mode")) if isinstance(config, dict) else False
+
+
 def _citation_runtime_options(
     trusted_sources: list[dict[str, Any]],
     *,
@@ -1670,6 +1691,7 @@ async def chat_completions(  # noqa: C901
         partner_user_id = None
     widget_system_prompt = await _widget_system_prompt(auth, db)
     page_context_enabled = await _widget_page_context_enabled(auth, db) if is_widget_chat else False
+    support_mode = await _widget_support_mode_enabled(auth, db) if is_widget_chat else False
     page_context = (
         request.page_context.model_dump(exclude_none=True) if page_context_enabled and request.page_context else None
     )
@@ -1695,6 +1717,7 @@ async def chat_completions(  # noqa: C901
             widget_system_prompt=widget_system_prompt,
             page_context=page_context,
             backend_managed_citations=True,
+            support_mode=support_mode,
             retrieval_query=knowledge.query if knowledge is not None else None,
             top_k=knowledge.top_k if knowledge is not None and knowledge.top_k is not None else 8,
             retrieval_enabled=knowledge.enabled if knowledge is not None else True,
@@ -1821,6 +1844,7 @@ async def chat_completions(  # noqa: C901
             source_query=knowledge.query if knowledge is not None else None,
             emit_sources=knowledge.include_sources if knowledge is not None else True,
             page_context=page_context,
+            support_mode=support_mode,
         )
         if audit_ready:
             streaming_gen = _audit_streaming_wrapper(
@@ -1853,6 +1877,7 @@ async def chat_completions(  # noqa: C901
         citation_output=citation_output,
         source_query=knowledge.query if knowledge is not None else None,
         page_context=page_context,
+        support_mode=support_mode,
     )
     if knowledge is not None and not knowledge.include_sources:
         for choice in result.get("choices") or []:
@@ -2666,6 +2691,7 @@ async def widget_config(
         "show_sources": widget_config_data.get("show_sources", True),
         "show_meta": widget_config_data.get("show_meta", False),
         "page_context_enabled": widget_config_data.get("page_context_enabled", False),
+        "support_mode": widget_config_data.get("support_mode", False),
         "handoff": {
             "hubspot": {
                 "enabled": _hubspot_handoff_enabled_for_widget(
@@ -2776,6 +2802,7 @@ async def public_bot_config(
         "show_sources": widget_config_data.get("show_sources", True),
         "show_meta": widget_config_data.get("show_meta", False),
         "page_context_enabled": widget_config_data.get("page_context_enabled", False),
+        "support_mode": widget_config_data.get("support_mode", False),
         "name": widget_row.name,
         "description": widget_row.description or "",
         "handoff": {

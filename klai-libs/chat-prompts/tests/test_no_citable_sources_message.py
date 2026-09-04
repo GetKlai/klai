@@ -14,12 +14,8 @@ from klai_chat_prompts import DUTCH_QUERY_MARKERS, no_citable_sources_message
 
 _DUTCH = "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
 _ENGLISH = "I cannot answer this reliably from the available knowledge sources."
-_DUTCH_WITH_HINT = (
-    _DUTCH + " Probeer het in Open-modus voor een antwoord op basis van algemene kennis."
-)
-_ENGLISH_WITH_HINT = (
-    _ENGLISH + " Try Open mode for an answer based on general knowledge."
-)
+_DUTCH_WITH_HINT = _DUTCH + " Probeer het in Open-modus voor een antwoord op basis van algemene kennis."
+_ENGLISH_WITH_HINT = _ENGLISH + " Try Open mode for an answer based on general knowledge."
 
 
 @pytest.mark.parametrize(
@@ -90,18 +86,73 @@ def test_suggest_open_mode_defaults_false_no_hint() -> None:
 
 
 def test_suggest_open_mode_true_appends_dutch_hint() -> None:
-    assert (
-        no_citable_sources_message("Wat is dit?", suggest_open_mode=True)
-        == _DUTCH_WITH_HINT
-    )
+    assert no_citable_sources_message("Wat is dit?", suggest_open_mode=True) == _DUTCH_WITH_HINT
 
 
 def test_suggest_open_mode_true_appends_english_hint() -> None:
-    assert (
-        no_citable_sources_message("What is this?", suggest_open_mode=True)
-        == _ENGLISH_WITH_HINT
-    )
+    assert no_citable_sources_message("What is this?", suggest_open_mode=True) == _ENGLISH_WITH_HINT
 
 
 def test_suggest_open_mode_true_non_string_query_falls_through_english() -> None:
     assert no_citable_sources_message(None, suggest_open_mode=True) == _ENGLISH_WITH_HINT
+
+
+# ─── helpdesk variant (public help-page widget) ──────────────────────────
+
+_DUTCH_HELPDESK = (
+    "Ik kan dit niet betrouwbaar beantwoorden op basis van onze helpartikelen. "
+    "Neem voor een vast antwoord contact op met de support."
+)
+_ENGLISH_HELPDESK = "I can't answer this reliably from our help articles. Please contact support for a definite answer."
+
+
+@pytest.mark.parametrize("query", ["Waarom lukt dit niet?", "Hoe vraag ik een refund aan?", "WAAROM?"])
+def test_helpdesk_variant_follows_dutch_query_language(query: str) -> None:
+    assert no_citable_sources_message(query, helpdesk=True) == _DUTCH_HELPDESK
+
+
+@pytest.mark.parametrize("query", ["Why not?", "how do I get a refund?", "", "   ", "12345", None, 42])
+def test_helpdesk_variant_falls_through_to_english(query: object) -> None:
+    assert no_citable_sources_message(query, helpdesk=True) == _ENGLISH_HELPDESK
+
+
+@pytest.mark.parametrize(
+    "query,expected",
+    [
+        ("Waarom lukt dit niet?", _DUTCH_HELPDESK),
+        ("Why not?", _ENGLISH_HELPDESK),
+    ],
+)
+def test_helpdesk_variant_ignores_suggest_open_mode(query: str, expected: str) -> None:
+    # The help-page widget has no Strict/Open toggle, so the Open-mode hint
+    # is meaningless here — helpdesk must override it, not append to it.
+    assert no_citable_sources_message(query, helpdesk=True, suggest_open_mode=True) == expected
+
+
+@pytest.mark.parametrize("helpdesk", [True, False])
+def test_helpdesk_variant_never_uses_kb_jargon(helpdesk: bool) -> None:
+    # Customer-facing wording: "kennisbank" / "kennisbronnen" /
+    # "knowledge sources" are internal terms a website visitor does not
+    # know. The helpdesk refusal must avoid them in both languages. The
+    # non-helpdesk refusal is the one that legitimately says
+    # "kennisbronnen"; only the helpdesk variant is jargon-free.
+    if not helpdesk:
+        return
+    for query in ("Waarom lukt dit niet?", "Why not?"):
+        refusal = no_citable_sources_message(query, helpdesk=True)
+        lowered = refusal.lower()
+        assert "kennisbank" not in lowered
+        assert "kennisbron" not in lowered
+        assert "knowledge source" not in lowered
+
+
+def test_helpdesk_variant_offers_support_contact() -> None:
+    assert "support" in no_citable_sources_message("Why not?", helpdesk=True).lower()
+    assert "contact op met de support" in no_citable_sources_message("Waarom?", helpdesk=True)
+
+
+def test_helpdesk_default_leaves_existing_callers_untouched() -> None:
+    # Regression: helpdesk defaults to False, so the existing path A/B/C
+    # refusal text is byte-for-byte unchanged when the flag is not passed.
+    assert no_citable_sources_message("Waarom lukt dit niet?") == _DUTCH
+    assert no_citable_sources_message("Why not?") == _ENGLISH
