@@ -17,7 +17,7 @@ Create Date: 2026-09-04
 from __future__ import annotations
 
 revision = "f4a8c2e6b1d9"
-down_revision = "b7c1d2e3f4a5"
+down_revision = "d3a91c47f5b2"
 branch_labels = None
 depends_on = None
 
