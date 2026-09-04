@@ -1,7 +1,7 @@
 ---
 id: SPEC-VOYS-HELPBOT-001
-version: "0.3.0"
-status: in progress
+version: "0.4.0"
+status: built, pending review
 created: 2026-09-04
 updated: 2026-09-04
 author: Claude (Opus 5), commissioned by Mark Vletter
@@ -19,6 +19,7 @@ implementation_branch: feat/voys-helpbot-integratie
 
 | Version | Date | Change |
 |---|---|---|
+| 0.4.0 | 2026-09-04 | All eight requirements built and merged. REQ-4 was tuned a second time after Mark supplied the official brand documentation: eight principles turned out to be independently confirmed by the measurement, one contradiction (apologies) was resolved by register rather than by picking a side, and three things the help pages could not show were added. REQ-7 shipped with a sharper dividing line than specified — one decidable test instead of a list. One medium defect recorded rather than fixed: a broad-mode answer lands in the `escalated` outcome bucket. |
 | 0.3.0 | 2026-09-04 | REQ-6 rewritten before implementation. The escalation contract flipped twice on the same day and the reason matters for anyone reading the code: v0.2.0 forbade offering a human at all, because the only handoff (HubSpot) is pinned to tenant `getklai` (G-1). Mark then corrected the premise — an API integration with the support partner is coming that will offer appointment booking *inside* the chat, and until it lands we redirect to the partner's existing booking module. So the bot may offer an appointment again, but must not name a URL itself; the widget owns the link. REQ-7 (broad-mode consent switch) added from Mark's observation that non-strict answers know more but are less certain. |
 | 0.2.0 | 2026-09-04 | REQ-2 (facade) added, replacing "raise the mint limit" as the answer to G-14 after online research: 3-10% of visitors ever open a chat widget, so 90-97% of session-token mints are waste. REQ-4 (support prompt) written with an explicit ban on offering a human, matching the then-known constraint. |
 | 0.1.0 | 2026-09-04 | Initial scope from the research document. Ordering principle set with Mark: measurement before configuration before go-live, because without it we cannot tell whether the pilot worked. |
@@ -146,7 +147,7 @@ puts 20-30 points away from real resolution.
 
 Brief: appendix A.6 · Commit `c9f6f77`
 
-## REQ-6 — AI disclosure and appointment escalation · wip · G-10, G-1 (partial)
+## REQ-6 — AI disclosure and appointment escalation · done · G-10, G-1 (partial)
 
 **Disclosure.** The empty state shows, before the visitor types, that this is an
 AI assistant that knows a lot about Voys, cites its sources where it can, and
@@ -167,9 +168,9 @@ widget config; http/https only, since this is admin input landing in a visitor's
 `href`. Absent, no button and no behaviour change. To be replaced by the support
 partner's API integration once that lands.
 
-Brief: appendix A.7
+Brief: appendix A.7 · Commit `d55ec67`
 
-## REQ-7 — Consent-gated broad mode · open
+## REQ-7 — Consent-gated broad mode · done
 
 When the help articles do not cover a question, the bot may offer to answer from
 general knowledge instead of stopping at "I can't find this". The visitor must
@@ -191,6 +192,26 @@ Prior art: path A has a Strict/Open toggle the user sets in advance. That model
 does not transfer — a help-page visitor does not know what "strict" means and
 will not go looking for a setting. The offer has to come from the bot, at the
 moment it is relevant.
+
+**As built.** The dividing line became one decidable test rather than a list:
+*could this sentence be written unchanged by any other phone provider?* Yes →
+allowed; only true here → refused, "even if you are sure you know it, even if
+your training data seems to confirm it". Blending is called out explicitly
+("most providers, including this one, ..."), and a mixed question gets the
+world half answered and the us half refused. Retrieval still runs first every
+turn. Both measurement traps are handled: the gap event keeps firing on a broad
+turn, and the outcome label does not read it as sourced.
+
+**Open defect, medium.** A broad answer lands in the `escalated` bucket, even
+when the visitor rated it up. The intent is right — the articles could not
+answer — but the label reads as "a human got involved", which did not happen.
+It inflates the escalation rate and hides real handoffs in the same pile. The
+`outcome` CHECK allows only four values, so a fifth needs a migration; the
+alternative is documenting what `escalated` means on the dashboard. The gap
+registry carries the content signal either way, so this is a reporting-clarity
+problem, not a lost signal.
+
+Brief: appendix A.9 · Commit op branch `feat/broad-mode-consent`
 
 ## REQ-8 — Voys tone of voice · done
 
@@ -237,10 +258,10 @@ All gates run by Claude on the merged branch, not taken from builder reports.
 
 | Gate | Result |
 |---|---|
-| `pytest tests/ -q` (portal backend) | 3834 passed, 0 failed (baseline 3796) |
-| chat-prompts tests | 102 passed |
+| `pytest tests/ -q` (portal backend) | 3867 passed, 0 failed (baseline 3796) |
+| chat-prompts tests | 137 passed |
 | `npm run build` (widget) | exit 0 |
-| `npm run check-size` | 34.3 kB gzipped, limit 200 kB |
+| `npm run check-size` | 36.2 kB gzipped, limit 200 kB |
 | portal frontend widget tests | 21 passed |
 
 Every builder ran under an agent profile that cannot commit, push or stash —
@@ -249,7 +270,7 @@ was refused. Work therefore always arrives as an unstaged diff for review.
 
 # 7. Open
 
-- REQ-6 in progress; REQ-7 specified only. REQ-1 t/m REQ-5 en REQ-8 zijn samengevoegd op de implementatietak.
+- All eight requirements are merged on `feat/voys-helpbot-integratie`. Nothing is pushed.
 - Pilot configuration (widget, KB scope, allowed origins, conversation
   starters) — admin work, needs Voys content knowledge.
 - **Assumption to verify:** the support partner's booking module is reachable
@@ -820,4 +841,187 @@ Een Nederlandstalig document `docs/research/voys-tone-of-voice.md` met:
   kunnen bekijken en waarom.
 - Beschrijf geen merkrichtlijnen die je niet in de teksten terugziet; we willen
   de waargenomen stem, niet een gewenste.
+```
+
+## A.9 REQ-7 · brede modus met toestemming
+
+```text
+Bouw een brede modus met toestemming voor de helpdesk-widget. Werk in de
+huidige werkmap. Dit is de subtielste opdracht van deze reeks; lees hem
+helemaal voordat je begint.
+
+## Het probleem
+
+De helpdesk-bot antwoordt uitsluitend uit de helpartikelen. Vindt hij daar
+niets, dan zegt hij dat en houdt op. Voor "hoe stel ik mijn belplan in" is dat
+juist. Voor "wat is een SIP-trunk" is het zonde: dat kan hij prima uitleggen,
+en de bezoeker escaleert nu onnodig.
+
+De interne chat kent hiervoor een strict/open-schakelaar die de gebruiker
+vooraf omzet. Dat model werkt hier niet: een bezoeker op een helppagina weet
+niet wat "strict" betekent en gaat geen instellingen zoeken.
+
+## Wat je bouwt
+
+De bot biedt het zelf aan, op het moment dat het relevant is, en de bezoeker
+zegt expliciet ja.
+
+### Gedrag
+
+1. **Aanbod.** Vindt de bot geen bruikbare bronnen in de helpartikelen, dan
+   zegt hij dat (zoals nu) en biedt daarna aan om breder te kijken. Strekking:
+   "Zal ik breder kijken op basis van algemene kennis? Let op: daar ben ik
+   minder zeker over, en het is niet specifiek over ons." De precieze
+   formulering volgt de tone of voice uit
+   `docs/research/voys-tone-of-voice.md` — lees § 10 en § 11.
+2. **Toestemming.** De bezoeker accepteert via een knop onder het bericht. Een
+   expliciet "ja" in tekst mag de bot ook honoreren. Zonder toestemming
+   gebeurt er niets.
+3. **De schakelaar staat daarna aan voor dit gesprek**, met een zichtbare
+   indicator in het chatvenster en een manier om hem weer uit te zetten. De
+   bezoeker moet altijd kunnen zien in welke modus hij zit.
+4. **Retrieval blijft altijd eerst.** Brede modus vervangt het zoeken in de
+   helpartikelen niet; het is de terugval binnen dezelfde beurt wanneer die
+   niets oplevert. Elke beurt zoekt dus gewoon eerst in de artikelen.
+5. **Elk antwoord uit brede modus is zichtbaar gemarkeerd** als algemene
+   kennis, duidelijk onderscheiden van een antwoord met bronnen uit de
+   helpartikelen.
+
+### De harde grens — dit is de kern van de opdracht
+
+Brede modus betekent **algemene vakkennis**, niet "verzin maar iets over ons".
+
+De bot mag in brede modus uitleggen wat DECT is, hoe nummerportering in
+Nederland werkt, wat het verschil is tussen een SIP-trunk en een VoIP-account
+in het algemeen.
+
+De bot mag in brede modus NOOIT organisatie-specifieke feiten produceren:
+geen prijzen, geen tarieven, geen functies of functienamen, geen instellingen,
+geen beschikbaarheid, geen doorlooptijden, geen "bij ons doe je dat zo". Vraagt
+de bezoeker daarnaar en staat het niet in de artikelen, dan blijft het antwoord
+dat hij het niet weet — ook met brede modus aan.
+
+Die scheiding is niet "zekerder versus minder zeker" maar "over de wereld
+versus over ons". Formuleer die regel in de prompt zo scherp dat er geen
+schemergebied is, en schrijf er tests voor.
+
+### Meting — hier gaat het snel mis
+
+6. **Een brede-modus-antwoord blijft een kennisgat.** De helpartikelen konden
+   de vraag niet beantwoorden; dat is precies wat de gap-registratie moet
+   vastleggen. Zorg dat het gap-event nog steeds gevuurd wordt
+   (`app/services/partner_chat.py`, `_schedule_gap_event`), ook als de bot
+   daarna breed antwoordt. Anders verdwijnt het redactionele signaal juist voor
+   de onderwerpen waar content ontbreekt.
+7. **Een brede-modus-antwoord telt niet als beantwoord uit de kennisbank.**
+   Controleer hoe het uitkomstlabel (`app/services/widget_outcome.py`) en de
+   citatie-compositie hierop reageren, en zorg dat een breed antwoord niet als
+   bronbevestigd wordt geteld.
+
+## Implementatie
+
+- Promptkant: een variant of aanvulling op `SUPPORT_CHAT_SYSTEM_PROMPT` in
+  `klai-libs/chat-prompts/klai_chat_prompts/__init__.py`. Laat GROUNDED,
+  GENERAL, OPEN_KB en META letterlijk ongemoeid en controleer dat achteraf door
+  de uiteindelijke waarden te vergelijken, niet de diff.
+- Backend: `partner_chat.py` moet de modus per beurt kunnen ontvangen en het
+  juiste profiel kiezen. Bestaand gedrag zonder de vlag blijft exact gelijk.
+- Widget: knop onder het aanbod, modus-indicator, uitzetten mogelijk, en de
+  modus meesturen bij volgende berichten. Bewaar de stand bij de rest van de
+  gespreksstatus zodat hij een herlaadbeurt overleeft.
+- Nederlandse en Engelse labels in de bestaande stijl.
+
+## Randvoorwaarden
+
+- Zonder toestemming verandert er niets aan het huidige gedrag. Dat is de
+  belangrijkste regressie.
+- Blijf binnen het bundelbudget (`npm run check-size`).
+- Volg de bestaande codestijl per bestand.
+
+## Gates — zelf draaien en de uitvoer tonen
+
+- `klai-libs/chat-prompts`: bestaande tests plus je nieuwe.
+- `klai-portal/backend`: `.venv/bin/python -m pytest tests/ -q` — gebruik de
+  venv uit /Users/mvletter/conductor/workspaces/Klai/tegucigalpa/klai-portal/backend
+  als er in deze worktree geen staat. Meld exact aantal geslaagd/gefaald.
+- `klai-widget`: `npm ci` indien nodig, dan `npm run build` en
+  `npm run check-size`.
+```
+
+## A.10 REQ-4 (vervolg) · afstemmen op de officiële merkstem
+
+```text
+Scherp de helpdesk-chatprompt aan op de officiële Voys-merkstem. Werk in de
+huidige werkmap.
+
+## Waar het over gaat
+
+`klai-libs/chat-prompts/klai_chat_prompts/__init__.py` bevat
+`SUPPORT_CHAT_SYSTEM_PROMPT`, de prompt voor de publieke helpdesk-widget. Die is
+geschreven vóórdat we de officiële merkdocumentatie hadden. Die documentatie
+staat nu, samen met een meting van de echte helppagina's en een vergelijking
+tussen beide, in `docs/research/voys-tone-of-voice.md`. LEES DAT DOCUMENT
+EERST — vooral § 10 (Nederlands specifiek) en § 11 (de vergelijking). De
+wijzigingen hieronder komen daaruit voort.
+
+## De vijf wijzigingen
+
+1. **Verontschuldigen mag, precies twee keer zo vaak als nu (namelijk: soms).**
+   De prompt kent nu geen regel hierover, en de gemeten helppagina's
+   verontschuldigen zich nooit. Maar het merkdocument noemt "Onze excuses, we
+   gaan dit oplossen" als vorm die werkt. § 11.2 legt uit waarom beide kloppen.
+   Regel: één korte, gemeende verontschuldiging wanneer de bot zelf de fout in
+   ging (verkeerd begrepen, onjuist antwoord) of wanneer de bezoeker een terecht
+   ongenoegen uit. Nooit als vulmiddel, nooit meervoudig, nooit "helaas" als
+   hele alinea, en niet bij een normale "dit staat niet in de artikelen".
+
+2. **Niet alles weten is merkgedrag, geen tekortkoming.** Het merkdocument zegt:
+   "it's okay not to have all the answers. What matters is caring enough to find
+   a solution." De prompt behandelt het ontbrekende antwoord nu als een
+   beperking. Herschrijf die passage zo dat toegeven dat je iets niet weet
+   expliciet op de merkstem is, gekoppeld aan wat de bot dan wél doet. Dit
+   versterkt de anti-hallucinatieregels; verzwak ze niet.
+
+3. **Doorvragen is nieuwsgierigheid, geen rem.** De prompt staat nu maximaal
+   één verduidelijkingsvraag toe, geformuleerd als beperking. Het merkdocument
+   noemt "Curious — we ask questions, explore ideas" als karaktertrek. Zelfde
+   gedrag — nog steeds maximaal één vraag, dan wachten — maar geformuleerd als
+   iets wat de bot dóet omdat hij het antwoord goed wil hebben.
+
+4. **De vriendtoets als slotregel.** Neem de toets uit het merkdocument
+   letterlijk op: zou je dit tegen een vriend zeggen? Zet hem aan het eind, als
+   laatste controle over de hele stijl.
+
+5. **Concrete Nederlandse voorbeelden.** Neem uit § 10 een korte set
+   vertaalvoorbeelden op die laten zien hoe een standaardzin in Voys-Nederlands
+   klinkt ("Dit kan even duren", "Laat het gerust weten als je vastloopt",
+   "Goed om te weten: ..."), en de lijst van wat níet werkt ("Geachte klant",
+   "Wij verzoeken u vriendelijk", uitroeptekens-enthousiasme). Kies de meest
+   sturende; maak er geen lange lijst van.
+
+## Wat ongewijzigd blijft
+
+- Alle bestaande regels rond bronvermelding, geen URLs of citatienummers
+  schrijven, en de behandeling van meervoudige vragen.
+- De escalatieregels: de bot kan niet doorverbinden, biedt wél een afspraak aan,
+  en noemt NOOIT een telefoonnummer of e-mailadres — ook niet als het in een
+  geciteerd artikel staat. Dit is een productbesluit, geen stijlkwestie.
+- Het verbod op toezeggingen namens het bedrijf.
+- GROUNDED, GENERAL, OPEN_KB en META blijven letterlijk gelijk. Controleer dat
+  na afloop door de uiteindelijke waarden te vergelijken, niet de diff.
+- De taaldetectie-preamble blijft ongewijzigd hergebruikt.
+
+## Bewaak de lengte
+
+De prompt wordt hierdoor langer. Houd hem strak: schrap waar de nieuwe regels
+bestaande formuleringen overbodig maken, in plaats van er alleen bij te
+schrijven. Meld in je rapport hoeveel tekens de prompt vóór en na je wijziging
+telt.
+
+## Gates — zelf draaien en de uitvoer tonen
+
+- `klai-libs/chat-prompts`: de bestaande tests, plus een test die aantoont dat
+  de vier andere profielen ongewijzigd zijn.
+- `klai-portal/backend`: `.venv/bin/python -m pytest tests/ -q`, met het exacte
+  aantal geslaagd/gefaald.
 ```

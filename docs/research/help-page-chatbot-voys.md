@@ -293,13 +293,13 @@ De widget kent daarvoor nu maar één ingang: het 4000-char `system_prompt`-veld
 | G-1 | **Handoff geblokkeerd voor Voys**: `_HUBSPOT_HANDOFF_DEV_TENANT_SLUG="getklai"`, origin-whitelist `getklai.getklai.com`, HubSpot-config wijst naar Klai-eigen inbox | **Blocker** (pilot zonder escalatie kan, maar "Praat met een medewerker" faalt dan) | deels — REQ-6 (boekings-redirect) | `partner.py:106-107, 2117-2149, 2485-2501`; `core/config.py:189-198`; compose `:1055` |
 | G-2 | Widget-path mist answer-beleid (rewrite/brand-bridging, low-confidence, multi-question, strict) | hoog | open | § 5.2 |
 | G-3 | Geen feedback-loop op de widget (geen thumbs in UI, geen kolom op `widget_messages`, `/feedback` is partner-key-only) | hoog | **gebouwd** — REQ-3 | § 2.1; `partner.py:2289-2301` + `require_permission("feedback")` |
-| G-4 | Geen outcome-meting (resolved/escalated/abandoned) op conversaties; alleen volume/top-queries | hoog | in aanbouw — REQ-5 | `models/widgets.py:101-145`; `admin_widgets.py:804-811` |
+| G-4 | Geen outcome-meting (resolved/escalated/abandoned) op conversaties; alleen volume/top-queries | hoog | **gebouwd** — REQ-5 | `models/widgets.py:101-145`; `admin_widgets.py:804-811` |
 | G-5 | Interne toon/jargon in basis-prompts en refusal; persona-conflict in de instructielaag | hoog | **gebouwd** — REQ-4 | § 7 |
 | G-6 | Geen eval-harness voor path B (widget) — alle kwaliteitsmetingen gaan via pad A | hoog | open | § 5.2 |
 | G-7 | Parallelle paden = driftgevaar; synchronisatie via handmatige comments | midden | open | `docker-compose.yml:966-971`; docstring-referenties |
 | G-8 | Instructies: één vrij veld, geen structuur/versioning/testpad/usage-meting | midden | open | § 6.1 vs `admin_widgets.py:76` |
 | G-9 | Page-context excerpt = aanvalsvector (injectie via hostpagina) — deels gemitigeerd | midden | open | § 6.3 |
-| G-10 | AI Act-artikel-50-disclosure niet expliciet ingericht (alleen nauwkeurigheid-disclaimer) | midden | in aanbouw — REQ-6 | § 6.4; `labels.ts` (`disclaimer`) |
+| G-10 | AI Act-artikel-50-disclosure niet expliciet ingericht (alleen nauwkeurigheid-disclaimer) | midden | **gebouwd** — REQ-6 | § 6.4; `labels.ts` (`disclaimer`) |
 | G-11 | Content-bron-kloof: help.voys.nl (Super/Notion, externe crawl) vs klai-docs (Gitea, ingest) vs interne support-KB; oud/tegenstrijdig materiaal levert conflicterende antwoorden op | midden | open | § 3; corroboration-laag is uitgesteld (zie [README](README.md) §3) |
 | G-12 | Twee chat-bubbels rechtsonder op help.voys.nl (Nerds booking-widget) | laag (UX) | open | HTML-fetch § 3 |
 | G-14 | **Rate limits zijn per widget, niet per bezoeker**: chat 60 rpm hardcoded en gedeeld door alle bezoekers, sessie-mint 10/min, geen caching op `/widget-config` | **Blocker voor publiek verkeer** | **vervallen** — opgelost door REQ-2 | § 5.6; `partner_dependencies.py:210`; `partner.py:2577` |
