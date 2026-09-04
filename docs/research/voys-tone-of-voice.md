@@ -1,5 +1,11 @@
 # Voys — tone of voice: bruikbaar schrijfprofiel
 
+> Deel I (§1-8) is een meting van gepubliceerde teksten, gedaan zonder kennis
+> van de officiële documentatie. Deel II (§9-10) is die officiële documentatie,
+> aangeleverd op 2026-09-04 en leidend voor de merkstem. §11 legt ze naast
+> elkaar: wat onafhankelijk bevestigd is, waar ze botsen, en waar de bot bewust
+> ingetogener blijft dan het merk.
+
 Doel: materiaal voor de systeeminstructies van de AI-helpbot op de Nederlandse
 helppagina's van Voys. Dit document beschrijft de **waargenomen** stem, niet een
 gewenst imagedocument. Alles hieronder staat of letterlijk geciteerd met URL, of
@@ -444,6 +450,188 @@ Je schrijft als de Voys-hulppagina in het Nederlands.
 - Geen emoji behalve functionele (⚠️ op waarschuwingen). Geen ✨📣👉 — dat is blog, niet help. Uitroeptekens spaarzaam, op successen ("Je extensie is nu live!") en waarschuwingen ("Let op!").
 - Droge humor op zijn hoogst één zin, nooit bij gemiste gesprekken of storingen. Voorbeeld: "Dat werkt meestal prima."
 ```
+
+
+---
+
+# Deel II — officiële merkdocumentatie
+
+> Aangeleverd door Mark op 2026-09-04 als de actuele interne documentatie. Dit
+> is de **bron van waarheid** voor de merkstem. Deel I hierboven is een meting
+> van gepubliceerde teksten; waar de twee verschillen, wint dit deel — behalve
+> waar Deel I aantoont dat de helppagina's een strakker register hanteren dan
+> de merkstem als geheel. Zie de vergelijking in § 11.
+
+## 9. Personality (officieel)
+
+Voys is your wonderfully quirky, wildly smart, and naturally helpful tech-whiz
+from next door. We'll resuscitate your router, explain quantum physics with
+fridge magnets, and keep the banter flowing like it's on unlimited data.
+
+We're clever without showing off, eccentric without going off the rails, and
+witty without trying too hard. Our superpower is making complex technology feel
+shamelessly simple and surprisingly satisfying to engage with.
+
+We're the kind of tech-geeks who go skydiving: bold enough to jump, calculated
+enough to pack the parachute. We're human, grounded, supportive, and genuinely
+excited to share our experience.
+
+Above all, we believe that every connection should feel like good company: warm,
+clear, and genuinely enjoyable. We listen before we leap, simplify before we
+speak, and always show up as humans first and tech-experts second.
+
+### Communicatieprincipes
+
+1. **Informal** — We speak like people, not like policies. Light, playful,
+   engaging; smart without sounding pretentious. Plain language.
+2. **Personal** — We talk to people, not at them. Honesty builds trust, so it's
+   okay not to have all the answers. What matters is caring enough to find a
+   solution.
+3. **Curious** — We ask questions, explore ideas, never settle for the obvious.
+4. **Appropriate** — We know when to keep things straight and when to crack a
+   joke. Our tone flexes with the moment. Empathy guides the balance.
+5. **Concise** — A good message doesn't need a hundred words when ten will do.
+6. **Candid** — We say what needs to be said, but always with dignity and
+   respect. Being direct doesn't mean calling a spade a bulldozer.
+7. **Distinct** — Inventive, expressive, unmistakably Voys.
+
+### Balans
+
+Laid back but not lazy · Fun but not frantic · Smart but not smug · Relaxed but
+reliable · Playful but pragmatic · Bold but balanced.
+
+### Humor
+
+Droog en subtiel, nooit geforceerd. Zelfreflectie mag, arrogantie niet. Voelt
+een grap niet spontaan, laat hem weg. Mik op een glimlach, niet op een
+schaterlach. Gevatte one-liners mogen, nooit ten koste van duidelijkheid.
+
+### Vermijden
+
+Corporate jargon ("leveraging", "synergy", "stakeholders") · stijve
+formuleringen ("Geachte klant", "Wij verzoeken u vriendelijk") · opgeblazen
+beloftes ("beste service ter wereld") · lijdende vorm waar bedrijvend kan ·
+overdreven enthousiasme ("SUPER!!!", "WOW!") · bureaucratische of robotachtige
+taal · alles wat klinkt als beleid in plaats van een mens.
+
+## 10. Nederlands specifiek (officieel)
+
+**Markttype:** letterlijke markt. Nederlandse lezers willen helder, direct en
+ondubbelzinnig. Snel ter zake. Praktisch, met concreet voordeel. Humor werkt als
+hij subtiel, slim of droog is. Directheid, transparantie en authenticiteit.
+
+**Formaliteit:** (zakelijk) informeel. "Je" en "jij", nooit "u". We zijn
+gelijken.
+
+**Stijl:** direct en to-the-point, maar nooit bot. Korte zinnen, bedrijvende
+vorm. Geen omhaal. Schrijf zoals je tegen een vriend praat. Vermijd overdrijving;
+focus op feiten en waarde.
+
+**Humor:** directe humor werkt in het Nederlands. Zelfspot mag. Droge opmerkingen
+passen. Maar: de focus ligt op helpen — maak niet overal een grap van.
+
+**Wat werkt**
+
+- "Dat kan even duren. We gaan voor het beste resultaat."
+- "Geen zorgen, dit is zo gefixt."
+- "Klinkt ingewikkeld? Dat valt mee, beloofd."
+- "Heb je dit al geprobeerd? Dit werkt vaak."
+- "Even geduld, we zijn er bijna."
+
+**Wat niet werkt**
+
+- "Geachte klant, hartelijk dank voor uw geduld."
+- "Wij verzoeken u vriendelijk om..."
+- "SUPER goed dat je dit vraagt!!!"
+- "Neem contact op met onze klantenservice afdeling."
+- "Bij voorbaat dank voor uw begrip."
+
+**Vertaalvoorbeelden**
+
+| Engels | Voys-Nederlands |
+|---|---|
+| This might take a moment | Dit kan even duren |
+| Feel free to reach out | Laat het gerust weten als je vastloopt |
+| We apologize for any inconvenience | Onze excuses, we gaan dit oplossen |
+| Click the button below | Klik hieronder |
+| Please note that... | Goed om te weten: ... |
+
+**De toets:** zou je dit tegen een vriend zeggen?
+
+
+## 11. Vergelijking: gemeten stem versus officiële merkstem
+
+De meting is gedaan zonder de officiële documentatie te kennen. Dat maakt de
+overeenkomsten bruikbaar als validatie, en de verschillen interessant.
+
+### 11.1 Wat onafhankelijk bevestigd is
+
+| Officieel principe | Onafhankelijke meting (Deel I) |
+|---|---|
+| "Je en jij, nooit u. We zijn gelijken." | `je` 739×, `jij/jou/jouw` 20×, **`u`/`uw` 0×** over 1.249 zinnen. Ook bij opzeggen en privacy. |
+| "Korte zinnen, bedrijvende vorm." | Mediaan ~11 woorden; imperatieve stappen, één handeling per regel. |
+| Vermijd stijve formuleringen | `gaarne`, `bij dezen`, `desalniettemin`, `uiteraard` — alle 0×. |
+| Vermijd overdreven enthousiasme | 19 uitroeptekens op ~1.250 zinnen, uitsluitend op waarschuwingen en successen. |
+| "Candid — say what needs to be said" | "Dit is een bekende bug" mét tijdelijke én structurele oplossing, in plaats van "er wordt aan gewerkt". |
+| "Concise — trim the fat" | Beperkingen als grens + reden + alternatief, zonder omhaal. |
+| Humor droog, subtiel, niet overal | Hooguit één droge regel per artikel; nooit bij storingen of gemiste gesprekken. |
+| "Appropriate — tone flexes with the moment" | Emoji functioneel (⚠️ bij waarschuwingen), decoratieve emoji uitsluitend op blog en marketing. |
+
+De merkstem wordt in de praktijk dus daadwerkelijk gehanteerd. Dat is geen
+vanzelfsprekendheid — een styleguide die alleen in een la ligt, meet je niet
+terug in 16 willekeurige artikelen.
+
+### 11.2 Eén echte tegenspraak: de verontschuldiging
+
+De officiële Nederlandse documentatie noemt **"Onze excuses, we gaan dit
+oplossen"** als vertaling die wérkt. De meting vond `excuses`, `sorry` en
+`het spijt` **0× in 16 helpartikelen**.
+
+Dat is geen fout aan één van beide kanten, maar een registerverschil dat de bot
+moet oplossen:
+
+- **Helpartikelen zijn documentatie.** Een artikel over het instellen van een
+  belplan heeft niets om excuses voor te maken. Nul treffers is daar logisch.
+- **Een chatbot voert een gesprek.** Die komt wél in situaties waar een
+  verontschuldiging past: hij begreep de vraag verkeerd, hij gaf een antwoord
+  dat niet klopte, of de bezoeker heeft een terechte klacht.
+
+**Besluit voor de prompt:** één korte, gemeende verontschuldiging is toegestaan
+wanneer de bot zelf de fout in ging of de bezoeker een terecht ongenoegen
+uit — nooit als vulmiddel, nooit meervoudig, en nooit "helaas" als hele alinea.
+Buiten die twee gevallen blijft de nul uit de meting leidend.
+
+### 11.3 Wat de meting niet kon zien
+
+De helppagina's tonen alleen het ingetogen uiteinde van de merkstem. Zonder de
+officiële documentatie zou je concluderen dat Voys louter functioneel schrijft.
+Drie dingen komen er nu bij die de bot beter maken:
+
+**"Het is oké om niet alle antwoorden te hebben. Wat telt is dat je genoeg geeft
+om een oplossing te zoeken."** Dit is merkbeleid dat rechtstreeks de
+anti-hallucinatiestand versterkt. Toegeven dat je iets niet weet is niet
+gênant — het is op de merkstem. Dat mag explicieter in de prompt dan het nu
+staat.
+
+**"Curious — we ask questions."** De prompt beperkt doorvragen nu tot maximaal
+één verduidelijkingsvraag, geformuleerd als rem. Volgens de merkstem is
+doorvragen juist karakter. Zelfde gedrag, andere framing — en die framing
+bepaalt hoe de vraag klinkt.
+
+**De toets "zou je dit tegen een vriend zeggen?"** is één regel die meer
+stuurt dan een halve pagina toonvoorschriften. Hoort in de prompt.
+
+### 11.4 Waar de bot bewust ónder de merkstem blijft
+
+De personality spreekt van "banter flowing like it's on unlimited data" en
+"witty one-liners". Op een helppagina, bij iemand met een probleem, is dat het
+verkeerde register — en de officiële documentatie zegt dat zelf: *"Appropriate —
+we know when to keep things straight"*, *"Empathy guides the balance"*, en in
+het Nederlandse deel *"maak niet overal een grap van"*.
+
+De merkstem bevat dus zijn eigen rem. Deel I meet waar die rem in de praktijk
+staat: hooguit één droge regel, nooit tijdens een storing. Dat is de stand die
+de bot aanhoudt.
 
 ## Niet geverifieerd
 
