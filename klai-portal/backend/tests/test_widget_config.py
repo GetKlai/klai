@@ -139,6 +139,151 @@ async def test_widget_config_returns_page_context_enabled():
 
 
 @pytest.mark.asyncio
+async def test_widget_config_returns_support_mode():
+    widget = FakeWidget()
+    widget.widget_config["support_mode"] = True
+    org = FakeOrg()
+    db = _make_db_chain(widget, org, [1])
+    request = _make_request("https://example.com")
+
+    with (
+        patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.get_redis_pool"),
+        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner.set_tenant", new=AsyncMock()),
+        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
+    ):
+        mock_settings.widget_jwt_secret = "shared-secret"
+
+        response = await widget_config(id=widget.widget_id, request=request, db=db)
+
+    assert json.loads(response.body.decode())["support_mode"] is True
+
+
+@pytest.mark.asyncio
+async def test_widget_config_support_mode_defaults_false():
+    widget = FakeWidget()  # no support_mode key set
+    org = FakeOrg()
+    db = _make_db_chain(widget, org, [1])
+    request = _make_request("https://example.com")
+
+    with (
+        patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.get_redis_pool"),
+        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner.set_tenant", new=AsyncMock()),
+        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
+    ):
+        mock_settings.widget_jwt_secret = "shared-secret"
+
+        response = await widget_config(id=widget.widget_id, request=request, db=db)
+
+    assert json.loads(response.body.decode())["support_mode"] is False
+
+
+@pytest.mark.asyncio
+async def test_widget_config_delivers_https_booking_url():
+    """Interim booking redirect: an https URL is delivered as configured."""
+    widget = FakeWidget()
+    widget.widget_config["booking_url"] = "https://booking.example.com/voys"
+    org = FakeOrg()
+    db = _make_db_chain(widget, org, [1])
+    request = _make_request("https://example.com")
+
+    with (
+        patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.get_redis_pool"),
+        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner.set_tenant", new=AsyncMock()),
+        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
+    ):
+        mock_settings.widget_jwt_secret = "shared-secret"
+
+        response = await widget_config(id=widget.widget_id, request=request, db=db)
+
+    assert json.loads(response.body.decode())["booking_url"] == "https://booking.example.com/voys"
+
+
+@pytest.mark.asyncio
+async def test_widget_config_stores_no_booking_url_key_and_delivers_empty():
+    """Unset booking_url → empty string; the widget then shows no button."""
+    widget = FakeWidget()  # no booking_url key set
+    org = FakeOrg()
+    db = _make_db_chain(widget, org, [1])
+    request = _make_request("https://example.com")
+
+    with (
+        patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.get_redis_pool"),
+        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner.set_tenant", new=AsyncMock()),
+        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
+    ):
+        mock_settings.widget_jwt_secret = "shared-secret"
+
+        response = await widget_config(id=widget.widget_id, request=request, db=db)
+
+    assert json.loads(response.body.decode())["booking_url"] == ""
+
+
+def test_widget_booking_url_scheme_policy():
+    """Only absolute http(s) survives; the value lands in a visitor-facing href."""
+    from app.api.partner import _widget_booking_url
+
+    def deliver(value: object) -> str:
+        return _widget_booking_url({"booking_url": value})
+
+    assert deliver("https://booking.example.com/a?b=1") == "https://booking.example.com/a?b=1"
+    assert deliver("http://booking.example.com") == "http://booking.example.com"
+    assert deliver("  https://booking.example.com  ") == "https://booking.example.com"
+    assert deliver("javascript:alert(1)") == ""
+    assert deliver("JaVaScRiPt:alert(1)") == ""
+    assert deliver("data:text/html;base64,PHNjcmlwdD4=") == ""
+    assert deliver("vbscript:msgbox") == ""
+    assert deliver("//booking.example.com") == ""
+    assert deliver("booking.example.com") == ""
+    assert deliver("/relative/booking") == ""
+    assert deliver("") == ""
+    assert deliver("   ") == ""
+    assert deliver("http://") == ""
+    assert deliver(None) == ""
+    assert deliver(42) == ""
+    assert _widget_booking_url({}) == ""
+
+
+@pytest.mark.asyncio
+async def test_public_bot_config_strips_non_http_booking_url():
+    """The share-link endpoint runs the same scheme validation."""
+    from app.api.partner import public_bot_config
+
+    org = FakeOrg()
+    widget = FakeWidget(
+        public_share_enabled=True,
+        widget_config={
+            "allowed_origins": [],
+            "title": "Public",
+            "welcome_message": "",
+            "system_prompt": "",
+            "css_variables": {},
+            "booking_url": "javascript:alert(1)",
+        },
+    )
+    db = _make_db_chain(widget, org, [10])
+
+    with (
+        patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.get_redis_pool"),
+        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner.set_tenant", new=AsyncMock()),
+        patch("app.api.partner.generate_session_token", return_value="public.jwt.token"),
+    ):
+        mock_settings.widget_jwt_secret = "shared-secret"
+        response = await public_bot_config(id=widget.widget_id, db=db)
+
+    assert json.loads(response.body.decode())["booking_url"] == ""
+
+
+@pytest.mark.asyncio
 async def test_widget_config_hubspot_handoff_visible_only_for_getklai_origin():
     widget = FakeWidget()
     widget.widget_config["allowed_origins"] = ["https://getklai.getklai.com"]

@@ -13,6 +13,7 @@ import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 import httpx
 import structlog
@@ -196,6 +197,22 @@ class ChatCompletionsRequest(BaseModel):
     # embedding retrieval and is often a long labelled blob that returns nothing
     # from a keyword engine. Falls back to the last user message when omitted.
     web_search_query: str | None = Field(default=None, max_length=_MAX_WEB_SEARCH_QUERY_CHARS)
+    # Per-turn visitor consent for the helpdesk widget's broad mode: when this
+    # turn's help-article retrieval comes up empty or weak, answer from general
+    # domain knowledge instead of refusing — labelled as general knowledge,
+    # never citing help articles, and never for company-specific claims (the
+    # boundary lives in the prompt profile). Honoured only while the widget
+    # runs in support mode; ignored for partner API keys, whose behaviour is
+    # unchanged. Retrieval always runs first regardless, so knowledge gaps
+    # keep being recorded even when a broad answer follows.
+    broad_mode: bool = False
+    # Widget feedback addressing: the widget client generates one random hex
+    # id per assistant turn and sends it here; the audit writer stores it on
+    # the assistant ``widget_messages`` row, and POST /partner/v1/widget/
+    # feedback later addresses the turn with it. Ignored for partner API keys
+    # (their chat turns are not audited to widget_messages), so partner
+    # behaviour is unchanged.
+    widget_turn_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{16,64}$")
 
 
 class PartnerFeedbackRequest(BaseModel):
@@ -388,6 +405,27 @@ async def _widget_page_context_enabled(auth: PartnerAuthContext, db: AsyncSessio
     return bool(config.get("page_context_enabled")) if isinstance(config, dict) else False
 
 
+async def _widget_support_mode_enabled(auth: PartnerAuthContext, db: AsyncSession) -> bool:
+    """Return whether this widget answers as a public help-page assistant.
+
+    Same shape as :func:`_widget_page_context_enabled`: a private widget_config
+    flag read only for widget JWT callers. When true, the chat uses the
+    customer-facing ``SUPPORT_CHAT_SYSTEM_PROMPT`` profile and the helpdesk
+    refusal variant; when false/absent the internal-team GROUNDED wording is
+    kept unchanged.
+    """
+    if not str(auth.key_id).startswith("wgt_"):
+        return False
+    result = await db.execute(
+        select(Widget.widget_config).where(
+            Widget.widget_id == auth.key_id,
+            Widget.org_id == auth.org_id,
+        )
+    )
+    config = result.scalar_one_or_none() or {}
+    return bool(config.get("support_mode")) if isinstance(config, dict) else False
+
+
 def _citation_runtime_options(
     trusted_sources: list[dict[str, Any]],
     *,
@@ -411,6 +449,7 @@ async def _audit_streaming_wrapper(
     session_key: str,
     loaded_origin: str | None = None,
     is_preview: bool = False,
+    turn_id: str | None = None,
 ) -> AsyncGenerator[bytes]:
     """Tee the SSE stream, capture composed text + sources, log the
     assistant turn once the generator completes.
@@ -444,6 +483,7 @@ async def _audit_streaming_wrapper(
                     sources=composed_sources or None,
                     loaded_origin=loaded_origin,
                     is_preview=is_preview,
+                    turn_id=turn_id,
                 )
             )
             _pending.add(task)
@@ -1670,6 +1710,7 @@ async def chat_completions(  # noqa: C901
         partner_user_id = None
     widget_system_prompt = await _widget_system_prompt(auth, db)
     page_context_enabled = await _widget_page_context_enabled(auth, db) if is_widget_chat else False
+    support_mode = await _widget_support_mode_enabled(auth, db) if is_widget_chat else False
     page_context = (
         request.page_context.model_dump(exclude_none=True) if page_context_enabled and request.page_context else None
     )
@@ -1685,7 +1726,13 @@ async def chat_completions(  # noqa: C901
     )
 
     try:
-        chunks, system_prompt, trusted_sources = await retrieve_context(
+        # ``broad`` (4th element) is retrieve_context's per-turn decision:
+        # support mode + visitor consent + a real retrieval attempt that
+        # produced a gap. It drives the no-chunks handoff below so a broad
+        # answer can neither cite weak chunks nor show a misleading
+        # "passages gevonden" activity. The retrieval log still records the
+        # real (weak) chunks: retrieval genuinely ran.
+        chunks, system_prompt, trusted_sources, broad_turn = await retrieve_context(
             org_id=auth.org_id,
             zitadel_org_id=auth.zitadel_org_id,
             kb_slugs=kb_slugs,
@@ -1695,6 +1742,9 @@ async def chat_completions(  # noqa: C901
             widget_system_prompt=widget_system_prompt,
             page_context=page_context,
             backend_managed_citations=True,
+            support_mode=support_mode,
+            broad_mode=bool(request.broad_mode),
+            is_preview=getattr(auth, "is_preview", False),
             retrieval_query=knowledge.query if knowledge is not None else None,
             top_k=knowledge.top_k if knowledge is not None and knowledge.top_k is not None else 8,
             retrieval_enabled=knowledge.enabled if knowledge is not None else True,
@@ -1813,7 +1863,7 @@ async def chat_completions(  # noqa: C901
             allowed_source_urls=allowed_source_urls,
             citation_source_urls=citation_source_urls,
             citation_source_metadata=citation_source_metadata,
-            citation_chunks=chunks,
+            citation_chunks=[] if broad_turn else chunks,
             web_chunks=web_chunks,
             web_query=web_query,
             trusted_sources=trusted_sources,
@@ -1821,6 +1871,8 @@ async def chat_completions(  # noqa: C901
             source_query=knowledge.query if knowledge is not None else None,
             emit_sources=knowledge.include_sources if knowledge is not None else True,
             page_context=page_context,
+            support_mode=support_mode,
+            broad_mode=broad_turn,
         )
         if audit_ready:
             streaming_gen = _audit_streaming_wrapper(
@@ -1829,6 +1881,7 @@ async def chat_completions(  # noqa: C901
                 session_key=audit_session_key,  # type: ignore[arg-type]
                 loaded_origin=http_request.headers.get("origin") or None,
                 is_preview=getattr(auth, "is_preview", False),
+                turn_id=request.widget_turn_id,
             )
         return StreamingResponse(
             content=streaming_gen,
@@ -1846,13 +1899,15 @@ async def chat_completions(  # noqa: C901
         allowed_source_urls=allowed_source_urls,
         citation_source_urls=citation_source_urls,
         citation_source_metadata=citation_source_metadata,
-        citation_chunks=chunks,
+        citation_chunks=[] if broad_turn else chunks,
         web_chunks=web_chunks,
         web_query=web_query,
         trusted_sources=trusted_sources,
         citation_output=citation_output,
         source_query=knowledge.query if knowledge is not None else None,
         page_context=page_context,
+        support_mode=support_mode,
+        broad_mode=broad_turn,
     )
     if knowledge is not None and not knowledge.include_sources:
         for choice in result.get("choices") or []:
@@ -1871,6 +1926,7 @@ async def chat_completions(  # noqa: C901
                     sources=assistant_sources,
                     loaded_origin=http_request.headers.get("origin") or None,
                     is_preview=getattr(auth, "is_preview", False),
+                    turn_id=request.widget_turn_id,
                 )
             )
             _pending.add(task)
@@ -2368,6 +2424,118 @@ async def submit_feedback(
 
 
 # ---------------------------------------------------------------------------
+# POST /partner/v1/widget/feedback  (widget thumbs up/down)
+# ---------------------------------------------------------------------------
+
+# Separate sliding window from the per-widget 60/min auth bucket in
+# _auth_via_session_token — feedback must not be able to starve the chat
+# path, and chat volume must not silently absorb (or block) ratings.
+_WIDGET_FEEDBACK_RATE_LIMIT_PER_MINUTE = 12
+
+
+class WidgetFeedbackRequest(BaseModel):
+    # Same shape as ChatCompletionsRequest.widget_turn_id — the client-
+    # generated identifier stored on the assistant widget_messages row.
+    turn_id: str = Field(..., pattern=r"^[0-9a-f]{16,64}$")
+    # None withdraws the rating again (second click on the active button).
+    rating: Literal["thumbsUp", "thumbsDown"] | None = None
+
+
+@router.post("/widget/feedback")
+async def submit_widget_feedback(
+    request: WidgetFeedbackRequest,
+    auth: PartnerAuthContext = Depends(get_partner_key),
+    db: AsyncSession = Depends(get_db),
+):
+    """Record a visitor thumbs rating on one assistant answer of the
+    caller's own widget conversation.
+
+    Why a dedicated endpoint instead of opening POST /partner/v1/feedback
+    to widget tokens: that endpoint is built for authenticated partner
+    integrations — it correlates retrieval logs by time window, inserts
+    into portal_feedback_events, schedules Qdrant quality updates, and
+    emits product events. Flipping ``feedback: True`` in the widget
+    session permissions would expose that whole side-effect pipeline to
+    every anonymous browser holding a widget JWT — a new abuse surface —
+    and its addressing model (caller-supplied free-form message_id) does
+    not match widget audit rows at all. Partner API-key behaviour on
+    /partner/v1/feedback stays byte-identical. Here the mutation is one
+    scoped UPDATE on widget_messages, addressed by the turn id the chat
+    request already carried.
+
+    Tenant scoping: conversation + org are taken from the verified JWT
+    (session_key + wgt_id), never from the request body. A turn_id from
+    another visitor's conversation or another org simply matches no row
+    → 404 (existence-non-disclosing, and RLS Cat-D on widget_messages /
+    widget_conversations is the second layer).
+    """
+    # 1. Widget sessions only. Partner keys are rejected here explicitly:
+    #    auth.permissions cannot express "widget-only" (a partner key row
+    #    with feedback=False and a widget JWT both lack the permission),
+    #    and widget JWTs always carry a session_key while key auth never does.
+    if not str(auth.key_id).startswith("wgt_") or not auth.session_key:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": {"type": "permission_error", "message": "Insufficient permissions"}},
+        )
+
+    # 2. Per-session sliding-window rate limit (app/services/partner_rate_limit).
+    redis_pool = await get_redis_pool()
+    if redis_pool is not None:
+        allowed, retry_after = await check_rate_limit(
+            redis_pool,
+            f"widget_feedback:{auth.key_id}:{auth.session_key}",
+            limit_per_minute=_WIDGET_FEEDBACK_RATE_LIMIT_PER_MINUTE,
+        )
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={"error": {"type": "rate_limit_error", "message": "Rate limit exceeded"}},
+                headers={"Retry-After": str(retry_after)},
+            )
+
+    # 3. Stamp the rating on the assistant row of THIS session's conversation.
+    #    Raw text() SQL follows the widget_audit convention (RLS-guarded
+    #    tables avoid ORM implicit RETURNING). rowcount==0 means the turn id
+    #    matched no assistant row in the caller's own conversation/org —
+    #    including foreign turn ids replayed from another tenant.
+    result = await db.execute(
+        text(
+            """
+            UPDATE widget_messages AS m
+               SET rating = :rating
+              FROM widget_conversations AS c
+             WHERE c.id = m.conversation_id
+               AND m.role = 'assistant'
+               AND m.turn_id = :turn_id
+               AND m.org_id = :org_id
+               AND c.org_id = :org_id
+               AND c.session_key = :session_key
+               AND c.widget_id = (
+                   SELECT w.id FROM widgets AS w
+                    WHERE w.widget_id = :wgt_id AND w.org_id = :org_id
+               )
+            """
+        ),
+        {
+            "rating": request.rating,
+            "turn_id": request.turn_id,
+            "org_id": auth.org_id,
+            "session_key": auth.session_key,
+            "wgt_id": str(auth.key_id),
+        },
+    )
+    if result.rowcount == 0:  # type: ignore[attr-defined]
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"type": "not_found", "message": "Feedback target not found"}},
+        )
+    await db.commit()
+
+    return {"ok": True, "rating": request.rating}
+
+
+# ---------------------------------------------------------------------------
 # POST /partner/v1/knowledge  (TASK-011)
 # ---------------------------------------------------------------------------
 
@@ -2499,6 +2667,32 @@ def _hubspot_handoff_enabled_for_widget(
     return bool(
         isinstance(hubspot, dict) and hubspot.get("status") == "connected" and hubspot.get("channel_account_id")
     )
+
+
+def _widget_booking_url(widget_config_data: dict[str, Any]) -> str:
+    """INTERIM — remove together with ``booking_url`` when the chat booking
+    API integration replaces the support-partner redirect.
+
+    Return the widget's booking URL for the visitor-facing appointment
+    button, or ``""`` to hide it. The stored value is admin input that
+    lands in an ``href`` in a visitor's browser, so only absolute http(s)
+    URLs are delivered at all: ``javascript:``, other schemes, relative
+    and malformed values are dropped here, before the widget ever sees
+    them. An unset field changes nothing about the payload's behaviour.
+    """
+    url = widget_config_data.get("booking_url")
+    if not isinstance(url, str):
+        return ""
+    url = url.strip()
+    if not url:
+        return ""
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return ""
+    if parsed.scheme.lower() not in ("http", "https") or not parsed.netloc:
+        return ""
+    return url
 
 
 # ---------------------------------------------------------------------------
@@ -2666,6 +2860,9 @@ async def widget_config(
         "show_sources": widget_config_data.get("show_sources", True),
         "show_meta": widget_config_data.get("show_meta", False),
         "page_context_enabled": widget_config_data.get("page_context_enabled", False),
+        "support_mode": widget_config_data.get("support_mode", False),
+        # Interim appointment redirect (booking API pending) — see _widget_booking_url.
+        "booking_url": _widget_booking_url(widget_config_data),
         "handoff": {
             "hubspot": {
                 "enabled": _hubspot_handoff_enabled_for_widget(
@@ -2776,6 +2973,9 @@ async def public_bot_config(
         "show_sources": widget_config_data.get("show_sources", True),
         "show_meta": widget_config_data.get("show_meta", False),
         "page_context_enabled": widget_config_data.get("page_context_enabled", False),
+        "support_mode": widget_config_data.get("support_mode", False),
+        # Interim appointment redirect (booking API pending) — see _widget_booking_url.
+        "booking_url": _widget_booking_url(widget_config_data),
         "name": widget_row.name,
         "description": widget_row.description or "",
         "handoff": {

@@ -4,8 +4,17 @@ import { streamHubSpotHandoffEvents } from "../api/handoff";
 import { addAgentMessage, chatState, setChatOpen, setError } from "../store/chat";
 import { t } from "../i18n/labels";
 
-export function ChatBubble() {
-  const [isOpen, setIsOpen] = createSignal(false);
+export interface ChatBubbleProps {
+  // Set by the facade after the first click: the visitor already asked
+  // to open the chat, so the window mounts open.
+  initiallyOpen?: boolean;
+}
+
+export function ChatBubble(props: ChatBubbleProps = {}) {
+  const [isOpen, setIsOpen] = createSignal(props.initiallyOpen === true);
+  if (props.initiallyOpen === true) {
+    setChatOpen(true);
+  }
   let handoffAbortController: AbortController | null = null;
   let handoffStreamToken: string | null = null;
   const seenHandoffMessageIds = new Set<number>();
@@ -83,6 +92,7 @@ export function ChatBubble() {
           conversationStarters={chatState.config?.conversation_starters}
           hideDisclaimer={chatState.config?.hide_disclaimer}
           welcomeMessage={chatState.config?.welcome_message}
+          bookingUrl={chatState.config?.booking_url}
           collectUserInfo={chatState.config?.collect_user_info}
           manageHandoffStream={false}
         />

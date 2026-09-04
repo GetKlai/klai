@@ -7,9 +7,12 @@ import {
   addUserMessage,
   closeCurrentConversation,
   createConversationSessionId,
+  createTurnId,
   startAssistantMessage,
   appendToLastMessage,
   setLastMessageSources,
+  setLastMessageBroadMode,
+  setBroadMode,
   appendLastMessageActivity,
   finishStreaming,
   setError,
@@ -38,18 +41,21 @@ interface ChatWindowProps {
   onClose: () => void;
   inline?: boolean;
   conversationStarters?: string[];
+  // White-label toggle for the accuracy footer only — it must never hide
+  // the EU AI Act art. 50 notice in the hero.
   hideDisclaimer?: boolean;
   welcomeMessage?: string;
+  bookingUrl?: string;
   collectUserInfo?: boolean;
   manageHandoffStream?: boolean;
 }
 
 // TWD-pattern widget chrome:
 //   header  → primary-color bg, avatar + title + description, close
-//   hero    → centered icon + welcome line + starter chips (only when
-//             the conversation hasn't started yet)
+//   hero    → centered icon + welcome line + mandatory AI notice +
+//             starter chips (only when the conversation hasn't started yet)
 //   input   → pill textarea + small primary-color send button
-//   footer  → AI disclaimer (white-label toggle hides it)
+//   footer  → AI accuracy disclaimer (white-label toggle hides it)
 export function ChatWindow(props: ChatWindowProps) {
   const [inputValue, setInputValue] = createSignal("");
   const [visitorName, setVisitorName] = createSignal(chatState.visitorName);
@@ -61,6 +67,32 @@ export function ChatWindow(props: ChatWindowProps) {
   let handoffStreamToken: string | null = null;
   let textareaRef: HTMLTextAreaElement | undefined;
   const seenHandoffMessageIds = new Set<number>();
+
+  // The art. 50 notice doubles as a screen-reader announcement on window
+  // open. Screen readers only reliably announce a live region whose
+  // content CHANGES after the region is already in the DOM — text shipped
+  // in the same mount as the region itself is skipped. So the hero renders
+  // the (empty) status region immediately and fills the text one beat
+  // later; closing and reopening the window re-announces it.
+  const [aiDisclosureText, setAiDisclosureText] = createSignal("");
+  const disclosureTimer = window.setTimeout(() => {
+    // Fill the notice with the tenant's own bot name. config.name is the
+    // per-widget display name the admin API requires (non-empty); the
+    // header title is only a caption and may be generic wording that
+    // reads wrong mid-sentence. No/blank name → the prepared no-org
+    // variant, so the sentence never renders a hole.
+    const botName = chatState.config?.name?.trim();
+    const notice = botName
+      ? t().aiDisclosure.replace("{name}", botName)
+      : t().aiDisclosureNoOrg;
+    // The AI notice is unconditional — it is the Article 50 requirement. The
+    // appointment sentence is not: it only holds where a booking route is
+    // actually configured. Appending it everywhere would promise every other
+    // tenant's visitors a person they have no way to reach.
+    const booking = props.bookingUrl ? t().aiDisclosureBooking : "";
+    setAiDisclosureText(notice + booking);
+  }, 150);
+  onCleanup(() => window.clearTimeout(disclosureTimer));
 
   const connectHandoffStream = () => {
     if (props.manageHandoffStream === false || !chatState.sessionToken) {
@@ -132,6 +164,112 @@ export function ChatWindow(props: ChatWindowProps) {
     });
   };
 
+  // One streamed bot turn. The consent flag and retrieval-query override
+  // travel with the request; JSON.stringify drops them when unset, so
+  // regular strict traffic is byte-identical to before broad mode existed.
+  const streamBotTurn = async (opts: { retrievalQuery?: string } = {}) => {
+    const turnId = createTurnId();
+    startAssistantMessage(turnId);
+
+    abortController = new AbortController();
+
+    await streamChat({
+      endpoint: chatState.config!.chat_endpoint,
+      token: chatState.sessionToken,
+      widgetId: chatState.widgetId,
+      messages: withVisitorInfo(chatState.messages.slice(0, -1)),
+      widgetTurnId: turnId,
+      broadMode: chatState.broadMode || undefined,
+      retrievalQuery: opts.retrievalQuery,
+      pageContext: chatState.config?.page_context_enabled ? collectPageContext() : undefined,
+      abortController,
+      callbacks: {
+        onToken: (token) => {
+          appendToLastMessage(token);
+        },
+        onSources: (sources) => {
+          setLastMessageSources(sources);
+        },
+        onActivity: (activity) => {
+          appendLastMessageActivity(activity);
+        },
+        onBroadMode: (mode) => {
+          setLastMessageBroadMode(mode);
+        },
+        onDone: () => {
+          finishStreaming();
+          abortController = null;
+        },
+        onError: (error) => {
+          finishStreaming();
+          abortController = null;
+          setError(
+            error.message.includes("Origin")
+              ? t().errorSessionExpired
+              : t().errorGeneric
+          );
+        },
+      },
+    });
+  };
+
+  // ── Helpdesk broad mode: consent handling ────────────────────────────
+  // Consent is only ever a complete, unpunctuated affirmation typed right
+  // after the bot offered it, or a click on the offer button. An exact
+  // word-list match (no fuzzy "does it contain ja") keeps "ja, maar ik
+  // liever niet" a normal message the strict bot can answer.
+
+  const BROAD_CONSENT_WORDS = new Set([
+    "ja", "jawel", "jazeker", "ja zeker", "ja graag", "ja dat mag", "ja doe maar",
+    "doe maar", "graag", "ok", "oke", "oké", "akkoord", "ga maar", "ga door",
+    "yes", "yeah", "yep", "yes please", "please", "sure", "of course", "go ahead", "y",
+  ]);
+
+  const isBroadConsentText = (text: string): boolean => {
+    const normalized = text
+      .toLowerCase()
+      .replace(/[.,!?;:'"`"“”‘’\u00b7()\[\]]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    return BROAD_CONSENT_WORDS.has(normalized);
+  };
+
+  // The last message the bot actually said something in — empty streaming
+  // placeholders don't count and don't hide an offer one turn older.
+  const lastBotAnswerIndex = (): number => {
+    for (let i = chatState.messages.length - 1; i >= 0; i--) {
+      const message = chatState.messages[i];
+      if (message.role === "assistant" && message.content.trim()) return i;
+    }
+    return -1;
+  };
+
+  const questionBefore = (index: number): string => {
+    for (let i = index - 1; i >= 0; i--) {
+      const message = chatState.messages[i];
+      if (message.role === "user" && message.content.trim()) return message.content;
+    }
+    return "";
+  };
+
+  const runBroadConsentTurn = async (question: string) => {
+    setBroadMode(true);
+    // Retrieval on this turn runs against the original question, not the
+    // consent text: the knowledge gap must keep being recorded for what the
+    // visitor actually asked.
+    await streamBotTurn({ retrievalQuery: question || undefined });
+  };
+
+  const handleBroadConsentClick = async (offerIndex: number) => {
+    if (!canSend()) return;
+    clearError();
+    addUserMessage(t().broadConsentMessage);
+    if (textareaRef) {
+      textareaRef.style.height = "auto";
+    }
+    await runBroadConsentTurn(questionBefore(offerIndex));
+  };
+
   const handleSend = async (override?: string) => {
     const content = (override ?? inputValue()).trim();
     if (!content || !canSend()) return;
@@ -157,42 +295,17 @@ export function ChatWindow(props: ChatWindowProps) {
       return;
     }
 
-    startAssistantMessage();
+    // A bare "yes" answering the bot's broad-mode offer is consent, not a
+    // question: run the same turn the offer button would.
+    if (!chatState.broadMode && isBroadConsentText(content)) {
+      const answerIndex = lastBotAnswerIndex();
+      if (answerIndex >= 0 && chatState.messages[answerIndex].broadMode === "offer") {
+        await runBroadConsentTurn(questionBefore(answerIndex));
+        return;
+      }
+    }
 
-    abortController = new AbortController();
-
-    await streamChat({
-      endpoint: chatState.config!.chat_endpoint,
-      token: chatState.sessionToken,
-      widgetId: chatState.widgetId,
-      messages: withVisitorInfo(chatState.messages.slice(0, -1)),
-      pageContext: chatState.config?.page_context_enabled ? collectPageContext() : undefined,
-      abortController,
-      callbacks: {
-        onToken: (token) => {
-          appendToLastMessage(token);
-        },
-        onSources: (sources) => {
-          setLastMessageSources(sources);
-        },
-        onActivity: (activity) => {
-          appendLastMessageActivity(activity);
-        },
-        onDone: () => {
-          finishStreaming();
-          abortController = null;
-        },
-        onError: (error) => {
-          finishStreaming();
-          abortController = null;
-          setError(
-            error.message.includes("Origin")
-              ? t().errorSessionExpired
-              : t().errorGeneric
-          );
-        },
-      },
-    });
+    await streamBotTurn();
   };
 
   const handleStop = () => {
@@ -455,6 +568,18 @@ export function ChatWindow(props: ChatWindowProps) {
           <Show when={props.description}>
             <p class="klai-hero-subtitle">{props.description}</p>
           </Show>
+          {/* EU AI Act art. 50 notice: visitors must know they are talking
+              to an AI system, perceptibly, at first interaction. Deliberately
+              NOT gated on hide_disclaimer — that flag is a white-label toggle
+              for the accuracy footer ("AI-antwoorden kunnen fouten bevatten…")
+              and a legal disclosure cannot be switched off per widget. It also
+              sits NEXT TO the configurable welcome_message rather than inside
+              it, so a customer can rewrite the greeting without ever dropping
+              the notice. role="status" + the deferred fill above announce it
+              to screen readers when the window opens. */}
+          <p class="klai-hero-ai-disclosure" role="status" aria-live="polite">
+            {aiDisclosureText()}
+          </p>
           <Show when={(props.conversationStarters?.length ?? 0) > 0}>
             <div class="klai-starters">
               {props.conversationStarters!.map((s) => (
@@ -477,7 +602,34 @@ export function ChatWindow(props: ChatWindowProps) {
           messages={chatState.messages}
           isStreaming={chatState.isStreaming}
           error={chatState.error}
+          onBroadConsent={(offerIndex) => void handleBroadConsentClick(offerIndex)}
         />
+      </Show>
+
+      {/* Broad-mode indicator: once the visitor consented (or ever received
+        a labelled broad answer in this conversation), the mode stays
+        visible and switchable. Turning it off returns the bot to strict
+        help-articles-only answers immediately; turning it back on is a
+        fresh explicit click. */}
+      <Show
+        when={
+          hasUserTurn() &&
+          (chatState.broadMode || chatState.messages.some((m) => m.broadMode === "answer"))
+        }
+      >
+        <div class="klai-broad-status">
+          <span class="klai-broad-status-label">
+            {chatState.broadMode ? t().broadModeOnLabel : t().broadModePausedLabel}
+          </span>
+          <button
+            type="button"
+            class="klai-broad-toggle-btn"
+            disabled={chatState.isStreaming || chatState.conversationStatus === "closed"}
+            onClick={() => setBroadMode(!chatState.broadMode)}
+          >
+            {chatState.broadMode ? t().broadModeOffButton : t().broadModeOnButton}
+          </button>
+        </div>
       </Show>
 
       <Show when={chatState.handoffActive}>
@@ -516,6 +668,26 @@ export function ChatWindow(props: ChatWindowProps) {
           >
             {t().handoffButton}
           </button>
+        </div>
+      </Show>
+
+      {/* INTERIM appointment redirect until the chat booking API
+          integration lands: the SUPPORT prompt offers a personal
+          appointment on escalation, the button here executes the
+          redirect to the support partner's booking module. booking_url
+          is server-validated to absolute http(s) before delivery
+          (partner.py _widget_booking_url), so it is safe as an href.
+          Unset → no element rendered, current behaviour unchanged. */}
+      <Show when={props.bookingUrl?.trim()}>
+        <div class="klai-booking-bar">
+          <a
+            class="klai-booking-btn"
+            href={props.bookingUrl!.trim()}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {t().bookingButton}
+          </a>
         </div>
       </Show>
 

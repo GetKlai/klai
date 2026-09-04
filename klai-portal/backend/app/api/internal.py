@@ -34,7 +34,7 @@ from jwt import PyJWKClient
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, ConfigDict, Field
 from redis.exceptions import RedisError
-from sqlalchemy import select, text, update
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_effective_capabilities
@@ -49,6 +49,7 @@ from app.models.templates import PortalTemplate
 from app.services.connector_credentials import SENSITIVE_FIELDS, credential_store
 from app.services.entitlements import get_effective_products
 from app.services.events import emit_event
+from app.services.gap_events import record_gap_event
 from app.services.gap_rescorer import schedule_rescore
 from app.services.partner_rate_limit import check_rate_limit
 from app.services.pii_entity_policy import sanitize_stored_entities
@@ -1347,39 +1348,23 @@ async def create_gap_event(
 ) -> dict:
     """Record a knowledge gap event from the LiteLLM hook.
 
-    SPEC-PRIVACY-QUERY-SHADOW-001 REQ-8: gating by per-tenant
-    telemetry_level — never trust the upstream-supplied value, always
-    re-fetch the canonical level from portal_orgs.
+    The write itself lives in app.services.gap_events.record_gap_event —
+    shared with the widget / partner chatpad, which run in this same
+    process and must not loop back over HTTP. That service owns the
+    SPEC-PRIVACY-QUERY-SHADOW-001 REQ-8 gating: the per-tenant
+    telemetry_level is re-fetched from portal_orgs there and the
+    upstream-supplied value is never trusted.
 
     - off    → 200 OK, no row inserted
     - shadow → INSERT with query_text='[REDACTED:shadow]'
     - full   → INSERT with literal query_text (existing behavior)
     """
     await _require_internal_token(request)
-    from app.models.retrieval_gaps import PortalRetrievalGap
-
-    org_result = await db.execute(select(PortalOrg).where(PortalOrg.zitadel_org_id == payload.org_id))
-    org = org_result.scalar_one_or_none()
-    if org is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Org not found")
-    await set_tenant(db, org.id)
-
-    # REQ-8: 'off' → skip the INSERT entirely. Tenant accepts the
-    # support-side trade-off; we still respond 200 to keep the
-    # idempotent contract for fire-and-forget callers.
-    if org.telemetry_level == "off":
-        await _audit_internal_call(request, org_id=org.id)
-        return {"ok": True, "skipped": "telemetry_off"}
-
-    # REQ-8: 'shadow' → REDACT the literal query text. The matching
-    # telemetry.query_shadow row (written by retrieval-api in Unit 3)
-    # carries the embedding + features for support-team triage.
-    effective_query_text = payload.query_text if org.telemetry_level == "full" else "[REDACTED:shadow]"
-
-    gap = PortalRetrievalGap(
-        org_id=org.id,
+    result = await record_gap_event(
+        db,
+        zitadel_org_id=payload.org_id,
         user_id=payload.user_id,
-        query_text=effective_query_text,
+        query_text=payload.query_text,
         gap_type=payload.gap_type,
         top_score=payload.top_score,
         nearest_kb_slug=payload.nearest_kb_slug,
@@ -1388,71 +1373,12 @@ async def create_gap_event(
         taxonomy_node_ids=payload.taxonomy_node_ids,
         caller_client_id=payload.caller_client_id,
     )
-    db.add(gap)
-    await db.commit()
+    if result.outcome == "not_found":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Org not found")
 
-    # SPEC-KB-022 R6 + SPEC-KB-026 R4: async gap classification via knowledge-ingest
-    if payload.taxonomy_node_ids is None and payload.nearest_kb_slug:
-
-        async def _classify_gap(
-            gap_id: int,
-            org_int_id: int,
-            org_zitadel_id: str,
-            query_text: str,
-            kb_slug: str,
-        ) -> None:
-            """Classify gap query against KB taxonomy via knowledge-ingest.
-
-            Background task on a fresh session: `tenant_scoped_session`
-            guarantees the connection is pinned and app.current_org_id is
-            set before the UPDATE, so RLS does not silently filter the row
-            to zero. rowcount==0 raises; the RLS guard event listener also
-            catches this as a safety net.
-            """
-            try:
-                from app.core.database import tenant_scoped_session
-                from app.services.knowledge_ingest_client import classify_gap_taxonomy
-
-                node_ids = await classify_gap_taxonomy(org_zitadel_id, kb_slug, query_text)
-                if not node_ids:
-                    return
-
-                async with tenant_scoped_session(org_int_id) as session:
-                    result = await session.execute(
-                        update(PortalRetrievalGap)
-                        .where(PortalRetrievalGap.id == gap_id)
-                        .values(taxonomy_node_ids=node_ids)
-                    )
-                    if result.rowcount == 0:  # type: ignore[attr-defined]
-                        raise RuntimeError(
-                            f"gap_classification UPDATE matched 0 rows "
-                            f"(gap_id={gap_id}, org_id={org_int_id}) — "
-                            f"likely RLS/tenant-context mismatch"
-                        )
-                    await session.commit()
-
-                logger.info(
-                    "gap_classification_complete: gap_id=%s, node_ids=%s",
-                    gap_id,
-                    node_ids,
-                )
-            except Exception:
-                logger.exception(
-                    "gap_classification_failed: gap_id=%s",
-                    gap_id,
-                )
-
-        _task = asyncio.create_task(  # noqa: RUF006
-            _classify_gap(
-                gap.id,
-                org.id,
-                payload.org_id,
-                payload.query_text,
-                payload.nearest_kb_slug,
-            )
-        )
-
-    await _audit_internal_call(request, org_id=org.id)
+    await _audit_internal_call(request, org_id=result.org_id)
+    if result.outcome == "skipped":
+        return {"ok": True, "skipped": "telemetry_off"}
     return {"ok": True}
 
 

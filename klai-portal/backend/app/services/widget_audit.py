@@ -75,6 +75,11 @@ async def record_widget_turn(
     role: Literal["user", "assistant"],
     content: str,
     sources: list[dict[str, Any]] | None = None,
+    # Client-generated per-turn identifier echoed by the widget chat request
+    # (``widget_turn_id``). Stored on the assistant row so
+    # POST /partner/v1/widget/feedback can address this exact answer without
+    # ever exposing widget_messages.id to the browser.
+    turn_id: str | None = None,
     ip_hash: str | None = None,
     user_agent_hash: str | None = None,
     language_detected: str | None = None,
@@ -176,10 +181,11 @@ async def record_widget_turn(
                 text(
                     """
                     INSERT INTO widget_messages
-                        (conversation_id, org_id, role, content, sources, sequence)
+                        (conversation_id, org_id, role, content, sources,
+                         sequence, turn_id)
                     VALUES
                         (:conversation_id, :org_id, :role, :content,
-                         CAST(:sources AS jsonb), :sequence)
+                         CAST(:sources AS jsonb), :sequence, :turn_id)
                     """
                 ),
                 {
@@ -189,6 +195,7 @@ async def record_widget_turn(
                     "content": content[:10000],  # REQ-8: clamp to 10000 chars (AC8.1)
                     "sources": None if sources is None else json.dumps(sources),
                     "sequence": sequence,
+                    "turn_id": turn_id,
                 },
             )
             await db.execute(

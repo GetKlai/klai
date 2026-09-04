@@ -115,6 +115,10 @@ class WidgetConversation(Base):
         ),
         Index("ix_widget_conversations_widget_started", "widget_id", "started_at"),
         Index("ix_widget_conversations_org_started", "org_id", "started_at"),
+        CheckConstraint(
+            "outcome IN ('resolved','escalated','abandoned','unknown')",
+            name="ck_widget_conversations_outcome",
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
@@ -143,6 +147,13 @@ class WidgetConversation(Base):
     # Truncated to 200 chars. NULL when Origin header was absent (e.g. direct API call).
     # @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-2
     loaded_origin: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # Heuristic conversation outcome written by the widget-outcome background
+    # loop (app/services/widget_outcome.py): 'resolved' / 'escalated' /
+    # 'abandoned' / 'unknown'. NULL while undetermined (conversation still
+    # active or not yet processed). Values enforced by
+    # ck_widget_conversations_outcome — see
+    # post_deploy_d9e0f1a2b3c4_widget_conversations_outcome.sql.
+    outcome: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
 
 class WidgetMessage(Base):
@@ -172,3 +183,14 @@ class WidgetMessage(Base):
     sources: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Client-generated per-turn identifier (widget chat requests carry it as
+    # ``widget_turn_id``; only the assistant row stores it). It is how
+    # POST /partner/v1/widget/feedback addresses the answer the visitor
+    # rated — the row id itself is never exposed to the browser.
+    # DDL + unique partial index live in
+    # post_deploy_f4a8c2e6b1d9_widget_messages_feedback.sql (klai-owned table).
+    turn_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Visitor thumbs rating for this assistant answer: 'thumbsUp' /
+    # 'thumbsDown' / NULL (no rating or withdrawn). CHECK constraints restrict
+    # the values to assistant rows only — see the same post-deploy SQL.
+    rating: Mapped[str | None] = mapped_column(String(16), nullable=True)

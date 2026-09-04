@@ -443,7 +443,7 @@ async def test_chat_handler_web_search_requires_partner_permission(monkeypatch):
     import app.api.partner as partner
 
     monkeypatch.setattr(partner, "_resolve_kb_slugs", AsyncMock(return_value=[]))
-    monkeypatch.setattr(partner, "retrieve_context", AsyncMock(return_value=([], "sp", [])))
+    monkeypatch.setattr(partner, "retrieve_context", AsyncMock(return_value=([], "sp", [], False)))
     search = AsyncMock(return_value=[])
     monkeypatch.setattr(partner, "search_web", search)
     req = _req(web_search=True, stream=False, messages=[{"role": "user", "content": "q"}])
@@ -469,7 +469,7 @@ async def test_chat_handler_web_search_never_runs_for_widget_key(monkeypatch):
     monkeypatch.setattr(partner, "_resolve_kb_slugs", AsyncMock(return_value=["kb-1"]))
     monkeypatch.setattr(partner, "_widget_system_prompt", AsyncMock(return_value=None))
     monkeypatch.setattr(partner, "_widget_page_context_enabled", AsyncMock(return_value=False))
-    monkeypatch.setattr(partner, "retrieve_context", AsyncMock(return_value=([], "sp", [])))
+    monkeypatch.setattr(partner, "retrieve_context", AsyncMock(return_value=([], "sp", [], False)))
     search = AsyncMock(return_value=[{"title": "T", "url": "https://x.test/1", "content": "c"}])
     chat = AsyncMock(return_value={"choices": [{"message": {"content": "ok"}}]})
     monkeypatch.setattr(partner, "search_web", search)
@@ -500,7 +500,7 @@ async def test_chat_handler_web_search_allowed_for_partner_key(monkeypatch):
     # kb_access resolves to a real slug (SPEC-PARTNER-KB-SCOPE-001 fails closed
     # on an unresolvable KB scope) — this test is about web search, not KB scope.
     monkeypatch.setattr(partner, "_resolve_kb_slugs", AsyncMock(return_value=["kb-1"]))
-    monkeypatch.setattr(partner, "retrieve_context", AsyncMock(return_value=([], "sp", [])))
+    monkeypatch.setattr(partner, "retrieve_context", AsyncMock(return_value=([], "sp", [], False)))
     search = AsyncMock(return_value=[{"title": "T", "url": "https://x.test/1", "content": "c"}])
     chat = AsyncMock(return_value={"choices": [{"message": {"content": "ok"}}]})
     monkeypatch.setattr(partner, "search_web", search)

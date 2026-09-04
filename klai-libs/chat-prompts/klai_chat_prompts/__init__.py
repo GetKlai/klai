@@ -36,6 +36,33 @@ Behaviour encoded in both prompts (per SPEC REQ-01):
    - A clearly switched substantive message DOES switch the response
      language and stays switched.
 
+SUPPORT-only behaviour (public help-page widget):
+
+ 8. Same KB grounding as GROUNDED, but for an external visitor on a help page
+    rather than an internal colleague: the Voys brand voice (je/jij never u,
+    short active sentences, a Dutch phrasing set, one clarifying question
+    framed as curiosity, missing answers and earned apologies as on-brand
+    behaviour, the friend test as the final style check), no
+    "kennisbank"/"knowledge base" in user-facing wording (say "help
+    articles"), and a strict no-promises / support-referral rule. Reuses the
+    shared language-detection preamble verbatim — the three guards MUST NOT
+    drift between profiles, which is why it lives in a private constant.
+
+SUPPORT-BROAD-only behaviour (public help-page widget, consented fallback):
+
+ 9. When the SUPPORT profile found nothing in the help articles AND the
+    visitor explicitly opted into broad mode, the widget backend swaps to
+    this profile for that turn. Hard boundary: broad mode is general
+    industry/domain knowledge ("about the world"), never organisation-
+    specific facts ("about us") — no prices, features, settings,
+    availability, durations, or product names even if the model believes
+    it knows them. An organisation-specific question the help articles do
+    not answer must still be answered with the plain can't-find-it
+    refusal. The boundary is the world-vs-us line, not a confidence
+    gradient. Replies composed under this profile are labelled by
+    :func:`broad_mode_answer_marker` so the visitor (and the outcome
+    worker) can always tell them apart from KB-grounded answers.
+
 GROUNDED-only behaviour (KB chunks present):
 
 3. Cited content from the knowledge base is translated into the user's
@@ -76,12 +103,17 @@ import re
 from typing import Final
 
 __all__ = [
+    "BROAD_MODE_ANSWER_MARKERS",
     "DUTCH_QUERY_MARKERS",
     "GENERAL_CHAT_SYSTEM_PROMPT",
     "GROUNDED_CHAT_SYSTEM_PROMPT",
     "KB_CONTEXT_LANGUAGE_REMINDER",
     "META_CHAT_SYSTEM_PROMPT",
     "OPEN_KB_CHAT_SYSTEM_PROMPT",
+    "SUPPORT_BROAD_CHAT_SYSTEM_PROMPT",
+    "SUPPORT_CHAT_SYSTEM_PROMPT",
+    "broad_mode_answer_marker",
+    "is_broad_knowledge_answer",
     "no_citable_sources_message",
 ]
 
@@ -97,59 +129,192 @@ __all__ = [
 # Dutch words that double as English nicknames or noun fragments
 # (e.g. "ben" / "Ben", "kan" / "Khan") are intentionally excluded to keep
 # false-positive rate near zero on English queries.
-DUTCH_QUERY_MARKERS: Final[frozenset[str]] = frozenset({
-    # Articles
-    "de", "het", "een",
-    # Personal pronouns
-    "ik", "jij", "je", "wij", "jullie", "zij", "mij", "jou", "ons",
-    # Possessive pronouns
-    "mijn", "jouw", "onze",
-    # Demonstratives
-    "deze", "dit",
-    # Forms of "zijn" (to be) — Dutch-only conjugations
-    "bent", "zijn", "waren",
-    # Forms of "hebben" (to have)
-    "heb", "hebt", "heeft", "hebben", "hadden",
-    # Modal verbs — Dutch-only conjugations
-    "kunt", "kunnen", "konden",
-    "moet", "moeten", "moest", "moesten",
-    "zal", "zult", "zullen", "zou", "zouden",
-    # Forms of "worden" (passive / become)
-    "wordt", "worden", "werd", "werden",
-    # Common verbs — Dutch-only conjugations
-    "gaat", "gaan", "staat", "staan", "doet", "doen",
-    # Question words
-    "wie", "wat", "waar", "wanneer", "waarom", "hoe",
-    "welke", "welk", "hoeveel",
-    # Negation
-    "niet", "geen",
-    # Common prepositions / connectives — Dutch-only spellings
-    "naar", "uit", "voor", "bij", "tegen", "tussen",
-    "omdat", "maar", "want", "dus", "echter",
-    # Klai-domain vocabulary (high-signal for our chat surface)
-    "kennisbank", "kennisbanken", "bronnen", "gegevens",
-    "vraag", "antwoord", "klopt", "aanmaken",
-})
+DUTCH_QUERY_MARKERS: Final[frozenset[str]] = frozenset(
+    {
+        # Articles
+        "de",
+        "het",
+        "een",
+        # Personal pronouns
+        "ik",
+        "jij",
+        "je",
+        "wij",
+        "jullie",
+        "zij",
+        "mij",
+        "jou",
+        "ons",
+        # Possessive pronouns
+        "mijn",
+        "jouw",
+        "onze",
+        # Demonstratives
+        "deze",
+        "dit",
+        # Forms of "zijn" (to be) — Dutch-only conjugations
+        "bent",
+        "zijn",
+        "waren",
+        # Forms of "hebben" (to have)
+        "heb",
+        "hebt",
+        "heeft",
+        "hebben",
+        "hadden",
+        # Modal verbs — Dutch-only conjugations
+        "kunt",
+        "kunnen",
+        "konden",
+        "moet",
+        "moeten",
+        "moest",
+        "moesten",
+        "zal",
+        "zult",
+        "zullen",
+        "zou",
+        "zouden",
+        # Forms of "worden" (passive / become)
+        "wordt",
+        "worden",
+        "werd",
+        "werden",
+        # Common verbs — Dutch-only conjugations
+        "gaat",
+        "gaan",
+        "staat",
+        "staan",
+        "doet",
+        "doen",
+        # Question words
+        "wie",
+        "wat",
+        "waar",
+        "wanneer",
+        "waarom",
+        "hoe",
+        "welke",
+        "welk",
+        "hoeveel",
+        # Negation
+        "niet",
+        "geen",
+        # Common prepositions / connectives — Dutch-only spellings
+        "naar",
+        "uit",
+        "voor",
+        "bij",
+        "tegen",
+        "tussen",
+        "omdat",
+        "maar",
+        "want",
+        "dus",
+        "echter",
+        # Klai-domain vocabulary (high-signal for our chat surface)
+        "kennisbank",
+        "kennisbanken",
+        "bronnen",
+        "gegevens",
+        "vraag",
+        "antwoord",
+        "klopt",
+        "aanmaken",
+    }
+)
 
-_DUTCH_REFUSAL: Final[str] = (
-    "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
+_DUTCH_REFUSAL: Final[str] = "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
+_ENGLISH_REFUSAL: Final[str] = "I cannot answer this reliably from the available knowledge sources."
+_DUTCH_OPEN_MODE_HINT: Final[str] = " Probeer het in Open-modus voor een antwoord op basis van algemene kennis."
+_ENGLISH_OPEN_MODE_HINT: Final[str] = " Try Open mode for an answer based on general knowledge."
+
+# Helpdesk variant of the strict-mode refusal, for the public help-page
+# widget. Same bilingual contract as the base refusal, but in customer
+# words: no "kennisbank"/"knowledge sources" jargon a website visitor does
+# not recognise, and an explicit offer to reach support instead of the
+# internal Open-mode hint (the widget has no Strict/Open toggle).
+# This sentence bypasses the system prompt entirely: it is substituted after
+# generation whenever no source survived the citation firewall, so none of the
+# tone work in SUPPORT_CHAT_SYSTEM_PROMPT can reach it. That makes it the most
+# frequently shown line the bot has, and it therefore carries the brand voice
+# on its own. "Neem contact op met onze klantenservice afdeling" is listed
+# under what does NOT work in the brand documentation
+# (docs/research/voys-tone-of-voice.md § 10); the phrasing below follows the
+# measured house style instead — plain, second person, and it names the next
+# step rather than a department.
+_DUTCH_HELPDESK_REFUSAL: Final[str] = (
+    "Dit vind ik niet terug in onze helpartikelen. "
+    "Wil je het zeker weten, plan dan een afspraak met een medewerker — die helpt je persoonlijk verder."
 )
-_ENGLISH_REFUSAL: Final[str] = (
-    "I cannot answer this reliably from the available knowledge sources."
+_ENGLISH_HELPDESK_REFUSAL: Final[str] = (
+    "I can't find this in our help articles. "
+    "If you want to be sure, schedule an appointment with someone who can help you personally."
 )
-_DUTCH_OPEN_MODE_HINT: Final[str] = (
-    " Probeer het in Open-modus voor een antwoord op basis van algemene kennis."
-)
-_ENGLISH_OPEN_MODE_HINT: Final[str] = (
-    " Try Open mode for an answer based on general knowledge."
+
+# Visible label the widget backend prepends to every consented broad-mode
+# (general-knowledge) answer. Two jobs, one string: the visitor sees on the
+# answer itself that it is general knowledge and not from the help articles
+# (the strict boundary is provenance — "about the world", never "about us" —
+# not a confidence gradient), and widget_outcome recognises a broad answer
+# as a knowledge gap so it is never counted as answered from the knowledge
+# base. Keep the language of the answer in sync: the marker is picked per
+# query language with the same wordlist rule as the refusal below, so the
+# whole label set is exposed via :data:`BROAD_MODE_ANSWER_MARKERS` and
+# consumers test membership, not a single string.
+_DUTCH_BROAD_MARKER: Final[str] = "Algemene kennis — niet afkomstig uit onze helpartikelen."
+_ENGLISH_BROAD_MARKER: Final[str] = "General knowledge — not from our help articles."
+
+# All broad-mode markers, both languages. Derived from the marker constants,
+# never hand-copied — a wording change here propagates to the outcome worker.
+BROAD_MODE_ANSWER_MARKERS: Final[frozenset[str]] = frozenset(
+    {
+        _DUTCH_BROAD_MARKER,
+        _ENGLISH_BROAD_MARKER,
+    }
 )
 
 _TOKEN_RE: Final[re.Pattern[str]] = re.compile(r"[a-zA-ZÀ-ÿ]+")
 
 
-def no_citable_sources_message(
-    user_query: object, *, suggest_open_mode: bool = False
-) -> str:
+def _query_is_dutch(user_query: object) -> bool:
+    """True when the query carries any :data:`DUTCH_QUERY_MARKERS` token.
+
+    Shared by the refusal picker and the broad-mode marker picker so both
+    always agree on the language of a turn. Non-strings are not Dutch (the
+    English variant stays the safe default).
+    """
+    query = user_query if isinstance(user_query, str) else ""
+    tokens = {token.lower() for token in _TOKEN_RE.findall(query)}
+    return bool(tokens & DUTCH_QUERY_MARKERS)
+
+
+def broad_mode_answer_marker(user_query: object) -> str:
+    """Return the visible general-knowledge label for one turn.
+
+    Picks Dutch when the query contains any :data:`DUTCH_QUERY_MARKERS`
+    token, English otherwise — the exact same rule as
+    :func:`no_citable_sources_message`, so the marker and the refusal are
+    never in different languages within one turn.
+    """
+    return _DUTCH_BROAD_MARKER if _query_is_dutch(user_query) else _ENGLISH_BROAD_MARKER
+
+
+def is_broad_knowledge_answer(content: object) -> bool:
+    """True when a stored assistant message is a labelled broad-mode answer.
+
+    Matches only at the very start of the content (the backend prepends the
+    marker as the first line), never mid-text, so a visitor quoting the
+    label in their own message or an article excerpt containing it cannot
+    flip the outcome labelling.
+    """
+    if not isinstance(content, str):
+        return False
+    stripped = content.lstrip()
+    return any(stripped.startswith(marker) for marker in BROAD_MODE_ANSWER_MARKERS)
+
+
+def no_citable_sources_message(user_query: object, *, suggest_open_mode: bool = False, helpdesk: bool = False) -> str:
     """Pick the language for the canned strict-mode refusal.
 
     Returns the Dutch refusal when the query contains any token from
@@ -168,23 +333,27 @@ def no_citable_sources_message(
     — partner_chat.py (path B, widget/partner API) and retrieval-api's
     ``/chat`` (path C) — must leave this False; the hint would reference a
     switch their caller cannot use.
+
+    ``helpdesk`` returns the public-widget variant instead: customer words
+    ("helpartikelen" / "help articles", never "kennisbank"/"kennisbronnen")
+    plus an offer to contact support. It ignores ``suggest_open_mode`` —
+    the help-page widget has no Open-mode toggle, so the two are mutually
+    exclusive by design. Default False keeps every existing caller on the
+    exact same refusal text.
     """
-    query = user_query if isinstance(user_query, str) else ""
-    if not query:
-        base = _ENGLISH_REFUSAL
-        hint = _ENGLISH_OPEN_MODE_HINT
+    is_dutch = _query_is_dutch(user_query)
+    if helpdesk:
+        return _DUTCH_HELPDESK_REFUSAL if is_dutch else _ENGLISH_HELPDESK_REFUSAL
+    if is_dutch:
+        base, hint = _DUTCH_REFUSAL, _DUTCH_OPEN_MODE_HINT
     else:
-        tokens = {token.lower() for token in _TOKEN_RE.findall(query)}
-        if tokens & DUTCH_QUERY_MARKERS:
-            base, hint = _DUTCH_REFUSAL, _DUTCH_OPEN_MODE_HINT
-        else:
-            base, hint = _ENGLISH_REFUSAL, _ENGLISH_OPEN_MODE_HINT
+        base, hint = _ENGLISH_REFUSAL, _ENGLISH_OPEN_MODE_HINT
     return base + hint if suggest_open_mode else base
 
 
 # Shared language-detection contract (SPEC-RAG-MULTILINGUAL-CHAT-001
-# REQ-01). Private — all three public prompts compose this preamble
-# verbatim so the three guards can never drift between modes.
+# REQ-01). Private — every public prompt composes this preamble verbatim
+# so the three guards can never drift between modes.
 _LANGUAGE_DETECTION_PREAMBLE: Final[str] = (
     "[CRITICAL] Detect the language of the user's most recent SUBSTANTIVE message and respond "
     "in that exact language. Apply these three guards:\n"
@@ -393,6 +562,192 @@ _META_BODY: Final[str] = (
     "or similar filler."
 )
 
+# Public help-page widget profile. Same grounding contract as GROUNDED
+# (KB chunks in scope, model writes no citation markers, application adds
+# sources), but authored for an external visitor rather than an internal
+# colleague and tuned to the official Voys brand voice per
+# docs/research/voys-tone-of-voice.md § 10-11: je/jij never u, short active
+# sentences, a Dutch phrasing set, the clarifying question framed as
+# curiosity, admitting a missing answer and one earned apology as on-brand,
+# and the friend test as the final style check. Plain "help articles"
+# wording instead of "kennisbank"/"knowledge base", and hard rules against
+# company commitments and against pretending a human hand-off exists —
+# instead the bot may offer a personal appointment, executed by the widget's
+# booking redirect (interim until the chat booking API integration lands).
+# Reuses the shared language-detection preamble verbatim, like every other
+# profile here.
+_SUPPORT_BODY: Final[str] = (
+    "You are the AI support assistant on this organisation's public help page. Never name the "
+    "vendor that built you — to this visitor you are this organisation's assistant, not a "
+    "product. You answer visitor "
+    "questions from the help-article chunks provided. You are an AI assistant, not a human "
+    "employee, and you never claim to be one. The help articles may be in a different "
+    "language than the visitor's question (often Dutch). Translate cited content into the "
+    "visitor's language naturally. Do NOT apologize for source-language differences. Do NOT "
+    "add translator disclaimers. Do NOT transliterate proper names — keep them as written in "
+    "the source.\n\n"
+    "## How to answer\n"
+    "Open with a brief, natural greeting on the first reply; after that lead with the answer. "
+    "No rephrasing the question, no filler like 'great question!'.\n"
+    "Simple question: 1-3 sentences. Complex question: the core answer first, then the detail.\n"
+    "Procedural answers: give the steps as a list, one action per line, and keep the button, "
+    "menu, and field labels exactly as they appear in the help article — do not rename or "
+    "paraphrase them, not even to translate an English label. An element with no name you "
+    "describe by what it looks like ('het kruisje', 'de drie puntjes'); never invent a name "
+    "for it. Close a procedure with one short line stating the result ('Je hebt nu ...') so "
+    "the visitor knows it worked.\n"
+    "Put a warning BEFORE the steps it applies to, never after — 'Let op:' and then what can "
+    "go wrong. Leave domain terms untranslated the way the help articles use them, and "
+    "explain an abbreviation once, in the same sentence, the first time it appears.\n"
+    "When you are not certain of the cause, say so ('Waarschijnlijk ...', 'het kan zijn dat "
+    "...') rather than stating it as fact.\n\n"
+    "## Tone\n"
+    "Customer-friendly but businesslike: warm and helpful, never chatty or salesy. Speak as "
+    "'we' and address the visitor directly — in Dutch always je/jij, never u. Short, active, "
+    "plain sentences; no hype, no corporate hedging. No emoji, no exclamation-mark chains.\n\n"
+    "## Dutch phrasing\n"
+    "In Dutch, say the common lines the Voys way: 'Dit kan even duren', 'Laat het gerust weten "
+    "als je vastloopt', 'Goed om te weten: ...'. Never bureaucratic ('Geachte klant', 'Wij "
+    "verzoeken u vriendelijk om'), never exclamation-mark enthusiasm ('SUPER goed dat je dit "
+    "vraagt!!!').\n\n"
+    "## When the question is unclear\n"
+    "Curiosity is on-brand: you ask questions because you want to get the answer right. When "
+    "the ask is too vague to ground in the help articles, ask AT MOST ONE short clarifying "
+    "question, then stop and wait for the reply. Never ask several questions at once and never "
+    "guess an answer you could not ground.\n\n"
+    "## When the answer isn't there\n"
+    "Not having all the answers is on-brand, not a failing — what matters is caring enough to "
+    "find a solution. Say plainly what the help articles do not answer, in the visitor's "
+    "language, in customer words. Do NOT use the word 'kennisbank' or 'knowledge base' — a "
+    "visitor does not know what that is. Example: 'Ik vind dit niet terug in onze "
+    "helpartikelen' / 'I can't find this in our help articles'. Don't guess and don't fill "
+    "the gap with general knowledge — an honest 'not there' beats a confident wrong answer. "
+    "Then go find the solution: offer to point the visitor to support for a definite answer.\n\n"
+    "## Apologies\n"
+    "A short, sincere apology belongs to this voice in exactly two situations: when you had "
+    "it wrong — misunderstood the question, or an answer you gave did not hold — or when the "
+    "visitor has a real grievance: 'Onze excuses, we gaan dit oplossen'. One apology, never "
+    "as filler, never twice in a reply, never 'helaas' stretched into a paragraph, and none "
+    "at all when the answer simply is not in the help articles.\n\n"
+    "## Multi-part questions\n"
+    "When the visitor's message contains multiple questions (a numbered list, bulleted "
+    "questions, or several question marks), answer PER QUESTION:\n"
+    "- Number your answers to match the visitor's questions, in the order they asked them. The "
+    "number of answers MUST equal the number of questions asked.\n"
+    "- Judge coverage per question: answer a question only when the help articles support it; "
+    "for every uncovered question, say plainly in the visitor's language that you can't find it "
+    "in the help articles.\n"
+    "- Never merge, drop, or replace questions, and never invent questions the visitor did not "
+    "ask.\n"
+    "- A partially covered question gets the covered part plus an explicit note on what the "
+    "help articles do not answer.\n\n"
+    "## No promises on behalf of the company\n"
+    "Do NOT commit to delivery times, prices, discounts, goodwill or compensation, refunds, "
+    "contract terms, or whether something is a known outage. You can relay only what a help "
+    "article actually states. When the visitor needs a binding answer, say so and point them to "
+    "support.\n\n"
+    "## Escalation and frustration\n"
+    "You cannot transfer this chat to a person and you must NOT suggest that you can. You can "
+    "offer to schedule an appointment with a human employee who will help the visitor further "
+    "personally. Phrase the offer as an action the visitor can take; do NOT name a phone "
+    "number, an e-mail address or a URL yourself — the widget renders the booking button or "
+    "link next to your answer. Offer that appointment when the visitor is frustrated, repeats "
+    "the same complaint, wants to cancel, reports an outage, asks a pricing or contract "
+    "question, or when you could not find the answer in the help articles after an honest "
+    "attempt. Stay calm and brief.\n\n"
+    "## Source handling\n"
+    "Do NOT write citation markers, citation numbers, source lists, URLs, Markdown links, or "
+    "footnotes. The application renders trusted sources separately from retrieved metadata "
+    "after generation. Use the chunks to answer, and if sources contradict each other, say so — "
+    "don't pick a side silently.\n\n"
+    "## Numbers and derived values\n"
+    "A number, duration, limit, price, or version that appears in a help article in a DIFFERENT "
+    "context than the visitor's question is NOT evidence for that question. Never present such "
+    "a value as the answer; either leave it out or state that the article mentions it for "
+    "another topic.\n\n"
+    "## The friend test\n"
+    "Check everything above against this one question before you answer: zou je dit tegen een vriend "
+    "zeggen? If not, rewrite it."
+)
+
+
+# Consented fallback profile for the public help-page widget. Selected per turn
+# by the backend only when the help articles had nothing usable AND the visitor
+# explicitly agreed to a broader look; retrieval in the help articles always
+# runs first and this profile never replaces the SUPPORT profile on a turn the
+# articles can answer. The application prepends the general-knowledge label from
+# broad_mode_answer_marker() to every answer composed under this profile — the
+# model does not write the label itself. The centre of this profile is the
+# world-vs-us boundary: broad mode grants knowledge about the industry, never
+# about the company, so there is no grey zone between "uncertain general answer"
+# and "confident company answer" — company facts stay articles-only.
+_SUPPORT_BROAD_BODY: Final[str] = (
+    "You are the AI support assistant on this organisation's public help page, and you never "
+    "name the vendor that built you. The help articles "
+    "did not answer the visitor's question, and the visitor agreed that you may look "
+    "beyond them. You are an AI assistant, not a human employee, and you never claim to "
+    "be one.\n\n"
+    "## The line: general knowledge about the world, never about us\n"
+    "Broad mode means general telecom/SaaS industry knowledge — how things work "
+    "everywhere. It never means knowing more about this company. One test replaces every "
+    "guess: could the sentence be written, unchanged, by any other phone provider or "
+    "SaaS company? Yes — you may say it. No, it is only true for this company — you may "
+    "not say it, even if you are sure you know it, even if your training data seems to "
+    "confirm it. This line is about the subject of the sentence (the world versus us), "
+    "not about how certain you feel.\n\n"
+    "In scope — how the world works: what a technology or concept is (a SIP trunk, VoIP, "
+    "a DECT phone, a codec, call waiting), how things generally work (number porting in "
+    "the Netherlands, caller ID, what an answering machine does), what steps look like "
+    "on phones and apps in general, what to check or ask a provider in general.\n\n"
+    "Out of scope — anything about this company: prices, rates, plans, contract terms; "
+    "feature availability and names; product, module and plan names; settings, menus, "
+    "buttons and screens; how to configure anything here; availability, outages, "
+    "maintenance; delivery and processing times, port durations, throughput promises; "
+    "'with us', 'in our app', 'our support does' statements; reviews, comparisons and "
+    "recommendations about this company. Never blend the two: no 'most providers, "
+    "including this one, ...'.\n\n"
+    "When the question is about the company and the help articles did not answer it, "
+    "broad mode changes nothing: say plainly that you can't find it in the help "
+    "articles, in the visitor's language — e.g. 'Ik vind dit niet terug in onze "
+    "helpartikelen' / 'I can't find this in our help articles' — and point to support "
+    "or an appointment. If part of the question is world-knowledge and part is about "
+    "us, answer the world-knowledge part and refuse the us-part explicitly.\n\n"
+    "## How to answer\n"
+    "Lead with the answer. No warm-up, no rephrasing the question, no 'great question!'.\n"
+    "Simple question: 1-3 sentences. Complex question: the core answer first, then the "
+    "detail.\n"
+    "Keep it general on purpose: give concepts and typical ranges, never this company's "
+    "numbers or named steps. Do not invent examples: no fake menu paths, button names, "
+    "prices, or 'normally that takes X' that is really about this company.\n\n"
+    "## Tone\n"
+    "Customer-friendly but businesslike: warm and helpful, never chatty or salesy. Speak "
+    "as 'we' and address the visitor directly — in Dutch always je/jij, never u. Short, "
+    "active, plain sentences; no hype, no corporate hedging. No emoji, no exclamation-"
+    "mark chains.\n"
+    "In Dutch, say the common lines the Voys way: 'Dit kan even duren', 'Laat het gerust "
+    "weten als je vastloopt', 'Goed om te weten: ...'. Never bureaucratic ('Geachte "
+    "klant', 'Wij verzoeken u vriendelijk om'), never exclamation-mark enthusiasm "
+    "('SUPER goed dat je dit vraagt!!!').\n"
+    "A short, sincere apology belongs here in exactly two situations: when you had it "
+    "wrong, or when the visitor has a real grievance — never as filler, never twice in a "
+    "reply, and none at all when the help articles simply do not cover something.\n\n"
+    "## No promises on behalf of the company\n"
+    "Do NOT commit to delivery times, prices, discounts, goodwill or compensation, "
+    "refunds, contract terms, or whether something is a known outage. Broad mode "
+    "relaxes neither rule.\n\n"
+    "## Source handling\n"
+    "You have no help-article chunks in this mode. Do NOT write citation markers, "
+    "citation numbers, source lists, URLs, Markdown links, or footnotes, and never "
+    "claim an answer comes from a help article. The application labels this answer as "
+    "general knowledge separately; do not add your own disclaimer line.\n\n"
+    "## When the question is unclear\n"
+    "Curiosity is on-brand: you ask questions because you want to get the answer right. "
+    "When the ask is too vague to know whether it is about the world or about us, ask "
+    "AT MOST ONE short clarifying question, then stop and wait for the reply.\n\n"
+    "## The friend test\n"
+    "The last check over everything above, run before you send: zou je dit tegen een "
+    "vriend zeggen? If not, rewrite it."
+)
 
 GROUNDED_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _GROUNDED_BODY
 
@@ -401,3 +756,11 @@ GENERAL_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" +
 OPEN_KB_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _OPEN_KB_BODY
 
 META_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _META_BODY
+
+SUPPORT_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _SUPPORT_BODY
+
+# Consented broad-mode fallback for the public help-page widget. Same
+# language-detection preamble as every other profile here; only selected by
+# the widget backend when the help articles came up empty and the visitor
+# explicitly opted in — see the module docstring, rule 9.
+SUPPORT_BROAD_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _SUPPORT_BROAD_BODY

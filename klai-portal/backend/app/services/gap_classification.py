@@ -27,7 +27,11 @@ def classify_gap(chunks: list[dict]) -> str | None:
         if all(s < threshold for s in reranker_scores):
             return "soft"
     else:
-        dense_scores = [c.get("score", 0.0) for c in chunks]
+        # ``or 0.0`` also normalizes an explicit None: evidence-pack chunks
+        # on the partner/widget path carry the key with a None value when
+        # the item was never reranked, unlike the hook's raw chunks where
+        # the key is simply present with a float.
+        dense_scores = [c.get("score") or 0.0 for c in chunks]
         if all(s < settings.klai_gap_dense_threshold for s in dense_scores):
             return "soft"
     return None
