@@ -1279,7 +1279,7 @@ services:
       - monitoring
 
   alloy:
-    image: grafana/alloy:v1.19.0
+    image: grafana/alloy:v1.19.2
     restart: unless-stopped
     volumes:
       - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
@@ -1487,7 +1487,7 @@ services:
   # ─── Klai Docs ────────────────────────────────────────────────────────────
 
   gitea:
-    image: gitea/gitea:1.27.2
+    image: gitea/gitea:1.27.3
     restart: unless-stopped
     environment:
       USER_UID: 1000
