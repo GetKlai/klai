@@ -128,6 +128,12 @@ def test_widget_to_response_maps_tone_register():
     assert to_response({}).widget_config.tone_register == "restrained"
     stored = to_response({"support_mode": True, "tone_register": "expressive"})
     assert stored.widget_config.tone_register == "expressive"
+    # widget_config is JSONB, so an unknown value can be there — from an older
+    # release, a hand-edit, or a partially applied migration. It must land on
+    # the restrained default, the same answer the runtime reader gives, and not
+    # raise a validation error that takes the whole admin list down with it.
+    for junk in ("boisterous", "Expressive", "", None, 7, ["expressive"]):
+        assert to_response({"tone_register": junk}).widget_config.tone_register == "restrained"
 
 
 def test_widget_model_has_public_share_column():

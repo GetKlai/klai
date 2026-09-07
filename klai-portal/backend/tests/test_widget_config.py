@@ -284,7 +284,7 @@ async def test_public_bot_config_strips_non_http_booking_url():
 
 
 @pytest.mark.asyncio
-async def test_widget_config_hubspot_handoff_visible_only_for_getklai_origin():
+async def test_widget_config_hubspot_handoff_offered_to_the_platform_tenant():
     widget = FakeWidget()
     widget.widget_config["allowed_origins"] = ["https://getklai.getklai.com"]
     widget.widget_config["integrations"] = {
@@ -305,6 +305,7 @@ async def test_widget_config_hubspot_handoff_visible_only_for_getklai_origin():
         patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
+        mock_settings.platform_org_slug = "getklai"
 
         response = await widget_config(id=widget.widget_id, request=request, db=db)
 
@@ -312,10 +313,16 @@ async def test_widget_config_hubspot_handoff_visible_only_for_getklai_origin():
 
 
 @pytest.mark.asyncio
-async def test_widget_config_hubspot_handoff_offered_to_any_connected_tenant():
-    """The config used to advertise the handoff only to org.slug == "getklai",
-    a leftover from the single-tenant pilot. Any tenant whose widget has a
-    connected HubSpot channel now gets the button."""
+async def test_widget_config_hubspot_handoff_refused_for_other_tenants():
+    """A tenant that is not the platform tenant does NOT get the handoff button,
+    even with a widget whose config says the channel is connected.
+
+    There is one HubSpot channel platform-wide: start_hubspot_handoff calls
+    ensure_channel_account() with no argument and publishes to a single global
+    recipient. Offering the button to another tenant would put that tenant's
+    visitor transcripts in the platform's own inbox. And widget_config is
+    client-writable through the admin PATCH, so "connected" here is a claim by
+    the tenant, not proof that the protected connect flow ever ran."""
     widget = FakeWidget()
     widget.widget_config["allowed_origins"] = ["https://getklai.getklai.com"]
     widget.widget_config["integrations"] = {
@@ -336,10 +343,11 @@ async def test_widget_config_hubspot_handoff_offered_to_any_connected_tenant():
         patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
+        mock_settings.platform_org_slug = "getklai"
 
         response = await widget_config(id=widget.widget_id, request=request, db=db)
 
-    assert json.loads(response.body.decode())["handoff"]["hubspot"]["enabled"] is True
+    assert json.loads(response.body.decode())["handoff"]["hubspot"]["enabled"] is False
 
 
 @pytest.mark.asyncio

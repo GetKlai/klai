@@ -44,6 +44,11 @@ export function DetailsTab({ widget }: Props) {
       systemPrompt.trim() !== config.system_prompt ||
       (templateSlug || null) !== (config.template_slug ?? null) ||
       supportMode !== (config.support_mode ?? false) ||
+      // The register reaches the model through the system prompt, so an
+      // unsaved change to it cannot show up in the preview either. Leaving it
+      // out here made the panel answer in the saved tone without saying so,
+      // which is the one thing a preview must never do.
+      toneRegister !== (config.tone_register ?? 'restrained') ||
       pageContextEnabled !== (config.page_context_enabled ?? false),
   })
 

@@ -2216,6 +2216,7 @@ async def _require_hubspot_widget_handoff_enabled(
         raise _hubspot_handoff_forbidden()
 
     widget_row = row[0]
+    org = row[1]
     widget_config_data = widget_row.widget_config or {}
     # Origin is checked against THIS widget's own allowlist, not against one
     # hardcoded pilot host. Same security property — a handoff can only be
@@ -2233,7 +2234,7 @@ async def _require_hubspot_widget_handoff_enabled(
         allow_any_origin=bool(widget_row.allow_any_origin),
     ):
         raise _hubspot_handoff_forbidden()
-    if not _hubspot_handoff_enabled_for_widget(widget_config_data=widget_config_data):
+    if not _hubspot_handoff_enabled_for_widget(org=org, widget_config_data=widget_config_data):
         raise _hubspot_handoff_forbidden()
 
 
@@ -2685,13 +2686,30 @@ def _widget_client_session_id(request: Request | None) -> str | None:
 
 def _hubspot_handoff_enabled_for_widget(
     *,
+    org: PortalOrg,
     widget_config_data: dict[str, Any],
 ) -> bool:
-    # The gate is the widget's own connected HubSpot channel, nothing else.
-    # This used to also require org.slug == "getklai" and one hardcoded origin,
-    # from when the handoff was a single-tenant pilot. That made the feature
-    # invisible to every other tenant while the admin UI still offered it, and
-    # it is why Voys could not use an integration that was fully built.
+    """Whether this widget may hand a visitor over to HubSpot.
+
+    Two conditions, and the first one is not a leftover.
+
+    There is exactly ONE HubSpot destination on the platform:
+    ``start_hubspot_handoff`` calls ``ensure_channel_account()`` with no
+    argument and publishes to ``settings.hubspot_webchat_delivery_identifier``,
+    a single global recipient. Until a per-tenant channel binding exists, any
+    tenant allowed through here publishes its visitors' transcripts and contact
+    details into that one shared inbox. So the org gate stays — but keyed on
+    ``settings.platform_org_slug``, the same source of truth as
+    ``_assert_internal_hubspot_allowed`` on the connect endpoints, instead of
+    the tenant name that used to be compiled in here.
+
+    The second condition, the widget's own connected channel, is necessary but
+    NOT sufficient: ``integrations`` is client-writable through the generic
+    widget PATCH, so an admin can set ``status: "connected"`` without ever
+    completing the protected connect flow.
+    """
+    if org.slug != settings.platform_org_slug:
+        return False
     integrations = widget_config_data.get("integrations")
     if not isinstance(integrations, dict):
         return False
@@ -2895,7 +2913,9 @@ async def widget_config(
         "support_mode": widget_config_data.get("support_mode", False),
         # Interim appointment redirect (booking API pending) — see _widget_booking_url.
         "booking_url": _widget_booking_url(widget_config_data),
-        "handoff": {"hubspot": {"enabled": _hubspot_handoff_enabled_for_widget(widget_config_data=widget_config_data)}},
+        "handoff": {
+            "hubspot": {"enabled": _hubspot_handoff_enabled_for_widget(org=org, widget_config_data=widget_config_data)}
+        },
     }
 
     return Response(
@@ -3002,7 +3022,14 @@ async def public_bot_config(
         "booking_url": _widget_booking_url(widget_config_data),
         "name": widget_row.name,
         "description": widget_row.description or "",
-        "handoff": {"hubspot": {"enabled": _hubspot_handoff_enabled_for_widget(widget_config_data=widget_config_data)}},
+        "handoff": {
+            "hubspot": {
+                # org is None only if the row vanished between the two queries;
+                # treat that as not-enabled rather than raising here.
+                "enabled": org is not None
+                and _hubspot_handoff_enabled_for_widget(org=org, widget_config_data=widget_config_data)
+            }
+        },
     }
     return Response(
         content=json.dumps(body),

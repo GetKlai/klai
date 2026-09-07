@@ -258,22 +258,41 @@ The Details copy states plainly that a large share of conversations carries no
 outcome label and that this is the design, not a fault — otherwise the first
 person to read the dashboard concludes the measurement is broken.
 
-## REQ-10 — Nothing is pinned to one tenant or one hostname · done
+## REQ-10 — Nothing is pinned to a hostname; the HubSpot tenant gate stays · done
 
-Three separate hardcodings kept the Integrations tab invisible to Voys, each of
-which individually made the feature unreachable:
+Three hardcodings kept the Integrations tab out of Voys's reach. Two were
+accidents of the pilot and are gone; the third turned out to be load-bearing,
+and removing it was a mistake this SPEC records rather than hides.
 
-1. `partner.py` gated the HubSpot handoff on `org.slug == "getklai"`.
-2. The same file carried a hardcoded origin in the allowed-origin check.
-3. The frontend rendered the Integrations tab only when
-   `window.location.hostname === "getklai.getklai.com"`.
+| Hardcoding | Verdict |
+|---|---|
+| A hardcoded origin in the handoff's allowed-origin check | **Removed.** Replaced by the widget's own `allowed_origins`, so the platform tenant can now run the handoff from any page its widget is configured for — and a missing `Origin` is refused, which the equality check did only as a side effect. |
+| `window.location.hostname === "getklai.getklai.com"` deciding whether the Integrations tab renders | **Removed.** The tab is now visible to every tenant. |
+| `org.slug == "getklai"` gating the handoff itself | **Kept**, rewritten to read `settings.platform_org_slug` — the same source of truth the connect endpoints already use — instead of a tenant name compiled into the source. |
 
-All three are gone. The gate is now the widget's own connected HubSpot channel
-and its own configured origins. A tenant check standing in for a capability
-check is the failure mode to watch for here: it passes every test written by
-the tenant it was written for.
+The third one is why: there is exactly ONE HubSpot destination on the platform.
+`start_hubspot_handoff` calls `ensure_channel_account()` with no argument and
+publishes to `settings.hubspot_webchat_delivery_identifier`, a single global
+recipient. Any tenant let through that gate would deliver its visitors'
+transcripts and contact details into the platform's own inbox. Worse, the
+condition that briefly replaced it — the widget's own `integrations` block
+saying `status: "connected"` — is client-writable through the generic widget
+PATCH, so a tenant admin could have satisfied it without the protected connect
+flow ever running.
 
-Commit `74c9b65e3`
+The lesson generalises, and it cuts against the instinct that produced the
+error: **a tenant check is not automatically a leftover.** Before removing one,
+find what it is standing in front of. Here it stood in front of a
+single-tenant integration, and only a per-tenant channel binding — not a
+config flag — makes it safe to remove.
+
+The Integrations tab now shows the HubSpot card only when the backend's own
+status endpoint answers, so a tenant it does not serve sees the booking-URL
+card and no broken integration. That is data-driven rather than a second
+hostname check, so it starts working by itself once per-tenant channels land.
+
+Commits `74c9b65e3` (unpin) and the follow-up that restored the tenant gate
+after review.
 
 ## REQ-11 — Tone register beside the support prompt · done
 
@@ -378,6 +397,27 @@ decision rather than a patch:
   now reads "Dit vind ik niet terug in onze helpartikelen…" and offers the
   appointment, in the register the brand document asks for
   (`klai_chat_prompts/__init__.py:263`).
+- **HubSpot is a single-tenant integration wearing a multi-tenant UI.** One
+  global channel account, one global recipient, and an `integrations` block that
+  any tenant admin can write through the generic widget PATCH. The handoff is
+  therefore gated on the platform tenant (REQ-10). Two things are needed before
+  another tenant can use it: a per-tenant channel binding that the handoff
+  actually passes to `ensure_channel_account`, and a server-managed connection
+  record so `status: "connected"` means the protected flow ran rather than that
+  someone said so.
+- **`Origin` is a UX gate, not authentication.** The handoff treats a matching
+  origin as evidence the request came from a permitted page; a non-browser
+  client can send any origin it likes. It is worth keeping as defence in depth,
+  but the real control for a mutation this visible would be a server-side
+  capability tied to a live chat turn, plus per-widget quota. Nothing in this
+  branch made that worse — it is the pre-existing property of the endpoint.
+- **A widget on a customer's own domain will fail CORS preflight.** The handoff
+  route now accepts any origin from the widget config, but the global CORS
+  middleware only knows `CORS_ORIGINS` plus `*.getklai.com`, so a browser POST
+  from `https://help.customer.com` is refused at preflight before the handler
+  runs. Only `/widget-config` has a widget-aware preflight today. This does not
+  affect the pilot, which runs on a `getklai.com` subdomain, but it does block
+  the first genuinely external help-page embed.
 - **Gap rows carry a 7-day retention** while widget messages get 90, so the
   editorial signal expires faster than the conversations it came from.
 - ~~A broad answer lands in the `escalated` bucket.~~ **Fixed** along the line

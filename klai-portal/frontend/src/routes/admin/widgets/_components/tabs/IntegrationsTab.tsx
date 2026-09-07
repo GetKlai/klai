@@ -11,6 +11,7 @@ import {
   useHubSpotIntegrationAction,
   useUpdateWidget,
 } from '../../-hooks'
+import { FetchError } from '@/lib/fetch-errors'
 import type { WidgetConfig, WidgetDetailResponse } from '../../-types'
 
 interface Props {
@@ -53,8 +54,16 @@ export function IntegrationsTab({ widget }: Props) {
     status?.status === 'error'
   )
   const canUseActions = Boolean(status?.configured) && !isBusy
+  // HubSpot has one channel platform-wide, so the connect endpoints answer 404
+  // for every other tenant. Rather than teach the frontend which tenant that
+  // is, take the backend's own answer: no card, no error, and the booking-URL
+  // card below still shows. When the backend gains per-tenant channels this
+  // starts working on its own.
+  const hubspotUnavailable =
+    statusQuery.error instanceof FetchError && statusQuery.error.status === 404
+
   const error =
-    statusQuery.error ||
+    (hubspotUnavailable ? null : statusQuery.error) ||
     connectMutation.error ||
     disconnectMutation.error ||
     rebuildMutation.error ||
@@ -84,6 +93,7 @@ export function IntegrationsTab({ widget }: Props) {
       </div>
 
       <div className="grid gap-3">
+        {hubspotUnavailable ? null : (
         <article className="rounded-lg border border-gray-200 bg-white p-5">
           <header className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div className="flex min-w-0 items-start gap-3">
@@ -218,6 +228,7 @@ export function IntegrationsTab({ widget }: Props) {
             </p>
           )}
         </article>
+        )}
 
         <BookingCard widget={widget} />
       </div>

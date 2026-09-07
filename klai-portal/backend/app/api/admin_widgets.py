@@ -209,7 +209,12 @@ def _widget_to_response(widget: Widget, kb_access_count: int) -> WidgetResponse:
             collect_user_info=config.get("collect_user_info", False),
             page_context_enabled=config.get("page_context_enabled", False),
             support_mode=config.get("support_mode", False),
-            tone_register=config.get("tone_register", "restrained"),
+            # Normalised, not passed through: widget_config is JSONB and can
+            # hold anything an older release or a hand-edit left behind. The
+            # runtime reader already falls back to restrained on an unknown
+            # value; handing that same value straight to a Literal field would
+            # instead 500 the list and detail responses.
+            tone_register=("expressive" if config.get("tone_register") == "expressive" else "restrained"),
             booking_url=config.get("booking_url"),
             widget_position=config.get("widget_position", "right"),
             integrations=config.get("integrations", {}),

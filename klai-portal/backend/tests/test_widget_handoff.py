@@ -107,15 +107,47 @@ class _FakePubSub:
 
 
 @pytest.mark.asyncio
-async def test_start_handoff_allows_any_tenant_with_a_connected_channel() -> None:
-    """The handoff used to be gated on org.slug == "getklai" from its
-    single-tenant pilot, which made a fully built integration invisible to every
-    other tenant. The gate is now the widget's own connected HubSpot channel,
-    so a Voys widget with the same configuration is served."""
+async def test_start_handoff_refused_for_a_tenant_that_is_not_the_platform_tenant() -> None:
+    """A non-platform tenant is refused even with a "connected" channel and a
+    matching origin.
+
+    There is one HubSpot channel platform-wide — start_hubspot_handoff calls
+    ensure_channel_account() with no argument and publishes to a single global
+    recipient — so letting another tenant through would deliver its visitors'
+    transcripts and contact details into the platform's own inbox. The widget's
+    `integrations` block is not evidence to the contrary: it is client-writable
+    through the admin PATCH, so a tenant can set status="connected" itself
+    without the protected connect flow ever running.
+
+    This gate goes when a per-tenant channel binding exists, not before.
+    """
     db = AsyncMock()
     widget = _FakeWidget()
     widget.widget_config["allowed_origins"] = ["https://voys.getklai.com"]
     db.execute = AsyncMock(return_value=_Result((widget, _FakeOrg(slug="voys"))))
+
+    with patch("app.api.partner.start_hubspot_handoff", new_callable=AsyncMock) as start_handoff:
+        with pytest.raises(HTTPException) as exc_info:
+            await start_widget_hubspot_handoff(
+                http_request=_widget_request("https://voys.getklai.com"),
+                request=StartHubSpotHandoffRequest(summary="Help nodig"),
+                auth=_widget_auth(),
+                db=db,
+            )
+
+    assert exc_info.value.status_code == 403
+    start_handoff.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_start_handoff_allows_the_platform_tenant_on_its_own_allowed_origin() -> None:
+    """The origin is now checked against the widget's OWN allowlist instead of
+    one host compiled into the source, so the platform tenant can run the
+    handoff from any page its widget is configured for."""
+    db = AsyncMock()
+    widget = _FakeWidget()
+    widget.widget_config["allowed_origins"] = ["https://help.example.com"]
+    db.execute = AsyncMock(return_value=_Result((widget, _FakeOrg(slug="getklai"))))
 
     with patch("app.api.partner.start_hubspot_handoff", new_callable=AsyncMock) as start_handoff:
         start_handoff.return_value = {
@@ -124,7 +156,7 @@ async def test_start_handoff_allows_any_tenant_with_a_connected_channel() -> Non
             "integration_thread_id": "thread-1",
         }
         await start_widget_hubspot_handoff(
-            http_request=_widget_request("https://voys.getklai.com"),
+            http_request=_widget_request("https://help.example.com"),
             request=StartHubSpotHandoffRequest(summary="Help nodig"),
             auth=_widget_auth(),
             db=db,
