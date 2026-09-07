@@ -29,6 +29,7 @@ export function DetailsTab({ widget }: Props) {
   const [systemPrompt, setSystemPrompt] = useState(config.system_prompt)
   const [templateSlug, setTemplateSlug] = useState<string>(config.template_slug ?? '')
   const [pageContextEnabled, setPageContextEnabled] = useState(config.page_context_enabled ?? false)
+  const [supportMode, setSupportMode] = useState(config.support_mode ?? false)
 
   const templatesQuery = useQuery<Template[]>({
     queryKey: ['app-templates'],
@@ -41,14 +42,16 @@ export function DetailsTab({ widget }: Props) {
     setSystemPrompt(config.system_prompt)
     setTemplateSlug(config.template_slug ?? '')
     setPageContextEnabled(config.page_context_enabled ?? false)
-  }, [widget.name, widget.description, config.system_prompt, config.template_slug, config.page_context_enabled])
+    setSupportMode(config.support_mode ?? false)
+  }, [widget.name, widget.description, config.system_prompt, config.template_slug, config.page_context_enabled, config.support_mode])
 
   const isDirty =
     name.trim() !== widget.name ||
     (description.trim() || null) !== widget.description ||
     systemPrompt.trim() !== config.system_prompt ||
     (templateSlug || null) !== (config.template_slug ?? null) ||
-    pageContextEnabled !== (config.page_context_enabled ?? false)
+    pageContextEnabled !== (config.page_context_enabled ?? false) ||
+    supportMode !== (config.support_mode ?? false)
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -62,6 +65,7 @@ export function DetailsTab({ widget }: Props) {
       system_prompt: systemPrompt.trim(),
       template_slug: templateSlug || null,
       page_context_enabled: pageContextEnabled,
+      support_mode: supportMode,
     }
     updateMutation.mutate(
       {
@@ -148,6 +152,13 @@ export function DetailsTab({ widget }: Props) {
             onChange={setPageContextEnabled}
             label={m.admin_widgets_page_context_label()}
             help={m.admin_widgets_page_context_help()}
+          />
+          <WidgetToggleCard
+            id="support-mode"
+            checked={supportMode}
+            onChange={setSupportMode}
+            label={m.admin_widgets_support_mode_label()}
+            help={m.admin_widgets_support_mode_help()}
           />
         </div>
       </section>

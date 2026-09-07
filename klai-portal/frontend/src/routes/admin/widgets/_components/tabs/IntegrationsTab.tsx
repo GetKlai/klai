@@ -1,16 +1,34 @@
-import { ExternalLink, Loader2, MessageSquareText, PlugZap, RotateCcw, Unplug } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { CalendarCheck, ExternalLink, Loader2, MessageSquareText, PlugZap, RotateCcw, Unplug } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import * as m from '@/paraglide/messages'
 import {
   useHubSpotIntegration,
   useHubSpotIntegrationAction,
+  useUpdateWidget,
 } from '../../-hooks'
-import type { WidgetDetailResponse } from '../../-types'
+import type { WidgetConfig, WidgetDetailResponse } from '../../-types'
 
 interface Props {
   widget: WidgetDetailResponse
+}
+
+// INTERIM appointment redirect - a fixed booking URL in widget_config
+// until the chat booking API integration replaces it (mirrors the
+// interim marker on the backend field). Absolute http(s) only, matching
+// what partner.py's _widget_booking_url will actually deliver to the
+// widget; anything else would silently never show a button.
+function isAbsoluteHttpUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+  } catch {
+    return false
+  }
 }
 
 export function IntegrationsTab({ widget }: Props) {
@@ -200,8 +218,106 @@ export function IntegrationsTab({ widget }: Props) {
             </p>
           )}
         </article>
+
+        <BookingCard widget={widget} />
       </div>
     </section>
+  )
+}
+
+function BookingCard({ widget }: Props) {
+  const updateMutation = useUpdateWidget(String(widget.id))
+  const config = widget.widget_config
+  const [bookingUrl, setBookingUrl] = useState(config.booking_url ?? '')
+
+  useEffect(() => {
+    setBookingUrl(config.booking_url ?? '')
+  }, [config.booking_url])
+
+  const trimmed = bookingUrl.trim()
+  const isEmpty = trimmed.length === 0
+  const isValid = isEmpty || isAbsoluteHttpUrl(trimmed)
+  const isDirty = trimmed !== (config.booking_url ?? '')
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!isValid) return
+    const next: WidgetConfig = {
+      ...config,
+      // Empty field = no appointment button for the visitor (same
+      // contract the widget client implements).
+      booking_url: isEmpty ? null : trimmed,
+    }
+    updateMutation.mutate(
+      { widget_config: next },
+      { onSuccess: () => toast.success(m.admin_shared_success_updated()) },
+    )
+  }
+
+  return (
+    <article className="rounded-lg border border-gray-200 bg-white p-5">
+      <header className="flex items-start gap-3">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-[var(--color-rl-accent)]/10 text-[var(--color-rl-dark)]">
+          <CalendarCheck className="h-5 w-5" />
+        </div>
+        <div className="min-w-0 space-y-1">
+          <h3 className="text-base font-semibold text-gray-900">
+            {m.admin_widgets_integrations_booking_title()}
+          </h3>
+          <p className="text-sm text-gray-500">
+            {m.admin_widgets_integrations_booking_description()}
+          </p>
+        </div>
+      </header>
+
+      <form onSubmit={handleSubmit} noValidate className="mt-4 space-y-3">
+        <div className="space-y-1.5">
+          <Label htmlFor="widget-booking-url">
+            {m.admin_widgets_integrations_booking_url_label()}
+          </Label>
+          <p className="text-xs text-gray-600">
+            {m.admin_widgets_integrations_booking_url_help()}
+          </p>
+          <Input
+            id="widget-booking-url"
+            type="url"
+            value={bookingUrl}
+            onChange={(e) => setBookingUrl(e.target.value)}
+            placeholder={m.admin_widgets_integrations_booking_url_placeholder()}
+            aria-invalid={!isValid}
+            className="max-w-xl"
+          />
+          {!isValid && (
+            <p className="text-sm text-[var(--color-destructive)]">
+              {m.admin_widgets_integrations_booking_error_invalid()}
+            </p>
+          )}
+        </div>
+        <p className="text-xs text-gray-600">
+          {m.admin_widgets_integrations_booking_button_hint()}
+        </p>
+        <p className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-500">
+          {m.admin_widgets_integrations_booking_interim_note()}
+        </p>
+        {updateMutation.error && (
+          <p className="text-sm text-[var(--color-destructive)]">
+            {updateMutation.error instanceof Error
+              ? updateMutation.error.message
+              : m.admin_shared_error_generic()}
+          </p>
+        )}
+        <div>
+          <Button
+            type="submit"
+            size="sm"
+            disabled={updateMutation.isPending || !isDirty || !isValid}
+          >
+            {updateMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {m.admin_shared_save()}
+          </Button>
+        </div>
+      </form>
+    </article>
   )
 }
 

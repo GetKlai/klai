@@ -17,6 +17,12 @@ export interface WidgetConfig {
   show_meta: boolean
   collect_user_info: boolean
   page_context_enabled: boolean
+  // Customer-facing tone for public help-page widgets (backend default:
+  // false). Optional here so existing widget_config payloads keep typing.
+  support_mode?: boolean
+  // INTERIM appointment redirect — a plain URL until the booking API
+  // integration replaces it. null/absent → visitor sees no button.
+  booking_url?: string | null
   widget_position: 'left' | 'right'
   integrations?: WidgetIntegrations
 }
@@ -153,6 +159,17 @@ export interface TopQuery {
   count: number
 }
 
+// Heuristic per-conversation outcome labels written by the backend
+// outcome loop. Not a verdict: `unlabeled` = not processed yet,
+// `unknown` = processed without an explicit signal.
+export interface OutcomeCounts {
+  resolved: number
+  escalated: number
+  abandoned: number
+  unknown: number
+  unlabeled: number
+}
+
 export interface WidgetStats {
   period: StatsPeriod
   total_conversations: number
@@ -160,4 +177,5 @@ export interface WidgetStats {
   avg_messages_per_conversation: number
   top_queries: TopQuery[]
   hourly_activity: number[]
+  outcome_counts?: OutcomeCounts
 }

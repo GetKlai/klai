@@ -67,6 +67,7 @@ export function ActivityTab({ widget }: Props) {
   const conversations: ConversationListItem[] = Array.isArray(convsQuery.data)
     ? convsQuery.data
     : []
+  const outcomes = statsQuery.data?.outcome_counts
 
   return (
     <section className="space-y-8">
@@ -113,6 +114,47 @@ export function ActivityTab({ widget }: Props) {
           }
           loading={statsQuery.isLoading}
         />
+      </div>
+
+      {/* Outcome distribution - heuristic labels, not a verdict */}
+      <div>
+        <SectionHeading>{m.admin_widgets_activity_outcomes_title()}</SectionHeading>
+        <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
+          {statsQuery.isLoading ? (
+            <p className="text-sm text-gray-600">
+              <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
+              {m.admin_shared_loading()}
+            </p>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 md:grid-cols-5">
+                <OutcomeStat
+                  label={m.admin_widgets_activity_outcome_resolved()}
+                  value={outcomes?.resolved ?? 0}
+                />
+                <OutcomeStat
+                  label={m.admin_widgets_activity_outcome_escalated()}
+                  value={outcomes?.escalated ?? 0}
+                />
+                <OutcomeStat
+                  label={m.admin_widgets_activity_outcome_abandoned()}
+                  value={outcomes?.abandoned ?? 0}
+                />
+                <OutcomeStat
+                  label={m.admin_widgets_activity_outcome_unknown()}
+                  value={outcomes?.unknown ?? 0}
+                />
+                <OutcomeStat
+                  label={m.admin_widgets_activity_outcome_unlabeled()}
+                  value={outcomes?.unlabeled ?? 0}
+                />
+              </div>
+              <p className="mt-3 text-xs leading-5 text-gray-600">
+                {m.admin_widgets_activity_outcomes_note()}
+              </p>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Hourly activity sparkline */}
@@ -244,6 +286,19 @@ function StatCard({
         ) : (
           value
         )}
+      </p>
+    </div>
+  )
+}
+
+function OutcomeStat({ label, value }: { label: string; value: number }) {
+  return (
+    <div>
+      <p className="text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-600">
+        {label}
+      </p>
+      <p className="mt-0.5 text-lg font-display-bold text-gray-900 tabular-nums">
+        {value}
       </p>
     </div>
   )
