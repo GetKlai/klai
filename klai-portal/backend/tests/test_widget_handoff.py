@@ -61,9 +61,9 @@ def _widget_auth() -> PartnerAuthContext:
     )
 
 
-def _widget_request(origin: str = "https://getklai.getklai.com"):
+def _widget_request(origin: str | None = "https://getklai.getklai.com"):
     request = AsyncMock()
-    request.headers = {"origin": origin}
+    request.headers = {} if origin is None else {"origin": origin}
     return request
 
 
@@ -220,6 +220,32 @@ async def test_start_handoff_rejects_wrong_origin() -> None:
         with pytest.raises(HTTPException) as exc_info:
             await start_widget_hubspot_handoff(
                 http_request=_widget_request("https://voys.getklai.com"),
+                request=StartHubSpotHandoffRequest(summary="Help nodig"),
+                auth=_widget_auth(),
+                db=db,
+            )
+
+    assert exc_info.value.status_code == 403
+    start_handoff.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_start_handoff_rejects_missing_origin() -> None:
+    """A handoff without an Origin header is refused.
+
+    The widget reaches this endpoint with a cross-origin POST, on which a
+    browser always sends Origin. An absent header therefore means the caller is
+    something other than the widget, and the origin allowlist — the only thing
+    tying a handoff to a page the widget may run on — cannot be evaluated at
+    all. Refusing is the same answer widget_config and the beacon endpoint give.
+    """
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_Result((_FakeWidget(), _FakeOrg(slug="getklai"))))
+
+    with patch("app.api.partner.start_hubspot_handoff", new_callable=AsyncMock) as start_handoff:
+        with pytest.raises(HTTPException) as exc_info:
+            await start_widget_hubspot_handoff(
+                http_request=_widget_request(None),
                 request=StartHubSpotHandoffRequest(summary="Help nodig"),
                 auth=_widget_auth(),
                 db=db,

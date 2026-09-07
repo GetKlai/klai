@@ -2221,8 +2221,13 @@ async def _require_hubspot_widget_handoff_enabled(
     # hardcoded pilot host. Same security property — a handoff can only be
     # driven from a page the widget is allowed to run on — but it now holds for
     # every tenant instead of one.
+    # A missing Origin is refused, matching widget_config and the beacon
+    # endpoint below. The old hardcoded comparison rejected it as a side effect
+    # of not matching the pilot host; that was worth keeping deliberately. A
+    # browser always sends Origin on the cross-origin POST the widget makes, so
+    # an absent header means the caller is not the widget.
     request_origin = _request_origin(request)
-    if request_origin is not None and not origin_allowed(
+    if request_origin is None or not origin_allowed(
         request_origin,
         widget_config_data.get("allowed_origins") or [],
         allow_any_origin=bool(widget_row.allow_any_origin),
