@@ -56,13 +56,13 @@ function WidgetDetailPage() {
 
   const { data: widget, isLoading, error, refetch } = useWidget(id)
 
-  const showInternalIntegrations =
-    typeof window !== 'undefined' && window.location.hostname === 'getklai.getklai.com'
+  // The integrations tab used to be visible only on one hardcoded hostname,
+  // from when the HubSpot handoff was a single-tenant pilot. That hid a fully
+  // built feature from every other tenant while the backend was ready to serve
+  // it. Availability is now the widget's own integration state, which the tab
+  // itself already renders.
   const requestedTab: TabId = search.tab ?? 'details'
-  const activeTab: TabId =
-    requestedTab === 'integrations' && !showInternalIntegrations
-      ? 'details'
-      : requestedTab
+  const activeTab: TabId = requestedTab
 
   if (isLoading) {
     return (
@@ -93,9 +93,7 @@ function WidgetDetailPage() {
     { id: 'kbs', label: m.admin_shared_wizard_step_kb_access(), icon: Shield },
     { id: 'appearance', label: m.admin_widgets_wizard_step_appearance(), icon: Palette },
     { id: 'embed', label: m.admin_widgets_wizard_step_embed(), icon: Code2 },
-    ...(showInternalIntegrations
-      ? [{ id: 'integrations' as const, label: m.admin_widgets_integrations_tab(), icon: Plug }]
-      : []),
+    { id: 'integrations' as const, label: m.admin_widgets_integrations_tab(), icon: Plug },
     { id: 'activity', label: m.admin_widgets_tab_activity(), icon: Activity },
     { id: 'danger', label: m.admin_shared_tab_danger(), icon: AlertTriangle },
   ]
@@ -143,7 +141,7 @@ function WidgetDetailPage() {
       {activeTab === 'kbs' && <KnowledgeBasesTab widget={widget} />}
       {activeTab === 'appearance' && <AppearanceTab widget={widget} />}
       {activeTab === 'embed' && <EmbedTab widget={widget} />}
-      {activeTab === 'integrations' && showInternalIntegrations && (
+      {activeTab === 'integrations' && (
         <IntegrationsTab widget={widget} />
       )}
       {activeTab === 'activity' && <ActivityTab widget={widget} />}

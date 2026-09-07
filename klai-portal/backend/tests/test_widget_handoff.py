@@ -29,14 +29,16 @@ class _FakeWidget:
     id: str = "widget-uuid-1"
     org_id: int = 42
     widget_id: str = "wgt_abcdef1234567890abcdef1234567890abcdef12"
+    allow_any_origin: bool = False
     widget_config: dict = field(
         default_factory=lambda: {
+            "allowed_origins": ["https://getklai.getklai.com"],
             "integrations": {
                 "hubspot": {
                     "status": "connected",
                     "channel_account_id": "3307400689",
                 }
-            }
+            },
         }
     )
 
@@ -105,21 +107,30 @@ class _FakePubSub:
 
 
 @pytest.mark.asyncio
-async def test_start_handoff_rejects_non_getklai_tenant() -> None:
+async def test_start_handoff_allows_any_tenant_with_a_connected_channel() -> None:
+    """The handoff used to be gated on org.slug == "getklai" from its
+    single-tenant pilot, which made a fully built integration invisible to every
+    other tenant. The gate is now the widget's own connected HubSpot channel,
+    so a Voys widget with the same configuration is served."""
     db = AsyncMock()
-    db.execute = AsyncMock(return_value=_Result((_FakeWidget(), _FakeOrg(slug="voys"))))
+    widget = _FakeWidget()
+    widget.widget_config["allowed_origins"] = ["https://voys.getklai.com"]
+    db.execute = AsyncMock(return_value=_Result((widget, _FakeOrg(slug="voys"))))
 
     with patch("app.api.partner.start_hubspot_handoff", new_callable=AsyncMock) as start_handoff:
-        with pytest.raises(HTTPException) as exc_info:
-            await start_widget_hubspot_handoff(
-                http_request=_widget_request(),
-                request=StartHubSpotHandoffRequest(summary="Help nodig"),
-                auth=_widget_auth(),
-                db=db,
-            )
+        start_handoff.return_value = {
+            "id": 1,
+            "status": "active",
+            "integration_thread_id": "thread-1",
+        }
+        await start_widget_hubspot_handoff(
+            http_request=_widget_request("https://voys.getklai.com"),
+            request=StartHubSpotHandoffRequest(summary="Help nodig"),
+            auth=_widget_auth(),
+            db=db,
+        )
 
-    assert exc_info.value.status_code == 403
-    start_handoff.assert_not_awaited()
+    start_handoff.assert_awaited()
 
 
 @pytest.mark.asyncio

@@ -312,7 +312,10 @@ async def test_widget_config_hubspot_handoff_visible_only_for_getklai_origin():
 
 
 @pytest.mark.asyncio
-async def test_widget_config_hubspot_handoff_hidden_for_non_getklai_tenant():
+async def test_widget_config_hubspot_handoff_offered_to_any_connected_tenant():
+    """The config used to advertise the handoff only to org.slug == "getklai",
+    a leftover from the single-tenant pilot. Any tenant whose widget has a
+    connected HubSpot channel now gets the button."""
     widget = FakeWidget()
     widget.widget_config["allowed_origins"] = ["https://getklai.getklai.com"]
     widget.widget_config["integrations"] = {
@@ -336,7 +339,7 @@ async def test_widget_config_hubspot_handoff_hidden_for_non_getklai_tenant():
 
         response = await widget_config(id=widget.widget_id, request=request, db=db)
 
-    assert json.loads(response.body.decode())["handoff"]["hubspot"]["enabled"] is False
+    assert json.loads(response.body.decode())["handoff"]["hubspot"]["enabled"] is True
 
 
 @pytest.mark.asyncio

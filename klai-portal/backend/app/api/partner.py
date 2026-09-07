@@ -104,8 +104,6 @@ _PASSTHROUGH_ONLY_FIELDS = {
     "tools",
 }
 _WIDGET_CLIENT_SESSION_RE = re.compile(r"^[A-Za-z0-9_-]{16,80}$")
-_HUBSPOT_HANDOFF_DEV_TENANT_SLUG = "getklai"
-_HUBSPOT_HANDOFF_DEV_ORIGIN = "https://getklai.getklai.com"
 _MAX_WEB_SEARCH_QUERY_CHARS = 512
 _OPENAI_COMPAT_MAX_BODY_BYTES = 131_072
 _OPENAI_COMPAT_DEFAULT_MAX_TOKENS = 2048
@@ -2177,9 +2175,6 @@ async def _require_hubspot_widget_handoff_enabled(
     request: Request | None,
 ) -> None:
     _require_widget_auth(auth)
-    if _request_origin(request) != _HUBSPOT_HANDOFF_DEV_ORIGIN:
-        raise _hubspot_handoff_forbidden()
-
     result = await db.execute(
         select(Widget, PortalOrg)
         .join(PortalOrg, PortalOrg.id == Widget.org_id)
@@ -2194,13 +2189,19 @@ async def _require_hubspot_widget_handoff_enabled(
         raise _hubspot_handoff_forbidden()
 
     widget_row = row[0]
-    org = row[1]
     widget_config_data = widget_row.widget_config or {}
-    if not _hubspot_handoff_enabled_for_widget(
-        org=org,
-        widget_config_data=widget_config_data,
-        origin=_request_origin(request),
+    # Origin is checked against THIS widget's own allowlist, not against one
+    # hardcoded pilot host. Same security property — a handoff can only be
+    # driven from a page the widget is allowed to run on — but it now holds for
+    # every tenant instead of one.
+    request_origin = _request_origin(request)
+    if request_origin is not None and not origin_allowed(
+        request_origin,
+        widget_config_data.get("allowed_origins") or [],
+        allow_any_origin=bool(widget_row.allow_any_origin),
     ):
+        raise _hubspot_handoff_forbidden()
+    if not _hubspot_handoff_enabled_for_widget(widget_config_data=widget_config_data):
         raise _hubspot_handoff_forbidden()
 
 
@@ -2652,14 +2653,13 @@ def _widget_client_session_id(request: Request | None) -> str | None:
 
 def _hubspot_handoff_enabled_for_widget(
     *,
-    org: PortalOrg,
     widget_config_data: dict[str, Any],
-    origin: str | None = None,
 ) -> bool:
-    if org.slug != _HUBSPOT_HANDOFF_DEV_TENANT_SLUG:
-        return False
-    if origin is not None and origin != _HUBSPOT_HANDOFF_DEV_ORIGIN:
-        return False
+    # The gate is the widget's own connected HubSpot channel, nothing else.
+    # This used to also require org.slug == "getklai" and one hardcoded origin,
+    # from when the handoff was a single-tenant pilot. That made the feature
+    # invisible to every other tenant while the admin UI still offered it, and
+    # it is why Voys could not use an integration that was fully built.
     integrations = widget_config_data.get("integrations")
     if not isinstance(integrations, dict):
         return False
@@ -2863,15 +2863,7 @@ async def widget_config(
         "support_mode": widget_config_data.get("support_mode", False),
         # Interim appointment redirect (booking API pending) — see _widget_booking_url.
         "booking_url": _widget_booking_url(widget_config_data),
-        "handoff": {
-            "hubspot": {
-                "enabled": _hubspot_handoff_enabled_for_widget(
-                    org=org,
-                    widget_config_data=widget_config_data,
-                    origin=origin,
-                )
-            }
-        },
+        "handoff": {"hubspot": {"enabled": _hubspot_handoff_enabled_for_widget(widget_config_data=widget_config_data)}},
     }
 
     return Response(
@@ -2978,14 +2970,7 @@ async def public_bot_config(
         "booking_url": _widget_booking_url(widget_config_data),
         "name": widget_row.name,
         "description": widget_row.description or "",
-        "handoff": {
-            "hubspot": {
-                "enabled": _hubspot_handoff_enabled_for_widget(
-                    org=org,
-                    widget_config_data=widget_config_data,
-                )
-            }
-        },
+        "handoff": {"hubspot": {"enabled": _hubspot_handoff_enabled_for_widget(widget_config_data=widget_config_data)}},
     }
     return Response(
         content=json.dumps(body),
