@@ -96,6 +96,12 @@ export interface WidgetDetailResponse extends WidgetResponse {
   kb_access: KbAccess[]
 }
 
+export interface WidgetPreviewSessionResponse {
+  session_token: string
+  chat_endpoint: string
+  session_expires_at: string
+}
+
 export interface CreateWidgetRequest {
   name: string
   description: string | null

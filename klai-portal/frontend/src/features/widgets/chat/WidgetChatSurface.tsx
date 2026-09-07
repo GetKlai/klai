@@ -22,6 +22,9 @@ export interface WidgetChatSurfaceProps {
   variant?: 'public' | 'admin-preview'
   onClose?: () => void
   shareUrl?: string
+  // Fill the parent element instead of the viewport, for the admin
+  // settings screen's side panel. The parent owns the height.
+  embedded?: boolean
 }
 
 interface MessageSource {
@@ -135,6 +138,7 @@ export function WidgetChatSurface({
   variant = 'public',
   onClose,
   shareUrl,
+  embedded = false,
 }: WidgetChatSurfaceProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
@@ -312,8 +316,8 @@ export function WidgetChatSurface({
   return (
     <div
       data-widget-chat-surface
-      className={`fixed inset-0 z-[60] flex flex-col ${isDark ? 'bg-[var(--color-rl-dark)] text-[var(--color-rl-bg)]' : 'bg-white text-gray-900'}`}
-      style={{ height: '100vh' }}
+      className={`${embedded ? 'relative h-full w-full overflow-hidden' : 'fixed inset-0 z-[60]'} flex flex-col ${isDark ? 'bg-[var(--color-rl-dark)] text-[var(--color-rl-bg)]' : 'bg-white text-gray-900'}`}
+      style={embedded ? undefined : { height: '100vh' }}
     >
       <div className={`flex h-14 shrink-0 items-center justify-between border-b px-4 sm:px-6 ${isDark ? 'border-white/10 bg-[var(--color-rl-dark)]' : 'border-gray-200 bg-white'}`}>
         <div className="flex min-w-0 items-center gap-3">
