@@ -405,6 +405,21 @@ decision rather than a patch:
   actually passes to `ensure_channel_account`, and a server-managed connection
   record so `status: "connected"` means the protected flow ran rather than that
   someone said so.
+- **The Integrations tab hides the HubSpot card on any 404, not only the
+  tenant-gate one.** A vanished widget, a removed route or a routing regression
+  produces the same silence, including for the platform tenant, which is the
+  opposite of failing loudly. Making it precise needs a structured error code
+  from `_assert_internal_hubspot_allowed` rather than a status-code guess. Until
+  then the residual risk is a HubSpot card that disappears without saying why.
+- **That same 404 is retried three times first.** `useHubSpotIntegration` has no
+  retry policy, so TanStack Query's default gives a non-platform tenant roughly
+  seven seconds of loading card and four identical requests before it goes away.
+- **`PLATFORM_ORG_SLUG` is not wired through in the production compose file**,
+  and `config.py` names it `PORTAL_API_PLATFORM_ORG_SLUG` in a comment, which is
+  not the variable that works. The gate therefore always uses the `getklai`
+  default in production. That happens to be correct today, so nothing is broken
+  — but the setting is not actually settable, which is worth knowing before
+  anyone relies on changing it.
 - **`Origin` is a UX gate, not authentication.** The handoff treats a matching
   origin as evidence the request came from a permitted page; a non-browser
   client can send any origin it likes. It is worth keeping as defence in depth,
