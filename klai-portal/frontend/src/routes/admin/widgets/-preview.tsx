@@ -20,10 +20,12 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { WIDGET_DEFAULT_PRIMARY_COLOR } from '@/features/widgets/config/appearance'
+import {
+  WIDGET_DEFAULT_PRIMARY_COLOR,
+  WIDGET_MAX_CONVERSATION_STARTERS,
+} from '@/features/widgets/config/appearance'
 import type { WidgetDetailResponse } from './-types'
 
-const MAX_STARTERS = 6
 
 export type WidgetPreviewScope = 'details' | 'appearance'
 
@@ -81,7 +83,7 @@ function isSameDraft(a: WidgetPreviewDraft, b: WidgetPreviewDraft): boolean {
 }
 
 function parseStarters(raw: string): string[] {
-  return raw.split('\n').map((line) => line.trim()).filter(Boolean).slice(0, MAX_STARTERS)
+  return raw.split('\n').map((line) => line.trim()).filter(Boolean).slice(0, WIDGET_MAX_CONVERSATION_STARTERS)
 }
 
 function resolvePreview(widget: WidgetDetailResponse, scopes: Scopes): WidgetPreviewValues {

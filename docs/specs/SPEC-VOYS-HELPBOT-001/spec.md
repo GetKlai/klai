@@ -405,6 +405,15 @@ decision rather than a patch:
   actually passes to `ensure_channel_account`, and a server-managed connection
   record so `status: "connected"` means the protected flow ran rather than that
   someone said so.
+- **REQ-11 reaches the visitor less often than the prompt suggests.** The
+  citation firewall replaces any model output it cannot attach to a trusted
+  source with the fixed refusal (`partner_chat.py:1578`). The expressive
+  register's added value — a warmer greeting, the one witty remark, a softer
+  refusal — lives largely in turns that have no source by definition, so on the
+  strict path the register mostly changes the wording of answers that are
+  already grounded and structurally constrained. This is not a new defect: it
+  is the citation-firewall item above, applied to the register. Worth knowing
+  before judging the feature by its prompt rather than by its output.
 - **The Integrations tab hides the HubSpot card on any 404, not only the
   tenant-gate one.** A vanished widget, a removed route or a routing regression
   produces the same silence, including for the platform tenant, which is the

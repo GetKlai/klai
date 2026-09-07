@@ -16,3 +16,16 @@
  * `widget-appearance.test.ts` asserts they stay in step.
  */
 export const WIDGET_DEFAULT_PRIMARY_COLOR = '#fcaa2d'
+
+/**
+ * How many conversation starters a widget may carry.
+ *
+ * The backend is the authority — `WidgetConfig.conversation_starters` is
+ * `Field(max_length=6)` in `admin_widgets.py`. This constant mirrors it for
+ * the two places that have to agree with it AND with each other: the
+ * appearance form's counter and truncation, and the live preview's parsing of
+ * the same unsaved textarea. When those two disagree the preview shows a
+ * different set of starters than the form is about to save, which is the one
+ * thing a preview must never do.
+ */
+export const WIDGET_MAX_CONVERSATION_STARTERS = 6

@@ -6,13 +6,15 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { WidgetToggleCard } from '@/features/widgets/components/WidgetToggleCard'
-import { WIDGET_DEFAULT_PRIMARY_COLOR } from '@/features/widgets/config/appearance'
+import {
+  WIDGET_DEFAULT_PRIMARY_COLOR,
+  WIDGET_MAX_CONVERSATION_STARTERS,
+} from '@/features/widgets/config/appearance'
 import * as m from '@/paraglide/messages'
 import type { WidgetDetailResponse, WidgetConfig } from '../../-types'
 import { useUpdateWidget } from '../../-hooks'
 import { usePublishWidgetPreview } from '../../-preview'
 
-const MAX_STARTERS = 6
 
 interface Props {
   widget: WidgetDetailResponse
@@ -62,7 +64,7 @@ export function AppearanceTab({ widget }: Props) {
     setWidgetPosition(config.widget_position || 'right')
   }, [config])
 
-  const starters = startersRaw.split('\n').map((l) => l.trim()).filter(Boolean).slice(0, MAX_STARTERS)
+  const starters = startersRaw.split('\n').map((l) => l.trim()).filter(Boolean).slice(0, WIDGET_MAX_CONVERSATION_STARTERS)
 
   const isDirty =
     welcome.trim() !== config.welcome_message ||
@@ -174,7 +176,7 @@ export function AppearanceTab({ widget }: Props) {
             rows={4}
             placeholder={m.admin_widgets_widget_starters_placeholder()}
           />
-          <p className="text-xs text-gray-600">{starters.length}/{MAX_STARTERS}</p>
+          <p className="text-xs text-gray-600">{starters.length}/{WIDGET_MAX_CONVERSATION_STARTERS}</p>
         </div>
       </section>
 
