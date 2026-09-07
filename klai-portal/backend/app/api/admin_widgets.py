@@ -104,6 +104,14 @@ class WidgetConfig(BaseModel):
     # variant instead of the internal-team GROUNDED wording. Off by default
     # so existing widgets keep their current behaviour.
     support_mode: bool = False
+    # Register of the customer-facing voice, honoured only while
+    # support_mode is on (an internal widget has no visitor to sound
+    # expressive for). "restrained" = the dry help-article voice (default,
+    # current behaviour); "expressive" = the brand's higher marketing
+    # register — more warmth, one witty remark per answer, functional emoji
+    # (SUPPORT_EXPRESSIVE_CHAT_SYSTEM_PROMPT). Tone only: source rules,
+    # no-promises, escalation and refusal behaviour are identical.
+    tone_register: Literal["restrained", "expressive"] = "restrained"
     # INTERIM SOLUTION — replace when the chat booking API integration lands.
     # Booking-module URL of the support partner, shown by the widget as an
     # "appointment" redirect. Admin input that ends up in a visitor-facing
@@ -201,6 +209,7 @@ def _widget_to_response(widget: Widget, kb_access_count: int) -> WidgetResponse:
             collect_user_info=config.get("collect_user_info", False),
             page_context_enabled=config.get("page_context_enabled", False),
             support_mode=config.get("support_mode", False),
+            tone_register=config.get("tone_register", "restrained"),
             booking_url=config.get("booking_url"),
             widget_position=config.get("widget_position", "right"),
             integrations=config.get("integrations", {}),

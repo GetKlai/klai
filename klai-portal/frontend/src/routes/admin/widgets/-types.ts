@@ -20,6 +20,10 @@ export interface WidgetConfig {
   // Customer-facing tone for public help-page widgets (backend default:
   // false). Optional here so existing widget_config payloads keep typing.
   support_mode?: boolean
+  // Register of the customer-facing voice, honoured only while
+  // support_mode is on (backend default: 'restrained' = the current,
+  // dry help-article voice; 'expressive' = warmer marketing register).
+  tone_register?: 'restrained' | 'expressive'
   // INTERIM appointment redirect — a plain URL until the booking API
   // integration replaces it. null/absent → visitor sees no button.
   booking_url?: string | null

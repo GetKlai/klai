@@ -424,6 +424,29 @@ async def _widget_support_mode_enabled(auth: PartnerAuthContext, db: AsyncSessio
     return bool(config.get("support_mode")) if isinstance(config, dict) else False
 
 
+async def _widget_tone_register(auth: PartnerAuthContext, db: AsyncSession) -> str:
+    """Return this widget's customer-facing register: ``"restrained"`` (default)
+    or ``"expressive"``.
+
+    Same shape as :func:`_widget_support_mode_enabled`, same restriction to
+    widget JWT callers. The value only selects between the two SUPPORT
+    profiles when support mode is on; anything unrecognised falls back to
+    ``"restrained"``, so a hand-edited or stale widget_config can never
+    silently switch a live widget to the expressive voice.
+    """
+    if not str(auth.key_id).startswith("wgt_"):
+        return "restrained"
+    result = await db.execute(
+        select(Widget.widget_config).where(
+            Widget.widget_id == auth.key_id,
+            Widget.org_id == auth.org_id,
+        )
+    )
+    config = result.scalar_one_or_none() or {}
+    register = config.get("tone_register") if isinstance(config, dict) else None
+    return register if register == "expressive" else "restrained"
+
+
 def _citation_runtime_options(
     trusted_sources: list[dict[str, Any]],
     *,
@@ -1709,6 +1732,9 @@ async def chat_completions(  # noqa: C901
     widget_system_prompt = await _widget_system_prompt(auth, db)
     page_context_enabled = await _widget_page_context_enabled(auth, db) if is_widget_chat else False
     support_mode = await _widget_support_mode_enabled(auth, db) if is_widget_chat else False
+    # Register only matters when support mode is on; for internal widgets and
+    # partner-key traffic it stays the default and changes nothing.
+    tone_register = await _widget_tone_register(auth, db) if is_widget_chat and support_mode else "restrained"
     page_context = (
         request.page_context.model_dump(exclude_none=True) if page_context_enabled and request.page_context else None
     )
@@ -1742,6 +1768,7 @@ async def chat_completions(  # noqa: C901
             backend_managed_citations=True,
             support_mode=support_mode,
             broad_mode=bool(request.broad_mode),
+            tone_register=tone_register,
             is_preview=getattr(auth, "is_preview", False),
             retrieval_query=knowledge.query if knowledge is not None else None,
             top_k=knowledge.top_k if knowledge is not None and knowledge.top_k is not None else 8,

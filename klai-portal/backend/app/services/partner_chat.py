@@ -35,6 +35,7 @@ from klai_chat_prompts import (
     KB_CONTEXT_LANGUAGE_REMINDER,
     SUPPORT_BROAD_CHAT_SYSTEM_PROMPT,
     SUPPORT_CHAT_SYSTEM_PROMPT,
+    SUPPORT_EXPRESSIVE_CHAT_SYSTEM_PROMPT,
     broad_mode_answer_marker,
 )
 from klai_chat_prompts import (
@@ -1844,15 +1845,22 @@ def _build_system_prompt(
     backend_managed_citations: bool = False,
     support_mode: bool = False,
     broad_mode: bool = False,
+    tone_register: str = "restrained",
 ) -> str:
     """Build a grounded system prompt augmented with retrieved context chunks.
 
     ``support_mode`` swaps the default profile from the internal-team GROUNDED
     prompt to the customer-facing SUPPORT_CHAT_SYSTEM_PROMPT for public
-    help-page widgets. ``broad_mode`` (only meaningful with ``support_mode``)
+    help-page widgets. ``tone_register`` (only meaningful with ``support_mode``)
+    selects the brand's expressive register instead of the default restrained
+    one: ``"expressive"`` swaps in SUPPORT_EXPRESSIVE_CHAT_SYSTEM_PROMPT, a
+    tone-only variant of SUPPORT whose truth rules are byte-identical; any
+    other value keeps the restrained default, so an absent field cannot change
+    existing behaviour. ``broad_mode`` (only meaningful with ``support_mode``)
     swaps further to the consented general-knowledge fallback
-    SUPPORT_BROAD_CHAT_SYSTEM_PROMPT; callers must also pass an empty chunk
-    list so no help-article context is injected on a broad turn. Both flags
+    SUPPORT_BROAD_CHAT_SYSTEM_PROMPT — the register does not carry into broad
+    mode, which keeps its single profile; callers must also pass an empty chunk
+    list so no help-article context is injected on a broad turn. These flags
     only change the default: an explicit ``original_system`` from the caller
     still wins, and the widget behaviour instructions, page context, safety
     hierarchy, and source-handling below are unchanged in every mode.
@@ -1860,7 +1868,9 @@ def _build_system_prompt(
     if support_mode and broad_mode:
         default_prompt = SUPPORT_BROAD_CHAT_SYSTEM_PROMPT
     elif support_mode:
-        default_prompt = SUPPORT_CHAT_SYSTEM_PROMPT
+        default_prompt = (
+            SUPPORT_EXPRESSIVE_CHAT_SYSTEM_PROMPT if tone_register == "expressive" else SUPPORT_CHAT_SYSTEM_PROMPT
+        )
     else:
         default_prompt = GROUNDED_CHAT_SYSTEM_PROMPT
     base = original_system or default_prompt
@@ -2043,6 +2053,7 @@ async def retrieve_context(
     retrieval_enabled: bool = True,
     support_mode: bool = False,
     broad_mode: bool = False,
+    tone_register: str = "restrained",
     is_preview: bool = False,
 ) -> tuple[list[dict], str, list[dict[str, Any]], bool]:
     """Call retrieval-api and return (chunks, augmented_system_prompt, trusted_sources, broad).
@@ -2059,6 +2070,11 @@ async def retrieve_context(
     return (retrieval off, no query, no retrieval url, identity-assertion
     degradation) yields broad=False: no consented broad answer is served
     without an actual retrieval attempt that came up short.
+
+    ``tone_register`` is the widget's customer-facing register (only
+    meaningful with ``support_mode``); it selects the restrained or the
+    expressive SUPPORT profile in :func:`_build_system_prompt` and is ignored
+    on broad turns. Default ``"restrained"`` keeps current behaviour.
 
     ``partner_user_id`` (F2 audit cleanup, 2026-05-06): when given, attached
     to the /retrieve body as ``user_id``. retrieval-api recognizes the
@@ -2100,6 +2116,7 @@ async def retrieve_context(
                 page_context=cleaned_page_context,
                 backend_managed_citations=backend_managed_citations,
                 support_mode=support_mode,
+                tone_register=tone_register,
             ),
             [],
             False,
@@ -2139,6 +2156,7 @@ async def retrieve_context(
                 page_context=cleaned_page_context,
                 backend_managed_citations=backend_managed_citations,
                 support_mode=support_mode,
+                tone_register=tone_register,
             ),
             [],
             False,
@@ -2182,6 +2200,7 @@ async def retrieve_context(
                     page_context=cleaned_page_context,
                     backend_managed_citations=backend_managed_citations,
                     support_mode=support_mode,
+                    tone_register=tone_register,
                 ),
                 [],
                 False,
@@ -2224,6 +2243,7 @@ async def retrieve_context(
         backend_managed_citations=backend_managed_citations,
         support_mode=support_mode,
         broad_mode=broad,
+        tone_register=tone_register,
     )
 
     # --- Gap detection (KB-014) ---

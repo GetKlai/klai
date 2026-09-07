@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { RadioCardGroup } from '@/components/ui/radio-card-group'
 import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { WidgetToggleCard } from '@/features/widgets/components/WidgetToggleCard'
@@ -30,6 +31,7 @@ export function DetailsTab({ widget }: Props) {
   const [templateSlug, setTemplateSlug] = useState<string>(config.template_slug ?? '')
   const [pageContextEnabled, setPageContextEnabled] = useState(config.page_context_enabled ?? false)
   const [supportMode, setSupportMode] = useState(config.support_mode ?? false)
+  const [toneRegister, setToneRegister] = useState<'restrained' | 'expressive'>(config.tone_register ?? 'restrained')
 
   const templatesQuery = useQuery<Template[]>({
     queryKey: ['app-templates'],
@@ -43,7 +45,8 @@ export function DetailsTab({ widget }: Props) {
     setTemplateSlug(config.template_slug ?? '')
     setPageContextEnabled(config.page_context_enabled ?? false)
     setSupportMode(config.support_mode ?? false)
-  }, [widget.name, widget.description, config.system_prompt, config.template_slug, config.page_context_enabled, config.support_mode])
+    setToneRegister(config.tone_register ?? 'restrained')
+  }, [widget.name, widget.description, config.system_prompt, config.template_slug, config.page_context_enabled, config.support_mode, config.tone_register])
 
   const isDirty =
     name.trim() !== widget.name ||
@@ -51,7 +54,8 @@ export function DetailsTab({ widget }: Props) {
     systemPrompt.trim() !== config.system_prompt ||
     (templateSlug || null) !== (config.template_slug ?? null) ||
     pageContextEnabled !== (config.page_context_enabled ?? false) ||
-    supportMode !== (config.support_mode ?? false)
+    supportMode !== (config.support_mode ?? false) ||
+    toneRegister !== (config.tone_register ?? 'restrained')
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -66,6 +70,10 @@ export function DetailsTab({ widget }: Props) {
       template_slug: templateSlug || null,
       page_context_enabled: pageContextEnabled,
       support_mode: supportMode,
+      // Only meaningful with support_mode on (the backend ignores it for
+      // internal widgets); stored regardless so switching customer mode
+      // back on restores the admin's earlier register choice.
+      tone_register: toneRegister,
     }
     updateMutation.mutate(
       {
@@ -160,6 +168,29 @@ export function DetailsTab({ widget }: Props) {
             label={m.admin_widgets_support_mode_label()}
             help={m.admin_widgets_support_mode_help()}
           />
+          {supportMode && (
+            <div className="space-y-1.5">
+              <Label>{m.admin_widgets_tone_register_label()}</Label>
+              <p className="text-xs text-gray-600">{m.admin_widgets_tone_register_help()}</p>
+              <RadioCardGroup
+                aria-label={m.admin_widgets_tone_register_label()}
+                value={toneRegister}
+                onChange={(value) => setToneRegister(value === 'expressive' ? 'expressive' : 'restrained')}
+                options={[
+                  {
+                    value: 'restrained',
+                    label: m.admin_widgets_tone_register_restrained(),
+                    description: m.admin_widgets_tone_register_restrained_help(),
+                  },
+                  {
+                    value: 'expressive',
+                    label: m.admin_widgets_tone_register_expressive(),
+                    description: m.admin_widgets_tone_register_expressive_help(),
+                  },
+                ]}
+              />
+            </div>
+          )}
         </div>
       </section>
 

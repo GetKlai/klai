@@ -89,6 +89,47 @@ def test_widget_config_defaults():
     assert "public_share_enabled" not in WidgetConfig.model_fields
 
 
+def test_widget_config_tone_register_defaults_restrained():
+    """tone_register exists, defaults to the current restrained voice, and is
+    a closed choice: an unknown register cannot be saved."""
+    import pytest
+
+    from app.api.admin_widgets import WidgetConfig
+
+    config = WidgetConfig()
+    assert config.tone_register == "restrained"
+    assert WidgetConfig(tone_register="expressive").tone_register == "expressive"
+    with pytest.raises(ValueError):
+        WidgetConfig(tone_register="boisterous")
+
+
+def test_widget_to_response_maps_tone_register():
+    """Stored tone_register survives the response mapping; absent = restrained.
+
+    Widgets created before the field existed carry no key at all and must
+    read back as the restrained default, never as a validation error.
+    """
+    from app.api.admin_widgets import _widget_to_response
+
+    def to_response(widget_config: dict):
+        widget = MagicMock()
+        widget.id = "uuid-1"
+        widget.name = "Help Bot"
+        widget.description = None
+        widget.widget_id = "wgt_abc123"
+        widget.widget_config = widget_config
+        widget.public_share_enabled = False
+        widget.rate_limit_rpm = 60
+        widget.last_used_at = None
+        widget.created_at = "2026-01-01"
+        widget.created_by = "user-1"
+        return _widget_to_response(widget, kb_access_count=0)
+
+    assert to_response({}).widget_config.tone_register == "restrained"
+    stored = to_response({"support_mode": True, "tone_register": "expressive"})
+    assert stored.widget_config.tone_register == "expressive"
+
+
 def test_widget_model_has_public_share_column():
     """Public share state is a first-class widgets column, not JSON config."""
     from app.models.widgets import Widget
