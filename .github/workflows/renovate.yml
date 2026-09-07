@@ -76,7 +76,7 @@ jobs:
       - name: Validate Renovate configuration contracts
         run: sh scripts/test-renovate-config.sh
 
-      - uses: renovatebot/github-action@v46.2.4
+      - uses: renovatebot/github-action@v46.2.5
         with:
           token: ${{ steps.app-token.outputs.token }}
         env:
