@@ -7,11 +7,10 @@
 @plugin "@tailwindcss/typography";
 
 /* Klai brand fonts — self-hosted, mirrored from klai-website */
-@font-face { font-family: "Parabole Trial Regular Text"; src: url("/docs/fonts/parabole-regular.woff2") format("woff2"); font-display: swap; font-weight: 400; }
-@font-face { font-family: "Parabole Trial Medium Text"; src: url("/docs/fonts/parabole-medium.woff2") format("woff2"); font-display: swap; font-weight: 500; }
-@font-face { font-family: "Parabole Trial Bold Text"; src: url("/docs/fonts/parabole-bold.woff2") format("woff2"); font-display: swap; font-weight: 700; }
-@font-face { font-family: "Parabole Trial Regular Display"; src: url("/docs/fonts/parabole-display.woff2") format("woff2"); font-display: swap; font-weight: 400; }
-@font-face { font-family: "Decima Mono Pro Regular"; src: url("/docs/fonts/decima-mono.woff2") format("woff2"); font-display: swap; font-weight: 400; }
+@font-face { font-family: "Geist";        src: url("/docs/fonts/geist-regular.woff2") format("woff2"); font-display: swap; font-weight: 400; }
+@font-face { font-family: "Geist Medium"; src: url("/docs/fonts/geist-medium.woff2")  format("woff2"); font-display: swap; font-weight: 500; }
+@font-face { font-family: "Geist Bold";   src: url("/docs/fonts/geist-bold.woff2")    format("woff2"); font-display: swap; font-weight: 700; }
+@font-face { font-family: "Geist Mono";   src: url("/docs/fonts/geist-mono.woff2")    format("woff2"); font-display: swap; font-weight: 400; }
 
 @theme {
   --color-rl-bg: #fffef2;
@@ -26,18 +25,18 @@
   --color-rl-border: #e3e2d8;
   --color-rl-muted: #bab9b0;
 
-  --font-display: "Parabole Trial Regular Text", system-ui, sans-serif;
-  --font-display-medium: "Parabole Trial Medium Text", system-ui, sans-serif;
-  --font-display-bold: "Parabole Trial Bold Text", system-ui, sans-serif;
-  --font-accent: "Parabole Trial Regular Display", serif;
-  --font-mono: "Decima Mono Pro Regular", ui-monospace, monospace;
-  --font-sans: "Parabole Trial Regular Text", system-ui, sans-serif;
-  --font-serif: "Parabole Trial Regular Text", system-ui, sans-serif;
+  --font-display: "Geist", system-ui, sans-serif;
+  --font-display-medium: "Geist Medium", system-ui, sans-serif;
+  --font-display-bold: "Geist Bold", system-ui, sans-serif;
+  --font-accent: "Geist Medium", system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, monospace;
+  --font-sans: "Geist", system-ui, sans-serif;
+  --font-serif: "Geist", system-ui, sans-serif;
 }
 
 body {
   background: #fffef2;
-  font-family: "Parabole Trial Regular Text", system-ui, sans-serif;
+  font-family: "Geist", system-ui, sans-serif;
   color: #191918;
 }
 
@@ -63,7 +62,7 @@ body {
 .klai-prose,
 .klai-prose p,
 .klai-prose li {
-  font-family: "Parabole Trial Regular Text", system-ui, sans-serif;
+  font-family: "Geist", system-ui, sans-serif;
   line-height: 1.75;
 }
 
@@ -71,13 +70,13 @@ body {
 .klai-prose h2,
 .klai-prose h3,
 .klai-prose h4 {
-  font-family: "Parabole Trial Medium Text", system-ui, sans-serif;
+  font-family: "Geist Medium", system-ui, sans-serif;
   letter-spacing: -0.02em;
   font-weight: 500;
 }
 
 .klai-prose h1 {
-  font-family: "Parabole Trial Regular Text", system-ui, sans-serif;
+  font-family: "Geist", system-ui, sans-serif;
   font-size: 2rem;
   letter-spacing: -0.04em;
   font-weight: 400;
@@ -94,7 +93,7 @@ body {
 }
 
 .klai-prose strong {
-  font-family: "Parabole Trial Medium Text", system-ui, sans-serif;
+  font-family: "Geist Medium", system-ui, sans-serif;
   font-weight: 500;
 }
 
@@ -115,7 +114,7 @@ body {
   border-radius: 4px;
   padding: 0.1em 0.4em;
   font-size: 0.875em;
-  font-family: "Decima Mono Pro Regular", ui-monospace, monospace;
+  font-family: "Geist Mono", ui-monospace, monospace;
 }
 
 .klai-prose pre {
@@ -132,6 +131,6 @@ body {
 }
 
 .klai-prose blockquote p {
-  font-family: "Parabole Trial Medium Text", system-ui, sans-serif;
+  font-family: "Geist Medium", system-ui, sans-serif;
   font-style: italic;
 }

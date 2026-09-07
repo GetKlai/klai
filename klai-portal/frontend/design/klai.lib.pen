@@ -1090,35 +1090,35 @@
     },
     "font-display": {
       "type": "string",
-      "value": "Parabole Medium"
+      "value": "Geist Medium"
     },
     "font-display-bold": {
       "type": "string",
-      "value": "Parabole Bold"
+      "value": "Geist Bold"
     },
     "font-display-bold-preview": {
       "type": "string",
-      "value": "Schibsted Grotesk"
+      "value": "Geist"
     },
     "font-display-preview": {
       "type": "string",
-      "value": "Schibsted Grotesk"
+      "value": "Geist"
     },
     "font-mono": {
       "type": "string",
-      "value": "Decima Mono"
+      "value": "Geist Mono"
     },
     "font-mono-preview": {
       "type": "string",
-      "value": "DM Mono"
+      "value": "Geist Mono"
     },
     "font-sans": {
       "type": "string",
-      "value": "Parabole Regular"
+      "value": "Geist"
     },
     "font-sans-preview": {
       "type": "string",
-      "value": "Schibsted Grotesk"
+      "value": "Geist"
     },
     "radius-lg": {
       "type": "number",

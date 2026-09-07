@@ -20,7 +20,7 @@ paths:
 Klai should feel calm, confident, and warm. Not a startup shouting for attention. Not an enterprise wall.
 
 - **Calm over chaos.** Warm ivory space. Few elements per screen. One point per section.
-- **One font family does everything.** Parabole in three weights handles headings, body, and UI. Decima Mono for labels only.
+- **One font family does everything.** Geist in three weights handles headings, body, and UI. Geist Mono for labels only.
 - **Movement with restraint.** No animations for their own sake. Scroll-triggered opacity and subtle hover responses only.
 - **Show the product.** Screenshots, real interfaces, painting backgrounds. No stock photos of people behind laptops.
 - **Two contexts.** USE side (warmer, more cream, human language) vs. BUILD side (darker, technical details).
@@ -81,15 +81,18 @@ Klai should feel calm, confident, and warm. Not a startup shouting for attention
 
 ## Typography
 
-One font family (Parabole) in multiple weights, plus Decima Mono for labels.
+One font family in multiple weights, plus a mono for labels. The portal ships
+Geist + Geist Mono; the website still ships Parabole + Decima Mono (see below).
 
-> [HARD] **The table below is the WEBSITE font stack only.** The portal binds
-> the same token names to different faces and weights. `--font-display` is
-> `"Parabole Trial Regular Text"` at 400 here and `"Parabole Medium"` at 500
-> in the portal, and `--font-display-medium` does not exist in the portal at
-> all. When you are editing `klai-portal/**`, the font tokens in
-> `tokens.md` win over this section. Colors, logo and anti-patterns in this
-> file are shared except where a section is explicitly marked website-only.
+> [HARD] **The table below is the WEBSITE font stack only, and it is stale.**
+> The portal moved off Parabole to Geist (SIL OFL) in 2026 because the Parabole
+> files were a 58-glyph TRIAL build that may not be used in production or
+> redistributed. `klai-website` is a separate closed-source repository and has
+> NOT been migrated yet — the table records what it still ships, not what it
+> should ship. Target there is the same Geist stack. Until that migration
+> lands, do not copy these values into `klai-portal/**`: the font tokens in
+> `tokens.md` win. Colors, logo and anti-patterns in this file are shared
+> except where a section is explicitly marked website-only.
 >
 > Source of truth: `klai-website/src/styles/global.css` for the values below,
 > `klai-portal/frontend/src/index.css` for the portal.
@@ -171,7 +174,7 @@ Height: `h-5` (20px) in nav. Never distort or tint.
 | Cold enterprise gray | Loses warmth. Use cream/ivory tones instead. |
 | Stock photos of people | Says nothing about the product. |
 | Auto-playing video | Breaks calm. |
-| Multiple font families | Parabole handles everything. Do not introduce Inter/Manrope/etc. |
+| Multiple font families | Geist handles everything. Do not introduce Inter/Manrope/etc. |
 | Purple accent colors | Old brand. The new accent is amber `#fcaa2d`. |
 | Many elements per screen | Dilutes the message. One point per section. |
 | `rounded-lg` on cards | Cards use `rounded-xl`. Buttons use `rounded-full`. |

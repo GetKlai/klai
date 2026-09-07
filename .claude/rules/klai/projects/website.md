@@ -45,6 +45,10 @@ Definitions live in `global.css` and page-level `<style is:global>` blocks (with
 
 All text uses Parabole. Sizes are set with explicit pixel values, not Tailwind scale.
 
+> [HARD] Parabole and Decima Mono here are unlicensed builds (Parabole is a
+> 58-glyph TRIAL). The portal migrated to Geist + Geist Mono (SIL OFL) in 2026;
+> this site still has to follow. Do not add new Parabole usage.
+
 ### Headings (font-display, weight 400)
 
 | Context | Size | Responsive | Tracking | Line height |

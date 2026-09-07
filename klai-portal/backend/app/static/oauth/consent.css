@@ -10,26 +10,26 @@
  * Falls back to system-ui if /fonts/* is unreachable.
  */
 @font-face {
-    font-family: "Parabole Regular";
-    src: url("/fonts/parabole-regular.woff2") format("woff2");
+    font-family: "Geist";
+    src: url("/fonts/geist-regular.woff2") format("woff2");
     font-display: swap;
     font-weight: 400;
 }
 @font-face {
-    font-family: "Parabole Medium";
-    src: url("/fonts/parabole-medium.woff2") format("woff2");
+    font-family: "Geist Medium";
+    src: url("/fonts/geist-medium.woff2") format("woff2");
     font-display: swap;
     font-weight: 500;
 }
 @font-face {
-    font-family: "Parabole Bold";
-    src: url("/fonts/parabole-bold.woff2") format("woff2");
+    font-family: "Geist Bold";
+    src: url("/fonts/geist-bold.woff2") format("woff2");
     font-display: swap;
     font-weight: 700;
 }
 @font-face {
-    font-family: "Decima Mono";
-    src: url("/fonts/decima-mono.woff2") format("woff2");
+    font-family: "Geist Mono";
+    src: url("/fonts/geist-mono.woff2") format("woff2");
     font-display: swap;
     font-weight: 400;
 }
@@ -51,10 +51,10 @@
     --color-border:          #e8e6de;
 
     /* Typography */
-    --font-sans:         "Parabole Regular", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-    --font-display:      "Parabole Medium", system-ui, sans-serif;
-    --font-display-bold: "Parabole Bold", system-ui, sans-serif;
-    --font-mono:         "Decima Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    --font-sans:         "Geist", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-display:      "Geist Medium", system-ui, sans-serif;
+    --font-display-bold: "Geist Bold", system-ui, sans-serif;
+    --font-mono:         "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
     /* Local semantic aliases for this page */
     --bg:           var(--color-background);
