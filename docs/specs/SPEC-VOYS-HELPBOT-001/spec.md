@@ -1,12 +1,16 @@
 ---
 id: SPEC-VOYS-HELPBOT-001
-version: "0.5.0"
-status: built, reviewed, open items recorded
+version: "0.6.0"
+status: built, reviewed, configurable in the portal
 created: 2026-09-04
-updated: 2026-09-04
+updated: 2026-09-07
 author: Claude (Opus 5), commissioned by Mark Vletter
 priority: high
-tenant_scope: Voys only (pilot)
+tenant_scope: platform-wide capability, Voys is the first tenant to use it
+# Note: the pilot is Voys, but nothing in the code is Voys-specific. Every
+# requirement here is a per-widget setting available to any tenant. The one
+# thing that WAS tenant-pinned (the HubSpot handoff, hardcoded to `getklai`)
+# was unpinned in 74c9b65e3 precisely because that pinning was a defect.
 related:
   - docs/research/help-page-chatbot-voys.md (research basis; gap IDs G-1..G-16 referenced below)
   - SPEC-PRIVACY-QUERY-SHADOW-001 (REQ-8 telemetry gating that REQ-1 inherits)
@@ -19,6 +23,7 @@ implementation_branch: feat/voys-helpbot-integratie
 
 | Version | Date | Change |
 |---|---|---|
+| 0.6.0 | 2026-09-07 | Everything the previous versions built was reachable only by editing the database. This version makes it configurable in the portal, and in doing so removed the last three places where a tenant name or a hostname was compiled into the product: the HubSpot handoff checked `org.slug == "getklai"`, the origin check carried a hardcoded host, and the frontend showed the Integrations tab only on one hostname. All three are now driven by the widget's own configuration. Added in the UI: the answer-mode switch (REQ-7), the booking URL that REQ-6 promises but never named, the outcome distribution from REQ-5 with the wording that a large 'unknown' share is by design, a live preview beside the settings, and a tone register — restrained or expressive — beside the support prompt of REQ-4. The register is the one genuinely new behaviour rather than an exposure of existing behaviour: the voice research measured two registers at Voys, and until now only the restrained one existed. |
 | 0.5.0 | 2026-09-04 | Independent holistic review (Fable) against the intent rather than the checklist. It found the measurement instrument inverted: REQ-5 labelled a single good exchange 'abandoned' and any conversation ending on an answer 'resolved', so the label tracked turn count, not outcome — and with thumbs at 2-8% response those two rules decided nearly every row. The defect came from brief A.6, i.e. from the same party that wrote the brief and approved the result. Fixed by refusing to read silence as a signal in either direction; a large 'unknown' share is now the honest reading and the argument for the LLM-as-judge pass. Also fixed: a red CI gate nobody had run (the vendored prompt copy lagged the canonical one) and an appointment promise that shipped unconditionally to every tenant. Corrected an overclaim in the research: REQ-2 relieves the mint limit, it does not remove the 60 rpm chat limit, so G-14 is partial, not void. |
 | 0.4.0 | 2026-09-04 | All eight requirements built and merged. REQ-4 was tuned a second time after Mark supplied the official brand documentation: eight principles turned out to be independently confirmed by the measurement, one contradiction (apologies) was resolved by register rather than by picking a side, and three things the help pages could not show were added. REQ-7 shipped with a sharper dividing line than specified — one decidable test instead of a list. One medium defect recorded rather than fixed: a broad-mode answer lands in the `escalated` outcome bucket. |
 | 0.3.0 | 2026-09-04 | REQ-6 rewritten before implementation. The escalation contract flipped twice on the same day and the reason matters for anyone reading the code: v0.2.0 forbade offering a human at all, because the only handoff (HubSpot) is pinned to tenant `getklai` (G-1). Mark then corrected the premise — an API integration with the support partner is coming that will offer appointment booking *inside* the chat, and until it lands we redirect to the partner's existing booking module. So the bot may offer an appointment again, but must not name a URL itself; the widget owns the link. REQ-7 (broad-mode consent switch) added from Mark's observation that non-strict answers know more but are less certain. |
@@ -234,6 +239,75 @@ straight into REQ-4's prompt.
 
 Brief: appendix A.8 · Commit `2335ed6` · Levert `docs/research/voys-tone-of-voice.md`
 
+## REQ-9 — Every setting reachable from the portal · done
+
+REQ-1 through REQ-8 all landed behind a database column. An administrator who
+wanted the customer-facing mode, the answer mode, or the booking URL had to ask
+an engineer, which means in practice nobody ever changed them. This requirement
+adds no chat behaviour at all — it exposes what already existed:
+
+| Setting | Where it lives | Which requirement it exposes |
+|---|---|---|
+| Customer-facing mode | Details tab, toggle | REQ-4 |
+| Answer mode (strict / broad) | Details tab, shown only in customer-facing mode | REQ-7 |
+| Tone register (restrained / expressive) | Details tab, shown only in customer-facing mode | REQ-11 |
+| Booking URL | Integrations tab, its own card | REQ-6 |
+| Outcome distribution | Activity tab | REQ-5 |
+
+The Details copy states plainly that a large share of conversations carries no
+outcome label and that this is the design, not a fault — otherwise the first
+person to read the dashboard concludes the measurement is broken.
+
+## REQ-10 — Nothing is pinned to one tenant or one hostname · done
+
+Three separate hardcodings kept the Integrations tab invisible to Voys, each of
+which individually made the feature unreachable:
+
+1. `partner.py` gated the HubSpot handoff on `org.slug == "getklai"`.
+2. The same file carried a hardcoded origin in the allowed-origin check.
+3. The frontend rendered the Integrations tab only when
+   `window.location.hostname === "getklai.getklai.com"`.
+
+All three are gone. The gate is now the widget's own connected HubSpot channel
+and its own configured origins. A tenant check standing in for a capability
+check is the failure mode to watch for here: it passes every test written by
+the tenant it was written for.
+
+Commit `74c9b65e3`
+
+## REQ-11 — Tone register beside the support prompt · done
+
+The voice research measured two registers at Voys, not one: the help articles
+are dry and functional, the marketing pages and blog sit noticeably higher.
+Until now only the restrained register existed, so a bot on a product page and
+a bot on a help page necessarily sounded the same.
+
+`SUPPORT_EXPRESSIVE_CHAT_SYSTEM_PROMPT` sits beside the restrained profile and
+differs from it only in the tone section: a witty remark is welcome at most once
+per answer and never when the visitor reports an outage, voices a complaint, or
+asks about a bill; emoji only where one carries meaning; a livelier greeting,
+with the structure of every answer unchanged from the opening line onwards.
+
+The prompt carries its own guard, *Register changes tone, never truth*, stating
+outright that it relaxes no rule above it. That is the failure worth preventing:
+not a bot that jokes, but a bot that grows loose about the facts because it was
+told to be warm. All six pre-existing profiles are byte-identical, verified by
+comparing resolved constant values rather than by reading the diff.
+
+## REQ-12 — Live preview beside the settings · done
+
+An administrator configured a widget and then put it on a public page without
+ever having seen it. The only way to check was to go live, on the surface where
+being wrong is most expensive.
+
+The panel renders the real widget against a preview session — the backend
+already excluded those from statistics and from the gaps dashboard, so this
+needed no new backend concept. It follows unsaved input for anything the browser
+owns (name, welcome line, starters, colour, theme), because seeing what you are
+typing is the point. Settings that steer the model cannot take effect before
+saving, and the panel says so rather than quietly ignoring them. Collapsible,
+with the choice remembered per administrator.
+
 # 4. Settled decisions — do not re-open
 
 **Escalation goes to the support partner, never to a phone number.** Today via
@@ -291,26 +365,29 @@ decision rather than a patch:
   reaches the visitor on this path. This is the concrete cost of the two
   parallel chat paths (§2, research §5.4); the reviewer advises fixing it as a
   requirement on the shared answer-policy layer rather than patching path B.
-- **Broad mode is sticky and can degrade later grounded answers.** Consent holds
-  for the conversation and also triggers on a soft gap, so a follow-up with
-  weak-but-usable chunks is forced broad. Consider hard-gap-only, or per-turn
-  consent.
-- **Admin preview traffic registers knowledge gaps**, while stats and outcome
-  already exclude preview conversations. Small fix, real dashboard pollution.
-- **The pilot cannot be configured in the portal**: no UI for `support_mode`,
-  `booking_url` or the outcome distribution. API or database only for now.
-- **The most-shown sentence of the bot is off-brand.** The fixed refusal reads
-  "Neem voor een vast antwoord contact op met de support", which the brand
-  document lists under what does not work — and because it bypasses the prompt,
-  the tone work cannot reach it.
+- ~~Broad mode is sticky and can degrade later grounded answers.~~ **Fixed.**
+  `_broad_mode_active` now requires `classify_gap(chunks) == "hard"`, so consent
+  no longer converts a soft gap into a broad answer
+  (`partner_chat.py:1837`).
+- ~~Admin preview traffic registers knowledge gaps.~~ **Fixed.** `is_preview`
+  threads through to `_schedule_gap_event`, which returns before recording
+  (`partner_chat.py:1990`). REQ-12's preview panel depends on this.
+- ~~The pilot cannot be configured in the portal.~~ **Fixed** — that is
+  REQ-9 through REQ-12.
+- ~~The most-shown sentence of the bot is off-brand.~~ **Fixed.** The refusal
+  now reads "Dit vind ik niet terug in onze helpartikelen…" and offers the
+  appointment, in the register the brand document asks for
+  (`klai_chat_prompts/__init__.py:263`).
 - **Gap rows carry a 7-day retention** while widget messages get 90, so the
   editorial signal expires faster than the conversations it came from.
-- **A broad answer lands in the `escalated` bucket.** Reviewer's counter: no
-  migration needed — the marker is in the content, so the stats endpoint can
-  count broad answers separately and `derive_outcome` can leave them `unknown`.
+- ~~A broad answer lands in the `escalated` bucket.~~ **Fixed** along the line
+  the reviewer proposed: `derive_outcome` reads the content marker and leaves a
+  broad answer `unknown` (`widget_outcome.py:151`). An explicit thumbs-up is
+  still checked first, so a rated broad answer counts as resolved.
 
 
-- All eight requirements are merged on `feat/voys-helpbot-integratie`. Nothing is pushed.
+- REQ-1 through REQ-8 are on `main`; REQ-9 through REQ-12 are on
+  `feat/chat-agent-config`.
 - Pilot configuration (widget, KB scope, allowed origins, conversation
   starters) — admin work, needs Voys content knowledge.
 - **Assumption to verify:** the support partner's booking module is reachable
