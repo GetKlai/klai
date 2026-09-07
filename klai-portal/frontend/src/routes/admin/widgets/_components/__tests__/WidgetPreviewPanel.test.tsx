@@ -1,0 +1,274 @@
+/**
+ * Tests for SPEC-WIDGET-PREVIEW-001: the admin preview panel.
+ *
+ * The panel must follow the NOT-YET-SAVED form state (name, welcome text),
+ * flag that answer behaviour (instructions, customer mode) only follows the
+ * SAVED settings, and degrade to a clean message when the preview session
+ * cannot be started while the rest of the screen keeps working.
+ *
+ * The chat surface itself is replaced with a props-recording stub; sending
+ * messages is the surface's own contract, not the panel's.
+ */
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, fireEvent } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+
+// ---------------------------------------------------------------------------
+// Module mocks - must be at the top level before any imports of the SUT.
+// ---------------------------------------------------------------------------
+
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}))
+
+// Paraglide compiles to src/paraglide, which is generated rather than
+// committed; resolve every message key the component tree uses to its own
+// name for stable assertions.
+const { MESSAGE_KEYS } = vi.hoisted(() => ({
+  MESSAGE_KEYS: [
+    'admin_shared_error_generic',
+    'admin_shared_field_name',
+    'admin_shared_save',
+    'admin_shared_success_updated',
+    'admin_widgets_appearance_section_brand',
+    'admin_widgets_appearance_section_chat_display',
+    'admin_widgets_appearance_section_position',
+    'admin_widgets_appearance_section_starters',
+    'admin_widgets_appearance_section_welcome',
+    'admin_widgets_brand_color_help',
+    'admin_widgets_brand_color_label',
+    'admin_widgets_brand_color_placeholder',
+    'admin_widgets_collect_user_info_help',
+    'admin_widgets_collect_user_info_label',
+    'admin_widgets_details_role_scope_help',
+    'admin_widgets_details_role_scope_label',
+    'admin_widgets_details_section_ai',
+    'admin_widgets_details_section_basics',
+    'admin_widgets_name_placeholder',
+    'admin_widgets_page_context_help',
+    'admin_widgets_page_context_label',
+    'admin_widgets_position_left',
+    'admin_widgets_position_right',
+    'admin_widgets_preview_badge',
+    'admin_widgets_preview_close',
+    'admin_widgets_preview_loading',
+    'admin_widgets_preview_model_note',
+    'admin_widgets_preview_not_counted',
+    'admin_widgets_preview_restart',
+    'admin_widgets_preview_retry',
+    'admin_widgets_preview_subtitle',
+    'admin_widgets_role_scope_placeholder',
+    'admin_widgets_show_meta_help',
+    'admin_widgets_show_meta_label',
+    'admin_widgets_show_sources_help',
+    'admin_widgets_show_sources_label',
+    'admin_widgets_support_mode_help',
+    'admin_widgets_support_mode_label',
+    'admin_widgets_theme_dark',
+    'admin_widgets_theme_label',
+    'admin_widgets_theme_light',
+    'admin_widgets_welcome_help',
+    'admin_widgets_welcome_label',
+    'admin_widgets_widget_hide_disclaimer_help',
+    'admin_widgets_widget_hide_disclaimer_label',
+    'admin_widgets_widget_starters_help',
+    'admin_widgets_widget_starters_label',
+    'admin_widgets_widget_starters_placeholder',
+    'admin_widgets_widget_system_prompt_help',
+    'admin_widgets_widget_system_prompt_label',
+    'admin_widgets_widget_system_prompt_placeholder',
+    'admin_widgets_widget_template_help',
+    'admin_widgets_widget_template_label',
+    'admin_widgets_widget_template_none',
+    'admin_widgets_widget_welcome_placeholder',
+    'widget_chat_preview_session_error',
+  ],
+}))
+
+vi.mock('@/paraglide/messages', () =>
+  Object.fromEntries(MESSAGE_KEYS.map((key) => [key, () => key])),
+)
+
+vi.mock('@/lib/auth', () => ({
+  useAuth: () => ({
+    isAuthenticated: true,
+    user: { profile: { sub: 'test-sub' } },
+  }),
+}))
+
+const apiFetchMock = vi.fn()
+vi.mock('@/lib/apiFetch', () => ({
+  apiFetch: (url: string, init?: RequestInit) => apiFetchMock(url, init),
+}))
+
+// Props-recording stub: the panel hands the preview values to the surface,
+// the tests read them back off the DOM.
+interface StubProps {
+  botName?: string
+  primaryColor?: string
+  welcomeMessage?: string
+}
+vi.mock('@/features/widgets/chat/WidgetChatSurface', () => ({
+  WidgetChatSurface: ({
+    botName = '',
+    primaryColor = '',
+    welcomeMessage = '',
+  }: StubProps) => (
+    <div data-testid="chat-surface" data-bot-name={botName} data-primary-color={primaryColor}>
+      {welcomeMessage}
+    </div>
+  ),
+}))
+
+// ---------------------------------------------------------------------------
+// Import SUT after mocks are registered.
+// ---------------------------------------------------------------------------
+
+import { WidgetPreviewPanel } from '../WidgetPreviewPanel'
+import { WidgetPreviewProvider } from '../../-preview'
+import { DetailsTab } from '../tabs/DetailsTab'
+import { AppearanceTab } from '../tabs/AppearanceTab'
+import type { WidgetDetailResponse } from '../../-types'
+
+// ---------------------------------------------------------------------------
+// Test helpers
+// ---------------------------------------------------------------------------
+
+function makeWidget(overrides?: Partial<WidgetDetailResponse>): WidgetDetailResponse {
+  return {
+    id: 'widget-uuid-1',
+    name: 'Test Widget',
+    widget_id: 'wgt_test',
+    description: null,
+    allow_any_origin: false,
+    public_share_enabled: false,
+    rate_limit_rpm: 60,
+    kb_access_count: 0,
+    last_used_at: null,
+    created_at: '2026-01-01T00:00:00Z',
+    created_by: 'user-1',
+    widget_config: {
+      allowed_origins: [],
+      title: 'Test Widget',
+      welcome_message: 'Welkom',
+      system_prompt: '',
+      css_variables: {},
+      conversation_starters: [],
+      hide_disclaimer: false,
+      template_slug: null,
+      primary_color: '#fcaa2d',
+      theme: 'light',
+      show_sources: true,
+      show_meta: false,
+      collect_user_info: false,
+      page_context_enabled: false,
+      widget_position: 'right',
+    },
+    kb_access: [],
+    ...overrides,
+  }
+}
+
+function renderScreen(widget: WidgetDetailResponse, tab: 'details' | 'appearance') {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  })
+  return render(
+    <QueryClientProvider client={client}>
+      <WidgetPreviewProvider widget={widget}>
+        <div>
+          {tab === 'details' ? <DetailsTab widget={widget} /> : <AppearanceTab widget={widget} />}
+          <WidgetPreviewPanel widget={widget} onCollapse={() => {}} />
+        </div>
+      </WidgetPreviewProvider>
+    </QueryClientProvider>,
+  )
+}
+
+beforeEach(() => {
+  apiFetchMock.mockReset()
+  apiFetchMock.mockImplementation((url: string) => {
+    if (url.includes('/preview-session')) {
+      return Promise.resolve({
+        session_token: 'preview-token',
+        chat_endpoint: '/partner/v1/chat/completions',
+        session_expires_at: '2026-01-01T02:00:00Z',
+      })
+    }
+    return Promise.resolve([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe('WidgetPreviewPanel - SPEC-WIDGET-PREVIEW-001', () => {
+  it('follows the unsaved widget name from the details form', async () => {
+    const widget = makeWidget()
+    renderScreen(widget, 'details')
+
+    await screen.findByTestId('chat-surface')
+    expect(screen.getByTestId('chat-surface').dataset.botName).toBe('Test Widget')
+
+    const nameInput = document.getElementById('widget-name') as HTMLInputElement
+    fireEvent.change(nameInput, { target: { value: 'Servicebot' } })
+
+    expect(screen.getByTestId('chat-surface').dataset.botName).toBe('Servicebot')
+  })
+
+  it('follows the unsaved welcome text and colour from the appearance form', async () => {
+    const widget = makeWidget()
+    renderScreen(widget, 'appearance')
+
+    const surface = await screen.findByTestId('chat-surface')
+    expect(surface.textContent).toBe('Welkom')
+
+    const welcomeInput = document.getElementById('widget-welcome') as HTMLInputElement
+    fireEvent.change(welcomeInput, { target: { value: 'Hoi, kan ik helpen?' } })
+    const colorInput = document.getElementById('widget-primary-color') as HTMLInputElement
+    fireEvent.change(colorInput, { target: { value: '#2266ee' } })
+
+    expect(screen.getByTestId('chat-surface').textContent).toBe('Hoi, kan ik helpen?')
+    expect(screen.getByTestId('chat-surface').dataset.primaryColor).toBe('#2266ee')
+  })
+
+  it('flags that answer behaviour uses the saved settings while instructions are edited', async () => {
+    renderScreen(makeWidget(), 'details')
+
+    await screen.findByTestId('chat-surface')
+    expect(
+      screen.queryByText('admin_widgets_preview_model_note'),
+    ).toBeNull()
+
+    const prompt = document.getElementById('widget-system-prompt') as HTMLTextAreaElement
+    fireEvent.change(prompt, { target: { value: 'Doe alsof je een ander bent.' } })
+
+    expect(screen.getByText('admin_widgets_preview_model_note')).toBeTruthy()
+  })
+
+  it('shows a clean error and keeps the rest of the screen when the preview session fails', async () => {
+    apiFetchMock.mockImplementation((url: string) => {
+      if (url.includes('/preview-session')) {
+        return Promise.reject(new Error('Widget auth not configured'))
+      }
+      return Promise.resolve([])
+    })
+
+    renderScreen(makeWidget(), 'details')
+
+    await screen.findByText('widget_chat_preview_session_error')
+    expect(screen.getByText('Widget auth not configured')).toBeTruthy()
+    // The settings form beside the panel keeps working.
+    expect(document.getElementById('widget-name')).toBeTruthy()
+    // No chat surface is mounted.
+    expect(screen.queryByTestId('chat-surface')).toBeNull()
+  })
+
+  it('states that preview conversations do not count toward statistics', async () => {
+    renderScreen(makeWidget(), 'appearance')
+
+    await screen.findByTestId('chat-surface')
+    expect(screen.getByText('admin_widgets_preview_not_counted')).toBeTruthy()
+  })
+})

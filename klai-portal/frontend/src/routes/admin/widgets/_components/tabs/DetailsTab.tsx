@@ -13,6 +13,7 @@ import { apiFetch } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
 import type { WidgetDetailResponse, WidgetConfig } from '../../-types'
 import { useUpdateWidget } from '../../-hooks'
+import { usePublishWidgetPreview } from '../../-preview'
 
 interface Template { slug: string; name: string; prompt_text: string }
 
@@ -32,6 +33,19 @@ export function DetailsTab({ widget }: Props) {
   const [pageContextEnabled, setPageContextEnabled] = useState(config.page_context_enabled ?? false)
   const [supportMode, setSupportMode] = useState(config.support_mode ?? false)
   const [toneRegister, setToneRegister] = useState<'restrained' | 'expressive'>(config.tone_register ?? 'restrained')
+
+  // The preview panel follows name and description live. Instructions,
+  // template, customer-facing mode and the page-context toggle only reach
+  // the model after save, so the tab reports them as dirty instead.
+  usePublishWidgetPreview('details', {
+    name,
+    description,
+    modelBehaviorDirty:
+      systemPrompt.trim() !== config.system_prompt ||
+      (templateSlug || null) !== (config.template_slug ?? null) ||
+      supportMode !== (config.support_mode ?? false) ||
+      pageContextEnabled !== (config.page_context_enabled ?? false),
+  })
 
   const templatesQuery = useQuery<Template[]>({
     queryKey: ['app-templates'],

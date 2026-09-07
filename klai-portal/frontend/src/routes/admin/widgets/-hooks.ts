@@ -13,6 +13,7 @@ import type {
   WidgetStats,
   StatsPeriod,
   HubSpotIntegrationStatus,
+  WidgetPreviewSessionResponse,
 } from './-types'
 
 export function useWidgets() {
@@ -32,6 +33,26 @@ export function useWidget(id: string) {
     queryKey: ['admin-widget', id],
     queryFn: async () => apiFetch<WidgetDetailResponse>(`/api/admin/widgets/${id}`),
     enabled: auth.isAuthenticated && !!id,
+  })
+}
+
+// Preview session for the admin's live preview panel. The token is valid for
+// an hour: fetch once, reuse across panel collapse/expand, and let the
+// interval (mounted panel only) mint a fresh one well before expiry instead
+// of letting a long-open preview run into a dead token. A save that changes
+// the widget (useUpdateWidget) invalidates the session, because the minted
+// JWT carries the kb_ids and must follow the saved knowledge-base access.
+export function useWidgetPreviewSession(id: string) {
+  const auth = useAuth()
+
+  return useQuery({
+    queryKey: ['admin-widget-preview-session', id],
+    queryFn: async () =>
+      apiFetch<WidgetPreviewSessionResponse>(`/api/admin/widgets/${id}/preview-session`),
+    enabled: auth.isAuthenticated && !!id,
+    retry: false,
+    staleTime: 45 * 60 * 1000,
+    refetchInterval: 45 * 60 * 1000,
   })
 }
 
@@ -62,6 +83,7 @@ export function useUpdateWidget(id: string) {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['admin-widgets'] })
       void queryClient.invalidateQueries({ queryKey: ['admin-widget', id] })
+      void queryClient.invalidateQueries({ queryKey: ['admin-widget-preview-session', id] })
     },
   })
 }

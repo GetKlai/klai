@@ -10,6 +10,7 @@ import { WIDGET_DEFAULT_PRIMARY_COLOR } from '@/features/widgets/config/appearan
 import * as m from '@/paraglide/messages'
 import type { WidgetDetailResponse, WidgetConfig } from '../../-types'
 import { useUpdateWidget } from '../../-hooks'
+import { usePublishWidgetPreview } from '../../-preview'
 
 const MAX_STARTERS = 6
 
@@ -35,6 +36,19 @@ export function AppearanceTab({ widget }: Props) {
   const [collectUserInfo, setCollectUserInfo] = useState(config.collect_user_info ?? false)
   const [hideDisclaimer, setHideDisclaimer] = useState(config.hide_disclaimer ?? false)
   const [widgetPosition, setWidgetPosition] = useState<'left' | 'right'>(config.widget_position || 'right')
+
+  // Everything on this tab is presentation, so the preview panel can follow
+  // it verbatim - before save. Starters travel as the raw textarea text.
+  usePublishWidgetPreview('appearance', {
+    welcome,
+    starters: startersRaw,
+    primaryColor,
+    theme,
+    showSources,
+    showMeta,
+    collectUserInfo,
+    hideDisclaimer,
+  })
 
   useEffect(() => {
     setWelcome(config.welcome_message)

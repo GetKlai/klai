@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
   ArrowLeft,
@@ -5,6 +6,7 @@ import {
   Shield,
   Palette,
   Code2,
+  PanelRightOpen,
   Plug,
   Activity,
   AlertTriangle,
@@ -13,8 +15,11 @@ import {
 import { Button } from '@/components/ui/button'
 import { Tabs, type TabItem } from '@/components/ui/tabs'
 import { QueryErrorState } from '@/components/ui/query-error-state'
+import { useAuth } from '@/lib/auth'
+import { STORAGE_KEYS } from '@/lib/storage'
 import * as m from '@/paraglide/messages'
 import { useWidget } from './-hooks'
+import { WidgetPreviewProvider } from './-preview'
 import { DetailsTab } from './_components/tabs/DetailsTab'
 import { KnowledgeBasesTab } from './_components/tabs/KnowledgeBasesTab'
 import { AppearanceTab } from './_components/tabs/AppearanceTab'
@@ -22,6 +27,7 @@ import { EmbedTab } from './_components/tabs/EmbedTab'
 import { IntegrationsTab } from './_components/tabs/IntegrationsTab'
 import { ActivityTab } from './_components/tabs/ActivityTab'
 import { DangerTab } from './_components/tabs/DangerTab'
+import { WidgetPreviewPanel } from './_components/WidgetPreviewPanel'
 import { PageContainer } from '@/components/ui/page-container'
 
 type TabId = 'details' | 'kbs' | 'appearance' | 'embed' | 'integrations' | 'activity' | 'danger'
@@ -53,8 +59,29 @@ function WidgetDetailPage() {
   const { id } = Route.useParams()
   const search = Route.useSearch()
   const navigate = useNavigate()
+  const auth = useAuth()
 
   const { data: widget, isLoading, error, refetch } = useWidget(id)
+
+  // The preview panel is collapsed per admin (localStorage is keyed on the
+  // user id, so a shared browser still remembers each admin's choice) and
+  // open by default.
+  const previewStorageKey = STORAGE_KEYS.widgetsPreviewCollapsed +
+    (auth.user ? `:${auth.user.profile.sub}` : '')
+  const [previewOpen, setPreviewOpen] = useState(() => {
+    try {
+      return localStorage.getItem(previewStorageKey) !== 'true'
+    } catch {
+      return true
+    }
+  })
+
+  function setPreviewVisibility(open: boolean) {
+    setPreviewOpen(open)
+    try {
+      localStorage.setItem(previewStorageKey, String(!open))
+    } catch { /* localStorage unavailable in sandboxed contexts */ }
+  }
 
   // The integrations tab used to be visible only on one hardcoded hostname,
   // from when the HubSpot handoff was a single-tenant pilot. That hid a fully
@@ -107,9 +134,9 @@ function WidgetDetailPage() {
   }
 
   return (
-    <PageContainer width="4xl" gap="8">
-      <div className="flex items-start gap-3">
-        <div className="flex-1">
+    <PageContainer width={previewOpen ? '6xl' : '4xl'} gap="8">
+      <div className="flex flex-wrap items-start gap-3">
+        <div className="min-w-0 flex-1">
           <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
             {widget.name}
           </h1>
@@ -119,33 +146,61 @@ function WidgetDetailPage() {
             </p>
           )}
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => navigate({ to: '/admin/widgets' })}
-        >
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          {m.admin_widgets_back_to_list()}
-        </Button>
+        <div className="flex shrink-0 items-center gap-2">
+          {!previewOpen && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setPreviewVisibility(true)}
+            >
+              <PanelRightOpen className="h-4 w-4 mr-2" />
+              {m.admin_widgets_preview_open()}
+            </Button>
+          )}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => navigate({ to: '/admin/widgets' })}
+          >
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            {m.admin_widgets_back_to_list()}
+          </Button>
+        </div>
       </div>
 
-      <Tabs
-        tabs={tabs}
-        value={activeTab}
-        onValueChange={setTab}
-        className="overflow-x-auto"
-      />
+      {/* Settings on the left, live visitor preview on the right; the panel
+          stacks below the content on narrow screens. */}
+      <WidgetPreviewProvider widget={widget}>
+        <div className="grid min-w-0 items-start gap-8 xl:grid-cols-[minmax(0,1fr)_24rem]">
+          <div className="min-w-0 space-y-8">
+            <Tabs
+              tabs={tabs}
+              value={activeTab}
+              onValueChange={setTab}
+              className="overflow-x-auto"
+            />
 
-      {activeTab === 'details' && <DetailsTab widget={widget} />}
-      {activeTab === 'kbs' && <KnowledgeBasesTab widget={widget} />}
-      {activeTab === 'appearance' && <AppearanceTab widget={widget} />}
-      {activeTab === 'embed' && <EmbedTab widget={widget} />}
-      {activeTab === 'integrations' && (
-        <IntegrationsTab widget={widget} />
-      )}
-      {activeTab === 'activity' && <ActivityTab widget={widget} />}
-      {activeTab === 'danger' && <DangerTab widget={widget} />}
+            {activeTab === 'details' && <DetailsTab widget={widget} />}
+            {activeTab === 'kbs' && <KnowledgeBasesTab widget={widget} />}
+            {activeTab === 'appearance' && <AppearanceTab widget={widget} />}
+            {activeTab === 'embed' && <EmbedTab widget={widget} />}
+            {activeTab === 'integrations' && (
+              <IntegrationsTab widget={widget} />
+            )}
+            {activeTab === 'activity' && <ActivityTab widget={widget} />}
+            {activeTab === 'danger' && <DangerTab widget={widget} />}
+          </div>
+
+          {previewOpen && (
+            <WidgetPreviewPanel
+              widget={widget}
+              onCollapse={() => setPreviewVisibility(false)}
+            />
+          )}
+        </div>
+      </WidgetPreviewProvider>
     </PageContainer>
   )
 }
