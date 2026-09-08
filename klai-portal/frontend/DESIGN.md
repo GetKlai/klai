@@ -51,10 +51,10 @@ colors:
   sidebar-accent-foreground: "#191918"
   sidebar-muted-foreground: "#19191866"
 typography:
-  sans: { fontFamily: "\"Parabole Regular\", system-ui, sans-serif" }
-  display: { fontFamily: "\"Parabole Medium\", system-ui, sans-serif" }
-  display-bold: { fontFamily: "\"Parabole Bold\", system-ui, sans-serif" }
-  mono: { fontFamily: "\"Decima Mono\", monospace" }
+  sans: { fontFamily: "\"Geist\", system-ui, sans-serif" }
+  display: { fontFamily: "\"Geist Medium\", system-ui, sans-serif" }
+  display-bold: { fontFamily: "\"Geist Bold\", system-ui, sans-serif" }
+  mono: { fontFamily: "\"Geist Mono\", ui-monospace, monospace" }
   text-xs: { fontSize: "0.75rem", lineHeight: "calc(1 / 0.75)" }
   text-sm: { fontSize: "0.875rem", lineHeight: "calc(1.25 / 0.875)" }
   text-base: { fontSize: "1rem", lineHeight: "calc(1.5 / 1)" }
@@ -199,10 +199,10 @@ The portal root is **110%** of the browser default. The rem-based type scale the
 
 | Font token | Family |
 |---|---|
-| `font-sans` | `"Parabole Regular", system-ui, sans-serif` |
-| `font-display` | `"Parabole Medium", system-ui, sans-serif` |
-| `font-display-bold` | `"Parabole Bold", system-ui, sans-serif` |
-| `font-mono` | `"Decima Mono", monospace` |
+| `font-sans` | `"Geist", system-ui, sans-serif` |
+| `font-display` | `"Geist Medium", system-ui, sans-serif` |
+| `font-display-bold` | `"Geist Bold", system-ui, sans-serif` |
+| `font-mono` | `"Geist Mono", ui-monospace, monospace` |
 
 | Type token | Font size | Line height |
 |---|---|---|

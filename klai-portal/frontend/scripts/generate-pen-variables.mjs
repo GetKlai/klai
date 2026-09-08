@@ -39,10 +39,10 @@ const OPACITY_MODIFIER_PATTERN = /var\(--color-([\w-]+)\)\]\/(?:\[([\d.]+)\]|(\d
 // exists in CSS. Parabole's three weights map to one Schibsted Grotesk family
 // because weight is a separate property in pen (fontWeight).
 const PREVIEW_FONTS = {
-  'font-sans': 'Schibsted Grotesk',
-  'font-display': 'Schibsted Grotesk',
-  'font-display-bold': 'Schibsted Grotesk',
-  'font-mono': 'DM Mono',
+  'font-sans': 'Geist',
+  'font-display': 'Geist',
+  'font-display-bold': 'Geist',
+  'font-mono': 'Geist Mono',
 }
 
 const args = process.argv.slice(2)
@@ -413,7 +413,7 @@ function generateVariables() {
     }
     variables[`${name}-preview`] = { type: 'string', value: substitute }
     warnings.push(
-      `canvas preview font: ${name} -> ${substitute} (pen.dev cannot load the self-hosted brand face)`,
+      `canvas font: ${name} -> ${substitute} (pen.dev renders Google families; the per-weight aliases map onto the base family)`,
     )
   }
 
