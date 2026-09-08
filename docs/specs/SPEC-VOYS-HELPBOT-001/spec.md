@@ -282,14 +282,18 @@ flow ever running.
 
 The lesson generalises, and it cuts against the instinct that produced the
 error: **a tenant check is not automatically a leftover.** Before removing one,
-find what it is standing in front of. Here it stood in front of a
-single-tenant integration, and only a per-tenant channel binding — not a
-config flag — makes it safe to remove.
+find what it is standing in front of.
 
-The Integrations tab now shows the HubSpot card only when the backend's own
-status endpoint answers, so a tenant it does not serve sees the booking-URL
-card and no broken integration. That is data-driven rather than a second
-hostname check, so it starts working by itself once per-tenant channels land.
+**This gate is permanent, not a stopgap.** HubSpot is Klai's own support inbox
+and stays that way. Voys does not escalate to HubSpot and never will — it
+escalates to the support partner (the Nerds), today through their booking
+module and later through their API (§4). Nobody is waiting on a per-tenant
+HubSpot channel, because no other tenant is meant to have one.
+
+The Integrations tab therefore shows the HubSpot card only when the backend's
+own status endpoint answers. For every other tenant that card is not missing
+functionality: the booking URL beside it IS the escalation route, and it is the
+one the settled decision names.
 
 Commits `74c9b65e3` (unpin) and the follow-up that restored the tenant gate
 after review.
@@ -337,6 +341,13 @@ just cited. This was restated three times in the same session, so it is written
 down here: the tone-of-voice profile observes that Voys' own articles sometimes
 close with the support number, and that observation does not transfer to the
 bot. Article style and product policy are different things.
+
+**And the destination is the Nerds, not HubSpot.** HubSpot is Klai's own support
+inbox, used by the platform tenant only. A Voys visitor who needs a human goes
+to the support partner — booking module today, their API later. So a sentence
+like "Voys cannot use the HubSpot handoff yet" is wrong twice over: it is not a
+limitation, and it is not the route. Do not write per-tenant HubSpot into any
+plan, backlog item or open-items list; it is not coming.
 
 # 5. Other decisions worth preserving
 
@@ -397,14 +408,13 @@ decision rather than a patch:
   now reads "Dit vind ik niet terug in onze helpartikelen…" and offers the
   appointment, in the register the brand document asks for
   (`klai_chat_prompts/__init__.py:263`).
-- **HubSpot is a single-tenant integration wearing a multi-tenant UI.** One
-  global channel account, one global recipient, and an `integrations` block that
-  any tenant admin can write through the generic widget PATCH. The handoff is
-  therefore gated on the platform tenant (REQ-10). Two things are needed before
-  another tenant can use it: a per-tenant channel binding that the handoff
-  actually passes to `ensure_channel_account`, and a server-managed connection
-  record so `status: "connected"` means the protected flow ran rather than that
-  someone said so.
+- **The widget's `integrations` block is client-writable and is not proof of a
+  connection.** The generic widget PATCH replaces it wholesale, so
+  `status: "connected"` means a tenant admin wrote it, not that the protected
+  connect flow ran. Today the platform-tenant gate makes that harmless. If
+  `integrations` ever gains a second consumer, it needs a server-managed
+  connection record first. (This is NOT a step toward per-tenant HubSpot — see
+  §4: other tenants escalate to the support partner, not to HubSpot.)
 - **REQ-11 reaches the visitor less often than the prompt suggests.** The
   citation firewall replaces any model output it cannot attach to a trusted
   source with the fixed refusal (`partner_chat.py:1578`). The expressive
