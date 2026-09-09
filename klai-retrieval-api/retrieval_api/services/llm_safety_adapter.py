@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from klai_chat_prompts.language import identify_text_language
 from klai_llm_safety import SafetyDecision, SafetyPhase, SafetyRequest, SafetySurface, check_text
 
 
@@ -35,7 +36,9 @@ def check_coreference_input(query: str, history: list[dict]) -> SafetyDecision:
             text=text,
             phase=SafetyPhase.INPUT,
             surface=SafetySurface.RETRIEVAL_COREFERENCE,
-            locale_hint=query,
+            # locale_hint is a language CODE, identified from the query with
+            # the shared mechanism — never the raw query text.
+            locale_hint=identify_text_language(query),
         )
     )
 
@@ -46,7 +49,7 @@ def check_coreference_output(text: str, *, query: str) -> SafetyDecision:
             text=text,
             phase=SafetyPhase.OUTPUT,
             surface=SafetySurface.RETRIEVAL_COREFERENCE,
-            locale_hint=query,
+            locale_hint=identify_text_language(query),
         )
     )
 
@@ -57,6 +60,6 @@ def check_synthesis_context(text: str, *, query: str) -> SafetyDecision:
             text=text,
             phase=SafetyPhase.CONTEXT,
             surface=SafetySurface.RETRIEVAL_SYNTHESIS,
-            locale_hint=query,
+            locale_hint=identify_text_language(query),
         )
     )

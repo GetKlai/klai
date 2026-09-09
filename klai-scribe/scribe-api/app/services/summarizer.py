@@ -113,13 +113,16 @@ def _with_untrusted_transcript_guard(system: str) -> str:
     return f"{system}{_UNTRUSTED_TRANSCRIPT_GUARD}"
 
 
-def _safety_decision(text: str, *, phase: SafetyPhase) -> SafetyDecision:
+def _safety_decision(text: str, *, phase: SafetyPhase, language: str | None) -> SafetyDecision:
+    # locale_hint is a language CODE, never the transcript: scribe knows the
+    # meeting's target language and the summary is written in it, so the
+    # refusal follows it (empty falls back to English, same as the prompt).
     return check_text(
         SafetyRequest(
             text=text,
             phase=phase,
             surface=SafetySurface.SCRIBE_SUMMARY,
-            locale_hint=text,
+            locale_hint=language or "en",
         )
     )
 
@@ -180,7 +183,7 @@ async def extract_facts(
 ) -> dict:
     """Run extraction prompt; return structured facts dict."""
     lang_name = _LANGUAGE_NAMES.get(language or "en", "English")
-    decision = _safety_decision(transcript, phase=SafetyPhase.CONTEXT)
+    decision = _safety_decision(transcript, phase=SafetyPhase.CONTEXT, language=language)
     if not decision.allowed:
         logger.warning("scribe_transcript_context_safety_flagged reason=%s", decision.reason)
     system = _with_untrusted_transcript_guard(get_extraction_prompt(recording_type))
@@ -210,10 +213,10 @@ async def synthesize_summary(
     markdown = await _call_llm(
         system, user_prompt, model=settings.synthesis_model, temperature=0.3, org_id=org_id
     )
-    decision = _safety_decision(markdown, phase=SafetyPhase.OUTPUT)
+    decision = _safety_decision(markdown, phase=SafetyPhase.OUTPUT, language=language)
     if not decision.allowed:
         logger.warning("scribe_summary_output_blocked reason=%s", decision.reason)
-        return refusal_message("", decision.reason)
+        return refusal_message(language or "en", decision.reason)
     return markdown
 
 
