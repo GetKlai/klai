@@ -671,6 +671,25 @@ def test_gate_machine_rejection_and_low_confidence_are_separate_reasons() -> Non
     assert machine_only.votes == 0
 
 
+def test_short_dutch_question_with_protocol_acronym_is_not_english() -> None:
+    # Regression: a Dutch question whose only non-Dutch-looking token is a
+    # protocol acronym (TCP/IP, DNS, SIP, ...) must never resolve to English.
+    for text in (
+        "Wat is TCP/IP?",
+        "Wat is TCP/IP? Antwoord kort. Prod smoke 1757439603123",
+        "Hoe werkt DNS?",
+    ):
+        decision = clm.resolve_conversation_language(user_turns(text))
+        assert decision.language in (None, "nl"), (text, decision)
+    for text in (  # English controls must still resolve to English.
+        "What is TCP/IP?",
+        "How does DNS work?",
+        "Can you explain the SIP trunk configuration?",
+    ):
+        decision = clm.resolve_conversation_language(user_turns(text))
+        assert decision.language == "en", (text, decision)
+
+
 def test_counter_votes_plus_abstentions_equal_user_turns() -> None:
     messages = user_turns(NL_1, FENCED, EN_1, "Ja", "Antwoord in het Nederlands")
     decision = clm.resolve_conversation_language(messages)

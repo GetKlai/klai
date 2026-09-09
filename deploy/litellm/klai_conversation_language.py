@@ -653,6 +653,29 @@ def _reset_detector_cache() -> None:
     _identifier_built = False
 
 
+# Protocol/product acronyms Klai's Dutch support traffic asks about
+# constantly. langid's confidence in the surrounding sentence is unchanged by
+# their presence (measured), but the acronym still counts as a word toward
+# the LONG_PROSE_WORDS tier switch, which drops the confidence bar required
+# to vote from IDENTIFY_MIN_CONFIDENCE_SHORT (0.99) to IDENTIFY_MIN_CONFIDENCE
+# (0.70) — enough for a borderline-English score to wrongly pass.
+_PROTOCOL_ACRONYMS = frozenset(
+    {
+        "tcp", "ip", "dns", "sip", "voip", "ssl", "dhcp", "nat", "api",
+        "pbx", "udp", "tls", "http", "https",
+    }
+)
+_PROTOCOL_ACRONYM_RE = re.compile(
+    r"\b(?:" + "|".join(sorted(_PROTOCOL_ACRONYMS, key=len, reverse=True)) + r")\b",
+    re.IGNORECASE,
+)
+
+
+def _strip_protocol_acronyms(text: str) -> str:
+    """Blank out :data:`_PROTOCOL_ACRONYMS` tokens before identification."""
+    return _PROTOCOL_ACRONYM_RE.sub(" ", text)
+
+
 def _identify(identifier: Any, text: str) -> str | None:
     """Classify ``text`` with langid; return a target code or None (abstain).
 
@@ -660,12 +683,15 @@ def _identify(identifier: Any, text: str) -> str | None:
     reach :data:`IDENTIFY_MIN_CONFIDENCE`; shorter surviving prose must reach
     :data:`IDENTIFY_MIN_CONFIDENCE_SHORT`, because cross-language look-alike
     fragments fool langid at confidence values that look fine at 0.70.
+    Protocol acronyms (see :data:`_PROTOCOL_ACRONYMS`) are stripped first, for
+    the word count as well as for the text handed to langid.
     """
+    stripped = _strip_protocol_acronyms(text)
     try:
-        lang, confidence = identifier.classify(text)
+        lang, confidence = identifier.classify(stripped)
     except Exception:  # noqa: BLE001, RUF100 - a broken classify is an abstention
         return None
-    words = len(_WORD_RE.findall(text))
+    words = len(_WORD_RE.findall(stripped))
     threshold = IDENTIFY_MIN_CONFIDENCE if words >= LONG_PROSE_WORDS else IDENTIFY_MIN_CONFIDENCE_SHORT
     if lang in TARGET_LANGUAGES and float(confidence) >= threshold:
         return str(lang)
