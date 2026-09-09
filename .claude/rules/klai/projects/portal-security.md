@@ -174,7 +174,7 @@ rowcount=0 DML on those tables at ERROR level; in tests,
 2. Write the policy in a new `alembic/versions/post_deploy_*.sql` file
    using the category's pattern. Wrap in `BEGIN`/`COMMIT`.
 3. For category D: audit every callsite that touches the model or
-   tablename (grep, CodeIndex `impact()`). Each must go through one of
+   tablename (grep, `codebase-memory-mcp cli trace_path --project <name> --function-name "<Model>" --direction inbound`). Each must go through one of
    the three patterns above.
 4. Add the table to `RLS_DML_TABLES` in `app/core/rls_guard.py` so the
    event listener covers it.

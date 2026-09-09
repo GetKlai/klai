@@ -3,7 +3,6 @@ paths:
   - "**/docker-compose*.yml"
   - "**/Dockerfile"
   - ".github/**/*.yml"
-  - "**/*.sh"
   - "**/Caddyfile"
 ---
 # Container Hygiene

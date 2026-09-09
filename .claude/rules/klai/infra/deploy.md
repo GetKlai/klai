@@ -3,7 +3,6 @@ paths:
   - "**/Dockerfile"
   - "**/docker-compose*.yml"
   - ".github/**/*.yml"
-  - "**/*.sh"
 ---
 # Deployment & CI/CD
 

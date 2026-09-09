@@ -438,7 +438,8 @@ Rules for the implementer:
 - Write the failing test first for every requirement. AC-4 and AC-9 must be RED against
   current `main` before the fix, and that must be stated in the PR body with the actual
   failure output — not asserted.
-- Run `mcp__codeindex__impact` on `source_aware_select`, `route_to_sources`,
+- Run `codebase-memory-mcp cli trace_path --project <name> --function-name <fn> --direction inbound`
+  on `source_aware_select`, `route_to_sources`,
   `fetch_source_catalog`, and `_compute_confidence_band` before editing. These are shared
   helpers on a cross-service contract; AGENTS.md requires it.
 - Do not "improve" adjacent code. `minimal-changes` applies. Deleting the functions named

@@ -65,6 +65,10 @@ that mistake cost a full audit cycle to detect.
   / KB-unavailable block outside `deploy/litellm/klai_knowledge.py`
   unless you migrated it into `klai-libs/chat-prompts` and updated
   every other consumer in the same PR.
+- A module lives where its only consumer is. Move it to `klai-libs/chat-prompts`
+  only in the PR that adds the second consumer: the vendored-copy pattern doubles
+  every line, never pay that for a speculative consumer. A new dependency in the
+  LiteLLM container is class L (needs Mark's yes).
 - The CI lint `scripts/lint-no-duplicate-chat-prompt.sh` enforces both
   rules. It checks two anchor sets — the GROUNDED prompt anchors
   (canonical: `klai-libs/chat-prompts`) and the LiteLLM-hook NL prefix

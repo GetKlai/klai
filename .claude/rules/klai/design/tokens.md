@@ -1,11 +1,15 @@
 ---
 paths:
-  - "**"
+  - "klai-portal/frontend/**"
+  - "klai-website/**"
+  - "klai-portal/backend/app/templates/**"
+  - "klai-portal/backend/app/static/**"
 ---
-# Klai Design Contract — Always-Loaded Entry Point
+# Klai Design Contract
 
-> Loads on every operation so an agent sees the design sources before choosing
-> values in user-facing markup (HTML, CSS, JSX, email-template).
+> Loads when portal, website, or email-template files are touched, so an agent
+> sees the design sources before choosing values in user-facing markup (HTML,
+> CSS, JSX, email-template).
 >
 > Generated portal contract: `klai-portal/frontend/DESIGN.md`.
 > Rules ledger: `klai-portal/frontend/docs/ui-standards.md`.

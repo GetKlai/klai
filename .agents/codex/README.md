@@ -34,7 +34,8 @@ before escalating — escalate for genuine uncertainty, not by default:
 
 ## What Codex shares with Claude
 
-- Project-scoped CodeIndex graph context for high-blast-radius Klai work.
+- Project-scoped code graph via `codebase-memory-mcp` (CLI only; data lives in
+  `~/.cache/codebase-memory-mcp/`, nothing in the repo) for high-blast-radius Klai work.
 - Project browser and observability tooling where configured for the active CLI.
 - The same model-neutral rules in the root and nested `AGENTS.md` files.
 
@@ -48,10 +49,18 @@ code exploration tasks:
 2. Follow `.serena/project.yml` for source-code exploration and symbol edits.
 3. Use normal file reads/search for Markdown, YAML, config, env examples, and
    other non-code files.
+4. If Serena is unavailable, continue with local source inspection and say so in
+   one line.
 
-Tracked `.serena/memories/**` files are public repo content. They may contain
-stable, contributor-safe project orientation only. Keep production operations in
-`klai-infra` and GTM/compliance/research context in `klai-private`.
+Serena memory files in this public repo are public documentation. Keep them
+evergreen and contributor-safe only: repo layout, coding patterns, public
+service contracts, local development, and self-hosting templates are allowed.
+Do not write Klai production hostnames, SSH aliases, IPs, tunnel topology,
+secret names that are not already part of public code/config contracts,
+operator runbooks, business/GTM plans, compliance records, or customer context
+to `.serena/memories/**`. Production operations belong in the private
+`klai-infra` repo; business, GTM, compliance, and research context belongs in
+the private `klai-private` repo.
 
 ## How instructions load under Codex
 
