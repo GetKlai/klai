@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import copy
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -255,6 +256,35 @@ def test_gate_needs_a_majority_of_machine_lines_not_just_any_of_them() -> None:
     )
     ev = clm.classify_turn_evidence(turn)
     assert ev.classification == clm.EVIDENCE_PROSE
+
+
+SIP_EXPORT_PATH = Path(__file__).resolve().parent / "fixtures" / "sip-leg-export.txt"
+
+
+def sip_leg_export() -> str:
+    # Real anonymised VoIP leg export: "SIP packets - Leg #1 …". 349 non-empty
+    # lines; only ~10% survive _line_is_machine (SDP attribute lines, SIP
+    # status/reason phrases, counters). The proportional rule must abstain on
+    # structure alone — the identifier labels the readable debris en@1.0.
+    return SIP_EXPORT_PATH.read_text(encoding="utf-8")
+
+
+def test_gate_abstains_on_sip_leg_export_despite_readable_survivors() -> None:
+    ev = clm.classify_turn_evidence(sip_leg_export())
+    assert ev.classification == clm.EVIDENCE_MACHINE
+    assert not ev.has_evidence
+    # The gate decides without consulting the identifier: the turn abstains.
+    assert clm.identify_text_language(sip_leg_export()) is None
+
+
+def test_sip_leg_export_with_short_dutch_question_never_votes_english() -> None:
+    turn = "Niks anders dan dat?\n\n" + sip_leg_export()
+    decision = clm.resolve_conversation_language(user_turns(turn))
+    assert decision.language != "en"
+    # The short question line stays under MIN_PROSE_SENTENCE_WORDS, so the
+    # whole machine-dominated turn abstains: no vote at all.
+    assert decision.votes == 0
+    assert decision.abstentions == 1
 
 
 def test_gate_empty_text_is_classified_empty() -> None:
@@ -690,6 +720,60 @@ def test_short_dutch_question_with_protocol_acronym_is_not_english() -> None:
         assert decision.language == "en", (text, decision)
 
 
+# --- Short prose: deterministic decision from unambiguous function words ---
+
+# Typical short widget questions. langid abstains on these or lands below the
+# short-text confidence bar; the unambiguous function words decide instead.
+SHORT_NL_QUESTIONS = (
+    "Wie is Jantine?",
+    "Wat kost dit?",
+    "Hoe log ik in?",
+    "Welke nummers heb ik?",
+    "Kun je dat uitleggen?",
+    "Wat is TCP/IP?",
+)
+SHORT_EN_QUESTIONS = (
+    "Who is Jantine?",
+    "What does this cost?",
+    "How do I log in?",
+    "Which numbers do I have?",
+    "Can you explain that?",
+    "What is TCP/IP?",
+    "How does DNS work?",
+    "Can you explain the SIP trunk configuration?",
+)
+
+
+def test_short_dutch_questions_resolve_nl_deterministically() -> None:
+    for text in SHORT_NL_QUESTIONS:
+        assert clm.identify_text_language(text) == "nl", text
+
+
+def test_short_english_questions_resolve_en_deterministically() -> None:
+    for text in SHORT_EN_QUESTIONS:
+        assert clm.identify_text_language(text) == "en", text
+
+
+def test_function_word_rule_falls_through_on_both_sides_or_neither() -> None:
+    # Words from BOTH sides or from NEITHER side carry no deterministic
+    # signal; turns longer than the "short" band are left to langid.
+    assert clm._short_prose_function_language("Wat does het zeggen?") is None
+    assert clm._short_prose_function_language("Thanks a lot") is None
+    assert clm._short_prose_function_language("Ja, dat is goed") is None  # shared words only
+    assert clm._short_prose_function_language(NL_2) is None  # 11 words: not short
+
+
+def test_function_word_rule_keeps_gate_and_request_precedence() -> None:
+    # Machine text never reaches the rule (gate first)…
+    assert clm.identify_text_language(JSON_STIMULUS) is None
+    # …and an explicit request outranks it: the request table already decides
+    # these turns before any identification happens.
+    nl = clm.resolve_conversation_language(user_turns("Antwoord in het Nederlands"))
+    en = clm.resolve_conversation_language(user_turns("In English please"))
+    assert nl.language == "nl" and nl.reason == clm.REASON_EXPLICIT_REQUEST
+    assert en.language == "en" and en.reason == clm.REASON_EXPLICIT_REQUEST
+
+
 def test_counter_votes_plus_abstentions_equal_user_turns() -> None:
     messages = user_turns(NL_1, FENCED, EN_1, "Ja", "Antwoord in het Nederlands")
     decision = clm.resolve_conversation_language(messages)
@@ -852,3 +936,16 @@ def test_identify_text_language_matches_the_conversation_decision() -> None:
         assert clm.identify_text_language(text) == clm.resolve_conversation_language(
             user_turns(text)
         ).language
+
+
+def test_short_german_question_is_not_hijacked_by_the_dutch_function_word_table() -> None:
+    """The function-word rule breaks the nl/en tie only; it never overrides langid on a third language.
+
+    German "wie" (how) is spelled like Dutch "wie" (who). Measured 2026-09-09: with the
+    rule running before langid, "Wie funktioniert das?" resolved to nl.
+    """
+    for text in ("Wie funktioniert das?", "Wie geht es Ihnen?", "Kann ich das ändern?"):
+        assert clm.resolve_conversation_language([{"role": "user", "content": text}]).language == "de", text
+    # The tie-break itself still works for the languages it exists for.
+    assert clm.resolve_conversation_language([{"role": "user", "content": "Wie is Jantine?"}]).language == "nl"
+    assert clm.resolve_conversation_language([{"role": "user", "content": "How does it work?"}]).language == "en"

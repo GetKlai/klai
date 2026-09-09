@@ -1,0 +1,375 @@
+SIP packets - Leg #1 (000000000 -> 637)
+Call-ID: REDACTEDCALLID
+20 message(s)
+========================================
+
+[2026-09-07 13:20:52.928 CEST] → INVITE  (10.0.0.1 → 10.0.0.2)
+INVITE sip:637@sip.example.invalid SIP/2.0
+Via: SIP/2.0/TLS 10.0.0.3:59416;branch=z9hG4bKREDACTED;rport
+From: <sip:000000000@sip.example.invalid>;tag=REDACTEDTAG
+To: sip:637@sip.example.invalid
+CSeq: 20 INVITE
+Call-ID: REDACTEDCALLID
+Max-Forwards: 69
+Supported: replaces, outbound, gruu, path
+Allow: INVITE, ACK, CANCEL, OPTIONS, BYE, REFER, NOTIFY, MESSAGE, SUBSCRIBE, INFO, PRACK, UPDATE
+Content-Type: application/sdp
+Content-Length: 708
+Contact: <sip:000000000@10.0.0.1:59416;transport=tls>;expires=3600;received="sip:10.0.0.2:5070"
+User-Agent: Vialer Android v7.74.0
+
+v=0
+o=000000000 3047 1584 IN IP4 10.0.0.3
+s=Talk
+c=IN IP4 10.0.0.3
+t=0 0
+a=rtcp-xr:rcvr-rtt=all:10000 stat-summary=loss,dup,jitt,TTL voip-metrics
+m=audio 48625 RTP/SAVP 96 101
+a=rtpmap:96 opus/48000/2
+a=fmtp:96 useinbandfec=1
+a=rtpmap:101 telephone-event/48000
+a=crypto:1 AEAD_AES_128_GCM inline:TjLools6A+KH0dUdLA8jEjiqppSz8TBzATB8hQ==
+a=crypto:2 AES_CM_128_HMAC_SHA1_80 inline:7sbJeVHF/xWy5psUBuPFwef08WxS/ZUt27vFvCz0
+a=crypto:3 AEAD_AES_256_GCM inline:ykRD+mLwM3rVSjJbY8TLmXHLwN4ASRgXbXPgPHUufOjvfsEP7j2aC2QvYF0=
+a=crypto:4 AES_256_CM_HMAC_SHA1_80 inline:RaqwmHTUNkQlyO35b1cq/6Eca8dPxeKe+xWKhwCUyT3h7oejVuxGwVrUuGqRtw==
+a=rtcp:33035
+a=rtcp-fb:* trr-int 1000
+a=rtcp-fb:* ccm tmmbr
+
+[2026-09-07 13:20:52.929 CEST] ← 100  (10.0.0.2 ← 10.0.0.1)
+SIP/2.0 100 Giving it a try
+Via: SIP/2.0/TLS 10.0.0.3:59416;received=10.0.0.1;branch=z9hG4bKREDACTED;rport=59416
+To: sip:637@sip.example.invalid
+From: <sip:000000000@sip.example.invalid>;tag=REDACTEDTAG
+Call-ID: REDACTEDCALLID
+CSeq: 20 INVITE
+Server: VGPXY--OS
+Content-Length: 0
+
+[2026-09-07 13:20:52.929 CEST] → INVITE  (10.0.0.2 → 10.0.0.4)
+INVITE sip:637@sip.example.invalid SIP/2.0
+Record-Route: <sip:10.0.0.2:5070;r2=on;lr>
+Record-Route: <sip:10.0.0.2:5061;transport=tls;r2=on;lr>
+Via: SIP/2.0/UDP 10.0.0.2:5070;branch=z9hG4bKREDACTED;i=64536741
+Via: SIP/2.0/TLS 10.0.0.3:59416;received=10.0.0.1;branch=z9hG4bKREDACTED;rport=59416
+From: <sip:000000000@sip.example.invalid>;tag=REDACTEDTAG
+To: sip:637@sip.example.invalid
+CSeq: 20 INVITE
+Call-ID: REDACTEDCALLID
+Max-Forwards: 69
+Supported: replaces, outbound, gruu, path
+Allow: INVITE, ACK, CANCEL, OPTIONS, BYE, REFER, NOTIFY, MESSAGE, SUBSCRIBE, INFO, PRACK, UPDATE
+Content-Type: application/sdp
+Content-Length: 708
+Contact: <sip:000000000@10.0.0.1:59416;transport=tls>;expires=3600;received="sip:10.0.0.2:5070"
+User-Agent: Vialer Android v7.74.0
+X-Real-IP: 10.0.0.1
+X-VG-CID: 41ee87a8c8b3073c2b2ab202c2b26f9d
+X-Real-Proto: tls
+X-Real-Port: 59416
+
+v=0
+o=000000000 3047 1584 IN IP4 10.0.0.3
+s=Talk
+c=IN IP4 10.0.0.3
+t=0 0
+a=rtcp-xr:rcvr-rtt=all:10000 stat-summary=loss,dup,jitt,TTL voip-metrics
+m=audio 48625 RTP/SAVP 96 101
+a=rtpmap:96 opus/48000/2
+a=fmtp:96 useinbandfec=1
+a=rtpmap:101 telephone-event/48000
+a=crypto:1 AEAD_AES_128_GCM inline:TjLools6A+KH0dUdLA8jEjiqppSz8TBzATB8hQ==
+a=crypto:2 AES_CM_128_HMAC_SHA1_80 inline:7sbJeVHF/xWy5psUBuPFwef08WxS/ZUt27vFvCz0
+a=crypto:3 AEAD_AES_256_GCM inline:ykRD+mLwM3rVSjJbY8TLmXHLwN4ASRgXbXPgPHUufOjvfsEP7j2aC2QvYF0=
+a=crypto:4 AES_256_CM_HMAC_SHA1_80 inline:RaqwmHTUNkQlyO35b1cq/6Eca8dPxeKe+xWKhwCUyT3h7oejVuxGwVrUuGqRtw==
+a=rtcp:33035
+a=rtcp-fb:* trr-int 1000
+a=rtcp-fb:* ccm tmmbr
+
+[2026-09-07 13:20:52.930 CEST] ← 100  (10.0.0.4 ← 10.0.0.2)
+SIP/2.0 100 Trying
+Via: SIP/2.0/UDP 10.0.0.2:5070;branch=z9hG4bKREDACTED;i=64536741
+Via: SIP/2.0/TLS 10.0.0.3:59416;received=10.0.0.1;branch=z9hG4bKREDACTED;rport=59416
+To: sip:637@sip.example.invalid
+From: <sip:000000000@sip.example.invalid>;tag=REDACTEDTAG
+Call-ID: REDACTEDCALLID
+CSeq: 20 INVITE
+Server: VGPXY--OS
+Content-Length: 0
+
+[2026-09-07 13:20:52.930 CEST] ← 407  (10.0.0.4 ← 10.0.0.2)
+SIP/2.0 407 Proxy Authentication Required
+Via: SIP/2.0/UDP 10.0.0.2:5070;branch=z9hG4bKREDACTED;i=64536741
+Via: SIP/2.0/TLS 10.0.0.3:59416;received=10.0.0.1;branch=z9hG4bKREDACTED;rport=59416
+To: sip:637@sip.example.invalid;tag=REDACTEDTAG
+From: <sip:000000000@sip.example.invalid>;tag=REDACTEDTAG
+Call-ID: REDACTEDCALLID
+CSeq: 20 INVITE
+Proxy-Authenticate: Digest realm="sip.example.invalid", nonce="zZTdsq2H4oiYRtwUOoIwvuagqikHyxwrtFsU8AV+pEYA"
+Server: VGPXY--OS
+Content-Length: 0
+
+[2026-09-07 13:20:52.930 CEST] → ACK  (10.0.0.2 → 10.0.0.4)
+ACK sip:637@sip.example.invalid SIP/2.0
+Via: SIP/2.0/UDP 10.0.0.2:5070;branch=z9hG4bKREDACTED
+From: <sip:000000000@sip.example.invalid>;tag=REDACTEDTAG
+Call-ID: REDACTEDCALLID
+To: sip:637@sip.example.invalid;tag=REDACTEDTAG
+CSeq: 20 ACK
+Max-Forwards: 70
+User-Agent: VGPXY--OS
+Content-Length: 0
+
+[2026-09-07 13:20:52.931 CEST] ← 407  (10.0.0.2 ← 10.0.0.1)
+SIP/2.0 407 Proxy Authentication Required
+Via: SIP/2.0/TLS 10.0.0.3:59416;received=10.0.0.1;branch=z9hG4bKREDACTED;rport=59416
+To: sip:637@sip.example.invalid;tag=REDACTEDTAG
+From: <sip:000000000@sip.example.invalid>;tag=REDACTEDTAG
+Call-ID: REDACTEDCALLID
+CSeq: 20 INVITE
+Proxy-Authenticate: Digest realm="sip.example.invalid", nonce="zZTdsq2H4oiYRtwUOoIwvuagqikHyxwrtFsU8AV+pEYA"
+Server: VGPXY--OS
+Content-Length: 0
+
+[2026-09-07 13:20:52.976 CEST] → ACK  (10.0.0.1 → 10.0.0.2)
+ACK sip:637@sip.example.invalid SIP/2.0
+Via: SIP/2.0/TLS 10.0.0.3:59416;branch=z9hG4bKREDACTED;rport
+Call-ID: REDACTEDCALLID
+From: <sip:000000000@sip.example.invalid>;tag=REDACTEDTAG
+To: <sip:637@sip.example.invalid>;tag=REDACTEDTAG
+Contact: <sip:000000000@10.0.0.1:59416;transport=tls>;expires=3600;received="sip:10.0.0.2:5070"
+Max-Forwards: 69
+CSeq: 20 ACK
+Content-Length: 0
+
+[2026-09-07 13:20:52.978 CEST] → INVITE  (10.0.0.1 → 10.0.0.2)
+INVITE sip:637@sip.example.invalid SIP/2.0
+Via: SIP/2.0/TLS 10.0.0.3:59416;branch=z9hG4bKREDACTED;rport
+From: <sip:000000000@sip.example.invalid>;tag=REDACTEDTAG
+To: sip:637@sip.example.invalid
+CSeq: 21 INVITE
+Call-ID: REDACTEDCALLID
+Max-Forwards: 69
+Supported: replaces, outbound, gruu, path
+Allow: INVITE, ACK, CANCEL, OPTIONS, BYE, REFER, NOTIFY, MESSAGE, SUBSCRIBE, INFO, PRACK, UPDATE
+Content-Type: application/sdp
+Content-Length: 708
+Contact: <sip:000000000@10.0.0.1:59416;transport=tls>;expires=3600;received="sip:10.0.0.2:5070"
+User-Agent: Vialer Android v7.74.0
+Proxy-Authorization: Digest realm="sip.example.invalid", nonce="zZTdsq2H4oiYRtwUOoIwvuagqikHyxwrtFsU8AV+pEYA", algorithm=MD5, username="000000000",  uri="sip:637@sip.example.invalid", response="637c7b53a232c7c00000000000cf7e1c"
+
+v=0
+o=000000000 3047 1584 IN IP4 10.0.0.3
+s=Talk
+c=IN IP4 10.0.0.3
+t=0 0
+a=rtcp-xr:rcvr-rtt=all:10000 stat-summary=loss,dup,jitt,TTL voip-metrics
+m=audio 48625 RTP/SAVP 96 101
+a=rtpmap:96 opus/48000/2
+a=fmtp:96 useinbandfec=1
+a=rtpmap:101 telephone-event/48000
+a=crypto:1 AEAD_AES_128_GCM inline:TjLools6A+KH0dUdLA8jEjiqppSz8TBzATB8hQ==
+a=crypto:2 AES_CM_128_HMAC_SHA1_80 inline:7sbJeVHF/xWy5psUBuPFwef08WxS/ZUt27vFvCz0
+a=crypto:3 AEAD_AES_256_GCM inline:ykRD+mLwM3rVSjJbY8TLmXHLwN4ASRgXbXPgPHUufOjvfsEP7j2aC2QvYF0=
+a=crypto:4 AES_256_CM_HMAC_SHA1_80 inline:RaqwmHTUNkQlyO35b1cq/6Eca8dPxeKe+xWKhwCUyT3h7oejVuxGwVrUuGqRtw==
+a=rtcp:33035
+a=rtcp-fb:* trr-int 1000
+a=rtcp-fb:* ccm tmmbr
+
+[2026-09-07 13:20:52.979 CEST] ← 100  (10.0.0.2 ← 10.0.0.1)
+SIP/2.0 100 Giving it a try
+Via: SIP/2.0/TLS 10.0.0.3:59416;received=10.0.0.1;branch=z9hG4bKREDACTED;rport=59416
+To: sip:637@sip.example.invalid
+From: <sip:000000000@sip.example.invalid>;tag=REDACTEDTAG
+Call-ID: REDACTEDCALLID
+CSeq: 21 INVITE
+Server: VGPXY--OS
+Content-Length: 0
+
+[2026-09-07 13:20:52.979 CEST] → INVITE  (10.0.0.2 → 10.0.0.4)
+INVITE sip:637@sip.example.invalid SIP/2.0
+Record-Route: <sip:10.0.0.2:5070;r2=on;lr>
+Record-Route: <sip:10.0.0.2:5061;transport=tls;r2=on;lr>
+Via: SIP/2.0/UDP 10.0.0.2:5070;branch=z9hG4bKREDACTED;i=64536741
+Via: SIP/2.0/TLS 10.0.0.3:59416;received=10.0.0.1;branch=z9hG4bKREDACTED;rport=59416
+From: <sip:000000000@sip.example.invalid>;tag=REDACTEDTAG
+To: sip:637@sip.example.invalid
+CSeq: 21 INVITE
+Call-ID: REDACTEDCALLID
+Max-Forwards: 69
+Supported: replaces, outbound, gruu, path
+Allow: INVITE, ACK, CANCEL, OPTIONS, BYE, REFER, NOTIFY, MESSAGE, SUBSCRIBE, INFO, PRACK, UPDATE
+Content-Type: application/sdp
+Content-Length: 708
+Contact: <sip:000000000@10.0.0.1:59416;transport=tls>;expires=3600;received="sip:10.0.0.2:5070"
+User-Agent: Vialer Android v7.74.0
+Proxy-Authorization: Digest realm="sip.example.invalid", nonce="zZTdsq2H4oiYRtwUOoIwvuagqikHyxwrtFsU8AV+pEYA", algorithm=MD5, username="000000000",  uri="sip:637@sip.example.invalid", response="637c7b53a232c7c00000000000cf7e1c"
+X-Real-IP: 10.0.0.1
+X-VG-CID: 41ee87a8c8b3073c2b2ab202c2b26f9d
+X-Real-Proto: tls
+X-Real-Port: 59416
+
+v=0
+o=000000000 3047 1584 IN IP4 10.0.0.3
+s=Talk
+c=IN IP4 10.0.0.3
+t=0 0
+a=rtcp-xr:rcvr-rtt=all:10000 stat-summary=loss,dup,jitt,TTL voip-metrics
+m=audio 48625 RTP/SAVP 96 101
+a=rtpmap:96 opus/48000/2
+a=fmtp:96 useinbandfec=1
+a=rtpmap:101 telephone-event/48000
+a=crypto:1 AEAD_AES_128_GCM inline:TjLools6A+KH0dUdLA8jEjiqppSz8TBzATB8hQ==
+a=crypto:2 AES_CM_128_HMAC_SHA1_80 inline:7sbJeVHF/xWy5psUBuPFwef08WxS/ZUt27vFvCz0
+a=crypto:3 AEAD_AES_256_GCM inline:ykRD+mLwM3rVSjJbY8TLmXHLwN4ASRgXbXPgPHUufOjvfsEP7j2aC2QvYF0=
+a=crypto:4 AES_256_CM_HMAC_SHA1_80 inline:RaqwmHTUNkQlyO35b1cq/6Eca8dPxeKe+xWKhwCUyT3h7oejVuxGwVrUuGqRtw==
+a=rtcp:33035
+a=rtcp-fb:* trr-int 1000
+a=rtcp-fb:* ccm tmmbr
+
+[2026-09-07 13:20:52.979 CEST] ← 100  (10.0.0.4 ← 10.0.0.2)
+SIP/2.0 100 Trying
+Via: SIP/2.0/UDP 10.0.0.2:5070;branch=z9hG4bKREDACTED;i=64536741
+Via: SIP/2.0/TLS 10.0.0.3:59416;received=10.0.0.1;branch=z9hG4bKREDACTED;rport=59416
+To: sip:637@sip.example.invalid
+From: <sip:000000000@sip.example.invalid>;tag=REDACTEDTAG
+Call-ID: REDACTEDCALLID
+CSeq: 21 INVITE
+Server: VGPXY--OS
+Content-Length: 0
+
+[2026-09-07 13:20:52.983 CEST] → INVITE  (10.0.0.4 → 10.0.0.5)
+INVITE sip:637@sip.example.invalid SIP/2.0
+Record-Route: <sip:10.0.0.4;lr;ftag=REDACTEDTAG;did=952.c1b3f626;cc=0000000000>
+Record-Route: <sip:10.0.0.2:5070;r2=on;lr>
+Record-Route: <sip:10.0.0.2:5061;transport=tls;r2=on;lr>
+Via: SIP/2.0/UDP 10.0.0.4:5060;branch=z9hG4bKREDACTED
+Via: SIP/2.0/UDP 10.0.0.2:5070;branch=z9hG4bKREDACTED;i=64536741
+Via: SIP/2.0/TLS 10.0.0.3:59416;received=10.0.0.1;branch=z9hG4bKREDACTED;rport=59416
+From: <sip:000000000@sip.example.invalid>;tag=REDACTEDTAG
+To: sip:637@sip.example.invalid
+CSeq: 21 INVITE
+Call-ID: REDACTEDCALLID
+Max-Forwards: 68
+Supported: replaces, outbound, gruu, path
+Allow: INVITE, ACK, CANCEL, OPTIONS, BYE, REFER, NOTIFY, MESSAGE, SUBSCRIBE, INFO, PRACK, UPDATE
+Content-Type: application/sdp
+Content-Length: 708
+Contact: <sip:000000000@10.0.0.1:59416;transport=tls>;expires=3600;received="sip:10.0.0.2:5070"
+User-Agent: Vialer Android v7.74.0
+X-VG-CID: 41ee87a8c8b3073c2b2ab202c2b26f9d
+Authorization: Digest username="000000000",realm="sip.example.invalid"
+Remote-Party-ID: <sip:000000000@10.0.0.2>;privacy=off;screen=no
+
+v=0
+o=000000000 3047 1584 IN IP4 10.0.0.3
+s=Talk
+c=IN IP4 10.0.0.3
+t=0 0
+a=rtcp-xr:rcvr-rtt=all:10000 stat-summary=loss,dup,jitt,TTL voip-metrics
+m=audio 48625 RTP/SAVP 96 101
+a=rtpmap:96 opus/48000/2
+a=fmtp:96 useinbandfec=1
+a=rtpmap:101 telephone-event/48000
+a=crypto:1 AEAD_AES_128_GCM inline:TjLools6A+KH0dUdLA8jEjiqppSz8TBzATB8hQ==
+a=crypto:2 AES_CM_128_HMAC_SHA1_80 inline:7sbJeVHF/xWy5psUBuPFwef08WxS/ZUt27vFvCz0
+a=crypto:3 AEAD_AES_256_GCM inline:ykRD+mLwM3rVSjJbY8TLmXHLwN4ASRgXbXPgPHUufOjvfsEP7j2aC2QvYF0=
+a=crypto:4 AES_256_CM_HMAC_SHA1_80 inline:RaqwmHTUNkQlyO35b1cq/6Eca8dPxeKe+xWKhwCUyT3h7oejVuxGwVrUuGqRtw==
+a=rtcp:33035
+a=rtcp-fb:* trr-int 1000
+a=rtcp-fb:* ccm tmmbr
+
+[2026-09-07 13:20:52.986 CEST] ← 100  (10.0.0.5 ← 10.0.0.4)
+SIP/2.0 100 Trying
+Via: SIP/2.0/UDP 10.0.0.4:5060;received=10.0.0.4;branch=z9hG4bKREDACTED
+Via: SIP/2.0/UDP 10.0.0.2:5070;branch=z9hG4bKREDACTED;i=64536741
+Via: SIP/2.0/TLS 10.0.0.3:59416;rport=59416;received=10.0.0.1;branch=z9hG4bKREDACTED
+Record-Route: <sip:10.0.0.4;lr;ftag=REDACTEDTAG;did=952.c1b3f626;cc=0000000000>
+Record-Route: <sip:10.0.0.2:5070;lr;r2=on>
+Record-Route: <sip:10.0.0.2:5061;transport=tls;lr;r2=on>
+Call-ID: REDACTEDCALLID
+From: <sip:000000000@sip.example.invalid>;tag=REDACTEDTAG
+To: <sip:637@sip.example.invalid>
+CSeq: 21 INVITE
+Server: VGUA
+Content-Length:  0
+
+[2026-09-07 13:20:53.322 CEST] ← 480  (10.0.0.5 ← 10.0.0.4)
+SIP/2.0 480 Temporarily Unavailable
+Via: SIP/2.0/UDP 10.0.0.4:5060;received=10.0.0.4;branch=z9hG4bKREDACTED
+Via: SIP/2.0/UDP 10.0.0.2:5070;branch=z9hG4bKREDACTED;i=64536741
+Via: SIP/2.0/TLS 10.0.0.3:59416;rport=59416;received=10.0.0.1;branch=z9hG4bKREDACTED
+Record-Route: <sip:10.0.0.4;lr;ftag=REDACTEDTAG;did=952.c1b3f626;cc=0000000000>
+Record-Route: <sip:10.0.0.2:5070;lr;r2=on>
+Record-Route: <sip:10.0.0.2:5061;transport=tls;lr;r2=on>
+Call-ID: REDACTEDCALLID
+From: <sip:000000000@sip.example.invalid>;tag=REDACTEDTAG
+To: <sip:637@sip.example.invalid>;tag=REDACTEDTAG
+CSeq: 21 INVITE
+Server: VGUA
+Reason: Q.850;cause=19
+Content-Length:  0
+
+[2026-09-07 13:20:53.323 CEST] ← 480  (10.0.0.4 ← 10.0.0.2)
+SIP/2.0 480 Temporarily Unavailable
+Via: SIP/2.0/UDP 10.0.0.2:5070;branch=z9hG4bKREDACTED;i=64536741
+Via: SIP/2.0/TLS 10.0.0.3:59416;rport=59416;received=10.0.0.1;branch=z9hG4bKREDACTED
+Record-Route: <sip:10.0.0.4;lr;ftag=REDACTEDTAG;did=952.c1b3f626;cc=0000000000>
+Record-Route: <sip:10.0.0.2:5070;lr;r2=on>
+Record-Route: <sip:10.0.0.2:5061;transport=tls;lr;r2=on>
+Call-ID: REDACTEDCALLID
+From: <sip:000000000@sip.example.invalid>;tag=REDACTEDTAG
+To: <sip:637@sip.example.invalid>;tag=REDACTEDTAG
+CSeq: 21 INVITE
+Server: VGUA
+Reason: Q.850;cause=19
+Content-Length:  0
+
+[2026-09-07 13:20:53.323 CEST] → ACK  (10.0.0.4 → 10.0.0.5)
+ACK sip:637@sip.example.invalid SIP/2.0
+Via: SIP/2.0/UDP 10.0.0.4:5060;branch=z9hG4bKREDACTED
+From: <sip:000000000@sip.example.invalid>;tag=REDACTEDTAG
+Call-ID: REDACTEDCALLID
+To: <sip:637@sip.example.invalid>;tag=REDACTEDTAG
+CSeq: 21 ACK
+Max-Forwards: 70
+User-Agent: VGPXY--OS
+Content-Length: 0
+
+[2026-09-07 13:20:53.324 CEST] ← 480  (10.0.0.2 ← 10.0.0.1)
+SIP/2.0 480 Temporarily Unavailable
+Via: SIP/2.0/TLS 10.0.0.3:59416;rport=59416;received=10.0.0.1;branch=z9hG4bKREDACTED
+Record-Route: <sip:10.0.0.4;lr;ftag=REDACTEDTAG;did=952.c1b3f626;cc=0000000000>
+Record-Route: <sip:10.0.0.2:5070;lr;r2=on>
+Record-Route: <sip:10.0.0.2:5061;transport=tls;lr;r2=on>
+Call-ID: REDACTEDCALLID
+From: <sip:000000000@sip.example.invalid>;tag=REDACTEDTAG
+To: <sip:637@sip.example.invalid>;tag=REDACTEDTAG
+CSeq: 21 INVITE
+Server: VGUA
+Reason: Q.850;cause=19
+Content-Length:  0
+
+[2026-09-07 13:20:53.324 CEST] → ACK  (10.0.0.2 → 10.0.0.4)
+ACK sip:637@sip.example.invalid SIP/2.0
+Via: SIP/2.0/UDP 10.0.0.2:5070;branch=z9hG4bKREDACTED
+From: <sip:000000000@sip.example.invalid>;tag=REDACTEDTAG
+Call-ID: REDACTEDCALLID
+To: <sip:637@sip.example.invalid>;tag=REDACTEDTAG
+CSeq: 21 ACK
+Max-Forwards: 70
+User-Agent: VGPXY--OS
+Content-Length: 0
+
+[2026-09-07 13:20:53.359 CEST] → ACK  (10.0.0.1 → 10.0.0.2)
+ACK sip:637@sip.example.invalid SIP/2.0
+Via: SIP/2.0/TLS 10.0.0.3:59416;branch=z9hG4bKREDACTED;rport
+Call-ID: REDACTEDCALLID
+From: <sip:000000000@sip.example.invalid>;tag=REDACTEDTAG
+To: <sip:637@sip.example.invalid>;tag=REDACTEDTAG
+Contact: <sip:000000000@10.0.0.1:59416;transport=tls>;expires=3600;received="sip:10.0.0.2:5070"
+Max-Forwards: 69
+CSeq: 21 ACK
+Content-Length: 0
+
+antwoord in het nederlands

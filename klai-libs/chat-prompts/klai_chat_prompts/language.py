@@ -9,7 +9,10 @@ This module is the single language-identification mechanism behind every Klai
 chat surface (it replaced and deleted the per-message stopword counter that
 used to live in ``deploy/litellm/klai_language_detect.py``). Identification is
 delegated to ``langid`` (BSD, pure Python, model embedded), restricted to
-:data:`TARGET_LANGUAGES` with normalised probabilities.
+:data:`TARGET_LANGUAGES` with normalised probabilities — except for surviving
+prose too short for langid's confidence to mean anything, which is decided
+deterministically from unambiguous function words (see
+:data:`SHORT_PROSE_MAX_WORDS`).
 
 Surfaces that hold a conversation list use :func:`resolve_conversation_language`;
 surfaces that only hold a single text (a lone query, an answer to measure) use
@@ -96,6 +99,7 @@ __all__ = [
     "REASON_LOW_CONFIDENCE",
     "REASON_NO_EVIDENCE",
     "REASON_SWITCHED",
+    "SHORT_PROSE_MAX_WORDS",
     "SUBSEQUENT_SWITCH_CONFIRMATIONS",
     "TARGET_LANGUAGES",
     "LanguageDecision",
@@ -140,6 +144,17 @@ LONG_PROSE_WORDS = 7
 # LONG_PROSE_WORDS). See LONG_PROSE_WORDS.
 IDENTIFY_MIN_CONFIDENCE_SHORT = 0.99
 
+# Prose of at most this many words (gate survivors, protocol acronyms
+# stripped — the same measure as the confidence tiers above) is decided
+# deterministically from the unambiguous function-word tables below before
+# langid is consulted at all. "Short" is pinned by measurement: langid
+# carries no reliable signal this thin (7 of 12 measured Dutch widget
+# questions abstained outright; "Wat is TCP/IP?" sat at en@0.98 against the
+# 0.99 bar), while at 9+ measured words its tiered confidence already
+# decided correctly. 8 is the largest measured failing length; longer prose
+# keeps today's behaviour unchanged.
+SHORT_PROSE_MAX_WORDS = 8
+
 # Step 4: number of voting turns before the conversation language locks.
 # Inside the window a language switch costs one strong turn (see
 # _turn_is_strong_switch) instead of the full confirmation streak that switches
@@ -149,15 +164,19 @@ OPENING_WINDOW_TURNS = 3
 
 # Gate, proportional rule (correction 2): when more than half of the turn's
 # non-empty content lines are machine-like, the turn abstains UNLESS one
-# single surviving prose line carries at least this many word tokens. That
-# line can only be the user's own running sentence — fragments rescued from
-# a mechanical paste ("HTTP/1.1 503 Service Unavailable") never reach this
-# length. Calibrated between the two anchors the spec pins: the held-out
-# protocol dump whose whole survivor is a handful of words (<= 8 per line,
-# must abstain) and a real customer question pasted under five mail-header
-# lines (12 words, must vote). 9 sits with margin on both sides; the
-# absolute MIN_PROSE_WORDS floor below keeps its separate job of rejecting
-# genuinely short prose.
+# single surviving prose line carries at least this many SENTENCE words (see
+# _sentence_word_count: space-separated word tokens, not letter runs inside
+# attribute syntax). The line can only then be the user's own running
+# sentence — fragments rescued from a mechanical paste ("HTTP/1.1 503 Service
+# Unavailable") never reach this length, and neither do single machine
+# attribute lines, whose embedded fragments ("a=rtcp-xr:rcvr-rtt=all:10000
+# stat-summary=loss,dup,jitt,TTL voip-metrics" — 14 letter runs, one word)
+# the raw letter-run count used to pass off as a sentence. Calibrated
+# between the two anchors the spec pins: the held-out protocol dump whose
+# whole survivor is a handful of words (<= 8 per line, must abstain) and a
+# real customer question pasted under five mail-header lines (12 words, must
+# vote). 9 sits with margin on both sides; the absolute MIN_PROSE_WORDS floor
+# below keeps its separate job of rejecting genuinely short prose.
 MIN_PROSE_SENTENCE_WORDS = 9
 
 # After locking, the FIRST switch needs this many consecutive STRONG
@@ -430,6 +449,25 @@ def _turn_is_strong_switch(text: str) -> bool:
     return not any(_token_is_machine_identifier(tok) for tok in _TOKEN_RE.findall(text))
 
 
+# Sentence words for the proportional rule's rescue measure: whitespace-
+# separated tokens that are actual words. Internal hyphens and apostrophes
+# stay inside a word ("puis-je", "factuur-nummer", "don't"); surrounding
+# punctuation is stripped; an embedded "=", ":", ",", "/" or digit is not a
+# word. This is deliberately NOT _WORD_RE: that regex counts every letter
+# run, so one dense protocol attribute line ("rcvr-rtt=all:10000 ...")
+# out-words a real sentence and silently defeats the rescue exception.
+_SENTENCE_WORD_RE = re.compile(r"[^\W\d_]+(?:[-'\u2019][^\W\d_]+)*", re.UNICODE)
+
+
+def _sentence_word_count(line: str) -> int:
+    """Count whitespace-separated word tokens in one surviving line."""
+    return sum(
+        1
+        for token in _TOKEN_RE.findall(line)
+        if _SENTENCE_WORD_RE.fullmatch(token.strip(_STRIP_PUNCTUATION))
+    )
+
+
 def _line_is_machine(line: str) -> bool:
     """Classify one whitespace-stripped survivor line as machine-like or not."""
     if _URL_LINE_RE.match(line):
@@ -488,11 +526,13 @@ def classify_turn_evidence(text: str) -> TurnEvidence:
       (the floor for genuinely short prose turns);
     * proportionally — when a clear majority of the lines are machine-like
       and no single surviving line reaches :data:`MIN_PROSE_SENTENCE_WORDS`
-      words, the readable leftovers are fragments of an otherwise mechanical
-      paste, not prose, however many of them clear the absolute floor.
-      Without this rule a protocol dump (status line + headers + identifier
-      soup) votes whenever the identifier happens to be confident about the
-      debris — gate decisions must not depend on the identifier at all.
+      sentence words (see :func:`_sentence_word_count` — space-separated
+      words, not letter runs inside attribute syntax), the readable
+      leftovers are fragments of an otherwise mechanical paste, not prose,
+      however many of them clear the absolute floor. Without this rule a
+      protocol dump (status line + headers + identifier soup) votes whenever
+      the identifier happens to be confident about the debris — gate
+      decisions must not depend on the identifier at all.
 
     Note that :func:`resolve_conversation_language` still checks short
     surviving prose against the explicit-request table (step 2 is exempt
@@ -527,7 +567,7 @@ def classify_turn_evidence(text: str) -> TurnEvidence:
 
     machine_majority = total_lines > 0 and machine_lines * 2 > total_lines
     if machine_majority and not any(
-        len(_WORD_RE.findall(line)) >= MIN_PROSE_SENTENCE_WORDS for line in prose_lines
+        _sentence_word_count(line) >= MIN_PROSE_SENTENCE_WORDS for line in prose_lines
     ):
         return TurnEvidence(EVIDENCE_MACHINE, prose)
     if prose_words >= MIN_PROSE_WORDS:
@@ -676,9 +716,63 @@ def _strip_protocol_acronyms(text: str) -> str:
     return _PROTOCOL_ACRONYM_RE.sub(" ", text)
 
 
+# Unambiguous function words for the short-prose rule. EXCLUSION RULE: a word
+# only belongs in a table when the OTHER language cannot use it — words shared
+# by Dutch and English (is, we, in, de, die, dat, was, had, "met" is English
+# past tense too, and every single letter) carry no signal and are in NEITHER
+# table, so they can never decide anything. Lowercased whole tokens.
+_DUTCH_FUNCTION_WORDS = frozenset(
+    {
+        "wat", "welke", "waarom", "wanneer", "wie", "waar", "hoe",  # vragers
+        "kan", "kun", "kunt", "kunnen", "wil", "willen", "zou", "zouden",
+        "moet", "moeten", "heb", "heeft", "hebben",  # hulpwerkwoorden
+        "ik", "mij", "mijn", "mezelf", "jij", "hij", "het",  # voornaamwoorden
+        "een", "geen", "niet", "deze", "maar", "ook", "omdat",  # overig
+    }
+)
+_ENGLISH_FUNCTION_WORDS = frozenset(
+    {
+        "what", "when", "where", "which", "who", "why", "how",
+        "can", "could", "would", "should", "may", "might",
+        "do", "does", "did", "have", "has", "are",
+        "the", "this", "that", "these", "those", "there",
+        "they", "them", "you", "your", "with", "about", "from",
+    }
+)
+
+
+def _short_prose_function_language(text: str) -> str | None:
+    """Decide short prose from unambiguous function words; None = no signal.
+
+    Short surviving prose (<= :data:`SHORT_PROSE_MAX_WORDS` words, measured
+    after protocol-acronym stripping like the confidence tiers) carries a
+    deterministic signal langid ignores: function words that exist in Dutch
+    and not in English, or the reverse. When EXACTLY ONE side's words appear,
+    that side is the language; words shared by both are in neither table.
+    Mixed or markerless prose, and everything longer, returns None and falls
+    through to the normal confidence-tiered identification. The evidence gate
+    and the explicit-request table keep precedence: this runs inside the
+    identification step only, on prose that already passed both.
+    """
+    words = [w.lower() for w in _WORD_RE.findall(text)]
+    if not words or len(words) > SHORT_PROSE_MAX_WORDS:
+        return None
+    seen = set(words)
+    has_nl = bool(seen & _DUTCH_FUNCTION_WORDS)
+    has_en = bool(seen & _ENGLISH_FUNCTION_WORDS)
+    if has_nl == has_en:
+        return None
+    return "nl" if has_nl else "en"
+
+
 def _identify(identifier: Any, text: str) -> str | None:
     """Classify ``text`` with langid; return a target code or None (abstain).
 
+    Short nl/en prose: :func:`_short_prose_function_language` decides it
+    deterministically from unambiguous function words whenever exactly one
+    side's words appear, because langid's normalised confidence is unreliable
+    at that length — it abstains on most of it and lands a hair under (or
+    over) the bar on the rest.
     Confidence tiering: prose of :data:`LONG_PROSE_WORDS` words or more must
     reach :data:`IDENTIFY_MIN_CONFIDENCE`; shorter surviving prose must reach
     :data:`IDENTIFY_MIN_CONFIDENCE_SHORT`, because cross-language look-alike
@@ -691,6 +785,13 @@ def _identify(identifier: Any, text: str) -> str | None:
         lang, confidence = identifier.classify(stripped)
     except Exception:  # noqa: BLE001, RUF100 - a broken classify is an abstention
         return None
+    # The function-word rule only breaks the nl/en tie langid is unreliable
+    # on; it never overrides a third language. German "wie" (how) sits in the
+    # Dutch table as "wie" (who): "Wie funktioniert das?" must stay de.
+    if lang in ("nl", "en"):
+        deterministic = _short_prose_function_language(stripped)
+        if deterministic is not None:
+            return deterministic
     words = len(_WORD_RE.findall(stripped))
     threshold = IDENTIFY_MIN_CONFIDENCE if words >= LONG_PROSE_WORDS else IDENTIFY_MIN_CONFIDENCE_SHORT
     if lang in TARGET_LANGUAGES and float(confidence) >= threshold:
