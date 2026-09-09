@@ -84,6 +84,12 @@ jobs:
       - name: Generate audio fixture (if missing)
         run: |
           if [ ! -f e2e/prod-tenant/fixtures/e2e-fixture.wav ]; then
+            # Only espeak/ffmpeg from Ubuntu's own archive are needed here. The
+            # runner image ships Google Chrome with its apt source, and one
+            # broken third-party mirror makes `apt-get update` fail the whole step
+            # (dl.google.com Hash Sum mismatch, 2026-09-09, twice). Chrome stays
+            # installed; only its source list is dropped from the refresh.
+            sudo rm -f /etc/apt/sources.list.d/google-chrome*
             sudo apt-get update -y
             sudo apt-get install -y espeak ffmpeg
             bash e2e/prod-tenant/fixtures/generate.sh
