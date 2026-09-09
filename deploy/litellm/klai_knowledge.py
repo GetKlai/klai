@@ -99,9 +99,6 @@ from klai_kb_system_prompt import (
     build_template_instructions_block as _build_template_instructions_block,
     prepend_system_prefix as _prepend_system_prefix,
 )
-from klai_language_detect import (
-    UNKNOWN_LANGUAGE as _UNKNOWN_LANGUAGE,
-)
 from klai_conversation_language import (
     resolve_conversation_language as _resolve_conversation_language,
 )
@@ -438,9 +435,10 @@ class KlaiKnowledgeHook(CustomLogger):
         # PDF attachment processing below replaces the latest user content
         # with question + extracted document text, and a Dutch document must
         # never overrule an English question (Sol review P1).
-        response_language_target = (
-            _resolve_conversation_language(messages).language or _UNKNOWN_LANGUAGE
-        )
+        # The decision object travels with the target so every rendered
+        # line can log WHY this code was chosen (Part B telemetry).
+        language_decision = _resolve_conversation_language(messages)
+        response_language_target = language_decision.language
         context_meta: dict[str, Any] | None = None
         should_assemble_provider_context = _should_assemble_provider_context(data)
         if should_assemble_provider_context:
@@ -486,12 +484,15 @@ class KlaiKnowledgeHook(CustomLogger):
         latest_turn_correspondence = _latest_user_turn_has_correspondence(messages)
         if pasted_correspondence or latest_turn_correspondence:
             # Pasted third-party correspondence (an email, ticket, forwarded
-            # thread) sits INSIDE the user message, so the stopword detector
-            # would follow the correspondence language, not the user's own
-            # words ("Please summarize this in English" + a German email
-            # detects as German). Fall back to model-side detection — the
-            # pre-injection behaviour — rather than inject a wrong target.
-            response_language_target = _UNKNOWN_LANGUAGE
+            # thread) sits INSIDE the user message, so the conversation
+            # decision would follow the correspondence language, not the
+            # user's own words ("Please summarize this in English" + a German
+            # email detects as German). Fall back to model-side detection —
+            # the pre-injection behaviour — rather than inject a wrong
+            # target. The decision is cleared with the target so the rendered
+            # line reports no_decision, never a stale reason.
+            language_decision = None
+            response_language_target = None
         if _is_trivial(query) and not pasted_correspondence:
             return data
 
@@ -666,7 +667,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 org_id,
                 librechat_user_id,
             )
-            data["mock_response"] = _settings_unavailable_message(query)
+            data["mock_response"] = _settings_unavailable_message(response_language_target)
             return data
 
         chat_retrieval_policy = _resolve_chat_retrieval_policy(feature)
@@ -703,7 +704,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 chat_retrieval_policy.user_visible_failure_reason,
             )
             data["mock_response"] = _no_citable_sources_message(
-                query, suggest_open_mode=True
+                response_language_target, suggest_open_mode=True
             )
             return data
         if chat_retrieval_policy.prompt_mode == "general":
@@ -755,7 +756,7 @@ class KlaiKnowledgeHook(CustomLogger):
                     librechat_user_id,
                     failure_reason,
                 )
-                data["mock_response"] = _strict_kb_unavailable_message(query)
+                data["mock_response"] = _strict_kb_unavailable_message(response_language_target)
                 return data
             # Open + KB unavailable: keep the prompt notice so the model answers
             # from general knowledge WITH an explicit warning — that is the Open
@@ -1091,6 +1092,7 @@ class KlaiKnowledgeHook(CustomLogger):
             )
             data.setdefault("metadata", {})["_klai_kb_meta"] = answer_policy.to_kb_meta(
                 org_id=org_id,
+                language_decision=language_decision,
                 user_id=user_id,
                 telemetry_level=telemetry_level,
                 latest_turn_pasted_correspondence_detected=latest_turn_correspondence,
@@ -1098,7 +1100,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 retrieval_ms=int((time.monotonic() - t0) * 1000),
                 no_citable_sources=bool(kb_narrow),
                 no_citable_reason="retrieval_failure" if kb_narrow else None,
-                no_citable_message=_strict_kb_unavailable_message(query)
+                no_citable_message=_strict_kb_unavailable_message(response_language_target)
                 if kb_narrow
                 else None,
                 original_stream=original_stream,
@@ -1107,10 +1109,13 @@ class KlaiKnowledgeHook(CustomLogger):
                 retrieval_request_id=retrieval_request_id,
                 kb_scope_mode=kb_scope_mode,
                 kbs_in_scope=kbs_in_scope,
-                response_language_target=reminder_target,
+                # The conversation DECISION, not what was injected (None in strict mode,
+                # where the model is never called): footer language and
+                # language_correct must follow the same decision the refusal uses.
+                response_language_target=response_language_target,
             )
             if kb_narrow:
-                data["mock_response"] = _strict_kb_unavailable_message(query)
+                data["mock_response"] = _strict_kb_unavailable_message(response_language_target)
             return data
 
         retrieval_ms = int((time.monotonic() - t0) * 1000)
@@ -1143,6 +1148,8 @@ class KlaiKnowledgeHook(CustomLogger):
             )
             data.setdefault("metadata", {})["_klai_kb_meta"] = answer_policy.to_kb_meta(
                 org_id=org_id,
+                language_decision=language_decision,
+                response_language_target=response_language_target,
                 user_id=user_id,
                 telemetry_level=telemetry_level,
                 latest_turn_pasted_correspondence_detected=latest_turn_correspondence,
@@ -1150,7 +1157,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 retrieval_ms=retrieval_ms,
                 no_citable_sources=True,
                 no_citable_reason=strict_bypass_failure,
-                no_citable_message=_strict_kb_unavailable_message(query),
+                no_citable_message=_strict_kb_unavailable_message(response_language_target),
                 original_stream=original_stream,
                 render_mode=render_strategy.mode,
                 retrieval_failure=strict_bypass_failure,
@@ -1158,7 +1165,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 kb_scope_mode=kb_scope_mode,
                 kbs_in_scope=kbs_in_scope,
             )
-            data["mock_response"] = _strict_kb_unavailable_message(query)
+            data["mock_response"] = _strict_kb_unavailable_message(response_language_target)
             return data
 
         # Rolling-deploy compatibility for responses from a pre-removal
@@ -1198,6 +1205,7 @@ class KlaiKnowledgeHook(CustomLogger):
             )
             data.setdefault("metadata", {})["_klai_kb_meta"] = answer_policy.to_kb_meta(
                 org_id=org_id,
+                language_decision=language_decision,
                 user_id=user_id,
                 telemetry_level=telemetry_level,
                 latest_turn_pasted_correspondence_detected=latest_turn_correspondence,
@@ -1241,6 +1249,8 @@ class KlaiKnowledgeHook(CustomLogger):
             )
             data.setdefault("metadata", {})["_klai_kb_meta"] = answer_policy.to_kb_meta(
                 org_id=org_id,
+                language_decision=language_decision,
+                response_language_target=response_language_target,
                 user_id=user_id,
                 telemetry_level=telemetry_level,
                 latest_turn_pasted_correspondence_detected=latest_turn_correspondence,
@@ -1258,7 +1268,7 @@ class KlaiKnowledgeHook(CustomLogger):
             )
             if kb_narrow and not user_provided_content_context:
                 data["mock_response"] = _no_citable_sources_message(
-                    query, suggest_open_mode=True
+                    response_language_target, suggest_open_mode=True
                 )
             return data
         evidence_chunks = evidence_pack_items_as_chunks(evidence_pack)
@@ -1466,6 +1476,8 @@ class KlaiKnowledgeHook(CustomLogger):
             )
             data.setdefault("metadata", {})["_klai_kb_meta"] = answer_policy.to_kb_meta(
                 org_id=org_id,
+                language_decision=language_decision,
+                response_language_target=response_language_target,
                 user_id=user_id,
                 telemetry_level=telemetry_level,
                 latest_turn_pasted_correspondence_detected=latest_turn_correspondence,
@@ -1490,7 +1502,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 kbs_with_results=kbs_with_results,
             )
             data["mock_response"] = _no_citable_sources_message(
-                query, suggest_open_mode=True
+                response_language_target, suggest_open_mode=True
             )
             return data
 
@@ -1550,6 +1562,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 data.setdefault("metadata", {})["_klai_kb_meta"] = (
                     answer_policy.to_kb_meta(
                         org_id=org_id,
+                        language_decision=language_decision,
                         user_id=user_id,
                         telemetry_level=telemetry_level,
                         latest_turn_pasted_correspondence_detected=latest_turn_correspondence,
@@ -1592,7 +1605,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 )
                 if kb_narrow and not user_provided_content_context:
                     data["mock_response"] = _no_citable_sources_message(
-                        query, suggest_open_mode=True
+                        response_language_target, suggest_open_mode=True
                     )
             return data
 
@@ -1668,6 +1681,7 @@ class KlaiKnowledgeHook(CustomLogger):
         # Stored in data["metadata"] so it is never forwarded to the LLM provider.
         data.setdefault("metadata", {})["_klai_kb_meta"] = answer_policy.to_kb_meta(
             org_id=org_id,
+            language_decision=language_decision,
             user_id=user_id,
             telemetry_level=telemetry_level,
             latest_turn_pasted_correspondence_detected=latest_turn_correspondence,

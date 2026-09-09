@@ -61,7 +61,7 @@ import httpx
 from litellm.integrations.custom_logger import CustomLogger
 
 from klai_kb_request_context import message_text as _message_text
-from klai_language_detect import UNKNOWN_LANGUAGE, detect_language
+from klai_conversation_language import identify_text_language
 
 logger = logging.getLogger(__name__)
 
@@ -224,7 +224,7 @@ def _org_id_from_key(user_api_key_dict: Any) -> Any:
 async def _observe(
     combined_text: str,
     *,
-    language: str,
+    language: str | None,
     org_id: Any,
     call_type: str,
     model: Any,
@@ -245,10 +245,7 @@ async def _observe(
     try:
         analyzer_language = (
             language
-            if (
-                language != UNKNOWN_LANGUAGE
-                and language in _ANALYZER_SUPPORTED_LANGUAGES
-            )
+            if language in _ANALYZER_SUPPORTED_LANGUAGES
             else _DEFAULT_ANALYZER_LANGUAGE
         )
         async with httpx.AsyncClient(timeout=_HTTPX_CLIENT_TIMEOUT_SECONDS) as http:
@@ -315,7 +312,7 @@ class KlaiPiiObserver(CustomLogger):
                 # last in `callbacks:` so it is the post-injection payload.
                 texts = _payload_texts(messages)
                 if texts:
-                    language = detect_language(_user_text(messages))
+                    language = identify_text_language(_user_text(messages))
                     asyncio.get_running_loop().create_task(
                         _observe(
                             "\n\n".join(texts),

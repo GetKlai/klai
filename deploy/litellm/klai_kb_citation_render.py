@@ -14,13 +14,15 @@ from klai_answer_epistemics import (
     pop_answer_contract_stream_text,
     strip_answer_contract_markers,
 )
-from klai_chat_prompts import DUTCH_QUERY_MARKERS, no_citable_sources_message
+from klai_chat_prompts import _language_is_dutch as language_is_dutch
+from klai_chat_prompts import no_citable_sources_message
 from klai_citations import (
     compose_answer_with_trusted_sources,
     evidence_label_ids,
     strip_injected_evidence_labels,
     strip_model_citation_artifacts,
 )
+from klai_conversation_language import identify_text_language
 from klai_kb_answer_policy import strict_kb_unavailable_message
 from klai_kb_chat_mode import prompt_mode_is_known, prompt_mode_is_strict
 
@@ -32,7 +34,6 @@ from klai_kb_chat_mode import prompt_mode_is_known, prompt_mode_is_strict
 from klai_kb_context_prompt import _sanitize_question_echo
 from klai_kb_traceability import dedupe_strings
 from klai_kb_urls import normalise_guard_url
-from klai_language_detect import UNKNOWN_LANGUAGE, detect_language
 from klai_litellm_response import (
     get_choice_finish_reason,
     get_choice_message,
@@ -74,7 +75,9 @@ class KbCitationRenderStats:
         self.citation_decisions.extend(other.citation_decisions)
 
 
-def _is_strict_refusal_answer(text: object, *, user_query: object) -> bool:
+# ``refusal_language`` is the conversation decision code, never the raw
+# query: the same hook that generated the refusal matches its own text.
+def _is_strict_refusal_answer(text: object, *, refusal_language: object) -> bool:
     if not isinstance(text, str) or not text.strip():
         return False
     answer = re.sub(r"\s+", " ", text).strip().casefold()
@@ -88,9 +91,11 @@ def _is_strict_refusal_answer(text: object, *, user_query: object) -> bool:
     # value from a call site that predates the hint, or the mock_response
     # text itself already having been through a partial normalisation).
     expected = {
-        _normalise(no_citable_sources_message(user_query, suggest_open_mode=True)),
-        _normalise(no_citable_sources_message(user_query)),
-        _normalise(strict_kb_unavailable_message(user_query)),
+        _normalise(
+            no_citable_sources_message(refusal_language, suggest_open_mode=True)
+        ),
+        _normalise(no_citable_sources_message(refusal_language)),
+        _normalise(strict_kb_unavailable_message(refusal_language)),
         "dat staat niet in de kennisbank.",
         "dat staat niet in de kennisbank",
     }
@@ -138,6 +143,7 @@ def _render_kb_citation_content(
     *,
     allowed_image_urls: set[str],
     user_query: object,
+    refusal_language: object = None,
     trusted_sources: list[dict[str, Any]],
     evidence_chunks: list[dict],
     kb_narrow: bool,
@@ -173,7 +179,7 @@ def _render_kb_citation_content(
     strict_refusal = (
         no_citable_message.strip()
         if isinstance(no_citable_message, str) and no_citable_message.strip()
-        else no_citable_sources_message(user_query, suggest_open_mode=True)
+        else no_citable_sources_message(refusal_language, suggest_open_mode=True)
     )
     if not trusted_sources:
         if kb_narrow:
@@ -231,7 +237,7 @@ def _render_kb_citation_content(
                 "no_citable_reason": "no_trusted_sources_broad_passthrough",
             },
         )
-    if kb_narrow and _is_strict_refusal_answer(text, user_query=user_query):
+    if kb_narrow and _is_strict_refusal_answer(text, refusal_language=refusal_language):
         return (
             text.strip(),
             [],
@@ -277,7 +283,7 @@ def _render_kb_citation_content(
         decision = dict(composed.decision)
         if kb_narrow and _is_strict_refusal_answer(
             composed.content or text,
-            user_query=user_query,
+            refusal_language=refusal_language,
         ):
             decision["no_citable_reason"] = "strict_refusal_no_supported_sources"
             return strict_refusal, [], True, decision
@@ -427,17 +433,17 @@ def _prepend_primary_upload_source(
     return relabelled
 
 
-_TOKEN_RE = re.compile(r"[a-zA-ZÀ-ÿ]+")
-
-
 def _visible_trace_language(kb_meta: dict[str, Any] | None) -> str:
-    query = kb_meta.get("user_query") if isinstance(kb_meta, dict) else None
-    if not isinstance(query, str):
-        return "nl"
-    if not query.strip():
-        return "nl"
-    tokens = {token.lower() for token in _TOKEN_RE.findall(query)}
-    return "nl" if tokens & DUTCH_QUERY_MARKERS else "en"
+    """Language of the visible "Bronnen/Sources" footer.
+
+    Reads the conversation decision from kb_meta instead of re-guessing the
+    query: the footer may never disagree with the refusal/marker language of
+    the same answer. Only the decided ``"nl"`` code yields Dutch; a missing
+    or abstained decision falls through to DUTCH, an explicit other code to
+    English — the same contract as klai_chat_prompts._language_is_dutch.
+    """
+    target = kb_meta.get("response_language_target") if isinstance(kb_meta, dict) else None
+    return "nl" if language_is_dutch(target) else "en"
 
 
 def _plural(count: int, singular: str, plural: str) -> str:
@@ -856,7 +862,7 @@ def log_kb_citation_render(
     # Semgrep reads the contract's "tokens" field names as credentials;
     # values are redacted unless privacy mode is explicitly "full".
     logger.warning(  # nosemgrep
-        "%s org_id=%s user_id=%s request_id=%s render_mode=%s stream=%s rendered_messages=%d rendered_sources=%d chunks_injected=%s no_citable_reason=%s citation_reason_counts=%s citation_decisions=%s sender_only_tokens_in_answer=%s answer_tokens_unsupported_by_evidence=%s correspondence_detected=%s sender_only_tokens=%s answer_tokens_unsupported_by_evidence_values=%s answer_contract=%s response_language_target=%s answer_language=%s language_correct=%s",
+        "%s org_id=%s user_id=%s request_id=%s render_mode=%s stream=%s rendered_messages=%d rendered_sources=%d chunks_injected=%s no_citable_reason=%s citation_reason_counts=%s citation_decisions=%s sender_only_tokens_in_answer=%s answer_tokens_unsupported_by_evidence=%s correspondence_detected=%s sender_only_tokens=%s answer_tokens_unsupported_by_evidence_values=%s answer_contract=%s response_language_target=%s language_reason=%s language_votes=%s language_abstentions=%s language_switches=%s answer_language=%s language_correct=%s",
         event,
         kb_meta.get("org_id"),
         kb_meta.get("user_id"),
@@ -876,6 +882,13 @@ def log_kb_citation_render(
         provenance.get("answer_tokens_unsupported_by_evidence_values", "<redacted>"),
         kb_meta.get("answer_contract"),
         kb_meta.get("response_language_target"),
+        # Part B: why the target above was chosen. Decision metadata only
+        # (reason enum + vote/abstention/switch ints) — never prose, never
+        # gated on telemetry level (SPEC-PRIVACY-QUERY-SHADOW-001).
+        kb_meta.get("response_language_reason"),
+        kb_meta.get("response_language_votes"),
+        kb_meta.get("response_language_abstentions"),
+        kb_meta.get("response_language_switches"),
         kb_meta.get("answer_language"),
         kb_meta.get("language_correct"),
     )
@@ -908,7 +921,7 @@ def _record_answer_epistemics(
             kb_meta["answer_contract"] = answer_contract
         if correspondence_detected:
             return strip_answer_contract_markers(answer)
-    except Exception:  # noqa: BLE001 - telemetry is explicitly fail-open
+    except Exception:
         if correspondence_detected:
             return strip_answer_contract_markers(answer)
         return answer
@@ -934,20 +947,22 @@ def _citation_user_content_flags(kb_meta: dict[str, Any]) -> tuple[bool, bool]:
 
 
 def _record_answer_language(answer: str, kb_meta: dict[str, Any]) -> None:
-    answer_language = detect_language(answer)
+    answer_language = identify_text_language(answer)
     target = kb_meta.get("response_language_target")
-    target_language = (
-        target if isinstance(target, str) and target != UNKNOWN_LANGUAGE else None
-    )
-    measured_answer_language = (
-        answer_language if answer_language != UNKNOWN_LANGUAGE else None
-    )
+    target_language = target if isinstance(target, str) else None
     kb_meta["answer_language"] = answer_language
-    kb_meta["language_correct"] = (
-        None
-        if target_language is None or measured_answer_language is None
-        else target_language == measured_answer_language
-    )
+    if target_language is None:
+        # Three honest outcomes, never two: without a conversation
+        # decision there is nothing the answer could be correct against,
+        # so this must not read as True/False in the language-correctness
+        # tally. "no_decision" keeps abstained turns out of the ratio.
+        kb_meta["language_correct"] = "no_decision"
+    else:
+        # None = decision exists but the rendered answer carries too
+        # little prose to measure.
+        kb_meta["language_correct"] = (
+            None if answer_language is None else answer_language == target_language
+        )
 
 
 # Internal evidence labels ("(E3)", "(Evidence E3)", bare "Evidence E3")
@@ -1082,6 +1097,7 @@ def compose_non_streaming_kb_response(
                     inspected_content,
                     allowed_image_urls=allowed_image_urls,
                     user_query=kb_meta.get("user_query"),
+                    refusal_language=kb_meta.get("response_language_target"),
                     trusted_sources=trusted_sources,
                     evidence_chunks=citation_chunks,
                     kb_narrow=_kb_meta_is_strict(kb_meta),
@@ -1205,6 +1221,7 @@ def compose_streaming_kb_response(
                     inspected_content,
                     allowed_image_urls=allowed_image_urls,
                     user_query=kb_meta.get("user_query"),
+                    refusal_language=kb_meta.get("response_language_target"),
                     trusted_sources=trusted_sources,
                     evidence_chunks=citation_chunks,
                     kb_narrow=kb_narrow,
@@ -1293,6 +1310,7 @@ def compose_streaming_kb_response(
                 full_text,
                 allowed_image_urls=allowed_image_urls,
                 user_query=kb_meta.get("user_query"),
+                refusal_language=kb_meta.get("response_language_target"),
                 trusted_sources=trusted_sources,
                 evidence_chunks=citation_chunks,
                 kb_narrow=kb_narrow,

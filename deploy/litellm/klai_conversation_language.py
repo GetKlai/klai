@@ -5,11 +5,17 @@ Klai chat surface resends the full history on each request, so the decision
 is derived by replaying the user turns in order: pure, stateless, no cache,
 same messages in, same decision out.
 
-This module replaces the per-message stopword counter in
-``deploy/litellm/klai_language_detect.py`` (kept for now as the fallback of
-the old wiring; new call sites should use this module instead). Identification
-is delegated to ``langid`` (BSD, pure Python, model embedded), restricted to
+This module is the single language-identification mechanism behind every Klai
+chat surface (it replaced and deleted the per-message stopword counter that
+used to live in ``deploy/litellm/klai_language_detect.py``). Identification is
+delegated to ``langid`` (BSD, pure Python, model embedded), restricted to
 :data:`TARGET_LANGUAGES` with normalised probabilities.
+
+Surfaces that hold a conversation list use :func:`resolve_conversation_language`;
+surfaces that only hold a single text (a lone query, an answer to measure) use
+:func:`identify_text_language`, which runs the same gate and identifier on that
+one text. One implementation, two entry points — a call site MUST NOT roll its
+own guessing.
 
 Design contract
 ---------------
@@ -96,6 +102,7 @@ __all__ = [
     "TurnEvidence",
     "classify_turn_evidence",
     "detect_explicit_language_request",
+    "identify_text_language",
     "resolve_conversation_language",
 ]
 
@@ -261,45 +268,22 @@ EXPLICIT_LANGUAGE_NAMES: dict[str, str] = {
     name: target for target, names in _LANGUAGE_NAMES_BY_TARGET.items() for name in names
 }
 
-# Words that turn a language NAME into a language REQUEST. Exact lowercase
-# word matches across the six languages; short prepositions are included
-# because "auf Deutsch" / "en français" / "in het Nederlands" are requests
-# without a verb. Only consulted for turns of 3..MAX_EXPLICIT_REQUEST_WORDS
-# words; 1-2 word turns with a language name are requests outright.
-_REQUEST_HINT_WORDS = frozenset(
+# Words that carry no content next to a bare language name, so "Spaans
+# a.u.b." or "Nederlands graag" still reads as a request: politeness and
+# filler only. Request VERBS are deliberately absent — a verb anywhere in a
+# sentence is not a request ("onze klant is Portugees, kun je dat uitzoeken?"),
+# which is why the directing-preposition rule below decides the normal case.
+_REQUEST_FILLER_WORDS = frozenset(
     {
-        # nl
-        "antwoord", "antwoordt", "antwoorden", "beantwoord", "beantwoorden",
-        "schrijf", "schrijven", "spreek", "spreken", "gebruik", "gebruiken",
-        "maak", "wijzig", "wissel", "verander", "vertaal", "overzet",
-        "graag", "alstublieft", "wil", "kun", "kunt",
-        # en
-        "answer", "answers", "answered", "reply", "respond", "response",
-        "please", "write", "speak", "use", "switch", "translate", "change",
-        "will", "want", "can",
-        # de
-        "bitte", "antworte", "antworten", "schreibe", "schreiben", "spreche",
-        "sprechen", "benutze", "benutzen", "verwende", "verwenden", "wechsle",
-        "wechseln", "übersetze", "übersetzen", "möchte", "kann", "können",
-        # fr
-        "merci", "réponds", "répondez", "répondre", "écris", "écrivez",
-        "écrire", "parle", "parlez", "parler", "utilise", "utilisez",
-        "utiliser", "traduis", "traduisez", "changez", "veux",
-        "peux",
-        # pt
-        "favor", "responda", "responder", "escreva", "escrever", "fale",
-        "falar", "usar", "mude", "mudar", "traduza", "traduzir",
-        "quero", "quer", "pode",
-        # es
-        "responde", "responden", "escríbeme", "escribe", "escribir", "habla",
-        "hablar", "usa", "cambia", "cambiar", "traduce", "traducir",
-        "puedes", "puede", "quiero", "quiere",
+        "graag", "alstublieft", "alsjeblieft", "aub", "svp", "dank", "bedankt",  # nl
+        "please", "thanks", "thank", "pls",  # en
+        "bitte", "danke",  # de
+        "merci",  # fr ("svp" is listed once, under nl; it is shared)
+        "favor", "obrigado", "obrigada",  # pt
+        "gracias",  # es
     }
 )
 
-# Hint phrases matched as substrings of the lowercased prose, because
-# word-splitting on punctuation destroys them ("a.u.b." → a / u / b).
-_REQUEST_HINT_PHRASES = ("a.u.b", "s.v.p", "svp", "s'il te plaît", "s'il vous plaît")
 
 # ---------------------------------------------------------------------------
 # Evidence-gate line classification
@@ -611,7 +595,7 @@ def detect_explicit_language_request(prose: str) -> str | None:
         if len(w) > 1
         and w not in EXPLICIT_LANGUAGE_NAMES
         and w not in _REQUEST_SKIPPABLE_ARTICLES
-        and w not in _REQUEST_HINT_WORDS
+        and w not in _REQUEST_FILLER_WORDS
     ]:
         return target
 
@@ -686,6 +670,28 @@ def _identify(identifier: Any, text: str) -> str | None:
     if lang in TARGET_LANGUAGES and float(confidence) >= threshold:
         return str(lang)
     return None
+
+
+def identify_text_language(text: str) -> str | None:
+    """Identify the language of ONE standalone text. Public single-text entry.
+
+    Runs exactly the steps :func:`resolve_conversation_language` runs per user
+    turn — evidence gate, explicit-request table, confidence-tiered
+    identification — on a single text, for call sites that have a lone query
+    (or an answer to measure) and no conversation to replay. Returns a target
+    code, or ``None`` for "we do not know" (no prose, machine-dominated text,
+    sub-threshold confidence, or langid unavailable); never raises.
+    """
+    evidence = classify_turn_evidence(text)
+    requested = detect_explicit_language_request(evidence.prose)
+    if requested is not None:
+        return requested
+    if not evidence.has_evidence:
+        return None
+    identifier = _get_identifier()  # cached; repeated calls are cheap
+    if identifier is None:
+        return None
+    return _identify(identifier, evidence.prose)
 
 
 # ---------------------------------------------------------------------------

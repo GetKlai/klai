@@ -85,7 +85,7 @@ def test_helpdesk_refusal_offers_an_appointment():
         "wat kost het abonnement?",
         helpdesk=True,
     )
-    assert text == no_citable_sources_message("wat kost het abonnement?", helpdesk=True)
+    assert text == no_citable_sources_message("nl", helpdesk=True)
     assert decision["escalation"] == {"appointment": True}
     # It is the same turn the broad-mode offer rides on; both signals stand.
     assert decision["broad_mode"] == "offer"
@@ -180,7 +180,7 @@ def test_marker_only_reply_is_not_rendered_as_a_bare_marker():
     whose entire content is the token."""
     text, _sources, decision = _compose_backend_managed_answer(MARKER, [], [], "help me", helpdesk=True)
     assert MARKER not in text
-    assert text == no_citable_sources_message("help me", helpdesk=True)
+    assert text == no_citable_sources_message("nl", helpdesk=True)
     assert decision["escalation"] == {"appointment": True}
 
 

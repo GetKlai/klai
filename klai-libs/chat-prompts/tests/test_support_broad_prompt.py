@@ -153,29 +153,32 @@ def test_broad_prompt_labels_are_applied_by_the_application_not_the_model():
 # ─── the general-knowledge label (visible marking + gap detection) ────────
 
 
-def test_broad_marker_picks_dutch_for_dutch_queries():
-    assert broad_mode_answer_marker("wat is een sip trunk?") in BROAD_MODE_ANSWER_MARKERS
-    assert broad_mode_answer_marker("Hoe werkt nummerportering in vredesnaam?") in BROAD_MODE_ANSWER_MARKERS
-    assert "helpartikelen" in broad_mode_answer_marker("hoe stel ik iets in")
-    assert "Algemene kennis" in broad_mode_answer_marker("wat is dect")
+def test_broad_marker_picks_dutch_for_the_dutch_code():
+    assert broad_mode_answer_marker("nl") in BROAD_MODE_ANSWER_MARKERS
+    assert "helpartikelen" in broad_mode_answer_marker("nl")
+    assert "Algemene kennis" in broad_mode_answer_marker("nl")
 
 
 def test_broad_marker_picks_english_otherwise():
-    marker = broad_mode_answer_marker("what is a sip trunk")
+    marker = broad_mode_answer_marker("en")
     assert "General knowledge" in marker
     assert "help articles" in marker
-    # Non-string inputs must still produce a usable label (mirrors the refusal).
+    # A decided non-NL language renders English (the only two canned
+    # languages): rendered strings exist in nl/en only.
+    assert "General knowledge" in broad_mode_answer_marker("de")
+    # Missing or non-string language must still produce a usable label
+    # (mirrors the refusal fallback).
     assert broad_mode_answer_marker(None) in BROAD_MODE_ANSWER_MARKERS
     assert broad_mode_answer_marker({"meta": 1}) in BROAD_MODE_ANSWER_MARKERS
 
 
 def test_broad_marker_language_pick_agrees_with_the_helpdesk_refusal():
     # Both user-visible canned strings must land in the same language for the
-    # same query, or a refusal and a broad label would mix languages in one
-    # conversation. Uses the same wordlist rule on purpose.
+    # same code, or a refusal and a broad label would mix languages in one
+    # conversation. Same language_is_dutch rule by design.
     from klai_chat_prompts import no_citable_sources_message
 
-    for probe in ["wat is een sip trunk", "how do I configure the dial plan", "de", "", None]:
+    for probe in ["nl", "en", "de", "", None]:
         dutch = "helpartikelen" in no_citable_sources_message(probe, helpdesk=True)
         marker = broad_mode_answer_marker(probe)
         assert ("helpartikelen" in marker) is dutch, f"language drift for probe {probe!r}"
@@ -189,8 +192,8 @@ def test_broad_markers_avoid_internal_jargon():
 
 
 def test_is_broad_knowledge_answer_matches_labelled_answers():
-    nl = broad_mode_answer_marker("wat is dect")
-    en = broad_mode_answer_marker("what is dect")
+    nl = broad_mode_answer_marker("nl")
+    en = broad_mode_answer_marker("en")
     assert is_broad_knowledge_answer(f"{nl}\n\nEen DECT-telefoon is draadloos.")
     assert is_broad_knowledge_answer(f"{en}\n\nA DECT phone is a cordless phone.")
     # Leading whitespace tolerated (the backend prepends the marker first).
@@ -203,11 +206,11 @@ def test_is_broad_knowledge_answer_rejects_unlabelled_content():
     assert not is_broad_knowledge_answer(None)
     # The label mid-text (e.g. an article quoting it, or a visitor echoing it)
     # must NOT flip the detector: only a leading label counts.
-    marker = broad_mode_answer_marker("klopt dit?")
+    marker = broad_mode_answer_marker("nl")
     assert not is_broad_knowledge_answer(f"Hier staat: {marker}")
-    # An unrelated German query must pick the English label and still be
+    # A German-decided turn picks the English label and must still be
     # recognised, because membership is checked over the whole label set.
-    assert is_broad_knowledge_answer(f"{broad_mode_answer_marker('was ist dect')}\n\nAntwort")
+    assert is_broad_knowledge_answer(f"{broad_mode_answer_marker('de')}\n\nAntwort")
 
 
 # ─── the existing profiles stayed untouched ──────────────────────────────

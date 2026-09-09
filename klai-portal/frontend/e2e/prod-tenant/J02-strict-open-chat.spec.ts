@@ -84,7 +84,9 @@ async function askChat(page: Page, prompt: string): Promise<string> {
 test('J02 - Strict/Open mode reaches LiteLLM chat response without stale mode', async ({ page }) => {
   test.setTimeout(180_000)
 
-  const prompt = `Wat is TCP/IP? Antwoord kort. Prod smoke ${Date.now()}`
+  // The whole prompt must be Dutch: the footer follows the conversation language,
+  // and an English marker ("Prod smoke") tipped identification to English on 2026-09-09.
+  const prompt = `Wat is TCP/IP? Antwoord kort. Productie-rooktest ${Date.now()}`
 
   try {
     const openPref = await patchMode(page, false)

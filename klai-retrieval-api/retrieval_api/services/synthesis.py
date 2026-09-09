@@ -21,6 +21,7 @@ from collections.abc import AsyncIterator
 
 import httpx
 from klai_chat_prompts import GROUNDED_CHAT_SYSTEM_PROMPT, no_citable_sources_message
+from klai_chat_prompts.language import identify_text_language
 from klai_citations import normalise_source_url, render_evidence_context, source_url_key
 
 from retrieval_api.config import settings
@@ -215,7 +216,12 @@ async def synthesize(
     if blocked_context_count:
         evidence_pack = build_evidence_pack(chunks, query=query_resolved)
     if not evidence_pack.sources:
-        message = no_citable_sources_message(query_resolved)
+        # The refusal language is identified from this single query, NOT from
+        # a conversation replay — /chat is server-to-server and holds one
+        # query; full replay wiring is a separate change. Same single helper
+        # as every other surface; abstain renders Dutch (undecided short turns
+        # are far more likely Dutch here — see klai_chat_prompts._language_is_dutch).
+        message = no_citable_sources_message(identify_text_language(query_resolved))
         yield message
         yield {
             "citations": [],

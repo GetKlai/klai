@@ -4921,6 +4921,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         data = {
             "metadata": {
                 "_klai_kb_meta": {
+                    "response_language_target": "nl",
                     "org_id": "org123",
                     "user_id": "user123",
                     "chunks_injected": 1,
@@ -4988,6 +4989,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                     "org_id": "org123",
                     "user_id": "user123",
                     "user_query": "Hoe voeg ik een nieuwe user toe?",
+                    "response_language_target": "nl",
                     "chunks_injected": 1,
                     "retrieval_ms": 12,
                     "gate_bypassed": False,
@@ -5064,6 +5066,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                     "org_id": "org123",
                     "user_id": "user123",
                     "user_query": "Wat staat er over budget in het organogram?",
+                    "response_language_target": "nl",
                     "kb_narrow": True,
                     "chunks_injected": 1,
                     "retrieval_ms": 12,
@@ -5146,6 +5149,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                     "org_id": "org123",
                     "user_id": "user123",
                     "user_query": "Wat is de TCP-poort van onze API gateway?",
+                    "response_language_target": "nl",
                     "chat_retrieval_prompt_mode": "strict_kb",
                     "kb_narrow": True,
                     "chunks_injected": 3,
@@ -5236,6 +5240,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                     "org_id": "org123",
                     "user_id": "user123",
                     "user_query": "Wie is waarvoor verantwoordelijk?",
+                    "response_language_target": "nl",
                     "kb_narrow": False,
                     "chunks_injected": 1,
                     "retrieval_ms": 12,
@@ -5295,6 +5300,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                     "org_id": "org123",
                     "user_id": "user123",
                     "user_query": "wat staat er op deze screenshot?",
+                    "response_language_target": "nl",
                     "kb_narrow": False,
                     "chunks_injected": 1,
                     "retrieval_ms": 12,
@@ -5358,6 +5364,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                     "org_id": "org123",
                     "user_id": "user123",
                     "user_query": "Wie is waarvoor verantwoordelijk?",
+                    "response_language_target": "nl",
                     "kb_narrow": False,
                     "chunks_injected": 1,
                     "retrieval_ms": 12,
@@ -5429,6 +5436,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                     "org_id": "org123",
                     "user_id": "user123",
                     "user_query": "Hoe open is Klai?",
+                    "response_language_target": "nl",
                     "kb_narrow": True,
                     "chunks_injected": 1,
                     "retrieval_ms": 12,
@@ -5482,6 +5490,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                     "org_id": "org123",
                     "user_id": "user123",
                     "user_query": "Wat staat op deze screenshot?",
+                    "response_language_target": "nl",
                     "kb_narrow": True,
                     "chunks_injected": 0,
                     "retrieval_ms": 12,
@@ -5533,6 +5542,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                     "org_id": "org123",
                     "user_id": "user123",
                     "user_query": "Wat is het favoriete ijsje van Frank Wolters?",
+                    "response_language_target": "nl",
                     "kb_narrow": True,
                     "chunks_injected": 20,
                     "retrieval_ms": 416,
@@ -5600,6 +5610,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                     "org_id": "org123",
                     "user_id": "user123",
                     "user_query": "Hoe open is Klai?",
+                    "response_language_target": "nl",
                     "kb_narrow": False,
                     "chunks_injected": 1,
                     "retrieval_ms": 12,
@@ -5639,6 +5650,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                     "org_id": "org123",
                     "user_id": "user123",
                     "user_query": "Wat staat op deze screenshot?",
+                    "response_language_target": "nl",
                     "kb_narrow": False,
                     "chunks_injected": 0,
                     "retrieval_ms": 12,
@@ -5687,6 +5699,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                     "org_id": "org123",
                     "user_id": "user123",
                     "user_query": "Hoe voeg ik een nieuwe user toe?",
+                    "response_language_target": "nl",
                     "kb_narrow": True,
                     "chunks_injected": 0,
                     "retrieval_ms": 12,
@@ -5736,6 +5749,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                     "org_id": "org123",
                     "user_id": "user123",
                     "user_query": "Hoe voeg ik een nieuwe user toe?",
+                    "response_language_target": "nl",
                     "kb_narrow": True,
                     "chunks_injected": 3,
                     "retrieval_ms": 12,
@@ -5786,6 +5800,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         data = {
             "metadata": {
                 "_klai_kb_meta": {
+                    "response_language_target": "nl",
                     "org_id": "org123",
                     "user_id": "user123",
                     "chunks_injected": 1,
@@ -5890,6 +5905,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         data = {
             "metadata": {
                 "_klai_kb_meta": {
+                    "response_language_target": "nl",
                     "org_id": "org123",
                     "user_id": "user123",
                     "chunks_injected": 1,
@@ -5985,6 +6001,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         data = {
             "metadata": {
                 "_klai_kb_meta": {
+                    "response_language_target": "nl",
                     "org_id": "org123",
                     "user_id": "user123",
                     "chunks_injected": 1,
@@ -6089,6 +6106,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                     "org_id": "org123",
                     "user_id": "user123",
                     "user_query": "Werk je weer?",
+                    "response_language_target": "nl",
                     "kb_narrow": True,
                     "chunks_injected": 12,
                     "retrieval_ms": 80,
@@ -6164,6 +6182,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                     "org_id": "org123",
                     "user_id": "user123",
                     "user_query": "Werk je weer?",
+                    "response_language_target": "nl",
                     "kb_narrow": True,
                     "chunks_injected": 12,
                     "retrieval_ms": 80,
@@ -6257,6 +6276,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                     "org_id": "org123",
                     "user_id": "user123",
                     "user_query": "Werk je weer?",
+                    "response_language_target": "nl",
                     "kb_narrow": True,
                     "chunks_injected": 12,
                     "retrieval_ms": 80,
@@ -6306,6 +6326,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                     "org_id": "org123",
                     "user_id": "user123",
                     "user_query": "What does the diagram show?",
+                    "response_language_target": "en",
                     "kb_narrow": True,
                     "chunks_injected": 1,
                     "retrieval_ms": 12,
@@ -6357,6 +6378,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
         data = {
             "metadata": {
                 "_klai_kb_meta": {
+                    "response_language_target": "nl",
                     "org_id": "org123",
                     "user_id": "user123",
                     "chunks_injected": 1,
@@ -6423,6 +6445,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                     "org_id": "org123",
                     "user_id": "user123",
                     "user_query": "Wie is waarvoor verantwoordelijk?",
+                    "response_language_target": "nl",
                     "kb_narrow": True,
                     "chunks_injected": 8,
                     "retrieval_ms": 604,
@@ -6526,6 +6549,7 @@ class TestKlaiKnowledgeHookUrlImageGrounding:
                     "org_id": "org123",
                     "user_id": "user123",
                     "user_query": "Wie is waarvoor verantwoordelijk?",
+                    "response_language_target": "nl",
                     "kb_narrow": True,
                     "chunks_injected": 20,
                     "retrieval_ms": 591,
@@ -7540,7 +7564,9 @@ class TestKlaiKnowledgeHookZeroChunksMode:
 
         data = {
             "user": "aabbcc112233445566778899",
-            "messages": [{"role": "user", "content": "Wie is Jantine?"}],
+            # Full Dutch sentence: the conversation decision identifies nl
+            # with confidence; the short "Wie is Jantine?" abstains.
+            "messages": [{"role": "user", "content": "Hoe kan ik een nieuwe gebruiker uitnodigen in ons team?"}],
         }
         retrieval_resp = _make_resp({"chunks": [], "retrieval_bypassed": False})
 
@@ -7566,6 +7592,13 @@ class TestKlaiKnowledgeHookZeroChunksMode:
         )
         assert result.get("mock_response")
         assert "niet betrouwbaar beantwoorden" in result["mock_response"]
+        # Part B: the conversation decision is traceable on every rendered
+        # line — code + reason + counters, metadata only.
+        assert meta["response_language_target"] == "nl"
+        assert meta["response_language_reason"] == "established"
+        assert meta["response_language_votes"] == 1
+        assert meta["response_language_abstentions"] == 0
+        assert meta["response_language_switches"] == 0
 
     @pytest.mark.asyncio
     async def test_zero_chunks_open_metadata_lets_post_call_short_circuit(

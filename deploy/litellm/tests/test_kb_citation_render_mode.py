@@ -22,6 +22,9 @@ def _meta(**overrides) -> dict:
         "trusted_sources": [],
         "no_citable_sources": True,
         "user_query": "Wat is het beleid?",
+        # The hook now always carries the conversation decision; the footer
+        # reads THIS, never user_query.
+        "response_language_target": "nl",
         **overrides,
     }
 
@@ -49,7 +52,7 @@ def test_prompt_mode_overrides_legacy_kb_narrow_for_open_no_sources():
     assert content == "Model answer without sources."
 
 
-def test_visible_footer_follows_english_user_query_not_dutch_sources():
+def test_visible_footer_follows_the_english_decision_not_dutch_sources():
     response = _response("Use the Voys app troubleshooting steps.")
 
     stats = compose_non_streaming_kb_response(
@@ -58,6 +61,7 @@ def test_visible_footer_follows_english_user_query_not_dutch_sources():
             chat_retrieval_prompt_mode="open_kb",
             no_citable_sources=False,
             user_query="The app does not call, just drops the call",
+            response_language_target="en",
             citation_chunks=[
                 {
                     "text": "iPhone Voys App Probleemoplosser > Ik ontvang geen inkomende oproepen",
@@ -92,7 +96,7 @@ def test_visible_footer_follows_english_user_query_not_dutch_sources():
     assert "Kennisbank geraadpleegd" not in content
 
 
-def test_visible_footer_keeps_dutch_for_dutch_user_query():
+def test_visible_footer_follows_the_dutch_decision_not_the_user_query():
     response = _response("Gebruik de Voys app probleemoplosser.")
 
     compose_non_streaming_kb_response(
@@ -100,7 +104,11 @@ def test_visible_footer_keeps_dutch_for_dutch_user_query():
         _meta(
             chat_retrieval_prompt_mode="open_kb",
             no_citable_sources=False,
-            user_query="De app belt niet en verbreekt de oproep",
+            # English text on purpose: the footer must follow the decision
+            # even when the (earlier-turn) user_query would have said
+            # otherwise under the deleted wordlist.
+            user_query="The app does not call, just drops the call",
+            response_language_target="nl",
             citation_chunks=[
                 {
                     "text": "iPhone Voys App Probleemoplosser > Ik ontvang geen inkomende oproepen",
@@ -205,6 +213,11 @@ def test_non_streaming_render_log_contains_language_fields(caplog):
     )
     kb_meta = _fanout_meta(
         response_language_target="en",
+        # Part B fields as the hook flattens them out of LanguageDecision.
+        response_language_reason="locked",
+        response_language_votes=4,
+        response_language_abstentions=1,
+        response_language_switches=0,
         kb_scope_mode="all_org_and_personal",
         kbs_in_scope=["support"],
     )
@@ -222,8 +235,27 @@ def test_non_streaming_render_log_contains_language_fields(caplog):
     ]
     assert len(messages) == 1
     assert "response_language_target=en" in messages[0]
+    assert "language_reason=locked" in messages[0]
+    assert "language_votes=4" in messages[0]
+    assert "language_abstentions=1" in messages[0]
+    assert "language_switches=0" in messages[0]
     assert "answer_language=en" in messages[0]
     assert "language_correct=True" in messages[0]
+
+
+def test_language_correct_is_no_decision_without_a_conversation_decision():
+    # The incident's self-consistency trap: comparing our own guess against
+    # our own guess. With NO decision there is nothing to be correct
+    # against — that must be the distinct "no_decision", never True/False.
+    response = _response(
+        "The notifications are not offered again, and you can review the setting. (E1)"
+    )
+    kb_meta = _fanout_meta(response_language_target=None)
+
+    compose_non_streaming_kb_response(response, kb_meta)
+
+    assert kb_meta["answer_language"] == "en"
+    assert kb_meta["language_correct"] == "no_decision"
 
 
 def test_streaming_render_log_contains_language_fields(caplog):

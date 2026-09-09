@@ -111,6 +111,10 @@ _EXPECTED_KEYS = {
     "sub_query_coverage",
     "unchecked_questions",
     "response_language_target",
+    "response_language_reason",
+    "response_language_votes",
+    "response_language_abstentions",
+    "response_language_switches",
     # policy-derived
     "answer_policy_state",
     "chat_retrieval_prompt_mode",
@@ -262,12 +266,14 @@ def test_strict_kb_unavailable_message_lives_with_answer_policy():
     policy_module = _policy_module()
 
     assert (
-        policy_module.strict_kb_unavailable_message("wat is de status?")
+        policy_module.strict_kb_unavailable_message("nl")
         == "De kennisbank is tijdelijk niet bereikbaar, dus ik kan dit niet "
         "betrouwbaar beantwoorden op basis van je kennisbronnen."
     )
     assert (
-        policy_module.strict_kb_unavailable_message("what is the status?")
+        # Codes, not queries: an abstained (None) or other-language decision
+        # renders the English fallback.
+        policy_module.strict_kb_unavailable_message("en")
         == "The knowledge base is temporarily unavailable, so I cannot answer this "
         "reliably from your knowledge sources."
     )

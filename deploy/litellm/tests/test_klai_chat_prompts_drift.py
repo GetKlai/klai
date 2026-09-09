@@ -143,23 +143,6 @@ def test_vendored_kb_context_language_reminder_matches_canonical() -> None:
     )
 
 
-def test_vendored_dutch_markers_match_canonical() -> None:
-    """``DUTCH_QUERY_MARKERS`` MUST be set-equal between vendored and
-    canonical. The set drives the language choice for the strict-mode
-    refusal in both the LiteLLM hook (path A) and partner_chat.py
-    (path B); drift here means one surface refuses in Dutch while the
-    other refuses in English for the same query.
-    """
-    vendored = _load("_drift_vendored_markers", _VENDORED_PATH)
-    canonical = _load("_drift_canonical_markers", _CANONICAL_PATH)
-
-    assert vendored.DUTCH_QUERY_MARKERS == canonical.DUTCH_QUERY_MARKERS, (
-        "DUTCH_QUERY_MARKERS drift between vendored and canonical.\n"
-        "  Update deploy/litellm/klai_chat_prompts.py to match "
-        "klai-libs/chat-prompts/klai_chat_prompts/__init__.py."
-    )
-
-
 def test_vendored_no_citable_sources_message_matches_canonical() -> None:
     """``no_citable_sources_message`` MUST produce the same output for
     the same input on both the vendored and canonical copies. Drift here
@@ -169,13 +152,15 @@ def test_vendored_no_citable_sources_message_matches_canonical() -> None:
     vendored = _load("_drift_vendored_refusal", _VENDORED_PATH)
     canonical = _load("_drift_canonical_refusal", _CANONICAL_PATH)
 
+    # Language CODES (the helper takes a decided code, not a query): both
+    # canned languages plus the documented fallbacks for other/missing codes.
     samples = [
-        "Wat is dit?",
-        "What is this?",
-        "Hoeveel kost het?",
-        "How much does it cost?",
+        "nl",
+        "en",
+        "de",
         "",
         None,
+        42,
     ]
     for sample in samples:
         assert vendored.no_citable_sources_message(sample) == canonical.no_citable_sources_message(sample), (

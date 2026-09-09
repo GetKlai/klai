@@ -91,11 +91,17 @@ def test_llm_messages_strip_widget_metadata():
     assert all(set(message) == {"role", "content"} for message in augmented)
 
 
-def test_no_citable_sources_message_follows_dutch_query_language():
+def test_no_citable_sources_message_follows_the_identified_query_language():
+    from klai_chat_prompts.language import identify_text_language
+
     from app.services.partner_chat import _no_citable_sources_message
 
+    # The widget chain: identify the language of the lone query, render the
+    # canned refusal for that CODE — the refusal no longer sniffs the text.
+    query = "Hoeveel knowledgebases mag ik aanmaken?"
+    assert identify_text_language(query) == "nl"
     assert (
-        _no_citable_sources_message("Hoeveel knowledgebases mag ik aanmaken?")
+        _no_citable_sources_message(identify_text_language(query))
         == "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
     )
 
@@ -2235,7 +2241,7 @@ async def test_streaming_widget_mode_composes_sources_without_model_citations(mo
 
     chunks = []
     async for chunk in chat_completion_streaming(
-        messages=[{"role": "user", "content": "Wat is Klai?"}],
+        messages=[{"role": "user", "content": "Wat is Klai precies en hoe werkt het?"}],
         model="klai-primary",
         temperature=0.7,
         system_prompt="prompt",
@@ -2313,7 +2319,7 @@ async def test_streaming_widget_mode_respects_emit_sources_false(monkeypatch):
 
     chunks = []
     async for chunk in chat_completion_streaming(
-        messages=[{"role": "user", "content": "Wat is Klai?"}],
+        messages=[{"role": "user", "content": "Wat is Klai precies en hoe werkt het?"}],
         model="klai-primary",
         temperature=0.7,
         system_prompt="prompt",
@@ -2564,7 +2570,7 @@ async def test_streaming_widget_mode_refuses_uncited_answer_without_sources(monk
 
     chunks = []
     async for chunk in chat_completion_streaming(
-        messages=[{"role": "user", "content": "Wat is Klai?"}],
+        messages=[{"role": "user", "content": "Wat is Klai precies en hoe werkt het?"}],
         model="klai-primary",
         temperature=0.7,
         system_prompt="prompt",

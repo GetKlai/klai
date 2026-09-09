@@ -39,7 +39,9 @@ _SUPPORT_EXPRESSIVE_ONLY = "Expressive register"
 # Derived from the single source of truth rather than copied: a hardcoded copy
 # here silently pins the wording and fails the day the brand voice changes,
 # which is exactly what happened when this text was rewritten.
-_HELPDESK_DUTCH = no_citable_sources_message("Waarom lukt dit niet?", helpdesk=True)
+# Derived from the single source of truth rather than copied, per the
+# rendered language CODES ("nl"/"en") — the helper no longer guesses.
+_HELPDESK_DUTCH = no_citable_sources_message("nl", helpdesk=True)
 _INTERNAL_DUTCH = "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
 
 

@@ -7,16 +7,18 @@ from klai_kb_system_prompt import (
     final_response_language_reminder,
 )
 
+_EN_TURN = {
+    "role": "user",
+    "content": "Could you please explain what this setting does today?",
+}
+
 
 def test_append_final_language_reminder_uses_explicit_english_target() -> None:
-    messages = [
-        {
-            "role": "user",
-            "content": "Could you please explain what this setting does today?",
-        }
-    ]
+    messages = [dict(_EN_TURN)]
 
-    target = append_final_language_reminder(messages, include_kb_reminder=False)
+    target = append_final_language_reminder(
+        messages, include_kb_reminder=False, target="en"
+    )
 
     assert target == "en"
     assert messages[-1]["role"] == "system"
@@ -24,24 +26,22 @@ def test_append_final_language_reminder_uses_explicit_english_target() -> None:
     assert "substantive message is in English (en)" in messages[-1]["content"]
 
 
-def test_append_final_language_reminder_falls_back_to_legacy_text_for_unknown() -> None:
+def test_append_final_language_reminder_without_target_uses_generic_text() -> None:
+    # No self-detection anymore: a missing target means the conversation
+    # abstained (or the decision was withheld) and the generic reminder is
+    # the honest contract — the model-side prompt rules take over.
     messages = [{"role": "user", "content": "Hi"}]
 
     target = append_final_language_reminder(messages, include_kb_reminder=False)
 
-    assert target == "und"
+    assert target is None
     assert messages[-1]["content"] == FINAL_RESPONSE_LANGUAGE_REMINDER
 
 
 def test_append_final_language_reminder_keeps_kb_reminder_composition() -> None:
-    messages = [
-        {
-            "role": "user",
-            "content": "Could you please explain what this setting does today?",
-        }
-    ]
+    messages = [dict(_EN_TURN)]
 
-    target = append_final_language_reminder(messages)
+    target = append_final_language_reminder(messages, target="en")
 
     assert target == "en"
     assert messages[-1]["content"] == (
@@ -50,38 +50,31 @@ def test_append_final_language_reminder_keeps_kb_reminder_composition() -> None:
 
 
 def test_append_final_language_reminder_is_idempotent_for_explicit_variant() -> None:
-    messages = [
-        {
-            "role": "user",
-            "content": "Could you please explain what this setting does today?",
-        }
-    ]
+    messages = [dict(_EN_TURN)]
 
-    first_target = append_final_language_reminder(messages, include_kb_reminder=False)
-    second_target = append_final_language_reminder(messages, include_kb_reminder=False)
+    first_target = append_final_language_reminder(
+        messages, include_kb_reminder=False, target="en"
+    )
+    second_target = append_final_language_reminder(
+        messages, include_kb_reminder=False, target="en"
+    )
 
     assert first_target == "en"
     assert second_target == "en"
     assert len([m for m in messages if m["role"] == "system"]) == 1
 
 
-def test_append_final_language_reminder_is_idempotent_for_legacy_variant() -> None:
+def test_append_final_language_reminder_is_idempotent_for_generic_variant() -> None:
     messages = [
-        {
-            "role": "user",
-            "content": "Could you please explain what this setting does today?",
-        },
+        dict(_EN_TURN),
         {"role": "system", "content": FINAL_RESPONSE_LANGUAGE_REMINDER},
     ]
 
     target = append_final_language_reminder(messages, include_kb_reminder=False)
 
-    assert target == "en"
+    assert target is None
     assert messages == [
-        {
-            "role": "user",
-            "content": "Could you please explain what this setting does today?",
-        },
+        dict(_EN_TURN),
         {"role": "system", "content": FINAL_RESPONSE_LANGUAGE_REMINDER},
     ]
 
@@ -89,9 +82,9 @@ def test_append_final_language_reminder_is_idempotent_for_legacy_variant() -> No
 def test_append_final_language_reminder_prefers_explicit_target() -> None:
     # Sol review P1: PDF attachment processing replaces the latest user
     # content with question + extracted document text BEFORE the reminder is
-    # appended. The hook therefore detects the target on the unmutated
-    # messages and passes it in; the passed target must win over whatever the
-    # (mutated) messages would detect as.
+    # appended. The hook therefore takes the conversation decision on the
+    # UNMUTATED messages and passes the code in; this function never reads
+    # message content to detect a language itself.
     messages = [
         {
             "role": "user",
@@ -112,17 +105,12 @@ def test_append_final_language_reminder_prefers_explicit_target() -> None:
     assert "Respond in English" in messages[-1]["content"]
 
 
-def test_append_final_language_reminder_explicit_unknown_uses_legacy_text() -> None:
-    messages = [
-        {
-            "role": "user",
-            "content": "Could you please explain what this setting does today?",
-        }
-    ]
+def test_append_final_language_reminder_other_language_target_names_it() -> None:
+    messages = [dict(_EN_TURN)]
 
     target = append_final_language_reminder(
-        messages, include_kb_reminder=False, target="und"
+        messages, include_kb_reminder=False, target="de"
     )
 
-    assert target == "und"
-    assert messages[-1]["content"] == FINAL_RESPONSE_LANGUAGE_REMINDER
+    assert target == "de"
+    assert "Respond in German" in messages[-1]["content"]
