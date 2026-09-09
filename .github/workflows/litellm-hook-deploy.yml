@@ -33,20 +33,77 @@ jobs:
       - name: Add core-01 to known_hosts
         run: ssh-keyscan -H ${{ secrets.CORE01_HOST }} >> ~/.ssh/known_hosts
 
+      # core-01 sshd runs MaxStartups 10:30:100; pre-auth scanner load made it
+      # randomly drop new handshakes on 2026-09-09 (three deploy failures in a
+      # row, 21:28-21:31, all `Connection closed by ... port 22` = exit 255).
+      # One dropped connection must not fail a production deploy, so every
+      # rsync/ssh below runs through this retry helper. It is written and
+      # tested here and sourced by each deploy step, so the loop exists once.
+      - name: Test retry helper
+        run: |
+          cat > "$RUNNER_TEMP/ssh-retry.sh" <<'EOF'
+          # retry CMD...: run CMD; on exit 255 (ssh/rsync connection drop)
+          # try up to 5 attempts with a growing pause. Any other non-zero
+          # exit fails immediately, as before.
+          retry() {
+            local attempt delay=${RETRY_BASE_DELAY:-5} rc
+            for attempt in 1 2 3 4 5; do
+              "$@" && return 0
+              rc=$?
+              [ "$rc" -ne 255 ] && return "$rc"
+              [ "$attempt" -eq 5 ] && return "$rc"
+              echo "retry $attempt/5: command exited 255, sleeping ${delay}s: $*" >&2
+              sleep "$delay"
+              delay=$((delay * 2))
+            done
+          }
+          EOF
+          export RETRY_BASE_DELAY=0
+          source "$RUNNER_TEMP/ssh-retry.sh"
+
+          attempts=0
+          flaky_255() {
+            attempts=$((attempts + 1))
+            if [ "$attempts" -lt 3 ]; then
+              return 255
+            fi
+            return 0
+          }
+          rc=0
+          retry flaky_255 || rc=$?
+          if [ "$rc" -ne 0 ] || [ "$attempts" -ne 3 ]; then
+            echo "FAIL: 255-then-success: rc=$rc after $attempts attempts (want rc=0 after 3)" >&2
+            exit 1
+          fi
+
+          attempts=0
+          exit_1() {
+            attempts=$((attempts + 1))
+            return 1
+          }
+          rc=0
+          retry exit_1 || rc=$?
+          if [ "$rc" -ne 1 ] || [ "$attempts" -ne 1 ]; then
+            echo "FAIL: exit-1: rc=$rc after $attempts attempts (want rc=1 after 1)" >&2
+            exit 1
+          fi
+          echo "retry helper ok"
+
       - name: Sync hook files to core-01
         run: |
-          rsync -av deploy/litellm/ klai@${{ secrets.CORE01_HOST }}:/opt/klai/litellm/
+          source "$RUNNER_TEMP/ssh-retry.sh"
+          retry rsync -av deploy/litellm/ klai@${{ secrets.CORE01_HOST }}:/opt/klai/litellm/
           # SPEC-SEC-SERVICE-AUTH-002 removed the vendored ZitadelTokenClient;
           # the rsync above has no --delete, so drop the now-orphaned host file.
-          ssh klai@${{ secrets.CORE01_HOST }} 'rm -f /opt/klai/litellm/klai_service_auth.py'
-          rsync -av --delete klai-libs/citations/klai_citations/ klai@${{ secrets.CORE01_HOST }}:/opt/klai/litellm/klai_citations/
-          rsync -av deploy/docker-compose.yml klai@${{ secrets.CORE01_HOST }}:/opt/klai/docker-compose.yml
+          retry ssh klai@${{ secrets.CORE01_HOST }} 'rm -f /opt/klai/litellm/klai_service_auth.py'
+          retry rsync -av --delete klai-libs/citations/klai_citations/ klai@${{ secrets.CORE01_HOST }}:/opt/klai/litellm/klai_citations/
+          retry rsync -av deploy/docker-compose.yml klai@${{ secrets.CORE01_HOST }}:/opt/klai/docker-compose.yml
           # --inplace would let a concurrent service deploy read a half-written
           # script; rsync's default is write-to-temp-then-rename, so the swap is
           # atomic. Kept explicit because compose-up.sh now decides whether a
           # deploy counts as successful.
-          rsync -av deploy/scripts/compose-up.sh klai@${{ secrets.CORE01_HOST }}:/opt/klai/scripts/compose-up.sh
-          ssh klai@${{ secrets.CORE01_HOST }} "chmod 0755 /opt/klai/scripts/compose-up.sh"
+          retry rsync -av deploy/scripts/compose-up.sh klai@${{ secrets.CORE01_HOST }}:/opt/klai/scripts/compose-up.sh
+          retry ssh klai@${{ secrets.CORE01_HOST }} "chmod 0755 /opt/klai/scripts/compose-up.sh"
 
       # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3 — use the canonical
       # compose-up wrapper (already used by caddy, klai-connector,
@@ -80,9 +137,12 @@ jobs:
       # not recreate the container against a stale compose file that does not
       # expose the new module at /app.
       - name: Recreate LiteLLM container
-        run: ssh klai@${{ secrets.CORE01_HOST }} "/opt/klai/scripts/compose-up.sh --force-recreate litellm"
+        run: |
+          source "$RUNNER_TEMP/ssh-retry.sh"
+          retry ssh klai@${{ secrets.CORE01_HOST }} "/opt/klai/scripts/compose-up.sh --force-recreate litellm"
 
       - name: Smoke LiteLLM hook imports
         run: |
-          ssh klai@${{ secrets.CORE01_HOST }} \
+          source "$RUNNER_TEMP/ssh-retry.sh"
+          retry ssh klai@${{ secrets.CORE01_HOST }} \
             "docker exec klai-core-litellm-1 python -c 'import klai_knowledge, custom_router, klai_context, klai_citations; print(\"litellm hook imports ok\")'"
