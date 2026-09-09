@@ -12,6 +12,7 @@ import {
   appendToLastMessage,
   setLastMessageSources,
   setLastMessageBroadMode,
+  setLastMessageEscalation,
   setBroadMode,
   appendLastMessageActivity,
   finishStreaming,
@@ -250,6 +251,9 @@ export function ChatWindow(props: ChatWindowProps) {
         },
         onBroadMode: (mode) => {
           setLastMessageBroadMode(mode);
+        },
+        onEscalation: (escalation) => {
+          setLastMessageEscalation(escalation);
         },
         onDone: () => {
           finishStreaming();
@@ -663,6 +667,7 @@ export function ChatWindow(props: ChatWindowProps) {
           isStreaming={chatState.isStreaming}
           error={chatState.error}
           onBroadConsent={(offerIndex) => void handleBroadConsentClick(offerIndex)}
+          onAppointment={nerdsActive() ? openNerdsPanel : undefined}
         />
       </Show>
 
@@ -737,8 +742,14 @@ export function ChatWindow(props: ChatWindowProps) {
           redirect to the support partner's booking module. booking_url
           is server-validated to absolute http(s) before delivery
           (partner.py _widget_booking_url), so it is safe as an href.
-          Unset → no element rendered, current behaviour unchanged. */}
-      <Show when={props.bookingUrl?.trim()}>
+          Unset → no element rendered, current behaviour unchanged.
+
+          With the nerds panel wired up the bar disappears entirely: the
+          appointment is then offered in the conversation, under the answer
+          that offered it, and a second permanent route to the same booking
+          module would only compete with it. Widgets without the nerds
+          integration keep this bar exactly as it was. */}
+      <Show when={props.bookingUrl?.trim() && !nerdsActive()}>
         <div class="klai-booking-bar">
           <a
             class="klai-booking-btn"
@@ -844,9 +855,10 @@ export function ChatWindow(props: ChatWindowProps) {
 
       {/* With the nerds integration on, the client's own disclosure
           sentence replaces the plain accuracy footer — same place, same
-          white-label gate. "onze nerds" is a <button>, not an <a>: the
-          panel opens inside the widget, there is no URL to visit. The
-          fragments render as JSX text, never as raw HTML. */}
+          white-label gate. "onze nerds" is plain text, not a control: a
+          disclaimer is not an appointment route, and the one route the
+          visitor should take is the button under the answer that offered
+          it. The fragments render as JSX text, never as raw HTML. */}
       <Show when={!props.hideDisclaimer}>
         <Show
           when={nerdsActive()}
@@ -854,13 +866,7 @@ export function ChatWindow(props: ChatWindowProps) {
         >
           <p class="klai-disclaimer">
             {t().nerdsDisclosureBefore}
-            <button
-              type="button"
-              class="klai-nerds-disclosure-link"
-              onClick={openNerdsPanel}
-            >
-              {t().nerdsDisclosureLink}
-            </button>
+            {t().nerdsDisclosureLink}
             {t().nerdsDisclosureAfter}
           </p>
         </Show>

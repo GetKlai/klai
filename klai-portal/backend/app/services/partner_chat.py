@@ -37,6 +37,7 @@ from klai_chat_prompts import (
     SUPPORT_CHAT_SYSTEM_PROMPT,
     SUPPORT_EXPRESSIVE_CHAT_SYSTEM_PROMPT,
     broad_mode_answer_marker,
+    strip_appointment_offer_marker,
 )
 from klai_chat_prompts import (
     no_citable_sources_message as _no_citable_sources_message,
@@ -1284,6 +1285,11 @@ def _sse_broad_mode_delta(mode: str) -> bytes:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
 
 
+def _sse_escalation_delta(escalation: dict[str, bool]) -> bytes:
+    payload = {"choices": [{"delta": {"escalation": escalation}}]}
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
+
+
 def _sse_error_frame(message: str) -> bytes:
     """OpenAI-compatible SSE error frame.
 
@@ -1519,6 +1525,32 @@ async def openai_chat_completion_streaming(
         ) from exc
 
 
+def _appointment_escalation() -> dict[str, bool]:
+    """The only escalation shape the widget contract allows.
+
+    Exactly ``{"appointment": bool}``, never partial — the widget treats an
+    absent key as "no offer", so a half-built dict would be a silent no-op.
+    Built fresh per call so a caller mutating one decision cannot reach into
+    another.
+    """
+    return {"appointment": True}
+
+
+def _appointment_escalation_signal(decision: object) -> dict[str, bool] | None:
+    """Read the appointment offer back off a composed decision, or ``None``.
+
+    Deliberately strict: anything other than a literal ``True`` under
+    ``appointment`` is no offer. A safety refusal replaces the decision dict
+    wholesale, so a blocked answer can never carry a booking button.
+    """
+    if not isinstance(decision, dict):
+        return None
+    escalation = decision.get("escalation")
+    if isinstance(escalation, dict) and escalation.get("appointment") is True:
+        return {"appointment": True}
+    return None
+
+
 def _compose_backend_managed_answer(
     text: str,
     trusted_sources: list[dict[str, Any]] | None,
@@ -1554,20 +1586,38 @@ def _compose_backend_managed_answer(
     knowledge here (never by the model) and returns with empty sources. Public
     refusal decisions additionally carry ``broad_mode`` ("answer" / "offer") so
     the stream wrapper can emit the matching widget signal.
+
+    Public helpdesk decisions can additionally carry ``escalation``
+    ``{"appointment": True}`` — "this answer offers the visitor an
+    appointment", so the widget can render the booking button under exactly
+    that message. Two sources feed it: the canned refusal (its own text makes
+    the offer) and the SUPPORT profile's machine marker on an offer the model
+    wrote itself. The marker is stripped here and can never reach a visitor.
     """
+    text, model_offered_appointment = strip_appointment_offer_marker(text)
+    # The marker only means something on the public help-page widget; partner
+    # API callers never see the SUPPORT prompt, so their path stays untouched.
+    offered_appointment = helpdesk and model_offered_appointment
+
     if broad:
         if not text.strip():
             # The model produced nothing even with the broad profile; stay on
             # the honest refusal. No offer signal: consent already happened.
+            decision: dict[str, Any] = {"reason": "broad_mode_no_output"}
+            # The helpdesk refusal itself offers an appointment, so the widget
+            # gets the button even though the model wrote nothing at all.
+            if helpdesk:
+                decision["escalation"] = _appointment_escalation()
             return (
                 _no_citable_sources_message(user_query, helpdesk=helpdesk),
                 [],
-                {
-                    "reason": "broad_mode_no_output",
-                },
+                decision,
             )
         marker = broad_mode_answer_marker(user_query)
-        return f"{marker}\n\n{text.strip()}", [], {"reason": "broad_mode_answer", "broad_mode": "answer"}
+        decision = {"reason": "broad_mode_answer", "broad_mode": "answer"}
+        if offered_appointment:
+            decision["escalation"] = _appointment_escalation()
+        return f"{marker}\n\n{text.strip()}", [], decision
 
     composed = compose_answer_with_trusted_sources(
         text,
@@ -1579,6 +1629,7 @@ def _compose_backend_managed_answer(
         decision = dict(composed.decision)
         if helpdesk:
             decision["broad_mode"] = "offer"
+            decision["escalation"] = _appointment_escalation()
         return _no_citable_sources_message(user_query, helpdesk=helpdesk), [], decision
 
     kb_sources = [{**source, "origin": "kb"} for source in composed.sources]
@@ -1607,7 +1658,10 @@ def _compose_backend_managed_answer(
     if not sources:
         if helpdesk:
             decision["broad_mode"] = "offer"
+            decision["escalation"] = _appointment_escalation()
         return _no_citable_sources_message(user_query, helpdesk=helpdesk), [], decision
+    if offered_appointment:
+        decision["escalation"] = _appointment_escalation()
     return composed.content, sources, decision
 
 
@@ -1671,6 +1725,11 @@ async def _chat_completion_streaming_with_composed_citations(
     unchanged. Both the composer's answer label and its offer signal on a public
     refusal surface as a ``delta.broad_mode`` frame before content, so the widget
     can label the message or render the consent button without parsing prose.
+
+    An answer that offers the visitor an appointment surfaces the same way, as a
+    ``delta.escalation`` frame carrying ``{"appointment": true}`` — the widget
+    puts its booking button under that one message instead of keeping a bar on
+    screen forever. Absent frame = no offer.
     """
     raw_text_parts: list[str] = []
     chat_url = f"{settings.litellm_base_url}/v1/chat/completions"
@@ -1757,6 +1816,10 @@ async def _chat_completion_streaming_with_composed_citations(
     broad_signal = decision.get("broad_mode") if isinstance(decision, dict) else None
     if broad_signal in ("offer", "answer"):
         yield _sse_broad_mode_delta(broad_signal)
+    # Same reasoning for the appointment offer: it rides on the decision dict,
+    # so a safety-blocked turn drops it with everything else.
+    if escalation := _appointment_escalation_signal(decision):
+        yield _sse_escalation_delta(escalation)
     if citation_chunks:
         yield _sse_activity_delta(
             [
@@ -2308,6 +2371,10 @@ async def chat_completion_non_streaming(
     (only ever True for the consented helpdesk widget); on the marker path it
     reaches the composer, and the resulting signal surfaces as
     ``message.broad_mode`` ("answer" | "offer") for non-streaming widget use.
+
+    An answer that offers the visitor an appointment carries
+    ``message.escalation = {"appointment": true}``, the non-streaming twin of
+    the ``delta.escalation`` frame. Absent key = no offer.
     """
     augmented_messages = _augment_messages_with_system_prompt(messages, system_prompt, page_context)
 
@@ -2399,6 +2466,8 @@ async def chat_completion_non_streaming(
                 message["sources"] = sources
                 if isinstance(decision, dict) and decision.get("broad_mode") in ("offer", "answer"):
                     message["broad_mode"] = decision["broad_mode"]
+                if escalation := _appointment_escalation_signal(decision):
+                    message["escalation"] = escalation
         stripped_links = 0
     else:
         stripped_links = _sanitize_completion_body(
