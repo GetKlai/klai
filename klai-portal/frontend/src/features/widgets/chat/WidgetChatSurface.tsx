@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowUp, Calendar, ChevronDown, MessageSquare, Pencil, Share2, X } from 'lucide-react'
-import DOMPurify from 'dompurify'
-import snarkdown from 'snarkdown'
+import Markdown from 'react-markdown'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { WIDGET_DEFAULT_PRIMARY_COLOR } from '@/features/widgets/config/appearance'
@@ -139,15 +138,6 @@ function normalizeSources(rawSources: unknown): MessageSource[] {
     seen.add(label)
   }
   return normalized
-}
-
-// Assistant-only markdown rendering (visitor-facing surface: always sanitize
-// before anything reaches the DOM). Mirrors the embedded widget's approach
-// in klai-widget/src/components/MessageList.tsx (snarkdown -> DOMPurify).
-// User messages are never passed through this — they render as plain text
-// via React's default escaping, since they originate from the visitor.
-function renderAssistantMarkdown(content: string): string {
-  return DOMPurify.sanitize(snarkdown(content))
 }
 
 // Streaming delta: {"choices":[{"delta":{"escalation":{"appointment":true}}}]}
@@ -606,10 +596,11 @@ export function WidgetChatSurface({
   )
 }
 
-// Spacing between paragraphs/list items for snarkdown's output. Tailwind
+// Spacing between paragraphs/list items react-markdown emits. Tailwind
 // utilities target the generated markup via arbitrary-variant child
 // selectors rather than a separate stylesheet, matching this file's
-// className-only styling convention.
+// className-only styling convention and the same pattern the meetings and
+// transcribe routes use around their own <Markdown> element.
 function markdownClasses(isDark: boolean) {
   return [
     '[&_p]:m-0 [&_p+p]:mt-2',
@@ -703,9 +694,8 @@ function MessageBubble({
             : 'max-w-[75%] rounded-2xl rounded-br-md px-4 py-2.5 text-white'}
           style={{ backgroundColor: primaryColor }}
         >
-          {/* Visitor-authored text. Never markdown/HTML-rendered — see
-              renderAssistantMarkdown, which only ever touches assistant
-              content. */}
+          {/* Visitor-authored text. Never markdown/HTML-rendered — only the
+              assistant branches below ever render a <Markdown> element. */}
           <p className="whitespace-pre-line break-words text-[0.875rem] leading-relaxed">
             {message.content}
           </p>
@@ -728,9 +718,10 @@ function MessageBubble({
         <div className="min-w-0 flex-1">
           {message.content ? (
             <div
-              className={`whitespace-normal break-words text-[0.875rem] leading-[1.75] ${isDark ? 'text-[var(--color-rl-bg)]' : 'text-gray-900'} ${markdownClasses(isDark)}`}
-              dangerouslySetInnerHTML={{ __html: renderAssistantMarkdown(message.content) }}
-            />
+              className={`break-words text-[0.875rem] leading-[1.75] ${isDark ? 'text-[var(--color-rl-bg)]' : 'text-gray-900'} ${markdownClasses(isDark)}`}
+            >
+              <Markdown>{message.content}</Markdown>
+            </div>
           ) : isStreaming && isLast ? (
             <TypingIndicator isDark={isDark} />
           ) : null}
@@ -747,9 +738,10 @@ function MessageBubble({
         <div>
           <div className={`max-w-[75%] rounded-2xl rounded-bl-md px-4 py-2.5 ${isDark ? 'bg-white/10' : 'bg-[var(--color-rl-cream)]'}`}>
             <div
-              className={`whitespace-normal break-words text-[0.875rem] leading-[1.6] ${isDark ? 'text-[var(--color-rl-bg)]' : 'text-gray-900'} ${markdownClasses(isDark)}`}
-              dangerouslySetInnerHTML={{ __html: renderAssistantMarkdown(message.content) }}
-            />
+              className={`break-words text-[0.875rem] leading-[1.6] ${isDark ? 'text-[var(--color-rl-bg)]' : 'text-gray-900'} ${markdownClasses(isDark)}`}
+            >
+              <Markdown>{message.content}</Markdown>
+            </div>
           </div>
           {showEscalation && <EscalationCta href={nerdsHref} isDark={isDark} />}
           <SourceDetails message={message} showSources={showSources} showMeta={showMeta} isDark={isDark} />
