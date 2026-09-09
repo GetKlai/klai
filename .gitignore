@@ -217,11 +217,6 @@ dist-ssr/
 .playwright-mcp/
 klai-portal/frontend/public/widget/klai-chat.js
 
-# CodeIndex source — lives in dedicated repo (sinterqlaas2/codeindex).
-# Do not vendor into this monorepo.
-codeindex-src/
-.codeindex/
-
 # Generated during the Klai LibreChat image build (SPEC-LIBRECHAT-PATCH-MODEL-001).
 # The real manifest lives inside the built image and as a CI artifact.
 deploy/librechat/build-manifest.json

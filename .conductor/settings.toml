@@ -1,4 +1,6 @@
 "$schema" = "https://conductor.build/schemas/settings.repo.schema.json"
 
 [scripts]
-setup = "make setup"
+# codebase-memory-mcp: index on workspace creation, drop the index on archive (see AGENTS.md)
+setup = "make setup ; ~/bin/codebase-memory-mcp cli index_repository --repo-path . >/dev/null 2>&1 || true"
+archive = "~/bin/codebase-memory-mcp cli delete_project --project \"$(pwd -P | sed 's#^/##; s#/#-#g')\" >/dev/null 2>&1 || true"
