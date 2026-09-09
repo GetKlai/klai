@@ -16,8 +16,9 @@ Predict and measure an observable effect such as elapsed time, concurrency,
 request count, or a required log event. A remote service may accept and return a
 field while a different dispatcher or explicit argument bypasses it entirely.
 
-For every new configurable threshold, identify the production reader and add a
-test in which changing the setting changes behavior. Treat a passed-but-ignored
+A threshold that changes production behaviour when tuned gets one test that
+shows it. A constant introduced by a bugfix gets no test of its own; the failing
+test for the reported case covers it. Treat a passed-but-ignored
 parameter as a behavior bug requiring a decision, not automatically as dead code.
 
 ## [HARD] Close browser when done

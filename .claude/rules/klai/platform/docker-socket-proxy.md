@@ -1,7 +1,7 @@
 ---
 paths:
   - "klai-portal/backend/**"
-  - "deploy/docker-compose.yml"
+  - "klai-docker-authz/**"
 ---
 # docker-socket-proxy
 

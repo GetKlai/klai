@@ -1,3 +1,11 @@
+---
+paths:
+  - "deploy/**"
+  - "klai-infra/**"
+  - "**/logging*.py"
+  - "**/*alert*"
+  - "**/grafana/**"
+---
 # Observability & Debugging
 
 ## Log pipeline

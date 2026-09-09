@@ -11,8 +11,7 @@ name: CI failure notice
 #   - A dependency update passes its tests, merges, and then fails at the
 #     deploy step (image build, migration, container health).
 #   - A previous failure blocks the NEXT person's deploy — the
-#     "previous-deploy-failure-blocks-yours" pitfall in
-#     .claude/rules/klai/pitfalls/process-rules.md.
+#     "previous-deploy-failure-blocks-yours" pitfall this notice guards.
 #
 # One issue per workflow, reopened and re-commented rather than duplicated, so
 # a flapping deploy does not bury the tab. Auto-closes when the same workflow
@@ -113,8 +112,7 @@ jobs:
               `- Started: ${run.run_started_at}`,
               '',
               'This blocks the next deploy of this service until it is green again',
-              '(see `previous-deploy-failure-blocks-yours` in',
-              '`.claude/rules/klai/pitfalls/process-rules.md`).',
+              '(pitfall: previous-deploy-failure-blocks-yours).',
               '',
               'Closes itself automatically when this workflow next succeeds on `main`.',
             ].join('\n');
