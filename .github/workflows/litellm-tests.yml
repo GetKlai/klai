@@ -21,6 +21,10 @@ on:
       # Without this trigger a canonical-only edit lands without ever running
       # the drift gate, and the NEXT unrelated litellm PR fails on it.
       - 'klai-libs/chat-prompts/**'
+      # This workflow file itself: a change to the job's dependency list or
+      # command must be verified by running it. Without this path the fix for
+      # a red run silently never executes, and main stays red.
+      - '.github/workflows/litellm-tests.yml'
   pull_request:
     paths:
       - 'deploy/litellm/**'
@@ -28,6 +32,7 @@ on:
       - 'klai-libs/citations/**'
       - 'klai-libs/service-auth/**'
       - 'klai-libs/chat-prompts/**'
+      - '.github/workflows/litellm-tests.yml'
 
 jobs:
   litellm-tests:
@@ -48,7 +53,7 @@ jobs:
         run: >
           uv run --no-project --python 3.13
           --with pytest --with pytest-asyncio --with httpx --with structlog
-          --with pyyaml --with litellm==1.96.2
+          --with pyyaml --with litellm==1.96.2 --with numpy
           --with ../../klai-libs/citations
           --with ../../klai-libs/service-auth
           python -m pytest tests/ -q --tb=short

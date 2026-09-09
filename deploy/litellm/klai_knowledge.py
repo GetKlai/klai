@@ -101,7 +101,9 @@ from klai_kb_system_prompt import (
 )
 from klai_language_detect import (
     UNKNOWN_LANGUAGE as _UNKNOWN_LANGUAGE,
-    detect_response_language as _detect_response_language,
+)
+from klai_conversation_language import (
+    resolve_conversation_language as _resolve_conversation_language,
 )
 from klai_kb_chat_mode import (
     prompt_mode_is_unavailable as _prompt_mode_is_unavailable,
@@ -436,7 +438,9 @@ class KlaiKnowledgeHook(CustomLogger):
         # PDF attachment processing below replaces the latest user content
         # with question + extracted document text, and a Dutch document must
         # never overrule an English question (Sol review P1).
-        response_language_target = _detect_response_language(messages)
+        response_language_target = (
+            _resolve_conversation_language(messages).language or _UNKNOWN_LANGUAGE
+        )
         context_meta: dict[str, Any] | None = None
         should_assemble_provider_context = _should_assemble_provider_context(data)
         if should_assemble_provider_context:

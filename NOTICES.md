@@ -72,6 +72,21 @@ satisfied by this file.
 |---------|---------|---------|
 | `uvicorn` | BSD-3-Clause | klai-portal/backend |
 | `httpx` | BSD-3-Clause | klai-portal/backend |
+| `langid` | BSD-2-Clause | klai-libs/chat-prompts (dependency), deployed surfaces |
+
+### Vendored copy: langid 1.1.6
+
+`langid` (https://github.com/saffsd/langid.py, by Marco Lui, BSD-2-Clause) is
+**vendored verbatim** at `deploy/litellm/langid/` because the LiteLLM container
+is a stock upstream image that gets its code by bind-mount — it has no
+pip-install step. The vendored directory contains `__init__.py` and
+`langid.py` (the statistical model is embedded in that file) exactly as
+released on PyPI; the package's `train/` and `tools/` subpackages are omitted
+because classification never imports them. Requirement: `numpy` (already
+present in the container image).
+
+Full license text: the BSD-2-Clause notice in the header of
+`deploy/litellm/langid/langid.py`.
 
 ---
 
