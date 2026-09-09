@@ -1822,7 +1822,10 @@ async def chat_completions(  # noqa: C901
     # retrieval found, and the model is told so for this one turn. See
     # escalation_intent.py for why this layer exists.
     escalation = escalation_service.escalation_intent(_last_user_message(request.messages)) if support_mode else None
-    sentiment = classification.get("sentiment") if classification else None
+    raw_sentiment = classification.get("sentiment") if classification else None
+    sentiment: Literal["negative", "neutral", "positive"] | None = (
+        raw_sentiment if raw_sentiment in ("negative", "neutral", "positive") else None  # type: ignore[assignment]
+    )
     if escalation is None and classification:
         if classification.get("wants_human") is True:
             escalation = escalation_service.HUMAN_REQUEST
