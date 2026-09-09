@@ -1,6 +1,13 @@
 import { createStore } from "solid-js/store";
 import type { WidgetConfig } from "../api/widget-config";
-import type { AgentActivity, BroadModeSignal, Message, MessageRating, MessageSource } from "../api/chat-stream";
+import type {
+  AgentActivity,
+  BroadModeSignal,
+  Message,
+  MessageEscalation,
+  MessageRating,
+  MessageSource,
+} from "../api/chat-stream";
 import { normalizeAgentActivity, normalizeMessageSources } from "../api/chat-stream";
 
 export type ConversationStatus = "active" | "handoff_active" | "closed";
@@ -590,6 +597,22 @@ export function setLastMessageBroadMode(mode: BroadModeSignal): void {
     const last = updated[updated.length - 1];
     if (last && last.role === "assistant") {
       updated[updated.length - 1] = { ...last, broadMode: mode };
+    }
+    return updated;
+  });
+  schedulePersist();
+}
+
+/** Records the backend's per-turn escalation signal on the assistant message
+ * being streamed: this answer offers the visitor an appointment, so the
+ * booking button belongs under this bubble and nowhere else. Persisted with
+ * the conversation so a reload keeps the offer attached to its answer. */
+export function setLastMessageEscalation(escalation: MessageEscalation): void {
+  setChatState("messages", (msgs) => {
+    const updated = [...msgs];
+    const last = updated[updated.length - 1];
+    if (last && last.role === "assistant") {
+      updated[updated.length - 1] = { ...last, escalation };
     }
     return updated;
   });

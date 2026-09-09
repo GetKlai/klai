@@ -610,24 +610,6 @@
   width: min(460px, calc(100vw - 40px));
 }
 
-/* "onze nerds" in the client's disclosure sentence: an inline text
-   button styled as a link — it opens the panel, it goes nowhere. */
-.klai-nerds-disclosure-link {
-  display: inline;
-  padding: 0;
-  border: none;
-  background: none;
-  font: inherit;
-  color: var(--klai-link-color);
-  text-decoration: underline;
-  cursor: pointer;
-}
-
-.klai-nerds-disclosure-link:focus-visible {
-  outline: 2px solid var(--klai-text-color);
-  outline-offset: 2px;
-}
-
 /* Overlay covering the chat while the booking panel is open. */
 .klai-nerds-panel {
   position: absolute;
@@ -1385,6 +1367,41 @@
 
 .klai-message--broad {
   border-left: 3px solid color-mix(in srgb, var(--klai-primary-color) 55%, transparent);
+}
+
+/* ── In-chat appointment offer ───────────────────────────────────── */
+/* Sits directly under the answer that offered the appointment, aligned
+   with the assistant bubble like the broad-mode offer above it. Primary
+   emphasis: this is the one action the visitor is being invited to take,
+   unlike the muted secondary controls next to it. */
+.klai-appointment-offer {
+  display: flex;
+  margin: 2px 0 10px 14px;
+  max-width: min(420px, 92%);
+}
+
+.klai-appointment-btn {
+  align-self: flex-start;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--klai-primary-text-color);
+  background: var(--klai-primary-color);
+  border: 1px solid var(--klai-primary-color);
+  border-radius: 999px;
+  padding: 7px 14px;
+  cursor: pointer;
+  transition: filter 150ms ease;
+}
+
+.klai-appointment-btn:hover {
+  filter: brightness(0.94);
+}
+
+.klai-appointment-btn:focus-visible {
+  outline: 2px solid var(--klai-primary-color);
+  outline-offset: 2px;
 }
 
 .klai-broad-status {
