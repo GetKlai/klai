@@ -258,10 +258,10 @@ class KbAnswerPolicy:
 
         ``language_decision`` (the ``LanguageDecision`` from
         :func:`klai_conversation_language.resolve_conversation_language`, or
-        None) is flattened into its reason/vote counters so every rendered
-        line can prove WHY the target code was chosen. Metadata only — a
-        reason enum and three ints, never prose — so these keys ship on the
-        normal 30-day line regardless of telemetry level
+        None) is flattened into its reason/method/vote counters so every
+        rendered line can prove WHY and HOW the target code was chosen.
+        Metadata only — two enums and three ints, never prose — so these keys
+        ship on the normal 30-day line regardless of telemetry level
         (SPEC-PRIVACY-QUERY-SHADOW-001).
         """
         decision = (
@@ -315,6 +315,9 @@ class KbAnswerPolicy:
             "response_language_target": response_language_target,
             "response_language_reason": (
                 decision.reason if decision is not None else None
+            ),
+            "response_language_method": (
+                decision.method if decision is not None else None
             ),
             "response_language_votes": (
                 decision.votes if decision is not None else None

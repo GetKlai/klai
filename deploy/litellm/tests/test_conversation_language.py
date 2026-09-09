@@ -774,6 +774,29 @@ def test_function_word_rule_keeps_gate_and_request_precedence() -> None:
     assert en.language == "en" and en.reason == clm.REASON_EXPLICIT_REQUEST
 
 
+def test_decision_method_reports_the_identification_mechanism() -> None:
+    # Telemetry requirement: reason says the language was established, the
+    # method says HOW — explicit request, function-word rule or langid.
+    # None when no language was set at all.
+    explicit = clm.resolve_conversation_language(user_turns("In het nederlands?"))
+    assert explicit.language == "nl"
+    assert explicit.method == clm.METHOD_EXPLICIT_REQUEST
+
+    function_words = clm.resolve_conversation_language(user_turns("Hoe log ik in?"))
+    assert function_words.language == "nl"
+    assert function_words.method == clm.METHOD_FUNCTION_WORDS
+
+    langid = clm.resolve_conversation_language(
+        user_turns("Kun je uitleggen waarom dit gesprek faalt bij de carrier?")
+    )
+    assert langid.language == "nl"
+    assert langid.method == clm.METHOD_LANGID
+
+    machine = clm.resolve_conversation_language(user_turns(PROTOCOL_DUMP))
+    assert machine.language is None
+    assert machine.method is None
+
+
 def test_counter_votes_plus_abstentions_equal_user_turns() -> None:
     messages = user_turns(NL_1, FENCED, EN_1, "Ja", "Antwoord in het Nederlands")
     decision = clm.resolve_conversation_language(messages)

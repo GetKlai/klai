@@ -215,6 +215,7 @@ def test_non_streaming_render_log_contains_language_fields(caplog):
         response_language_target="en",
         # Part B fields as the hook flattens them out of LanguageDecision.
         response_language_reason="locked",
+        response_language_method="function_words",
         response_language_votes=4,
         response_language_abstentions=1,
         response_language_switches=0,
@@ -236,6 +237,9 @@ def test_non_streaming_render_log_contains_language_fields(caplog):
     assert len(messages) == 1
     assert "response_language_target=en" in messages[0]
     assert "language_reason=locked" in messages[0]
+    # The mechanism sits next to the reason: an operator reading one line
+    # sees both WHAT decided and HOW the deciding turn was identified.
+    assert "language_reason=locked language_method=function_words" in messages[0]
     assert "language_votes=4" in messages[0]
     assert "language_abstentions=1" in messages[0]
     assert "language_switches=0" in messages[0]

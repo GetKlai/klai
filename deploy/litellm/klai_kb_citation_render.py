@@ -862,7 +862,7 @@ def log_kb_citation_render(
     # Semgrep reads the contract's "tokens" field names as credentials;
     # values are redacted unless privacy mode is explicitly "full".
     logger.warning(  # nosemgrep
-        "%s org_id=%s user_id=%s request_id=%s render_mode=%s stream=%s rendered_messages=%d rendered_sources=%d chunks_injected=%s no_citable_reason=%s citation_reason_counts=%s citation_decisions=%s sender_only_tokens_in_answer=%s answer_tokens_unsupported_by_evidence=%s correspondence_detected=%s sender_only_tokens=%s answer_tokens_unsupported_by_evidence_values=%s answer_contract=%s response_language_target=%s language_reason=%s language_votes=%s language_abstentions=%s language_switches=%s answer_language=%s language_correct=%s",
+        "%s org_id=%s user_id=%s request_id=%s render_mode=%s stream=%s rendered_messages=%d rendered_sources=%d chunks_injected=%s no_citable_reason=%s citation_reason_counts=%s citation_decisions=%s sender_only_tokens_in_answer=%s answer_tokens_unsupported_by_evidence=%s correspondence_detected=%s sender_only_tokens=%s answer_tokens_unsupported_by_evidence_values=%s answer_contract=%s response_language_target=%s language_reason=%s language_method=%s language_votes=%s language_abstentions=%s language_switches=%s answer_language=%s language_correct=%s",
         event,
         kb_meta.get("org_id"),
         kb_meta.get("user_id"),
@@ -883,9 +883,12 @@ def log_kb_citation_render(
         kb_meta.get("answer_contract"),
         kb_meta.get("response_language_target"),
         # Part B: why the target above was chosen. Decision metadata only
-        # (reason enum + vote/abstention/switch ints) — never prose, never
-        # gated on telemetry level (SPEC-PRIVACY-QUERY-SHADOW-001).
+        # (reason + method enums, vote/abstention/switch ints) — never prose,
+        # never gated on telemetry level (SPEC-PRIVACY-QUERY-SHADOW-001).
+        # The method says HOW the deciding turn was identified (explicit
+        # request, function words or langid); the reason alone cannot.
         kb_meta.get("response_language_reason"),
+        kb_meta.get("response_language_method"),
         kb_meta.get("response_language_votes"),
         kb_meta.get("response_language_abstentions"),
         kb_meta.get("response_language_switches"),

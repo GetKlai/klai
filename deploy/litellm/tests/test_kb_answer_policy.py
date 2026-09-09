@@ -112,6 +112,7 @@ _EXPECTED_KEYS = {
     "unchecked_questions",
     "response_language_target",
     "response_language_reason",
+    "response_language_method",
     "response_language_votes",
     "response_language_abstentions",
     "response_language_switches",

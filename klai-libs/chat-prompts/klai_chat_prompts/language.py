@@ -89,6 +89,9 @@ __all__ = [
     "IDENTIFY_MIN_CONFIDENCE_SHORT",
     "LONG_PROSE_WORDS",
     "MAX_EXPLICIT_REQUEST_WORDS",
+    "METHOD_EXPLICIT_REQUEST",
+    "METHOD_FUNCTION_WORDS",
+    "METHOD_LANGID",
     "MIN_PROSE_SENTENCE_WORDS",
     "MIN_PROSE_WORDS",
     "OPENING_WINDOW_TURNS",
@@ -206,6 +209,14 @@ REASON_EXPLICIT_REQUEST = "explicit_request"
 REASON_NO_EVIDENCE = "no_evidence"
 REASON_LOW_CONFIDENCE = "low_confidence"
 REASON_DETECTOR_UNAVAILABLE = "detector_unavailable"
+
+# Mechanism vocabulary on LanguageDecision.method: WHICH step identified the
+# turn that set the current language. A reason of "established" alone cannot
+# tell an explicit request apart from a function-word decision or a langid
+# vote; the method can.
+METHOD_EXPLICIT_REQUEST = "explicit_request"
+METHOD_FUNCTION_WORDS = "function_words"
+METHOD_LANGID = "langid"
 
 # TurnEvidence classifications.
 EVIDENCE_PROSE = "prose"  # enough prose survived: the turn may cast a vote
@@ -765,8 +776,12 @@ def _short_prose_function_language(text: str) -> str | None:
     return "nl" if has_nl else "en"
 
 
-def _identify(identifier: Any, text: str) -> str | None:
-    """Classify ``text`` with langid; return a target code or None (abstain).
+def _identify(identifier: Any, text: str) -> tuple[str, str] | None:
+    """Classify ``text``; return ``(target code, method)`` or None (abstain).
+
+    ``method`` names the step that produced the code
+    (:data:`METHOD_FUNCTION_WORDS` or :data:`METHOD_LANGID`) so callers can
+    report HOW a vote was identified, not just what it was.
 
     Short nl/en prose: :func:`_short_prose_function_language` decides it
     deterministically from unambiguous function words whenever exactly one
@@ -791,11 +806,11 @@ def _identify(identifier: Any, text: str) -> str | None:
     if lang in ("nl", "en"):
         deterministic = _short_prose_function_language(stripped)
         if deterministic is not None:
-            return deterministic
+            return (deterministic, METHOD_FUNCTION_WORDS)
     words = len(_WORD_RE.findall(stripped))
     threshold = IDENTIFY_MIN_CONFIDENCE if words >= LONG_PROSE_WORDS else IDENTIFY_MIN_CONFIDENCE_SHORT
     if lang in TARGET_LANGUAGES and float(confidence) >= threshold:
-        return str(lang)
+        return (str(lang), METHOD_LANGID)
     return None
 
 
@@ -818,7 +833,8 @@ def identify_text_language(text: str) -> str | None:
     identifier = _get_identifier()  # cached; repeated calls are cheap
     if identifier is None:
         return None
-    return _identify(identifier, evidence.prose)
+    identified = _identify(identifier, evidence.prose)
+    return identified[0] if identified is not None else None
 
 
 # ---------------------------------------------------------------------------
@@ -892,6 +908,11 @@ class LanguageDecision:
     (window moves, confirmed switches and explicit requests). ``locked`` is
     True once the opening window was exhausted (``votes >=
     OPENING_WINDOW_TURNS``).
+    ``method`` names the mechanism that identified the turn which SET the
+    current language — :data:`METHOD_EXPLICIT_REQUEST`,
+    :data:`METHOD_FUNCTION_WORDS` or :data:`METHOD_LANGID`, and ``None``
+    when no language was set. A reinforcing turn (same language, no switch)
+    does not overwrite it; the method keeps naming the turn that decided.
     """
 
     language: str | None
@@ -900,6 +921,7 @@ class LanguageDecision:
     abstentions: int = 0
     switches: int = 0
     locked: bool = False
+    method: str | None = None
 
 
 @dataclass
@@ -914,14 +936,19 @@ class _ReplayState:
     pending_run: int = 0
     switch_cost: int = FIRST_SWITCH_CONFIRMATIONS
     last_set: str = ""  # "", "establish", "window", "switch" or "explicit"
+    last_method: str | None = None  # mechanism of the turn that set last_set
 
-    def cast(self, lang: str, *, explicit: bool, strong: bool) -> None:
+    def cast(self, lang: str, *, explicit: bool, strong: bool, method: str) -> None:
         """Apply one voting turn (gate passed and language determined).
 
         ``strong`` is the turn's strength for SWITCHING purposes: it wraps
         nothing in quotes and names no technical identifier
         (:func:`_turn_is_strong_switch`; explicit requests pass ``strong=True``
-        as a formality — step 2 ignores turn strength entirely). Establishing
+        as a formality — step 2 ignores turn strength entirely). ``method`` is
+        the mechanism that identified this turn (:data:`METHOD_LANGID`,
+        :data:`METHOD_FUNCTION_WORDS` or :data:`METHOD_EXPLICIT_REQUEST`); it
+        is recorded whenever the turn sets the conversation language, so a
+        reinforcing turn leaves the deciding turn's method alone. Establishing
         when nothing is set is cheap and accepts weak turns; changing an
         already established language never is: inside the opening window it
         costs one strong turn, outside it a strong turn plus the
@@ -937,6 +964,7 @@ class _ReplayState:
                 self.switches += 1
             self.language = lang
             self.last_set = "explicit"
+            self.last_method = method
             self.pending_language = None
             self.pending_run = 0
             self.switch_cost = FIRST_SWITCH_CONFIRMATIONS
@@ -945,6 +973,7 @@ class _ReplayState:
         if self.language is None:
             self.language = lang
             self.last_set = "establish"
+            self.last_method = method
         elif lang == self.language:
             # Reinforcing the established language: break any pending switch
             # streak; inside the window also mark the turn as a window move.
@@ -964,10 +993,11 @@ class _ReplayState:
             self.switches += 1
             self.language = lang
             self.last_set = "window"
+            self.last_method = method
         else:
-            self._advance_streak(lang)
+            self._advance_streak(lang, method)
 
-    def _advance_streak(self, lang: str) -> None:
+    def _advance_streak(self, lang: str, method: str) -> None:
         """Post-window switch confirmation for a vote against the lock."""
         if lang == self.pending_language:
             self.pending_run += 1
@@ -978,6 +1008,7 @@ class _ReplayState:
             self.switches += 1
             self.language = lang
             self.last_set = "switch"
+            self.last_method = method
             self.switch_cost = SUBSEQUENT_SWITCH_CONFIRMATIONS
             self.pending_language = None
             self.pending_run = 0
@@ -1040,7 +1071,9 @@ def resolve_conversation_language(messages: list[dict]) -> LanguageDecision:
         if requested is not None:
             # Step 2 ignores turn strength entirely; strong=True is a
             # formality so the cast signature stays uniform.
-            state.cast(requested, explicit=True, strong=True)
+            state.cast(
+                requested, explicit=True, strong=True, method=METHOD_EXPLICIT_REQUEST
+            )
             continue
 
         if not evidence.has_evidence:
@@ -1064,7 +1097,7 @@ def resolve_conversation_language(messages: list[dict]) -> LanguageDecision:
         # is talking rather than quoting — no quoted span, no machine identifier
         # anywhere in the raw turn.
         strong = _turn_is_strong_switch(text)
-        state.cast(identified, explicit=False, strong=strong)
+        state.cast(identified[0], explicit=False, strong=strong, method=identified[1])
 
     locked = state.language is not None and state.votes >= OPENING_WINDOW_TURNS
     return LanguageDecision(
@@ -1079,4 +1112,5 @@ def resolve_conversation_language(messages: list[dict]) -> LanguageDecision:
         abstentions=state.abstentions,
         switches=state.switches,
         locked=locked,
+        method=state.last_method,
     )
