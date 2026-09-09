@@ -125,7 +125,7 @@ export function WidgetPreviewPanel({ widget, onCollapse }: Props) {
               // form state the other preview props come from; the saved
               // config decides what the visitor-facing footer shows.
               nerdsEnabled={widget.widget_config.integrations?.nerds?.enabled}
-              nerdsBookingUrl={widget.widget_config.integrations?.nerds?.booking_url}
+              nerdsBookingUrl={widget.widget_config.integrations?.nerds?.booking_url ?? undefined}
             />
           )}
         </div>
