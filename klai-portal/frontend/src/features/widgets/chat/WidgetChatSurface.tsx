@@ -419,8 +419,13 @@ export function WidgetChatSurface({
 
       <div className={`flex-1 overflow-y-auto ${isDark ? 'bg-[var(--color-rl-dark)]' : 'bg-white'}`}>
         <div className={`mx-auto max-w-3xl px-4 sm:px-6 ${messages.length === 0 ? 'h-full flex flex-col' : 'py-6'}`}>
+          {/* py-8 on the empty state, not pb-8: with justify-center and padding
+              on one side only, a short container — the admin preview panel, a
+              small window — pushes the block up until the icon tile touches the
+              header border. Padding on both sides keeps a floor of space above
+              it at every height. */}
           {messages.length === 0 ? (
-            <div className="flex flex-1 flex-col items-center justify-center px-4 pb-8 text-center">
+            <div className="flex flex-1 flex-col items-center justify-center px-4 py-8 text-center">
               <div
                 className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl"
                 style={{ backgroundColor: primaryFaint }}
