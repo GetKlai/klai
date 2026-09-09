@@ -1575,6 +1575,8 @@ def _compose_backend_managed_answer(
     helpdesk: bool = False,
     broad: bool = False,
     force_escalation: bool = False,
+    *,
+    visitor_query: str,
 ) -> tuple[str, list[dict], dict[str, Any]]:
     """Compose the answer with KB and (optionally) web sources as separate tiers.
 
@@ -1593,6 +1595,14 @@ def _compose_backend_managed_answer(
     ``helpdesk`` selects the customer-facing refusal wording (help articles +
     offer to reach support) instead of the internal-team "kennisbronnen" phrasing.
     Default False keeps every existing caller's refusal text identical.
+
+    ``visitor_query`` is the visitor's own last message — the sole input for
+    the refusal/marker language. It is a required keyword-only parameter on
+    purpose: on the widget path ``user_query`` is the KB-tuned rewritten search
+    query (``source_query``), a keyword bag whose language is not the visitor's,
+    and a caller must not be able to re-introduce that bug by omission. The
+    rewritten query stays the right input for citation composition and web
+    validation (``query_text=``), which is why the two are separate parameters.
 
     ``broad`` marks a consented general-knowledge turn on the helpdesk widget:
     the model had the SUPPORT_BROAD profile, no article context was injected,
@@ -1622,12 +1632,13 @@ def _compose_backend_managed_answer(
     offered_appointment = helpdesk and (
         (model_offered_appointment and _text_offers_appointment(text)) or force_escalation
     )
-    # The refusal/marker language is identified from this single query, NOT
-    # from the conversation: full conversation replay on the widget path is a
-    # separate change. Same gate+identifier as every other surface
-    # (klai_chat_prompts.language), abstain renders Dutch — see
+    # The refusal/marker language is identified from the visitor's own words,
+    # never from user_query (on the widget path that is the rewritten KB search
+    # query) and not from the conversation: full conversation replay on the
+    # widget path is a separate change. Same gate+identifier as every other
+    # surface (klai_chat_prompts.language), abstain renders Dutch — see
     # klai_chat_prompts._language_is_dutch for the measured rationale.
-    refusal_language = identify_text_language(user_query)
+    refusal_language = identify_text_language(visitor_query)
     if broad:
         if not text.strip():
             # The model produced nothing even with the broad profile; stay on
@@ -1824,6 +1835,9 @@ async def _chat_completion_streaming_with_composed_citations(
         helpdesk=support_mode,
         broad=broad_mode,
         force_escalation=force_escalation,
+        # The page-context message is prepended, so the last user turn here is
+        # the human's own words — the language they should be refused in.
+        visitor_query=_last_user_message(augmented_messages) or "",
     )
     decision.update({"sentiment": sentiment} if support_mode and sentiment else {})
     if safety_reason := output_safety_violation("".join(raw_text_parts)):
@@ -2490,6 +2504,9 @@ async def chat_completion_non_streaming(
                     helpdesk=support_mode,
                     broad=broad_mode,
                     force_escalation=force_escalation,
+                    # Visitor's own words decide the refusal language, not the
+                    # rewritten source_query (see the composer docstring).
+                    visitor_query=_last_user_message(augmented_messages) or "",
                 )
                 decision.update({"sentiment": sentiment} if support_mode and sentiment else {})
                 logger.info(

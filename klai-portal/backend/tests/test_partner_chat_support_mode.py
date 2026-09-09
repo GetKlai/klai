@@ -159,6 +159,7 @@ def test_compose_refusal_helpdesk_wording_when_support():
         [],
         "Waarom lukt dit niet?",
         helpdesk=True,
+        visitor_query="Waarom lukt dit niet?",
     )
     assert sources == []
     assert text == _HELPDESK_DUTCH
@@ -171,6 +172,7 @@ def test_compose_refusal_default_uses_internal_wording():
         [],
         [],
         "Waarom lukt dit niet?",
+        visitor_query="Waarom lukt dit niet?",
     )
     assert sources == []
     assert text == _INTERNAL_DUTCH
@@ -183,6 +185,7 @@ def test_compose_refusal_helpdesk_english_for_non_dutch_query():
         [],
         "Why does this not work?",
         helpdesk=True,
+        visitor_query="Why does this not work?",
     )
     assert "help articles" in text
     assert "appointment" in text.lower()

@@ -281,7 +281,12 @@ def test_compose_keeps_kb_and_web_as_separate_tiers():
         [{"title": "Economy 2026", "url": "https://web.test/eco", "content": "Dutch GDP grew 2 percent in 2026"}]
     )
     _content, sources, _decision = _compose_backend_managed_answer(
-        answer, [], kb_chunks, "yealink sip-alg dutch economy 2026", web_chunks
+        answer,
+        [],
+        kb_chunks,
+        "yealink sip-alg dutch economy 2026",
+        web_chunks,
+        visitor_query="yealink sip-alg dutch economy 2026",
     )
     origins = {s["url"]: s["origin"] for s in sources}
     assert origins.get("https://kb.test/sip") == "kb"
@@ -325,7 +330,9 @@ def test_compose_web_only_not_refused():
     web_chunks = web_results_as_chunks(
         [{"title": "Economy 2026", "url": "https://web.test/eco", "content": "Dutch GDP grew 2 percent in 2026"}]
     )
-    content, sources, _decision = _compose_backend_managed_answer(answer, [], [], "dutch economy 2026", web_chunks)
+    content, sources, _decision = _compose_backend_managed_answer(
+        answer, [], [], "dutch economy 2026", web_chunks, visitor_query="dutch economy 2026"
+    )
     assert sources and all(s["origin"] == "web" for s in sources)
     assert "2 percent" in content
 
@@ -334,7 +341,7 @@ def test_compose_refuses_when_no_kb_and_no_web():
     from app.services.partner_chat import _compose_backend_managed_answer
 
     _content, sources, _decision = _compose_backend_managed_answer(
-        "Some ungrounded statement.", [], [], "unrelated query", None
+        "Some ungrounded statement.", [], [], "unrelated query", None, visitor_query="unrelated query"
     )
     assert sources == []
 
@@ -364,12 +371,14 @@ def test_compose_validates_web_against_web_query_not_kb_blob():
     blob = "Yealink router registratie ticket model"
 
     # With the KB blob as the web query_text, the relevant web source is rejected.
-    _c, blob_sources, _d = _compose_backend_managed_answer(answer, [], [], blob, web_chunks, web_query=None)
+    _c, blob_sources, _d = _compose_backend_managed_answer(
+        answer, [], [], blob, web_chunks, web_query=None, visitor_query=blob
+    )
     assert blob_sources == []
 
     # With the concise web query threaded through, it is cited.
     _c2, web_sources, _d2 = _compose_backend_managed_answer(
-        answer, [], [], blob, web_chunks, web_query="outage provider X affecting calls"
+        answer, [], [], blob, web_chunks, web_query="outage provider X affecting calls", visitor_query=blob
     )
     assert [s["url"] for s in web_sources] == ["https://status.test/x"]
     assert web_sources[0]["origin"] == "web"
@@ -388,7 +397,13 @@ def test_compose_dedupes_same_url_across_kb_and_web():
         [{"title": "SIP-ALG guide", "url": same, "content": "Disable SIP-ALG on the router for the Yealink phone"}]
     )
     _content, sources, _decision = _compose_backend_managed_answer(
-        answer, [], kb_chunks, "yealink sip-alg router", web_chunks, web_query="yealink sip-alg router"
+        answer,
+        [],
+        kb_chunks,
+        "yealink sip-alg router",
+        web_chunks,
+        web_query="yealink sip-alg router",
+        visitor_query="yealink sip-alg router",
     )
     urls = [s["url"] for s in sources]
     assert urls.count(same) == 1

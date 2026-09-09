@@ -128,6 +128,7 @@ def test_compose_broad_answer_prefixes_marker_and_drops_sources():
         "wat is een sip trunk?",
         helpdesk=True,
         broad=True,
+        visitor_query="wat is een sip trunk?",
     )
     marker = broad_mode_answer_marker("nl")
     assert text == f"{marker}\n\nEen SIP trunk is een virtuele telefoonlijn."
@@ -144,6 +145,7 @@ def test_compose_broad_answer_english_marker_for_english_query():
         "what is a sip trunk",
         helpdesk=True,
         broad=True,
+        visitor_query="what is a sip trunk",
     )
     assert text.startswith("General knowledge — not from our help articles.")
 
@@ -153,7 +155,7 @@ def test_compose_broad_empty_output_falls_back_to_refusal_without_signals():
     # unlabelled (nothing was claimed as general knowledge) and no offer
     # re-pitch (consent already happened this turn).
     text, sources, decision = _compose_backend_managed_answer(
-        "   ", [], [], "wat is een sip trunk?", helpdesk=True, broad=True
+        "   ", [], [], "wat is een sip trunk?", helpdesk=True, broad=True, visitor_query="wat is een sip trunk?"
     )
     assert text == no_citable_sources_message("nl", helpdesk=True)
     assert sources == []
@@ -170,6 +172,7 @@ def test_compose_helpdesk_refusal_tags_offer():
         [],
         "wat kost het abonnement?",
         helpdesk=True,
+        visitor_query="wat kost het abonnement?",
     )
     assert text == _HELPDESK_REFUSAL_NL  # byte-identical canned refusal
     assert sources == []
@@ -178,7 +181,7 @@ def test_compose_helpdesk_refusal_tags_offer():
 
 def test_compose_partner_refusal_does_not_tag_offer():
     _, _, decision = _compose_backend_managed_answer(
-        "Whatever the model said.", [], [], "what is the price", helpdesk=False
+        "Whatever the model said.", [], [], "what is the price", helpdesk=False, visitor_query="what is the price"
     )
     assert "broad_mode" not in decision
 
@@ -192,6 +195,7 @@ def test_compose_grounded_helpdesk_answer_carries_no_broad_signal():
         [chunk],
         "hoe reset ik mijn wachtwoord",
         helpdesk=True,
+        visitor_query="hoe reset ik mijn wachtwoord",
     )
     assert "broad_mode" not in decision
     assert sources
@@ -586,14 +590,14 @@ async def _call_non_streaming(monkeypatch, model_text: str, **kwargs):
     settings.litellm_base_url = "http://litellm:4000"
     settings.litellm_master_key = "key"
     kwargs.setdefault("org_id", 42)
+    kwargs.setdefault("messages", [{"role": "user", "content": "wat is dect?"}])
+    kwargs.setdefault("source_query", "wat is dect?")
     return await partner_chat.chat_completion_non_streaming(
-        messages=[{"role": "user", "content": "wat is dect?"}],
         model="klai-primary",
         temperature=0.7,
         system_prompt="sys",
         settings=settings,
         citation_output="markers",
-        source_query="wat is dect?",
         **kwargs,
     )
 
@@ -625,6 +629,53 @@ async def test_non_streaming_partner_has_no_broad_key(monkeypatch):
     body = await _call_non_streaming(monkeypatch, "Partner answer.")
     message = body["choices"][0]["message"]
     assert "broad_mode" not in message
+
+
+# ─── refusal language: the visitor's words, not the rewritten query ───────
+
+
+@pytest.mark.asyncio
+async def test_stream_refusal_language_follows_visitor_not_source_query(monkeypatch):
+    """The rewrite must not decide the refusal language: partner.py threads
+    ``knowledge.query`` (the KB-tuned search string) in as ``user_query``, and
+    a Dutch question rewritten into an English-lexified keyword bag used to
+    earn the visitor an English refusal they never prompted."""
+    _stream_patches(monkeypatch, "Ik ken het antwoord niet.")
+    settings = MagicMock()
+    settings.litellm_base_url = "http://litellm:4000"
+    settings.litellm_master_key = "key"
+
+    frames = await _collect(
+        augmented_messages=[{"role": "user", "content": "Wat gaat hier mis met doorverbinden?"}],
+        model="klai-primary",
+        temperature=0.7,
+        settings=settings,
+        org_id=42,
+        # What chat_completion_streaming computes on the widget path:
+        # source_query wins over the visitor's message — English-identifiable.
+        user_query="call transfer SIP REFER error timeout fix",
+        trusted_sources=[],
+        citation_chunks=[],
+        support_mode=True,
+    )
+
+    content = "".join(_delta_values(_parse_frames(frames), "content"))
+    assert content == no_citable_sources_message("nl", helpdesk=True)
+
+
+@pytest.mark.asyncio
+async def test_non_streaming_refusal_language_follows_visitor_not_source_query(monkeypatch):
+    """Mirror case: an English visitor whose question rewrites into a
+    Dutch-identifiable keyword bag must get the English refusal."""
+    body = await _call_non_streaming(
+        monkeypatch,
+        "I do not know the answer.",
+        messages=[{"role": "user", "content": "Why does call transfer fail here?"}],
+        source_query="doorverbinden foutmelding storing",
+        support_mode=True,
+    )
+    message = body["choices"][0]["message"]
+    assert message["content"] == no_citable_sources_message("en", helpdesk=True)
 
 
 # ─── partner.py plumbing ─────────────────────────────────────────────────
