@@ -10,6 +10,7 @@ import asyncio
 import json
 import re
 import uuid
+from asyncio import gather as asyncio_gather
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
@@ -36,7 +37,7 @@ from app.core.permissions import assert_platform_unlocked
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg
 from app.models.widgets import Widget, WidgetKbAccess
-from app.services.escalation_intent import ESCALATION_TURN_ADDENDUM, escalation_intent
+from app.services import escalation_intent as escalation_service
 from app.services.events import emit_event
 from app.services.partner_chat import (
     _last_user_message,
@@ -1758,7 +1759,7 @@ async def chat_completions(  # noqa: C901
         # answer can neither cite weak chunks nor show a misleading
         # "passages gevonden" activity. The retrieval log still records the
         # real (weak) chunks: retrieval genuinely ran.
-        chunks, system_prompt, trusted_sources, broad_turn = await retrieve_context(
+        retrieval = retrieve_context(
             org_id=auth.org_id,
             zitadel_org_id=auth.zitadel_org_id,
             kb_slugs=kb_slugs,
@@ -1776,6 +1777,15 @@ async def chat_completions(  # noqa: C901
             top_k=knowledge.top_k if knowledge is not None and knowledge.top_k is not None else 8,
             retrieval_enabled=knowledge.enabled if knowledge is not None else True,
         )
+        if support_mode:
+            retrieval_result, classification = await asyncio_gather(
+                retrieval,
+                escalation_service.classify_escalation(_last_user_message(request.messages) or "", settings),
+            )
+        else:
+            retrieval_result = await retrieval
+            classification = None
+        chunks, system_prompt, trusted_sources, broad_turn = retrieval_result
     except (httpx.TimeoutException, httpx.ReadTimeout) as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -1811,9 +1821,15 @@ async def chat_completions(  # noqa: C901
     # for a person or is frustrated, the button goes under this answer whatever
     # retrieval found, and the model is told so for this one turn. See
     # escalation_intent.py for why this layer exists.
-    escalation = escalation_intent(_last_user_message(request.messages)) if support_mode else None
+    escalation = escalation_service.escalation_intent(_last_user_message(request.messages)) if support_mode else None
+    sentiment = classification.get("sentiment") if classification else None
+    if escalation is None and classification:
+        if classification.get("wants_human") is True:
+            escalation = escalation_service.HUMAN_REQUEST
+        elif sentiment == "negative":
+            escalation = escalation_service.FRUSTRATION
     if escalation:
-        system_prompt += ESCALATION_TURN_ADDENDUM[escalation]
+        system_prompt += escalation_service.ESCALATION_TURN_ADDENDUM[escalation]
     force_escalation = escalation is not None
 
     system_prompt, web_chunks, web_query = await _maybe_apply_web_search(
@@ -1910,6 +1926,7 @@ async def chat_completions(  # noqa: C901
             support_mode=support_mode,
             broad_mode=broad_turn,
             force_escalation=force_escalation,
+            sentiment=sentiment,
         )
         if audit_ready:
             streaming_gen = _audit_streaming_wrapper(
@@ -1946,6 +1963,7 @@ async def chat_completions(  # noqa: C901
         support_mode=support_mode,
         broad_mode=broad_turn,
         force_escalation=force_escalation,
+        sentiment=sentiment,
     )
     if knowledge is not None and not knowledge.include_sources:
         for choice in result.get("choices") or []:

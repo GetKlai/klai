@@ -1622,7 +1622,6 @@ def _compose_backend_managed_answer(
     offered_appointment = helpdesk and (
         (model_offered_appointment and _text_offers_appointment(text)) or force_escalation
     )
-
     # The refusal/marker language is identified from this single query, NOT
     # from the conversation: full conversation replay on the widget path is a
     # separate change. Same gate+identifier as every other surface
@@ -1740,6 +1739,7 @@ async def _chat_completion_streaming_with_composed_citations(
     support_mode: bool = False,
     broad_mode: bool = False,
     force_escalation: bool = False,
+    sentiment: Literal["negative", "neutral", "positive"] | None = None,
 ) -> AsyncGenerator[bytes]:
     """Collect text, compose deterministic citations, then stream once.
 
@@ -1825,6 +1825,7 @@ async def _chat_completion_streaming_with_composed_citations(
         broad=broad_mode,
         force_escalation=force_escalation,
     )
+    decision.update({"sentiment": sentiment} if support_mode and sentiment else {})
     if safety_reason := output_safety_violation("".join(raw_text_parts)):
         logger.warning(
             "partner_chat_output_blocked",
@@ -2393,6 +2394,7 @@ async def chat_completion_non_streaming(
     support_mode: bool = False,
     broad_mode: bool = False,
     force_escalation: bool = False,
+    sentiment: Literal["negative", "neutral", "positive"] | None = None,
 ) -> dict:
     """Forward to LiteLLM and return complete response as dict.
 
@@ -2489,6 +2491,7 @@ async def chat_completion_non_streaming(
                     broad=broad_mode,
                     force_escalation=force_escalation,
                 )
+                decision.update({"sentiment": sentiment} if support_mode and sentiment else {})
                 logger.info(
                     "partner_chat_citation_selection_decision",
                     org_id=org_id,
@@ -2565,6 +2568,7 @@ async def chat_completion_streaming(
     support_mode: bool = False,
     broad_mode: bool = False,
     force_escalation: bool = False,
+    sentiment: Literal["negative", "neutral", "positive"] | None = None,
 ) -> AsyncGenerator[bytes]:
     """Stream LiteLLM SSE response with backend-managed KB citations.
 
@@ -2595,6 +2599,7 @@ async def chat_completion_streaming(
             support_mode=support_mode,
             broad_mode=broad_mode,
             force_escalation=force_escalation,
+            sentiment=sentiment,
         ):
             yield chunk
         return

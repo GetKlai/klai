@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+from types import SimpleNamespace
+
+import httpx
 import pytest
 
+from app.services import escalation_intent as escalation_module
 from app.services.escalation_intent import FRUSTRATION, HUMAN_REQUEST, escalation_intent
 
 
@@ -61,3 +66,33 @@ def test_wanting_to_set_something_up_with_an_employee_is_a_human_request() -> No
     assert escalation_intent("Heej ik wil dit graag met een medewerker instellen.") == "human_request"
     assert escalation_intent("Ik wil een afspraak maken met een medewerker") == "human_request"
     assert escalation_intent("Kan ik dit samen met iemand van jullie doen?") == "human_request"
+
+
+@pytest.mark.asyncio
+async def test_classifier_is_structured_and_failure_safe(monkeypatch) -> None:
+    valid = {"wants_human": True, "sentiment": "neutral"}
+    provider_results = iter([valid, "invalid", RuntimeError("offline"), "slow"])
+    original_client = httpx.AsyncClient
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        provider_result = next(provider_results)
+        assert b'"model":"klai-fast"' in request.content and b'"type":"json_schema"' in request.content
+        if isinstance(provider_result, Exception):
+            raise provider_result
+        if provider_result == "slow":
+            await asyncio.sleep(3)
+        content = provider_result if isinstance(provider_result, str) else '{"wants_human":true,"sentiment":"neutral"}'
+        return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+
+    monkeypatch.setattr(
+        escalation_module.httpx,
+        "AsyncClient",
+        lambda timeout: original_client(transport=httpx.MockTransport(handler)),
+    )
+    settings = SimpleNamespace(
+        litellm_base_url="http://litellm", litellm_master_key="key", extraction_model="klai-fast"
+    )
+
+    assert await escalation_module.classify_escalation("visitor text", settings) == valid
+    for _ in range(3):
+        assert await escalation_module.classify_escalation("visitor text", settings) is None

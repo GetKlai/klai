@@ -23,18 +23,25 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from helpers import FakeResult, make_partner_auth
 from klai_chat_prompts import appointment_offer_marker, no_citable_sources_message
 
+from app.api import partner
 from app.services import partner_chat
+from app.services.escalation_intent import escalation_intent
 from app.services.partner_chat import (
     _chat_completion_streaming_with_composed_citations,
     _compose_backend_managed_answer,
 )
 
 MARKER = appointment_offer_marker()
+HUMAN_QUERY = "Kan er iemand van jullie hier eens naar kijken?"
+NEGATIVE_QUERY = "Dit werkt al drie dagen niet en ik heb er genoeg van"
+NEUTRAL_QUERY = "Hoe voeg ik een extra gebruiker toe?"
+NEUTRAL = {"wants_human": False, "sentiment": "neutral"}
 
 
 def _good_chunk() -> dict[str, Any]:
@@ -69,6 +76,65 @@ def _delta_values(frames: list[dict], key: str) -> list[Any]:
             if key in delta:
                 values.append(delta[key])
     return values
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("query", "classification", "stream", "support_mode", "expected"),
+    [
+        (HUMAN_QUERY, {"wants_human": True}, False, True, True),
+        (HUMAN_QUERY, {"wants_human": True}, True, True, True),
+        (NEGATIVE_QUERY, {"wants_human": False, "sentiment": "negative"}, False, True, True),
+        (NEUTRAL_QUERY, NEUTRAL, False, True, False),
+        ("IK WIL EEN MEDEWERKER SPREKEN", NEUTRAL, False, True, True),
+        (NEUTRAL_QUERY, {"wants_human": True}, False, False, False),
+    ],
+)
+async def test_widget_classifier_controls_escalation(
+    monkeypatch, query, classification, stream, support_mode, expected
+):
+    assert escalation_intent(HUMAN_QUERY) is escalation_intent(NEGATIVE_QUERY) is None
+
+    auth = make_partner_auth(kb_access={10: "read"})
+    auth.key_id = "wgt_classifier"
+    request = partner.ChatCompletionsRequest(messages=[{"role": "user", "content": query}], stream=stream)
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=FakeResult())
+
+    async def completion(**kwargs):
+        message = {"role": "assistant", "content": "Artikelantwoord", "sources": []}
+        if kwargs["force_escalation"]:
+            message["escalation"] = {"appointment": True}
+        return {"choices": [{"message": message}]}
+
+    async def streaming(**kwargs):
+        if kwargs["force_escalation"]:
+            yield b'data: {"choices":[{"delta":{"escalation":{"appointment":true}}}]}\n\n'
+        yield b"data: [DONE]\n\n"
+
+    monkeypatch.setattr(partner, "_resolve_kb_slugs", AsyncMock(return_value=["kb-alpha"]))
+    monkeypatch.setattr(partner, "_widget_support_mode_enabled", AsyncMock(return_value=support_mode))
+    monkeypatch.setattr(partner, "retrieve_context", AsyncMock(return_value=([_good_chunk()], "prompt", [], False)))
+    classifier = AsyncMock(return_value=classification)
+    monkeypatch.setattr(partner.escalation_service, "classify_escalation", classifier)
+    monkeypatch.setattr(partner, "chat_completion_non_streaming", completion)
+    monkeypatch.setattr(partner, "chat_completion_streaming", streaming)
+    monkeypatch.setattr(partner, "write_retrieval_log", AsyncMock())
+
+    response = await partner.chat_completions(
+        request=request,
+        http_request=MagicMock(headers={}, client=None),
+        auth=auth,
+        db=db,
+    )
+
+    if stream:
+        frames = _parse_frames([chunk async for chunk in response.body_iterator])
+        escalated = bool(_delta_values(frames, "escalation"))
+    else:
+        escalated = "escalation" in response["choices"][0]["message"]
+    assert escalated is expected
+    assert classifier.await_count == int(support_mode)
 
 
 # ─── composer: the backend's own two cases ───────────────────────────────
@@ -237,6 +303,8 @@ async def test_stream_emits_escalation_frame_for_a_model_offer(monkeypatch):
         "Je reset het wachtwoord via Instellingen > Beveiliging. "
         f"Lukt dat niet, dan plan ik een afspraak voor je in.\n\n{MARKER}",
     )
+    decisions = []
+    monkeypatch.setattr(partner_chat, "_log_citation_rescues", lambda decision, **_: decisions.append(decision))
 
     frames = await _collect(
         augmented_messages=[{"role": "user", "content": "hoe reset ik mijn wachtwoord"}],
@@ -248,6 +316,7 @@ async def test_stream_emits_escalation_frame_for_a_model_offer(monkeypatch):
         trusted_sources=_grounded_sources(),
         citation_chunks=[_good_chunk()],
         support_mode=True,
+        sentiment="positive",
     )
 
     parsed = _parse_frames(frames)
@@ -257,6 +326,7 @@ async def test_stream_emits_escalation_frame_for_a_model_offer(monkeypatch):
     assert "APPOINTMENT_OFFER" not in content.upper()
     # Not the canned refusal: the signal really came from the marker.
     assert content.startswith("Je reset het wachtwoord")
+    assert decisions[0]["sentiment"] == "positive"
 
 
 @pytest.mark.asyncio
@@ -388,6 +458,8 @@ async def _call_non_streaming(monkeypatch, model_text: str, **kwargs):
 
 @pytest.mark.asyncio
 async def test_non_streaming_marks_the_message_that_offers(monkeypatch):
+    decisions = []
+    monkeypatch.setattr(partner_chat, "_log_citation_rescues", lambda decision, **_: decisions.append(decision))
     body = await _call_non_streaming(
         monkeypatch,
         "Je reset het wachtwoord via Instellingen > Beveiliging. "
@@ -395,11 +467,13 @@ async def test_non_streaming_marks_the_message_that_offers(monkeypatch):
         support_mode=True,
         trusted_sources=_grounded_sources(),
         citation_chunks=[_good_chunk()],
+        sentiment="neutral",
     )
     message = body["choices"][0]["message"]
     assert message["escalation"] == {"appointment": True}
     assert MARKER not in message["content"]
     assert message["content"].startswith("Je reset het wachtwoord")
+    assert decisions[0]["sentiment"] == "neutral"
 
 
 @pytest.mark.asyncio
