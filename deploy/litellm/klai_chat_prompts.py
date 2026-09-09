@@ -98,9 +98,11 @@ __all__ = [
     "SUPPORT_BROAD_CHAT_SYSTEM_PROMPT",
     "SUPPORT_CHAT_SYSTEM_PROMPT",
     "SUPPORT_EXPRESSIVE_CHAT_SYSTEM_PROMPT",
+    "appointment_offer_marker",
     "broad_mode_answer_marker",
     "is_broad_knowledge_answer",
     "no_citable_sources_message",
+    "strip_appointment_offer_marker",
 ]
 
 
@@ -230,6 +232,32 @@ _ENGLISH_HELPDESK_REFUSAL: Final[str] = (
 )
 
 _TOKEN_RE: Final[re.Pattern[str]] = re.compile(r"[a-zA-ZÀ-ÿ]+")
+
+# Machine-only signal the SUPPORT profiles append when the reply they just
+# wrote actually offers the visitor an appointment. Never shown: the backend
+# strips it and turns it into the widget's escalation signal.
+_APPOINTMENT_OFFER_MARKER: Final[str] = "[[APPOINTMENT_OFFER]]"
+
+_APPOINTMENT_OFFER_MARKER_RE: Final[re.Pattern[str]] = re.compile(
+    r"[ \t]*\[\[\s*APPOINTMENT_OFFER\s*\]\]",
+    re.IGNORECASE,
+)
+
+
+def appointment_offer_marker() -> str:
+    """Return the exact token the SUPPORT profiles are told to emit."""
+    return _APPOINTMENT_OFFER_MARKER
+
+
+def strip_appointment_offer_marker(content: object) -> tuple[str, bool]:
+    """Split model output into ``(visible text, offered an appointment)``."""
+    if not isinstance(content, str):
+        return "", False
+    cleaned, count = _APPOINTMENT_OFFER_MARKER_RE.subn("", content)
+    if not count:
+        return content, False
+    return cleaned.strip(), True
+
 
 
 def no_citable_sources_message(user_query: object, *, suggest_open_mode: bool = False, helpdesk: bool = False) -> str:
@@ -571,10 +599,19 @@ _SUPPORT_BODY: Final[str] = (
     "offer to schedule an appointment with a human employee who will help the visitor further "
     "personally. Phrase the offer as an action the visitor can take; do NOT name a phone "
     "number, an e-mail address or a URL yourself — the widget renders the booking button or "
-    "link next to your answer. Offer that appointment when the visitor is frustrated, repeats "
-    "the same complaint, wants to cancel, reports an outage, asks a pricing or contract "
-    "question, or when you could not find the answer in the help articles after an honest "
-    "attempt. Stay calm and brief.\n\n"
+    "link next to your answer. Offer that appointment when the visitor asks to speak to a "
+    "person, is frustrated, repeats the same complaint, wants to cancel, reports an outage, "
+    "asks a pricing or contract question, or when you could not find the answer in the help "
+    "articles after an honest attempt. Finding a matching help article does NOT cancel that "
+    "offer: answer from the article when you have one AND make the offer when a trigger "
+    "fires. A visitor who asks for a person gets the offer, never steps alone. Never repeat a "
+    "phone number, e-mail address or URL for reaching support from a help article either: "
+    "an article written for staff about how to route callers is not an answer to a visitor "
+    "asking for help. Stay calm and brief.\n"
+    "When your reply actually contains that appointment offer, end the reply with the exact "
+    f"token {_APPOINTMENT_OFFER_MARKER} on its own final line. That token is a machine signal "
+    "the application removes before the visitor sees the reply: never mention it, never explain "
+    "it, and never write it in a reply that makes no such offer.\n\n"
     "## Source handling\n"
     "Do NOT write citation markers, citation numbers, source lists, URLs, Markdown links, or "
     "footnotes. The application renders trusted sources separately from retrieved metadata "
@@ -687,10 +724,19 @@ _SUPPORT_EXPRESSIVE_BODY: Final[str] = (
     "offer to schedule an appointment with a human employee who will help the visitor further "
     "personally. Phrase the offer as an action the visitor can take; do NOT name a phone "
     "number, an e-mail address or a URL yourself — the widget renders the booking button or "
-    "link next to your answer. Offer that appointment when the visitor is frustrated, repeats "
-    "the same complaint, wants to cancel, reports an outage, asks a pricing or contract "
-    "question, or when you could not find the answer in the help articles after an honest "
-    "attempt. Stay calm and brief.\n\n"
+    "link next to your answer. Offer that appointment when the visitor asks to speak to a "
+    "person, is frustrated, repeats the same complaint, wants to cancel, reports an outage, "
+    "asks a pricing or contract question, or when you could not find the answer in the help "
+    "articles after an honest attempt. Finding a matching help article does NOT cancel that "
+    "offer: answer from the article when you have one AND make the offer when a trigger "
+    "fires. A visitor who asks for a person gets the offer, never steps alone. Never repeat a "
+    "phone number, e-mail address or URL for reaching support from a help article either: "
+    "an article written for staff about how to route callers is not an answer to a visitor "
+    "asking for help. Stay calm and brief.\n"
+    "When your reply actually contains that appointment offer, end the reply with the exact "
+    f"token {_APPOINTMENT_OFFER_MARKER} on its own final line. That token is a machine signal "
+    "the application removes before the visitor sees the reply: never mention it, never explain "
+    "it, and never write it in a reply that makes no such offer.\n\n"
     "## Source handling\n"
     "Do NOT write citation markers, citation numbers, source lists, URLs, Markdown links, or "
     "footnotes. The application renders trusted sources separately from retrieved metadata "

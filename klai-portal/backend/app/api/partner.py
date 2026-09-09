@@ -36,8 +36,10 @@ from app.core.permissions import assert_platform_unlocked
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg
 from app.models.widgets import Widget, WidgetKbAccess
+from app.services.escalation_intent import ESCALATION_TURN_ADDENDUM, escalation_intent
 from app.services.events import emit_event
 from app.services.partner_chat import (
+    _last_user_message,
     chat_completion_non_streaming,
     chat_completion_streaming,
     openai_chat_completion_non_streaming,
@@ -1805,6 +1807,15 @@ async def chat_completions(  # noqa: C901
     #     tier from the knowledge base: they are passed alongside the KB chunks
     #     (never merged) so the composer keeps KB and web apart, tags each
     #     source with its origin, and only refuses when both tiers are empty.
+    # Escalation is the backend's call, not the model's: when the visitor asks
+    # for a person or is frustrated, the button goes under this answer whatever
+    # retrieval found, and the model is told so for this one turn. See
+    # escalation_intent.py for why this layer exists.
+    escalation = escalation_intent(_last_user_message(request.messages)) if support_mode else None
+    if escalation:
+        system_prompt += ESCALATION_TURN_ADDENDUM[escalation]
+    force_escalation = escalation is not None
+
     system_prompt, web_chunks, web_query = await _maybe_apply_web_search(
         request=request,
         auth=auth,
@@ -1898,6 +1909,7 @@ async def chat_completions(  # noqa: C901
             page_context=page_context,
             support_mode=support_mode,
             broad_mode=broad_turn,
+            force_escalation=force_escalation,
         )
         if audit_ready:
             streaming_gen = _audit_streaming_wrapper(
@@ -1933,6 +1945,7 @@ async def chat_completions(  # noqa: C901
         page_context=page_context,
         support_mode=support_mode,
         broad_mode=broad_turn,
+        force_escalation=force_escalation,
     )
     if knowledge is not None and not knowledge.include_sources:
         for choice in result.get("choices") or []:

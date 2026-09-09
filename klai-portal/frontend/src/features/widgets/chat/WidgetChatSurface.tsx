@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowUp, ChevronDown, MessageSquare, Pencil, Share2, X } from 'lucide-react'
+import { ArrowUp, Calendar, ChevronDown, MessageSquare, Pencil, Share2, X } from 'lucide-react'
+import Markdown from 'react-markdown'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { WIDGET_DEFAULT_PRIMARY_COLOR } from '@/features/widgets/config/appearance'
@@ -71,11 +72,16 @@ interface AgentActivity {
   count?: number
 }
 
+interface MessageEscalation {
+  appointment: boolean
+}
+
 interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   sources?: MessageSource[]
   activity?: AgentActivity[]
+  escalation?: MessageEscalation
 }
 
 interface PageContext {
@@ -132,6 +138,15 @@ function normalizeSources(rawSources: unknown): MessageSource[] {
     seen.add(label)
   }
   return normalized
+}
+
+// Streaming delta: {"choices":[{"delta":{"escalation":{"appointment":true}}}]}
+// Non-streaming: message["escalation"] = {"appointment": true}, alongside
+// message["sources"]. Absent = no offer. Shape is exactly {appointment: bool}.
+function normalizeEscalation(raw: unknown): MessageEscalation | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const appointment = (raw as { appointment?: unknown }).appointment
+  return typeof appointment === 'boolean' ? { appointment } : undefined
 }
 
 function normalizeActivity(rawActivity: unknown): AgentActivity[] {
@@ -275,6 +290,10 @@ export function WidgetChatSurface({
           if (sources.length > 0) setLastAssistantSources(sources)
           const activity = normalizeActivity(parsed.choices?.[0]?.delta?.activity)
           if (activity.length > 0) appendLastAssistantActivity(activity)
+          const escalation = normalizeEscalation(
+            parsed.choices?.[0]?.delta?.escalation ?? parsed.choices?.[0]?.message?.escalation,
+          )
+          if (escalation) setLastAssistantEscalation(escalation)
         }
       }
     } catch (err) {
@@ -307,6 +326,17 @@ export function WidgetChatSurface({
       const last = next[next.length - 1]
       if (last && last.role === 'assistant') {
         next[next.length - 1] = { ...last, sources }
+      }
+      return next
+    })
+  }
+
+  function setLastAssistantEscalation(escalation: MessageEscalation) {
+    setMessages((prev) => {
+      const next = [...prev]
+      const last = next[next.length - 1]
+      if (last && last.role === 'assistant') {
+        next[next.length - 1] = { ...last, escalation }
       }
       return next
     })
@@ -466,6 +496,8 @@ export function WidgetChatSurface({
                   isDark={isDark}
                   showSources={showSources}
                   showMeta={showMeta}
+                  nerdsActive={nerdsActive}
+                  nerdsHref={nerdsHref}
                 />
               ))}
               <div ref={messagesEndRef} />
@@ -564,6 +596,70 @@ export function WidgetChatSurface({
   )
 }
 
+// Spacing between paragraphs/list items react-markdown emits. Tailwind
+// utilities target the generated markup via arbitrary-variant child
+// selectors rather than a separate stylesheet, matching this file's
+// className-only styling convention and the same pattern the meetings and
+// transcribe routes use around their own <Markdown> element.
+function markdownClasses(isDark: boolean) {
+  return [
+    '[&_p]:m-0 [&_p+p]:mt-2',
+    '[&_strong]:font-semibold [&_em]:italic',
+    '[&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5',
+    '[&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5',
+    '[&_li]:mb-1 [&_li:last-child]:mb-0',
+    '[&_a]:underline [&_a]:underline-offset-2',
+    isDark
+      ? '[&_code]:bg-white/10 [&_pre]:bg-white/10'
+      : '[&_code]:bg-black/5 [&_pre]:bg-black/5',
+    '[&_code]:rounded [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-[0.85em]',
+    '[&_pre]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:p-2',
+    '[&_pre_code]:bg-transparent [&_pre_code]:p-0',
+  ].join(' ')
+}
+
+// Three animating dots while an assistant reply streams in. CSS animation
+// only (no GIF); prefers-reduced-motion visitors get the same three dots
+// without the bounce (motion-safe: gates the animation, not the dots).
+// role="status" + aria-label tells screen readers a response is in progress.
+function TypingIndicator({ isDark, bubble = false }: { isDark: boolean; bubble?: boolean }) {
+  const dotClass = isDark ? 'bg-[var(--color-rl-bg)]/40' : 'bg-gray-400'
+  const dots = (
+    <span role="status" aria-label={m.widget_chat_typing()} className="inline-flex items-center gap-1">
+      <span className={`h-1.5 w-1.5 rounded-full ${dotClass} motion-safe:animate-bounce [animation-delay:0ms]`} />
+      <span className={`h-1.5 w-1.5 rounded-full ${dotClass} motion-safe:animate-bounce [animation-delay:150ms]`} />
+      <span className={`h-1.5 w-1.5 rounded-full ${dotClass} motion-safe:animate-bounce [animation-delay:300ms]`} />
+    </span>
+  )
+  if (!bubble) return dots
+  return (
+    <div className={`inline-flex items-center rounded-2xl rounded-bl-md px-4 py-3 ${isDark ? 'bg-white/10' : 'bg-[var(--color-rl-cream)]'}`}>
+      {dots}
+    </div>
+  )
+}
+
+// Offered under an assistant message that carried the escalation signal
+// (see normalizeEscalation). Opens the same booking URL the "onze nerds"
+// footer link uses, in a new tab — this surface has no in-widget panel.
+function EscalationCta({ href, isDark }: { href: string; isDark: boolean }) {
+  return (
+    <div className="mt-2">
+      <Button
+        asChild
+        variant="secondary"
+        size="sm"
+        className={isDark ? 'border-white/15 bg-white/10 text-[var(--color-rl-bg)] hover:bg-white/15' : undefined}
+      >
+        <a href={href} target="_blank" rel="noopener noreferrer">
+          <Calendar className="h-3.5 w-3.5" strokeWidth={2} />
+          {m.widget_chat_book_appointment()}
+        </a>
+      </Button>
+    </div>
+  )
+}
+
 function MessageBubble({
   message,
   isLast,
@@ -574,6 +670,8 @@ function MessageBubble({
   isDark,
   showSources,
   showMeta,
+  nerdsActive,
+  nerdsHref,
 }: {
   message: ChatMessage
   isLast: boolean
@@ -584,6 +682,8 @@ function MessageBubble({
   isDark: boolean
   showSources: boolean
   showMeta: boolean
+  nerdsActive: boolean
+  nerdsHref: string
 }) {
   if (message.role === 'user') {
     return (
@@ -594,6 +694,8 @@ function MessageBubble({
             : 'max-w-[75%] rounded-2xl rounded-br-md px-4 py-2.5 text-white'}
           style={{ backgroundColor: primaryColor }}
         >
+          {/* Visitor-authored text. Never markdown/HTML-rendered — only the
+              assistant branches below ever render a <Markdown> element. */}
           <p className="whitespace-pre-line break-words text-[0.875rem] leading-relaxed">
             {message.content}
           </p>
@@ -601,6 +703,8 @@ function MessageBubble({
       </div>
     )
   }
+
+  const showEscalation = nerdsActive && message.escalation?.appointment === true
 
   if (variant === 'admin-preview') {
     return (
@@ -612,9 +716,16 @@ function MessageBubble({
           <MessageSquare className="h-4 w-4" style={{ color: primaryColor }} strokeWidth={2} />
         </div>
         <div className="min-w-0 flex-1">
-          <div className={`whitespace-pre-line break-words text-[0.875rem] leading-[1.75] ${isDark ? 'text-[var(--color-rl-bg)]' : 'text-gray-900'}`}>
-            {message.content || (isStreaming && isLast ? '…' : '')}
-          </div>
+          {message.content ? (
+            <div
+              className={`break-words text-[0.875rem] leading-[1.75] ${isDark ? 'text-[var(--color-rl-bg)]' : 'text-gray-900'} ${markdownClasses(isDark)}`}
+            >
+              <Markdown>{message.content}</Markdown>
+            </div>
+          ) : isStreaming && isLast ? (
+            <TypingIndicator isDark={isDark} />
+          ) : null}
+          {showEscalation && <EscalationCta href={nerdsHref} isDark={isDark} />}
           <SourceDetails message={message} showSources={showSources} showMeta={showMeta} isDark={isDark} />
         </div>
       </div>
@@ -626,18 +737,17 @@ function MessageBubble({
       {message.content ? (
         <div>
           <div className={`max-w-[75%] rounded-2xl rounded-bl-md px-4 py-2.5 ${isDark ? 'bg-white/10' : 'bg-[var(--color-rl-cream)]'}`}>
-            <div className={`whitespace-pre-line break-words text-[0.875rem] leading-[1.6] ${isDark ? 'text-[var(--color-rl-bg)]' : 'text-gray-900'}`}>
-              {message.content}
+            <div
+              className={`break-words text-[0.875rem] leading-[1.6] ${isDark ? 'text-[var(--color-rl-bg)]' : 'text-gray-900'} ${markdownClasses(isDark)}`}
+            >
+              <Markdown>{message.content}</Markdown>
             </div>
           </div>
+          {showEscalation && <EscalationCta href={nerdsHref} isDark={isDark} />}
           <SourceDetails message={message} showSources={showSources} showMeta={showMeta} isDark={isDark} />
         </div>
       ) : isStreaming && isLast ? (
-        <div className={`inline-flex items-center gap-1 rounded-2xl rounded-bl-md px-4 py-3 ${isDark ? 'bg-white/10' : 'bg-[var(--color-rl-cream)]'}`}>
-          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400 [animation-delay:0ms]" />
-          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400 [animation-delay:150ms]" />
-          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400 [animation-delay:300ms]" />
-        </div>
+        <TypingIndicator isDark={isDark} bubble />
       ) : null}
     </div>
   )

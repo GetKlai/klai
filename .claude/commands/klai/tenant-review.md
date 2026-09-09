@@ -23,7 +23,7 @@ Vergelijkt huidige working tree + commits tegen `main`. Voor pre-push of pre-PR 
 
 - Geen full security audit (gebruik `klai-security-audit` agent)
 - Geen lint / format / type check (dat is `ruff check` / `pyright` / CI)
-- Geen impact-analysis (gebruik CodeIndex `impact`)
+- Geen impact-analysis (gebruik `codebase-memory-mcp cli trace_path --direction inbound`)
 - Geen merge-conflict resolution
 
 ## Process

@@ -2141,6 +2141,8 @@
   "widget_chat_sources_label": "Sources",
   "widget_chat_meta_sources_one": "Answer based on 1 source from the knowledge base.",
   "widget_chat_meta_sources_many": "Answer based on {count} sources from the knowledge base.",
+  "widget_chat_typing": "Assistant is typing a response",
+  "widget_chat_book_appointment": "Book an appointment",
   "admin_widgets_details_section_basics": "Basic information",
   "admin_widgets_details_section_ai": "AI Configuration",
   "admin_widgets_details_role_scope_label": "Role & Scope",

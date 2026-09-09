@@ -58,12 +58,6 @@ It is **cross-platform** — all platform-specific settings live in local config
       "args": [".claude/scripts/playwright-launcher.mjs"],
       "env": {}
     },
-    "codeindex": {
-      "type": "stdio",
-      "command": "bash",
-      "args": [".claude/scripts/codeindex-mcp-launcher.sh"],
-      "env": {}
-    },
     "grafana": {
       "type": "stdio",
       "command": "node",
@@ -89,52 +83,8 @@ It is **cross-platform** — all platform-specific settings live in local config
 | **serena** | Semantic code navigation (symbol search, references, go-to-definition) and persistent project memories. Uses LSP for Python and TypeScript. |
 | **context7** | Up-to-date library documentation (React, FastAPI, Next.js, etc.). Prefer over web search for API docs. |
 | **playwright** | Browser automation for E2E spot-checks and visual verification. Headed Chrome with a per-workspace **persistent profile** (login state survives Claude Code restarts). Parallel-safe across workspaces via `{workspace-hash}` profile naming. Set `PLAYWRIGHT_ISOLATED=1` to opt into an ephemeral, logged-out profile. See Section 3. |
-| **codeindex** | Graph-powered code intelligence — call graphs, impact analysis, semantic search, communities, and enrichment queries (git hotspots, SPEC links, test coverage, PageRank). |
 | **grafana** | Read-only access to Grafana dashboards, Prometheus/VictoriaMetrics queries, and alerts. The launcher maps `GRAFANA_SERVICE_ACCOUNT_TOKEN` to `GRAFANA_API_KEY`. Cannot query VictoriaLogs — use the `victorialogs` MCP for log queries instead. |
 | **victorialogs** | Production log queries via LogsQL against VictoriaLogs. The launcher reads `VICTORIALOGS_BASIC_AUTH_B64`, injects `VL_INSTANCE_HEADERS`, and opens a per-MCP-process SSH tunnel automatically. Preferred over `docker logs` for investigating issues. |
-
-### CodeIndex stale-index prevention
-
-The CodeIndex MCP server starts through `.claude/scripts/codeindex-mcp-launcher.sh`
-instead of calling `codeindex mcp` directly. The launcher runs
-`scripts/codeindex-health.sh --quiet` before handing stdout to MCP. This is an
-advisory preflight only: startup must not rebuild the index or restart MCP
-processes, because doing that from inside stdio startup can close existing agent
-transports (`Transport closed`) or contend with an active DB reader.
-
-Important details:
-
-- CodeIndex stores one shared index for `klai`, currently registered from
-  `/Users/mvletter/Developer/Klai`. Conductor worktrees may be on different
-  branches, so agents should treat branch changes as an overlay on the shared
-  base index and verify local diffs/source files directly.
-- The launcher writes preflight output to
-  `.context/codeindex-mcp-launcher.log`, not stdout, because MCP uses stdout for
-  JSON-RPC.
-- The launcher does not run repair and does not kill existing `codeindex mcp`
-  processes. That would be unsafe while starting an MCP server.
-
-Manual non-disruptive repair, if the shared base index is stale:
-
-```bash
-scripts/codeindex-health.sh --repair
-```
-
-Disruptive recovery, only if already-running agents are stuck on stale or locked
-MCP processes:
-
-```bash
-scripts/codeindex-health.sh --repair --restart-mcp
-```
-
-After this command, existing sessions may need to be restarted because their MCP
-stdio transport was intentionally closed.
-
-For diagnosis only:
-
-```bash
-scripts/codeindex-health.sh
-```
 
 ## 3. Set up Playwright
 
@@ -467,65 +417,24 @@ gh auth login
 
 For other platforms: https://github.com/cli/cli#installation
 
-## 7. Install CodeIndex
+## 7. Install codebase-memory-mcp (CLI, not MCP)
 
-CodeIndex provides graph-powered code intelligence (call graphs, impact analysis, semantic search).
-It is distributed as a private npm package.
-
-```bash
-# Install from klai-private
-npm install -g klai-private/tools/codeindex-1.3.56.tgz
-
-# Configure MCP, hooks, and skills
-codeindex setup
-
-# Index the codebase (creates KuzuDB graph in ~/.codeindex/klai/)
-codeindex analyze
-
-# Run enrichment (git hotspots, SPEC links, test mapping, PageRank)
-node scripts/codeindex-enrich.mjs
-```
-
-For Klai's Conductor workflow, keep the shared index pinned to `origin/main`.
-Feature-worktree changes are an overlay and should be verified with local
-diffs/source files, not by refreshing the global index from that worktree.
-
-Diagnose the shared main-index health:
+The code knowledge graph for this repo, used through its CLI only. Install via the
+dotfiles `install.sh`: pinned `CBM_VERSION` (v0.10.8), sha256-checksummed download,
+installed to `~/bin/codebase-memory-mcp`. It also sets `auto_watch`, `auto_index` and `ui_enabled` to false.
 
 ```bash
-scripts/codeindex-health.sh
+codebase-memory-mcp cli index_repository --repo-path .   # first use in a worktree; ~10 s, incremental on rerun
 ```
 
-If the shared main index is stale, repair it non-disruptively:
+Storage lives in `~/.cache/codebase-memory-mcp/` — nothing is written into the repo,
+so there is nothing to gitignore. `.cbmignore` at the repo root un-skips code
+directories the built-in skip-list would otherwise drop.
 
-```bash
-scripts/codeindex-health.sh --repair
-```
+Deliberately not used: the MCP server, the daemon watcher (`auto_watch false`), and
+the vendor installer's client-hook integrations. The CLI is the interface.
 
-For manual non-Conductor maintenance, refresh the index:
-
-```bash
-codeindex update && node scripts/codeindex-enrich.mjs
-```
-
-Or force a full re-index:
-
-```bash
-./scripts/codeindex-analyze-and-enrich.sh --force
-```
-
-**File locations:**
-
-| What | Where | Committed |
-|------|-------|-----------|
-| KuzuDB graph | `~/.codeindex/klai/kuzu` | No (per-machine) |
-| Enrichment sidecar | `~/.codeindex/klai/enrichment.json` | No |
-| CodeIndex hooks | `~/.claude/hooks/codeindex/` | No (installed by setup) |
-| CodeIndex skills | `.claude/skills/codeindex/` | Yes |
-| Enrichment script | `scripts/codeindex-enrich.mjs` | Yes |
-| Wrapper script | `scripts/codeindex-analyze-and-enrich.sh` | Yes |
-
-For usage guidelines (when to use CodeIndex vs Serena), see `.claude/rules/klai/codeindex.md`.
+Usage: the `codebase-memory` block in `AGENTS.md` and the global `codebase-memory` skill.
 
 ## 8. Install VictoriaLogs MCP
 
@@ -659,9 +568,8 @@ uvx mcp-grafana --help
 6. **Playwright fails with `Browser is already in use`** — two MCP clients inside the same workspace are trying to open the same persistent profile. Fix: set `PLAYWRIGHT_ISOLATED=1` on the second instance (ephemeral profile, no lock). A leftover Chromium process from a previous crash can be killed with `taskkill /F /IM chrome.exe` (Windows) or `pkill -f playwright` (Mac/Linux).
 7. **Playwright window opens but immediately closes** — corrupt profile directory or corrupt storage-state file. Fix: nuke the workspace's profile (`rm -rf ~/Library/Caches/ms-playwright/mcp-chrome-*` on macOS — see Section 3 "Starting from scratch") and, if used, the storage-state file. Restart Claude Code.
 8. **Login state visible in one profile but missing in this MCP workspace** — workspace-hashed profiles are separate. Do not copy live Chrome cookie databases between profiles. For Voys, capture a portable storage-state with `npm run e2e:capture-session` or recover it from a known-good profile by launching that profile and calling `context.storageState({ path: '.../storageState.voys.json' })`; then verify with `npm run e2e:verify-voys-session`.
-9. **CodeIndex not found** — `codeindex` command not available. Fix: `npm install -g klai-private/tools/codeindex-1.3.56.tgz`
-10. **CodeIndex stale index** — In Conductor, first run `scripts/codeindex-health.sh`. If the shared base index is stale, fix with `scripts/codeindex-health.sh --repair`. If health is clean but MCP context still reports stale, the registered checkout or current worktree differs from the shared main index; treat CodeIndex as advisory and verify branch-local files directly.
-11. **VictoriaLogs tunnel not running** — MCP queries fail silently or timeout. Fix: `./scripts/victorialogs-tunnel.sh` then restart Claude Code.
-12. **VictoriaLogs auth missing** — `VICTORIALOGS_BASIC_AUTH_B64` not set in `~/.zshrc`. Symptoms: MCP connects but queries return 401. Fix: get the base64 value from SOPS and export it.
-13. **VictoriaLogs container IP changed** — Tunnel connects but queries fail. Cause: VictoriaLogs container restarted, got a new IP. Fix: `./scripts/victorialogs-tunnel.sh --stop && ./scripts/victorialogs-tunnel.sh` (re-resolves IP).
-14. **Grafana token missing** — `GRAFANA_SERVICE_ACCOUNT_TOKEN` not set. Symptoms: Grafana MCP fails to connect. Fix: create a per-developer service account in Grafana (see section 10) and export the token in your shell profile.
+9. **codebase-memory-mcp missing or stale** — `codebase-memory-mcp` not on PATH: run the dotfiles `install.sh` (see section 7). No or stale graph for this worktree: `codebase-memory-mcp cli index_repository --repo-path .`. Treat graph output as advisory and verify branch-local files directly.
+10. **VictoriaLogs tunnel not running** — MCP queries fail silently or timeout. Fix: `./scripts/victorialogs-tunnel.sh` then restart Claude Code.
+11. **VictoriaLogs auth missing** — `VICTORIALOGS_BASIC_AUTH_B64` not set in `~/.zshrc`. Symptoms: MCP connects but queries return 401. Fix: get the base64 value from SOPS and export it.
+12. **VictoriaLogs container IP changed** — Tunnel connects but queries fail. Cause: VictoriaLogs container restarted, got a new IP. Fix: `./scripts/victorialogs-tunnel.sh --stop && ./scripts/victorialogs-tunnel.sh` (re-resolves IP).
+13. **Grafana token missing** — `GRAFANA_SERVICE_ACCOUNT_TOKEN` not set. Symptoms: Grafana MCP fails to connect. Fix: create a per-developer service account in Grafana (see section 10) and export the token in your shell profile.

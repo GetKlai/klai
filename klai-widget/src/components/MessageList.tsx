@@ -162,6 +162,11 @@ interface MessageListProps {
    * click hands the refusal's message index back so the parent can resolve
    * the original question for retrieval and run the consent turn. */
   onBroadConsent?: (offerIndex: number) => void;
+  /** Opens the booking panel for an answer that offered an appointment.
+   * Undefined when this widget has no in-chat booking route, and then the
+   * button is not rendered at all — an offer with nowhere to go is worse
+   * than no button. */
+  onAppointment?: () => void;
 }
 
 export function MessageList(props: MessageListProps) {
@@ -253,6 +258,28 @@ export function MessageList(props: MessageListProps) {
                     onClick={() => props.onBroadConsent?.(index())}
                   >
                     {t().broadOfferButton}
+                  </button>
+                </div>
+              </Show>
+              {/* The appointment offer belongs to the answer that made it:
+                the button sits under that bubble instead of standing in a
+                permanent bar unrelated to what the bot just said. Strict
+                ``=== true`` so a corrupted persisted value cannot conjure
+                one, and gated on a real booking route being wired up. */}
+              <Show
+                when={
+                  message.role === "assistant" &&
+                  message.escalation?.appointment === true &&
+                  props.onAppointment
+                }
+              >
+                <div class="klai-appointment-offer">
+                  <button
+                    type="button"
+                    class="klai-appointment-btn"
+                    onClick={() => props.onAppointment?.()}
+                  >
+                    {t().bookingButton}
                   </button>
                 </div>
               </Show>

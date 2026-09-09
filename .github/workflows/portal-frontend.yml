@@ -61,6 +61,16 @@ jobs:
           npm run i18n:compile
           npm test
 
+      # klai-widget gained its own vitest suite on 2026-09-09. Without this
+      # step those tests exist but never run: the widget is built only in the
+      # deploy job below, which starts after quality has already gone green.
+      # A suite that cannot fail a PR is not a gate.
+      - name: Test (vitest, klai-widget)
+        run: |
+          npm ci
+          npm test
+        working-directory: klai-widget
+
   # CI looks at pixels. Two defects in one week were invisible to lint, types
   # and 620 unit tests, and only visible in a rendered browser. /dev/ui is the
   # deterministic rendered proof of every component; this job photographs each

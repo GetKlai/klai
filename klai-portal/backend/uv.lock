@@ -906,9 +906,13 @@ wheels = [
 name = "klai-chat-prompts"
 version = "0.1.0"
 source = { editable = "../../klai-libs/chat-prompts" }
+dependencies = [
+    { name = "langid" },
+]
 
 [package.metadata]
 requires-dist = [
+    { name = "langid", specifier = ">=1.1.6" },
     { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1.390" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8" },
@@ -1229,6 +1233,15 @@ dev = [
     { name = "respx", specifier = ">=0.22" },
     { name = "ruff", specifier = ">=0.15" },
 ]
+
+[[package]]
+name = "langid"
+version = "1.1.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ea/4c/0fb7d900d3b0b9c8703be316fbddffecdab23c64e1b46c7a83561d78bd43/langid-1.1.6.tar.gz", hash = "sha256:044bcae1912dab85c33d8e98f2811b8f4ff1213e5e9a9e9510137b84da2cb293", size = 1925978, upload-time = "2016-04-05T22:34:15.786Z" }
 
 [[package]]
 name = "lingua-language-detector"

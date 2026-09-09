@@ -13,8 +13,11 @@ from __future__ import annotations
 import pytest
 
 from klai_chat_prompts import (
+    BROAD_MODE_ANSWER_MARKERS,
     GROUNDED_CHAT_SYSTEM_PROMPT,
     SUPPORT_CHAT_SYSTEM_PROMPT,
+    appointment_offer_marker,
+    strip_appointment_offer_marker,
 )
 
 
@@ -166,3 +169,57 @@ def test_support_prompt_does_not_carry_internalkb_phrasing(phrase: str):
     # profile addresses a visitor, not a colleague. "Dat staat niet in de
     # kennisbank" is the KB-jargon fallback. Neither belongs here.
     assert phrase not in SUPPORT_CHAT_SYSTEM_PROMPT
+
+
+# ─── the in-chat appointment offer: machine token, never visible ─────────
+
+
+def test_support_prompt_orders_the_appointment_marker_on_offers_only():
+    """The offer itself is composed by the model, so there is no canned string
+    to match on. The prompt therefore asks for an out-of-band token, and pins
+    the two properties that keep it safe: only on a reply that really offers,
+    and never mentioned to the visitor."""
+    text = SUPPORT_CHAT_SYSTEM_PROMPT
+    assert appointment_offer_marker() in text
+    assert "end the reply with the exact token" in text
+    assert "never write it in a reply that makes no such offer" in text
+    assert "never mention it, never explain " in text
+    # It is documented as machine-only, removed before display.
+    assert "the application removes before the visitor sees the reply" in text
+
+
+def test_appointment_marker_is_a_single_stable_token():
+    marker = appointment_offer_marker()
+    assert marker == "[[APPOINTMENT_OFFER]]"
+    # It must not collide with the visible broad-mode labels: one is stripped
+    # before display, the other is deliberately shown.
+    assert all(marker not in label for label in BROAD_MODE_ANSWER_MARKERS)
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("Zal ik een afspraak inplannen?\n\n[[APPOINTMENT_OFFER]]", "Zal ik een afspraak inplannen?"),
+        ("[[APPOINTMENT_OFFER]]", ""),
+        ("Antwoord. [[appointment_offer]]", "Antwoord."),
+        ("Antwoord.\n[[ APPOINTMENT_OFFER ]]", "Antwoord."),
+        ("Een. [[APPOINTMENT_OFFER]] Twee. [[APPOINTMENT_OFFER]]", "Een. Twee."),
+    ],
+)
+def test_strip_appointment_marker_removes_every_variant(raw: str, expected: str):
+    cleaned, offered = strip_appointment_offer_marker(raw)
+    assert offered is True
+    assert cleaned == expected
+    assert "APPOINTMENT_OFFER" not in cleaned.upper()
+
+
+def test_strip_appointment_marker_leaves_ordinary_text_byte_identical():
+    text = "Dit vind ik niet terug in onze helpartikelen."
+    cleaned, offered = strip_appointment_offer_marker(text)
+    assert cleaned == text
+    assert offered is False
+
+
+def test_strip_appointment_marker_rejects_non_strings():
+    assert strip_appointment_offer_marker(None) == ("", False)
+    assert strip_appointment_offer_marker({"content": "x"}) == ("", False)

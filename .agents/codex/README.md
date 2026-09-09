@@ -34,7 +34,8 @@ before escalating — escalate for genuine uncertainty, not by default:
 
 ## What Codex shares with Claude
 
-- Project-scoped CodeIndex graph context for high-blast-radius Klai work.
+- Project-scoped code graph via `codebase-memory-mcp` (CLI only; data lives in
+  `~/.cache/codebase-memory-mcp/`, nothing in the repo) for high-blast-radius Klai work.
 - Project browser and observability tooling where configured for the active CLI.
 - The same model-neutral rules in the root and nested `AGENTS.md` files.
 

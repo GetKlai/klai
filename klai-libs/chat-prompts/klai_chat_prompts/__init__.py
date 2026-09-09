@@ -128,9 +128,11 @@ __all__ = [
     "SUPPORT_BROAD_CHAT_SYSTEM_PROMPT",
     "SUPPORT_CHAT_SYSTEM_PROMPT",
     "SUPPORT_EXPRESSIVE_CHAT_SYSTEM_PROMPT",
+    "appointment_offer_marker",
     "broad_mode_answer_marker",
     "is_broad_knowledge_answer",
     "no_citable_sources_message",
+    "strip_appointment_offer_marker",
 ]
 
 
@@ -314,6 +316,51 @@ def broad_mode_answer_marker(user_query: object) -> str:
     never in different languages within one turn.
     """
     return _DUTCH_BROAD_MARKER if _query_is_dutch(user_query) else _ENGLISH_BROAD_MARKER
+
+
+# Machine-only signal the SUPPORT profiles append when the reply they just
+# wrote actually offers the visitor an appointment. Unlike
+# :data:`BROAD_MODE_ANSWER_MARKERS`, this one is NOT a label: the visitor must
+# never see it. The backend strips it from the answer and turns it into the
+# structured escalation signal the widget uses to render a booking button
+# under that one message. It exists because the offer is composed by the model
+# in its own words — there is no canned string to match on — so the model has
+# to say "this reply is an offer" out of band.
+_APPOINTMENT_OFFER_MARKER: Final[str] = "[[APPOINTMENT_OFFER]]"
+
+# Tolerant on purpose: models drift on inner spacing and casing, and a marker
+# that survives into the visitor's text is a visible defect. Leading spaces/tabs
+# are eaten with the token so a mid-sentence slip does not leave a double space.
+_APPOINTMENT_OFFER_MARKER_RE: Final[re.Pattern[str]] = re.compile(
+    r"[ \t]*\[\[\s*APPOINTMENT_OFFER\s*\]\]",
+    re.IGNORECASE,
+)
+
+
+def appointment_offer_marker() -> str:
+    """Return the exact token the SUPPORT profiles are told to emit.
+
+    Single source of truth: the prompt line and every consumer read the token
+    from here, so the wording can never drift between what the model is asked
+    to write and what the backend looks for.
+    """
+    return _APPOINTMENT_OFFER_MARKER
+
+
+def strip_appointment_offer_marker(content: object) -> tuple[str, bool]:
+    """Split model output into ``(visible text, offered an appointment)``.
+
+    Removes EVERY occurrence, not just a trailing one: the prompt asks for the
+    token on the last line, but a model that repeats it or drops it mid-answer
+    must still never show it to a visitor. Non-strings return ``("", False)``
+    so a caller cannot accidentally render a repr.
+    """
+    if not isinstance(content, str):
+        return "", False
+    cleaned, count = _APPOINTMENT_OFFER_MARKER_RE.subn("", content)
+    if not count:
+        return content, False
+    return cleaned.strip(), True
 
 
 def is_broad_knowledge_answer(content: object) -> bool:
@@ -667,10 +714,19 @@ _SUPPORT_BODY: Final[str] = (
     "offer to schedule an appointment with a human employee who will help the visitor further "
     "personally. Phrase the offer as an action the visitor can take; do NOT name a phone "
     "number, an e-mail address or a URL yourself — the widget renders the booking button or "
-    "link next to your answer. Offer that appointment when the visitor is frustrated, repeats "
-    "the same complaint, wants to cancel, reports an outage, asks a pricing or contract "
-    "question, or when you could not find the answer in the help articles after an honest "
-    "attempt. Stay calm and brief.\n\n"
+    "link next to your answer. Offer that appointment when the visitor asks to speak to a "
+    "person, is frustrated, repeats the same complaint, wants to cancel, reports an outage, "
+    "asks a pricing or contract question, or when you could not find the answer in the help "
+    "articles after an honest attempt. Finding a matching help article does NOT cancel that "
+    "offer: answer from the article when you have one AND make the offer when a trigger "
+    "fires. A visitor who asks for a person gets the offer, never steps alone. Never repeat a "
+    "phone number, e-mail address or URL for reaching support from a help article either: "
+    "an article written for staff about how to route callers is not an answer to a visitor "
+    "asking for help. Stay calm and brief.\n"
+    "When your reply actually contains that appointment offer, end the reply with the exact "
+    f"token {_APPOINTMENT_OFFER_MARKER} on its own final line. That token is a machine signal "
+    "the application removes before the visitor sees the reply: never mention it, never explain "
+    "it, and never write it in a reply that makes no such offer.\n\n"
     "## Source handling\n"
     "Do NOT write citation markers, citation numbers, source lists, URLs, Markdown links, or "
     "footnotes. The application renders trusted sources separately from retrieved metadata "
@@ -798,10 +854,19 @@ _SUPPORT_EXPRESSIVE_BODY: Final[str] = (
     "offer to schedule an appointment with a human employee who will help the visitor further "
     "personally. Phrase the offer as an action the visitor can take; do NOT name a phone "
     "number, an e-mail address or a URL yourself — the widget renders the booking button or "
-    "link next to your answer. Offer that appointment when the visitor is frustrated, repeats "
-    "the same complaint, wants to cancel, reports an outage, asks a pricing or contract "
-    "question, or when you could not find the answer in the help articles after an honest "
-    "attempt. Stay calm and brief.\n\n"
+    "link next to your answer. Offer that appointment when the visitor asks to speak to a "
+    "person, is frustrated, repeats the same complaint, wants to cancel, reports an outage, "
+    "asks a pricing or contract question, or when you could not find the answer in the help "
+    "articles after an honest attempt. Finding a matching help article does NOT cancel that "
+    "offer: answer from the article when you have one AND make the offer when a trigger "
+    "fires. A visitor who asks for a person gets the offer, never steps alone. Never repeat a "
+    "phone number, e-mail address or URL for reaching support from a help article either: "
+    "an article written for staff about how to route callers is not an answer to a visitor "
+    "asking for help. Stay calm and brief.\n"
+    "When your reply actually contains that appointment offer, end the reply with the exact "
+    f"token {_APPOINTMENT_OFFER_MARKER} on its own final line. That token is a machine signal "
+    "the application removes before the visitor sees the reply: never mention it, never explain "
+    "it, and never write it in a reply that makes no such offer.\n\n"
     "## Source handling\n"
     "Do NOT write citation markers, citation numbers, source lists, URLs, Markdown links, or "
     "footnotes. The application renders trusted sources separately from retrieved metadata "

@@ -10,6 +10,15 @@ export type MessageRating = "thumbsUp" | "thumbsDown";
  * of the stored content, the flag drives UI state only). */
 export type BroadModeSignal = "offer" | "answer";
 
+/** Escalation signal for one assistant turn, from ``delta.escalation``
+ * (streaming) or ``message.escalation`` (non-streaming). Exactly one shape:
+ * ``{ appointment: boolean }``. ``appointment: true`` means "this answer
+ * offers the visitor an appointment", so the widget renders the booking
+ * button under that one message. Absent = no offer. */
+export interface MessageEscalation {
+  appointment: boolean;
+}
+
 export interface Message {
   role: "user" | "assistant" | "agent";
   content: string;
@@ -25,6 +34,9 @@ export interface Message {
   rating?: MessageRating | null;
   /** Set from the stream signal above; only bot answers carry one. */
   broadMode?: BroadModeSignal;
+  /** Set from the escalation signal; present only on the answers that
+   * actually offer the visitor an appointment. */
+  escalation?: MessageEscalation;
 }
 
 export interface MessageSource {
@@ -54,6 +66,7 @@ export interface StreamCallbacks {
   onSources?: (sources: MessageSource[]) => void;
   onActivity?: (activity: AgentActivity[]) => void;
   onBroadMode?: (mode: BroadModeSignal) => void;
+  onEscalation?: (escalation: MessageEscalation) => void;
   onDone: () => void;
   onError: (error: KlaiWidgetError | Error) => void;
 }
@@ -224,6 +237,21 @@ export function normalizeMessageSources(rawSources: unknown): MessageSource[] {
   return normalized;
 }
 
+/** Strict reader for the escalation signal.
+ *
+ * The contract is exactly ``{ appointment: boolean }``, so only a literal
+ * ``true`` is an offer. Anything else — ``false``, a missing key, a string,
+ * a future field we do not know — returns null and the widget renders
+ * nothing. A booking button is a promise of a person; it is never guessed at.
+ */
+export function normalizeEscalation(rawEscalation: unknown): MessageEscalation | null {
+  if (!rawEscalation || typeof rawEscalation !== "object") {
+    return null;
+  }
+  const escalation = rawEscalation as Partial<MessageEscalation>;
+  return escalation.appointment === true ? { appointment: true } : null;
+}
+
 export function normalizeAgentActivity(rawActivity: unknown): AgentActivity[] {
   if (!Array.isArray(rawActivity)) {
     return [];
@@ -313,7 +341,13 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
             | {
                 error?: { message?: string };
                 choices?: Array<{
-                  delta?: { content?: string; sources?: unknown; activity?: unknown; broad_mode?: unknown };
+                  delta?: {
+                    content?: string;
+                    sources?: unknown;
+                    activity?: unknown;
+                    broad_mode?: unknown;
+                    escalation?: unknown;
+                  };
                   finish_reason?: string;
                 }>;
               }
@@ -322,7 +356,13 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
             parsed = JSON.parse(event.data) as {
               error?: { message?: string };
               choices?: Array<{
-                delta?: { content?: string; sources?: unknown; activity?: unknown; broad_mode?: unknown };
+                delta?: {
+                  content?: string;
+                  sources?: unknown;
+                  activity?: unknown;
+                  broad_mode?: unknown;
+                  escalation?: unknown;
+                };
                 finish_reason?: string;
               }>;
             };
@@ -353,6 +393,10 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
           const broadModeSignal = delta?.broad_mode;
           if (broadModeSignal === "offer" || broadModeSignal === "answer") {
             callbacks.onBroadMode?.(broadModeSignal);
+          }
+          const escalation = normalizeEscalation(delta?.escalation);
+          if (escalation) {
+            callbacks.onEscalation?.(escalation);
           }
           if (parsed.choices?.[0]?.finish_reason === "stop") {
             callbacks.onDone();
