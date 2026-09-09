@@ -1399,8 +1399,11 @@
   filter: brightness(0.94);
 }
 
+/* The ring cannot be the primary colour: this button's background IS the
+   primary colour, so a same-colour outline is invisible exactly where it
+   matters. Same choice the other focus rings on tinted surfaces make. */
 .klai-appointment-btn:focus-visible {
-  outline: 2px solid var(--klai-primary-color);
+  outline: 2px solid var(--klai-text-color);
   outline-offset: 2px;
 }
 
