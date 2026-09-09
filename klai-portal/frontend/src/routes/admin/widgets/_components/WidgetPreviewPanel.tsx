@@ -121,6 +121,11 @@ export function WidgetPreviewPanel({ widget, onCollapse }: Props) {
               // The saved setting governs real visitors; the toggle is listed
               // under the save-only note.
               pageContextEnabled={false}
+              // The nerds booking integration is not part of the live
+              // form state the other preview props come from; the saved
+              // config decides what the visitor-facing footer shows.
+              nerdsEnabled={widget.widget_config.integrations?.nerds?.enabled}
+              nerdsBookingUrl={widget.widget_config.integrations?.nerds?.booking_url}
             />
           )}
         </div>

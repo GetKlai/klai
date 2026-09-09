@@ -89,6 +89,55 @@ def test_widget_config_defaults():
     assert "public_share_enabled" not in WidgetConfig.model_fields
 
 
+def test_widget_config_nerds_integration_defaults_and_roundtrip():
+    """The nerds booking integration exists, defaults to disabled, and
+    survives the response mapping — so a PATCH with it stored reads back
+    with the toggle and booking URL intact."""
+    from app.api.admin_widgets import WidgetConfig, _widget_to_response
+
+    config = WidgetConfig()
+    assert config.integrations.nerds.enabled is False
+    assert config.integrations.nerds.booking_url is None
+
+    saved = WidgetConfig(
+        integrations={
+            "hubspot": {"status": "not_connected"},
+            "nerds": {"enabled": True, "booking_url": "https://support.voys.nl/book/voys?t=abc"},
+        }
+    )
+    assert saved.integrations.nerds.enabled is True
+    assert saved.integrations.nerds.booking_url == "https://support.voys.nl/book/voys?t=abc"
+
+    widget = MagicMock()
+    widget.id = "uuid-1"
+    widget.name = "Help Bot"
+    widget.description = None
+    widget.widget_id = "wgt_abc123"
+    widget.widget_config = saved.model_dump()
+    widget.public_share_enabled = False
+    widget.rate_limit_rpm = 60
+    widget.last_used_at = None
+    widget.created_at = "2026-01-01"
+    widget.created_by = "user-1"
+    response = _widget_to_response(widget, kb_access_count=0)
+    assert response.widget_config.integrations.nerds.enabled is True
+    assert response.widget_config.integrations.nerds.booking_url == "https://support.voys.nl/book/voys?t=abc"
+
+    # Widgets stored before the integration existed keep the disabled default.
+    legacy = MagicMock()
+    legacy.id = "uuid-2"
+    legacy.name = "Old Bot"
+    legacy.description = None
+    legacy.widget_id = "wgt_old"
+    legacy.widget_config = {"allowed_origins": []}
+    legacy.public_share_enabled = False
+    legacy.rate_limit_rpm = 60
+    legacy.last_used_at = None
+    legacy.created_at = "2026-01-01"
+    legacy.created_by = "user-1"
+    assert _widget_to_response(legacy, kb_access_count=0).widget_config.integrations.nerds.enabled is False
+
+
 def test_widget_config_tone_register_defaults_restrained():
     """tone_register exists, defaults to the current restrained voice, and is
     a closed choice: an unknown register cannot be saved."""

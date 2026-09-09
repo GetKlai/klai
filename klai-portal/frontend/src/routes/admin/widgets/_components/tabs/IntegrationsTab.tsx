@@ -1,10 +1,20 @@
 import { useEffect, useState } from 'react'
-import { CalendarCheck, ExternalLink, Loader2, MessageSquareText, PlugZap, RotateCcw, Unplug } from 'lucide-react'
+import {
+  CalendarCheck,
+  ExternalLink,
+  Loader2,
+  MessageSquareText,
+  PlugZap,
+  RotateCcw,
+  Unplug,
+  Users,
+} from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import * as m from '@/paraglide/messages'
 import {
   useHubSpotIntegration,
@@ -12,7 +22,12 @@ import {
   useUpdateWidget,
 } from '../../-hooks'
 import { FetchError } from '@/lib/fetch-errors'
-import type { WidgetConfig, WidgetDetailResponse } from '../../-types'
+import type {
+  HubSpotWidgetIntegration,
+  WidgetConfig,
+  WidgetDetailResponse,
+  WidgetIntegrations,
+} from '../../-types'
 
 interface Props {
   widget: WidgetDetailResponse
@@ -230,9 +245,143 @@ export function IntegrationsTab({ widget }: Props) {
         </article>
         )}
 
+        <NerdsCard widget={widget} />
         <BookingCard widget={widget} />
       </div>
     </section>
+  )
+}
+
+// Saving the nerds integration goes through the generic widget PATCH, which
+// rewrites the whole integrations block — so the untouched hubspot state
+// must ride along. Widgets created before hubspot existed carry no block at
+// all; the backend default is not_connected, mirrored here.
+const HUBSPOT_NOT_CONNECTED: HubSpotWidgetIntegration = {
+  status: 'not_connected',
+  portal_id: null,
+  channel_id: null,
+  channel_account_id: null,
+  inbox_id: null,
+  help_desk_url: null,
+  last_connected_at: null,
+  last_disconnected_at: null,
+  last_rebuilt_at: null,
+  last_tested_at: null,
+  last_test_thread_id: null,
+  last_error: null,
+}
+
+// Voys-specific: the Nerds booking panel. Not a configurable framework —
+// exactly one named integration, rendered as a card beside HubSpot.
+function NerdsCard({ widget }: Props) {
+  const updateMutation = useUpdateWidget(String(widget.id))
+  const config = widget.widget_config
+  const nerds = config.integrations?.nerds
+  const [enabled, setEnabled] = useState(nerds?.enabled ?? false)
+  const [bookingUrl, setBookingUrl] = useState(nerds?.booking_url ?? '')
+
+  useEffect(() => {
+    setEnabled(nerds?.enabled ?? false)
+    setBookingUrl(nerds?.booking_url ?? '')
+  }, [nerds?.enabled, nerds?.booking_url])
+
+  const trimmed = bookingUrl.trim()
+  const isEmpty = trimmed.length === 0
+  const isValid = isEmpty || isAbsoluteHttpUrl(trimmed)
+  // partner.py only ever delivers the panel with a usable URL: enabling
+  // without one saves a dead switch, so the form requires it up front.
+  const showUrlError = !isValid || (enabled && isEmpty)
+  const isDirty = enabled !== (nerds?.enabled ?? false) || trimmed !== (nerds?.booking_url ?? '')
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (showUrlError) return
+    const integrations: WidgetIntegrations = {
+      ...config.integrations,
+      hubspot: config.integrations?.hubspot ?? HUBSPOT_NOT_CONNECTED,
+      nerds: {
+        enabled,
+        booking_url: isEmpty ? null : trimmed,
+      },
+    }
+    const next: WidgetConfig = { ...config, integrations }
+    updateMutation.mutate(
+      { widget_config: next },
+      { onSuccess: () => toast.success(m.admin_shared_success_updated()) },
+    )
+  }
+
+  return (
+    <article className="rounded-lg border border-gray-200 bg-white p-5">
+      <header className="flex items-start gap-3">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-[var(--color-rl-accent)]/10 text-[var(--color-rl-dark)]">
+          <Users className="h-5 w-5" />
+        </div>
+        <div className="min-w-0 space-y-1">
+          <h3 className="text-base font-semibold text-gray-900">
+            {m.admin_widgets_integrations_nerds_title()}
+          </h3>
+          <p className="text-sm text-gray-500">
+            {m.admin_widgets_integrations_nerds_description()}
+          </p>
+        </div>
+      </header>
+
+      <form onSubmit={handleSubmit} noValidate className="mt-4 space-y-3">
+        <div className="flex items-center gap-3">
+          <Switch
+            id="widget-nerds-enabled"
+            checked={enabled}
+            onCheckedChange={setEnabled}
+          />
+          <Label htmlFor="widget-nerds-enabled">
+            {m.admin_widgets_integrations_nerds_enabled_label()}
+          </Label>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="widget-nerds-url">
+            {m.admin_widgets_integrations_booking_url_label()}
+          </Label>
+          <p className="text-xs text-gray-600">
+            {m.admin_widgets_integrations_nerds_url_help()}
+          </p>
+          <Input
+            id="widget-nerds-url"
+            type="url"
+            value={bookingUrl}
+            onChange={(e) => setBookingUrl(e.target.value)}
+            placeholder={m.admin_widgets_integrations_booking_url_placeholder()}
+            aria-invalid={showUrlError}
+            className="max-w-xl"
+          />
+          {showUrlError && (
+            <p className="text-sm text-[var(--color-destructive)]">
+              {m.admin_widgets_integrations_booking_error_invalid()}
+            </p>
+          )}
+        </div>
+        <p className="text-xs text-gray-600">
+          {m.admin_widgets_integrations_nerds_hint()}
+        </p>
+        {updateMutation.error && (
+          <p className="text-sm text-[var(--color-destructive)]">
+            {updateMutation.error instanceof Error
+              ? updateMutation.error.message
+              : m.admin_shared_error_generic()}
+          </p>
+        )}
+        <div>
+          <Button
+            type="submit"
+            size="sm"
+            disabled={updateMutation.isPending || !isDirty || showUrlError}
+          >
+            {updateMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {m.admin_shared_save()}
+          </Button>
+        </div>
+      </form>
+    </article>
   )
 }
 

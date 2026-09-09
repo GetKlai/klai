@@ -2719,18 +2719,13 @@ def _hubspot_handoff_enabled_for_widget(
     )
 
 
-def _widget_booking_url(widget_config_data: dict[str, Any]) -> str:
-    """INTERIM — remove together with ``booking_url`` when the chat booking
-    API integration replaces the support-partner redirect.
+def _validated_http_url(url: object) -> str:
+    """Return the value unchanged when it is an absolute http(s) URL, else ``""``.
 
-    Return the widget's booking URL for the visitor-facing appointment
-    button, or ``""`` to hide it. The stored value is admin input that
-    lands in an ``href`` in a visitor's browser, so only absolute http(s)
-    URLs are delivered at all: ``javascript:``, other schemes, relative
-    and malformed values are dropped here, before the widget ever sees
-    them. An unset field changes nothing about the payload's behaviour.
+    Shared scheme gate for every admin-entered URL that reaches a visitor's
+    browser: ``javascript:``, other schemes, relative and malformed values
+    are dropped here, before the widget ever sees them.
     """
-    url = widget_config_data.get("booking_url")
     if not isinstance(url, str):
         return ""
     url = url.strip()
@@ -2743,6 +2738,41 @@ def _widget_booking_url(widget_config_data: dict[str, Any]) -> str:
     if parsed.scheme.lower() not in ("http", "https") or not parsed.netloc:
         return ""
     return url
+
+
+def _widget_booking_url(widget_config_data: dict[str, Any]) -> str:
+    """INTERIM — remove together with ``booking_url`` when the chat booking
+    API integration replaces the support-partner redirect.
+
+    Return the widget's booking URL for the visitor-facing appointment
+    button, or ``""`` to hide it. The stored value is admin input that
+    lands in an ``href`` in a visitor's browser, so only absolute http(s)
+    URLs are delivered at all (see ``_validated_http_url``). An unset
+    field changes nothing about the payload's behaviour.
+    """
+    return _validated_http_url(widget_config_data.get("booking_url"))
+
+
+def _widget_nerds_integration(widget_config_data: dict[str, Any]) -> dict[str, Any]:
+    """Nerds booking panel (Voys-specific support-partner integration).
+
+    Delivered to the visitor-facing widget-config endpoints as
+    ``{"enabled": bool, "booking_url": str}``. The booking URL is admin
+    input that becomes an iframe ``src`` in a visitor's browser, so it runs
+    through the same absolute-http(s) gate as the interim booking redirect:
+    a ``javascript:`` or relative value never reaches the visitor. A panel
+    without a loadable URL is no panel and a switched-off integration has
+    no visitor to serve, so ``enabled`` only survives when the toggle is on
+    AND the URL validates — and an empty ``booking_url`` is delivered
+    whenever the link is off. A widget without this integration gets the
+    same disabled shape as before it existed.
+    """
+    integrations = widget_config_data.get("integrations")
+    nerds = integrations.get("nerds") if isinstance(integrations, dict) else None
+    if not isinstance(nerds, dict) or not nerds.get("enabled"):
+        return {"enabled": False, "booking_url": ""}
+    booking_url = _validated_http_url(nerds.get("booking_url"))
+    return {"enabled": bool(booking_url), "booking_url": booking_url}
 
 
 # ---------------------------------------------------------------------------
@@ -2913,6 +2943,8 @@ async def widget_config(
         "support_mode": widget_config_data.get("support_mode", False),
         # Interim appointment redirect (booking API pending) — see _widget_booking_url.
         "booking_url": _widget_booking_url(widget_config_data),
+        # Voys-specific: in-widget Nerds booking panel — see _widget_nerds_integration.
+        "nerds": _widget_nerds_integration(widget_config_data),
         "handoff": {
             "hubspot": {"enabled": _hubspot_handoff_enabled_for_widget(org=org, widget_config_data=widget_config_data)}
         },
@@ -3020,6 +3052,8 @@ async def public_bot_config(
         "support_mode": widget_config_data.get("support_mode", False),
         # Interim appointment redirect (booking API pending) — see _widget_booking_url.
         "booking_url": _widget_booking_url(widget_config_data),
+        # Voys-specific: in-widget Nerds booking panel — see _widget_nerds_integration.
+        "nerds": _widget_nerds_integration(widget_config_data),
         "name": widget_row.name,
         "description": widget_row.description or "",
         "handoff": {

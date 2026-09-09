@@ -32,7 +32,7 @@ import {
   startHubSpotHandoff,
   streamHubSpotHandoffEvents,
 } from "../api/handoff";
-import { t } from "../i18n/labels";
+import { currentLocale, t } from "../i18n/labels";
 import type { Message } from "../api/chat-stream";
 
 interface ChatWindowProps {
@@ -46,6 +46,12 @@ interface ChatWindowProps {
   hideDisclaimer?: boolean;
   welcomeMessage?: string;
   bookingUrl?: string;
+  // Nerds booking panel (Voys-specific). The server only delivers
+  // enabled=true together with an absolute http(s) booking_url
+  // (partner.py _widget_nerds_integration), but the widget re-checks
+  // before rendering a frame anyway. Both unset → renders as before.
+  nerdsEnabled?: boolean;
+  nerdsBookingUrl?: string;
   collectUserInfo?: boolean;
   manageHandoffStream?: boolean;
 }
@@ -93,6 +99,55 @@ export function ChatWindow(props: ChatWindowProps) {
     setAiDisclosureText(notice + booking);
   }, 150);
   onCleanup(() => window.clearTimeout(disclosureTimer));
+
+  // ── Nerds booking panel (Voys-specific) ────────────────────────────
+  // The panel replaces the widget's contents with an iframe on the Nerds
+  // booking module while it is open; the close button returns to the chat.
+  // The booking page is built for a 460x680 embed, so the window widens
+  // for the duration (CSS .klai-window--nerds; narrow viewports fill).
+  const [nerdsPanelOpen, setNerdsPanelOpen] = createSignal(false);
+  const [nerdsFrameFailed, setNerdsFrameFailed] = createSignal(false);
+  let nerdsFrameTimer: number | undefined;
+  // Cross-origin iframes fire neither a usable error event nor a load
+  // event when the framed site outright refuses to load, so "no load
+  // event within N seconds" is the signal to offer the fallback link.
+  const NERDS_FRAME_LOAD_TIMEOUT_MS = 12000;
+
+  const nerdsActive = () => Boolean(props.nerdsEnabled && props.nerdsBookingUrl?.trim());
+  // Exactly what the Nerds' own embed.js requests of their booking
+  // module: the configured URL plus embed and language parameters.
+  // The separator has to be chosen, not assumed: a booking URL without a
+  // query string turns "&embed=1" into part of the path, and their router
+  // answers that with a 404 page inside our panel. The configured Voys URL
+  // has no query string, so hardcoding "&" broke exactly the case we ship.
+  // Same rule their own embed.js applies before appending lng.
+  const nerdsEmbedUrl = () => {
+    const base = props.nerdsBookingUrl!.trim();
+    const sep = base.includes("?") ? "&" : "?";
+    return `${base}${sep}embed=1&lng=${currentLocale()}`;
+  };
+
+  const clearNerdsFrameTimer = () => {
+    if (nerdsFrameTimer !== undefined) {
+      window.clearTimeout(nerdsFrameTimer);
+      nerdsFrameTimer = undefined;
+    }
+  };
+
+  const openNerdsPanel = () => {
+    setNerdsFrameFailed(false);
+    setNerdsPanelOpen(true);
+    clearNerdsFrameTimer();
+    nerdsFrameTimer = window.setTimeout(() => setNerdsFrameFailed(true), NERDS_FRAME_LOAD_TIMEOUT_MS);
+  };
+
+  const closeNerdsPanel = () => {
+    clearNerdsFrameTimer();
+    setNerdsFrameFailed(false);
+    setNerdsPanelOpen(false);
+  };
+
+  onCleanup(clearNerdsFrameTimer);
 
   const connectHandoffStream = () => {
     if (props.manageHandoffStream === false || !chatState.sessionToken) {
@@ -423,9 +478,14 @@ export function ChatWindow(props: ChatWindowProps) {
   const hasUserTurn = () =>
     chatState.messages.some((m) => m.role === "user");
 
+  const windowClass = () => {
+    const base = props.inline ? "klai-window klai-window--inline" : "klai-window";
+    return nerdsPanelOpen() && !props.inline ? `${base} klai-window--nerds` : base;
+  };
+
   return (
     <div
-      class={props.inline ? "klai-window klai-window--inline" : "klai-window"}
+      class={windowClass()}
       role={props.inline ? "region" : "dialog"}
       aria-label={props.title}
       aria-modal={props.inline ? undefined : "false"}
@@ -782,8 +842,77 @@ export function ChatWindow(props: ChatWindowProps) {
         </Show>
       </div>
 
+      {/* With the nerds integration on, the client's own disclosure
+          sentence replaces the plain accuracy footer — same place, same
+          white-label gate. "onze nerds" is a <button>, not an <a>: the
+          panel opens inside the widget, there is no URL to visit. The
+          fragments render as JSX text, never as raw HTML. */}
       <Show when={!props.hideDisclaimer}>
-        <p class="klai-disclaimer">{t().disclaimer}</p>
+        <Show
+          when={nerdsActive()}
+          fallback={<p class="klai-disclaimer">{t().disclaimer}</p>}
+        >
+          <p class="klai-disclaimer">
+            {t().nerdsDisclosureBefore}
+            <button
+              type="button"
+              class="klai-nerds-disclosure-link"
+              onClick={openNerdsPanel}
+            >
+              {t().nerdsDisclosureLink}
+            </button>
+            {t().nerdsDisclosureAfter}
+          </p>
+        </Show>
+      </Show>
+
+      {/* Nerds booking panel: overlay covering the chat while open. The
+          sandbox deliberately has no allow-top-navigation — the framed
+          booking module must never navigate the host page away. The
+          fallback (frame never loaded) links to the same URL in a new
+          tab, the pre-panel behaviour. booking_url is server-validated
+          absolute http(s) before it ever reaches this component. */}
+      <Show when={nerdsPanelOpen()}>
+        <div class="klai-nerds-panel" role="region" aria-label={t().nerdsPanelTitle}>
+          <div class="klai-nerds-panel-head">
+            <span class="klai-nerds-panel-title">{t().nerdsPanelTitle}</span>
+            <button type="button" class="klai-nerds-panel-back" onClick={closeNerdsPanel}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M19 12H5" />
+                <path d="m12 19-7-7 7-7" />
+              </svg>
+              {t().nerdsPanelClose}
+            </button>
+          </div>
+          <Show
+            when={!nerdsFrameFailed()}
+            fallback={
+              <div class="klai-nerds-panel-fallback">
+                <a
+                  class="klai-nerds-fallback-link"
+                  href={nerdsEmbedUrl()}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {t().nerdsPanelFallback}
+                </a>
+              </div>
+            }
+          >
+            <iframe
+              class="klai-nerds-frame"
+              title={t().nerdsPanelTitle}
+              src={nerdsEmbedUrl()}
+              allow="clipboard-write; payment; geolocation"
+              sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+              on:load={() => {
+                clearNerdsFrameTimer();
+                setNerdsFrameFailed(false);
+              }}
+              on:error={() => setNerdsFrameFailed(true)}
+            />
+          </Show>
+        </div>
       </Show>
     </div>
   );

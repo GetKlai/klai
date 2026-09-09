@@ -129,6 +129,8 @@ async function bootstrap(): Promise<void> {
         hideDisclaimer: config.hide_disclaimer,
         welcomeMessage: config.welcome_message,
         bookingUrl: config.booking_url,
+        nerdsEnabled: config.nerds?.enabled,
+        nerdsBookingUrl: config.nerds?.booking_url,
         collectUserInfo: config.collect_user_info,
       }),
       target as HTMLElement,

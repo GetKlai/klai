@@ -601,6 +601,129 @@
   background: color-mix(in srgb, var(--klai-primary-color) 10%, transparent);
 }
 
+/* ── Nerds booking panel (Voys-specific integration) ─────────────── */
+
+/* The panel is designed for a 460px-wide embed; widen the window for it
+   while it is open, clamping to the viewport so narrow screens simply
+   fill. Removing the class on close restores the default width. */
+.klai-window--nerds {
+  width: min(460px, calc(100vw - 40px));
+}
+
+/* "onze nerds" in the client's disclosure sentence: an inline text
+   button styled as a link — it opens the panel, it goes nowhere. */
+.klai-nerds-disclosure-link {
+  display: inline;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--klai-link-color);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.klai-nerds-disclosure-link:focus-visible {
+  outline: 2px solid var(--klai-text-color);
+  outline-offset: 2px;
+}
+
+/* Overlay covering the chat while the booking panel is open. */
+.klai-nerds-panel {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--klai-background-color);
+}
+
+.klai-nerds-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--klai-border-color);
+  flex-shrink: 0;
+}
+
+.klai-nerds-panel-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--klai-text-color);
+}
+
+.klai-nerds-panel-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--klai-border-color);
+  border-radius: 8px;
+  background: var(--klai-background-color);
+  color: var(--klai-text-color);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+
+.klai-nerds-panel-back:hover {
+  border-color: var(--klai-primary-color);
+  background: color-mix(in srgb, var(--klai-primary-color) 10%, transparent);
+}
+
+.klai-nerds-panel-back:focus-visible {
+  border-color: var(--klai-text-color);
+  background: color-mix(in srgb, var(--klai-primary-color) 10%, transparent);
+}
+
+.klai-nerds-panel-back svg {
+  width: 13px;
+  height: 13px;
+}
+
+.klai-nerds-frame {
+  flex: 1;
+  width: 100%;
+  border: 0;
+  display: block;
+}
+
+/* Frame never loaded: the same URL offered as a new-tab link, the
+   behaviour this panel replaced. */
+.klai-nerds-panel-fallback {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.klai-nerds-fallback-link {
+  display: inline-block;
+  border: 1px solid var(--klai-border-color);
+  border-radius: 8px;
+  background: var(--klai-background-color);
+  color: var(--klai-link-color);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  padding: 8px 12px;
+  text-decoration: underline;
+  cursor: pointer;
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+
+.klai-nerds-fallback-link:hover {
+  border-color: var(--klai-primary-color);
+  background: color-mix(in srgb, var(--klai-primary-color) 10%, transparent);
+}
+
 /* Markdown in assistant messages */
 .klai-markdown p { margin: 0 0 8px; }
 .klai-markdown p:last-child { margin-bottom: 0; }

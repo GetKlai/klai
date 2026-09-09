@@ -3,7 +3,31 @@ import { ArrowUp, ChevronDown, MessageSquare, Pencil, Share2, X } from 'lucide-r
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { WIDGET_DEFAULT_PRIMARY_COLOR } from '@/features/widgets/config/appearance'
+import { getLocale } from '@/paraglide/runtime'
 import * as m from '@/paraglide/messages'
+
+// Nerds booking integration (Voys-specific): while it is on, the footer
+// shows the client's own disclosure sentence instead of the portal-
+// translated accuracy disclaimer. The sentence is fixed, delivered verbatim
+// by the client for NL — reproducing it as a constant here (rather than a
+// message key) keeps it identical to what the embedded widget renders and
+// out of reach of the logged-in admin's portal language setting. The same
+// NL/EN fork as the widget's labels; locale here falls out of the page's
+// own language (the visitor's, on the public share link).
+const NERDS_DISCLOSURE = {
+  nl: {
+    before:
+      'De Voys AI chat baseert zich op zorgvuldig gekozen bronnen. Toch kunnen ook daar fouten in staan, dus vertrouw ze niet blind. Kom je er niet uit in de chat? Plan dan een afspraak in met ',
+    link: 'onze nerds',
+    after: '.',
+  },
+  en: {
+    before:
+      "The Voys AI chat draws on carefully chosen sources. Even those can contain mistakes, so don't trust them blindly. Can't work it out in the chat? Then schedule an appointment with ",
+    link: 'our nerds',
+    after: '.',
+  },
+} as const
 
 export interface WidgetChatSurfaceProps {
   botName: string
@@ -13,6 +37,13 @@ export interface WidgetChatSurfaceProps {
   welcomeMessage?: string
   conversationStarters?: string[]
   hideDisclaimer?: boolean
+  // Nerds booking panel (Voys-specific). Enabled + booking_url always
+  // arrive as a pair, pre-validated to absolute http(s) server-side
+  // (partner.py _widget_nerds_integration). Unlike the embeddable widget
+  // this surface has no in-page panel: "onze nerds" links to the same
+  // booking URL in a new tab. Both unset → footer stays as before.
+  nerdsEnabled?: boolean
+  nerdsBookingUrl?: string
   primaryColor?: string
   theme?: 'light' | 'dark'
   showSources?: boolean
@@ -129,6 +160,8 @@ export function WidgetChatSurface({
   welcomeMessage = '',
   conversationStarters = [],
   hideDisclaimer = false,
+  nerdsEnabled = false,
+  nerdsBookingUrl = '',
   primaryColor = WIDGET_DEFAULT_PRIMARY_COLOR,
   theme = 'light',
   showSources = true,
@@ -152,6 +185,15 @@ export function WidgetChatSurface({
   const starters = conversationStarters.filter(Boolean).slice(0, 6)
   const primaryFaint = `${primaryColor}14`
   const isDark = theme === 'dark'
+  const nerdsUrl = nerdsBookingUrl.trim()
+  const nerdsActive = nerdsEnabled && nerdsUrl.length > 0
+  const nerdsLang = getLocale() === 'nl' ? 'nl' : 'en'
+  // Same embed request the widget's iframe panel makes; here it opens in
+  // a new tab. The server validated the URL before delivering it.
+  // Choose the separator; do not assume one. The configured Voys URL has no
+  // query string, and appending "&embed=1" to a bare path makes their router
+  // answer with a 404 page. Verified against the live booking URL.
+  const nerdsHref = `${nerdsUrl}${nerdsUrl.includes('?') ? '&' : '?'}embed=1&lng=${nerdsLang}`
   const visitorInfoComplete =
     !collectUserInfo ||
     (visitorName.trim().length > 1 && visitorEmail.trim().includes('@'))
@@ -493,7 +535,22 @@ export function WidgetChatSurface({
           </form>
           {!hideDisclaimer && (
             <p className={`mt-2.5 text-center text-[0.6875rem] ${isDark ? 'text-[var(--color-rl-bg)]/45' : 'text-gray-600'}`}>
-              {m.widget_ai_disclaimer()}
+              {nerdsActive ? (
+                <>
+                  {NERDS_DISCLOSURE[nerdsLang].before}
+                  <a
+                    href={nerdsHref}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline decoration-1 underline-offset-2"
+                  >
+                    {NERDS_DISCLOSURE[nerdsLang].link}
+                  </a>
+                  {NERDS_DISCLOSURE[nerdsLang].after}
+                </>
+              ) : (
+                m.widget_ai_disclaimer()
+              )}
             </p>
           )}
         </div>

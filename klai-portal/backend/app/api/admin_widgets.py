@@ -65,8 +65,20 @@ class HubSpotWidgetIntegration(BaseModel):
     last_error: str | None = None
 
 
+class WidgetNerdsIntegration(BaseModel):
+    # Voys-specific: the Nerds booking panel embedded in the widget instead
+    # of the new-tab link. booking_url is the support partner's booking
+    # module address; the widget appends embed + language parameters itself.
+    # Admin input that ends up in a visitor-facing iframe src, so only
+    # absolute http(s) values are delivered (partner.py validates at the
+    # widget-config endpoints).
+    enabled: bool = False
+    booking_url: str | None = None
+
+
 class WidgetIntegrations(BaseModel):
     hubspot: HubSpotWidgetIntegration = Field(default_factory=HubSpotWidgetIntegration)
+    nerds: WidgetNerdsIntegration = Field(default_factory=WidgetNerdsIntegration)
 
 
 class WidgetConfig(BaseModel):

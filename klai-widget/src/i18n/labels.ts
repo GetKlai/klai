@@ -28,6 +28,16 @@ export interface WidgetLabels {
   aiDisclosureNoOrg: string
   aiDisclosureBooking: string
   bookingButton: string
+  // Nerds booking panel (Voys-specific). While the integration is on, the
+  // three disclosure fragments REPLACE the plain accuracy footer below the
+  // input; the NL wording is client-supplied verbatim — do not rephrase.
+  // The link fragment renders as a <button> that opens the iframe panel.
+  nerdsDisclosureBefore: string
+  nerdsDisclosureLink: string
+  nerdsDisclosureAfter: string
+  nerdsPanelTitle: string
+  nerdsPanelClose: string
+  nerdsPanelFallback: string
   handoffButton: string
   handoffConnecting: string
   handoffConnected: string
@@ -82,6 +92,15 @@ const nl: WidgetLabels = {
   aiDisclosureBooking:
     " Kom je er samen niet uit, dan kun je een afspraak inplannen met een medewerker die je persoonlijk verderhelpt.",
   bookingButton: "Plan een afspraak",
+  // Client-supplied verbatim — the sentence reads "… afspraak in met " +
+  // "onze nerds" + "."; the trailing/leading spaces carry the spacing.
+  nerdsDisclosureBefore:
+    "De Voys AI chat baseert zich op zorgvuldig gekozen bronnen. Toch kunnen ook daar fouten in staan, dus vertrouw ze niet blind. Kom je er niet uit in de chat? Plan dan een afspraak in met ",
+  nerdsDisclosureLink: "onze nerds",
+  nerdsDisclosureAfter: ".",
+  nerdsPanelTitle: "Afspraak inplannen",
+  nerdsPanelClose: "Terug naar de chat",
+  nerdsPanelFallback: "Openen in een nieuw tabblad",
   handoffButton: "Praat met een medewerker",
   handoffConnecting: "Ik verbind je met een medewerker.",
   handoffConnected: "Je bent verbonden met een medewerker.",
@@ -130,6 +149,13 @@ const en: WidgetLabels = {
   aiDisclosureBooking:
     " If you don't work it out together, you can schedule an appointment with an employee who will help you personally.",
   bookingButton: "Schedule an appointment",
+  nerdsDisclosureBefore:
+    "The Voys AI chat draws on carefully chosen sources. Even those can contain mistakes, so don't trust them blindly. Can't work it out in the chat? Then schedule an appointment with ",
+  nerdsDisclosureLink: "our nerds",
+  nerdsDisclosureAfter: ".",
+  nerdsPanelTitle: "Schedule an appointment",
+  nerdsPanelClose: "Back to the chat",
+  nerdsPanelFallback: "Open in a new tab",
   handoffButton: "Talk to a human",
   handoffConnecting: "I am connecting you with a human agent.",
   handoffConnected: "You are connected with a human agent.",
@@ -163,6 +189,7 @@ const en: WidgetLabels = {
 const locales: Record<string, WidgetLabels> = { nl, en }
 
 let _labels: WidgetLabels = nl
+let _locale: "nl" | "en" = "nl"
 
 export function initLabels(locale?: string, samples: string[] = []): void {
   const explicitLang = locale?.slice(0, 2).toLowerCase()
@@ -173,6 +200,14 @@ export function initLabels(locale?: string, samples: string[] = []): void {
     navigator.language?.slice(0, 2).toLowerCase() ||
     "nl"
   _labels = locales[lang] ?? locales.en ?? nl
+  _locale = _labels === en ? "en" : "nl"
+}
+
+// The locale the labels were resolved to. The Nerds booking panel sends it
+// as the embed's `lng` parameter, so the framed page and the widget copy
+// always speak the same language.
+export function currentLocale(): "nl" | "en" {
+  return _locale
 }
 
 export function t(): WidgetLabels {

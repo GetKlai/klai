@@ -283,6 +283,188 @@ async def test_public_bot_config_strips_non_http_booking_url():
     assert json.loads(response.body.decode())["booking_url"] == ""
 
 
+def _nerds_config(nerds: object) -> dict:
+    """Widget config with a stored nerds integration block."""
+    return {"integrations": {"nerds": nerds}}
+
+
+def test_widget_nerds_integration_scheme_policy():
+    """The nerds booking_url becomes an iframe src: only absolute http(s) survives."""
+    from app.api.partner import _widget_nerds_integration
+
+    delivered = _widget_nerds_integration(
+        _nerds_config({"enabled": True, "booking_url": "https://support.voys.nl/book/x?t=1"})
+    )
+    assert delivered == {"enabled": True, "booking_url": "https://support.voys.nl/book/x?t=1"}
+
+    for bad in (
+        "javascript:alert(1)",
+        "JaVaScRiPt:alert(1)",
+        "data:text/html;base64,PHNjcmlwdD4=",
+        "//support.voys.nl/book",
+        "/relative/booking",
+        "support.voys.nl/book",
+        "",
+        None,
+        42,
+    ):
+        result = _widget_nerds_integration(_nerds_config({"enabled": True, "booking_url": bad}))
+        assert result["booking_url"] == "", bad
+        # A panel without a loadable URL is no panel — not delivered as enabled.
+        assert result["enabled"] is False, bad
+
+    # Toggle off → disabled, and the URL is not handed to the visitor either.
+    assert _widget_nerds_integration(_nerds_config({"enabled": False, "booking_url": "https://x.example.com"})) == {
+        "enabled": False,
+        "booking_url": "",
+    }
+    # Absent or malformed integration blocks read as disabled, never raise.
+    assert _widget_nerds_integration({}) == {"enabled": False, "booking_url": ""}
+    assert _widget_nerds_integration({"integrations": None}) == {"enabled": False, "booking_url": ""}
+    assert _widget_nerds_integration({"integrations": {"nerds": "junk"}}) == {"enabled": False, "booking_url": ""}
+
+
+@pytest.mark.asyncio
+async def test_widget_config_delivers_enabled_nerds_integration():
+    widget = FakeWidget()
+    widget.widget_config.update(
+        _nerds_config({"enabled": True, "booking_url": "https://support.voys.nl/book/voys?t=abc"})
+    )
+    org = FakeOrg()
+    db = _make_db_chain(widget, org, [1])
+    request = _make_request("https://example.com")
+
+    with (
+        patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.get_redis_pool"),
+        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner.set_tenant", new=AsyncMock()),
+        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
+    ):
+        mock_settings.widget_jwt_secret = "shared-secret"
+
+        response = await widget_config(id=widget.widget_id, request=request, db=db)
+
+    body = json.loads(response.body.decode())
+    assert body["nerds"] == {"enabled": True, "booking_url": "https://support.voys.nl/book/voys?t=abc"}
+
+
+@pytest.mark.asyncio
+async def test_widget_config_strips_javascript_nerds_booking_url():
+    """A javascript: URL in the nerds integration never reaches the visitor."""
+    widget = FakeWidget()
+    widget.widget_config.update(_nerds_config({"enabled": True, "booking_url": "javascript:alert(1)"}))
+    org = FakeOrg()
+    db = _make_db_chain(widget, org, [1])
+    request = _make_request("https://example.com")
+
+    with (
+        patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.get_redis_pool"),
+        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner.set_tenant", new=AsyncMock()),
+        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
+    ):
+        mock_settings.widget_jwt_secret = "shared-secret"
+
+        response = await widget_config(id=widget.widget_id, request=request, db=db)
+
+    body = json.loads(response.body.decode())
+    assert body["nerds"] == {"enabled": False, "booking_url": ""}
+
+
+@pytest.mark.asyncio
+async def test_widget_config_without_nerds_integration_unchanged_for_widget():
+    """No nerds integration → the payload keeps the interim booking_url contract:
+    the legacy button URL is still delivered and the panel reads as disabled,
+    so widgets without the integration render exactly as before."""
+    widget = FakeWidget()
+    widget.widget_config["booking_url"] = "https://booking.example.com/voys"
+    org = FakeOrg()
+    db = _make_db_chain(widget, org, [1])
+    request = _make_request("https://example.com")
+
+    with (
+        patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.get_redis_pool"),
+        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner.set_tenant", new=AsyncMock()),
+        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
+    ):
+        mock_settings.widget_jwt_secret = "shared-secret"
+
+        response = await widget_config(id=widget.widget_id, request=request, db=db)
+
+    body = json.loads(response.body.decode())
+    assert body["booking_url"] == "https://booking.example.com/voys"
+    assert body["nerds"] == {"enabled": False, "booking_url": ""}
+
+
+@pytest.mark.asyncio
+async def test_public_bot_config_strips_non_http_nerds_booking_url():
+    """The share-link endpoint runs the same nerds scheme validation."""
+    from app.api.partner import public_bot_config
+
+    org = FakeOrg()
+    widget = FakeWidget(
+        public_share_enabled=True,
+        widget_config={
+            "allowed_origins": [],
+            "title": "Public",
+            "welcome_message": "",
+            "system_prompt": "",
+            "css_variables": {},
+            **_nerds_config({"enabled": True, "booking_url": "javascript:alert(1)"}),
+        },
+    )
+    db = _make_db_chain(widget, org, [10])
+
+    with (
+        patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.get_redis_pool"),
+        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner.set_tenant", new=AsyncMock()),
+        patch("app.api.partner.generate_session_token", return_value="public.jwt.token"),
+    ):
+        mock_settings.widget_jwt_secret = "shared-secret"
+        response = await public_bot_config(id=widget.widget_id, db=db)
+
+    body = json.loads(response.body.decode())
+    assert body["nerds"] == {"enabled": False, "booking_url": ""}
+
+
+@pytest.mark.asyncio
+async def test_public_bot_config_delivers_enabled_nerds_integration():
+    from app.api.partner import public_bot_config
+
+    org = FakeOrg()
+    widget = FakeWidget(
+        public_share_enabled=True,
+        widget_config={
+            "allowed_origins": [],
+            "title": "Public",
+            "welcome_message": "",
+            "system_prompt": "",
+            "css_variables": {},
+            **_nerds_config({"enabled": True, "booking_url": "https://support.voys.nl/book/voys?t=abc"}),
+        },
+    )
+    db = _make_db_chain(widget, org, [10])
+
+    with (
+        patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.get_redis_pool"),
+        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner.set_tenant", new=AsyncMock()),
+        patch("app.api.partner.generate_session_token", return_value="public.jwt.token"),
+    ):
+        mock_settings.widget_jwt_secret = "shared-secret"
+        response = await public_bot_config(id=widget.widget_id, db=db)
+
+    body = json.loads(response.body.decode())
+    assert body["nerds"] == {"enabled": True, "booking_url": "https://support.voys.nl/book/voys?t=abc"}
+
+
 @pytest.mark.asyncio
 async def test_widget_config_hubspot_handoff_offered_to_the_platform_tenant():
     widget = FakeWidget()
