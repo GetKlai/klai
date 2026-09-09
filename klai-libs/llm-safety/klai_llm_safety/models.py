@@ -45,6 +45,8 @@ class SafetyRequest:
     text: str
     phase: SafetyPhase
     surface: SafetySurface = SafetySurface.UNKNOWN
+    # A language CODE (from identify_text_language / resolve_conversation_language)
+    # or None, never raw user text: the policy passes it straight to refusal_message.
     locale_hint: str | None = None
     org_id: int | str | None = None
     metadata: dict[str, str] = field(default_factory=_empty_metadata)

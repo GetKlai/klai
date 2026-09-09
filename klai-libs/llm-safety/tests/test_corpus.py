@@ -22,7 +22,6 @@ def test_guardrail_corpus() -> None:
                 text=case["input"],
                 phase=SafetyPhase(case["phase"]),
                 surface=SafetySurface(case["surface"]),
-                locale_hint=case["input"],
             )
         )
         assert decision.action == SafetyAction(case["expected_action"]), case["id"]

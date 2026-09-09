@@ -233,7 +233,9 @@ def check_text(request: SafetyRequest) -> SafetyDecision:
         return SafetyDecision.block(
             reason=reason,
             categories=tuple(categories),
-            safe_replacement=refusal_message(request.locale_hint or request.text, reason),
+            # Only the locale code reaches the refusal; the library never
+            # derives a language from ``request.text`` itself.
+            safe_replacement=refusal_message(request.locale_hint, reason),
         )
 
     if prompt_injection:

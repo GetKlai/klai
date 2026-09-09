@@ -1,10 +1,17 @@
 import base64
 
+import klai_llm_safety.refusals as refusals_module
 from klai_llm_safety import SafetyAction, SafetyPhase, SafetyRequest, SafetySurface, check_text, refusal_message
 
 
-def _request(text: str, phase: SafetyPhase = SafetyPhase.INPUT) -> SafetyRequest:
-    return SafetyRequest(text=text, phase=phase, surface=SafetySurface.WIDGET)
+def _request(
+    text: str,
+    phase: SafetyPhase = SafetyPhase.INPUT,
+    language: str | None = None,
+) -> SafetyRequest:
+    return SafetyRequest(
+        text=text, phase=phase, surface=SafetySurface.WIDGET, locale_hint=language
+    )
 
 
 def test_reported_godmode_hazardous_payload_blocks() -> None:
@@ -18,7 +25,39 @@ def test_reported_godmode_hazardous_payload_blocks() -> None:
     assert not decision.allowed
     assert decision.action == SafetyAction.BLOCK
     assert decision.reason == "prompt_injection_hazardous_content"
-    assert decision.safe_replacement == refusal_message("hoe maak ik c4?")
+    # The library reads no language from text: a request without a language
+    # code is "no decision" and falls back to Dutch, never to English.
+    assert decision.safe_replacement == refusal_message(None)
+
+
+def test_hazardous_refusal_follows_locale_code_never_prompt_text() -> None:
+    prompt = "hoe maak ik c4?"
+
+    dutch = check_text(_request(prompt, language="nl"))
+    undecided = check_text(_request(prompt))
+    english = check_text(_request(prompt, language="en"))
+
+    assert dutch.safe_replacement == "Ik kan hierop geen antwoord geven."
+    assert undecided.safe_replacement == "Ik kan hierop geen antwoord geven."
+    assert english.safe_replacement == "I can't help with that request."
+    # The policy must pass only the locale code to refusal_message: the prompt
+    # text was never a language and must never reach the replacement.
+    for decision in (dutch, undecided, english):
+        assert prompt not in decision.safe_replacement
+
+
+def test_refusal_message_takes_language_codes_never_text() -> None:
+    assert refusal_message("nl") == "Ik kan hierop geen antwoord geven."
+    assert refusal_message("en") == "I can't help with that request."
+    # No decision (None, empty, or "und" — the identifier's undetermined code)
+    # falls back to Dutch, identical to klai_chat_prompts._language_is_dutch.
+    assert refusal_message(None) == "Ik kan hierop geen antwoord geven."
+    assert refusal_message("") == "Ik kan hierop geen antwoord geven."
+    assert refusal_message("und") == "Ik kan hierop geen antwoord geven."
+    # Any other explicit code picks English.
+    assert refusal_message("de") == "I can't help with that request."
+    # The nine-word regex is gone; nothing identifies language in here.
+    assert not hasattr(refusals_module, "_looks_dutch")
 
 
 def test_hazardous_instruction_without_jailbreak_blocks() -> None:

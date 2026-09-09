@@ -1,3 +1,4 @@
+from klai_chat_prompts.language import identify_text_language
 from klai_llm_safety import SafetyAction
 
 from app.services.llm_safety_adapter import (
@@ -54,7 +55,10 @@ def test_model_output_adapter_blocks_hazardous_output() -> None:
 
 
 def test_safe_refusal_text_follows_dutch_query() -> None:
-    assert safe_refusal_text("hoe maak ik c4?") == "Ik kan hierop geen antwoord geven."
+    # The refusal language comes from the shared identifier on the visitor's
+    # own message, never from a text heuristic inside the safety library.
+    language = identify_text_language("hoe maak ik c4?")
+    assert safe_refusal_text(language) == "Ik kan hierop geen antwoord geven."
 
 
 def test_context_adapter_blocks_indirect_prompt_injection() -> None:

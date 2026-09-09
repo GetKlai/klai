@@ -20,6 +20,7 @@ import logging
 import os
 from typing import Any
 
+from klai_conversation_language import identify_text_language
 from klai_llm_safety import (
     SafetyDecision,
     SafetyPhase,
@@ -72,7 +73,10 @@ def check_llm_safety(
             text=text,
             phase=phase,
             surface=SafetySurface.LIBRECHAT,
-            locale_hint=query,
+            # The policy takes a language CODE, never the query itself; the
+            # same identifier as llm_safety_refusal_text, so a block decision
+            # carries the refusal copy in the visitor's own language.
+            locale_hint=identify_text_language(query),
             org_id=str(org_id) if org_id is not None else None,
         )
     )
@@ -102,8 +106,14 @@ def check_llm_safety(
 
 
 def llm_safety_refusal_text(query: str, decision: SafetyDecision | None) -> str:
+    # The refusal language is the one identifier's code for the visitor's own
+    # last message (``query`` here is exactly that; ``klai_llm_safety`` reads
+    # no language from text itself). Ceiling: this identifies the single
+    # query, not the conversation-level language decision — plumbing that in
+    # is a separate change. Abstention falls back to Dutch, like the canned
+    # KB refusals.
     reason = decision.reason if decision is not None else "safety_block"
-    return refusal_message(query, reason)
+    return refusal_message(identify_text_language(query), reason)
 
 
 def llm_safety_short_circuit(

@@ -434,7 +434,8 @@ class KlaiKnowledgeHook(CustomLogger):
         # Detect the response-language target BEFORE any message mutation:
         # PDF attachment processing below replaces the latest user content
         # with question + extracted document text, and a Dutch document must
-        # never overrule an English question (Sol review P1).
+        # never overrule an English question (Sol review P1). The same target
+        # renders the attachment error text, so it is computed first.
         # The decision object travels with the target so every rendered
         # line can log WHY this code was chosen (Part B telemetry).
         language_decision = _resolve_conversation_language(messages)
@@ -447,7 +448,7 @@ class KlaiKnowledgeHook(CustomLogger):
             )
             attachment_result = await _process_chat_attachments(
                 messages,
-                query=query,
+                language=response_language_target,
                 token_counter=getattr(litellm, "token_counter", None),
                 token_counter_model=profile.token_counter_model,
             )

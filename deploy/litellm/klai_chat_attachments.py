@@ -19,6 +19,8 @@ from typing import Any, Callable
 
 import httpx
 
+from klai_chat_prompts import _language_is_dutch as language_is_dutch
+
 
 _AsyncClient = httpx.AsyncClient
 DOCLING_URL = os.getenv("DOCLING_URL", "http://docling-serve:5001").rstrip("/")
@@ -70,26 +72,15 @@ def _default_meta() -> dict[str, Any]:
     }
 
 
-def _looks_dutch(text: str) -> bool:
-    lowered = f" {text.lower()} "
-    return any(
-        token in lowered
-        for token in (
-            " de ",
-            " het ",
-            " een ",
-            " deze ",
-            " upload ",
-            " bestand ",
-            " pdf ",
-            " kennisbank ",
-        )
-    )
+def user_visible_error(reason: str, language: object) -> str:
+    """Deterministic attachment-failure text for the user.
 
-
-def user_visible_error(reason: str, query: str | None) -> str:
-    dutch = _looks_dutch(query or "")
-    if dutch:
+    Takes the conversation language CODE, never raw query text — the same
+    contract as :func:`klai_kb_answer_policy.settings_unavailable_message`.
+    Dutch for ``"nl"`` and for no decision (None, empty, ``"und"``);
+    English for any other explicit code.
+    """
+    if language_is_dutch(language):
         if reason == "file_too_large":
             return (
                 "Deze PDF is te groot om direct in chat te verwerken. Zet het "
@@ -323,7 +314,7 @@ def _replace_latest_user_content(
 async def process_chat_attachments(
     messages: object,
     *,
-    query: str | None,
+    language: object,
     token_counter: Callable[..., int] | None = None,
     token_counter_model: str | None = None,
 ) -> ChatAttachmentResult:
@@ -376,7 +367,7 @@ async def process_chat_attachments(
             messages=typed_messages,
             processed_count=0,
             meta=meta,
-            user_visible_error=user_visible_error(exc.reason, query),
+            user_visible_error=user_visible_error(exc.reason, language),
         )
     except (httpx.HTTPError, ValueError) as exc:
         _ = exc
@@ -386,5 +377,5 @@ async def process_chat_attachments(
             messages=typed_messages,
             processed_count=0,
             meta=meta,
-            user_visible_error=user_visible_error("processing_failed", query),
+            user_visible_error=user_visible_error("processing_failed", language),
         )

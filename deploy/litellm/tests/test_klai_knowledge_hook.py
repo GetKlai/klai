@@ -2179,6 +2179,56 @@ class TestKlaiKnowledgeHookProviderContext:
         retrieval_cls.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_english_conversation_over_cap_gets_english_error(self, monkeypatch):
+        # The conversation decision ("en") picks the error language, not a
+        # substring scan of the question: " pdf " and " bestand " used to
+        # trigger the old heuristic and render Dutch here.
+        mod = _load_hook(monkeypatch, {"KLAI_CHAT_PDF_MAX_BYTES": "12"})
+        from klai_conversation_language import LanguageDecision
+
+        monkeypatch.setattr(
+            mod,
+            "_resolve_conversation_language",
+            lambda messages: LanguageDecision(language="en", reason="locked"),
+        )
+        hook = mod.KlaiKnowledgeHook()
+        cache = _make_cache(feature_enabled=True)
+        latest = "Can you summarize this pdf? The bestand looks odd."
+        pdf = b"%PDF-1.4\n" + b"x" * 20
+        data = {
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": latest},
+                        {
+                            "type": "file",
+                            "file": {
+                                "filename": "big.pdf",
+                                "file_data": "data:application/pdf;base64,"
+                                + __import__("base64").b64encode(pdf).decode("ascii"),
+                            },
+                        },
+                    ],
+                },
+            ],
+        }
+
+        with patch("klai_chat_attachments._AsyncClient") as docling_cls, patch(
+            "klai_knowledge.httpx.AsyncClient"
+        ) as retrieval_cls:
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, data, "completion"
+            )
+
+        assert "mock_response" in result
+        assert "This PDF is too large" in result["mock_response"]
+        assert result["metadata"]["_klai_chat_attachment_meta"]["chat_pdf_error_reason"] == "file_too_large"
+        docling_cls.assert_not_called()
+        retrieval_cls.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_unreadable_active_pdf_short_circuits(self, monkeypatch):
         _load_hook(monkeypatch)
         import klai_knowledge as mod

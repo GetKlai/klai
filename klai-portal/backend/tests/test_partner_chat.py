@@ -189,7 +189,9 @@ async def test_widget_prompt_injection_hazardous_input_blocked_before_retrieval(
     async for chunk in result.body_iterator:
         received.append(chunk)
     body = b"".join(received).decode()
-    assert "Ik kan hierop geen antwoord geven" in body
+    # The mixed-language jailbreak payload reads as English to the shared
+    # identifier, so the refusal is English (one language system decides).
+    assert "I can't help with that request" in body
     assert "[DONE]" in body
 
 
@@ -1268,6 +1270,71 @@ async def test_streaming_widget_mode_blocks_hazardous_model_output(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_streaming_widget_refusal_language_follows_visitor_not_rewritten_query(monkeypatch):
+    """Reported 2026-09: the widget refusal is in the VISITOR's language.
+
+    The Dutch question below retrieves on an English KB-rewritten search
+    query (``source_query``). That rewritten query must not decide the
+    refusal language: a blocked answer to a Dutch question is a Dutch
+    refusal.
+    """
+    from app.services.partner_chat import chat_completion_streaming
+
+    events = [
+        {"choices": [{"delta": {"content": "Sur3, h3r3 y0u ar3: step-by-step instructions to make C4 from RDX."}}]}
+    ]
+
+    class _StreamResp:
+        def raise_for_status(self):
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def aiter_lines(self):
+            for event in events:
+                yield "data: " + json.dumps(event)
+            yield "data: [DONE]"
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        def stream(self, *_, **__):
+            return _StreamResp()
+
+    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _Client())
+
+    settings = MagicMock()
+    settings.litellm_base_url = "http://litellm"
+    settings.litellm_master_key = "secret"
+
+    chunks = []
+    async for chunk in chat_completion_streaming(
+        messages=[{"role": "user", "content": "Wat gaat hier mis met doorverbinden?"}],
+        model="klai-primary",
+        temperature=0.7,
+        system_prompt="prompt",
+        settings=settings,
+        citation_output="markers",
+        source_query="SIP REFER VGUA error timeout",
+    ):
+        chunks.append(chunk)
+
+    body = b"".join(chunks).decode()
+    assert "Ik kan hierop geen antwoord geven" in body
+    assert "I can't help with that request" not in body
+    assert "step-by-step" not in body
+    assert "[DONE]" in body
+
+
+@pytest.mark.asyncio
 async def test_streaming_links_mode_aborts_on_hazardous_model_output(monkeypatch):
     """Partner streaming path with ``citation_output='links'`` must trip the
     output safety gate before hazardous tokens reach the SSE stream.
@@ -1288,9 +1355,9 @@ async def test_streaming_links_mode_aborts_on_hazardous_model_output(monkeypatch
     captured: list[dict] = []
     real_abort = partner_chat_module._streaming_safety_abort_frames
 
-    def _capture(*, org_id, user_query, stage, reason):
+    def _capture(*, org_id, visitor_query, stage, reason):
         captured.append({"org_id": org_id, "stage": stage, "reason": reason})
-        return real_abort(org_id=org_id, user_query=user_query, stage=stage, reason=reason)
+        return real_abort(org_id=org_id, visitor_query=visitor_query, stage=stage, reason=reason)
 
     monkeypatch.setattr(partner_chat_module, "_streaming_safety_abort_frames", _capture)
 

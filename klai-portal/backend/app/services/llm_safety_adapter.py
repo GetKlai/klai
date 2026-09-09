@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from klai_chat_prompts.language import identify_text_language
 from klai_llm_safety import SafetyDecision, SafetyPhase, SafetyRequest, SafetySurface, check_text, refusal_message
 
 
@@ -44,7 +45,9 @@ def check_widget_or_partner_input(
             text=user_query,
             phase=SafetyPhase.INPUT,
             surface=surface,
-            locale_hint=user_query,
+            # locale_hint is a language CODE (same identifier as
+            # partner_chat's safety_refusal_message), never the raw text.
+            locale_hint=identify_text_language(user_query),
         )
     )
 
@@ -60,7 +63,7 @@ def check_model_output(
             text=text,
             phase=SafetyPhase.OUTPUT,
             surface=surface,
-            locale_hint=query,
+            locale_hint=identify_text_language(query),
         )
     )
 
@@ -76,10 +79,16 @@ def check_context_text(
             text=text,
             phase=SafetyPhase.CONTEXT,
             surface=surface,
-            locale_hint=query,
+            locale_hint=identify_text_language(query),
         )
     )
 
 
-def safe_refusal_text(query: str = "", reason: str = "") -> str:
-    return refusal_message(query, reason)
+def safe_refusal_text(language: str | None = None, reason: str = "") -> str:
+    """Refusal copy for a language CODE from the shared identifier.
+
+    Never raw user text: ``refusal_message`` reads no language itself, the
+    caller identifies the visitor's own message (see partner_chat's
+    ``safety_refusal_message``).
+    """
+    return refusal_message(language, reason)

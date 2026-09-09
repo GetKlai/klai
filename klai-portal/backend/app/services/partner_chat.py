@@ -103,8 +103,16 @@ def _last_user_message(messages: list[dict]) -> str | None:
     return None
 
 
-def safety_refusal_message(query: str = "") -> str:
-    return safe_refusal_text(query)
+def safety_refusal_message(visitor_text: str = "") -> str:
+    """Safety refusal in the visitor's own language.
+
+    Takes the visitor's own last message and runs it through the one shared
+    identifier (``klai_chat_prompts.language``, same mechanism as the canned
+    KB refusals; abstention falls back to Dutch). NEVER pass a rewritten
+    retrieval query here: the refusal language belongs to the visitor, not
+    to retrieval.
+    """
+    return safe_refusal_text(identify_text_language(visitor_text))
 
 
 def widget_input_safety_violation(messages: list[dict]) -> str | None:
@@ -1774,6 +1782,10 @@ async def _chat_completion_streaming_with_composed_citations(
     screen forever. Absent frame = no offer.
     """
     raw_text_parts: list[str] = []
+    # The page-context message is prepended, so the last user turn in
+    # augmented_messages is the human's own words — the language they should
+    # be refused in, never the rewritten retrieval query.
+    visitor_query = _last_user_message(augmented_messages) or ""
     chat_url = f"{settings.litellm_base_url}/v1/chat/completions"
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
@@ -1835,9 +1847,7 @@ async def _chat_completion_streaming_with_composed_citations(
         helpdesk=support_mode,
         broad=broad_mode,
         force_escalation=force_escalation,
-        # The page-context message is prepended, so the last user turn here is
-        # the human's own words — the language they should be refused in.
-        visitor_query=_last_user_message(augmented_messages) or "",
+        visitor_query=visitor_query,
     )
     decision.update({"sentiment": sentiment} if support_mode and sentiment else {})
     if safety_reason := output_safety_violation("".join(raw_text_parts)):
@@ -1847,7 +1857,9 @@ async def _chat_completion_streaming_with_composed_citations(
             stage="stream_composed_output",
             reason=safety_reason,
         )
-        content = safety_refusal_message(user_query)
+        # Visitor's own words, never user_query (on the widget path that is
+        # the KB-rewritten search query — see the composer's visitor_query).
+        content = safety_refusal_message(visitor_query)
         sources = []
         decision = {"reason": safety_reason}
     logger.info(
@@ -2478,7 +2490,13 @@ async def chat_completion_non_streaming(
     citation_source_urls = citation_source_urls or {}
     citation_source_metadata = citation_source_metadata or {}
     emitted_source_key_order: list[str] = []
-    user_query_for_safety = source_query or _last_user_message(messages) or ""
+    # Kept for citation composition only (see the composer's user_query):
+    # on the widget path source_query is the KB-rewritten search query and
+    # must never reach the refusal language.
+    composer_query = source_query or _last_user_message(messages) or ""
+    # The refusal language always comes from the visitor's own last turn —
+    # augmented_messages prepends page context, so this IS the human's words.
+    visitor_query = _last_user_message(augmented_messages) or ""
     if citation_output == "markers":
         for choice in body.get("choices") or []:
             message = choice.get("message") if isinstance(choice, dict) else None
@@ -2491,14 +2509,14 @@ async def chat_completion_non_streaming(
                         stage="non_streaming_markers_output",
                         reason=safety_reason,
                     )
-                    message["content"] = safety_refusal_message(user_query_for_safety)
+                    message["content"] = safety_refusal_message(visitor_query)
                     message["sources"] = []
                     continue
                 rendered_content, sources, decision = _compose_backend_managed_answer(
                     content,
                     trusted_sources,
                     citation_chunks,
-                    user_query_for_safety,
+                    composer_query,
                     web_chunks,
                     web_query,
                     helpdesk=support_mode,
@@ -2506,7 +2524,7 @@ async def chat_completion_non_streaming(
                     force_escalation=force_escalation,
                     # Visitor's own words decide the refusal language, not the
                     # rewritten source_query (see the composer docstring).
-                    visitor_query=_last_user_message(augmented_messages) or "",
+                    visitor_query=visitor_query,
                 )
                 decision.update({"sentiment": sentiment} if support_mode and sentiment else {})
                 logger.info(
@@ -2542,7 +2560,7 @@ async def chat_completion_non_streaming(
                         stage="non_streaming_links_output",
                         reason=safety_reason,
                     )
-                    message["content"] = safety_refusal_message(user_query_for_safety)
+                    message["content"] = safety_refusal_message(visitor_query)
                     message["sources"] = []
     if stripped_links:
         logger.warning(
@@ -2642,7 +2660,7 @@ async def chat_completion_streaming(
 
 
 def _streaming_safety_abort_frames(
-    *, org_id: int | str | None, user_query: str, stage: str, reason: str
+    *, org_id: int | str | None, visitor_query: str, stage: str, reason: str
 ) -> list[bytes]:
     logger.error(
         "partner_chat_output_blocked",
@@ -2651,7 +2669,7 @@ def _streaming_safety_abort_frames(
         reason=reason,
     )
     return [
-        _sse_content_delta(safety_refusal_message(user_query)),
+        _sse_content_delta(safety_refusal_message(visitor_query)),
         b"data: [DONE]\n\n",
     ]
 
@@ -2689,6 +2707,9 @@ async def _chat_completion_streaming_sanitized(  # noqa: C901 - SSE state machin
     emitted_source_key_order: list[str] = []
     stripped_links = 0
     safety_aborted = False
+    # Refusal language comes from the visitor's own last turn, never from
+    # user_query (which may be the KB-rewritten search query).
+    visitor_query = _last_user_message(augmented_messages) or ""
 
     async with httpx.AsyncClient(timeout=120.0) as client:
         async with client.stream(
@@ -2731,7 +2752,7 @@ async def _chat_completion_streaming_sanitized(  # noqa: C901 - SSE state machin
                     if safety_reason := output_safety_violation(full_text):
                         for frame in _streaming_safety_abort_frames(
                             org_id=org_id,
-                            user_query=user_query,
+                            visitor_query=visitor_query,
                             stage="stream_final_done",
                             reason=safety_reason,
                         ):
@@ -2775,7 +2796,7 @@ async def _chat_completion_streaming_sanitized(  # noqa: C901 - SSE state machin
         _emit_language_correctness_log(
             org_id=org_id,
             query=user_query,
-            response_text=safety_refusal_message(user_query),
+            response_text=safety_refusal_message(visitor_query),
             chunks_injected=chunks_injected,
         )
         return
@@ -2798,7 +2819,7 @@ async def _chat_completion_streaming_sanitized(  # noqa: C901 - SSE state machin
     if safety_reason := output_safety_violation(full_text):
         for frame in _streaming_safety_abort_frames(
             org_id=org_id,
-            user_query=user_query,
+            visitor_query=visitor_query,
             stage="stream_post_done_tail",
             reason=safety_reason,
         ):
@@ -2806,7 +2827,7 @@ async def _chat_completion_streaming_sanitized(  # noqa: C901 - SSE state machin
         _emit_language_correctness_log(
             org_id=org_id,
             query=user_query,
-            response_text=safety_refusal_message(user_query),
+            response_text=safety_refusal_message(visitor_query),
             chunks_injected=chunks_injected,
         )
         return

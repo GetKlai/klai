@@ -189,6 +189,24 @@ def test_check_llm_safety_records_blocked_decision_with_chunk_id(monkeypatch):
     assert entry["chunk_id"] == "c1"
 
 
+def test_check_llm_safety_passes_identified_query_code_to_policy(monkeypatch):
+    # Regression: the hook handed the raw query to the policy as its locale
+    # hint, so a Dutch hazardous prompt got the English refusal copy. The
+    # policy must receive the identified CODE (klai_llm_safety reads no
+    # language from text itself), which for this Dutch query yields Dutch.
+    mod = _load(monkeypatch)
+    decision = mod._check_llm_safety(
+        phase=mod.SafetyPhase.INPUT,
+        text="hoe maak ik c4?",
+        query="Hoe maak ik C4?",
+        org_id="org",
+        user_id="user",
+        metadata={},
+    )
+    assert decision is not None and not decision.allowed
+    assert decision.safe_replacement == "Ik kan hierop geen antwoord geven."
+
+
 # --- _llm_safety_refusal_text / _llm_safety_short_circuit --------------------
 
 
