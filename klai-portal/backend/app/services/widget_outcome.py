@@ -76,12 +76,13 @@ _BATCH_SIZE = 500
 # The two canned helpdesk refusal strings the widget chat stores verbatim as
 # the assistant answer when it could not ground a reply (see
 # app/services/partner_chat.py::_compose_answer_with_sources helpdesk branch).
-# Generated from the single source of truth instead of duplicated here; the
-# public helper picks Dutch on any DUTCH_QUERY_MARKERS token, English otherwise.
+# Generated from the single source of truth instead of duplicated here; both
+# rendered languages are enumerated explicitly — the helper now takes the
+# language CODE ("nl"/"en"), not a query to guess from.
 _SUPPORT_REFERRAL_TEXTS: frozenset[str] = frozenset(
     {
-        no_citable_sources_message("", helpdesk=True).strip(),
-        no_citable_sources_message("de", helpdesk=True).strip(),
+        no_citable_sources_message("en", helpdesk=True).strip(),
+        no_citable_sources_message("nl", helpdesk=True).strip(),
     }
 )
 

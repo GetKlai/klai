@@ -42,6 +42,7 @@ from klai_chat_prompts import (
 from klai_chat_prompts import (
     no_citable_sources_message as _no_citable_sources_message,
 )
+from klai_chat_prompts.language import identify_text_language
 
 from app.core.config import Settings
 from app.core.database import tenant_scoped_session
@@ -1622,6 +1623,12 @@ def _compose_backend_managed_answer(
         (model_offered_appointment and _text_offers_appointment(text)) or force_escalation
     )
 
+    # The refusal/marker language is identified from this single query, NOT
+    # from the conversation: full conversation replay on the widget path is a
+    # separate change. Same gate+identifier as every other surface
+    # (klai_chat_prompts.language), abstain renders Dutch — see
+    # klai_chat_prompts._language_is_dutch for the measured rationale.
+    refusal_language = identify_text_language(user_query)
     if broad:
         if not text.strip():
             # The model produced nothing even with the broad profile; stay on
@@ -1632,11 +1639,11 @@ def _compose_backend_managed_answer(
             if helpdesk:
                 decision["escalation"] = _appointment_escalation()
             return (
-                _no_citable_sources_message(user_query, helpdesk=helpdesk),
+                _no_citable_sources_message(refusal_language, helpdesk=helpdesk),
                 [],
                 decision,
             )
-        marker = broad_mode_answer_marker(user_query)
+        marker = broad_mode_answer_marker(refusal_language)
         decision = {"reason": "broad_mode_answer", "broad_mode": "answer"}
         if offered_appointment:
             decision["escalation"] = _appointment_escalation()
@@ -1653,7 +1660,7 @@ def _compose_backend_managed_answer(
         if helpdesk:
             decision["broad_mode"] = "offer"
             decision["escalation"] = _appointment_escalation()
-        return _no_citable_sources_message(user_query, helpdesk=helpdesk), [], decision
+        return _no_citable_sources_message(refusal_language, helpdesk=helpdesk), [], decision
 
     kb_sources = [{**source, "origin": "kb"} for source in composed.sources]
     web_sources: list[dict] = []
@@ -1682,7 +1689,7 @@ def _compose_backend_managed_answer(
         if helpdesk:
             decision["broad_mode"] = "offer"
             decision["escalation"] = _appointment_escalation()
-        return _no_citable_sources_message(user_query, helpdesk=helpdesk), [], decision
+        return _no_citable_sources_message(refusal_language, helpdesk=helpdesk), [], decision
     if offered_appointment:
         decision["escalation"] = _appointment_escalation()
     return composed.content, sources, decision

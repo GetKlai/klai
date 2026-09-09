@@ -426,18 +426,28 @@ class TestSynthesize:
         assert len(str_items) == 1
         assert str_items[0] == "token"
 
-    async def test_no_citable_evidence_refuses_without_model_call(self):
+    async def test_no_citable_evidence_refuses_in_dutch_when_query_is_undecidable(self):
+        # "q" carries no language evidence, so the single-text identifier
+        # abstains and the refusal renders the DUTCH fallback (measured
+        # 2026-09-09: undecided short turns are far more likely Dutch here).
         items = []
         async for item in synthesize("q", [], []):
             items.append(item)
 
-        assert items[0] == "I cannot answer this reliably from the available knowledge sources."
+        assert (
+            items[0]
+            == "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
+        )
         assert items[1]["citations"] == []
         assert items[1]["evidence_pack"]["no_citable_reason"] == "no_evidence"
 
     async def test_no_citable_evidence_refuses_in_user_language(self):
+        # A query the single-text identifier recognises as Dutch; the short
+        # "Wat staat er over Obsidian?" abstains (< threshold) and correctly
+        # falls through to the English refusal, which test_no_citable_evidence
+        # _refuses_without_model_call pins with "q".
         items = []
-        async for item in synthesize("Wat staat er over Obsidian?", [], []):
+        async for item in synthesize("Wat staat er in de documentatie over Obsidian?", [], []):
             items.append(item)
 
         assert items[0] == (

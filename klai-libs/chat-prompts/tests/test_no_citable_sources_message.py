@@ -1,16 +1,18 @@
-"""Tests for the language-aware ``no_citable_sources_message`` helper.
+"""Tests for the language-code-based ``no_citable_sources_message`` helper.
 
-The helper exists so the canned strict-mode refusal speaks Dutch when
-the user typed Dutch and English otherwise. Same source of truth for
-both the LiteLLM hook (path A) and partner_chat.py (path B); a drift
-test in deploy/litellm/tests/ guards the vendored copy.
+The helper exists so the canned strict-mode refusal speaks the language the
+conversation was DECIDED in. It takes a language code, never raw user text:
+path A (LiteLLM hook) passes the conversation decision, paths B (partner_chat)
+and C (synthesis) pass the output of the single-text identifier
+``klai_chat_prompts.language.identify_text_language``. Same source of truth
+for all three; a drift test in deploy/litellm/tests/ guards the vendored copy.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from klai_chat_prompts import DUTCH_QUERY_MARKERS, no_citable_sources_message
+from klai_chat_prompts import no_citable_sources_message
 
 _DUTCH = "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
 _ENGLISH = "I cannot answer this reliably from the available knowledge sources."
@@ -18,83 +20,44 @@ _DUTCH_WITH_HINT = _DUTCH + " Probeer het in Open-modus voor een antwoord op bas
 _ENGLISH_WITH_HINT = _ENGLISH + " Try Open mode for an answer based on general knowledge."
 
 
-@pytest.mark.parametrize(
-    "query",
-    [
-        "Wat is dit?",
-        "Wie is Jantine?",
-        "Hoe werkt dit precies?",
-        "Hoeveel kost een abonnement?",
-        "Waar staat onze handleiding?",
-        "Wanneer worden de gegevens bijgewerkt?",
-        "Welke kennisbank moet ik kiezen?",
-        "Klopt het dat ik geen bronnen kan toevoegen?",
-        # Mixed casing
-        "WAAR STAAT DIT?",
-    ],
-)
-def test_dutch_queries_return_dutch_refusal(query: str) -> None:
-    assert no_citable_sources_message(query) == _DUTCH
+def test_dutch_code_returns_dutch_refusal() -> None:
+    assert no_citable_sources_message("nl") == _DUTCH
 
 
-@pytest.mark.parametrize(
-    "query",
-    [
-        "What is this?",
-        "Who is Jantine?",
-        "How does this work exactly?",
-        "How much does a subscription cost?",
-        "Where can I find our manual?",
-        # Names that previously could have tripped the heuristic
-        "Ben Affleck",
-        "Khan Academy review",
-        # Empty / malformed inputs fall through to English
-        "",
-        "   ",
-        "12345",
-    ],
-)
-def test_non_dutch_queries_return_english_refusal(query: str) -> None:
-    assert no_citable_sources_message(query) == _ENGLISH
+@pytest.mark.parametrize("code", ["en", "nl-NL", "DE", "de"])
+def test_exact_code_match_is_case_and_locale_strict(code: str) -> None:
+    # Only the bare lowercase decision code selects Dutch; a locale variant
+    # or uppercase slip is a caller bug we refuse to paper over — it renders
+    # the documented English fallback.
+    assert no_citable_sources_message(code) == _ENGLISH
 
 
-@pytest.mark.parametrize("query", [None, 42, {"text": "Wat is dit?"}, ["wat"]])
-def test_non_string_inputs_return_english_refusal(query: object) -> None:
-    assert no_citable_sources_message(query) == _ENGLISH
-
-
-def test_marker_set_contains_no_single_letter_or_short_tokens() -> None:
-    """Single-letter / two-letter tokens are too easy to false-positive on
-    English text. Keep the set free of them.
-
-    "de", "ik", "ze", "je", "wat", "het", "een" etc are short but
-    UNAMBIGUOUSLY Dutch — they're allowed. The guard here is purely
-    against single-letter slip-ins (e.g. the old set contained "u").
-    """
-    for token in DUTCH_QUERY_MARKERS:
-        assert len(token) >= 2, f"single-letter token leaked into markers: {token!r}"
-
-
-def test_marker_set_is_lowercase() -> None:
-    for token in DUTCH_QUERY_MARKERS:
-        assert token == token.lower(), f"marker not lowercase: {token!r}"
+@pytest.mark.parametrize("language", [None, "und", 42, {"lang": "nl"}, ["nl"], "", "   "])
+def test_missing_or_non_string_language_falls_back_to_dutch(language: object) -> None:
+    # No decision (None / "und" / blank / garbage) renders DUTCH, never an
+    # empty refusal. Measured 2026-09-09: the identifier abstains on half of
+    # typical short Dutch widget questions ("Hoe log ik in?") but decides
+    # nearly all equally short English ones, and Klai's customers are
+    # overwhelmingly Dutch — so an undecided turn is far more likely Dutch.
+    # An explicit non-Dutch code still renders English (test above).
+    assert no_citable_sources_message(language) == _DUTCH
 
 
 def test_suggest_open_mode_defaults_false_no_hint() -> None:
-    assert no_citable_sources_message("Wat is dit?") == _DUTCH
-    assert no_citable_sources_message("What is this?") == _ENGLISH
+    assert no_citable_sources_message("nl") == _DUTCH
+    assert no_citable_sources_message("en") == _ENGLISH
 
 
 def test_suggest_open_mode_true_appends_dutch_hint() -> None:
-    assert no_citable_sources_message("Wat is dit?", suggest_open_mode=True) == _DUTCH_WITH_HINT
+    assert no_citable_sources_message("nl", suggest_open_mode=True) == _DUTCH_WITH_HINT
 
 
 def test_suggest_open_mode_true_appends_english_hint() -> None:
-    assert no_citable_sources_message("What is this?", suggest_open_mode=True) == _ENGLISH_WITH_HINT
+    assert no_citable_sources_message("en", suggest_open_mode=True) == _ENGLISH_WITH_HINT
 
 
-def test_suggest_open_mode_true_non_string_query_falls_through_english() -> None:
-    assert no_citable_sources_message(None, suggest_open_mode=True) == _ENGLISH_WITH_HINT
+def test_suggest_open_mode_true_missing_language_falls_through_dutch() -> None:
+    assert no_citable_sources_message(None, suggest_open_mode=True) == _DUTCH_WITH_HINT
 
 
 # ─── helpdesk variant (public help-page widget) ──────────────────────────
@@ -109,27 +72,28 @@ _ENGLISH_HELPDESK = (
 )
 
 
-@pytest.mark.parametrize("query", ["Waarom lukt dit niet?", "Hoe vraag ik een refund aan?", "WAAROM?"])
-def test_helpdesk_variant_follows_dutch_query_language(query: str) -> None:
-    assert no_citable_sources_message(query, helpdesk=True) == _DUTCH_HELPDESK
+@pytest.mark.parametrize("language", ["nl", "und", None, 42, "", "   ", {"lang": "nl"}])
+def test_helpdesk_variant_dutch_on_nl_code_and_on_no_decision(language: object) -> None:
+    # Same fallback contract as the plain refusal: undecided renders Dutch.
+    assert no_citable_sources_message(language, helpdesk=True) == _DUTCH_HELPDESK
 
 
-@pytest.mark.parametrize("query", ["Why not?", "how do I get a refund?", "", "   ", "12345", None, 42])
-def test_helpdesk_variant_falls_through_to_english(query: object) -> None:
-    assert no_citable_sources_message(query, helpdesk=True) == _ENGLISH_HELPDESK
+@pytest.mark.parametrize("language", ["en", "de", "DE", "nl-NL"])
+def test_helpdesk_variant_falls_through_to_english_on_explicit_other_code(language: str) -> None:
+    assert no_citable_sources_message(language, helpdesk=True) == _ENGLISH_HELPDESK
 
 
 @pytest.mark.parametrize(
-    "query,expected",
+    "language,expected",
     [
-        ("Waarom lukt dit niet?", _DUTCH_HELPDESK),
-        ("Why not?", _ENGLISH_HELPDESK),
+        ("nl", _DUTCH_HELPDESK),
+        ("en", _ENGLISH_HELPDESK),
     ],
 )
-def test_helpdesk_variant_ignores_suggest_open_mode(query: str, expected: str) -> None:
+def test_helpdesk_variant_ignores_suggest_open_mode(language: str, expected: str) -> None:
     # The help-page widget has no Strict/Open toggle, so the Open-mode hint
     # is meaningless here — helpdesk must override it, not append to it.
-    assert no_citable_sources_message(query, helpdesk=True, suggest_open_mode=True) == expected
+    assert no_citable_sources_message(language, helpdesk=True, suggest_open_mode=True) == expected
 
 
 @pytest.mark.parametrize("helpdesk", [True, False])
@@ -141,8 +105,8 @@ def test_helpdesk_variant_never_uses_kb_jargon(helpdesk: bool) -> None:
     # "kennisbronnen"; only the helpdesk variant is jargon-free.
     if not helpdesk:
         return
-    for query in ("Waarom lukt dit niet?", "Why not?"):
-        refusal = no_citable_sources_message(query, helpdesk=True)
+    for language in ("nl", "en"):
+        refusal = no_citable_sources_message(language, helpdesk=True)
         lowered = refusal.lower()
         assert "kennisbank" not in lowered
         assert "kennisbron" not in lowered
@@ -154,9 +118,9 @@ def test_helpdesk_variant_names_the_next_step() -> None:
     its own. It must point at a concrete next step the visitor can take — an
     appointment — rather than at a department, which the brand documentation
     lists under what does not work."""
-    en = no_citable_sources_message("Why not?", helpdesk=True).lower()
+    en = no_citable_sources_message("en", helpdesk=True).lower()
     assert "appointment" in en
-    nl = no_citable_sources_message("Waarom?", helpdesk=True).lower()
+    nl = no_citable_sources_message("nl", helpdesk=True).lower()
     assert "afspraak" in nl
     # And never the phrasing the brand doc rejects.
     assert "klantenservice afdeling" not in nl
@@ -166,5 +130,5 @@ def test_helpdesk_variant_names_the_next_step() -> None:
 def test_helpdesk_default_leaves_existing_callers_untouched() -> None:
     # Regression: helpdesk defaults to False, so the existing path A/B/C
     # refusal text is byte-for-byte unchanged when the flag is not passed.
-    assert no_citable_sources_message("Waarom lukt dit niet?") == _DUTCH
-    assert no_citable_sources_message("Why not?") == _ENGLISH
+    assert no_citable_sources_message("nl") == _DUTCH
+    assert no_citable_sources_message("en") == _ENGLISH

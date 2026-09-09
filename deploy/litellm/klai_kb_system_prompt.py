@@ -19,8 +19,18 @@ the hook call sites and the test suite — which reach them as
 from __future__ import annotations
 
 from klai_chat_prompts import KB_CONTEXT_LANGUAGE_REMINDER
-from klai_language_detect import LANGUAGE_NAMES, detect_response_language
 
+# Names for the codes klai_conversation_language.TARGET_LANGUAGES can decide
+# on; moved here when the stdlib stopword module (klai_language_detect.py)
+# was deleted. Unlisted codes fall through to the generic reminder.
+LANGUAGE_NAMES = {
+    "nl": "Dutch",
+    "en": "English",
+    "de": "German",
+    "fr": "French",
+    "pt": "Portuguese",
+    "es": "Spanish",
+}
 
 FINAL_RESPONSE_LANGUAGE_REMINDER = (
     "[FINAL RESPONSE LANGUAGE] Respond to the most recent user message in "
@@ -66,7 +76,7 @@ def prepend_system_prefix(messages: list[dict], prefix: str) -> None:
 
 def append_final_language_reminder(
     messages: list[dict], *, include_kb_reminder: bool = True, target: str | None = None
-) -> str:
+) -> str | None:
     """Append the language contract after the current user turn.
 
     The KB context reminder inside the leading system prompt is still needed
@@ -79,16 +89,16 @@ def append_final_language_reminder(
     (general chat, zero chunks, retrieval failure, gate bypass): the KB
     context reminder refers to "chunks above" that do not exist there.
 
-    ``target`` lets the hook pass a language code it detected BEFORE mutating
-    the message list. PDF attachment processing replaces the latest user
-    content with question + extracted document text, so detecting here on the
-    mutated messages would let a Dutch document overrule an English question
-    (Sol review P1). ``None`` means detect from ``messages`` as-is — that is
-    correct for the unit-test surface and any call site that has not rewritten
-    message content.
+    ``target`` is the language code of the conversation-level decision,
+    computed by the hook BEFORE mutating the message list: PDF attachment
+    processing replaces the latest user content with question + extracted
+    document text, so detecting after that mutation would let a Dutch
+    document overrule an English question (Sol review P1). ``None`` means
+    the conversation abstained (or the decision was withheld, e.g. pasted
+    correspondence) — the generic reminder is appended and the model falls
+    back to prompt-side detection. This function never detects on its own:
+    one conversation decision per request, taken in klai_knowledge.
     """
-    if target is None:
-        target = detect_response_language(messages)
     if (
         messages
         and messages[-1].get("role") == "system"

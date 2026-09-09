@@ -48,7 +48,7 @@ from app.services.partner_chat import (
     _compose_backend_managed_answer,
 )
 
-_HELPDESK_REFUSAL_NL = no_citable_sources_message("de", helpdesk=True)
+_HELPDESK_REFUSAL_NL = no_citable_sources_message("nl", helpdesk=True)
 
 
 def _http_request_stub():
@@ -129,7 +129,7 @@ def test_compose_broad_answer_prefixes_marker_and_drops_sources():
         helpdesk=True,
         broad=True,
     )
-    marker = broad_mode_answer_marker("wat is een sip trunk?")
+    marker = broad_mode_answer_marker("nl")
     assert text == f"{marker}\n\nEen SIP trunk is een virtuele telefoonlijn."
     assert sources == []
     assert decision["reason"] == "broad_mode_answer"
@@ -155,7 +155,7 @@ def test_compose_broad_empty_output_falls_back_to_refusal_without_signals():
     text, sources, decision = _compose_backend_managed_answer(
         "   ", [], [], "wat is een sip trunk?", helpdesk=True, broad=True
     )
-    assert text == no_citable_sources_message("wat is een sip trunk?", helpdesk=True)
+    assert text == no_citable_sources_message("nl", helpdesk=True)
     assert sources == []
     assert "broad_mode" not in decision
 
@@ -453,12 +453,13 @@ async def test_stream_broad_answer_emits_answer_frame_with_marker(monkeypatch):
     settings.litellm_master_key = "key"
 
     frames = await _collect(
-        augmented_messages=[{"role": "user", "content": "wat is dect"}],
+        augmented_messages=[{"role": "user", "content": "wat kost het abonnement?"}],
         model="klai-primary",
         temperature=0.7,
         settings=settings,
         org_id=42,
-        user_query="wat is dect?",
+        # An NL-identifiable query: the answer label must be Dutch.
+        user_query="wat kost het abonnement?",
         trusted_sources=[],
         citation_chunks=[],
         support_mode=True,
@@ -468,7 +469,7 @@ async def test_stream_broad_answer_emits_answer_frame_with_marker(monkeypatch):
     parsed = _parse_frames(frames)
     assert _delta_values(parsed, "broad_mode") == ["answer"]
     content = "".join(_delta_values(parsed, "content"))
-    assert content.startswith(broad_mode_answer_marker("wat is dect?"))
+    assert content.startswith(broad_mode_answer_marker("nl"))
     assert content.endswith("Een DECT-telefoon is een draadloze telefoon.")
     # A broad answer never carries citation sources.
     assert _delta_values(parsed, "sources") == []
@@ -496,8 +497,9 @@ async def test_stream_refusal_without_consent_emits_offer_frame(monkeypatch):
     parsed = _parse_frames(frames)
     assert _delta_values(parsed, "broad_mode") == ["offer"]
     content = "".join(_delta_values(parsed, "content"))
-    # The stored refusal text is the exact canned string (outcome rule 1).
-    assert content == no_citable_sources_message("wat kost het abonnement?", helpdesk=True)
+    # The stored refusal text is the exact canned string (outcome rule 1),
+    # in the language IDENTIFIED from the query — "nl" here.
+    assert content == no_citable_sources_message("nl", helpdesk=True)
 
 
 @pytest.mark.asyncio
@@ -606,7 +608,7 @@ async def test_non_streaming_broad_answer_labels_message(monkeypatch):
     )
     message = body["choices"][0]["message"]
     assert message["broad_mode"] == "answer"
-    assert message["content"].startswith(broad_mode_answer_marker("wat is dect?"))
+    assert message["content"].startswith(broad_mode_answer_marker("nl"))
     assert message["sources"] == []
 
 
@@ -615,7 +617,7 @@ async def test_non_streaming_refusal_without_consent_offers(monkeypatch):
     body = await _call_non_streaming(monkeypatch, "Ik ken het antwoord niet.", support_mode=True)
     message = body["choices"][0]["message"]
     assert message["broad_mode"] == "offer"
-    assert message["content"] == no_citable_sources_message("wat is dect?", helpdesk=True)
+    assert message["content"] == no_citable_sources_message("nl", helpdesk=True)
 
 
 @pytest.mark.asyncio

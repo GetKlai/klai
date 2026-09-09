@@ -20,8 +20,9 @@ from klai_chat_prompts import (
     GROUNDED_CHAT_SYSTEM_PROMPT,
     META_CHAT_SYSTEM_PROMPT,
     OPEN_KB_CHAT_SYSTEM_PROMPT,
-    no_citable_sources_message,
 )
+from klai_chat_prompts import _language_is_dutch as language_is_dutch
+from klai_conversation_language import LanguageDecision
 from klai_context import (
     HISTORY_BUDGET_CONTEXT_PLACEHOLDER as _HISTORY_BUDGET_CONTEXT_PLACEHOLDER,
     STALE_ATTACHMENT_CONTEXT_PLACEHOLDER as _STALE_ATTACHMENT_CONTEXT_PLACEHOLDER,
@@ -251,8 +252,23 @@ class KbAnswerPolicy:
         sub_query_coverage: list | None = None,
         unchecked_questions: list | None = None,
         response_language_target: object = None,
+        language_decision: object = None,
     ) -> dict[str, Any]:
-        """Build the COMPLETE ``_klai_kb_meta`` dict for any branch."""
+        """Build the COMPLETE ``_klai_kb_meta`` dict for any branch.
+
+        ``language_decision`` (the ``LanguageDecision`` from
+        :func:`klai_conversation_language.resolve_conversation_language`, or
+        None) is flattened into its reason/vote counters so every rendered
+        line can prove WHY the target code was chosen. Metadata only — a
+        reason enum and three ints, never prose — so these keys ship on the
+        normal 30-day line regardless of telemetry level
+        (SPEC-PRIVACY-QUERY-SHADOW-001).
+        """
+        decision = (
+            language_decision
+            if isinstance(language_decision, LanguageDecision)
+            else None
+        )
         return {
             "org_id": org_id,
             "user_id": user_id,
@@ -297,6 +313,18 @@ class KbAnswerPolicy:
             "sub_query_coverage": sub_query_coverage,
             "unchecked_questions": unchecked_questions,
             "response_language_target": response_language_target,
+            "response_language_reason": (
+                decision.reason if decision is not None else None
+            ),
+            "response_language_votes": (
+                decision.votes if decision is not None else None
+            ),
+            "response_language_abstentions": (
+                decision.abstentions if decision is not None else None
+            ),
+            "response_language_switches": (
+                decision.switches if decision is not None else None
+            ),
             **self.metadata(),
         }
 
@@ -380,10 +408,14 @@ def kb_retrieval_failure_notice(kb_narrow: bool, retrieval_failure: object) -> s
     )
 
 
-def strict_kb_unavailable_message(user_query: object) -> str:
-    """Strict-mode deterministic answer when KB retrieval has no citable evidence."""
-    baseline = no_citable_sources_message(user_query)
-    if baseline.startswith("Ik "):
+def strict_kb_unavailable_message(language: object) -> str:
+    """Strict-mode deterministic answer when KB retrieval has no citable evidence.
+
+    Takes the language CODE decided upstream (same rule as
+    :func:`klai_chat_prompts.no_citable_sources_message`), never raw query
+    text; the old sniff of the rendered baseline for ``"Ik "`` is gone.
+    """
+    if language_is_dutch(language):
         return (
             "De kennisbank is tijdelijk niet bereikbaar, dus ik kan dit niet "
             "betrouwbaar beantwoorden op basis van je kennisbronnen."
@@ -394,16 +426,17 @@ def strict_kb_unavailable_message(user_query: object) -> str:
     )
 
 
-def settings_unavailable_message(user_query: object) -> str:
+def settings_unavailable_message(language: object) -> str:
     """Deterministic refusal when the user's chat settings cannot be loaded.
 
     Used only on the truly-cold path: portal-api is unreachable AND there is no
     Redis-cached setting to fall back on. We do not know their mode
     (Strict/Open), so we refuse honestly instead of silently defaulting to a
     general-knowledge answer — which would break a Strict user's KB-only promise.
+    Language CODE, never raw query text; see
+    :func:`strict_kb_unavailable_message`.
     """
-    baseline = no_citable_sources_message(user_query)
-    if baseline.startswith("Ik "):
+    if language_is_dutch(language):
         return (
             "Ik kan je chat-instellingen op dit moment niet bereiken, dus ik "
             "kan dit nu niet betrouwbaar beantwoorden. Probeer het zo opnieuw."

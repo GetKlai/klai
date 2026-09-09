@@ -73,7 +73,7 @@ def test_broad_mode_answer_with_thumbs_up_is_resolved():
     conversations where nobody was routed anywhere."""
     from klai_chat_prompts import broad_mode_answer_marker
 
-    answer = f"{broad_mode_answer_marker('wat is een sip trunk')}\n\nEen SIP trunk is een virtuele lijn."
+    answer = f"{broad_mode_answer_marker('nl')}\n\nEen SIP trunk is een virtuele lijn."
     turns = [
         _turn("user", "wat is een sip trunk"),
         _turn("assistant", answer, rating="thumbsUp"),
@@ -101,7 +101,7 @@ def test_broad_answer_followed_by_grounded_answer_is_resolved():
     'resolved' — silence is not consent."""
     from klai_chat_prompts import broad_mode_answer_marker
 
-    broad = f"{broad_mode_answer_marker('hoe lang duurt portering')}\n\nIn NL meestal 1 werkdag."
+    broad = f"{broad_mode_answer_marker('nl')}\n\nIn NL meestal 1 werkdag."
     turns = [
         _turn("user", "hoe lang duurt portering"),
         _turn("assistant", broad),

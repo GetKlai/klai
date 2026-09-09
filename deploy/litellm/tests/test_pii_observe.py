@@ -462,10 +462,12 @@ async def test_event_carries_detected_english_language(monkeypatch, caplog):
     assert any("language=en" in r.message for r in caplog.records)
 
 
-def test_short_text_detects_as_unknown_language(monkeypatch):
+def test_short_text_identifies_as_none(monkeypatch):
+    # identify_text_language abstains (None) instead of inventing an "und"
+    # code: too little prose to judge.
     mod = _load_observer(monkeypatch)
-    assert mod.detect_language("hoi") == mod.UNKNOWN_LANGUAGE
-    assert mod.detect_language("") == mod.UNKNOWN_LANGUAGE
+    assert mod.identify_text_language("hoi") is None
+    assert mod.identify_text_language("") is None
 
 
 def test_analyzer_language_falls_back_to_supported_set(monkeypatch):

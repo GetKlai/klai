@@ -48,6 +48,36 @@ SUPPORT-only behaviour (public help-page widget):
     shared language-detection preamble verbatim — the three guards MUST NOT
     drift between profiles, which is why it lives in a private constant.
 
+SUPPORT-BROAD-only behaviour (public help-page widget, consented fallback):
+
+ 9. When the SUPPORT profile found nothing in the help articles AND the
+    visitor explicitly opted into broad mode, the widget backend swaps to
+    this profile for that turn. Hard boundary: broad mode is general
+    industry/domain knowledge ("about the world"), never organisation-
+    specific facts ("about us") — no prices, features, settings,
+    availability, durations, or product names even if the model believes
+    it knows them. An organisation-specific question the help articles do
+    not answer must still be answered with the plain can't-find-it
+    refusal. The boundary is the world-vs-us line, not a confidence
+    gradient. Replies composed under this profile are labelled by
+    :func:`broad_mode_answer_marker` so the visitor (and the outcome
+    worker) can always tell them apart from KB-grounded answers.
+
+SUPPORT-EXPRESSIVE-only behaviour (public help-page widget, expressive
+register — the tone_register widget-config choice):
+
+ 10. Same profile as SUPPORT with exactly one section swapped: the Tone
+     section carries the higher marketing register measured in
+     docs/research/voys-tone-of-voice.md § 6 — more personality and warmth,
+     at most one witty remark per answer (never on an outage, complaint or
+     billing question), functional emoji only, a livelier opening. Every
+     other section is byte-identical to SUPPORT, enforced by tests: the
+     register changes tone, never truth — source rules, no-promises,
+     escalation, anti-fabrication and the missing-answer behaviour are
+     untouched and an explicit guard section says the rule wins over tone
+     whenever they seem to conflict. Default stays ``restrained``: this
+     profile is only selected when a widget opts in.
+
 GROUNDED-only behaviour (KB chunks present):
 
 3. Cited content from the knowledge base is translated into the user's
@@ -89,7 +119,6 @@ from typing import Final
 
 __all__ = [
     "BROAD_MODE_ANSWER_MARKERS",
-    "DUTCH_QUERY_MARKERS",
     "GENERAL_CHAT_SYSTEM_PROMPT",
     "GROUNDED_CHAT_SYSTEM_PROMPT",
     "KB_CONTEXT_LANGUAGE_REMINDER",
@@ -106,112 +135,6 @@ __all__ = [
 ]
 
 
-# Curated set of Dutch-unique high-frequency tokens used to detect whether
-# a user's most recent query was Dutch. Single source of truth — both the
-# LiteLLM hook (path A) and partner_chat.py (path B) import this same set
-# so the language choice for the "no citable sources" refusal stays
-# identical across surfaces.
-#
-# Selection rule: every token below is unambiguously Dutch and does NOT
-# collide with common English words or names. Single-letter tokens and
-# Dutch words that double as English nicknames or noun fragments
-# (e.g. "ben" / "Ben", "kan" / "Khan") are intentionally excluded to keep
-# false-positive rate near zero on English queries.
-DUTCH_QUERY_MARKERS: Final[frozenset[str]] = frozenset(
-    {
-        # Articles
-        "de",
-        "het",
-        "een",
-        # Personal pronouns
-        "ik",
-        "jij",
-        "je",
-        "wij",
-        "jullie",
-        "zij",
-        "mij",
-        "jou",
-        "ons",
-        # Possessive pronouns
-        "mijn",
-        "jouw",
-        "onze",
-        # Demonstratives
-        "deze",
-        "dit",
-        # Forms of "zijn" (to be) — Dutch-only conjugations
-        "bent",
-        "zijn",
-        "waren",
-        # Forms of "hebben" (to have)
-        "heb",
-        "hebt",
-        "heeft",
-        "hebben",
-        "hadden",
-        # Modal verbs — Dutch-only conjugations
-        "kunt",
-        "kunnen",
-        "konden",
-        "moet",
-        "moeten",
-        "moest",
-        "moesten",
-        "zal",
-        "zult",
-        "zullen",
-        "zou",
-        "zouden",
-        # Forms of "worden" (passive / become)
-        "wordt",
-        "worden",
-        "werd",
-        "werden",
-        # Common verbs — Dutch-only conjugations
-        "gaat",
-        "gaan",
-        "staat",
-        "staan",
-        "doet",
-        "doen",
-        # Question words
-        "wie",
-        "wat",
-        "waar",
-        "wanneer",
-        "waarom",
-        "hoe",
-        "welke",
-        "welk",
-        "hoeveel",
-        # Negation
-        "niet",
-        "geen",
-        # Common prepositions / connectives — Dutch-only spellings
-        "naar",
-        "uit",
-        "voor",
-        "bij",
-        "tegen",
-        "tussen",
-        "omdat",
-        "maar",
-        "want",
-        "dus",
-        "echter",
-        # Klai-domain vocabulary (high-signal for our chat surface)
-        "kennisbank",
-        "kennisbanken",
-        "bronnen",
-        "gegevens",
-        "vraag",
-        "antwoord",
-        "klopt",
-        "aanmaken",
-    }
-)
-
 _DUTCH_REFUSAL: Final[str] = "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
 _ENGLISH_REFUSAL: Final[str] = "I cannot answer this reliably from the available knowledge sources."
 _DUTCH_OPEN_MODE_HINT: Final[str] = " Probeer het in Open-modus voor een antwoord op basis van algemene kennis."
@@ -222,6 +145,15 @@ _ENGLISH_OPEN_MODE_HINT: Final[str] = " Try Open mode for an answer based on gen
 # words: no "kennisbank"/"knowledge sources" jargon a website visitor does
 # not recognise, and an explicit offer to reach support instead of the
 # internal Open-mode hint (the widget has no Strict/Open toggle).
+# This sentence bypasses the system prompt entirely: it is substituted after
+# generation whenever no source survived the citation firewall, so none of the
+# tone work in SUPPORT_CHAT_SYSTEM_PROMPT can reach it. That makes it the most
+# frequently shown line the bot has, and it therefore carries the brand voice
+# on its own. "Neem contact op met onze klantenservice afdeling" is listed
+# under what does NOT work in the brand documentation
+# (docs/research/voys-tone-of-voice.md § 10); the phrasing below follows the
+# measured house style instead — plain, second person, and it names the next
+# step rather than a department.
 _DUTCH_HELPDESK_REFUSAL: Final[str] = (
     "Dit vind ik niet terug in onze helpartikelen. "
     "Wil je het zeker weten, plan dan een afspraak met een medewerker — die helpt je persoonlijk verder."
@@ -231,13 +163,80 @@ _ENGLISH_HELPDESK_REFUSAL: Final[str] = (
     "If you want to be sure, schedule an appointment with someone who can help you personally."
 )
 
-_TOKEN_RE: Final[re.Pattern[str]] = re.compile(r"[a-zA-ZÀ-ÿ]+")
+# Visible label the widget backend prepends to every consented broad-mode
+# (general-knowledge) answer. Two jobs, one string: the visitor sees on the
+# answer itself that it is general knowledge and not from the help articles
+# (the strict boundary is provenance — "about the world", never "about us" —
+# not a confidence gradient), and widget_outcome recognises a broad answer
+# as a knowledge gap so it is never counted as answered from the knowledge
+# base. Keep the language of the answer in sync: the marker is picked with
+# the same language-code rule as the refusal below, so the whole label set
+# is exposed via :data:`BROAD_MODE_ANSWER_MARKERS` and consumers test
+# membership, not a single string.
+_DUTCH_BROAD_MARKER: Final[str] = "Algemene kennis — niet afkomstig uit onze helpartikelen."
+_ENGLISH_BROAD_MARKER: Final[str] = "General knowledge — not from our help articles."
+
+# All broad-mode markers, both languages. Derived from the marker constants,
+# never hand-copied — a wording change here propagates to the outcome worker.
+BROAD_MODE_ANSWER_MARKERS: Final[frozenset[str]] = frozenset(
+    {
+        _DUTCH_BROAD_MARKER,
+        _ENGLISH_BROAD_MARKER,
+    }
+)
+
+
+def _language_is_dutch(language: object) -> bool:
+    """Pick Dutch for the explicit Dutch code AND for "no decision".
+
+    Shared by the refusal picker, the broad-mode marker picker, the
+    unavailable-messages and the footer headings, so every rendered string
+    agrees on the language of a turn. Rendered strings exist only in Dutch
+    and English; an explicit other code (de, fr, pt, es, en) gets English.
+
+    "No decision" (None, "und", empty) falls back to DUTCH, not English.
+    Measured 2026-09-09 on ten typical short Dutch widget questions: the
+    identifier abstains on five of them ("Hoe log ik in?", "Wie is
+    Jantine?") because short prose must reach 0.99 confidence, while it
+    decides four of five equally short ENGLISH questions. Klai's customers
+    are overwhelmingly Dutch, so an undecided short turn is far more likely
+    Dutch than English, and an English user is rarely undecided in the
+    first place. The old footer already defaulted to Dutch on an unknown
+    query; this makes all rendered strings agree on that default.
+
+    This predicate never influences the model-side instruction: no decision
+    there still yields the generic reminder and the model chooses.
+    """
+    if not isinstance(language, str) or not language.strip():
+        return True
+    # Exact-code contract, unchanged: "NL" or "nl-NL" is not the Dutch code.
+    # "und" is the identifier's own "undetermined" outcome.
+    return language in ("nl", "und")
+
+
+def broad_mode_answer_marker(language: object) -> str:
+    """Return the visible general-knowledge label for one turn.
+
+    Picks Dutch for the ``"nl"`` code, English otherwise — the exact same
+    rule as :func:`no_citable_sources_message`, so the marker and the
+    refusal are never in different languages within one turn.
+    """
+    return _DUTCH_BROAD_MARKER if _language_is_dutch(language) else _ENGLISH_BROAD_MARKER
+
 
 # Machine-only signal the SUPPORT profiles append when the reply they just
-# wrote actually offers the visitor an appointment. Never shown: the backend
-# strips it and turns it into the widget's escalation signal.
+# wrote actually offers the visitor an appointment. Unlike
+# :data:`BROAD_MODE_ANSWER_MARKERS`, this one is NOT a label: the visitor must
+# never see it. The backend strips it from the answer and turns it into the
+# structured escalation signal the widget uses to render a booking button
+# under that one message. It exists because the offer is composed by the model
+# in its own words — there is no canned string to match on — so the model has
+# to say "this reply is an offer" out of band.
 _APPOINTMENT_OFFER_MARKER: Final[str] = "[[APPOINTMENT_OFFER]]"
 
+# Tolerant on purpose: models drift on inner spacing and casing, and a marker
+# that survives into the visitor's text is a visible defect. Leading spaces/tabs
+# are eaten with the token so a mid-sentence slip does not leave a double space.
 _APPOINTMENT_OFFER_MARKER_RE: Final[re.Pattern[str]] = re.compile(
     r"[ \t]*\[\[\s*APPOINTMENT_OFFER\s*\]\]",
     re.IGNORECASE,
@@ -245,12 +244,23 @@ _APPOINTMENT_OFFER_MARKER_RE: Final[re.Pattern[str]] = re.compile(
 
 
 def appointment_offer_marker() -> str:
-    """Return the exact token the SUPPORT profiles are told to emit."""
+    """Return the exact token the SUPPORT profiles are told to emit.
+
+    Single source of truth: the prompt line and every consumer read the token
+    from here, so the wording can never drift between what the model is asked
+    to write and what the backend looks for.
+    """
     return _APPOINTMENT_OFFER_MARKER
 
 
 def strip_appointment_offer_marker(content: object) -> tuple[str, bool]:
-    """Split model output into ``(visible text, offered an appointment)``."""
+    """Split model output into ``(visible text, offered an appointment)``.
+
+    Removes EVERY occurrence, not just a trailing one: the prompt asks for the
+    token on the last line, but a model that repeats it or drops it mid-answer
+    must still never show it to a visitor. Non-strings return ``("", False)``
+    so a caller cannot accidentally render a repr.
+    """
     if not isinstance(content, str):
         return "", False
     cleaned, count = _APPOINTMENT_OFFER_MARKER_RE.subn("", content)
@@ -259,19 +269,30 @@ def strip_appointment_offer_marker(content: object) -> tuple[str, bool]:
     return cleaned.strip(), True
 
 
+def is_broad_knowledge_answer(content: object) -> bool:
+    """True when a stored assistant message is a labelled broad-mode answer.
 
-def no_citable_sources_message(user_query: object, *, suggest_open_mode: bool = False, helpdesk: bool = False) -> str:
+    Matches only at the very start of the content (the backend prepends the
+    marker as the first line), never mid-text, so a visitor quoting the
+    label in their own message or an article excerpt containing it cannot
+    flip the outcome labelling.
+    """
+    if not isinstance(content, str):
+        return False
+    stripped = content.lstrip()
+    return any(stripped.startswith(marker) for marker in BROAD_MODE_ANSWER_MARKERS)
+
+
+def no_citable_sources_message(language: object, *, suggest_open_mode: bool = False, helpdesk: bool = False) -> str:
     """Pick the language for the canned strict-mode refusal.
 
-    Returns the Dutch refusal when the query contains any token from
-    :data:`DUTCH_QUERY_MARKERS`, otherwise English. Inputs that are not
-    strings (None, dicts from upstream meta) fall through to English so
-    the refusal is never empty.
-
-    The detection is intentionally a curated wordlist match rather than
-    a general language-detector dependency: we only need to choose
-    between two languages for one canned sentence, and a wordlist keeps
-    the latency at microseconds with no model-load cost.
+    Takes a language CODE decided upstream — never raw user text: the
+    conversation-level decision (path A) or the single-text identifier
+    (``identify_text_language``, next to this library) on the lone query
+    (paths B/C). Returns the Dutch refusal for ``"nl"``, otherwise
+    English; None/abstain fall through to DUTCH, other codes to English, so the
+    refusal is never empty (deliberate degradation, see
+    :func:`_language_is_dutch`).
 
     ``suggest_open_mode`` appends a hint to try Open mode. Default False:
     only path A (the LiteLLM hook backing LibreChat) has a user-facing
@@ -287,9 +308,7 @@ def no_citable_sources_message(user_query: object, *, suggest_open_mode: bool = 
     exclusive by design. Default False keeps every existing caller on the
     exact same refusal text.
     """
-    query = user_query if isinstance(user_query, str) else ""
-    tokens = {token.lower() for token in _TOKEN_RE.findall(query)}
-    is_dutch = bool(tokens & DUTCH_QUERY_MARKERS)
+    is_dutch = _language_is_dutch(language)
     if helpdesk:
         return _DUTCH_HELPDESK_REFUSAL if is_dutch else _ENGLISH_HELPDESK_REFUSAL
     if is_dutch:
@@ -629,6 +648,21 @@ _SUPPORT_BODY: Final[str] = (
     "zeggen? If not, rewrite it."
 )
 
+# Expressive-register variant of the SUPPORT profile, selected per widget via
+# the ``tone_register`` widget-config field when ``support_mode`` is on
+# ("expressive"; default "restrained" keeps SUPPORT_CHAT_SYSTEM_PROMPT).
+# Per docs/research/voys-tone-of-voice.md § 6 the brand demonstrably runs TWO
+# registers: the dry help-article one SUPPORT follows, and a higher marketing/
+# blog one with more personality and eye-catcher emoji. A bot on a product
+# page may use the second; a help answer must not have its truth rules
+# softened by it. So this body is SUPPORT with exactly ONE section swapped —
+# ## Tone — plus an explicit ## Register section pinning that swap as
+# tone-only. Everything else is byte-identical by construction, and the tests
+# in tests/test_support_expressive_prompt.py parse both profiles section by
+# section and fail on any divergence outside ## Tone. Source rules, the no-
+# promises rule, escalation, anti-fabrication and the missing-answer
+# behaviour therefore cannot degrade with the register; register changes
+# tone, never truth.
 _SUPPORT_EXPRESSIVE_BODY: Final[str] = (
     "You are the AI support assistant on this organisation's public help page. Never name the "
     "vendor that built you — to this visitor you are this organisation's assistant, not a "
@@ -757,60 +791,16 @@ _SUPPORT_EXPRESSIVE_BODY: Final[str] = (
 )
 
 
-GROUNDED_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _GROUNDED_BODY
-
-GENERAL_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _GENERAL_BODY
-
-OPEN_KB_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _OPEN_KB_BODY
-
-META_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _META_BODY
-
-SUPPORT_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _SUPPORT_BODY
-
-# Expressive-register variant of SUPPORT, selected by the widget backend only
-# when the widget runs in support mode with tone_register="expressive" — see
-# the module docstring, rule 10. Same language-detection preamble, same truth
-# rules; only the ## Tone section differs.
-SUPPORT_EXPRESSIVE_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _SUPPORT_EXPRESSIVE_BODY
-
-
-_DUTCH_BROAD_MARKER: Final[str] = "Algemene kennis — niet afkomstig uit onze helpartikelen."
-_ENGLISH_BROAD_MARKER: Final[str] = "General knowledge — not from our help articles."
-
-
-BROAD_MODE_ANSWER_MARKERS: Final[frozenset[str]] = frozenset(
-    {
-        _DUTCH_BROAD_MARKER,
-        _ENGLISH_BROAD_MARKER,
-    }
-)
-
-
-def broad_mode_answer_marker(user_query: object) -> str:
-    """Return the visible general-knowledge label for one turn.
-
-    Picks Dutch when the query contains any :data:`DUTCH_QUERY_MARKERS`
-    token, English otherwise — the exact same rule as
-    :func:`no_citable_sources_message`, so the marker and the refusal are
-    never in different languages within one turn.
-    """
-    return _DUTCH_BROAD_MARKER if _query_is_dutch(user_query) else _ENGLISH_BROAD_MARKER
-
-
-def is_broad_knowledge_answer(content: object) -> bool:
-    """True when a stored assistant message is a labelled broad-mode answer.
-
-    Matches only at the very start of the content (the backend prepends the
-    marker as the first line), never mid-text, so a visitor quoting the
-    label in their own message or an article excerpt containing it cannot
-    flip the outcome labelling.
-    """
-    if not isinstance(content, str):
-        return False
-    stripped = content.lstrip()
-    return any(stripped.startswith(marker) for marker in BROAD_MODE_ANSWER_MARKERS)
-
-
+# Consented fallback profile for the public help-page widget. Selected per turn
+# by the backend only when the help articles had nothing usable AND the visitor
+# explicitly agreed to a broader look; retrieval in the help articles always
+# runs first and this profile never replaces the SUPPORT profile on a turn the
+# articles can answer. The application prepends the general-knowledge label from
+# broad_mode_answer_marker() to every answer composed under this profile — the
+# model does not write the label itself. The centre of this profile is the
+# world-vs-us boundary: broad mode grants knowledge about the industry, never
+# about the company, so there is no grey zone between "uncertain general answer"
+# and "confident company answer" — company facts stay articles-only.
 _SUPPORT_BROAD_BODY: Final[str] = (
     "You are the AI support assistant on this organisation's public help page, and you never "
     "name the vendor that built you. The help articles "
@@ -879,5 +869,24 @@ _SUPPORT_BROAD_BODY: Final[str] = (
     "vriend zeggen? If not, rewrite it."
 )
 
+GROUNDED_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _GROUNDED_BODY
 
+GENERAL_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _GENERAL_BODY
+
+OPEN_KB_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _OPEN_KB_BODY
+
+META_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _META_BODY
+
+SUPPORT_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _SUPPORT_BODY
+
+# Expressive-register variant of SUPPORT, selected by the widget backend only
+# when the widget runs in support mode with tone_register="expressive" — see
+# the module docstring, rule 10. Same language-detection preamble, same truth
+# rules; only the ## Tone section differs.
+SUPPORT_EXPRESSIVE_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _SUPPORT_EXPRESSIVE_BODY
+
+# Consented broad-mode fallback for the public help-page widget. Same
+# language-detection preamble as every other profile here; only selected by
+# the widget backend when the help articles came up empty and the visitor
+# explicitly opted in — see the module docstring, rule 9.
 SUPPORT_BROAD_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _SUPPORT_BROAD_BODY

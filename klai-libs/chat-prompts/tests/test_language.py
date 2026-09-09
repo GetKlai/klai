@@ -802,3 +802,34 @@ def test_detector_recovers_after_unavailable_fixture() -> None:
     # Teardown of the fixture above must have restored normal behaviour.
     decision = clm.resolve_conversation_language(user_turns(NL_1))
     assert decision.language == "nl"
+
+
+# ---------------------------------------------------------------------------
+# identify_text_language — the public single-text entry
+# ---------------------------------------------------------------------------
+
+
+def test_identify_text_language_recognises_clear_prose() -> None:
+    assert clm.identify_text_language(NL_1) == "nl"
+    assert clm.identify_text_language(EN_1) == "en"
+
+
+def test_identify_text_language_honours_explicit_request() -> None:
+    assert clm.identify_text_language("Antwoord in het Nederlands") == "nl"
+    assert clm.identify_text_language("In English please") == "en"
+
+
+def test_identify_text_language_abstains_without_evidence() -> None:
+    # Too little prose or machine-dominated text return None — never a guess.
+    assert clm.identify_text_language("") is None
+    assert clm.identify_text_language("q") is None
+    assert clm.identify_text_language(JSON_STIMULUS) is None
+
+
+def test_identify_text_language_matches_the_conversation_decision() -> None:
+    # One implementation: the single-text answer for a lone turn must equal
+    # what the full replay decides for a conversation of exactly that turn.
+    for text in (NL_1, EN_1, DE_1, "Antwoord in het Nederlands", JSON_STIMULUS):
+        assert clm.identify_text_language(text) == clm.resolve_conversation_language(
+            user_turns(text)
+        ).language

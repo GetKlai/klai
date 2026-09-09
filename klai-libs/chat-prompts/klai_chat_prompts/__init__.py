@@ -119,7 +119,6 @@ from typing import Final
 
 __all__ = [
     "BROAD_MODE_ANSWER_MARKERS",
-    "DUTCH_QUERY_MARKERS",
     "GENERAL_CHAT_SYSTEM_PROMPT",
     "GROUNDED_CHAT_SYSTEM_PROMPT",
     "KB_CONTEXT_LANGUAGE_REMINDER",
@@ -135,112 +134,6 @@ __all__ = [
     "strip_appointment_offer_marker",
 ]
 
-
-# Curated set of Dutch-unique high-frequency tokens used to detect whether
-# a user's most recent query was Dutch. Single source of truth — both the
-# LiteLLM hook (path A) and partner_chat.py (path B) import this same set
-# so the language choice for the "no citable sources" refusal stays
-# identical across surfaces.
-#
-# Selection rule: every token below is unambiguously Dutch and does NOT
-# collide with common English words or names. Single-letter tokens and
-# Dutch words that double as English nicknames or noun fragments
-# (e.g. "ben" / "Ben", "kan" / "Khan") are intentionally excluded to keep
-# false-positive rate near zero on English queries.
-DUTCH_QUERY_MARKERS: Final[frozenset[str]] = frozenset(
-    {
-        # Articles
-        "de",
-        "het",
-        "een",
-        # Personal pronouns
-        "ik",
-        "jij",
-        "je",
-        "wij",
-        "jullie",
-        "zij",
-        "mij",
-        "jou",
-        "ons",
-        # Possessive pronouns
-        "mijn",
-        "jouw",
-        "onze",
-        # Demonstratives
-        "deze",
-        "dit",
-        # Forms of "zijn" (to be) — Dutch-only conjugations
-        "bent",
-        "zijn",
-        "waren",
-        # Forms of "hebben" (to have)
-        "heb",
-        "hebt",
-        "heeft",
-        "hebben",
-        "hadden",
-        # Modal verbs — Dutch-only conjugations
-        "kunt",
-        "kunnen",
-        "konden",
-        "moet",
-        "moeten",
-        "moest",
-        "moesten",
-        "zal",
-        "zult",
-        "zullen",
-        "zou",
-        "zouden",
-        # Forms of "worden" (passive / become)
-        "wordt",
-        "worden",
-        "werd",
-        "werden",
-        # Common verbs — Dutch-only conjugations
-        "gaat",
-        "gaan",
-        "staat",
-        "staan",
-        "doet",
-        "doen",
-        # Question words
-        "wie",
-        "wat",
-        "waar",
-        "wanneer",
-        "waarom",
-        "hoe",
-        "welke",
-        "welk",
-        "hoeveel",
-        # Negation
-        "niet",
-        "geen",
-        # Common prepositions / connectives — Dutch-only spellings
-        "naar",
-        "uit",
-        "voor",
-        "bij",
-        "tegen",
-        "tussen",
-        "omdat",
-        "maar",
-        "want",
-        "dus",
-        "echter",
-        # Klai-domain vocabulary (high-signal for our chat surface)
-        "kennisbank",
-        "kennisbanken",
-        "bronnen",
-        "gegevens",
-        "vraag",
-        "antwoord",
-        "klopt",
-        "aanmaken",
-    }
-)
 
 _DUTCH_REFUSAL: Final[str] = "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
 _ENGLISH_REFUSAL: Final[str] = "I cannot answer this reliably from the available knowledge sources."
@@ -276,10 +169,10 @@ _ENGLISH_HELPDESK_REFUSAL: Final[str] = (
 # (the strict boundary is provenance — "about the world", never "about us" —
 # not a confidence gradient), and widget_outcome recognises a broad answer
 # as a knowledge gap so it is never counted as answered from the knowledge
-# base. Keep the language of the answer in sync: the marker is picked per
-# query language with the same wordlist rule as the refusal below, so the
-# whole label set is exposed via :data:`BROAD_MODE_ANSWER_MARKERS` and
-# consumers test membership, not a single string.
+# base. Keep the language of the answer in sync: the marker is picked with
+# the same language-code rule as the refusal below, so the whole label set
+# is exposed via :data:`BROAD_MODE_ANSWER_MARKERS` and consumers test
+# membership, not a single string.
 _DUTCH_BROAD_MARKER: Final[str] = "Algemene kennis — niet afkomstig uit onze helpartikelen."
 _ENGLISH_BROAD_MARKER: Final[str] = "General knowledge — not from our help articles."
 
@@ -292,30 +185,43 @@ BROAD_MODE_ANSWER_MARKERS: Final[frozenset[str]] = frozenset(
     }
 )
 
-_TOKEN_RE: Final[re.Pattern[str]] = re.compile(r"[a-zA-ZÀ-ÿ]+")
 
+def _language_is_dutch(language: object) -> bool:
+    """Pick Dutch for the explicit Dutch code AND for "no decision".
 
-def _query_is_dutch(user_query: object) -> bool:
-    """True when the query carries any :data:`DUTCH_QUERY_MARKERS` token.
+    Shared by the refusal picker, the broad-mode marker picker, the
+    unavailable-messages and the footer headings, so every rendered string
+    agrees on the language of a turn. Rendered strings exist only in Dutch
+    and English; an explicit other code (de, fr, pt, es, en) gets English.
 
-    Shared by the refusal picker and the broad-mode marker picker so both
-    always agree on the language of a turn. Non-strings are not Dutch (the
-    English variant stays the safe default).
+    "No decision" (None, "und", empty) falls back to DUTCH, not English.
+    Measured 2026-09-09 on ten typical short Dutch widget questions: the
+    identifier abstains on five of them ("Hoe log ik in?", "Wie is
+    Jantine?") because short prose must reach 0.99 confidence, while it
+    decides four of five equally short ENGLISH questions. Klai's customers
+    are overwhelmingly Dutch, so an undecided short turn is far more likely
+    Dutch than English, and an English user is rarely undecided in the
+    first place. The old footer already defaulted to Dutch on an unknown
+    query; this makes all rendered strings agree on that default.
+
+    This predicate never influences the model-side instruction: no decision
+    there still yields the generic reminder and the model chooses.
     """
-    query = user_query if isinstance(user_query, str) else ""
-    tokens = {token.lower() for token in _TOKEN_RE.findall(query)}
-    return bool(tokens & DUTCH_QUERY_MARKERS)
+    if not isinstance(language, str) or not language.strip():
+        return True
+    # Exact-code contract, unchanged: "NL" or "nl-NL" is not the Dutch code.
+    # "und" is the identifier's own "undetermined" outcome.
+    return language in ("nl", "und")
 
 
-def broad_mode_answer_marker(user_query: object) -> str:
+def broad_mode_answer_marker(language: object) -> str:
     """Return the visible general-knowledge label for one turn.
 
-    Picks Dutch when the query contains any :data:`DUTCH_QUERY_MARKERS`
-    token, English otherwise — the exact same rule as
-    :func:`no_citable_sources_message`, so the marker and the refusal are
-    never in different languages within one turn.
+    Picks Dutch for the ``"nl"`` code, English otherwise — the exact same
+    rule as :func:`no_citable_sources_message`, so the marker and the
+    refusal are never in different languages within one turn.
     """
-    return _DUTCH_BROAD_MARKER if _query_is_dutch(user_query) else _ENGLISH_BROAD_MARKER
+    return _DUTCH_BROAD_MARKER if _language_is_dutch(language) else _ENGLISH_BROAD_MARKER
 
 
 # Machine-only signal the SUPPORT profiles append when the reply they just
@@ -377,18 +283,16 @@ def is_broad_knowledge_answer(content: object) -> bool:
     return any(stripped.startswith(marker) for marker in BROAD_MODE_ANSWER_MARKERS)
 
 
-def no_citable_sources_message(user_query: object, *, suggest_open_mode: bool = False, helpdesk: bool = False) -> str:
+def no_citable_sources_message(language: object, *, suggest_open_mode: bool = False, helpdesk: bool = False) -> str:
     """Pick the language for the canned strict-mode refusal.
 
-    Returns the Dutch refusal when the query contains any token from
-    :data:`DUTCH_QUERY_MARKERS`, otherwise English. Inputs that are not
-    strings (None, dicts from upstream meta) fall through to English so
-    the refusal is never empty.
-
-    The detection is intentionally a curated wordlist match rather than
-    a general language-detector dependency: we only need to choose
-    between two languages for one canned sentence, and a wordlist keeps
-    the latency at microseconds with no model-load cost.
+    Takes a language CODE decided upstream — never raw user text: the
+    conversation-level decision (path A) or the single-text identifier
+    (``identify_text_language``, next to this library) on the lone query
+    (paths B/C). Returns the Dutch refusal for ``"nl"``, otherwise
+    English; None/abstain fall through to DUTCH, other codes to English, so the
+    refusal is never empty (deliberate degradation, see
+    :func:`_language_is_dutch`).
 
     ``suggest_open_mode`` appends a hint to try Open mode. Default False:
     only path A (the LiteLLM hook backing LibreChat) has a user-facing
@@ -404,7 +308,7 @@ def no_citable_sources_message(user_query: object, *, suggest_open_mode: bool = 
     exclusive by design. Default False keeps every existing caller on the
     exact same refusal text.
     """
-    is_dutch = _query_is_dutch(user_query)
+    is_dutch = _language_is_dutch(language)
     if helpdesk:
         return _DUTCH_HELPDESK_REFUSAL if is_dutch else _ENGLISH_HELPDESK_REFUSAL
     if is_dutch:
