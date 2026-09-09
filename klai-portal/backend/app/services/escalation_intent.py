@@ -40,6 +40,12 @@ _HUMAN_RE = re.compile(
     r"( even| nu| toch)? (spreken|praten|bellen|hebben)\b"
     r"|(speak|talk|chat)( to| with) (a |an |the )?(human|person|agent|someone|real person|representative|employee)\b"
     r"|(i (want|need|would like)( to)?) (a |an )?(human|person|agent|real person|representative)\b"
+    # Doing something WITH a person, or an appointment with one, is also a
+    # request for a person: "dit met een medewerker instellen", "een afspraak
+    # maken met een medewerker", "samen met iemand van jullie".
+    r"|(samen )?met (een |de )?(mens|medewerker|persoon|iemand|collega)( van jullie)?( \w+){0,4}? "
+    r"(instellen|regelen|doen|doorlopen|doornemen|bekijken|oplossen|inrichten|configureren|afspreken|plannen|inplannen)\b"
+    r"|afspraak\b[^.?!]{0,40}\b(medewerker|mens|persoon|iemand|collega)\b"
     r"|geen (chatbot|bot|robot)\b"
     r"|no(t a)? (chatbot|bot|robot)\b"
     r")",

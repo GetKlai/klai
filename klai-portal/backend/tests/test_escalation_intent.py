@@ -52,3 +52,12 @@ def test_anger_and_repetition_are_frustration(text: str) -> None:
 )
 def test_ordinary_questions_do_not_escalate(text: object) -> None:
     assert escalation_intent(text) is None
+
+
+def test_wanting_to_set_something_up_with_an_employee_is_a_human_request() -> None:
+    """Reported 2026-09-09: 'Heej ik wil dit graag met een medewerker instellen.'
+    got an article answer and no button — the request for a person was phrased
+    as doing something WITH one, not speaking TO one."""
+    assert escalation_intent("Heej ik wil dit graag met een medewerker instellen.") == "human_request"
+    assert escalation_intent("Ik wil een afspraak maken met een medewerker") == "human_request"
+    assert escalation_intent("Kan ik dit samen met iemand van jullie doen?") == "human_request"
