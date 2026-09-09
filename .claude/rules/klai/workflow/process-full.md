@@ -39,15 +39,6 @@ After completing work: 1) `git diff --stat` — right files changed? 2) Logs/hea
 AI hallucination pattern: prepares for work (imports, skeletons) → reports complete with fabricated metrics.
 **Source:** Vexa Conductor — 4+ false completion claims from dev agent.
 
-### report-confidence (HIGH)
-End with `Confidence: [0-100] — [evidence summary]`. Only observable evidence counts.
-"Code looks correct" and "should work" score zero. Stop hook enforces mechanically.
-**Source:** Vexa Conductor — mechanical enforcement achieves ~100% compliance vs ~70% for prompt instructions.
-
-### adversarial-at-high-confidence (HIGH)
-At >= 80: ask "what bugs can I find?" not "is this correct?" Adversarial framing reduces overconfidence ~15pp.
-**Source:** Kaddour et al. 2026 adversarial framing study.
-
 ---
 
 ## Communication & Flow

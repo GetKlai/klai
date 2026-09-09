@@ -2,7 +2,6 @@
 paths:
   - "klai-infra/**/garage*"
   - "**/garage*"
-  - "deploy/docker-compose*.yml"
 ---
 # Garage (S3-compatible Object Storage)
 

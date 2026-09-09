@@ -5,8 +5,7 @@
 # reconstructed inline in 5 services (portal-api, retrieval-api,
 # knowledge-mcp, knowledge-ingest, deploy/litellm). The Jantine incident
 # (2026-05-27) surfaced that this kind of multi-file string contract
-# drifts silently — see ``url-shape-multi-file-drift`` in
-# ``.claude/rules/klai/pitfalls/process-rules.md``.
+# drifts silently (pitfall: url-shape-multi-file-drift).
 #
 # Single source of truth post-fix: ``klai-libs/kb-slugs``. Every
 # production caller MUST import and call ``personal_kb_slug(user_id)``.

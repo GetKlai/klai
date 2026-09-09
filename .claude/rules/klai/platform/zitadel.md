@@ -2,7 +2,6 @@
 paths:
   - "klai-portal/backend/app/services/zitadel*"
   - "klai-portal/backend/app/api/auth*"
-  - "deploy/docker-compose*.yml"
 ---
 # Zitadel
 

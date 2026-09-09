@@ -1,6 +1,9 @@
 ---
 paths:
-  - "**"
+  - "**/e2e/**"
+  - "**/*.spec.ts"
+  - "**/playwright*"
+  - "klai-portal/frontend/**"
 ---
 # Agent Browser
 
