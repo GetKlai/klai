@@ -430,3 +430,49 @@ async def test_non_streaming_partner_has_no_escalation_key(monkeypatch):
     message = body["choices"][0]["message"]
     assert "escalation" not in message
     assert MARKER not in message["content"]
+
+
+# --- backend-decided escalation: a matching article must not cancel the offer ---
+
+
+def test_forced_escalation_sets_signal_on_grounded_answer() -> None:
+    """The visitor asked for a person; retrieval found an article; the model wrote
+    steps and no marker. Before the backend layer this produced no button at all
+    (measured 2026-09-09 against the Voys widget). Now the decision carries the
+    signal because the backend, not the model, made the call."""
+    text = "Ga naar Instellingen > Beveiliging en reset daar je wachtwoord."
+    content, sources, decision = _compose_backend_managed_answer(
+        text,
+        _grounded_sources(),
+        [_good_chunk()],
+        "IK WIL EEN MEDEWERKER SPREKEN",
+        helpdesk=True,
+        force_escalation=True,
+    )
+    assert MARKER not in content
+    assert sources, "the grounded answer keeps its sources"
+    assert decision.get("escalation") == {"appointment": True}
+
+
+def test_forced_escalation_is_ignored_off_the_helpdesk_path() -> None:
+    """Partner-API callers never get the SUPPORT profile or the button."""
+    _, _, decision = _compose_backend_managed_answer(
+        "Some answer.",
+        _grounded_sources(),
+        [_good_chunk()],
+        "I want a human",
+        helpdesk=False,
+        force_escalation=True,
+    )
+    assert "escalation" not in decision
+
+
+def test_grounded_answer_without_force_or_marker_has_no_signal() -> None:
+    _, _, decision = _compose_backend_managed_answer(
+        "Ga naar Instellingen > Beveiliging.",
+        _grounded_sources(),
+        [_good_chunk()],
+        "Hoe reset ik mijn wachtwoord?",
+        helpdesk=True,
+    )
+    assert "escalation" not in decision

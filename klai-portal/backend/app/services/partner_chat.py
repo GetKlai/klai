@@ -1560,6 +1560,7 @@ def _compose_backend_managed_answer(
     web_query: str | None = None,
     helpdesk: bool = False,
     broad: bool = False,
+    force_escalation: bool = False,
 ) -> tuple[str, list[dict], dict[str, Any]]:
     """Compose the answer with KB and (optionally) web sources as separate tiers.
 
@@ -1597,7 +1598,11 @@ def _compose_backend_managed_answer(
     text, model_offered_appointment = strip_appointment_offer_marker(text)
     # The marker only means something on the public help-page widget; partner
     # API callers never see the SUPPORT prompt, so their path stays untouched.
-    offered_appointment = helpdesk and model_offered_appointment
+    # ``force_escalation`` is the backend's own decision (escalation_intent):
+    # the visitor asked for a person or is frustrated, so the button goes
+    # under this answer no matter what the model wrote or what retrieval
+    # found. A matching article must never cancel the offer.
+    offered_appointment = helpdesk and (model_offered_appointment or force_escalation)
 
     if broad:
         if not text.strip():
@@ -1709,6 +1714,7 @@ async def _chat_completion_streaming_with_composed_citations(
     emit_sources: bool = True,
     support_mode: bool = False,
     broad_mode: bool = False,
+    force_escalation: bool = False,
 ) -> AsyncGenerator[bytes]:
     """Collect text, compose deterministic citations, then stream once.
 
@@ -1792,6 +1798,7 @@ async def _chat_completion_streaming_with_composed_citations(
         web_query,
         helpdesk=support_mode,
         broad=broad_mode,
+        force_escalation=force_escalation,
     )
     if safety_reason := output_safety_violation("".join(raw_text_parts)):
         logger.warning(
@@ -2360,6 +2367,7 @@ async def chat_completion_non_streaming(
     page_context: PageContext | None = None,
     support_mode: bool = False,
     broad_mode: bool = False,
+    force_escalation: bool = False,
 ) -> dict:
     """Forward to LiteLLM and return complete response as dict.
 
@@ -2454,6 +2462,7 @@ async def chat_completion_non_streaming(
                     web_query,
                     helpdesk=support_mode,
                     broad=broad_mode,
+                    force_escalation=force_escalation,
                 )
                 logger.info(
                     "partner_chat_citation_selection_decision",
@@ -2530,6 +2539,7 @@ async def chat_completion_streaming(
     page_context: PageContext | None = None,
     support_mode: bool = False,
     broad_mode: bool = False,
+    force_escalation: bool = False,
 ) -> AsyncGenerator[bytes]:
     """Stream LiteLLM SSE response with backend-managed KB citations.
 
@@ -2559,6 +2569,7 @@ async def chat_completion_streaming(
             emit_sources=emit_sources,
             support_mode=support_mode,
             broad_mode=broad_mode,
+            force_escalation=force_escalation,
         ):
             yield chunk
         return

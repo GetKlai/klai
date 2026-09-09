@@ -193,12 +193,11 @@ _PROFILE_HASHES = {
     "GENERAL_CHAT_SYSTEM_PROMPT": "e51d3bba78ecfcd4c26c8553935756f03afe7d9284f1efd4b44f6d962d62f38a",
     "OPEN_KB_CHAT_SYSTEM_PROMPT": "2babfcab82348a9ddc90c21e48bc0e7de34a16dee20938fceac7ef9b4f02221b",
     "META_CHAT_SYSTEM_PROMPT": "1123025a36e42e114461db2730421de5f44e686b063a77ba6894fdfd7599bcf5",
-    # Re-baselined for the in-chat appointment offer (escalation signal): the
-    # ## Escalation and frustration section gained the one line that tells the
-    # model to close an appointment offer with the machine token the backend
-    # strips. Deliberate, and the only profile that moved — the four unrelated
-    # profiles above and SUPPORT_BROAD below keep their original digests.
-    "SUPPORT_CHAT_SYSTEM_PROMPT": "5e6a13645ac583460351abd0f12f1f362d88db9d2d844f31bbc227da22d79fb0",
+    # re-baselined 2026-09-09: escalation section — a matching article no
+    # longer cancels the appointment offer. Deliberate, and the only profile
+    # that moved — the four unrelated profiles above and SUPPORT_BROAD below
+    # keep their original digests.
+    "SUPPORT_CHAT_SYSTEM_PROMPT": "461086bfa659ced309c6903ed8d4cec7b5fdc280723c17b3318d5bebb9c584a0",
     "SUPPORT_BROAD_CHAT_SYSTEM_PROMPT": "a8595ff04ff34cad9deb52eaca21e0961f8ad2ec1ca84f2b4f8df50d64fffbd1",
 }
 _PROFILE_VALUES = {
