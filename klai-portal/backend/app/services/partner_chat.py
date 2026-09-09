@@ -1525,6 +1525,19 @@ async def openai_chat_completion_streaming(
         ) from exc
 
 
+_OFFER_NOUN_RE = re.compile(r"\b(afspraak|appointment)\b", re.IGNORECASE)
+
+
+def _text_offers_appointment(text: str) -> bool:
+    """Whether the visible reply actually offers an appointment.
+
+    The marker is a machine signal the model is asked to add to such a reply;
+    it is not evidence on its own. A reply that mentions the appointment
+    counts; a list of steps with a stray token does not.
+    """
+    return bool(_OFFER_NOUN_RE.search(text))
+
+
 def _appointment_escalation() -> dict[str, bool]:
     """The only escalation shape the widget contract allows.
 
@@ -1598,11 +1611,16 @@ def _compose_backend_managed_answer(
     text, model_offered_appointment = strip_appointment_offer_marker(text)
     # The marker only means something on the public help-page widget; partner
     # API callers never see the SUPPORT prompt, so their path stays untouched.
-    # ``force_escalation`` is the backend's own decision (escalation_intent):
-    # the visitor asked for a person or is frustrated, so the button goes
-    # under this answer no matter what the model wrote or what retrieval
-    # found. A matching article must never cancel the offer.
-    offered_appointment = helpdesk and (model_offered_appointment or force_escalation)
+    # The model's marker is corroborated against its own visible text: measured
+    # 2026-09-09, one in six plain step-by-step answers carried a bare marker
+    # and no offer at all, which put the button under a reply that never
+    # mentions an appointment. ``force_escalation`` is the backend's own
+    # decision (escalation_intent) — the visitor asked for a person or is
+    # frustrated — and needs no corroboration: the button goes under this
+    # answer whatever the model wrote or retrieval found.
+    offered_appointment = helpdesk and (
+        (model_offered_appointment and _text_offers_appointment(text)) or force_escalation
+    )
 
     if broad:
         if not text.strip():

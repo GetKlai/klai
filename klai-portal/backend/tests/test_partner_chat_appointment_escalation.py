@@ -148,13 +148,16 @@ def test_grounded_answer_without_the_marker_has_no_escalation():
 
 
 def test_broad_answer_marker_is_stripped_and_signals():
-    answer = f"Nummerportering duurt in Nederland meestal een werkdag.\n{MARKER}"
+    answer = (
+        "Nummerportering duurt in Nederland meestal een werkdag. "
+        f"Wil je het zeker weten, plan dan een afspraak met een medewerker.\n{MARKER}"
+    )
     text, _sources, decision = _compose_backend_managed_answer(
         answer, [], [], "hoe lang duurt portering?", helpdesk=True, broad=True
     )
     assert decision["escalation"] == {"appointment": True}
     assert MARKER not in text
-    assert text.endswith("Nummerportering duurt in Nederland meestal een werkdag.")
+    assert text.endswith("plan dan een afspraak met een medewerker.")
 
 
 def test_partner_path_strips_the_marker_but_never_signals():
@@ -476,3 +479,36 @@ def test_grounded_answer_without_force_or_marker_has_no_signal() -> None:
         helpdesk=True,
     )
     assert "escalation" not in decision
+
+
+def test_bare_marker_without_an_offer_in_the_text_is_ignored() -> None:
+    """Measured 2026-09-09: one in six plain answers carried the marker but no
+    offer sentence. The button must not appear under a reply that never
+    mentions an appointment."""
+    text = f"Ga naar Instellingen > Beveiliging en reset daar je wachtwoord.\n{MARKER}"
+    content, _, decision = _compose_backend_managed_answer(
+        text, _grounded_sources(), [_good_chunk()], "Hoe voeg ik een gebruiker toe?", helpdesk=True
+    )
+    assert MARKER not in content
+    assert "escalation" not in decision
+
+
+def test_marker_with_a_real_offer_in_the_text_still_counts() -> None:
+    text = f"Je kunt een afspraak inplannen met een medewerker via de knop hieronder.\n{MARKER}"
+    _, _, decision = _compose_backend_managed_answer(
+        text, _grounded_sources(), [_good_chunk()], "Ik wil iemand spreken", helpdesk=True
+    )
+    assert decision.get("escalation") == {"appointment": True}
+
+
+def test_forced_escalation_needs_no_offer_sentence() -> None:
+    """The backend decided; the button follows even if the model wrote only steps."""
+    _, _, decision = _compose_backend_managed_answer(
+        "**Stap 1:** Ga naar Beheer.",
+        _grounded_sources(),
+        [_good_chunk()],
+        "IK WIL EEN MEDEWERKER SPREKEN",
+        helpdesk=True,
+        force_escalation=True,
+    )
+    assert decision.get("escalation") == {"appointment": True}
