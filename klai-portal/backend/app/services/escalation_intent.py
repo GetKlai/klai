@@ -91,7 +91,7 @@ def escalation_intent(text: object) -> str | None:
 ESCALATION_TURN_ADDENDUM = {
     HUMAN_REQUEST: (
         "\n\n[This turn] The visitor just asked to reach a person. Do NOT answer with "
-        "steps or an article, even if one matches. Acknowledge in one sentence, then say "
+        "steps or an article, even if one matches. Acknowledge in one plain sentence — no apology, this is not your mistake — then say "
         "that the visitor can schedule an appointment with a human employee using the button "
         "under this reply. You cannot transfer, connect, call back or schedule anything "
         "yourself: never write 'ik verbind je door', 'we plannen een afspraak in' or any "
@@ -100,7 +100,7 @@ ESCALATION_TURN_ADDENDUM = {
         "[[APPOINTMENT_OFFER]] on its own final line."
     ),
     FRUSTRATION: (
-        "\n\n[This turn] The visitor is frustrated. Keep any answer short, then say that the "
+        "\n\n[This turn] The visitor is frustrated. Keep any answer short and apologise only if you had it wrong, then say that the "
         "visitor can schedule an appointment with a human employee using the button under "
         "this reply. You cannot transfer, connect, call back or schedule anything yourself: "
         "never write a sentence where you or 'we' perform the action — the visitor does it. "

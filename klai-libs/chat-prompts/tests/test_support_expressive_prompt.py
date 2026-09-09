@@ -197,7 +197,7 @@ _PROFILE_HASHES = {
     # longer cancels the appointment offer. Deliberate, and the only profile
     # that moved — the four unrelated profiles above and SUPPORT_BROAD below
     # keep their original digests.
-    "SUPPORT_CHAT_SYSTEM_PROMPT": "461086bfa659ced309c6903ed8d4cec7b5fdc280723c17b3318d5bebb9c584a0",
+    "SUPPORT_CHAT_SYSTEM_PROMPT": "a4a551d0b1ed9ce5b71fc57868a27212158ef3754e49199faf2489ffb78b16d2",
     "SUPPORT_BROAD_CHAT_SYSTEM_PROMPT": "a8595ff04ff34cad9deb52eaca21e0961f8ad2ec1ca84f2b4f8df50d64fffbd1",
 }
 _PROFILE_VALUES = {
