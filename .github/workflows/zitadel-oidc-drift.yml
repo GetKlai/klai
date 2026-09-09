@@ -59,8 +59,26 @@ jobs:
           exit $status
         continue-on-error: true
 
-      - name: Fail the workflow on drift
-        if: steps.drift.outputs.exit_code != '0'
+      # Exit 1 (the check could not run) and exit 2 (drift found) are very
+      # different problems, and collapsing them into one red X is how this
+      # workflow sat broken from 2026-08-24 to 2026-09-09 without anyone
+      # reading it: a check that is always red stops being a signal. The exit
+      # code is already in the log above and says nothing about live IAM
+      # state, so naming the failure mode here leaks nothing.
+      - name: Fail — the check could not run
+        if: steps.drift.outputs.exit_code == '1'
         run: |
-          echo "::error::OIDC drift check failed; detailed output is suppressed. Reproduce through the private operator path."
+          echo "::error::OIDC drift check could NOT RUN (exit 1) — configuration error, most likely a missing or expired ZITADEL_ADMIN_PAT. This is not a drift finding: nothing was verified. Drift is UNKNOWN for as long as this persists."
+          exit 1
+
+      - name: Fail — drift detected
+        if: steps.drift.outputs.exit_code == '2'
+        run: |
+          echo "::error::OIDC drift DETECTED (exit 2). Details are suppressed on purpose; reproduce through the private operator path."
+          exit 1
+
+      - name: Fail — unexpected exit code
+        if: steps.drift.outputs.exit_code != '0' && steps.drift.outputs.exit_code != '1' && steps.drift.outputs.exit_code != '2'
+        run: |
+          echo "::error::OIDC drift check exited with an unexpected code; treat as not-verified."
           exit 1
