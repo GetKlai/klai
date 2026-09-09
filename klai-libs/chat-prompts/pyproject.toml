@@ -7,10 +7,12 @@ readme = "README.md"
 license = { text = "Proprietary" }
 authors = [{ name = "Klai" }]
 
-# This library has zero runtime dependencies — it exposes string
-# constants only. Keeping it dependency-free means consumers can import
-# without dragging in extra wheels at install time.
-dependencies = []
+# langid powers klai_chat_prompts.language (conversation-level language
+# decisions): BSD, pure Python, model embedded in the package, needs numpy.
+# The LiteLLM container cannot pip-install, so it carries a vendored copy of
+# langid next to the flat module instead (see NOTICES.md). All other consumers
+# (portal-backend, retrieval-api) get langid through this path-dependency.
+dependencies = ["langid>=1.1.6"]
 
 [project.optional-dependencies]
 dev = [

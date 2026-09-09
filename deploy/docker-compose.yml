@@ -332,6 +332,19 @@ services:
       - ./litellm/klai_kb_traceability.py:/app/klai_kb_traceability.py:ro
       - ./litellm/klai_kb_urls.py:/app/klai_kb_urls.py:ro
       - ./litellm/klai_language_detect.py:/app/klai_language_detect.py:ro
+      # Conversation-level language decision module (canonical: klai-libs/
+      # chat-prompts/klai_chat_prompts/language.py, kept byte-identical via
+      # deploy/litellm/tests/test_klai_conversation_language_drift.py).
+      # Shipped INERT — no hook imports it yet, the wiring lands separately.
+      # Needs the vendored langid package below; without it the module
+      # degrades to "no evidence" on every turn, so it can never break the
+      # request path.
+      - ./litellm/klai_conversation_language.py:/app/klai_conversation_language.py:ro
+      # Vendored langid 1.1.6 (BSD-2-Clause, model embedded in langid.py,
+      # see NOTICES.md): this stock upstream image has no pip-install step,
+      # so the package rides as a directory mount next to the flat modules.
+      # Same rationale as klai_llm_safety above.
+      - ./litellm/langid:/app/langid:ro
       - ./litellm/klai_litellm_response.py:/app/klai_litellm_response.py:ro
       - ./litellm/klai_chat_attachments.py:/app/klai_chat_attachments.py:ro
       - ./litellm/klai_pasted_correspondence.py:/app/klai_pasted_correspondence.py:ro
