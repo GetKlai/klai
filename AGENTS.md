@@ -253,8 +253,8 @@ Treat a customer report as a SYMPTOM, not a diagnosis. Before closing:
    paths you test, and which you cannot.
 
 Auth / invite / delete / offboard / suspend / IdP bugs have an extra gate in
-`klai-portal/backend/AGENTS.md`. Use CodeIndex `impact` before editing any
-shared helper; if the index is stale, verify against source + git history.
+`klai-portal/backend/AGENTS.md`. Use `codebase-memory-mcp cli trace_path --project <name> --function-name <fn> --direction inbound` before editing
+any shared helper; if the graph is stale, verify against source + git history.
 
 ## End-of-bugfix answer format
 
@@ -291,68 +291,13 @@ rebuilds automatically, with no staging branch and no approval gate. Build
 locally first, and verify the deployed commit and the live URL afterwards.
 `docs/runbooks/website-publishing.md` has the exact commands.
 
-<!-- codeindex:start -->
-# CodeIndex MCP
+<!-- codebase-memory:start -->
+## codebase-memory-mcp (code graph, CLI only)
 
-This project is indexed by CodeIndex as **klai** (16280 symbols, 20581 relationships, 0 execution flows).
+This repo is indexed by `codebase-memory-mcp` (pinned v0.10.8 in `~/bin`), used only through its CLI: no MCP server, no daemon watcher, no hooks. The graph is a precomputed map, not a source of truth: verify every hit in the source.
 
-## Rules (MUST follow)
-
-Use CodeIndex when it adds graph value; do not use it as a reflexive wrapper
-around ordinary source inspection.
-
-- **Required before high-blast-radius code changes**: call `impact` before
-  editing shared helpers, exported/public APIs, cross-module contracts,
-  auth/RLS/Zitadel/streaming/caching/retrieval helpers, or doing a rename /
-  extraction / refactor. Backend auth/invite/delete/offboard/suspend/IdP work
-  still follows the stricter gate in `klai-portal/backend/AGENTS.md`.
-- **Required for architecture/debugging questions**: use `query` or `context`
-  for "How does X work?", "What breaks if X changes?", unfamiliar flows, or
-  multi-hop caller/callee questions.
-- **Prefer local source search first** for known-file edits, single-file UI
-  work, literal text/CSS/component searches, config/docs/scripts, and direct
-  "where is this string/symbol?" lookups. Use `git grep`/`rg`/IDE/Serena, then
-  escalate to CodeIndex only if graph context changes the decision.
-- **If CodeIndex MCP is unavailable** (`Transport closed`, missing lazy-loaded
-  tool, stale advisory while health is green), do not block routine work. Use
-  local source + git history, state the residual risk, and run
-  `scripts/codeindex-health.sh` only when graph accuracy matters.
-
-## For Tasks That Need CodeIndex
-
-1. **Read `codeindex://repo/{name}/context`** — codebase overview + check index freshness
-2. **Match your task to a skill below** and **read that skill file**
-3. **Follow the skill's workflow and checklist**
-
-> In Conductor worktrees, a stale warning can mean the current worktree or the
-> registered checkout differs from the shared main index. Do **not** run
-> `codeindex update` from a feature worktree. Run `scripts/codeindex-health.sh`;
-> only if it reports the shared base index is stale, run
-> `scripts/codeindex-health.sh --repair`. Treat branch changes as an overlay on
-> the shared graph and verify local diffs/source files directly.
-
-## Skills
-
-| Task | Read this skill file |
-|------|---------------------|
-| Understand architecture / "How does X work?" | `.claude/skills/codeindex/codeindex-exploring/SKILL.md` |
-| Blast radius / "What breaks if I change X?" | `.claude/skills/codeindex/codeindex-impact-analysis/SKILL.md` |
-| Trace bugs / "Why is X failing?" | `.claude/skills/codeindex/codeindex-debugging/SKILL.md` |
-| Rename / extract / split / refactor | `.claude/skills/codeindex/codeindex-refactoring/SKILL.md` |
-| Tools, resources, schema reference | `.claude/skills/codeindex/codeindex-guide/SKILL.md` |
-| Index, status, clean, wiki CLI commands | `.claude/skills/codeindex/codeindex-cli/SKILL.md` |
-
-## If CodeIndex tools appear missing
-
-If you don't see CodeIndex tools in your active toolset, they are almost certainly **deferred/lazy-loaded** by the agent harness — **NOT disconnected**. The MCP server is fine.
-
-Use your harness's tool-discovery mechanism once, then continue with the loaded CodeIndex MCP tools:
-
-- **Claude Code**: call `ToolSearch` with `select:mcp__codeindex__query,mcp__codeindex__context,mcp__codeindex__impact,mcp__codeindex__detect_changes,mcp__codeindex__rename,mcp__codeindex__cypher,mcp__codeindex__remember,mcp__codeindex__recall,mcp__codeindex__forget`
-- **Codex / Conductor**: call `tool_search` with the same `select:mcp__codeindex__...` query above
-
-After that the tools are directly callable, usually as `mcp__codeindex__query` / `mcp__codeindex__.query` or plain `query`, depending on the harness. If a `list_repos` tool is not exposed, read the `codeindex://repos` resource instead.
-
-Do **NOT** run `npx codeindex`, `codeindex analyze`, or `codeindex update` as a workaround for "missing MCP" or a stale index. The CLI is for explicit setup/maintenance requests. In Conductor, use `scripts/codeindex-health.sh` to diagnose shared main-index health; if it is healthy, use CodeIndex results as advisory and verify branch-local code against source files.
-
-<!-- codeindex:end -->
+- **Index (first use in a worktree, after a merge, and after your own changes):** `codebase-memory-mcp cli index_repository --repo-path .` (about 10 s, incremental on rerun). The `project` field in its output is the project name for the commands below. `.cbmignore` un-skips code directories the built-in skip-list would drop.
+- **Impact before changing a shared symbol:** `codebase-memory-mcp cli trace_path --project <name> --function-name <fn> --direction inbound` with `--depth 1` lists the callers you must check before editing; the default depth 3 is the blast radius for your report; go deeper only to find the route or entry point that reaches the symbol. On an ambiguous name pass the `qualified_name` it suggests. `search_graph --project <name> --name-pattern "<regex>" [--label Function|Method|Class|Route]` finds symbols and HTTP routes.
+- **Orientation:** `get_architecture --project <name>` for the summary and `detect_changes --project <name>` for the symbols touched by the current diff against main.
+- Full command reference and worked examples: the global `codebase-memory` skill.
+<!-- codebase-memory:end -->

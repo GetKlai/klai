@@ -35,7 +35,8 @@ before touching DB access or writing a migration.
    42501 and 500s every authenticated request). Cat-D strict tenant tables use
    the helper. Never swap them.
 
-Use CodeIndex `impact` before editing any shared helper. If the index is stale,
+Use `codebase-memory-mcp cli trace_path --project <name> --function-name <fn> --direction inbound`
+before editing any shared helper. If the graph is stale,
 verify against source + git history — do not trust a stale call graph.
 
 ## Identity lifecycle gate (auth / invite / delete / offboard / suspend / IdP)

@@ -15,13 +15,6 @@
       "args": [".claude/scripts/playwright-launcher.mjs"],
       "env": {}
     },
-    "codeindex": {
-      "$comment": "Graph-powered code intelligence. Launcher runs an advisory health check only; it must not rebuild or restart MCP during stdio startup. Manual fix: scripts/codeindex-health.sh --repair; disruptive reset for stuck existing agents: scripts/codeindex-health.sh --repair --restart-mcp",
-      "type": "stdio",
-      "command": "bash",
-      "args": [".claude/scripts/codeindex-mcp-launcher.sh"],
-      "env": {}
-    },
     "grafana": {
       "$comment": "AI agent access to Grafana dashboards, metrics queries, and alerts. Read-only. VictoriaLogs queries use the dedicated victorialogs MCP instead. Launcher maps GRAFANA_SERVICE_ACCOUNT_TOKEN -> GRAFANA_API_KEY.",
       "type": "stdio",

@@ -5,7 +5,7 @@
   "permissions": {
     "allow": [
       "mcp__playwright__browser_evaluate",
-      "Bash(codeindex update:*)"
+      "Bash(codebase-memory-mcp:*)"
     ]
   },
   "hooks": {
