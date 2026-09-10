@@ -47,12 +47,7 @@ export function EmbedTab({ widget }: Props) {
   const invalidOrigins = origins.filter((o) => !isValidOrigin(o))
 
   const shareUrl = `${window.location.origin}/bot/${widget.widget_id}`
-  const snippet = buildWidgetEmbedSnippet(
-    widget.widget_id,
-    config.title || undefined,
-    config.welcome_message || undefined,
-    config.primary_color || undefined,
-  )
+  const snippet = buildWidgetEmbedSnippet(widget.widget_id, config.primary_color || undefined)
 
   function copyShareLink() {
     if (!publicShareEnabled) return

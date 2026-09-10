@@ -1,15 +1,10 @@
 const WIDGET_SCRIPT_URL = 'https://my.getklai.com/widget/klai-chat.js'
 
-export function buildWidgetEmbedSnippet(
-  widgetId: string,
-  title?: string,
-  welcomeMessage?: string,
-  primaryColor?: string,
-): string {
-  const attrs: string[] = [`  src="${WIDGET_SCRIPT_URL}"`]
-  attrs.push(`  data-widget-id="${widgetId}"`)
-  if (title) attrs.push(`  data-title="${title}"`)
-  if (welcomeMessage) attrs.push(`  data-welcome="${welcomeMessage}"`)
+// Everything else (title, welcome text, colours) comes from the widget
+// config on the server, so the customer's HTML never goes stale. The colour
+// is the one exception: the bubble renders before the config is fetched.
+export function buildWidgetEmbedSnippet(widgetId: string, primaryColor?: string): string {
+  const attrs = [`  src="${WIDGET_SCRIPT_URL}"`, `  data-widget-id="${widgetId}"`]
   if (primaryColor) attrs.push(`  data-primary-color="${primaryColor}"`)
-  return `<script\n${attrs.join('\n')}\n></script>`
+  return `<script async\n${attrs.join('\n')}\n></script>`
 }
