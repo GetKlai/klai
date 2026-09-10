@@ -18,8 +18,16 @@ COLOR_VARIABLES = frozenset(
         "header-control-background",
     )
 )
+FONT_FAMILY_VALUES = frozenset(
+    {
+        '"Klai Widget Geist", system-ui, sans-serif',
+        "system-ui, sans-serif",
+    }
+)
 SIZE_RANGES = {
     "--klai-message-font-size": (12, 24),
+    "--klai-input-font-size": (12, 24),
+    "--klai-starter-font-size": (12, 24),
     "--klai-message-gap": (0, 40),
     "--klai-content-padding": (0, 40),
     "--klai-border-radius": (0, 32),
@@ -37,6 +45,9 @@ def validate_widget_style_overrides(values: dict[str, str]) -> dict[str, str]:
             match = re.fullmatch(r"(\d+(?:\.\d+)?)px", value)
             lower, upper = SIZE_RANGES[key]
             if match and lower <= float(match[1]) <= upper:
+                continue
+        elif key == "--klai-font-family":
+            if value in FONT_FAMILY_VALUES:
                 continue
         elif key == "--klai-message-line-height":
             if re.fullmatch(r"\d+(?:\.\d+)?", value) and 1.2 <= float(value) <= 2.4:

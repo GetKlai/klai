@@ -33,7 +33,7 @@ function AppHome() {
   return (
     <PageContainer width="3xl" gap="8">
       <div className="space-y-1" data-help-id="home-greeting">
-        <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
+        <h1 className="text-xl font-display-bold text-gray-900">
           {getGreeting(userName)}
         </h1>
         <p className="text-sm text-gray-600">

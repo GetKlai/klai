@@ -17,6 +17,21 @@ import {
 import type { WidgetConfig } from "./api/widget-config";
 import { initLabels } from "./i18n/labels";
 import widgetCss from "./styles/widget.css?inline";
+import geistRegularWoff2 from "../../klai-portal/frontend/public/fonts/geist-regular.woff2?inline";
+
+// Locally bundled Geist, opt-in via the tenant CSS variable
+// --klai-font-family: '"Klai Widget Geist", system-ui, sans-serif'.
+// The face is registered once per widget document from the embedded bytes
+// (data URI decoded via atob) — no external font URL, so no network request
+// and no CORS/CSP surface — and under a distinctly named family so a
+// host-page "Geist" is never shadowed. Module scope covers every mode that
+// loads this bundle: public bubble, inline and the preview iframe.
+// jsdom (widget unit tests) has no FontFace; real browsers always do.
+if (typeof FontFace === "function") {
+  const base64 = geistRegularWoff2.split(",")[1];
+  const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+  document.fonts.add(new FontFace("Klai Widget Geist", bytes));
+}
 
 // Find the script tag that loaded this widget
 function findScriptTag(): HTMLScriptElement | null {
@@ -93,9 +108,26 @@ function previewPrimaryTextColor(primaryColor: string): string {
 
 // css_variables from config as custom properties overrides
 function cssVariableOverrides(config: WidgetConfig): string {
-  return Object.entries(config.css_variables)
+  const variables = { ...config.css_variables };
+  // The AI intro follows explicitly configured body typography. An unset
+  // message variable emits no derived declaration, so widgets without
+  // typography config keep the .klai-hero-ai-disclosure CSS defaults.
+  if (variables["--klai-message-font-size"]) {
+    variables["--klai-intro-font-size"] = variables["--klai-message-font-size"];
+  }
+  if (variables["--klai-message-line-height"]) {
+    variables["--klai-intro-line-height"] = variables["--klai-message-line-height"];
+  }
+  const overrides = Object.entries(variables)
     .map(([key, value]) => `${key}: ${value};`)
     .join(" ");
+  // Exact opt-in to the bundled Geist face (config.css_variables is already
+  // tenant-merged here, so this is the final font value): match the portal's
+  // WebKit antialiasing so iframe text weight is the same on both surfaces.
+  if (config.css_variables["--klai-font-family"] === '"Klai Widget Geist", system-ui, sans-serif') {
+    return `${overrides} -webkit-font-smoothing: antialiased;`;
+  }
+  return overrides;
 }
 
 type PreviewConfig = WidgetConfig & {
@@ -115,6 +147,7 @@ const previewGeometry = `
 :host { display: block; position: relative; width: 100%; height: 100%; }
 .klai-window:not(.klai-window--inline) { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; max-height: none; }
 .klai-bubble { position: absolute; }
+.klai-bubble[aria-expanded="true"] { display: none; }
 `;
 
 function previewConfig(config: PreviewConfig): PreviewConfig {
@@ -139,6 +172,18 @@ function previewAppearance(config: PreviewConfig): Map<string, string> {
   for (const [key, value] of Object.entries(config.css_variables)) {
     if (key.startsWith("--klai-")) values.set(key, value);
   }
+  // Same bundled-Geist antialiasing as cssVariableOverrides, judged on the
+  // final merged font; the applied-set cleanup clears it when the opt-in goes.
+  if (values.get("--klai-font-family") === '"Klai Widget Geist", system-ui, sans-serif') {
+    values.set("-webkit-font-smoothing", "antialiased");
+  }
+  // Same intro derivation as cssVariableOverrides, judged on the final
+  // tenant/widget merge; the applied-set cleanup clears the derived keys
+  // when the explicit message overrides go away.
+  const messageFontSize = values.get("--klai-message-font-size");
+  if (messageFontSize) values.set("--klai-intro-font-size", messageFontSize);
+  const messageLineHeight = values.get("--klai-message-line-height");
+  if (messageLineHeight) values.set("--klai-intro-line-height", messageLineHeight);
   return values;
 }
 
