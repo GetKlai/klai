@@ -9,7 +9,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.api.connectors import _connector_out, _cookie_names_from_credentials, _merge_saved_sensitive_credentials
+from app.api.connectors import (
+    _connector_out,
+    _cookie_names_from_credentials,
+    _drop_stale_credentials_on_origin_change,
+    _merge_saved_sensitive_credentials,
+)
 from app.services.connector_credentials import SENSITIVE_FIELDS
 
 # Test-only placeholder values (NOT real credentials)
@@ -163,3 +168,93 @@ async def test_merge_saved_sensitive_credentials_preserves_omitted_json_feed_url
         )
 
     assert merged == {"url": saved_url}
+
+
+@pytest.mark.asyncio
+async def test_merge_saved_sensitive_credentials_drops_cookies_on_origin_change() -> None:
+    """Regression: PATCHing base_url to a different origin must not carry the
+    old cookies forward into this save - they were captured for the old site.
+    Without this, a connector-manage user could repoint base_url and have the
+    real site's decrypted cookies sent to the new origin on the next probe.
+    """
+    connector = MagicMock()
+    connector.connector_type = "web_crawler"
+    connector.encrypted_credentials = b"ENCRYPTED"
+    connector.config = {"base_url": "https://wiki.redcactus.cloud/nl/"}
+
+    with patch("app.api.connectors.credential_store") as mock_store:
+        mock_store.decrypt_credentials = AsyncMock(return_value={"cookies": [{"name": "session", "value": FAKE_TOKEN}]})
+
+        merged = await _merge_saved_sensitive_credentials(
+            connector=connector,
+            config={"base_url": "https://attacker.example.com/"},
+            org_id=8,
+            db=AsyncMock(),
+        )
+
+    assert "cookies" not in merged
+
+
+@pytest.mark.asyncio
+async def test_merge_saved_sensitive_credentials_keeps_cookies_on_same_origin_path_change() -> None:
+    """A base_url edit that stays on the same origin (e.g. adding a path)
+    must still carry the saved cookies forward - only a different origin
+    invalidates them."""
+    connector = MagicMock()
+    connector.connector_type = "web_crawler"
+    connector.encrypted_credentials = b"ENCRYPTED"
+    connector.config = {"base_url": "https://wiki.redcactus.cloud/nl/"}
+    cookies = [{"name": "session", "value": FAKE_TOKEN}]
+
+    with patch("app.api.connectors.credential_store") as mock_store:
+        mock_store.decrypt_credentials = AsyncMock(return_value={"cookies": cookies})
+
+        merged = await _merge_saved_sensitive_credentials(
+            connector=connector,
+            config={"base_url": "https://wiki.redcactus.cloud/nl/login"},
+            org_id=8,
+            db=AsyncMock(),
+        )
+
+    assert merged["cookies"] == cookies
+
+
+class TestDropStaleCredentialsOnOriginChange:
+    """Regression for the same gap, at the point that actually clears storage."""
+
+    def _connector(self, *, base_url: str) -> MagicMock:
+        connector = MagicMock()
+        connector.connector_type = "web_crawler"
+        connector.encrypted_credentials = b"ENCRYPTED"
+        connector.config = {"base_url": base_url}
+        return connector
+
+    def test_clears_on_origin_change_without_fresh_cookies(self) -> None:
+        connector = self._connector(base_url="https://wiki.redcactus.cloud/nl/")
+        _drop_stale_credentials_on_origin_change(
+            connector=connector,
+            new_config={"base_url": "https://attacker.example.com/"},
+            clear_credentials=False,
+        )
+        assert connector.encrypted_credentials is None
+
+    def test_keeps_credentials_when_fresh_cookies_supplied(self) -> None:
+        connector = self._connector(base_url="https://wiki.redcactus.cloud/nl/")
+        _drop_stale_credentials_on_origin_change(
+            connector=connector,
+            new_config={
+                "base_url": "https://attacker.example.com/",
+                "cookies": [{"name": "session", "value": FAKE_TOKEN}],
+            },
+            clear_credentials=False,
+        )
+        assert connector.encrypted_credentials == b"ENCRYPTED"
+
+    def test_keeps_credentials_on_same_origin(self) -> None:
+        connector = self._connector(base_url="https://wiki.redcactus.cloud/nl/")
+        _drop_stale_credentials_on_origin_change(
+            connector=connector,
+            new_config={"base_url": "https://wiki.redcactus.cloud/nl/login"},
+            clear_credentials=False,
+        )
+        assert connector.encrypted_credentials == b"ENCRYPTED"

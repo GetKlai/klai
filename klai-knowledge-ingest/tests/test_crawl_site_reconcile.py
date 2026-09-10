@@ -2723,20 +2723,40 @@ async def test_crawl_site_recovery_stops_mid_batch_once_time_budget_genuinely_sp
     assert by_url["https://example.com/page-c"]["reason_code"] == FetchReasonCode.HTTP_5XX.value
 
 
-def test_browser_config_merges_cookies_and_stealth() -> None:
-    """Stealth must not drop an authenticated crawl's cookies."""
+def test_browser_config_never_carries_cookies() -> None:
+    """Regression: crawl4ai >= 0.9 rejects a ``cookies`` key inside
+    ``browser_config.params`` with HTTP 400 ("not permitted on BrowserConfig
+    from an untrusted request") - its CVE-2026-57572 untrusted-config
+    boundary. ``_build_browser_config_with_cookies`` must never place cookies
+    there again; verified live against our own crawl4ai server 2026-09-10.
+    Stealth must still work and must not resurrect a ``cookies`` key.
+    """
     cookies = [{"name": "session", "value": "abc", "domain": "example.com", "path": "/"}]
 
     plain = crawl4ai_client._build_browser_config_with_cookies(cookies)
-    assert plain is not None
-    assert plain["params"] == {"cookies": cookies}
+    assert plain is None
 
-    both = crawl4ai_client._build_browser_config_with_cookies(cookies, stealth=True)
-    assert both is not None
-    assert both["params"]["cookies"] == cookies
-    assert both["params"]["enable_stealth"] is True
+    stealth = crawl4ai_client._build_browser_config_with_cookies(cookies, stealth=True)
+    assert stealth is not None
+    assert "cookies" not in stealth["params"]
+    assert stealth["params"]["enable_stealth"] is True
 
     assert crawl4ai_client._build_browser_config_with_cookies(None) is None
     stealth_only = crawl4ai_client._build_browser_config_with_cookies(None, stealth=True)
     assert stealth_only is not None
     assert "cookies" not in stealth_only["params"]
+
+
+def test_cookie_hooks_use_declarative_add_cookies_action() -> None:
+    """Cookies travel via the declarative ``add_cookies`` hook - crawl4ai's
+    server-validated, currently-supported replacement for raw
+    ``BrowserConfig.cookies`` (see ``hook_registry.py`` on the crawl4ai
+    server: the action is described there as "Add cookies to the browser
+    context before navigation (auth)" - exactly this use case)."""
+    cookies = [{"name": "session", "value": "abc", "domain": "example.com", "path": "/"}]
+
+    hooks = crawl4ai_client._build_cookie_hooks(cookies)
+    assert hooks == {"hooks": [{"action": "add_cookies", "params": {"cookies": cookies}}]}
+
+    assert crawl4ai_client._build_cookie_hooks(None) is None
+    assert crawl4ai_client._build_cookie_hooks([]) is None
