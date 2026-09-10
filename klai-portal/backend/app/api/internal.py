@@ -39,7 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_effective_capabilities
 from app.core.config import settings
-from app.core.database import AsyncSessionLocal, get_db, set_tenant
+from app.core.database import AsyncSessionLocal, cross_org_scope, get_db, set_tenant
 from app.core.permissions import resolve_user_permissions
 from app.core.provisioning_names import validate_slug_for_provisioning
 from app.models.connectors import PortalConnector
@@ -621,6 +621,59 @@ async def get_connector_config(
         allowed_assertion_modes=connector.allowed_assertion_modes,
         owner_user_id=connector.created_by,
     )
+
+
+class ScheduledConnectorItem(BaseModel):
+    connector_id: str
+    zitadel_org_id: str
+    schedule: str
+
+
+@router.get("/scheduled-connectors", response_model=list[ScheduledConnectorItem])
+async def list_scheduled_connectors(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> list[ScheduledConnectorItem]:
+    """List every enabled, active connector that carries a cron schedule.
+
+    klai-connector's APScheduler bootstraps its job list from this endpoint at
+    startup; without it the scheduler starts with 0 jobs in production even
+    when connectors have a schedule set. Per-connector config still comes from
+    GET /internal/connectors/{connector_id}.
+
+    Cross-org by design: portal_connectors and portal_orgs carry no RLS, but
+    portal_knowledge_bases is FORCE-RLS and raises without tenant context, so
+    the joined select runs under cross_org_scope on the request session (no
+    second pooled connection). No org_id for the audit row.
+
+    Only org-scoped KBs are listed. A scheduled sync bypasses the per-KB item
+    quota that the manual sync route enforces via assert_can_add_item_to_kb;
+    that quota only applies to personal KBs (owner_type "user"), so excluding
+    them here keeps scheduled syncs quota-safe without re-checking counts.
+    """
+    await _require_internal_token(request)
+    async with cross_org_scope(db):
+        result = await db.execute(
+            select(PortalConnector, PortalOrg)
+            .join(PortalKnowledgeBase, PortalConnector.kb_id == PortalKnowledgeBase.id)
+            .join(PortalOrg, PortalConnector.org_id == PortalOrg.id)
+            .where(
+                PortalConnector.is_enabled.is_(True),
+                PortalConnector.state == "active",
+                PortalConnector.schedule.isnot(None),
+                PortalKnowledgeBase.owner_type == "org",
+            )
+        )
+        rows = result.all()
+    await _audit_internal_call(request)
+    return [
+        ScheduledConnectorItem(
+            connector_id=str(connector.id),
+            zitadel_org_id=org.zitadel_org_id,
+            schedule=connector.schedule,
+        )
+        for connector, org in rows
+    ]
 
 
 class SyncStatusCallback(BaseModel):
