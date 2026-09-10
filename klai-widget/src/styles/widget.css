@@ -1467,3 +1467,14 @@
 .klai-window--inline .klai-disclaimer {
   border-top: none;
 }
+
+.klai-disclaimer-link {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: inherit;
+  color: var(--klai-link-color);
+  text-decoration: underline;
+  cursor: pointer;
+}

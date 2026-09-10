@@ -855,10 +855,10 @@ export function ChatWindow(props: ChatWindowProps) {
 
       {/* With the nerds integration on, the client's own disclosure
           sentence replaces the plain accuracy footer — same place, same
-          white-label gate. "onze nerds" is plain text, not a control: a
-          disclaimer is not an appointment route, and the one route the
-          visitor should take is the button under the answer that offered
-          it. The fragments render as JSX text, never as raw HTML. */}
+          white-label gate. The visitor must always have a working escape
+          route to a human, so "onze nerds" opens the same booking panel
+          the in-conversation appointment button opens. The fragments
+          render as JSX text/a button, never as raw HTML. */}
       <Show when={!props.hideDisclaimer}>
         <Show
           when={nerdsActive()}
@@ -866,7 +866,13 @@ export function ChatWindow(props: ChatWindowProps) {
         >
           <p class="klai-disclaimer">
             {t().nerdsDisclosureBefore}
-            {t().nerdsDisclosureLink}
+            <button
+              type="button"
+              class="klai-disclaimer-link"
+              onClick={openNerdsPanel}
+            >
+              {t().nerdsDisclosureLink}
+            </button>
             {t().nerdsDisclosureAfter}
           </p>
         </Show>

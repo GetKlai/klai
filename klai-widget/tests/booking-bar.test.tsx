@@ -4,13 +4,14 @@
  * Two shapes exist side by side and must not bleed into each other:
  *
  * - nerds integration ON  → the appointment lives in the conversation, so the
- *   always-on bar is gone and "onze nerds" in the footer is a disclaimer
- *   sentence, plain text, not a second route to the same booking module.
+ *   always-on bar is gone, and "onze nerds" in the footer is always a working
+ *   escape route: clicking it opens the same nerds booking panel the
+ *   in-conversation appointment button opens.
  * - nerds integration OFF → nothing changed at all. Widgets that never had
  *   this integration must render byte-for-byte the same controls as before.
  */
 
-import { render, cleanup } from "@solidjs/testing-library";
+import { render, fireEvent, cleanup } from "@solidjs/testing-library";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ChatWindow } from "../src/components/ChatWindow";
@@ -53,7 +54,7 @@ describe("permanent booking bar", () => {
     expect(container.querySelector(".klai-booking-bar")).toBeNull();
   });
 
-  it("keeps the disclosure sentence as text, with no second appointment button", () => {
+  it("keeps the disclosure sentence's wording, with a working escape link", () => {
     const { container } = renderWindow({
       nerdsEnabled: true,
       nerdsBookingUrl: BOOKING_URL,
@@ -62,7 +63,14 @@ describe("permanent booking bar", () => {
     expect(disclaimer.textContent).toBe(
       t().nerdsDisclosureBefore + t().nerdsDisclosureLink + t().nerdsDisclosureAfter,
     );
-    expect(disclaimer.querySelector("button")).toBeNull();
-    expect(disclaimer.querySelector("a")).toBeNull();
+    const link = disclaimer.querySelector("button.klai-disclaimer-link") as HTMLButtonElement;
+    expect(link).not.toBeNull();
+    expect(link.textContent).toBe(t().nerdsDisclosureLink);
+
+    // Clicking it must always open the nerds panel — the visitor must
+    // always be able to escape to a human, from the footer, not just from
+    // an in-conversation offer.
+    fireEvent.click(link);
+    expect(container.querySelector(".klai-nerds-panel")).not.toBeNull();
   });
 });
