@@ -59,6 +59,27 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 #   https://evil.getklai.com.attacker.tld    (not the getklai.com TLD)
 _FIRST_PARTY_ORIGIN_PATTERN = r"^https://([a-z0-9][a-z0-9-]*\.)?getklai\.com$"
 
+# Public widget endpoints (app/api/partner.py). The widget bundle calls these
+# from the customer's own site, so the first-party allowlist cannot apply.
+# The security boundary there is the widget session JWT minted by
+# /widget-config (see its docstring), never the BFF cookie: the origin is
+# echoed and credentials are never allowed. /widget-config keeps its own
+# widget-aware OPTIONS route, which decides per widget allowlist.
+_WIDGET_CONFIG_PATH = "/partner/v1/widget-config"
+_WIDGET_PUBLIC_PATHS = frozenset(
+    {
+        _WIDGET_CONFIG_PATH,
+        "/partner/v1/chat/completions",
+        "/partner/v1/widget/feedback",
+    }
+)
+_WIDGET_HANDOFF_PREFIX = "/partner/v1/widget-handoffs/"
+
+
+def _is_widget_public_path(path: str) -> bool:
+    return path in _WIDGET_PUBLIC_PATHS or path.startswith(_WIDGET_HANDOFF_PREFIX)
+
+
 logger = structlog.get_logger()
 _startup_logger = logging.getLogger(__name__)
 
@@ -157,6 +178,10 @@ class KlaiCORSMiddleware(CORSMiddleware):
         headers = Headers(scope=scope)
         origin = headers.get("origin")
 
+        if origin and _is_widget_public_path(scope.get("path", "")):
+            await self._widget_cors(scope, receive, send, origin=origin, headers=headers)
+            return
+
         if origin and not self.is_allowed_origin(origin):
             method = scope.get("method", "")
             is_preflight = method == "OPTIONS" and "access-control-request-method" in headers
@@ -171,6 +196,51 @@ class KlaiCORSMiddleware(CORSMiddleware):
             )
 
         await super().__call__(scope, receive, send)
+
+    async def _widget_cors(
+        self,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+        *,
+        origin: str,
+        headers: Headers,
+    ) -> None:
+        """CORS for the public widget endpoints: echo the origin, no credentials."""
+        if scope.get("path") == _WIDGET_CONFIG_PATH:
+            # Its routes decide per widget allowlist and set ACAO themselves,
+            # on the preflight as well as on the GET (403 without ACAO when
+            # the origin is not allowed).
+            await self.app(scope, receive, send)
+            return
+        if scope.get("method") == "OPTIONS" and "access-control-request-method" in headers:
+            response = Response(
+                status_code=204,
+                headers={
+                    "Access-Control-Allow-Origin": origin,
+                    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                    # Mirror what the browser asks for (Starlette does the same
+                    # for allow_headers="*"): the SSE client adds Last-Event-ID
+                    # on reconnect, the widget its session id and bearer token.
+                    "Access-Control-Allow-Headers": headers.get("access-control-request-headers", "*"),
+                    "Access-Control-Max-Age": "600",
+                    "Vary": "Origin",
+                },
+            )
+            await response(scope, receive, send)
+            return
+
+        async def send_with_origin(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                message.setdefault("headers", [])
+                response_headers = MutableHeaders(scope=message)
+                response_headers.setdefault("Access-Control-Allow-Origin", origin)
+                if "access-control-allow-credentials" in response_headers:
+                    del response_headers["access-control-allow-credentials"]
+                response_headers.add_vary_header("Origin")
+            await send(message)
+
+        await self.app(scope, receive, send_with_origin)
 
     # @MX:NOTE: REQ-1.5 enforcement — Starlette's CORSMiddleware always sets
     # Access-Control-Allow-Credentials: true when allow_credentials=True,
