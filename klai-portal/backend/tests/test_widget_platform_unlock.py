@@ -172,7 +172,7 @@ async def test_public_bot_config_returns_404_when_widgets_not_unlocked():
         mock_settings.widget_jwt_secret = "shared-secret"
 
         with pytest.raises(HTTPException) as exc_info:
-            await public_bot_config(id=widget.widget_id, db=db)
+            await public_bot_config(id=widget.widget_id, request=_make_request(), db=db)
 
     assert exc_info.value.status_code == 404
 
@@ -193,7 +193,7 @@ async def test_public_bot_config_returns_200_when_widgets_unlocked():
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
 
-        response = await public_bot_config(id=widget.widget_id, db=db)
+        response = await public_bot_config(id=widget.widget_id, request=_make_request(), db=db)
 
     assert response.status_code == 200
 

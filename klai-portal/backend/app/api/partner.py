@@ -62,6 +62,7 @@ from app.services.partner_support import (
 )
 from app.services.quality_scorer import schedule_quality_update
 from app.services.redis_client import get_redis_pool
+from app.services.request_ip import resolve_caller_ip
 from app.services.retrieval_log import find_correlated_log, write_retrieval_log
 from app.services.web_search import build_web_results_block, search_web, web_results_as_chunks
 from app.services.widget_audit import (
@@ -2814,6 +2815,27 @@ def _widget_nerds_integration(widget_config_data: dict[str, Any]) -> dict[str, A
 # Public endpoint — NO auth dependency
 # ---------------------------------------------------------------------------
 
+# REQ-7 (Finding B-4) abuse ceilings for the public mint paths. The per-widget
+# number used to be 10/min, which was a traffic cap, not an abuse cap: every
+# visitor of every page embedding the widget shares one bucket (help.voys.nl
+# hit it on the 11th visitor/min). Now: 20/min per client IP (real visitors get
+# an individual budget) under a 120/min per-widget backstop (order of magnitude
+# above real traffic, mirrors the Caddy partner_per_ip edge zone). Actual LLM
+# drain stays bounded by the untouched per-widget 60/min chat-auth bucket in
+# partner_dependencies._auth_via_session_token.
+_WIDGET_MINT_IP_RATE_LIMIT_PER_MINUTE = 20
+_WIDGET_MINT_RATE_LIMIT_PER_MINUTE = 120
+
+
+def _widget_mint_rate_limited(retry_after: int) -> Response:
+    """429 shared by the public mint paths (REQ-7 / Finding B-4)."""
+    return Response(
+        content='{"detail":"Rate limit exceeded"}',
+        status_code=429,
+        media_type="application/json",
+        headers={"Retry-After": str(retry_after)},
+    )
+
 
 @router.get("/widget-config")
 async def widget_config(
@@ -2876,22 +2898,53 @@ async def widget_config(
             media_type="application/json",
         )
 
-    # REQ-7 (Finding B-4): per-widget mint rate-limit BEFORE DB lookup.
-    # @MX:NOTE: [AUTO] Rate-limit key is widget_mint:{id} (public widget_id from URL param).
-    # Limit is 10/min per widget to prevent unbounded LLM-token drain via the public mint path.
+    # REQ-7 (Finding B-4): mint rate-limit BEFORE DB lookup, two layers, checked
+    # client-first so a rejected attempt never counts against the shared widget
+    # ceiling — one hammering client can only ever use its own IP share of it:
+    # 1. per client IP — the caller IP comes from uvicorn's proxy-header
+    #    validation behind Caddy (app.services.request_ip), so it is not
+    #    spoofable like the widget session-id header.
+    # 2. per widget — the REQ-7 abuse ceiling and backstop: key-rotating
+    #    clients still stop here.
+    # @MX:NOTE: [AUTO] Rate-limit keys are widget_mint_ip:{id}:{caller_ip} and
+    # widget_mint:{id} (public widget_id from URL param).
+    # Limits: 20/min per client IP, 120/min per-widget ceiling — see
+    # _WIDGET_MINT_RATE_LIMIT_PER_MINUTE for why the old 10/min was a traffic cap.
     # @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-7
     redis = await get_redis_pool()
     if redis is not None:
+        caller_ip = resolve_caller_ip(request)
+        client_allowed, client_retry_after = await check_rate_limit(
+            redis,
+            f"widget_mint_ip:{id}:{caller_ip}",
+            limit_per_minute=_WIDGET_MINT_IP_RATE_LIMIT_PER_MINUTE,
+            window_seconds=60,
+        )
+        if not client_allowed:
+            # Visitor IPs are logged hashed, never raw (widget-audit convention).
+            logger.warning(
+                "widget_mint_rate_limited",
+                path="widget-config",
+                widget_id=id,
+                limit="client",
+                ip_hash=hash_audit_value(caller_ip),
+            )
+            return _widget_mint_rate_limited(client_retry_after)
+
         allowed, retry_after = await check_rate_limit(
-            redis, f"widget_mint:{id}", limit_per_minute=10, window_seconds=60
+            redis, f"widget_mint:{id}", limit_per_minute=_WIDGET_MINT_RATE_LIMIT_PER_MINUTE, window_seconds=60
         )
         if not allowed:
-            return Response(
-                content='{"detail":"Rate limit exceeded"}',
-                status_code=429,
-                media_type="application/json",
-                headers={"Retry-After": str(retry_after)},
+            # Review finding 5: the ceiling event carries the same ip_hash as the
+            # client event — a rejected visitor is traceable whichever layer fired.
+            logger.warning(
+                "widget_mint_rate_limited",
+                path="widget-config",
+                widget_id=id,
+                limit="widget",
+                ip_hash=hash_audit_value(caller_ip),
             )
+            return _widget_mint_rate_limited(retry_after)
 
     # Look up widget by public widget_id (SPEC-WIDGET-002: own table)
     # REQ-16: soft-deleted widgets are 404 to the public/partner endpoints.
@@ -2995,6 +3048,7 @@ async def widget_config(
 @router.get("/public-bot-config")
 async def public_bot_config(
     id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Public bot share-link endpoint — no Origin check.
@@ -3012,22 +3066,48 @@ async def public_bot_config(
             media_type="application/json",
         )
 
-    # REQ-7 (Finding B-4): per-widget mint rate-limit BEFORE DB lookup.
-    # @MX:NOTE: [AUTO] Same rate-limit as widget_config — isolates public share-link
-    # mint path from the embed mint path with separate per-widget keys.
+    # REQ-7 (Finding B-4): mint rate-limit BEFORE DB lookup — same two layers,
+    # keys and order as widget_config. Without the per-client layer here, one
+    # share-link client could burn the whole shared widget_mint:{id} ceiling and
+    # lock out the embed visitors of the same widget (Caddy's edge zone is also
+    # 120/min/IP, so it does not stop that).
+    # @MX:NOTE: [AUTO] Rate-limit keys are widget_mint_ip:{id}:{caller_ip} and
+    # widget_mint:{id}, deliberately shared with the embed path: one client has
+    # one 20/min mint budget per widget no matter which of the two public doors
+    # it enters, under the same 120/min per-widget abuse ceiling.
     # @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-7
     redis = await get_redis_pool()
     if redis is not None:
+        caller_ip = resolve_caller_ip(request)
+        client_allowed, client_retry_after = await check_rate_limit(
+            redis,
+            f"widget_mint_ip:{id}:{caller_ip}",
+            limit_per_minute=_WIDGET_MINT_IP_RATE_LIMIT_PER_MINUTE,
+            window_seconds=60,
+        )
+        if not client_allowed:
+            # Visitor IPs are logged hashed, never raw (widget-audit convention).
+            logger.warning(
+                "widget_mint_rate_limited",
+                path="public-bot-config",
+                widget_id=id,
+                limit="client",
+                ip_hash=hash_audit_value(caller_ip),
+            )
+            return _widget_mint_rate_limited(client_retry_after)
+
         allowed, retry_after = await check_rate_limit(
-            redis, f"widget_mint:{id}", limit_per_minute=10, window_seconds=60
+            redis, f"widget_mint:{id}", limit_per_minute=_WIDGET_MINT_RATE_LIMIT_PER_MINUTE, window_seconds=60
         )
         if not allowed:
-            return Response(
-                content='{"detail":"Rate limit exceeded"}',
-                status_code=429,
-                media_type="application/json",
-                headers={"Retry-After": str(retry_after)},
+            logger.warning(
+                "widget_mint_rate_limited",
+                path="public-bot-config",
+                widget_id=id,
+                limit="widget",
+                ip_hash=hash_audit_value(caller_ip),
             )
+            return _widget_mint_rate_limited(retry_after)
 
     # REQ-16: soft-deleted widgets are 404 to the public/partner endpoints.
     result = await db.execute(select(Widget).where(Widget.widget_id == id, Widget.deleted_at.is_(None)))
