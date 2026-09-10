@@ -4,6 +4,7 @@ import logging
 import re
 from datetime import datetime
 from typing import Literal
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -476,6 +477,43 @@ def _require_credential_store_for_sensitive_config(connector_type: str, config: 
         )
 
 
+def _origin(url: object) -> tuple[str, str] | None:
+    """``(scheme, netloc.lower())`` for a URL, or ``None`` if not a usable URL."""
+    if not isinstance(url, str) or not url:
+        return None
+    parts = urlsplit(url)
+    if not parts.netloc:
+        return None
+    return (parts.scheme, parts.netloc.lower())
+
+
+def _stale_credentials_cross_origin(*, connector: PortalConnector, new_config: dict, clear_credentials: bool) -> bool:
+    """True when this update repoints a web_crawler connector's base_url to a
+    different origin while leaving its saved cookies (captured for the old
+    origin) in place. Those cookies must not survive the move - see the
+    caller."""
+    return (
+        connector.connector_type == "web_crawler"
+        and connector.encrypted_credentials is not None
+        and not clear_credentials
+        and "cookies" not in new_config
+        and _origin((connector.config or {}).get("base_url")) != _origin(new_config.get("base_url"))
+    )
+
+
+def _drop_stale_credentials_on_origin_change(
+    *, connector: PortalConnector, new_config: dict, clear_credentials: bool
+) -> None:
+    """Clear ``connector.encrypted_credentials`` when this update repoints a
+    web_crawler connector's base_url to a different origin without supplying
+    fresh cookies - see ``_stale_credentials_cross_origin``. A separate
+    statement (rather than an inline ``if`` in ``update_connector``) so the
+    branch there doesn't push that function over the complexity budget.
+    """
+    if _stale_credentials_cross_origin(connector=connector, new_config=new_config, clear_credentials=clear_credentials):
+        connector.encrypted_credentials = None
+
+
 async def _merge_saved_sensitive_credentials(
     *,
     connector: PortalConnector,
@@ -483,9 +521,22 @@ async def _merge_saved_sensitive_credentials(
     org_id: int,
     db: AsyncSession,
 ) -> dict:
-    """Fill omitted secret fields from encrypted storage for edit requests."""
+    """Fill omitted secret fields from encrypted storage for edit requests.
+
+    Web-crawler cookies are captured for a specific site. If this update also
+    changes ``base_url`` to a different origin, do NOT carry the old cookies
+    forward: a later auth-probe/preview against the new origin would then
+    send the previous site's decrypted session cookies to it. The caller
+    must supply fresh cookies (or ``clear_credentials``) for the new origin.
+    """
     sensitive_fields = _sensitive_fields_for(connector.connector_type)
     missing_fields = sensitive_fields - set(config)
+    if connector.connector_type == "web_crawler" and "cookies" in missing_fields:
+        old_config = connector.config or {}
+        old_origin = _origin(old_config.get("base_url"))
+        new_origin = _origin(config.get("base_url"))
+        if old_origin != new_origin:
+            missing_fields = missing_fields - {"cookies"}
     if not missing_fields or connector.encrypted_credentials is None:
         return config
     if credential_store is None:
@@ -785,6 +836,9 @@ async def update_connector(
                 org_id=perms.org_id,
                 db=db,
             )
+        _drop_stale_credentials_on_origin_change(
+            connector=connector, new_config=body.config, clear_credentials=body.clear_credentials
+        )
         # SPEC-SEC-SSRF-001 REQ-2.1 / AC-8 / AC-20: SSRF + allowlist
         # validation runs before any downstream fingerprint fetch
         # (which would dispatch an HTTP request to the candidate URL).

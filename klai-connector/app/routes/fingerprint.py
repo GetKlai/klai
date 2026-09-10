@@ -93,14 +93,15 @@ def _build_crawl_payload(
         "crawler_config": {"type": "CrawlerRunConfig", "params": config},
     }
     if cookies:
-        # Native cookie injection via BrowserConfig.cookies — crawl4ai's
-        # recommended path for authenticated crawls (see Identity-Based
-        # Crawling docs). Replaces the on_page_context_created hook pattern
-        # that has known timing issues (Playwright #26786, crawl4ai #322).
-        # Mirrors knowledge_ingest.crawl4ai_client._build_browser_config_with_cookies.
-        payload["browser_config"] = {
-            "type": "BrowserConfig",
-            "params": {"cookies": cookies},
+        # Declarative add_cookies hook — crawl4ai's currently-supported path
+        # for authenticated crawls via the Docker API. Raw BrowserConfig.cookies
+        # (used here previously) is rejected with HTTP 400 by crawl4ai >= 0.9's
+        # untrusted-config boundary (CVE-2026-57572 hardening); add_cookies is
+        # the server-validated declarative replacement, still running at
+        # on_page_context_created (pre-navigation), same timing as before.
+        # Mirrors knowledge_ingest.crawl4ai_client._build_cookie_hooks.
+        payload["hooks_config"] = {
+            "hooks": [{"action": "add_cookies", "params": {"cookies": cookies}}]
         }
     return payload
 

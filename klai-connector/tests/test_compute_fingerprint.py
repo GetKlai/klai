@@ -36,6 +36,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.routes.fingerprint import _build_crawl_payload
 from app.routes.fingerprint import router as fingerprint_router
 
 _PORTAL_TEST_URL = "https://example.test/article"
@@ -234,6 +235,31 @@ def test_502_body_does_not_leak_internal_topology(
 #   - ``_extract_markdown`` handles the dict-shaped ``markdown`` field.
 #   - End-to-end: response feeds into ``compute_content_fingerprint`` and
 #     produces a valid 16-hex-char SimHash.
+#
+# NOTE: the canned response below matches the shape crawl4ai emits today
+# (0.9.2) - it does not, and cannot, prove the *request* would be accepted
+# by a live server. That gap is exactly what let the browser_config.cookies
+# regression below ship silently; see test_build_crawl_payload_cookies_use_hooks.
+
+
+def test_build_crawl_payload_cookies_use_hooks() -> None:
+    """Regression: crawl4ai >= 0.9 rejects a ``cookies`` key inside
+    ``browser_config.params`` with HTTP 400 ("not permitted on BrowserConfig
+    from an untrusted request") - its CVE-2026-57572 untrusted-config
+    boundary. Cookies must travel via the declarative ``add_cookies`` hook
+    instead; verified live against our own crawl4ai server 2026-09-10.
+    """
+    cookies = [{"name": "session", "value": "abc", "domain": "example.com", "path": "/"}]
+
+    payload = _build_crawl_payload("https://example.com/page", cookies)
+    assert "browser_config" not in payload
+    assert payload["hooks_config"] == {
+        "hooks": [{"action": "add_cookies", "params": {"cookies": cookies}}]
+    }
+
+    no_cookies = _build_crawl_payload("https://example.com/page", None)
+    assert "hooks_config" not in no_cookies
+    assert "browser_config" not in no_cookies
 
 
 class _FakeResponse:
