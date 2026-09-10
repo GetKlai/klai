@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { WidgetToggleCard } from '@/features/widgets/components/WidgetToggleCard'
+import { WidgetStyleOverridesFields } from '@/features/widgets/config/WidgetStyleOverridesFields'
 import {
   WIDGET_DEFAULT_PRIMARY_COLOR,
   WIDGET_MAX_CONVERSATION_STARTERS,
@@ -37,7 +38,8 @@ export function AppearanceTab({ widget }: Props) {
   const [headerTitle, setHeaderTitle] = useState(config.title ?? widget.name)
   const [welcome, setWelcome] = useState(config.welcome_message)
   const [primaryColor, setPrimaryColor] = useState(config.primary_color || WIDGET_DEFAULT_PRIMARY_COLOR)
-  const [backgroundColor, setBackgroundColor] = useState(config.css_variables[BACKGROUND_COLOR_VARIABLE] || '')
+  const [cssVariables, setCssVariables] = useState<Record<string, string>>({ ...config.css_variables })
+  const backgroundColor = cssVariables[BACKGROUND_COLOR_VARIABLE] || ''
   const [theme, setTheme] = useState<'light' | 'dark'>(config.theme || 'light')
   const [startersRaw, setStartersRaw] = useState((config.conversation_starters ?? []).join('\n'))
   const [showSources, setShowSources] = useState(config.show_sources ?? true)
@@ -64,13 +66,14 @@ export function AppearanceTab({ widget }: Props) {
     hideDisclaimer: false,
     aiDisclosureOverride,
     footerText,
+    cssVariablesJson: JSON.stringify(cssVariables),
   })
 
   useEffect(() => {
     setHeaderTitle(config.title ?? widget.name)
     setWelcome(config.welcome_message)
     setPrimaryColor(config.primary_color || WIDGET_DEFAULT_PRIMARY_COLOR)
-    setBackgroundColor(config.css_variables[BACKGROUND_COLOR_VARIABLE] || '')
+    setCssVariables({ ...config.css_variables })
     setTheme(config.theme || 'light')
     setStartersRaw((config.conversation_starters ?? []).join('\n'))
     setShowSources(config.show_sources ?? true)
@@ -89,7 +92,7 @@ export function AppearanceTab({ widget }: Props) {
     headerTitle !== (config.title ?? widget.name) ||
     welcome.trim() !== config.welcome_message ||
     primaryColor !== (config.primary_color || WIDGET_DEFAULT_PRIMARY_COLOR) ||
-    backgroundColor !== (config.css_variables[BACKGROUND_COLOR_VARIABLE] || '') ||
+    JSON.stringify(cssVariables) !== JSON.stringify(config.css_variables) ||
     theme !== (config.theme || 'light') ||
     JSON.stringify(starters) !== JSON.stringify(config.conversation_starters ?? []) ||
     showSources !== (config.show_sources ?? true) ||
@@ -106,9 +109,7 @@ export function AppearanceTab({ widget }: Props) {
       title: headerTitle.trim(),
       welcome_message: welcome.trim(),
       primary_color: primaryColor,
-      css_variables: backgroundColor
-        ? { ...config.css_variables, [BACKGROUND_COLOR_VARIABLE]: backgroundColor }
-        : config.css_variables,
+      css_variables: cssVariables,
       theme,
       conversation_starters: starters,
       show_sources: showSources,
@@ -122,6 +123,15 @@ export function AppearanceTab({ widget }: Props) {
       { widget_config: next },
       { onSuccess: () => toast.success(m.admin_shared_success_updated()) },
     )
+  }
+
+  function setBackgroundColor(nextValue: string) {
+    setCssVariables((current) => {
+      const next = { ...current }
+      if (nextValue) next[BACKGROUND_COLOR_VARIABLE] = nextValue
+      else delete next[BACKGROUND_COLOR_VARIABLE]
+      return next
+    })
   }
 
   return (
@@ -204,6 +214,9 @@ export function AppearanceTab({ widget }: Props) {
               </Button>
             ))}
           </div>
+        </div>
+        <div className="mt-5 max-w-2xl">
+          <WidgetStyleOverridesFields value={cssVariables} onChange={setCssVariables} />
         </div>
       </section>
 
