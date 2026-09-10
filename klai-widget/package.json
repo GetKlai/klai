@@ -13,7 +13,7 @@
   "dependencies": {
     "@microsoft/fetch-event-source": "^2.0.1",
     "dompurify": "^3.4.11",
-    "snarkdown": "^2.0.0",
+    "marked": "^18.0.12",
     "solid-js": "^1.9.14"
   },
   "devDependencies": {

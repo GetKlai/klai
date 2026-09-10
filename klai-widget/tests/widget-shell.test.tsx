@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 describe("widget shell", () => {
-  it("shows online status and a visible new-conversation label in the header", () => {
+  it("keeps deployed defaults while exposing scoped layout overrides", () => {
     initLabels("nl");
     const { container } = render(() => (
       <ChatWindow title="Voys Help NL" onClose={() => {}} manageHandoffStream={false} />
@@ -29,6 +29,23 @@ describe("widget shell", () => {
 
     expect(header.querySelector(".klai-header-status")?.textContent).toBe("Online");
     expect(newConversation.textContent).toContain("Nieuw gesprek");
+    expect(container.querySelector(".klai-textarea")?.parentElement?.className).toBe(
+      "klai-compose-row",
+    );
+
+    const style = document.createElement("style");
+    style.textContent = widgetCss;
+    document.head.append(style);
+    container.classList.add("klai-inline-root");
+    container.style.setProperty("--klai-primary-color", "#270697");
+    expect(getComputedStyle(container).getPropertyValue("--klai-header-background").trim()).toBe(
+      "var(--klai-primary-color)",
+    );
+
+    container.style.setProperty("--klai-header-background", "#ffffff");
+    expect(getComputedStyle(container).getPropertyValue("--klai-header-background").trim()).toBe(
+      "#ffffff",
+    );
   });
 
   it("keeps launcher artwork unfilled and centers the header actions", () => {
