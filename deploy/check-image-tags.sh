@@ -26,8 +26,7 @@
 # line, so an inline comment can neither smuggle a bad image through nor
 # fail a good one. Exempt: ghcr.io/getklai/*:latest (built by our own CI,
 # deliberately mutable — only `latest`, not dev/staging) and `@sha256:`
-# digest pins. ghcr.io/mendableai/firecrawl:latest carries its own one-off
-# exemption, documented at the point where it is applied.
+# digest pins.
 #
 # Wire into git hooks via .githooks/pre-commit or CI.
 
@@ -109,15 +108,6 @@ for F in $FILES; do
 
         # A digest is the strongest pin there is.
         case "$REF" in *@sha256:*) continue ;; esac
-
-        # Explicit, visible exception — NOT a general ghcr.io allowance:
-        # ghcr.io/mendableai/firecrawl:latest. Measured 2026-09-10: that tag
-        # no longer exists upstream (docker manifest inspect: manifest
-        # unknown) and the old local digest is not pullable either; the
-        # running container only survives on the host image cached since
-        # March. The replacement decision is still open — when it lands, pin
-        # this image and delete this exception.
-        [ "$REF" = "ghcr.io/mendableai/firecrawl:latest" ] && continue
 
         # Rule 4: no tag at all. Docker reads that as `:latest`.
         REPO=${REF%:*}

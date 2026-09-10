@@ -65,7 +65,6 @@ jobs:
           #                                      SKIP-tier of SPEC-CI-TRIVY-POLICY-001 REQ-4: these
           #                                      images do not exist on Docker Hub so a `docker
           #                                      manifest inspect` always 404s.
-          #   mendableai/firecrawl             — built locally from source on the server
           TARGETS=$(
             {
               yq -o=json eval '.services | to_entries | map({"source": "deploy", "service": .key, "image": .value.image})' deploy/docker-compose.yml
@@ -74,7 +73,7 @@ jobs:
               | jq -sc '
                   add
                   | map(select(.image != null and .image != "~"))
-                  | map(select(.image | test("^(ghcr\\.io/getklai/|ghcr\\.io/mendableai/firecrawl|[^:]+:klai$|[^:]+:local$|[^:]+:.*-local-[0-9]{6}-[0-9]{4}$)") | not))
+                  | map(select(.image | test("^(ghcr\\.io/getklai/|[^:]+:klai$|[^:]+:local$|[^:]+:.*-local-[0-9]{6}-[0-9]{4}$)") | not))
                   | sort_by(.image)
                   | group_by(.image)
                   | map({

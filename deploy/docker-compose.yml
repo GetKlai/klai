@@ -2172,8 +2172,21 @@ services:
   # Requires dedicated Postgres (NUQ job queue) and RabbitMQ (worker coordination).
   # NUQ schema is auto-initialized via firecrawl-nuq-init.sql on first Postgres start.
   # Redis URL must use %-encoded password (special chars break ioredis URL parsing).
-  # Image built from source — ghcr.io/mendableai/firecrawl is a private registry.
-  # Build: cd /tmp/firecrawl/apps/api && docker build -t ghcr.io/mendableai/firecrawl:latest .
+  #
+  # Until 2026-09-10 this was a locally-built image tagged
+  # `ghcr.io/mendableai/firecrawl:latest`, a name nothing could ever pull: it
+  # was never published there, so the service survived only on the image
+  # cached on the host and could not have been rebuilt from this file.
+  # Upstream publishes proper releases at ghcr.io/firecrawl/firecrawl, so this
+  # is an ordinary version pin that Renovate can track like any other.
+  #
+  # Verified before the bump (2026-09-10, tag 2.11.325) against an isolated
+  # stack with this same NUQ schema and this same env: identical entrypoint
+  # and harness, all ten env vars below still read, and LibreChat's exact
+  # request (POST /v2/scrape with formats=[markdown], onlyMainContent) answers
+  # 200 with the same {markdown, metadata} shape as the image it replaces.
+  # Bumping means running deploy/tests/firecrawl-contract.sh against the
+  # candidate first, then editing here.
   firecrawl-postgres:
     image: postgres:18.4-alpine
     restart: unless-stopped
@@ -2206,7 +2219,7 @@ services:
       start_period: 15s
 
   firecrawl-api:
-    image: ghcr.io/mendableai/firecrawl:latest
+    image: ghcr.io/firecrawl/firecrawl:2.11.325
     restart: unless-stopped
     environment:
       PORT: "3002"

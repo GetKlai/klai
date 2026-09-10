@@ -46,10 +46,15 @@ for F in $FILES; do
     # pull without project-specific credentials:
     #   - ghcr.io/getklai/* from the published compose stack
     #   - vexaai/* images and env vars like BOT_IMAGE_NAME / BROWSER_IMAGE
+    #   - ghcr.io/firecrawl/* — pinned upstream release. Added 2026-09-10:
+    #     this service previously ran a locally-built image under a name
+    #     nothing could pull, and nothing noticed until an audit went looking.
+    #     A pin that is not pullable must fail here, before the deploy.
     REFS=$(
         {
             grep -oE 'ghcr\.io/getklai/[a-z0-9-]+:[A-Za-z0-9._-]+' "$F" || true
             grep -oE 'vexaai/[a-z0-9-]+:[A-Za-z0-9._-]+' "$F" || true
+            grep -oE 'ghcr\.io/firecrawl/[a-z0-9-]+:[A-Za-z0-9._-]+' "$F" || true
         } | sort -u
     )
 
