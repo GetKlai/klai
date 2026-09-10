@@ -91,11 +91,8 @@ class WidgetConfig(BaseModel):
     # TalkWithData convention. Each entry is rendered as a clickable
     # pill that submits the text as the first user message.
     conversation_starters: list[str] = Field(default_factory=list, max_length=6)
-    # When true, the widget hides the "AI-antwoorden kunnen fouten
-    # bevatten…" footer (white-label / power-user flag, matches the
-    # "Verberg 'Powered by'" pattern in the TWD editor). It does NOT hide
-    # the EU AI Act art. 50 AI notice in the empty state — that one is
-    # mandatory and not switchable per widget.
+    # When true, the widget hides the AI introduction in the empty state.
+    # The footer is configured independently through footer_text.
     hide_disclaimer: bool = False
     # Tenant-supplied replacement for the whole AI-notice sentence (the
     # EU AI Act art. 50 notice + the auto-appended booking sentence) shown
@@ -105,6 +102,9 @@ class WidgetConfig(BaseModel):
     # switchable, only its exact wording. Empty/unset → the default
     # templated notice, unchanged.
     ai_disclosure_override: str | None = Field(default=None, max_length=500)
+    # Tenant-editable Markdown shown below the chat input. Links are rendered
+    # and sanitised by the widget; no separate link-label or URL fields exist.
+    footer_text: str | None = Field(default=None, max_length=2000)
     # Optional reference to a Template (app/templates) — when set, the
     # template's prompt_text is appended to system_prompt at runtime so
     # admins can re-use named prompts across widgets without copy-paste.
@@ -222,6 +222,7 @@ def _widget_to_response(widget: Widget, kb_access_count: int) -> WidgetResponse:
             conversation_starters=config.get("conversation_starters", []),
             hide_disclaimer=config.get("hide_disclaimer", False),
             ai_disclosure_override=config.get("ai_disclosure_override"),
+            footer_text=config.get("footer_text"),
             template_slug=config.get("template_slug"),
             primary_color=config.get("primary_color", "#fcaa2d"),
             theme=config.get("theme", "light"),

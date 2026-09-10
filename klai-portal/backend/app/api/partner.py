@@ -3030,10 +3030,12 @@ async def widget_config(
         "chat_endpoint": "/partner/v1/chat/completions",
         "session_token": session_token,
         "session_expires_at": expires_at.isoformat(),
-        # TWD-style additions: chips on empty state, white-label
-        # disclaimer toggle. system_prompt stays server-side only.
+        # TWD-style additions: chips and the optional AI-intro toggle.
+        # system_prompt stays server-side only; footer Markdown is a separate
+        # presentation field interpreted by the widget.
         "conversation_starters": widget_config_data.get("conversation_starters", []),
         "hide_disclaimer": widget_config_data.get("hide_disclaimer", False),
+        "footer_text": widget_config_data.get("footer_text") or "",
         # Name drives the TWD-pattern header (avatar + title). description
         # is admin-only scope/behaviour config, not rendered to visitors —
         # kept in the response only as a widget-frontend locale hint.
@@ -3181,6 +3183,7 @@ async def public_bot_config(
         "session_expires_at": expires_at.isoformat(),
         "conversation_starters": widget_config_data.get("conversation_starters", []),
         "hide_disclaimer": widget_config_data.get("hide_disclaimer", False),
+        "footer_text": widget_config_data.get("footer_text") or "",
         "primary_color": widget_config_data.get("primary_color", "#fcaa2d"),
         "theme": widget_config_data.get("theme", "light"),
         "collect_user_info": widget_config_data.get("collect_user_info", False),

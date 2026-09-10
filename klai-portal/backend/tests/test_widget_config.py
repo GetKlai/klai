@@ -93,6 +93,7 @@ def _make_db_chain(widget: FakeWidget | None, org: FakeOrg | None, kb_ids: list[
 async def test_widget_config_happy_path():
     """Valid wgt_id + allowed origin returns 200 with session token."""
     widget = FakeWidget()
+    widget.widget_config["footer_text"] = "Lees [meer](https://example.com/help)."
     org = FakeOrg()
     db = _make_db_chain(widget, org, [1, 2])
     request = _make_request("https://example.com")
@@ -113,6 +114,7 @@ async def test_widget_config_happy_path():
     assert '"session_token": "fake.jwt.token"' in body
     assert '"title": "Chat"' in body
     assert '"page_context_enabled": false' in body
+    assert json.loads(body)["footer_text"] == "Lees [meer](https://example.com/help)."
     assert "system_prompt" not in body
 
 
@@ -446,6 +448,7 @@ async def test_public_bot_config_delivers_enabled_nerds_integration():
             "welcome_message": "",
             "system_prompt": "",
             "css_variables": {},
+            "footer_text": "Plan met [onze nerds](https://support.voys.nl/book/voys).",
             **_nerds_config({"enabled": True, "booking_url": "https://support.voys.nl/book/voys?t=abc"}),
         },
     )
@@ -463,6 +466,7 @@ async def test_public_bot_config_delivers_enabled_nerds_integration():
 
     body = json.loads(response.body.decode())
     assert body["nerds"] == {"enabled": True, "booking_url": "https://support.voys.nl/book/voys?t=abc"}
+    assert body["footer_text"] == "Plan met [onze nerds](https://support.voys.nl/book/voys)."
 
 
 @pytest.mark.asyncio
