@@ -15,9 +15,11 @@ constant) use pytest's `monkeypatch` for idempotent cleanup.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+
 import pytest
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.testclient import TestClient
 
 # ---------------------------------------------------------------------------
@@ -55,6 +57,34 @@ def _make_test_app(cors_origins: str = "http://localhost:5174") -> FastAPI:
     @app.get("/internal/anything")
     async def internal() -> JSONResponse:
         return JSONResponse({"ok": True})
+
+    # Public widget endpoints, mirrored from app/api/partner.py: the widget
+    # bundle calls these from the customer's own site. /widget-config has a
+    # widget-aware preflight route that echoes the origin when the widget's
+    # allowlist matches.
+    @app.post("/partner/v1/chat/completions")
+    async def widget_chat() -> JSONResponse:
+        return JSONResponse({"ok": True})
+
+    @app.options("/partner/v1/widget-config")
+    async def widget_config_preflight(id: str) -> JSONResponse:
+        headers = {"X-Widget-Route": id}
+        if id == "wgt_allows_customer":
+            headers["Access-Control-Allow-Origin"] = "https://help.customer.example"
+        return JSONResponse(None, status_code=204, headers=headers)
+
+    @app.get("/partner/v1/widget-config")
+    async def widget_config(id: str) -> JSONResponse:
+        if id == "wgt_allows_customer":
+            return JSONResponse({"ok": True}, headers={"Access-Control-Allow-Origin": "https://help.customer.example"})
+        return JSONResponse({"detail": "Origin not allowed"}, status_code=403)
+
+    @app.get("/partner/v1/widget-handoffs/hubspot/events")
+    async def widget_handoff_events() -> StreamingResponse:
+        async def events() -> AsyncIterator[bytes]:
+            yield b"id: 1\ndata: {}\n\n"
+
+        return StreamingResponse(events(), media_type="text/event-stream")
 
     app.add_middleware(
         KlaiCORSMiddleware,
@@ -423,3 +453,103 @@ def test_cors_regex_compile_failure_raises_system_exit(
 
     with pytest.raises(SystemExit):
         cors_module._compile_first_party_regex()
+
+
+# ---------------------------------------------------------------------------
+# Public widget endpoints: a customer's own origin is the normal caller
+# ---------------------------------------------------------------------------
+
+CUSTOMER_ORIGIN = "https://help.customer.example"
+
+
+@pytest.mark.parametrize(
+    ("path", "method", "requested_headers"),
+    [
+        ("/partner/v1/chat/completions", "POST", "content-type,authorization"),
+        ("/partner/v1/widget/feedback", "POST", "content-type,authorization"),
+        # The SSE client re-sends Last-Event-ID when it reconnects.
+        ("/partner/v1/widget-handoffs/hubspot/events", "GET", "authorization,last-event-id"),
+    ],
+)
+def test_widget_preflight_from_customer_origin_is_answered(
+    cors_client: TestClient, path: str, method: str, requested_headers: str
+) -> None:
+    """The widget on a customer's site must get through the preflight: the
+    security boundary there is the widget session JWT, not the first-party
+    origin allowlist."""
+    response = cors_client.options(
+        path,
+        headers={
+            "Origin": CUSTOMER_ORIGIN,
+            "Access-Control-Request-Method": method,
+            "Access-Control-Request-Headers": requested_headers,
+        },
+    )
+    assert response.status_code == 204, response.text
+    assert response.headers.get("access-control-allow-origin") == CUSTOMER_ORIGIN
+    allowed = response.headers.get("access-control-allow-headers", "").lower()
+    assert all(h in allowed for h in requested_headers.split(","))
+    assert "access-control-allow-credentials" not in response.headers
+
+
+def test_widget_chat_response_from_customer_origin_carries_acao(cors_client: TestClient) -> None:
+    response = cors_client.post("/partner/v1/chat/completions", headers={"Origin": CUSTOMER_ORIGIN})
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") == CUSTOMER_ORIGIN
+    assert "access-control-allow-credentials" not in response.headers
+
+
+def test_widget_sse_stream_from_customer_origin_carries_acao(cors_client: TestClient) -> None:
+    with cors_client.stream(
+        "GET", "/partner/v1/widget-handoffs/hubspot/events", headers={"Origin": CUSTOMER_ORIGIN}
+    ) as response:
+        assert response.status_code == 200
+        assert response.headers.get("access-control-allow-origin") == CUSTOMER_ORIGIN
+        assert b"id: 1" in b"".join(response.iter_bytes())
+
+
+def test_widget_config_preflight_is_decided_by_the_widget_route(cors_client: TestClient) -> None:
+    """/widget-config decides per widget allowlist in its own OPTIONS route;
+    the global middleware hands the preflight through and must not add an
+    origin echo the route deliberately left out."""
+    headers = {
+        "Origin": CUSTOMER_ORIGIN,
+        "Access-Control-Request-Method": "GET",
+        "Access-Control-Request-Headers": "x-klai-widget-session-id",
+    }
+    allowed = cors_client.options("/partner/v1/widget-config?id=wgt_allows_customer", headers=headers)
+    assert allowed.status_code == 204, allowed.text
+    assert allowed.headers.get("x-widget-route") == "wgt_allows_customer"
+    assert allowed.headers.get("access-control-allow-origin") == CUSTOMER_ORIGIN
+
+    rejected = cors_client.options("/partner/v1/widget-config?id=wgt_other", headers=headers)
+    assert rejected.status_code == 204, rejected.text
+    assert rejected.headers.get("x-widget-route") == "wgt_other"
+    assert "access-control-allow-origin" not in rejected.headers
+
+    # The GET follows the same rule: a 403 for a disallowed origin stays
+    # unreadable cross-origin (AC-10), an allowed origin keeps the route's echo.
+    denied = cors_client.get("/partner/v1/widget-config?id=wgt_other", headers={"Origin": CUSTOMER_ORIGIN})
+    assert denied.status_code == 403
+    assert "access-control-allow-origin" not in denied.headers
+    granted = cors_client.get("/partner/v1/widget-config?id=wgt_allows_customer", headers={"Origin": CUSTOMER_ORIGIN})
+    assert granted.status_code == 200
+    assert granted.headers.get("access-control-allow-origin") == CUSTOMER_ORIGIN
+
+
+def test_widget_path_match_is_exact(cors_client: TestClient) -> None:
+    response = cors_client.options(
+        "/partner/v1/chat/completions-admin",
+        headers={"Origin": CUSTOMER_ORIGIN, "Access-Control-Request-Method": "POST"},
+    )
+    assert response.status_code == 400
+    assert "access-control-allow-origin" not in response.headers
+
+
+def test_customer_origin_is_still_rejected_outside_widget_paths(cors_client: TestClient) -> None:
+    response = cors_client.options(
+        "/api/auth/login",
+        headers={"Origin": CUSTOMER_ORIGIN, "Access-Control-Request-Method": "POST"},
+    )
+    assert response.status_code == 400
+    assert "access-control-allow-origin" not in response.headers
