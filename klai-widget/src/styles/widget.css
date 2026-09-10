@@ -163,6 +163,11 @@
   color: var(--klai-text-color);
 }
 
+.klai-window:not(.klai-window--inline) {
+  max-width: calc(100vw - 40px);
+  max-height: calc(100dvh - 108px);
+}
+
 /* Header colours can be scoped per widget without changing deployed defaults. */
 .klai-header {
   padding: 14px 14px 16px;
