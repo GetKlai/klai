@@ -32,6 +32,10 @@ const NERDS_DISCLOSURE = {
 
 export interface WidgetChatSurfaceProps {
   botName: string
+  headerTitle?: string
+  backgroundColor?: string
+  aiDisclosureOverride?: string | null
+  footerText?: string | null
   chatEndpoint: string
   sessionToken: string
   description?: string
@@ -169,6 +173,10 @@ function normalizeActivity(rawActivity: unknown): AgentActivity[] {
 
 export function WidgetChatSurface({
   botName,
+  headerTitle,
+  backgroundColor,
+  aiDisclosureOverride,
+  footerText,
   chatEndpoint,
   sessionToken,
   description = '',
@@ -200,6 +208,7 @@ export function WidgetChatSurface({
   const starters = conversationStarters.filter(Boolean).slice(0, 6)
   const primaryFaint = `${primaryColor}14`
   const isDark = theme === 'dark'
+  const surfaceBackground = backgroundColor || (isDark ? 'var(--color-rl-dark)' : 'var(--color-rl-bg)')
   const nerdsUrl = nerdsBookingUrl.trim()
   const nerdsActive = nerdsEnabled && nerdsUrl.length > 0
   const nerdsLang = getLocale() === 'nl' ? 'nl' : 'en'
@@ -389,7 +398,7 @@ export function WidgetChatSurface({
     <div
       data-widget-chat-surface
       className={`${embedded ? 'relative h-full w-full overflow-hidden' : 'fixed inset-0 z-[60]'} flex flex-col ${isDark ? 'bg-[var(--color-rl-dark)] text-[var(--color-rl-bg)]' : 'bg-white text-gray-900'}`}
-      style={embedded ? undefined : { height: '100vh' }}
+      style={{ ...(!embedded && { height: '100vh' }), backgroundColor: surfaceBackground }}
     >
       <div className={`flex h-14 shrink-0 items-center justify-between border-b px-4 sm:px-6 ${isDark ? 'border-white/10 bg-[var(--color-rl-dark)]' : 'border-gray-200 bg-white'}`}>
         <div className="flex min-w-0 items-center gap-3">
@@ -400,7 +409,7 @@ export function WidgetChatSurface({
             <MessageSquare className="h-4 w-4 text-white" strokeWidth={1.75} />
           </div>
           <div className="min-w-0">
-            <h2 className={`truncate text-sm font-display-medium leading-none ${isDark ? 'text-[var(--color-rl-bg)]' : 'text-gray-900'}`}>{botName}</h2>
+            <h2 className={`truncate text-sm font-display-medium leading-none ${isDark ? 'text-[var(--color-rl-bg)]' : 'text-gray-900'}`}>{headerTitle || botName}</h2>
             <p className={`mt-0.5 flex items-center gap-1 text-[0.6875rem] leading-none ${isDark ? 'text-[var(--color-rl-bg)]/50' : 'text-gray-600'}`}>
               <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--color-success)]" />
               {m.widget_chat_status_online()}
@@ -447,7 +456,7 @@ export function WidgetChatSurface({
         </div>
       </div>
 
-      <div className={`flex-1 overflow-y-auto ${isDark ? 'bg-[var(--color-rl-dark)]' : 'bg-white'}`}>
+      <div className="min-h-0 flex-1 overflow-y-auto" style={{ backgroundColor: surfaceBackground }}>
         <div className={`mx-auto max-w-3xl px-4 sm:px-6 ${messages.length === 0 ? 'h-full flex flex-col' : 'py-6'}`}>
           {/* py-8 on the empty state, not pb-8: with justify-center and padding
               on one side only, a short container — the admin preview panel, a
@@ -455,17 +464,15 @@ export function WidgetChatSurface({
               header border. Padding on both sides keeps a floor of space above
               it at every height. */}
           {messages.length === 0 ? (
-            <div className="flex flex-1 flex-col items-center justify-center px-4 py-8 text-center">
-              <div
-                className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl"
-                style={{ backgroundColor: primaryFaint }}
-              >
-                <MessageSquare className="h-8 w-8" style={{ color: primaryColor }} strokeWidth={1.5} />
-              </div>
-              <h3 className={`text-lg font-semibold ${isDark ? 'text-[var(--color-rl-bg)]' : 'text-gray-900'}`}>{botName}</h3>
+            <div data-widget-hero className="flex flex-1 flex-col items-center justify-center px-4 py-8 text-center">
               <p className={`mt-1 max-w-md text-sm ${isDark ? 'text-[var(--color-rl-bg)]/65' : 'text-gray-500'}`}>
                 {welcomeMessage || description || m.widget_chat_default_empty_state()}
               </p>
+              {aiDisclosureOverride?.trim() && (
+                <p data-widget-introduction className={`mt-4 max-w-md text-sm ${isDark ? 'text-[var(--color-rl-bg)]/65' : 'text-gray-500'}`}>
+                  {aiDisclosureOverride}
+                </p>
+              )}
               {starters.length > 0 && (
                 <div className="mt-8 flex max-w-lg flex-wrap justify-center gap-2">
                   {starters.map((starter) => (
@@ -506,7 +513,7 @@ export function WidgetChatSurface({
         </div>
       </div>
 
-      <div className={`shrink-0 ${isDark ? 'bg-[var(--color-rl-dark)]' : 'bg-white'}`}>
+      <div className="shrink-0" style={{ backgroundColor: surfaceBackground }}>
         <div className="mx-auto max-w-3xl px-4 pb-4 pt-2 sm:px-6">
           {collectUserInfo && (
             <div className="mb-3">
@@ -570,9 +577,13 @@ export function WidgetChatSurface({
               <ArrowUp className="h-4 w-4" strokeWidth={2.5} />
             </Button>
           </form>
-          {!hideDisclaimer && (
-            <p className={`mt-2.5 text-center text-[0.6875rem] ${isDark ? 'text-[var(--color-rl-bg)]/45' : 'text-gray-600'}`}>
-              {nerdsActive ? (
+          {(footerText != null ? footerText.trim() : !hideDisclaimer) && (
+            <div data-widget-footer className={`mt-2.5 text-center text-[0.6875rem] ${isDark ? 'text-[var(--color-rl-bg)]/45' : 'text-gray-600'}`}>
+              {footerText != null ? (
+                <Markdown skipHtml allowedElements={['a', 'p', 'br', 'strong', 'em']}
+                  components={{ a: ({ children, href }) => <a href={href} target="_blank" rel="noopener noreferrer" className="underline">{children}</a> }}
+                >{footerText}</Markdown>
+              ) : nerdsActive ? (
                 <>
                   {NERDS_DISCLOSURE[nerdsLang].before}
                   <a
@@ -588,7 +599,7 @@ export function WidgetChatSurface({
               ) : (
                 m.widget_ai_disclaimer()
               )}
-            </p>
+            </div>
           )}
         </div>
       </div>
