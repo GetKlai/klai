@@ -82,7 +82,7 @@ function OnboardingHowtoPage() {
   return (
     <PageContainer width="3xl">
       <div className="mb-2 flex items-start justify-between gap-3">
-        <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
+        <h1 className="text-xl font-display-bold text-gray-900">
           {m.platform_onboarding_title()}
         </h1>
         <Button

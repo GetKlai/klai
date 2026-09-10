@@ -111,7 +111,7 @@ function GapsPage() {
       <div className="p-6 max-w-2xl opacity-50 cursor-default select-none" aria-disabled="true">
         <div className="flex items-start gap-3 mb-4">
           <AlertTriangle className="h-7 w-7 text-gray-900" />
-          <h1 className="page-title text-xl/none font-semibold text-gray-900">
+          <h1 className="text-xl/none font-semibold text-gray-900">
             {m.gaps_page_title()}
           </h1>
         </div>
@@ -131,7 +131,7 @@ function GapsPage() {
       <div className="flex items-start justify-between mb-6">
         <div className="flex items-center gap-3">
           <AlertTriangle className="h-7 w-7 text-gray-900" />
-          <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
+          <h1 className="text-xl font-display-bold text-gray-900">
             {m.gaps_page_title()}
           </h1>
         </div>

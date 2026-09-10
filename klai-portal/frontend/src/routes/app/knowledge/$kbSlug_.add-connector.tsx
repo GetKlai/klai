@@ -379,7 +379,7 @@ function AddConnectorPage() {
     <PageContainer width="xl">
       {/* Page header */}
       <div className="flex items-center justify-between mb-6">
-        <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
+        <h1 className="text-xl font-display-bold text-gray-900">
           {m.admin_connectors_add_title()}
         </h1>
         <Button type="button" variant="outline" size="sm" onClick={goBack}>
