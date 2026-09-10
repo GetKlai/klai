@@ -172,3 +172,53 @@ async def test_empty_response_body_adds_no_key(monkeypatch: pytest.MonkeyPatch) 
     event, _result = await _crawl_page(monkeypatch, error)
 
     assert "response_body" not in event
+
+
+@pytest.mark.asyncio
+async def test_seed_relaxed_retry_failure_carries_the_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Relaxed seed retry = _fetch_seed_page's SECOND request; it fires only when the
+    strict fetch succeeds thin (word_count < 100, HTML words >= 100,
+    ``should_retry_relaxed_for_thin_content``), so the always-failing stub misses it."""
+    thin_page = {"success": True, "markdown": "", "html": "<p>" + "seed " * 100 + "</p>"}
+    state: dict[str, Any] = {"calls": 0, "error": None}
+
+    async def _stub(_client: httpx.AsyncClient, _payload: dict[str, Any]) -> dict[str, Any]:
+        state["calls"] += 1
+        if state["calls"] == 1:
+            return {"results": [thin_page]}
+        raise state["error"]
+
+    for error, body_expected in (
+        (_status_error(400, _REJECTED_CONFIG_BODY), True),
+        (httpx.ConnectError("all connection attempts failed"), False),
+    ):
+        state.update(calls=0, error=error)
+        monkeypatch.setattr(crawl4ai_client, "_crawl_sync", _stub)
+        with capture_logs() as logs:
+            await crawl4ai_client._fetch_seed_page(
+                start_url="https://example.com/", crawler_config={}, cookies=None
+            )
+        events = [e for e in logs if e["event"] == "crawl_site_seed_relaxed_retry_failed"]
+        assert len(events) == 1
+        assert ("response_body" in events[0]) is body_expected
+        if body_expected:
+            assert "field 'js_code' is not permitted" in events[0]["response_body"]
+
+
+@pytest.mark.asyncio
+async def test_dom_summary_failure_carries_the_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The DOM-summary crawl (``crawl_dom_summary``) is the fourth _crawl_sync caller."""
+    for error, body_expected in (
+        (_status_error(400, _REJECTED_CONFIG_BODY), True),
+        (httpx.ConnectError("all connection attempts failed"), False),
+    ):
+        _stub_crawl_sync(monkeypatch, error)
+        with capture_logs() as logs:
+            await crawl4ai_client.crawl_dom_summary("https://example.com/", rate_limit=None)
+        events = [e for e in logs if e["event"] == "crawl4ai_dom_summary_failed"]
+        assert len(events) == 1
+        assert ("response_body" in events[0]) is body_expected
+        if body_expected:
+            assert "field 'js_code' is not permitted" in events[0]["response_body"]
