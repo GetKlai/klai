@@ -1,6 +1,6 @@
 import { createEffect, For, Show } from "solid-js";
 import DOMPurify from "dompurify";
-import snarkdown from "snarkdown";
+import { marked } from "marked";
 import { TypingIndicator } from "./TypingIndicator";
 import { chatState, setMessageRating } from "../store/chat";
 import { sendTurnFeedback } from "../api/feedback";
@@ -148,7 +148,7 @@ function linkCitationMarkers(template: HTMLTemplateElement, sources?: MessageSou
 function renderMarkdown(text: string, sources?: MessageSource[]): string {
   const markdown = normalizeCitationMarkdown(text);
   const template = document.createElement("template");
-  template.innerHTML = DOMPurify.sanitize(snarkdown(markdown));
+  template.innerHTML = DOMPurify.sanitize(marked.parse(markdown, { async: false }));
   decorateLinks(template);
   linkCitationMarkers(template, sources);
   return template.innerHTML;

@@ -1,6 +1,6 @@
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import DOMPurify from "dompurify";
-import snarkdown from "snarkdown";
+import { marked } from "marked";
 import { MessageList } from "./MessageList";
 import {
   chatState,
@@ -120,7 +120,7 @@ export function ChatWindow(props: ChatWindowProps) {
 
   const footerHtml = () => {
     const template = document.createElement("template");
-    template.innerHTML = DOMPurify.sanitize(snarkdown(props.footerText?.trim() ?? ""), {
+    template.innerHTML = DOMPurify.sanitize(marked.parse(props.footerText?.trim() ?? "", { async: false }).trim(), {
       ALLOWED_TAGS: ["a", "p", "br", "strong", "em"],
       ALLOWED_ATTR: ["href", "title"],
     });
@@ -577,8 +577,8 @@ export function ChatWindow(props: ChatWindowProps) {
               onClick={() => void startFreshConversation()}
             >
               <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M12 5v14" />
-                <path d="M5 12h14" />
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" />
               </svg>
               <span>{t().newConversation}</span>
             </button>
@@ -832,42 +832,53 @@ export function ChatWindow(props: ChatWindowProps) {
             </Show>
           </div>
         </Show>
-        <textarea
-          ref={textareaRef}
-          class="klai-textarea"
-          placeholder={t().placeholder}
-          value={inputValue()}
-          onInput={handleTextareaInput}
-          onKeyDown={handleKeyDown}
-          disabled={chatState.isStreaming || chatState.handoffConnecting || chatState.conversationStatus === "closed" || conversationActionBusy()}
-          rows={1}
-          aria-label={t().inputLabel}
-        />
-        <Show
-          when={chatState.isStreaming}
-          fallback={
+        <div class="klai-compose-row">
+          <textarea
+            ref={textareaRef}
+            class="klai-textarea"
+            placeholder={t().placeholder}
+            value={inputValue()}
+            onInput={handleTextareaInput}
+            onKeyDown={handleKeyDown}
+            disabled={chatState.isStreaming || chatState.handoffConnecting || chatState.conversationStatus === "closed" || conversationActionBusy()}
+            rows={1}
+            aria-label={t().inputLabel}
+          />
+          <Show
+            when={chatState.isStreaming}
+            fallback={
+              <button
+                class="klai-send-btn"
+                aria-label={t().sendMessage}
+                disabled={inputValue().trim() === "" || !canSend()}
+                onClick={() => void handleSend()}
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M12 19V5" />
+                  <path d="m5 12 7-7 7 7" />
+                </svg>
+              </button>
+            }
+          >
             <button
-              class="klai-send-btn"
-              aria-label={t().sendMessage}
-              disabled={inputValue().trim() === "" || !canSend()}
-              onClick={() => void handleSend()}
+              class="klai-stop-btn"
+              aria-label={t().stopGenerating}
+              onClick={handleStop}
             >
               <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+                <rect x="6" y="6" width="12" height="12" rx="2" />
               </svg>
             </button>
-          }
-        >
-          <button
-            class="klai-stop-btn"
-            aria-label={t().stopGenerating}
-            onClick={handleStop}
-          >
-            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-              <rect x="6" y="6" width="12" height="12" rx="2" />
-            </svg>
-          </button>
-        </Show>
+          </Show>
+        </div>
       </div>
 
       {/* null/missing keeps the legacy footer; an explicit blank hides it. */}
