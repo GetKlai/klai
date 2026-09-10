@@ -173,7 +173,7 @@ function WidgetDetailPage() {
       {/* Settings on the left, live visitor preview on the right; the panel
           stacks below the content on narrow screens. */}
       <WidgetPreviewProvider widget={widget}>
-        <div className="grid min-w-0 items-start gap-8 xl:grid-cols-[minmax(0,1fr)_24rem]">
+        <div className={`grid min-w-0 items-start gap-8 ${previewOpen ? 'xl:grid-cols-[minmax(0,1fr)_24rem]' : ''}`}>
           <div className="min-w-0 space-y-8">
             <Tabs
               tabs={tabs}
