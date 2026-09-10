@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import Annotated, Literal
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -527,8 +527,10 @@ async def get_widget_detail(
 
 class PreviewSessionResponse(BaseModel):
     session_token: str
+    session_id: str
     chat_endpoint: str
     session_expires_at: str
+    tenant_css_variables: dict[str, str] = Field(default_factory=dict)
 
 
 @router.get("/{widget_id}/preview-session", response_model=PreviewSessionResponse)
@@ -537,6 +539,9 @@ async def widget_preview_session(
     perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     _platform: UserPermissions = Depends(require_platform_unlocked("widgets")),
     db: AsyncSession = Depends(get_db),
+    session_id: Annotated[str | None, Header(
+        alias="X-Klai-Widget-Session-Id", pattern=r"^[A-Za-z0-9_-]{16,128}$",
+    )] = None,
 ) -> PreviewSessionResponse:
     """Issue a short-lived session token for the admin's own widget,
     no Origin check. Powers the test page chat without touching
@@ -555,6 +560,7 @@ async def widget_preview_session(
     # REQ-15 (Finding B-11): mark the admin-preview JWT with is_preview=true
     # so widget_audit can flag the conversation and the stats query can
     # exclude it. @MX:SPEC SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-15
+    session_id = session_id or uuid.uuid4().hex
     token = generate_session_token(
         wgt_id=widget.widget_id,
         org_id=widget.org_id,
@@ -562,11 +568,14 @@ async def widget_preview_session(
         secret=settings.widget_jwt_secret,
         tenant_slug=org.slug,
         is_preview=True,
+        session_id=session_id,
     )
     return PreviewSessionResponse(
         session_token=token,
+        session_id=session_id,
         chat_endpoint="/partner/v1/chat/completions",
         session_expires_at=(datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+        tenant_css_variables=org.widget_css_variables,
     )
 
 
