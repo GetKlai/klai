@@ -18,13 +18,69 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 
 import pytest
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.testclient import TestClient
 
 # ---------------------------------------------------------------------------
 # Test app factory + module-scoped fixtures
 # ---------------------------------------------------------------------------
+
+
+def _widget_router() -> APIRouter:
+    # Public widget endpoints, shaped like production: an APIRouter with the
+    # partner prefix, routes marked with @widget_cors, included on the app.
+    # /widget-config has a widget-aware preflight route that echoes the origin
+    # when the widget's allowlist matches.
+    from app.api.widget_public import ECHO, ROUTE_DECIDES, widget_cors
+
+    router = APIRouter(prefix="/partner/v1")
+
+    @widget_cors(router, ECHO)
+    @router.post("/chat/completions")
+    async def widget_chat() -> JSONResponse:
+        return JSONResponse({"ok": True})
+
+    @widget_cors(router, ROUTE_DECIDES)
+    @router.options("/widget-config")
+    async def widget_config_preflight(id: str) -> JSONResponse:
+        headers = {"X-Widget-Route": id}
+        if id == "wgt_allows_customer":
+            headers["Access-Control-Allow-Origin"] = "https://help.customer.example"
+        return JSONResponse(None, status_code=204, headers=headers)
+
+    @widget_cors(router, ROUTE_DECIDES)
+    @router.get("/widget-config")
+    async def widget_config(id: str) -> JSONResponse:
+        if id == "wgt_allows_customer":
+            return JSONResponse({"ok": True}, headers={"Access-Control-Allow-Origin": "https://help.customer.example"})
+        return JSONResponse({"detail": "Origin not allowed"}, status_code=403)
+
+    @widget_cors(router, ECHO)
+    @router.get("/widget-handoffs/hubspot/events")
+    async def widget_handoff_events() -> StreamingResponse:
+        async def events() -> AsyncIterator[bytes]:
+            yield b"id: 1\ndata: {}\n\n"
+
+        return StreamingResponse(events(), media_type="text/event-stream")
+
+    @widget_cors(router, ECHO)
+    @router.post("/widget/feedback")
+    async def widget_feedback() -> JSONResponse:
+        return JSONResponse({"ok": True})
+
+    # Same path as a marked route, different method, no marker: must keep
+    # the first-party policy.
+    @widget_cors(router, ECHO)
+    @router.get("/shared")
+    async def shared_marked() -> JSONResponse:
+        return JSONResponse({"ok": True})
+
+    @router.post("/shared")
+    async def shared_unmarked() -> JSONResponse:
+        return JSONResponse({"ok": True})
+
+    return router
 
 
 def _make_test_app(cors_origins: str = "http://localhost:5174") -> FastAPI:
@@ -58,33 +114,7 @@ def _make_test_app(cors_origins: str = "http://localhost:5174") -> FastAPI:
     async def internal() -> JSONResponse:
         return JSONResponse({"ok": True})
 
-    # Public widget endpoints, mirrored from app/api/partner.py: the widget
-    # bundle calls these from the customer's own site. /widget-config has a
-    # widget-aware preflight route that echoes the origin when the widget's
-    # allowlist matches.
-    @app.post("/partner/v1/chat/completions")
-    async def widget_chat() -> JSONResponse:
-        return JSONResponse({"ok": True})
-
-    @app.options("/partner/v1/widget-config")
-    async def widget_config_preflight(id: str) -> JSONResponse:
-        headers = {"X-Widget-Route": id}
-        if id == "wgt_allows_customer":
-            headers["Access-Control-Allow-Origin"] = "https://help.customer.example"
-        return JSONResponse(None, status_code=204, headers=headers)
-
-    @app.get("/partner/v1/widget-config")
-    async def widget_config(id: str) -> JSONResponse:
-        if id == "wgt_allows_customer":
-            return JSONResponse({"ok": True}, headers={"Access-Control-Allow-Origin": "https://help.customer.example"})
-        return JSONResponse({"detail": "Origin not allowed"}, status_code=403)
-
-    @app.get("/partner/v1/widget-handoffs/hubspot/events")
-    async def widget_handoff_events() -> StreamingResponse:
-        async def events() -> AsyncIterator[bytes]:
-            yield b"id: 1\ndata: {}\n\n"
-
-        return StreamingResponse(events(), media_type="text/event-stream")
+    app.include_router(_widget_router())
 
     app.add_middleware(
         KlaiCORSMiddleware,
@@ -487,6 +517,7 @@ def test_widget_preflight_from_customer_origin_is_answered(
     )
     assert response.status_code == 204, response.text
     assert response.headers.get("access-control-allow-origin") == CUSTOMER_ORIGIN
+    assert response.headers.get("access-control-allow-methods") == method
     allowed = response.headers.get("access-control-allow-headers", "").lower()
     assert all(h in allowed for h in requested_headers.split(","))
     assert "access-control-allow-credentials" not in response.headers
@@ -553,3 +584,50 @@ def test_customer_origin_is_still_rejected_outside_widget_paths(cors_client: Tes
     )
     assert response.status_code == 400
     assert "access-control-allow-origin" not in response.headers
+
+
+def test_unmarked_route_on_a_marked_path_keeps_the_first_party_policy(cors_client: TestClient) -> None:
+    preflight = cors_client.options(
+        "/partner/v1/shared",
+        headers={"Origin": CUSTOMER_ORIGIN, "Access-Control-Request-Method": "POST"},
+    )
+    assert preflight.status_code == 400
+    actual = cors_client.post("/partner/v1/shared", headers={"Origin": CUSTOMER_ORIGIN})
+    assert actual.status_code == 200
+    assert "access-control-allow-origin" not in actual.headers
+    marked = cors_client.options(
+        "/partner/v1/shared",
+        headers={"Origin": CUSTOMER_ORIGIN, "Access-Control-Request-Method": "GET"},
+    )
+    assert marked.status_code == 204
+    assert marked.headers.get("access-control-allow-origin") == CUSTOMER_ORIGIN
+
+
+def test_production_widget_routes_carry_the_marker() -> None:
+    """Every route the widget bundle calls (klai-widget/src/api) declares its
+    CORS mode on the real partner router. A new widget endpoint that forgets
+    the marker fails here instead of only on a customer domain."""
+    import importlib
+
+    from app.api import widget_public
+    from app.api.widget_public import ECHO, ROUTE_DECIDES, registered_widget_routes
+
+    # The fixture router above registers the same keys; start from an empty
+    # registry so only the real partner router counts, then put it back.
+    before = registered_widget_routes()
+    widget_public._replace_registry({})
+    try:
+        importlib.reload(importlib.import_module("app.api.partner"))
+        registered = registered_widget_routes()
+    finally:
+        widget_public._replace_registry(before)
+    expected = {
+        ("POST", "/partner/v1/chat/completions"): ECHO,
+        ("POST", "/partner/v1/widget/feedback"): ECHO,
+        ("POST", "/partner/v1/widget-handoffs/hubspot/start"): ECHO,
+        ("POST", "/partner/v1/widget-handoffs/hubspot/messages"): ECHO,
+        ("GET", "/partner/v1/widget-handoffs/hubspot/events"): ECHO,
+        ("GET", "/partner/v1/widget-config"): ROUTE_DECIDES,
+        ("OPTIONS", "/partner/v1/widget-config"): ROUTE_DECIDES,
+    }
+    assert registered == expected

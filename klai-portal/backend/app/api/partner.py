@@ -31,6 +31,7 @@ from app.api.partner_dependencies import (
     require_permission,
     validate_kb_access,
 )
+from app.api.widget_public import ECHO, ROUTE_DECIDES, widget_cors
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal, get_db, set_tenant
 from app.core.permissions import assert_platform_unlocked
@@ -1595,6 +1596,7 @@ async def _maybe_apply_web_search(
     return enriched_prompt, web_results_as_chunks(web_results), web_query
 
 
+@widget_cors(router, ECHO)
 @router.post("/chat/completions", response_model=None)
 async def canonical_chat_completions(
     http_request: Request,
@@ -2273,6 +2275,7 @@ async def _require_hubspot_widget_handoff_enabled(
         raise _hubspot_handoff_forbidden()
 
 
+@widget_cors(router, ECHO)
 @router.post("/widget-handoffs/hubspot/start", response_model=HubSpotHandoffResponse)
 async def start_widget_hubspot_handoff(
     http_request: Request,
@@ -2301,6 +2304,7 @@ async def start_widget_hubspot_handoff(
     return HubSpotHandoffResponse(**result)
 
 
+@widget_cors(router, ECHO)
 @router.post("/widget-handoffs/hubspot/messages", response_model=HubSpotHandoffMessageResponse)
 async def send_widget_hubspot_handoff_message(
     http_request: Request,
@@ -2332,6 +2336,7 @@ async def send_widget_hubspot_handoff_message(
     return HubSpotHandoffMessageResponse(**result)
 
 
+@widget_cors(router, ECHO)
 @router.get("/widget-handoffs/hubspot/events")
 async def stream_widget_hubspot_handoff_events(
     request: Request,
@@ -2510,6 +2515,7 @@ class WidgetFeedbackRequest(BaseModel):
     rating: Literal["thumbsUp", "thumbsDown"] | None = None
 
 
+@widget_cors(router, ECHO)
 @router.post("/widget/feedback")
 async def submit_widget_feedback(
     request: WidgetFeedbackRequest,
@@ -2837,6 +2843,7 @@ def _widget_mint_rate_limited(retry_after: int) -> Response:
     )
 
 
+@widget_cors(router, ROUTE_DECIDES)
 @router.get("/widget-config")
 async def widget_config(
     id: str,
@@ -3192,6 +3199,7 @@ async def public_bot_config(
     )
 
 
+@widget_cors(router, ROUTE_DECIDES)
 @router.options("/widget-config")
 async def widget_config_preflight(
     id: str,

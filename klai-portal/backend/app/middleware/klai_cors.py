@@ -44,6 +44,8 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from app.api.widget_public import ROUTE_DECIDES, widget_cors_mode
+
 # The fixed first-party origin pattern. Exposed as a module constant so the
 # AC-14 test can monkeypatch it before re-invoking _compile_first_party_regex().
 #
@@ -59,25 +61,18 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 #   https://evil.getklai.com.attacker.tld    (not the getklai.com TLD)
 _FIRST_PARTY_ORIGIN_PATTERN = r"^https://([a-z0-9][a-z0-9-]*\.)?getklai\.com$"
 
-# Public widget endpoints (app/api/partner.py). The widget bundle calls these
-# from the customer's own site, so the first-party allowlist cannot apply.
-# The security boundary there is the widget session JWT minted by
-# /widget-config (see its docstring), never the BFF cookie: the origin is
-# echoed and credentials are never allowed. /widget-config keeps its own
-# widget-aware OPTIONS route, which decides per widget allowlist.
-_WIDGET_CONFIG_PATH = "/partner/v1/widget-config"
-_WIDGET_PUBLIC_PATHS = frozenset(
-    {
-        _WIDGET_CONFIG_PATH,
-        "/partner/v1/chat/completions",
-        "/partner/v1/widget/feedback",
-    }
-)
-_WIDGET_HANDOFF_PREFIX = "/partner/v1/widget-handoffs/"
 
-
-def _is_widget_public_path(path: str) -> bool:
-    return path in _WIDGET_PUBLIC_PATHS or path.startswith(_WIDGET_HANDOFF_PREFIX)
+# The widget bundle runs on the customer's own site, so the first-party
+# allowlist cannot apply to the routes it calls. Those routes declare
+# themselves with @widget_cors in app/api/partner.py (see
+# app/api/widget_public.py); this module holds no widget paths. A preflight is
+# looked up with the method it asks for, so an unmarked route sharing a path
+# with a marked one keeps the first-party policy.
+def _widget_mode_for(scope: Scope, headers: Headers) -> str | None:
+    method = scope.get("method", "")
+    if method == "OPTIONS" and "access-control-request-method" in headers:
+        method = headers["access-control-request-method"]
+    return widget_cors_mode(method, scope.get("path", ""))
 
 
 logger = structlog.get_logger()
@@ -178,9 +173,11 @@ class KlaiCORSMiddleware(CORSMiddleware):
         headers = Headers(scope=scope)
         origin = headers.get("origin")
 
-        if origin and _is_widget_public_path(scope.get("path", "")):
-            await self._widget_cors(scope, receive, send, origin=origin, headers=headers)
-            return
+        if origin:
+            mode = _widget_mode_for(scope, headers)
+            if mode is not None:
+                await self._widget_cors(scope, receive, send, origin=origin, headers=headers, mode=mode)
+                return
 
         if origin and not self.is_allowed_origin(origin):
             method = scope.get("method", "")
@@ -205,12 +202,13 @@ class KlaiCORSMiddleware(CORSMiddleware):
         *,
         origin: str,
         headers: Headers,
+        mode: str,
     ) -> None:
         """CORS for the public widget endpoints: echo the origin, no credentials."""
-        if scope.get("path") == _WIDGET_CONFIG_PATH:
-            # Its routes decide per widget allowlist and set ACAO themselves,
-            # on the preflight as well as on the GET (403 without ACAO when
-            # the origin is not allowed).
+        if mode == ROUTE_DECIDES:
+            # The route decides per widget allowlist and sets ACAO itself, on
+            # the preflight as well as on the actual request (403 without
+            # ACAO when the origin is not allowed) — see app/api/widget_public.py.
             await self.app(scope, receive, send)
             return
         if scope.get("method") == "OPTIONS" and "access-control-request-method" in headers:
@@ -218,7 +216,10 @@ class KlaiCORSMiddleware(CORSMiddleware):
                 status_code=204,
                 headers={
                     "Access-Control-Allow-Origin": origin,
-                    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                    # Only the method this preflight asked for: browsers cache
+                    # each advertised method, and an unmarked route sharing
+                    # the path must not ride on a marked one's preflight.
+                    "Access-Control-Allow-Methods": headers["access-control-request-method"],
                     # Mirror what the browser asks for (Starlette does the same
                     # for allow_headers="*"): the SSE client adds Last-Event-ID
                     # on reconnect, the widget its session id and bearer token.
