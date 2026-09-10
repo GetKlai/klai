@@ -370,7 +370,10 @@ function EditConnectorPage() {
         // is still inside the (possibly edited) base URL scope.
         const base = webcrawlerConfig.base_url
         const validatedSeed =
-          wcPreviewUrl && wcPreviewUrl !== base && previewResult?.classification === 'success'
+          wcPreviewUrl &&
+          wcPreviewUrl !== base &&
+          previewResult?.classification === 'success' &&
+          isWithinBaseUrl(wcPreviewUrl, base)
             ? wcPreviewUrl
             : ''
         const carriedSeed =
