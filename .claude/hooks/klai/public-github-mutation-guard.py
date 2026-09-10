@@ -402,6 +402,38 @@ def is_public_main_push(command: str) -> bool:
     return False
 
 
+def _is_authorized(command: str, marker: str) -> bool:
+    """True only when ``marker`` is set as an environment assignment.
+
+    A plain ``marker in command`` also matches the marker appearing as DATA:
+    a PR body explaining the marker, a commit message quoting it, a doc edit
+    documenting it. Writing about the escape hatch then opens it. Heredoc
+    bodies were already stripped before this point for the same reason; a
+    quoted ``--body`` argument was not.
+
+    So the marker has to survive shlex tokenising as its own bare word, in the
+    assignment position: leading, or after another assignment, or right after
+    a command separator. ``KLAI_...=1 gh pr create`` authorises;
+    ``gh pr create --body "about KLAI_...=1"`` does not, because shlex hands
+    that back as one token with the surrounding prose attached.
+    """
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        # Unparseable quoting: fail closed, the caller will block.
+        return False
+    expect_assignment = True
+    for token in tokens:
+        if token in {"&&", "||", ";", "|", "&", "(", ")", "{", "}"}:
+            expect_assignment = True
+            continue
+        if expect_assignment and token == marker:
+            return True
+        # An assignment keeps us in the prefix position; anything else ends it.
+        expect_assignment = expect_assignment and "=" in token and not token.startswith("-")
+    return False
+
+
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
@@ -413,7 +445,7 @@ def main() -> int:
         return 0
     command = _without_heredoc_bodies(command)
 
-    if APPROVAL_MARKER not in command and is_public_issue_mutation(command):
+    if not _is_authorized(command, APPROVAL_MARKER) and is_public_issue_mutation(command):
         print(
             "BLOCKED: autonomous public GitHub issue mutation.\n\n"
             "This repository is public. Report backlog and security findings in "
@@ -424,7 +456,7 @@ def main() -> int:
         )
         return 2
 
-    if CODE_APPROVAL_MARKER not in command and is_public_pr_mutation(command):
+    if not _is_authorized(command, CODE_APPROVAL_MARKER) and is_public_pr_mutation(command):
         print(
             "BLOCKED: autonomous public GitHub PR mutation.\n\n"
             "A public PR is a disclosure surface. Only when the user's current "
@@ -434,7 +466,7 @@ def main() -> int:
         )
         return 2
 
-    if CODE_APPROVAL_MARKER not in command and is_public_main_push(command):
+    if not _is_authorized(command, CODE_APPROVAL_MARKER) and is_public_main_push(command):
         print(
             "BLOCKED: public main branch push.\n\n"
             "Direct publication to main requires explicit authorization. Routine "

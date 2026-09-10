@@ -119,6 +119,46 @@ gh pr merge 123
             command, "autonomous public GitHub PR mutation"
         )
 
+    def test_marker_as_argument_data_cannot_authorize(self) -> None:
+        """Writing ABOUT the escape hatch must not open it.
+
+        The check was a plain substring match on the command text, so a PR
+        body explaining the marker, a commit message quoting it, or a doc edit
+        documenting it all authorised the mutation. Heredoc bodies were
+        stripped for exactly this reason; a quoted argument was not. That is
+        how PR #1400 came to be opened: its body contained a sentence naming
+        the marker.
+        """
+        cases = [
+            ('gh pr comment 42 --body "retry with KLAI_ALLOW_PUBLIC_CODE_MUTATION=1"',
+             "autonomous public GitHub PR mutation"),
+            ('gh pr edit 42 --title "KLAI_ALLOW_PUBLIC_CODE_MUTATION=1"',
+             "autonomous public GitHub PR mutation"),
+            ('git commit -m "KLAI_ALLOW_PUBLIC_CODE_MUTATION=1" && git push origin main',
+             "public main branch push"),
+        ]
+        for command, message in cases:
+            with self.subTest(command=command):
+                self.assert_blocked(command, message)
+
+    def test_issue_marker_as_argument_data_cannot_authorize(self) -> None:
+        self.assert_blocked(
+            'gh issue create --title x --body "KLAI_ALLOW_PUBLIC_ISSUE_MUTATION=1"',
+            "autonomous public GitHub issue mutation",
+        )
+
+    def test_marker_in_the_assignment_position_still_authorizes(self) -> None:
+        """The intended escape hatch keeps working, including after a separator."""
+        commands = [
+            "KLAI_ALLOW_PUBLIC_CODE_MUTATION=1 gh pr merge 42 --squash",
+            "echo hi && KLAI_ALLOW_PUBLIC_CODE_MUTATION=1 gh pr merge 42",
+            "KLAI_ALLOW_PUBLIC_CODE_MUTATION=1 git push origin main",
+        ]
+        for command in commands:
+            with self.subTest(command=command):
+                exit_code, _stderr, _run = self.run_guard(command)
+                self.assertEqual(exit_code, 0, command)
+
     def test_non_heredoc_shift_operators_do_not_hide_a_real_mutation(self) -> None:
         commands = [
             "printf '%s\\n' \"<<'EOF'\"\ngh pr merge 123\nEOF\n",
