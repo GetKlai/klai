@@ -115,6 +115,7 @@ const previewGeometry = `
 :host { display: block; position: relative; width: 100%; height: 100%; }
 .klai-window:not(.klai-window--inline) { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; max-height: none; }
 .klai-bubble { position: absolute; }
+.klai-bubble[aria-expanded="true"] { display: none; }
 `;
 
 function previewConfig(config: PreviewConfig): PreviewConfig {
