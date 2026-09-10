@@ -70,7 +70,9 @@ test('preview send button stays clickable while open and the header close leaves
 // --klai-font-family must load the locally bundled 'Klai Widget Geist' face
 // through document.fonts (not merely the computed family) with zero external
 // font requests, and the input/starter/message size variables must apply and
-// clear. Runs the real dist bundle through mountPreview/updateConfig.
+// clear. The AI intro follows the message size/line-height only when they are
+// explicitly configured, and reverts to 12.5px/1.45 when the overrides clear.
+// Runs the real dist bundle through mountPreview/updateConfig.
 test('bundled Geist opt-in loads without external font requests and typography overrides apply and clear', async ({ page }) => {
   const bundle = readFileSync(new URL('../../../klai-widget/dist/klai-chat.js', import.meta.url), 'utf8')
   const fontRequests: string[] = []
@@ -79,6 +81,7 @@ test('bundled Geist opt-in loads without external font requests and typography o
   const opted = { ...base, css_variables: {
     '--klai-font-family': '"Klai Widget Geist", system-ui, sans-serif',
     '--klai-input-font-size': '16.5px', '--klai-starter-font-size': '14.3px', '--klai-message-font-size': '15.4px',
+    '--klai-message-line-height': '1.75',
   } }
   const frameHtml = '<!doctype html><html><body style="margin:0"><div id="klai-preview-host" style="height:100vh"></div><script src="/klai-chat.js" data-widget-id="e2e-preview" data-mode="preview"></script></body></html>'
   await page.route('https://widget.e2e/**', (route) => {
@@ -101,12 +104,18 @@ test('bundled Geist opt-in loads without external font requests and typography o
   await expect(chat.locator('.klai-starter')).toHaveCSS('font-size', '12.5px')
   await expect(chat.locator('.klai-hero-title')).toHaveCSS('font-size', '14px')
   await expect(chat.locator('.klai-hero-title')).toHaveCSS('-webkit-font-smoothing', 'auto')
+  // Unset message variables keep the intro on its own CSS defaults.
+  await expect(chat.locator('.klai-hero-ai-disclosure')).toHaveCSS('font-size', '12.5px')
+  await expect(chat.locator('.klai-hero-ai-disclosure')).toHaveCSS('line-height', '18.125px')
   await frame.evaluate((config) => (window as any).__preview.updateConfig(config), opted)
   await expect(chat.locator('.klai-textarea')).toHaveCSS('font-size', '16.5px')
   await expect(chat.locator('.klai-starter')).toHaveCSS('font-size', '14.3px')
   await expect(chat.locator('.klai-hero-title')).toHaveCSS('font-size', '15.4px')
   await expect(chat.locator('.klai-hero-title')).toHaveCSS('font-family', /Klai Widget Geist/)
   await expect(chat.locator('.klai-hero-title')).toHaveCSS('-webkit-font-smoothing', 'antialiased')
+  // Explicit message size/line-height drive the intro: 15.4px and 15.4×1.75.
+  await expect(chat.locator('.klai-hero-ai-disclosure')).toHaveCSS('font-size', '15.4px')
+  await expect(chat.locator('.klai-hero-ai-disclosure')).toHaveCSS('line-height', '26.95px')
   const face = await frame.evaluate(() => document.fonts.load('16px "Klai Widget Geist"')
     .then((faces) => ({ count: faces.length, loaded: faces.every((f) => f.status === 'loaded') })))
   expect(face.count).toBeGreaterThan(0)
@@ -116,5 +125,41 @@ test('bundled Geist opt-in loads without external font requests and typography o
   await expect(chat.locator('.klai-starter')).toHaveCSS('font-size', '12.5px')
   await expect(chat.locator('.klai-hero-title')).toHaveCSS('font-size', '14px')
   await expect(chat.locator('.klai-hero-title')).toHaveCSS('-webkit-font-smoothing', 'auto')
+  await expect(chat.locator('.klai-hero-ai-disclosure')).toHaveCSS('font-size', '12.5px')
+  await expect(chat.locator('.klai-hero-ai-disclosure')).toHaveCSS('line-height', '18.125px')
   expect(fontRequests).toEqual([])
+})
+
+// Answer (markdown) and footer (disclaimer) links must show a visible hover
+// state and a keyboard-only focus ring: thicker underline on hover, 2px
+// outline on real Tab navigation (:focus-visible). Source CSS in an isolated
+// shadow root, real markup per class.
+test('answer and footer links emphasize on hover and outline on keyboard focus', async ({ page }) => {
+  await page.setContent('<div id="host"></div>')
+  await page.evaluate((styles) => {
+    const root = document.getElementById('host')!.attachShadow({ mode: 'open' })
+    const style = document.createElement('style')
+    style.textContent = styles
+    const box = document.createElement('div')
+    box.innerHTML =
+      '<div class="klai-markdown"><p><a href="https://example.com/a">answer link</a></p></div>' +
+      '<p class="klai-disclaimer"><a class="klai-disclaimer-link" href="https://example.com/f">footer link</a></p>'
+    root.append(style, box)
+  }, css)
+  const answer = page.locator('#host .klai-markdown a')
+  const footer = page.locator('#host .klai-disclaimer-link')
+  await answer.hover()
+  await expect(answer).toHaveCSS('text-decoration-thickness', '2px')
+  await expect(answer).toHaveCSS('text-underline-offset', '3px')
+  await footer.hover()
+  await expect(footer).toHaveCSS('text-decoration-thickness', '2px')
+  await expect(footer).toHaveCSS('text-underline-offset', '3px')
+  await page.keyboard.press('Tab')
+  await expect(answer).toHaveCSS('outline-width', '2px')
+  await expect(answer).toHaveCSS('outline-style', 'solid')
+  await expect(answer).toHaveCSS('outline-offset', '3px')
+  await page.keyboard.press('Tab')
+  await expect(footer).toHaveCSS('outline-width', '2px')
+  await expect(footer).toHaveCSS('outline-style', 'solid')
+  await expect(footer).toHaveCSS('outline-offset', '3px')
 })
