@@ -3175,6 +3175,7 @@ async def public_bot_config(
         "nerds": _widget_nerds_integration(widget_config_data),
         "name": widget_row.name,
         "description": widget_row.description or "",
+        "ai_disclosure_override": widget_config_data.get("ai_disclosure_override") or "",
         "handoff": {
             "hubspot": {
                 # org is None only if the row vanished between the two queries;
