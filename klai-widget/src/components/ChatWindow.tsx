@@ -1,6 +1,6 @@
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import DOMPurify from "dompurify";
-import snarkdown from "snarkdown";
+import { marked } from "marked";
 import { MessageList } from "./MessageList";
 import {
   chatState,
@@ -120,7 +120,7 @@ export function ChatWindow(props: ChatWindowProps) {
 
   const footerHtml = () => {
     const template = document.createElement("template");
-    template.innerHTML = DOMPurify.sanitize(snarkdown(props.footerText?.trim() ?? ""), {
+    template.innerHTML = DOMPurify.sanitize(marked.parse(props.footerText?.trim() ?? "", { async: false }).trim(), {
       ALLOWED_TAGS: ["a", "p", "br", "strong", "em"],
       ALLOWED_ATTR: ["href", "title"],
     });
