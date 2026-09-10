@@ -16,6 +16,13 @@ vi.mock('@/paraglide/messages', () => ({
   widget_style_window_width: () => 'Window width',
   widget_style_window_height: () => 'Window height',
   widget_style_line_height: () => 'Line height',
+  widget_style_font_family: () => 'Font',
+  widget_style_font_inherit: () => 'Use default',
+  widget_style_font_bundled: () => 'Geist (bundled with Klai)',
+  widget_style_font_system: () => 'System font',
+  widget_style_font_help: () => 'The bundled font is served by Klai itself, with no external font service.',
+  widget_style_input_font_size: () => 'Input font size',
+  widget_style_starter_font_size: () => 'Starter font size',
 }))
 
 import { WidgetStyleOverridesFields } from '../WidgetStyleOverridesFields'
@@ -48,5 +55,39 @@ describe('WidgetStyleOverridesFields', () => {
     fireEvent.change(screen.getByLabelText('Header background'), { target: { value: '' } })
     expect(screen.getByTestId('value').textContent).not.toContain('--klai-header-background')
     expect(screen.getByTestId('value').textContent).toContain('"--unrelated-setting":"keep-me"')
+  })
+  it('accepts fractional px values and keeps unrelated settings when clearing the font override', () => {
+    const fractional = render(
+      <WidgetStyleOverridesFields
+        value={{
+          '--klai-message-font-size': '15.4px',
+          '--klai-input-font-size': '16.5px',
+          '--klai-starter-font-size': '14.3px',
+          '--klai-message-gap': '18.4px',
+          '--klai-content-padding': '26.4px',
+        }}
+        onChange={() => {}}
+      />,
+    )
+    expect(screen.getByLabelText<HTMLInputElement>(/^Message font size/).checkValidity()).toBe(true)
+    expect(screen.getByLabelText<HTMLInputElement>(/^Input font size/).checkValidity()).toBe(true)
+    expect(screen.getByLabelText<HTMLInputElement>(/^Starter font size/).checkValidity()).toBe(true)
+    expect(screen.getByLabelText<HTMLInputElement>(/^Message spacing/).checkValidity()).toBe(true)
+    expect(screen.getByLabelText<HTMLInputElement>(/^Content padding/).checkValidity()).toBe(true)
+    fractional.unmount()
+
+    render(<Harness />)
+    const font = screen.getByLabelText<HTMLSelectElement>('Font')
+
+    fireEvent.change(font, { target: { value: '"Klai Widget Geist", system-ui, sans-serif' } })
+    expect(screen.getByTestId('value').textContent).toContain('"--klai-font-family":"\\"Klai Widget Geist\\", system-ui, sans-serif"')
+
+    fireEvent.change(font, { target: { value: 'system-ui, sans-serif' } })
+    expect(screen.getByTestId('value').textContent).toContain('"--klai-font-family":"system-ui, sans-serif"')
+
+    fireEvent.change(font, { target: { value: '' } })
+    expect(screen.getByTestId('value').textContent).not.toContain('--klai-font-family')
+    expect(screen.getByTestId('value').textContent).toContain('"--unrelated-setting":"keep-me"')
+    expect(screen.getByTestId('value').textContent).toContain('"--klai-header-background":"#ffffff"')
   })
 })
