@@ -36,6 +36,20 @@ async def test_tenant_can_save_clear_and_preserve_widget_style_defaults():
     assert result.widget_css_variables == {}
 
 
+def test_tenant_font_style_overrides_accept_supported_and_reject_arbitrary_values():
+    styles = {
+        "--klai-font-family": '"Klai Widget Geist", system-ui, sans-serif',
+        "--klai-input-font-size": "12px",
+        "--klai-starter-font-size": "24px",
+    }
+    assert OrgSettingsUpdate(widget_css_variables=styles).widget_css_variables == styles
+    assert OrgSettingsUpdate(
+        widget_css_variables={"--klai-font-family": "system-ui, sans-serif"}
+    ).widget_css_variables == {"--klai-font-family": "system-ui, sans-serif"}
+    with pytest.raises(ValidationError):
+        OrgSettingsUpdate(widget_css_variables={"--klai-font-family": "url('https://cdn.example/evil.woff2')"})
+
+
 @pytest.mark.parametrize(
     "styles",
     [

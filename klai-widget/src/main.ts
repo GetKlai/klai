@@ -17,6 +17,21 @@ import {
 import type { WidgetConfig } from "./api/widget-config";
 import { initLabels } from "./i18n/labels";
 import widgetCss from "./styles/widget.css?inline";
+import geistRegularWoff2 from "../../klai-portal/frontend/public/fonts/geist-regular.woff2?inline";
+
+// Locally bundled Geist, opt-in via the tenant CSS variable
+// --klai-font-family: '"Klai Widget Geist", system-ui, sans-serif'.
+// The face is registered once per widget document from the embedded bytes
+// (data URI decoded via atob) — no external font URL, so no network request
+// and no CORS/CSP surface — and under a distinctly named family so a
+// host-page "Geist" is never shadowed. Module scope covers every mode that
+// loads this bundle: public bubble, inline and the preview iframe.
+// jsdom (widget unit tests) has no FontFace; real browsers always do.
+if (typeof FontFace === "function") {
+  const base64 = geistRegularWoff2.split(",")[1];
+  const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+  document.fonts.add(new FontFace("Klai Widget Geist", bytes));
+}
 
 // Find the script tag that loaded this widget
 function findScriptTag(): HTMLScriptElement | null {
