@@ -43,7 +43,7 @@ def _readable_text_color(primary_hex: str) -> str:
     return "#191918" if lum > 0.179 else "#ffffff"
 
 
-def _merge_css_variables(widget_config: dict) -> dict[str, str]:
+def _merge_css_variables(widget_config: dict, tenant_defaults: dict[str, str] | None = None) -> dict[str, str]:
     """Translate stored widget-config fields into CSS custom properties
     the embed script (klai-chat.js) applies inside its Shadow DOM.
 
@@ -62,7 +62,7 @@ def _merge_css_variables(widget_config: dict) -> dict[str, str]:
     Anything else (empty, invalid, attempted CSS injection) is dropped
     silently so a malformed admin field can never poison the stylesheet.
     """
-    css_vars: dict[str, str] = {}
+    css_vars: dict[str, str] = dict(tenant_defaults or {})
     if widget_config.get("theme") == "dark":
         css_vars.update(
             {

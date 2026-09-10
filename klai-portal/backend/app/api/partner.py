@@ -3026,7 +3026,7 @@ async def widget_config(
     body = {
         "title": widget_config_data.get("title", "") or widget_row.name,
         "welcome_message": widget_config_data.get("welcome_message", ""),
-        "css_variables": _merge_css_variables(widget_config_data),
+        "css_variables": _merge_css_variables(widget_config_data, getattr(org, "widget_css_variables", None)),
         "chat_endpoint": "/partner/v1/chat/completions",
         "session_token": session_token,
         "session_expires_at": expires_at.isoformat(),
@@ -3176,7 +3176,7 @@ async def public_bot_config(
     body = {
         "title": widget_config_data.get("title", ""),
         "welcome_message": widget_config_data.get("welcome_message", ""),
-        "css_variables": _merge_css_variables(widget_config_data),
+        "css_variables": _merge_css_variables(widget_config_data, getattr(org, "widget_css_variables", None)),
         "chat_endpoint": "/partner/v1/chat/completions",
         "session_token": session_token,
         "session_expires_at": expires_at.isoformat(),
