@@ -10,10 +10,10 @@ gated by require_platform_admin for cross-org writes.
 """
 
 import logging
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import _load_org_or_500
@@ -23,6 +23,9 @@ from app.core.permissions import ProfileRole, UserPermissions, get_caller_at_lea
 from app.services.domain_validation import primary_domain_for_email_domain
 from app.services.pii_allow_list import sanitize_stored_entries as sanitize_stored_allow_list
 from app.services.pii_entity_policy import sanitize_stored_entities
+from app.services.widget_style_overrides import validate_widget_style_overrides
+
+WidgetStyleOverrides = Annotated[dict[str, str], AfterValidator(validate_widget_style_overrides)]
 
 # Set of user-facing product keys (= keys that appear in derive_user_products
 # output). Used by the deprecated /settings/addons GET facade to return only
@@ -54,6 +57,7 @@ class PiiAllowListEntryOut(BaseModel):
 
 class OrgSettingsOut(BaseModel):
     name: str
+    widget_css_variables: dict[str, str] = Field(default_factory=dict)
     default_language: Literal["nl", "en"]
     mfa_policy: Literal["optional", "recommended", "required"] = "optional"
     # @MX:NOTE SPEC-AUTH-009 R5 -- toggle for auto-accepting same-domain users.
@@ -76,6 +80,7 @@ class OrgSettingsOut(BaseModel):
 
 
 class OrgSettingsUpdate(BaseModel):
+    widget_css_variables: WidgetStyleOverrides | None = None
     default_language: Literal["nl", "en"] | None = None
     mfa_policy: Literal["optional", "recommended", "required"] | None = None
     # C5.1: optional field -- omitting it does NOT change the existing value
@@ -90,6 +95,7 @@ def _settings_out(org) -> OrgSettingsOut:
     primary_domain = primary_domain_for_email_domain(org.primary_domain or "")
     return OrgSettingsOut(
         name=org.name,
+        widget_css_variables=org.widget_css_variables,
         default_language=org.default_language,
         mfa_policy=org.mfa_policy,
         auto_accept_same_domain=bool(org.auto_accept_same_domain) if primary_domain else False,
@@ -121,6 +127,8 @@ async def update_org_settings(
     db: AsyncSession = Depends(get_db),
 ) -> OrgSettingsOut:
     org = await _load_org_or_500(db, perms.org_id)
+    if body.widget_css_variables is not None:
+        org.widget_css_variables = body.widget_css_variables
     if body.default_language is not None:
         org.default_language = body.default_language
     if body.mfa_policy is not None:
