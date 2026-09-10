@@ -278,7 +278,7 @@ async def test_public_bot_config_strips_non_http_booking_url():
         patch("app.api.partner.generate_session_token", return_value="public.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
-        response = await public_bot_config(id=widget.widget_id, db=db)
+        response = await public_bot_config(id=widget.widget_id, request=_make_request(), db=db)
 
     assert json.loads(response.body.decode())["booking_url"] == ""
 
@@ -427,7 +427,7 @@ async def test_public_bot_config_strips_non_http_nerds_booking_url():
         patch("app.api.partner.generate_session_token", return_value="public.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
-        response = await public_bot_config(id=widget.widget_id, db=db)
+        response = await public_bot_config(id=widget.widget_id, request=_make_request(), db=db)
 
     body = json.loads(response.body.decode())
     assert body["nerds"] == {"enabled": False, "booking_url": ""}
@@ -459,7 +459,7 @@ async def test_public_bot_config_delivers_enabled_nerds_integration():
         patch("app.api.partner.generate_session_token", return_value="public.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
-        response = await public_bot_config(id=widget.widget_id, db=db)
+        response = await public_bot_config(id=widget.widget_id, request=_make_request(), db=db)
 
     body = json.loads(response.body.decode())
     assert body["nerds"] == {"enabled": True, "booking_url": "https://support.voys.nl/book/voys?t=abc"}
@@ -782,7 +782,7 @@ async def test_public_bot_config_rejects_when_share_disabled():
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
         with pytest.raises(Exception) as exc_info:
-            await public_bot_config(id=widget.widget_id, db=db)
+            await public_bot_config(id=widget.widget_id, request=_make_request(), db=db)
 
     assert exc_info.value.status_code == 404
 
@@ -813,7 +813,7 @@ async def test_public_bot_config_returns_token_when_share_enabled():
         patch("app.api.partner.generate_session_token", return_value="public.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
-        response = await public_bot_config(id=widget.widget_id, db=db)
+        response = await public_bot_config(id=widget.widget_id, request=_make_request(), db=db)
 
     assert response.status_code == 200
     assert '"session_token": "public.jwt.token"' in response.body.decode()
