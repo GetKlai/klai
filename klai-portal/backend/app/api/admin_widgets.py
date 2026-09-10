@@ -539,9 +539,13 @@ async def widget_preview_session(
     perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     _platform: UserPermissions = Depends(require_platform_unlocked("widgets")),
     db: AsyncSession = Depends(get_db),
-    session_id: Annotated[str | None, Header(
-        alias="X-Klai-Widget-Session-Id", pattern=r"^[A-Za-z0-9_-]{16,128}$",
-    )] = None,
+    session_id: Annotated[
+        str | None,
+        Header(
+            alias="X-Klai-Widget-Session-Id",
+            pattern=r"^[A-Za-z0-9_-]{16,128}$",
+        ),
+    ] = None,
 ) -> PreviewSessionResponse:
     """Issue a short-lived session token for the admin's own widget,
     no Origin check. Powers the test page chat without touching

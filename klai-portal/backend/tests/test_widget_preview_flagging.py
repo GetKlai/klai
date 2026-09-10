@@ -42,7 +42,10 @@ async def test_preview_refresh_preserves_conversation_and_inherits_only_its_tena
     ):
         for session in ["conversation0123456789", "conversation0123456789", "newconversation012345", None]:
             result = await widget_preview_session(
-                widget_id="widget-id", perms=make_perms(role="admin", org_id=8), db=db, session_id=session,
+                widget_id="widget-id",
+                perms=make_perms(role="admin", org_id=8),
+                db=db,
+                session_id=session,
             )
             claims = decode_session_token(result.session_token, "preview-test-secret", "voys")
             assert claims["jti"] == result.session_id
@@ -51,6 +54,7 @@ async def test_preview_refresh_preserves_conversation_and_inherits_only_its_tena
             assert claims["org_id"] == 8
             assert result.tenant_css_variables == org.widget_css_variables
         load.assert_awaited_with("widget-id", 8, db)
+
 
 # ---------------------------------------------------------------------------
 # AC15.1 — preview JWT carries is_preview claim

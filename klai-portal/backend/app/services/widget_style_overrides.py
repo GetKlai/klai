@@ -2,11 +2,22 @@
 
 import re
 
-COLOR_VARIABLES = frozenset(f"--klai-{name}" for name in (
-    "primary-color", "primary-text-color", "background-color", "card-color",
-    "text-color", "text-muted", "border-color", "link-color",
-    "header-background", "header-text-color", "header-control-background",
-))
+COLOR_VARIABLES = frozenset(
+    f"--klai-{name}"
+    for name in (
+        "primary-color",
+        "primary-text-color",
+        "background-color",
+        "card-color",
+        "text-color",
+        "text-muted",
+        "border-color",
+        "link-color",
+        "header-background",
+        "header-text-color",
+        "header-control-background",
+    )
+)
 SIZE_RANGES = {
     "--klai-message-font-size": (12, 24),
     "--klai-message-gap": (0, 40),
