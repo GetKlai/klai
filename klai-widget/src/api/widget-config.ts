@@ -176,10 +176,29 @@ function writeCachedWidgetSession(
   }
 }
 
+export type WidgetConfigFetchOptions = {
+  sessionId?: string;
+  reuseCachedSession?: boolean;
+};
+
+type PreviewWidgetConfigProvider = (
+  widgetId: string,
+  options: WidgetConfigFetchOptions,
+) => Promise<WidgetConfig>;
+
+let previewWidgetConfigProvider: PreviewWidgetConfigProvider | undefined;
+
+export function setPreviewWidgetConfigProvider(provider: PreviewWidgetConfigProvider | undefined): void {
+  previewWidgetConfigProvider = provider;
+}
+
 export async function fetchWidgetConfig(
   widgetId: string,
-  options: { sessionId?: string; reuseCachedSession?: boolean } = {},
+  options: WidgetConfigFetchOptions = {},
 ): Promise<WidgetConfig> {
+  if (previewWidgetConfigProvider) {
+    return previewWidgetConfigProvider(widgetId, options);
+  }
   if (options.reuseCachedSession) {
     const cached = readCachedWidgetSession(widgetId, options.sessionId);
     if (cached) return cached;

@@ -104,6 +104,34 @@ describe("widget session-token cache", () => {
     vi.resetModules();
   });
 
+  it("keeps preview config requests off the public mint and session cache", async () => {
+    const { fetchWidgetConfig, setPreviewWidgetConfigProvider } = await import(
+      "../src/api/widget-config"
+    );
+    const previewConfig = {
+      title: "Preview",
+      welcome_message: "Hoi!",
+      css_variables: {},
+      chat_endpoint: "/partner/v1/chat/completions",
+      session_token: "preview-token",
+      session_expires_at: new Date(Date.now() + 60 * MINUTE).toISOString(),
+    };
+    const provider = vi.fn(async () => previewConfig);
+    setPreviewWidgetConfigProvider(provider);
+
+    await fetchWidgetConfig(WIDGET_ID, { sessionId: CONV, reuseCachedSession: true });
+    await fetchWidgetConfig(WIDGET_ID, { sessionId: "conv-next" });
+
+    expect(provider).toHaveBeenNthCalledWith(1, WIDGET_ID, { sessionId: CONV, reuseCachedSession: true });
+    expect(provider).toHaveBeenNthCalledWith(2, WIDGET_ID, { sessionId: "conv-next" });
+    expect(mints).toBe(0);
+    expect(window.localStorage.length).toBe(0);
+
+    setPreviewWidgetConfigProvider(undefined);
+    await fetchWidgetConfig(WIDGET_ID, { sessionId: CONV });
+    expect(mints).toBe(1);
+  });
+
   it("reuses the cached mint when the chat reopens after a reload", async () => {
     await openChat();
     expect(mints).toBe(1);
