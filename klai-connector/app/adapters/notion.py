@@ -69,9 +69,9 @@ class NotionAdapter(BaseAdapter):
             page_ids (optional): List of specific Notion page IDs to sync.
                 When set, only these pages are synced — search is skipped entirely.
             database_ids (optional): List of Notion database IDs. When set,
-                only pages whose parent is one of these databases are synced.
-                Applied as a post-fetch filter (notion_client v2 has no server-side
-                database query — see knowledge rule notion_client-v2).
+                only pages whose parent references one of these databases are
+                synced. Applied as a post-fetch filter on parent.database_id
+                (works for both the pre- and post-2025-09-03 API parent shapes).
             max_pages (optional): Safety limit on total pages synced. Default 500.
 
         Raises:
@@ -148,9 +148,11 @@ class NotionAdapter(BaseAdapter):
         Args:
             client: Rate-limited Notion client.
             max_pages: Safety limit on total pages returned.
-            database_ids: When set, only include pages whose parent is one of
-                these database IDs (post-fetch filter — notion_client v2 has no
-                server-side database query endpoint).
+            database_ids: When set, only include pages whose parent references
+                one of these database IDs. Post-fetch filter on parent.database_id:
+                notion-client 3.1.0 defaults to API 2025-09-03, where database rows
+                report parent.type "data_source_id" (older versions: "database_id");
+                both shapes carry the database_id key.
 
         Returns:
             List of Notion page objects (including last_edited_time metadata).
@@ -179,8 +181,11 @@ class NotionAdapter(BaseAdapter):
                 if page.get("archived", False):
                     continue
                 if db_filter:
+                    # Match on parent.database_id, not parent.type: since Notion
+                    # API 2025-09-03 database rows carry type "data_source_id"
+                    # while still exposing the database_id key.
                     parent = page.get("parent", {})
-                    if parent.get("type") != "database_id" or parent.get("database_id") not in db_filter:
+                    if parent.get("database_id") not in db_filter:
                         continue
                 pages.append(page)
                 if len(pages) >= max_pages:

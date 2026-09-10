@@ -234,17 +234,32 @@ REQ-04.
 - Never use `[class*="sidebar"]` or other substring CSS selectors in JS removal scripts.
 - Use only semantic element selectors (`nav`, `header`, `aside`) and ARIA roles.
 
-## notion_client v2 — databases.query() removed (MED)
+## notion_client — no database-scoped query, and the parent shape moved (MED)
 
-`notion_client` v2 removed `databases.query()`. The only available search API is
-`client.search()`, which returns all pages the integration can access — it cannot
-be filtered by `database_ids` at the client level.
+`notion_client` v2 removed `databases.query()`, and `client.search()` — the API
+the adapter uses — cannot be filtered by `database_id` at the client level. That
+is still true on v3.
 
-The `database_ids` config field is stored and surfaced in the UI (SPEC-KB-019) but
-does not filter API results. Future filtering must be applied post-fetch (compare
-`parent.database_id` against the stored list), not via an SDK call.
+The `database_ids` config field is therefore applied as a post-fetch filter in
+`NotionAdapter._search_all_pages`, comparing `parent.database_id` against the
+stored list. That is a deliberate choice, not the only option: v3 does expose
+`databases.retrieve()` and `data_sources.query()`, so a database ID could be
+resolved to its data sources and queried per data source. That costs one extra
+API call per database and a second code path, which the current volumes do not
+justify.
 
-**Rule:** Never assume `notion_client` has a database-scoped query method. Filter by `database_id` in Python after fetching all search results.
+Since 2026-04-05 the connector runs `notion-client` 3.x (arrived transitively via
+`notion-sync-lib`, so no major-version PR). v3 defaults to `Notion-Version:
+2025-09-03`, and in that API version a page inside a database reports
+`parent.type == "data_source_id"` instead of `"database_id"` — while still
+carrying the `database_id` key. Code that filtered on `parent.type` dropped every
+page and the sync completed with zero documents and no error. Fixed 2026-09-10 by
+matching on `parent.database_id` alone, which is correct for both shapes.
+
+**Rule:** Never assume `notion_client` has a database-scoped query method, and
+never key off `parent.type` — match on `parent.database_id`. When a Notion
+behaviour looks wrong, check the default `Notion-Version` of the installed
+client first: it moves with the SDK, not with our code.
 - Spot-check `raw_words` on a known-good page after any crawl config change.
 
 ## crawl4ai usage
