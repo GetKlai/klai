@@ -41,6 +41,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # A version pin that lives in two places drifts: the compose image
+      # is what production runs, the litellm-tests workflow pin is what CI
+      # tests the hooks against. Bumping the compose pin without the
+      # workflow pin leaves CI green while testing the old library against
+      # the new production. Add pairs in deploy/check-version-pin-agreement.py.
+      - name: Check version pins agree between compose and CI workflows
+        # --self-test first: a guard whose own tests never run is the same
+        # class of problem this check exists to catch.
+        run: |
+          python3 deploy/check-version-pin-agreement.py --self-test
+          python3 deploy/check-version-pin-agreement.py
+
       # Forcing function — fail loud BEFORE pushing to core-01 if any
       # public self-host image reference points at a tag that is not
       # pullable from the registry and not a locally-built convention.

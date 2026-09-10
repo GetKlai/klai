@@ -16,6 +16,8 @@ on:
       - 'scripts/test-audit-compose.sh'
       - 'scripts/test-audit-compose-orphans.sh'
       - 'klai-scribe/scribe-api/app/core/config.py'
+      - 'deploy/check-version-pin-agreement.py'
+      - '.github/workflows/litellm-tests.yml'
       - '.github/workflows/audit-compose.yml'
   push:
     branches: [main]
@@ -29,6 +31,8 @@ on:
       - 'scripts/test-audit-compose.sh'
       - 'scripts/test-audit-compose-orphans.sh'
       - 'klai-scribe/scribe-api/app/core/config.py'
+      - 'deploy/check-version-pin-agreement.py'
+      - '.github/workflows/litellm-tests.yml'
 
 jobs:
   audit:
@@ -37,6 +41,19 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+
+      # A version pin that lives in two places drifts: the compose image is
+      # what production runs, the litellm-tests pin is what CI tests the hooks
+      # against. Bump one and forget the other and CI stays green while
+      # testing the old library against the new production. This runs here as
+      # well as in deploy-compose because deploy-compose is push-to-main only,
+      # and the change that introduces drift arrives in a PR.
+      # --self-test first: a guard whose own tests never run is the same class
+      # of problem this check exists to catch.
+      - name: Check version pins agree between compose and CI workflows
+        run: |
+          python3 deploy/check-version-pin-agreement.py --self-test
+          python3 deploy/check-version-pin-agreement.py
 
       - name: Install yq + jq
         env:
