@@ -18,11 +18,16 @@ The endpoint is now wired to the shared crawl4ai HTTP API at
 ``klai-knowledge-ingest/knowledge_ingest/crawl4ai_client.crawl_page``.
 The 502 response detail is the constant string ``"Crawl failed"``;
 all exception text goes only to ``logger.exception`` (REQ-31.2).
+crawl4ai's own rejection reason is logged separately, as two bounded
+identifiers pulled out of the body -- never as upstream prose. See
+``_rejection_diagnosis``.
 """
 
 from __future__ import annotations
 
+import re
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 import structlog
@@ -135,6 +140,73 @@ def _extract_markdown(page: dict[str, Any]) -> str:
     return fit or raw
 
 
+# What we actually need from a crawl4ai error, and nothing else.
+#
+# Both body shapes are measured against 0.9.2 (2026-09-10):
+#   {"detail": "Rejected config: field 'js_code' is not permitted ..."}
+#   {"error": "Internal server error", "correlation_id": "188834187d7d"}
+#
+# Earlier versions of this code logged the whole body, then an allowlist of
+# three fields. Both are free-form upstream strings, and scrubbing secrets out
+# of a free-form string by substring replacement cannot be both complete and
+# free of false positives: the same value is escaped differently depending on
+# the serializer, and nested JSON is escaped twice. So we do not log upstream
+# prose at all. We pull two BOUNDED identifiers out of it:
+#
+#   rejected_field  -- which config field the boundary refused
+#   correlation_id  -- the handle to find the failure in crawl4ai's own logs
+#
+# Anything that does not match these shapes is dropped. A credential cannot
+# survive a character class that admits neither quotes nor spaces.
+_REJECTED_FIELD_RE = re.compile(r"field '([A-Za-z_][A-Za-z0-9_]{0,63})' is not permitted")
+_CORRELATION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _loggable_url(url: str) -> str:
+    """Scheme, host and path only.
+
+    A canary URL is operator-supplied and may carry a session token in its
+    userinfo or query string — ``https://user:pw@wiki/?token=...``. The URL
+    validator upstream checks scheme, host and IP but does not forbid either,
+    and we log this on every rejection. Keep the part an operator needs to
+    recognise the page; drop the parts that can carry a credential.
+    """
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return "<unparseable>"
+    host = parts.hostname or ""
+    if parts.port:
+        host = f"{host}:{parts.port}"
+    return urlunsplit((parts.scheme, host, parts.path, "", ""))
+
+
+def _rejection_diagnosis(resp: httpx.Response) -> dict[str, str]:
+    """Bounded identifiers from a crawl4ai error body.
+
+    Returns an empty dict when the body is not JSON or carries neither shape —
+    the caller then logs url and status_code only, as it did before any of
+    this existed.
+    """
+    try:
+        payload = resp.json()
+    except ValueError:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+
+    diagnosis: dict[str, str] = {}
+    detail = payload.get("detail")
+    if isinstance(detail, str):
+        match = _REJECTED_FIELD_RE.search(detail)
+        if match:
+            diagnosis["rejected_field"] = match.group(1)
+    correlation_id = payload.get("correlation_id")
+    if isinstance(correlation_id, str) and _CORRELATION_ID_RE.match(correlation_id):
+        diagnosis["correlation_id"] = correlation_id
+    return diagnosis
+
+
 async def _fetch_page_markdown(
     url: str,
     cookies: list[dict[str, Any]] | None,
@@ -157,6 +229,20 @@ async def _fetch_page_markdown(
             json=payload,
             headers=headers,
         )
+        if resp.status_code >= 400:
+            # crawl4ai puts the reason for a rejection in the response body —
+            # e.g. "field 'cookies' is not permitted on BrowserConfig from an
+            # untrusted request" from its CVE-2026-57572 config boundary. It
+            # exists nowhere else, so reading it here is the only diagnosis
+            # available. Sanitized (SPEC-SEC-INTERNAL-001 REQ-4); the route's
+            # 502 detail stays generic per REQ-31.2. raise_for_status() below
+            # keeps the exception contract exactly as it was.
+            logger.error(
+                "compute_fingerprint_crawl4ai_rejected",
+                url=_loggable_url(url),
+                status_code=resp.status_code,
+                **_rejection_diagnosis(resp),
+            )
         resp.raise_for_status()
         data: dict[str, Any] = resp.json()
 
@@ -202,7 +288,7 @@ async def compute_fingerprint(
         # REQ-31.2: never echo internal module names, hostnames, or
         # exception class names. logger.exception preserves the traceback
         # in structlog for VictoriaLogs queries.
-        logger.exception("compute_fingerprint_crawl_failed", url=body.url)
+        logger.exception("compute_fingerprint_crawl_failed", url=_loggable_url(body.url))
         raise HTTPException(status_code=502, detail="Crawl failed") from None
 
     word_count = len(markdown.split()) if markdown else 0
