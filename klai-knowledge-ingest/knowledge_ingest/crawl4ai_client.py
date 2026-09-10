@@ -1102,7 +1102,9 @@ async def _crawl_page_with_config(
         try:
             data = await _crawl_sync(client, payload)
         except Exception as exc:
-            logger.warning("crawl4ai_request_failed", url=url, error=str(exc))
+            response_body = _crawl4ai_error_body(exc)
+            extra = {"response_body": response_body} if response_body else {}
+            logger.warning("crawl4ai_request_failed", url=url, error=str(exc), **extra)
             return CrawlResult(
                 url=url,
                 fit_markdown="",
@@ -1486,6 +1488,36 @@ def _status_code_from_exception(exc: BaseException) -> int | None:
     if isinstance(exc, httpx.HTTPStatusError):
         return exc.response.status_code
     return None
+
+
+def _crawl4ai_error_body(exc: BaseException) -> str:
+    """Return crawl4ai's response body for an HTTP error, safe to log.
+
+    ``str(HTTPStatusError)`` carries only httpx' generic "Client error '400
+    Bad Request'" text. The field crawl4ai actually rejected lives in the
+    body -- ``{"detail": "Rejected config: field 'js_code' is not permitted
+    on CrawlerRunConfig from an untrusted request"}``. That body already
+    reaches ``CrawlResult.raw_error_text`` via ``_raw_error_text``, but it
+    never reached the log event, which is why the 2026-08 authenticated-crawl
+    outage read as "this page needs JavaScript" for weeks: VictoriaLogs only
+    ever showed httpx' generic sentence.
+
+    Reuses ``_truncate_error_message``, so the body gets the same treatment
+    every persisted error text already gets -- auth/token query params masked
+    BEFORE truncation, then bounded at 300 chars. Anything that is not an
+    ``HTTPStatusError`` returns "" so callers keep their exact previous event
+    shape.
+    """
+    if not isinstance(exc, httpx.HTTPStatusError):
+        return ""
+    try:
+        body = exc.response.text
+    except Exception:
+        return ""
+    # Deliberately not _raw_error_text: that one falls back to str(exc) when
+    # the body is empty, which here would log the httpx sentence twice and
+    # make "server sent no body" indistinguishable from a real body.
+    return _truncate_error_message(body) if body.strip() else ""
 
 
 def _is_unrendered_template_href(url: str) -> bool:
@@ -2188,10 +2220,13 @@ async def _fetch_seed_page(
                 logger.info("crawl_site_seed_retry_relaxed_config", start_url=start_url)
                 data = await _crawl_sync(client, relaxed_payload)
     except Exception as exc:
+        response_body = _crawl4ai_error_body(exc)
+        extra = {"response_body": response_body} if response_body else {}
         logger.warning(
             "crawl_site_seed_request_failed",
             start_url=start_url,
             error=str(exc),
+            **extra,
         )
         return CrawlResult(
             url=start_url,
@@ -2247,10 +2282,13 @@ async def _fetch_seed_page(
                 if relaxed_result.word_count > result.word_count:
                     return relaxed_result
         except Exception as exc:
+            response_body = _crawl4ai_error_body(exc)
+            extra = {"response_body": response_body} if response_body else {}
             logger.warning(
                 "crawl_site_seed_relaxed_retry_failed",
                 start_url=start_url,
                 error=str(exc),
+                **extra,
             )
     return result
 
@@ -3682,5 +3720,7 @@ async def _crawl_dom_summary_in_host_scope(url: str) -> list[dict] | None:
             raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
         return json.loads(raw)
     except Exception as exc:
-        logger.warning("crawl4ai_dom_summary_failed", url=url, error=str(exc))
+        response_body = _crawl4ai_error_body(exc)
+        extra = {"response_body": response_body} if response_body else {}
+        logger.warning("crawl4ai_dom_summary_failed", url=url, error=str(exc), **extra)
         return None
