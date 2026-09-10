@@ -284,6 +284,12 @@ async def test_widget_config_429_when_client_limit_fires():
     assert response.status_code == 429
     assert "Retry-After" in response.headers
     assert response.headers["Retry-After"] == "45"
+    # A browser on the customer's site must be able to read the 429: without
+    # the origin echo it only sees an opaque CORS error and never the
+    # Retry-After (help.voys.nl, 2026-09-10).
+    assert response.headers["Access-Control-Allow-Origin"] == "https://example.com"
+    assert response.headers["Access-Control-Expose-Headers"] == "Retry-After"
+    assert "access-control-allow-credentials" not in {k.lower() for k in response.headers}
 
 
 @pytest.mark.asyncio
