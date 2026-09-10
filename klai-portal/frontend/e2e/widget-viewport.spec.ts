@@ -26,3 +26,41 @@ test('floating widget overrides fit a small screen while inline widgets retain t
   expect(floating!.y + floating!.height).toBeLessThanOrEqual(600)
   expect((await page.locator('#inline .klai-window').boundingBox())!.height).toBe(800)
 })
+
+// Regression: the deployed 440x650 admin preview fills the frame with the
+// chat window but keeps ChatBubble's collapse button painted over the send
+// button (public floating layout offsets the window 88px above the bubble;
+// previewGeometry does not). Loads the real dist bundle in a real iframe.
+const previewConfig = {
+  title: 'E2E preview', welcome_message: 'Hi', footer_text: 'Plan met [onze nerds](https://example.com).',
+  css_variables: { '--klai-message-font-size': '15px', '--klai-message-line-height': '1.65' },
+  chat_endpoint: 'https://widget.e2e/chat', session_token: 'e2e-preview-token',
+  session_expires_at: '2030-01-01T00:00:00Z',
+}
+
+test('preview send button stays clickable while open and the header close leaves a launcher that reopens', async ({ page }) => {
+  const bundle = readFileSync(new URL('../../../klai-widget/dist/klai-chat.js', import.meta.url), 'utf8')
+  const frameHtml = '<!doctype html><html><body style="margin:0"><div id="klai-preview-host" style="height:100vh"></div><script src="/klai-chat.js" data-widget-id="e2e-preview" data-mode="preview"></script></body></html>'
+  await page.route('https://widget.e2e/**', (route) => {
+    const url = route.request().url()
+    if (url.endsWith('.js')) return route.fulfill({ contentType: 'text/javascript', body: bundle })
+    if (url.endsWith('/preview-frame')) return route.fulfill({ contentType: 'text/html', body: frameHtml })
+    return route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><body style="margin:0"><iframe src="/preview-frame" width="440" height="650" style="border:0"></iframe></body></html>' })
+  })
+  await page.goto('https://widget.e2e/')
+  const frame = page.frames().find((f) => f.url().endsWith('/preview-frame'))!
+  await frame.waitForFunction('window.KlaiWidget !== undefined')
+  await frame.evaluate((config) => (window as any).KlaiWidget.mountPreview(document.getElementById('klai-preview-host')!, {
+    widgetId: 'e2e-preview', config, fetchConfig: async () => config,
+  }), previewConfig)
+  const chat = page.frameLocator('iframe')
+  await expect(chat.locator('.klai-window')).toBeVisible()
+  await expect(chat.locator('.klai-bubble')).toBeHidden()
+  await chat.locator('.klai-textarea').fill('hello')
+  // Before the fix this fails: the expanded bubble intercepts the hit target.
+  await chat.locator('.klai-send-btn').click({ trial: true })
+  await chat.locator('.klai-close-btn').click()
+  await expect(chat.locator('.klai-bubble')).toBeVisible()
+  await chat.locator('.klai-bubble').click()
+  await expect(chat.locator('.klai-window')).toBeVisible()
+})
