@@ -947,41 +947,34 @@ def _build_browser_config_with_cookies(
     *,
     stealth: bool = False,
 ) -> dict[str, Any] | None:
-    """Build a BrowserConfig payload that injects cookies natively at browser
-    context creation.
+    """Build a BrowserConfig payload for stealth mode.
 
-    ``stealth=True`` additionally turns on crawl4ai's own ``enable_stealth``
-    and a randomised user agent. Both are shipped crawl4ai features and both
-    pass its untrusted-config boundary (``magic``, ``simulate_user`` and
+    ``stealth=True`` turns on crawl4ai's own ``enable_stealth`` and a
+    randomised user agent. Both are shipped crawl4ai features and both pass
+    its untrusted-config boundary (``magic``, ``simulate_user`` and
     ``override_navigator`` do NOT — the server rejects those with HTTP 400).
     Reserved for the escalation path in ``crawl_site``: it is not the default
     because a randomised UA can change what a site serves, and every crawl
     that works today does so without it.
 
-    Why not the ``on_page_context_created`` hook we used before? The hook
-    pattern has known timing issues — Playwright #26786 (cookies added before
-    goto can appear empty after load) and crawl4ai #322 (hook actions don't
-    always propagate to ``crawler.arun``). crawl4ai's own docs explicitly
-    recommend identity-based crawling over hooks for "robust auth":
+    ``cookies`` is accepted but no longer placed on ``BrowserConfig`` here —
+    see ``_build_cookie_hooks``. crawl4ai >= 0.9's untrusted-config boundary
+    (CVE-2026-57572 hardening) added ``cookies``/``storage_state`` to
+    ``BrowserConfig``'s forbidden-field list for every network request, the
+    same wall #873 hit for ``js_code`` (see that commit). Verified live
+    against our own crawl4ai server 2026-09-10: a ``cookies`` key in
+    ``browser_config.params`` now gets HTTP 400 "field 'cookies' is not
+    permitted on BrowserConfig from an untrusted request" — this used to
+    work on crawl4ai 0.8.x and silently stopped once we moved to 0.9.x.
 
-      "Run your initial login steps in a separate, well-defined process,
-      then feed that session to your main crawl — rather than shoehorning
-      complex authentication into early hooks."
-
-    crawl4ai 0.8.x's ``BrowserConfig`` accepts a ``cookies`` list directly
-    (async_configs.py line 634). The Docker REST API server deserializes it
-    via ``BrowserConfig.load`` (api.py line 567), so the same payload shape
-    works in our deployed setup.
-
-    Returns ``None`` when no cookies are provided, so callers can do:
+    Returns ``None`` when stealth is off, so callers can do:
 
         bc = _build_browser_config_with_cookies(cookies)
         if bc:
             payload["browser_config"] = bc
     """
+    del cookies  # kept in the signature so callers don't need two branches
     params: dict[str, Any] = {}
-    if cookies:
-        params["cookies"] = cookies
     if stealth:
         params["enable_stealth"] = True
         params["user_agent_mode"] = "random"
@@ -991,6 +984,29 @@ def _build_browser_config_with_cookies(
         "type": "BrowserConfig",
         "params": params,
     }
+
+
+def _build_cookie_hooks(cookies: list[dict[str, Any]] | None) -> dict[str, Any] | None:
+    """Build a declarative ``hooks_config`` payload that injects cookies.
+
+    crawl4ai's server-side "untrusted-config boundary" (introduced fixing
+    CVE-2026-57572) forbids raw ``BrowserConfig.cookies``/``storage_state``
+    on every network request — see ``_build_browser_config_with_cookies``.
+    The safe, currently-supported replacement is a declarative hook: a
+    fixed, server-validated action (``add_cookies``) instead of an arbitrary
+    config field. It runs at ``on_page_context_created``, i.e. before
+    navigation — same timing as the old ``BrowserConfig.cookies`` approach,
+    so Playwright's BrowserContext still receives the cookies pre-goto.
+
+    Returns ``None`` when no cookies are provided, so callers can do:
+
+        hooks = _build_cookie_hooks(cookies)
+        if hooks:
+            payload["hooks_config"] = hooks
+    """
+    if not cookies:
+        return None
+    return {"hooks": [{"action": "add_cookies", "params": {"cookies": cookies}}]}
 
 
 async def crawl_page(
@@ -1078,6 +1094,9 @@ async def _crawl_page_with_config(
     bc = _build_browser_config_with_cookies(cookies, stealth=stealth)
     if bc:
         payload["browser_config"] = bc
+    hooks = _build_cookie_hooks(cookies)
+    if hooks:
+        payload["hooks_config"] = hooks
 
     async with httpx.AsyncClient(timeout=timeout) as client:
         try:
@@ -2148,6 +2167,9 @@ async def _fetch_seed_page(
     bc = _build_browser_config_with_cookies(cookies)
     if bc:
         payload["browser_config"] = bc
+    hooks = _build_cookie_hooks(cookies)
+    if hooks:
+        payload["hooks_config"] = hooks
 
     try:
         async with httpx.AsyncClient(timeout=90.0) as client:
@@ -3052,6 +3074,9 @@ async def _bfs_deep_crawl(
     bc = _build_browser_config_with_cookies(cookies)
     if bc:
         payload["browser_config"] = bc
+    hooks = _build_cookie_hooks(cookies)
+    if hooks:
+        payload["hooks_config"] = hooks
 
     try:
         async with httpx.AsyncClient(timeout=90.0) as client:
@@ -3327,6 +3352,9 @@ async def _chunked_bulk_fetch_with_session(
         bc = _build_browser_config_with_cookies(cookies, stealth=stealth)
         if bc:
             payload["browser_config"] = bc
+        hooks = _build_cookie_hooks(cookies)
+        if hooks:
+            payload["hooks_config"] = hooks
 
         chunk_reason_codes: set[str] = set()
         # Fed to host_circuit_breaker.evaluate_chunk below — a whole-chunk

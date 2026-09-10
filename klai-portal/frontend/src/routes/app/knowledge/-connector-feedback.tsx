@@ -91,7 +91,8 @@ export function PreviewClassificationFeedback({
       break
     case 'requires_javascript':
       message =
-        'Page renders via JavaScript. Configure a wait_for condition or selector for the post-render DOM.'
+        "This page needs JavaScript to load its content, and the preview didn't catch it in time. " +
+        "There's nothing to configure here - save anyway and Klai will index what the full crawl can reach."
       break
     case 'entry_point_empty':
       // The reason from the backend already spells out the fix (paste a
