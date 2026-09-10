@@ -31,6 +31,7 @@ from app.api.partner_dependencies import (
     require_permission,
     validate_kb_access,
 )
+from app.api.widget_public import WIDGET_PUBLIC_CORS, WIDGET_ROUTE_DECIDES_CORS
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal, get_db, set_tenant
 from app.core.permissions import assert_platform_unlocked
@@ -1594,7 +1595,7 @@ async def _maybe_apply_web_search(
     return enriched_prompt, web_results_as_chunks(web_results), web_query
 
 
-@router.post("/chat/completions", response_model=None)
+@router.post("/chat/completions", response_model=None, openapi_extra=WIDGET_PUBLIC_CORS)
 async def canonical_chat_completions(
     http_request: Request,
     auth: PartnerAuthContext = Depends(get_partner_key),
@@ -2272,7 +2273,7 @@ async def _require_hubspot_widget_handoff_enabled(
         raise _hubspot_handoff_forbidden()
 
 
-@router.post("/widget-handoffs/hubspot/start", response_model=HubSpotHandoffResponse)
+@router.post("/widget-handoffs/hubspot/start", response_model=HubSpotHandoffResponse, openapi_extra=WIDGET_PUBLIC_CORS)
 async def start_widget_hubspot_handoff(
     http_request: Request,
     request: StartHubSpotHandoffRequest,
@@ -2300,7 +2301,11 @@ async def start_widget_hubspot_handoff(
     return HubSpotHandoffResponse(**result)
 
 
-@router.post("/widget-handoffs/hubspot/messages", response_model=HubSpotHandoffMessageResponse)
+@router.post(
+    "/widget-handoffs/hubspot/messages",
+    response_model=HubSpotHandoffMessageResponse,
+    openapi_extra=WIDGET_PUBLIC_CORS,
+)
 async def send_widget_hubspot_handoff_message(
     http_request: Request,
     request: SendHubSpotHandoffMessageRequest,
@@ -2331,7 +2336,7 @@ async def send_widget_hubspot_handoff_message(
     return HubSpotHandoffMessageResponse(**result)
 
 
-@router.get("/widget-handoffs/hubspot/events")
+@router.get("/widget-handoffs/hubspot/events", openapi_extra=WIDGET_PUBLIC_CORS)
 async def stream_widget_hubspot_handoff_events(
     request: Request,
     last_event_id: int = 0,
@@ -2509,7 +2514,7 @@ class WidgetFeedbackRequest(BaseModel):
     rating: Literal["thumbsUp", "thumbsDown"] | None = None
 
 
-@router.post("/widget/feedback")
+@router.post("/widget/feedback", openapi_extra=WIDGET_PUBLIC_CORS)
 async def submit_widget_feedback(
     request: WidgetFeedbackRequest,
     auth: PartnerAuthContext = Depends(get_partner_key),
@@ -2668,6 +2673,12 @@ async def append_knowledge(
 # Bearer JWT in the Authorization header; cookies are not involved. The
 # helper centralises this contract so the GET and OPTIONS handlers can
 # never drift apart.
+#
+# /widget-config carries the WIDGET_ROUTE_DECIDES_CORS marker (see
+# app/api/widget_public.py): the per-widget allowed_origins gate below needs
+# a DB read, so its routes answer CORS themselves and KlaiCORSMiddleware
+# passes those requests through untouched — unlike the "echo" marker the
+# other widget routes carry.
 # ---------------------------------------------------------------------------
 
 
@@ -2815,7 +2826,7 @@ def _widget_nerds_integration(widget_config_data: dict[str, Any]) -> dict[str, A
 # ---------------------------------------------------------------------------
 
 
-@router.get("/widget-config")
+@router.get("/widget-config", openapi_extra=WIDGET_ROUTE_DECIDES_CORS)
 async def widget_config(
     id: str,
     request: Request,
@@ -3106,7 +3117,7 @@ async def public_bot_config(
     )
 
 
-@router.options("/widget-config")
+@router.options("/widget-config", openapi_extra=WIDGET_ROUTE_DECIDES_CORS)
 async def widget_config_preflight(
     id: str,
     request: Request,

@@ -17,8 +17,9 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
+import httpx
 import pytest
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.testclient import TestClient
 
@@ -58,33 +59,47 @@ def _make_test_app(cors_origins: str = "http://localhost:5174") -> FastAPI:
     async def internal() -> JSONResponse:
         return JSONResponse({"ok": True})
 
-    # Public widget endpoints, mirrored from app/api/partner.py: the widget
-    # bundle calls these from the customer's own site. /widget-config has a
-    # widget-aware preflight route that echoes the origin when the widget's
-    # allowlist matches.
-    @app.post("/partner/v1/chat/completions")
+    # Public widget endpoints, mirrored from app/api/partner.py IN ITS
+    # PRODUCTION SHAPE: an APIRouter with prefix="/partner/v1", registered
+    # with app.include_router(). The widget bundle calls these from the
+    # customer's own site; they carry the same marker the production routes
+    # carry, and /widget-config has a widget-aware preflight route that
+    # echoes the origin when the widget's allowlist matches. Registering
+    # them any other way hides the include_router wrapper bug the marker
+    # walk had in FastAPI 0.141+ (see _collect_widget_cors_entries).
+    from app.api.widget_public import WIDGET_PUBLIC_CORS, WIDGET_ROUTE_DECIDES_CORS
+
+    widget_router = APIRouter(prefix="/partner/v1")
+
+    @widget_router.post("/chat/completions", openapi_extra=WIDGET_PUBLIC_CORS)
     async def widget_chat() -> JSONResponse:
         return JSONResponse({"ok": True})
 
-    @app.options("/partner/v1/widget-config")
+    @widget_router.post("/widget/feedback", openapi_extra=WIDGET_PUBLIC_CORS)
+    async def widget_feedback() -> JSONResponse:
+        return JSONResponse({"ok": True})
+
+    @widget_router.options("/widget-config", openapi_extra=WIDGET_ROUTE_DECIDES_CORS)
     async def widget_config_preflight(id: str) -> JSONResponse:
         headers = {"X-Widget-Route": id}
         if id == "wgt_allows_customer":
             headers["Access-Control-Allow-Origin"] = "https://help.customer.example"
         return JSONResponse(None, status_code=204, headers=headers)
 
-    @app.get("/partner/v1/widget-config")
+    @widget_router.get("/widget-config", openapi_extra=WIDGET_ROUTE_DECIDES_CORS)
     async def widget_config(id: str) -> JSONResponse:
         if id == "wgt_allows_customer":
             return JSONResponse({"ok": True}, headers={"Access-Control-Allow-Origin": "https://help.customer.example"})
         return JSONResponse({"detail": "Origin not allowed"}, status_code=403)
 
-    @app.get("/partner/v1/widget-handoffs/hubspot/events")
+    @widget_router.get("/widget-handoffs/hubspot/events", openapi_extra=WIDGET_PUBLIC_CORS)
     async def widget_handoff_events() -> StreamingResponse:
         async def events() -> AsyncIterator[bytes]:
             yield b"id: 1\ndata: {}\n\n"
 
         return StreamingResponse(events(), media_type="text/event-stream")
+
+    app.include_router(widget_router)
 
     app.add_middleware(
         KlaiCORSMiddleware,
@@ -553,3 +568,244 @@ def test_customer_origin_is_still_rejected_outside_widget_paths(cors_client: Tes
     )
     assert response.status_code == 400
     assert "access-control-allow-origin" not in response.headers
+
+
+# ---------------------------------------------------------------------------
+# Ownership: the route carries the marker, klai_cors.py knows no paths
+# ---------------------------------------------------------------------------
+
+
+def test_widget_public_marker_teaches_the_middleware_a_new_route() -> None:
+    """A NEW route that only carries the widget-public marker gets its
+    preflight answered from a customer origin — without klai_cors.py knowing
+    anything about its path. A route WITHOUT the marker on the same app still
+    gets 400."""
+    from app.api.widget_public import WIDGET_PUBLIC_CORS
+    from app.middleware.klai_cors import KlaiCORSMiddleware
+
+    app = FastAPI()
+
+    @app.post("/partner/v1/bookings", openapi_extra=WIDGET_PUBLIC_CORS)
+    async def booking() -> JSONResponse:
+        return JSONResponse({"ok": True})
+
+    @app.post("/partner/v1/internal-secret")
+    async def internal_secret() -> JSONResponse:
+        return JSONResponse({"ok": True})
+
+    app.add_middleware(KlaiCORSMiddleware, cors_origins=[])
+    client = TestClient(app, raise_server_exceptions=False)
+
+    preflight = client.options(
+        "/partner/v1/bookings",
+        headers={
+            "Origin": CUSTOMER_ORIGIN,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "authorization,content-type",
+        },
+    )
+    assert preflight.status_code == 204, preflight.text
+    assert preflight.headers.get("access-control-allow-origin") == CUSTOMER_ORIGIN
+    assert "access-control-allow-credentials" not in preflight.headers
+
+    denied = client.options(
+        "/partner/v1/internal-secret",
+        headers={"Origin": CUSTOMER_ORIGIN, "Access-Control-Request-Method": "POST"},
+    )
+    assert denied.status_code == 400
+    assert "access-control-allow-origin" not in denied.headers
+
+
+def _preflight(client: TestClient, path: str, method: str) -> httpx.Response:
+    return client.options(
+        path,
+        headers={
+            "Origin": CUSTOMER_ORIGIN,
+            "Access-Control-Request-Method": method,
+            "Access-Control-Request-Headers": "authorization,content-type",
+        },
+    )
+
+
+def test_widget_routes_registered_with_include_router_are_answered() -> None:
+    """Regression (review finding 1): production registers the partner
+    routes with ``app.include_router(partner_router)``, which on FastAPI
+    0.141+ puts an ``_IncludedRouter`` (without ``openapi_extra``) in
+    ``app.routes``. A flat top-level scan saw no marked route and 400'd
+    every widget preflight from a customer domain. Build the app exactly
+    like production — APIRouter with prefix, included, middleware added
+    last — and the preflight must get 204 with the origin echoed."""
+    from app.api.widget_public import WIDGET_PUBLIC_CORS
+    from app.middleware.klai_cors import KlaiCORSMiddleware
+
+    router = APIRouter(prefix="/partner/v1")
+
+    @router.post("/chat/completions", openapi_extra=WIDGET_PUBLIC_CORS)
+    async def chat() -> JSONResponse:
+        return JSONResponse({"ok": True})
+
+    app = FastAPI()
+    app.include_router(router)
+    app.add_middleware(KlaiCORSMiddleware, cors_origins=[])
+    client = TestClient(app, raise_server_exceptions=False)
+
+    preflight = _preflight(client, "/partner/v1/chat/completions", "POST")
+    assert preflight.status_code == 204, preflight.text
+    assert preflight.headers.get("access-control-allow-origin") == CUSTOMER_ORIGIN
+    assert "access-control-allow-credentials" not in preflight.headers
+
+
+def test_widget_routes_under_a_mount_are_answered() -> None:
+    """Same bug class as the include_router regression: a marked route
+    registered under ``app.mount()`` is invisible to a flat scan of
+    app.routes, and Starlette Mounts rewrite the path before their inner
+    routes match. It must still echo."""
+    from app.api.widget_public import WIDGET_PUBLIC_CORS
+    from app.middleware.klai_cors import KlaiCORSMiddleware
+
+    inner = APIRouter()
+
+    @inner.post("/widget/feedback", openapi_extra=WIDGET_PUBLIC_CORS)
+    async def feedback() -> JSONResponse:
+        return JSONResponse({"ok": True})
+
+    app = FastAPI()
+    app.mount("/outer", inner)
+    app.add_middleware(KlaiCORSMiddleware, cors_origins=[])
+    client = TestClient(app, raise_server_exceptions=False)
+
+    preflight = _preflight(client, "/outer/widget/feedback", "POST")
+    assert preflight.status_code == 204, preflight.text
+    assert preflight.headers.get("access-control-allow-origin") == CUSTOMER_ORIGIN
+
+
+def test_widget_routes_under_a_mount_inside_an_include_router_are_answered() -> None:
+    """Both wrappers at once: include_router wraps the Mount in a FastAPI
+    effective context, and the mount itself rewrites the path again before
+    its inner routes match (a Mount skips its router's own prefix, so the
+    router-resolvable path here is /m/widget/feedback). The walk must follow
+    the context to the mounted app's routes and replay both rewrites."""
+    from app.api.widget_public import WIDGET_PUBLIC_CORS
+    from app.middleware.klai_cors import KlaiCORSMiddleware
+
+    inner = APIRouter()
+
+    @inner.post("/widget/feedback", openapi_extra=WIDGET_PUBLIC_CORS)
+    async def feedback() -> JSONResponse:
+        return JSONResponse({"ok": True})
+
+    outer = APIRouter()
+    outer.mount("/m", inner)
+
+    app = FastAPI()
+    app.include_router(outer)
+    app.add_middleware(KlaiCORSMiddleware, cors_origins=[])
+    client = TestClient(app, raise_server_exceptions=False)
+
+    preflight = _preflight(client, "/m/widget/feedback", "POST")
+    assert preflight.status_code == 204, preflight.text
+    assert preflight.headers.get("access-control-allow-origin") == CUSTOMER_ORIGIN
+
+
+def test_unmarked_full_match_wins_over_marked_partial_on_the_same_path() -> None:
+    """Regression (review finding 2): Starlette keeps looking for a FULL
+    match after a PARTIAL one. A marked GET registered BEFORE an unmarked
+    POST on the same path must not make the POST inherit the widget echo:
+    the preflight is decided with Access-Control-Request-Method as the
+    method, so a POST preflight resolves to the POST route (unmarked ->
+    first-party policy -> 400 from a customer origin) and only a GET
+    preflight resolves to the marked GET."""
+    from app.api.widget_public import WIDGET_PUBLIC_CORS
+    from app.middleware.klai_cors import KlaiCORSMiddleware
+
+    app = FastAPI()
+
+    @app.get("/partner/v1/bookings", openapi_extra=WIDGET_PUBLIC_CORS)
+    async def list_bookings() -> JSONResponse:
+        return JSONResponse({"ok": True})
+
+    @app.post("/partner/v1/bookings")
+    async def create_booking() -> JSONResponse:
+        return JSONResponse({"ok": True})
+
+    app.add_middleware(KlaiCORSMiddleware, cors_origins=[])
+    client = TestClient(app, raise_server_exceptions=False)
+
+    post_preflight = _preflight(client, "/partner/v1/bookings", "POST")
+    assert post_preflight.status_code == 400, post_preflight.text
+    assert "access-control-allow-origin" not in post_preflight.headers
+
+    actual_post = client.post("/partner/v1/bookings", headers={"Origin": CUSTOMER_ORIGIN})
+    assert actual_post.status_code == 200
+    assert "access-control-allow-origin" not in actual_post.headers
+
+    get_preflight = _preflight(client, "/partner/v1/bookings", "GET")
+    assert get_preflight.status_code == 204, get_preflight.text
+    assert get_preflight.headers.get("access-control-allow-origin") == CUSTOMER_ORIGIN
+
+
+@pytest.mark.parametrize(
+    ("path", "method", "expected_status"),
+    [
+        ("/partner/v1/chat/completions", "POST", 204),
+        ("/partner/v1/widget/feedback", "POST", 204),
+        ("/partner/v1/widget-handoffs/hubspot/start", "POST", 204),
+        ("/partner/v1/widget-handoffs/hubspot/messages", "POST", 204),
+        ("/partner/v1/widget-handoffs/hubspot/events", "GET", 204),
+        # Unmarked sibling on the same production router: must NOT inherit.
+        ("/partner/v1/responses", "POST", 400),
+    ],
+)
+def test_production_partner_router_answers_widget_preflights(path: str, method: str, expected_status: int) -> None:
+    """End-to-end on the real app.api.partner router, registered exactly as
+    main.py does (APIRouter with prefix, include_router, middleware added
+    last). Preflights are answered by the middleware and never reach the
+    endpoints, so no DB is needed. This is the shape the fixture-level tests
+    could not cover while they registered routes directly on FastAPI."""
+    from app.api.partner import router as partner_router
+    from app.middleware.klai_cors import KlaiCORSMiddleware
+
+    app = FastAPI()
+    app.include_router(partner_router)
+    app.add_middleware(KlaiCORSMiddleware, cors_origins=[])
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = _preflight(client, path, method)
+    assert response.status_code == expected_status, response.text
+    if expected_status == 204:
+        assert response.headers.get("access-control-allow-origin") == CUSTOMER_ORIGIN
+        assert "access-control-allow-credentials" not in response.headers
+    else:
+        assert "access-control-allow-origin" not in response.headers
+
+
+def test_production_widget_routes_carry_their_marker() -> None:
+    """Review finding 4: the widget bundle's production endpoints must all
+    declare their CORS mode, or a customer-domain widget breaks silently
+    (help.voys.nl, PR #1361). Import app.api.partner directly — no DB, no
+    app — and assert the marker inventory on every route the bundle calls.
+    An unmarked new widget endpoint fails here; marking a route nobody
+    calls fails here too (equality, not subset)."""
+    from app.api.partner import router as partner_router
+    from app.api.widget_public import MODE_ECHO, MODE_ROUTE_DECIDES, widget_cors_mode_of
+
+    expected = {
+        ("POST", "/partner/v1/chat/completions"): MODE_ECHO,
+        ("POST", "/partner/v1/widget/feedback"): MODE_ECHO,
+        ("POST", "/partner/v1/widget-handoffs/hubspot/start"): MODE_ECHO,
+        ("POST", "/partner/v1/widget-handoffs/hubspot/messages"): MODE_ECHO,
+        ("GET", "/partner/v1/widget-handoffs/hubspot/events"): MODE_ECHO,
+        ("GET", "/partner/v1/widget-config"): MODE_ROUTE_DECIDES,
+        ("OPTIONS", "/partner/v1/widget-config"): MODE_ROUTE_DECIDES,
+    }
+
+    declared: dict[tuple[str, str], str] = {}
+    for route in partner_router.routes:
+        mode = widget_cors_mode_of(route)
+        if mode is None:
+            continue
+        methods = {str(m) for m in getattr(route, "methods", set())} - {"HEAD"}
+        for method in methods:
+            declared[(method, str(route.path))] = mode
+
+    assert declared == expected
