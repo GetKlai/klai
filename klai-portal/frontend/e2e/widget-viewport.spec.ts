@@ -64,3 +64,54 @@ test('preview send button stays clickable while open and the header close leaves
   await chat.locator('.klai-bubble').click()
   await expect(chat.locator('.klai-window')).toBeVisible()
 })
+
+// Regression: Voys/demo rendered .SF NS although live CSS says Geist, and
+// tenant typography could not be configured. Opting in via
+// --klai-font-family must load the locally bundled 'Klai Widget Geist' face
+// through document.fonts (not merely the computed family) with zero external
+// font requests, and the input/starter/message size variables must apply and
+// clear. Runs the real dist bundle through mountPreview/updateConfig.
+test('bundled Geist opt-in loads without external font requests and typography overrides apply and clear', async ({ page }) => {
+  const bundle = readFileSync(new URL('../../../klai-widget/dist/klai-chat.js', import.meta.url), 'utf8')
+  const fontRequests: string[] = []
+  page.on('request', (r) => { if (/font/i.test(r.url())) fontRequests.push(r.url()) })
+  const base = { ...previewConfig, css_variables: {}, conversation_starters: ['E2E starter'] }
+  const opted = { ...base, css_variables: {
+    '--klai-font-family': '"Klai Widget Geist", system-ui, sans-serif',
+    '--klai-input-font-size': '16.5px', '--klai-starter-font-size': '14.3px', '--klai-message-font-size': '15.4px',
+  } }
+  const frameHtml = '<!doctype html><html><body style="margin:0"><div id="klai-preview-host" style="height:100vh"></div><script src="/klai-chat.js" data-widget-id="e2e-preview" data-mode="preview"></script></body></html>'
+  await page.route('https://widget.e2e/**', (route) => {
+    const url = route.request().url()
+    if (url.endsWith('.js')) return route.fulfill({ contentType: 'text/javascript', body: bundle })
+    if (url.endsWith('/preview-frame')) return route.fulfill({ contentType: 'text/html', body: frameHtml })
+    return route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><body style="margin:0"><iframe src="/preview-frame" width="440" height="650" style="border:0"></iframe></body></html>' })
+  })
+  await page.goto('https://widget.e2e/')
+  const frame = page.frames().find((f) => f.url().endsWith('/preview-frame'))!
+  await frame.waitForFunction('window.KlaiWidget !== undefined')
+  await frame.evaluate((config) => {
+    ;(window as any).__preview = (window as any).KlaiWidget.mountPreview(document.getElementById('klai-preview-host')!, {
+      widgetId: 'e2e-preview', config, fetchConfig: async () => config,
+    })
+  }, base)
+  const chat = page.frameLocator('iframe')
+  // Unset overrides keep the standard CSS: 14 / 12.5 / 14.
+  await expect(chat.locator('.klai-textarea')).toHaveCSS('font-size', '14px')
+  await expect(chat.locator('.klai-starter')).toHaveCSS('font-size', '12.5px')
+  await expect(chat.locator('.klai-hero-title')).toHaveCSS('font-size', '14px')
+  await frame.evaluate((config) => (window as any).__preview.updateConfig(config), opted)
+  await expect(chat.locator('.klai-textarea')).toHaveCSS('font-size', '16.5px')
+  await expect(chat.locator('.klai-starter')).toHaveCSS('font-size', '14.3px')
+  await expect(chat.locator('.klai-hero-title')).toHaveCSS('font-size', '15.4px')
+  await expect(chat.locator('.klai-hero-title')).toHaveCSS('font-family', /Klai Widget Geist/)
+  const face = await frame.evaluate(() => document.fonts.load('16px "Klai Widget Geist"')
+    .then((faces) => ({ count: faces.length, loaded: faces.every((f) => f.status === 'loaded') })))
+  expect(face.count).toBeGreaterThan(0)
+  expect(face.loaded).toBe(true)
+  await frame.evaluate((config) => (window as any).__preview.updateConfig(config), base)
+  await expect(chat.locator('.klai-textarea')).toHaveCSS('font-size', '14px')
+  await expect(chat.locator('.klai-starter')).toHaveCSS('font-size', '12.5px')
+  await expect(chat.locator('.klai-hero-title')).toHaveCSS('font-size', '14px')
+  expect(fontRequests).toEqual([])
+})

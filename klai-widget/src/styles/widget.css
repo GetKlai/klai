@@ -1126,7 +1126,7 @@
   border-radius: 8px;
   padding: 10px 12px;
   font-family: var(--klai-font-family);
-  font-size: 14px;
+  font-size: var(--klai-input-font-size, 14px);
   line-height: 1.4;
   color: var(--klai-text-color);
   background-color: var(--klai-background-color);
@@ -1247,7 +1247,7 @@
 }
 
 .klai-hero-title {
-  font-size: 14px;
+  font-size: var(--klai-message-font-size);
   font-weight: 400;
   line-height: 1.5;
   color: var(--klai-text-color);
@@ -1290,7 +1290,7 @@
 
 .klai-starter {
   font-family: inherit;
-  font-size: 12.5px;
+  font-size: var(--klai-starter-font-size, 12.5px);
   line-height: 1.35;
   color: var(--klai-text-color);
   background: var(--klai-card-color);
