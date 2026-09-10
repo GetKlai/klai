@@ -87,12 +87,12 @@ export function ChatBubble(props: ChatBubbleProps = {}) {
       <Show when={isOpen()}>
         <ChatWindow
           title={title()}
-          description={chatState.config?.description}
           onClose={close}
           conversationStarters={chatState.config?.conversation_starters}
           hideDisclaimer={chatState.config?.hide_disclaimer}
           welcomeMessage={chatState.config?.welcome_message}
           bookingUrl={chatState.config?.booking_url}
+          aiDisclosureOverride={chatState.config?.ai_disclosure_override}
           nerdsEnabled={chatState.config?.nerds?.enabled}
           nerdsBookingUrl={chatState.config?.nerds?.booking_url}
           collectUserInfo={chatState.config?.collect_user_info}

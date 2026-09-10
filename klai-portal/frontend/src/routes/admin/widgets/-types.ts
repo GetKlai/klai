@@ -10,6 +10,10 @@ export interface WidgetConfig {
   css_variables: Record<string, string>
   conversation_starters: string[]
   hide_disclaimer: boolean
+  // Tenant-supplied replacement for the whole AI-notice sentence in the
+  // empty-state hero (the EU AI Act art. 50 notice + the auto-appended
+  // booking sentence). null/empty → the default templated notice.
+  ai_disclosure_override?: string | null
   template_slug: string | null
   primary_color: string
   theme: 'light' | 'dark'

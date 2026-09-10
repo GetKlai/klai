@@ -97,6 +97,14 @@ class WidgetConfig(BaseModel):
     # the EU AI Act art. 50 AI notice in the empty state — that one is
     # mandatory and not switchable per widget.
     hide_disclaimer: bool = False
+    # Tenant-supplied replacement for the whole AI-notice sentence (the
+    # EU AI Act art. 50 notice + the auto-appended booking sentence) shown
+    # in the empty-state hero. Used verbatim by the widget when set — the
+    # admin UI must still require that the replacement text conveys "this
+    # is an AI system", since the legal requirement itself is not
+    # switchable, only its exact wording. Empty/unset → the default
+    # templated notice, unchanged.
+    ai_disclosure_override: str | None = Field(default=None, max_length=500)
     # Optional reference to a Template (app/templates) — when set, the
     # template's prompt_text is appended to system_prompt at runtime so
     # admins can re-use named prompts across widgets without copy-paste.
@@ -213,6 +221,7 @@ def _widget_to_response(widget: Widget, kb_access_count: int) -> WidgetResponse:
             css_variables=config.get("css_variables", {}),
             conversation_starters=config.get("conversation_starters", []),
             hide_disclaimer=config.get("hide_disclaimer", False),
+            ai_disclosure_override=config.get("ai_disclosure_override"),
             template_slug=config.get("template_slug"),
             primary_color=config.get("primary_color", "#fcaa2d"),
             theme=config.get("theme", "light"),
