@@ -71,6 +71,17 @@ function cssVariableOverrides(config: WidgetConfig): string {
     .join(" ");
 }
 
+// The snippet often lands in <head> (help.voys.nl, most CMSs), so the bundle
+// runs before <body> is parsed. Wait for it; the script tag itself must be
+// resolved before this await because document.currentScript is only set
+// while the script executes synchronously.
+function whenBodyReady(): Promise<void> {
+  if (document.body) return Promise.resolve();
+  return new Promise((resolve) => {
+    document.addEventListener("DOMContentLoaded", () => resolve(), { once: true });
+  });
+}
+
 async function bootstrap(): Promise<void> {
   const scriptTag = findScriptTag();
 
@@ -103,6 +114,7 @@ async function bootstrap(): Promise<void> {
 
     setChatOpen(true);
     // Inline mode: mount ChatWindow directly into a page element, no shadow DOM
+    await whenBodyReady();
     const target = document.querySelector(containerSelector);
     if (!target) {
       console.error(`KLAI_WIDGET: Container "${containerSelector}" not found`);
@@ -142,6 +154,7 @@ async function bootstrap(): Promise<void> {
   // renders at page load — no network request until the first click —
   // so visitors who never open the chat cost no config call and no
   // session token.
+  await whenBodyReady();
   const container = document.createElement("div");
   container.setAttribute("id", "klai-widget-root");
   document.body.appendChild(container);
