@@ -1,9 +1,19 @@
 /// <reference types="vite/client" />
 import { render } from "solid-js/web";
+import { ChatBubble } from "./components/ChatBubble";
 import { ChatWindow } from "./components/ChatWindow";
 import { WidgetFacade } from "./components/WidgetFacade";
-import { getInitialConversationSessionId, initStore, setChatOpen } from "./store/chat";
-import { fetchWidgetConfig, KlaiWidgetError } from "./api/widget-config";
+import {
+  getInitialConversationSessionId,
+  initStore,
+  setChatOpen,
+  updateWidgetConfig,
+} from "./store/chat";
+import {
+  fetchWidgetConfig,
+  KlaiWidgetError,
+  setPreviewWidgetConfigProvider,
+} from "./api/widget-config";
 import type { WidgetConfig } from "./api/widget-config";
 import { initLabels } from "./i18n/labels";
 import widgetCss from "./styles/widget.css?inline";
@@ -88,6 +98,90 @@ function cssVariableOverrides(config: WidgetConfig): string {
     .join(" ");
 }
 
+type PreviewConfig = WidgetConfig & {
+  primary_color?: string;
+  session_id?: string;
+  tenant_css_variables?: Record<string, string>;
+};
+
+export interface PreviewOptions {
+  widgetId: string;
+  locale?: string;
+  config: PreviewConfig;
+  fetchConfig: (sessionId: string) => Promise<PreviewConfig>;
+}
+
+const previewGeometry = `
+:host { display: block; position: relative; width: 100%; height: 100%; }
+.klai-window:not(.klai-window--inline) { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; max-height: none; }
+.klai-bubble { position: absolute; }
+`;
+
+function previewConfig(config: PreviewConfig): PreviewConfig {
+  return { ...config, page_context_enabled: false };
+}
+
+function previewAppearance(config: PreviewConfig): Map<string, string> {
+  const values = new Map<string, string>(Object.entries(config.tenant_css_variables ?? {}));
+  const theme = config.theme === "dark"
+    ? [
+        ["--klai-text-color", "#fffef2"], ["--klai-text-muted", "#fffef299"],
+        ["--klai-background-color", "#191918"], ["--klai-card-color", "#27251f"],
+        ["--klai-border-color", "#3a3831"],
+      ]
+    : [];
+  for (const [key, value] of theme) values.set(key, value);
+  const directPrimary = parsePreviewPrimaryColor(config.primary_color ?? null);
+  const rawPrimary = parsePreviewPrimaryColor(config.css_variables["--klai-primary-color"] ?? null);
+  const effectivePrimary = rawPrimary ?? directPrimary ?? parsePreviewPrimaryColor(values.get("--klai-primary-color") ?? null);
+  if (directPrimary) values.set("--klai-primary-color", directPrimary);
+  if (effectivePrimary) values.set("--klai-primary-text-color", previewPrimaryTextColor(effectivePrimary));
+  for (const [key, value] of Object.entries(config.css_variables)) {
+    if (key.startsWith("--klai-")) values.set(key, value);
+  }
+  return values;
+}
+
+export function mountPreview(host: HTMLElement, options: PreviewOptions) {
+  if (host.ownerDocument !== document || window.parent === window) {
+    throw new Error("KLAI_WIDGET_PREVIEW_IFRAME_REQUIRED");
+  }
+  const shadowRoot = host.shadowRoot ?? host.attachShadow({ mode: "open" });
+  const style = document.createElement("style");
+  style.textContent = `${widgetCss}\n${previewGeometry}`;
+  const mountPoint = document.createElement("div");
+  shadowRoot.replaceChildren(style, mountPoint);
+  let applied = new Set<string>();
+  const applyConfig = (input: PreviewConfig) => {
+    const config = previewConfig(input);
+    for (const key of applied) host.style.removeProperty(key);
+    const values = previewAppearance(config);
+    for (const [key, value] of values) host.style.setProperty(key, value);
+    applied = new Set(values.keys());
+    initLabels(options.locale, [config.title, config.welcome_message]);
+    return config;
+  };
+  const sessionId = options.config.session_id ?? crypto.randomUUID().replace(/-/g, "");
+  const initialConfig = applyConfig(options.config);
+  setPreviewWidgetConfigProvider(async (_widgetId, fetchOptions) =>
+    previewConfig(await options.fetchConfig(fetchOptions.sessionId ?? sessionId))
+  );
+  initStore(options.widgetId, initialConfig, sessionId, false);
+  const disposeRoot = render(() => ChatBubble({ initiallyOpen: true }), mountPoint);
+
+  return {
+    updateConfig(input: PreviewConfig) {
+      updateWidgetConfig(applyConfig(input));
+    },
+    dispose() {
+      disposeRoot();
+      setPreviewWidgetConfigProvider(undefined);
+      for (const key of applied) host.style.removeProperty(key);
+      shadowRoot.replaceChildren();
+    },
+  };
+}
+
 // The snippet often lands in <head> (help.voys.nl, most CMSs), so the bundle
 // runs before <body> is parsed. Wait for it; the script tag itself must be
 // resolved before this await because document.currentScript is only set
@@ -107,13 +201,15 @@ async function bootstrap(): Promise<void> {
     return;
   }
 
+  const mode = scriptTag.getAttribute("data-mode") ?? "bubble";
+  if (mode === "preview") return;
+
   const widgetId = scriptTag.getAttribute("data-widget-id");
   if (!widgetId) {
     console.error("KLAI_WIDGET: data-widget-id attribute is missing or empty");
     return;
   }
 
-  const mode = scriptTag.getAttribute("data-mode") ?? "bubble";
   const locale = scriptTag.getAttribute("data-locale") ?? undefined;
   const containerSelector = scriptTag.getAttribute("data-container");
   const clientSessionId = getInitialConversationSessionId(widgetId);
