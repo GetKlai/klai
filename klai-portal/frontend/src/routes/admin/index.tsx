@@ -35,7 +35,7 @@ function AdminHome() {
   return (
     <PageContainer width="3xl" gap="8">
       <div className="space-y-1">
-        <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
+        <h1 className="text-xl font-display-bold text-gray-900">
           {m.admin_home_heading()}
         </h1>
         <p className="text-sm text-gray-600">

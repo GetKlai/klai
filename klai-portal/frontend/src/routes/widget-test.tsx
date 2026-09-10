@@ -103,7 +103,7 @@ function WidgetTestEmbedPage() {
 
       {/* Main content */}
       <main className="mx-auto max-w-2xl px-6 pb-16 pt-10">
-        <h1 className="page-title mb-2 text-[1.625rem] font-display-bold text-[var(--color-rl-dark)]">
+        <h1 className="mb-2 text-xl font-display-bold text-[var(--color-rl-dark)]">
           Test je widget
         </h1>
         <p className="mb-8 text-sm text-[var(--color-rl-dark)]/60">

@@ -171,7 +171,7 @@ export function FeedbackSubmissionDetailPanel({
   const header = (
     <div className="flex items-start gap-3">
       <div className="flex-1">
-        <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
+        <h1 className="text-xl font-display-bold text-gray-900">
           {canTriage
             ? m.platform_feedback_triage_title()
             : m.platform_feedback_submission_detail_title()}
