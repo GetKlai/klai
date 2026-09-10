@@ -44,7 +44,11 @@ async def test_cross_origin_probe_url_rejected_before_decrypt() -> None:
     db = _db_with_connector(base_url="https://wiki.redcactus.cloud/nl/")
     with pytest.raises(HTTPException) as exc_info:
         await _load_saved_web_crawler_cookies(
-            _kb(), "connector-1", org_id=8, db=db, probe_url="https://attacker.example.com/collect",
+            _kb(),
+            "connector-1",
+            org_id=8,
+            db=db,
+            probe_url="https://attacker.example.com/collect",
         )
     assert exc_info.value.status_code == 400
     assert exc_info.value.detail == {"error_code": "probe_url_origin_mismatch"}
@@ -59,7 +63,11 @@ async def test_same_origin_probe_url_passes_the_guard() -> None:
     db = _db_with_connector(base_url="https://wiki.redcactus.cloud/nl/")
     with pytest.raises(HTTPException) as exc_info:
         await _load_saved_web_crawler_cookies(
-            _kb(), "connector-1", org_id=8, db=db, probe_url="https://wiki.redcactus.cloud/nl/login",
+            _kb(),
+            "connector-1",
+            org_id=8,
+            db=db,
+            probe_url="https://wiki.redcactus.cloud/nl/login",
         )
     assert exc_info.value.status_code == 409
     assert exc_info.value.detail == {"error_code": "saved_credentials_missing"}

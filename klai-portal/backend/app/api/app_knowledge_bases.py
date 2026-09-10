@@ -2260,9 +2260,9 @@ async def _load_saved_web_crawler_cookies(
     stored_base_url = (connector.config or {}).get("base_url") if isinstance(connector.config, dict) else None
     probe_origin = urlsplit(probe_url)
     stored_origin = urlsplit(stored_base_url) if stored_base_url else None
-    if (
-        stored_origin is None
-        or (probe_origin.scheme, probe_origin.netloc.lower()) != (stored_origin.scheme, stored_origin.netloc.lower())
+    if stored_origin is None or (probe_origin.scheme, probe_origin.netloc.lower()) != (
+        stored_origin.scheme,
+        stored_origin.netloc.lower(),
     ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
