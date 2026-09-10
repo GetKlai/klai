@@ -158,13 +158,25 @@ Combines `extract_secret_values(settings_obj)` and
 `sanitize_response_body(...)`. The recommended call shape from each
 service's wrapper module.
 
+A body that parses as JSON is decoded before the secrets are matched,
+and re-serialised afterwards. JSON has more than one valid spelling of
+the same string — `/` may be `\/`, a newline `\n` or `\u000a`, and a
+nested payload may be encoded twice — so matching the literal value
+against the raw body misses a secret that arrived escaped. A body that
+is not JSON falls back to literal replacement.
+
 ### `extract_secret_values(settings_obj) -> set[str]`
 
 Walks a Pydantic-Settings instance (`model_fields`) or a plain
 attribute object, returning every non-empty string value whose field
-name matches the regex `(?i)(secret|password|token|pat|api_key)` and
-whose length is ≥ 8 characters. Shorter values are deliberately
+name matches the regex `(?i)(secret|password|token|pat|api_key|_key$)`
+and whose length is ≥ 8 characters. Shorter values are deliberately
 skipped to avoid over-redaction of common substrings.
+
+The `_key` suffix is anchored on purpose: it is how most credentials in
+this codebase are named (`litellm_master_key`, `encryption_key`,
+`github_app_private_key`), while `keyboard_layout` and
+`key_rotation_days` are not credentials and must not match.
 
 ### `verify_shared_secret(header_value, configured) -> bool`
 

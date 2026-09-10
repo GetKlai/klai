@@ -14,6 +14,7 @@ above that, the body is clipped before scanning.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable
 from typing import Any
 
@@ -38,6 +39,60 @@ def _extract_body(exc_or_response: object) -> str:
     if not isinstance(text, str):
         return ""
     return text
+
+
+def _redact(body: str, secrets: list[str]) -> tuple[str, int]:
+    """Replace every secret in ``body``, whatever escaping it arrived in.
+
+    Upstream bodies are JSON, and JSON has more than one valid way to write
+    the same string: ``/`` may be ``\\/``, a newline may be ``\\n`` or
+    ``\\u000a``, and a nested payload may be encoded twice. Enumerating
+    those forms is a losing game -- one was missed the first time this was
+    fixed. So a body that parses as JSON is decoded first and the secrets
+    are matched against the DECODED strings, where no escaping exists at
+    all; decoding also unwraps a double-encoded payload into a plain string
+    that the same literal match then covers.
+
+    A body that is not JSON falls back to literal replacement, which is what
+    it always was.
+    """
+    try:
+        parsed = json.loads(body)
+    except (ValueError, RecursionError):
+        return _redact_literal(body, secrets)
+
+    count = 0
+
+    def walk(node: Any) -> Any:
+        nonlocal count
+        if isinstance(node, str):
+            cleaned, hits = _redact_literal(node, secrets)
+            count += hits
+            return cleaned
+        if isinstance(node, dict):
+            return {walk(key): walk(value) for key, value in node.items()}
+        if isinstance(node, list):
+            return [walk(item) for item in node]
+        return node
+
+    try:
+        redacted = json.dumps(walk(parsed))
+    except (TypeError, ValueError, RecursionError):
+        # Something in there does not round-trip; the literal pass is still
+        # better than returning the body untouched.
+        return _redact_literal(body, secrets)
+    return redacted, count
+
+
+def _redact_literal(text: str, secrets: list[str]) -> tuple[str, int]:
+    """Straight substring replacement, secrets already ordered longest first."""
+    count = 0
+    for secret in secrets:
+        occurrences = text.count(secret)
+        if occurrences:
+            text = text.replace(secret, _REDACTED)
+            count += occurrences
+    return text, count
 
 
 def sanitize_response_body(
@@ -74,15 +129,18 @@ def sanitize_response_body(
     redaction_count = 0
 
     if secret_values:
-        # Replace longer secrets first so a shorter secret that happens to
-        # be a substring of a longer one cannot corrupt the longer match.
-        for secret in sorted(_dedupe_strings(secret_values), key=len, reverse=True):
-            if not secret or len(secret) < _MIN_REDACTABLE_LEN:
-                continue
-            occurrences = body.count(secret)
-            if occurrences:
-                body = body.replace(secret, _REDACTED)
-                redaction_count += occurrences
+        # Longest first, so a shorter secret that happens to be a substring
+        # of a longer one cannot corrupt the longer match.
+        secrets = sorted(
+            (
+                value
+                for value in _dedupe_strings(secret_values)
+                if value and len(value) >= _MIN_REDACTABLE_LEN
+            ),
+            key=len,
+            reverse=True,
+        )
+        body, redaction_count = _redact(body, secrets)
 
     truncated = body[:max_len]
 

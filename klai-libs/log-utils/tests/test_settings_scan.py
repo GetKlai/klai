@@ -70,3 +70,40 @@ def test_password_field_name_is_caught() -> None:
 def test_token_field_name_is_caught() -> None:
     settings = SimpleNamespace(slack_bot_token="xoxb-aaaaaaaaaaaaa")
     assert "xoxb-aaaaaaaaaaaaa" in extract_secret_values(settings)
+
+
+def test_key_suffixed_field_names_are_recognised() -> None:
+    """Most credentials in this codebase are named ``*_key``, not ``*_api_key``.
+
+    ``api_key`` matches none of litellm_master_key, meili_master_key,
+    encryption_key, github_app_private_key or bff_session_key, so before the
+    suffix was added those values were invisible to the scanner and survived
+    into anything that logged an upstream body.
+    """
+    settings = SimpleNamespace(
+        litellm_master_key="litellm-master-key-value",
+        meili_master_key="meili-master-key-value",
+        encryption_key="disk-encryption-key-value",
+        github_app_private_key="-----BEGIN KEY-----\nabc\n-----END KEY-----",
+        bff_session_key="bff-session-key-value",
+    )
+
+    found = extract_secret_values(settings)
+
+    assert found == set(vars(settings).values())
+
+
+def test_key_suffix_still_respects_the_length_floor() -> None:
+    """The suffix widens which names count, not which values are safe."""
+    settings = SimpleNamespace(short_key="abc", long_key="long-enough-to-scrub")
+
+    assert extract_secret_values(settings) == {"long-enough-to-scrub"}
+
+
+def test_key_in_the_middle_of_a_name_is_not_a_credential() -> None:
+    """Anchored on the suffix: ``keyboard_layout`` is not a secret."""
+    settings = SimpleNamespace(
+        keyboard_layout="azerty-layout-name", key_rotation_days="not-a-secret"
+    )
+
+    assert extract_secret_values(settings) == set()

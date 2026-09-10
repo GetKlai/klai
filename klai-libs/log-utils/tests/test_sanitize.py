@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import httpx
@@ -174,3 +175,95 @@ def test_sanitize_from_settings_uses_settings_secrets() -> None:
     out = sanitize_from_settings(settings, _make_response(body))
     assert "sneakysecret-42abc" not in out
     assert "api.example.com" in out
+
+
+def test_secret_is_redacted_in_its_json_escaped_form() -> None:
+    """Upstream bodies are JSON, and JSON escapes quotes and backslashes.
+
+    A literal-only match leaves such a value fully reconstructable in the
+    log: decode the JSON and the credential is back. That matters most for
+    the persisted path (``sync_run.error_details``), which keeps the body
+    rather than just printing it.
+    """
+    secret = 'abc"def\\ghi-0123456789'
+    escaped = json.dumps(secret)[1:-1]
+    assert escaped != secret, "pick a value JSON actually escapes"
+    body = SimpleNamespace(text=f'{{"detail":"rejected {escaped}"}}')
+
+    cleaned = sanitize_response_body(body, [secret])
+
+    assert escaped not in cleaned
+    assert secret not in cleaned
+    assert "<redacted>" in cleaned
+
+
+def test_multiline_key_is_redacted_in_its_escaped_form() -> None:
+    """A PEM private key is the worst case: quotes, backslashes and newlines."""
+    secret = "-----BEGIN KEY-----\nline-one\nline-two\n-----END KEY-----"
+    escaped = json.dumps(secret)[1:-1]
+    body = SimpleNamespace(text=f'{{"error":"upstream echoed {escaped}"}}')
+
+    cleaned = sanitize_response_body(body, [secret])
+
+    assert "line-one" not in cleaned
+    assert "<redacted>" in cleaned
+
+
+def test_literal_form_still_redacted_when_the_body_is_not_json() -> None:
+    """Plain-text bodies keep working exactly as before."""
+    secret = "plain-text-secret-value"
+    body = SimpleNamespace(text=f"upstream said {secret} is wrong")
+
+    cleaned = sanitize_response_body(body, [secret])
+
+    assert secret not in cleaned
+    assert "<redacted>" in cleaned
+
+
+def test_alternative_json_escapes_are_redacted() -> None:
+    """JSON has more than one valid spelling of the same string.
+
+    A producer may write ``/`` as ``\\/``, a newline as ``\\u000a`` and ``<``
+    as ``\\u003c``. Enumerating those forms is a losing game — one was missed
+    the first time this was fixed — so the body is decoded and the secret is
+    matched where no escaping exists.
+    """
+    secret = "abc/def-ghijklmnop"
+    body = SimpleNamespace(text='{"detail":"rejected abc\\/def-ghijklmnop"}')
+
+    cleaned = sanitize_response_body(body, [secret])
+
+    assert secret not in cleaned
+    assert "<redacted>" in cleaned
+
+
+def test_unicode_escaped_secret_is_redacted() -> None:
+    secret = "line-one\nline-two-abcdef"
+    body = SimpleNamespace(text='{"detail":"got line-one\\u000aline-two-abcdef"}')
+
+    cleaned = sanitize_response_body(body, [secret])
+
+    assert "line-two-abcdef" not in cleaned
+    assert "<redacted>" in cleaned
+
+
+def test_double_encoded_json_is_redacted() -> None:
+    """A nested payload encoded twice still decodes to a plain string."""
+    secret = "nested-secret-value-123"
+    inner = json.dumps({"cookies": [{"value": secret}]})
+    body = SimpleNamespace(text=json.dumps({"detail": inner}))
+
+    cleaned = sanitize_response_body(body, [secret])
+
+    assert secret not in cleaned
+    assert "<redacted>" in cleaned
+
+
+def test_secret_in_a_json_key_is_redacted_too() -> None:
+    """Keys are strings as well; an upstream echo can put a value there."""
+    secret = "key-position-secret-123"
+    body = SimpleNamespace(text=json.dumps({secret: "whatever"}))
+
+    cleaned = sanitize_response_body(body, [secret])
+
+    assert secret not in cleaned
