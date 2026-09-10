@@ -42,6 +42,7 @@ export function AppearanceTab({ widget }: Props) {
   const [collectUserInfo, setCollectUserInfo] = useState(config.collect_user_info ?? false)
   const [hideDisclaimer, setHideDisclaimer] = useState(config.hide_disclaimer ?? false)
   const [aiDisclosureOverride, setAiDisclosureOverride] = useState(config.ai_disclosure_override ?? '')
+  const [footerText, setFooterText] = useState(config.footer_text ?? '')
   const [widgetPosition, setWidgetPosition] = useState<'left' | 'right'>(config.widget_position || 'right')
 
   // Everything on this tab is presentation, so the preview panel can follow
@@ -68,6 +69,7 @@ export function AppearanceTab({ widget }: Props) {
     setCollectUserInfo(config.collect_user_info ?? false)
     setHideDisclaimer(config.hide_disclaimer ?? false)
     setAiDisclosureOverride(config.ai_disclosure_override ?? '')
+    setFooterText(config.footer_text ?? '')
     setWidgetPosition(config.widget_position || 'right')
   }, [config])
 
@@ -84,6 +86,7 @@ export function AppearanceTab({ widget }: Props) {
     collectUserInfo !== (config.collect_user_info ?? false) ||
     hideDisclaimer !== (config.hide_disclaimer ?? false) ||
     aiDisclosureOverride.trim() !== (config.ai_disclosure_override ?? '') ||
+    footerText.trim() !== (config.footer_text ?? '') ||
     widgetPosition !== (config.widget_position || 'right')
 
   function handleSubmit(e: React.FormEvent) {
@@ -102,6 +105,7 @@ export function AppearanceTab({ widget }: Props) {
       collect_user_info: collectUserInfo,
       hide_disclaimer: hideDisclaimer,
       ai_disclosure_override: aiDisclosureOverride.trim() || null,
+      footer_text: footerText.trim() || null,
       widget_position: widgetPosition,
     }
     updateMutation.mutate(
@@ -150,6 +154,7 @@ export function AppearanceTab({ widget }: Props) {
               <Input
                 value={backgroundColor || THEME_BACKGROUND_COLORS[theme]}
                 onChange={(e) => setBackgroundColor(e.target.value)}
+                aria-label={m.admin_widgets_background_color_label()}
                 pattern="^#[0-9a-fA-F]{6}$"
                 placeholder={m.admin_widgets_background_color_placeholder()}
                 className="font-mono text-sm"
@@ -235,8 +240,21 @@ export function AppearanceTab({ widget }: Props) {
             id="widget-ai-disclosure-override"
             value={aiDisclosureOverride}
             onChange={(e) => setAiDisclosureOverride(e.target.value)}
+            maxLength={500}
             rows={3}
             placeholder={m.admin_widgets_ai_disclosure_override_placeholder()}
+          />
+        </div>
+        <div className="mt-3 space-y-1.5">
+          <Label htmlFor="widget-footer-text">{m.admin_widgets_footer_text_label()}</Label>
+          <p className="text-xs text-gray-600">{m.admin_widgets_footer_text_help()}</p>
+          <Textarea
+            id="widget-footer-text"
+            value={footerText}
+            onChange={(e) => setFooterText(e.target.value)}
+            maxLength={2000}
+            rows={3}
+            placeholder={m.admin_widgets_footer_text_placeholder()}
           />
         </div>
       </section>

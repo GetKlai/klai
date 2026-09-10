@@ -38,6 +38,9 @@ const { MESSAGE_KEYS } = vi.hoisted(() => ({
     'admin_widgets_ai_disclosure_override_help',
     'admin_widgets_ai_disclosure_override_label',
     'admin_widgets_ai_disclosure_override_placeholder',
+    'admin_widgets_footer_text_help',
+    'admin_widgets_footer_text_label',
+    'admin_widgets_footer_text_placeholder',
     'admin_widgets_brand_color_help',
     'admin_widgets_brand_color_label',
     'admin_widgets_brand_color_placeholder',
@@ -267,6 +270,43 @@ describe('WidgetPreviewPanel - SPEC-WIDGET-PREVIEW-001', () => {
     widget.widget_config.css_variables['--klai-background-color'] = '#123456'
     renderScreen(widget, 'appearance')
     expect((document.getElementById('widget-background-color') as HTMLInputElement).value).toBe('#123456')
+  })
+
+  it('saves the introduction and Markdown footer as independent fields', async () => {
+    const widget = makeWidget()
+    widget.widget_config.ai_disclosure_override = 'Bestaande introductie'
+    widget.widget_config.footer_text = 'Bestaande [footer](https://example.com)'
+    const rendered = renderScreen(widget, 'appearance')
+
+    const intro = document.getElementById('widget-ai-disclosure-override') as HTMLTextAreaElement
+    const footer = document.getElementById('widget-footer-text') as HTMLTextAreaElement
+    expect(intro.maxLength).toBe(500)
+    expect(footer.maxLength).toBe(2000)
+
+    fireEvent.change(intro, { target: { value: 'Nieuwe introductie' } })
+    fireEvent.click(screen.getByText('admin_shared_save'))
+
+    await waitFor(() => {
+      const request = apiFetchMock.mock.calls.find(([url]) => url === '/api/admin/widgets/widget-uuid-1')
+      const config = JSON.parse(String(request?.[1]?.body)).widget_config
+      expect(config.ai_disclosure_override).toBe('Nieuwe introductie')
+      expect(config.footer_text).toBe('Bestaande [footer](https://example.com)')
+    })
+
+    rendered.unmount()
+    apiFetchMock.mockClear()
+    renderScreen(widget, 'appearance')
+    fireEvent.change(document.getElementById('widget-footer-text')!, {
+      target: { value: 'Nieuwe [footer](https://example.com/nieuw)' },
+    })
+    fireEvent.click(screen.getByText('admin_shared_save'))
+
+    await waitFor(() => {
+      const request = apiFetchMock.mock.calls.find(([url]) => url === '/api/admin/widgets/widget-uuid-1')
+      const config = JSON.parse(String(request?.[1]?.body)).widget_config
+      expect(config.ai_disclosure_override).toBe('Bestaande introductie')
+      expect(config.footer_text).toBe('Nieuwe [footer](https://example.com/nieuw)')
+    })
   })
 
   it('flags that answer behaviour uses the saved settings while instructions are edited', async () => {
