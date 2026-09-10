@@ -27,10 +27,16 @@ export interface WidgetConfig {
     enabled?: boolean;
     booking_url?: string;
   };
-  // TWD-pattern: header avatar + empty-state hero need the bot name
-  // and a short description ("Assistent voor X — informatie over Y").
+  // TWD-pattern: header avatar + empty-state hero need the bot name.
+  // description is admin-only scope/behaviour config (see partner.py) and
+  // is never rendered to visitors — kept here only as a locale-detection
+  // sample in main.ts.
   name?: string;
   description?: string;
+  // Tenant-supplied replacement for the whole AI-notice sentence in the
+  // hero (the mandatory EU AI Act art. 50 notice + the auto-appended
+  // booking sentence). Used verbatim when set. See ChatWindow.tsx.
+  ai_disclosure_override?: string;
   // Display toggles: show citation list / meta block under each
   // assistant message. Admin-controlled in the Vormgeving tab.
   show_sources?: boolean;

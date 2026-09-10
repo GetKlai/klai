@@ -144,13 +144,13 @@ async function bootstrap(): Promise<void> {
     render(
       () => ChatWindow({
         title: config.title,
-        description: config.description,
         onClose: () => {},
         inline: true,
         conversationStarters: config.conversation_starters,
         hideDisclaimer: config.hide_disclaimer,
         welcomeMessage: config.welcome_message,
         bookingUrl: config.booking_url,
+        aiDisclosureOverride: config.ai_disclosure_override,
         nerdsEnabled: config.nerds?.enabled,
         nerdsBookingUrl: config.nerds?.booking_url,
         collectUserInfo: config.collect_user_info,

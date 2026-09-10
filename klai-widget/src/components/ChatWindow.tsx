@@ -39,7 +39,6 @@ import type { Message } from "../api/chat-stream";
 
 interface ChatWindowProps {
   title: string;
-  description?: string;
   onClose: () => void;
   inline?: boolean;
   conversationStarters?: string[];
@@ -48,6 +47,16 @@ interface ChatWindowProps {
   hideDisclaimer?: boolean;
   welcomeMessage?: string;
   bookingUrl?: string;
+  // Tenant-supplied replacement for the whole AI-notice sentence (the
+  // templated "Je praat met een AI-assistent…" + the auto-appended booking
+  // sentence). Used verbatim, no {name} substitution, nothing auto-appended
+  // — the tenant already wrote their own complete sentence, e.g. because
+  // they show their own escalation route elsewhere (the nerds footer link).
+  // Unset/empty → the default templated notice, unchanged. The admin UI
+  // must keep telling the tenant this still has to convey "this is an AI
+  // system" — the EU AI Act art. 50 requirement doesn't go away, only the
+  // exact wording becomes theirs.
+  aiDisclosureOverride?: string;
   // Nerds booking panel (Voys-specific). The server only delivers
   // enabled=true together with an absolute http(s) booking_url
   // (partner.py _widget_nerds_integration), but the widget re-checks
@@ -59,7 +68,7 @@ interface ChatWindowProps {
 }
 
 // TWD-pattern widget chrome:
-//   header  → primary-color bg, avatar + title + description, close
+//   header  → primary-color bg, avatar + title, close
 //   hero    → centered icon + welcome line + mandatory AI notice +
 //             starter chips (only when the conversation hasn't started yet)
 //   input   → pill textarea + small primary-color send button
@@ -84,6 +93,11 @@ export function ChatWindow(props: ChatWindowProps) {
   // later; closing and reopening the window re-announces it.
   const [aiDisclosureText, setAiDisclosureText] = createSignal("");
   const disclosureTimer = window.setTimeout(() => {
+    const override = props.aiDisclosureOverride?.trim();
+    if (override) {
+      setAiDisclosureText(override);
+      return;
+    }
     // Fill the notice with the tenant's own bot name. config.name is the
     // per-widget display name the admin API requires (non-empty); the
     // header title is only a caption and may be generic wording that
@@ -518,9 +532,6 @@ export function ChatWindow(props: ChatWindowProps) {
             </span>
             <div class="klai-header-text">
               <span class="klai-header-title">{props.title}</span>
-              <Show when={props.description}>
-                <span class="klai-header-description">{props.description}</span>
-              </Show>
             </div>
           </div>
           <div class="klai-header-actions">
@@ -636,9 +647,6 @@ export function ChatWindow(props: ChatWindowProps) {
           <p class="klai-hero-title">
             {props.welcomeMessage?.trim() || props.title}
           </p>
-          <Show when={props.description}>
-            <p class="klai-hero-subtitle">{props.description}</p>
-          </Show>
           {/* EU AI Act art. 50 notice: visitors must know they are talking
               to an AI system, perceptibly, at first interaction. Deliberately
               NOT gated on hide_disclaimer — that flag is a white-label toggle

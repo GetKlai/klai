@@ -3014,10 +3014,15 @@ async def widget_config(
         # disclaimer toggle. system_prompt stays server-side only.
         "conversation_starters": widget_config_data.get("conversation_starters", []),
         "hide_disclaimer": widget_config_data.get("hide_disclaimer", False),
-        # Name + description drive the TWD-pattern header (avatar +
-        # title + subtitle) and the empty-state hero.
+        # Name drives the TWD-pattern header (avatar + title). description
+        # is admin-only scope/behaviour config, not rendered to visitors —
+        # kept in the response only as a widget-frontend locale hint.
         "name": widget_row.name,
         "description": widget_row.description or "",
+        # Tenant-supplied replacement for the whole AI-notice sentence (the
+        # EU AI Act art. 50 notice + the auto-appended booking sentence).
+        # Used verbatim by the widget when set — see ChatWindow.tsx.
+        "ai_disclosure_override": widget_config_data.get("ai_disclosure_override") or "",
         "primary_color": widget_config_data.get("primary_color", "#fcaa2d"),
         "theme": widget_config_data.get("theme", "light"),
         "collect_user_info": widget_config_data.get("collect_user_info", False),

@@ -37,6 +37,7 @@ export function AppearanceTab({ widget }: Props) {
   const [showMeta, setShowMeta] = useState(config.show_meta ?? false)
   const [collectUserInfo, setCollectUserInfo] = useState(config.collect_user_info ?? false)
   const [hideDisclaimer, setHideDisclaimer] = useState(config.hide_disclaimer ?? false)
+  const [aiDisclosureOverride, setAiDisclosureOverride] = useState(config.ai_disclosure_override ?? '')
   const [widgetPosition, setWidgetPosition] = useState<'left' | 'right'>(config.widget_position || 'right')
 
   // Everything on this tab is presentation, so the preview panel can follow
@@ -61,6 +62,7 @@ export function AppearanceTab({ widget }: Props) {
     setShowMeta(config.show_meta ?? false)
     setCollectUserInfo(config.collect_user_info ?? false)
     setHideDisclaimer(config.hide_disclaimer ?? false)
+    setAiDisclosureOverride(config.ai_disclosure_override ?? '')
     setWidgetPosition(config.widget_position || 'right')
   }, [config])
 
@@ -75,6 +77,7 @@ export function AppearanceTab({ widget }: Props) {
     showMeta !== (config.show_meta ?? false) ||
     collectUserInfo !== (config.collect_user_info ?? false) ||
     hideDisclaimer !== (config.hide_disclaimer ?? false) ||
+    aiDisclosureOverride.trim() !== (config.ai_disclosure_override ?? '') ||
     widgetPosition !== (config.widget_position || 'right')
 
   function handleSubmit(e: React.FormEvent) {
@@ -89,6 +92,7 @@ export function AppearanceTab({ widget }: Props) {
       show_meta: showMeta,
       collect_user_info: collectUserInfo,
       hide_disclaimer: hideDisclaimer,
+      ai_disclosure_override: aiDisclosureOverride.trim() || null,
       widget_position: widgetPosition,
     }
     updateMutation.mutate(
@@ -192,6 +196,17 @@ export function AppearanceTab({ widget }: Props) {
             label={m.admin_widgets_collect_user_info_label()} help={m.admin_widgets_collect_user_info_help()} />
           <WidgetToggleCard id="hide-disclaimer" checked={hideDisclaimer} onChange={setHideDisclaimer}
             label={m.admin_widgets_widget_hide_disclaimer_label()} help={m.admin_widgets_widget_hide_disclaimer_help()} />
+        </div>
+        <div className="mt-3 space-y-1.5">
+          <Label htmlFor="widget-ai-disclosure-override">{m.admin_widgets_ai_disclosure_override_label()}</Label>
+          <p className="text-xs text-gray-600">{m.admin_widgets_ai_disclosure_override_help()}</p>
+          <Textarea
+            id="widget-ai-disclosure-override"
+            value={aiDisclosureOverride}
+            onChange={(e) => setAiDisclosureOverride(e.target.value)}
+            rows={3}
+            placeholder={m.admin_widgets_ai_disclosure_override_placeholder()}
+          />
         </div>
       </section>
 

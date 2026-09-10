@@ -91,4 +91,20 @@ def _merge_css_variables(widget_config: dict) -> dict[str, str]:
         for key, value in overrides.items():
             if isinstance(key, str) and isinstance(value, str):
                 css_vars[key] = value
+
+    # A raw --klai-primary-color override (set directly via css_variables,
+    # bypassing the primary_color field above) skips the luminance
+    # derivation, leaving --klai-primary-text-color at its CSS default
+    # (dark) — illegible icon/arrow/user-message text on a dark override
+    # colour. Whichever path set the effective primary colour, derive a
+    # contrast-safe text colour for it, unless the override explicitly
+    # supplied its own --klai-primary-text-color.
+    effective_primary = css_vars.get("--klai-primary-color")
+    if (
+        isinstance(effective_primary, str)
+        and _HEX_COLOR_RE.match(effective_primary)
+        and "--klai-primary-text-color" not in overrides
+    ):
+        css_vars["--klai-primary-text-color"] = _readable_text_color(effective_primary)
+
     return css_vars
