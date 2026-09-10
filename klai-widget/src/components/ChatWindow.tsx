@@ -854,28 +854,34 @@ export function ChatWindow(props: ChatWindowProps) {
       </div>
 
       {/* With the nerds integration on, the client's own disclosure
-          sentence replaces the plain accuracy footer — same place, same
-          white-label gate. The visitor must always have a working escape
-          route to a human, so "onze nerds" opens the same booking panel
-          the in-conversation appointment button opens. The fragments
-          render as JSX text/a button, never as raw HTML. */}
-      <Show when={!props.hideDisclaimer}>
-        <Show
-          when={nerdsActive()}
-          fallback={<p class="klai-disclaimer">{t().disclaimer}</p>}
-        >
-          <p class="klai-disclaimer">
-            {t().nerdsDisclosureBefore}
-            <button
-              type="button"
-              class="klai-disclaimer-link"
-              onClick={openNerdsPanel}
-            >
-              {t().nerdsDisclosureLink}
-            </button>
-            {t().nerdsDisclosureAfter}
-          </p>
-        </Show>
+          sentence replaces the plain accuracy footer — same place, but NOT
+          the same white-label gate. hideDisclaimer only white-labels the
+          generic accuracy wording; the nerds escape route is the visitor's
+          one permanent way to reach a human (the booking bar above is
+          already hidden once nerds is active) and must survive that toggle,
+          so it renders whenever nerds is configured, hideDisclaimer or not.
+          "onze nerds" opens the same booking panel the in-conversation
+          appointment button opens. The fragments render as JSX text/a
+          button, never as raw HTML. */}
+      <Show
+        when={nerdsActive()}
+        fallback={
+          <Show when={!props.hideDisclaimer}>
+            <p class="klai-disclaimer">{t().disclaimer}</p>
+          </Show>
+        }
+      >
+        <p class="klai-disclaimer">
+          {t().nerdsDisclosureBefore}
+          <button
+            type="button"
+            class="klai-disclaimer-link"
+            onClick={openNerdsPanel}
+          >
+            {t().nerdsDisclosureLink}
+          </button>
+          {t().nerdsDisclosureAfter}
+        </p>
       </Show>
 
       {/* Nerds booking panel: overlay covering the chat while open. The

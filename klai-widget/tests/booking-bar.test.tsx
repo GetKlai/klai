@@ -73,4 +73,24 @@ describe("permanent booking bar", () => {
     fireEvent.click(link);
     expect(container.querySelector(".klai-nerds-panel")).not.toBeNull();
   });
+
+  it("keeps the nerds escape link even when hideDisclaimer white-labels the accuracy footer", () => {
+    // hideDisclaimer only white-labels the generic accuracy wording. With
+    // nerds active the permanent booking bar is already gone (the offer
+    // lives in-conversation instead), so this link is the visitor's only
+    // remaining permanent route to a human — it must survive the toggle.
+    const { container } = renderWindow({
+      nerdsEnabled: true,
+      nerdsBookingUrl: BOOKING_URL,
+      hideDisclaimer: true,
+    });
+    const link = container.querySelector("button.klai-disclaimer-link");
+    expect(link).not.toBeNull();
+    expect(link!.textContent).toBe(t().nerdsDisclosureLink);
+  });
+
+  it("still hides the plain accuracy footer via hideDisclaimer when nerds is off", () => {
+    const { container } = renderWindow({ hideDisclaimer: true });
+    expect(container.querySelector(".klai-disclaimer")).toBeNull();
+  });
 });
