@@ -445,13 +445,12 @@ decision rather than a patch:
   but the real control for a mutation this visible would be a server-side
   capability tied to a live chat turn, plus per-widget quota. Nothing in this
   branch made that worse — it is the pre-existing property of the endpoint.
-- **A widget on a customer's own domain will fail CORS preflight.** The handoff
-  route now accepts any origin from the widget config, but the global CORS
-  middleware only knows `CORS_ORIGINS` plus `*.getklai.com`, so a browser POST
-  from `https://help.customer.com` is refused at preflight before the handler
-  runs. Only `/widget-config` has a widget-aware preflight today. This does not
-  affect the pilot, which runs on a `getklai.com` subdomain, but it does block
-  the first genuinely external help-page embed.
+- ~~A widget on a customer's own domain will fail CORS preflight.~~ **Fixed**
+  on 2026-09-10 (PR #1361) when help.voys.nl became the first external embed:
+  `KlaiCORSMiddleware` now lets the public widget endpoints (chat, feedback,
+  handoff) answer their own CORS with the origin echoed and no credentials,
+  and hands `/widget-config` to its own per-widget-allowlist routes. The
+  security boundary on those paths is the widget session JWT.
 - **Gap rows carry a 7-day retention** while widget messages get 90, so the
   editorial signal expires faster than the conversations it came from.
 - ~~A broad answer lands in the `escalated` bucket.~~ **Fixed** along the line
