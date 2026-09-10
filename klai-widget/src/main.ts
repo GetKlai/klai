@@ -108,7 +108,17 @@ function previewPrimaryTextColor(primaryColor: string): string {
 
 // css_variables from config as custom properties overrides
 function cssVariableOverrides(config: WidgetConfig): string {
-  const overrides = Object.entries(config.css_variables)
+  const variables = { ...config.css_variables };
+  // The AI intro follows explicitly configured body typography. An unset
+  // message variable emits no derived declaration, so widgets without
+  // typography config keep the .klai-hero-ai-disclosure CSS defaults.
+  if (variables["--klai-message-font-size"]) {
+    variables["--klai-intro-font-size"] = variables["--klai-message-font-size"];
+  }
+  if (variables["--klai-message-line-height"]) {
+    variables["--klai-intro-line-height"] = variables["--klai-message-line-height"];
+  }
+  const overrides = Object.entries(variables)
     .map(([key, value]) => `${key}: ${value};`)
     .join(" ");
   // Exact opt-in to the bundled Geist face (config.css_variables is already
@@ -167,6 +177,13 @@ function previewAppearance(config: PreviewConfig): Map<string, string> {
   if (values.get("--klai-font-family") === '"Klai Widget Geist", system-ui, sans-serif') {
     values.set("-webkit-font-smoothing", "antialiased");
   }
+  // Same intro derivation as cssVariableOverrides, judged on the final
+  // tenant/widget merge; the applied-set cleanup clears the derived keys
+  // when the explicit message overrides go away.
+  const messageFontSize = values.get("--klai-message-font-size");
+  if (messageFontSize) values.set("--klai-intro-font-size", messageFontSize);
+  const messageLineHeight = values.get("--klai-message-line-height");
+  if (messageLineHeight) values.set("--klai-intro-line-height", messageLineHeight);
   return values;
 }
 

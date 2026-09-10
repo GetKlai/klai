@@ -774,6 +774,8 @@
 .klai-markdown strong { font-weight: 600; }
 .klai-markdown em { font-style: italic; }
 .klai-markdown a { color: var(--klai-link-color); text-decoration: underline; }
+.klai-markdown a:hover { text-decoration-thickness: 2px; text-underline-offset: 3px; }
+.klai-markdown a:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
 .klai-markdown a.klai-citation {
   white-space: nowrap;
   font-weight: 600;
@@ -1263,10 +1265,12 @@
 }
 
 /* Optional tenant-editable introduction, in the same muted register as
-   the subtitle. An explicitly empty value renders no introduction. */
+   the subtitle. An explicitly empty value renders no introduction.
+   --klai-intro-* are only set inline when the tenant explicitly configured
+   the message typography; otherwise these defaults stand. */
 .klai-hero-ai-disclosure {
-  font-size: 12.5px;
-  line-height: 1.45;
+  font-size: var(--klai-intro-font-size, 12.5px);
+  line-height: var(--klai-intro-line-height, 1.45);
   color: var(--klai-text-muted);
   margin: 10px 0 0;
   max-width: 300px;
@@ -1532,3 +1536,5 @@
   text-decoration: underline;
   cursor: pointer;
 }
+.klai-disclaimer-link:hover { text-decoration-thickness: 2px; text-underline-offset: 3px; }
+.klai-disclaimer-link:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
