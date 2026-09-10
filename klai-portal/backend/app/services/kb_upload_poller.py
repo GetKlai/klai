@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import structlog
@@ -50,8 +51,41 @@ DEFAULT_POLL_INTERVAL_S: float = 5.0
 # skip on this tick are picked up on the next.
 _BATCH_SIZE: int = 50
 
+# Cap on a row sitting in ``processing`` while docling keeps reporting a
+# non-terminal status (unknown status, dropped queue entry). Conversions
+# take minutes; only never-finishing tasks are cut off. Clock: created_at.
+PROCESSING_DEADLINE: timedelta = timedelta(hours=3)
+
 
 # ---- Per-row processing ---------------------------------------------------
+
+
+async def _fail_when_past_deadline(view: KBUploadView, *, docling_status: str) -> bool:
+    """Fail a row that has been in ``processing`` past the cap.
+
+    Returns True when this tick ended the row, so the caller knows the row
+    is done with. Reached from both non-terminal outcomes -- a status that
+    is simply not terminal, and a status endpoint that keeps timing out --
+    because either one on its own leaves the row polling forever.
+    """
+    if datetime.now(UTC) - view.created_at < PROCESSING_DEADLINE:
+        return False
+    async with tenant_scoped_session(view.org_id) as db:
+        failed = await kb_uploads_repo.mark_failed_if_processing(
+            db, upload_id=view.id, failure_reason="processing_deadline_exceeded"
+        )
+        await db.commit()
+    if not failed:
+        # Another actor moved the row on between the read and this write.
+        return False
+    logger.warning(
+        "kb_upload_processing_deadline_exceeded",
+        upload_id=str(view.id),
+        task_id=view.docling_task_id,
+        docling_status=docling_status,
+        age_hours=round((datetime.now(UTC) - view.created_at).total_seconds() / 3600, 1),
+    )
+    return True
 
 
 async def _process_processing_row(view: KBUploadView) -> None:
@@ -78,7 +112,11 @@ async def _process_processing_row(view: KBUploadView) -> None:
     except docling_client.DoclingTimeoutError:
         # Transient — leave for next tick. Bump updated_at so the
         # poller sorts this row to the back of the queue and works on
-        # other rows first.
+        # other rows first. Past the cap it is no longer transient: a
+        # status endpoint that never answers keeps the row here forever
+        # just as surely as a status that is never terminal.
+        if await _fail_when_past_deadline(view, docling_status="poll_timeout"):
+            return
         logger.info(
             "kb_upload_poll_transient",
             upload_id=str(view.id),
@@ -93,6 +131,7 @@ async def _process_processing_row(view: KBUploadView) -> None:
         return
 
     if not poll.terminal:
+        await _fail_when_past_deadline(view, docling_status=poll.status)
         return
 
     if poll.status != docling_client.DoclingTaskStatus.SUCCESS:
