@@ -5,6 +5,7 @@ import datetime as dt
 import json
 from datetime import datetime, timedelta
 from typing import Literal
+from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
@@ -2227,8 +2228,18 @@ async def _load_saved_web_crawler_cookies(
     connector_id: str | None,
     org_id: int,
     db: AsyncSession,
+    probe_url: str,
 ) -> list[dict]:
-    """Return encrypted web-crawler cookies for preview/probe without exposing them."""
+    """Return encrypted web-crawler cookies for preview/probe without exposing them.
+
+    ``probe_url`` MUST be on the same origin as the connector's stored
+    ``base_url``. Decrypted saved cookies are forwarded verbatim to whatever
+    URL the caller supplies; without this check a connector-manage user could
+    point the probe/preview URL at an attacker-controlled domain and exfiltrate
+    the org's saved session cookies for the real target site. The wizard's own
+    "test URL" field only advises the same restriction client-side - this is
+    the enforcement point a direct API call cannot bypass.
+    """
     if not connector_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -2246,6 +2257,17 @@ async def _load_saved_web_crawler_cookies(
     connector = result.scalar_one_or_none()
     if not connector:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
+    stored_base_url = (connector.config or {}).get("base_url") if isinstance(connector.config, dict) else None
+    probe_origin = urlsplit(probe_url)
+    stored_origin = urlsplit(stored_base_url) if stored_base_url else None
+    if stored_origin is None or (probe_origin.scheme, probe_origin.netloc.lower()) != (
+        stored_origin.scheme,
+        stored_origin.netloc.lower(),
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error_code": "probe_url_origin_mismatch"},
+        )
     if connector.encrypted_credentials is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -2290,6 +2312,7 @@ async def _resolve_web_crawler_probe_cookies(
     cookies: list[dict] | None,
     connector_id: str | None,
     use_saved_credentials: bool,
+    probe_url: str,
 ) -> list[dict] | None:
     if use_saved_credentials and cookies:
         raise HTTPException(
@@ -2297,7 +2320,7 @@ async def _resolve_web_crawler_probe_cookies(
             detail={"error_code": "saved_credentials_conflict"},
         )
     if use_saved_credentials:
-        return await _load_saved_web_crawler_cookies(kb, connector_id, org_id, db)
+        return await _load_saved_web_crawler_cookies(kb, connector_id, org_id, db, probe_url)
     return cookies
 
 
@@ -2329,6 +2352,7 @@ async def crawl_preview(
         cookies=body.cookies,
         connector_id=body.connector_id,
         use_saved_credentials=body.use_saved_credentials,
+        probe_url=body.url,
     )
     # SPEC-CONNECTOR-INPUT-VALIDATION-001 hotfix: knowledge-ingest
     # identity verifier expects the Zitadel resourceowner ID (the
@@ -2407,6 +2431,7 @@ async def auth_probe(
         cookies=body.cookies,
         connector_id=body.connector_id,
         use_saved_credentials=body.use_saved_credentials,
+        probe_url=body.url,
     )
     # See crawl_preview above for the org_id rationale (Zitadel ID, not int PK).
     org = await _load_org_or_500(db, perms.org_id)

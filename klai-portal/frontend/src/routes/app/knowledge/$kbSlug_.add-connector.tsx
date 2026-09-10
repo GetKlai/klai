@@ -30,6 +30,7 @@ import type {
   WebCrawlerConfig,
 } from './-connector-types'
 import {
+  isWithinBaseUrl,
   joinSeedUrl,
   MARKDOWN_PROSE_CLASSES,
   normalizeConnectorPreselectType,
@@ -133,6 +134,11 @@ function AddConnectorPage() {
   // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-2: auth-probe state.
   const [authProbeResult, setAuthProbeResult] = useState<AuthProbeResult | null>(null)
   const [authProbeError, setAuthProbeError] = useState<string | null>(null)
+  // Auth-probe test URL - defaults to the Details-step base URL, but is
+  // editable because a site's login wall doesn't always sit on the crawl
+  // root (e.g. a public FAQ root with gated articles deeper in the site).
+  // Empty string means "use the default"; resolved in wcEffectiveTestUrl.
+  const [wcTestUrl, setWcTestUrl] = useState('')
   // Save-time auth_guard config - operator-editable. Initialized from the
   // auth-probe at step 4 → 5 transition, overwritten by preview's auth_guard
   // on a successful Run preview, written by the editable form below the
@@ -181,8 +187,13 @@ function AddConnectorPage() {
         // ``authGuard`` state - initialized from auth-probe at step 4 → 5
         // bridge, refreshed by preview onSuccess, mutated by the operator-
         // editable form on step 5.
+        // canary_url must stay within base_url + path_prefix (backend
+        // WebcrawlerConfig._assert_within_scope) - the auth-probe test URL
+        // can point at a login page outside that scope, in which case we
+        // drop it here rather than 422 on save. The connector still saves;
+        // it just skips ongoing cookie-expiry monitoring for that case.
         const ag = authGuard
-        if (ag?.canary_url) {
+        if (ag?.canary_url && isWithinBaseUrl(ag.canary_url, joinSeedUrl(webcrawlerConfig.base_url, webcrawlerConfig.path_prefix))) {
           config.canary_url = ag.canary_url
           if (ag.canary_fingerprint) config.canary_fingerprint = ag.canary_fingerprint
         }
@@ -346,11 +357,13 @@ function AddConnectorPage() {
     setPreviewError(null)
   }
 
+  const wcEffectiveTestUrl = wcTestUrl || joinSeedUrl(webcrawlerConfig.base_url, webcrawlerConfig.path_prefix)
+
   function runAuthProbe(payload: CrawlerAuthPayload) {
     setAuthProbeResult(null)
     setAuthProbeError(null)
     authProbeMutation.mutate({
-      url: joinSeedUrl(webcrawlerConfig.base_url, webcrawlerConfig.path_prefix),
+      url: wcEffectiveTestUrl,
       ...payload,
     })
   }
@@ -807,6 +820,7 @@ function AddConnectorPage() {
                           setWcPreviewUrl((current) =>
                             previewUrlOnDetailsAdvance(current, webcrawlerConfig.base_url),
                           )
+                          setWcTestUrl('')
                           invalidateAuthProbe()
                           invalidatePreview()
                           setWcStep('auth-question')
@@ -884,6 +898,12 @@ function AddConnectorPage() {
                 {wcStep === 'auth-setup' && (
                   <CrawlerAuthSetupStep
                     baseUrl={webcrawlerConfig.base_url}
+                    testUrl={wcEffectiveTestUrl}
+                    onTestUrlChange={(url) => {
+                      setWcTestUrl(url)
+                      invalidateAuthProbe()
+                      invalidatePreview()
+                    }}
                     mode={{
                       kind: 'cookies',
                       idPrefix: 'add-wc-cookie',
