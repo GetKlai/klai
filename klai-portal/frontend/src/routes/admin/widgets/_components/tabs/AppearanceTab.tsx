@@ -20,6 +20,9 @@ interface Props {
   widget: WidgetDetailResponse
 }
 
+const BACKGROUND_COLOR_VARIABLE = '--klai-background-color'
+const THEME_BACKGROUND_COLORS = { light: '#fffef2', dark: '#191918' } as const
+
 // TWD-parity Appearance tab - five sub-sections (Brand & theme,
 // Welkomstbericht, Conversation starters, Chat display toggles, Widget
 // position). Wired fields land in widget_config JSON; widget client
@@ -31,6 +34,7 @@ export function AppearanceTab({ widget }: Props) {
 
   const [welcome, setWelcome] = useState(config.welcome_message)
   const [primaryColor, setPrimaryColor] = useState(config.primary_color || WIDGET_DEFAULT_PRIMARY_COLOR)
+  const [backgroundColor, setBackgroundColor] = useState(config.css_variables[BACKGROUND_COLOR_VARIABLE] || '')
   const [theme, setTheme] = useState<'light' | 'dark'>(config.theme || 'light')
   const [startersRaw, setStartersRaw] = useState((config.conversation_starters ?? []).join('\n'))
   const [showSources, setShowSources] = useState(config.show_sources ?? true)
@@ -38,6 +42,7 @@ export function AppearanceTab({ widget }: Props) {
   const [collectUserInfo, setCollectUserInfo] = useState(config.collect_user_info ?? false)
   const [hideDisclaimer, setHideDisclaimer] = useState(config.hide_disclaimer ?? false)
   const [aiDisclosureOverride, setAiDisclosureOverride] = useState(config.ai_disclosure_override ?? '')
+  const [footerText, setFooterText] = useState(config.footer_text ?? '')
   const [widgetPosition, setWidgetPosition] = useState<'left' | 'right'>(config.widget_position || 'right')
 
   // Everything on this tab is presentation, so the preview panel can follow
@@ -56,6 +61,7 @@ export function AppearanceTab({ widget }: Props) {
   useEffect(() => {
     setWelcome(config.welcome_message)
     setPrimaryColor(config.primary_color || WIDGET_DEFAULT_PRIMARY_COLOR)
+    setBackgroundColor(config.css_variables[BACKGROUND_COLOR_VARIABLE] || '')
     setTheme(config.theme || 'light')
     setStartersRaw((config.conversation_starters ?? []).join('\n'))
     setShowSources(config.show_sources ?? true)
@@ -63,6 +69,7 @@ export function AppearanceTab({ widget }: Props) {
     setCollectUserInfo(config.collect_user_info ?? false)
     setHideDisclaimer(config.hide_disclaimer ?? false)
     setAiDisclosureOverride(config.ai_disclosure_override ?? '')
+    setFooterText(config.footer_text ?? '')
     setWidgetPosition(config.widget_position || 'right')
   }, [config])
 
@@ -71,6 +78,7 @@ export function AppearanceTab({ widget }: Props) {
   const isDirty =
     welcome.trim() !== config.welcome_message ||
     primaryColor !== (config.primary_color || WIDGET_DEFAULT_PRIMARY_COLOR) ||
+    backgroundColor !== (config.css_variables[BACKGROUND_COLOR_VARIABLE] || '') ||
     theme !== (config.theme || 'light') ||
     JSON.stringify(starters) !== JSON.stringify(config.conversation_starters ?? []) ||
     showSources !== (config.show_sources ?? true) ||
@@ -78,6 +86,7 @@ export function AppearanceTab({ widget }: Props) {
     collectUserInfo !== (config.collect_user_info ?? false) ||
     hideDisclaimer !== (config.hide_disclaimer ?? false) ||
     aiDisclosureOverride.trim() !== (config.ai_disclosure_override ?? '') ||
+    footerText.trim() !== (config.footer_text ?? '') ||
     widgetPosition !== (config.widget_position || 'right')
 
   function handleSubmit(e: React.FormEvent) {
@@ -86,6 +95,9 @@ export function AppearanceTab({ widget }: Props) {
       ...config,
       welcome_message: welcome.trim(),
       primary_color: primaryColor,
+      css_variables: backgroundColor
+        ? { ...config.css_variables, [BACKGROUND_COLOR_VARIABLE]: backgroundColor }
+        : config.css_variables,
       theme,
       conversation_starters: starters,
       show_sources: showSources,
@@ -93,6 +105,7 @@ export function AppearanceTab({ widget }: Props) {
       collect_user_info: collectUserInfo,
       hide_disclaimer: hideDisclaimer,
       ai_disclosure_override: aiDisclosureOverride.trim() || null,
+      footer_text: footerText.trim() || null,
       widget_position: widgetPosition,
     }
     updateMutation.mutate(
@@ -106,24 +119,47 @@ export function AppearanceTab({ widget }: Props) {
       {/* Brand & Theme */}
       <section>
         <SectionHeading>{m.admin_widgets_appearance_section_brand()}</SectionHeading>
-        <div className="space-y-1.5 max-w-sm">
-          <Label htmlFor="widget-primary-color">{m.admin_widgets_brand_color_label()}</Label>
-          <p className="text-xs text-gray-600">{m.admin_widgets_brand_color_help()}</p>
-          <div className="flex items-center gap-2">
-            <Input
-              id="widget-primary-color"
-              type="color"
-              value={primaryColor}
-              onChange={(e) => setPrimaryColor(e.target.value)}
-              className="h-10 w-12 cursor-pointer rounded-md border border-gray-200 p-1"
-            />
-            <Input
-              value={primaryColor}
-              onChange={(e) => setPrimaryColor(e.target.value)}
-              pattern="^#[0-9a-fA-F]{6}$"
-              placeholder={m.admin_widgets_brand_color_placeholder()}
-              className="font-mono text-sm"
-            />
+        <div className="grid max-w-2xl gap-5 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="widget-primary-color">{m.admin_widgets_brand_color_label()}</Label>
+            <p className="text-xs text-gray-600">{m.admin_widgets_brand_color_help()}</p>
+            <div className="flex items-center gap-2">
+              <Input
+                id="widget-primary-color"
+                type="color"
+                value={primaryColor}
+                onChange={(e) => setPrimaryColor(e.target.value)}
+                className="h-10 w-12 cursor-pointer rounded-md border border-gray-200 p-1"
+              />
+              <Input
+                value={primaryColor}
+                onChange={(e) => setPrimaryColor(e.target.value)}
+                pattern="^#[0-9a-fA-F]{6}$"
+                placeholder={m.admin_widgets_brand_color_placeholder()}
+                className="font-mono text-sm"
+              />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="widget-background-color">{m.admin_widgets_background_color_label()}</Label>
+            <p className="text-xs text-gray-600">{m.admin_widgets_background_color_help()}</p>
+            <div className="flex items-center gap-2">
+              <Input
+                id="widget-background-color"
+                type="color"
+                value={backgroundColor || THEME_BACKGROUND_COLORS[theme]}
+                onChange={(e) => setBackgroundColor(e.target.value)}
+                className="h-10 w-12 cursor-pointer rounded-md border border-gray-200 p-1"
+              />
+              <Input
+                value={backgroundColor || THEME_BACKGROUND_COLORS[theme]}
+                onChange={(e) => setBackgroundColor(e.target.value)}
+                aria-label={m.admin_widgets_background_color_label()}
+                pattern="^#[0-9a-fA-F]{6}$"
+                placeholder={m.admin_widgets_background_color_placeholder()}
+                className="font-mono text-sm"
+              />
+            </div>
           </div>
         </div>
 
@@ -204,8 +240,21 @@ export function AppearanceTab({ widget }: Props) {
             id="widget-ai-disclosure-override"
             value={aiDisclosureOverride}
             onChange={(e) => setAiDisclosureOverride(e.target.value)}
+            maxLength={500}
             rows={3}
             placeholder={m.admin_widgets_ai_disclosure_override_placeholder()}
+          />
+        </div>
+        <div className="mt-3 space-y-1.5">
+          <Label htmlFor="widget-footer-text">{m.admin_widgets_footer_text_label()}</Label>
+          <p className="text-xs text-gray-600">{m.admin_widgets_footer_text_help()}</p>
+          <Textarea
+            id="widget-footer-text"
+            value={footerText}
+            onChange={(e) => setFooterText(e.target.value)}
+            maxLength={2000}
+            rows={3}
+            placeholder={m.admin_widgets_footer_text_placeholder()}
           />
         </div>
       </section>

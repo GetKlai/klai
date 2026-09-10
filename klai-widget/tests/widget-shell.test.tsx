@@ -4,6 +4,8 @@ import { cleanup, render } from "@solidjs/testing-library";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ChatBubble } from "../src/components/ChatBubble";
+import { ChatWindow } from "../src/components/ChatWindow";
+import { initLabels } from "../src/i18n/labels";
 
 const widgetCss = readFileSync(join(process.cwd(), "src/styles/widget.css"), "utf8");
 
@@ -15,6 +17,20 @@ afterEach(() => {
 });
 
 describe("widget shell", () => {
+  it("shows online status and a visible new-conversation label in the header", () => {
+    initLabels("nl");
+    const { container } = render(() => (
+      <ChatWindow title="Voys Help NL" onClose={() => {}} manageHandoffStream={false} />
+    ));
+    const header = container.querySelector(".klai-header")!;
+    const newConversation = header.querySelector(
+      'button[aria-label="Nieuw gesprek"]',
+    ) as HTMLButtonElement;
+
+    expect(header.querySelector(".klai-header-status")?.textContent).toBe("Online");
+    expect(newConversation.textContent).toContain("Nieuw gesprek");
+  });
+
   it("keeps launcher artwork unfilled and centers the header actions", () => {
     const { container } = render(() => <ChatBubble />);
     const bubble = container.querySelector(".klai-bubble") as HTMLButtonElement;
