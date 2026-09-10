@@ -33,6 +33,7 @@ from typing import Any
 
 import httpx
 import pytest
+import structlog
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -48,7 +49,11 @@ _LONG_MARKDOWN = (
 )
 
 
-def _build_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
+def _build_client(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    settings_values: dict[str, Any] | None = None,
+) -> TestClient:
     """Build a FastAPI client with the fingerprint router mounted.
 
     Bypass ``_require_portal_call`` (used inline, not via Depends) so the
@@ -63,12 +68,16 @@ def _build_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     # Stub Settings so the route does not blow up on missing required
     # env vars (database_url, zitadel_*) when instantiated inside the
     # request handler. The crawl4ai_* fields are the only ones the
-    # rewired endpoint reads.
+    # rewired endpoint reads; ``settings_values`` adds more for tests that
+    # assert on secret scrubbing.
     monkeypatch.setattr(
         "app.routes.fingerprint.Settings",
         lambda: SimpleNamespace(
-            crawl4ai_api_url="http://crawl4ai.test:11235",
-            crawl4ai_internal_key="",
+            **{
+                "crawl4ai_api_url": "http://crawl4ai.test:11235",
+                "crawl4ai_internal_key": "",
+                **(settings_values or {}),
+            }
         ),
     )
     return TestClient(app, raise_server_exceptions=False)
@@ -270,9 +279,13 @@ class _FakeResponse:
         *,
         status_code: int = 200,
         json_data: dict[str, Any] | None = None,
+        text: str = "",
+        raises_on_json: bool = False,
     ) -> None:
         self.status_code = status_code
         self._json = json_data or {}
+        self.text = text
+        self._raises_on_json = raises_on_json
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
@@ -283,6 +296,9 @@ class _FakeResponse:
             )
 
     def json(self) -> dict[str, Any]:
+        if self._raises_on_json:
+            # httpx raises ValueError (json.JSONDecodeError) on a non-JSON body.
+            raise ValueError("Expecting value: line 1 column 1 (char 0)")
         return self._json
 
 
@@ -511,3 +527,242 @@ def test_source_does_not_import_deleted_webcrawler_module() -> None:
                 "module was deleted by SPEC-CRAWLER-004 Fase F "
                 "(commit 2295bc0c)."
             )
+
+
+# ---------------------------------------------------------------------------
+# Diagnosis — crawl4ai's rejection reason lives in the 4xx response body
+# ---------------------------------------------------------------------------
+#
+# Live-measured on our own crawl4ai 0.9.2 (2026-09-10): the untrusted-config
+# boundary (CVE-2026-57572 hardening) answers POST /crawl with HTTP 400 and
+# puts the offending field in ``detail``. The old code called
+# ``raise_for_status()`` and dropped the body, so a rejected config field
+# read as a generic crawl failure. The 502 body must stay generic (REQ-31.2),
+# so the reason belongs in the log — sanitized via app.core.sanitize.
+
+# Measured verbatim against crawl4ai 0.9.2 on 2026-09-10.
+
+
+# ---------------------------------------------------------------------------
+# crawl4ai rejection diagnosis — bounded identifiers only
+# ---------------------------------------------------------------------------
+#
+# Measured verbatim against crawl4ai 0.9.2 on 2026-09-10.
+_REJECTED_COOKIES_JSON = {
+    "detail": (
+        "Rejected request: field 'cookies' is not permitted on "
+        "BrowserConfig from an untrusted request"
+    )
+}
+_SERVER_ERROR_JSON = {
+    "error": "Internal server error",
+    "correlation_id": "188834187d7d",
+}
+_SESSION_COOKIE_VALUE = "sess-abc123def456ghi789"
+
+
+def _patch_httpx(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    response: _FakeResponse | None = None,
+    raises: Exception | None = None,
+) -> None:
+    """Swap httpx.AsyncClient inside the route for the fake above."""
+
+    def _client_factory(*_args: Any, **kwargs: Any) -> _FakeAsyncClient:
+        return _FakeAsyncClient(response=response, raises=raises, **kwargs)
+
+    monkeypatch.setattr("app.routes.fingerprint.httpx.AsyncClient", _client_factory)
+
+
+def _logged(captured: list[dict[str, Any]]) -> str:
+    """Flatten every captured structlog entry into one searchable string."""
+    return " ".join(
+        f"{key}={value}" for entry in captured for key, value in entry.items()
+    )
+
+
+def _rejection_event(captured: list[dict[str, Any]]) -> dict[str, Any]:
+    events = [
+        entry
+        for entry in captured
+        if entry["event"] == "compute_fingerprint_crawl4ai_rejected"
+    ]
+    assert len(events) == 1, f"expected one rejection event, got {captured!r}"
+    return events[0]
+
+
+def test_rejected_field_name_reaches_the_log(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The one thing an operator needs: which field the boundary refused.
+
+    Pre-fix this failed: the body was never read, so only the generic
+    ``compute_fingerprint_crawl_failed`` event was emitted and a rejected
+    config field read as an ordinary crawl failure.
+    """
+    client = _build_client(monkeypatch)
+    _patch_httpx(
+        monkeypatch,
+        response=_FakeResponse(status_code=400, json_data=_REJECTED_COOKIES_JSON),
+    )
+
+    with structlog.testing.capture_logs() as captured:
+        response = client.post(
+            "/api/v1/compute-fingerprint", json={"url": _PORTAL_TEST_URL}
+        )
+
+    # Route contract unchanged: still a generic 502 (REQ-31.2).
+    assert response.status_code == 502
+    assert response.json() == {"detail": "Crawl failed"}
+    assert _rejection_event(captured)["rejected_field"] == "cookies"
+
+
+def test_server_error_surfaces_correlation_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """crawl4ai's opaque 5xx shape is the operator's only cross-reference.
+
+    Measured on 0.9.2: a 5xx answers {"error": "Internal server error",
+    "correlation_id": "188834187d7d"}; that id is the only handle to find the
+    failure back in crawl4ai's own logs.
+    """
+    client = _build_client(monkeypatch)
+    _patch_httpx(
+        monkeypatch,
+        response=_FakeResponse(status_code=500, json_data=_SERVER_ERROR_JSON),
+    )
+
+    with structlog.testing.capture_logs() as captured:
+        client.post("/api/v1/compute-fingerprint", json={"url": _PORTAL_TEST_URL})
+
+    assert _rejection_event(captured)["correlation_id"] == "188834187d7d"
+
+
+@pytest.mark.parametrize(
+    "detail",
+    [
+        # A serialized request echoed inside detail: one json() call decodes
+        # only the outer layer, so substring scrubbing of the inner one fails.
+        # Nothing here matches the bounded field pattern, so nothing is logged.
+        "Rejected: {\"hooks\": [{\"cookies\": [{\"value\": \"" + _SESSION_COOKIE_VALUE + "\"}]}]}",
+        # A cookie value where the field name would be.
+        f"field '{_SESSION_COOKIE_VALUE}' is not permitted",
+        # Free prose that simply is not a rejection.
+        "upstream said no",
+    ],
+)
+def test_free_form_detail_never_reaches_the_log(
+    monkeypatch: pytest.MonkeyPatch, detail: str
+) -> None:
+    """Only a bounded identifier survives; upstream prose is dropped whole.
+
+    Scrubbing secrets out of free-form upstream text by substring replacement
+    cannot be both complete and free of false positives — the same value is
+    escaped differently per serializer and nested JSON is escaped twice. So
+    the prose is never logged; a bounded character class that admits neither
+    quotes nor spaces is what makes the guarantee hold.
+    """
+    client = _build_client(monkeypatch)
+    _patch_httpx(
+        monkeypatch,
+        response=_FakeResponse(status_code=400, json_data={"detail": detail}),
+    )
+
+    with structlog.testing.capture_logs() as captured:
+        client.post("/api/v1/compute-fingerprint", json={"url": _PORTAL_TEST_URL})
+
+    event = _rejection_event(captured)
+    assert _SESSION_COOKIE_VALUE not in _logged(captured), (
+        f"a credential-shaped value reached the log: {event!r}"
+    )
+    assert set(event) - {"event", "log_level"} <= {"url", "status_code"}, (
+        f"free-form detail leaked a field: {event!r}"
+    )
+
+
+def test_correlation_id_must_look_like_an_identifier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``correlation_id`` is a free upstream string; only an id shape passes."""
+    client = _build_client(monkeypatch)
+    _patch_httpx(
+        monkeypatch,
+        response=_FakeResponse(
+            status_code=500,
+            json_data={"correlation_id": f"oops {_SESSION_COOKIE_VALUE} oops"},
+        ),
+    )
+
+    with structlog.testing.capture_logs() as captured:
+        client.post("/api/v1/compute-fingerprint", json={"url": _PORTAL_TEST_URL})
+
+    assert "correlation_id" not in _rejection_event(captured)
+    assert _SESSION_COOKIE_VALUE not in _logged(captured)
+
+
+def test_logged_url_drops_userinfo_and_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A canary URL is operator-supplied and can carry a credential itself.
+
+    Both log sites print the URL, and the upstream validator checks scheme,
+    host and IP but does not forbid userinfo or a query string.
+    """
+    client = _build_client(monkeypatch)
+    _patch_httpx(
+        monkeypatch,
+        response=_FakeResponse(status_code=400, json_data=_REJECTED_COOKIES_JSON),
+    )
+
+    with structlog.testing.capture_logs() as captured:
+        client.post(
+            "/api/v1/compute-fingerprint",
+            json={"url": f"https://user:pw@wiki.example.com/page?token={_SESSION_COOKIE_VALUE}"},
+        )
+
+    logged = _logged(captured)
+    assert _SESSION_COOKIE_VALUE not in logged, f"query token leaked: {logged!r}"
+    assert "user:pw" not in logged, f"userinfo leaked: {logged!r}"
+    assert "wiki.example.com/page" in logged, (
+        f"operator lost the page they need to recognise: {logged!r}"
+    )
+
+
+def test_non_json_error_body_logs_nothing_extra(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A body we cannot parse degrades to url + status_code, as before."""
+    client = _build_client(monkeypatch)
+    _patch_httpx(
+        monkeypatch,
+        response=_FakeResponse(status_code=502, raises_on_json=True),
+    )
+
+    with structlog.testing.capture_logs() as captured:
+        client.post("/api/v1/compute-fingerprint", json={"url": _PORTAL_TEST_URL})
+
+    event = _rejection_event(captured)
+    assert set(event) - {"event", "log_level"} == {"url", "status_code"}
+
+
+def test_transport_failure_logs_exactly_as_before(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-HTTPStatusError failure is untouched by the diagnosis."""
+    client = _build_client(monkeypatch)
+    _patch_httpx(
+        monkeypatch,
+        raises=httpx.ConnectError("http://crawl4ai.test:11235/crawl: refused"),
+    )
+
+    with structlog.testing.capture_logs() as captured:
+        response = client.post(
+            "/api/v1/compute-fingerprint", json={"url": _PORTAL_TEST_URL}
+        )
+
+    assert response.status_code == 502
+    assert response.json() == {"detail": "Crawl failed"}
+    assert [entry["event"] for entry in captured] == [
+        "compute_fingerprint_crawl_failed"
+    ]

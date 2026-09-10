@@ -330,3 +330,70 @@ def test_adapter_has_no_image_cache_attribute(notion_adapter: Any) -> None:
     """The legacy _image_cache side-channel must remain removed."""
     assert not hasattr(notion_adapter, "_image_cache")
     assert not hasattr(notion_adapter, "get_cached_images")
+
+
+# ---------------------------------------------------------------------------
+# 11. _search_all_pages -- database_ids post-fetch filter
+# ---------------------------------------------------------------------------
+
+
+def _page_with_parent(page_id: str, parent: dict[str, Any]) -> dict[str, Any]:
+    page = make_page(page_id)
+    page["parent"] = parent
+    return page
+
+
+def _search_client(results: list[dict[str, Any]]) -> SimpleNamespace:
+    """Fabricated client whose one search call returns the given page set."""
+    return SimpleNamespace(
+        notion=SimpleNamespace(search=None),
+        _execute_with_retry=lambda *args, **kwargs: {
+            "object": "list",
+            "results": results,
+            "has_more": False,
+            "next_cursor": None,
+        }
+    )
+
+
+def _database_parent_rows() -> list[dict[str, Any]]:
+    return [
+        # Notion API 2025-09-03: row in db-1 (type data_source_id, database_id kept).
+        _page_with_parent(
+            "p-ds-1",
+            {"type": "data_source_id", "data_source_id": "ds-1", "database_id": "db-1"},
+        ),
+        # Older API version: row in db-1 (type database_id).
+        _page_with_parent("p-db-1", {"type": "database_id", "database_id": "db-1"}),
+        # 2025-09-03 shape but a different database — must not match db-1.
+        _page_with_parent(
+            "p-ds-9",
+            {"type": "data_source_id", "data_source_id": "ds-9", "database_id": "db-9"},
+        ),
+        # Child page of another page — no database at all.
+        _page_with_parent("p-page", {"type": "page_id", "page_id": "p-1"}),
+    ]
+
+
+def test_search_all_pages_database_filter_accepts_both_parent_shapes(
+    notion_adapter: Any,
+) -> None:
+    """database_ids=["db-1"] keeps rows of db-1 in both API parent shapes.
+
+    Since Notion API 2025-09-03 (notion-client 3.1.0 default) a page inside a
+    database reports parent.type "data_source_id" while still carrying
+    parent.database_id. Filtering on the type string alone drops every page
+    and the sync completes with zero documents.
+    """
+    pages = notion_adapter._search_all_pages(
+        _search_client(_database_parent_rows()), 500, ["db-1"]
+    )
+    assert [p["id"] for p in pages] == ["p-ds-1", "p-db-1"]
+
+
+def test_search_all_pages_without_database_ids_keeps_all_pages(
+    notion_adapter: Any,
+) -> None:
+    """No database_ids configured: every parent shape is returned unchanged."""
+    pages = notion_adapter._search_all_pages(_search_client(_database_parent_rows()), 500, None)
+    assert [p["id"] for p in pages] == ["p-ds-1", "p-db-1", "p-ds-9", "p-page"]
