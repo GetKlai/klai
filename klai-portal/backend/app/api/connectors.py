@@ -553,6 +553,28 @@ def _cookie_names_from_credentials(credentials: dict) -> list[str]:
     return names
 
 
+def _normalize_schedule(schedule: str | None) -> str | None:
+    """Validate and normalise a connector cron schedule.
+
+    A schedule is a 5-field crontab string (minute hour day-of-month month
+    day-of-week). klai-connector's APScheduler silently skips anything else,
+    so a typo like "0 3 * *" would be stored dead and never fire — reject it
+    at write time with 422 instead. An empty-after-strip value means "no
+    schedule" and normalises to None.
+    """
+    if schedule is None:
+        return None
+    stripped = schedule.strip()
+    if not stripped:
+        return None
+    if len(stripped.split()) != 5:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"error_code": "invalid_schedule"},
+        )
+    return stripped
+
+
 # -- Endpoints ----------------------------------------------------------------
 
 
@@ -616,6 +638,7 @@ async def create_connector(
                 },
             )
     resolved_content_type = body.content_type or CONTENT_TYPE_DEFAULTS.get(body.connector_type, "unknown")
+    resolved_schedule = _normalize_schedule(body.schedule)
     if body.allowed_assertion_modes is not None:
         invalid = set(body.allowed_assertion_modes) - VALID_ASSERTION_MODES
         if invalid:
@@ -653,7 +676,7 @@ async def create_connector(
         name=body.name,
         connector_type=body.connector_type,
         config=config_to_store,
-        schedule=body.schedule,
+        schedule=resolved_schedule,
         content_type=resolved_content_type,
         allowed_assertion_modes=body.allowed_assertion_modes,
         encrypted_credentials=encrypted_blob,
@@ -789,7 +812,7 @@ async def update_connector(
     if body.clear_credentials:
         connector.encrypted_credentials = None
     if body.schedule is not None:
-        connector.schedule = body.schedule
+        connector.schedule = _normalize_schedule(body.schedule)
     if body.is_enabled is not None:
         connector.is_enabled = body.is_enabled
     if body.content_type is not None:

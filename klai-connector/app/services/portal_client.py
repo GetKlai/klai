@@ -51,6 +51,15 @@ class PortalConnectorConfig:
         return self.connector_id
 
 
+@dataclass
+class ScheduledConnector:
+    """One entry of the portal's scheduled-connectors feed (scheduler input)."""
+
+    connector_id: uuid.UUID
+    org_id: str
+    schedule: str
+
+
 class PortalClient:
     """Calls portal's internal API for config and status callbacks.
 
@@ -106,6 +115,33 @@ class PortalClient:
                 allowed_assertion_modes=data.get("allowed_assertion_modes"),
                 owner_user_id=data.get("owner_user_id"),
             )
+
+    async def list_scheduled_connectors(self) -> list[ScheduledConnector]:
+        """Fetch all enabled portal connectors that carry a cron schedule.
+
+        Feeds ConnectorScheduler: one entry per connector the portal wants
+        synced on a schedule, with the tenant org_id the sync run needs.
+
+        Returns:
+            List of ScheduledConnector (connector_id, org_id, crontab schedule).
+
+        Raises:
+            httpx.HTTPStatusError: On 4xx/5xx.
+        """
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                f"{self._base_url}/internal/scheduled-connectors",
+                headers=self._headers(),
+            )
+            response.raise_for_status()
+            return [
+                ScheduledConnector(
+                    connector_id=uuid.UUID(item["connector_id"]),
+                    org_id=item["zitadel_org_id"],
+                    schedule=item["schedule"],
+                )
+                for item in response.json()
+            ]
 
     async def report_sync_status(
         self,

@@ -48,12 +48,6 @@ async def create_connector(
     await session.refresh(connector)
     logger.info("Connector created: %s", connector.id, extra={"org_id": str(org_id)})
 
-    # Update scheduler if schedule is set
-    app = request.app
-    scheduler = getattr(app.state, "scheduler", None)
-    if scheduler and connector.schedule:
-        scheduler.add_job(connector)
-
     return connector
 
 
@@ -120,14 +114,6 @@ async def update_connector(
     await session.refresh(connector)
     logger.info("Connector updated: %s", connector.id, extra={"org_id": str(org_id)})
 
-    # Update scheduler
-    app = request.app
-    scheduler = getattr(app.state, "scheduler", None)
-    if scheduler:
-        scheduler.remove_job(connector.id)
-        if connector.schedule and connector.is_enabled:
-            scheduler.add_job(connector)
-
     return connector
 
 
@@ -147,12 +133,6 @@ async def delete_connector(
     connector = await session.get(Connector, connector_id)
     if connector is None or connector.org_id != org_id:
         raise HTTPException(status_code=404, detail="Connector not found")
-
-    # Remove scheduled job
-    app = request.app
-    scheduler = getattr(app.state, "scheduler", None)
-    if scheduler:
-        scheduler.remove_job(connector.id)
 
     await session.delete(connector)
     await session.commit()
