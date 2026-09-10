@@ -8,7 +8,8 @@ dependencies = [
     "httpx>=0.27",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
-    "qdrant-client>=1.12",
+    # Ceiling: 1.19.0 removed search/search_batch/recommend (measured 2026-09-10); no silent major.
+    "qdrant-client>=1.12,<2.0",
     "sse-starlette>=2.1",
     "graphiti-core[falkordb]>=0.29,<0.30",
     "klai-graphiti-compat",

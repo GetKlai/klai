@@ -11,7 +11,8 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0",
     "alembic>=1.13",  # SPEC-INGEST-ALEMBIC-001
     "asyncpg>=0.30",
-    "qdrant-client>=1.12",
+    # Ceiling: 1.19.0 removed search/search_batch/recommend (measured 2026-09-10); no silent major.
+    "qdrant-client>=1.12,<2.0",
     "pyyaml>=6.0",
     "cachetools>=5.5",
     # procrastinate 3.x: PsycopgConnector, open_async(), run_worker_async() all unchanged.

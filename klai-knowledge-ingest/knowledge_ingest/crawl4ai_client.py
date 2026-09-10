@@ -1102,7 +1102,9 @@ async def _crawl_page_with_config(
         try:
             data = await _crawl_sync(client, payload)
         except Exception as exc:
-            logger.warning("crawl4ai_request_failed", url=url, error=str(exc))
+            response_body = _crawl4ai_error_body(exc)
+            extra = {"response_body": response_body} if response_body else {}
+            logger.warning("crawl4ai_request_failed", url=url, error=str(exc), **extra)
             return CrawlResult(
                 url=url,
                 fit_markdown="",
@@ -1486,6 +1488,36 @@ def _status_code_from_exception(exc: BaseException) -> int | None:
     if isinstance(exc, httpx.HTTPStatusError):
         return exc.response.status_code
     return None
+
+
+def _crawl4ai_error_body(exc: BaseException) -> str:
+    """Return crawl4ai's response body for an HTTP error, safe to log.
+
+    ``str(HTTPStatusError)`` carries only httpx' generic "Client error '400
+    Bad Request'" text. The field crawl4ai actually rejected lives in the
+    body -- ``{"detail": "Rejected config: field 'js_code' is not permitted
+    on CrawlerRunConfig from an untrusted request"}``. That body already
+    reaches ``CrawlResult.raw_error_text`` via ``_raw_error_text``, but it
+    never reached the log event, which is why the 2026-08 authenticated-crawl
+    outage read as "this page needs JavaScript" for weeks: VictoriaLogs only
+    ever showed httpx' generic sentence.
+
+    Reuses ``_truncate_error_message``, so the body gets the same treatment
+    every persisted error text already gets -- auth/token query params masked
+    BEFORE truncation, then bounded at 300 chars. Anything that is not an
+    ``HTTPStatusError`` returns "" so callers keep their exact previous event
+    shape.
+    """
+    if not isinstance(exc, httpx.HTTPStatusError):
+        return ""
+    try:
+        body = exc.response.text
+    except Exception:
+        return ""
+    # Deliberately not _raw_error_text: that one falls back to str(exc) when
+    # the body is empty, which here would log the httpx sentence twice and
+    # make "server sent no body" indistinguishable from a real body.
+    return _truncate_error_message(body) if body.strip() else ""
 
 
 def _is_unrendered_template_href(url: str) -> bool:
@@ -2188,10 +2220,13 @@ async def _fetch_seed_page(
                 logger.info("crawl_site_seed_retry_relaxed_config", start_url=start_url)
                 data = await _crawl_sync(client, relaxed_payload)
     except Exception as exc:
+        response_body = _crawl4ai_error_body(exc)
+        extra = {"response_body": response_body} if response_body else {}
         logger.warning(
             "crawl_site_seed_request_failed",
             start_url=start_url,
             error=str(exc),
+            **extra,
         )
         return CrawlResult(
             url=start_url,
@@ -2247,10 +2282,13 @@ async def _fetch_seed_page(
                 if relaxed_result.word_count > result.word_count:
                     return relaxed_result
         except Exception as exc:
+            response_body = _crawl4ai_error_body(exc)
+            extra = {"response_body": response_body} if response_body else {}
             logger.warning(
                 "crawl_site_seed_relaxed_retry_failed",
                 start_url=start_url,
                 error=str(exc),
+                **extra,
             )
     return result
 
@@ -2994,147 +3032,6 @@ def _lower_rate_limit_for_slowdown(current_rate_limit: float | None) -> float:
     return max(MIN_DOMAIN_RATE_LIMIT, baseline / 2)
 
 
-# Server-side BFS deep crawl polling budget. /crawl/job is async — submit,
-# get task_id, poll status. Voys-support full-depth crawl (~500 pages
-# across 3 levels) completes well under 30 minutes; the cap is a safety
-# net for stuck workers.
-_DEEP_POLL_INTERVAL = 5.0  # seconds between status polls
-_MAX_DEEP_POLL = 30 * 60  # max total seconds (30 minutes)
-
-
-async def _bfs_deep_crawl(
-    *,
-    start_url: str,
-    crawler_config: dict[str, Any],
-    max_depth: int,
-    max_pages: int,
-    include_patterns: list[str] | None,
-    exclude_patterns: list[str] | None,
-    cookies: list[dict[str, Any]] | None,
-) -> tuple[list[CrawlResult], BaseException | None]:
-    """Server-side BFS deep crawl via crawl4ai's ``/crawl/job`` endpoint.
-
-    Submits a single crawl job that uses crawl4ai's ``BFSDeepCrawlStrategy``
-    (recursive multi-level link-following) with optional ``URLPatternFilter``
-    (real fnmatch glob, not the substring approximation). crawl4ai's own
-    server-side ``MemoryAdaptiveDispatcher`` handles concurrency safely —
-    no client-side ``asyncio.gather`` over a shared connection.
-
-    Returns ``(results, transport_error)``:
-      * ``results`` — list of ``CrawlResult`` for every URL the BFS visited
-        (including the start_url itself; results may exceed ``max_pages``
-        slightly because crawl4ai counts queued pages, not strictly
-        finished ones).
-      * ``transport_error`` — non-None when the submission/polling itself
-        failed (network error, timeout, 5xx). ``results`` is empty on
-        failure; the caller decides whether to fall back to sitemap-only
-        or surface as an error.
-    """
-    deep_crawl_params: dict[str, Any] = {
-        "max_depth": max_depth,
-        "max_pages": max_pages,
-        "include_external": False,
-    }
-    filters: list[dict[str, Any]] = []
-    if include_patterns:
-        filters.append(
-            {
-                "type": "URLPatternFilter",
-                "params": {"patterns": include_patterns},
-            }
-        )
-    if exclude_patterns:
-        filters.append(
-            {
-                "type": "URLPatternFilter",
-                "params": {"patterns": exclude_patterns, "reverse": True},
-            }
-        )
-    if filters:
-        # Crawl4AI 0.8.6 only reconstructs nested objects when wrapped in
-        # ``{"type": "<ClassName>", "params": {...}}`` — a bare list stays a
-        # list and BFSDeepCrawlStrategy crashes with
-        # ``AttributeError: 'list' object has no attribute 'apply'`` the
-        # moment it walks past depth 0. Pinned by tests.
-        deep_crawl_params["filter_chain"] = {
-            "type": "FilterChain",
-            "params": {"filters": filters},
-        }
-
-    config = dict(crawler_config)
-    config["deep_crawl_strategy"] = {
-        "type": "BFSDeepCrawlStrategy",
-        "params": deep_crawl_params,
-    }
-
-    payload: dict[str, Any] = {
-        "urls": [start_url],
-        "crawler_config": {"type": "CrawlerRunConfig", "params": config},
-    }
-    bc = _build_browser_config_with_cookies(cookies)
-    if bc:
-        payload["browser_config"] = bc
-    hooks = _build_cookie_hooks(cookies)
-    if hooks:
-        payload["hooks_config"] = hooks
-
-    try:
-        async with httpx.AsyncClient(timeout=90.0) as client:
-            resp = await client.post(
-                f"{settings.crawl4ai_api_url}/crawl/job",
-                json=payload,
-                headers=_auth_headers(),
-            )
-            resp.raise_for_status()
-            task_id: str = resp.json()["task_id"]
-            logger.info(
-                "crawl_site_bfs_job_submitted",
-                start_url=start_url,
-                task_id=task_id,
-                max_depth=max_depth,
-                max_pages=max_pages,
-            )
-
-            elapsed = 0.0
-            result_data: dict[str, Any] = {}
-            while elapsed < _MAX_DEEP_POLL:
-                await asyncio.sleep(_DEEP_POLL_INTERVAL)
-                elapsed += _DEEP_POLL_INTERVAL
-                resp = await client.get(
-                    f"{settings.crawl4ai_api_url}/crawl/job/{task_id}",
-                    headers=_auth_headers(),
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                status_str = data.get("status", "").lower()
-                if status_str == "completed":
-                    result_data = data.get("result", {}) or {}
-                    break
-                if status_str == "failed":
-                    err_msg = data.get("error", "unknown")
-                    raise RuntimeError(f"BFS deep crawl job {task_id} failed: {err_msg}")
-            else:
-                raise TimeoutError(
-                    f"BFS deep crawl job {task_id} did not complete within {_MAX_DEEP_POLL}s"
-                )
-    except Exception as exc:
-        logger.warning(
-            "crawl_site_bfs_failed",
-            start_url=start_url,
-            error=str(exc),
-        )
-        return [], exc
-
-    raw_results = _normalise_results_block(result_data)
-    crawl_results = [_extract_result(start_url, page) for page in raw_results if page]
-    logger.info(
-        "crawl_site_bfs_complete",
-        start_url=start_url,
-        pages=len(crawl_results),
-    )
-    return crawl_results, None
-
-
 # Reason codes that mean "the target site just told us to back off" —
 # observed either as a per-URL page result inside an otherwise-successful
 # chunk, or as the whole chunk's own transport exception. Either shape MUST
@@ -3682,5 +3579,7 @@ async def _crawl_dom_summary_in_host_scope(url: str) -> list[dict] | None:
             raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
         return json.loads(raw)
     except Exception as exc:
-        logger.warning("crawl4ai_dom_summary_failed", url=url, error=str(exc))
+        response_body = _crawl4ai_error_body(exc)
+        extra = {"response_body": response_body} if response_body else {}
+        logger.warning("crawl4ai_dom_summary_failed", url=url, error=str(exc), **extra)
         return None
