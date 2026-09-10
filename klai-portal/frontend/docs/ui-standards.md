@@ -263,7 +263,7 @@ page title.
 ```tsx
 <div className="flex items-start gap-3">
   <div className="flex-1">
-    <h1 className="page-title text-[26px] font-display-bold text-gray-900">
+    <h1 className="text-xl font-display-bold text-gray-900">
       {title}
     </h1>
     <p className="mt-1 text-sm text-gray-600">{description}</p>

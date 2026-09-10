@@ -53,7 +53,7 @@ colors:
 typography:
   sans: { fontFamily: "\"Geist\", system-ui, sans-serif" }
   display: { fontFamily: "\"Geist Medium\", system-ui, sans-serif" }
-  display-bold: { fontFamily: "\"Geist Bold\", system-ui, sans-serif" }
+  display-bold: { fontFamily: "system-ui, -apple-system, sans-serif" }
   mono: { fontFamily: "\"Geist Mono\", ui-monospace, monospace" }
   text-xs: { fontSize: "0.75rem", lineHeight: "calc(1 / 0.75)" }
   text-sm: { fontSize: "0.875rem", lineHeight: "calc(1.25 / 0.875)" }
@@ -201,7 +201,7 @@ The portal root is **110%** of the browser default. The rem-based type scale the
 |---|---|
 | `font-sans` | `"Geist", system-ui, sans-serif` |
 | `font-display` | `"Geist Medium", system-ui, sans-serif` |
-| `font-display-bold` | `"Geist Bold", system-ui, sans-serif` |
+| `font-display-bold` | `system-ui, -apple-system, sans-serif` |
 | `font-mono` | `"Geist Mono", ui-monospace, monospace` |
 
 | Type token | Font size | Line height |
