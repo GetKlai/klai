@@ -759,6 +759,7 @@
    agent metadata stay available without dominating the answer. */
 .klai-disclosure {
   align-self: flex-start;
+  flex-shrink: 0;
   margin: -4px 0 2px;
   width: min(100%, 460px);
   border: 1px solid color-mix(in srgb, var(--klai-border-color) 78%, transparent);
