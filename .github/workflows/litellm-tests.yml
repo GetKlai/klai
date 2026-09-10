@@ -54,6 +54,8 @@ jobs:
           uv run --no-project --python 3.13
           --with pytest --with pytest-asyncio --with httpx --with structlog
           --with pyyaml --with litellm==1.96.2 --with numpy
+          --with "backoff>=2.2.1,<3.0" --with "fastapi>=0.136.3,<1.0"
+          --with "orjson>=3.11.6,<4.0"
           --with ../../klai-libs/citations
           --with ../../klai-libs/service-auth
           python -m pytest tests/ -q --tb=short

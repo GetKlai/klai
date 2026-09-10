@@ -22,7 +22,7 @@ CHANGED=$(git diff --cached --name-only --diff-filter=ACM)
 
 # ---- Trigger 1: deploy/ image-tag validators ----
 
-if echo "$CHANGED" | grep -qE '^deploy/(docker-compose(\.override)?\.ya?ml|check-image-.*\.sh|VERSIONS\.md)$'; then
+if echo "$CHANGED" | grep -qE '^deploy/(docker-compose(\.override|\.gpu)?\.ya?ml|check-image-.*\.sh|VERSIONS\.md)$'; then
     echo "[pre-commit] deploy/ change detected — validating image tags..."
 
     if [ -f deploy/check-image-tags.sh ]; then

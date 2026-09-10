@@ -59,6 +59,18 @@ A nested `AGENTS.md` closer to the file you edit overrides anything here.
   password policy, streaming chunks, BFF cookies, OIDC flows, or performance
   paths from intuition. Require evidence from code, tests, logs, docs, or an
   explicit user confirmation.
+- **verify vendored contracts on the bump** — Bumping a pinned image or a
+  network SDK is not done until something exercised the contract you rely on
+  against the NEW version. Two rules learned the hard way, both in August
+  2026: read the installed source or the running container, never the schema
+  (docling-serve's OpenAPI types `task_status` as a six-value enum the server
+  can only ever answer with four of, and trusting it produced the wrong fix);
+  and record the verified version in a test, not in a docstring — a docstring
+  goes stale in silence, a test goes red. A mocked unit test asserting "we
+  sent the right shape" proves nothing about whether the dependency still
+  accepts that shape: crawl4ai 0.9 started answering `400` to a field we had
+  always sent, every authenticated crawl broke for weeks, and the whole suite
+  stayed green.
 
 ## Conductor handoff contract
 
