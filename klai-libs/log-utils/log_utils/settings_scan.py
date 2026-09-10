@@ -8,10 +8,15 @@ from __future__ import annotations
 import re
 from typing import Any
 
-# Field-name regex per REQ-4.2: secret/password/token/pat/api_key.
-# Case-insensitive. ``pat`` matches both ``personal_access_token`` and
-# ``github_app_pat``-style names.
-_SECRET_NAME_RE = re.compile(r"(?i)(secret|password|token|pat|api_key)")
+# Field-name regex per REQ-4.2: secret/password/token/pat/api_key, plus any
+# name ending in ``_key``. Case-insensitive. ``pat`` matches both
+# ``personal_access_token`` and ``github_app_pat``-style names.
+#
+# The ``_key`` suffix is not decoration: across the services it is how most
+# credentials are named, and ``api_key`` alone does not match a single one of
+# them. The lower bound of eight characters still applies, so this widens the
+# set without turning short, generic values into redaction bait.
+_SECRET_NAME_RE = re.compile(r"(?i)(secret|password|token|pat|api_key|_key$)")
 _MIN_VALUE_LENGTH = 8  # shorter values are too generic to safely scrub
 
 
