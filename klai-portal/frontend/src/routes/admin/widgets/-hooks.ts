@@ -42,13 +42,25 @@ export function useWidget(id: string) {
 // of letting a long-open preview run into a dead token. A save that changes
 // the widget (useUpdateWidget) invalidates the session, because the minted
 // JWT carries the kb_ids and must follow the saved knowledge-base access.
+export const widgetPreviewSessionQueryKey = (id: string) => ['admin-widget-preview-session', id] as const
+
+export function fetchWidgetPreviewSession(id: string, sessionId?: string) {
+  return apiFetch<WidgetPreviewSessionResponse>(`/api/admin/widgets/${id}/preview-session`, {
+    headers: sessionId ? { 'X-Klai-Widget-Session-Id': sessionId } : undefined,
+  })
+}
+
 export function useWidgetPreviewSession(id: string) {
   const auth = useAuth()
+  const queryClient = useQueryClient()
+  const queryKey = widgetPreviewSessionQueryKey(id)
 
   return useQuery({
-    queryKey: ['admin-widget-preview-session', id],
-    queryFn: async () =>
-      apiFetch<WidgetPreviewSessionResponse>(`/api/admin/widgets/${id}/preview-session`),
+    queryKey,
+    queryFn: () => fetchWidgetPreviewSession(
+      id,
+      queryClient.getQueryData<WidgetPreviewSessionResponse>(queryKey)?.session_id,
+    ),
     enabled: auth.isAuthenticated && !!id,
     retry: false,
     staleTime: 45 * 60 * 1000,

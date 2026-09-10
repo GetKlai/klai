@@ -121,6 +121,8 @@ export interface WidgetPreviewSessionResponse {
   session_token: string
   chat_endpoint: string
   session_expires_at: string
+  session_id?: string
+  tenant_css_variables?: Record<string, string>
 }
 
 export interface CreateWidgetRequest {
