@@ -1,6 +1,8 @@
 import { KeyRound, Loader2 } from 'lucide-react'
 import { CookieRowsInput } from '@/components/knowledge/CookieRowsInput'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import * as m from '@/paraglide/messages'
 import type { CookieRow } from '../$kbSlug/-kb-types'
 import { AuthProbeFeedback } from '../-connector-feedback'
@@ -24,8 +26,22 @@ type SavedSetupMode = {
   onUseWithoutLogin: () => void
 }
 
+// The test URL must stay on the same origin as the site being crawled -
+// it's the destination cookies (including decrypted saved ones) get sent
+// to. A cross-origin value would let anyone who can edit the connector
+// exfiltrate its stored session cookies to an arbitrary domain.
+function isSameOrigin(a: string, b: string): boolean {
+  try {
+    return new URL(a).origin === new URL(b).origin
+  } catch {
+    return false
+  }
+}
+
 type CrawlerAuthSetupStepProps = {
   baseUrl: string
+  testUrl: string
+  onTestUrlChange: (url: string) => void
   mode: CookieSetupMode | SavedSetupMode
   isPending: boolean
   error: string | null
@@ -37,6 +53,8 @@ type CrawlerAuthSetupStepProps = {
 
 export function CrawlerAuthSetupStep({
   baseUrl,
+  testUrl,
+  onTestUrlChange,
   mode,
   isPending,
   error,
@@ -46,10 +64,29 @@ export function CrawlerAuthSetupStep({
   onBack,
 }: CrawlerAuthSetupStepProps) {
   const hasSavedCredentials = mode.kind === 'saved' || mode.savedCredentials !== undefined
+  const effectiveTestUrl = testUrl || baseUrl
+  const testUrlCrossOrigin = Boolean(effectiveTestUrl) && Boolean(baseUrl) && !isSameOrigin(effectiveTestUrl, baseUrl)
 
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-gray-200 p-4 space-y-3">
+        <div className="space-y-1.5">
+          <Label htmlFor="wc-auth-test-url">{m.admin_connectors_webcrawler_test_url()}</Label>
+          <Input
+            id="wc-auth-test-url"
+            type="url"
+            placeholder={baseUrl}
+            value={testUrl}
+            onChange={(e) => onTestUrlChange(e.target.value)}
+          />
+          <p className="text-xs text-gray-600">{m.admin_connectors_webcrawler_test_url_hint()}</p>
+          {testUrlCrossOrigin && (
+            <p className="text-xs text-[var(--color-destructive)]">
+              {m.admin_connectors_webcrawler_test_url_cross_origin()}
+            </p>
+          )}
+        </div>
+
         {hasSavedCredentials ? (
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -77,7 +114,7 @@ export function CrawlerAuthSetupStep({
                 type="button"
                 size="sm"
                 variant="outline"
-                disabled={isPending || !baseUrl}
+                disabled={isPending || !baseUrl || testUrlCrossOrigin}
                 onClick={() => onProbe({ use_saved_credentials: true })}
               >
                 {isPending ? (
@@ -106,7 +143,7 @@ export function CrawlerAuthSetupStep({
               type="button"
               size="sm"
               variant="outline"
-              disabled={isPending || !baseUrl}
+              disabled={isPending || !baseUrl || testUrlCrossOrigin}
               onClick={() => onProbe({ cookies: buildCrawlerCookies(mode.rows, baseUrl) })}
             >
               {isPending ? (
