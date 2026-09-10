@@ -105,6 +105,7 @@ export function WidgetPreviewPanel({ widget, onCollapse }: Props) {
               embedded
               variant="admin-preview"
               botName={preview.botName}
+              headerTitle={preview.headerTitle}
               chatEndpoint={session.data.chat_endpoint}
               sessionToken={session.data.session_token}
               description={preview.description}
@@ -112,6 +113,9 @@ export function WidgetPreviewPanel({ widget, onCollapse }: Props) {
               conversationStarters={preview.conversationStarters}
               hideDisclaimer={preview.hideDisclaimer}
               primaryColor={preview.primaryColor}
+              backgroundColor={preview.backgroundColor}
+              aiDisclosureOverride={preview.aiDisclosureOverride}
+              footerText={preview.footerText}
               theme={preview.theme}
               showSources={preview.showSources}
               showMeta={preview.showMeta}
