@@ -2827,13 +2827,22 @@ _WIDGET_MINT_IP_RATE_LIMIT_PER_MINUTE = 20
 _WIDGET_MINT_RATE_LIMIT_PER_MINUTE = 120
 
 
-def _widget_mint_rate_limited(retry_after: int) -> Response:
-    """429 shared by the public mint paths (REQ-7 / Finding B-4)."""
+def _widget_mint_rate_limited(retry_after: int, origin: str) -> Response:
+    """429 shared by the public mint paths (REQ-7 / Finding B-4).
+
+    The origin is echoed (no credentials) so a browser on the customer's
+    site sees the 429 and its Retry-After instead of an opaque CORS error;
+    the response carries nothing the widget allowlist protects."""
+    headers = {"Retry-After": str(retry_after)}
+    if origin:
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Access-Control-Expose-Headers"] = "Retry-After"
+        headers["Vary"] = "Origin"
     return Response(
         content='{"detail":"Rate limit exceeded"}',
         status_code=429,
         media_type="application/json",
-        headers={"Retry-After": str(retry_after)},
+        headers=headers,
     )
 
 
@@ -2929,7 +2938,7 @@ async def widget_config(
                 limit="client",
                 ip_hash=hash_audit_value(caller_ip),
             )
-            return _widget_mint_rate_limited(client_retry_after)
+            return _widget_mint_rate_limited(client_retry_after, request.headers.get("origin", ""))
 
         allowed, retry_after = await check_rate_limit(
             redis, f"widget_mint:{id}", limit_per_minute=_WIDGET_MINT_RATE_LIMIT_PER_MINUTE, window_seconds=60
@@ -2944,7 +2953,7 @@ async def widget_config(
                 limit="widget",
                 ip_hash=hash_audit_value(caller_ip),
             )
-            return _widget_mint_rate_limited(retry_after)
+            return _widget_mint_rate_limited(retry_after, request.headers.get("origin", ""))
 
     # Look up widget by public widget_id (SPEC-WIDGET-002: own table)
     # REQ-16: soft-deleted widgets are 404 to the public/partner endpoints.
@@ -3099,7 +3108,7 @@ async def public_bot_config(
                 limit="client",
                 ip_hash=hash_audit_value(caller_ip),
             )
-            return _widget_mint_rate_limited(client_retry_after)
+            return _widget_mint_rate_limited(client_retry_after, request.headers.get("origin", ""))
 
         allowed, retry_after = await check_rate_limit(
             redis, f"widget_mint:{id}", limit_per_minute=_WIDGET_MINT_RATE_LIMIT_PER_MINUTE, window_seconds=60
@@ -3112,7 +3121,7 @@ async def public_bot_config(
                 limit="widget",
                 ip_hash=hash_audit_value(caller_ip),
             )
-            return _widget_mint_rate_limited(retry_after)
+            return _widget_mint_rate_limited(retry_after, request.headers.get("origin", ""))
 
     # REQ-16: soft-deleted widgets are 404 to the public/partner endpoints.
     result = await db.execute(select(Widget).where(Widget.widget_id == id, Widget.deleted_at.is_(None)))
