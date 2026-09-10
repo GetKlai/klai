@@ -21,6 +21,41 @@ from app.services.widget_auth import (
     generate_session_token,
 )
 
+
+@pytest.mark.asyncio
+async def test_preview_refresh_preserves_conversation_and_inherits_only_its_tenant_styles():
+    from types import SimpleNamespace
+
+    from app.api.admin_widgets import widget_preview_session
+    from tests.conftest import make_perms
+
+    org = SimpleNamespace(slug="voys", widget_css_variables={"--klai-message-gap": "20px"})
+    widget = SimpleNamespace(id="widget-id", widget_id="wgt_preview", org_id=8)
+    db = AsyncMock()
+    db.get.return_value = org
+    rows = MagicMock()
+    rows.all.return_value = [(7,)]
+    db.execute.return_value = rows
+    with (
+        patch("app.api.admin_widgets._get_widget_or_404", new_callable=AsyncMock, return_value=widget) as load,
+        patch("app.api.admin_widgets.settings", widget_jwt_secret="preview-test-secret"),
+    ):
+        for session in ["conversation0123456789", "conversation0123456789", "newconversation012345", None]:
+            result = await widget_preview_session(
+                widget_id="widget-id",
+                perms=make_perms(role="admin", org_id=8),
+                db=db,
+                session_id=session,
+            )
+            claims = decode_session_token(result.session_token, "preview-test-secret", "voys")
+            assert claims["jti"] == result.session_id
+            assert result.session_id == session if session else len(result.session_id) == 32
+            assert claims["is_preview"] is True
+            assert claims["org_id"] == 8
+            assert result.tenant_css_variables == org.widget_css_variables
+        load.assert_awaited_with("widget-id", 8, db)
+
+
 # ---------------------------------------------------------------------------
 # AC15.1 — preview JWT carries is_preview claim
 # ---------------------------------------------------------------------------

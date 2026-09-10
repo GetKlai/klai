@@ -19,6 +19,16 @@ from Claude so no agent makes a false assumption.
 - **No Claude plugin runtime.** Claude gets Python/TypeScript symbol navigation
   from its Pyright and TypeScript LSP plugins; Codex uses Serena instead.
 
+## Execution ownership
+
+Use Qwen's bounded `build-s` / `build-m` profiles for scoped implementation.
+The primary agent owns scope, acceptance criteria, verification and shipping;
+it does not replace Qwen with itself or another executor for convenience.
+Handle architecture, cross-cutting diagnosis, auth and migrations centrally,
+then delegate the safely bounded follow-up. Record an objective escalation
+before taking over a failed Qwen task. Keep recall review and verification
+separate, and limit follow-up review to the new delta.
+
 ## Reasoning effort
 
 Default is `medium` (set in `~/.codex/config.toml`). Re-evaluate the level

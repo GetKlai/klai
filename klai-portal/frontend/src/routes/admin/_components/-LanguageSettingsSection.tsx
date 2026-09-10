@@ -3,7 +3,8 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import * as m from '@/paraglide/messages'
-import { useDefaultLanguageMutation, type OrgSettings } from '../-settings-hooks'
+import { WidgetStyleOverridesFields } from '@/features/widgets/config/WidgetStyleOverridesFields'
+import { useGeneralSettingsMutation, type OrgSettings } from '../-settings-hooks'
 
 interface LanguageSettingsSectionProps {
   settings: OrgSettings | undefined
@@ -18,7 +19,8 @@ export function LanguageSettingsSection({
 }: LanguageSettingsSectionProps) {
   const [selectedLang, setSelectedLang] = useState<OrgSettings['default_language']>('nl')
   const [savedLang, setSavedLang] = useState(false)
-  const langMutation = useDefaultLanguageMutation(() => {
+  const [widgetStyles, setWidgetStyles] = useState<Record<string, string>>({})
+  const langMutation = useGeneralSettingsMutation(() => {
     setSavedLang(true)
     setTimeout(() => setSavedLang(false), 2500)
   })
@@ -26,12 +28,13 @@ export function LanguageSettingsSection({
   useEffect(() => {
     if (settings) {
       setSelectedLang(settings.default_language)
+      setWidgetStyles(settings.widget_css_variables ?? {})
     }
   }, [settings])
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    langMutation.mutate(selectedLang)
+    langMutation.mutate({ default_language: selectedLang, widget_css_variables: widgetStyles })
   }
 
   return (
@@ -62,6 +65,11 @@ export function LanguageSettingsSection({
                 <option value="en">{m.admin_settings_language_en()}</option>
               </Select>
             </div>
+            <div className="space-y-3 pt-4">
+              <h2 className="text-base font-display-bold text-gray-900">{m.widget_style_tenant_title()}</h2>
+              <p className="text-sm text-gray-600">{m.widget_style_tenant_help()}</p>
+              <WidgetStyleOverridesFields value={widgetStyles} onChange={setWidgetStyles} includeBaseColors />
+            </div>
             {langMutation.error && (
               <p className="text-sm text-[var(--color-destructive)]">{m.admin_settings_error_save()}</p>
             )}
@@ -71,7 +79,8 @@ export function LanguageSettingsSection({
                 disabled={
                   langMutation.isPending ||
                   savedLang ||
-                  selectedLang === settings?.default_language
+                  (selectedLang === settings?.default_language &&
+                    JSON.stringify(widgetStyles) === JSON.stringify(settings?.widget_css_variables ?? {}))
                 }
               >
                 {savedLang

@@ -137,7 +137,7 @@ function WidgetDetailPage() {
     <PageContainer width={previewOpen ? '6xl' : '4xl'} gap="8">
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
-          <h1 className="page-title text-[1.625rem] font-display-bold text-gray-900">
+          <h1 className="text-xl font-display-bold text-gray-900">
             {widget.name}
           </h1>
           {widget.description && (

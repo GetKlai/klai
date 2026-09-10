@@ -8,6 +8,7 @@ export type TelemetryLevel = 'off' | 'shadow' | 'full'
 
 export type OrgSettings = {
   name: string
+  widget_css_variables?: Record<string, string>
   default_language: 'nl' | 'en'
   mfa_policy: 'optional' | 'recommended' | 'required'
   auto_accept_same_domain: boolean
@@ -75,7 +76,7 @@ export function useAdminExtensions() {
 
 function patchSettings(
   payload: Partial<
-    Pick<OrgSettings, 'default_language' | 'mfa_policy' | 'auto_accept_same_domain'>
+    Pick<OrgSettings, 'default_language' | 'mfa_policy' | 'auto_accept_same_domain' | 'widget_css_variables'>
   >,
 ) {
   return apiFetch<OrgSettings>('/api/admin/settings', {
@@ -84,14 +85,15 @@ function patchSettings(
   })
 }
 
-export function useDefaultLanguageMutation(onSaved: () => void) {
+export function useGeneralSettingsMutation(onSaved: () => void) {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: (lang: OrgSettings['default_language']) => patchSettings({ default_language: lang }),
-    onSuccess: (data, lang) => {
-      adminLogger.info('Default language changed', { language: lang })
+    mutationFn: (values: Pick<OrgSettings, 'default_language' | 'widget_css_variables'>) => patchSettings(values),
+    onSuccess: (data) => {
+      adminLogger.info('General settings changed')
       queryClient.setQueryData(adminSettingsQueryKey, data)
+      void queryClient.invalidateQueries({ queryKey: ['admin-widget-preview-session'] })
       onSaved()
     },
   })

@@ -49,6 +49,7 @@ class FakeWidget:
 @dataclass
 class FakeOrg:
     id: int = 42
+    widget_css_variables: dict = field(default_factory=dict)
     zitadel_org_id: str = "zitadel-org-123"
     # SPEC-SEC-HYGIENE-001 REQ-24.4: slug is read by partner.py to derive
     # the per-tenant widget JWT signing key (HKDF). Test patches
@@ -96,6 +97,7 @@ async def test_widget_config_happy_path():
     widget.widget_config["ai_disclosure_override"] = None
     widget.widget_config["footer_text"] = None
     org = FakeOrg()
+    org.widget_css_variables = {"--klai-message-gap": "20px"}
     db = _make_db_chain(widget, org, [1, 2])
     request = _make_request("https://example.com")
 
@@ -117,6 +119,7 @@ async def test_widget_config_happy_path():
     assert '"page_context_enabled": false' in body
     assert json.loads(body)["ai_disclosure_override"] is None
     assert json.loads(body)["footer_text"] is None
+    assert json.loads(body)["css_variables"]["--klai-message-gap"] == "20px"
     assert "system_prompt" not in body
 
 
@@ -801,6 +804,7 @@ async def test_public_bot_config_returns_token_when_share_enabled():
     from app.api.partner import public_bot_config
 
     org = FakeOrg()
+    org.widget_css_variables = {"--klai-content-padding": "20px"}
     widget = FakeWidget(
         public_share_enabled=True,
         widget_config={
@@ -825,3 +829,4 @@ async def test_public_bot_config_returns_token_when_share_enabled():
 
     assert response.status_code == 200
     assert '"session_token": "public.jwt.token"' in response.body.decode()
+    assert json.loads(response.body)["css_variables"]["--klai-content-padding"] == "20px"

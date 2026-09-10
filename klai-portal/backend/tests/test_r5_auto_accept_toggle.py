@@ -28,6 +28,7 @@ def _make_org(auto_accept: bool = False, primary_domain: str | None = "acme.nl")
     # carries telemetry_level. Pin to the privacy-friendly default for
     # tests that don't explicitly exercise this field.
     org.telemetry_level = "shadow"
+    org.widget_css_variables = {}
     return org
 
 
