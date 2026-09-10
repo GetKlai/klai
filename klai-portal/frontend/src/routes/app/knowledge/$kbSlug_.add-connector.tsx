@@ -177,7 +177,8 @@ function AddConnectorPage() {
         if (
           wcPreviewUrl &&
           wcPreviewUrl !== webcrawlerConfig.base_url &&
-          previewResult?.classification === 'success'
+          previewResult?.classification === 'success' &&
+          isWithinBaseUrl(wcPreviewUrl, webcrawlerConfig.base_url)
         ) {
           config.discovery_seed_url = wcPreviewUrl
         }
