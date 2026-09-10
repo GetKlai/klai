@@ -494,8 +494,12 @@
   padding: 10px 14px;
   border-radius: 14px;
   font-size: 14px;
-  line-height: 1.5;
+  line-height: 1.6;
   word-break: break-word;
+}
+
+.klai-message:not(:first-child) {
+  margin-top: 8px;
 }
 
 .klai-message--user {
@@ -511,6 +515,14 @@
   background-color: var(--klai-card-color);
   color: var(--klai-text-color);
   border-bottom-left-radius: 4px;
+}
+
+.klai-message--assistant {
+  width: 100%;
+  max-width: none;
+  padding: 0;
+  border-radius: 0;
+  background-color: transparent;
 }
 
 .klai-message--agent {
@@ -1186,7 +1198,7 @@
 }
 
 .klai-window--inline .klai-message--assistant {
-  background-color: rgba(0, 0, 0, 0.04);
+  background-color: transparent;
 }
 
 .klai-window--inline .klai-message--user {
