@@ -271,7 +271,7 @@ class TestProcessingState:
         with _PollerPatches(
             poll_result=DoclingPollResult(
                 task_id="task-1",
-                status=DoclingTaskStatus.IN_PROGRESS,
+                status=DoclingTaskStatus.STARTED,
                 terminal=False,
                 error_message=None,
                 queue_position=2,

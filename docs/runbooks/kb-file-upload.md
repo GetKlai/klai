@@ -55,7 +55,7 @@ Browser ──multipart archive──▶ portal-api archive preflight
 |---|---|
 | Caddy | `request_body { max_size 200MB }` on `^/api/app/knowledge-bases/[^/]+/sources/file$` |
 | portal-api | new `POST /api/app/knowledge-bases/{kb}/sources/file`, new `GET .../sources/file/{id}/status`, new `kb_uploads` table + cat-D RLS, `kb_upload_poller` background task |
-| docling-serve | v1.16.1 on klai-net; async hybrid chunk endpoint; non-single-use result retention configured for retry tolerance |
+| docling-serve | v1.30.0 on klai-net; async hybrid chunk endpoint; non-single-use result retention configured for retry tolerance |
 | knowledge-ingest | receives either normal text content or Docling pre-computed chunks via the existing `/ingest/v1/document` endpoint |
 
 ## Deploy steps
