@@ -56,6 +56,28 @@ function renderSurface(props: Partial<ComponentProps<typeof WidgetChatSurface>> 
 }
 
 describe('WidgetChatSurface nerds footer', () => {
+  it('previews the header title, background and custom footer independently of the introduction', () => {
+    const { container } = renderSurface({
+      variant: 'admin-preview', embedded: true, headerTitle: 'Customer support',
+      backgroundColor: '#fafafa', aiDisclosureOverride: '', hideDisclaimer: true,
+      footerText: 'Ask [our team](https://example.com/help).',
+    })
+    expect(container.querySelector('h2')?.textContent).toBe('Customer support')
+    expect((container.querySelector('[data-widget-chat-surface]') as HTMLElement).style.backgroundColor).toBe('rgb(250, 250, 250)')
+    expect(container.querySelector('[data-widget-introduction]')).toBeNull()
+    expect(container.querySelector('a')?.getAttribute('href')).toBe('https://example.com/help')
+    expect(container.querySelector('[data-widget-hero] svg')).toBeNull()
+  })
+
+  it('shows explicit introduction text and hides an explicitly empty footer', () => {
+    const { container } = renderSurface({
+      variant: 'admin-preview', hideDisclaimer: true,
+      aiDisclosureOverride: 'You are talking to AI.', footerText: '',
+    })
+    expect(container.querySelector('[data-widget-introduction]')?.textContent).toBe('You are talking to AI.')
+    expect(container.querySelector('[data-widget-footer]')).toBeNull()
+  })
+
   it('keeps the portal disclaimer for widgets without the nerds integration', () => {
     renderSurface()
     // getBy* throws when absent: a plain render is the assertion.

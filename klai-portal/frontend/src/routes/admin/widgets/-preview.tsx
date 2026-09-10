@@ -39,25 +39,33 @@ export interface WidgetPreviewDraft {
   // customer-facing mode, page context) are edited but not saved; the model
   // cannot follow them live, so the panel flags that instead.
   modelBehaviorDirty?: boolean
+  headerTitle?: string
   welcome?: string
   starters?: string
   primaryColor?: string
+  backgroundColor?: string
   theme?: 'light' | 'dark'
   showSources?: boolean
   showMeta?: boolean
   collectUserInfo?: boolean
   hideDisclaimer?: boolean
+  aiDisclosureOverride?: string
+  footerText?: string
 }
 
 // What the panel renders - every field resolved to the tab draft when one is
 // mounted, otherwise to the saved widget.
 export interface WidgetPreviewValues {
   botName: string
+  headerTitle: string
   description: string
   welcomeMessage: string
   conversationStarters: string[]
   hideDisclaimer: boolean
   primaryColor: string
+  backgroundColor?: string
+  aiDisclosureOverride?: string
+  footerText?: string | null
   theme: 'light' | 'dark'
   showSources: boolean
   showMeta: boolean
@@ -92,7 +100,8 @@ function resolvePreview(widget: WidgetDetailResponse, scopes: Scopes): WidgetPre
   const appearance = scopes.appearance ?? {}
   const name = details.name ?? widget.name
   return {
-    botName: name.trim() || config.title || widget.name,
+    botName: name.trim() || widget.name,
+    headerTitle: appearance.headerTitle ?? config.title ?? (name.trim() || widget.name),
     description: details.description ?? widget.description ?? '',
     welcomeMessage: appearance.welcome ?? config.welcome_message,
     conversationStarters:
@@ -101,11 +110,21 @@ function resolvePreview(widget: WidgetDetailResponse, scopes: Scopes): WidgetPre
         : config.conversation_starters ?? [],
     primaryColor:
       appearance.primaryColor || config.primary_color || WIDGET_DEFAULT_PRIMARY_COLOR,
+    backgroundColor:
+      appearance.backgroundColor || config.css_variables['--klai-background-color'],
     theme: appearance.theme ?? config.theme ?? 'light',
     showSources: appearance.showSources ?? config.show_sources ?? true,
     showMeta: appearance.showMeta ?? config.show_meta ?? false,
     collectUserInfo: appearance.collectUserInfo ?? config.collect_user_info ?? false,
     hideDisclaimer: appearance.hideDisclaimer ?? config.hide_disclaimer ?? false,
+    aiDisclosureOverride:
+      appearance.aiDisclosureOverride !== undefined
+        ? appearance.aiDisclosureOverride
+        : config.ai_disclosure_override ?? undefined,
+    footerText:
+      appearance.footerText !== undefined
+        ? appearance.footerText
+        : config.footer_text ?? undefined,
     modelBehaviorDirty: details.modelBehaviorDirty ?? false,
   }
 }

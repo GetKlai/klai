@@ -31,7 +31,10 @@ const THEME_BACKGROUND_COLORS = { light: '#fffef2', dark: '#191918' } as const
 export function AppearanceTab({ widget }: Props) {
   const updateMutation = useUpdateWidget(String(widget.id))
   const config = widget.widget_config
+  const defaultAiDisclosure = m.admin_widgets_ai_disclosure_default({ name: widget.name })
+  const defaultFooterText = m.widget_ai_disclaimer()
 
+  const [headerTitle, setHeaderTitle] = useState(config.title ?? widget.name)
   const [welcome, setWelcome] = useState(config.welcome_message)
   const [primaryColor, setPrimaryColor] = useState(config.primary_color || WIDGET_DEFAULT_PRIMARY_COLOR)
   const [backgroundColor, setBackgroundColor] = useState(config.css_variables[BACKGROUND_COLOR_VARIABLE] || '')
@@ -40,25 +43,31 @@ export function AppearanceTab({ widget }: Props) {
   const [showSources, setShowSources] = useState(config.show_sources ?? true)
   const [showMeta, setShowMeta] = useState(config.show_meta ?? false)
   const [collectUserInfo, setCollectUserInfo] = useState(config.collect_user_info ?? false)
-  const [hideDisclaimer, setHideDisclaimer] = useState(config.hide_disclaimer ?? false)
-  const [aiDisclosureOverride, setAiDisclosureOverride] = useState(config.ai_disclosure_override ?? '')
-  const [footerText, setFooterText] = useState(config.footer_text ?? '')
+  const [aiDisclosureOverride, setAiDisclosureOverride] = useState(
+    config.ai_disclosure_override ?? defaultAiDisclosure,
+  )
+  const [footerText, setFooterText] = useState(config.footer_text ?? defaultFooterText)
   const [widgetPosition, setWidgetPosition] = useState<'left' | 'right'>(config.widget_position || 'right')
 
   // Everything on this tab is presentation, so the preview panel can follow
   // it verbatim - before save. Starters travel as the raw textarea text.
   usePublishWidgetPreview('appearance', {
+    headerTitle,
     welcome,
     starters: startersRaw,
     primaryColor,
+    backgroundColor,
     theme,
     showSources,
     showMeta,
     collectUserInfo,
-    hideDisclaimer,
+    hideDisclaimer: false,
+    aiDisclosureOverride,
+    footerText,
   })
 
   useEffect(() => {
+    setHeaderTitle(config.title ?? widget.name)
     setWelcome(config.welcome_message)
     setPrimaryColor(config.primary_color || WIDGET_DEFAULT_PRIMARY_COLOR)
     setBackgroundColor(config.css_variables[BACKGROUND_COLOR_VARIABLE] || '')
@@ -67,15 +76,17 @@ export function AppearanceTab({ widget }: Props) {
     setShowSources(config.show_sources ?? true)
     setShowMeta(config.show_meta ?? false)
     setCollectUserInfo(config.collect_user_info ?? false)
-    setHideDisclaimer(config.hide_disclaimer ?? false)
-    setAiDisclosureOverride(config.ai_disclosure_override ?? '')
-    setFooterText(config.footer_text ?? '')
+    setAiDisclosureOverride(config.ai_disclosure_override ?? defaultAiDisclosure)
+    setFooterText(config.footer_text ?? defaultFooterText)
     setWidgetPosition(config.widget_position || 'right')
-  }, [config])
+  }, [config, defaultAiDisclosure, defaultFooterText, widget.name])
 
   const starters = startersRaw.split('\n').map((l) => l.trim()).filter(Boolean).slice(0, WIDGET_MAX_CONVERSATION_STARTERS)
+  const introductionChanged = aiDisclosureOverride.trim() !== (config.ai_disclosure_override ?? defaultAiDisclosure)
+  const footerChanged = footerText.trim() !== (config.footer_text ?? defaultFooterText)
 
   const isDirty =
+    headerTitle !== (config.title ?? widget.name) ||
     welcome.trim() !== config.welcome_message ||
     primaryColor !== (config.primary_color || WIDGET_DEFAULT_PRIMARY_COLOR) ||
     backgroundColor !== (config.css_variables[BACKGROUND_COLOR_VARIABLE] || '') ||
@@ -84,15 +95,15 @@ export function AppearanceTab({ widget }: Props) {
     showSources !== (config.show_sources ?? true) ||
     showMeta !== (config.show_meta ?? false) ||
     collectUserInfo !== (config.collect_user_info ?? false) ||
-    hideDisclaimer !== (config.hide_disclaimer ?? false) ||
-    aiDisclosureOverride.trim() !== (config.ai_disclosure_override ?? '') ||
-    footerText.trim() !== (config.footer_text ?? '') ||
+    introductionChanged ||
+    footerChanged ||
     widgetPosition !== (config.widget_position || 'right')
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     const next: WidgetConfig = {
       ...config,
+      title: headerTitle.trim(),
       welcome_message: welcome.trim(),
       primary_color: primaryColor,
       css_variables: backgroundColor
@@ -103,9 +114,8 @@ export function AppearanceTab({ widget }: Props) {
       show_sources: showSources,
       show_meta: showMeta,
       collect_user_info: collectUserInfo,
-      hide_disclaimer: hideDisclaimer,
-      ai_disclosure_override: aiDisclosureOverride.trim() || null,
-      footer_text: footerText.trim() || null,
+      ...(introductionChanged ? { hide_disclaimer: false, ai_disclosure_override: aiDisclosureOverride.trim() } : {}),
+      ...(footerChanged ? { footer_text: footerText.trim() } : {}),
       widget_position: widgetPosition,
     }
     updateMutation.mutate(
@@ -119,6 +129,15 @@ export function AppearanceTab({ widget }: Props) {
       {/* Brand & Theme */}
       <section>
         <SectionHeading>{m.admin_widgets_appearance_section_brand()}</SectionHeading>
+        <div className="mb-5 max-w-sm space-y-1.5">
+          <Label htmlFor="widget-header-title">{m.admin_widgets_widget_title_label()}</Label>
+          <p className="text-xs text-gray-600">{m.admin_widgets_widget_title_help()}</p>
+          <Input
+            id="widget-header-title"
+            value={headerTitle}
+            onChange={(e) => setHeaderTitle(e.target.value)}
+          />
+        </div>
         <div className="grid max-w-2xl gap-5 sm:grid-cols-2">
           <div className="space-y-1.5">
             <Label htmlFor="widget-primary-color">{m.admin_widgets_brand_color_label()}</Label>
@@ -230,20 +249,18 @@ export function AppearanceTab({ widget }: Props) {
             label={m.admin_widgets_show_meta_label()} help={m.admin_widgets_show_meta_help()} />
           <WidgetToggleCard id="collect-user-info" checked={collectUserInfo} onChange={setCollectUserInfo}
             label={m.admin_widgets_collect_user_info_label()} help={m.admin_widgets_collect_user_info_help()} />
-          <WidgetToggleCard id="hide-disclaimer" checked={hideDisclaimer} onChange={setHideDisclaimer}
-            label={m.admin_widgets_widget_hide_disclaimer_label()} help={m.admin_widgets_widget_hide_disclaimer_help()} />
         </div>
         <div className="mt-3 space-y-1.5">
           <Label htmlFor="widget-ai-disclosure-override">{m.admin_widgets_ai_disclosure_override_label()}</Label>
-          <p className="text-xs text-gray-600">{m.admin_widgets_ai_disclosure_override_help()}</p>
           <Textarea
             id="widget-ai-disclosure-override"
+            aria-describedby="widget-ai-disclosure-help"
             value={aiDisclosureOverride}
             onChange={(e) => setAiDisclosureOverride(e.target.value)}
             maxLength={500}
             rows={3}
-            placeholder={m.admin_widgets_ai_disclosure_override_placeholder()}
           />
+          <p id="widget-ai-disclosure-help" className="text-xs text-gray-600">{m.admin_widgets_ai_disclosure_override_help()}</p>
         </div>
         <div className="mt-3 space-y-1.5">
           <Label htmlFor="widget-footer-text">{m.admin_widgets_footer_text_label()}</Label>

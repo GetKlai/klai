@@ -21,6 +21,8 @@ interface PublicConfig {
   css_variables?: Record<string, string>
   conversation_starters?: string[]
   hide_disclaimer?: boolean
+  ai_disclosure_override?: string | null
+  footer_text?: string | null
   primary_color?: string
   theme?: 'light' | 'dark'
   show_sources?: boolean
@@ -84,6 +86,9 @@ function PublicBotPage() {
       welcomeMessage={cfg.welcome_message}
       conversationStarters={cfg.conversation_starters}
       hideDisclaimer={cfg.hide_disclaimer}
+      aiDisclosureOverride={cfg.ai_disclosure_override}
+      footerText={cfg.footer_text}
+      backgroundColor={cfg.css_variables?.['--klai-background-color']}
       primaryColor={cfg.primary_color}
       theme={cfg.theme}
       showSources={cfg.show_sources}

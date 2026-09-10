@@ -7,7 +7,7 @@ export interface WidgetConfig {
   session_expires_at: string;
   // TWD-style empty-state chips. Admin-configured, 0-6 entries.
   conversation_starters?: string[];
-  // Hide the introductory AI notice independently of the footer.
+  // Legacy toggle, used only while no explicit introduction text is stored.
   hide_disclaimer?: boolean;
   footer_text?: string | null;
   // INTERIM appointment redirect — remove once the chat booking API
@@ -32,10 +32,9 @@ export interface WidgetConfig {
   // sample in main.ts.
   name?: string;
   description?: string;
-  // Tenant-supplied replacement for the whole AI-notice sentence in the
-  // hero (the AI notice + the auto-appended
-  // booking sentence). Used verbatim when set. See ChatWindow.tsx.
-  ai_disclosure_override?: string;
+  // Explicit text, including an empty string, overrides legacy behaviour.
+  // null/missing keeps the existing default introduction.
+  ai_disclosure_override?: string | null;
   // Display toggles: show citation list / meta block under each
   // assistant message. Admin-controlled in the Vormgeving tab.
   show_sources?: boolean;

@@ -11,7 +11,7 @@
  *   this integration must render byte-for-byte the same controls as before.
  */
 
-import { render, fireEvent, cleanup } from "@solidjs/testing-library";
+import { render, fireEvent, cleanup, waitFor } from "@solidjs/testing-library";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ChatWindow } from "../src/components/ChatWindow";
@@ -90,17 +90,27 @@ describe("permanent booking bar", () => {
   });
 
   it("hides the AI introduction while preserving the footer", () => {
-    const { container } = renderWindow({ hideDisclaimer: true });
+    const { container } = renderWindow({
+      hideDisclaimer: true,
+      aiDisclosureOverride: null,
+      footerText: null,
+    });
     expect(container.querySelector(".klai-hero-ai-disclosure")).toBeNull();
     expect(container.querySelector(".klai-disclaimer")!.textContent).toBe(t().disclaimer);
   });
 
-  it("renders the customer's footer and appointment link independently of the AI introduction", () => {
+  it("renders explicit introduction and footer text despite the legacy hide flag", async () => {
     const { container } = renderWindow({
       hideDisclaimer: true,
       nerdsEnabled: true,
       nerdsBookingUrl: BOOKING_URL,
+      aiDisclosureOverride: "Je praat met de Voys-assistent.",
       footerText: `Onze AI kan fouten maken. Plan bij [onze nerds](${BOOKING_URL}).`,
+    });
+    await waitFor(() => {
+      expect(container.querySelector(".klai-hero-ai-disclosure")!.textContent).toBe(
+        "Je praat met de Voys-assistent.",
+      );
     });
     const footer = container.querySelector(".klai-disclaimer")!;
     expect(footer.textContent).toBe("Onze AI kan fouten maken. Plan bij onze nerds.");
@@ -108,7 +118,16 @@ describe("permanent booking bar", () => {
     expect(link.getAttribute("href")).toBe(BOOKING_URL);
     expect(link.target).toBe("_blank");
     expect(link.rel).toBe("noopener noreferrer");
+  });
+
+  it("renders no introduction, footer, or oversized hero icon when both texts are explicitly blank", () => {
+    const { container } = renderWindow({
+      aiDisclosureOverride: "",
+      footerText: "",
+    });
     expect(container.querySelector(".klai-hero-ai-disclosure")).toBeNull();
+    expect(container.querySelector(".klai-disclaimer")).toBeNull();
+    expect(container.querySelector(".klai-hero-icon")).toBeNull();
   });
 
   it("does not execute HTML or script links supplied in a customer footer", () => {
