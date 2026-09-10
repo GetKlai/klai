@@ -544,6 +544,10 @@ export function ChatWindow(props: ChatWindowProps) {
             </span>
             <div class="klai-header-text">
               <span class="klai-header-title">{props.title}</span>
+              <span class="klai-header-status">
+                <span class="klai-header-status-dot" aria-hidden="true" />
+                {t().onlineStatus}
+              </span>
             </div>
           </div>
           <div class="klai-header-actions">
@@ -561,7 +565,7 @@ export function ChatWindow(props: ChatWindowProps) {
               </svg>
             </button>
             <button
-              class="klai-icon-btn"
+              class="klai-icon-btn klai-new-conversation-header-btn"
               type="button"
               aria-label={t().newConversation}
               title={t().newConversation}
@@ -572,6 +576,7 @@ export function ChatWindow(props: ChatWindowProps) {
                 <path d="M12 5v14" />
                 <path d="M5 12h14" />
               </svg>
+              <span>{t().newConversation}</span>
             </button>
           </div>
           <button

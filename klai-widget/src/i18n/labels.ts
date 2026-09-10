@@ -50,6 +50,7 @@ export interface WidgetLabels {
   clearStoredIdentity: string
   conversationHistory: string
   newConversation: string
+  onlineStatus: string
   closeConversation: string
   feedbackGroupLabel: string
   feedbackHelpful: string
@@ -113,6 +114,7 @@ const nl: WidgetLabels = {
   clearStoredIdentity: "Wis opgeslagen gegevens",
   conversationHistory: "Gesprekken",
   newConversation: "Nieuw gesprek",
+  onlineStatus: "Online",
   closeConversation: "Sluit gesprek",
   feedbackGroupLabel: "Beoordeel dit antwoord",
   feedbackHelpful: "Nuttig",
@@ -168,6 +170,7 @@ const en: WidgetLabels = {
   clearStoredIdentity: "Clear stored details",
   conversationHistory: "Conversations",
   newConversation: "New conversation",
+  onlineStatus: "Online",
   closeConversation: "Close conversation",
   feedbackGroupLabel: "Rate this answer",
   feedbackHelpful: "Helpful",
