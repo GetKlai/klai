@@ -330,7 +330,7 @@ If no `content_type` is set, the pipeline uses `unknown` — no enrichment, basi
 **Step 1 — Parse and chunk.** The content arrives as plain text (already decoded by the
 caller). There are now **two** binary-parse paths:
 - **Standalone portal file uploads** (`.pdf/.docx/.pptx/.xlsx/.json/.xml`) stream to
-  **docling-serve** v1.16.1's async queue from portal-api
+  **docling-serve** v1.30.0's async queue from portal-api
   (`app/services/docling_client.py` / `file_upload.py`, SPEC-KB-FILE-UPLOAD-001 /
   SPEC-PORTAL-KENNIS-002): `POST /v1/chunk/hybrid/file/async`, polled, then the resulting
   docling chunks are submitted **pre-chunked** to knowledge-ingest. knowledge-ingest has

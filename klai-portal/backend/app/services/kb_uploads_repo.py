@@ -211,6 +211,29 @@ async def mark_ingesting(db: AsyncSession, *, upload_id: uuid.UUID) -> bool:
     return int(cast("CursorResult[Any]", result).rowcount or 0) > 0
 
 
+async def mark_failed_if_processing(
+    db: AsyncSession,
+    *,
+    upload_id: uuid.UUID,
+    failure_reason: str,
+) -> bool:
+    """Transition ``processing`` → ``failed``, but only from ``processing``.
+
+    Same guard, and for the same reason, as ``mark_ingesting``: every
+    FastAPI lifespan starts a poller, so a tick working from a view read
+    moments ago can land after another actor already moved the row on. An
+    id-only UPDATE would drag an ``ingesting`` or ``done`` row back to
+    ``failed``. Returns False when the row had already moved, which is the
+    caller's signal that nothing happened and nothing should be logged.
+    """
+    result = await db.execute(
+        update(KBUpload)
+        .where(KBUpload.id == upload_id, KBUpload.status == STATUS_PROCESSING)
+        .values(status=STATUS_FAILED, failure_reason=failure_reason, updated_at=_now())
+    )
+    return int(cast("CursorResult[Any]", result).rowcount or 0) > 0
+
+
 async def is_still_pending(db: AsyncSession, *, upload_id: uuid.UUID, org_id: int) -> bool:
     """True when this row still wants the poller to finish it.
 

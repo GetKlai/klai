@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import structlog.testing
 
 from app.services import kb_upload_poller
 from app.services.docling_client import (
@@ -39,6 +40,7 @@ def _view(
     org_id: int = 1,
     kb_id: int = 42,
     target_path: str | None = None,
+    created_at: datetime | None = None,
 ) -> KBUploadView:
     return KBUploadView(
         id=uuid.uuid4(),
@@ -54,10 +56,15 @@ def _view(
         failure_reason=None,
         docling_task_id=docling_task_id,
         artifact_id=None,
-        created_at=datetime.now(UTC),
+        created_at=created_at or datetime.now(UTC),
         updated_at=datetime.now(UTC),
         target_path=target_path,
     )
+
+
+def _started_poll() -> DoclingPollResult:
+    # Non-terminal: what a task that never finishes keeps reporting.
+    return DoclingPollResult("task-1", DoclingTaskStatus.STARTED, False, None, 2)
 
 
 @asynccontextmanager
@@ -83,6 +90,7 @@ class _PollerPatches:
         kb: object | None = None,
         org: object | None = None,
         claim_kept: bool = True,
+        deadline_claim_kept: bool = True,
         still_pending: bool = True,
         finalised: bool = True,
     ) -> None:
@@ -96,6 +104,7 @@ class _PollerPatches:
         self.kb = kb
         self.org = org
         self.claim_kept = claim_kept
+        self.deadline_claim_kept = deadline_claim_kept
         self.still_pending = still_pending
         self.finalised = finalised
         self.stack = ExitStack()
@@ -104,6 +113,7 @@ class _PollerPatches:
         self.mock_ingest: AsyncMock | None = None
         self.mock_mark_done: AsyncMock | None = None
         self.mock_mark_failed: AsyncMock | None = None
+        self.mock_fail_if_processing: AsyncMock | None = None
         self.mock_mark_ingesting: AsyncMock | None = None
         self.mock_still_pending: AsyncMock | None = None
         self.mock_delete_artifact: AsyncMock | None = None
@@ -135,10 +145,18 @@ class _PollerPatches:
 
         self.mock_mark_done = AsyncMock(return_value=self.finalised)
         self.mock_mark_failed = AsyncMock(return_value=None)
+        # True = this tick really moved the row; False = someone else got there first.
+        self.mock_fail_if_processing = AsyncMock(return_value=self.deadline_claim_kept)
         self.mock_mark_ingesting = AsyncMock(return_value=self.claim_kept)
         self.stack.enter_context(patch("app.services.kb_upload_poller.kb_uploads_repo.mark_done", self.mock_mark_done))
         self.stack.enter_context(
             patch("app.services.kb_upload_poller.kb_uploads_repo.mark_failed", self.mock_mark_failed)
+        )
+        self.stack.enter_context(
+            patch(
+                "app.services.kb_upload_poller.kb_uploads_repo.mark_failed_if_processing",
+                self.mock_fail_if_processing,
+            )
         )
         self.stack.enter_context(
             patch(
@@ -271,7 +289,7 @@ class TestProcessingState:
         with _PollerPatches(
             poll_result=DoclingPollResult(
                 task_id="task-1",
-                status=DoclingTaskStatus.IN_PROGRESS,
+                status=DoclingTaskStatus.STARTED,
                 terminal=False,
                 error_message=None,
                 queue_position=2,
@@ -397,6 +415,76 @@ class TestProcessingState:
         patches.mock_mark_failed.assert_called_once()  # type: ignore[union-attr]
         kwargs = patches.mock_mark_failed.call_args.kwargs  # type: ignore[union-attr]
         assert kwargs["failure_reason"] == "missing_docling_task"
+
+    @pytest.mark.asyncio
+    async def test_non_terminal_row_past_deadline_is_failed(self) -> None:
+        """A docling status that never turns terminal cannot be polled forever."""
+        stale = datetime.now(UTC) - kb_upload_poller.PROCESSING_DEADLINE * 2
+        view = _view(status=STATUS_PROCESSING, created_at=stale)
+        with _PollerPatches(poll_result=_started_poll()) as patches:
+            await kb_upload_poller._process_processing_row(view)
+
+        assert patches.mock_fail_if_processing is not None
+        patches.mock_fail_if_processing.assert_awaited_once()
+        kwargs = patches.mock_fail_if_processing.call_args.kwargs
+        assert kwargs["failure_reason"] == "processing_deadline_exceeded"
+
+    @pytest.mark.asyncio
+    async def test_poll_timeout_past_deadline_is_failed(self) -> None:
+        """A status endpoint that never answers strands the row just as hard.
+
+        Without this the transient branch returns before the deadline check
+        and the row polls forever anyway — the exact thing the cap exists
+        to prevent.
+        """
+        stale = datetime.now(UTC) - kb_upload_poller.PROCESSING_DEADLINE * 2
+        view = _view(status=STATUS_PROCESSING, created_at=stale)
+        with _PollerPatches(poll_side_effect=DoclingTimeoutError("poll timed out")) as patches:
+            await kb_upload_poller._process_processing_row(view)
+
+        assert patches.mock_fail_if_processing is not None
+        patches.mock_fail_if_processing.assert_awaited_once()
+        assert patches.mock_fail_if_processing.call_args.kwargs["failure_reason"] == "processing_deadline_exceeded"
+
+    @pytest.mark.asyncio
+    async def test_poll_timeout_within_deadline_stays_transient(self) -> None:
+        """Inside the cap a timeout is still just a blip: leave the row alone."""
+        young = datetime.now(UTC) - kb_upload_poller.PROCESSING_DEADLINE / 2
+        view = _view(status=STATUS_PROCESSING, created_at=young)
+        with _PollerPatches(poll_side_effect=DoclingTimeoutError("poll timed out")) as patches:
+            await kb_upload_poller._process_processing_row(view)
+
+        patches.mock_fail_if_processing.assert_not_called()  # type: ignore[union-attr]
+        patches.mock_mark_failed.assert_not_called()  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio
+    async def test_deadline_does_not_overwrite_a_row_that_moved_on(self) -> None:
+        """Every lifespan runs a poller, so a stale tick can land late.
+
+        When the conditional UPDATE matches nothing the row already moved to
+        ingesting or done, and this tick must neither claim it nor log that
+        it failed.
+        """
+        stale = datetime.now(UTC) - kb_upload_poller.PROCESSING_DEADLINE * 2
+        view = _view(status=STATUS_PROCESSING, created_at=stale)
+        with _PollerPatches(poll_result=_started_poll(), deadline_claim_kept=False) as patches:
+            with structlog.testing.capture_logs() as captured:
+                await kb_upload_poller._process_processing_row(view)
+
+        patches.mock_fail_if_processing.assert_awaited_once()  # type: ignore[union-attr]
+        assert not [entry for entry in captured if entry["event"] == "kb_upload_processing_deadline_exceeded"], (
+            "logged a failure that never happened"
+        )
+
+    @pytest.mark.asyncio
+    async def test_non_terminal_row_within_deadline_keeps_processing(self) -> None:
+        """A merely slow conversion must not be cut off by the deadline."""
+        young = datetime.now(UTC) - kb_upload_poller.PROCESSING_DEADLINE / 2
+        view = _view(status=STATUS_PROCESSING, created_at=young)
+        with _PollerPatches(poll_result=_started_poll()) as patches:
+            await kb_upload_poller._process_processing_row(view)
+
+        patches.mock_mark_failed.assert_not_called()  # type: ignore[union-attr]
 
 
 # ---- Ingesting-state retry ------------------------------------------------

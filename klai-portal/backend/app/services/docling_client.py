@@ -1,12 +1,16 @@
 """Docling-serve async client.
 
 SPEC-KB-FILE-UPLOAD-001 — wraps the three async endpoints exposed by
-``docling-serve v1.16.1``:
+``docling-serve v1.30.0`` (task-status vocabulary verified against
+docling-jobkit 3.3.0 inside ``klai-core-docling-serve-1`` on 2026-09-10;
+the openapi.json types ``task_status`` as ``ConversionStatus``, which is
+misleading — ``partial_success`` and ``skipped`` are document statuses and
+can never appear as a task status):
 
 - ``POST /v1/chunk/hybrid/file/async`` — submit a file, returns ``task_id``
   immediately. Conversion + chunking run in docling-serve's own worker queue.
 - ``GET /v1/status/poll/{task_id}`` — current task status (``pending``,
-  ``in_progress``, ``success``, ``failure``, etc.). Cheap to call.
+  ``started``, ``success``, ``failure``). Cheap to call.
 - ``GET /v1/result/{task_id}`` — fetch the converted markdown once
   the task reports ``success``.
 
@@ -46,16 +50,12 @@ class DoclingTaskStatus(StrEnum):
 
     PENDING = "pending"
     STARTED = "started"
-    IN_PROGRESS = "in_progress"
     SUCCESS = "success"
     FAILURE = "failure"
-    REVOKED = "revoked"
 
 
 # Statuses we consider terminal — polling stops here.
-_TERMINAL_STATUSES: frozenset[str] = frozenset(
-    {DoclingTaskStatus.SUCCESS, DoclingTaskStatus.FAILURE, DoclingTaskStatus.REVOKED}
-)
+_TERMINAL_STATUSES: frozenset[str] = frozenset({DoclingTaskStatus.SUCCESS, DoclingTaskStatus.FAILURE})
 
 
 @dataclass(frozen=True)
