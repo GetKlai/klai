@@ -10,7 +10,7 @@
  * messages is the surface's own contract, not the panel's.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 // ---------------------------------------------------------------------------
@@ -41,6 +41,9 @@ const { MESSAGE_KEYS } = vi.hoisted(() => ({
     'admin_widgets_brand_color_help',
     'admin_widgets_brand_color_label',
     'admin_widgets_brand_color_placeholder',
+    'admin_widgets_background_color_help',
+    'admin_widgets_background_color_label',
+    'admin_widgets_background_color_placeholder',
     'admin_widgets_collect_user_info_help',
     'admin_widgets_collect_user_info_label',
     'admin_widgets_details_role_scope_help',
@@ -234,6 +237,36 @@ describe('WidgetPreviewPanel - SPEC-WIDGET-PREVIEW-001', () => {
 
     expect(screen.getByTestId('chat-surface').textContent).toBe('Hoi, kan ik helpen?')
     expect(screen.getByTestId('chat-surface').dataset.primaryColor).toBe('#2266ee')
+  })
+
+  it('saves and repopulates the selected widget background colour', async () => {
+    const widget = makeWidget()
+    widget.widget_config.css_variables = { '--existing-variable': 'keep-me' }
+    const rendered = renderScreen(widget, 'appearance')
+
+    const backgroundInput = document.getElementById('widget-background-color') as HTMLInputElement
+    expect(backgroundInput.value).toBe('#fffef2')
+    fireEvent.click(screen.getByText('admin_widgets_theme_dark'))
+    expect(backgroundInput.value).toBe('#191918')
+
+    fireEvent.change(backgroundInput, { target: { value: '#123456' } })
+    fireEvent.click(screen.getByText('admin_shared_save'))
+
+    await waitFor(() => {
+      const request = apiFetchMock.mock.calls.find(([url]) =>
+        url === '/api/admin/widgets/widget-uuid-1',
+      )
+      const body = JSON.parse(String(request?.[1]?.body))
+      expect(body.widget_config.css_variables).toEqual({
+        '--existing-variable': 'keep-me',
+        '--klai-background-color': '#123456',
+      })
+    })
+
+    rendered.unmount()
+    widget.widget_config.css_variables['--klai-background-color'] = '#123456'
+    renderScreen(widget, 'appearance')
+    expect((document.getElementById('widget-background-color') as HTMLInputElement).value).toBe('#123456')
   })
 
   it('flags that answer behaviour uses the saved settings while instructions are edited', async () => {
