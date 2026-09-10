@@ -108,9 +108,16 @@ function previewPrimaryTextColor(primaryColor: string): string {
 
 // css_variables from config as custom properties overrides
 function cssVariableOverrides(config: WidgetConfig): string {
-  return Object.entries(config.css_variables)
+  const overrides = Object.entries(config.css_variables)
     .map(([key, value]) => `${key}: ${value};`)
     .join(" ");
+  // Exact opt-in to the bundled Geist face (config.css_variables is already
+  // tenant-merged here, so this is the final font value): match the portal's
+  // WebKit antialiasing so iframe text weight is the same on both surfaces.
+  if (config.css_variables["--klai-font-family"] === '"Klai Widget Geist", system-ui, sans-serif') {
+    return `${overrides} -webkit-font-smoothing: antialiased;`;
+  }
+  return overrides;
 }
 
 type PreviewConfig = WidgetConfig & {
@@ -154,6 +161,11 @@ function previewAppearance(config: PreviewConfig): Map<string, string> {
   if (effectivePrimary) values.set("--klai-primary-text-color", previewPrimaryTextColor(effectivePrimary));
   for (const [key, value] of Object.entries(config.css_variables)) {
     if (key.startsWith("--klai-")) values.set(key, value);
+  }
+  // Same bundled-Geist antialiasing as cssVariableOverrides, judged on the
+  // final merged font; the applied-set cleanup clears it when the opt-in goes.
+  if (values.get("--klai-font-family") === '"Klai Widget Geist", system-ui, sans-serif') {
+    values.set("-webkit-font-smoothing", "antialiased");
   }
   return values;
 }
