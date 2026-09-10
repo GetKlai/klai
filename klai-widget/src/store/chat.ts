@@ -134,6 +134,7 @@ const initialState: ChatState = {
 export const [chatState, setChatState] = createStore<ChatState>(initialState);
 
 let persistedConversations: Record<string, PersistedConversation> = {};
+let persistenceEnabled = true;
 
 function storageKey(widgetId: string): string {
   return `klai-widget:${widgetId}:chat:v1`;
@@ -382,7 +383,9 @@ function persistState(status = chatState.conversationStatus): void {
       identity,
       conversations,
     };
-    window.localStorage.setItem(storageKey(chatState.widgetId), JSON.stringify(payload));
+    if (persistenceEnabled) {
+      window.localStorage.setItem(storageKey(chatState.widgetId), JSON.stringify(payload));
+    }
     setChatState("conversations", conversationList());
   } catch {
     // Persistence is best-effort; the widget must keep working in private mode.
@@ -393,8 +396,14 @@ function schedulePersist(status?: ConversationStatus): void {
   queueMicrotask(() => persistState(status));
 }
 
-export function initStore(widgetId: string, config: WidgetConfig, clientSessionId: string): void {
-  const persisted = loadPersistedState(widgetId, clientSessionId);
+export function initStore(
+  widgetId: string,
+  config: WidgetConfig,
+  clientSessionId: string,
+  persist = true,
+): void {
+  persistenceEnabled = persist;
+  const persisted = persist ? loadPersistedState(widgetId, clientSessionId) : null;
   persistedConversations = Object.fromEntries((persisted?.conversations ?? []).map((conversation) => [conversation.id, conversation]));
   const activeId = persisted?.activeConversationId && persistedConversations[persisted.activeConversationId]
     ? persisted.activeConversationId
@@ -439,6 +448,10 @@ export function initStore(widgetId: string, config: WidgetConfig, clientSessionI
     broadMode: conversation.broadMode === true,
   });
   schedulePersist();
+}
+
+export function updateWidgetConfig(config: WidgetConfig): void {
+  setChatState({ config, sessionToken: config.session_token });
 }
 
 export function switchConversation(config: WidgetConfig, conversationId: string): void {

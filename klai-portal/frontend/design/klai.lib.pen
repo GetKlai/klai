@@ -1094,7 +1094,7 @@
     },
     "font-display-bold": {
       "type": "string",
-      "value": "Geist Bold"
+      "value": "system-ui"
     },
     "font-display-bold-preview": {
       "type": "string",

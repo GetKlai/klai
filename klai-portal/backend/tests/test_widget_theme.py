@@ -49,6 +49,16 @@ def test_merge_empty_config_is_empty():
     assert _merge_css_variables({}) == {}
 
 
+def test_widget_style_overrides_inherit_tenant_defaults_without_mutating_them():
+    tenant = {"--klai-background-color": "#ffffff", "--klai-message-gap": "20px"}
+    first = _merge_css_variables({"css_variables": {"--klai-message-gap": "24px"}}, tenant)
+    second = _merge_css_variables({}, tenant)
+    assert first == {"--klai-background-color": "#ffffff", "--klai-message-gap": "24px"}
+    assert second == tenant
+    assert tenant["--klai-message-gap"] == "20px"
+    assert _merge_css_variables({}) == {}
+
+
 def test_merge_dark_theme_vars():
     assert _merge_css_variables({"theme": "dark"}) == {
         "--klai-text-color": "#fffef2",

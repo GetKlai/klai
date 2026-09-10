@@ -81,6 +81,9 @@ class PortalOrg(Base):
     default_language: Mapped[Literal["nl", "en"]] = mapped_column(
         String(8), nullable=False, default="nl", server_default="nl"
     )
+    widget_css_variables: Mapped[dict[str, str]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=sa.text("'{}'::jsonb")
+    )
     librechat_container: Mapped[str | None] = mapped_column(String(128), nullable=True)
     zitadel_librechat_client_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     zitadel_librechat_client_secret: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)

@@ -12,6 +12,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import type { WidgetEmbedPreviewConfig } from '../WidgetEmbedPreview'
 
 // ---------------------------------------------------------------------------
 // Module mocks - must be at the top level before any imports of the SUT.
@@ -94,7 +95,40 @@ const { MESSAGE_KEYS } = vi.hoisted(() => ({
     'admin_widgets_widget_title_label',
     'admin_widgets_widget_welcome_placeholder',
     'widget_ai_disclaimer',
+    'widget_chat_close',
+    'widget_chat_copied',
+    'widget_chat_default_empty_state',
+    'widget_chat_input_placeholder',
+    'widget_chat_meta_sources_many',
+    'widget_chat_meta_sources_one',
+    'widget_chat_new_conversation',
     'widget_chat_preview_session_error',
+    'widget_chat_send',
+    'widget_chat_share_link',
+    'widget_chat_sources_label',
+    'widget_chat_status_online',
+    'widget_chat_typing',
+    'widget_chat_user_info_email',
+    'widget_chat_user_info_help',
+    'widget_chat_user_info_name',
+    'widget_style_advanced_title',
+    'widget_style_border_radius',
+    'widget_style_content_padding',
+    'widget_style_font_bundled',
+    'widget_style_font_family',
+    'widget_style_font_help',
+    'widget_style_font_inherit',
+    'widget_style_font_system',
+    'widget_style_header_background',
+    'widget_style_header_control_background',
+    'widget_style_header_text',
+    'widget_style_input_font_size',
+    'widget_style_line_height',
+    'widget_style_message_font_size',
+    'widget_style_message_gap',
+    'widget_style_starter_font_size',
+    'widget_style_window_height',
+    'widget_style_window_width',
   ],
 }))
 
@@ -114,40 +148,24 @@ vi.mock('@/lib/apiFetch', () => ({
   apiFetch: (url: string, init?: RequestInit) => apiFetchMock(url, init),
 }))
 
-// Props-recording stub: the panel hands the preview values to the surface,
-// the tests read them back off the DOM.
 interface StubProps {
-  botName?: string
-  headerTitle?: string
-  primaryColor?: string
-  backgroundColor?: string
-  welcomeMessage?: string
-  aiDisclosureOverride?: string
-  footerText?: string | null
-  hideDisclaimer?: boolean
+  config: WidgetEmbedPreviewConfig & { name?: string; primary_color?: string; ai_disclosure_override?: string | null; footer_text?: string | null; hide_disclaimer?: boolean }
+  fetchConfig: (sessionId?: string) => Promise<unknown>
 }
-vi.mock('@/features/widgets/chat/WidgetChatSurface', () => ({
-  WidgetChatSurface: ({
-    botName = '',
-    headerTitle = '',
-    primaryColor = '',
-    backgroundColor = '',
-    welcomeMessage = '',
-    aiDisclosureOverride = '',
-    footerText = '',
-    hideDisclaimer = false,
-  }: StubProps) => (
+vi.mock('../WidgetEmbedPreview', () => ({
+  WidgetEmbedPreview: ({ config, fetchConfig }: StubProps) => (
     <div
       data-testid="chat-surface"
-      data-bot-name={botName}
-      data-header-title={headerTitle}
-      data-primary-color={primaryColor}
-      data-background-color={backgroundColor}
-      data-ai-disclosure={aiDisclosureOverride}
-      data-footer-text={footerText ?? ''}
-      data-hide-disclaimer={String(hideDisclaimer)}
+      data-bot-name={config.name}
+      data-header-title={config.title}
+      data-primary-color={config.primary_color}
+      data-background-color={config.css_variables['--klai-background-color']}
+      data-ai-disclosure={config.ai_disclosure_override}
+      data-footer-text={config.footer_text ?? ''}
+      data-hide-disclaimer={String(config.hide_disclaimer)}
     >
-      {welcomeMessage}
+      {config.welcome_message}
+      <button type="button" aria-label="renew-preview" onClick={() => void fetchConfig('preview-conversation-2')} />
     </div>
   ),
 }))
@@ -201,7 +219,7 @@ function makeWidget(overrides?: Partial<WidgetDetailResponse>): WidgetDetailResp
   }
 }
 
-function renderScreen(widget: WidgetDetailResponse, tab: 'details' | 'appearance') {
+function renderScreen(widget: WidgetDetailResponse, tab: 'details' | 'appearance', withPreview = true) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
@@ -210,7 +228,7 @@ function renderScreen(widget: WidgetDetailResponse, tab: 'details' | 'appearance
       <WidgetPreviewProvider widget={widget}>
         <div>
           {tab === 'details' ? <DetailsTab widget={widget} /> : <AppearanceTab widget={widget} />}
-          <WidgetPreviewPanel widget={widget} onCollapse={() => {}} />
+          {withPreview && <WidgetPreviewPanel widget={widget} onCollapse={() => {}} />}
         </div>
       </WidgetPreviewProvider>
     </QueryClientProvider>,
@@ -219,12 +237,15 @@ function renderScreen(widget: WidgetDetailResponse, tab: 'details' | 'appearance
 
 beforeEach(() => {
   apiFetchMock.mockReset()
-  apiFetchMock.mockImplementation((url: string) => {
+  apiFetchMock.mockImplementation((url: string, init?: RequestInit) => {
     if (url.includes('/preview-session')) {
+      const sessionId = (init?.headers as Record<string, string> | undefined)?.['X-Klai-Widget-Session-Id'] ?? 'preview-conversation-1'
       return Promise.resolve({
         session_token: 'preview-token',
         chat_endpoint: '/partner/v1/chat/completions',
         session_expires_at: '2026-01-01T02:00:00Z',
+        session_id: sessionId,
+        tenant_css_variables: { '--klai-window-width': '390px' },
       })
     }
     return Promise.resolve([])
@@ -254,14 +275,14 @@ describe('WidgetPreviewPanel - SPEC-WIDGET-PREVIEW-001', () => {
     renderScreen(widget, 'appearance')
 
     const surface = await screen.findByTestId('chat-surface')
-    expect(surface.textContent).toBe('Welkom')
+    expect(surface.textContent).toContain('Welkom')
 
     const welcomeInput = document.getElementById('widget-welcome') as HTMLInputElement
     fireEvent.change(welcomeInput, { target: { value: 'Hoi, kan ik helpen?' } })
     const colorInput = document.getElementById('widget-primary-color') as HTMLInputElement
     fireEvent.change(colorInput, { target: { value: '#2266ee' } })
 
-    expect(screen.getByTestId('chat-surface').textContent).toBe('Hoi, kan ik helpen?')
+    expect(screen.getByTestId('chat-surface').textContent).toContain('Hoi, kan ik helpen?')
     expect(screen.getByTestId('chat-surface').dataset.primaryColor).toBe('#2266ee')
   })
 
@@ -334,6 +355,38 @@ describe('WidgetPreviewPanel - SPEC-WIDGET-PREVIEW-001', () => {
     widget.widget_config.css_variables['--klai-background-color'] = '#123456'
     renderScreen(widget, 'appearance')
     expect((document.getElementById('widget-background-color') as HTMLInputElement).value).toBe('#123456')
+  })
+
+  it('saves and clears a style override without losing unrelated CSS variables', async () => {
+    const widget = makeWidget()
+    widget.widget_config.css_variables = { '--existing-variable': 'keep-me' }
+    const first = renderScreen(widget, 'appearance', false)
+
+    fireEvent.change(document.getElementById('widget-style-message-font-size')!, {
+      target: { value: '18' },
+    })
+    fireEvent.click(screen.getByText('admin_shared_save'))
+    const saved = await waitFor(() => {
+      const request = apiFetchMock.mock.calls.find(([url]) => url === '/api/admin/widgets/widget-uuid-1')
+      const variables = JSON.parse(String(request?.[1]?.body)).widget_config.css_variables
+      expect(variables).toEqual({ '--existing-variable': 'keep-me', '--klai-message-font-size': '18px' })
+      return variables
+    })
+
+    first.unmount()
+    apiFetchMock.mockClear()
+    widget.widget_config.css_variables = saved
+    renderScreen(widget, 'appearance', false)
+    fireEvent.change(document.getElementById('widget-style-message-font-size')!, {
+      target: { value: '' },
+    })
+    fireEvent.click(screen.getByText('admin_shared_save'))
+    await waitFor(() => {
+      const request = apiFetchMock.mock.calls.find(([url]) => url === '/api/admin/widgets/widget-uuid-1')
+      expect(JSON.parse(String(request?.[1]?.body)).widget_config.css_variables).toEqual({
+        '--existing-variable': 'keep-me',
+      })
+    })
   })
 
   it('preserves existing default text and booking links when only the background changes', async () => {
@@ -429,5 +482,16 @@ describe('WidgetPreviewPanel - SPEC-WIDGET-PREVIEW-001', () => {
 
     await screen.findByTestId('chat-surface')
     expect(screen.getByText('admin_widgets_preview_not_counted')).toBeTruthy()
+
+    fireEvent.click(screen.getByLabelText('renew-preview'))
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(
+      '/api/admin/widgets/widget-uuid-1/preview-session',
+      { headers: { 'X-Klai-Widget-Session-Id': 'preview-conversation-2' } },
+    ))
+    fireEvent.click(screen.getByText('admin_widgets_preview_restart'))
+    await waitFor(() => {
+      const headers = apiFetchMock.mock.calls.at(-1)?.[1]?.headers as Record<string, string>
+      expect(headers['X-Klai-Widget-Session-Id']).toMatch(/^[a-f0-9]{32}$/)
+    })
   })
 })
