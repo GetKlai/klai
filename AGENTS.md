@@ -113,6 +113,14 @@ authorization to mutate GitHub.
   unpatched security fix, establish the private remediation and deployment
   path with the user. After the fix is deployed, a deliberately redacted public
   explanation is allowed when requested.
+- The hook that enforces this blocks what it can meaningfully gate: issue
+  mutations, PR comments, reviews, edits and merges, and any push to `main`.
+  It does not block `gh pr create`, because the branch push that precedes it
+  already published the same code and the same commit messages — gating the
+  PR that proposes them stopped nothing and made bypassing the hook routine,
+  which is how the blocks that do matter get bypassed too. The rule above is
+  unchanged: it still governs what you write in a PR body, and that judgement
+  is yours, not the hook's.
 - If sensitive details are already public, do not amplify them in comments or
   linked issues. Prioritize remediation, then close or redact the public item
   only with explicit user authorization.

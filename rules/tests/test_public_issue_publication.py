@@ -195,7 +195,6 @@ def test_hook_allows_explicitly_authorized_public_issue_mutation() -> None:
 @pytest.mark.parametrize(
     "command",
     [
-        "gh pr create --title 'finding' --body 'details'",
         "gh pr edit 42 --body 'new details'",
         "gh pr comment 42 --body 'new details'",
         "gh pr review 42 --comment --body 'review details'",
@@ -210,6 +209,43 @@ def test_hook_blocks_unapproved_public_pr_mutations(command: str) -> None:
 
     assert result.returncode == 2
     assert "autonomous public GitHub PR mutation" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "gh pr create --title 'fix' --body 'details'",
+        "gh pr create --base main --head feature --fill",
+    ],
+)
+def test_hook_allows_opening_a_pull_request(command: str) -> None:
+    """Opening a PR publishes nothing the branch push did not already publish.
+
+    Only pushes to `main` are gated, so `git push -u origin feature` already
+    made the code and every commit message on it public. Blocking the PR that
+    proposes them protected nothing and fired on every ordinary change; what
+    it did teach was the bypass reflex, which then also reaches the blocks
+    that matter.
+    """
+    result = _run_hook(command)
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_hook_still_blocks_merging_and_commenting() -> None:
+    """The two PR verbs that are not covered by anything else stay blocked.
+
+    `merge` is the #1208 lesson -- an agent merged past a review gate -- and
+    a comment or review is prose published straight to the PR.
+    """
+    for command in (
+        "gh pr merge 42 --squash",
+        "gh pr comment 42 --body 'details'",
+        "gh pr review 42 --approve",
+    ):
+        result = _run_hook(command)
+        assert result.returncode == 2, f"{command!r} should still be blocked"
+        assert "autonomous public GitHub PR mutation" in result.stderr
 
 
 @pytest.mark.parametrize(
