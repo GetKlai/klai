@@ -44,7 +44,7 @@ interface ChatWindowProps {
   onClose: () => void;
   inline?: boolean;
   conversationStarters?: string[];
-  // The introductory AI notice and footer are configured independently.
+  // Legacy toggle, honoured only without explicit introduction text.
   hideDisclaimer?: boolean;
   footerText?: string | null;
   welcomeMessage?: string;
@@ -54,8 +54,8 @@ interface ChatWindowProps {
   // sentence). Used verbatim, no {name} substitution, nothing auto-appended
   // — the tenant already wrote their own complete sentence, e.g. because
   // they show their own escalation route elsewhere (the nerds footer link).
-  // Unset/empty uses the default notice when the introduction is enabled.
-  aiDisclosureOverride?: string;
+  // Empty renders nothing; null/unset keeps the legacy default/toggle.
+  aiDisclosureOverride?: string | null;
   // Nerds booking panel (Voys-specific). The server only delivers
   // enabled=true together with an absolute http(s) booking_url
   // (partner.py _widget_nerds_integration), but the widget re-checks
@@ -68,7 +68,7 @@ interface ChatWindowProps {
 
 // TWD-pattern widget chrome:
 //   header  → primary-color bg, avatar + title, close
-//   hero    → centered icon + welcome line + optional AI notice +
+//   hero    → welcome line + optional AI notice +
 //             starter chips (only when the conversation hasn't started yet)
 //   input   → pill textarea + small primary-color send button
 //   footer  → customer Markdown, or the existing default footer
@@ -92,9 +92,8 @@ export function ChatWindow(props: ChatWindowProps) {
   // later; closing and reopening the window re-announces it.
   const [aiDisclosureText, setAiDisclosureText] = createSignal("");
   const disclosureTimer = window.setTimeout(() => {
-    const override = props.aiDisclosureOverride?.trim();
-    if (override) {
-      setAiDisclosureText(override);
+    if (props.aiDisclosureOverride != null) {
+      setAiDisclosureText(props.aiDisclosureOverride.trim());
       return;
     }
     // Fill the notice with the tenant's own bot name. config.name is the
@@ -113,6 +112,11 @@ export function ChatWindow(props: ChatWindowProps) {
     setAiDisclosureText(notice + booking);
   }, 150);
   onCleanup(() => window.clearTimeout(disclosureTimer));
+
+  const showAiDisclosure = () =>
+    props.aiDisclosureOverride != null
+      ? props.aiDisclosureOverride.trim().length > 0
+      : !props.hideDisclaimer;
 
   const footerHtml = () => {
     const template = document.createElement("template");
@@ -649,22 +653,10 @@ export function ChatWindow(props: ChatWindowProps) {
           we drop the hero and switch to the regular message list. */}
       <Show when={!hasUserTurn()}>
         <div class="klai-hero">
-          <div class="klai-hero-icon" aria-hidden="true">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.6"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-            </svg>
-          </div>
           <p class="klai-hero-title">
             {props.welcomeMessage?.trim() || props.title}
           </p>
-          <Show when={!props.hideDisclaimer}>
+          <Show when={showAiDisclosure()}>
             <p class="klai-hero-ai-disclosure" role="status" aria-live="polite">
               {aiDisclosureText()}
             </p>
@@ -878,26 +870,31 @@ export function ChatWindow(props: ChatWindowProps) {
         </Show>
       </div>
 
-      {/* Keep existing booking behavior until a customer supplies a footer. */}
-      <Show when={props.footerText?.trim()} fallback={
+      {/* null/missing keeps the legacy footer; an explicit blank hides it. */}
       <Show
-        when={nerdsActive()}
-        fallback={<p class="klai-disclaimer">{t().disclaimer}</p>}
+        when={props.footerText == null}
+        fallback={
+          <Show when={props.footerText!.trim()}>
+            <div class="klai-disclaimer" innerHTML={footerHtml()} />
+          </Show>
+        }
       >
-        <p class="klai-disclaimer">
-          {t().nerdsDisclosureBefore}
-          <button
-            type="button"
-            class="klai-disclaimer-link"
-            onClick={openNerdsPanel}
-          >
-            {t().nerdsDisclosureLink}
-          </button>
-          {t().nerdsDisclosureAfter}
-        </p>
-      </Show>
-      }>
-        <div class="klai-disclaimer" innerHTML={footerHtml()} />
+        <Show
+          when={nerdsActive()}
+          fallback={<p class="klai-disclaimer">{t().disclaimer}</p>}
+        >
+          <p class="klai-disclaimer">
+            {t().nerdsDisclosureBefore}
+            <button
+              type="button"
+              class="klai-disclaimer-link"
+              onClick={openNerdsPanel}
+            >
+              {t().nerdsDisclosureLink}
+            </button>
+            {t().nerdsDisclosureAfter}
+          </p>
+        </Show>
       </Show>
 
       {/* Nerds booking panel: overlay covering the chat while open. The
