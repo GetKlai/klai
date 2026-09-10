@@ -3035,16 +3035,15 @@ async def widget_config(
         # presentation field interpreted by the widget.
         "conversation_starters": widget_config_data.get("conversation_starters", []),
         "hide_disclaimer": widget_config_data.get("hide_disclaimer", False),
-        "footer_text": widget_config_data.get("footer_text") or "",
+        "footer_text": widget_config_data.get("footer_text"),
         # Name drives the TWD-pattern header (avatar + title). description
         # is admin-only scope/behaviour config, not rendered to visitors —
         # kept in the response only as a widget-frontend locale hint.
         "name": widget_row.name,
         "description": widget_row.description or "",
-        # Tenant-supplied replacement for the whole AI-notice sentence (the
-        # EU AI Act art. 50 notice + the auto-appended booking sentence).
-        # Used verbatim by the widget when set — see ChatWindow.tsx.
-        "ai_disclosure_override": widget_config_data.get("ai_disclosure_override") or "",
+        # Explicit tenant text preserves empty versus null: empty hides the
+        # introduction, while null keeps the widget's legacy default.
+        "ai_disclosure_override": widget_config_data.get("ai_disclosure_override"),
         "primary_color": widget_config_data.get("primary_color", "#fcaa2d"),
         "theme": widget_config_data.get("theme", "light"),
         "collect_user_info": widget_config_data.get("collect_user_info", False),
@@ -3183,7 +3182,7 @@ async def public_bot_config(
         "session_expires_at": expires_at.isoformat(),
         "conversation_starters": widget_config_data.get("conversation_starters", []),
         "hide_disclaimer": widget_config_data.get("hide_disclaimer", False),
-        "footer_text": widget_config_data.get("footer_text") or "",
+        "footer_text": widget_config_data.get("footer_text"),
         "primary_color": widget_config_data.get("primary_color", "#fcaa2d"),
         "theme": widget_config_data.get("theme", "light"),
         "collect_user_info": widget_config_data.get("collect_user_info", False),
@@ -3198,7 +3197,7 @@ async def public_bot_config(
         "nerds": _widget_nerds_integration(widget_config_data),
         "name": widget_row.name,
         "description": widget_row.description or "",
-        "ai_disclosure_override": widget_config_data.get("ai_disclosure_override") or "",
+        "ai_disclosure_override": widget_config_data.get("ai_disclosure_override"),
         "handoff": {
             "hubspot": {
                 # org is None only if the row vanished between the two queries;
