@@ -36,8 +36,12 @@ async function loadConfigAndInitStore(
   widgetId: string,
   locale: string | undefined,
   clientSessionId: string,
+  reuseCachedSession: boolean,
 ): Promise<WidgetConfig> {
-  const config = await fetchWidgetConfig(widgetId, { sessionId: clientSessionId });
+  const config = await fetchWidgetConfig(widgetId, {
+    sessionId: clientSessionId,
+    reuseCachedSession,
+  });
 
   // Init i18n labels after config so the widget copy can hint the locale.
   initLabels(locale, [
@@ -101,12 +105,18 @@ async function bootstrap(): Promise<void> {
   const containerSelector = scriptTag.getAttribute("data-container");
   const clientSessionId = getInitialConversationSessionId(widgetId);
 
+  // Presence of data-fresh-config disables reuse of a cached session-token
+  // mint: the portal's own widget-test page loads the same bundle, and an
+  // admin who just saved changes must see the fresh config immediately
+  // instead of whatever a real visitor cached (up to the reuse window).
+  const reuseCachedSession = !scriptTag.hasAttribute("data-fresh-config");
+
   if (mode === "inline" && containerSelector) {
     // Inline mode has no facade: the chat window sits on the page
     // deliberately, so the config is fetched immediately as before.
     let config;
     try {
-      config = await loadConfigAndInitStore(widgetId, locale, clientSessionId);
+      config = await loadConfigAndInitStore(widgetId, locale, clientSessionId, reuseCachedSession);
     } catch (error) {
       logFetchError(error);
       return;
@@ -186,7 +196,12 @@ async function bootstrap(): Promise<void> {
   // again once it resolved. On success the facade swaps to the real
   // ChatBubble with the chat window already open.
   const launch = async (): Promise<void> => {
-    const config = await loadConfigAndInitStore(widgetId, locale, clientSessionId);
+    const config = await loadConfigAndInitStore(
+      widgetId,
+      locale,
+      clientSessionId,
+      reuseCachedSession,
+    );
     const cssVariables = cssVariableOverrides(config);
     if (cssVariables) {
       styleEl.textContent = `${widgetCss}\n:host { ${cssVariables} }`;

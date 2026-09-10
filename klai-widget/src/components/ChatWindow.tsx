@@ -18,6 +18,7 @@ import {
   finishStreaming,
   setError,
   clearError,
+  updateSessionToken,
   setHandoffActive,
   setHandoffConnecting,
   setVisitorIdentity,
@@ -233,6 +234,7 @@ export function ChatWindow(props: ChatWindowProps) {
       endpoint: chatState.config!.chat_endpoint,
       token: chatState.sessionToken,
       widgetId: chatState.widgetId,
+      sessionId: chatState.clientSessionId,
       messages: withVisitorInfo(chatState.messages.slice(0, -1)),
       widgetTurnId: turnId,
       broadMode: chatState.broadMode || undefined,
@@ -267,6 +269,11 @@ export function ChatWindow(props: ChatWindowProps) {
               ? t().errorSessionExpired
               : t().errorGeneric
           );
+        },
+        onTokenRefreshed: (token) => {
+          // Keep the store on the fresh token, or every next turn replays
+          // the rejected one and 401s into another re-mint.
+          updateSessionToken(token);
         },
       },
     });

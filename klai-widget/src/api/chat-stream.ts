@@ -1,5 +1,5 @@
 import { fetchEventSource } from "@microsoft/fetch-event-source";
-import { fetchWidgetConfig, KlaiWidgetError } from "./widget-config";
+import { clearCachedWidgetSession, fetchWidgetConfig, KlaiWidgetError } from "./widget-config";
 
 export type MessageRating = "thumbsUp" | "thumbsDown";
 
@@ -69,6 +69,10 @@ export interface StreamCallbacks {
   onEscalation?: (escalation: MessageEscalation) => void;
   onDone: () => void;
   onError: (error: KlaiWidgetError | Error) => void;
+  /** Fired after a 401 re-mint succeeded, with the replacement token. The
+   * caller must store it: every next turn reads chatState.sessionToken,
+   * and replaying the rejected one would 401 and re-mint all over again. */
+  onTokenRefreshed?: (token: string) => void;
 }
 
 interface ChatStreamOptions {
@@ -76,6 +80,10 @@ interface ChatStreamOptions {
   token: string;
   messages: Message[];
   widgetId: string;
+  /** Active conversation id, sent as X-Klai-Widget-Session-Id when the 401
+   * re-mint runs: the backend stamps it into the new JWT as `jti`, so the
+   * replacement token stays bound to the same conversation as the rejected one. */
+  sessionId?: string;
   pageContext?: PageContext;
   /** Client-generated id for the assistant turn being generated; stored
    * server-side on the audit row so feedback buttons can address it. */
@@ -285,6 +293,7 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
     token,
     messages,
     widgetId,
+    sessionId,
     pageContext,
     widgetTurnId,
     broadMode,
@@ -431,11 +440,20 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
       // Attempt token refresh once
       retried = true;
       try {
-        const freshConfig = await fetchWidgetConfig(widgetId);
+        // The rejected token may live in the session cache; it must never
+        // be replayed on the next page load, so evict before re-minting.
+        clearCachedWidgetSession(widgetId, currentToken);
+        // Re-mint for the active conversation: the backend binds the new
+        // JWT's `jti` to this session id, and the mint refreshes the cache.
+        const freshConfig = await fetchWidgetConfig(widgetId, { sessionId });
         currentToken = freshConfig.session_token;
+        callbacks.onTokenRefreshed?.(currentToken);
         try {
           await doStream(currentToken);
         } catch (retryError) {
+          // The replacement token was rejected as well: it must not survive
+          // in the cache either, or a reload replays it.
+          clearCachedWidgetSession(widgetId, currentToken);
           const wrappedError =
             retryError instanceof KlaiWidgetError
               ? retryError

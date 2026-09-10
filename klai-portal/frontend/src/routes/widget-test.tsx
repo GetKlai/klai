@@ -42,6 +42,9 @@ function WidgetTestEmbedPage() {
     const s = document.createElement('script')
     s.src = '/widget/klai-chat.js'
     s.setAttribute('data-widget-id', id)
+    // The widget bundle caches its session-token mint; on this test page an
+    // admin must always see the just-saved config, so disable cache reuse.
+    s.setAttribute('data-fresh-config', 'true')
     s.onload = () => setScriptStatus('loaded')
     s.onerror = () => setScriptStatus('error')
     document.body.appendChild(s)

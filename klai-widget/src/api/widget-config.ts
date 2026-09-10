@@ -72,10 +72,115 @@ const WIDGET_CONFIG_BASE_URL =
 
 declare const __WIDGET_CONFIG_BASE_URL__: string;
 
+// Every successful call to /partner/v1/widget-config mints a fresh session
+// token server-side, and that mint path is rate-limited per widget (10/min).
+// Reopening the chat on the next help article therefore burned the whole
+// customer site's budget on tokens that were still valid for an hour. The
+// complete response is cached under a per-widget localStorage key. The
+// backend stamps the mint request's X-Klai-Widget-Session-Id into the JWT
+// as `jti` and derives the audit/handoff session key from it, so a cached
+// token only belongs to the conversation it was minted for: reuse is bound
+// to the stored sessionId and a mint for any other conversation overwrites
+// the entry. Reuse is capped at 15 minutes after mint and always ends 60s
+// before the server-side expiry. Staleness trade-off: portal edits to
+// settings only reach a visitor after that window — bounded and cosmetic,
+// the alternative is the mint storm this fixes.
+interface CachedWidgetSession {
+  /** Conversation the token was minted for; becomes the JWT `jti`. */
+  sessionId: string;
+  mintedAtMs: number;
+  config: WidgetConfig;
+}
+
+const SESSION_CACHE_MARGIN_MS = 60_000;
+const SESSION_CACHE_REUSE_MS = 15 * 60_000;
+
+function sessionCacheKey(widgetId: string): string {
+  return `klai-widget:${widgetId}:config-session:v1`;
+}
+
+function readCachedWidgetSession(
+  widgetId: string,
+  sessionId: string | undefined,
+): WidgetConfig | null {
+  if (!sessionId) return null;
+  try {
+    const raw = window.localStorage.getItem(sessionCacheKey(widgetId));
+    if (!raw) return null;
+    const cached = JSON.parse(raw) as Partial<CachedWidgetSession>;
+    const config = cached.config;
+    const expiresAtMs = config ? Date.parse(config.session_expires_at) : Number.NaN;
+    if (
+      !config ||
+      typeof config !== "object" ||
+      typeof config.session_token !== "string" ||
+      !config.session_token ||
+      !Number.isFinite(cached.mintedAtMs) ||
+      !Number.isFinite(expiresAtMs)
+    ) {
+      return null;
+    }
+    // Minted for another conversation: a hit would replay the old `jti`.
+    // Leave the entry; only a mint for its own session may overwrite it.
+    if (cached.sessionId !== sessionId) return null;
+    const now = Date.now();
+    if (
+      now - (cached.mintedAtMs as number) >= SESSION_CACHE_REUSE_MS ||
+      now >= expiresAtMs - SESSION_CACHE_MARGIN_MS
+    ) {
+      window.localStorage.removeItem(sessionCacheKey(widgetId));
+      return null;
+    }
+    return config;
+  } catch {
+    // Private mode or corrupted entry: fall back to minting on every open.
+    return null;
+  }
+}
+
+/** Drop the cached mint after its token was rejected (401 from the chat
+ * endpoint), so it can never be replayed on reload. Only removes when the
+ * entry still holds that exact token — a newer mint (another tab refreshed
+ * it) must survive. */
+export function clearCachedWidgetSession(widgetId: string, rejectedToken: string): void {
+  try {
+    const raw = window.localStorage.getItem(sessionCacheKey(widgetId));
+    if (!raw) return;
+    const cached = JSON.parse(raw) as Partial<CachedWidgetSession>;
+    if (cached.config?.session_token !== rejectedToken) return;
+    window.localStorage.removeItem(sessionCacheKey(widgetId));
+  } catch {
+    // Same silent fallback as the read path.
+  }
+}
+
+function writeCachedWidgetSession(
+  widgetId: string,
+  sessionId: string,
+  config: WidgetConfig,
+): void {
+  if (!config.session_token || !Number.isFinite(Date.parse(config.session_expires_at))) return;
+  try {
+    const cached: CachedWidgetSession = {
+      sessionId,
+      mintedAtMs: Date.now(),
+      config,
+    };
+    window.localStorage.setItem(sessionCacheKey(widgetId), JSON.stringify(cached));
+  } catch {
+    // Storage failures (private mode, quota) keep today's behaviour.
+  }
+}
+
 export async function fetchWidgetConfig(
   widgetId: string,
-  options: { sessionId?: string } = {},
+  options: { sessionId?: string; reuseCachedSession?: boolean } = {},
 ): Promise<WidgetConfig> {
+  if (options.reuseCachedSession) {
+    const cached = readCachedWidgetSession(widgetId, options.sessionId);
+    if (cached) return cached;
+  }
+
   let response: Response;
 
   try {
@@ -137,6 +242,13 @@ export async function fetchWidgetConfig(
   // Resolve relative chat_endpoint against the API base URL
   if (data.chat_endpoint && data.chat_endpoint.startsWith("/")) {
     data.chat_endpoint = `${WIDGET_CONFIG_BASE_URL}${data.chat_endpoint}`;
+  }
+
+  // Every mint refreshes the entry, so a reload — or the launch after a
+  // conversation switch or a 401 re-mint — reuses the token minted for the
+  // conversation that is actually active.
+  if (options.sessionId) {
+    writeCachedWidgetSession(widgetId, options.sessionId, data);
   }
 
   return data;
