@@ -85,8 +85,35 @@ def test_widget_config_defaults():
     assert config.welcome_message == ""
     assert config.system_prompt == ""
     assert config.css_variables == {}
+    assert config.footer_text is None
     assert config.integrations.hubspot.status == "not_connected"
     assert "public_share_enabled" not in WidgetConfig.model_fields
+
+
+def test_widget_config_footer_text_roundtrip():
+    """Editable Markdown footer survives admin response normalisation."""
+    import pytest
+
+    from app.api.admin_widgets import WidgetConfig, _widget_to_response
+
+    footer = "Plan een afspraak met [onze nerds](https://example.com/afspraak)."
+    assert WidgetConfig(footer_text=footer).footer_text == footer
+    with pytest.raises(ValueError):
+        WidgetConfig(footer_text="x" * 2001)
+
+    widget = MagicMock()
+    widget.id = "uuid-footer"
+    widget.name = "Help Bot"
+    widget.description = None
+    widget.widget_id = "wgt_footer"
+    widget.widget_config = {"footer_text": footer}
+    widget.public_share_enabled = False
+    widget.rate_limit_rpm = 60
+    widget.last_used_at = None
+    widget.created_at = "2026-01-01"
+    widget.created_by = "user-1"
+
+    assert _widget_to_response(widget, kb_access_count=0).widget_config.footer_text == footer
 
 
 def test_widget_config_nerds_integration_defaults_and_roundtrip():
