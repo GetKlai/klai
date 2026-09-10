@@ -13,6 +13,13 @@
   --klai-background-color: #fffef2;       /* rl-bg (warm ivory) */
   --klai-card-color: #f3f2e7;             /* rl-cream */
   --klai-border-color: #e3e2d8;           /* rl-border */
+  --klai-header-background: var(--klai-primary-color);
+  --klai-header-text-color: var(--klai-primary-text-color);
+  --klai-header-control-background: color-mix(in srgb, var(--klai-primary-text-color) 12%, transparent);
+  --klai-message-gap: 12px;
+  --klai-message-font-size: 14px;
+  --klai-message-line-height: 1.6;
+  --klai-content-padding: 16px;
   --klai-border-radius: 12px;
   --klai-font-family: "Geist", system-ui, -apple-system, sans-serif;
   --klai-bubble-size: 56px;
@@ -21,6 +28,16 @@
   --klai-z-index: 2147483647;
   --klai-widget-left: auto;
   --klai-widget-right: 20px;
+}
+
+.klai-inline-root {
+  --klai-header-background: var(--klai-primary-color);
+  --klai-header-text-color: var(--klai-primary-text-color);
+  --klai-header-control-background: color-mix(in srgb, var(--klai-primary-text-color) 12%, transparent);
+  --klai-message-gap: 12px;
+  --klai-message-font-size: 14px;
+  --klai-message-line-height: 1.6;
+  --klai-content-padding: 16px;
 }
 
 :host *,
@@ -146,14 +163,16 @@
   color: var(--klai-text-color);
 }
 
-/* Window header — TWD pattern: primary-color background, avatar +
-   title + description stacked, close button. Foreground colour
-   flips light/dark via --klai-primary-text-color (computed from
-   the brand-colour luminance server-side). */
+.klai-window:not(.klai-window--inline) {
+  max-width: calc(100vw - 40px);
+  max-height: calc(100dvh - 108px);
+}
+
+/* Header colours can be scoped per widget without changing deployed defaults. */
 .klai-header {
   padding: 14px 14px 16px;
-  background-color: var(--klai-primary-color);
-  color: var(--klai-primary-text-color);
+  background-color: var(--klai-header-background);
+  color: var(--klai-header-text-color);
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -173,8 +192,8 @@
   width: 40px;
   height: 40px;
   border-radius: 10px;
-  background-color: color-mix(in srgb, var(--klai-primary-text-color) 18%, transparent);
-  color: var(--klai-primary-text-color);
+  background-color: color-mix(in srgb, var(--klai-header-text-color) 18%, transparent);
+  color: var(--klai-header-text-color);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -198,7 +217,7 @@
   font-size: 15px;
   font-weight: 600;
   line-height: 1.25;
-  color: var(--klai-primary-text-color);
+  color: var(--klai-header-text-color);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -208,7 +227,7 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: color-mix(in srgb, var(--klai-primary-text-color) 85%, transparent);
+  color: color-mix(in srgb, var(--klai-header-text-color) 85%, transparent);
   font-size: 11px;
   line-height: 1;
 }
@@ -224,7 +243,7 @@
 .klai-header-description {
   font-size: 12.5px;
   line-height: 1.4;
-  color: color-mix(in srgb, var(--klai-primary-text-color) 85%, transparent);
+  color: color-mix(in srgb, var(--klai-header-text-color) 85%, transparent);
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
@@ -244,8 +263,8 @@
   height: 28px;
   border: none;
   border-radius: 6px;
-  background: color-mix(in srgb, var(--klai-primary-text-color) 12%, transparent);
-  color: var(--klai-primary-text-color);
+  background: var(--klai-header-control-background);
+  color: var(--klai-header-text-color);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -258,11 +277,11 @@
 .klai-icon-btn:focus-visible,
 .klai-icon-btn--active {
   opacity: 1;
-  background: color-mix(in srgb, var(--klai-primary-text-color) 20%, transparent);
+  background: color-mix(in srgb, var(--klai-header-text-color) 20%, transparent);
 }
 
 .klai-icon-btn:focus-visible {
-  outline: 2px solid var(--klai-primary-text-color);
+  outline: 2px solid var(--klai-header-text-color);
   outline-offset: 2px;
 }
 
@@ -314,7 +333,7 @@
   background: none;
   border: none;
   cursor: pointer;
-  color: var(--klai-primary-text-color);
+  color: var(--klai-header-text-color);
   padding: 4px;
   display: flex;
   align-items: center;
@@ -330,7 +349,7 @@
 }
 
 .klai-close-btn:focus-visible {
-  outline: 2px solid var(--klai-primary-text-color);
+  outline: 2px solid var(--klai-header-text-color);
   outline-offset: 2px;
   opacity: 1;
 }
@@ -338,7 +357,7 @@
 .klai-close-btn svg {
   width: 18px;
   height: 18px;
-  stroke: var(--klai-primary-text-color);
+  stroke: currentColor;
   stroke-width: 2;
   fill: none;
 }
@@ -468,10 +487,10 @@
 .klai-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 16px;
+  padding: var(--klai-content-padding);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--klai-message-gap);
   scroll-behavior: smooth;
 }
 
@@ -493,8 +512,8 @@
   max-width: 82%;
   padding: 10px 14px;
   border-radius: 14px;
-  font-size: 14px;
-  line-height: 1.6;
+  font-size: var(--klai-message-font-size);
+  line-height: var(--klai-message-line-height);
   word-break: break-word;
 }
 
@@ -755,6 +774,8 @@
 .klai-markdown strong { font-weight: 600; }
 .klai-markdown em { font-style: italic; }
 .klai-markdown a { color: var(--klai-link-color); text-decoration: underline; }
+.klai-markdown a:hover { text-decoration-thickness: 2px; text-underline-offset: 3px; }
+.klai-markdown a:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
 .klai-markdown a.klai-citation {
   white-space: nowrap;
   font-weight: 600;
@@ -1024,6 +1045,14 @@
   gap: 8px;
 }
 
+.klai-compose-row {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
 .klai-user-info p {
   color: var(--klai-text-muted);
   font-size: 12px;
@@ -1099,7 +1128,7 @@
   border-radius: 8px;
   padding: 10px 12px;
   font-family: var(--klai-font-family);
-  font-size: 14px;
+  font-size: var(--klai-input-font-size, 14px);
   line-height: 1.4;
   color: var(--klai-text-color);
   background-color: var(--klai-background-color);
@@ -1220,7 +1249,7 @@
 }
 
 .klai-hero-title {
-  font-size: 14px;
+  font-size: var(--klai-message-font-size);
   font-weight: 400;
   line-height: 1.5;
   color: var(--klai-text-color);
@@ -1236,10 +1265,12 @@
 }
 
 /* Optional tenant-editable introduction, in the same muted register as
-   the subtitle. An explicitly empty value renders no introduction. */
+   the subtitle. An explicitly empty value renders no introduction.
+   --klai-intro-* are only set inline when the tenant explicitly configured
+   the message typography; otherwise these defaults stand. */
 .klai-hero-ai-disclosure {
-  font-size: 12.5px;
-  line-height: 1.45;
+  font-size: var(--klai-intro-font-size, 12.5px);
+  line-height: var(--klai-intro-line-height, 1.45);
   color: var(--klai-text-muted);
   margin: 10px 0 0;
   max-width: 300px;
@@ -1263,7 +1294,7 @@
 
 .klai-starter {
   font-family: inherit;
-  font-size: 12.5px;
+  font-size: var(--klai-starter-font-size, 12.5px);
   line-height: 1.35;
   color: var(--klai-text-color);
   background: var(--klai-card-color);
@@ -1505,3 +1536,5 @@
   text-decoration: underline;
   cursor: pointer;
 }
+.klai-disclaimer-link:hover { text-decoration-thickness: 2px; text-underline-offset: 3px; }
+.klai-disclaimer-link:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }

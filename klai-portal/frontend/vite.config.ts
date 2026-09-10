@@ -63,7 +63,7 @@ export default defineConfig(({ mode }) => {
       proxy: Object.fromEntries(
         // Proxy all backend paths. Default: production (for frontend-only dev).
         // Set VITE_API_PROXY_TARGET=http://localhost:8010 to use local backends.
-        ['/api', '/research', '/scribe', '/docs/api'].map((path) => [
+        ['/api', '/research', '/scribe', '/docs/api', '/partner'].map((path) => [
           path,
           {
             target: apiProxyTarget,

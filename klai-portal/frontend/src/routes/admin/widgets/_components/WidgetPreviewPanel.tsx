@@ -5,27 +5,80 @@
 // uses a short-lived preview session from the backend, which flags these
 // conversations so they stay out of stats and the gap dashboard.
 import { useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Loader2, PanelRightClose, RotateCcw } from 'lucide-react'
 import { Alert } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { WidgetChatSurface } from '@/features/widgets/chat/WidgetChatSurface'
 import * as m from '@/paraglide/messages'
-import { useWidgetPreviewSession } from '../-hooks'
-import { useWidgetPreview } from '../-preview'
-import type { WidgetDetailResponse } from '../-types'
+import { getLocale } from '@/paraglide/runtime'
+import { fetchWidgetPreviewSession, useWidgetPreviewSession, widgetPreviewSessionQueryKey } from '../-hooks'
+import { useWidgetPreview, type WidgetPreviewValues } from '../-preview'
+import type { WidgetDetailResponse, WidgetPreviewSessionResponse } from '../-types'
+import { WidgetEmbedPreview } from './WidgetEmbedPreview'
 
 interface Props {
   widget: WidgetDetailResponse
   onCollapse: () => void
 }
 
+export function buildWidgetRendererConfig(widget: WidgetDetailResponse, preview: WidgetPreviewValues, session: WidgetPreviewSessionResponse) {
+  const cssVariables = { ...(preview.cssVariables ?? widget.widget_config.css_variables) }
+  if (preview.backgroundColor) cssVariables['--klai-background-color'] = preview.backgroundColor
+  const nerds = widget.widget_config.integrations?.nerds
+  return {
+    ...widget.widget_config,
+    title: preview.headerTitle || preview.botName,
+    name: preview.botName,
+    welcome_message: preview.welcomeMessage,
+    conversation_starters: preview.conversationStarters,
+    hide_disclaimer: preview.hideDisclaimer,
+    ai_disclosure_override: preview.aiDisclosureOverride,
+    footer_text: preview.footerText,
+    primary_color: preview.primaryColor,
+    css_variables: cssVariables,
+    tenant_css_variables: session.tenant_css_variables ?? {},
+    theme: preview.theme,
+    show_sources: preview.showSources,
+    show_meta: preview.showMeta,
+    collect_user_info: preview.collectUserInfo,
+    page_context_enabled: false,
+    nerds: nerds ? { enabled: nerds.enabled, booking_url: nerds.booking_url ?? undefined } : undefined,
+    chat_endpoint: session.chat_endpoint,
+    session_token: session.session_token,
+    session_expires_at: session.session_expires_at,
+    session_id: session.session_id,
+  }
+}
+
 export function WidgetPreviewPanel({ widget, onCollapse }: Props) {
   const preview = useWidgetPreview()
   const session = useWidgetPreviewSession(widget.id)
+  const queryClient = useQueryClient()
   // Remounting the surface is the restart: it clears messages, input and
   // visitor info in one step.
   const [conversationKey, setConversationKey] = useState(0)
+  const [restartPending, setRestartPending] = useState(false)
+  const [restartError, setRestartError] = useState(false)
+
+  const fetchConfig = async (sessionId?: string) => {
+    const fresh = await fetchWidgetPreviewSession(widget.id, sessionId)
+    queryClient.setQueryData(widgetPreviewSessionQueryKey(widget.id), fresh)
+    return buildWidgetRendererConfig(widget, preview, fresh)
+  }
+
+  const restart = async () => {
+    setRestartPending(true)
+    setRestartError(false)
+    try {
+      await fetchConfig(crypto.randomUUID().replaceAll('-', ''))
+      setConversationKey((key) => key + 1)
+    } catch {
+      setRestartError(true)
+    } finally {
+      setRestartPending(false)
+    }
+  }
 
   return (
     <aside
@@ -46,8 +99,8 @@ export function WidgetPreviewPanel({ widget, onCollapse }: Props) {
               variant="outline"
               size="sm"
               className="h-7 px-2 text-xs"
-              disabled={!session.data}
-              onClick={() => setConversationKey((key) => key + 1)}
+              disabled={!session.data || restartPending}
+              onClick={() => void restart()}
             >
               <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
               {m.admin_widgets_preview_restart()}
@@ -100,39 +153,18 @@ export function WidgetPreviewPanel({ widget, onCollapse }: Props) {
               </Button>
             </div>
           ) : (
-            <WidgetChatSurface
+            <WidgetEmbedPreview
               key={conversationKey}
-              embedded
-              variant="admin-preview"
-              botName={preview.botName}
-              headerTitle={preview.headerTitle}
-              chatEndpoint={session.data.chat_endpoint}
-              sessionToken={session.data.session_token}
-              description={preview.description}
-              welcomeMessage={preview.welcomeMessage}
-              conversationStarters={preview.conversationStarters}
-              hideDisclaimer={preview.hideDisclaimer}
-              primaryColor={preview.primaryColor}
-              backgroundColor={preview.backgroundColor}
-              aiDisclosureOverride={preview.aiDisclosureOverride}
-              footerText={preview.footerText}
-              theme={preview.theme}
-              showSources={preview.showSources}
-              showMeta={preview.showMeta}
-              collectUserInfo={preview.collectUserInfo}
-              // Never on: the surface would scrape the admin page and feed
-              // portal text to the model as if it were the visitor's page.
-              // The saved setting governs real visitors; the toggle is listed
-              // under the save-only note.
-              pageContextEnabled={false}
-              // The nerds booking integration is not part of the live
-              // form state the other preview props come from; the saved
-              // config decides what the visitor-facing footer shows.
-              nerdsEnabled={widget.widget_config.integrations?.nerds?.enabled}
-              nerdsBookingUrl={widget.widget_config.integrations?.nerds?.booking_url ?? undefined}
+              widgetId={widget.widget_id}
+              locale={getLocale()}
+              config={buildWidgetRendererConfig(widget, preview, session.data)}
+              fetchConfig={fetchConfig}
+              title={m.admin_widgets_preview_badge()}
             />
           )}
         </div>
+
+        {restartError && <p role="alert" className="px-3 py-2 text-xs text-[var(--color-destructive-text)]">{m.widget_chat_preview_session_error()}</p>}
 
         <footer className="border-t border-gray-200 px-3 py-2">
           <p className="text-[0.6875rem] text-gray-600">{m.admin_widgets_preview_not_counted()}</p>

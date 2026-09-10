@@ -51,6 +51,7 @@ export interface WidgetPreviewDraft {
   hideDisclaimer?: boolean
   aiDisclosureOverride?: string
   footerText?: string
+  cssVariablesJson?: string
 }
 
 // What the panel renders - every field resolved to the tab draft when one is
@@ -71,6 +72,7 @@ export interface WidgetPreviewValues {
   showMeta: boolean
   collectUserInfo: boolean
   modelBehaviorDirty: boolean
+  cssVariables: Record<string, string>
 }
 
 type Scopes = Partial<Record<WidgetPreviewScope, WidgetPreviewDraft>>
@@ -94,11 +96,14 @@ function parseStarters(raw: string): string[] {
   return raw.split('\n').map((line) => line.trim()).filter(Boolean).slice(0, WIDGET_MAX_CONVERSATION_STARTERS)
 }
 
-function resolvePreview(widget: WidgetDetailResponse, scopes: Scopes): WidgetPreviewValues {
+export function resolvePreview(widget: WidgetDetailResponse, scopes: Scopes = {}): WidgetPreviewValues {
   const config = widget.widget_config
   const details = scopes.details ?? {}
   const appearance = scopes.appearance ?? {}
   const name = details.name ?? widget.name
+  const cssVariables = appearance.cssVariablesJson !== undefined
+    ? JSON.parse(appearance.cssVariablesJson) as Record<string, string>
+    : config.css_variables
   return {
     botName: name.trim() || widget.name,
     headerTitle: appearance.headerTitle ?? config.title ?? (name.trim() || widget.name),
@@ -111,7 +116,7 @@ function resolvePreview(widget: WidgetDetailResponse, scopes: Scopes): WidgetPre
     primaryColor:
       appearance.primaryColor || config.primary_color || WIDGET_DEFAULT_PRIMARY_COLOR,
     backgroundColor:
-      appearance.backgroundColor || config.css_variables['--klai-background-color'],
+      appearance.backgroundColor || cssVariables['--klai-background-color'],
     theme: appearance.theme ?? config.theme ?? 'light',
     showSources: appearance.showSources ?? config.show_sources ?? true,
     showMeta: appearance.showMeta ?? config.show_meta ?? false,
@@ -126,6 +131,7 @@ function resolvePreview(widget: WidgetDetailResponse, scopes: Scopes): WidgetPre
         ? appearance.footerText
         : config.footer_text ?? undefined,
     modelBehaviorDirty: details.modelBehaviorDirty ?? false,
+    cssVariables,
   }
 }
 

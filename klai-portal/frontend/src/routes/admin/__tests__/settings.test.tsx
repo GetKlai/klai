@@ -67,6 +67,7 @@ vi.mock('@/paraglide/messages', async () => {
     admin_settings_auto_accept_hint_on: () => 'Users from your domain join immediately.',
     admin_settings_auto_accept_hint_off: () => 'Users from your domain must request access.',
     admin_users_loading: () => 'Loading...',
+    widget_style_message_font_size: () => 'Message font size',
   }
   return { ...actual, ...messages }
 })
@@ -90,6 +91,26 @@ beforeEach(() => {
 })
 
 describe('AdminSettings page', () => {
+  it('saves tenant widget defaults with the general settings form', async () => {
+    const settings = {
+      name: 'Klai', default_language: 'nl', mfa_policy: 'optional',
+      auto_accept_same_domain: false, primary_domain: 'getklai.com',
+      telemetry_level: 'shadow', widget_css_variables: {},
+    }
+    apiFetchMock.mockImplementation((_url, options) => Promise.resolve(
+      options?.method === 'PATCH' ? { ...settings, ...JSON.parse(options.body) } : settings,
+    ))
+    const Cfg = RouteCfg as unknown as { component: () => JSX.Element }
+    render(<Wrapper><Cfg.component /></Wrapper>)
+    const font = await screen.findByLabelText(/^Message font size/)
+    fireEvent.change(font, { target: { value: '15' } })
+    fireEvent.click(screen.getByRole('button', { name: /^Save$/ }))
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/api/admin/settings', {
+      method: 'PATCH',
+      body: JSON.stringify({ default_language: 'nl', widget_css_variables: { '--klai-message-font-size': '15px' } }),
+    }))
+  })
+
   it('groups settings into tabs and replaces the placeholder with organisation details', async () => {
     apiFetchMock.mockResolvedValue({
       name: 'Klai',
