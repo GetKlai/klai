@@ -2249,7 +2249,18 @@ services:
       resources:
         limits:
           cpus: '2'
-          memory: 1G
+          # 1G was enough for the pre-2.11 image and is not enough for this
+          # one: it runs the api, a queue worker, an extract worker, five
+          # nuq workers, a prefetch worker and a reconciler — 21 node
+          # processes — and every one of them got SIGKILLed (exit 137) in a
+          # startup loop on 2026-09-10, so /v2/scrape answered connection
+          # refused. Measured steady state after the raise is well under
+          # this ceiling; the headroom is for the startup peak.
+          #
+          # deploy/tests/firecrawl-contract.sh did not catch it: it runs the
+          # image without a memory limit, which is exactly the difference
+          # between a fresh isolated stack and this deployment.
+          memory: 3G
 
   # ─── Cal.com (self-hosted scheduling) ────────────────────────────────────
   # Deployed at https://cal.getklai.com
