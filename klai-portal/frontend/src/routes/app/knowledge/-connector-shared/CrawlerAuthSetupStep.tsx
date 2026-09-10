@@ -71,7 +71,7 @@ export function CrawlerAuthSetupStep({
     <div className="space-y-4">
       <div className="rounded-lg border border-gray-200 p-4 space-y-3">
         <div className="space-y-1.5">
-          <Label htmlFor="wc-auth-test-url">{m.admin_connectors_webcrawler_test_url()}</Label>
+          <Label htmlFor="wc-auth-test-url">URL to test</Label>
           <Input
             id="wc-auth-test-url"
             type="url"
@@ -79,10 +79,12 @@ export function CrawlerAuthSetupStep({
             value={testUrl}
             onChange={(e) => onTestUrlChange(e.target.value)}
           />
-          <p className="text-xs text-gray-600">{m.admin_connectors_webcrawler_test_url_hint()}</p>
+          <p className="text-xs text-gray-600">
+            Defaults to your base URL. If the login wall lives on a different page, paste that page&apos;s URL here instead.
+          </p>
           {testUrlCrossOrigin && (
             <p className="text-xs text-[var(--color-destructive)]">
-              {m.admin_connectors_webcrawler_test_url_cross_origin()}
+              This URL is on a different domain than your base URL. For safety, cookies can only be tested against the same site.
             </p>
           )}
         </div>
