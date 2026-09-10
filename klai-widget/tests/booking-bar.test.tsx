@@ -89,8 +89,34 @@ describe("permanent booking bar", () => {
     expect(link!.textContent).toBe(t().nerdsDisclosureLink);
   });
 
-  it("still hides the plain accuracy footer via hideDisclaimer when nerds is off", () => {
+  it("hides the AI introduction while preserving the footer", () => {
     const { container } = renderWindow({ hideDisclaimer: true });
-    expect(container.querySelector(".klai-disclaimer")).toBeNull();
+    expect(container.querySelector(".klai-hero-ai-disclosure")).toBeNull();
+    expect(container.querySelector(".klai-disclaimer")!.textContent).toBe(t().disclaimer);
+  });
+
+  it("renders the customer's footer and appointment link independently of the AI introduction", () => {
+    const { container } = renderWindow({
+      hideDisclaimer: true,
+      nerdsEnabled: true,
+      nerdsBookingUrl: BOOKING_URL,
+      footerText: `Onze AI kan fouten maken. Plan bij [onze nerds](${BOOKING_URL}).`,
+    });
+    const footer = container.querySelector(".klai-disclaimer")!;
+    expect(footer.textContent).toBe("Onze AI kan fouten maken. Plan bij onze nerds.");
+    const link = footer.querySelector("a")!;
+    expect(link.getAttribute("href")).toBe(BOOKING_URL);
+    expect(link.target).toBe("_blank");
+    expect(link.rel).toBe("noopener noreferrer");
+    expect(container.querySelector(".klai-hero-ai-disclosure")).toBeNull();
+  });
+
+  it("does not execute HTML or script links supplied in a customer footer", () => {
+    const { container } = renderWindow({
+      footerText: 'Footer <img src=x onerror="alert(1)"> [unsafe](javascript:alert) <script>alert(1)</script>',
+    });
+    const footer = container.querySelector(".klai-disclaimer")!;
+    expect(footer.textContent).toContain("Footer");
+    expect(footer.querySelector("script, img, [onerror], a[href^='javascript:']")).toBeNull();
   });
 });

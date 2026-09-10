@@ -7,10 +7,9 @@ export interface WidgetConfig {
   session_expires_at: string;
   // TWD-style empty-state chips. Admin-configured, 0-6 entries.
   conversation_starters?: string[];
-  // White-label flag to hide the AI-accuracy-disclaimer footer. Does NOT
-  // hide the EU AI Act art. 50 notice (labels.aiDisclosure) — that one is
-  // mandatory and always rendered.
+  // Hide the introductory AI notice independently of the footer.
   hide_disclaimer?: boolean;
+  footer_text?: string | null;
   // INTERIM appointment redirect — remove once the chat booking API
   // integration lands. Booking-module URL of the support partner, rendered
   // as the "schedule an appointment" button. The server only delivers
@@ -34,7 +33,7 @@ export interface WidgetConfig {
   name?: string;
   description?: string;
   // Tenant-supplied replacement for the whole AI-notice sentence in the
-  // hero (the mandatory EU AI Act art. 50 notice + the auto-appended
+  // hero (the AI notice + the auto-appended
   // booking sentence). Used verbatim when set. See ChatWindow.tsx.
   ai_disclosure_override?: string;
   // Display toggles: show citation list / meta block under each
