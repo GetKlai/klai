@@ -2231,6 +2231,14 @@ services:
       USE_DB_AUTHENTICATION: "false"
       FIRECRAWL_API_KEY: "${FIRECRAWL_INTERNAL_KEY}"
       NUM_WORKERS_PER_QUEUE: "2"
+      # 2.11 spawns five nuq workers by default; with the api, a queue worker,
+      # an extract worker, a prefetch worker and a reconciler that is 21 node
+      # processes, and each one sizes its heap off the cgroup limit. Measured
+      # on 2026-09-10 under the 3G limit below: default = 2.81 GiB resident
+      # and the cgroup hit its ceiling 1031 times; NUQ_WORKER_COUNT=2 = 15
+      # processes and 2.09 GiB, same scrape result. Fewer workers is the fix,
+      # not a bigger ceiling. Raise this if scrape throughput ever needs it.
+      NUQ_WORKER_COUNT: "2"
       LOGGING_LEVEL: "INFO"
       NUQ_DATABASE_URL: "postgresql://firecrawl:${FIRECRAWL_DB_PASSWORD}@firecrawl-postgres:5432/firecrawl"
       NUQ_RABBITMQ_URL: "amqp://firecrawl-rabbitmq:5672"
@@ -2250,16 +2258,12 @@ services:
         limits:
           cpus: '2'
           # 1G was enough for the pre-2.11 image and is not enough for this
-          # one: it runs the api, a queue worker, an extract worker, five
-          # nuq workers, a prefetch worker and a reconciler — 21 node
-          # processes — and every one of them got SIGKILLed (exit 137) in a
-          # startup loop on 2026-09-10, so /v2/scrape answered connection
-          # refused. Measured steady state after the raise is well under
-          # this ceiling; the headroom is for the startup peak.
-          #
-          # deploy/tests/firecrawl-contract.sh did not catch it: it runs the
-          # image without a memory limit, which is exactly the difference
-          # between a fresh isolated stack and this deployment.
+          # one: every worker got SIGKILLed (exit 137) in a startup loop on
+          # 2026-09-10 and /v2/scrape answered connection refused. With
+          # NUQ_WORKER_COUNT above, measured resident use is 2.09 GiB, so
+          # this leaves roughly 30% for the startup peak and for a heavy
+          # page. Both numbers come from deploy/tests/firecrawl-contract.sh,
+          # which now applies this same limit.
           memory: 3G
 
   # ─── Cal.com (self-hosted scheduling) ────────────────────────────────────
