@@ -1,4 +1,6 @@
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
+import DOMPurify from "dompurify";
+import snarkdown from "snarkdown";
 import { MessageList } from "./MessageList";
 import {
   chatState,
@@ -42,9 +44,9 @@ interface ChatWindowProps {
   onClose: () => void;
   inline?: boolean;
   conversationStarters?: string[];
-  // White-label toggle for the accuracy footer only — it must never hide
-  // the EU AI Act art. 50 notice in the hero.
+  // The introductory AI notice and footer are configured independently.
   hideDisclaimer?: boolean;
+  footerText?: string | null;
   welcomeMessage?: string;
   bookingUrl?: string;
   // Tenant-supplied replacement for the whole AI-notice sentence (the
@@ -52,10 +54,7 @@ interface ChatWindowProps {
   // sentence). Used verbatim, no {name} substitution, nothing auto-appended
   // — the tenant already wrote their own complete sentence, e.g. because
   // they show their own escalation route elsewhere (the nerds footer link).
-  // Unset/empty → the default templated notice, unchanged. The admin UI
-  // must keep telling the tenant this still has to convey "this is an AI
-  // system" — the EU AI Act art. 50 requirement doesn't go away, only the
-  // exact wording becomes theirs.
+  // Unset/empty uses the default notice when the introduction is enabled.
   aiDisclosureOverride?: string;
   // Nerds booking panel (Voys-specific). The server only delivers
   // enabled=true together with an absolute http(s) booking_url
@@ -69,10 +68,10 @@ interface ChatWindowProps {
 
 // TWD-pattern widget chrome:
 //   header  → primary-color bg, avatar + title, close
-//   hero    → centered icon + welcome line + mandatory AI notice +
+//   hero    → centered icon + welcome line + optional AI notice +
 //             starter chips (only when the conversation hasn't started yet)
 //   input   → pill textarea + small primary-color send button
-//   footer  → AI accuracy disclaimer (white-label toggle hides it)
+//   footer  → customer Markdown, or the existing default footer
 export function ChatWindow(props: ChatWindowProps) {
   const [inputValue, setInputValue] = createSignal("");
   const [visitorName, setVisitorName] = createSignal(chatState.visitorName);
@@ -107,14 +106,27 @@ export function ChatWindow(props: ChatWindowProps) {
     const notice = botName
       ? t().aiDisclosure.replace("{name}", botName)
       : t().aiDisclosureNoOrg;
-    // The AI notice is unconditional — it is the Article 50 requirement. The
-    // appointment sentence is not: it only holds where a booking route is
+    // The appointment sentence only holds where a booking route is
     // actually configured. Appending it everywhere would promise every other
     // tenant's visitors a person they have no way to reach.
     const booking = props.bookingUrl ? t().aiDisclosureBooking : "";
     setAiDisclosureText(notice + booking);
   }, 150);
   onCleanup(() => window.clearTimeout(disclosureTimer));
+
+  const footerHtml = () => {
+    const template = document.createElement("template");
+    template.innerHTML = DOMPurify.sanitize(snarkdown(props.footerText?.trim() ?? ""), {
+      ALLOWED_TAGS: ["a", "p", "br", "strong", "em"],
+      ALLOWED_ATTR: ["href", "title"],
+    });
+    for (const link of template.content.querySelectorAll("a")) {
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.className = "klai-disclaimer-link";
+    }
+    return template.innerHTML;
+  };
 
   // ── Nerds booking panel (Voys-specific) ────────────────────────────
   // The panel replaces the widget's contents with an iframe on the Nerds
@@ -647,18 +659,11 @@ export function ChatWindow(props: ChatWindowProps) {
           <p class="klai-hero-title">
             {props.welcomeMessage?.trim() || props.title}
           </p>
-          {/* EU AI Act art. 50 notice: visitors must know they are talking
-              to an AI system, perceptibly, at first interaction. Deliberately
-              NOT gated on hide_disclaimer — that flag is a white-label toggle
-              for the accuracy footer ("AI-antwoorden kunnen fouten bevatten…")
-              and a legal disclosure cannot be switched off per widget. It also
-              sits NEXT TO the configurable welcome_message rather than inside
-              it, so a customer can rewrite the greeting without ever dropping
-              the notice. role="status" + the deferred fill above announce it
-              to screen readers when the window opens. */}
-          <p class="klai-hero-ai-disclosure" role="status" aria-live="polite">
-            {aiDisclosureText()}
-          </p>
+          <Show when={!props.hideDisclaimer}>
+            <p class="klai-hero-ai-disclosure" role="status" aria-live="polite">
+              {aiDisclosureText()}
+            </p>
+          </Show>
           <Show when={(props.conversationStarters?.length ?? 0) > 0}>
             <div class="klai-starters">
               {props.conversationStarters!.map((s) => (
@@ -868,23 +873,11 @@ export function ChatWindow(props: ChatWindowProps) {
         </Show>
       </div>
 
-      {/* With the nerds integration on, the client's own disclosure
-          sentence replaces the plain accuracy footer — same place, but NOT
-          the same white-label gate. hideDisclaimer only white-labels the
-          generic accuracy wording; the nerds escape route is the visitor's
-          one permanent way to reach a human (the booking bar above is
-          already hidden once nerds is active) and must survive that toggle,
-          so it renders whenever nerds is configured, hideDisclaimer or not.
-          "onze nerds" opens the same booking panel the in-conversation
-          appointment button opens. The fragments render as JSX text/a
-          button, never as raw HTML. */}
+      {/* Keep existing booking behavior until a customer supplies a footer. */}
+      <Show when={props.footerText?.trim()} fallback={
       <Show
         when={nerdsActive()}
-        fallback={
-          <Show when={!props.hideDisclaimer}>
-            <p class="klai-disclaimer">{t().disclaimer}</p>
-          </Show>
-        }
+        fallback={<p class="klai-disclaimer">{t().disclaimer}</p>}
       >
         <p class="klai-disclaimer">
           {t().nerdsDisclosureBefore}
@@ -897,6 +890,9 @@ export function ChatWindow(props: ChatWindowProps) {
           </button>
           {t().nerdsDisclosureAfter}
         </p>
+      </Show>
+      }>
+        <div class="klai-disclaimer" innerHTML={footerHtml()} />
       </Show>
 
       {/* Nerds booking panel: overlay covering the chat while open. The

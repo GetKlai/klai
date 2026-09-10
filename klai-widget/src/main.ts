@@ -68,6 +68,19 @@ function parsePreviewPrimaryColor(value: string | null): string | null {
   return null;
 }
 
+function previewPrimaryTextColor(primaryColor: string): string {
+  const hex = primaryColor.slice(1);
+  const rgb = (hex.length === 3 ? [...hex].map((digit) => digit + digit).join("") : hex)
+    .slice(0, 6)
+    .match(/.{2}/g)!
+    .map((channel) => Number.parseInt(channel, 16) / 255)
+    .map((channel) =>
+      channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4,
+    );
+  const luminance = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+  return luminance > 0.179 ? "#191918" : "#ffffff";
+}
+
 // css_variables from config as custom properties overrides
 function cssVariableOverrides(config: WidgetConfig): string {
   return Object.entries(config.css_variables)
@@ -151,6 +164,7 @@ async function bootstrap(): Promise<void> {
         welcomeMessage: config.welcome_message,
         bookingUrl: config.booking_url,
         aiDisclosureOverride: config.ai_disclosure_override,
+        footerText: config.footer_text,
         nerdsEnabled: config.nerds?.enabled,
         nerdsBookingUrl: config.nerds?.booking_url,
         collectUserInfo: config.collect_user_info,
@@ -180,7 +194,7 @@ async function bootstrap(): Promise<void> {
     scriptTag.getAttribute("data-primary-color"),
   );
   styleEl.textContent = previewColor
-    ? `${widgetCss}\n:host { --klai-primary-color: ${previewColor}; }`
+    ? `${widgetCss}\n:host { --klai-primary-color: ${previewColor}; --klai-primary-text-color: ${previewPrimaryTextColor(previewColor)}; }`
     : widgetCss;
   shadowRoot.appendChild(styleEl);
 

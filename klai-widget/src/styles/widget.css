@@ -49,6 +49,7 @@
   height: var(--klai-bubble-size);
   border-radius: 50%;
   background-color: var(--klai-primary-color);
+  color: var(--klai-primary-text-color);
   border: 1px solid var(--klai-border-color);
   cursor: pointer;
   display: flex;
@@ -70,7 +71,7 @@
 .klai-bubble svg {
   width: 24px;
   height: 24px;
-  fill: var(--klai-primary-text-color);
+  fill: none;
 }
 
 /* Facade loading state — spinner replacing the glyph inside the
@@ -79,8 +80,8 @@
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  border: 2.5px solid color-mix(in srgb, var(--klai-primary-text-color) 30%, transparent);
-  border-top-color: var(--klai-primary-text-color);
+  border: 2.5px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-top-color: currentColor;
   animation: klai-spin 0.7s linear infinite;
 }
 
@@ -216,6 +217,7 @@
 .klai-header-actions {
   display: flex;
   align-items: center;
+  align-self: center;
   gap: 4px;
   flex-shrink: 0;
 }
@@ -288,6 +290,7 @@
   padding: 4px;
   display: flex;
   align-items: center;
+  align-self: center;
   justify-content: center;
   border-radius: 4px;
   opacity: 0.75;
