@@ -1,4 +1,4 @@
-import { For, Show } from "solid-js";
+import { createEffect, For, Show } from "solid-js";
 import DOMPurify from "dompurify";
 import snarkdown from "snarkdown";
 import { TypingIndicator } from "./TypingIndicator";
@@ -178,6 +178,12 @@ export function MessageList(props: MessageListProps) {
       listRef.scrollTop = listRef.scrollHeight;
     }
   };
+
+  createEffect(() => {
+    if (props.isStreaming) {
+      queueMicrotask(scrollToBottom);
+    }
+  });
 
   return (
     <div
