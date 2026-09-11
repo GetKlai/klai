@@ -262,12 +262,12 @@ def test_build_crawl_payload_cookies_use_hooks() -> None:
 
     payload = _build_crawl_payload("https://example.com/page", cookies)
     assert "browser_config" not in payload
-    assert payload["hooks_config"] == {
+    assert payload["hooks"] == {
         "hooks": [{"action": "add_cookies", "params": {"cookies": cookies}}]
     }
 
     no_cookies = _build_crawl_payload("https://example.com/page", None)
-    assert "hooks_config" not in no_cookies
+    assert "hooks" not in no_cookies
     assert "browser_config" not in no_cookies
 
 

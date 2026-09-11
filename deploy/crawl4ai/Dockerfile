@@ -31,4 +31,6 @@ FROM unclecode/crawl4ai:0.9.2
 USER root
 COPY apply_body_visibility_patch.py /tmp/apply_body_visibility_patch.py
 RUN python /tmp/apply_body_visibility_patch.py && rm /tmp/apply_body_visibility_patch.py
+COPY apply_hook_isolation_patch.py /tmp/apply_hook_isolation_patch.py
+RUN python /tmp/apply_hook_isolation_patch.py && rm /tmp/apply_hook_isolation_patch.py
 USER appuser

@@ -987,7 +987,7 @@ def _build_browser_config_with_cookies(
 
 
 def _build_cookie_hooks(cookies: list[dict[str, Any]] | None) -> dict[str, Any] | None:
-    """Build a declarative ``hooks_config`` payload that injects cookies.
+    """Build the declarative ``hooks`` payload that injects cookies.
 
     crawl4ai's server-side "untrusted-config boundary" (introduced fixing
     CVE-2026-57572) forbids raw ``BrowserConfig.cookies``/``storage_state``
@@ -998,11 +998,22 @@ def _build_cookie_hooks(cookies: list[dict[str, Any]] | None) -> dict[str, Any] 
     navigation — same timing as the old ``BrowserConfig.cookies`` approach,
     so Playwright's BrowserContext still receives the cookies pre-goto.
 
+    The request field is ``hooks``, NOT ``hooks_config``. That distinction
+    cost four weeks: ``hooks_config`` is not on crawl4ai's request model, and
+    pydantic drops an unknown field without a word, so every authenticated
+    crawl since the 0.9.2 upgrade answered HTTP 200 while sending no cookies
+    at all. The wrong name also hid the second half of the problem -- hooks
+    must be enabled server-side (``CRAWL4AI_HOOKS_ENABLED``), and with the
+    right name a disabled server answers 403 instead of a cheerful 200.
+
+    Accepting the request is not the same as applying the cookies, and only
+    the second one matters: see deploy/tests/crawl4ai-cookie-contract.sh.
+
     Returns ``None`` when no cookies are provided, so callers can do:
 
         hooks = _build_cookie_hooks(cookies)
         if hooks:
-            payload["hooks_config"] = hooks
+            payload["hooks"] = hooks
     """
     if not cookies:
         return None
@@ -1096,7 +1107,7 @@ async def _crawl_page_with_config(
         payload["browser_config"] = bc
     hooks = _build_cookie_hooks(cookies)
     if hooks:
-        payload["hooks_config"] = hooks
+        payload["hooks"] = hooks
 
     async with httpx.AsyncClient(timeout=timeout) as client:
         try:
@@ -2201,7 +2212,7 @@ async def _fetch_seed_page(
         payload["browser_config"] = bc
     hooks = _build_cookie_hooks(cookies)
     if hooks:
-        payload["hooks_config"] = hooks
+        payload["hooks"] = hooks
 
     try:
         async with httpx.AsyncClient(timeout=90.0) as client:
@@ -3251,7 +3262,7 @@ async def _chunked_bulk_fetch_with_session(
             payload["browser_config"] = bc
         hooks = _build_cookie_hooks(cookies)
         if hooks:
-            payload["hooks_config"] = hooks
+            payload["hooks"] = hooks
 
         chunk_reason_codes: set[str] = set()
         # Fed to host_circuit_breaker.evaluate_chunk below — a whole-chunk

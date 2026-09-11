@@ -105,7 +105,10 @@ def _build_crawl_payload(
         # the server-validated declarative replacement, still running at
         # on_page_context_created (pre-navigation), same timing as before.
         # Mirrors knowledge_ingest.crawl4ai_client._build_cookie_hooks.
-        payload["hooks_config"] = {
+        # The field is ``hooks``, not ``hooks_config``: the latter is not on
+        # crawl4ai's request model and pydantic drops an unknown field without
+        # a word, which is how this answered 200 while sending no cookies.
+        payload["hooks"] = {
             "hooks": [{"action": "add_cookies", "params": {"cookies": cookies}}]
         }
     return payload
