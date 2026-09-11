@@ -82,10 +82,19 @@ _CANARY_FINGERPRINT_RE = re.compile(r"^[0-9a-f]{16}$")
 
 
 class CookieEntry(BaseModel):
-    """A single browser cookie for webcrawler auth injection."""
+    """A single browser cookie for webcrawler auth injection.
+
+    ``value`` is optional so one expired cookie can be replaced without
+    re-reading the others out of DevTools: an entry with a name and no value
+    means "keep the value already saved for this name", and is resolved in
+    ``_merge_saved_credentials`` before anything is stored. A blank value is
+    never persisted as a cookie -- a crawl carrying one answers HTTP 200 and
+    fetches the logged-out page, which is the failure class that stayed
+    invisible here for four weeks.
+    """
 
     name: str
-    value: str
+    value: str | None = None
     domain: str = ""
     path: str = "/"
 
@@ -577,7 +586,18 @@ async def _merge_saved_sensitive_credentials(
         new_origin = _origin(config.get("base_url"))
         if old_origin != new_origin:
             missing_fields = missing_fields - {"cookies"}
-    if not missing_fields or connector.encrypted_credentials is None:
+    needs_kept_cookies = connector.connector_type == "web_crawler" and any(
+        isinstance(cookie, dict) and not cookie.get("value")
+        for cookie in (config.get("cookies") or [])
+    )
+    if (not missing_fields and not needs_kept_cookies) or connector.encrypted_credentials is None:
+        if needs_kept_cookies:
+            # Nothing stored to keep a value from, so the blank rows cannot be
+            # resolved. Fail loudly rather than store a cookie with no value.
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="No saved cookies to keep values from. Paste every cookie value.",
+            )
         return config
     if credential_store is None:
         raise HTTPException(
@@ -594,7 +614,73 @@ async def _merge_saved_sensitive_credentials(
     for field in missing_fields:
         if field in saved_credentials:
             merged[field] = saved_credentials[field]
+    if needs_kept_cookies:
+        merged["cookies"] = _resolve_kept_cookies(config, saved_credentials)
     return merged
+
+
+def _assert_no_valueless_cookies(config: dict) -> None:
+    """A cookie with no value must never reach the vault.
+
+    ``CookieEntry.value`` is optional so a blank row can mean "keep the stored
+    one", and ``_resolve_kept_cookies`` fills those in on update. Create has no
+    stored value to fill from, and a direct API call can reach either path, so
+    the invariant is asserted here -- once, immediately before encryption --
+    rather than trusted to hold at every call site.
+
+    Storing one would not raise anywhere later: the crawl carries a blank
+    cookie, the site serves the logged-out page, and crawl4ai answers HTTP 200.
+    """
+    for cookie in config.get("cookies") or []:
+        if isinstance(cookie, dict) and not cookie.get("value"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"Cookie {cookie.get('name')!r} has no value. Paste one, or "
+                    "remove the row."
+                ),
+            )
+
+
+def _resolve_kept_cookies(config: dict, saved_credentials: dict) -> list[dict]:
+    """Fill in the cookies the caller left blank from what is already stored.
+
+    The wizard prefills the saved cookie NAMES with empty values, so replacing
+    one expired cookie means typing one value and leaving the rest alone. Until
+    this existed those blank rows were dropped before the request and the whole
+    stored set was replaced by the single cookie that had been typed -- so
+    refreshing one cookie silently deleted the others.
+
+    A name that is not in the vault cannot be kept, and saying so beats
+    storing a cookie with no value: that crawls logged out and still answers
+    HTTP 200.
+    """
+    incoming = config.get("cookies") or []
+    saved_by_name = {
+        cookie["name"]: cookie
+        for cookie in (saved_credentials.get("cookies") or [])
+        if isinstance(cookie, dict) and cookie.get("name")
+    }
+
+    resolved: list[dict] = []
+    for cookie in incoming:
+        if not isinstance(cookie, dict):
+            continue
+        if cookie.get("value"):
+            resolved.append(cookie)
+            continue
+        name = cookie.get("name")
+        kept = saved_by_name.get(name)
+        if kept is None or not kept.get("value"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"No saved value to keep for cookie {name!r}. "
+                    "Paste its value, or remove the row."
+                ),
+            )
+        resolved.append({**kept, **{k: v for k, v in cookie.items() if v}})
+    return resolved
 
 
 def _connector_out(c: PortalConnector) -> ConnectorOut:
@@ -751,6 +837,7 @@ async def create_connector(
     encrypted_blob = None
     _require_credential_store_for_sensitive_config(body.connector_type, config_for_save)
     if credential_store is not None:
+        _assert_no_valueless_cookies(config_for_save)
         encrypted_blob, config_to_store = await credential_store.encrypt_credentials(
             org_id=perms.org_id,
             connector_type=body.connector_type,
@@ -887,6 +974,7 @@ async def update_connector(
         config_for_save = await _auto_fill_canary_fingerprint(validated_config)
         _require_credential_store_for_sensitive_config(connector.connector_type, config_for_save)
         if credential_store is not None:
+            _assert_no_valueless_cookies(config_for_save)
             encrypted_blob, stripped_config = await credential_store.encrypt_credentials(
                 org_id=perms.org_id,
                 connector_type=connector.connector_type,

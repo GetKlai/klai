@@ -282,7 +282,7 @@ describe('edit connector wizard characterization', () => {
     expect(screen.getByText('Saved authentication configured')).toBeTruthy()
   })
 
-  it('Replace cookies prefills only saved cookie names and posts replacement values', async () => {
+  it('Replace cookies keeps the rows you left blank instead of dropping them', async () => {
     await advanceSavedToAuthSetup()
     await waitFor(() => {
       expect(apiFetchMock.mock.calls.some(([url]) => String(url).endsWith('/credential-metadata'))).toBe(
@@ -300,6 +300,10 @@ describe('edit connector wizard characterization', () => {
     const authCall = apiFetchMock.mock.calls.find(([url]) =>
       String(url).endsWith('/auth-probe'),
     )
+    // `csrf` was left blank and is still here, carrying no value: that is the
+    // request to keep the stored one. It used to be dropped, and the backend
+    // then replaced the whole set with `sessionid` alone -- so refreshing one
+    // expired cookie silently deleted the other.
     expect(JSON.parse((authCall?.[1] as RequestInit).body as string)).toEqual({
       url: 'https://docs.example.com/guide/',
       cookies: [
@@ -309,8 +313,16 @@ describe('edit connector wizard characterization', () => {
           domain: 'docs.example.com',
           path: '/',
         },
+        {
+          name: 'csrf',
+          domain: 'docs.example.com',
+          path: '/',
+        },
       ],
-      connector_id: null,
+      // Sent even though use_saved_credentials is false: without it the
+      // server cannot look up the value the blank `csrf` row is asking to
+      // keep, and the probe would 400.
+      connector_id: 'connector-1',
       use_saved_credentials: false,
     })
   })

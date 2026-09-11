@@ -19,7 +19,12 @@ from fastapi import HTTPException
 from klai_image_storage.url_guard import _reset_dns_cache
 from pydantic import ValidationError
 
-from app.api.connectors import WebcrawlerConfig, _validate_connector_config
+from app.api.connectors import (
+    WebcrawlerConfig,
+    _assert_no_valueless_cookies,
+    _resolve_kept_cookies,
+    _validate_connector_config,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -373,3 +378,81 @@ class TestWebcrawlerConfigTestUrl:
                 },
             )
         assert exc_info.value.status_code == 422
+
+
+class TestReplaceOneCookie:
+    """Refreshing one expired cookie must not delete the others.
+
+    The wizard prefills the saved cookie NAMES with empty values, so replacing
+    one means typing one value and leaving the rest alone. Those blank rows
+    used to be dropped before the request, and the backend then replaced the
+    whole stored set with the single cookie that had been typed.
+    """
+
+    @staticmethod
+    def _saved(*pairs: tuple[str, str]) -> dict:
+        return {"cookies": [{"name": n, "value": v, "domain": "w.example.com", "path": "/"} for n, v in pairs]}
+
+    def test_a_blank_row_keeps_the_stored_value(self) -> None:
+        resolved = _resolve_kept_cookies(
+            {
+                "cookies": [
+                    {"name": "sess", "value": "new1", "domain": "w.example.com", "path": "/"},
+                    {"name": "xsrf", "domain": "w.example.com", "path": "/"},
+                ]
+            },
+            self._saved(("sess", "old1"), ("xsrf", "old2")),
+        )
+
+        assert [(c["name"], c["value"]) for c in resolved] == [
+            ("sess", "new1"),
+            ("xsrf", "old2"),
+        ]
+
+    def test_a_removed_row_removes_the_cookie(self) -> None:
+        """The x in the wizard drops the row, so the name never arrives."""
+        resolved = _resolve_kept_cookies(
+            {"cookies": [{"name": "sess", "value": "new1", "domain": "w.example.com", "path": "/"}]},
+            self._saved(("sess", "old1"), ("xsrf", "old2")),
+        )
+
+        assert [c["name"] for c in resolved] == ["sess"]
+
+    def test_a_blank_row_for_an_unknown_name_is_refused(self) -> None:
+        """Storing a cookie with no value would crawl logged out and still
+        answer HTTP 200, which is the failure that hid here for four weeks."""
+        with pytest.raises(HTTPException) as exc_info:
+            _resolve_kept_cookies(
+                {"cookies": [{"name": "typo", "domain": "w.example.com", "path": "/"}]},
+                self._saved(("sess", "old1")),
+            )
+
+        assert exc_info.value.status_code == 422
+        assert "typo" in str(exc_info.value.detail)
+
+    def test_a_blank_row_never_becomes_an_empty_cookie(self) -> None:
+        resolved = _resolve_kept_cookies(
+            {"cookies": [{"name": "sess", "domain": "w.example.com", "path": "/"}]},
+            self._saved(("sess", "old1")),
+        )
+
+        assert all(c["value"] for c in resolved)
+
+    def test_a_valueless_cookie_never_reaches_the_vault(self) -> None:
+        """Create has nothing stored to fill a blank row from, and a direct API
+        call reaches the same model. Asserted once, right before encryption,
+        rather than trusted to hold at every call site -- storing one raises
+        nowhere later: the crawl carries a blank cookie, the site serves the
+        logged-out page, and crawl4ai answers HTTP 200."""
+        with pytest.raises(HTTPException) as exc_info:
+            _assert_no_valueless_cookies(
+                {"cookies": [{"name": "sid", "domain": "w.example.com", "path": "/"}]}
+            )
+
+        assert exc_info.value.status_code == 422
+        assert "sid" in str(exc_info.value.detail)
+
+    def test_cookies_with_values_pass_the_vault_check(self) -> None:
+        _assert_no_valueless_cookies(
+            {"cookies": [{"name": "sid", "value": "x", "domain": "w.example.com", "path": "/"}]}
+        )

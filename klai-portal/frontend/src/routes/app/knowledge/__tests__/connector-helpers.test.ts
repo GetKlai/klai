@@ -10,6 +10,8 @@
  */
 
 import { describe, expect, it } from 'vitest'
+
+import { buildCrawlerCookies } from '../-connector-shared/api'
 import {
   isWithinBaseUrl,
   joinSeedUrl,
@@ -111,5 +113,43 @@ describe('isWithinBaseUrl', () => {
   it('rejects a different site and a look-alike host', () => {
     expect(isWithinBaseUrl('https://y.com/docs', 'https://x.com')).toBe(false)
     expect(isWithinBaseUrl('https://x.com.evil.test/docs', 'https://x.com')).toBe(false)
+  })
+})
+
+describe('buildCrawlerCookies', () => {
+  const base = 'https://wiki.example.com/'
+
+  it('passes a named row with no value through, so the backend can keep it', () => {
+    // The wizard prefills saved cookie NAMES with empty values. Dropping those
+    // rows here is what made refreshing one cookie delete the others.
+    const rows = [
+      { name: 'sess', value: 'new1' },
+      { name: 'xsrf', value: '' },
+    ]
+
+    expect(buildCrawlerCookies(rows, base)).toEqual([
+      { name: 'sess', value: 'new1', domain: 'wiki.example.com', path: '/' },
+      { name: 'xsrf', domain: 'wiki.example.com', path: '/' },
+    ])
+  })
+
+  it('drops a row with no name at all', () => {
+    const rows = [
+      { name: 'sess', value: 'new1' },
+      { name: '  ', value: 'orphan' },
+    ]
+
+    expect(buildCrawlerCookies(rows, base)).toHaveLength(1)
+  })
+
+  it('sends nothing when every row is blank', () => {
+    // Not "replace them all with nothing" but "do not touch the cookies",
+    // which is what opening the wizard and saving without editing must do.
+    const rows = [
+      { name: 'sess', value: '' },
+      { name: 'xsrf', value: '' },
+    ]
+
+    expect(buildCrawlerCookies(rows, base)).toBeUndefined()
   })
 })
