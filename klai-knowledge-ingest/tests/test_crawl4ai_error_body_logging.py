@@ -91,7 +91,7 @@ async def test_logged_body_masks_auth_tokens_echoed_from_the_url(
     """AC-2: crawl4ai echoes the failing URL, which may carry a session token.
 
     Measured on crawl4ai 0.9.2 (2026-09-10): the server does NOT echo
-    ``hooks_config`` cookie values back in a 400 body, so the reachable leak
+    ``hooks`` cookie values back in a 400 body, so the reachable leak
     is the URL. That is exactly what ``_mask_sensitive_query_params`` covers,
     and it runs before truncation so a token near the cut point cannot
     survive half-exposed.
