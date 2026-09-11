@@ -10,7 +10,7 @@ silently rejects every login through that app.
 This script flips the loop: it asks Zitadel for the live OIDC config
 and compares against the local expectation. Drift = exit code 2 plus
 a structured report. The accompanying workflow runs this nightly and
-opens a GitHub issue on drift.
+keeps live IAM details out of public logs.
 
 Inputs
 ------
@@ -52,6 +52,7 @@ import os
 import sys
 import urllib.parse
 import urllib.request
+from typing import NoReturn
 from urllib.error import HTTPError, URLError
 
 # Mirrors `_STATIC_SYSTEM_SUBDOMAINS` in klai-portal/backend/app/api/auth.py.
@@ -70,13 +71,21 @@ DEFAULT_EXPECTED_STATIC: frozenset[str] = frozenset({
 })
 
 
+def _fatal(reason: str, detail: str) -> NoReturn:
+    """Expose only a fixed category to Actions; keep diagnostics on stderr."""
+    if output := os.environ.get("GITHUB_OUTPUT"):
+        with open(output, "a", encoding="utf-8") as stream:
+            stream.write(f"failure_reason={reason}\n")
+    print(f"FATAL: {detail}", file=sys.stderr)
+    sys.exit(1)
+
+
 def _env(name: str, default: str | None = None) -> str:
-    """Read env var; raise on missing+no-default."""
+    """Read env var; reject missing or blank required values."""
     value = os.environ.get(name)
-    if value is None:
+    if value is None or (default is None and not value.strip()):
         if default is None:
-            print(f"FATAL: missing required env var {name}", file=sys.stderr)
-            sys.exit(1)
+            _fatal("missing_configuration", f"missing or empty required env var {name}")
         return default
     return value
 
@@ -102,12 +111,15 @@ def _fetch_oidc_apps(
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
-    except (HTTPError, URLError) as exc:
-        print(f"FATAL: Zitadel API call failed: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except json.JSONDecodeError as exc:
-        print(f"FATAL: Zitadel response not JSON: {exc}", file=sys.stderr)
-        sys.exit(1)
+    except HTTPError as exc:
+        reason = "authentication_rejected" if exc.code in (401, 403) else "api_error"
+        _fatal(reason, f"Zitadel API call failed: {exc}")
+    except (URLError, TimeoutError) as exc:
+        _fatal("connection_error", f"Zitadel API call failed: {exc}")
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        _fatal("invalid_response", f"Zitadel response not JSON: {exc}")
+    if not isinstance(payload, dict) or not isinstance(payload.get("result", []), list):
+        _fatal("invalid_response", "Zitadel response has an unexpected structure")
     return payload.get("result", [])
 
 

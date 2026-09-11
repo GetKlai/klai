@@ -12,10 +12,10 @@
 # Action on drift: fail loudly without publishing the live drift report. The
 # detailed report must be reproduced and handled through a private operator
 # channel; this repository and its Actions logs are public.
-# Human signal: GitHub sends private email/web notifications for a failed
-# scheduled workflow to the workflow creator. Keep Actions failure
-# notifications enabled for that account; the notification links to the
-# generic failure while the detailed report remains private.
+# Human signal: GitHub notifies the creator, latest cron editor, or user who
+# re-enabled the schedule, subject to that account's notification settings.
+# This is not an escalation policy. Independently monitor failures and stale
+# checks through private monitoring; never publish the detailed report.
 #
 # Required secret: ZITADEL_ADMIN_PAT (IAM_OWNER PAT for klai-admin-sa).
 # Used read-only — the script only calls /apps/_search.
@@ -67,8 +67,19 @@ jobs:
       # state, so naming the failure mode here leaks nothing.
       - name: Fail — the check could not run
         if: steps.drift.outputs.exit_code == '1'
+        env:
+          FAILURE_REASON: ${{ steps.drift.outputs.failure_reason }}
         run: |
-          echo "::error::OIDC drift check could NOT RUN (exit 1) — configuration error, most likely a missing or expired ZITADEL_ADMIN_PAT. This is not a drift finding: nothing was verified. Drift is UNKNOWN for as long as this persists."
+          # Only fixed messages may reach public logs, never stderr or API text.
+          case "$FAILURE_REASON" in
+            missing_configuration) reason="ZITADEL_ADMIN_PAT is missing or empty" ;;
+            authentication_rejected) reason="Zitadel rejected authentication or permission (HTTP 401/403)" ;;
+            api_error) reason="Zitadel returned an HTTP error" ;;
+            connection_error) reason="Zitadel could not be reached" ;;
+            invalid_response) reason="Zitadel returned an unreadable or malformed response" ;;
+            *) reason="Unexpected checker failure; investigate through the private operator path" ;;
+          esac
+          echo "::error::OIDC drift check could NOT RUN (exit 1): $reason. Nothing was verified; drift is UNKNOWN."
           exit 1
 
       - name: Fail — drift detected
