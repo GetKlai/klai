@@ -212,6 +212,32 @@ def _extra_payload_for_qdrant(extra_payload: dict | None) -> dict:
     return {k: v for k, v in extra_payload.items() if k not in _QDRANT_PAYLOAD_DENY_LIST}
 
 
+def _assert_vectors_writable(vectors: list, *, what: str) -> None:
+    """Refuse a write whose vectors Qdrant would reject, BEFORE deleting.
+
+    Both upsert paths delete the document's existing points first and build
+    the replacements afterwards. So a vector Qdrant will not accept does not
+    fail the write -- it empties the document out of the index and then fails,
+    and the artifact still reads as ingested. Qdrant 1.19.1 rejects an empty
+    dense vector outright (it used to take it), which turns a bad embedding
+    from a broken point into a disappeared document.
+
+    Raising here leaves the old points exactly where they were.
+
+    Only emptiness is checked. A wrong DIMENSION is rejected by Qdrant after
+    the delete too, so it carries the same risk -- but enforcing EMBED_DIM
+    here would mean every mocked test in this repo has to carry 1024 floats
+    instead of two, and that is a change of its own rather than part of a
+    version bump.
+    """
+    for index, vector in enumerate(vectors):
+        if vector is not None and not vector:
+            raise ValueError(
+                f"{what}: empty dense vector at index {index}; refusing to "
+                "delete the existing points for a write Qdrant would reject"
+            )
+
+
 async def upsert_chunks(
     org_id: str,
     kb_slug: str,
@@ -238,6 +264,8 @@ async def upsert_chunks(
         Both [] and non-empty lists are stored when not None.
     """
     client = get_client()
+
+    _assert_vectors_writable(vectors, what="upsert_chunks")
 
     # Delete existing points for this document
     await client.delete(
@@ -319,6 +347,9 @@ async def upsert_enriched_chunks(
     are passed entirely via extra_payload — no separate parameters needed here.
     """
     client = get_client()
+
+    _assert_vectors_writable(chunk_vectors, what="upsert_enriched_chunks chunk")
+    _assert_vectors_writable(question_vectors, what="upsert_enriched_chunks question")
 
     await client.delete(
         COLLECTION,
