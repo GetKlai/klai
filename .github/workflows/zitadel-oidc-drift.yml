@@ -12,8 +12,8 @@
 # Action on drift: fail loudly without publishing the live drift report. The
 # detailed report must be reproduced and handled through a private operator
 # channel; this repository and its Actions logs are public.
-# Human signal: GitHub notifies the creator, latest cron editor, or user who
-# re-enabled the schedule, subject to that account's notification settings.
+# Human signal: GitHub sends private email/web notifications to the creator,
+# latest cron editor, or user who re-enabled it, subject to account settings.
 # This is not an escalation policy. Independently monitor failures and stale
 # checks through private monitoring; never publish the detailed report.
 #
