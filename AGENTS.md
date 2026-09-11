@@ -125,13 +125,22 @@ authorization to mutate GitHub.
   unpatched security fix, establish the private remediation and deployment
   path with the user. After the fix is deployed, a deliberately redacted public
   explanation is allowed when requested.
-- The hook that enforces this blocks what it can meaningfully gate: issue
-  mutations, PR comments, reviews, edits and merges, and any push to `main`.
-  It does not block `gh pr create`, because the branch push that precedes it
-  already published the same code and the same commit messages — gating the
-  PR that proposes them stopped nothing and made bypassing the hook routine,
-  which is how the blocks that do matter get bypassed too. The rule above is
-  unchanged: it still governs what you write in a PR body, and that judgement
+- The hook that enforces this asks WHERE a command is aimed, not which verb
+  it uses. Inside GetKlai it blocks nothing: `main` is already gated by branch
+  protection, and a marker the one developer types on every merge is a
+  keystroke, not a second opinion. Outside GetKlai it blocks every
+  pull-request mutation, including drafts and including the same publication
+  made through `gh api` or `curl` — a branch on your own fork notifies nobody,
+  a pull request does. Ask first, then do exactly what was asked, drafting
+  included. It also blocks when the destination cannot be read from the
+  command, which is deliberate. It still blocks issue mutations everywhere;
+  issues have no other gate.
+- That guard reads a bash string to decide where a command lands, so it is a
+  guard against misreading a sentence — the failure that actually happened —
+  and not against someone determined to get around it. Arbitrary shell can
+  always compute a destination it cannot see. Do not treat a green run as
+  permission.
+  Everything above still governs what you WRITE in a PR body — that judgement
   is yours, not the hook's.
 - If sensitive details are already public, do not amplify them in comments or
   linked issues. Prioritize remediation, then close or redact the public item

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import shlex
 import subprocess
 import textwrap
 from pathlib import Path
@@ -192,275 +191,128 @@ def test_hook_allows_explicitly_authorized_public_issue_mutation() -> None:
     assert result.returncode == 0
 
 
-@pytest.mark.parametrize(
-    "command",
-    [
-        "gh pr edit 42 --body 'new details'",
-        "gh pr comment 42 --body 'new details'",
-        "gh pr review 42 --comment --body 'review details'",
-        "gh api repos/GetKlai/klai/pulls -X POST -f title=finding",
-        "gh api -X PATCH repos/GetKlai/klai/pulls/42 -f state=closed",
-        "gh api graphql -f query='mutation { mergePullRequest(input: {}) { pullRequest { id } } }'",
-        "curl https://api.github.com/repos/GetKlai/klai/pulls/42 -X PATCH -d '{}'",
-    ],
-)
-def test_hook_blocks_unapproved_public_pr_mutations(command: str) -> None:
-    result = _run_hook(command)
-
-    assert result.returncode == 2
-    assert "autonomous public GitHub PR mutation" in result.stderr
+ELSEWHERE = "outside GetKlai"
 
 
-@pytest.mark.parametrize(
-    "command",
-    [
-        "gh pr create --title 'fix' --body 'details'",
-        "gh pr create --base main --head feature --fill",
-    ],
-)
-def test_hook_allows_opening_a_pull_request(command: str) -> None:
-    """Opening a PR publishes nothing the branch push did not already publish.
+def _repo_with_origin(tmp_path: Path, owner: str) -> Path:
+    """A checkout whose `origin` belongs to ``owner``.
 
-    Only pushes to `main` are gated, so `git push -u origin feature` already
-    made the code and every commit message on it public. Blocking the PR that
-    proposes them protected nothing and fired on every ordinary change; what
-    it did teach was the bypass reflex, which then also reaches the blocks
-    that matter.
+    The guard reads that remote to work out where a command with no explicit
+    repository is aimed, so this is the only setup these tests need.
     """
-    result = _run_hook(command)
+    repo = tmp_path / owner
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "origin",
+         f"https://github.com/{owner}/thing.git"],
+        check=True, capture_output=True,
+    )
+    return repo
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "gh pr merge 42 --squash",
+        "gh pr merge 42 --merge --admin",
+        "gh pr create --title 'fix' --body 'details'",
+        "gh pr ready 42",
+        "gh pr comment 42 --body 'details'",
+        "gh pr review 42 --approve",
+        "gh pr edit 42 --body 'new details'",
+        "git push origin main",
+        "git push --force-with-lease origin HEAD:main",
+        "gh api repos/GetKlai/klai/pulls -X POST -f title=x",
+    ],
+)
+def test_hook_stays_out_of_the_way_inside_getklai(command: str, tmp_path: Path) -> None:
+    """Inside our own org the hook blocks nothing, on purpose.
+
+    `main` is gated by branch protection: a pull request, a green `quality`
+    check that itself waits on every affected service job, no force-push, no
+    deletion. A marker the one developer types on every merge adds no second
+    opinion -- and it self-authorised once, when a PR body that merely named
+    the marker satisfied the match (#1400).
+    """
+    result = _run_hook(command, cwd=_repo_with_origin(tmp_path, "GetKlai"))
 
     assert result.returncode == 0, result.stderr
 
 
-def test_hook_still_blocks_merging_and_commenting() -> None:
-    """The two PR verbs that are not covered by anything else stay blocked.
-
-    `merge` is the #1208 lesson -- an agent merged past a review gate -- and
-    a comment or review is prose published straight to the PR.
-    """
-    for command in (
-        "gh pr merge 42 --squash",
-        "gh pr comment 42 --body 'details'",
-        "gh pr review 42 --approve",
-    ):
-        result = _run_hook(command)
-        assert result.returncode == 2, f"{command!r} should still be blocked"
-        assert "autonomous public GitHub PR mutation" in result.stderr
-
-
 @pytest.mark.parametrize(
     "command",
     [
-        "git push origin main",
-        "git push --force origin main",
-        "git push --set-upstream origin main",
-        "git push --force-with-lease origin HEAD:main",
-        "git push origin HEAD:refs/heads/main",
-        "git push origin fix/publication-guard:refs/heads/main",
-        "git push origin deadbeef:refs/heads/main",
-        "git push origin +deadbeef:refs/heads/main",
-        "git push origin +main",
-        "git push origin --delete main",
-        "git push --all",
-        "git push --all origin",
-        "git push --mirror",
-        "git push --mirror origin",
+        "gh pr create --repo unclecode/crawl4ai --title x --body y",
+        "gh pr ready 2249 --repo unclecode/crawl4ai",
+        "gh pr merge 2249 --repo unclecode/crawl4ai",
+        "gh pr comment 2249 --repo unclecode/crawl4ai --body 'ping'",
+        "gh api --method POST repos/unclecode/crawl4ai/pulls -f title=x",
+        "curl -X POST https://api.github.com/repos/unclecode/crawl4ai/pulls -d '{}'",
     ],
 )
-def test_hook_blocks_unapproved_pushes_that_can_mutate_main(command: str) -> None:
-    result = _run_hook(command)
-
-    assert result.returncode == 2
-    assert "public main branch push" in result.stderr
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        "gh pr view 42 --json title,body",
-        "gh pr list --state open",
-        "gh pr checks 42",
-        "gh pr diff 42",
-        "gh pr checkout 42",
-        "git push origin feature/foo",
-        "git push --force origin feature/foo",
-        "git push -u origin fix/publication-guard",
-        "git push --set-upstream origin feature/foo",
-        "git push origin HEAD:refs/heads/fix/publication-guard",
-        "git push origin deadbeef:refs/heads/fix/publication-guard",
-        "git push origin +deadbeef:refs/heads/fix/publication-guard",
-        "git push origin +feature/foo",
-        "git push origin --delete feature/foo",
-    ],
-)
-def test_hook_allows_read_only_pr_commands_and_named_feature_branch_pushes(
-    command: str,
-) -> None:
-    result = _run_hook(command)
-
-    assert result.returncode == 0
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        "git push",
-        "git push --force",
-        "git push -f",
-        "git push origin",
-        "git push origin HEAD",
-        "git push --force origin HEAD",
-        "git push -f origin HEAD",
-        "git push -u origin HEAD",
-        "git push --set-upstream origin HEAD",
-    ],
-)
-def test_hook_allows_head_pushes_from_a_feature_branch(
+def test_hook_blocks_publication_aimed_at_another_organisation(
     command: str, tmp_path: Path
 ) -> None:
-    """HEAD-relative pushes depend on the checked-out branch, so pin it.
+    """Pushing a branch to your own fork notifies nobody; these do.
 
-    These forms were once asserted without controlling the branch. That passed
-    on a feature worktree and on a detached PR checkout, and failed on main --
-    where the hook is right to block them. The test was reading its environment
-    rather than the contract. Its sibling below pins main; this one pins a
-    feature branch, so both outcomes are asserted deliberately.
+    Opening a pull request puts it in front of someone else's maintainers, and
+    undrafting is the moment it asks to be reviewed. On 2026-09-11 a PR was
+    opened at unclecode/crawl4ai from a sentence read as permission, and
+    nothing here stopped it -- `gh pr create` was on the read-only list.
     """
-    _init_git_repo(tmp_path, "feature/guard-context")
+    result = _run_hook(command, cwd=_repo_with_origin(tmp_path, "GetKlai"))
 
-    result = _run_hook(command, cwd=tmp_path)
-
-    assert result.returncode == 0
+    assert result.returncode == 2, result.stderr
+    assert ELSEWHERE in result.stderr
 
 
 @pytest.mark.parametrize(
     "command",
     [
-        "git push",
-        "git push --force",
-        "git push -f",
-        "git push origin",
-        "git push origin HEAD",
-        "git push --force origin HEAD",
-        "git push -f origin HEAD",
-        "git push -u origin HEAD",
-        "git push --set-upstream origin HEAD",
+        "gh pr ready 2249 --repo unclecode/crawl4ai --undo",
+        "gh pr view 2249 --repo unclecode/crawl4ai",
+        "gh pr checks 2249 --repo unclecode/crawl4ai",
+        "gh pr diff 2249 --repo unclecode/crawl4ai",
     ],
 )
-def test_hook_resolves_head_pushes_to_main(
+def test_hook_allows_retreating_and_reading_elsewhere(
     command: str, tmp_path: Path
 ) -> None:
-    _init_git_repo(tmp_path, "main")
+    """Putting a PR back to draft is the retreat; reading is not publication.
 
-    result = _run_hook(command, cwd=tmp_path)
+    Opening one is NOT here, draft or otherwise: a draft is still a pull
+    request nobody asked for, and the --draft exemption was where the holes
+    were -- a body reading "use --draft next time" satisfied it.
+    """
+    result = _run_hook(command, cwd=_repo_with_origin(tmp_path, "GetKlai"))
 
-    assert result.returncode == 2
-    assert "public main branch push" in result.stderr
-
-
-def test_hook_blocks_when_head_branch_cannot_be_resolved(tmp_path: Path) -> None:
-    result = _run_hook("git push --force origin HEAD", cwd=tmp_path)
-
-    assert result.returncode == 2
-    assert "symbolic-ref" in HOOK.read_text()
+    assert result.returncode == 0, result.stderr
 
 
-def test_hook_resolves_head_in_leading_cd_worktree(tmp_path: Path) -> None:
-    session_repo = tmp_path / "session-main"
-    feature_repo = tmp_path / "target feature"
-    _init_git_repo(session_repo, "main")
-    _init_git_repo(feature_repo, "feature/worktree-target")
+def test_hook_fails_closed_when_the_destination_is_unknown(tmp_path: Path) -> None:
+    """No `--repo`, no usable `origin`: treat it as elsewhere.
 
-    command = f"cd {shlex.quote(str(feature_repo))} && git push -u origin HEAD"
-    result = _run_hook(command, cwd=session_repo)
+    Being wrong that way costs one sentence asking the user. Being wrong the
+    other way costs a stranger their inbox.
+    """
+    nowhere = tmp_path / "nowhere"
+    nowhere.mkdir()
+    result = _run_hook("gh pr merge 1", cwd=nowhere)
 
-    assert result.returncode == 0
-
-
-def test_hook_blocks_head_in_leading_cd_main_worktree(tmp_path: Path) -> None:
-    session_repo = tmp_path / "session-feature"
-    main_repo = tmp_path / "target main"
-    _init_git_repo(session_repo, "feature/session")
-    _init_git_repo(main_repo, "main")
-
-    command = f"cd {shlex.quote(str(main_repo))} && git push origin HEAD"
-    result = _run_hook(command, cwd=session_repo)
-
-    assert result.returncode == 2
-    assert "public main branch push" in result.stderr
+    assert result.returncode == 2, result.stderr
+    assert ELSEWHERE in result.stderr
 
 
-def test_hook_blocks_branch_dependent_push_in_unsupported_shell_context(
+def test_hook_allows_explicitly_authorized_publication_elsewhere(
     tmp_path: Path,
 ) -> None:
-    session_repo = tmp_path / "session-feature"
-    main_repo = tmp_path / "target-main"
-    _init_git_repo(session_repo, "feature/session")
-    _init_git_repo(main_repo, "main")
-
-    command = f"(cd {shlex.quote(str(main_repo))} && git push origin HEAD)"
-    result = _run_hook(command, cwd=session_repo)
-
-    assert result.returncode == 2
-    assert "public main branch push" in result.stderr
-
-
-@pytest.mark.parametrize(
-    ("branch", "expected_exit"),
-    [("feature/git-c-target", 0), ("main", 2)],
-)
-def test_hook_resolves_head_in_git_c_worktree(
-    branch: str, expected_exit: int, tmp_path: Path
-) -> None:
-    target_repo = tmp_path / branch.replace("/", "-")
-    _init_git_repo(target_repo, branch)
-
     result = _run_hook(
-        f"git -C {shlex.quote(str(target_repo))} push origin HEAD", cwd=tmp_path
+        "KLAI_ALLOW_PUBLIC_CODE_MUTATION=1 gh pr ready 2249 --repo unclecode/crawl4ai",
+        cwd=_repo_with_origin(tmp_path, "GetKlai"),
     )
 
-    assert result.returncode == expected_exit
-
-
-def test_hook_prefers_explicit_refspec_destination_over_current_branch(
-    tmp_path: Path,
-) -> None:
-    _init_git_repo(tmp_path, "main")
-
-    result = _run_hook(
-        "git push origin HEAD:refs/heads/fix/explicit-target", cwd=tmp_path
-    )
-
-    assert result.returncode == 0
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        "git push --unknown-option origin feature/guard",
-        "git --no-pager push origin feature/guard",
-        "git push origin refs/heads/*:refs/heads/*",
-        "git push origin deadbeef:",
-    ],
-)
-def test_hook_blocks_push_shapes_with_ambiguous_destinations(command: str) -> None:
-    result = _run_hook(command)
-
-    assert result.returncode == 2
-    assert "public main branch push" in result.stderr
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        "KLAI_ALLOW_PUBLIC_CODE_MUTATION=1 gh pr comment 42 --body approved",
-        "KLAI_ALLOW_PUBLIC_CODE_MUTATION=1 git push origin main",
-    ],
-)
-def test_hook_allows_explicitly_authorized_public_code_mutation(command: str) -> None:
-    result = _run_hook(command)
-
-    assert result.returncode == 0
+    assert result.returncode == 0, result.stderr
 
 
 def test_server_guard_has_safe_events_and_minimal_write_permissions() -> None:
