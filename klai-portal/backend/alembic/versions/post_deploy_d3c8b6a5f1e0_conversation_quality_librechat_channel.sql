@@ -32,6 +32,16 @@ END $$;
 -- IF NOT EXISTS for CHECK, so drop-then-add inside the same transaction —
 -- safe: the OLD constraint only accepted 'webchat', which is a subset of
 -- the new allowed set, so no existing row can violate the replacement.
+--
+-- The original CREATE TABLE (post_deploy_b7e4f1a9c3d2) declared this CHECK
+-- inline with no explicit name, so Postgres auto-named it
+-- conversation_quality_judgments_channel_check — NOT ck_cqj_channel (that
+-- name only exists in the SQLAlchemy ORM model's CheckConstraint(), which
+-- was never applied as DDL since portal_api doesn't own this table). Drop
+-- the REAL auto-generated name; ck_cqj_channel here is the constraint this
+-- script is about to (re-)create, not one to look for.
+ALTER TABLE conversation_quality_judgments
+    DROP CONSTRAINT IF EXISTS conversation_quality_judgments_channel_check;
 ALTER TABLE conversation_quality_judgments DROP CONSTRAINT IF EXISTS ck_cqj_channel;
 ALTER TABLE conversation_quality_judgments
     ADD CONSTRAINT ck_cqj_channel CHECK (channel IN ('webchat', 'librechat'));
