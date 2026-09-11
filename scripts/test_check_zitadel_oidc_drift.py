@@ -302,9 +302,38 @@ def test_workflow_uses_server_credentials_and_managed_context(monkeypatch):
     bootstrap = textwrap.dedent(workflow.split('bootstrap = r"""\n')[1].split('"""')[0])
     monkeypatch.setattr(os, "environ", {"ZITADEL_ADMIN_PAT": "wrong-runner-credential"})
     monkeypatch.setattr(Path, "read_text", lambda p: 'ZITADEL_ADMIN_PAT="server-credential"\nZITADEL_PORTAL_ORG_ID=managed-org\nZITADEL_PROJECT_ID=managed-project')
-    monkeypatch.setattr(sys, "stdin", io.StringIO("pass"))
+    monkeypatch.setattr(sys, "stdin", io.StringIO('\"\"\npass'))
     exec(bootstrap, {})
     assert os.environ["ZITADEL_ADMIN_PAT"] == "server-credential"
     assert os.environ["ZITADEL_ORG_ID"] == "managed-org"
     assert os.environ["ZITADEL_PROJECT_ID"] == "managed-project"
     assert os.environ["GITHUB_OUTPUT"] == "/dev/stdout"
+
+
+@pytest.mark.parametrize("expected", ["service", "", "private-canary'; raise Exception('injected') #"])
+def test_workflow_delivers_private_expectations_to_remote_checker(expected, monkeypatch):
+    import shlex
+
+    workflow = (_SCRIPTS_DIR.parent / ".github/workflows/zitadel-oidc-drift.yml").read_text()
+    runner = textwrap.dedent(workflow.split("2> drift-stderr.txt\n")[1].split("          PYTHON\n")[0])
+    monkeypatch.setenv("EXPECTED_STATIC_SUBDOMAINS", expected)
+    monkeypatch.setenv("CORE01_HOST", "example.invalid")
+
+    def ssh_run(command, **kwargs):
+        if expected:
+            assert expected not in shlex.split(command[-1])[2]
+        # A fresh remote process does not inherit the runner's environment.
+        monkeypatch.setattr(os, "environ", {})
+        monkeypatch.setattr(Path, "read_text", lambda p: "ZITADEL_ADMIN_PAT=synthetic")
+        monkeypatch.setattr(sys, "stdin", io.StringIO(
+            kwargs["input"].split("\n", 1)[0] + "\n"
+            + "assert os.environ.get('EXPECTED_STATIC_SUBDOMAINS') == " + repr(expected)
+        ))
+        exec(shlex.split(command[-1])[2], {})
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(subprocess, "run", ssh_run)
+    with pytest.raises(SystemExit) as result:
+        exec(runner, {})
+    assert result.value.code == 0
+    assert "EXPECTED_STATIC_SUBDOMAINS: ${{ secrets.EXPECTED_STATIC_SUBDOMAINS }}" in workflow

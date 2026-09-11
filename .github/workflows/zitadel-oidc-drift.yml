@@ -44,6 +44,7 @@ jobs:
           CORE01_HOST: ${{ secrets.CORE01_HOST }}
           CORE01_DEPLOY_KEY: ${{ secrets.CORE01_DEPLOY_KEY }}
           CORE01_KNOWN_HOSTS: ${{ secrets.CORE01_KNOWN_HOSTS }}
+          EXPECTED_STATIC_SUBDOMAINS: ${{ secrets.EXPECTED_STATIC_SUBDOMAINS }}
         run: |
           eval "$(ssh-agent -s)" > /dev/null
           trap 'ssh-agent -k >/dev/null' EXIT
@@ -53,10 +54,11 @@ jobs:
           set -o pipefail
           set +e
           python3 - <<'PYTHON' > drift-report.json 2> drift-stderr.txt
-          import os, shlex, subprocess, sys
+          import json, os, shlex, subprocess, sys
           bootstrap = r"""
-          import os, sys
+          import json, os, sys
           from pathlib import Path
+          os.environ["EXPECTED_STATIC_SUBDOMAINS"] = json.loads(sys.stdin.readline())
           values = dict(line.split("=", 1) for line in Path("/opt/klai/.env").read_text().splitlines() if "=" in line and not line.startswith("#"))
           for target, source in [("ZITADEL_ADMIN_PAT", "ZITADEL_ADMIN_PAT"), ("ZITADEL_ORG_ID", "ZITADEL_PORTAL_ORG_ID"), ("ZITADEL_PROJECT_ID", "ZITADEL_PROJECT_ID")]:
               os.environ[target] = values.get(source, "").strip().strip("\"'")
@@ -64,7 +66,9 @@ jobs:
           exec(compile(sys.stdin.read(), "drift-check", "exec"))
           """
           with open("scripts/check_zitadel_oidc_drift.py") as source:
-              result = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=15", "klai@" + os.environ["CORE01_HOST"], "python3 -c " + shlex.quote(bootstrap)], stdin=source)
+              # Keep private inventory off argv and out of public code and logs.
+              payload = json.dumps(os.environ.get("EXPECTED_STATIC_SUBDOMAINS", "")) + "\n" + source.read()
+              result = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=15", "klai@" + os.environ["CORE01_HOST"], "python3 -c " + shlex.quote(bootstrap)], input=payload, text=True)
           sys.exit(result.returncode)
           PYTHON
           status=$?
