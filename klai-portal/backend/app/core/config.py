@@ -281,6 +281,10 @@ class Settings(BaseSettings):
     extraction_model: str = "klai-fast"
     synthesis_model: str = "klai-primary"
     feedback_triage_model: str = "klai-fast"
+    # SPEC-CHAT-QUALITY-LOOP-001 REQ-2: klai-medium, not klai-fast — same
+    # reason RAGAS faithfulness moved off klai-fast (Mistral Small truncates
+    # multi-field structured JSON). Tier-named, no role-specific alias.
+    conversation_judge_model: str = "klai-medium"
 
     # SPEC-INFRA-TENANT-DELETE-001: Garage S3 for Scribe artifact deletion.
     # Generate credentials via: garage key new --name portal-api
@@ -367,7 +371,9 @@ class Settings(BaseSettings):
 
     # REQ-8 (SPEC-SEC-CROSS-TENANT-FOLLOWUP-001): widget_messages retention.
     # Rows older than this many days are deleted daily by the background loop.
-    widget_messages_retention_days: int = 90  # PORTAL_API_WIDGET_MESSAGES_RETENTION_DAYS
+    # Lowered from 90 to 7 (SPEC-CHAT-QUALITY-LOOP-001 open item #2, decided
+    # 2026-09-11): global, all tenants, no per-org override exists today.
+    widget_messages_retention_days: int = 7  # PORTAL_API_WIDGET_MESSAGES_RETENTION_DAYS
 
     # Conversations quiet for at least this many minutes get an outcome
     # label ('resolved' / 'escalated' / 'abandoned' / 'unknown') by the

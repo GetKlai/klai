@@ -1137,8 +1137,11 @@ dropped — retrieval quality is unaffected.
 
 **Storage:** `portal_retrieval_gaps` table in PostgreSQL, with `org_id`, `query`,
 `gap_type`, `nearest_kb_slug` (populated when a soft gap has a closest matching KB),
-`scores`, and a `created_at` timestamp. Rows are retained for 90 days and then
-automatically purged.
+`scores`, and a `created_at` timestamp. Rows carrying raw (non-redacted) query
+text are purged after 7 days by the daily privacy sweep
+(`app/services/telemetry_purge.py`, SPEC-PRIVACY-QUERY-SHADOW-001); rows whose
+query text is already `[REDACTED:...]` are not time-purged and stay until the
+underlying gap is resolved.
 
 **The `/app/gaps` dashboard** (admin-only):
 

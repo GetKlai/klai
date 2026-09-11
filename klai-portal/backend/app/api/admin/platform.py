@@ -29,6 +29,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import and_, bindparam, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.admin_widgets import (
+    ConversationDetail,
+    ConversationListItem,
+    ConversationQualityRead,
+    WidgetMessageItem,
+)
 from app.core.database import cross_org_session
 from app.core.permissions import UserPermissions, require_platform_admin
 from app.klai_feedback.models import FeedbackItem, FeedbackItemLink, FeedbackSubmission, FeedbackTriageSuggestion
@@ -944,6 +950,193 @@ async def platform_bots(
         )
         for r in rows
     ]
+
+
+async def _platform_widget_or_404(db: AsyncSession, widget_id: str) -> str:
+    """Resolve a public widget UUID with NO org filter — this endpoint group
+    is deliberately cross-tenant; the platform-admin gate is the only boundary.
+    Soft-deleted widgets stay readable (REQ-16, mirrors admin_widgets)."""
+    result = await db.execute(
+        text("SELECT id FROM widgets WHERE id = CAST(:widget_id AS uuid)"),
+        {"widget_id": widget_id},
+    )
+    row = result.first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Widget not found")
+    return str(row.id)
+
+
+@router.get("/bots/{widget_id}/conversations", response_model=list[ConversationListItem])
+async def platform_bot_conversations(
+    widget_id: str,
+    cursor: str | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=100),
+    perms: UserPermissions = Depends(require_platform_admin()),
+) -> list[ConversationListItem]:
+    """Cross-tenant conversation list for one widget.
+
+    Mirrors ``admin_widgets.list_widget_conversations`` minus the org
+    restriction — platform staff can inspect any tenant's webchat history.
+    """
+    await _audit(perms, "bot-conversations", widget_id)
+    params: dict[str, object] = {"widget_id": widget_id, "limit": limit}
+    if cursor:
+        try:
+            params["cursor"] = datetime.fromisoformat(cursor.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="invalid cursor") from exc
+
+    async with cross_org_session() as db:
+        wid = await _platform_widget_or_404(db, widget_id)
+        params["widget_id"] = wid
+        if cursor:
+            result = await db.execute(
+                text(
+                    "SELECT id, started_at, last_message_at, message_count, "
+                    "first_user_query, language_detected "
+                    "FROM widget_conversations "
+                    "WHERE widget_id = CAST(:widget_id AS uuid) "
+                    "AND started_at < :cursor "
+                    "ORDER BY started_at DESC LIMIT :limit"
+                ),
+                params,
+            )
+        else:
+            result = await db.execute(
+                text(
+                    "SELECT id, started_at, last_message_at, message_count, "
+                    "first_user_query, language_detected "
+                    "FROM widget_conversations "
+                    "WHERE widget_id = CAST(:widget_id AS uuid) "
+                    "ORDER BY started_at DESC LIMIT :limit"
+                ),
+                params,
+            )
+        rows = result.all()
+
+    return [
+        ConversationListItem(
+            id=row.id,
+            started_at=row.started_at,
+            last_message_at=row.last_message_at,
+            message_count=row.message_count,
+            first_user_query=row.first_user_query,
+            language_detected=row.language_detected,
+        )
+        for row in rows
+    ]
+
+
+@router.get("/bots/{widget_id}/conversations/{conv_id}", response_model=ConversationDetail)
+async def platform_bot_conversation(
+    widget_id: str,
+    conv_id: int,
+    perms: UserPermissions = Depends(require_platform_admin()),
+) -> ConversationDetail:
+    """Cross-tenant transcript of one conversation, messages chronological.
+
+    Mirrors ``admin_widgets.get_widget_conversation`` minus the org restriction.
+    """
+    await _audit(perms, "bot-conversations", widget_id)
+
+    async with cross_org_session() as db:
+        wid = await _platform_widget_or_404(db, widget_id)
+        conv_result = await db.execute(
+            text(
+                """
+                SELECT id, started_at, last_message_at, message_count,
+                       first_user_query, language_detected
+                  FROM widget_conversations
+                 WHERE id = :conv_id
+                   AND widget_id = CAST(:widget_id AS uuid)
+                """
+            ),
+            {"conv_id": conv_id, "widget_id": wid},
+        )
+        conv_row = conv_result.first()
+        if conv_row is None:
+            raise HTTPException(status_code=404, detail="conversation not found")
+
+        msg_result = await db.execute(
+            text(
+                """
+                SELECT id, role, content, sources, created_at, sequence, rating
+                  FROM widget_messages
+                 WHERE conversation_id = :conv_id
+                 ORDER BY sequence ASC
+                """
+            ),
+            {"conv_id": conv_id},
+        )
+        messages = [
+            WidgetMessageItem(
+                id=m.id,
+                role=m.role,  # type: ignore[arg-type]
+                content=m.content,
+                sources=m.sources,
+                created_at=m.created_at,
+                sequence=m.sequence,
+                rating=m.rating,
+            )
+            for m in msg_result.all()
+        ]
+
+    return ConversationDetail(
+        id=conv_row.id,
+        started_at=conv_row.started_at,
+        last_message_at=conv_row.last_message_at,
+        message_count=conv_row.message_count,
+        first_user_query=conv_row.first_user_query,
+        language_detected=conv_row.language_detected,
+        messages=messages,
+    )
+
+
+@router.get(
+    "/bots/{widget_id}/conversations/{conv_id}/quality",
+    response_model=ConversationQualityRead,
+)
+async def platform_bot_conversation_quality(
+    widget_id: str,
+    conv_id: int,
+    perms: UserPermissions = Depends(require_platform_admin()),
+) -> ConversationQualityRead:
+    """Cross-tenant judge verdict for one conversation (REQ-3,
+    SPEC-CHAT-QUALITY-LOOP-001).
+
+    Mirrors ``admin_widgets.get_widget_conversation_quality`` without the org
+    restriction — conversation_id is unique, so no org filter is needed under
+    the RLS-bypassing cross_org_session; the platform-admin gate is the only
+    boundary. No row → 404 ("not judged yet" renders as nothing).
+    """
+    await _audit(perms, "bot-conversations", widget_id)
+
+    async with cross_org_session() as db:
+        await _platform_widget_or_404(db, widget_id)
+        result = await db.execute(
+            text(
+                """
+                SELECT outcome, failure_category, reasoning, confidence,
+                       suggested_action, judged_at
+                  FROM conversation_quality_judgments
+                 WHERE conversation_id = :conv_id
+                """
+            ),
+            {"conv_id": conv_id},
+        )
+        row = result.first()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="conversation not judged yet")
+
+    return ConversationQualityRead(
+        outcome=row.outcome,
+        failure_category=row.failure_category,
+        reasoning=row.reasoning,
+        confidence=row.confidence,
+        suggested_action=row.suggested_action,
+        judged_at=row.judged_at,
+    )
 
 
 @router.get("/knowledge-bases", response_model=list[PlatformKB])

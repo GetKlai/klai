@@ -261,7 +261,7 @@ async def test_retention_run_once_skips_delete_when_no_candidates():
         result = await _retention_run_once()
 
     assert result == {"deleted_count": 0, "chunk_count": 0}
-    assert any("SELECT id FROM widget_messages" in sql for sql in captured_sql)
+    assert any("SELECT id, conversation_id FROM widget_messages" in sql for sql in captured_sql)
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +344,82 @@ async def test_retention_run_once_uses_settings_retention_days():
 
     # The SQL must have been called with a cutoff param
     assert captured_params, "No SQL params captured — DELETE not issued"
+
+
+# ---------------------------------------------------------------------------
+# REQ-4 (SPEC-CHAT-QUALITY-LOOP-001 §11) — anonymize judgment reasoning on purge
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_retention_anonymizes_judgment_reasoning_before_deleting_messages():
+    """Purging a conversation's messages NULLs its judgment's reasoning first.
+
+    The UPDATE runs BEFORE the DELETE, in the same session/transaction, and
+    only for the DISTINCT conversation_ids of the messages deleted in that
+    chunk — a conversation that is not purged keeps its judgment untouched.
+    outcome/confidence/judged_at are not in the SET list, so they survive.
+    """
+    from app.services.widget_messages_retention import _retention_run_once
+
+    session_id = 0
+    calls: list[tuple[int, str, dict]] = []
+    db = AsyncMock()
+
+    async def _execute(stmt, params=None, **kwargs):
+        sql = str(stmt)
+        calls.append((session_id, sql, dict(params or {})))
+        result = MagicMock()
+        if "FROM widget_messages" in sql and sql.lstrip().startswith("SELECT"):
+            # 3 expired messages across conversations 7, 7 and 9
+            result.all.return_value = [(101, 7), (102, 7), (103, 9)]
+        elif "UPDATE conversation_quality_judgments" in sql:
+            result.rowcount = 2
+        else:
+            result.rowcount = 3
+        return result
+
+    db.execute = _execute
+    db.commit = AsyncMock()
+
+    @asynccontextmanager
+    async def _fake_session():
+        nonlocal session_id
+        session_id += 1
+        yield db
+
+    import structlog.testing
+
+    with (
+        patch("app.services.widget_messages_retention.cross_org_session", _fake_session),
+        patch("app.services.widget_messages_retention.settings") as mock_settings,
+        structlog.testing.capture_logs() as captured,
+    ):
+        mock_settings.widget_messages_retention_days = 7
+        result = await _retention_run_once()
+
+    update_idx = next(
+        i for i, (_, sql, _) in enumerate(calls)
+        if "UPDATE conversation_quality_judgments" in sql
+    )
+    delete_idx = next(
+        i for i, (_, sql, _) in enumerate(calls) if "DELETE FROM widget_messages" in sql
+    )
+    assert update_idx < delete_idx, "reasoning must be nulled before the messages are deleted"
+
+    _, update_sql, update_params = calls[update_idx]
+    assert "SET reasoning = NULL" in update_sql
+    assert "anonymized_at = NOW()" in update_sql
+    assert "conversation_id = ANY(CAST(:conversation_ids AS bigint[]))" in update_sql
+    assert "reasoning IS NOT NULL" in update_sql
+    assert update_params["conversation_ids"] == [7, 9]
+
+    # Same cross_org_session as the DELETE (no second session/transaction).
+    assert calls[update_idx][0] == calls[delete_idx][0]
+
+    assert result["deleted_count"] == 3
+    audit = [e for e in captured if e.get("event") == "widget_messages.retention_deleted"]
+    assert audit[0]["anonymized_judgments"] == 2
 
 
 # ---------------------------------------------------------------------------

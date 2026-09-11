@@ -170,6 +170,31 @@ export interface PlatformBot {
   created_at: string
 }
 
+// Cross-tenant widget conversation reads (GET /platform/bots/{id}/conversations*).
+// Shapes mirror admin/widgets/-types.ts deliberately — no cross-directory import.
+export interface PlatformBotConversationItem {
+  id: number
+  started_at: string
+  last_message_at: string
+  message_count: number
+  first_user_query: string | null
+  language_detected: string | null
+}
+
+export interface PlatformBotConversationMessage {
+  id: number
+  role: 'user' | 'assistant'
+  content: string
+  sources: { label: string; title: string; url: string }[] | null
+  created_at: string
+  sequence: number
+  rating: 'thumbsUp' | 'thumbsDown' | null
+}
+
+export interface PlatformBotConversationDetail extends PlatformBotConversationItem {
+  messages: PlatformBotConversationMessage[]
+}
+
 export interface PlatformChatError {
   id: number
   org_id: number

@@ -539,11 +539,14 @@ export function UsersSection({
 
 export function BotsSection({
   bots,
+  orgId,
   fmtDate,
 }: {
   bots: PlatformBot[]
+  orgId: string
   fmtDate: (s: string | null) => string
 }) {
+  const navigate = useNavigate()
   return (
     <section>
       <h2 className="mb-3 text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-600">
@@ -558,6 +561,7 @@ export function BotsSection({
               <DataTableHead>{m.platform_col_bot()}</DataTableHead>
               <DataTableHead>{m.platform_col_knowledge_bases()}</DataTableHead>
               <DataTableHead>{m.platform_col_created()}</DataTableHead>
+              <DataTableHead className="w-24">&nbsp;</DataTableHead>
             </DataTableRow>
           </DataTableHeader>
           <DataTableBody>
@@ -579,6 +583,24 @@ export function BotsSection({
                 <DataTableCell className="tabular-nums">{b.kb_count}</DataTableCell>
                 <DataTableCell className="whitespace-nowrap tabular-nums text-gray-600">
                   {fmtDate(b.created_at)}
+                </DataTableCell>
+                <DataTableCell className="text-right">
+                  {/* Cross-tenant conversation browser (platform staff only) */}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      void navigate({
+                        to: '/admin/platform/orgs/$orgId',
+                        params: { orgId },
+                        search: { tab: 'conversations', widgetId: b.id },
+                      })
+                    }}
+                  >
+                    Gesprekken
+                  </Button>
                 </DataTableCell>
               </DataTableRow>
             ))}

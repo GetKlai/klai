@@ -3,7 +3,9 @@ Widget message retention worker.
 
 Background loop that runs every 24 hours and deletes widget_messages rows
 older than ``settings.widget_messages_retention_days`` days in chunks of
-10 000 rows.
+10 000 rows. Before each delete pass it anonymizes the
+``conversation_quality_judgments.reasoning`` of the purged conversations
+(REQ-4, SPEC-CHAT-QUALITY-LOOP-001 §11).
 
 Design mirrors ``telemetry_purge.py``:
 - cross-org: retention is platform-wide, not per-tenant.
@@ -38,11 +40,18 @@ _CHUNK_SIZE = 10_000
 async def _retention_run_once() -> dict[str, int]:
     """Delete expired widget_messages rows in chunks.
 
+    REQ-4 (SPEC-CHAT-QUALITY-LOOP-001 §11): before each DELETE pass, nulls
+    ``conversation_quality_judgments.reasoning`` (and stamps ``anonymized_at``)
+    for the conversations whose messages are being purged — a judge quote may
+    not outlive the conversation it came from, while the judgment row itself
+    survives (FK is SET NULL, not CASCADE).
+
     Returns a dict with ``deleted_count`` (total rows removed) and
     ``chunk_count`` (number of DELETE passes executed).
     """
     cutoff = datetime.now(UTC) - timedelta(days=settings.widget_messages_retention_days)
     deleted_total = 0
+    anonymized_total = 0
     chunk_count = 0
 
     while True:
@@ -50,7 +59,7 @@ async def _retention_run_once() -> dict[str, int]:
             candidate_result = await db.execute(
                 text(
                     """
-                    SELECT id FROM widget_messages
+                    SELECT id, conversation_id FROM widget_messages
                     WHERE created_at < :cutoff
                     ORDER BY id
                     LIMIT :chunk_size
@@ -58,9 +67,27 @@ async def _retention_run_once() -> dict[str, int]:
                 ),
                 {"cutoff": cutoff, "chunk_size": _CHUNK_SIZE},
             )
-            message_ids = list(candidate_result.scalars().all())
-            if not message_ids:
+            rows = list(candidate_result.all())
+            if not rows:
                 break
+            message_ids = [row[0] for row in rows]
+
+            # Anonymize first, in this same transaction: batched per chunk,
+            # keyed off the messages we are about to delete (no separate
+            # cutoff computation on widget_conversations).
+            conversation_ids = sorted({row[1] for row in rows})
+            anon_result = await db.execute(
+                text(
+                    """
+                    UPDATE conversation_quality_judgments
+                    SET reasoning = NULL, anonymized_at = NOW()
+                    WHERE conversation_id = ANY(CAST(:conversation_ids AS bigint[]))
+                      AND reasoning IS NOT NULL
+                    """
+                ),
+                {"conversation_ids": conversation_ids},
+            )
+            anonymized_total += anon_result.rowcount or 0  # type: ignore[attr-defined]
 
             result = await db.execute(
                 text(
@@ -83,6 +110,7 @@ async def _retention_run_once() -> dict[str, int]:
     logger.info(
         "widget_messages.retention_deleted",
         deleted_count=deleted_total,
+        anonymized_judgments=anonymized_total,
         chunk_count=chunk_count,
         cutoff=cutoff.isoformat(),
         retention_days=settings.widget_messages_retention_days,

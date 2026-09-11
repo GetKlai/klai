@@ -1,6 +1,9 @@
 import { useState } from 'react'
-import { Loader2, MessageSquare, X } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
+import { Loader2, MessageSquare, ThumbsDown, ThumbsUp, X } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { apiFetch } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
 import {
   useWidgetConversations,
@@ -340,6 +343,48 @@ function HourlySparkline({ data }: { data: number[] | undefined }) {
   )
 }
 
+/**
+ * REQ-3 (SPEC-CHAT-QUALITY-LOOP-001): the nightly judge's verdict, read from
+ * its own sidecar endpoint so the transcript types stay untouched. Local
+ * shape on purpose — duplicated in the platform drawer, no shared module.
+ */
+interface ConversationQuality {
+  outcome: string
+  failure_category: string | null
+  reasoning: string | null
+  confidence: string | null
+  suggested_action: string | null
+  judged_at: string | null
+}
+
+/** Outcome → existing Badge semantic variant; no ad-hoc colors. */
+const OUTCOME_BADGE_VARIANT: Record<string, 'success' | 'warning' | 'secondary'> = {
+  resolved: 'success',
+  partially_resolved: 'success',
+  escalated: 'warning',
+  unresolved: 'secondary',
+  abandoned_early: 'secondary',
+  out_of_scope: 'secondary',
+}
+
+/** Judge verdict panel for a conversation drawer. Renders only when a
+ * judgment exists — a 404 ("not judged yet") is normal and shows nothing. */
+function QualityPanel({ quality }: { quality: ConversationQuality }) {
+  return (
+    <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
+      <Badge variant={OUTCOME_BADGE_VARIANT[quality.outcome] ?? 'secondary'}>
+        {quality.outcome}
+      </Badge>
+      {quality.reasoning && (
+        <p className="mt-2 text-xs leading-5 text-gray-600">{quality.reasoning}</p>
+      )}
+      {quality.suggested_action && (
+        <p className="mt-1.5 text-xs leading-5 text-gray-700">{quality.suggested_action}</p>
+      )}
+    </div>
+  )
+}
+
 function ConversationDrawer({
   widgetId,
   convId,
@@ -350,6 +395,16 @@ function ConversationDrawer({
   onClose: () => void
 }) {
   const query = useWidgetConversation(widgetId, convId)
+  // 404 = not judged yet (normal state): retry off, error never surfaced.
+  const qualityQuery = useQuery({
+    queryKey: ['widget-conversation-quality', widgetId, convId],
+    queryFn: () =>
+      apiFetch<ConversationQuality>(
+        `/api/admin/widgets/${widgetId}/conversations/${convId}/quality`,
+      ),
+    enabled: !!convId,
+    retry: false,
+  })
   return (
     <div
       role="dialog"
@@ -389,6 +444,7 @@ function ConversationDrawer({
         </div>
 
         <div className="px-5 py-4 space-y-3">
+          {qualityQuery.data && <QualityPanel quality={qualityQuery.data} />}
           {query.isLoading && (
             <p className="text-sm text-gray-600">
               <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
@@ -438,6 +494,21 @@ function ConversationDrawer({
                     </li>
                   ))}
                 </ul>
+              )}
+              {msg.role === 'assistant' && msg.rating && (
+                msg.rating === 'thumbsUp' ? (
+                  <ThumbsUp
+                    role="img"
+                    aria-label="Door klant beoordeeld met duim omhoog"
+                    className="mt-2 h-3.5 w-3.5 text-[var(--color-success-text)]"
+                  />
+                ) : (
+                  <ThumbsDown
+                    role="img"
+                    aria-label="Door klant beoordeeld met duim omlaag"
+                    className="mt-2 h-3.5 w-3.5 text-[var(--color-destructive)]"
+                  />
+                )
               )}
             </div>
           ))}

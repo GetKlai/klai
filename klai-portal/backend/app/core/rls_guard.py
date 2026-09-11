@@ -49,6 +49,7 @@ logger = logging.getLogger(__name__)
 #     and tenant context is always bound by that point.
 RLS_DML_TABLES: frozenset[str] = frozenset(
     {
+        "conversation_quality_judgments",  # SPEC-CHAT-QUALITY-LOOP-001 Cat-D
         "partner_api_key_kb_access",
         "partner_api_keys",
         "portal_connectors",

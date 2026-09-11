@@ -2667,5 +2667,7 @@
   "klai_assistant_submitting": "Sending...",
   "klai_assistant_error": "Sending failed. Please try again.",
   "klai_assistant_add_another": "Send another",
-  "klai_assistant_disclaimer": "AI answers can contain mistakes. Always verify important information at the source."
+  "klai_assistant_disclaimer": "AI answers can contain mistakes. Always verify important information at the source.",
+  "admin_extension_librechat_quality_judge_label": "Conversation quality (LibreChat)",
+  "admin_extension_librechat_quality_judge_description": "Let the nightly quality judge also evaluate this tenant's LibreChat conversations (separate from webchat)."
 }

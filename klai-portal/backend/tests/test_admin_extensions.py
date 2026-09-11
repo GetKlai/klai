@@ -37,7 +37,14 @@ class TestListExtensions:
 
         result = await list_extensions(perms=perms, db=db)
         keys = {item.key for item in result.extensions}
-        assert keys == {"partner_api", "widgets", "custom_mcps", "scribe", "docs"}
+        assert keys == {
+            "partner_api",
+            "widgets",
+            "custom_mcps",
+            "scribe",
+            "docs",
+            "librechat_quality_judge",
+        }
         enabled = {item.key for item in result.extensions if item.enabled}
         assert enabled == {"scribe", "docs"}
 
