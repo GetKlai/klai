@@ -415,8 +415,25 @@ class ConnectorOut(BaseModel):
     needs_reconfiguration: bool = False
 
 
+class SavedCookieIdentity(BaseModel):
+    """What identifies a stored cookie, without revealing it.
+
+    A cookie is identified by name AND domain AND path -- two cookies may
+    share a name across paths. The wizard sends these back on a row it left
+    blank, so "keep the stored value" resolves to exactly one cookie instead
+    of whichever happened to be first with that name.
+
+    No value, ever: this is metadata for a form, not a way to read the vault.
+    """
+
+    name: str
+    domain: str = ""
+    path: str = "/"
+
+
 class ConnectorCredentialMetadataOut(BaseModel):
     cookie_names: list[str] = Field(default_factory=list)
+    cookies: list[SavedCookieIdentity] = Field(default_factory=list)
 
 
 # -- Helpers ------------------------------------------------------------------
@@ -589,6 +606,19 @@ async def _merge_saved_sensitive_credentials(
     needs_kept_cookies = connector.connector_type == "web_crawler" and any(
         isinstance(cookie, dict) and not cookie.get("value") for cookie in (config.get("cookies") or [])
     )
+    if needs_kept_cookies and _origin((connector.config or {}).get("base_url")) != _origin(config.get("base_url")):
+        # The same edit moved the site to another origin. A blank row asks to
+        # keep a cookie captured for the OLD host, and honouring it would walk
+        # straight past the rule that cookies must not survive that move: the
+        # prefilled row carries the old domain, so `cookies` looks freshly
+        # supplied and `_stale_credentials_cross_origin` never fires.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "The base URL now points at a different site, so the saved cookies "
+                "cannot be kept. Paste a value for every cookie."
+            ),
+        )
     if (not missing_fields and not needs_kept_cookies) or connector.encrypted_credentials is None:
         if needs_kept_cookies:
             # Nothing stored to keep a value from, so the blank rows cannot be
@@ -638,6 +668,34 @@ def _assert_no_valueless_cookies(config: dict) -> None:
             )
 
 
+def _match_saved_cookie(row: dict, saved: list[dict]) -> dict | None:
+    """Find the stored cookie a blank row is asking to keep.
+
+    On (name, domain, path), because that is what identifies a cookie: two may
+    share a name across paths, and matching on name alone hands back whichever
+    came first -- so a partial replacement would still lose one of them.
+
+    Falls back to the name alone when the row carries neither domain nor path,
+    which is what a wizard older than this change sends. That fallback fires
+    only when the name is unambiguous; when it is not, the caller gets the 422
+    and is asked to paste the value rather than being handed a guess.
+    """
+    name = row.get("name")
+    if not name:
+        return None
+    by_name = [c for c in saved if c.get("name") == name]
+    if not by_name:
+        return None
+
+    domain, path = row.get("domain"), row.get("path")
+    if domain or path:
+        exact = [
+            c for c in by_name if (not domain or c.get("domain") == domain) and (not path or c.get("path") == path)
+        ]
+        return exact[0] if len(exact) == 1 else None
+    return by_name[0] if len(by_name) == 1 else None
+
+
 def _resolve_kept_cookies(config: dict, saved_credentials: dict) -> list[dict]:
     """Fill in the cookies the caller left blank from what is already stored.
 
@@ -652,11 +710,7 @@ def _resolve_kept_cookies(config: dict, saved_credentials: dict) -> list[dict]:
     HTTP 200.
     """
     incoming = config.get("cookies") or []
-    saved_by_name = {
-        cookie["name"]: cookie
-        for cookie in (saved_credentials.get("cookies") or [])
-        if isinstance(cookie, dict) and cookie.get("name")
-    }
+    saved = [c for c in (saved_credentials.get("cookies") or []) if isinstance(c, dict)]
 
     resolved: list[dict] = []
     for cookie in incoming:
@@ -665,14 +719,19 @@ def _resolve_kept_cookies(config: dict, saved_credentials: dict) -> list[dict]:
         if cookie.get("value"):
             resolved.append(cookie)
             continue
-        name = cookie.get("name")
-        kept = saved_by_name.get(name)
+        kept = _match_saved_cookie(cookie, saved)
         if kept is None or not kept.get("value"):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=(f"No saved value to keep for cookie {name!r}. Paste its value, or remove the row."),
+                detail=(
+                    f"No saved value to keep for cookie {cookie.get('name')!r}. Paste its value, or remove the row."
+                ),
             )
-        resolved.append({**kept, **{k: v for k, v in cookie.items() if v}})
+        # The stored cookie is kept whole. The row supplies identity only:
+        # letting it overwrite domain or path would quietly re-point a cookie
+        # at another host, since the wizard derives those from the base URL
+        # and the same edit may have changed it.
+        resolved.append(dict(kept))
     return resolved
 
 
@@ -703,24 +762,35 @@ def _connector_out(c: PortalConnector) -> ConnectorOut:
     )
 
 
-def _cookie_names_from_credentials(credentials: dict) -> list[str]:
+def _cookie_identities_from_credentials(credentials: dict) -> list[SavedCookieIdentity]:
+    """Identify each stored cookie for the wizard, without its value.
+
+    Deduplicated on (name, domain, path) rather than name alone: two cookies
+    may share a name across paths, and collapsing them here would make one of
+    them unreachable from the form -- and then silently dropped on the next
+    partial replacement.
+    """
     cookies = credentials.get("cookies")
     if not isinstance(cookies, list):
         return []
-    names: list[str] = []
-    seen: set[str] = set()
+    identities: list[SavedCookieIdentity] = []
+    seen: set[tuple[str, str, str]] = set()
     for cookie in cookies:
         if not isinstance(cookie, dict):
             continue
         name = cookie.get("name")
-        if not isinstance(name, str):
+        if not isinstance(name, str) or not name.strip():
             continue
-        cleaned = name.strip()
-        if not cleaned or cleaned in seen:
+        identity = (
+            name.strip(),
+            str(cookie.get("domain") or ""),
+            str(cookie.get("path") or "/"),
+        )
+        if identity in seen:
             continue
-        seen.add(cleaned)
-        names.append(cleaned)
-    return names
+        seen.add(identity)
+        identities.append(SavedCookieIdentity(name=identity[0], domain=identity[1], path=identity[2]))
+    return identities
 
 
 def _normalize_schedule(schedule: str | None) -> str | None:
@@ -908,7 +978,14 @@ async def get_connector_credential_metadata(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"error_code": "saved_credentials_unavailable"},
         ) from exc
-    return ConnectorCredentialMetadataOut(cookie_names=_cookie_names_from_credentials(credentials))
+    identities = _cookie_identities_from_credentials(credentials)
+    # cookie_names keeps its old contract -- unique names -- because a client
+    # that has not been reloaded still reads it and turns each entry into a
+    # row. Flattening the identities would hand such a client two identical
+    # rows for two cookies it cannot tell apart.
+    seen: set[str] = set()
+    unique_names = [c.name for c in identities if not (c.name in seen or seen.add(c.name))]
+    return ConnectorCredentialMetadataOut(cookie_names=unique_names, cookies=identities)
 
 
 @router.patch("/{connector_id}", response_model=ConnectorOut)

@@ -142,14 +142,45 @@ describe('buildCrawlerCookies', () => {
     expect(buildCrawlerCookies(rows, base)).toHaveLength(1)
   })
 
-  it('sends nothing when every row is blank', () => {
-    // Not "replace them all with nothing" but "do not touch the cookies",
-    // which is what opening the wizard and saving without editing must do.
+  it('keeps a prefilled row on its own domain and path', () => {
+    // The base URL may have been edited in the same visit. Overwriting the
+    // stored cookie's domain would re-point it at whatever host that now is.
+    const rows = [
+      { name: 'sess', value: '', domain: 'old.example.com', path: '/admin' },
+      { name: 'fresh', value: 'v' },
+    ]
+
+    expect(buildCrawlerCookies(rows, base)).toEqual([
+      { name: 'sess', domain: 'old.example.com', path: '/admin' },
+      { name: 'fresh', value: 'v', domain: 'wiki.example.com', path: '/' },
+    ])
+  })
+
+  it('still sends the named rows when nothing was retyped', () => {
+    // They all resolve to their stored values, so saving changes nothing --
+    // but the rows must travel, because that is what makes REMOVING one
+    // work. Omitting the field entirely restores whatever is in the vault.
     const rows = [
       { name: 'sess', value: '' },
       { name: 'xsrf', value: '' },
     ]
 
-    expect(buildCrawlerCookies(rows, base)).toBeUndefined()
+    expect(buildCrawlerCookies(rows, base)).toHaveLength(2)
+  })
+
+  it('drops a cookie when its row is removed, even with nothing retyped', () => {
+    // Two saved, one row deleted, the other left blank. `xsrf` is absent from
+    // the payload, which is how the backend learns to drop it. Sending
+    // nothing here would have restored both, contradicting the wizard's own
+    // "remove a row to drop that cookie".
+    const rows = [{ name: 'sess', value: '' }]
+
+    expect(buildCrawlerCookies(rows, base)).toEqual([
+      { name: 'sess', domain: 'wiki.example.com', path: '/' },
+    ])
+  })
+
+  it('sends nothing only when no row has a name left', () => {
+    expect(buildCrawlerCookies([{ name: '  ', value: '' }], base)).toBeUndefined()
   })
 })

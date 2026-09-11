@@ -158,4 +158,10 @@ export interface TopTagsResponse {
 export interface CookieRow {
   name: string
   value: string
+  // Carried on a row prefilled from saved credentials, so a row left blank
+  // resolves to exactly one stored cookie. Two cookies can share a name
+  // across paths, and the name alone picks whichever came first. Absent on a
+  // row the operator typed: there is nothing stored to point at yet.
+  domain?: string
+  path?: string
 }

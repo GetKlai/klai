@@ -67,6 +67,10 @@ export function CrawlerAuthSetupStep({
   onBack,
 }: CrawlerAuthSetupStepProps) {
   const hasSavedCredentials = mode.kind === 'saved' || mode.savedCredentials !== undefined
+  const allRowsRemoved =
+    mode.kind === 'cookies' &&
+    mode.savedCredentials !== undefined &&
+    mode.rows.every((row) => !row.name.trim())
   const effectiveTestUrl = testUrl || baseUrl
   const testUrlCrossOrigin = Boolean(effectiveTestUrl) && Boolean(baseUrl) && !isSameOrigin(effectiveTestUrl, baseUrl)
 
@@ -139,9 +143,21 @@ export function CrawlerAuthSetupStep({
         ) : (
           <>
             <CookieRowsInput idPrefix={mode.idPrefix} value={mode.rows} onChange={mode.onChange} />
-            {mode.savedCredentials?.hasPrefilledNames && (
+            {mode.savedCredentials?.hasPrefilledNames && !allRowsRemoved && (
               <p className="text-xs text-gray-600">
-                Cookie names are prefilled from saved authentication. Paste fresh values only.
+                Cookie names are prefilled from saved authentication. Leave a value blank
+                to keep the one already saved; remove a row to drop that cookie.
+              </p>
+            )}
+            {allRowsRemoved && (
+              // Saying so, rather than saving and quietly changing nothing.
+              // CookieRowsInput always leaves one blank row behind, so an
+              // empty form cannot mean "delete them all" -- and reading it
+              // that way would wipe an org's session on a stray second click.
+              <p className="text-xs text-[var(--color-destructive)]">
+                Every row is empty, so saving now leaves the saved cookies exactly as they
+                are. To remove authentication entirely, go back and choose
+                &ldquo;Use without login&rdquo;.
               </p>
             )}
             <Button

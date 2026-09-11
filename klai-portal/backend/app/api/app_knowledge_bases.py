@@ -16,6 +16,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.connectors import _resolve_kept_cookies
 from app.api.dependencies import _load_org_or_500, get_kb_with_access, require_capability
 from app.core.config import settings
 from app.core.database import get_db
@@ -2328,24 +2329,12 @@ async def _resolve_web_crawler_probe_cookies(
         # set than the one being stored is worth less than no probe, and
         # crawl4ai rejects a cookie with no value outright.
         saved = await _load_saved_web_crawler_cookies(kb, connector_id, org_id, db, probe_url)
-        by_name = {c["name"]: c for c in (saved or []) if isinstance(c, dict) and c.get("name")}
-        resolved: list[dict] = []
-        for cookie in cookies:
-            if not isinstance(cookie, dict):
-                continue
-            if cookie.get("value"):
-                resolved.append(cookie)
-                continue
-            kept = by_name.get(cookie.get("name"))
-            if kept is None or not kept.get("value"):
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=(
-                        f"No saved value to keep for cookie {cookie.get('name')!r}. Paste its value, or remove the row."
-                    ),
-                )
-            resolved.append({**kept, **{k: v for k, v in cookie.items() if v}})
-        return resolved
+        # One resolver for both paths, so the probe can never test a set the
+        # save would reject -- or keep a different cookie than the save keeps.
+        return _resolve_kept_cookies(
+            {"cookies": cookies},
+            {"cookies": [c for c in (saved or []) if isinstance(c, dict)]},
+        )
     return cookies
 
 
