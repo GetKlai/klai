@@ -471,6 +471,7 @@ async def test_loop_continues_after_org_failure():
     with (
         patch("app.services.conversation_judge._judge_run_once", side_effect=_raise_then_cancel),
         patch("app.services.conversation_judge.JUDGE_INTERVAL_SECONDS", 0),
+        patch("app.services.conversation_judge._within_judge_window", return_value=True),
         patch("asyncio.sleep", new=AsyncMock()),
     ):
         with pytest.raises(asyncio.CancelledError):
@@ -538,3 +539,67 @@ async def test_litellm_call_uses_triage_pattern():
     assert body["temperature"] == 0.1
     assert body["messages"][0] == {"role": "system", "content": cj.JUDGE_SYSTEM_PROMPT}
     assert body["messages"][1] == {"role": "user", "content": '{"transcript": []}'}
+
+
+# ---------------------------------------------------------------------------
+# Off-peak window gate (Mark, 11 sep 2026): the judge must not compete with
+# live chat traffic for LiteLLM/Mistral capacity during business hours.
+# ---------------------------------------------------------------------------
+
+
+def test_within_judge_window_default_01_to_06_utc():
+    from datetime import UTC, datetime
+
+    from app.services.conversation_judge import _within_judge_window
+
+    assert _within_judge_window(datetime(2026, 9, 11, 0, 59, tzinfo=UTC)) is False
+    assert _within_judge_window(datetime(2026, 9, 11, 1, 0, tzinfo=UTC)) is True
+    assert _within_judge_window(datetime(2026, 9, 11, 5, 59, tzinfo=UTC)) is True
+    assert _within_judge_window(datetime(2026, 9, 11, 6, 0, tzinfo=UTC)) is False
+    assert _within_judge_window(datetime(2026, 9, 11, 14, 0, tzinfo=UTC)) is False, (
+        "must stay off during a peak-hour afternoon"
+    )
+
+
+def test_within_judge_window_handles_midnight_wraparound():
+    from datetime import UTC, datetime
+
+    from app.services.conversation_judge import _within_judge_window
+
+    with (
+        patch("app.services.conversation_judge.settings.conversation_judge_window_start_hour", 22),
+        patch("app.services.conversation_judge.settings.conversation_judge_window_end_hour", 6),
+    ):
+        assert _within_judge_window(datetime(2026, 9, 11, 23, 0, tzinfo=UTC)) is True
+        assert _within_judge_window(datetime(2026, 9, 11, 3, 0, tzinfo=UTC)) is True
+        assert _within_judge_window(datetime(2026, 9, 11, 12, 0, tzinfo=UTC)) is False
+
+
+@pytest.mark.asyncio
+async def test_loop_skips_both_passes_outside_the_window():
+    """During business hours the loop must not touch the DB or the LLM at
+    all — not just skip the writes, skip the calls entirely."""
+    from app.services.conversation_judge import conversation_judge_loop
+
+    webchat = AsyncMock()
+    librechat = AsyncMock()
+    call_count = 0
+
+    async def _sleep_then_cancel(_seconds):
+        nonlocal call_count
+        call_count += 1
+        if call_count >= 2:
+            raise asyncio.CancelledError
+
+    with (
+        patch("app.services.conversation_judge._judge_run_once", webchat),
+        patch("app.services.librechat_quality_judge.librechat_judge_run_once", librechat),
+        patch("app.services.conversation_judge._within_judge_window", return_value=False),
+        patch("app.services.conversation_judge.JUDGE_INTERVAL_SECONDS", 0),
+        patch("asyncio.sleep", side_effect=_sleep_then_cancel),
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await conversation_judge_loop()
+
+    webchat.assert_not_awaited()
+    librechat.assert_not_awaited()

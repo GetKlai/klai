@@ -41,6 +41,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 import httpx
 import structlog
@@ -402,32 +403,56 @@ async def _judge_run_once() -> dict[str, int]:
     return {"org_count": len(org_ids), "judged_count": judged_total}
 
 
+def _within_judge_window(now: datetime) -> bool:
+    """Whether ``now`` (UTC) falls inside the configured off-peak window.
+
+    Both passes make one LLM call per conversation on the same LiteLLM/
+    Mistral capacity that serves live chat traffic, so a large backlog must
+    never compete with peak-hour user traffic. Handles a window that wraps
+    past midnight (e.g. 22-6) as well as the non-wrapping default (1-6).
+    """
+    start = settings.conversation_judge_window_start_hour
+    end = settings.conversation_judge_window_end_hour
+    hour = now.hour
+    if start <= end:
+        return start <= hour < end
+    return hour >= start or hour < end
+
+
 async def conversation_judge_loop() -> None:
     """FastAPI-lifespan-attached conversation quality judge loop.
 
     Sleeps 60 s on startup so the app can finish wiring before the first
-    DB hit. Then runs ``_judge_run_once`` (webchat) followed by
-    ``librechat_judge_run_once`` (REQ-5) every JUDGE_INTERVAL_SECONDS until
-    cancelled. Exceptions are logged and do not abort the loop; each
-    channel's pass has its own try/except so neither one's failure stops
-    the other.
+    DB hit. Every JUDGE_INTERVAL_SECONDS it checks the current UTC hour
+    against the configured off-peak window
+    (``conversation_judge_window_start_hour``/``_end_hour``, default
+    01:00-06:00 UTC): outside that window it skips both passes entirely —
+    no DB read, no LLM call — and only checks again next tick. Inside the
+    window it runs ``_judge_run_once`` (webchat) followed by
+    ``librechat_judge_run_once`` (REQ-5); a large backlog is worked off
+    incrementally across the night rather than in one burst, since each
+    pass is capped at ``_BATCH_SIZE`` per org and the next tick picks up
+    where the last one stopped. Exceptions are logged and do not abort the
+    loop; each channel's pass has its own try/except so neither one's
+    failure stops the other.
     """
     await asyncio.sleep(60)
     while True:
-        try:
-            await _judge_run_once()
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("conversation_judge_loop_unexpected_error")
-        try:
-            # Lazy import: librechat_quality_judge reuses helpers from this
-            # module, so a module-level import here would be circular.
-            from app.services.librechat_quality_judge import librechat_judge_run_once
+        if _within_judge_window(datetime.now(UTC)):
+            try:
+                await _judge_run_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("conversation_judge_loop_unexpected_error")
+            try:
+                # Lazy import: librechat_quality_judge reuses helpers from this
+                # module, so a module-level import here would be circular.
+                from app.services.librechat_quality_judge import librechat_judge_run_once
 
-            await librechat_judge_run_once()
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("librechat_judge_loop_unexpected_error")
+                await librechat_judge_run_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("librechat_judge_loop_unexpected_error")
         await asyncio.sleep(JUDGE_INTERVAL_SECONDS)

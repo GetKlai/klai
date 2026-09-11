@@ -285,6 +285,14 @@ class Settings(BaseSettings):
     # reason RAGAS faithfulness moved off klai-fast (Mistral Small truncates
     # multi-field structured JSON). Tier-named, no role-specific alias.
     conversation_judge_model: str = "klai-medium"
+    # SPEC-CHAT-QUALITY-LOOP-001: the judge makes one LLM call per unjudged
+    # conversation on the same LiteLLM/Mistral capacity that serves live
+    # chat traffic. Confine it to an off-peak UTC window so a large backlog
+    # never competes with peak-hour user traffic for rate-limit headroom.
+    # Default 01:00-06:00 UTC. Non-wrapping (start < end); PORTAL_API_
+    # CONVERSATION_JUDGE_WINDOW_START_HOUR/_END_HOUR override per env.
+    conversation_judge_window_start_hour: int = 1
+    conversation_judge_window_end_hour: int = 6
 
     # SPEC-INFRA-TENANT-DELETE-001: Garage S3 for Scribe artifact deletion.
     # Generate credentials via: garage key new --name portal-api

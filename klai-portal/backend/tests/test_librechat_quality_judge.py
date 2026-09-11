@@ -538,6 +538,7 @@ async def test_loop_runs_both_channel_passes_independently():
     with (
         patch.object(cj, "_judge_run_once", webchat),
         patch.object(lj, "librechat_judge_run_once", librechat),
+        patch.object(cj, "_within_judge_window", return_value=True),
         patch("asyncio.sleep", new=AsyncMock()),
     ):
         with pytest.raises(asyncio.CancelledError):
