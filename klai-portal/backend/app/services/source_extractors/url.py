@@ -108,6 +108,10 @@ def _crawl_config() -> dict[str, Any]:
             # Keep below _CRAWL4AI_TIMEOUT so crawl4ai answers before the httpx
             # client gives up (otherwise portal-api 502s with "unreachable").
             "page_timeout": 20_000,
+            # Cap the body-visibility wait crawl4ai performs and then ignores;
+            # unset it pays up to 30s per page, which is longer than the
+            # page_timeout above. Mirrors knowledge_ingest.crawl4ai_config.
+            "body_visibility_timeout": 2_000,
             "markdown_generator": {
                 "type": "DefaultMarkdownGenerator",
                 "params": {

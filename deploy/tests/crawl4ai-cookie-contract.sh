@@ -7,7 +7,7 @@
 # missing: the previous test asserted the SHAPE of the dict we build, which
 # stayed green for four weeks while crawl4ai silently dropped it.
 #
-# Two contracts, because fixing the first exposed the second:
+# Three contracts, because fixing the first exposed the others:
 #
 #   DELIVERY  -- the request field is `hooks`; we sent `hooks_config`, which
 #     is not on crawl4ai's request model, and pydantic discards an unknown
@@ -15,11 +15,20 @@
 #     server-side; the wrong field name hid that, because with the right name
 #     a disabled server answers 403 instead of a cheerful 200.
 #
-#   ISOLATION -- hooks are attached by mutating the crawler that serves the
-#     request, and crawl4ai hands out a shared one. Nothing detaches them, so
-#     cookies from one request are re-injected into later requests on the same
-#     crawler. deploy/crawl4ai/apply_hook_isolation_patch.py gives a hooked
-#     request its own browser; this test is what keeps that true.
+#   ISOLATION -- crawl4ai hands out a shared crawler, so requests share a
+#     browser and its cookie jar. Cookies one request injects are still there
+#     for the next one. Scoping the hook per request is NOT enough: measured
+#     on 0.9.3, a second request whose hook set was empty still came back
+#     carrying the first request's cookie, because the cookie lives in the
+#     browser context, not in the hook.
+#     deploy/crawl4ai/apply_hook_isolation_patch.py gives a hooked request its
+#     own browser, which dies with it; this test is what keeps that true.
+#
+#   BODY-VISIBILITY -- we send `body_visibility_timeout` to cap a 30s wait
+#     crawl4ai performs and then ignores. crawl4ai drops an unknown config
+#     field WITHOUT a word (measured on 0.9.3), so a rename upstream would
+#     restore the 30s-per-page tax with no signal at all. Same trap as the
+#     field name above; pinned here rather than trusted.
 #
 # Accepting the request is not applying the cookies, and applying them to the
 # right request is not the same as applying them to only that one.
@@ -53,7 +62,6 @@ docker network create ${P}-net >/dev/null
 docker run -d --name ${P}-srv --network ${P}-net --shm-size=1g \
     -e CRAWL4AI_API_TOKEN="$TOKEN" \
     -e CRAWL4AI_HOOKS_ENABLED="$HOOKS_ENABLED" \
-    -e CRAWL4AI_BODY_VISIBILITY_TIMEOUT=2000 \
     "$IMAGE" >/dev/null
 
 printf 'waiting for crawl4ai'
@@ -64,6 +72,32 @@ while [ $i -lt 60 ]; do
 done
 echo
 
+# BODY-VISIBILITY. Against the installed source, not the docs: ask the real
+# config class what it made of the field we send.
+docker exec -i ${P}-srv python - <<'PY'
+import sys
+from crawl4ai.async_configs import CrawlerRunConfig, Provenance
+
+def load(params):
+    return CrawlerRunConfig.load({"type": "CrawlerRunConfig", "params": params},
+                                 provenance=Provenance.UNTRUSTED)
+
+sent = load({"body_visibility_timeout": 2000}).body_visibility_timeout
+default = load({}).body_visibility_timeout
+if sent != 2000:
+    print(f"CONTRACT BROKEN - we send body_visibility_timeout=2000 and crawl4ai "
+          f"made {sent!r} of it. An unknown field is dropped silently here, so the "
+          "likely cause is a rename or removal upstream. Every crawled page is back "
+          "to paying the full body-visibility wait, and nothing else would have told "
+          "you. Set the new name in knowledge_ingest/crawl4ai_config.py.",
+          file=sys.stderr)
+    raise SystemExit(1)
+if default <= 2000:
+    print(f"NOTE: upstream default is now {default}ms, at or below our 2000ms cap. "
+          "Our override has stopped buying anything; consider dropping it.",
+          file=sys.stderr)
+print(f"OK: body_visibility_timeout is read (2000, default {default}).")
+PY
 docker exec -i -e TOKEN="$TOKEN" ${P}-srv python - <<'PY'
 import json, os, sys
 import httpx
@@ -75,7 +109,8 @@ HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 BASE = {
     "urls": [URL],
     "crawler_config": {"type": "CrawlerRunConfig",
-                       "params": {"cache_mode": "bypass", "page_timeout": 30000}},
+                       "params": {"cache_mode": "bypass", "page_timeout": 30000,
+                                  "body_visibility_timeout": 2000}},
 }
 COOKIES = [{"name": "klai_contract", "value": MARKER,
             "domain": "httpbin.org", "path": "/"}]
@@ -136,10 +171,10 @@ if MARKER not in fetch(True, "with cookies"):
 for attempt in (1, 2):
     if MARKER in fetch(False, f"after-cookies #{attempt}"):
         print("CONTRACT BROKEN — a request that sent NO cookies came back "
-              "carrying the previous request's cookie. crawl4ai attaches hooks "
-              "to the crawler serving the request and hands out shared "
-              "crawlers, so one tenant's session rides along on another "
-              "tenant's crawl of the same site. Check that "
+              "carrying the previous request's cookie, so one tenant's session "
+              "rides along on another tenant's crawl of the same site. The "
+              "cookie lives in the shared browser's context, not in the hook, "
+              "so scoping the hook would not fix this. Check that "
               "deploy/crawl4ai/apply_hook_isolation_patch.py still applies to "
               "this image -- most likely the base image moved and the pin in "
               "deploy/docker-compose.yml points at an unpatched build.",

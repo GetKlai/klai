@@ -69,6 +69,13 @@ def build_crawl_config(
         "remove_consent_popups": True,
         "remove_overlay_elements": True,
         "page_timeout": 30000,
+        # crawl4ai waits for <body> to become visible and then ignores the
+        # answer (ignore_body_visibility defaults to True). On ng-cloak /
+        # v-cloak sites whose app never bootstraps that was a flat 30s per
+        # page; 2000 measured byte-identical output ~5x faster, and a page
+        # with a visible body leaves this wait immediately either way.
+        # Supported since 0.9.3 (our issue #2129); the server clamps it.
+        "body_visibility_timeout": 2000,
         "markdown_generator": markdown_generator,
     }
 
