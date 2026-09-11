@@ -1,9 +1,8 @@
 """Unit tests for the OIDC drift-check script.
 
 The script in `scripts/check_zitadel_oidc_drift.py` runs against live
-Zitadel from the workflow; these tests cover the pure-logic helpers
-(_classify, _extract_first_labels) so we catch regressions in the
-classifier without needing Zitadel access.
+Zitadel from the workflow; these tests cover classification, failure
+handling and the public workflow diagnostics without needing Zitadel access.
 
 Run from repo root:
     python -m pytest scripts/test_check_zitadel_oidc_drift.py -v
@@ -11,14 +10,23 @@ Run from repo root:
 
 from __future__ import annotations
 
+import io
+import json
+import os
+import subprocess
 import sys
+import textwrap
 from pathlib import Path
+
+import pytest
 
 # The script lives in scripts/ alongside this test; add to sys.path so
 # the regular import works without a packaging change.
 _SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
+
+import check_zitadel_oidc_drift as drift  # noqa: E402
 
 from check_zitadel_oidc_drift import (  # noqa: E402
     DEFAULT_EXPECTED_STATIC,
@@ -204,3 +212,99 @@ class TestEndToEndScenarios:
             if _classify(label, DEFAULT_EXPECTED_STATIC) == "unknown"
         ]
         assert unclassified == ["staging-api"]
+
+
+@pytest.mark.parametrize("pat", [None, "", "   "])
+def test_unavailable_actions_secret_fails_before_http(pat, monkeypatch, tmp_path):
+    if pat is None:
+        monkeypatch.delenv("ZITADEL_ADMIN_PAT", raising=False)
+    else:
+        monkeypatch.setenv("ZITADEL_ADMIN_PAT", pat)
+    output = tmp_path / "output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    def unexpected_http(*args, **kwargs):
+        pytest.fail("Missing secret must fail before any HTTP request")
+    monkeypatch.setattr(drift.urllib.request, "urlopen", unexpected_http)
+    with pytest.raises(SystemExit) as error:
+        drift.main()
+    assert error.value.code == 1
+    assert output.read_text() == "failure_reason=missing_configuration\n"
+
+
+def _public_failure(reason):
+    workflow = (_SCRIPTS_DIR.parent / ".github/workflows/zitadel-oidc-drift.yml").read_text()
+    step = workflow.split("      - name: Fail — the check could not run\n")[1]
+    shell = step.split("        run: |\n")[1].split("\n      - name:")[0]
+    return subprocess.run(
+        ["bash", "-e", "-c", textwrap.dedent(shell)], capture_output=True, text=True,
+        env={**os.environ, "FAILURE_REASON": reason},
+    )
+
+
+@pytest.mark.parametrize("failure, public_message", [
+    (401, "rejected authentication or permission"),
+    (403, "rejected authentication or permission"),
+    (500, "returned an HTTP error"),
+    ("connection", "could not be reached"),
+    ("timeout", "could not be reached"),
+    (b"private-canary-not-json", "unreadable or malformed response"),
+    (b"[]", "unreadable or malformed response"),
+])
+def test_api_failure_exposes_only_safe_reason(failure, public_message, monkeypatch, tmp_path):
+    output = tmp_path / "output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    def response(*args, **kwargs):
+        if isinstance(failure, int):
+            raise drift.HTTPError("https://private-canary.invalid", failure,
+                                  "private-canary\n::error::injected", {}, None)
+        if failure == "connection":
+            raise drift.URLError("private-canary")
+        if failure == "timeout":
+            raise TimeoutError("private-canary")
+        return io.BytesIO(failure)
+    monkeypatch.setattr(drift.urllib.request, "urlopen", response)
+    with pytest.raises(SystemExit) as error:
+        drift._fetch_oidc_apps("https://example.invalid", "synthetic", "org", "project")
+    assert error.value.code == 1
+    reason = output.read_text().removeprefix("failure_reason=").strip()
+    public = _public_failure(reason)
+    assert public.returncode == 1
+    assert public_message in public.stdout
+    assert "private-canary" not in public.stdout + public.stderr + output.read_text()
+
+
+@pytest.mark.parametrize("reason, expected", [
+    ("missing_configuration", "ZITADEL_ADMIN_PAT is missing or empty"),
+    ("", "Unexpected checker failure"),
+    ("private-canary\n$(echo injected)", "Unexpected checker failure"),
+])
+def test_workflow_never_echoes_unknown_diagnostics(reason, expected):
+    public = _public_failure(reason)
+    assert public.returncode == 1
+    assert expected in public.stdout
+    assert "private-canary" not in public.stdout + public.stderr
+    assert "injected" not in public.stdout + public.stderr
+
+
+@pytest.mark.parametrize("missing, expected_exit", [(False, 0), (True, 2)])
+def test_main_preserves_verified_and_drift_outcomes(missing, expected_exit, monkeypatch, capsys):
+    monkeypatch.setenv("ZITADEL_ADMIN_PAT", "synthetic")
+    monkeypatch.setenv("EXPECTED_STATIC_SUBDOMAINS", "service")
+    monkeypatch.setenv("KLAI_DOMAIN", "example.invalid")
+    apps = [] if missing else [{"oidcConfig": {"redirectUris": ["https://service.example.invalid/cb"]}}]
+    monkeypatch.setattr(drift, "_fetch_oidc_apps", lambda *args: apps)
+    assert drift.main() == expected_exit
+    assert json.loads(capsys.readouterr().out)["ok"] is (not missing)
+
+
+def test_workflow_uses_server_credentials_and_managed_context(monkeypatch):
+    workflow = (_SCRIPTS_DIR.parent / ".github/workflows/zitadel-oidc-drift.yml").read_text()
+    bootstrap = textwrap.dedent(workflow.split('bootstrap = r"""\n')[1].split('"""')[0])
+    monkeypatch.setattr(os, "environ", {"ZITADEL_ADMIN_PAT": "wrong-runner-credential"})
+    monkeypatch.setattr(Path, "read_text", lambda p: 'ZITADEL_ADMIN_PAT="server-credential"\nZITADEL_PORTAL_ORG_ID=managed-org\nZITADEL_PROJECT_ID=managed-project')
+    monkeypatch.setattr(sys, "stdin", io.StringIO("pass"))
+    exec(bootstrap, {})
+    assert os.environ["ZITADEL_ADMIN_PAT"] == "server-credential"
+    assert os.environ["ZITADEL_ORG_ID"] == "managed-org"
+    assert os.environ["ZITADEL_PROJECT_ID"] == "managed-project"
+    assert os.environ["GITHUB_OUTPUT"] == "/dev/stdout"
