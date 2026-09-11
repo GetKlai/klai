@@ -246,30 +246,52 @@ def is_public_issue_mutation(command: str) -> bool:
     return False
 
 
-# gh accepts several ways to name a repository, and a guard that knows only
-# the longest one is a guard with a documented bypass.
+# What this can and cannot do, stated plainly: it reads a bash string and
+# decides where the command lands. Arbitrary shell can always compute a
+# destination this cannot see, so this is a guard against MISREADING a
+# sentence -- the failure that actually happened -- not against someone
+# determined to get around it. Everything unclear therefore blocks, and the
+# marker is the way through.
+
 # An API call names the owner in its path rather than in a flag.
 _REPO_PATH = re.compile(r"(?:^|[\s'\"/])repos/([^/\s'\"]+)/[^/\s'\"]+")
-_OWNER_OF = re.compile(r"^['\"]?([A-Za-z0-9][A-Za-z0-9-]*)/[^/\s'\"]+['\"]?$")
+# gh takes [HOST/]OWNER/REPO, and a pull-request URL wherever a number fits.
+_OWNER_OF = re.compile(
+    r"^['\"]?(?:[A-Za-z0-9.-]+/)?([A-Za-z0-9][A-Za-z0-9-]*)/[^/\s'\"]+['\"]?$"
+)
+_PR_URL = re.compile(
+    r"https?://[^/\s]*github\.com/([A-Za-z0-9][A-Za-z0-9-]*)/[^/\s]+/pull/",
+    re.IGNORECASE,
+)
 
 # gh's own short forms. Without these, `gh pr new` is an unknown verb and
 # `gh pr ls` looks like a mutation.
 _PR_VERB_ALIASES = {"new": "create", "co": "checkout", "ls": "list"}
 
 # A directory change means the cwd we were handed no longer describes where
-# the command runs, and a shell variable means the destination is not in the
-# text at all. Neither can be resolved here, and unresolved is elsewhere.
-_CHANGES_DIRECTORY = re.compile(r"(?:^|[\s;&|(])cd\s", re.IGNORECASE)
+# the command runs. `-` and `~` are here too: they change it just as much.
+_CHANGES_DIRECTORY = re.compile(r"(?:^|[\s;&|(])(?:cd|pushd|popd)(?:\s|$)")
+# A mutating gh pr verb, or the API routes that do the same thing.
+_MUTATING_PR = re.compile(r"\bgh\s+pr\s+([a-z-]+)\b", re.IGNORECASE)
 
 
-def _named_owners(command: str) -> tuple[set[str], bool]:
-    """Owners named in the text, and whether any naming could not be read.
+def _segments(command: str) -> list[str]:
+    """Split into shell invocations, so one command cannot vouch for another.
+
+    `gh pr view --repo GetKlai/klai && gh pr merge 42` names our repository
+    exactly once, on the read-only half. Judging the merge on it is how a
+    whole-string scan clears a mutation it never looked at.
+    """
+    return [part for part in re.split(r"&&|\|\||[;\n|]", command) if part.strip()]
+
+
+def _named_owners(segment: str) -> tuple[set[str], bool]:
+    """Owners this segment names, and whether any naming could not be read.
 
     Tokenised rather than scanned, because the difference matters: in
     ``--body 'see --repo GetKlai/klai please'`` the body is ONE token and the
     flag never appears on its own, while ``--repo GetKlai/klai`` is two real
-    tokens. Regex on the raw string cannot tell those apart, and read the
-    first as a GetKlai destination.
+    tokens.
 
     The second half of the return matters as much as the first: ``-R
     "$TARGET"`` names a repository this cannot resolve, and calling that "none
@@ -278,60 +300,67 @@ def _named_owners(command: str) -> tuple[set[str], bool]:
     owners: set[str] = set()
     unresolved = False
 
+    def record(value: str) -> None:
+        nonlocal unresolved
+        match = _OWNER_OF.match(value)
+        if match is None:
+            unresolved = True
+        else:
+            owners.add(match.group(1).lower())
+
     try:
-        tokens = shlex.split(command, comments=False)
+        tokens = shlex.split(segment, comments=True)
     except ValueError:
-        # Unparseable shell. We cannot see the flags, so we have not proved
-        # anything about where this lands.
         return set(), True
 
-    flags = {"--repo", "-r"}
     index = 0
     while index < len(tokens):
         token = tokens[index]
-        lowered = token.lower()
-        value: str | None = None
-        if lowered in flags or lowered == "-r":
-            value = tokens[index + 1] if index + 1 < len(tokens) else ""
-            index += 1
-        elif "=" in token:
-            name, _, rest = token.partition("=")
-            if name.lower() in flags or name == "GH_REPO":
-                value = rest
-        if value is not None:
-            match = _OWNER_OF.match(value)
-            if match is None:
-                unresolved = True
-            else:
-                owners.add(match.group(1).lower())
+        # `-R` selects a repository; lowercase `-r` is reviewer on create and
+        # rebase on merge. Case matters here, so it is not folded away.
+        if token in {"--repo", "-R"}:
+            record(tokens[index + 1] if index + 1 < len(tokens) else "")
+            index += 2
+            continue
+        if token.startswith("-R") and len(token) > 2:
+            record(token[2:])          # gh accepts the value glued on
+        elif token.startswith("--repo="):
+            record(token[len("--repo="):])
+        elif token.startswith("GH_REPO="):
+            record(token[len("GH_REPO="):])
+        else:
+            url = _PR_URL.match(token.strip("'\""))
+            if url:
+                owners.add(url.group(1).lower())
         index += 1
 
     return owners, unresolved
 
 
-def _path_owners(command: str) -> set[str]:
-    """Owners appearing as ``repos/<owner>/<name>``, from the raw text.
+def _path_owners(segment: str) -> set[str]:
+    """Owners from a `repos/<owner>/<name>` API path, for gh api and curl only.
 
-    Used only to raise suspicion, never to clear it: unlike a tokenised flag,
-    this shape can sit inside a quoted argument, so a GetKlai name here proves
-    nothing about where the command lands.
+    Raw text rather than tokens, so it can only raise suspicion, never clear
+    it -- and it is read only where such a path is the destination, so the
+    same string quoted inside a PR body does not block an internal action.
     """
-    return {m.group(1).lower() for m in _REPO_PATH.finditer(command)}
+    if not re.search(r"\b(?:gh\s+api|curl)\b", segment, re.IGNORECASE):
+        return set()
+    return {m.group(1).lower() for m in _REPO_PATH.finditer(segment)}
 
 
 def _origin_owner(cwd: str | None) -> str | None:
     """Owner of the repository ``gh`` would act on in ``cwd``, or None.
 
-    ``gh repo set-default`` records its choice in ``remote.<name>.gh-resolved``
-    and gh prefers it over the remote URL, so reading only the URL would miss
-    a default pointed somewhere else entirely.
+    ``gh repo set-default`` records its choice as `remote.<name>.gh-resolved`,
+    and gh prefers it over the remote URL. The value is either `base` -- that
+    remote IS the choice -- or an explicit `owner/name`. Reading only
+    `origin` misses a default pointed at an upstream entirely.
     """
     if not cwd:
         return None
-    for args in (
-        ["config", "--get-regexp", r"remote\..*\.gh-resolved"],
-        ["remote", "get-url", "origin"],
-    ):
+
+    def git(*args: str) -> str | None:
         try:
             result = subprocess.run(
                 ["git", "-C", cwd, *args],
@@ -339,36 +368,47 @@ def _origin_owner(cwd: str | None) -> str | None:
             )
         except (OSError, subprocess.SubprocessError):
             return None
-        if result.returncode != 0:
-            continue
-        text = result.stdout.strip()
-        if not text:
-            continue
-        # gh-resolved is either "base" (meaning origin) or "owner/name".
-        match = re.search(r"(?:github\.com[:/])([^/\s]+)/", text) or re.search(
-            r"\s([A-Za-z0-9][A-Za-z0-9-]*)/[^/\s]+$", text
-        )
-        if match:
-            return match.group(1).lower()
-    return None
+        return result.stdout.strip() if result.returncode == 0 else None
+
+    resolved = git("config", "--get-regexp", r"remote\..*\.gh-resolved")
+    remote = "origin"
+    if resolved:
+        key, _, value = resolved.splitlines()[0].partition(" ")
+        if value.strip() and value.strip() != "base":
+            match = _OWNER_OF.match(value.strip())
+            return match.group(1).lower() if match else None
+        parts = key.split(".")
+        if len(parts) >= 3:
+            remote = ".".join(parts[1:-1])
+
+    url = git("remote", "get-url", remote)
+    if not url:
+        return None
+    match = re.search(r"(?:github\.com[:/])([^/\s]+)/", url)
+    return match.group(1).lower() if match else None
 
 
-def targets_another_org(command: str, cwd: str | None) -> bool:
-    """True unless everything visible says this lands inside GetKlai.
+def targets_another_org(segment: str, cwd: str | None, whole: str) -> bool:
+    """True unless everything visible says this segment lands inside GetKlai.
 
     Fail-closed by construction. Being wrong this way costs one sentence
     asking the user; being wrong the other way costs a stranger their inbox.
     """
-    flag_owners, unresolved = _named_owners(command)
+    owners, unresolved = _named_owners(segment)
     if unresolved:
         return True
-    if any(owner != OUR_ORG for owner in flag_owners | _path_owners(command)):
+    if any(owner != OUR_ORG for owner in owners | _path_owners(segment)):
         return True
-    if flag_owners:
-        # A tokenised --repo is the destination itself, so this settles it
-        # without asking the checkout.
+    if owners:
+        # A tokenised repository selector IS the destination, so this settles
+        # it without asking the checkout.
         return False
-    if _CHANGES_DIRECTORY.search(command):
+    # gh also reads GH_REPO from the environment it inherits.
+    inherited = os.environ.get("GH_REPO", "")
+    if inherited:
+        match = _OWNER_OF.match(inherited)
+        return match is None or match.group(1).lower() != OUR_ORG
+    if _CHANGES_DIRECTORY.search(whole):
         # The cwd we were handed no longer describes where this runs, and
         # nothing named a repository outright.
         return True
@@ -376,55 +416,50 @@ def targets_another_org(command: str, cwd: str | None) -> bool:
 
 
 def is_public_pr_mutation(command: str, cwd: str | None = None) -> bool:
-    elsewhere: bool | None = None
+    """Does this command mutate a pull request somewhere that is not ours?
 
-    def aimed_elsewhere() -> bool:
-        # Resolved at most once, and only once something worth gating is
-        # found: this hook runs before EVERY bash command, and `git remote
-        # get-url` on each `echo hello` is a subprocess nobody asked for.
-        nonlocal elsewhere
-        if elsewhere is None:
-            elsewhere = targets_another_org(command, cwd)
-        return elsewhere
+    Judged per shell segment, so a read-only invocation cannot vouch for a
+    mutating one standing next to it.
+    """
+    for segment in _segments(command):
+        mutates = False
 
-    # Bounded to one invocation: a greedy tail let `gh pr view && gh pr create`
-    # be judged entirely on the `view`.
-    for match in re.finditer(
-        r"\bgh\s+pr\s+([a-z-]+)\b([^\n;&|]*)", command, re.IGNORECASE
-    ):
-        verb = _PR_VERB_ALIASES.get(match.group(1).lower(), match.group(1).lower())
-        if verb in READ_ONLY_PR_VERBS:
-            continue
-        if verb == "ready" and re.search(r"(?:^|\s)--undo(?:\s|$)", match.group(2)):
-            # Putting a PR BACK to draft is the retreat, never the publication.
-            continue
-        if aimed_elsewhere():
+        for match in _MUTATING_PR.finditer(segment):
+            verb = _PR_VERB_ALIASES.get(match.group(1).lower(), match.group(1).lower())
+            if verb in READ_ONLY_PR_VERBS:
+                continue
+            tail = segment[match.end():]
+            if verb == "ready" and re.search(r"(?:^|\s)--undo(?:\s|$)", tail):
+                # Putting a PR BACK to draft is the retreat, never the
+                # publication.
+                continue
+            mutates = True
+            break
+
+        if not mutates and re.search(r"\bgh\s+api\b", segment, re.IGNORECASE):
+            if re.search(r"\bgraphql\b", segment, re.IGNORECASE) and (
+                PULL_GRAPHQL_MUTATION.search(segment)
+            ):
+                # A GraphQL mutation addresses an opaque node id, so nothing
+                # in the command says which repository it lands in. Unknown is
+                # elsewhere: the one shape where our checkout proves nothing.
+                return True
+            mutates = bool(
+                PULL_ENDPOINT.search(segment)
+                and (MUTATING_METHOD.search(segment) or BODY_ARGUMENT.search(segment))
+            )
+
+        if not mutates and re.search(r"\bcurl\b", segment, re.IGNORECASE):
+            mutates = bool(
+                PULL_ENDPOINT.search(segment)
+                and (MUTATING_METHOD.search(segment) or BODY_ARGUMENT.search(segment))
+            )
+
+        # Resolved only once a segment turns out to be worth gating: this hook
+        # runs before EVERY bash command, and `git remote get-url` on each
+        # `echo hello` is a subprocess nobody asked for.
+        if mutates and targets_another_org(segment, cwd, command):
             return True
-
-    # The same publications reached through the API rather than the CLI.
-    if re.search(r"\bgh\s+api\b", command, re.IGNORECASE):
-        if (
-            PULL_ENDPOINT.search(command)
-            and (MUTATING_METHOD.search(command) or BODY_ARGUMENT.search(command))
-            and aimed_elsewhere()
-        ):
-            return True
-        if re.search(r"\bgraphql\b", command, re.IGNORECASE) and (
-            PULL_GRAPHQL_MUTATION.search(command)
-        ):
-            # A GraphQL mutation addresses an opaque node id, so nothing in
-            # the command says which repository it lands in. Unknown is
-            # elsewhere: this is the one shape where our own checkout proves
-            # nothing at all.
-            return True
-
-    if (
-        re.search(r"\bcurl\b", command, re.IGNORECASE)
-        and PULL_ENDPOINT.search(command)
-        and (MUTATING_METHOD.search(command) or BODY_ARGUMENT.search(command))
-        and aimed_elsewhere()
-    ):
-        return True
 
     return False
 

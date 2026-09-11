@@ -175,6 +175,47 @@ class AnotherOrganisationTest(GuardTestCase):
             origin_owner="unclecode",
         )
 
+    def test_a_read_only_invocation_cannot_vouch_for_the_one_beside_it(self) -> None:
+        """The repository is named once, on the half that only reads."""
+        self.assert_blocked(
+            "gh pr view 1 --repo GetKlai/klai && gh pr merge 42",
+            OUTSIDE,
+            origin_owner="unclecode",
+        )
+
+    def test_lowercase_r_is_not_a_repository_selector(self) -> None:
+        """`-R` selects a repository; `-r` is reviewer on create and rebase on
+        merge. Folding the case read `-r GetKlai/security` as our repo, and
+        blocked an ordinary `gh pr merge -r` inside GetKlai."""
+        self.assert_allowed("gh pr merge 42 -r")
+        self.assert_blocked(
+            "gh pr create -r someone/else --title x", OUTSIDE, origin_owner="unclecode"
+        )
+
+    def test_the_value_glued_onto_the_short_flag_is_read(self) -> None:
+        self.assert_blocked("gh pr create -Runclecode/crawl4ai --title x", OUTSIDE)
+
+    def test_a_pull_request_url_is_a_destination(self) -> None:
+        """`gh pr merge <url>` is valid syntax and names the repository."""
+        self.assert_blocked(
+            "gh pr merge https://github.com/unclecode/crawl4ai/pull/2249 --merge",
+            OUTSIDE,
+        )
+
+    def test_a_host_prefixed_repository_still_reads_as_ours(self) -> None:
+        """gh takes [HOST/]OWNER/REPO; rejecting that spelling blocked our own
+        work for no reason."""
+        self.assert_allowed("gh pr merge 42 --repo github.com/GetKlai/klai")
+
+    def test_pushd_moves_the_checkout_just_like_cd(self) -> None:
+        self.assert_blocked("pushd /elsewhere && gh pr ready 42", OUTSIDE)
+
+    def test_an_api_path_quoted_in_a_body_does_not_block_our_own_work(self) -> None:
+        """The path only counts where such a path IS the destination."""
+        self.assert_allowed(
+            "gh pr comment 42 --body 'call repos/unclecode/crawl4ai/pulls for this'"
+        )
+
     def test_unparseable_shell_is_not_proof_of_anything(self) -> None:
         self.assert_blocked("gh pr merge 42 --body 'unterminated", OUTSIDE)
 

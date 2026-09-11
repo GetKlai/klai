@@ -128,12 +128,18 @@ authorization to mutate GitHub.
 - The hook that enforces this asks WHERE a command is aimed, not which verb
   it uses. Inside GetKlai it blocks nothing: `main` is already gated by branch
   protection, and a marker the one developer types on every merge is a
-  keystroke, not a second opinion. Outside GetKlai it blocks opening a pull
-  request that is not a draft, undrafting one, and the same publication made
-  through `gh api` or `curl` — because a branch on your own fork notifies
-  nobody, while those three put it in front of someone else's maintainers.
-  Open it with `--draft`, show the user, undraft only once they have said to.
-  It still blocks issue mutations everywhere; issues have no other gate.
+  keystroke, not a second opinion. Outside GetKlai it blocks every
+  pull-request mutation, including drafts and including the same publication
+  made through `gh api` or `curl` — a branch on your own fork notifies nobody,
+  a pull request does. Ask first, then do exactly what was asked, drafting
+  included. It also blocks when the destination cannot be read from the
+  command, which is deliberate. It still blocks issue mutations everywhere;
+  issues have no other gate.
+- That guard reads a bash string to decide where a command lands, so it is a
+  guard against misreading a sentence — the failure that actually happened —
+  and not against someone determined to get around it. Arbitrary shell can
+  always compute a destination it cannot see. Do not treat a green run as
+  permission.
   Everything above still governs what you WRITE in a PR body — that judgement
   is yours, not the hook's.
 - If sensitive details are already public, do not amplify them in comments or
