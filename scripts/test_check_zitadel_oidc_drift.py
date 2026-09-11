@@ -295,3 +295,16 @@ def test_main_preserves_verified_and_drift_outcomes(missing, expected_exit, monk
     monkeypatch.setattr(drift, "_fetch_oidc_apps", lambda *args: apps)
     assert drift.main() == expected_exit
     assert json.loads(capsys.readouterr().out)["ok"] is (not missing)
+
+
+def test_workflow_uses_server_credentials_and_managed_context(monkeypatch):
+    workflow = (_SCRIPTS_DIR.parent / ".github/workflows/zitadel-oidc-drift.yml").read_text()
+    bootstrap = textwrap.dedent(workflow.split('bootstrap = r"""\n')[1].split('"""')[0])
+    monkeypatch.setattr(os, "environ", {"ZITADEL_ADMIN_PAT": "wrong-runner-credential"})
+    monkeypatch.setattr(Path, "read_text", lambda p: 'ZITADEL_ADMIN_PAT="server-credential"\nZITADEL_PORTAL_ORG_ID=managed-org\nZITADEL_PROJECT_ID=managed-project')
+    monkeypatch.setattr(sys, "stdin", io.StringIO("pass"))
+    exec(bootstrap, {})
+    assert os.environ["ZITADEL_ADMIN_PAT"] == "server-credential"
+    assert os.environ["ZITADEL_ORG_ID"] == "managed-org"
+    assert os.environ["ZITADEL_PROJECT_ID"] == "managed-project"
+    assert os.environ["GITHUB_OUTPUT"] == "/dev/stdout"

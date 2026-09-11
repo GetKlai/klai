@@ -17,8 +17,8 @@
 # This is not an escalation policy. Independently monitor failures and stale
 # checks through private monitoring; never publish the detailed report.
 #
-# Required secret: ZITADEL_ADMIN_PAT (IAM_OWNER PAT for klai-admin-sa).
-# Used read-only — the script only calls /apps/_search.
+# Uses existing SSH access; IAM credentials and configuration stay on the server.
+# The script uses the managed admin credential read-only for /apps/_search.
 
 name: zitadel-oidc-drift
 
@@ -41,16 +41,36 @@ jobs:
       - name: Run drift check
         id: drift
         env:
-          ZITADEL_ADMIN_PAT: ${{ secrets.ZITADEL_ADMIN_PAT }}
+          CORE01_HOST: ${{ secrets.CORE01_HOST }}
+          CORE01_DEPLOY_KEY: ${{ secrets.CORE01_DEPLOY_KEY }}
+          CORE01_KNOWN_HOSTS: ${{ secrets.CORE01_KNOWN_HOSTS }}
         run: |
+          eval "$(ssh-agent -s)" > /dev/null
+          trap 'ssh-agent -k >/dev/null' EXIT
+          ssh-add - <<< "$CORE01_DEPLOY_KEY" 2>/dev/null
+          mkdir -p ~/.ssh
+          printf '%s\n' "$CORE01_KNOWN_HOSTS" > ~/.ssh/known_hosts
           set -o pipefail
           set +e
-          python scripts/check_zitadel_oidc_drift.py \
-            > drift-report.json \
-            2> drift-stderr.txt
+          python3 - <<'PYTHON' > drift-report.json 2> drift-stderr.txt
+          import os, shlex, subprocess, sys
+          bootstrap = r"""
+          import os, sys
+          from pathlib import Path
+          values = dict(line.split("=", 1) for line in Path("/opt/klai/.env").read_text().splitlines() if "=" in line and not line.startswith("#"))
+          for target, source in [("ZITADEL_ADMIN_PAT", "ZITADEL_ADMIN_PAT"), ("ZITADEL_ORG_ID", "ZITADEL_PORTAL_ORG_ID"), ("ZITADEL_PROJECT_ID", "ZITADEL_PROJECT_ID")]:
+              os.environ[target] = values.get(source, "").strip().strip("\"'")
+          os.environ["GITHUB_OUTPUT"] = "/dev/stdout"
+          exec(compile(sys.stdin.read(), "drift-check", "exec"))
+          """
+          with open("scripts/check_zitadel_oidc_drift.py") as source:
+              result = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=15", "klai@" + os.environ["CORE01_HOST"], "python3 -c " + shlex.quote(bootstrap)], stdin=source)
+          sys.exit(result.returncode)
+          PYTHON
           status=$?
           set -e
           echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          sed -n '/^failure_reason=[a-z_]*$/p' drift-report.json >> "$GITHUB_OUTPUT"
           # Do not print live IAM drift details to this public repository's
           # Actions log. Operators can reproduce the report through the private
           # runbook path after the generic failure signal fires.
@@ -91,5 +111,5 @@ jobs:
       - name: Fail — unexpected exit code
         if: steps.drift.outputs.exit_code != '0' && steps.drift.outputs.exit_code != '1' && steps.drift.outputs.exit_code != '2'
         run: |
-          echo "::error::OIDC drift check exited with an unexpected code; treat as not-verified."
+          echo "::error::OIDC drift check could not complete: runner or SSH execution failed; treat as not-verified."
           exit 1
