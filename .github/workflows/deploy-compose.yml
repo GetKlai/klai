@@ -18,6 +18,7 @@ on:
       - 'deploy/check-klai-librechat-digest.sh'   # Klai LibreChat image must be digest-pinned
       - 'deploy/check-klai-presidio-digest.sh'    # Klai presidio-analyzer image must be digest-pinned
       - 'deploy/scripts/**'                       # Public-safe deploy scripts; operator health scripts live in klai-infra
+      - 'scripts/mistral-api-probe.sh'            # authenticated provider heartbeat
       - 'scripts/smoke-docker-socket-proxy.sh'    # SPEC-SEC-024 M4.3 — smoke-test
       - '.github/workflows/deploy-compose.yml'
   workflow_dispatch:
@@ -135,18 +136,16 @@ jobs:
             # scripts are synced from klai-infra.
             mkdir -p /opt/klai/scripts
             for script in deploy/scripts/*.sh; do
+              name=$(basename "$script")
+              case "$name" in
+                push-health.sh|gpu-health.sh|audit-monitor-coverage.sh|push-component-health.sh) continue ;;
+              esac
               bash -n "$script"
+              install -m 0755 "$script" "/opt/klai/scripts/$name.tmp"
+              mv -f "/opt/klai/scripts/$name.tmp" "/opt/klai/scripts/$name"
             done
-            for script in deploy/scripts/*.sh; do
-              # install(1) truncates and writes in place, so a service deploy
-              # running concurrently can read a half-written compose-up.sh.
-              # Staging next to the target and renaming makes the swap atomic
-              # (same filesystem), so a concurrent reader gets either the old
-              # script or the new one.
-              dest="/opt/klai/scripts/$(basename "$script")"
-              install -m 0755 "$script" "$dest.tmp"
-              mv -f "$dest.tmp" "$dest"
-            done
+            install -m 0755 scripts/mistral-api-probe.sh /opt/klai/scripts/mistral-api-probe.sh.tmp
+            mv -f /opt/klai/scripts/mistral-api-probe.sh.tmp /opt/klai/scripts/mistral-api-probe.sh
             test -x /opt/klai/scripts/backup.sh
 
             # The canary's four patch bind-mounts are gone (Phase 3): it runs the

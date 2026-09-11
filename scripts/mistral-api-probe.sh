@@ -9,6 +9,21 @@ URL="${MISTRAL_PROBE_URL:-https://api.mistral.ai/v1/models}"
 TIMEOUT="${MISTRAL_PROBE_TIMEOUT:-10}"
 LOG_FILE="${MISTRAL_PROBE_LOG_FILE:-/opt/klai/logs/mistral-api-probe.log}"
 
+push_heartbeat() {
+  local status="$1" token
+  token=$(awk -F= '/^KUMA_TOKEN_MISTRAL=/ {sub(/^[^=]*=/, ""); print; exit}' "$ENV_FILE")
+  if [[ -z "$token" ]]; then
+    echo "Mistral status heartbeat configuration missing" >&2
+    return 1
+  fi
+  # Keep the token out of argv and diagnostics.
+  if ! printf 'url = "https://status.getklai.com/api/push/%s?status=%s&msg=provider-api-auth"\n' \
+    "$token" "$status" | curl --config - --fail --silent --max-time 10 --output /dev/null 2>/dev/null; then
+    echo "Mistral status heartbeat delivery failed" >&2
+    return 1
+  fi
+}
+
 json_escape() {
   python3 -c 'import json,sys; print(json.dumps(sys.stdin.read())[1:-1])'
 }
@@ -48,36 +63,24 @@ key=$(
 
 if [[ -z "$key" ]]; then
   emit fail 0 "" "missing_mistral_api_key" ""
+  push_heartbeat down
   exit 0
 fi
 
-key_suffix="${key: -4}"
-headers_file=$(mktemp)
-body_file=$(mktemp)
-curl_error_file="$body_file.curlerr"
-trap 'rm -f "$headers_file" "$body_file" "$curl_error_file"' EXIT
-
 http_status=$(
-  curl -sS -m "$TIMEOUT" \
-    -D "$headers_file" \
-    -o "$body_file" \
-    -w '%{http_code}' \
-    -H "Authorization: Bearer ${key}" \
-    "$URL" 2>"$curl_error_file" || true
-)
-
-correlation_id=$(
-  awk 'BEGIN{IGNORECASE=1} /^mistral-correlation-id:/ {gsub("\r","",$2); print $2; exit} /^x-kong-request-id:/ {gsub("\r","",$2); print $2; exit}' "$headers_file"
+  printf 'header = "Authorization: Bearer %s"\nurl = "%s"\n' "$key" "$URL" | curl --config - -sS -m "$TIMEOUT" \
+    -o /dev/null -w '%{http_code}' 2>/dev/null || true
 )
 
 if [[ "$http_status" == "200" ]]; then
-  emit ok 200 "$key_suffix" "" "$correlation_id"
+  emit ok 200 "" "" ""
+  push_heartbeat up
   exit 0
 fi
 
-error_body=$(head -c 500 "$body_file" 2>/dev/null || true)
-curl_error=$(head -c 500 "$curl_error_file" 2>/dev/null || true)
-if [[ -n "$curl_error" ]]; then
-  error_body="${error_body} curl_error=${curl_error}"
+error_category=provider_transport_error
+if [[ "$http_status" =~ ^[0-9]{3}$ && "$http_status" != "000" ]]; then
+  error_category=provider_http_error
 fi
-emit fail "${http_status:-0}" "$key_suffix" "$error_body" "$correlation_id"
+emit fail "${http_status:-0}" "" "$error_category" ""
+push_heartbeat down
