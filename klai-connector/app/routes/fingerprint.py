@@ -88,6 +88,9 @@ def _build_crawl_payload(
         "cache_mode": "bypass",
         "word_count_threshold": 0,
         "page_timeout": 30000,
+        # crawl4ai >= 0.9.3: cap the ignored body-visibility wait. Mirrors
+        # knowledge_ingest.crawl4ai_config.build_crawl_config.
+        "body_visibility_timeout": 2000,
         "remove_consent_popups": True,
         "remove_overlay_elements": True,
         "excluded_tags": ["nav", "footer", "header", "aside", "script", "style"],

@@ -3559,6 +3559,7 @@ async def _crawl_dom_summary_in_host_scope(url: str) -> list[dict] | None:
         "css_selector": "#__klai_dom_summary__",
         "word_count_threshold": 0,
         "page_timeout": 30000,
+        "body_visibility_timeout": 2000,  # see crawl4ai_config.build_crawl_config
         "remove_consent_popups": True,
     }
     payload = {

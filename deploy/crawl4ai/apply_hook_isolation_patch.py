@@ -103,20 +103,15 @@ patch(
 #    two lines in each, so one anchor covers both.
 patch(
     API,
-    "        from crawler_pool import get_crawler, release_crawler\n"
-    "        crawler = await get_crawler(browser_config)",
-    "        from crawler_pool import (\n"
-    "            get_crawler,\n"
-    "            get_dedicated_crawler,\n"
-    "            release_crawler,\n"
-    "        )\n"
-    "        # Hooks are attached by mutating the crawler and are never\n"
-    "        # detached, so a hooked request must not get a shared one.\n"
-    "        crawler = (\n"
-    "            await get_dedicated_crawler(browser_config)\n"
-    "            if hooks_config\n"
-    "            else await get_crawler(browser_config)\n"
-    "        )",
+    "        else:\n"
+    "            crawler = await get_crawler(browser_config)",
+    "        elif hooks_config:\n"
+    "            # Hooks are attached by mutating the crawler and are never\n"
+    "            # detached, so a hooked request must not get a shared one.\n"
+    "            from crawler_pool import get_dedicated_crawler\n"
+    "            crawler = await get_dedicated_crawler(browser_config)\n"
+    "        else:\n"
+    "            crawler = await get_crawler(browser_config)",
     2,
 )
 

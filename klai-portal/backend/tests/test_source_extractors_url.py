@@ -133,6 +133,10 @@ class TestHappyPath:
         # page_timeout MUST stay below the httpx client timeout so crawl4ai
         # answers before portal-api gives up (else 502 "unreachable").
         assert params["page_timeout"] < _CRAWL4AI_TIMEOUT * 1000
+        # And the body-visibility wait must stay below page_timeout. Unset, it
+        # is 30s -- longer than both -- on any site whose <body> never becomes
+        # visible, which is the case this whole lean config exists for.
+        assert params["body_visibility_timeout"] < params["page_timeout"]
 
 
 class TestTitleDerivation:
