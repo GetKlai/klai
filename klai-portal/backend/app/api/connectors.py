@@ -587,8 +587,7 @@ async def _merge_saved_sensitive_credentials(
         if old_origin != new_origin:
             missing_fields = missing_fields - {"cookies"}
     needs_kept_cookies = connector.connector_type == "web_crawler" and any(
-        isinstance(cookie, dict) and not cookie.get("value")
-        for cookie in (config.get("cookies") or [])
+        isinstance(cookie, dict) and not cookie.get("value") for cookie in (config.get("cookies") or [])
     )
     if (not missing_fields and not needs_kept_cookies) or connector.encrypted_credentials is None:
         if needs_kept_cookies:
@@ -635,10 +634,7 @@ def _assert_no_valueless_cookies(config: dict) -> None:
         if isinstance(cookie, dict) and not cookie.get("value"):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=(
-                    f"Cookie {cookie.get('name')!r} has no value. Paste one, or "
-                    "remove the row."
-                ),
+                detail=(f"Cookie {cookie.get('name')!r} has no value. Paste one, or remove the row."),
             )
 
 
@@ -674,10 +670,7 @@ def _resolve_kept_cookies(config: dict, saved_credentials: dict) -> list[dict]:
         if kept is None or not kept.get("value"):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=(
-                    f"No saved value to keep for cookie {name!r}. "
-                    "Paste its value, or remove the row."
-                ),
+                detail=(f"No saved value to keep for cookie {name!r}. Paste its value, or remove the row."),
             )
         resolved.append({**kept, **{k: v for k, v in cookie.items() if v}})
     return resolved

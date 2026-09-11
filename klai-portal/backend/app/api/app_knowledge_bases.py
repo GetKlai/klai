@@ -2341,8 +2341,7 @@ async def _resolve_web_crawler_probe_cookies(
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail=(
-                        f"No saved value to keep for cookie {cookie.get('name')!r}. "
-                        "Paste its value, or remove the row."
+                        f"No saved value to keep for cookie {cookie.get('name')!r}. Paste its value, or remove the row."
                     ),
                 )
             resolved.append({**kept, **{k: v for k, v in cookie.items() if v}})

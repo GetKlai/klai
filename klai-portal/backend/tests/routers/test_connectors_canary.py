@@ -445,9 +445,7 @@ class TestReplaceOneCookie:
         nowhere later: the crawl carries a blank cookie, the site serves the
         logged-out page, and crawl4ai answers HTTP 200."""
         with pytest.raises(HTTPException) as exc_info:
-            _assert_no_valueless_cookies(
-                {"cookies": [{"name": "sid", "domain": "w.example.com", "path": "/"}]}
-            )
+            _assert_no_valueless_cookies({"cookies": [{"name": "sid", "domain": "w.example.com", "path": "/"}]})
 
         assert exc_info.value.status_code == 422
         assert "sid" in str(exc_info.value.detail)
