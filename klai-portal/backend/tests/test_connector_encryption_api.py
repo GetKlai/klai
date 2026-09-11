@@ -11,7 +11,7 @@ import pytest
 
 from app.api.connectors import (
     _connector_out,
-    _cookie_names_from_credentials,
+    _cookie_identities_from_credentials,
     _drop_stale_credentials_on_origin_change,
     _merge_saved_sensitive_credentials,
 )
@@ -108,8 +108,8 @@ class TestConnectorOutPlaintextSecretRejection:
         assert out.has_saved_credentials is True
 
 
-def test_cookie_names_from_credentials_returns_names_without_values() -> None:
-    names = _cookie_names_from_credentials(
+def test_cookie_identities_carry_no_values() -> None:
+    identities = _cookie_identities_from_credentials(
         {
             "cookies": [
                 {"name": "prod-knowledgebase-session", "value": FAKE_TOKEN},
@@ -118,8 +118,24 @@ def test_cookie_names_from_credentials_returns_names_without_values() -> None:
             ]
         }
     )
-    assert names == ["prod-knowledgebase-session", "XSRF-TOKEN"]
-    assert FAKE_TOKEN not in names
+
+    assert [c.name for c in identities] == ["prod-knowledgebase-session", "XSRF-TOKEN"]
+    assert FAKE_TOKEN not in str(identities)
+
+
+def test_two_cookies_sharing_a_name_across_paths_both_survive() -> None:
+    """Deduplicating on the name alone made one of them unreachable from the
+    form, and a partial replacement then dropped it."""
+    identities = _cookie_identities_from_credentials(
+        {
+            "cookies": [
+                {"name": "sess", "domain": "w.example.com", "path": "/", "value": FAKE_TOKEN},
+                {"name": "sess", "domain": "w.example.com", "path": "/admin", "value": "other"},
+            ]
+        }
+    )
+
+    assert [(c.name, c.path) for c in identities] == [("sess", "/"), ("sess", "/admin")]
 
 
 @pytest.mark.asyncio

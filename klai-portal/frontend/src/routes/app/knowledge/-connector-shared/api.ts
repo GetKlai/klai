@@ -24,8 +24,11 @@ export type CrawlerPreviewRequest = CrawlerAuthPayload & {
 // Removing a row with its x still removes the cookie: the name is then gone.
 export function buildCrawlerCookies(rows: CookieRow[], baseUrl: string): unknown[] | undefined {
   const named = rows.filter((row) => row.name.trim())
+  // Only a form with no names left at all means "do not touch the cookies".
+  // Sending the named rows even when none carries a new value is what makes
+  // REMOVING one work: the row that is gone is then genuinely absent, instead
+  // of the whole field being omitted and the backend restoring both.
   if (named.length === 0) return undefined
-  if (named.every((row) => !row.value.trim())) return undefined
 
   const domain = (() => {
     try {
@@ -39,7 +42,15 @@ export function buildCrawlerCookies(rows: CookieRow[], baseUrl: string): unknown
   // before, so nothing downstream sees this change unless a value is blank.
   return named.map((row) => {
     const value = row.value.trim()
-    return { name: row.name.trim(), ...(value ? { value } : {}), domain, path: '/' }
+    // A prefilled row carries the stored cookie's own domain and path; only a
+    // freshly typed row falls back to the base URL. Overwriting them would
+    // re-point a kept cookie at whatever host the base URL now names.
+    return {
+      name: row.name.trim(),
+      ...(value ? { value } : {}),
+      domain: row.domain ?? domain,
+      path: row.path ?? '/',
+    }
   })
 }
 

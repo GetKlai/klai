@@ -73,7 +73,8 @@ const GOOGLE_DRIVE_CONNECTOR_TYPES = new Set([
 
 type EditSearch = { step?: StepDeepLink; show?: 'picker' }
 type WebCrawlerAuthMode = 'saved' | 'replace'
-type SavedCredentialMetadata = { cookie_names: string[] }
+type SavedCookieIdentity = { name: string; domain?: string; path?: string }
+type SavedCredentialMetadata = { cookie_names: string[]; cookies?: SavedCookieIdentity[] }
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug_/edit-connector/$connectorId')({
   validateSearch: (search: Record<string, unknown>): EditSearch => ({
@@ -219,6 +220,13 @@ function EditConnectorPage() {
   }
 
   function savedCookieNameRows(): CookieRow[] {
+    // Prefer the full identities: a row that carries domain and path resolves
+    // to exactly one stored cookie when left blank. cookie_names is the older
+    // shape and still works, it just cannot tell two same-named cookies apart.
+    const identities = savedCredentialMetadata?.cookies
+    if (identities?.length) {
+      return identities.map((c) => ({ name: c.name, value: '', domain: c.domain, path: c.path }))
+    }
     const names = savedCredentialMetadata?.cookie_names ?? []
     return names.map((name) => ({ name, value: '' }))
   }

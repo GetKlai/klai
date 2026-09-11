@@ -12,7 +12,7 @@ the SSRF reject-list itself is covered by ``test_connectors_ssrf.py``.
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -22,6 +22,7 @@ from pydantic import ValidationError
 from app.api.connectors import (
     WebcrawlerConfig,
     _assert_no_valueless_cookies,
+    _merge_saved_sensitive_credentials,
     _resolve_kept_cookies,
     _validate_connector_config,
 )
@@ -454,3 +455,87 @@ class TestReplaceOneCookie:
         _assert_no_valueless_cookies(
             {"cookies": [{"name": "sid", "value": "x", "domain": "w.example.com", "path": "/"}]}
         )
+
+    def test_two_cookies_sharing_a_name_are_told_apart_by_path(self) -> None:
+        """Matching on the name alone handed back whichever came first, so a
+        partial replacement still lost one of them."""
+        saved = {
+            "cookies": [
+                {"name": "sess", "domain": "w.example.com", "path": "/", "value": "root"},
+                {"name": "sess", "domain": "w.example.com", "path": "/admin", "value": "admin"},
+            ]
+        }
+        resolved = _resolve_kept_cookies(
+            {
+                "cookies": [
+                    {"name": "sess", "domain": "w.example.com", "path": "/admin"},
+                    {"name": "sess", "domain": "w.example.com", "path": "/", "value": "fresh"},
+                ]
+            },
+            saved,
+        )
+
+        assert [(c["path"], c["value"]) for c in resolved] == [
+            ("/admin", "admin"),
+            ("/", "fresh"),
+        ]
+
+    def test_an_ambiguous_blank_row_is_refused_rather_than_guessed(self) -> None:
+        """Two stored cookies share the name and the row says nothing more."""
+        saved = {
+            "cookies": [
+                {"name": "sess", "domain": "w.example.com", "path": "/", "value": "root"},
+                {"name": "sess", "domain": "w.example.com", "path": "/admin", "value": "admin"},
+            ]
+        }
+        with pytest.raises(HTTPException) as exc_info:
+            _resolve_kept_cookies({"cookies": [{"name": "sess"}]}, saved)
+
+        assert exc_info.value.status_code == 422
+
+    def test_a_row_from_a_moved_base_url_cannot_keep_the_old_cookie(self) -> None:
+        """The row's domain comes from the base URL, which the same edit may
+        have changed. It then no longer identifies the stored cookie, and the
+        answer is to ask for fresh values -- not to carry a cookie captured
+        for one host over to another."""
+        with pytest.raises(HTTPException) as exc_info:
+            _resolve_kept_cookies(
+                {"cookies": [{"name": "sess", "domain": "new.example.com", "path": "/"}]},
+                {"cookies": [{"name": "sess", "domain": "old.example.com", "path": "/", "value": "v"}]},
+            )
+
+        assert exc_info.value.status_code == 422
+
+    def test_a_kept_cookie_is_stored_exactly_as_it_was(self) -> None:
+        """The row supplies identity only. Nothing on it overwrites the stored
+        cookie, so keeping one cannot quietly rewrite its domain or path."""
+        resolved = _resolve_kept_cookies(
+            {"cookies": [{"name": "sess", "domain": "w.example.com", "path": "/"}]},
+            {"cookies": [{"name": "sess", "domain": "w.example.com", "path": "/", "value": "v", "httpOnly": True}]},
+        )
+
+        assert resolved == [{"name": "sess", "domain": "w.example.com", "path": "/", "value": "v", "httpOnly": True}]
+
+    @pytest.mark.asyncio
+    async def test_a_blank_row_cannot_carry_a_cookie_to_another_site(self) -> None:
+        """The prefilled row keeps the OLD domain, so `cookies` looks freshly
+        supplied and the cross-origin rule never fires. Without this, cookies
+        captured for one host would be re-saved for another."""
+        connector = MagicMock()
+        connector.connector_type = "web_crawler"
+        connector.encrypted_credentials = b"ENCRYPTED"
+        connector.config = {"base_url": "https://old.example.com/"}
+
+        with pytest.raises(HTTPException) as exc_info:
+            await _merge_saved_sensitive_credentials(
+                connector=connector,
+                config={
+                    "base_url": "https://new.example.com/",
+                    "cookies": [{"name": "sess", "domain": "old.example.com", "path": "/"}],
+                },
+                org_id=1,
+                db=MagicMock(),
+            )
+
+        assert exc_info.value.status_code == 422
+        assert "different site" in str(exc_info.value.detail)
