@@ -1049,9 +1049,7 @@ async def get_widget_conversation(
     )
 
 
-@router.get(
-    "/{widget_id}/conversations/{conv_id}/quality", response_model=ConversationQualityRead
-)
+@router.get("/{widget_id}/conversations/{conv_id}/quality", response_model=ConversationQualityRead)
 async def get_widget_conversation_quality(
     widget_id: str,
     conv_id: int,

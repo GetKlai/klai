@@ -398,13 +398,8 @@ async def test_retention_anonymizes_judgment_reasoning_before_deleting_messages(
         mock_settings.widget_messages_retention_days = 7
         result = await _retention_run_once()
 
-    update_idx = next(
-        i for i, (_, sql, _) in enumerate(calls)
-        if "UPDATE conversation_quality_judgments" in sql
-    )
-    delete_idx = next(
-        i for i, (_, sql, _) in enumerate(calls) if "DELETE FROM widget_messages" in sql
-    )
+    update_idx = next(i for i, (_, sql, _) in enumerate(calls) if "UPDATE conversation_quality_judgments" in sql)
+    delete_idx = next(i for i, (_, sql, _) in enumerate(calls) if "DELETE FROM widget_messages" in sql)
     assert update_idx < delete_idx, "reasoning must be nulled before the messages are deleted"
 
     _, update_sql, update_params = calls[update_idx]

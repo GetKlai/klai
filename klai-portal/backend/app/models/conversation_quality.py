@@ -50,8 +50,7 @@ class ConversationQualityJudgment(Base):
     __table_args__ = (
         CheckConstraint("channel IN ('webchat', 'librechat')", name="ck_cqj_channel"),
         CheckConstraint(
-            "outcome IN ('resolved','partially_resolved','unresolved',"
-            "'escalated','out_of_scope','abandoned_early')",
+            "outcome IN ('resolved','partially_resolved','unresolved','escalated','out_of_scope','abandoned_early')",
             name="ck_cqj_outcome",
         ),
         CheckConstraint(
@@ -62,17 +61,13 @@ class ConversationQualityJudgment(Base):
         ),
         CheckConstraint("confidence IN ('high','medium','low')", name="ck_cqj_confidence"),
         UniqueConstraint("conversation_id", name="uq_conversation_quality_judgments_conversation"),
-        UniqueConstraint(
-            "external_conversation_id", name="uq_conversation_quality_judgments_external_conversation"
-        ),
+        UniqueConstraint("external_conversation_id", name="uq_conversation_quality_judgments_external_conversation"),
         Index("ix_conversation_quality_judgments_org_judged", "org_id", "judged_at"),
         Index("ix_conversation_quality_judgments_outcome", "outcome"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    org_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("portal_orgs.id", ondelete="CASCADE"), nullable=False
-    )
+    org_id: Mapped[int] = mapped_column(Integer, ForeignKey("portal_orgs.id", ondelete="CASCADE"), nullable=False)
     # Nullable + SET NULL, not CASCADE: this row must outlive the purged
     # conversation, anonymized (see post_deploy SQL comment + SPEC §6).
     conversation_id: Mapped[int | None] = mapped_column(
@@ -90,7 +85,5 @@ class ConversationQualityJudgment(Base):
     confidence: Mapped[str] = mapped_column(String(8), nullable=False)
     suggested_action: Mapped[str | None] = mapped_column(Text, nullable=True)
     model_used: Mapped[str] = mapped_column(String(64), nullable=False)
-    judged_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
+    judged_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     anonymized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

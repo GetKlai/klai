@@ -114,9 +114,7 @@ async def test_tenant_quality_route_404_when_conversation_not_judged() -> None:
     db.execute = AsyncMock(side_effect=[TextRows([_widget_row()]), TextRows([])])
 
     with pytest.raises(HTTPException) as exc:
-        await get_widget_conversation_quality(
-            widget_id=WIDGET_UUID, conv_id=7, perms=_tenant_admin_perms(), db=db
-        )
+        await get_widget_conversation_quality(widget_id=WIDGET_UUID, conv_id=7, perms=_tenant_admin_perms(), db=db)
     assert exc.value.status_code == 404
 
 
@@ -132,9 +130,7 @@ async def test_platform_quality_route_reads_other_org_judgment() -> None:
         patch("app.api.admin.platform.cross_org_session", return_value=AsyncContext(db)),
         patch("app.api.admin.platform._audit", new=AsyncMock()) as audit,
     ):
-        judgment = await platform_bot_conversation_quality(
-            widget_id=WIDGET_UUID, conv_id=7, perms=_platform_perms()
-        )
+        judgment = await platform_bot_conversation_quality(widget_id=WIDGET_UUID, conv_id=7, perms=_platform_perms())
 
     assert judgment.outcome == "escalated"
     assert judgment.reasoning == "De bot kende het actuele prijsplan niet."
@@ -155,9 +151,7 @@ async def test_tenant_admin_gets_403_on_platform_quality_route() -> None:
     app.include_router(router)
     app.dependency_overrides[get_caller] = _tenant_admin_perms
 
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get(f"/platform/bots/{WIDGET_UUID}/conversations/7/quality")
 
     assert resp.status_code == 403

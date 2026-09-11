@@ -164,9 +164,7 @@ class _OrgDb:
             for cid in ids:
                 for role, content, sources, rating in self.messages.get(cid, []):
                     rows.append(
-                        MagicMock(
-                            conversation_id=cid, role=role, content=content, sources=sources, rating=rating
-                        )
+                        MagicMock(conversation_id=cid, role=role, content=content, sources=sources, rating=rating)
                     )
             return self._result(rows)
         if "SELECT DISTINCT conversation_id" in sql:  # handoff

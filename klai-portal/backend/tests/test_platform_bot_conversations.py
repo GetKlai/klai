@@ -92,9 +92,7 @@ async def test_platform_admin_reads_other_org_conversation_list_without_org_filt
         patch("app.api.admin.platform.cross_org_session", return_value=AsyncContext(db)),
         patch("app.api.admin.platform._audit", new=AsyncMock()) as audit,
     ):
-        result = await platform_bot_conversations(
-            widget_id=WIDGET_UUID, cursor=None, limit=20, perms=_platform_perms()
-        )
+        result = await platform_bot_conversations(widget_id=WIDGET_UUID, cursor=None, limit=20, perms=_platform_perms())
 
     # Cross-tenant read: org 42's conversation served to a platform-admin in org 1.
     assert [c.id for c in result] == [7]
@@ -114,7 +112,9 @@ async def test_platform_admin_reads_conversation_transcript_with_rating() -> Non
 
     now = datetime(2026, 9, 1, 12, 0, 0)
     msg_rows = [
-        SimpleNamespace(id=1, role="user", content="Wat kost Klai?", sources=None, created_at=now, sequence=1, rating=None),
+        SimpleNamespace(
+            id=1, role="user", content="Wat kost Klai?", sources=None, created_at=now, sequence=1, rating=None
+        ),
         SimpleNamespace(
             id=2,
             role="assistant",
@@ -138,9 +138,7 @@ async def test_platform_admin_reads_conversation_transcript_with_rating() -> Non
         patch("app.api.admin.platform.cross_org_session", return_value=AsyncContext(db)),
         patch("app.api.admin.platform._audit", new=AsyncMock()),
     ):
-        detail = await platform_bot_conversation(
-            widget_id=WIDGET_UUID, conv_id=7, perms=_platform_perms()
-        )
+        detail = await platform_bot_conversation(widget_id=WIDGET_UUID, conv_id=7, perms=_platform_perms())
 
     assert detail.id == 7
     assert [m.id for m in detail.messages] == [1, 2]
@@ -157,9 +155,7 @@ async def test_tenant_admin_gets_403_on_platform_conversation_endpoints() -> Non
     app.include_router(router)
     app.dependency_overrides[get_caller] = _tenant_admin_perms
 
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         listing = await client.get(f"/platform/bots/{WIDGET_UUID}/conversations")
         detail = await client.get(f"/platform/bots/{WIDGET_UUID}/conversations/7")
 

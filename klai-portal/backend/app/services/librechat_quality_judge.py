@@ -231,9 +231,7 @@ def _turns_from_messages(docs: list[dict]) -> list[dict]:
         content = _message_text(doc)
         if not content.strip():
             continue
-        turns.append(
-            {"role": "user" if doc.get("isCreatedByUser") else "assistant", "content": content}
-        )
+        turns.append({"role": "user" if doc.get("isCreatedByUser") else "assistant", "content": content})
     return turns
 
 

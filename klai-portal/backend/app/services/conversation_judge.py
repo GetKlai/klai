@@ -66,9 +66,7 @@ _BATCH_SIZE = 50
 # conversation_quality_judgments (app/models/conversation_quality.py) — a
 # verdict outside them would fail at INSERT time anyway, so reject it as a
 # parse failure instead and keep the conversation queued for a retry.
-_OUTCOMES = frozenset(
-    {"resolved", "partially_resolved", "unresolved", "escalated", "out_of_scope", "abandoned_early"}
-)
+_OUTCOMES = frozenset({"resolved", "partially_resolved", "unresolved", "escalated", "out_of_scope", "abandoned_early"})
 _FAILURE_CATEGORIES = frozenset(
     {
         "retrieval_miss",
@@ -176,9 +174,7 @@ def _build_user_prompt(
     ``triage._build_triage_prompt``."""
     return json.dumps(
         {
-            "transcript": [
-                {"role": t.role, "content": t.content, "sources": t.sources} for t in turns
-            ],
+            "transcript": [{"role": t.role, "content": t.content, "sources": t.sources} for t in turns],
             "signals": {
                 "explicit_rating": explicit_rating,
                 "had_citation_refusal": had_citation_refusal,
@@ -189,9 +185,7 @@ def _build_user_prompt(
     )
 
 
-async def _call_judge_llm(
-    *, model: str, user: str, system: str = JUDGE_SYSTEM_PROMPT
-) -> str:
+async def _call_judge_llm(*, model: str, user: str, system: str = JUDGE_SYSTEM_PROMPT) -> str:
     """One LiteLLM chat completion — mirrors ``triage._call_triage_llm``.
 
     ``system`` defaults to the webchat rubric; the LibreChat pass (REQ-5)
@@ -322,9 +316,7 @@ async def _judge_org(org_id: int) -> int:
         turns_by_conv: dict[int, list[JudgeTurn]] = {cid: [] for cid in conv_ids}
         for row in msg_result.all():
             turns_by_conv[row.conversation_id].append(
-                JudgeTurn(
-                    role=row.role, content=row.content, sources=row.sources, rating=row.rating
-                )
+                JudgeTurn(role=row.role, content=row.content, sources=row.sources, rating=row.rating)
             )
 
         handoff_result = await db.execute(
