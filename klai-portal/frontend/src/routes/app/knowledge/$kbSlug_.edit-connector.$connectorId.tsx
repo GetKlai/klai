@@ -20,7 +20,7 @@ import { GoogleDrivePicker } from './$kbSlug/_components/GoogleDrivePicker'
 import { MsDocsFolderPicker } from './$kbSlug/_components/MsDocsFolderPicker'
 import { PreviewClassificationFeedback } from './-connector-feedback'
 import { AiSelectorStep } from './-connector-shared/AiSelectorStep'
-import { CrawlerAuthSetupStep } from './-connector-shared/CrawlerAuthSetupStep'
+import { CrawlerAuthSetupStep, isSameOrigin } from './-connector-shared/CrawlerAuthSetupStep'
 import { CrawlerAuthStatus, type CrawlerAuthStatusState } from './-connector-shared/CrawlerAuthStatus'
 import {
   buildCrawlerCookies,
@@ -239,10 +239,15 @@ function EditConnectorPage() {
       const cfg = connector.config as {
         base_url?: string; path_prefix?: string; max_pages?: number; content_selector?: string
         cookies?: unknown[]; login_indicator_selector?: string; discovery_seed_url?: string
+        test_url?: string
       }
       // Remember any stored discovery seed so a re-save that doesn't re-run the
       // preview does not silently drop it.
       setSavedDiscoverySeedUrl(String(cfg.discovery_seed_url ?? ''))
+      // Restore the stored auth-probe test URL ("URL to test") so the
+      // operator's login-wall page survives reopening the wizard. Unset
+      // stays empty, which keeps falling back to the derived base URL.
+      setWcTestUrl(String(cfg.test_url ?? ''))
       setWebcrawlerConfig({
         base_url: String(cfg.base_url ?? ''),
         path_prefix: String(cfg.path_prefix ?? ''),
@@ -382,6 +387,12 @@ function EditConnectorPage() {
             : ''
         const discoverySeed = validatedSeed || carriedSeed
         if (discoverySeed) config.discovery_seed_url = discoverySeed
+        // Auth-probe test URL ("URL to test"), persisted so the login-wall
+        // page survives reopening the wizard. Kept only while it stays on
+        // the (possibly edited) base URL's origin - it is the destination
+        // decrypted saved cookies travel to. Empty is never stored: the
+        // fallback stays the derived base URL.
+        if (wcTestUrl && isSameOrigin(wcTestUrl, base)) config.test_url = wcTestUrl
         // SPEC-CRAWL-004: auth guard from ``authGuard`` state - initialized from
         // auth-probe at step 4 → 5 bridge, refreshed by preview onSuccess,
         // mutated by the operator-editable form on step 5.
@@ -687,7 +698,11 @@ function EditConnectorPage() {
                       value={webcrawlerConfig.path_prefix}
                       onChange={(e) => {
                         setWebcrawlerConfig((p) => ({ ...p, path_prefix: e.target.value }))
-                        setWcTestUrl('')
+                        // Deliberately NOT clearing wcTestUrl: a path change
+                        // leaves the origin alone, and the login wall often
+                        // sits outside the crawled subtree -- which is the
+                        // whole reason this field can differ from base_url +
+                        // path_prefix. Editing base_url does clear it, above.
                         invalidateAuthProbe()
                         invalidatePreview()
                       }}

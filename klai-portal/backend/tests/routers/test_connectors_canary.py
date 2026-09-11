@@ -15,10 +15,11 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
+from fastapi import HTTPException
 from klai_image_storage.url_guard import _reset_dns_cache
 from pydantic import ValidationError
 
-from app.api.connectors import WebcrawlerConfig
+from app.api.connectors import WebcrawlerConfig, _validate_connector_config
 
 
 @pytest.fixture(autouse=True)
@@ -299,3 +300,76 @@ class TestWebcrawlerConfigDiscoverySeed:
     def test_no_seed_is_fine(self) -> None:
         cfg = WebcrawlerConfig(base_url="https://wiki.example.com")
         assert cfg.discovery_seed_url is None
+
+
+class TestWebcrawlerConfigTestUrl:
+    """test_url: the persisted auth-probe "URL to test".
+
+    Checked through ``_validate_connector_config`` — the exact save-path
+    contract: it returns the dict stored in ``portal_connectors.config`` and
+    raises HTTPException(422) on rejection. The test URL is the destination
+    decrypted saved cookies travel to, so it must stay on base_url's ORIGIN
+    — deliberately NOT bound to the tighter base_url + path_prefix scope of
+    canary_url: the login wall may sit outside the crawled subtree.
+    """
+
+    def test_offprefix_same_origin_test_url_is_persisted(self) -> None:
+        stored = _validate_connector_config(
+            "web_crawler",
+            {
+                "base_url": "https://wiki.example.com",
+                "path_prefix": "/docs",
+                "test_url": "https://wiki.example.com/nl/inloggen",
+            },
+        )
+        assert stored["test_url"] == "https://wiki.example.com/nl/inloggen"
+
+    def test_cross_origin_test_url_rejected(self) -> None:
+        with pytest.raises(HTTPException) as exc_info:
+            _validate_connector_config(
+                "web_crawler",
+                {
+                    "base_url": "https://wiki.example.com",
+                    "test_url": "https://other.example.com/nl/inloggen",
+                },
+            )
+        assert exc_info.value.status_code == 422
+        assert "test_url" in str(exc_info.value.detail)
+
+    def test_empty_test_url_not_stored_as_choice(self) -> None:
+        """Empty means "no stored choice" — the wizard keeps falling back to
+        the derived base URL; a literal "" must not become a persisted value."""
+        stored = _validate_connector_config(
+            "web_crawler",
+            {"base_url": "https://wiki.example.com", "test_url": ""},
+        )
+        assert stored["test_url"] is None
+
+    def test_absent_test_url_defaults_to_none(self) -> None:
+        stored = _validate_connector_config("web_crawler", {"base_url": "https://wiki.example.com"})
+        assert stored["test_url"] is None
+
+    def test_explicit_default_port_is_the_same_origin(self) -> None:
+        """The wizard uses the browser's URL.origin, which drops a scheme's
+        default port. Comparing raw netloc here rejected a value the wizard
+        had just accepted, so the save 422'd on something the operator was
+        told was fine."""
+        stored = _validate_connector_config(
+            "web_crawler",
+            {
+                "base_url": "https://wiki.example.com",
+                "test_url": "https://wiki.example.com:443/nl/inloggen",
+            },
+        )
+        assert stored["test_url"] == "https://wiki.example.com:443/nl/inloggen"
+
+    def test_different_port_is_a_different_origin(self) -> None:
+        with pytest.raises(HTTPException) as exc_info:
+            _validate_connector_config(
+                "web_crawler",
+                {
+                    "base_url": "https://wiki.example.com",
+                    "test_url": "https://wiki.example.com:8443/nl/inloggen",
+                },
+            )
+        assert exc_info.value.status_code == 422

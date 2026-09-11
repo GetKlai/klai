@@ -535,4 +535,56 @@ describe('edit connector wizard characterization', () => {
     expect(screen.getByLabelText('Preview URL')).toBeTruthy()
     expect(screen.queryByText('Is this site behind a login?')).toBeNull()
   })
+
+  it('reopens the auth step with the stored test URL in the field', async () => {
+    connectorFixture = webCrawler({
+      has_saved_credentials: true,
+      config: {
+        base_url: 'https://docs.example.com',
+        path_prefix: '/guide',
+        max_pages: 350,
+        test_url: 'https://docs.example.com/nl/inloggen',
+      },
+    })
+    await renderWizard()
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+
+    expect(screen.getByLabelText<HTMLInputElement>('URL to test').value).toBe(
+      'https://docs.example.com/nl/inloggen',
+    )
+  })
+
+  it('keeps the stored test URL when only the path prefix changes', async () => {
+    // A path change leaves the origin alone, and the login wall often sits
+    // outside the crawled subtree -- which is why this field can differ from
+    // base_url + path_prefix at all. Clearing it here silently threw away the
+    // value the operator had just been given back.
+    connectorFixture = webCrawler({
+      has_saved_credentials: true,
+      config: {
+        base_url: 'https://docs.example.com',
+        path_prefix: '/guide',
+        max_pages: 350,
+        test_url: 'https://docs.example.com/nl/inloggen',
+      },
+    })
+    await renderWizard()
+
+    fireEvent.change(screen.getByLabelText('Path prefix (optional)'), {
+      target: { value: '/handboek' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+
+    expect(screen.getByLabelText<HTMLInputElement>('URL to test').value).toBe(
+      'https://docs.example.com/nl/inloggen',
+    )
+  })
+
+  it('falls back to the derived base URL when no test URL is stored', async () => {
+    await advanceSavedToAuthSetup()
+
+    expect(screen.getByLabelText<HTMLInputElement>('URL to test').value).toBe(
+      'https://docs.example.com/guide/',
+    )
+  })
 })

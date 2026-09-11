@@ -39,7 +39,7 @@ import {
 } from './-connector-constants'
 import { PreviewClassificationFeedback } from './-connector-feedback'
 import { AiSelectorStep } from './-connector-shared/AiSelectorStep'
-import { CrawlerAuthSetupStep } from './-connector-shared/CrawlerAuthSetupStep'
+import { CrawlerAuthSetupStep, isSameOrigin } from './-connector-shared/CrawlerAuthSetupStep'
 import { CrawlerAuthStatus, type CrawlerAuthStatusState } from './-connector-shared/CrawlerAuthStatus'
 import {
   buildCrawlerCookies,
@@ -184,6 +184,14 @@ function AddConnectorPage() {
         }
         const cookies = buildCrawlerCookies(wcCookieRows, webcrawlerConfig.base_url)
         if (cookies) config.cookies = cookies
+        // Auth-probe test URL ("URL to test"), persisted so the login-wall
+        // page survives reopening the wizard. Kept only while it stays on
+        // the base URL's origin - it is the destination decrypted saved
+        // cookies travel to. Empty is never stored: the fallback stays the
+        // derived base URL.
+        if (wcTestUrl && isSameOrigin(wcTestUrl, webcrawlerConfig.base_url)) {
+          config.test_url = wcTestUrl
+        }
         // SPEC-CRAWL-004: include auto-detected auth guard values. Source is
         // ``authGuard`` state - initialized from auth-probe at step 4 → 5
         // bridge, refreshed by preview onSuccess, mutated by the operator-
