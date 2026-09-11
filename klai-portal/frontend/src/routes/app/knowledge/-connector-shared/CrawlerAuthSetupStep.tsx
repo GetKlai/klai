@@ -30,7 +30,10 @@ type SavedSetupMode = {
 // it's the destination cookies (including decrypted saved ones) get sent
 // to. A cross-origin value would let anyone who can edit the connector
 // exfiltrate its stored session cookies to an arbitrary domain.
-function isSameOrigin(a: string, b: string): boolean {
+// Exported because the wizards apply the same guard before persisting the
+// value; the backend re-validates it (WebcrawlerConfig.test_url), since a
+// stored value is later replayed unseen.
+export function isSameOrigin(a: string, b: string): boolean {
   try {
     return new URL(a).origin === new URL(b).origin
   } catch {

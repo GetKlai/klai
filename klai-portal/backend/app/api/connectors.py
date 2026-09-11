@@ -100,6 +100,7 @@ class WebcrawlerConfig(BaseModel):
     - XOR: canary_url ↔ canary_fingerprint (both or neither)
     - canary_fingerprint must match ^[0-9a-f]{16}$
     - canary_url must start with base_url + (path_prefix if set)
+    - test_url must share base_url's origin (empty is normalised to unset)
     - login_indicator_selector: non-empty, no angle brackets, no 'script'
     """
 
@@ -121,6 +122,13 @@ class WebcrawlerConfig(BaseModel):
     # homepage/hub the crawler can't follow. Scoped within base_url like
     # canary_url so a fallback can never wander off-site.
     discovery_seed_url: str | None = None
+
+    # The auth-probe "URL to test": the page the operator validated their
+    # login cookies against, persisted so the wizard reopens with it instead
+    # of forcing a retype. Not the crawl scope — validated same-ORIGIN with
+    # base_url (see the validator), not within base_url + path_prefix like
+    # canary_url, because a login wall may sit outside the crawled subtree.
+    test_url: str | None = None
 
     @staticmethod
     def _ssrf_check(field: str, url: str | None) -> None:
@@ -159,11 +167,18 @@ class WebcrawlerConfig(BaseModel):
         malicious URL cannot trigger an internal fingerprint fetch.
         """
 
+        # An empty test_url is "no stored choice", never a deliberate value —
+        # normalise to None so the wizard keeps falling back to the derived
+        # base URL and "" can never be persisted as a choice.
+        if self.test_url is not None and not self.test_url.strip():
+            self.test_url = None
+
         # REQ-2.1 / REQ-2.2 / AC-7: SSRF-validate every URL the crawler fetches
         # — base_url, canary_url, and discovery_seed_url on the same footing.
         self._ssrf_check("base_url", self.base_url)
         self._ssrf_check("canary_url", self.canary_url)
         self._ssrf_check("discovery_seed_url", self.discovery_seed_url)
+        self._ssrf_check("test_url", self.test_url)
 
         url_set = self.canary_url is not None
         fp_set = self.canary_fingerprint is not None
@@ -180,6 +195,15 @@ class WebcrawlerConfig(BaseModel):
         # same-domain crawl, not an escape hatch to a different site.
         self._assert_within_scope("canary_url", self.canary_url)
         self._assert_within_scope("discovery_seed_url", self.discovery_seed_url)
+
+        # test_url must stay on base_url's ORIGIN — the same guard the wizard's
+        # "URL to test" field applies client-side (CrawlerAuthSetupStep):
+        # decrypted saved cookies are sent to this URL, so a stored value must
+        # never point at another site, even when it is replayed unseen. Origin
+        # (not path scope): the login wall may live outside base_url +
+        # path_prefix, which is the whole reason the field exists.
+        if self.test_url is not None and _origin(self.test_url) != _origin(self.base_url):
+            raise ValueError(f"test_url must share base_url's origin, got: {self.test_url!r}")
 
         # login_indicator_selector: non-empty, no angle brackets, no javascript: URI.
         # SPEC intent is to block HTML/JS injection in a CSS selector field. Angle
@@ -477,14 +501,30 @@ def _require_credential_store_for_sensitive_config(connector_type: str, config: 
         )
 
 
-def _origin(url: object) -> tuple[str, str] | None:
-    """``(scheme, netloc.lower())`` for a URL, or ``None`` if not a usable URL."""
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _origin(url: object) -> tuple[str, str, int | None] | None:
+    """WHATWG-style origin for a URL, or ``None`` if not a usable URL.
+
+    Canonicalised on purpose: the browser's ``URL.origin`` drops a scheme's
+    default port, so ``https://x.test:443`` and ``https://x.test`` are one
+    origin there. Comparing raw netloc made the two differ here, which turned
+    a value the wizard had already accepted into a 422 on save.
+    """
     if not isinstance(url, str) or not url:
         return None
     parts = urlsplit(url)
     if not parts.netloc:
         return None
-    return (parts.scheme, parts.netloc.lower())
+    scheme = parts.scheme.lower()
+    try:
+        port = parts.port
+    except ValueError:  # malformed port; keep it distinct rather than guessing
+        return (scheme, parts.netloc.lower(), None)
+    if port is not None and port == _DEFAULT_PORTS.get(scheme):
+        port = None
+    return (scheme, (parts.hostname or "").lower(), port)
 
 
 def _stale_credentials_cross_origin(*, connector: PortalConnector, new_config: dict, clear_credentials: bool) -> bool:
