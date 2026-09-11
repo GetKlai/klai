@@ -954,6 +954,7 @@ async def list_widget_conversations(
                 "first_user_query, language_detected "
                 "FROM widget_conversations "
                 "WHERE widget_id = CAST(:widget_id AS uuid) "
+                "AND is_preview = false "
                 "AND started_at < :cursor "
                 "ORDER BY started_at DESC LIMIT :limit"
             ),
@@ -966,6 +967,7 @@ async def list_widget_conversations(
                 "first_user_query, language_detected "
                 "FROM widget_conversations "
                 "WHERE widget_id = CAST(:widget_id AS uuid) "
+                "AND is_preview = false "
                 "ORDER BY started_at DESC LIMIT :limit"
             ),
             params,

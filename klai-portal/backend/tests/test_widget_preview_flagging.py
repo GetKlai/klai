@@ -245,3 +245,37 @@ def test_widget_activity_stats_sql_filters_preview_rows() -> None:
         f"found {source.count('is_preview = false')} occurrences. "
         "REQ-15 requires the stats query to exclude admin-preview conversations."
     )
+
+
+def test_list_widget_conversations_sql_filters_preview_rows() -> None:
+    """SQL-source inspection: the recent-conversations list (activity tab)
+    also excludes admin-preview rows, both with and without a pagination
+    cursor.
+    """
+    import inspect
+
+    from app.api.admin_widgets import list_widget_conversations
+
+    source = inspect.getsource(list_widget_conversations)
+    assert source.count("is_preview = false") >= 2, (
+        "list_widget_conversations must filter both the cursor and no-cursor "
+        f"branches on is_preview = false; found {source.count('is_preview = false')} "
+        "occurrences. Otherwise admin preview/test chats leak into the activity tab."
+    )
+
+
+def test_platform_bot_conversations_sql_filters_preview_rows() -> None:
+    """SQL-source inspection: the platform-admin mirror of the recent-
+    conversations list also excludes admin-preview rows, both with and
+    without a pagination cursor.
+    """
+    import inspect
+
+    from app.api.admin.platform import platform_bot_conversations
+
+    source = inspect.getsource(platform_bot_conversations)
+    assert source.count("is_preview = false") >= 2, (
+        "platform_bot_conversations must filter both the cursor and no-cursor "
+        f"branches on is_preview = false; found {source.count('is_preview = false')} "
+        "occurrences. Otherwise admin preview/test chats leak into the platform view."
+    )
