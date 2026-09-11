@@ -1,13 +1,22 @@
 """Give a hook-carrying crawl request its own browser instead of a shared one.
 
-Why this exists: crawl4ai's declarative hooks are attached by mutating the
-crawler that serves the request (``api.py::_attach_declarative_hooks`` calls
-``crawler.crawler_strategy.set_hook``), but ``crawler_pool.get_crawler``
-hands out a SHARED crawler — the permanent one for the default browser
-config, which is what every Klai crawl uses. ``release_crawler`` only
-decrements ``active_requests``; the hook stays attached. So the cookies one
-request injects are re-injected into every later request served by the same
-crawler, and a concurrent request can have its hooks overwritten by another.
+Why this exists: requests share a browser, and therefore its cookie jar.
+``crawler_pool.get_crawler`` hands out a SHARED crawler — the permanent one
+for the default browser config, which is what every Klai crawl uses — and
+``release_crawler`` only decrements ``active_requests``. Anything a request
+writes into that browser's context outlives it.
+
+Two mechanisms, and the second is the one that actually bites. The hook is
+attached by mutating the crawler (``api.py::_attach_declarative_hooks`` calls
+``crawler.crawler_strategy.set_hook``) and nothing detaches it. But even with
+the hook correctly scoped to one request, the COOKIES it added stay in the
+shared browser context. Measured on 0.9.3 with a per-request hook scope: the
+second request's hook set was empty and it still came back carrying the first
+request's cookie. The same is true without hooks at all — a cookie the site
+itself sets during one crawl is visible to the next, unrelated crawl.
+
+Giving a hook-carrying request its own browser closes both, because the
+context dies with it.
 
 Measured on this image before the patch, four sequential requests to a
 cookie-echoing URL:
