@@ -177,6 +177,7 @@ export interface WidgetMessageItem {
   sources: MessageSourceItem[] | null
   created_at: string
   sequence: number
+  rating: 'thumbsUp' | 'thumbsDown' | null
 }
 
 export interface ConversationDetail extends ConversationListItem {

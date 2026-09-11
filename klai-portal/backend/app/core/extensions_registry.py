@@ -34,6 +34,10 @@ KNOWN_FEATURES: frozenset[str] = frozenset(
         "custom_mcps",
         "scribe",
         "docs",
+        # SPEC-CHAT-QUALITY-LOOP-001 REQ-5: per-org opt-in for the nightly
+        # LLM-as-judge pass on LibreChat conversations. Default off; Klai
+        # staff turn it on per tenant here, not in code (Voys is the pilot).
+        "librechat_quality_judge",
     }
 )
 

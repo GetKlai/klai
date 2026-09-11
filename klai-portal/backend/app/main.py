@@ -49,6 +49,7 @@ from app.middleware.logging_context import LoggingContextMiddleware
 from app.middleware.session import SessionMiddleware
 from app.middleware.tenant_host import KlaiTenantHostMiddleware
 from app.services.bot_poller import poll_loop
+from app.services.conversation_judge import conversation_judge_loop
 from app.services.events import _pending as _event_tasks
 from app.services.kb_upload_poller import run_poll_loop as run_kb_upload_poll_loop
 from app.services.password_policy_guard import assert_zitadel_password_policy_compatible
@@ -299,6 +300,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     widget_outcome_task = asyncio.create_task(widget_outcome_loop())
     logger.info("Widget conversation outcome loop started")
 
+    # SPEC-CHAT-QUALITY-LOOP-001 REQ-2: LLM-as-judge verdicts for finished,
+    # unjudged conversations (reads the outcome labels set above).
+    conversation_judge_task = asyncio.create_task(conversation_judge_loop())
+    logger.info("Conversation quality judge loop started")
+
     imap_task: asyncio.Task[None] | None = None
     if settings.imap_host and settings.imap_username:
         from app.services.imap_listener import start_imap_listener
@@ -316,6 +322,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     telemetry_purge_task.cancel()
     widget_messages_retention_task.cancel()
     widget_outcome_task.cancel()
+    conversation_judge_task.cancel()
     if imap_task is not None:
         imap_task.cancel()
     if _event_tasks:

@@ -854,10 +854,25 @@ class WidgetMessageItem(BaseModel):
     sources: list[dict] | None
     created_at: datetime
     sequence: int
+    rating: Literal["thumbsUp", "thumbsDown"] | None
 
 
 class ConversationDetail(ConversationListItem):
     messages: list[WidgetMessageItem]
+
+
+class ConversationQualityRead(BaseModel):
+    """Read-only sidecar for one conversation's judge verdict (REQ-3,
+    SPEC-CHAT-QUALITY-LOOP-001). Separate model on purpose: the existing
+    transcript responses stay untouched. Deliberately omits ``model_used``
+    and ``anonymized_at`` — internals the admin UI never shows."""
+
+    outcome: str
+    failure_category: str | None = None
+    reasoning: str | None = None
+    confidence: str
+    suggested_action: str | None = None
+    judged_at: datetime
 
 
 class TopQuery(BaseModel):
@@ -1002,7 +1017,7 @@ async def get_widget_conversation(
     msg_result = await db.execute(
         text(
             """
-            SELECT id, role, content, sources, created_at, sequence
+            SELECT id, role, content, sources, created_at, sequence, rating
               FROM widget_messages
              WHERE conversation_id = :conv_id
              ORDER BY sequence ASC
@@ -1018,6 +1033,7 @@ async def get_widget_conversation(
             sources=m.sources,
             created_at=m.created_at,
             sequence=m.sequence,
+            rating=m.rating,
         )
         for m in msg_result.all()
     ]
@@ -1030,6 +1046,48 @@ async def get_widget_conversation(
         first_user_query=conv_row.first_user_query,
         language_detected=conv_row.language_detected,
         messages=messages,
+    )
+
+
+@router.get("/{widget_id}/conversations/{conv_id}/quality", response_model=ConversationQualityRead)
+async def get_widget_conversation_quality(
+    widget_id: str,
+    conv_id: int,
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    _platform: UserPermissions = Depends(require_platform_unlocked("widgets")),
+    db: AsyncSession = Depends(get_db),
+) -> ConversationQualityRead:
+    """Nightly judge verdict for one conversation (REQ-3, SPEC-CHAT-QUALITY-LOOP-001).
+
+    Read-only sidecar to the transcript drawer; the conversation_id lookup is
+    tenant-scoped by the Cat-D RLS policy on conversation_quality_judgments
+    (same session as the transcript route above). No row → 404: "not judged
+    yet" is a normal state the frontend renders as nothing.
+    """
+    await _get_widget_or_404(widget_id, perms.org_id, db, include_deleted=True)
+
+    result = await db.execute(
+        text(
+            """
+            SELECT outcome, failure_category, reasoning, confidence,
+                   suggested_action, judged_at
+              FROM conversation_quality_judgments
+             WHERE conversation_id = :conv_id
+            """
+        ),
+        {"conv_id": conv_id},
+    )
+    row = result.first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="conversation not judged yet")
+
+    return ConversationQualityRead(
+        outcome=row.outcome,
+        failure_category=row.failure_category,
+        reasoning=row.reasoning,
+        confidence=row.confidence,
+        suggested_action=row.suggested_action,
+        judged_at=row.judged_at,
     )
 
 

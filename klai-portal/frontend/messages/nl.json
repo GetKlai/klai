@@ -2667,5 +2667,7 @@
   "klai_assistant_submitting": "Versturen...",
   "klai_assistant_error": "Versturen mislukt. Probeer het opnieuw.",
   "klai_assistant_add_another": "Nog iets doorgeven",
-  "klai_assistant_disclaimer": "AI-antwoorden kunnen fouten bevatten. Controleer belangrijke informatie altijd bij de bron."
+  "klai_assistant_disclaimer": "AI-antwoorden kunnen fouten bevatten. Controleer belangrijke informatie altijd bij de bron.",
+  "admin_extension_librechat_quality_judge_label": "Gespreksbeoordeling (LibreChat)",
+  "admin_extension_librechat_quality_judge_description": "Laat de nachtelijke kwaliteitsbeoordeling ook LibreChat-gesprekken van deze tenant beoordelen (los van webchat)."
 }
