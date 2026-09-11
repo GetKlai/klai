@@ -17,9 +17,15 @@ export type CrawlerPreviewRequest = CrawlerAuthPayload & {
   try_ai?: boolean
 }
 
+// A row with a name but no value means "keep the one already saved", which is
+// how you replace ONE expired cookie without fetching the others out of
+// DevTools again. Dropping those rows here is what made the backend replace
+// the whole set with whatever you happened to type, silently losing the rest.
+// Removing a row with its x still removes the cookie: the name is then gone.
 export function buildCrawlerCookies(rows: CookieRow[], baseUrl: string): unknown[] | undefined {
-  const filled = rows.filter((row) => row.name.trim() && row.value.trim())
-  if (filled.length === 0) return undefined
+  const named = rows.filter((row) => row.name.trim())
+  if (named.length === 0) return undefined
+  if (named.every((row) => !row.value.trim())) return undefined
 
   const domain = (() => {
     try {
@@ -29,12 +35,12 @@ export function buildCrawlerCookies(rows: CookieRow[], baseUrl: string): unknown
     }
   })()
 
-  return filled.map((row) => ({
-    name: row.name.trim(),
-    value: row.value.trim(),
-    domain,
-    path: '/',
-  }))
+  // Key order is kept as it was: a row WITH a value serialises exactly like
+  // before, so nothing downstream sees this change unless a value is blank.
+  return named.map((row) => {
+    const value = row.value.trim()
+    return { name: row.name.trim(), ...(value ? { value } : {}), domain, path: '/' }
+  })
 }
 
 function savedCredentialFields(
@@ -48,7 +54,11 @@ function savedCredentialFields(
   const useSavedCredentials = payload.use_saved_credentials === true
   return {
     cookies: useSavedCredentials ? null : (payload.cookies || null),
-    connector_id: useSavedCredentials ? connectorId : null,
+    // Always sent, not only with use_saved_credentials: a row left blank means
+    // "keep the stored value", and the server cannot look that up without
+    // knowing which connector. It stays the server's decision what to hand
+    // back -- the same-origin check on the probe URL is enforced there.
+    connector_id: connectorId,
     use_saved_credentials: useSavedCredentials,
   }
 }
