@@ -145,8 +145,13 @@ class ConnectorScheduler:
             session.add(sync_run)
             await session.commit()
             await session.refresh(sync_run)
+            # Read the id here: leaving the block closes the session and
+            # expires the instance, so the same access one line down raises
+            # DetachedInstanceError -- which is what killed every scheduled
+            # sync on the first night this scheduler ran.
+            sync_run_id = sync_run.id
 
-        task = asyncio.create_task(self._sync_callback(connector_id, sync_run.id))
+        task = asyncio.create_task(self._sync_callback(connector_id, sync_run_id))
         self._sync_tasks.add(task)
         task.add_done_callback(self._sync_tasks.discard)
         logger.info("Scheduled sync triggered for connector %s (org %s)", connector_id, org_id)

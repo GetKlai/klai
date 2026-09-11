@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 from apscheduler.triggers.cron import CronTrigger
+from sqlalchemy import inspect as sa_inspect
 
 import app.core.database as _db_module
 from app.core.enums import SyncStatus
@@ -68,15 +69,40 @@ def _make_session(existing_running_run: Any | None = None) -> tuple[MagicMock, u
     ``session.execute`` answers the RUNNING-run guard with
     ``existing_running_run``; ``session.refresh`` materialises the ORM
     default id the same way a real flush would.
+
+    Leaving the block expires what it loaded, like the real thing. Without
+    that, this mock answers ``sync_run.id`` forever and the test cannot see
+    the one thing that matters here: whether the caller read the id while
+    the session was still open. Every scheduled sync on 2026-09-11 died on
+    exactly that access, and this file was green throughout.
     """
     sync_run_id = uuid.uuid4()
+    added: list[Any] = []
     sess = MagicMock()
     sess.__aenter__ = AsyncMock(return_value=sess)
+
+    async def _rollback() -> None:
+        # tenant_scoped_session() always rolls back on exit
+        # (_reset_tenant_context), and a rollback expires the identity map.
+        # Reproduced with SQLAlchemy's own expiry so an access afterwards
+        # takes the real code path and raises DetachedInstanceError.
+        for obj in added:
+            state = sa_inspect(obj)
+            state._expire(state.dict, set())
+
     sess.__aexit__ = AsyncMock(return_value=False)
     result = MagicMock()
     result.scalars = MagicMock(return_value=MagicMock(first=lambda: existing_running_run))
     sess.execute = AsyncMock(return_value=result)
-    sess.add = MagicMock()
+
+    def _add(obj: Any) -> None:
+        added.append(obj)
+        # Snapshot now. After close the instance is expired, and reading it
+        # then is the very habit that let the bug through.
+        sess.added_rows.append({"connector_id": obj.connector_id, "org_id": obj.org_id, "status": obj.status})
+
+    sess.added_rows = []
+    sess.add = MagicMock(side_effect=_add)
     sess.commit = AsyncMock()
 
     def _refresh(obj: Any) -> None:
@@ -84,7 +110,7 @@ def _make_session(existing_running_run: Any | None = None) -> tuple[MagicMock, u
 
     sess.refresh = AsyncMock(side_effect=_refresh)
     sess.connection = AsyncMock()
-    sess.rollback = AsyncMock()
+    sess.rollback = AsyncMock(side_effect=_rollback)
     return sess, sync_run_id
 
 
@@ -130,9 +156,7 @@ class TestRefreshReconciliation:
         assert any("scheduled connectors" in record.getMessage() for record in caplog.records)
 
     @pytest.mark.asyncio
-    async def test_refresh_skips_invalid_cron_and_schedules_the_rest(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    async def test_refresh_skips_invalid_cron_and_schedules_the_rest(self, caplog: pytest.LogCaptureFixture) -> None:
         bad = _scheduled(schedule="not a cron")
         good = _scheduled()
         with caplog.at_level(logging.ERROR):
@@ -157,17 +181,20 @@ class TestTriggerSync:
         await scheduler._trigger_sync(connector_id, "org-zitadel-1")
         await asyncio.sleep(0)  # let the create_task'd callback run
 
-        sync_run = sess.add.call_args.args[0]
-        assert sync_run.connector_id == connector_id
-        assert sync_run.org_id == "org-zitadel-1"
-        assert sync_run.status == SyncStatus.RUNNING
+        assert sess.added_rows == [
+            {
+                "connector_id": connector_id,
+                "org_id": "org-zitadel-1",
+                "status": SyncStatus.RUNNING,
+            }
+        ]
         sess.commit.assert_awaited_once()
+        # The id must have been read while the session was open. Passing it
+        # on is the whole point: the callback is what actually syncs.
         callback.assert_awaited_once_with(connector_id, sync_run_id)
 
     @pytest.mark.asyncio
-    async def test_trigger_sync_skips_when_run_already_running(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    async def test_trigger_sync_skips_when_run_already_running(self, caplog: pytest.LogCaptureFixture) -> None:
         scheduler = ConnectorScheduler()
         callback = AsyncMock()
         scheduler._sync_callback = callback
