@@ -499,9 +499,7 @@ async def test_retention_run_once_clears_visitor_contact_of_purged_conversations
         await _retention_run_once()
 
     visitor_updates = [
-        sql
-        for sql in statements
-        if "UPDATE widget_conversations" in sql and "visitor_email = NULL" in sql
+        sql for sql in statements if "UPDATE widget_conversations" in sql and "visitor_email = NULL" in sql
     ]
     assert visitor_updates, f"No visitor-contact anonymization statement ran. Statements: {statements}"
     assert "visitor_name = NULL" in visitor_updates[0]
