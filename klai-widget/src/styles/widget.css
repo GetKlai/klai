@@ -1280,6 +1280,77 @@
   margin-top: 24px;
 }
 
+/* Pre-chat step — occupies the hero's place before the first message when
+   the widget asks for a name and an e-mail. Same centred column as the hero
+   so switching between the two does not move the surrounding chrome. */
+.klai-identity-step {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: safe center;
+  text-align: center;
+  padding: 24px 24px 16px;
+  overflow-y: auto;
+}
+
+.klai-identity-title {
+  font-size: var(--klai-message-font-size);
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--klai-text-color);
+  margin: 0;
+}
+
+.klai-identity-help {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--klai-text-muted);
+  margin: 6px 0 0;
+  max-width: 300px;
+}
+
+.klai-identity-form {
+  width: 100%;
+  max-width: 280px;
+  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+}
+
+.klai-identity-btn {
+  margin-top: 4px;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 8px;
+  font-family: var(--klai-font-family);
+  font-size: 13px;
+  background-color: var(--klai-primary-color);
+  color: var(--klai-primary-text-color);
+  cursor: pointer;
+}
+
+.klai-identity-btn:hover:not(:disabled) {
+  opacity: 0.88;
+}
+
+.klai-identity-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.klai-identity-step .klai-remember-me {
+  margin-top: 2px;
+}
+
+.klai-identity-step .klai-clear-identity {
+  align-self: center;
+  margin-top: 14px;
+}
+
 /* Starter chips — TWD pattern. Content-width pills that wrap onto
    multiple lines when they exceed the chat width. Hover tint
    follows the brand colour. */

@@ -37,7 +37,6 @@ import {
   streamHubSpotHandoffEvents,
 } from "../api/handoff";
 import { currentLocale, t } from "../i18n/labels";
-import type { Message } from "../api/chat-stream";
 
 interface ChatWindowProps {
   title: string;
@@ -76,6 +75,12 @@ export function ChatWindow(props: ChatWindowProps) {
   const [inputValue, setInputValue] = createSignal("");
   const [visitorName, setVisitorName] = createSignal(chatState.visitorName);
   const [visitorEmail, setVisitorEmail] = createSignal(chatState.visitorEmail);
+  // The pre-chat step is answered once per widget load. A remembered identity
+  // (the opt-in below, 30 days) pre-fills the fields but does not skip the
+  // step: it is the only place that shows what we stored and the only way to
+  // wipe it, so a returning visitor confirms with one click instead of losing
+  // sight of the details entirely.
+  const [identityAnswered, setIdentityAnswered] = createSignal(false);
   const [showHistory, setShowHistory] = createSignal(false);
   const [conversationActionBusy, setConversationActionBusy] = createSignal(false);
   let abortController: AbortController | null = null;
@@ -224,32 +229,15 @@ export function ChatWindow(props: ChatWindowProps) {
     }
   };
 
-  const visitorInfoComplete = () =>
-    !props.collectUserInfo ||
-    (visitorName().trim().length > 1 && visitorEmail().trim().includes("@"));
+  const identityFilled = () =>
+    visitorName().trim().length > 1 && visitorEmail().trim().includes("@");
 
   const canSend = () =>
     chatState.conversationStatus !== "closed" &&
-    visitorInfoComplete() &&
+    !showIdentityStep() &&
     !chatState.isStreaming &&
     !chatState.handoffConnecting &&
     !conversationActionBusy();
-
-  const withVisitorInfo = (messages: Message[]): Message[] => {
-    if (!props.collectUserInfo) return messages;
-    const name = visitorName().trim();
-    const email = visitorEmail().trim();
-    if (!name || !email) return messages;
-    let added = false;
-    return messages.map((message) => {
-      if (added || message.role !== "user") return message;
-      added = true;
-      return {
-        ...message,
-        content: `Visitor details:\nName: ${name}\nEmail: ${email}\n\nMessage:\n${message.content}`,
-      };
-    });
-  };
 
   // One streamed bot turn. The consent flag and retrieval-query override
   // travel with the request; JSON.stringify drops them when unset, so
@@ -265,7 +253,14 @@ export function ChatWindow(props: ChatWindowProps) {
       token: chatState.sessionToken,
       widgetId: chatState.widgetId,
       sessionId: chatState.clientSessionId,
-      messages: withVisitorInfo(chatState.messages.slice(0, -1)),
+      messages: chatState.messages.slice(0, -1),
+      // Travel beside the transcript, not inside it: the model has no use for
+      // them and the audit row is where a reviewer looks for them. Gated on
+      // the toggle because a remembered identity outlives it: a widget where
+      // the admin switched collection off must stop sending the address it
+      // stored while collection was still on.
+      visitorName: props.collectUserInfo ? visitorName().trim() || undefined : undefined,
+      visitorEmail: props.collectUserInfo ? visitorEmail().trim() || undefined : undefined,
       widgetTurnId: turnId,
       broadMode: chatState.broadMode || undefined,
       retrievalQuery: opts.retrievalQuery,
@@ -519,6 +514,13 @@ export function ChatWindow(props: ChatWindowProps) {
   const hasUserTurn = () =>
     chatState.messages.some((m) => m.role === "user");
 
+  // Asked in the hero's place, before the first message, so the visitor reads
+  // why we want the address with nothing else competing for attention, and
+  // the fields are gone afterwards instead of sitting above the composer for
+  // the rest of the conversation.
+  const showIdentityStep = () =>
+    Boolean(props.collectUserInfo) && !identityAnswered() && !hasUserTurn();
+
   const windowClass = () => {
     const base = props.inline ? "klai-window klai-window--inline" : "klai-window";
     return nerdsPanelOpen() && !props.inline ? `${base} klai-window--nerds` : base;
@@ -651,7 +653,73 @@ export function ChatWindow(props: ChatWindowProps) {
       {/* Empty-state hero — TWD pattern. Shows the bot identity + a
           row of starter chips. The instant the user sends a message
           we drop the hero and switch to the regular message list. */}
-      <Show when={!hasUserTurn()}>
+      <Show when={showIdentityStep()}>
+        <div class="klai-identity-step">
+          <p class="klai-identity-title">{t().userInfoTitle}</p>
+          <p class="klai-identity-help">{t().userInfoHelp}</p>
+          <form
+            class="klai-identity-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (identityFilled()) setIdentityAnswered(true);
+            }}
+          >
+            <input
+              class="klai-user-info-input"
+              type="text"
+              autocomplete="name"
+              required
+              placeholder={t().userInfoName}
+              value={visitorName()}
+              onInput={(e) => {
+                const name = e.currentTarget.value;
+                setVisitorName(name);
+                setVisitorIdentity({ name });
+              }}
+            />
+            <input
+              class="klai-user-info-input"
+              type="email"
+              autocomplete="email"
+              required
+              placeholder={t().userInfoEmail}
+              value={visitorEmail()}
+              onInput={(e) => {
+                const email = e.currentTarget.value;
+                setVisitorEmail(email);
+                setVisitorIdentity({ email });
+              }}
+            />
+            <label class="klai-remember-me">
+              <input
+                type="checkbox"
+                checked={chatState.rememberIdentity}
+                onChange={(e) => setRememberIdentity(e.currentTarget.checked)}
+              />
+              <span>{t().rememberMe}</span>
+            </label>
+            <button type="submit" class="klai-identity-btn" disabled={!identityFilled()}>
+              {t().userInfoStart}
+            </button>
+          </form>
+          {/* Skipping wipes both fields and the stored entry, so the request
+              carries no contact details at all. */}
+          <button
+            type="button"
+            class="klai-clear-identity"
+            onClick={() => {
+              setVisitorName("");
+              setVisitorEmail("");
+              clearStoredIdentity();
+              setIdentityAnswered(true);
+            }}
+          >
+            {t().userInfoSkip}
+          </button>
+        </div>
+      </Show>
+
+      <Show when={!hasUserTurn() && !showIdentityStep()}>
         <div class="klai-hero">
           <p class="klai-hero-title">
             {props.welcomeMessage?.trim() || props.title}
@@ -728,7 +796,7 @@ export function ChatWindow(props: ChatWindowProps) {
 
       <Show when={hasUserTurn() && chatState.config?.handoff?.hubspot?.enabled && !chatState.handoffActive && chatState.conversationStatus !== "closed"}>
         <div class="klai-handoff-bar">
-          <Show when={!props.collectUserInfo}>
+          <Show when={visitorName().trim().length < 2}>
             <input
               class="klai-handoff-name-input"
               type="text"
@@ -780,58 +848,7 @@ export function ChatWindow(props: ChatWindowProps) {
       </Show>
 
       <div class="klai-input-area">
-        <Show when={props.collectUserInfo}>
-          <div class="klai-user-info" aria-label={t().userInfoHelp}>
-            <p>{t().userInfoHelp}</p>
-            <div class="klai-user-info-fields">
-              <input
-                class="klai-user-info-input"
-                type="text"
-                autocomplete="name"
-                placeholder={t().userInfoName}
-                value={visitorName()}
-                onInput={(e) => {
-                  const name = e.currentTarget.value;
-                  setVisitorName(name);
-                  setVisitorIdentity({ name });
-                }}
-              />
-              <input
-                class="klai-user-info-input"
-                type="email"
-                autocomplete="email"
-                placeholder={t().userInfoEmail}
-                value={visitorEmail()}
-                onInput={(e) => {
-                  const email = e.currentTarget.value;
-                  setVisitorEmail(email);
-                  setVisitorIdentity({ email });
-                }}
-              />
-            </div>
-            <label class="klai-remember-me">
-              <input
-                type="checkbox"
-                checked={chatState.rememberIdentity}
-                onChange={(e) => setRememberIdentity(e.currentTarget.checked)}
-              />
-              <span>{t().rememberMe}</span>
-            </label>
-            <Show when={chatState.rememberIdentity && (visitorName() || visitorEmail())}>
-              <button
-                type="button"
-                class="klai-clear-identity"
-                onClick={() => {
-                  setVisitorName("");
-                  setVisitorEmail("");
-                  clearStoredIdentity();
-                }}
-              >
-                {t().clearStoredIdentity}
-              </button>
-            </Show>
-          </div>
-        </Show>
+        <Show when={!showIdentityStep()}>
         <div class="klai-compose-row">
           <textarea
             ref={textareaRef}
@@ -879,6 +896,7 @@ export function ChatWindow(props: ChatWindowProps) {
             </button>
           </Show>
         </div>
+        </Show>
       </div>
 
       {/* null/missing keeps the legacy footer; an explicit blank hides it. */}

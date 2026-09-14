@@ -154,6 +154,16 @@ class WidgetConversation(Base):
     # ck_widget_conversations_outcome — see
     # post_deploy_d9e0f1a2b3c4_widget_conversations_outcome.sql.
     outcome: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Contact details the visitor left in the widget's pre-chat step, which
+    # runs when widget_config.collect_user_info is on. They live here instead
+    # of inside the first message: the model has no use for them, and
+    # first_user_query must stay the visitor's actual question for the activity
+    # list and the top-queries aggregate to mean anything. Both nullable — the
+    # step can be skipped. The widget_messages retention sweep nulls them along
+    # with the conversation they belong to. DDL in
+    # post_deploy_a1c4e7b2d9f3_widget_conversations_visitor_contact.sql.
+    visitor_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    visitor_email: Mapped[str | None] = mapped_column(String(254), nullable=True)
 
 
 class WidgetMessage(Base):

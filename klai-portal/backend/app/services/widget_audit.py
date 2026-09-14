@@ -91,6 +91,13 @@ async def record_widget_turn(
     # session so widget_activity_stats can exclude them from visitor totals.
     # @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-15
     is_preview: bool = False,
+    # Contact details from the widget's pre-chat step, sent on every turn by
+    # the client and written to the conversation row rather than into the
+    # message body. Latest non-empty value wins so a visitor who corrects a
+    # typo is not stuck with the first attempt; skipping the step leaves both
+    # NULL and touches nothing.
+    visitor_name: str | None = None,
+    visitor_email: str | None = None,
 ) -> None:
     """Append one turn to a widget conversation, creating the
     conversation row on first call.
@@ -131,6 +138,10 @@ async def record_widget_turn(
     org_id = int(row[0])
 
     truncated_query = content[:240] if role == "user" else None
+    # Browser-supplied, so clamp to the column widths here as well as in the
+    # request model; an empty field must land as NULL and not as "".
+    clean_visitor_name = (visitor_name or "").strip()[:120] or None
+    clean_visitor_email = (visitor_email or "").strip()[:254] or None
 
     try:
         async with tenant_scoped_session(org_id) as db:
@@ -140,13 +151,23 @@ async def record_widget_turn(
                     INSERT INTO widget_conversations
                         (org_id, widget_id, session_key, first_user_query,
                          ip_hash, user_agent_hash, language_detected,
-                         loaded_origin, is_preview, last_message_at)
+                         loaded_origin, is_preview, visitor_name,
+                         visitor_email, last_message_at)
                     VALUES
                         (:org_id, CAST(:widget_id AS uuid), :session_key,
                          :first_user_query, :ip_hash, :user_agent_hash,
-                         :language_detected, :loaded_origin, :is_preview, NOW())
+                         :language_detected, :loaded_origin, :is_preview,
+                         :visitor_name, :visitor_email, NOW())
                     ON CONFLICT (widget_id, session_key) DO UPDATE
                         SET last_message_at = NOW(),
+                            visitor_name = COALESCE(
+                                EXCLUDED.visitor_name,
+                                widget_conversations.visitor_name
+                            ),
+                            visitor_email = COALESCE(
+                                EXCLUDED.visitor_email,
+                                widget_conversations.visitor_email
+                            ),
                             -- never overwrite an existing first_user_query
                             first_user_query = COALESCE(
                                 widget_conversations.first_user_query,
@@ -169,6 +190,8 @@ async def record_widget_turn(
                     "language_detected": language_detected,
                     "loaded_origin": loaded_origin[:200] if loaded_origin else None,
                     "is_preview": is_preview,
+                    "visitor_name": clean_visitor_name,
+                    "visitor_email": clean_visitor_email,
                 },
             )
             row = upsert.first()

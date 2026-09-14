@@ -44,6 +44,9 @@ export interface WidgetLabels {
   userInfoName: string
   userInfoEmail: string
   userInfoHelp: string
+  userInfoTitle: string
+  userInfoStart: string
+  userInfoSkip: string
   handoffConnectedWith: string
   handoffNamePlaceholder: string
   rememberMe: string
@@ -106,8 +109,12 @@ const nl: WidgetLabels = {
   handoffConnecting: "Ik verbind je met een medewerker.",
   handoffConnected: "Je bent verbonden met een medewerker.",
   userInfoName: "Naam",
-  userInfoEmail: "E-mail",
-  userInfoHelp: "Laat je gegevens achter voor opvolging.",
+  userInfoEmail: "E-mailadres",
+  userInfoHelp:
+    "We lezen elk gesprek na om te zien hoe goed de AI antwoordt. Klopt een antwoord niet, dan sturen we je per e-mail een correctie.",
+  userInfoTitle: "Voordat we beginnen",
+  userInfoStart: "Begin het gesprek",
+  userInfoSkip: "Liever niet, ga direct naar de chat",
   handoffConnectedWith: "Je praat met {name}.",
   handoffNamePlaceholder: "Je naam",
   rememberMe: "Onthoud mijn gegevens (30 dagen)",
@@ -162,8 +169,12 @@ const en: WidgetLabels = {
   handoffConnecting: "I am connecting you with a human agent.",
   handoffConnected: "You are connected with a human agent.",
   userInfoName: "Name",
-  userInfoEmail: "Email",
-  userInfoHelp: "Leave your details for follow-up.",
+  userInfoEmail: "Email address",
+  userInfoHelp:
+    "We read every conversation to see how well the AI answered. If an answer turns out to be wrong, we email you a correction.",
+  userInfoTitle: "Before we start",
+  userInfoStart: "Start the chat",
+  userInfoSkip: "No thanks, take me to the chat",
   handoffConnectedWith: "You are talking to {name}.",
   handoffNamePlaceholder: "Your name",
   rememberMe: "Remember my details (30 days)",

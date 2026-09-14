@@ -162,6 +162,10 @@ export interface ConversationListItem {
   message_count: number
   first_user_query: string | null
   language_detected: string | null
+  // Left by the visitor in the widget's pre-chat step; null when the widget
+  // does not ask for them or the visitor skipped the step.
+  visitor_name: string | null
+  visitor_email: string | null
 }
 
 export interface MessageSourceItem {

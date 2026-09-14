@@ -446,3 +446,62 @@ async def test_retention_loop_continues_after_exception():
             await widget_messages_retention_loop()
 
     assert call_count >= 2, "Loop did not retry after the exception"
+
+
+# ---------------------------------------------------------------------------
+# Visitor contact details are cleared with the conversation they belong to
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_retention_run_once_clears_visitor_contact_of_purged_conversations():
+    """The name and e-mail from the pre-chat step do not outlive the transcript.
+
+    They were given so a reviewer could answer this one conversation. Once its
+    messages are gone the contact details have no purpose left, so the same
+    pass that deletes the messages nulls them on the conversation row, exactly
+    as it already does for the judge's quoted reasoning.
+    """
+    from app.services.widget_messages_retention import _retention_run_once
+
+    statements: list[str] = []
+    candidates_served = False
+
+    db = AsyncMock()
+
+    async def _execute(stmt, params=None, **kwargs):
+        nonlocal candidates_served
+        sql = str(stmt)
+        statements.append(sql)
+        result = MagicMock()
+        if "SELECT id, conversation_id FROM widget_messages" in sql:
+            if candidates_served:
+                result.all = MagicMock(return_value=[])
+            else:
+                candidates_served = True
+                result.all = MagicMock(return_value=[(11, 5), (12, 5), (13, 6)])
+            return result
+        result.rowcount = 1
+        return result
+
+    db.execute = _execute
+    db.commit = AsyncMock()
+
+    @asynccontextmanager
+    async def _fake_session():
+        yield db
+
+    with (
+        patch("app.services.widget_messages_retention.cross_org_session", _fake_session),
+        patch("app.services.widget_messages_retention.settings") as mock_settings,
+    ):
+        mock_settings.widget_messages_retention_days = 90
+        await _retention_run_once()
+
+    visitor_updates = [
+        sql
+        for sql in statements
+        if "UPDATE widget_conversations" in sql and "visitor_email = NULL" in sql
+    ]
+    assert visitor_updates, f"No visitor-contact anonymization statement ran. Statements: {statements}"
+    assert "visitor_name = NULL" in visitor_updates[0]

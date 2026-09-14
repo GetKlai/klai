@@ -92,6 +92,13 @@ interface ChatStreamOptions {
    * body when falsy, so strict (default) traffic is byte-identical to the
    * pre-feature request and old backends never see the field. */
   broadMode?: boolean;
+  /** Contact details from the pre-chat step, when the widget asks for them.
+   * Sent beside the transcript rather than inside it: the backend stores them
+   * on the conversation audit row and never forwards them to the model.
+   * Dropped from the body when empty, so widgets that do not ask send exactly
+   * the request they sent before. */
+  visitorName?: string;
+  visitorEmail?: string;
   /** Retrieval query override for this turn (``knowledge.query``). The
    * consent turn sends the visitor's original question here: the last
    * user message would be the consent text itself, and both the article
@@ -298,6 +305,8 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
     widgetTurnId,
     broadMode,
     retrievalQuery,
+    visitorName,
+    visitorEmail,
     callbacks,
     abortController,
   } = options;
@@ -321,6 +330,8 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
           widget_turn_id: widgetTurnId,
           broad_mode: broadMode || undefined,
           knowledge: retrievalQuery ? { query: retrievalQuery } : undefined,
+          visitor_name: visitorName || undefined,
+          visitor_email: visitorEmail || undefined,
         }),
         signal: abortController?.signal,
         onopen: async (response) => {

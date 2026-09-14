@@ -202,6 +202,10 @@ export function WidgetChatSurface({
   const [copied, setCopied] = useState(false)
   const [visitorName, setVisitorName] = useState('')
   const [visitorEmail, setVisitorEmail] = useState('')
+  // The pre-chat step is answered (or skipped) once per widget load. It is
+  // deliberately not persisted here: this surface is a share link people open
+  // once, and the embeddable widget owns its own "remember me" storage.
+  const [identityDone, setIdentityDone] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -218,9 +222,12 @@ export function WidgetChatSurface({
   // query string, and appending "&embed=1" to a bare path makes their router
   // answer with a 404 page. Verified against the live booking URL.
   const nerdsHref = `${nerdsUrl}${nerdsUrl.includes('?') ? '&' : '?'}embed=1&lng=${nerdsLang}`
-  const visitorInfoComplete =
-    !collectUserInfo ||
-    (visitorName.trim().length > 1 && visitorEmail.trim().includes('@'))
+  const identityFilled = visitorName.trim().length > 1 && visitorEmail.trim().includes('@')
+  // Ask before the first message rather than alongside it: the visitor reads
+  // why we want the address while nothing else competes for the space, and
+  // afterwards the fields are gone instead of sitting above the composer for
+  // the rest of the conversation.
+  const showIdentityStep = collectUserInfo && !identityDone
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -242,7 +249,7 @@ export function WidgetChatSurface({
 
   async function sendMessage(override?: string) {
     const content = (override ?? input).trim()
-    if (!content || isStreaming || !visitorInfoComplete) return
+    if (!content || isStreaming || showIdentityStep) return
     setInput('')
     if (textareaRef.current) textareaRef.current.style.height = 'auto'
 
@@ -259,9 +266,14 @@ export function WidgetChatSurface({
           Authorization: `Bearer ${sessionToken}`,
         },
         body: JSON.stringify({
-          messages: withVisitorInfo([...messages, userMsg]).map(({ role, content }) => ({ role, content })),
+          messages: [...messages, userMsg].map(({ role, content }) => ({ role, content })),
           stream: true,
           page_context: pageContextEnabled ? collectPageContext() : undefined,
+          // Kept out of the message list on purpose: the answer does not
+          // depend on who is asking, and the backend needs them on the
+          // conversation row, not in the transcript.
+          visitor_name: visitorName.trim() || undefined,
+          visitor_email: visitorEmail.trim() || undefined,
         }),
       })
       if (!res.ok || !res.body) throw new Error(`chat ${res.status}`)
@@ -365,22 +377,6 @@ export function WidgetChatSurface({
     })
   }
 
-  function withVisitorInfo(nextMessages: ChatMessage[]): ChatMessage[] {
-    if (!collectUserInfo) return nextMessages
-    const name = visitorName.trim()
-    const email = visitorEmail.trim()
-    if (!name || !email) return nextMessages
-    let added = false
-    return nextMessages.map((message) => {
-      if (added || message.role !== 'user') return message
-      added = true
-      return {
-        ...message,
-        content: `Visitor details:\nName: ${name}\nEmail: ${email}\n\nMessage:\n${message.content}`,
-      }
-    })
-  }
-
   function newConversation() {
     setMessages([])
     setInput('')
@@ -463,7 +459,73 @@ export function WidgetChatSurface({
               small window — pushes the block up until the icon tile touches the
               header border. Padding on both sides keeps a floor of space above
               it at every height. */}
-          {messages.length === 0 ? (
+          {showIdentityStep ? (
+            <div
+              data-widget-identity-step
+              className="flex flex-1 flex-col items-center justify-center px-4 py-8 text-center"
+            >
+              <p className={`text-base font-display-medium ${isDark ? 'text-[var(--color-rl-bg)]' : 'text-gray-900'}`}>
+                {m.widget_chat_user_info_title()}
+              </p>
+              <p className={`mt-2 max-w-md text-sm ${isDark ? 'text-[var(--color-rl-bg)]/65' : 'text-gray-500'}`}>
+                {m.widget_chat_user_info_help()}
+              </p>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  if (identityFilled) setIdentityDone(true)
+                }}
+                className="mt-6 w-full max-w-sm space-y-2"
+              >
+                {/* eslint-disable-next-line klai/no-raw-text-input -- dark-mode variant the owned Input cannot express */}
+                <input
+                  type="text"
+                  autoComplete="name"
+                  required
+                  value={visitorName}
+                  onChange={(e) => setVisitorName(e.target.value)}
+                  placeholder={m.widget_chat_user_info_name()}
+                  className={`w-full min-w-0 rounded-xl border px-3 py-2 text-sm outline-none transition-colors focus:border-gray-300 ${isDark ? 'border-white/10 bg-white/5 text-[var(--color-rl-bg)] placeholder:text-[var(--color-rl-bg)]/35' : 'border-gray-200 bg-white text-gray-900 placeholder:text-gray-600'}`}
+                />
+                {/* eslint-disable-next-line klai/no-raw-text-input -- dark-mode variant the owned Input cannot express */}
+                <input
+                  type="email"
+                  autoComplete="email"
+                  required
+                  value={visitorEmail}
+                  onChange={(e) => setVisitorEmail(e.target.value)}
+                  placeholder={m.widget_chat_user_info_email()}
+                  className={`w-full min-w-0 rounded-xl border px-3 py-2 text-sm outline-none transition-colors focus:border-gray-300 ${isDark ? 'border-white/10 bg-white/5 text-[var(--color-rl-bg)] placeholder:text-[var(--color-rl-bg)]/35' : 'border-gray-200 bg-white text-gray-900 placeholder:text-gray-600'}`}
+                />
+                <Button
+                  type="submit"
+                  disabled={!identityFilled}
+                  className={
+                    identityFilled
+                      ? 'h-10 w-full rounded-xl text-white'
+                      : 'h-10 w-full cursor-not-allowed rounded-xl bg-gray-100 text-gray-400'
+                  }
+                  style={identityFilled ? { backgroundColor: primaryColor } : {}}
+                >
+                  {m.widget_chat_user_info_start()}
+                </Button>
+              </form>
+              {/* Skipping keeps both fields empty, so the request carries no
+                  contact details and the conversation simply has none. */}
+              <Button
+                type="button"
+                variant="link"
+                onClick={() => {
+                  setVisitorName('')
+                  setVisitorEmail('')
+                  setIdentityDone(true)
+                }}
+                className={`mt-3 h-auto px-2 py-1 text-xs ${isDark ? 'text-[var(--color-rl-bg)]/55' : 'text-gray-600'}`}
+              >
+                {m.widget_chat_user_info_skip()}
+              </Button>
+            </div>
+          ) : messages.length === 0 ? (
             <div data-widget-hero className="flex flex-1 flex-col items-center justify-center px-4 py-8 text-center">
               <p className={`mt-1 max-w-md text-sm ${isDark ? 'text-[var(--color-rl-bg)]/65' : 'text-gray-500'}`}>
                 {welcomeMessage || description || m.widget_chat_default_empty_state()}
@@ -515,33 +577,7 @@ export function WidgetChatSurface({
 
       <div className="shrink-0" style={{ backgroundColor: surfaceBackground }}>
         <div className="mx-auto max-w-3xl px-4 pb-4 pt-2 sm:px-6">
-          {collectUserInfo && (
-            <div className="mb-3">
-              <p className={`mb-2 text-xs ${isDark ? 'text-[var(--color-rl-bg)]/55' : 'text-gray-600'}`}>
-                {m.widget_chat_user_info_help()}
-              </p>
-              <div className="grid gap-2 sm:grid-cols-2">
-                {/* eslint-disable-next-line klai/no-raw-text-input -- dark-mode variant the owned Input cannot express */}
-                <input
-                  type="text"
-                  autoComplete="name"
-                  value={visitorName}
-                  onChange={(e) => setVisitorName(e.target.value)}
-                  placeholder={m.widget_chat_user_info_name()}
-                  className={`min-w-0 rounded-xl border px-3 py-2 text-sm outline-none transition-colors focus:border-gray-300 ${isDark ? 'border-white/10 bg-white/5 text-[var(--color-rl-bg)] placeholder:text-[var(--color-rl-bg)]/35' : 'border-gray-200 bg-white text-gray-900 placeholder:text-gray-600'}`}
-                />
-                {/* eslint-disable-next-line klai/no-raw-text-input -- dark-mode variant the owned Input cannot express */}
-                <input
-                  type="email"
-                  autoComplete="email"
-                  value={visitorEmail}
-                  onChange={(e) => setVisitorEmail(e.target.value)}
-                  placeholder={m.widget_chat_user_info_email()}
-                  className={`min-w-0 rounded-xl border px-3 py-2 text-sm outline-none transition-colors focus:border-gray-300 ${isDark ? 'border-white/10 bg-white/5 text-[var(--color-rl-bg)] placeholder:text-[var(--color-rl-bg)]/35' : 'border-gray-200 bg-white text-gray-900 placeholder:text-gray-600'}`}
-                />
-              </div>
-            </div>
-          )}
+          {!showIdentityStep && (
           <form
             onSubmit={(e) => {
               e.preventDefault()
@@ -564,19 +600,20 @@ export function WidgetChatSurface({
             />
             <Button
               type="submit"
-              disabled={!input.trim() || isStreaming || !visitorInfoComplete}
+              disabled={!input.trim() || isStreaming}
               aria-label={m.widget_chat_send()}
               size="icon"
               className={
-                input.trim() && !isStreaming && visitorInfoComplete
+                input.trim() && !isStreaming
                   ? 'h-10 w-10 shrink-0 self-end rounded-full text-white hover:scale-[1.04] active:scale-95'
                   : 'h-10 w-10 shrink-0 cursor-not-allowed self-end rounded-full bg-gray-100 text-gray-400'
               }
-              style={input.trim() && !isStreaming && visitorInfoComplete ? { backgroundColor: primaryColor } : {}}
+              style={input.trim() && !isStreaming ? { backgroundColor: primaryColor } : {}}
             >
               <ArrowUp className="h-4 w-4" strokeWidth={2.5} />
             </Button>
           </form>
+          )}
           {(footerText != null ? footerText.trim() : !hideDisclaimer) && (
             <div data-widget-footer className={`mt-2.5 text-center text-[0.6875rem] ${isDark ? 'text-[var(--color-rl-bg)]/45' : 'text-gray-600'}`}>
               {footerText != null ? (

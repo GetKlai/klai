@@ -216,6 +216,14 @@ class ChatCompletionsRequest(BaseModel):
     # (their chat turns are not audited to widget_messages), so partner
     # behaviour is unchanged.
     widget_turn_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{16,64}$")
+    # Contact details from the widget's pre-chat step (collect_user_info), sent
+    # on every turn of that conversation. They are written to the conversation
+    # audit row and never forwarded to the model: the answer does not depend on
+    # who is asking, and keeping them out of ``messages`` keeps
+    # first_user_query the real question. Ignored for partner API keys, whose
+    # turns are not audited. Same limits as the HubSpot handoff request.
+    visitor_name: str | None = Field(default=None, max_length=120)
+    visitor_email: str | None = Field(default=None, max_length=254)
 
 
 class PartnerFeedbackRequest(BaseModel):
@@ -1895,6 +1903,8 @@ async def chat_completions(  # noqa: C901
                         user_agent_hash=audit_ua_hash,
                         loaded_origin=http_request.headers.get("origin") or None,
                         is_preview=getattr(auth, "is_preview", False),
+                        visitor_name=request.visitor_name,
+                        visitor_email=request.visitor_email,
                     )
                 )
                 _pending.add(task)

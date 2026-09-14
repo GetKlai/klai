@@ -444,6 +444,24 @@ function ConversationDrawer({
         </div>
 
         <div className="px-5 py-4 space-y-3">
+          {/* Who to reach when the answer was wrong. Only rendered when the
+              visitor actually left something, so a skipped step shows nothing
+              rather than an empty row. */}
+          {(query.data?.visitor_name || query.data?.visitor_email) && (
+            <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
+              <p className="text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-600">
+                Bezoeker
+              </p>
+              <p className="mt-1 text-sm text-gray-900">
+                {query.data.visitor_name || '-'}
+              </p>
+              {query.data.visitor_email && (
+                <p className="text-xs text-gray-600 break-all">
+                  {query.data.visitor_email}
+                </p>
+              )}
+            </div>
+          )}
           {qualityQuery.data && <QualityPanel quality={qualityQuery.data} />}
           {query.isLoading && (
             <p className="text-sm text-gray-600">

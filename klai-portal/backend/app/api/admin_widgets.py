@@ -845,6 +845,11 @@ class ConversationListItem(BaseModel):
     message_count: int
     first_user_query: str | None
     language_detected: str | None
+    # Left by the visitor in the widget's pre-chat step, so a reviewer who
+    # spots a wrong answer can mail a correction. NULL when the widget does
+    # not ask for them or the visitor skipped the step.
+    visitor_name: str | None = None
+    visitor_email: str | None = None
 
 
 class WidgetMessageItem(BaseModel):
@@ -951,7 +956,7 @@ async def list_widget_conversations(
         result = await db.execute(
             text(
                 "SELECT id, started_at, last_message_at, message_count, "
-                "first_user_query, language_detected "
+                "first_user_query, language_detected, visitor_name, visitor_email "
                 "FROM widget_conversations "
                 "WHERE widget_id = CAST(:widget_id AS uuid) "
                 "AND is_preview = false "
@@ -964,7 +969,7 @@ async def list_widget_conversations(
         result = await db.execute(
             text(
                 "SELECT id, started_at, last_message_at, message_count, "
-                "first_user_query, language_detected "
+                "first_user_query, language_detected, visitor_name, visitor_email "
                 "FROM widget_conversations "
                 "WHERE widget_id = CAST(:widget_id AS uuid) "
                 "AND is_preview = false "
@@ -981,6 +986,8 @@ async def list_widget_conversations(
             message_count=row.message_count,
             first_user_query=row.first_user_query,
             language_detected=row.language_detected,
+            visitor_name=row.visitor_name,
+            visitor_email=row.visitor_email,
         )
         for row in rows
     ]
@@ -1004,7 +1011,8 @@ async def get_widget_conversation(
         text(
             """
             SELECT id, started_at, last_message_at, message_count,
-                   first_user_query, language_detected
+                   first_user_query, language_detected,
+                   visitor_name, visitor_email
               FROM widget_conversations
              WHERE id = :conv_id
                AND widget_id = CAST(:widget_id AS uuid)
@@ -1047,6 +1055,8 @@ async def get_widget_conversation(
         message_count=conv_row.message_count,
         first_user_query=conv_row.first_user_query,
         language_detected=conv_row.language_detected,
+        visitor_name=conv_row.visitor_name,
+        visitor_email=conv_row.visitor_email,
         messages=messages,
     )
 

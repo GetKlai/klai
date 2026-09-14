@@ -44,7 +44,8 @@ async def _retention_run_once() -> dict[str, int]:
     ``conversation_quality_judgments.reasoning`` (and stamps ``anonymized_at``)
     for the conversations whose messages are being purged — a judge quote may
     not outlive the conversation it came from, while the judgment row itself
-    survives (FK is SET NULL, not CASCADE).
+    survives (FK is SET NULL, not CASCADE). The visitor contact details on
+    ``widget_conversations`` are cleared in the same pass, for the same reason.
 
     Returns a dict with ``deleted_count`` (total rows removed) and
     ``chunk_count`` (number of DELETE passes executed).
@@ -88,6 +89,22 @@ async def _retention_run_once() -> dict[str, int]:
                 {"conversation_ids": conversation_ids},
             )
             anonymized_total += anon_result.rowcount or 0  # type: ignore[attr-defined]
+
+            # Same rule one table over: the visitor's name and e-mail were
+            # given so a reviewer could answer this conversation, so they may
+            # not outlive it. The conversation row itself survives for the
+            # aggregate counts, without the identifiable part.
+            await db.execute(
+                text(
+                    """
+                    UPDATE widget_conversations
+                    SET visitor_name = NULL, visitor_email = NULL
+                    WHERE id = ANY(CAST(:conversation_ids AS bigint[]))
+                      AND (visitor_name IS NOT NULL OR visitor_email IS NOT NULL)
+                    """
+                ),
+                {"conversation_ids": conversation_ids},
+            )
 
             result = await db.execute(
                 text(
