@@ -1581,9 +1581,8 @@
   "gaps_column_source": "Source",
   "gaps_source_automatic": "Automatic",
   "gaps_source_review": "Review",
+  "gaps_column_language": "Language",
   "gaps_filter_language": "Language",
-  "gaps_language_nl": "Dutch",
-  "gaps_language_en": "English",
   "gaps_action_open_conversation": "View conversation",
   "gaps_action_close": "Close gap",
   "gaps_close_confirm": "Close",
@@ -2781,5 +2780,10 @@
   "activity_calibration_col_reviewed": "Reviewed",
   "activity_calibration_col_correct": "Correct",
   "activity_calibration_no_judgment": "No judgment",
-  "activity_calibration_unknown_language": "Unknown"
+  "activity_calibration_unknown_language": "Unknown",
+  "activity_calibration_by_judge_category": "Failure category and cause",
+  "activity_calibration_col_judge_category": "Failure category",
+  "activity_calibration_col_human_cause": "Cause",
+  "activity_calibration_col_count": "Count",
+  "activity_unlock_required": "This feature is not turned on for your organisation yet. Ask Klai to enable 'knowledge_activity'."
 }

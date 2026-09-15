@@ -1581,9 +1581,8 @@
   "gaps_column_source": "Bron",
   "gaps_source_automatic": "Automatisch",
   "gaps_source_review": "Beoordeling",
+  "gaps_column_language": "Taal",
   "gaps_filter_language": "Taal",
-  "gaps_language_nl": "Nederlands",
-  "gaps_language_en": "Engels",
   "gaps_action_open_conversation": "Bekijk gesprek",
   "gaps_action_close": "Sluiten",
   "gaps_close_confirm": "Sluiten",
@@ -2781,5 +2780,10 @@
   "activity_calibration_col_reviewed": "Beoordeeld",
   "activity_calibration_col_correct": "Correct",
   "activity_calibration_no_judgment": "Geen oordeel",
-  "activity_calibration_unknown_language": "Onbekend"
+  "activity_calibration_unknown_language": "Onbekend",
+  "activity_calibration_by_judge_category": "Foutcategorie en oorzaak",
+  "activity_calibration_col_judge_category": "Foutcategorie",
+  "activity_calibration_col_human_cause": "Oorzaak",
+  "activity_calibration_col_count": "Aantal",
+  "activity_unlock_required": "Deze functie staat voor jouw organisatie nog niet aan. Vraag Klai om 'knowledge_activity' aan te zetten."
 }

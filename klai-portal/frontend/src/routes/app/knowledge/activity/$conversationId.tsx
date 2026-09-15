@@ -3,6 +3,7 @@
 // on the whole conversation, the transcript, and under every assistant answer
 // its confidence signals plus the review form a knowledge admin fills in.
 import { createFileRoute, Link } from '@tanstack/react-router'
+import { useQuery } from '@tanstack/react-query'
 import { AlertTriangle, ArrowLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { PageContainer } from '@/components/ui/page-container'
@@ -13,6 +14,8 @@ import { Tooltip } from '@/components/ui/tooltip'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 import { RoleGuard } from '@/components/layout/RoleGuard'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
+import { fetchMe } from '@/lib/api-me'
+import { appNavActivityIsVisible } from '@/routes/app/-app-tools'
 import { ConversationTranscript, QualityPanel } from '@/features/chat-activity'
 import { useActivityConversation } from '@/features/chat-activity/api'
 import { AnswerSignals } from '@/features/chat-activity/AnswerSignals'
@@ -80,6 +83,17 @@ export function ActivityDetailPage() {
   const { user } = useCurrentUser()
   // Same capability gate as the list (SPEC §4.3 access model).
   const hasActivityCapability = user?.hasCapability('kb.activity') === true
+  // Same tenant-unlock gate as the list and the sidebar (appNavActivityIsVisible,
+  // -app-tools.ts): capability alone still lets useActivityConversation 403.
+  const meQuery = useQuery({
+    queryKey: ['me'],
+    queryFn: ({ signal }) => fetchMe(signal),
+    enabled: hasActivityCapability,
+  })
+  const isUnlocked = appNavActivityIsVisible({
+    hasCapability: (cap) => user?.hasCapability(cap) === true,
+    unlockedFeatures: meQuery.data?.platform_unlocked_features ?? [],
+  })
   const conversation = useActivityConversation(conversationId)
 
   if (!hasActivityCapability) {
@@ -93,6 +107,22 @@ export function ActivityDetailPage() {
           <p className="text-sm text-gray-600">{m.capability_tooltip_knowledge_only()}</p>
         </Tooltip>
       </div>
+    )
+  }
+
+  if (meQuery.isLoading) {
+    return (
+      <PageContainer width="4xl" gap="6">
+        <ListLoadingState label={m.admin_shared_loading()} />
+      </PageContainer>
+    )
+  }
+
+  if (!isUnlocked) {
+    return (
+      <PageContainer width="4xl" gap="6">
+        <ListEmptyState icon={AlertTriangle} title={m.activity_unlock_required()} />
+      </PageContainer>
     )
   }
 

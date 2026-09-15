@@ -57,6 +57,20 @@ vi.mock('@/hooks/useCurrentUser', () => ({
   useCurrentUser: () => ({ user: { isAdmin: false, hasCapability: (cap: string) => capabilities.includes(cap) } }),
 }))
 
+// fetchMe goes through raw fetch, not apiFetch, so the tenant unlocks the
+// drill-in link depends on are mocked at the module boundary (same pattern as
+// ActivityTab.conversations-link.test.tsx).
+let unlockedFeatures: string[] = ['widgets', 'knowledge_activity']
+vi.mock('@/lib/api-me', () => ({
+  fetchMe: () =>
+    Promise.resolve({
+      portal_role: 'user',
+      roles: [],
+      capabilities: [],
+      platform_unlocked_features: unlockedFeatures,
+    }),
+}))
+
 import { GapsPage } from '../knowledge/gaps/index'
 import { Route as LegacyGapsRoute } from '../gaps'
 
@@ -111,6 +125,7 @@ beforeEach(() => {
   apiFetchMock.mockReset()
   capabilities.length = 0
   capabilities.push('kb.gaps')
+  unlockedFeatures = ['widgets', 'knowledge_activity']
   for (const key of Object.keys(searchValue) as Array<keyof typeof searchValue>) delete searchValue[key]
 })
 
@@ -207,6 +222,23 @@ describe('GapsPage conversation drill-in', () => {
 
     await waitForRow()
     expect(container.querySelector('a[href*="/app/knowledge/activity/"]')).toBeNull()
+  })
+
+  it('hides the conversation link with kb.activity but without the knowledge_activity unlock', async () => {
+    capabilities.push('kb.activity')
+    unlockedFeatures = ['widgets']
+    mockGaps([gapItem({ conversation_id: 42 })])
+
+    const { container } = render(
+      <Wrapper>
+        <GapsPage />
+      </Wrapper>,
+    )
+
+    await waitForRow()
+    await waitFor(() =>
+      expect(container.querySelector('a[href*="/app/knowledge/activity/"]')).toBeNull(),
+    )
   })
 })
 

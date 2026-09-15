@@ -32,6 +32,12 @@ const OUTCOME_LABEL: Record<string, () => string> = {
   out_of_scope: m.activity_outcome_out_of_scope,
 }
 
+const HUMAN_CAUSE_LABEL: Record<string, () => string> = {
+  knowledge_missing: m.activity_cause_knowledge_missing,
+  knowledge_wrong: m.activity_cause_knowledge_wrong,
+  behaviour: m.activity_cause_behaviour,
+}
+
 function pct(numerator: number, denominator: number): number {
   return denominator > 0 ? Math.round((numerator / denominator) * 100) : 0
 }
@@ -63,6 +69,36 @@ function CalibrationTable({ caption, rows }: { caption: string; rows: TableRow[]
               </DataTableCell>
               <DataTableCell align="right" className="tabular-nums">
                 {row.correct}
+              </DataTableCell>
+            </DataTableRow>
+          ))}
+        </DataTableBody>
+      </DataTable>
+    </div>
+  )
+}
+
+function JudgeCategoryTable({ caption, rows }: { caption: string; rows: ActivitySummary['by_judge_category'] }) {
+  return (
+    <div className="space-y-1">
+      <p className="text-xs font-medium text-gray-600">{caption}</p>
+      <DataTable>
+        <DataTableHeader>
+          <DataTableRow>
+            <DataTableHead>{m.activity_calibration_col_judge_category()}</DataTableHead>
+            <DataTableHead>{m.activity_calibration_col_human_cause()}</DataTableHead>
+            <DataTableHead align="right">{m.activity_calibration_col_count()}</DataTableHead>
+          </DataTableRow>
+        </DataTableHeader>
+        <DataTableBody>
+          {rows.map((row) => (
+            <DataTableRow key={`${row.judge_category ?? 'none'}|${row.human_cause}`}>
+              <DataTableCell>{row.judge_category ?? m.activity_calibration_no_judgment()}</DataTableCell>
+              <DataTableCell>
+                {(HUMAN_CAUSE_LABEL[row.human_cause] ?? (() => row.human_cause))()}
+              </DataTableCell>
+              <DataTableCell align="right" className="tabular-nums">
+                {row.count}
               </DataTableCell>
             </DataTableRow>
           ))}
@@ -146,6 +182,10 @@ export function CalibrationPanel({ summary }: { summary: ActivitySummary }) {
               reviewed: row.reviewed,
               correct: row.correct,
             }))}
+          />
+          <JudgeCategoryTable
+            caption={m.activity_calibration_by_judge_category()}
+            rows={summary.by_judge_category}
           />
         </div>
       </details>

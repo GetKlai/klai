@@ -21,22 +21,29 @@ import {
 import { ListLoadingState, ListEmptyState } from '@/components/ui/list-state'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
+import { fetchMe } from '@/lib/api-me'
 import { queryLogger } from '@/lib/logger'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 import { RoleGuard } from '@/components/layout/RoleGuard'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { Tooltip } from '@/components/ui/tooltip'
 import { PageContainer } from '@/components/ui/page-container'
+import { appNavActivityIsVisible } from '@/routes/app/-app-tools'
 
 type GapsSearch = { days?: number; gapType?: string; language?: string }
 const VALID_DAYS = new Set([7, 14, 30, 60, 90])
-const VALID_LANGUAGES = new Set(['nl', 'en'])
+// BCP-47-ish: 2-3 letter language subtag, optional 2-4 letter script/region
+// subtag, or the "undetermined" code. Matches the values the backend groups
+// gaps by instead of a fixed nl/en allowlist.
+const LANGUAGE_CODE_RE = /^[a-z]{2,3}(-[A-Za-z]{2,4})?$/
+const isValidLanguageCode = (value: unknown): value is string =>
+  typeof value === 'string' && (value === 'und' || LANGUAGE_CODE_RE.test(value))
 
 export const Route = createFileRoute('/app/knowledge/gaps/')({
   validateSearch: (search: Record<string, unknown>): GapsSearch => ({
     days: VALID_DAYS.has(Number(search.days)) ? Number(search.days) : undefined,
     gapType: search.gapType === 'hard' || search.gapType === 'soft' ? (search.gapType as string) : undefined,
-    language: VALID_LANGUAGES.has(String(search.language)) ? (search.language as string) : undefined,
+    language: isValidLanguageCode(search.language) ? search.language : undefined,
   }),
   component: () => (
     <ProductGuard product="knowledge">
@@ -83,6 +90,18 @@ export function GapsPage() {
   // Admins bypass through hasCapability; users without kb.gaps see a grayed unavailable state.
   const hasGapsCapability = user?.hasCapability('kb.gaps') === true
   const hasActivityCapability = user?.hasCapability('kb.activity') === true
+  // The drill-in link must use the same predicate as the sidebar (-app-tools.ts):
+  // capability alone is not enough when the tenant has not unlocked widgets +
+  // knowledge_activity, or the link points at a screen that 403s.
+  const { data: me } = useQuery({
+    queryKey: ['me'],
+    queryFn: ({ signal }) => fetchMe(signal),
+    enabled: hasActivityCapability,
+  })
+  const canDrillIntoActivity = appNavActivityIsVisible({
+    hasCapability: (cap) => user?.hasCapability(cap) === true,
+    unlockedFeatures: me?.platform_unlocked_features ?? [],
+  })
   const navigate = useNavigate({ from: '/app/knowledge/gaps/' })
 
   const { days: daysParam, gapType: gapTypeParam, language: languageParam } = Route.useSearch()
@@ -155,6 +174,13 @@ export function GapsPage() {
   }
 
   const gaps = data?.gaps ?? []
+  // The API groups gaps by (question, type, language), so the language filter
+  // options come from what is actually loaded rather than a fixed nl/en list;
+  // the current search value is kept even if the loaded page has no row for it.
+  const languageOptions = Array.from(
+    new Set(gaps.map((gap) => gap.language).filter((code): code is string => Boolean(code))),
+  ).sort()
+  if (language && !languageOptions.includes(language)) languageOptions.push(language)
 
   return (
     <PageContainer width="3xl">
@@ -216,8 +242,11 @@ export function GapsPage() {
             className="w-auto"
           >
             <option value="">{m.gaps_filter_all()}</option>
-            <option value="nl">{m.gaps_language_nl()}</option>
-            <option value="en">{m.gaps_language_en()}</option>
+            {languageOptions.map((code) => (
+              <option key={code} value={code}>
+                {code}
+              </option>
+            ))}
           </Select>
         </div>
       </div>
@@ -233,6 +262,7 @@ export function GapsPage() {
             <DataTableRow>
               <DataTableHead>{m.gaps_column_query()}</DataTableHead>
               <DataTableHead className="w-24">{m.gaps_column_type()}</DataTableHead>
+              <DataTableHead className="w-20">{m.gaps_column_language()}</DataTableHead>
               <DataTableHead className="w-28">{m.gaps_column_source()}</DataTableHead>
               <DataTableHead className="w-32">{m.gaps_column_nearest_kb()}</DataTableHead>
               <DataTableHead align="right" className="w-20">{m.gaps_column_count()}</DataTableHead>
@@ -242,7 +272,10 @@ export function GapsPage() {
           </DataTableHeader>
           <DataTableBody>
             {gaps.map((gap) => {
-              const rowKey = `${gap.query_text}-${gap.gap_type}`
+              // The API groups gaps by (question, type, language); the key must
+              // include language or two gaps with the same question and type in
+              // different languages collide and clobber each other's row state.
+              const rowKey = `${gap.query_text}|${gap.gap_type}|${gap.language ?? ''}`
               return (
                 <DataTableRow key={rowKey} confirming={closingKey === rowKey}>
                   <DataTableCell className="truncate" title={gap.query_text}>
@@ -253,6 +286,7 @@ export function GapsPage() {
                       {gap.gap_type === 'hard' ? m.gaps_type_hard() : m.gaps_type_soft()}
                     </Badge>
                   </DataTableCell>
+                  <DataTableCell className="text-gray-600">{gap.language ?? '–'}</DataTableCell>
                   <DataTableCell>
                     <Badge variant={gap.source === 'review' ? 'info' : 'secondary'}>
                       {gap.source === 'review' ? m.gaps_source_review() : m.gaps_source_automatic()}
@@ -277,7 +311,7 @@ export function GapsPage() {
                       onCancel={() => setClosingKey(null)}
                     >
                       <RowActionGroup>
-                        {gap.conversation_id != null && hasActivityCapability && (
+                        {gap.conversation_id != null && canDrillIntoActivity && (
                           <BorderedRowActionIconButton
                             asChild
                             tone="neutral"

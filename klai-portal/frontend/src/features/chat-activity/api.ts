@@ -14,8 +14,10 @@ import {
 } from '@tanstack/react-query'
 import { useAuth } from '@/lib/auth'
 import { apiFetch } from '@/lib/apiFetch'
+import { fetchMe } from '@/lib/api-me'
 import { queryLogger } from '@/lib/logger'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
+import { appNavActivityIsVisible } from '@/routes/app/-app-tools'
 import type { ConversationMessage, ConversationQuality } from './types'
 
 export type ConversationBand = 'high' | 'medium' | 'low' | 'unknown'
@@ -108,11 +110,29 @@ export function fetchActivityConversations(
   return apiFetch<ConversationListResponse>(activityConversationsPath(query))
 }
 
-/** Capability gate shared by both activity hooks (SPEC §4.3 access model). */
+/**
+ * Access gate shared by every activity hook (SPEC §4.3 access model).
+ * Mirrors the sidebar's appNavActivityIsVisible (-app-tools.ts): the
+ * kb.activity capability alone is not enough when the tenant has not
+ * unlocked widgets + knowledge_activity — firing the request anyway just
+ * trades a hidden nav item for a 403 from the backend.
+ */
 function useActivityAccess(): boolean {
   const auth = useAuth()
   const { user } = useCurrentUser()
-  return auth.isAuthenticated && user?.hasCapability('kb.activity') === true
+  const hasCapability = user?.hasCapability('kb.activity') === true
+  const { data: me } = useQuery({
+    queryKey: ['me'],
+    queryFn: ({ signal }) => fetchMe(signal),
+    enabled: auth.isAuthenticated && hasCapability,
+  })
+  return (
+    auth.isAuthenticated &&
+    appNavActivityIsVisible({
+      hasCapability: (cap) => user?.hasCapability(cap) === true,
+      unlockedFeatures: me?.platform_unlocked_features ?? [],
+    })
+  )
 }
 
 export function useActivityConversations(query: ActivityConversationQuery) {
@@ -257,12 +277,16 @@ export function useActivityKnowledgeBases() {
 
 /**
  * Writing a review changes what the detail shows, what the list shows as
- * reviewed, and how many conversations are still in the queue.
+ * reviewed, how many conversations are still in the queue, the calibration
+ * summary (useActivitySummary), and — when the review closes a knowledge
+ * gap — the gaps list (['app-gaps'], read by /app/knowledge/gaps).
  */
 function invalidateActivityViews(queryClient: QueryClient) {
   void queryClient.invalidateQueries({ queryKey: ['activity', 'conversation'] })
   void queryClient.invalidateQueries({ queryKey: ['activity', 'conversations'] })
   void queryClient.invalidateQueries({ queryKey: ['activity', 'queue-count'] })
+  void queryClient.invalidateQueries({ queryKey: ['activity', 'summary'] })
+  void queryClient.invalidateQueries({ queryKey: ['app-gaps'] })
 }
 
 /** One row of `GET /api/app/activity/summary` (§4.6/§4.7, Appendix A). */
