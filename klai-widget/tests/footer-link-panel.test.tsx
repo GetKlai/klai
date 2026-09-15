@@ -35,6 +35,20 @@ function footerAnchor(container: HTMLElement): HTMLAnchorElement {
   return container.querySelector(".klai-disclaimer a") as HTMLAnchorElement;
 }
 
+function panelBackButton(container: HTMLElement): HTMLButtonElement {
+  return container.querySelector(
+    ".klai-nerds-panel-actions button.klai-nerds-panel-back",
+  ) as HTMLButtonElement;
+}
+
+// Solid assigns `inert` as a property, which is how modern browsers reflect
+// it; this jsdom build does not implement the attribute at all, so the
+// property is the only thing a unit test can observe.
+function chatIsInert(container: HTMLElement): boolean {
+  const body = container.querySelector(".klai-window-body") as HTMLElement & { inert?: boolean };
+  return body.inert === true;
+}
+
 describe("footer link panel", () => {
   it("opens the in-widget panel on the footer link's url and title", () => {
     const { container } = renderWindow({ footerLinksInWidget: true });
@@ -88,5 +102,32 @@ describe("footer link panel", () => {
 
     expect(container.querySelector(".klai-nerds-panel")).toBeNull();
     expect(click.defaultPrevented).toBe(false);
+  });
+
+  // WCAG 2.4.3: the panel covers the chat, so the chat behind it must stop
+  // taking keyboard focus and screen-reader attention, and focus has to move
+  // into the panel that replaced it.
+  it("moves focus to the panel's back button and marks the chat inert", () => {
+    const { container } = renderWindow({ footerLinksInWidget: true });
+    fireEvent.click(footerAnchor(container));
+
+    expect(document.activeElement).toBe(panelBackButton(container));
+    expect(chatIsInert(container)).toBe(true);
+  });
+
+  it("returns focus to the composer and clears inert when the panel closes", () => {
+    const { container } = renderWindow({ footerLinksInWidget: true });
+    fireEvent.click(footerAnchor(container));
+    fireEvent.click(panelBackButton(container));
+
+    expect(chatIsInert(container)).toBe(false);
+    expect(document.activeElement).toBe(container.querySelector(".klai-textarea"));
+  });
+
+  it("keeps the focus the page gave the visitor while no panel ever opened", () => {
+    const { container } = renderWindow({ footerLinksInWidget: true });
+
+    expect(document.activeElement).toBe(document.body);
+    expect(chatIsInert(container)).toBe(false);
   });
 });
