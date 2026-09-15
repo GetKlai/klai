@@ -1078,6 +1078,7 @@
   "admin_users_account_knowledge_label": "Klai Chat + Kennis",
   "admin_users_account_price_per_month": "€{amount}/mnd",
   "admin_users_account_derived_hint": "Afgeleid van het gekozen profiel.",
+  "admin_users_account_mismatch_hint": "Dit accounttype hoort niet meer bij het gekozen profiel.",
   "admin_users_status_active": "Actief",
   "admin_users_status_suspended": "Geschorst",
   "admin_users_status_offboarded": "Offboarded",

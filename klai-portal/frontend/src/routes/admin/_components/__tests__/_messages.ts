@@ -41,13 +41,15 @@ export const adminUsersMessages = {
   admin_users_field_profile: () => 'Profile',
   admin_users_field_language: () => 'Language',
   // SPEC-PORTAL-PRICING-PER-USER-001 v0.5.0 - Account type derived from Profile.
-  // No selector, no viewer tier, no mismatch warning - the display is a read-only badge.
+  // No selector, no viewer tier - the display is a read-only badge. A profile
+  // edit that leaves the stored account type behind raises a mismatch warning.
   admin_users_field_account_type: () => 'Account type',
   admin_users_col_account_type: () => 'Account type',
   admin_users_account_chat_label: () => 'Klai Chat',
   admin_users_account_knowledge_label: () => 'Klai Chat + Knowledge',
   admin_users_account_price_per_month: ({ amount }: { amount: number }) => `€${amount}/mo`,
   admin_users_account_derived_hint: () => 'Derived from the chosen Profile.',
+  admin_users_account_mismatch_hint: () => 'This account type no longer matches the chosen profile.',
   admin_users_language_nl: () => 'Dutch',
   admin_users_language_en: () => 'English',
   admin_users_col_name: () => 'Name',

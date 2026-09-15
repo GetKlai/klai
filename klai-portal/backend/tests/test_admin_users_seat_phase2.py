@@ -181,6 +181,40 @@ def test_user_out_schema_has_seat_type_field() -> None:
     assert out.seat_type == "knowledge"
 
 
+def test_user_out_flags_seat_mismatch_after_profile_change() -> None:
+    """Reported symptom: an admin changes the Profile via
+    ``PATCH /api/admin/users/{id}/role`` and ``seat_type`` is deliberately
+    NOT recomputed (profile and billing are separate axes), so the
+    Accounttype badge keeps claiming an account type that no longer belongs
+    to the chosen Profile. ``UserOut`` MUST surface that drift as
+    ``seat_mismatch`` so /admin/users can render a non-blocking warning.
+    """
+    from datetime import UTC, datetime
+
+    from app.api.admin.users import UserOut
+
+    def _user(role: str, seat_type: str) -> UserOut:
+        return UserOut(
+            zitadel_user_id="u-1",
+            email="x@example.com",
+            first_name="A",
+            last_name="B",
+            role=role,  # type: ignore[arg-type]
+            seat_type=seat_type,  # type: ignore[arg-type]
+            preferred_language="nl",
+            status="active",
+            created_at=datetime(2026, 9, 15, tzinfo=UTC),
+            invite_pending=False,
+        )
+
+    # kb_manager belongs to the knowledge tier (``suggest_seat``), so a user
+    # whose profile moved there while the seat stayed on chat is a mismatch.
+    assert _user("kb_manager", "chat").seat_mismatch is True
+    # The same column with the account type that does belong to the profile
+    # must stay silent — no warning for a consistent row.
+    assert _user("personal", "chat").seat_mismatch is False
+
+
 # ---------------------------------------------------------------------------
 # PATCH /api/admin/users/{user_id}/seat
 # ---------------------------------------------------------------------------
