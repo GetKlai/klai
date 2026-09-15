@@ -3,11 +3,19 @@
 // request URL; both hooks stay gated on the kb.activity capability so a screen
 // can never fetch without it.
 
-import { useQuery, useInfiniteQuery, type QueryKey } from '@tanstack/react-query'
+import {
+  useMutation,
+  useQuery,
+  useInfiniteQuery,
+  useQueryClient,
+  type QueryClient,
+  type QueryKey,
+} from '@tanstack/react-query'
 import { useAuth } from '@/lib/auth'
 import { apiFetch } from '@/lib/apiFetch'
 import { queryLogger } from '@/lib/logger'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
+import type { ConversationMessage, ConversationQuality } from './types'
 
 export type ConversationBand = 'high' | 'medium' | 'low' | 'unknown'
 export type ConversationRating = 'thumbsUp' | 'thumbsDown' | 'none'
@@ -143,5 +151,125 @@ export function useActivityQueueCount() {
     },
     enabled,
     retry: false,
+  })
+}
+
+/**
+ * The pair a knowledge admin records per assistant answer (SPEC Appendix A).
+ * `cause` is always sent: `none` for correct/not_a_fault, never `none` for the
+ * two failure verdicts.
+ */
+export type ConversationReviewVerdict = 'correct' | 'incomplete' | 'wrong' | 'not_a_fault'
+export type ConversationReviewCause = 'knowledge_missing' | 'knowledge_wrong' | 'behaviour' | 'none'
+
+export interface ConversationReview {
+  verdict: ConversationReviewVerdict
+  cause: ConversationReviewCause
+  note: string | null
+  kb_slug: string | null
+  reviewer_name: string | null
+  reviewed_at: string | null
+}
+
+export interface ConversationReviewInput {
+  verdict: ConversationReviewVerdict
+  cause: ConversationReviewCause
+  note: string | null
+  kb_slug: string | null
+}
+
+/** One message of the detail payload: the transcript shape plus the admin review. */
+export interface ConversationDetailMessage extends ConversationMessage {
+  review: ConversationReview | null
+}
+
+/** `GET /api/app/activity/conversations/{id}`. */
+export interface ConversationDetail {
+  id: number
+  widget_id: string
+  widget_name: string
+  channel: 'webchat' | 'librechat'
+  started_at: string
+  language: string | null
+  /** Only present when the backend exposes the visitor to this role. */
+  visitor?: { name: string | null; email: string | null } | null
+  quality: ConversationQuality | null
+  messages: ConversationDetailMessage[]
+}
+
+/** Org knowledge bases offered by the review's `kb_slug` picker. */
+export interface KnowledgeBaseOption {
+  id: number
+  name: string
+  slug: string
+  owner_type: string
+}
+
+export function useActivityConversation(conversationId: string | number) {
+  const enabled = useActivityAccess()
+  return useQuery<ConversationDetail, Error>({
+    queryKey: ['activity', 'conversation', String(conversationId)],
+    queryFn: async () => {
+      try {
+        return await apiFetch<ConversationDetail>(
+          `/api/app/activity/conversations/${conversationId}`,
+        )
+      } catch (err) {
+        queryLogger.warn('Activity conversation fetch failed', { error: err })
+        throw err
+      }
+    },
+    enabled,
+    retry: false,
+  })
+}
+
+export function useActivityKnowledgeBases() {
+  const enabled = useActivityAccess()
+  return useQuery<{ knowledge_bases: KnowledgeBaseOption[] }>({
+    queryKey: ['activity', 'knowledge-bases'],
+    queryFn: async () => {
+      try {
+        return await apiFetch<{ knowledge_bases: KnowledgeBaseOption[] }>(
+          '/api/app/knowledge-bases',
+        )
+      } catch (err) {
+        queryLogger.warn('Activity knowledge bases fetch failed', { error: err })
+        throw err
+      }
+    },
+    enabled,
+    retry: false,
+  })
+}
+
+/**
+ * Writing a review changes what the detail shows, what the list shows as
+ * reviewed, and how many conversations are still in the queue.
+ */
+function invalidateActivityViews(queryClient: QueryClient) {
+  void queryClient.invalidateQueries({ queryKey: ['activity', 'conversation'] })
+  void queryClient.invalidateQueries({ queryKey: ['activity', 'conversations'] })
+  void queryClient.invalidateQueries({ queryKey: ['activity', 'queue-count'] })
+}
+
+export function useUpsertReview(messageId: number) {
+  const queryClient = useQueryClient()
+  return useMutation<ConversationReview, Error, ConversationReviewInput>({
+    mutationFn: (input) =>
+      apiFetch<ConversationReview>(`/api/app/activity/messages/${messageId}/review`, {
+        method: 'PUT',
+        body: JSON.stringify(input),
+      }),
+    onSuccess: () => invalidateActivityViews(queryClient),
+  })
+}
+
+export function useDeleteReview(messageId: number) {
+  const queryClient = useQueryClient()
+  return useMutation<null, Error>({
+    mutationFn: () =>
+      apiFetch<null>(`/api/app/activity/messages/${messageId}/review`, { method: 'DELETE' }),
+    onSuccess: () => invalidateActivityViews(queryClient),
   })
 }
