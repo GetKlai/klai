@@ -2785,5 +2785,6 @@
   "activity_calibration_col_judge_category": "Failure category",
   "activity_calibration_col_human_cause": "Cause",
   "activity_calibration_col_count": "Count",
-  "activity_unlock_required": "This feature is not turned on for your organisation yet. Ask Klai to enable 'knowledge_activity'."
+  "activity_cause_none": "None",
+  "activity_unlock_required": "This feature is not turned on for your organisation yet. Ask Klai to enable the 'widgets' and 'knowledge_activity' unlocks."
 }

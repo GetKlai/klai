@@ -930,9 +930,12 @@ async def _sync_review_gap(
 
 
 def _question_language(message: Any, signals: dict[str, Any]) -> str | None:
-    """The conversation's detected language, or the answer's signal when the
-    conversation row predates the widget path writing it (phase 0 rows)."""
-    return message.language_detected or signals.get("language")
+    """The language of the question this answer replied to.
+
+    The answer signal is exact for the turn; the conversation column holds the
+    newest detected language and only serves rows from before the signals
+    existed."""
+    return signals.get("language") or message.language_detected
 
 
 @router.put("/messages/{message_id}/review", response_model=ReviewOut)

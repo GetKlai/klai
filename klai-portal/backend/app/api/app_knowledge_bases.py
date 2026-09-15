@@ -25,7 +25,7 @@ from app.core.profiles import Capability, ProfileRole
 from app.models.connectors import PortalConnector
 from app.models.groups import PortalGroup
 from app.models.kb_uploads import KBUpload
-from app.models.knowledge_bases import PortalGroupKBAccess, PortalKnowledgeBase, PortalUserKBAccess
+from app.models.knowledge_bases import RESERVED_KB_SLUGS, PortalGroupKBAccess, PortalKnowledgeBase, PortalUserKBAccess
 from app.models.portal import PortalUser
 from app.models.retrieval_gaps import PortalRetrievalGap
 from app.services import docs_client, kb_uploads_repo, knowledge_ingest_client
@@ -108,8 +108,6 @@ async def _qdrant_count_for_kb(zitadel_org_id: str, kb_slug: str) -> int | None:
         )
         return None
 
-
-_RESERVED_KB_SLUGS = frozenset({"activity", "gaps"})
 
 router = APIRouter(prefix="/api/app", tags=["app-knowledge-bases"])
 
@@ -575,10 +573,7 @@ async def create_app_knowledge_base(
     elif body.owner_type == "org":
         await assert_can_create_org_kb(org=org, role=perms.role)
 
-    # /app/knowledge/<slug> is also where the static activity and gaps screens
-    # live (SPEC-KNOWLEDGE-ACTIVITY-001); a KB with one of those slugs would be
-    # unreachable because the router prefers the static route.
-    if body.slug in _RESERVED_KB_SLUGS:
+    if body.slug in RESERVED_KB_SLUGS:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"slug '{body.slug}' is reserved",

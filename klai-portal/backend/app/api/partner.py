@@ -1799,8 +1799,9 @@ async def chat_completions(  # noqa: C901
                     content=last_user_msg,
                     ip_hash=audit_ip_hash,
                     user_agent_hash=audit_ua_hash,
-                    # The visitor's question language; COALESCE on the row keeps
-                    # the first detected value for the conversation.
+                    # The visitor's question language. The row keeps the newest
+                    # non-NULL value (COALESCE(EXCLUDED, existing) in the UPSERT);
+                    # the exact per-answer language lives in answer_signals.
                     language_detected=identify_text_language(last_user_msg) or None,
                     loaded_origin=http_request.headers.get("origin") or None,
                     is_preview=getattr(auth, "is_preview", False),

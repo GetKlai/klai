@@ -36,6 +36,7 @@ const HUMAN_CAUSE_LABEL: Record<string, () => string> = {
   knowledge_missing: m.activity_cause_knowledge_missing,
   knowledge_wrong: m.activity_cause_knowledge_wrong,
   behaviour: m.activity_cause_behaviour,
+  none: m.activity_cause_none,
 }
 
 function pct(numerator: number, denominator: number): number {
@@ -92,7 +93,7 @@ function JudgeCategoryTable({ caption, rows }: { caption: string; rows: Activity
         </DataTableHeader>
         <DataTableBody>
           {rows.map((row) => (
-            <DataTableRow key={`${row.judge_category ?? 'none'}|${row.human_cause}`}>
+            <DataTableRow key={`${row.judge_category ?? '\u2205'}|${row.human_cause}`}>
               <DataTableCell>{row.judge_category ?? m.activity_calibration_no_judgment()}</DataTableCell>
               <DataTableCell>
                 {(HUMAN_CAUSE_LABEL[row.human_cause] ?? (() => row.human_cause))()}

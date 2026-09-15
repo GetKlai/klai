@@ -2785,5 +2785,6 @@
   "activity_calibration_col_judge_category": "Foutcategorie",
   "activity_calibration_col_human_cause": "Oorzaak",
   "activity_calibration_col_count": "Aantal",
-  "activity_unlock_required": "Deze functie staat voor jouw organisatie nog niet aan. Vraag Klai om 'knowledge_activity' aan te zetten."
+  "activity_cause_none": "Geen",
+  "activity_unlock_required": "Deze functie staat voor jouw organisatie nog niet aan. Vraag Klai om de unlocks 'widgets' en 'knowledge_activity' aan te zetten."
 }

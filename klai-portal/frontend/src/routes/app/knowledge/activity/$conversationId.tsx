@@ -118,6 +118,15 @@ export function ActivityDetailPage() {
     )
   }
 
+  if (meQuery.isError) {
+    // A failed /api/me read is not a missing unlock: say so and offer a retry.
+    return (
+      <PageContainer width="4xl" gap="6">
+        <QueryErrorState error={meQuery.error} onRetry={() => void meQuery.refetch()} />
+      </PageContainer>
+    )
+  }
+
   if (!isUnlocked) {
     return (
       <PageContainer width="4xl" gap="6">
