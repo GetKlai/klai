@@ -42,6 +42,7 @@ vi.mock('@tanstack/react-router', async () => {
 })
 
 const apiFetchMock = vi.fn()
+let unlockedFeatures: string[] = ['widgets', 'knowledge_activity']
 vi.mock('@/lib/apiFetch', async () => {
   const actual = await vi.importActual<typeof import('@/lib/apiFetch')>('@/lib/apiFetch')
   return { ...actual, apiFetch: (...args: unknown[]) => apiFetchMock(...args) }
@@ -49,6 +50,18 @@ vi.mock('@/lib/apiFetch', async () => {
 
 vi.mock('@/lib/auth', () => ({
   useAuth: () => ({ isAuthenticated: true }),
+}))
+
+// fetchMe goes through raw fetch, not apiFetch, so the tenant unlocks the
+// link depends on are mocked at the module boundary.
+vi.mock('@/lib/api-me', () => ({
+  fetchMe: () =>
+    Promise.resolve({
+      portal_role: 'admin',
+      roles: [],
+      capabilities: [],
+      platform_unlocked_features: unlockedFeatures,
+    }),
 }))
 
 const widget = {
@@ -73,6 +86,7 @@ const stats = {
 }
 
 beforeEach(() => {
+  unlockedFeatures = ['widgets', 'knowledge_activity']
   apiFetchMock.mockReset()
   apiFetchMock.mockImplementation((path: string) => {
     if (path.includes('/stats')) return stats
@@ -107,6 +121,15 @@ describe('admin widget ActivityTab — conversations move to the knowledge side'
     expect(await screen.findByText('hoe lang is de levertijd')).toBeTruthy()
     expect(
       screen.queryByText(m.admin_widgets_activity_recent_conversations_title()),
+    ).toBeNull()
+  })
+
+  it('hides the link when the tenant lacks the knowledge_activity unlock', async () => {
+    unlockedFeatures = ['widgets']
+    renderTab()
+    await screen.findByText(stats.top_queries[0].query)
+    expect(
+      screen.queryByRole('link', { name: m.admin_widgets_activity_review_conversations_link() }),
     ).toBeNull()
   })
 })

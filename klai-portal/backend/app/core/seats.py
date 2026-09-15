@@ -103,6 +103,10 @@ CAPABILITY_TO_SEAT_FEATURE: dict[str, str] = {
     "kb.members": "knowledge.full",
     "kb.taxonomy": "knowledge.full",
     "kb.gaps": "knowledge.full",
+    # SPEC-KNOWLEDGE-ACTIVITY-001 §4.4: reviewing chat answers is knowledge
+    # management, so it rides on the same tier as the gaps dashboard; the
+    # per-tenant knowledge_activity unlock gates it separately at the router.
+    "kb.activity": "knowledge.full",
     "templates.manage_org": "knowledge.full",
 }
 

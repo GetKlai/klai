@@ -84,3 +84,14 @@ def test_knowledge_activity_is_known_feature() -> None:
     a user-facing product (no FEATURE_MIN_PROFILE entry)."""
     assert "knowledge_activity" in KNOWN_FEATURES
     assert "knowledge_activity" not in PRODUCT_FEATURES
+
+
+def test_kb_activity_survives_the_seat_filter():
+    """Production derives capabilities through the seat tier, not from
+    PROFILE_CAPABILITIES directly: a capability without a seat-feature mapping
+    is dropped for everyone, which would 403 the whole activity API."""
+    from app.core.seats import SeatType, effective_capabilities
+
+    assert "kb.activity" in effective_capabilities("kb_manager", SeatType.KNOWLEDGE)
+    assert "kb.activity" in effective_capabilities("admin", SeatType.KNOWLEDGE)
+    assert "kb.activity" not in effective_capabilities("company", SeatType.KNOWLEDGE)

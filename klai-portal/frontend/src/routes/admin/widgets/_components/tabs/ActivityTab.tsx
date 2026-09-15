@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { useQuery } from '@tanstack/react-query'
+import { fetchMe } from '@/lib/api-me'
 import * as m from '@/paraglide/messages'
 import { parseActivitySearch } from '@/routes/app/knowledge/activity/-search'
 import { useWidgetStats } from '../../-hooks'
@@ -35,6 +37,13 @@ export function ActivityTab({ widget }: Props) {
 
   const widgetId = String(widget.id)
   const statsQuery = useWidgetStats(widgetId, period)
+  // The knowledge side needs both unlocks (see -app-tools.ts); a tenant with
+  // widgets but without knowledge_activity would only reach a 403 page.
+  const { data: me } = useQuery({ queryKey: ['me'], queryFn: ({ signal }) => fetchMe(signal) })
+  const unlockedFeatures = me?.platform_unlocked_features ?? []
+  const canReviewOnKnowledgeSide = ['widgets', 'knowledge_activity'].every((f) =>
+    unlockedFeatures.includes(f),
+  )
   const outcomes = statsQuery.data?.outcome_counts
 
   return (
@@ -158,14 +167,16 @@ export function ActivityTab({ widget }: Props) {
       {/* SPEC-KNOWLEDGE-ACTIVITY-001 §3: reviewing conversations happens on
           the knowledge side, pre-filtered to this widget. The list's own search
           parser supplies the defaults so this tab stops guessing them. */}
-      <Button asChild variant="outline">
-        <Link
-          to="/app/knowledge/activity"
-          search={parseActivitySearch({ widget_id: String(widget.id) })}
-        >
-          {m.admin_widgets_activity_review_conversations_link()}
-        </Link>
-      </Button>
+      {canReviewOnKnowledgeSide && (
+        <Button asChild variant="outline">
+          <Link
+            to="/app/knowledge/activity"
+            search={parseActivitySearch({ widget_id: String(widget.id) })}
+          >
+            {m.admin_widgets_activity_review_conversations_link()}
+          </Link>
+        </Button>
+      )}
     </section>
   )
 }

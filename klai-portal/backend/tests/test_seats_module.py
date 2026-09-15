@@ -105,7 +105,7 @@ class TestCapabilityToSeatFeature:
     # `knowledge_activity` platform unlock (Klai staff decide which tenants see
     # the knowledge-side activity view), so no seat tier unlocks it and a seat
     # mapping would wrongly tie it to billing.
-    _ALLOWED_TO_BE_UNMAPPED: frozenset[str] = frozenset({Capability.KB_ACTIVITY.value})
+    _ALLOWED_TO_BE_UNMAPPED: frozenset[str] = frozenset()
 
     def test_every_capability_member_has_a_mapping(self) -> None:
         missing: list[str] = []
@@ -241,6 +241,7 @@ class TestEffectiveCapabilities:
             Capability.KB_MEMBERS,
             Capability.KB_TAXONOMY,
             Capability.KB_GAPS,
+            Capability.KB_ACTIVITY,
             Capability.TEMPLATES_MANAGE_ORG,
         }
 

@@ -17,6 +17,7 @@ drift apart. The scan is bounded by the ``days`` window and
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
@@ -492,7 +493,7 @@ async def _filtered_conversations(
         org_id=perms.org_id,
         cutoff=datetime.now(UTC) - timedelta(days=days),
         cursor=cursor,
-        widget_id=widget_id,
+        widget_id=str(widget_id) if widget_id is not None else None,
         language=language,
         channel=channel,
     )
@@ -524,7 +525,9 @@ async def list_conversations(
     limit: int = Query(default=20, ge=1, le=100),
     days: int = Query(default=7, ge=1, le=90),
     channel: Literal["webchat"] = Query(default=_WEBCHAT),
-    widget_id: str | None = Query(default=None),
+    # Typed as UUID so a hand-edited URL yields a 422 instead of a PostgreSQL
+    # cast error (500) inside the query.
+    widget_id: uuid.UUID | None = Query(default=None),
     language: str | None = Query(default=None),
     judge_outcome: list[str] = Query(default=[]),
     failure_category: list[str] = Query(default=[]),
@@ -549,7 +552,7 @@ async def list_conversations(
         perms=perms,
         days=days,
         cursor=_parse_cursor(cursor),
-        widget_id=widget_id,
+        widget_id=str(widget_id) if widget_id is not None else None,
         language=language,
         channel=channel,
         judge_outcomes=judge_outcome,
