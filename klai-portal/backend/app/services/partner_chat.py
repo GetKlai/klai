@@ -1704,7 +1704,9 @@ def _fill_answer_signals(
                 # Only "answer" is a broad answer; "offer" is a refusal that
                 # asks the visitor for broad-mode consent.
                 "broad_mode": decision.get("broad_mode") == "answer",
-                "language": detect_language(query_text),
+                # Visitor text, so the intent-aware entry point: "graag in het
+                # Nederlands" is a Dutch turn whatever language it is typed in.
+                "language": identify_text_language(query_text) or UNKNOWN_LANGUAGE,
                 "model": model,
             }
         )
