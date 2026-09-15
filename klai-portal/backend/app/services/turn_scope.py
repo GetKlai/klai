@@ -41,6 +41,21 @@ Fail-safe direction matters and is deliberate: any failure — timeout, bad JSON
 upstream error — returns ``None``, and ``None`` means "treat as a knowledge
 question". A broken classifier therefore restores exactly today's behaviour and
 can never open the grounding firewall (REQ-3).
+
+Known ceiling, named rather than hidden: this reads only the visitor's latest
+turn, while the answer model also sees the history and the retrieved articles.
+A MISCLASSIFICATION is therefore the residual risk — a turn wrongly called
+conversational renders without the firewall. Review on 2026-09-15 found one
+concrete instance and it was this prompt's own fault: it used to call "translate
+that" conversational, which let a grounded price answer be restated without its
+sources. That clause is gone. The structural upgrade, if the residual ever
+justifies it, is to validate the FINAL answer for organisation-specific claims
+rather than trusting a pre-generation label; REQ-4's counter is the measurement
+that would tell us whether it does.
+
+Caller-supplied ``system`` messages are not part of this risk on the widget
+path: ``_normalize_llm_message`` keeps only ``user`` and ``assistant`` roles, so
+an injected claim never reaches the model. Verified 2026-09-15.
 """
 
 from __future__ import annotations
@@ -63,8 +78,10 @@ _SYSTEM_PROMPT = (
     "the world outside this chat window?\n"
     "Answer false (conversational) ONLY when a correct answer is purely about "
     "the conversation itself: which languages you can reply in, that you are an "
-    "AI assistant, a greeting, a thank-you, an apology, or a request to repeat, "
-    "rephrase or translate what was already said.\n"
+    "AI assistant, a greeting, a thank-you, or an apology.\n"
+    "Repeating, rephrasing or translating an earlier answer is NOT "
+    "conversational: the claims inside it are still claims about the world, and "
+    "restating them is how they would escape their sources. Answer true.\n"
     "Answer true (asserts_about_the_world) for everything else, including any "
     "question about the company, its products, prices, procedures, availability "
     "or outages, AND any general factual question about the wider world.\n"

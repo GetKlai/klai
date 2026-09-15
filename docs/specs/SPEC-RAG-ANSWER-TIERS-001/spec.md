@@ -1,6 +1,6 @@
 ---
 id: SPEC-RAG-ANSWER-TIERS-001
-version: "0.4.0"
+version: "0.6.0"
 status: REQ-1 and REQ-3 built; REQ-2 measured and dropped; REQ-4 partly built
 created: 2026-09-15
 author: Fable (Opus 5), commissioned by Mark Vletter
@@ -18,6 +18,8 @@ related:
 
 | Version | Date | Change |
 |---|---|---|
+| 0.6.0 | 2026-09-15 | Second review round. The classifier moved out of the gather to behind `classify_gap`, so grounded turns pay nothing instead of risking two seconds. Three more reproduced defects fixed: scheme-cased URLs survived the shared stripper (case-sensitive regex, fixed in klai-citations), schemeless link shapes were never covered at all (REQ-5 got its own pattern), and internal evidence labels reached the visitor because the sanitiser was called without the ids that let it remove them. The classifier prompt also called "translate that" conversational, which would have let a grounded price answer be restated without its sources; that clause is gone and the residual misclassification risk is named with its upgrade path. |
+| 0.5.0 | 2026-09-15 | REQ-5 added and built after Mark asked that the middle mode never return links unless they were retrieved and passed the gate. Checking that turned up the same bypass in the consented broad-mode branch, where it had been live since that feature shipped: an arbitrary model-written URL reached the visitor. Both source-less branches now strip through one function, with a parametrised invariant test. |
 | 0.4.0 | 2026-09-15 | Review corrections. Two defects in the REQ-1 implementation: skipping the composer also skipped the only mechanical guard against a model-written URL or fake citation reaching the visitor (reproduced, now stripped), and `force_escalation` — which fires on frustration and shouting, not just an explicit request for a person — sent conversational turns back to the canned refusal. The offer now survives without the refusal text. Also corrected an overclaim: concurrency bounds the added latency, it does not zero it, and the two classifiers do not share a timeout. |
 | 0.3.0 | 2026-09-15 | REQ-2 measured before building and dropped on the numbers: of the 73 refusing turns in seven days, 47 carried no salient query tokens at all and ~17 were escalation-shaped, leaving 2 that a broader retrieval attempt could have rescued. Building it would have cost a rewrite plus a retrieval round on every refusal to buy two turns a week. |
 | 0.2.0 | 2026-09-15 | REQ-1 and REQ-3 built and merged. The classifier shares the gather that already carried the escalation classifier, so the worst-case latency window is unchanged rather than merely small — both sit behind the same 2 s timeout that was already accepted. REQ-2 deliberately left for its own change: it touches the retrieval loop and its acceptance evidence is the replay in §6, which is a measurement exercise rather than a patch. |
@@ -94,10 +96,10 @@ A turn classified "about this conversation" is answered without the grounding
 firewall, without the broad-mode consent offer, and without the appointment
 offer. It carries no citations and no URLs — the existing bans stay.
 
-Classification runs **before** retrieval is consumed and **concurrently with
-it**, so it costs no added wall-clock on the 86.5% of turns that do not need it.
-Prior art: Adaptive-RAG routes on a small classifier that adds under 100 ms and
-saves seconds of unnecessary retrieval.
+Classification runs only when retrieval reported a gap, so a grounded turn never
+pays for it. Adaptive-RAG routes before retrieval on a trained classifier; with
+an LLM call behind a 2 s timeout that ordering would tax every turn, so the gate
+moves after the cheap signal we already compute.
 
 Not negotiable: the classifier decides the CLASS, never the CONTENT. A class-
 three answer that nevertheless asserts something about the organisation is a
@@ -160,6 +162,26 @@ tribunal's reasoning was that it makes no difference whether information comes
 from a static page or a chatbot. REQ-1 and REQ-2 change WHICH turns enter the
 firewall, never what the firewall does once a turn is inside it.
 
+## REQ-5 [HARD] — No link without a retrieved, selected source · built
+
+A link may reach a visitor only when retrieval produced it and the source
+selector kept it. Every branch that returns the model's own words without
+`compose_answer_with_trusted_sources` strips URLs and citation artifacts first,
+because that composer is the only MECHANICAL place an output URL is checked
+against the allowed set. The SUPPORT profile bans URLs too, but a prompt is a
+request rather than a guarantee.
+
+This is not new policy; it is the policy that was already written down, now
+enforced. **Measured 2026-09-15: the consented broad-mode branch returned
+`https://evil.example.com/phish` to the visitor untouched, and had been able to
+since broad mode shipped.** A model inventing a plausible support URL on a
+public help page is the failure this closes, and it is the same shape as the
+liability in REQ-3 rather than a cosmetic concern.
+
+One function, `_answer_without_retrieved_sources`, owns the invariant, and the
+test is parametrised over the source-less branches so that a third one added
+later belongs in the list by construction.
+
 ## REQ-4 [SHOULD] — The classification is observable and falsifiable · partly built
 
 Every turn logs its class and, for class three, whether the rendered answer
@@ -204,15 +226,18 @@ claim that the boundary held is worth nothing without the count.
 retrieval, inside the `asyncio.gather` that already carried the escalation
 classifier.
 
-**Correction to v0.2.0, which overclaimed this.** `gather` waits for the slowest
-member, and the two classifiers hold separate 2 s timeouts rather than one
-shared budget. Concurrency therefore bounds the added latency by the classifier's
-own duration, it does not make it zero: a turn whose retrieval finished in 200 ms
-waits for this call. The honest statement of acceptance criterion 5 is that the
-worst case is unchanged (still 2 s, already accepted for escalation) while the
-typical case grows by however long the classifier actually takes — and that
-number is not yet measured. Measuring p50/p95 on the running service is the
-remaining evidence for criterion 5; until then it is argued, not proven.
+**Corrected twice, and the second correction changed the design.** v0.2.0 said
+concurrency made this free. It did not: `gather` waits for its slowest member and
+the two classifiers hold separate 2 s timeouts, so a classifier hitting its
+timeout would have added two seconds to a perfectly grounded answer.
+
+The classifier is therefore no longer in the gather. It runs only when
+`classify_gap(chunks)` reports a gap — the only situation where the class can
+change the outcome, because with usable chunks the composer answers from them
+either way. A grounded turn now pays nothing at all, and the cost lands on the
+turns that would otherwise have refused: 13.5% of widget traffic over seven days.
+That is strictly better than the concurrent version and it is also what the
+production guidance recommends — run retrieval first, act on the miss.
 
 `_compose_backend_managed_answer` gained one branch: a conversational turn with
 text and no forced escalation returns the model's own answer with empty sources

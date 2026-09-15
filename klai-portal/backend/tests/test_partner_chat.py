@@ -3641,3 +3641,99 @@ def test_classifier_failure_reads_as_a_knowledge_question():
     assert is_conversational(None) is False
     assert is_conversational(True) is False
     assert is_conversational(False) is True
+
+
+# ---------------------------------------------------------------------------
+# SPEC-RAG-ANSWER-TIERS-001 REQ-5 — no link without a retrieved, selected source
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "branch",
+    [
+        pytest.param({"conversational": True}, id="conversational"),
+        pytest.param({"broad": True}, id="broad_mode"),
+    ],
+)
+def test_no_branch_without_sources_may_return_a_link(branch):
+    """A link reaches a visitor only when retrieval produced it and it was selected.
+
+    Both non-strict branches skip compose_answer_with_trusted_sources, which is
+    the only mechanical place an output URL is checked against the allowed set.
+    Measured 2026-09-15: a consented broad-mode answer carrying an arbitrary URL
+    reached the visitor untouched, and had been able to since broad mode shipped.
+    Parametrised on purpose — a third source-less branch added later belongs in
+    this list, and leaving it out is the defect.
+    """
+    from app.services.partner_chat import _compose_backend_managed_answer
+
+    content, sources, _ = _compose_backend_managed_answer(
+        # Every shape a renderer will autolink. The scheme-cased one is not
+        # hypothetical: schemes are case-insensitive per RFC 3986, the shared
+        # citation stripper matched lowercase only, and "HTTPS://" reached the
+        # visitor until 2026-09-15. The schemeless forms never matched it at all.
+        "Kijk op https://evil.example.com/phish of <HTTPS://evil.example/a> of "
+        "www.evil.example/b of evil.example/c, en zie [1] en [2](http://x.test).",
+        [],
+        [],
+        "q",
+        None,
+        None,
+        helpdesk=True,
+        visitor_query="hoi",
+        **branch,
+    )
+
+    assert "evil.example" not in content
+    assert "x.test" not in content
+    assert "http" not in content.lower()
+    assert "www." not in content
+    assert sources == []
+
+
+def test_the_link_guard_leaves_ordinary_prose_alone():
+    """The guard is aggressive by design; it must not eat normal sentences."""
+    from app.services.partner_chat import _compose_backend_managed_answer
+
+    for sentence in (
+        "Ga naar Beheer en kies Permissiegroepen.",
+        "Dat kan, ik spreek ook Engels.",
+        "Let op: dit kan even duren.",
+    ):
+        content, _, _ = _compose_backend_managed_answer(
+            sentence, [], [], "q", None, None, helpdesk=True, conversational=True, visitor_query="hoi"
+        )
+        assert content == sentence
+
+
+def test_internal_evidence_labels_never_reach_the_visitor():
+    """Retrieval still injects E-labels into the prompt, so the model can echo them.
+
+    strip_model_citation_artifacts only removes them when told which ids exist —
+    in ordinary prose "E1" is just a word. Reproduced 2026-09-15: "Evidence E1"
+    and "(E1)" reached the visitor on the source-less branches.
+    """
+    from app.services.partner_chat import _compose_backend_managed_answer
+
+    chunks = [
+        {
+            "chunk_id": "c1",
+            "source_title": "Permissiegroepen",
+            "text": "Ga naar Beheer en kies Permissiegroepen.",
+            "source_url": "https://help.voys.nl/permissiegroepen",
+        }
+    ]
+    content, _, _ = _compose_backend_managed_answer(
+        "Zoals beschreven in Evidence E1 en (E1) kan dat.",
+        [],
+        chunks,
+        "q",
+        None,
+        None,
+        helpdesk=True,
+        conversational=True,
+        visitor_query="hoi",
+    )
+
+    assert "E1" not in content
+    assert "Evidence" not in content

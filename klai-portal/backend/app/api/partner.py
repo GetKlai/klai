@@ -41,6 +41,7 @@ from app.models.widgets import Widget, WidgetKbAccess
 from app.services import escalation_intent as escalation_service
 from app.services import turn_scope
 from app.services.events import emit_event
+from app.services.gap_classification import classify_gap
 from app.services.partner_chat import (
     _last_user_message,
     chat_completion_non_streaming,
@@ -1793,21 +1794,28 @@ async def chat_completions(  # noqa: C901
             top_k=knowledge.top_k if knowledge is not None and knowledge.top_k is not None else 8,
             retrieval_enabled=knowledge.enabled if knowledge is not None else True,
         )
+        visitor_turn = _last_user_message(request.messages) or ""
         if support_mode:
-            # SPEC-RAG-ANSWER-TIERS-001 REQ-1: the scope classifier rides along
-            # with retrieval rather than gating it, so it costs no wall-clock on
-            # the 86.5% of turns that turn out to need the knowledge pipeline.
-            visitor_turn = _last_user_message(request.messages) or ""
-            retrieval_result, classification, turn_asserts = await asyncio_gather(
+            retrieval_result, classification = await asyncio_gather(
                 retrieval,
                 escalation_service.classify_escalation(visitor_turn, settings),
-                turn_scope.classify_turn_scope(visitor_turn, settings),
             )
         else:
             retrieval_result = await retrieval
             classification = None
-            turn_asserts = None
         chunks, system_prompt, trusted_sources, broad_turn = retrieval_result
+
+        # SPEC-RAG-ANSWER-TIERS-001 REQ-1. Classify only when retrieval came
+        # back with a gap, which is the only situation where the class can
+        # change the outcome: with usable chunks the composer answers from them
+        # either way. Review on 2026-09-15 showed why this must not ride in the
+        # gather above — gather waits for its slowest member, so a classifier
+        # hitting its timeout would have added two seconds to a perfectly
+        # grounded answer. Now the cost lands on the turns that would otherwise
+        # have refused, measured at 13.5% of widget traffic over seven days.
+        turn_asserts = None
+        if support_mode and classify_gap(chunks) is not None:
+            turn_asserts = await turn_scope.classify_turn_scope(visitor_turn, settings)
     except (httpx.TimeoutException, httpx.ReadTimeout) as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,

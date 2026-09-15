@@ -58,7 +58,11 @@ class EvidenceChunk:
     image_urls: list[str] = field(default_factory=list)
 
 
-_RAW_URL_RE = re.compile(r"https?://[^\s<>)]+")
+# Case-insensitive: URL schemes are case-insensitive per RFC 3986 and browsers
+# follow "HTTPS://" happily, so a scheme-cased link slipped past this guard.
+# Reproduced 2026-09-15 on the widget: "Klik <HTTPS://evil.example/phish>."
+# survived the stripper and reached the visitor as a rendered autolink.
+_RAW_URL_RE = re.compile(r"https?://[^\s<>)]+", re.IGNORECASE)
 _MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\((\S+?)(?:\s+['\"][^'\"]*['\"])?\)")
 _MARKDOWN_LINK_RE = re.compile(r"(?<!!)\[([^\]]+)\]\([^)]*\)")
 _MARKDOWN_HEADING_RE = re.compile(r"^\s*#{1,6}\s+(.+?)\s*#*\s*$")
@@ -80,7 +84,7 @@ _EVIDENCE_LABEL_RE = re.compile(
     re.IGNORECASE,
 )
 _EVIDENCE_ID_TOKEN_RE = re.compile(r"E\d{1,3}", re.IGNORECASE)
-_MALFORMED_NUMBER_URL_RE = re.compile(r"\b\d{1,3}\(https?://[^)\s]+\)")
+_MALFORMED_NUMBER_URL_RE = re.compile(r"\b\d{1,3}\(https?://[^)\s]+\)", re.IGNORECASE)
 _BARE_NUMBER_RUN_RE = re.compile(r"(?<![\w/])\b\d{1,3}(?:\s*[,;]\s*\d{1,3})+\b(?=(?:[.!?])?(?:\s|$))")
 _TOKEN_RE = re.compile(r"[a-z0-9À-ÿ][a-z0-9À-ÿ_-]{2,}", re.IGNORECASE)
 # Bold/ATX-tolerant + multilingual: the model imitates our footer with bold,

@@ -59,6 +59,7 @@ from app.core.config import settings as global_settings
 from app.core.database import tenant_scoped_session
 from app.services.citations import (
     compose_answer_with_trusted_sources,
+    evidence_chunks_from_chunks,
     evidence_pack_items_as_chunks,
     render_evidence_context,
     source_url_key,
@@ -1715,6 +1716,59 @@ def _fill_answer_signals(
         logger.warning("partner_chat_answer_signals_failed", exc_info=True)
 
 
+# Anything a reader could click or paste. strip_model_citation_artifacts is a
+# CITATION cleaner, not a URL firewall: it only knows the "scheme://" shape, so
+# "www.evil.example/phish" and "evil.example/phish" walked straight through it
+# while GitHub-flavoured Markdown renderers autolink both. REQ-5 needs the
+# stricter job, so it gets its own pattern rather than stretching that one.
+#
+# Deliberately aggressive, with a known ceiling: this also removes a bare
+# "voys.nl" written as ordinary prose. On a branch that by definition has zero
+# retrieved sources the rule is simply "no links", and mangling one sentence
+# beats rendering an invented support URL on a public help page. The SUPPORT
+# profile already forbids the model from writing URLs at all, so reaching this
+# at all is the exception.
+_LINKLIKE_RE = re.compile(
+    r"(?:(?:https?|ftp)://|www\.)\S+"
+    r"|\b[\w-]+(?:\.[\w-]+)+\.[a-z]{2,}(?:/\S*)?"
+    r"|\b[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}/\S*",
+    re.IGNORECASE,
+)
+
+
+def _answer_without_retrieved_sources(text: str, citation_chunks: list[dict] | None = None) -> str:
+    """Render an answer that has no retrieved sources behind it.
+
+    SPEC-RAG-ANSWER-TIERS-001 REQ-5, the invariant for every branch that returns
+    the model's words without the composer: **a link may only reach a visitor
+    when it came from retrieval and survived the source selector.** Both
+    non-strict branches bypass ``compose_answer_with_trusted_sources``, and that
+    composer is the only MECHANICAL place where an output URL is checked against
+    the allowed set. The SUPPORT profile also bans URLs, but that is a prompt,
+    and a prompt is a request rather than a guarantee.
+
+    Measured 2026-09-15: a consented broad-mode answer carrying
+    ``https://evil.example.com/phish`` reached the visitor untouched, and it had
+    been able to since broad mode shipped. A model that invents a plausible
+    support URL on a public help page is the failure this closes.
+
+    One function so the invariant has one home; a future branch that returns
+    model text without sources calls this or it is a defect.
+    """
+    # Evidence labels only come off when the helper is told which ids exist —
+    # without them it deliberately leaves "E1" alone, because in ordinary prose
+    # that is just a word. Retrieval still runs on these branches and still
+    # injects the labels into the prompt, so the model can echo them; reproduced
+    # 2026-09-15 with "Evidence E1" and "(E1)" reaching the visitor.
+    evidence_ids = {
+        chunk_id
+        for chunk in evidence_chunks_from_chunks(citation_chunks or [])
+        if (chunk_id := getattr(chunk, "evidence_id", None))
+    }
+    cleaned = strip_model_citation_artifacts(text, evidence_ids=evidence_ids or None)
+    return _LINKLIKE_RE.sub("", cleaned).strip()
+
+
 def _compose_backend_managed_answer(
     text: str,
     trusted_sources: list[dict[str, Any]] | None,
@@ -1813,7 +1867,7 @@ def _compose_backend_managed_answer(
         # old behaviour answered them with "I can't find this in our help
         # articles", which is both wrong and unkind. The offer is kept, the
         # nonsense is not.
-        safe_text = strip_model_citation_artifacts(text).strip()
+        safe_text = _answer_without_retrieved_sources(text, citation_chunks)
         if safe_text:
             decision = {"reason": "conversational_turn", "turn_scope": "conversational"}
             if offered_appointment:
@@ -1841,7 +1895,7 @@ def _compose_backend_managed_answer(
         decision = {"reason": "broad_mode_answer", "broad_mode": "answer"}
         if offered_appointment:
             decision["escalation"] = _appointment_escalation()
-        return f"{marker}\n\n{text.strip()}", [], decision
+        return f"{marker}\n\n{_answer_without_retrieved_sources(text, citation_chunks)}", [], decision
 
     composed = compose_answer_with_trusted_sources(
         text,
