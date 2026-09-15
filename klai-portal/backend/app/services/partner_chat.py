@@ -1723,6 +1723,7 @@ def _compose_backend_managed_answer(
     web_query: str | None = None,
     helpdesk: bool = False,
     broad: bool = False,
+    conversational: bool = False,
     force_escalation: bool = False,
     *,
     visitor_query: str,
@@ -1788,6 +1789,24 @@ def _compose_backend_managed_answer(
     # surface (klai_chat_prompts.language), abstain renders Dutch — see
     # klai_chat_prompts._language_is_dutch for the measured rationale.
     refusal_language = identify_text_language(visitor_query)
+    if conversational and text.strip() and not force_escalation:
+        # SPEC-RAG-ANSWER-TIERS-001 REQ-1. The answer to this turn asserts
+        # nothing checkable outside this chat window — which language we speak,
+        # that the visitor is welcome, that this is an AI — so there is nothing
+        # for the citation firewall to ground and nothing to refuse. Before
+        # this branch such a turn fell into the strict path and came back as
+        # "I can't find this in our help articles" with a consent block and an
+        # appointment button under it.
+        #
+        # Returned with empty sources on purpose: a turn about the conversation
+        # has no sources, and the existing ban on URLs and citation markers in
+        # the SUPPORT profile already keeps them out of the text.
+        #
+        # ``force_escalation`` still wins. A visitor asking for a person is the
+        # backend's own decision from escalation_intent, and swallowing it here
+        # would drop the booking button on exactly the turn that needs it.
+        return text.strip(), [], {"reason": "conversational_turn", "turn_scope": "conversational"}
+
     if broad:
         if not text.strip():
             # The model produced nothing even with the broad profile; stay on
@@ -1903,6 +1922,7 @@ async def _chat_completion_streaming_with_composed_citations(
     emit_sources: bool = True,
     support_mode: bool = False,
     broad_mode: bool = False,
+    conversational: bool = False,
     force_escalation: bool = False,
     sentiment: Literal["negative", "neutral", "positive"] | None = None,
     answer_signals: dict[str, Any] | None = None,
@@ -2000,6 +2020,7 @@ async def _chat_completion_streaming_with_composed_citations(
         web_query,
         helpdesk=support_mode,
         broad=broad_mode,
+        conversational=conversational,
         force_escalation=force_escalation,
         visitor_query=visitor_query,
     )
@@ -2585,6 +2606,7 @@ async def chat_completion_non_streaming(
     page_context: PageContext | None = None,
     support_mode: bool = False,
     broad_mode: bool = False,
+    conversational: bool = False,
     force_escalation: bool = False,
     sentiment: Literal["negative", "neutral", "positive"] | None = None,
     answer_signals: dict[str, Any] | None = None,
@@ -2692,6 +2714,7 @@ async def chat_completion_non_streaming(
                     web_query,
                     helpdesk=support_mode,
                     broad=broad_mode,
+                    conversational=conversational,
                     force_escalation=force_escalation,
                     # Visitor's own words decide the refusal language, not the
                     # rewritten source_query (see the composer docstring).
@@ -2786,6 +2809,7 @@ async def chat_completion_streaming(
     page_context: PageContext | None = None,
     support_mode: bool = False,
     broad_mode: bool = False,
+    conversational: bool = False,
     force_escalation: bool = False,
     sentiment: Literal["negative", "neutral", "positive"] | None = None,
     answer_signals: dict[str, Any] | None = None,
@@ -2824,6 +2848,7 @@ async def chat_completion_streaming(
             emit_sources=emit_sources,
             support_mode=support_mode,
             broad_mode=broad_mode,
+            conversational=conversational,
             force_escalation=force_escalation,
             sentiment=sentiment,
             answer_signals=answer_signals,

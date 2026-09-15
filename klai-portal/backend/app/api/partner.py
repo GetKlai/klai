@@ -39,6 +39,7 @@ from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg
 from app.models.widgets import Widget, WidgetKbAccess
 from app.services import escalation_intent as escalation_service
+from app.services import turn_scope
 from app.services.events import emit_event
 from app.services.partner_chat import (
     _last_user_message,
@@ -1793,13 +1794,19 @@ async def chat_completions(  # noqa: C901
             retrieval_enabled=knowledge.enabled if knowledge is not None else True,
         )
         if support_mode:
-            retrieval_result, classification = await asyncio_gather(
+            # SPEC-RAG-ANSWER-TIERS-001 REQ-1: the scope classifier rides along
+            # with retrieval rather than gating it, so it costs no wall-clock on
+            # the 86.5% of turns that turn out to need the knowledge pipeline.
+            visitor_turn = _last_user_message(request.messages) or ""
+            retrieval_result, classification, turn_asserts = await asyncio_gather(
                 retrieval,
-                escalation_service.classify_escalation(_last_user_message(request.messages) or "", settings),
+                escalation_service.classify_escalation(visitor_turn, settings),
+                turn_scope.classify_turn_scope(visitor_turn, settings),
             )
         else:
             retrieval_result = await retrieval
             classification = None
+            turn_asserts = None
         chunks, system_prompt, trusted_sources, broad_turn = retrieval_result
     except (httpx.TimeoutException, httpx.ReadTimeout) as exc:
         raise HTTPException(
@@ -1951,6 +1958,7 @@ async def chat_completions(  # noqa: C901
             support_mode=support_mode,
             broad_mode=broad_turn,
             force_escalation=force_escalation,
+            conversational=turn_scope.is_conversational(turn_asserts),
             sentiment=sentiment,
             answer_signals=answer_signals if audit_ready else None,
             signal_chunks=chunks,
@@ -1991,6 +1999,7 @@ async def chat_completions(  # noqa: C901
         support_mode=support_mode,
         broad_mode=broad_turn,
         force_escalation=force_escalation,
+        conversational=turn_scope.is_conversational(turn_asserts),
         sentiment=sentiment,
         answer_signals=answer_signals if audit_ready else None,
         signal_chunks=chunks,

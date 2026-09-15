@@ -3544,3 +3544,81 @@ def test_build_conversation_history_window_and_role_filtering():
 
     assert [m["content"] for m in history] == ["q2", "a2", "q3", "a3", "q4", "a4"]
     assert all(m["role"] in ("user", "assistant") for m in history)
+
+
+# ---------------------------------------------------------------------------
+# SPEC-RAG-ANSWER-TIERS-001 REQ-1 — the third class leaves the KB pipeline
+# ---------------------------------------------------------------------------
+
+
+def _compose(text, *, conversational, trusted=None, force_escalation=False):
+    from app.services.partner_chat import _compose_backend_managed_answer
+
+    return _compose_backend_managed_answer(
+        text,
+        trusted or [],
+        [],
+        "can talk english",
+        None,
+        None,
+        helpdesk=True,
+        conversational=conversational,
+        force_escalation=force_escalation,
+        visitor_query="Can I also talk english?",
+    )
+
+
+def test_conversational_turn_is_not_refused_for_lack_of_help_articles():
+    """The reported turn: a visitor asked, in English, whether they could talk English.
+
+    Production request_id 469e4e48-94ad-4555-943a-a45b92bf46ae: the retriever
+    searched the help articles for "also can english talk", the selector rejected
+    all three candidates, and the citation firewall replaced the model's answer
+    with "I can't find this in our help articles" plus an appointment button.
+    """
+    content, sources, decision = _compose("Yes, I can answer in English.", conversational=True)
+
+    assert content == "Yes, I can answer in English."
+    assert "can't find this" not in content
+    assert sources == []
+    assert decision["turn_scope"] == "conversational"
+    # No consent block and no booking button: neither is an answer to this turn.
+    assert "broad_mode" not in decision
+    assert "escalation" not in decision
+
+
+def test_a_question_about_us_without_sources_still_refuses():
+    """REQ-3. The grounding boundary does not move — Moffatt v. Air Canada."""
+    content, sources, decision = _compose("Voys costs 12 euro a month.", conversational=False)
+
+    assert "can't find this in our help articles" in content
+    assert sources == []
+    assert decision["escalation"] == {"appointment": True}
+    assert decision["broad_mode"] == "offer"
+
+
+def test_asking_for_a_person_keeps_the_booking_button():
+    """force_escalation is the backend's own decision and outranks the class.
+
+    Swallowing it here would drop the button on exactly the turn that needs it.
+    """
+    content, _, decision = _compose("Of course, I'll help you with that.", conversational=True, force_escalation=True)
+
+    assert "can't find this in our help articles" in content
+    assert decision["escalation"] == {"appointment": True}
+
+
+def test_an_empty_model_answer_still_refuses_even_when_conversational():
+    """A class-three turn with nothing to say falls back, it does not send silence."""
+    content, _, _ = _compose("   ", conversational=True)
+
+    assert "can't find this in our help articles" in content
+
+
+def test_classifier_failure_reads_as_a_knowledge_question():
+    """REQ-1 fail-safe direction: None must never open the firewall."""
+    from app.services.turn_scope import is_conversational
+
+    assert is_conversational(None) is False
+    assert is_conversational(True) is False
+    assert is_conversational(False) is True
