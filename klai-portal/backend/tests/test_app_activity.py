@@ -72,6 +72,12 @@ class FakeSession:
         judged: Any | None = None,
         reviewed_returning: Any | None = None,
         widget_exists: bool = True,
+        summary_total: Any | None = None,
+        summary_by_band: list[Any] | None = None,
+        summary_by_judge_outcome: list[Any] | None = None,
+        summary_by_judge_category: list[Any] | None = None,
+        summary_modes: Any | None = None,
+        summary_by_language: list[Any] | None = None,
     ) -> None:
         self.conversations = conversations or []
         self.turns = turns or []
@@ -84,6 +90,12 @@ class FakeSession:
         self.judged = judged
         self.reviewed_returning = reviewed_returning
         self.widget_exists = widget_exists
+        self.summary_total = summary_total
+        self.summary_by_band = summary_by_band or []
+        self.summary_by_judge_outcome = summary_by_judge_outcome or []
+        self.summary_by_judge_category = summary_by_judge_category or []
+        self.summary_modes = summary_modes
+        self.summary_by_language = summary_by_language or []
         # (normalised sql, params, original statement) per execute() call.
         self.calls: list[tuple[str, dict[str, Any], Any]] = []
         self.commits = 0
@@ -118,9 +130,29 @@ class FakeSession:
             return _Rows(self.message_reviews)
         if "FROM portal_users" in sql:
             return _Rows([SimpleNamespace(id=CALLER_PORTAL_USER_ID, display_name=CALLER_DISPLAY_NAME)])
+        summary = self._summary_rows(sql)
+        if summary is not None:
+            return summary
         if "FROM answer_reviews" in sql:
             return _Rows(self.reviews)
         raise AssertionError(f"FakeSession got unexpected SQL:\n{sql}")
+
+    def _summary_rows(self, sql: str) -> _Rows | None:
+        """GET /summary markers (most specific first): every one of them also
+        matches the generic "FROM answer_reviews" fallback in execute()."""
+        if "LEFT JOIN widget_messages wm" in sql:
+            return _Rows([self.summary_modes] if self.summary_modes else [])
+        if "GROUP BY band_at_review" in sql:
+            return _Rows(self.summary_by_band)
+        if "GROUP BY judge_outcome_at_review" in sql:
+            return _Rows(self.summary_by_judge_outcome)
+        if "GROUP BY judge_failure_category_at_review, cause" in sql:
+            return _Rows(self.summary_by_judge_category)
+        if "GROUP BY language" in sql:
+            return _Rows(self.summary_by_language)
+        if sql.startswith("SELECT COUNT(*) AS reviewed"):
+            return _Rows([self.summary_total] if self.summary_total else [])
+        return None
 
     async def commit(self) -> None:
         self.commits += 1
@@ -653,3 +685,73 @@ async def test_queue_count_counts_the_same_set_as_queue_true() -> None:
     assert counted.status_code == 200
     assert counted.json() == {"count": 1}
     assert counted.json()["count"] == len(listed.json()["items"])
+
+
+# ---------------------------------------------------------------------------
+# GET /summary — calibration readout (§4.6/§4.7, Appendix A)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("role", "expected"), [("kb_manager", 200), ("company", 403)])
+async def test_summary_gate_follows_kb_activity_capability(role: str, expected: int) -> None:
+    """Same router-wide gate as the rest of Appendix A — no route-specific check needed."""
+    response = await _call(FakeSession(), _perms(role), "get", "/api/app/activity/summary")
+    assert response.status_code == expected
+
+
+@pytest.mark.asyncio
+async def test_summary_computes_the_documented_aggregates() -> None:
+    """Appendix A ``GET /summary`` shape, built from a fixed set of fake rows
+    so every field is checked against a hand-computed expectation."""
+    db = FakeSession(
+        summary_total=SimpleNamespace(reviewed=84),
+        summary_by_band=[
+            SimpleNamespace(band="high", reviewed=40, correct=34),
+            SimpleNamespace(band="low", reviewed=10, correct=3),
+        ],
+        summary_by_judge_outcome=[
+            SimpleNamespace(judge_outcome="resolved", reviewed=30, human_correct=27),
+            SimpleNamespace(judge_outcome=None, reviewed=5, human_correct=2),
+        ],
+        summary_by_judge_category=[
+            SimpleNamespace(judge_category="retrieval_miss", human_cause="knowledge_missing", row_count=12),
+            SimpleNamespace(judge_category=None, human_cause="none", row_count=8),
+        ],
+        summary_modes=SimpleNamespace(
+            broad_mode_reviewed=9,
+            broad_mode_correct=5,
+            strict_gap_reviewed=20,
+            strict_gap_correct=7,
+        ),
+        summary_by_language=[
+            SimpleNamespace(language="nl", reviewed=70, correct=55),
+            SimpleNamespace(language="en", reviewed=14, correct=9),
+        ],
+    )
+    response = await _call(db, _perms("kb_manager"), "get", "/api/app/activity/summary?days=30")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "reviewed": 84,
+        "by_band": [
+            {"band": "high", "reviewed": 40, "correct": 34},
+            {"band": "low", "reviewed": 10, "correct": 3},
+        ],
+        "by_judge_outcome": [
+            {"judge_outcome": "resolved", "reviewed": 30, "human_correct": 27},
+            {"judge_outcome": None, "reviewed": 5, "human_correct": 2},
+        ],
+        "by_judge_category": [
+            {"judge_category": "retrieval_miss", "human_cause": "knowledge_missing", "count": 12},
+            {"judge_category": None, "human_cause": "none", "count": 8},
+        ],
+        "broad_mode": {"reviewed": 9, "correct": 5},
+        "strict_on_gap": {"reviewed": 20, "correct": 7},
+        "by_language": [
+            {"language": "nl", "reviewed": 70, "correct": 55},
+            {"language": "en", "reviewed": 14, "correct": 9},
+        ],
+    }
+    assert db.params_for("SELECT COUNT(*) AS reviewed")[-1]["org_id"] == 101
+    assert all(params["org_id"] == 101 for _sql, params, _stmt in db.calls)

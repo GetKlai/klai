@@ -172,6 +172,88 @@ DELETE FROM answer_reviews
    AND org_id = :org_id
 """
 
+# Calibration readout (§4.6/§4.7): all six read the answer_reviews snapshots
+# for the window, never the live band/judge state, so the nightly purge of
+# the underlying conversation does not erase what was measured. Channel is a
+# literal, not a bound param — the surface only ever reviews webchat turns
+# (see the module docstring). Each statement is a full constant (no string
+# assembly into text()) so the driver binds every value.
+_SUMMARY_TOTAL_SQL = """
+SELECT COUNT(*) AS reviewed
+  FROM answer_reviews
+ WHERE org_id = :org_id
+   AND channel = 'webchat'
+   AND reviewed_at >= :cutoff
+"""
+
+_SUMMARY_BY_BAND_SQL = """
+SELECT band_at_review AS band,
+       COUNT(*) AS reviewed,
+       COUNT(*) FILTER (WHERE verdict = 'correct') AS correct
+  FROM answer_reviews
+ WHERE org_id = :org_id
+   AND channel = 'webchat'
+   AND reviewed_at >= :cutoff
+ GROUP BY band_at_review
+"""
+
+_SUMMARY_BY_JUDGE_OUTCOME_SQL = """
+SELECT judge_outcome_at_review AS judge_outcome,
+       COUNT(*) AS reviewed,
+       COUNT(*) FILTER (WHERE verdict = 'correct') AS human_correct
+  FROM answer_reviews
+ WHERE org_id = :org_id
+   AND channel = 'webchat'
+   AND reviewed_at >= :cutoff
+ GROUP BY judge_outcome_at_review
+"""
+
+_SUMMARY_BY_JUDGE_CATEGORY_SQL = """
+SELECT judge_failure_category_at_review AS judge_category,
+       cause AS human_cause,
+       COUNT(*) AS row_count
+  FROM answer_reviews
+ WHERE org_id = :org_id
+   AND channel = 'webchat'
+   AND reviewed_at >= :cutoff
+ GROUP BY judge_failure_category_at_review, cause
+"""
+
+_SUMMARY_BY_LANGUAGE_SQL = """
+SELECT language,
+       COUNT(*) AS reviewed,
+       COUNT(*) FILTER (WHERE verdict = 'correct') AS correct
+  FROM answer_reviews
+ WHERE org_id = :org_id
+   AND channel = 'webchat'
+   AND reviewed_at >= :cutoff
+ GROUP BY language
+"""
+
+# broad_mode/strict_on_gap read the reviewed answer's answer_signals via the
+# message it was filed against; a purged message (LEFT JOIN miss) simply does
+# not count towards either bucket (Appendix A).
+_SUMMARY_MODES_SQL = """
+SELECT COUNT(*) FILTER (WHERE wm.answer_signals ->> 'broad_mode' = 'true') AS broad_mode_reviewed,
+       COUNT(*) FILTER (
+           WHERE wm.answer_signals ->> 'broad_mode' = 'true' AND ar.verdict = 'correct'
+       ) AS broad_mode_correct,
+       COUNT(*) FILTER (
+           WHERE COALESCE(wm.answer_signals ->> 'broad_mode', 'false') <> 'true'
+             AND wm.answer_signals ->> 'gap_type' IS NOT NULL
+       ) AS strict_gap_reviewed,
+       COUNT(*) FILTER (
+           WHERE COALESCE(wm.answer_signals ->> 'broad_mode', 'false') <> 'true'
+             AND wm.answer_signals ->> 'gap_type' IS NOT NULL
+             AND ar.verdict = 'correct'
+       ) AS strict_gap_correct
+  FROM answer_reviews ar
+  LEFT JOIN widget_messages wm ON wm.id = ar.message_id
+ WHERE ar.org_id = :org_id
+   AND ar.channel = 'webchat'
+   AND ar.reviewed_at >= :cutoff
+"""
+
 # Columns a re-review overwrites; everything else on the row is immutable
 # context or a snapshot taken when the review was filed.
 _REVIEW_OVERWRITTEN = (
@@ -298,6 +380,45 @@ class ReviewRequest(BaseModel):
 
 class QueueCountOut(BaseModel):
     count: int
+
+
+class BandSummaryOut(BaseModel):
+    band: str
+    reviewed: int
+    correct: int
+
+
+class JudgeOutcomeSummaryOut(BaseModel):
+    judge_outcome: str | None
+    reviewed: int
+    human_correct: int
+
+
+class JudgeCategorySummaryOut(BaseModel):
+    judge_category: str | None
+    human_cause: str
+    count: int
+
+
+class ModeSummaryOut(BaseModel):
+    reviewed: int
+    correct: int
+
+
+class LanguageSummaryOut(BaseModel):
+    language: str | None
+    reviewed: int
+    correct: int
+
+
+class ActivitySummaryOut(BaseModel):
+    reviewed: int
+    by_band: list[BandSummaryOut]
+    by_judge_outcome: list[JudgeOutcomeSummaryOut]
+    by_judge_category: list[JudgeCategorySummaryOut]
+    broad_mode: ModeSummaryOut
+    strict_on_gap: ModeSummaryOut
+    by_language: list[LanguageSummaryOut]
 
 
 # ---------------------------------------------------------------------------
@@ -758,3 +879,50 @@ async def delete_review(
     """Withdraw the review of one answer; reviews are org-scoped by their own row."""
     await db.execute(text(_DELETE_REVIEW_SQL), {"message_id": message_id, "org_id": perms.org_id})
     await db.commit()
+
+
+@router.get("/summary", response_model=ActivitySummaryOut)
+async def get_summary(
+    days: int = Query(default=7, ge=1, le=90),
+    perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
+) -> ActivitySummaryOut:
+    """Calibration readout (§4.6/§4.7): how certain the system was per answer,
+    whether that certainty was justified, and how often the nightly judge and
+    the human reviewer agree — computed from the answer_reviews snapshots so
+    the retention purge of the conversation does not erase it."""
+    params = {"org_id": perms.org_id, "cutoff": datetime.now(UTC) - timedelta(days=days)}
+
+    reviewed_row = (await db.execute(text(_SUMMARY_TOTAL_SQL), params)).first()
+    band_rows = (await db.execute(text(_SUMMARY_BY_BAND_SQL), params)).all()
+    judge_outcome_rows = (await db.execute(text(_SUMMARY_BY_JUDGE_OUTCOME_SQL), params)).all()
+    judge_category_rows = (await db.execute(text(_SUMMARY_BY_JUDGE_CATEGORY_SQL), params)).all()
+    mode_row = (await db.execute(text(_SUMMARY_MODES_SQL), params)).first()
+    language_rows = (await db.execute(text(_SUMMARY_BY_LANGUAGE_SQL), params)).all()
+
+    return ActivitySummaryOut(
+        reviewed=reviewed_row.reviewed if reviewed_row is not None else 0,
+        by_band=[BandSummaryOut(band=row.band, reviewed=row.reviewed, correct=row.correct) for row in band_rows],
+        by_judge_outcome=[
+            JudgeOutcomeSummaryOut(
+                judge_outcome=row.judge_outcome, reviewed=row.reviewed, human_correct=row.human_correct
+            )
+            for row in judge_outcome_rows
+        ],
+        by_judge_category=[
+            JudgeCategorySummaryOut(judge_category=row.judge_category, human_cause=row.human_cause, count=row.row_count)
+            for row in judge_category_rows
+        ],
+        broad_mode=ModeSummaryOut(
+            reviewed=mode_row.broad_mode_reviewed if mode_row is not None else 0,
+            correct=mode_row.broad_mode_correct if mode_row is not None else 0,
+        ),
+        strict_on_gap=ModeSummaryOut(
+            reviewed=mode_row.strict_gap_reviewed if mode_row is not None else 0,
+            correct=mode_row.strict_gap_correct if mode_row is not None else 0,
+        ),
+        by_language=[
+            LanguageSummaryOut(language=row.language, reviewed=row.reviewed, correct=row.correct)
+            for row in language_rows
+        ],
+    )

@@ -2770,5 +2770,16 @@
   "activity_signals_refused": "Refused",
   "activity_signals_broad_mode": "Open answer",
   "activity_signals_language": "Language",
-  "activity_signals_model": "Model"
+  "activity_signals_model": "Model",
+  "activity_calibration_empty": "Nothing reviewed yet, so there are no calibration numbers.",
+  "activity_calibration_high_band": "At high confidence, {pct}% of {n} reviewed answers were correct.",
+  "activity_calibration_high_band_empty": "Nothing reviewed yet at high confidence.",
+  "activity_calibration_judge_agreement": "The nightly review and the colleague agreed in {pct}% of {n} cases.",
+  "activity_calibration_modes": "Open answers: {openPct}% of {openN} correct, strict answers on a knowledge gap: {strictPct}% of {strictN}.",
+  "activity_calibration_details": "Numbers by confidence, outcome and language",
+  "activity_calibration_col_label": "Category",
+  "activity_calibration_col_reviewed": "Reviewed",
+  "activity_calibration_col_correct": "Correct",
+  "activity_calibration_no_judgment": "No judgment",
+  "activity_calibration_unknown_language": "Unknown"
 }

@@ -25,8 +25,10 @@ import {
   OUTCOME_BADGE_VARIANT,
   useActivityConversations,
   useActivityQueueCount,
+  useActivitySummary,
   type ConversationBand,
 } from '@/features/chat-activity'
+import { CalibrationPanel } from '@/features/chat-activity/CalibrationPanel'
 import * as m from '@/paraglide/messages'
 import {
   BANDS,
@@ -122,6 +124,7 @@ export function ActivityPage() {
     cursor: search.cursor,
   })
   const queueCount = useActivityQueueCount()
+  const summary = useActivitySummary(search.days)
 
   if (!hasActivityCapability) {
     return (
@@ -162,6 +165,8 @@ export function ActivityPage() {
           ) : null}
         </PageIntro>
       </div>
+
+      {summary.data ? <CalibrationPanel summary={summary.data} /> : null}
 
       <div className="flex flex-wrap items-end gap-4">
         <div className="space-y-1.5">

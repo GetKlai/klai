@@ -265,6 +265,64 @@ function invalidateActivityViews(queryClient: QueryClient) {
   void queryClient.invalidateQueries({ queryKey: ['activity', 'queue-count'] })
 }
 
+/** One row of `GET /api/app/activity/summary` (§4.6/§4.7, Appendix A). */
+export interface ActivitySummaryBand {
+  band: ConversationBand
+  reviewed: number
+  correct: number
+}
+
+export interface ActivitySummaryJudgeOutcome {
+  judge_outcome: string | null
+  reviewed: number
+  human_correct: number
+}
+
+export interface ActivitySummaryJudgeCategory {
+  judge_category: string | null
+  human_cause: string
+  count: number
+}
+
+export interface ActivitySummaryMode {
+  reviewed: number
+  correct: number
+}
+
+export interface ActivitySummaryLanguage {
+  language: string | null
+  reviewed: number
+  correct: number
+}
+
+/** `GET /api/app/activity/summary?days=` — the calibration readout. */
+export interface ActivitySummary {
+  reviewed: number
+  by_band: ActivitySummaryBand[]
+  by_judge_outcome: ActivitySummaryJudgeOutcome[]
+  by_judge_category: ActivitySummaryJudgeCategory[]
+  broad_mode: ActivitySummaryMode
+  strict_on_gap: ActivitySummaryMode
+  by_language: ActivitySummaryLanguage[]
+}
+
+export function useActivitySummary(days: number) {
+  const enabled = useActivityAccess()
+  return useQuery<ActivitySummary, Error>({
+    queryKey: ['activity', 'summary', days],
+    queryFn: async () => {
+      try {
+        return await apiFetch<ActivitySummary>(`/api/app/activity/summary?days=${days}`)
+      } catch (err) {
+        queryLogger.warn('Activity summary fetch failed', { error: err })
+        throw err
+      }
+    },
+    enabled,
+    retry: false,
+  })
+}
+
 export function useUpsertReview(messageId: number) {
   const queryClient = useQueryClient()
   return useMutation<ConversationReview, Error, ConversationReviewInput>({
