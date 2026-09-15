@@ -205,11 +205,15 @@ rebuilds automatically, with no staging branch and no approval gate. Build
 locally first, and verify the deployed commit and the live URL afterwards.
 `docs/runbooks/website-publishing.md` has the exact commands.
 <!-- codebase-memory:start -->
+## Code intelligence (Serena, zvec-grep, codebase-memory-mcp)
+
+Three tools answer "where is this, who calls it, what does this area do" without reading whole files. Serena and zvec-grep are MCP servers and need no setup. All three need a per-worktree index, which `make code-tools` builds in about 35 s (Conductor runs it on workspace creation). `make mcp-smoke` proves every declared MCP server actually starts, and `make code-doctor` proves the two shared daemons are still rooted at `$HOME` — a daemon left rooted in an archived workspace breaks indexing for every repo on the machine while still reporting "ready". When a tool reports a missing or stale index, or Serena describes code that is not on your branch, read `docs/setup/code-intelligence.md` before working around it.
+
 ## codebase-memory-mcp (code graph, CLI only)
 
-This repo is indexed by `codebase-memory-mcp` (pinned v0.10.8 in `~/bin`), used only through its CLI: no MCP server, no daemon watcher, no hooks. The graph is a precomputed map, not a source of truth: verify every hit in the source.
+This repo is indexed by `codebase-memory-mcp` (pinned v0.10.8 in `~/bin`), used only through its CLI: no MCP server, no file watcher, no hooks. The graph is a precomputed map, not a source of truth: verify every hit in the source.
 
-- **Index (first use in a worktree, after a merge, and after your own changes):** `codebase-memory-mcp cli index_repository --repo-path .` (about 10 s, incremental on rerun). The `project` field in its output is the project name for the commands below. `.cbmignore` un-skips code directories the built-in skip-list would drop.
+- **Index (first use in a worktree, after a merge, and after your own changes):** `codebase-memory-mcp cli index_repository --repo-path .` (about 10 s, incremental on rerun). The `project` field in its output is the project name for the commands below — it is the worktree path as a slug, so passing `klai` returns "project not found". `.cbmignore` un-skips code directories the built-in skip-list would drop.
 - **Impact before changing a shared symbol:** `codebase-memory-mcp cli trace_path --project <name> --function-name <fn> --direction inbound` with `--depth 1` lists the callers you must check before editing; the default depth 3 is the blast radius for your report; go deeper only to find the route or entry point that reaches the symbol. On an ambiguous name pass the `qualified_name` it suggests. `search_graph --project <name> --name-pattern "<regex>" [--label Function|Method|Class|Route]` finds symbols and HTTP routes.
 - **Orientation:** `get_architecture --project <name>` for the summary and `detect_changes --project <name>` for the symbols touched by the current diff against main.
 - Full command reference and worked examples: the global `codebase-memory` skill.

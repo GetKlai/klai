@@ -972,3 +972,37 @@ def test_short_german_question_is_not_hijacked_by_the_dutch_function_word_table(
     # The tie-break itself still works for the languages it exists for.
     assert clm.resolve_conversation_language([{"role": "user", "content": "Wie is Jantine?"}]).language == "nl"
     assert clm.resolve_conversation_language([{"role": "user", "content": "How does it work?"}]).language == "en"
+
+
+# ---------------------------------------------------------------------------
+# Surface language: measuring what the model wrote, not what a user wants
+# ---------------------------------------------------------------------------
+
+
+def test_answer_about_a_language_is_not_a_request_to_switch() -> None:
+    """An English answer that mentions Dutch is English prose.
+
+    identify_text_language answers "what does this person want to be answered
+    in", so it reads "in Dutch" as a request. Applied to a model ANSWER that
+    turned an English reply into a Dutch one in the telemetry and in the
+    cross-lingual eval, which then scored the turn as correct.
+    """
+    answer = "I can answer in Dutch."
+    assert clm.identify_text_language(answer) == "nl"
+    assert clm.identify_surface_language(answer) == "en"
+
+
+def test_surface_language_still_reads_ordinary_prose() -> None:
+    assert clm.identify_surface_language("Go to Settings and click Save to continue.") == "en"
+    assert clm.identify_surface_language("Ga naar Beheer en kies Permissiegroepen.") == "nl"
+
+
+def test_surface_language_abstains_like_the_intent_entry_point() -> None:
+    """Dropping the request table must not weaken the evidence gate."""
+    assert clm.identify_surface_language("") is None
+    assert clm.identify_surface_language("2026-09-15T08:27:18Z ERR 500 uv_cwd") is None
+
+
+def test_explicit_request_still_wins_on_a_user_turn() -> None:
+    assert clm.identify_text_language("Graag in het Nederlands") == "nl"
+    assert clm.identify_text_language("Please reply in English") == "en"

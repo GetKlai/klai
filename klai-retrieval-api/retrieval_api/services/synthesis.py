@@ -20,8 +20,17 @@ import re
 from collections.abc import AsyncIterator
 
 import httpx
-from klai_chat_prompts import GROUNDED_CHAT_SYSTEM_PROMPT, no_citable_sources_message
-from klai_chat_prompts.language import identify_text_language
+from klai_chat_prompts import (
+    GROUNDED_CHAT_SYSTEM_PROMPT,
+    final_response_language_reminder,
+    no_citable_sources_message,
+)
+from klai_chat_prompts.language import (
+    UNKNOWN_LANGUAGE,
+    identify_surface_language,
+    identify_text_language,
+    language_correctness,
+)
 from klai_citations import normalise_source_url, render_evidence_context, source_url_key
 
 from retrieval_api.config import settings
@@ -32,10 +41,6 @@ from retrieval_api.services.evidence_pack import (
     evidence_pack_sources_payload,
 )
 from retrieval_api.services.llm_safety_adapter import check_synthesis_context
-from retrieval_api.util.language_detect import (
-    detect_language,
-    language_correctness,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -175,8 +180,8 @@ def _emit_language_correctness_log(query: str, response_text: str) -> None:
     inside detection MUST NOT block synthesis from returning normally.
     """
     try:
-        query_lang = detect_language(query)
-        response_lang = detect_language(response_text)
+        query_lang = identify_text_language(query) or UNKNOWN_LANGUAGE
+        response_lang = identify_surface_language(response_text) or UNKNOWN_LANGUAGE
         correct = language_correctness(query_lang, response_lang)
         logger.info(
             "chat_synthesis_complete",
@@ -244,6 +249,18 @@ async def synthesize(
     if history:
         recent = history[-3:]
         messages = [messages[0], *recent, messages[-1]]
+
+    # Same contract as paths A and B: the response language is the LAST provider
+    # instruction, after the turn it applies to. Identified from the resolved
+    # query alone, never from the message above it — that one carries the
+    # retrieved chunks merged into the question, so a Dutch help article would
+    # outvote an English visitor.
+    messages.append(
+        {
+            "role": "system",
+            "content": final_response_language_reminder(identify_text_language(query_resolved)),
+        }
+    )
 
     body = {
         "model": settings.synthesis_model,

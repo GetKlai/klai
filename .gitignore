@@ -167,6 +167,12 @@ secret-*.*
 .claude/agent-memory/
 .claude/worktrees/
 
+# zvec-grep semantic search index: binary vectors plus absolute local paths,
+# rebuilt per worktree by `make code-tools` in ~25s. Serena's LSP cache is
+# already excluded by .serena/.gitignore, and codebase-memory-mcp keeps its
+# graph in ~/.cache, so this is the only code index that lands in the repo.
+.zvec-grep/
+
 # Skill-specific credentials
 .claude/skills/*/.env*
 .claude/skills/*/secrets/
@@ -224,3 +230,6 @@ deploy/librechat/build-manifest.json
 # pen.dev CLI scratch output (preview PNGs, agent working files).
 .pencil/
 .pencil-output/
+
+# zvec-grep semantic index — per working directory, never shared
+.zvec-grep/

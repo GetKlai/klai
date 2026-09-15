@@ -71,14 +71,17 @@ The launcher `.claude/scripts/grafana-launcher.mjs` maps the shell's
 Before production debugging, validate the actual MCP stdio launchers:
 
 ```bash
-node .claude/scripts/observability-mcp-smoke.mjs
+node .claude/scripts/mcp-smoke.mjs --deep grafana victorialogs
 ```
+
+`--deep` is what actually proves the credentials: without it the smoke only
+handshakes the launcher, which succeeds even when the token is wrong.
 
 If you already have a local VictoriaLogs tunnel on `localhost:9428`, avoid
 opening a managed SSH tunnel during the smoke test:
 
 ```bash
-OBS_MCP_SMOKE_LOCAL_VICTORIALOGS=1 node .claude/scripts/observability-mcp-smoke.mjs
+OBS_MCP_SMOKE_LOCAL_VICTORIALOGS=1 node .claude/scripts/mcp-smoke.mjs --deep victorialogs
 ```
 
 If this fails with 401, fix the launcher/env first. Do not fall back to

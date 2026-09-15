@@ -484,6 +484,10 @@ async def _audit_streaming_wrapper(
     loaded_origin: str | None = None,
     is_preview: bool = False,
     turn_id: str | None = None,
+    # Certainty signals the completion generator fills while it streams
+    # (SPEC-KNOWLEDGE-ACTIVITY-001 §4.1). Read back once the stream ends and
+    # sent to the audit row only: nothing in it is ever re-emitted as a frame.
+    answer_signals: dict[str, Any] | None = None,
 ) -> AsyncGenerator[bytes]:
     """Tee the SSE stream, capture composed text + sources, log the
     assistant turn once the generator completes.
@@ -518,6 +522,7 @@ async def _audit_streaming_wrapper(
                     loaded_origin=loaded_origin,
                     is_preview=is_preview,
                     turn_id=turn_id,
+                    answer_signals=answer_signals or None,
                 )
             )
             _pending.add(task)
@@ -1919,6 +1924,11 @@ async def chat_completions(  # noqa: C901
     ) = _citation_runtime_options(trusted_sources, is_widget_chat=is_widget_chat)
 
     # 8. Streaming or non-streaming
+    # Retrieval certainty of this answer: the completion pad fills this dict
+    # in-process and we hand it to the audit write, so the widget visitor's
+    # response never carries it. Only wired when the audit trail will read it.
+    # @MX:SPEC: SPEC-KNOWLEDGE-ACTIVITY-001 §4.1
+    answer_signals: dict[str, Any] = {}
     if request.stream:
         streaming_gen = chat_completion_streaming(
             messages=request.messages,
@@ -1942,6 +1952,8 @@ async def chat_completions(  # noqa: C901
             broad_mode=broad_turn,
             force_escalation=force_escalation,
             sentiment=sentiment,
+            answer_signals=answer_signals if audit_ready else None,
+            signal_chunks=chunks,
         )
         if audit_ready:
             streaming_gen = _audit_streaming_wrapper(
@@ -1951,6 +1963,7 @@ async def chat_completions(  # noqa: C901
                 loaded_origin=http_request.headers.get("origin") or None,
                 is_preview=getattr(auth, "is_preview", False),
                 turn_id=request.widget_turn_id,
+                answer_signals=answer_signals,
             )
         return StreamingResponse(
             content=streaming_gen,
@@ -1979,6 +1992,8 @@ async def chat_completions(  # noqa: C901
         broad_mode=broad_turn,
         force_escalation=force_escalation,
         sentiment=sentiment,
+        answer_signals=answer_signals if audit_ready else None,
+        signal_chunks=chunks,
     )
     if knowledge is not None and not knowledge.include_sources:
         for choice in result.get("choices") or []:
@@ -1998,6 +2013,7 @@ async def chat_completions(  # noqa: C901
                     loaded_origin=http_request.headers.get("origin") or None,
                     is_preview=getattr(auth, "is_preview", False),
                     turn_id=request.widget_turn_id,
+                    answer_signals=answer_signals or None,
                 )
             )
             _pending.add(task)

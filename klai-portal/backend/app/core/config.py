@@ -312,6 +312,14 @@ class Settings(BaseSettings):
     klai_gap_soft_threshold: float = 0.4
     klai_gap_dense_threshold: float = 0.35
 
+    # Answer-certainty bands for the widget audit trail (SPEC-KNOWLEDGE-ACTIVITY-001 §4.1).
+    # These split an answer's top retrieval score into high / medium / low so a
+    # later rating-vs-certainty calibration can group turns without re-deriving
+    # certainty from prose. Both have safe defaults, so an unset env var answers
+    # in bands instead of failing startup — see _validate_answer_confidence_bands.
+    answer_confidence_high_threshold: float = 0.60  # ANSWER_CONFIDENCE_HIGH_THRESHOLD
+    answer_confidence_low_threshold: float = 0.30  # ANSWER_CONFIDENCE_LOW_THRESHOLD
+
     # Knowledge retrieval API (for gap re-scoring)
     knowledge_retrieve_url: str = ""  # e.g. http://retrieval-api:8000
 
@@ -903,6 +911,23 @@ class Settings(BaseSettings):
                 + "POSTs empty values and Zitadel returns 500. Update SOPS "
                 + "(klai-infra/core-01/.env.sops) and re-run the sync-env "
                 + "workflow before retrying the deploy."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_answer_confidence_bands(self) -> "Settings":
+        """SPEC-KNOWLEDGE-ACTIVITY-001 §4.1: the band ladder must be ordered.
+
+        With low >= high the medium band is empty and every answer collapses
+        into high/low, which silently skews the rating-vs-certainty corpus the
+        signals feed. Same guard the retrieval-api applies to its own
+        confidence_band. Reject at startup rather than emit a flat ladder.
+        """
+        if self.answer_confidence_low_threshold >= self.answer_confidence_high_threshold:
+            raise ValueError(
+                "answer_confidence_low_threshold must be < answer_confidence_high_threshold "
+                f"(got {self.answer_confidence_low_threshold} >= {self.answer_confidence_high_threshold}) "
+                "— SPEC-KNOWLEDGE-ACTIVITY-001 §4.1"
             )
         return self
 
