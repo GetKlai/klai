@@ -1593,6 +1593,7 @@
   "gaps_resolved_by_rescorer": "rescorer",
   "gaps_resolved_by_review": "beoordeling",
   "gaps_resolved_line_no_actor": "gesloten {time}",
+  "gaps_unlock_required": "Kennisgaten staat voor jouw organisatie nog niet aan. Vraag Klai om 'knowledge_gaps' aan te zetten.",
   "gaps_resolved_line": "gesloten {time} door {closer}",
   "chat_health_loading": "Verbinden met chat…",
   "chat_health_failed_title": "Chat is tijdelijk niet beschikbaar",
@@ -2704,6 +2705,8 @@
   "klai_assistant_disclaimer": "AI-antwoorden kunnen fouten bevatten. Controleer belangrijke informatie altijd bij de bron.",
   "admin_extension_knowledge_activity_label": "Gesprekken beoordelen",
   "admin_extension_knowledge_activity_description": "Kennisbeheerders zien de widget-gesprekken onder Kennis, beoordelen antwoorden en zien welke kennis ontbreekt of niet klopt.",
+  "admin_extension_knowledge_gaps_label": "Kennisgaten",
+  "admin_extension_knowledge_gaps_description": "Toont onder Kennis welke vragen de kennisbank niet kon beantwoorden, zodat kennisbeheerders die kunnen invullen. Nog in ontwikkeling.",
   "admin_extension_librechat_quality_judge_label": "Gespreksbeoordeling (LibreChat)",
   "admin_extension_librechat_quality_judge_description": "Laat de nachtelijke kwaliteitsbeoordeling ook LibreChat-gesprekken van deze tenant beoordelen (los van webchat)."
 ,

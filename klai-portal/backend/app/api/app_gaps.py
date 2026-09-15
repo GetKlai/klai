@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import require_capability
 from app.core.database import get_db
-from app.core.permissions import UserPermissions, get_caller
+from app.core.permissions import UserPermissions, get_caller, require_platform_unlocked
 from app.core.profiles import Capability
 from app.models.portal import PortalUser
 from app.models.retrieval_gaps import PortalRetrievalGap
@@ -20,8 +20,12 @@ from app.models.widgets import WidgetConversation
 router = APIRouter(
     prefix="/api/app",
     tags=["gaps"],
-    # R-X2 / AC-3: all gap endpoints require the kb.gaps capability.
-    dependencies=[Depends(require_capability(Capability.KB_GAPS))],
+    # R-X2 / AC-3: all gap endpoints require the kb.gaps capability, and the
+    # per-tenant knowledge_gaps unlock while the screen is unfinished.
+    dependencies=[
+        Depends(require_capability(Capability.KB_GAPS)),
+        Depends(require_platform_unlocked("knowledge_gaps")),
+    ],
 )
 
 # caller_client_id of the answer-review producer; a group containing one of its

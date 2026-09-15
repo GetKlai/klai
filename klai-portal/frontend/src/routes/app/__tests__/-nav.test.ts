@@ -33,7 +33,7 @@ describe('app nav — Kennis children (SPEC-KNOWLEDGE-ACTIVITY-001 §3)', () => 
   it('lists the three knowledge children and badges Gesprekken with the queue count', () => {
     const nav = getAppNavItems(
       ['knowledge'],
-      access(['kb.activity', 'kb.gaps'], ['widgets', 'knowledge_activity']),
+      access(['kb.activity', 'kb.gaps'], ['widgets', 'knowledge_activity', 'knowledge_gaps']),
     )
     const knowledge = nav.find((item) => item.to === '/app/knowledge')
 
@@ -47,15 +47,21 @@ describe('app nav — Kennis children (SPEC-KNOWLEDGE-ACTIVITY-001 §3)', () => 
     expect(knowledge?.children?.find((child) => child.to === '/app/knowledge/activity')?.badgeCount).toBe(3)
   })
 
-  it('hides Gesprekken and Kennisgaten without the knowledge_activity tenant unlock', () => {
+  it('hides Gesprekken without the knowledge_activity tenant unlock', () => {
     expect(
-      knowledgeChildren(['kb.activity', 'kb.gaps'], ['widgets']),
-    ).toEqual(['/app/knowledge'])
+      knowledgeChildren(['kb.activity', 'kb.gaps'], ['widgets', 'knowledge_gaps']),
+    ).toEqual(['/app/knowledge', '/app/knowledge/gaps'])
+  })
+
+  it('hides Kennisgaten without the knowledge_gaps tenant unlock', () => {
+    expect(
+      knowledgeChildren(['kb.activity', 'kb.gaps'], ['widgets', 'knowledge_activity']),
+    ).toEqual(['/app/knowledge', '/app/knowledge/activity'])
   })
 
   it('hides Kennisgaten without the kb.gaps capability', () => {
     expect(
-      knowledgeChildren(['kb.activity'], ['widgets', 'knowledge_activity']),
+      knowledgeChildren(['kb.activity'], ['widgets', 'knowledge_activity', 'knowledge_gaps']),
     ).toEqual(['/app/knowledge', '/app/knowledge/activity'])
   })
 })

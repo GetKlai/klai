@@ -30,7 +30,7 @@ import { RoleGuard } from '@/components/layout/RoleGuard'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { Tooltip } from '@/components/ui/tooltip'
 import { PageContainer } from '@/components/ui/page-container'
-import { appNavActivityIsVisible } from '@/routes/app/-app-tools'
+import { appNavActivityIsVisible, appNavGapsIsVisible } from '@/routes/app/-app-tools'
 
 type GapsSearch = { days?: number; gapType?: string; language?: string; include_resolved?: boolean }
 const VALID_DAYS = new Set([7, 14, 30, 60, 90])
@@ -130,15 +130,20 @@ export function GapsPage() {
   // The drill-in link must use the same predicate as the sidebar (-app-tools.ts):
   // capability alone is not enough when the tenant has not unlocked widgets +
   // knowledge_activity, or the link points at a screen that 403s.
-  const { data: me } = useQuery({
+  // The tenant unlocks decide both the drill-in link and whether this screen
+  // is on at all (knowledge_gaps, off by default while it is unfinished).
+  const meQuery = useQuery({
     queryKey: ['me'],
     queryFn: ({ signal }) => fetchMe(signal),
-    enabled: hasActivityCapability,
+    enabled: hasGapsCapability,
   })
-  const canDrillIntoActivity = appNavActivityIsVisible({
-    hasCapability: (cap) => user?.hasCapability(cap) === true,
+  const me = meQuery.data
+  const access = {
+    hasCapability: (cap: string) => user?.hasCapability(cap) === true,
     unlockedFeatures: me?.platform_unlocked_features ?? [],
-  })
+  }
+  const canDrillIntoActivity = hasActivityCapability && appNavActivityIsVisible(access)
+  const gapsUnlocked = appNavGapsIsVisible(access)
   const navigate = useNavigate({ from: '/app/knowledge/gaps/' })
 
   const {
@@ -168,14 +173,14 @@ export function GapsPage() {
         throw err
       }
     },
-    enabled: auth.isAuthenticated && hasGapsCapability,
+    enabled: auth.isAuthenticated && hasGapsCapability && gapsUnlocked,
     retry: false,
   })
 
   const { data: kbsData } = useQuery<KBsResponse>({
     queryKey: ['app-knowledge-bases-for-gaps'],
     queryFn: async () => apiFetch<KBsResponse>('/api/app/knowledge-bases'),
-    enabled: auth.isAuthenticated && hasGapsCapability,
+    enabled: auth.isAuthenticated && hasGapsCapability && gapsUnlocked,
     retry: false,
   })
 
@@ -225,6 +230,14 @@ export function GapsPage() {
     new Set(gaps.map((gap) => gap.language).filter((code): code is string => Boolean(code))),
   ).sort()
   if (language && !languageOptions.includes(language)) languageOptions.push(language)
+
+  if (hasGapsCapability && me !== undefined && !gapsUnlocked) {
+    return (
+      <PageContainer width="6xl" gap="6">
+        <ListEmptyState icon={AlertTriangle} title={m.gaps_unlock_required()} />
+      </PageContainer>
+    )
+  }
 
   return (
     <PageContainer width="3xl">

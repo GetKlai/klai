@@ -43,6 +43,9 @@ KNOWN_FEATURES: frozenset[str] = frozenset(
         # off; Klai staff turn it on per tenant via platform-unlocks, never in
         # code (Voys and Klai first).
         "knowledge_activity",
+        # Gaps screen under Kennis: separate switch, default off, because the
+        # screen is unfinished; Klai staff turn it on per tenant.
+        "knowledge_gaps",
     }
 )
 
