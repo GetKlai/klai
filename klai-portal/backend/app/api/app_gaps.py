@@ -1,10 +1,11 @@
 """App-level gap dashboard API."""
 
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import require_capability
@@ -13,6 +14,7 @@ from app.core.permissions import UserPermissions, get_caller
 from app.core.profiles import Capability
 from app.models.retrieval_gaps import PortalRetrievalGap
 from app.models.taxonomy import PortalTaxonomyNode
+from app.models.widgets import WidgetConversation
 
 router = APIRouter(
     prefix="/api/app",
@@ -21,10 +23,21 @@ router = APIRouter(
     dependencies=[Depends(require_capability(Capability.KB_GAPS))],
 )
 
+# caller_client_id of the answer-review producer; a group containing one of its
+# rows is review-sourced rather than telemetry-only.
+_REVIEW_CALLER_CLIENT_ID = "human-review"
+
 
 class GapOut(BaseModel):
     query_text: str
     gap_type: str
+    language: str | None = None
+    # "review" = a human already saw this question (answer-review flow);
+    # "automatic" = telemetry only.
+    source: str
+    # Conversation the newest row of the group came from, NULL when the gap
+    # has no conversation or that conversation no longer exists.
+    conversation_id: int | None = None
     top_score: float | None
     nearest_kb_slug: str | None
     occurrence_count: int
@@ -35,6 +48,19 @@ class GapOut(BaseModel):
 class GapsResponse(BaseModel):
     gaps: list[GapOut]
     total: int
+
+
+class GapResolveRequest(BaseModel):
+    """Identifies one gap group; ``language=None`` means the group whose rows
+    carry no language, not "any language"."""
+
+    query_text: str
+    gap_type: Literal["hard", "soft"]
+    language: str | None = None
+
+
+class GapResolveResponse(BaseModel):
+    resolved: int
 
 
 class GapSummaryResponse(BaseModel):
@@ -59,15 +85,19 @@ class GapsByTaxonomyResponse(BaseModel):
 async def list_gaps(
     days: int = Query(default=30, ge=1, le=90),
     gap_type: str | None = Query(default=None),
+    language: str | None = Query(default=None),
     taxonomy_node_id: int | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     include_resolved: bool = Query(default=False),
     perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> GapsResponse:
-    """List gap events for the caller's org, grouped by query text.
+    """List gap events for the caller's org, grouped by query text + language.
 
     Optional taxonomy_node_id filter: only return gaps classified to that node.
+    Optional language filter (SPEC-KNOWLEDGE-ACTIVITY-001 §4.5): language is
+    part of the grouping key, because "missing in nl" and "missing in en" are
+    two different things to write.
     """
     cutoff = datetime.now(tz=UTC) - timedelta(days=days)
 
@@ -75,22 +105,26 @@ async def list_gaps(
         select(
             PortalRetrievalGap.query_text,
             PortalRetrievalGap.gap_type,
+            PortalRetrievalGap.language,
             func.max(PortalRetrievalGap.top_score).label("top_score"),
             func.max(PortalRetrievalGap.nearest_kb_slug).label("nearest_kb_slug"),
             func.count().label("occurrence_count"),
             func.max(PortalRetrievalGap.occurred_at).label("last_occurred"),
             func.max(PortalRetrievalGap.resolved_at).label("resolved_at"),
+            func.bool_or(PortalRetrievalGap.caller_client_id == _REVIEW_CALLER_CLIENT_ID).label("has_review"),
         )
         .where(
             PortalRetrievalGap.org_id == perms.org_id,
             PortalRetrievalGap.occurred_at >= cutoff,
         )
-        .group_by(PortalRetrievalGap.query_text, PortalRetrievalGap.gap_type)
+        .group_by(PortalRetrievalGap.query_text, PortalRetrievalGap.gap_type, PortalRetrievalGap.language)
         .order_by(func.count().desc())
         .limit(limit)
     )
     if gap_type:
         stmt = stmt.where(PortalRetrievalGap.gap_type == gap_type)
+    if language:
+        stmt = stmt.where(PortalRetrievalGap.language == language)
     if not include_resolved:
         stmt = stmt.where(PortalRetrievalGap.resolved_at.is_(None))
     # SPEC-KB-022 R7: filter by taxonomy node
@@ -99,10 +133,43 @@ async def list_gaps(
 
     result = await db.execute(stmt)
     rows = result.all()
+    if not rows:
+        return GapsResponse(gaps=[], total=0)
+
+    # §4.5: link each group to the conversation its newest row came from. A
+    # per-row value cannot ride along in the grouped query, so pick the newest
+    # one here. The JOIN doubles as the existence check — a conversation the
+    # retention job purged (or a row written before the FK landed) must not be
+    # linked. Filters are deliberately not mirrored: rows only ever land on
+    # their own group key, and closing a gap must not hide its provenance.
+    conv_result = await db.execute(
+        select(
+            PortalRetrievalGap.query_text,
+            PortalRetrievalGap.gap_type,
+            PortalRetrievalGap.language,
+            PortalRetrievalGap.conversation_id,
+        )
+        .join(WidgetConversation, WidgetConversation.id == PortalRetrievalGap.conversation_id)
+        .where(
+            PortalRetrievalGap.org_id == perms.org_id,
+            PortalRetrievalGap.occurred_at >= cutoff,
+            PortalRetrievalGap.conversation_id.isnot(None),
+            PortalRetrievalGap.query_text.in_({r.query_text for r in rows}),
+        )
+        .order_by(PortalRetrievalGap.occurred_at.desc(), PortalRetrievalGap.id.desc())
+    )
+    conversation_by_group: dict[tuple[str, str, str | None], int] = {}
+    for row in conv_result.all():
+        # Rows arrive newest-first, so the first hit per group is the one.
+        conversation_by_group.setdefault((row.query_text, row.gap_type, row.language), row.conversation_id)
+
     gaps = [
         GapOut(
             query_text=r.query_text,
             gap_type=r.gap_type,
+            language=r.language,
+            source="review" if r.has_review else "automatic",
+            conversation_id=conversation_by_group.get((r.query_text, r.gap_type, r.language)),
             top_score=r.top_score,
             nearest_kb_slug=r.nearest_kb_slug,
             occurrence_count=r.occurrence_count,
@@ -112,6 +179,49 @@ async def list_gaps(
         for r in rows
     ]
     return GapsResponse(gaps=gaps, total=len(gaps))
+
+
+@router.post("/gaps/resolve", response_model=GapResolveResponse)
+async def resolve_gap(
+    body: GapResolveRequest,
+    perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
+) -> GapResolveResponse:
+    """Close one gap group by hand (SPEC-KNOWLEDGE-ACTIVITY-001 §4.9).
+
+    The rescorer is not the only closer: whoever wrote the missing page (or
+    decided the question is out of scope) needs to take it off the list now.
+    Stamps ``resolved_at`` on every open row of the group in the caller's org,
+    so it leaves the default open list. 404 when nothing open matches — which
+    includes another org's group, since the org predicate excludes it (and RLS
+    Category-D bounds the statement to that org anyway).
+    """
+    stmt = (
+        update(PortalRetrievalGap)
+        .where(
+            PortalRetrievalGap.org_id == perms.org_id,
+            PortalRetrievalGap.query_text == body.query_text,
+            PortalRetrievalGap.gap_type == body.gap_type,
+            PortalRetrievalGap.resolved_at.is_(None),
+        )
+        .values(resolved_at=datetime.now(tz=UTC))
+    )
+    # None means "the group without a language", not "any language" — same key
+    # the GET grouping used to show it.
+    if body.language is None:
+        stmt = stmt.where(PortalRetrievalGap.language.is_(None))
+    else:
+        stmt = stmt.where(PortalRetrievalGap.language == body.language)
+
+    result = await db.execute(stmt)
+    resolved = result.rowcount or 0  # type: ignore[attr-defined]
+    if resolved == 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No open gap group matches this query text, gap type and language",
+        )
+    await db.commit()
+    return GapResolveResponse(resolved=resolved)
 
 
 @router.get("/gaps/summary", response_model=GapSummaryResponse)

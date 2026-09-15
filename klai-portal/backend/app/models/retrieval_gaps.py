@@ -3,6 +3,7 @@
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     DateTime,
     Double,
@@ -29,6 +30,7 @@ class PortalRetrievalGap(Base):
         Index("ix_retrieval_gaps_org_occurred", "org_id", "occurred_at"),
         Index("ix_retrieval_gaps_org_query", "org_id", "query_text"),
         Index("ix_retrieval_gaps_open", "org_id", "query_text", postgresql_where=text("resolved_at IS NULL")),
+        Index("ix_retrieval_gaps_conversation", "conversation_id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -49,5 +51,15 @@ class PortalRetrievalGap(Base):
     # attribution. ``None`` = LibreChat traffic; populated = third-party
     # MCP client (Claude Desktop / Cursor / ChatGPT).
     caller_client_id: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
+    # SPEC-KNOWLEDGE-ACTIVITY-001 §4.5: provenance, so a knowledge editor can
+    # jump from a gap to the conversation it came from. No ForeignKey() here on
+    # purpose — the migration runs as portal_api, which has no REFERENCES
+    # privilege on widget_conversations (same split as b7e4f1a9c3d2); the real
+    # FK (ON DELETE SET NULL) is added by
+    # post_deploy_d8b3f6a1c4e9_gaps_conversation_fk.sql as klai superuser.
+    conversation_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, default=None)
+    # Language (BCP 47) of the question that produced the gap — "missing" in
+    # nl and in en are two different gaps to fill.
+    language: Mapped[str | None] = mapped_column(String(8), nullable=True, default=None)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)

@@ -67,6 +67,8 @@ async def record_gap_event(
     retrieval_ms: int = 0,
     taxonomy_node_ids: list[int] | None = None,
     caller_client_id: str | None = None,
+    conversation_id: int | None = None,
+    language: str | None = None,
 ) -> GapEventResult:
     """Insert one knowledge-gap row, gated by the org's telemetry level.
 
@@ -76,6 +78,10 @@ async def record_gap_event(
     Never raises on a missing org — returns ``outcome='not_found'`` so the
     HTTP layer can decide how to surface it (404) while in-process callers
     just log and move on.
+
+    ``conversation_id`` / ``language`` are provenance (SPEC-KNOWLEDGE-ACTIVITY-001
+    §4.5): the widget conversation the question came from and the language it
+    was asked in. Both stay NULL for callers that do not know them.
     """
     org_result = await db.execute(select(PortalOrg).where(PortalOrg.zitadel_org_id == zitadel_org_id))
     org = org_result.scalar_one_or_none()
@@ -105,6 +111,8 @@ async def record_gap_event(
         retrieval_ms=retrieval_ms,
         taxonomy_node_ids=taxonomy_node_ids,
         caller_client_id=caller_client_id,
+        conversation_id=conversation_id,
+        language=language,
     )
     db.add(gap)
     await db.commit()
