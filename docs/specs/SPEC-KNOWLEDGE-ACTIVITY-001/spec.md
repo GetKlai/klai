@@ -489,3 +489,57 @@ Zelfde predicaat als `queue=true`, over `days=7`, `channel=webchat`.
   "by_language": [{ "language": "nl", "reviewed": 70, "correct": 55 }, …]
 }
 ```
+
+# Appendix B — contract fase 2 (gaten), bindend voor backend en frontend
+
+## Schema (`portal_retrieval_gaps`)
+
+Twee nullable kolommen, gewone alembic-migratie (de tabel is portal_api-owned):
+`conversation_id BIGINT REFERENCES widget_conversations(id) ON DELETE SET NULL`
+en `language VARCHAR(8)`. Geen `source`-kolom: de bron wordt afgeleid uit
+`caller_client_id` (`"human-review"` → `review`, anders `automatic`).
+
+Het widget-pad vult voortaan beide kolommen bij automatische gaten;
+`record_gap_event()` krijgt daarvoor twee optionele parameters.
+
+## GET /api/app/gaps
+
+Nieuwe query-parameter `language`. Groepering wordt
+(`query_text`, `gap_type`, `language`). Per item extra velden:
+`language: string|null`, `source: "automatic"|"review"` (review zodra één rij
+in de groep van een beoordeling komt), `conversation_id: number|null` (van de
+meest recente rij in de groep, alleen als dat gesprek nog bestaat).
+
+## POST /api/app/gaps/resolve
+
+Body `{ "query_text": "…", "gap_type": "hard"|"soft", "language": string|null }`.
+Zet `resolved_at = NOW()` op alle open rijen van die groep binnen de eigen org.
+Antwoord `{ "resolved": <aantal> }`; 404 als er geen open rij was. Capability
+`kb.gaps`.
+
+## Beoordeling → gat (in PUT /api/app/activity/messages/{id}/review)
+
+Bij `cause` in (`knowledge_missing`, `knowledge_wrong`): via
+`record_gap_event()` één rij met `query_text` = de bezoekersvraag die direct
+aan de beoordeelde beurt voorafging, `gap_type` hard resp. soft,
+`nearest_kb_slug` = `kb_slug`, `caller_client_id = "human-review"`,
+`conversation_id`, `language`; `answer_reviews.gap_id` wijst ernaar. Bij een
+latere PUT die de oorzaak naar iets anders zet, of bij DELETE van de
+beoordeling, krijgt het gekoppelde gat `resolved_at = NOW()`. De
+telemetry-gating van SPEC-PRIVACY-QUERY-SHADOW-001 geldt ongewijzigd.
+
+## Frontend
+
+`/app/gaps` verhuist naar `/app/knowledge/gaps`; het oude pad blijft als
+redirect met behoud van search. Nieuw op de pagina: taalfilter, kolom bron,
+link naar het gesprek (alleen als `conversation_id` gevuld is en de gebruiker
+`kb.activity` heeft), rij-actie "Sluiten" met inline bevestiging. Het
+menu-item Kennisgaten wijst naar het nieuwe pad.
+
+## Migratieketen (vooraf vastgelegd, zodat lanes parallel kunnen bouwen)
+
+| Fase | Revisie | down_revision |
+|---|---|---|
+| 0 | `b5d2f8a4c7e1` (marker, answer_signals) | `a1c4e7b2d9f3` |
+| 1 | `c2a7e9d4b1f6` (marker, answer_reviews) | `b5d2f8a4c7e1` |
+| 2 | `d8b3f6a1c4e9` (gaps conversation_id + language) | `c2a7e9d4b1f6` |
