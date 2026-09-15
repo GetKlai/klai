@@ -38,6 +38,11 @@ KNOWN_FEATURES: frozenset[str] = frozenset(
         # LLM-as-judge pass on LibreChat conversations. Default off; Klai
         # staff turn it on per tenant here, not in code (Voys is the pilot).
         "librechat_quality_judge",
+        # SPEC-KNOWLEDGE-ACTIVITY-001 §4.4: per-tenant opt-in for the
+        # knowledge-side activity view (answer reviews + snapshots). Default
+        # off; Klai staff turn it on per tenant via platform-unlocks, never in
+        # code (Voys and Klai first).
+        "knowledge_activity",
     }
 )
 

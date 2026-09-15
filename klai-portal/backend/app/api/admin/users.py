@@ -4,13 +4,13 @@ import logging
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Final, Literal, cast
+from typing import Final, Literal, Self, cast
 from urllib.parse import urlparse
 
 import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, model_validator
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,6 +22,7 @@ from app.core.permissions import (
     get_caller,
     get_caller_at_least,
 )
+from app.core.seats import suggest_seat
 
 # SPEC-PORTAL-PRICING-PER-USER-001 Phase 3 (2026-05-12): the
 # ``assert_role_allowed_for_plan`` import from ``app.core.profiles`` is
@@ -113,10 +114,21 @@ class UserOut(BaseModel):
     # ``role`` via ``suggest_seat``. Surfaced here so /admin/users can
     # render the account-type column without an extra round-trip.
     seat_type: Literal["chat", "knowledge"]
+    # True when the stored account type is NOT the tier ``suggest_seat``
+    # returns for this profile. ``PATCH .../role`` deliberately leaves
+    # ``seat_type`` alone (profile and billing are separate axes), so the two
+    # drift apart after an admin edits the profile; /admin/users flags the
+    # row so the badge is never silently stale.
+    seat_mismatch: bool = False
     preferred_language: Literal["nl", "en"]
     status: str
     created_at: datetime
     invite_pending: bool
+
+    @model_validator(mode="after")
+    def _derive_seat_mismatch(self) -> Self:
+        self.seat_mismatch = self.seat_type != suggest_seat(self.role).value
+        return self
 
 
 class UsersResponse(BaseModel):
@@ -608,8 +620,6 @@ async def invite_user(
     # even if a legacy client sends it pydantic drops it silently. The
     # FE displays the derived tier as a read-only badge that updates
     # when the Profile dropdown changes.
-    from app.core.seats import suggest_seat
-
     seat_type_value = cast(Literal["chat", "knowledge"], suggest_seat(body.role).value)
 
     reactivated_old_role: str | None = None

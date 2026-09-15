@@ -51,7 +51,7 @@ export function UsersTable({ users, onRowClick, renderActions }: Props) {
               <ProfileBadge role={user.role} pending={user.invite_pending} />
             </div>
             <div>
-              <AccountTypeBadge seat={user.seat_type} />
+              <AccountTypeBadge seat={user.seat_type} mismatch={user.seat_mismatch} />
             </div>
             <div>
               <StatusBadge status={user.status} />

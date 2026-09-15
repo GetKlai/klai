@@ -1081,6 +1081,7 @@
   "admin_users_account_knowledge_label": "Klai Chat + Knowledge",
   "admin_users_account_price_per_month": "€{amount}/mo",
   "admin_users_account_derived_hint": "Derived from the chosen Profile.",
+  "admin_users_account_mismatch_hint": "This account type no longer matches the chosen profile.",
   "admin_users_status_active": "Active",
   "admin_users_status_suspended": "Suspended",
   "admin_users_status_offboarded": "Offboarded",

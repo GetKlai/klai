@@ -98,6 +98,7 @@ const usersResponse = {
       last_name: 'Lovelace',
       role: 'admin',
       seat_type: 'knowledge',
+      seat_mismatch: true,
       status: 'active',
       preferred_language: 'en',
       created_at: '2026-05-01T00:00:00Z',
@@ -110,6 +111,7 @@ const usersResponse = {
       last_name: 'Builder',
       role: 'personal',
       seat_type: 'chat',
+      seat_mismatch: false,
       status: 'active',
       preferred_language: 'en',
       created_at: '2026-05-02T00:00:00Z',
@@ -122,6 +124,7 @@ const usersResponse = {
       last_name: 'Offboarded',
       role: 'company',
       seat_type: 'chat',
+      seat_mismatch: false,
       status: 'offboarded',
       preferred_language: 'en',
       created_at: '2026-05-03T00:00:00Z',
@@ -163,6 +166,20 @@ describe('Admin users index', () => {
     expect(screen.getByText('(3)')).toBeTruthy()
 
     expect(screen.queryByLabelText('Search users')).toBeNull()
+  })
+
+  it('shows the account-type mismatch warning only for the affected row', async () => {
+    renderUsersPage()
+
+    await waitFor(() => {
+      expect(screen.getByText('Ada Lovelace')).toBeTruthy()
+    })
+
+    // Ada has seat_mismatch: true; Bob and Cleo don't — the warning must be
+    // scoped to her row, not shown for every user.
+    expect(
+      screen.getAllByLabelText('This account type no longer matches the chosen profile.'),
+    ).toHaveLength(1)
   })
 
   it('allows resending invites for active and offboarded users', async () => {
