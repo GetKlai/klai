@@ -16,6 +16,7 @@ PROFILE_CAPABILITIES, which is the table the gate documents.
 from __future__ import annotations
 
 import datetime as dt
+import uuid
 from types import SimpleNamespace
 from typing import Any
 
@@ -195,7 +196,7 @@ def _conv(
 ) -> SimpleNamespace:
     return SimpleNamespace(
         id=cid,
-        widget_id=WIDGET_UUID,
+        widget_id=uuid.UUID(WIDGET_UUID),  # asyncpg hands the uuid column back as UUID, not str
         widget_name="Voys help",
         started_at=started_at,
         last_message_at=started_at + dt.timedelta(minutes=3),

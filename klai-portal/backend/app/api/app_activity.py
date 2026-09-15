@@ -622,7 +622,7 @@ async def _load_candidates(
             _Candidate(
                 ConversationListItemOut(
                     id=row.id,
-                    widget_id=row.widget_id,
+                    widget_id=str(row.widget_id),
                     widget_name=row.widget_name,
                     channel=channel,
                     started_at=row.started_at,
@@ -818,7 +818,7 @@ async def get_conversation(
 
     detail = ConversationDetailOut(
         id=row.id,
-        widget_id=row.widget_id,
+        widget_id=str(row.widget_id),
         widget_name=row.widget_name,
         channel=_WEBCHAT,
         started_at=row.started_at,
