@@ -393,3 +393,18 @@ async def test_rescore_skips_on_network_exception() -> None:
 
     assert result == 0
     mock_db.commit.assert_not_called()
+
+
+def test_rescore_groups_and_resolves_per_question_language() -> None:
+    """SPEC-KNOWLEDGE-ACTIVITY-001 §4.9: the same words in Dutch and English are
+    two gaps; a rescore may only close the group whose language it re-asked."""
+    from datetime import UTC, datetime
+
+    from sqlalchemy.dialects import postgresql
+
+    from app.services.gap_rescorer import _open_gap_queries_stmt
+
+    compiled = str(
+        _open_gap_queries_stmt(1, None, datetime(2026, 1, 1, tzinfo=UTC)).compile(dialect=postgresql.dialect())
+    )
+    assert "portal_retrieval_gaps.language" in compiled.split("GROUP BY", 1)[1]

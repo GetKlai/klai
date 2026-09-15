@@ -2299,7 +2299,7 @@ def _schedule_gap_event(
         # The visitor's question, not the answer: the answer does not exist
         # yet at this point, and "ontbreekt in het Engels" is a different
         # editorial gap than "ontbreekt in het Nederlands".
-        language = detect_language(query_text)
+        language = identify_text_language(query_text) or UNKNOWN_LANGUAGE
 
         async def _write() -> None:
             # Reading the conversation row is org-scoped inside

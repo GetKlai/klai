@@ -52,6 +52,10 @@ class GapEventResult:
 
     outcome: GapEventOutcome
     org_id: int | None = None
+    # Row id of the gap just written, so a caller that must point at it (a
+    # human review, SPEC-KNOWLEDGE-ACTIVITY-001 §4.5) does not have to read
+    # the row back through the telemetry redaction.
+    gap_id: int | None = None
 
 
 async def record_gap_event(
@@ -178,4 +182,4 @@ async def record_gap_event(
             )
         )
 
-    return GapEventResult("created", org.id)
+    return GapEventResult("created", org.id, gap.id)
