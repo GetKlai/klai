@@ -61,6 +61,7 @@ an injected claim never reaches the model. Verified 2026-09-15.
 from __future__ import annotations
 
 import asyncio
+from typing import Literal
 
 import httpx
 import structlog
@@ -73,38 +74,44 @@ logger = structlog.get_logger()
 _CLASSIFIER_TIMEOUT_SECONDS = 2.0
 
 _SYSTEM_PROMPT = (
-    "You decide ONE thing about a visitor's message to a company's help chat: "
-    "would a correct answer to it assert anything that could be checked against "
-    "the world outside this chat window?\n"
-    "Answer false (conversational) ONLY when a correct answer is purely about "
-    "the conversation itself: which languages you can reply in, that you are an "
-    "AI assistant, a greeting, a thank-you, or an apology.\n"
-    "Repeating, rephrasing or translating an earlier answer is NOT "
-    "conversational: the claims inside it are still claims about the world, and "
-    "restating them is how they would escape their sources. Answer true.\n"
-    "Answer true (asserts_about_the_world) for everything else, including any "
-    "question about the company, its products, prices, procedures, availability "
-    "or outages, AND any general factual question about the wider world.\n"
-    "When the message mixes the two, answer true. When you are unsure, answer "
-    "true. Answering true is always safe; it only means the answer must be "
-    "grounded in sources."
+    "Classify the visitor's message to a company's help chat into exactly one "
+    "category.\n\n"
+    "conversation — a correct answer is only about this chat: which languages "
+    "you can reply in, that you are an AI, a greeting, a thank-you, an apology, "
+    "or a remark about the conversation itself. Nothing in the answer could be "
+    "checked against the outside world.\n"
+    "organisation — the answer would state something about this company: its "
+    "products, prices, procedures, settings, availability or outages.\n"
+    "world — the answer would state a general fact that is true regardless of "
+    "which company is asked.\n\n"
+    "Repeating, rephrasing or translating an earlier answer is never "
+    "conversation: the claims inside it are still claims. When a message mixes "
+    "categories, pick the one the visitor most needs answered."
 )
 
 
 class TurnScope(BaseModel):
-    """Whether the answer to this turn would assert something checkable."""
+    """Which of the three classes this turn belongs to."""
 
     model_config = ConfigDict(extra="forbid", strict=True, hide_input_in_errors=True)
 
-    asserts_about_the_world: bool
+    category: Literal["conversation", "organisation", "world"]
 
 
-async def classify_turn_scope(text: str, settings: Settings) -> bool | None:
-    """Return True when the turn needs grounding, False when it does not.
+async def classify_turn_scope(text: str, settings: Settings) -> str | None:
+    """Return ``conversation``, ``organisation``, ``world``, or ``None``.
 
-    ``None`` means "could not decide"; callers MUST treat that exactly like
-    True. Never raises — a classification failure may cost a turn its friendly
-    answer, never its correctness.
+    ``None`` means "could not decide"; callers MUST treat it like a question
+    that needs grounding. Never raises — a classification failure may cost a
+    turn its friendly answer, never its correctness.
+
+    An enum, not a boolean, and the reason is measured rather than stylistic.
+    The first version asked for one boolean and told the model that answering
+    "yes, this needs grounding" was always the safe choice. On klai-fast it then
+    answered exactly that for EVERY message, including "dankjewel" — a free pass
+    taken every time. Probed against the running service on 2026-09-15: naming
+    the three classes and making the model pick one scores 11/11 on the same
+    set, where the boolean scored 0 on the six conversational cases.
     """
     if not text or not text.strip():
         return None
@@ -123,7 +130,7 @@ async def classify_turn_scope(text: str, settings: Settings) -> bool | None:
                         "response_format": {
                             "type": "json_schema",
                             "json_schema": {
-                                "name": "turn_scope",
+                                "name": "turn_category",
                                 "strict": True,
                                 "schema": TurnScope.model_json_schema(),
                             },
@@ -132,12 +139,43 @@ async def classify_turn_scope(text: str, settings: Settings) -> bool | None:
                 )
                 response.raise_for_status()
                 content = response.json()["choices"][0]["message"]["content"]
-                return TurnScope.model_validate_json(content, strict=True).asserts_about_the_world
+                return TurnScope.model_validate_json(content, strict=True).category
     except Exception:
         logger.warning("turn_scope_classification_failed", exc_info=True)
     return None
 
 
-def is_conversational(scope: bool | None) -> bool:
+def is_conversational(scope: str | None) -> bool:
     """One place decides how ``None`` reads, so no call site can get it wrong."""
-    return scope is False
+    return scope == "conversation"
+
+
+def scope_label(scope: str | None) -> str:
+    """The class as one queryable word, for all three outcomes.
+
+    REQ-4. Logging only the conversational turns would make the share of each
+    class unmeasurable, which is how a boundary drifts unnoticed — the failure
+    the widget already lived through. ``classifier_failed`` is kept apart from
+    ``knowledge`` even though both behave identically: they are the same
+    behaviour for different reasons, and a rising failure rate is a signal about
+    the classifier rather than about visitors.
+    """
+    return scope or "classifier_failed"
+
+
+# Appended to the system prompt for a conversational turn. The profile the model
+# receives otherwise tells it to say the help articles do not cover this and to
+# offer support -- correct for a question about the organisation, wrong for
+# "do you speak English", and the composer would pass such a self-written
+# refusal straight through because it never looks at the words. Same shape as
+# escalation_intent.ESCALATION_TURN_ADDENDUM: one turn, one instruction.
+CONVERSATIONAL_TURN_ADDENDUM = (
+    "\n\n[This turn] The visitor's message is about this conversation itself, "
+    "not about the organisation — which languages you speak, a greeting, a "
+    "thank-you, or a remark about the chat. Answer it directly and briefly in "
+    "your own words. Do NOT say the help articles do not cover it, do NOT offer "
+    "to look more broadly, and do NOT point to support: none of those is an "
+    "answer to what was asked. Keep the rule that you never write URLs or "
+    "citations. If the message ALSO asks something about the organisation, "
+    "answer that part only from the help articles as usual."
+)

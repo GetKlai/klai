@@ -374,3 +374,86 @@ async def test_widget_tone_register_not_read_while_support_mode_off():
     )
     tone_reader.assert_not_called()
     assert mock_retrieve.call_args.kwargs["tone_register"] == "restrained"
+
+
+# ---------------------------------------------------------------------------
+# SPEC-RAG-ANSWER-TIERS-001 REQ-1 — the wiring, not just the composer
+# ---------------------------------------------------------------------------
+
+
+async def _run_with_scope(*, chunks, scope_result):
+    """Drive the real endpoint with retrieval and the classifier controlled."""
+    from app.api.partner import ChatCompletionsRequest, chat_completions
+
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=FakeResult(rows=[FakeKB(id=10, name="KB", slug="kb-a", org_id=42)]))
+    auth = make_partner_auth(kb_access={10: "read"})
+    auth.key_id = "wgt_901"
+
+    req = ChatCompletionsRequest(
+        messages=[{"role": "user", "content": "Can I also talk english?"}],
+        model="klai-primary",
+        stream=False,
+    )
+
+    classifier = AsyncMock(return_value=scope_result)
+    with (
+        patch("app.api.partner.retrieve_context", return_value=(chunks, "SUPPORT PROFILE", [], False)),
+        patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=False)),
+        patch("app.api.partner._widget_support_mode_enabled", new=AsyncMock(return_value=True)),
+        patch("app.api.partner._widget_tone_register", new=AsyncMock(return_value=None)),
+        patch("app.api.partner.turn_scope.classify_turn_scope", new=classifier),
+        patch(
+            "app.api.partner.chat_completion_non_streaming",
+            new=AsyncMock(return_value={"choices": []}),
+        ) as chat_call,
+        patch("app.api.partner.asyncio"),
+        patch("app.api.partner.write_retrieval_log", new=AsyncMock()),
+    ):
+        await chat_completions(request=req, http_request=_http_request_stub(), auth=auth, db=db)
+
+    return classifier, chat_call
+
+
+@pytest.mark.asyncio
+async def test_conversational_class_reaches_the_prompt_and_the_composer():
+    """The reported turn, through the endpoint rather than the composer alone.
+
+    The composer-level tests stay green even when the classifier is never
+    called or its result is never threaded, so on their own they do not prove
+    the reported user path.
+    """
+    classifier, chat_call = await _run_with_scope(chunks=[], scope_result="conversation")
+
+    classifier.assert_awaited_once()
+    assert chat_call.call_args.kwargs["conversational"] is True
+    # The model must also stop being told to refuse; the composer never reads
+    # the words, so a self-written refusal would otherwise pass through.
+    assert "[This turn]" in chat_call.call_args.kwargs["system_prompt"]
+    assert "about this conversation itself" in chat_call.call_args.kwargs["system_prompt"]
+
+
+@pytest.mark.asyncio
+async def test_a_knowledge_turn_is_not_marked_conversational():
+    classifier, chat_call = await _run_with_scope(chunks=[], scope_result="organisation")
+
+    classifier.assert_awaited_once()
+    assert chat_call.call_args.kwargs["conversational"] is False
+    assert (
+        "[This turn] The visitor's message is about this conversation"
+        not in (chat_call.call_args.kwargs["system_prompt"])
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_grounded_turn_never_pays_for_the_classifier():
+    """Only a retrieval gap can change the outcome, so only a gap classifies.
+
+    Before this gate the call sat in the gather beside retrieval, where a
+    classifier hitting its 2 s timeout delayed a perfectly grounded answer.
+    """
+    good_chunk = {"chunk_id": "c1", "text": "Ga naar Beheer.", "reranker_score": 0.9}
+    classifier, chat_call = await _run_with_scope(chunks=[good_chunk], scope_result="conversation")
+
+    classifier.assert_not_awaited()
+    assert chat_call.call_args.kwargs["conversational"] is False

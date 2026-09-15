@@ -1872,7 +1872,8 @@ async def chat_completions(  # noqa: C901
         # grounded answer. Now the cost lands on the turns that would otherwise
         # have refused, measured at 13.5% of widget traffic over seven days.
         turn_asserts = None
-        if support_mode and classify_gap(chunks) is not None:
+        gap = classify_gap(chunks) if support_mode else None
+        if gap is not None:
             turn_asserts = await turn_scope.classify_turn_scope(visitor_turn, settings)
     except (httpx.TimeoutException, httpx.ReadTimeout) as exc:
         raise HTTPException(
@@ -1922,6 +1923,25 @@ async def chat_completions(  # noqa: C901
     if escalation:
         system_prompt += escalation_service.ESCALATION_TURN_ADDENDUM[escalation]
     force_escalation = escalation is not None
+
+    # SPEC-RAG-ANSWER-TIERS-001 REQ-1, second half. Letting the class decide only
+    # what the composer does still left the model reading a profile that tells it
+    # to refuse when the articles do not cover the question. It could therefore
+    # write that refusal itself, and the composer would pass it through — it
+    # never reads the words. The class now reaches the generation too.
+    if turn_scope.is_conversational(turn_asserts):
+        system_prompt += turn_scope.CONVERSATIONAL_TURN_ADDENDUM
+
+    # REQ-4. Every classified turn logs its class, not just the conversational
+    # ones: a share you cannot see is a boundary that drifts unnoticed.
+    if support_mode:
+        logger.info(
+            "partner_chat_turn_scope",
+            org_id=auth.org_id,
+            wgt_id=auth.key_id if str(auth.key_id).startswith("wgt_") else None,
+            turn_scope=turn_scope.scope_label(turn_asserts) if turn_asserts is not None or gap else "not_classified",
+            retrieval_gap=gap,
+        )
 
     system_prompt, web_chunks, web_query = await _maybe_apply_web_search(
         request=request,
