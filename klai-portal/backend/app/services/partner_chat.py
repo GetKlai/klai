@@ -62,6 +62,7 @@ from app.services.citations import (
     evidence_pack_items_as_chunks,
     render_evidence_context,
     source_url_key,
+    strip_model_citation_artifacts,
     trusted_sources_from_evidence_pack,
 )
 from app.services.gap_classification import classify_gap
@@ -1789,7 +1790,7 @@ def _compose_backend_managed_answer(
     # surface (klai_chat_prompts.language), abstain renders Dutch — see
     # klai_chat_prompts._language_is_dutch for the measured rationale.
     refusal_language = identify_text_language(visitor_query)
-    if conversational and text.strip() and not force_escalation:
+    if conversational:
         # SPEC-RAG-ANSWER-TIERS-001 REQ-1. The answer to this turn asserts
         # nothing checkable outside this chat window — which language we speak,
         # that the visitor is welcome, that this is an AI — so there is nothing
@@ -1798,14 +1799,26 @@ def _compose_backend_managed_answer(
         # "I can't find this in our help articles" with a consent block and an
         # appointment button under it.
         #
-        # Returned with empty sources on purpose: a turn about the conversation
-        # has no sources, and the existing ban on URLs and citation markers in
-        # the SUPPORT profile already keeps them out of the text.
+        # The artifact stripper still runs. Skipping the composer also skips
+        # the only MECHANICAL guard against a model-written URL or a fake "[1]"
+        # reaching the visitor; the SUPPORT profile's ban on them is a prompt,
+        # and a prompt is not a guarantee. Reviewed 2026-09-15 by reproducing
+        # exactly that: a conversational answer carrying an arbitrary link went
+        # through untouched.
         #
-        # ``force_escalation`` still wins. A visitor asking for a person is the
-        # backend's own decision from escalation_intent, and swallowing it here
-        # would drop the booking button on exactly the turn that needs it.
-        return text.strip(), [], {"reason": "conversational_turn", "turn_scope": "conversational"}
+        # An escalation still shows its button. force_escalation fires on a
+        # frustrated or shouting visitor as well as on an explicit request for
+        # a person, and those turns are frequently conversational — a complaint
+        # about the previous answer asserts nothing about the organisation. The
+        # old behaviour answered them with "I can't find this in our help
+        # articles", which is both wrong and unkind. The offer is kept, the
+        # nonsense is not.
+        safe_text = strip_model_citation_artifacts(text).strip()
+        if safe_text:
+            decision = {"reason": "conversational_turn", "turn_scope": "conversational"}
+            if offered_appointment:
+                decision["escalation"] = _appointment_escalation()
+            return safe_text, [], decision
 
     if broad:
         if not text.strip():

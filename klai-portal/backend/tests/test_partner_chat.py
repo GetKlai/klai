@@ -3597,15 +3597,34 @@ def test_a_question_about_us_without_sources_still_refuses():
     assert decision["broad_mode"] == "offer"
 
 
-def test_asking_for_a_person_keeps_the_booking_button():
-    """force_escalation is the backend's own decision and outranks the class.
+def test_asking_for_a_person_keeps_the_booking_button_without_the_canned_refusal():
+    """The button is the backend's decision; the canned text is not the answer.
 
-    Swallowing it here would drop the button on exactly the turn that needs it.
+    force_escalation fires on a frustrated or shouting visitor as well as on an
+    explicit request for a person, and those turns are frequently conversational
+    - a complaint about the previous answer asserts nothing about the
+    organisation. Answering it with "I can't find this in our help articles" is
+    both wrong and unkind, so the offer survives and the nonsense does not.
     """
     content, _, decision = _compose("Of course, I'll help you with that.", conversational=True, force_escalation=True)
 
-    assert "can't find this in our help articles" in content
+    assert content == "Of course, I'll help you with that."
+    assert "can't find this in our help articles" not in content
     assert decision["escalation"] == {"appointment": True}
+
+
+def test_conversational_answer_cannot_smuggle_a_link_past_the_composer():
+    """Skipping the composer also skips the only mechanical link guard.
+
+    Reproduced during review on 2026-09-15: an arbitrary URL and a fake "[1]" in
+    a conversational answer reached the visitor untouched, because the ban on
+    them lives in the SUPPORT prompt and a prompt is not a guarantee.
+    """
+    content, sources, _ = _compose("Sure! See https://evil.example.com/phish and the docs [1].", conversational=True)
+
+    assert "evil.example.com" not in content
+    assert "[1]" not in content
+    assert sources == []
 
 
 def test_an_empty_model_answer_still_refuses_even_when_conversational():

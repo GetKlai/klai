@@ -1,7 +1,7 @@
 ---
 id: SPEC-RAG-ANSWER-TIERS-001
-version: "0.2.0"
-status: REQ-1 and REQ-3 built; REQ-2 and REQ-4 open
+version: "0.4.0"
+status: REQ-1 and REQ-3 built; REQ-2 measured and dropped; REQ-4 partly built
 created: 2026-09-15
 author: Fable (Opus 5), commissioned by Mark Vletter
 priority: high
@@ -18,6 +18,8 @@ related:
 
 | Version | Date | Change |
 |---|---|---|
+| 0.4.0 | 2026-09-15 | Review corrections. Two defects in the REQ-1 implementation: skipping the composer also skipped the only mechanical guard against a model-written URL or fake citation reaching the visitor (reproduced, now stripped), and `force_escalation` — which fires on frustration and shouting, not just an explicit request for a person — sent conversational turns back to the canned refusal. The offer now survives without the refusal text. Also corrected an overclaim: concurrency bounds the added latency, it does not zero it, and the two classifiers do not share a timeout. |
+| 0.3.0 | 2026-09-15 | REQ-2 measured before building and dropped on the numbers: of the 73 refusing turns in seven days, 47 carried no salient query tokens at all and ~17 were escalation-shaped, leaving 2 that a broader retrieval attempt could have rescued. Building it would have cost a rewrite plus a retrieval round on every refusal to buy two turns a week. |
 | 0.2.0 | 2026-09-15 | REQ-1 and REQ-3 built and merged. The classifier shares the gather that already carried the escalation classifier, so the worst-case latency window is unchanged rather than merely small — both sit behind the same 2 s timeout that was already accepted. REQ-2 deliberately left for its own change: it touches the retrieval loop and its acceptance evidence is the replay in §6, which is a measurement exercise rather than a patch. |
 | 0.1.0 | 2026-09-15 | Initial. Written after a visitor asked the Voys widget "Can I also talk english?" and was told "I can't find this in our help articles", with a broad-mode consent block and an appointment button underneath. |
 
@@ -101,7 +103,7 @@ Not negotiable: the classifier decides the CLASS, never the CONTENT. A class-
 three answer that nevertheless asserts something about the organisation is a
 defect, and REQ-4 measures it.
 
-## REQ-2 [HARD] — One broader attempt before refusing · open
+## REQ-2 [HARD] — One broader attempt before refusing · measured, NOT built
 
 When the turn is about us and the selector rejected every candidate, rewrite the
 query once and retrieve again before falling back to the refusal. The retry is
@@ -118,6 +120,36 @@ about one turn in seven.
 `classify_gap` already produces the signal (`hard`, `soft`, or no gap) and
 `SPEC-RAG-SOURCE-SELECTION-001` already computes a per-candidate `query_score`.
 No new measurement is introduced.
+
+**Measured 2026-09-15, and the measurement says do not build this.** §6 asked
+for the replay before the patch. Grouping all 73 refusing turns of the last
+seven days by their salient query tokens:
+
+| what the retriever searched on | turns | what the turn actually was |
+|---|---|---|
+| *(no salient tokens at all)* | **47** | greetings, thanks, one-word turns — class three |
+| "ben doorverbonden drie echt keer lost niemand zat" | 12 | a frustrated complaint — escalation |
+| "zoek" | 3 | a fragment |
+| "medewerker spreken wil" | 3 | asking for a person — escalation |
+| "dus vandaag wel" | 2 | a follow-up fragment |
+| "afspraak nerds wil" | 2 | asking for an appointment — escalation |
+| "also can english talk" | 2 | the reported turn — class three |
+| "assign call calling ... international number polish team" | 2 | **a real question retrieval missed** |
+
+64% of the refusal population has no salient query tokens at all: the retriever
+was searching the help articles on nothing. Another ~23% is escalation-shaped.
+**Two turns in seven days — under 3% of the refusals — are a genuine question
+that a broader retrieval attempt could have rescued.**
+
+Rewriting and re-retrieving would therefore buy about two turns a week, at the
+cost of a rewrite call plus a retrieval round on every refusing turn, against
+published evidence that query expansion actively harms queries that did not need
+it. REQ-1 already removes the 47, and escalation already owns the 17.
+
+This requirement stays written down rather than deleted, because the reasoning
+is the deliverable: it is correct in general and wrong at this corpus's numbers.
+Revisit when the refusal population stops being dominated by turns that were
+never knowledge questions — the same query-token grouping is the trigger.
 
 ## REQ-3 [HARD] — The grounding boundary does not move · built
 
@@ -170,8 +202,17 @@ claim that the boundary held is worth nothing without the count.
 
 `app/services/turn_scope.py` classifies the visitor's turn concurrently with
 retrieval, inside the `asyncio.gather` that already carried the escalation
-classifier. It therefore shares an existing 2 s worst case rather than adding
-one, which is what makes acceptance criterion 5 structural instead of a hope.
+classifier.
+
+**Correction to v0.2.0, which overclaimed this.** `gather` waits for the slowest
+member, and the two classifiers hold separate 2 s timeouts rather than one
+shared budget. Concurrency therefore bounds the added latency by the classifier's
+own duration, it does not make it zero: a turn whose retrieval finished in 200 ms
+waits for this call. The honest statement of acceptance criterion 5 is that the
+worst case is unchanged (still 2 s, already accepted for escalation) while the
+typical case grows by however long the classifier actually takes — and that
+number is not yet measured. Measuring p50/p95 on the running service is the
+remaining evidence for criterion 5; until then it is argued, not proven.
 
 `_compose_backend_managed_answer` gained one branch: a conversational turn with
 text and no forced escalation returns the model's own answer with empty sources
