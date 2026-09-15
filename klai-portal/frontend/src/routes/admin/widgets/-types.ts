@@ -168,21 +168,9 @@ export interface ConversationListItem {
   visitor_email: string | null
 }
 
-export interface MessageSourceItem {
-  label: string
-  title: string
-  url: string
-}
-
-export interface WidgetMessageItem {
-  id: number
-  role: 'user' | 'assistant'
-  content: string
-  sources: MessageSourceItem[] | null
-  created_at: string
-  sequence: number
-  rating: 'thumbsUp' | 'thumbsDown' | null
-}
+// The transcript shapes live in the shared chat-activity feature (SPEC-
+// KNOWLEDGE-ACTIVITY-001 §4.3); these aliases keep existing import sites working.
+export type { MessageSource as MessageSourceItem, ConversationMessage as WidgetMessageItem } from '@/features/chat-activity'
 
 export interface ConversationDetail extends ConversationListItem {
   messages: WidgetMessageItem[]

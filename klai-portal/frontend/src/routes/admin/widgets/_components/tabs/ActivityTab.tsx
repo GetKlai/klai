@@ -1,8 +1,12 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Loader2, MessageSquare, ThumbsDown, ThumbsUp, X } from 'lucide-react'
-import { Badge } from '@/components/ui/badge'
+import { Loader2, MessageSquare, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import {
+  ConversationTranscript,
+  QualityPanel,
+  type ConversationQuality,
+} from '@/features/chat-activity'
 import { apiFetch } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
 import {
@@ -22,33 +26,10 @@ import type {
 // recent-conversations list opens a side drawer with the full
 // transcript.
 
-/**
- * REQ-9 (Finding B-9): URL scheme allowlist for conversation source links.
- *
- * An LLM-controlled source URL could contain a `javascript:` URI. React 18+
- * still navigates on javascript: hrefs, enabling stored-XSS in the admin
- * session on my.getklai.com (CC-2 exploit chain).
- *
- * Only http: and https: schemes are allowed as clickable anchors. All other
- * schemes (javascript:, data:, vbscript:, file:, mailto:, scheme-less, etc.)
- * render as plain text without an href.
- *
- * Leading whitespace is stripped before the check to block bypass attempts
- * like "  javascript:alert(1)". Case is normalised by URL() itself.
- *
- * @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-9
- */
-export function _isSafeHttpUrl(url: string): boolean {
-  const trimmed = url.trim()
-  if (!trimmed) return false
-  try {
-    const parsed = new URL(trimmed)
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
-  } catch {
-    // URL() throws on relative paths, scheme-less, and malformed inputs.
-    return false
-  }
-}
+// REQ-9 (Finding B-9): the URL scheme allowlist behind conversation source
+// links moved to @/features/chat-activity with the transcript itself; the
+// re-export keeps existing importers (and its unit test) in place.
+export { _isSafeHttpUrl } from '@/features/chat-activity/urlAllowlist'
 
 interface Props {
   widget: WidgetDetailResponse
@@ -343,48 +324,6 @@ function HourlySparkline({ data }: { data: number[] | undefined }) {
   )
 }
 
-/**
- * REQ-3 (SPEC-CHAT-QUALITY-LOOP-001): the nightly judge's verdict, read from
- * its own sidecar endpoint so the transcript types stay untouched. Local
- * shape on purpose — duplicated in the platform drawer, no shared module.
- */
-interface ConversationQuality {
-  outcome: string
-  failure_category: string | null
-  reasoning: string | null
-  confidence: string | null
-  suggested_action: string | null
-  judged_at: string | null
-}
-
-/** Outcome → existing Badge semantic variant; no ad-hoc colors. */
-const OUTCOME_BADGE_VARIANT: Record<string, 'success' | 'warning' | 'secondary'> = {
-  resolved: 'success',
-  partially_resolved: 'success',
-  escalated: 'warning',
-  unresolved: 'secondary',
-  abandoned_early: 'secondary',
-  out_of_scope: 'secondary',
-}
-
-/** Judge verdict panel for a conversation drawer. Renders only when a
- * judgment exists — a 404 ("not judged yet") is normal and shows nothing. */
-function QualityPanel({ quality }: { quality: ConversationQuality }) {
-  return (
-    <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
-      <Badge variant={OUTCOME_BADGE_VARIANT[quality.outcome] ?? 'secondary'}>
-        {quality.outcome}
-      </Badge>
-      {quality.reasoning && (
-        <p className="mt-2 text-xs leading-5 text-gray-600">{quality.reasoning}</p>
-      )}
-      {quality.suggested_action && (
-        <p className="mt-1.5 text-xs leading-5 text-gray-700">{quality.suggested_action}</p>
-      )}
-    </div>
-  )
-}
-
 function ConversationDrawer({
   widgetId,
   convId,
@@ -474,62 +413,7 @@ function ConversationDrawer({
               Kon gesprek niet laden.
             </p>
           )}
-          {query.data?.messages.map((msg) => (
-            <div
-              key={msg.id}
-              className={
-                msg.role === 'user'
-                  ? 'ml-auto max-w-[85%] rounded-2xl rounded-br-md bg-gray-900 px-4 py-2.5 text-sm text-white whitespace-pre-wrap'
-                  : 'mr-auto max-w-[85%] rounded-2xl rounded-bl-md bg-[var(--color-rl-cream)] px-4 py-2.5 text-sm text-gray-900 whitespace-pre-wrap'
-              }
-            >
-              {msg.content}
-              {msg.role === 'assistant' && msg.sources && msg.sources.length > 0 && (
-                <ul className="mt-2 flex flex-wrap gap-1.5">
-                  {msg.sources.map((s) => (
-                    <li key={`${msg.id}-${s.label}`}>
-                      {/* REQ-9: only http/https schemes render as anchors */}
-                      {_isSafeHttpUrl(s.url) ? (
-                        <a
-                          href={s.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          title={s.title}
-                          className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[0.6875rem] text-gray-700 klai-hover"
-                        >
-                          <span className="font-medium">({s.label})</span>
-                          <span className="truncate max-w-[12rem]">{s.title}</span>
-                        </a>
-                      ) : (
-                        <span
-                          title={s.title}
-                          className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[0.6875rem] text-gray-700"
-                        >
-                          <span className="font-medium">({s.label})</span>
-                          <span className="truncate max-w-[12rem]">{s.title}</span>
-                        </span>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {msg.role === 'assistant' && msg.rating && (
-                msg.rating === 'thumbsUp' ? (
-                  <ThumbsUp
-                    role="img"
-                    aria-label="Door klant beoordeeld met duim omhoog"
-                    className="mt-2 h-3.5 w-3.5 text-[var(--color-success-text)]"
-                  />
-                ) : (
-                  <ThumbsDown
-                    role="img"
-                    aria-label="Door klant beoordeeld met duim omlaag"
-                    className="mt-2 h-3.5 w-3.5 text-[var(--color-destructive)]"
-                  />
-                )
-              )}
-            </div>
-          ))}
+          <ConversationTranscript messages={query.data?.messages ?? []} />
         </div>
       </div>
     </div>
