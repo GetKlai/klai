@@ -1,30 +1,18 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { Loader2, MessageSquare, X } from 'lucide-react'
+import { Link } from '@tanstack/react-router'
+import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import {
-  ConversationTranscript,
-  QualityPanel,
-  type ConversationQuality,
-} from '@/features/chat-activity'
-import { apiFetch } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
-import {
-  useWidgetConversations,
-  useWidgetConversation,
-  useWidgetStats,
-} from '../../-hooks'
-import type {
-  StatsPeriod,
-  WidgetDetailResponse,
-  ConversationListItem,
-} from '../../-types'
+import { useWidgetStats } from '../../-hooks'
+import type { StatsPeriod, WidgetDetailResponse } from '../../-types'
 
 // SPEC-WIDGET-ACTIVITY-001 - Activiteit tab: live audit trail of
 // every chat that flows through the widget. Period picker drives a
-// stats panel + hourly sparkline + top-queries list; a paginated
-// recent-conversations list opens a side drawer with the full
-// transcript.
+// stats panel + hourly sparkline + top-queries list.
+//
+// SPEC-KNOWLEDGE-ACTIVITY-001 §3 - reviewing individual conversations moved to
+// the knowledge side; this tab links there instead of showing its own list and
+// drawer.
 
 // REQ-9 (Finding B-9): the URL scheme allowlist behind conversation source
 // links moved to @/features/chat-activity with the transcript itself; the
@@ -43,14 +31,9 @@ const PERIOD_OPTIONS: { value: StatsPeriod; label: string }[] = [
 
 export function ActivityTab({ widget }: Props) {
   const [period, setPeriod] = useState<StatsPeriod>('7d')
-  const [openConvId, setOpenConvId] = useState<number | null>(null)
 
   const widgetId = String(widget.id)
   const statsQuery = useWidgetStats(widgetId, period)
-  const convsQuery = useWidgetConversations(widgetId)
-  const conversations: ConversationListItem[] = Array.isArray(convsQuery.data)
-    ? convsQuery.data
-    : []
   const outcomes = statsQuery.data?.outcome_counts
 
   return (
@@ -171,71 +154,13 @@ export function ActivityTab({ widget }: Props) {
         )}
       </div>
 
-      {/* Recent conversations */}
-      <div>
-        <SectionHeading>{m.admin_widgets_activity_recent_conversations_title()}</SectionHeading>
-        {convsQuery.isLoading ? (
-          <p className="text-sm text-gray-600">
-            <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
-            {m.admin_widgets_loading()}
-          </p>
-        ) : conversations.length === 0 ? (
-          <p className="text-sm text-gray-600">
-            Nog geen gesprekken. Zodra iemand met de bot praat verschijnt
-            het hier.
-          </p>
-        ) : (
-          <ul className="divide-y divide-gray-200 border-t border-b border-gray-200">
-            {conversations.map((c) => (
-              <li key={c.id}>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setOpenConvId(c.id)}
-                  className="h-auto w-full justify-start rounded-none px-2 py-3.5 text-left"
-                >
-                  <MessageSquare className="h-4 w-4 mt-0.5 text-gray-500 shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="truncate text-sm text-gray-900">
-                      {c.first_user_query || (
-                        <span className="text-gray-600 italic">
-                          (geen vraag opgeslagen)
-                        </span>
-                      )}
-                    </p>
-                    <p className="mt-0.5 flex items-center gap-2 text-xs text-gray-600">
-                      <span>{formatRelative(c.started_at)}</span>
-                      <span>·</span>
-                      <span>
-                        {c.message_count === 1
-                          ? '1 bericht'
-                          : `${c.message_count} berichten`}
-                      </span>
-                      {c.language_detected && (
-                        <>
-                          <span>·</span>
-                          <span className="uppercase">
-                            {c.language_detected}
-                          </span>
-                        </>
-                      )}
-                    </p>
-                  </div>
-                </Button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-
-      {/* Drawer */}
-      {openConvId !== null && (
-        <ConversationDrawer
-          widgetId={widgetId}
-          convId={openConvId}
-          onClose={() => setOpenConvId(null)}
-        />
-      )}
+      {/* SPEC-KNOWLEDGE-ACTIVITY-001 §3: reviewing conversations happens on
+          the knowledge side, pre-filtered to this widget. */}
+      <Button asChild variant="outline">
+        <Link to="/app/knowledge/activity" search={{ widget_id: widget.id }}>
+          {m.admin_widgets_activity_review_conversations_link()}
+        </Link>
+      </Button>
     </section>
   )
 }
@@ -322,117 +247,4 @@ function HourlySparkline({ data }: { data: number[] | undefined }) {
       </div>
     </div>
   )
-}
-
-function ConversationDrawer({
-  widgetId,
-  convId,
-  onClose,
-}: {
-  widgetId: string
-  convId: number
-  onClose: () => void
-}) {
-  const query = useWidgetConversation(widgetId, convId)
-  // 404 = not judged yet (normal state): retry off, error never surfaced.
-  const qualityQuery = useQuery({
-    queryKey: ['widget-conversation-quality', widgetId, convId],
-    queryFn: () =>
-      apiFetch<ConversationQuality>(
-        `/api/admin/widgets/${widgetId}/conversations/${convId}/quality`,
-      ),
-    enabled: !!convId,
-    retry: false,
-  })
-  return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      className="fixed inset-0 z-50 flex justify-end"
-    >
-      <div
-        className="absolute inset-0 bg-black/40"
-        onClick={onClose}
-        aria-hidden
-      />
-      <div className="relative h-full w-full max-w-lg bg-white overflow-y-auto">
-        <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-gray-200 bg-white px-5 py-3.5">
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-gray-900 truncate">
-              Gesprek #{convId}
-            </p>
-            {query.data && (
-              <p className="text-xs text-gray-600">
-                {formatRelative(query.data.started_at)} ·{' '}
-                {query.data.message_count === 1
-                  ? '1 bericht'
-                  : `${query.data.message_count} berichten`}
-              </p>
-            )}
-          </div>
-          <Button
-            type="button"
-            onClick={onClose}
-            variant="outline"
-            size="icon"
-            className="h-8 w-8 text-gray-500"
-            aria-label="Sluiten"
-          >
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
-
-        <div className="px-5 py-4 space-y-3">
-          {/* Who to reach when the answer was wrong. Only rendered when the
-              visitor actually left something, so a skipped step shows nothing
-              rather than an empty row. */}
-          {(query.data?.visitor_name || query.data?.visitor_email) && (
-            <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
-              <p className="text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-gray-600">
-                Bezoeker
-              </p>
-              <p className="mt-1 text-sm text-gray-900">
-                {query.data.visitor_name || '-'}
-              </p>
-              {query.data.visitor_email && (
-                <p className="text-xs text-gray-600 break-all">
-                  {query.data.visitor_email}
-                </p>
-              )}
-            </div>
-          )}
-          {qualityQuery.data && <QualityPanel quality={qualityQuery.data} />}
-          {query.isLoading && (
-            <p className="text-sm text-gray-600">
-              <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
-              Laden…
-            </p>
-          )}
-          {query.error && (
-            <p className="text-sm text-[var(--color-destructive)]">
-              Kon gesprek niet laden.
-            </p>
-          )}
-          <ConversationTranscript messages={query.data?.messages ?? []} />
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function formatRelative(iso: string): string {
-  const then = new Date(iso).getTime()
-  const diffMs = Date.now() - then
-  const min = Math.round(diffMs / 60000)
-  if (min < 1) return 'zojuist'
-  if (min < 60) return `${min} min geleden`
-  const hr = Math.round(min / 60)
-  if (hr < 24) return `${hr} uur geleden`
-  const day = Math.round(hr / 24)
-  if (day < 7) return `${day} dag${day === 1 ? '' : 'en'} geleden`
-  return new Date(iso).toLocaleDateString('nl-NL', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  })
 }

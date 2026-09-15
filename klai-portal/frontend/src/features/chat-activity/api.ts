@@ -137,8 +137,12 @@ export function useActivityConversations(query: ActivityConversationQuery) {
   })
 }
 
-export function useActivityQueueCount() {
-  const enabled = useActivityAccess()
+/**
+ * `shouldFetch` lets a caller that hides the nav item skip the request; the
+ * capability gate stays in force either way.
+ */
+export function useActivityQueueCount(shouldFetch = true) {
+  const enabled = useActivityAccess() && shouldFetch
   return useQuery<{ count: number }>({
     queryKey: ['activity', 'queue-count'],
     queryFn: async () => {

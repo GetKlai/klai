@@ -8,8 +8,6 @@ import type {
   CreateWidgetRequest,
   UpdateWidgetRequest,
   OrgKnowledgeBase,
-  ConversationListItem,
-  ConversationDetail,
   WidgetStats,
   StatsPeriod,
   HubSpotIntegrationStatus,
@@ -116,34 +114,9 @@ export function useDeleteWidget() {
 
 // ──────────────────────────────────────────────────────────────
 // Activity / audit-trail (SPEC-WIDGET-ACTIVITY-001)
+// Conversation review lives on the knowledge side (SPEC-KNOWLEDGE-ACTIVITY-001
+// §3), so this tab only needs the aggregate stats.
 // ──────────────────────────────────────────────────────────────
-
-export function useWidgetConversations(widgetId: string) {
-  const auth = useAuth()
-  return useQuery({
-    queryKey: ['admin-widget-conversations', widgetId],
-    queryFn: async () =>
-      apiFetch<ConversationListItem[]>(
-        `/api/admin/widgets/${widgetId}/conversations?limit=50`,
-      ),
-    enabled: auth.isAuthenticated && !!widgetId,
-  })
-}
-
-export function useWidgetConversation(
-  widgetId: string,
-  convId: string | number | null,
-) {
-  const auth = useAuth()
-  return useQuery({
-    queryKey: ['admin-widget-conversation', widgetId, convId],
-    queryFn: async () =>
-      apiFetch<ConversationDetail>(
-        `/api/admin/widgets/${widgetId}/conversations/${convId}`,
-      ),
-    enabled: auth.isAuthenticated && !!widgetId && convId !== null,
-  })
-}
 
 export function useWidgetStats(widgetId: string, period: StatsPeriod) {
   const auth = useAuth()

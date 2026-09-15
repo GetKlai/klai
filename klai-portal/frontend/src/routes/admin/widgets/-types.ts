@@ -152,29 +152,10 @@ export interface OrgKnowledgeBase {
   owner_type: string
 }
 
-// SPEC-WIDGET-ACTIVITY-001 - audit-trail types.
+// SPEC-WIDGET-ACTIVITY-001 - audit-trail types. Conversation list/transcript
+// types live in @/features/chat-activity (SPEC-KNOWLEDGE-ACTIVITY-001 §4.3);
+// the admin tab no longer renders them (§3).
 export type StatsPeriod = '7d' | '30d' | 'all'
-
-export interface ConversationListItem {
-  id: number
-  started_at: string
-  last_message_at: string
-  message_count: number
-  first_user_query: string | null
-  language_detected: string | null
-  // Left by the visitor in the widget's pre-chat step; null when the widget
-  // does not ask for them or the visitor skipped the step.
-  visitor_name: string | null
-  visitor_email: string | null
-}
-
-// The transcript shapes live in the shared chat-activity feature (SPEC-
-// KNOWLEDGE-ACTIVITY-001 §4.3); these aliases keep existing import sites working.
-export type { MessageSource as MessageSourceItem, ConversationMessage as WidgetMessageItem } from '@/features/chat-activity'
-
-export interface ConversationDetail extends ConversationListItem {
-  messages: WidgetMessageItem[]
-}
 
 export interface TopQuery {
   query: string
