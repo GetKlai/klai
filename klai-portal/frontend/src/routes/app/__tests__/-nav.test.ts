@@ -40,7 +40,7 @@ describe('app nav — Kennis children (SPEC-KNOWLEDGE-ACTIVITY-001 §3)', () => 
     expect(knowledge?.children?.map((child) => child.to)).toEqual([
       '/app/knowledge',
       '/app/knowledge/activity',
-      '/app/gaps',
+      '/app/knowledge/gaps',
     ])
     // Kennisbanken must not stay active for its own children's paths.
     expect(knowledge?.children?.[0]?.end).toBe(true)
@@ -50,7 +50,7 @@ describe('app nav — Kennis children (SPEC-KNOWLEDGE-ACTIVITY-001 §3)', () => 
   it('hides Gesprekken without the knowledge_activity tenant unlock', () => {
     expect(
       knowledgeChildren(['kb.activity', 'kb.gaps'], ['widgets']),
-    ).toEqual(['/app/knowledge', '/app/gaps'])
+    ).toEqual(['/app/knowledge', '/app/knowledge/gaps'])
   })
 
   it('hides Kennisgaten without the kb.gaps capability', () => {

@@ -100,9 +100,13 @@ export function getAppNavItems(products: string[], access: AppNavAccess): NavIte
         badgeCount: access.activityQueueCount,
       })
     }
-    // @MX:SPEC: SPEC-KNOWLEDGE-ACTIVITY-001 §3 — this path moves in phase 2.
+    // @MX:SPEC: SPEC-KNOWLEDGE-ACTIVITY-001 §3 — phase 2 moved the screen under /app/knowledge.
     if (access.hasCapability('kb.gaps')) {
-      children.push({ to: '/app/gaps', label: m.app_nav_knowledge_gaps(), icon: AlertTriangle })
+      children.push({
+        to: '/app/knowledge/gaps',
+        label: m.app_nav_knowledge_gaps(),
+        icon: AlertTriangle,
+      })
     }
 
     return { ...item, children }
