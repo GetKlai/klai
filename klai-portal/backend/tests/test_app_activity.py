@@ -325,6 +325,41 @@ async def test_list_returns_the_contract_shape() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sort_worst_returns_no_cursor_because_a_page_is_not_a_window() -> None:
+    """``sort=worst`` re-sorts the whole candidate set in memory, so the
+    ``started_at`` of the last page row is not the boundary of what is left.
+
+    A cursor built from it asks the next call for ``started_at <`` that value
+    and silently skips the conversations that are still unvisited: conv 1 is
+    the newest row and the third-worst, so it disappears from every page.
+    ``sort=newest`` keeps paging by cursor.
+    """
+    db = FakeSession(
+        conversations=[
+            _conv(1),
+            _conv(2, started_at=T0 - dt.timedelta(minutes=1)),
+            _conv(3, started_at=T0 - dt.timedelta(minutes=2)),
+        ],
+        turns=[
+            _turn(1, band_rank=3),
+            _turn(2, down=1, band_rank=3),
+            _turn(3, down=1, band_rank=0),
+        ],
+        judges=[_judge(1, "resolved"), _judge(2, "unresolved"), _judge(3, "unresolved")],
+    )
+
+    worst = await _call(db, _perms("admin"), "get", "/api/app/activity/conversations?sort=worst&limit=2")
+    assert worst.status_code == 200
+    assert [item["id"] for item in worst.json()["items"]] == [3, 2]
+    assert worst.json()["next_cursor"] is None
+
+    newest = await _call(db, _perms("admin"), "get", "/api/app/activity/conversations?sort=newest&limit=2")
+    assert newest.status_code == 200
+    assert [item["id"] for item in newest.json()["items"]] == [1, 2]
+    assert newest.json()["next_cursor"] == "2026-09-14T09:11:00Z"
+
+
+@pytest.mark.asyncio
 async def test_list_is_empty_for_a_widget_of_another_org() -> None:
     """Appendix A: foreign widget_id gives an empty list, never a 404."""
     db = FakeSession(widget_exists=False, conversations=[_conv(255)])

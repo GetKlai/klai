@@ -20,7 +20,9 @@ import { ReviewForm } from '@/features/chat-activity/ReviewForm'
 import * as m from '@/paraglide/messages'
 import { parseActivitySearch } from './-search'
 
-/** The list's own filter keys; whatever comes along is carried back to it. */
+/** The list's own filter keys. The list hands them over under `list` when it
+    navigates here, and the back link hands the same object straight back, so
+    returning from a conversation lands on the filtered list. */
 const LIST_SEARCH_KEYS = [
   'days',
   'widget_id',
@@ -36,18 +38,24 @@ const LIST_SEARCH_KEYS = [
   'cursor',
 ] as const
 
+type CarriedListSearch = Partial<
+  Record<(typeof LIST_SEARCH_KEYS)[number], string | number | boolean>
+>
+
 type ActivityDetailSearch = {
   // Null when the conversation was opened directly, so back goes to a clean list.
-  list: Record<string, string | number | boolean> | null
+  list: CarriedListSearch | null
 }
 
 const carriedSearch = (search: Record<string, unknown>): ActivityDetailSearch['list'] => {
-  const carried: Record<string, string | number | boolean> = {}
+  const source = (search.list ?? {}) as Record<string, unknown>
+  const carried: CarriedListSearch = {}
   for (const key of LIST_SEARCH_KEYS) {
-    const value = search[key]
-    if (typeof value === 'string' && value !== '') {
-      // `days` is numeric on the list; keep the number so the list revalidates it.
-      carried[key] = key === 'days' && Number.isFinite(Number(value)) ? Number(value) : value
+    const value = source[key]
+    // The list's validated search keeps its types, so a number or a boolean
+    // arrives as one; anything else on the URL is not a filter it carries.
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      carried[key] = value
     }
   }
   return Object.keys(carried).length > 0 ? carried : null

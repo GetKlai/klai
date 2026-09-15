@@ -42,8 +42,29 @@ import {
 // queue. Filters are URL search state (a filtered list is shareable) and the
 // list itself is server-paginated by cursor, so there is no client-side search.
 
-// Language codes are data, not copy: rendered as-is.
+// Language and failure-category codes are data, not copy: rendered as-is.
 const LANGUAGES = ['nl', 'en', 'de', 'fr']
+const FAILURE_CATEGORIES = [
+  'retrieval_miss',
+  'retrieval_wrong',
+  'generation_error',
+  'policy_refusal',
+  'scope_mismatch',
+  'user_confusion',
+] as const
+const CAUSES = ['knowledge_missing', 'knowledge_wrong', 'behaviour'] as const
+const SORTS = ['newest', 'worst'] as const
+
+const CAUSE_LABEL: Record<(typeof CAUSES)[number], () => string> = {
+  knowledge_missing: m.activity_cause_knowledge_missing,
+  knowledge_wrong: m.activity_cause_knowledge_wrong,
+  behaviour: m.activity_cause_behaviour,
+}
+
+const SORT_LABEL: Record<(typeof SORTS)[number], () => string> = {
+  newest: m.activity_sort_newest,
+  worst: m.activity_sort_worst,
+}
 
 const BAND_BADGE_VARIANT: Record<ConversationBand, 'success' | 'secondary' | 'warning'> = {
   high: 'success',
@@ -237,6 +258,57 @@ export function ActivityPage() {
             ))}
           </Select>
         </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="activity-failure-category">
+            {m.activity_filter_failure_category()}
+          </Label>
+          <Select
+            id="activity-failure-category"
+            value={search.failure_category ?? ''}
+            onChange={(e) =>
+              setFilters({ failure_category: ofSet(FAILURE_CATEGORIES, e.target.value) })
+            }
+            className="w-auto"
+          >
+            <option value="">{m.activity_filter_all()}</option>
+            {FAILURE_CATEGORIES.map((category) => (
+              <option key={category} value={category}>
+                {category}
+              </option>
+            ))}
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="activity-cause">{m.activity_review_cause_label()}</Label>
+          <Select
+            id="activity-cause"
+            value={search.cause ?? ''}
+            onChange={(e) => setFilters({ cause: ofSet(CAUSES, e.target.value) })}
+            className="w-auto"
+          >
+            <option value="">{m.activity_filter_all()}</option>
+            {CAUSES.map((cause) => (
+              <option key={cause} value={cause}>
+                {CAUSE_LABEL[cause]()}
+              </option>
+            ))}
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="activity-sort">{m.activity_filter_sort()}</Label>
+          <Select
+            id="activity-sort"
+            value={search.sort}
+            onChange={(e) => setFilters({ sort: ofSet(SORTS, e.target.value) ?? 'newest' })}
+            className="w-auto"
+          >
+            {SORTS.map((sort) => (
+              <option key={sort} value={sort}>
+                {SORT_LABEL[sort]()}
+              </option>
+            ))}
+          </Select>
+        </div>
         <div className="flex items-center gap-2 pb-2">
           <Switch
             id="activity-queue"
@@ -245,6 +317,22 @@ export function ActivityPage() {
           />
           <Label htmlFor="activity-queue">{m.activity_filter_queue()}</Label>
         </div>
+        {search.widget_id ? (
+          // The admin widget tab is what puts widget_id in the URL, and the app
+          // role may not list widgets: the chip names it from the rows on
+          // screen and falls back to the id while the list is still empty.
+          <div className="flex items-center gap-1 pb-2">
+            <Badge variant="secondary">{items[0]?.widget_name ?? search.widget_id}</Badge>
+            <Button
+              variant="link"
+              size="sm"
+              className="px-0"
+              onClick={() => setFilters({ widget_id: undefined })}
+            >
+              {m.activity_filter_widget_clear()}
+            </Button>
+          </div>
+        ) : null}
       </div>
 
       {list.isError ? (
@@ -278,7 +366,9 @@ export function ActivityPage() {
                     void navigate({
                       to: '/app/knowledge/activity/$conversationId',
                       params: { conversationId: String(item.id) },
-                      search: { list: null },
+                      // The detail folds this back into its own back link, so
+                      // returning lands on this exact filtered list.
+                      search: { list: search },
                     })
                   }
                 >

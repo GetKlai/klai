@@ -563,7 +563,13 @@ async def list_conversations(
     if sort == "worst":
         items.sort(key=_worst_sort_key)
     page = [candidate.item for candidate in items[:limit]]
-    next_cursor = _iso_z(page[-1].started_at) if page and len(items) > limit else None
+    # The cursor is a `started_at <` window boundary, which only means
+    # "everything older than the last row" for the newest-first order the
+    # window query already returns. `sort=worst` re-sorts the whole candidate
+    # set in memory, so the last row of a page is not that boundary and paging
+    # from it would skip the conversations that are still unvisited. The worst
+    # order is therefore served as one page only.
+    next_cursor = None if sort == "worst" or not page or len(items) <= limit else _iso_z(page[-1].started_at)
     return ConversationListResponse(items=page, next_cursor=next_cursor)
 
 

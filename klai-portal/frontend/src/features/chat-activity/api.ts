@@ -26,7 +26,8 @@ export type ConversationReviewStatus = 'unreviewed' | 'reviewed'
 export interface ConversationListItem {
   id: number
   widget_id: string
-  widget_name: string
+  /** Null when the widget row is gone; the conversation itself is kept. */
+  widget_name: string | null
   channel: 'webchat' | 'librechat'
   started_at: string
   last_message_at: string
@@ -37,7 +38,7 @@ export interface ConversationListItem {
   judge: {
     outcome: string
     failure_category: string | null
-    confidence: string
+    confidence: string | null
   } | null
   ratings: { up: number; down: number }
   review: {
@@ -198,7 +199,7 @@ export interface ConversationDetailMessage extends ConversationMessage {
 export interface ConversationDetail {
   id: number
   widget_id: string
-  widget_name: string
+  widget_name: string | null
   channel: 'webchat' | 'librechat'
   started_at: string
   language: string | null

@@ -184,6 +184,53 @@ describe('activity list', () => {
     )
   })
 
+  it('carries the current filters into the detail so back keeps them', async () => {
+    searchRef.current = { days: 14, queue: true, sort: 'newest', band: 'low' }
+    mockConversations([item()])
+
+    renderPage()
+
+    await waitFor(() => expect(screen.getByText('Wat is jullie retourbeleid?')).toBeTruthy())
+    fireEvent.click(screen.getByText('Wat is jullie retourbeleid?'))
+
+    expect(navigateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: '/app/knowledge/activity/$conversationId',
+        params: { conversationId: '1' },
+        search: { list: { days: 14, queue: true, sort: 'newest', band: 'low' } },
+      }),
+    )
+  })
+
+  it('shows the failure category, cause and sort filters and sends them as search params', async () => {
+    mockConversations([item()])
+
+    renderPage()
+
+    await waitFor(() => expect(conversationUrls().length).toBeGreaterThan(0))
+
+    fireEvent.change(screen.getByLabelText(/foutcategorie|failure category/i), {
+      target: { value: 'retrieval_miss' },
+    })
+    await waitFor(() =>
+      expect(
+        conversationUrls().some((url) => url.includes('failure_category=retrieval_miss')),
+      ).toBe(true),
+    )
+
+    fireEvent.change(screen.getByLabelText(/oorzaak|cause/i), {
+      target: { value: 'knowledge_missing' },
+    })
+    await waitFor(() =>
+      expect(conversationUrls().some((url) => url.includes('cause=knowledge_missing'))).toBe(true),
+    )
+
+    fireEvent.change(screen.getByLabelText(/sort/i), { target: { value: 'worst' } })
+    await waitFor(() =>
+      expect(conversationUrls().some((url) => url.includes('sort=worst'))).toBe(true),
+    )
+  })
+
   it('shows the disabled placeholder and fetches nothing without kb.activity', async () => {
     currentUser.capabilities = []
     mockConversations([item()])
