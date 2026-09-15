@@ -104,7 +104,7 @@ export function KBOverviewSections({ kbSlug }: { kbSlug: string }) {
             </p>
           </div>
           {user?.isAdmin === true && stats?.org_gap_count_7d != null && (
-            <Link to="/app/gaps" className="group">
+            <Link to="/app/knowledge/gaps" className="group">
               <div>
                 <p className="text-xs text-gray-600 tracking-wide mb-1 flex items-center gap-1">
                   <AlertTriangle className="h-3 w-3" />
