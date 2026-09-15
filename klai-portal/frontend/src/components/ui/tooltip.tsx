@@ -13,24 +13,29 @@ export function Tooltip({ label, children, className }: TooltipProps) {
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<{ top: number; left: number; rightAligned: boolean } | null>(null)
 
+  const show = () => {
+    const rect = ref.current?.getBoundingClientRect()
+    if (rect) {
+      const center = rect.left + rect.width / 2
+      // Right-align when within 160px of viewport right edge to prevent overflow
+      const rightAligned = center > window.innerWidth - 160
+      setPos({
+        top: rect.top,
+        left: rightAligned ? rect.right : center,
+        rightAligned,
+      })
+    }
+  }
+  const hide = () => setPos(null)
+
   return (
     <div
       ref={ref}
       className={className}
-      onMouseEnter={() => {
-        const rect = ref.current?.getBoundingClientRect()
-        if (rect) {
-          const center = rect.left + rect.width / 2
-          // Right-align when within 160px of viewport right edge to prevent overflow
-          const rightAligned = center > window.innerWidth - 160
-          setPos({
-            top: rect.top,
-            left: rightAligned ? rect.right : center,
-            rightAligned,
-          })
-        }
-      }}
-      onMouseLeave={() => setPos(null)}
+      onMouseEnter={show}
+      onMouseLeave={hide}
+      onFocus={show}
+      onBlur={hide}
     >
       {children}
       {pos && (
