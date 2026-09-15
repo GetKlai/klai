@@ -5,7 +5,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import func, select, update
+from sqlalchemy import case, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import require_capability
@@ -114,7 +114,12 @@ async def list_gaps(
             func.max(PortalRetrievalGap.nearest_kb_slug).label("nearest_kb_slug"),
             func.count().label("occurrence_count"),
             func.max(PortalRetrievalGap.occurred_at).label("last_occurred"),
-            func.max(PortalRetrievalGap.resolved_at).label("resolved_at"),
+            # Closed only when every occurrence is closed: a reopened question
+            # must keep its close action in the mixed list.
+            case(
+                (func.bool_and(PortalRetrievalGap.resolved_at.isnot(None)), func.max(PortalRetrievalGap.resolved_at)),
+                else_=None,
+            ).label("resolved_at"),
             func.bool_or(PortalRetrievalGap.caller_client_id == _REVIEW_CALLER_CLIENT_ID).label("has_review"),
         )
         .where(

@@ -72,7 +72,7 @@ async def _retention_run_once() -> dict[str, int]:
                     """
                     SELECT wm.id, wm.conversation_id
                     FROM widget_messages wm
-                    JOIN portal_orgs po ON po.id = wm.org_id
+                    LEFT JOIN portal_orgs po ON po.id = wm.org_id
                     WHERE wm.created_at < now() - (
                         COALESCE(po.widget_messages_retention_days, :default_days) * interval '1 day'
                     )

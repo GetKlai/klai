@@ -37,7 +37,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = structlog.get_logger()
 
-_VALID_EVENT_TYPES = frozenset({"provisioned", "deprovisioned", "failed_deprovisioning", "platform_features_updated"})
+_VALID_EVENT_TYPES = frozenset(
+    {
+        "provisioned",
+        "deprovisioned",
+        "failed_deprovisioning",
+        "platform_features_updated",
+        # Per-tenant widget retention override (SPEC-KNOWLEDGE-ACTIVITY-001
+        # follow-up); the DB CHECK is widened in
+        # post_deploy_63e87b89aa64_tenant_lifecycle_widget_retention.sql.
+        "widget_retention_updated",
+    }
+)
 _VALID_ACTOR_TYPES = frozenset({"owner", "platform_admin", "system"})
 
 

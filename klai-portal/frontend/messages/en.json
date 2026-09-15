@@ -1592,6 +1592,7 @@
   "gaps_status_resolved": "Closed",
   "gaps_resolved_by_rescorer": "rescorer",
   "gaps_resolved_by_review": "review",
+  "gaps_resolved_line_no_actor": "closed {time}",
   "gaps_resolved_line": "closed {time} by {closer}",
   "chat_health_loading": "Connecting to chat…",
   "chat_health_failed_title": "Chat is temporarily unavailable",

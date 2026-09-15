@@ -5,7 +5,7 @@ SPEC-CHAT-QUALITY-LOOP-001 open item #2: the global default
 tenant unless Klai staff set a longer per-org window — e.g. Voys keeps
 conversations 90 days so customers can be contacted. Purge behaviour at the
 end of the term is unchanged (app/services/widget_messages_retention.py):
-messages and conversation deleted, judge reasoning nulled, reviews keep
+messages deleted and contact details cleared; the conversation row itself is kept, judge reasoning nulled, reviews keep
 their snapshots.
 
 Endpoints:
@@ -42,7 +42,9 @@ class WidgetRetentionResponse(BaseModel):
 
 
 class PatchWidgetRetentionRequest(BaseModel):
-    days: int | None = Field(default=None, ge=1, le=365)
+    # Required-but-nullable: only an explicit null resets the override, so a
+    # partial-update client cannot shorten a tenant's window by omission.
+    days: int | None = Field(..., ge=1, le=365)
 
 
 async def _get_org_by_slug(slug: str, db: AsyncSession) -> PortalOrg:

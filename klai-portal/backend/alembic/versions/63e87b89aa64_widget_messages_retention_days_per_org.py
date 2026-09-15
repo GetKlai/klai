@@ -1,7 +1,7 @@
 """per-org widget_messages retention override
 
 Revision ID: 63e87b89aa64
-Revises: d8b3f6a1c4e9
+Revises: 997e0b66f750
 Create Date: 2026-09-15
 
 Voys keeps widget conversations 90 days so customers can be contacted after

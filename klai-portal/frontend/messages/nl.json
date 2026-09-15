@@ -1592,6 +1592,7 @@
   "gaps_status_resolved": "Gesloten",
   "gaps_resolved_by_rescorer": "rescorer",
   "gaps_resolved_by_review": "beoordeling",
+  "gaps_resolved_line_no_actor": "gesloten {time}",
   "gaps_resolved_line": "gesloten {time} door {closer}",
   "chat_health_loading": "Verbinden met chat…",
   "chat_health_failed_title": "Chat is tijdelijk niet beschikbaar",

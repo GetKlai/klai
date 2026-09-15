@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/data-table'
 import { ListLoadingState, ListEmptyState } from '@/components/ui/list-state'
 import * as m from '@/paraglide/messages'
+import { getLocale } from '@/paraglide/runtime'
 import { apiFetch } from '@/lib/apiFetch'
 import { fetchMe } from '@/lib/api-me'
 import { queryLogger } from '@/lib/logger'
@@ -76,7 +77,8 @@ interface GapRow {
     knowledge/activity/index.tsx (not shared -- the two routes don't share a
     lib module today and this is the only other caller). */
 function formatRelativeTime(isoString: string): string {
-  const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
+  // The portal language, not the browser's: mixed-language lines otherwise.
+  const rtf = new Intl.RelativeTimeFormat(getLocale(), { numeric: 'auto' })
   const diffSeconds = (new Date(isoString).getTime() - Date.now()) / 1000
   const units: [Intl.RelativeTimeFormatUnit, number][] = [
     ['year', 31536000],
@@ -337,10 +339,12 @@ export function GapsPage() {
                       <div className="mt-1 flex items-center gap-2">
                         <Badge variant="secondary">{m.gaps_status_resolved()}</Badge>
                         <span className="text-xs text-gray-500">
-                          {m.gaps_resolved_line({
-                            time: formatRelativeTime(gap.resolved_at!),
-                            closer: closerLabel(gap),
-                          })}
+                          {closerLabel(gap)
+                            ? m.gaps_resolved_line({
+                                time: formatRelativeTime(gap.resolved_at!),
+                                closer: closerLabel(gap),
+                              })
+                            : m.gaps_resolved_line_no_actor({ time: formatRelativeTime(gap.resolved_at!) })}
                         </span>
                       </div>
                     )}

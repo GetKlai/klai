@@ -221,3 +221,21 @@ class TestPatchWidgetRetention:
         assert PatchWidgetRetentionRequest(days=1).days == 1
         assert PatchWidgetRetentionRequest(days=365).days == 365
         assert PatchWidgetRetentionRequest(days=None).days is None
+
+
+def test_widget_retention_audit_event_type_is_valid_in_code_and_sql() -> None:
+    """The route emits ``widget_retention_updated``; if the validator or the DB
+    CHECK does not list it, every PATCH fails before its commit (found in
+    review: the emitter was mocked in the route tests)."""
+    from pathlib import Path
+
+    from app.services.audit.tenant_lifecycle import _VALID_EVENT_TYPES
+
+    assert "widget_retention_updated" in _VALID_EVENT_TYPES
+    sql = (
+        Path(__file__).parents[1]
+        / "alembic"
+        / "versions"
+        / "post_deploy_63e87b89aa64_tenant_lifecycle_widget_retention.sql"
+    )
+    assert "'widget_retention_updated'::text" in sql.read_text()

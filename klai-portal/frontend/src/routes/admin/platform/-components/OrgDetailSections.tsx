@@ -3,6 +3,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { Loader2, Plus, Trash2, UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
+import { QueryErrorState } from '@/components/ui/query-error-state'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -280,9 +281,7 @@ export function WidgetRetentionSection({
         {retention.isLoading ? (
           <p className="text-sm text-gray-600">{m.admin_users_loading()}</p>
         ) : retention.error ? (
-          <p className="text-sm text-[var(--color-destructive)]">
-            {m.admin_settings_error_fetch()}
-          </p>
+          <QueryErrorState error={retention.error} onRetry={() => void retention.refetch()} />
         ) : (
           <>
             <div className="max-w-xs space-y-1.5">
@@ -311,7 +310,14 @@ export function WidgetRetentionSection({
               </p>
             )}
             <div className="flex items-center gap-3 pt-1">
-              <Button type="submit" disabled={updateRetention.isPending || saved}>
+              <Button
+                type="submit"
+                disabled={
+                  updateRetention.isPending ||
+                  saved ||
+                  days === (retention.data?.days == null ? '' : String(retention.data.days))
+                }
+              >
                 {updateRetention.isPending && (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 )}
