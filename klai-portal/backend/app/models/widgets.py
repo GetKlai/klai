@@ -204,3 +204,10 @@ class WidgetMessage(Base):
     # 'thumbsDown' / NULL (no rating or withdrawn). CHECK constraints restrict
     # the values to assistant rows only — see the same post-deploy SQL.
     rating: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Retrieval certainty of this assistant answer (SPEC-KNOWLEDGE-ACTIVITY-001
+    # §4.1): top_score, band, gap_type, sources_count, refused, broad_mode,
+    # language, model. These values only exist while the answer is being
+    # generated, so a rating alone can never be compared against them unless
+    # they are stored alongside it. A CHECK keeps them off user rows — see
+    # post_deploy_b5d2f8a4c7e1_widget_messages_answer_signals.sql.
+    answer_signals: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
