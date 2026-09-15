@@ -1,7 +1,7 @@
 ---
 id: SPEC-KNOWLEDGE-ACTIVITY-001
-version: "0.2.0"
-status: fase 0 gebouwd en gereviewd; fase 1 en 2 in parallelle bouw na Mark's GO (15 sep 2026)
+version: "0.3.0"
+status: fase 0 t/m 3 gebouwd; fase 0 en 1 live (PR #1434, #1441), fase 2 en 3 in één PR; unlock `knowledge_activity` per tenant door Klai-staff
 created: 2026-09-15
 updated: 2026-09-15
 author: Claude (Fable 5.1), commissioned by Mark Vletter
@@ -25,6 +25,7 @@ related:
 
 | Versie | Datum | Wijziging |
 |---|---|---|
+| 0.3.0 | 2026-09-15 | Fase 1 live (PR #1441): router `/api/app/activity`, tabel `answer_reviews`, capability `kb.activity` (ook in de seat-mapping en het kennis-plan-tier, want de route-gate leest die), unlock `knowledge_activity`, lijst met werkvoorraad en filters, detailroute met beoordelingsformulier, sub-items onder Kennis, admin-tab terug naar statistieken plus link, oude admin-gespreksroutes weg. Reviews vonden vóór de merge twee blokkades (capability niet in de seat- en plan-afleiding, dynamische SQL-tekst) en drie hoge punten (open antwoorden gescoord op lege citatielijst, dode admin-link zonder unlock, 500 op ongeldig widget-id). Fase 2 en 3 gebouwd in één branch: gaten met gesprek en taal, handmatig sluiten, beoordeling → gat (Appendix B), rescorer per taal, kalibratiepaneel op de lijst (`GET /summary`). Werkwijze aangepast na Marks kritiek op de doorlooptijd: geen briefs per bestand meer, verticale slices door een sterk model met de echte gates, één review per PR. Bekende grens: `broad_mode` en `strict_on_gap` in het paneel steunen op `answer_signals` van het bericht en vallen na de 7-daagse purge uit die twee cijfers. |
 | 0.2.0 | 2026-09-15 | Mark gaf GO voor het hele project, met drie regels: parallelle Qwen-bouwers per fase, verificatie door Opus en een Sol-codecheck per fase, en beschikbaarheid eerst alleen voor Voys en Klai (tenant-unlock `knowledge_activity`, §4.4). Fase 0 gebouwd: `answer_signals` op `widget_messages`, gevuld op beide widget-paden. Reviewfixes na Opus en Sol: band alleen uit reranker-scores (retrieval-api-contract), broad-mode-beurten gescoord op de echte retrieval in plaats van de lege citatielijst, taal uit de bezoekersvraag. Appendix A (API-contract fase 1) en B (gaten fase 2, migratieketen) toegevoegd. |
 | 0.1.0 | 2026-09-15 | Eerste plan na onderzoek in de bron en één feedbackronde met Mark. Drie besluiten uit die ronde verwerkt: de bezoeker houdt alleen thumbs (geen druk bij de gebruiker, de interne collega krijgt de beoordelingsroute), de admin-kant blijft bestaan met een expliciete verdeling admin/kennis (§3), en het plan begint bij de externe chat maar is zo ontworpen dat het interne kanaal en meertaligheid er later zonder herbouw bij kunnen (§4.8, §4.9). Niets gebouwd. |
 

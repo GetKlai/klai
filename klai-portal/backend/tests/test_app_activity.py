@@ -107,12 +107,8 @@ class FakeSession:
     async def execute(self, statement: Any, params: dict[str, Any] | None = None) -> _Rows:
         sql = " ".join(str(statement).split())
         self.calls.append((sql, params or {}, statement))
-        if sql.startswith("INSERT INTO answer_reviews"):
-            return _Rows([self.reviewed_returning or SimpleNamespace(reviewed_at=T0)])
-        if sql.startswith("DELETE FROM answer_reviews"):
-            return _Rows([])
-        if (gap_rows := self._gap_rows(sql)) is not None:
-            return gap_rows
+        if (review_rows := self._review_write_rows(sql)) is not None:
+            return review_rows
         if "SELECT 1 FROM widgets" in sql:
             return _Rows([SimpleNamespace(one=1)] if self.widget_exists else [])
         if "c.id = :conversation_id" in sql:
@@ -159,8 +155,12 @@ class FakeSession:
         if sql.startswith("SELECT COUNT(*) AS reviewed"):
             return _Rows([self.summary_total] if self.summary_total else [])
 
-    def _gap_rows(self, sql: str) -> _Rows | None:
-        """Phase 2 statements: the review's gap link and the visitor question."""
+    def _review_write_rows(self, sql: str) -> _Rows | None:
+        """Review writes and the phase 2 gap link statements."""
+        if sql.startswith("INSERT INTO answer_reviews"):
+            return _Rows([self.reviewed_returning or SimpleNamespace(reviewed_at=T0)])
+        if sql.startswith("DELETE FROM answer_reviews"):
+            return _Rows([])
         if sql.startswith("UPDATE answer_reviews") or sql.startswith("UPDATE portal_retrieval_gaps"):
             return _Rows([])
         if "role = 'user' AND sequence < :sequence" in sql:
