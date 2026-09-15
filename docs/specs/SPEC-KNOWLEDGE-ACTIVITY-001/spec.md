@@ -372,3 +372,120 @@ menselijke beoordeling, geen kb_manager-toegang, geen kalibratie.
    KB-auteur onleesbaar; de beoordelingsrij houdt `note` en `kb_slug`, dus
    de auteur weet nog wél waar het hoort. Advies: consistent laten en op de
    gatenpagina bij zo'n rij naar de beoordeling linken.
+
+# Appendix A — API-contract kenniskant (fase 1, bindend voor backend en frontend)
+
+Alle routes onder `/api/app/activity`, router-breed
+`require_capability("kb.activity")` + `require_platform_unlocked("widgets")` +
+`require_platform_unlocked("knowledge_activity")`. Org-scoping via
+`perms.org_id`; een `widget_id`-filter op een widget van een andere org geeft
+een lege lijst, geen 404 (bestaan niet prijsgeven). Preview-gesprekken
+(`is_preview`) blijven overal buiten beeld.
+
+## GET /conversations
+
+Query: `cursor` (ISO-tijdstip van `started_at`, exclusief), `limit` (1-100,
+default 20), `days` (1-90, default 7), `channel` (default `webchat`),
+`widget_id`, `language`, `judge_outcome` (herhaalbaar), `failure_category`
+(herhaalbaar), `review_status` (`unreviewed` | `reviewed`), `cause`
+(herhaalbaar), `band` (herhaalbaar), `rating` (`thumbsUp` | `thumbsDown` |
+`none`), `queue` (bool; past de werkvoorraad-predicaat toe: onbeoordeeld én
+(judge-outcome ≠ resolved óf een thumbsDown óf een beurt met band low/unknown
+óf een geweigerde beurt)), `sort` (`newest` default | `worst`: eerst
+thumbsDown, dan judge unresolved/partially_resolved, dan band low, dan
+nieuwste).
+
+```json
+{
+  "items": [
+    {
+      "id": 255,
+      "widget_id": "5112f9ad-…",
+      "widget_name": "Voys help",
+      "channel": "webchat",
+      "started_at": "2026-09-14T09:12:00Z",
+      "last_message_at": "2026-09-14T09:15:30Z",
+      "message_count": 6,
+      "first_user_query": "Hoe koppel ik Salesforce?",
+      "language": "nl",
+      "worst_band": "low",
+      "judge": { "outcome": "unresolved", "failure_category": "retrieval_miss", "confidence": "high" },
+      "ratings": { "up": 0, "down": 1 },
+      "review": { "status": "unreviewed", "worst_verdict": null, "causes": [] },
+      "open_gap_count": 0
+    }
+  ],
+  "next_cursor": "2026-09-14T09:12:00Z"
+}
+```
+
+`judge` is `null` zolang de nachtelijke pas het gesprek niet heeft gezien.
+`worst_band` is de laagste band over de assistent-beurten (volgorde
+low < unknown < medium < high), `null` als geen beurt signalen heeft.
+`open_gap_count` komt in fase 2 (tot dan altijd 0).
+
+## GET /conversations/{id}
+
+```json
+{
+  "id": 255,
+  "widget_id": "…", "widget_name": "…", "channel": "webchat",
+  "started_at": "…", "language": "nl",
+  "visitor": { "name": "…", "email": "…" },
+  "quality": { "outcome": "…", "failure_category": "…", "reasoning": "…",
+               "confidence": "…", "suggested_action": "…", "judged_at": "…" },
+  "messages": [
+    {
+      "id": 9001, "role": "user", "content": "…", "sequence": 1, "created_at": "…",
+      "sources": null, "rating": null, "answer_signals": null, "review": null
+    },
+    {
+      "id": 9002, "role": "assistant", "content": "…", "sequence": 2, "created_at": "…",
+      "sources": [{ "label": "…", "title": "…", "url": "https://…" }],
+      "rating": "thumbsDown",
+      "answer_signals": { "top_score": 0.18, "band": "low", "gap_type": "soft",
+                          "sources_count": 1, "refused": false, "broad_mode": false,
+                          "language": "nl", "model": "klai-primary" },
+      "review": { "verdict": "wrong", "cause": "knowledge_missing", "note": "…",
+                  "kb_slug": "voys-help", "reviewer_name": "…", "reviewed_at": "…" }
+    }
+  ]
+}
+```
+
+`visitor` is alleen aanwezig (en niet-null) als de aanroeper rol `admin` of
+hoger heeft; voor kb_manager ontbreekt de sleutel volledig. `quality` is
+`null` zonder judge-rij. 404 als het gesprek niet in de eigen org bestaat of
+preview is.
+
+## PUT /messages/{message_id}/review
+
+Body: `{ "verdict": "correct" | "incomplete" | "wrong" | "not_a_fault",
+"cause": "knowledge_missing" | "knowledge_wrong" | "behaviour" | "none",
+"note": string | null, "kb_slug": string | null }`. `cause` moet `none` zijn
+bij `correct` en `not_a_fault`, en iets anders dan `none` bij `incomplete` en
+`wrong` (422 anders). UPSERT op `message_id`; de laatste beoordelaar wint.
+Alleen assistent-berichten (422 op een user-bericht). Vult de snapshots
+`band_at_review`, `judge_outcome_at_review`,
+`judge_failure_category_at_review`, `language` server-side. Antwoord: het
+review-object zoals in het detail. 404 buiten de eigen org.
+
+## DELETE /messages/{message_id}/review → 204
+
+## GET /queue-count → `{ "count": 12 }`
+
+Zelfde predicaat als `queue=true`, over `days=7`, `channel=webchat`.
+
+## GET /summary?days= (fase 3)
+
+```json
+{
+  "reviewed": 84,
+  "by_band": [{ "band": "high", "reviewed": 40, "correct": 34 }, …],
+  "by_judge_outcome": [{ "judge_outcome": "resolved", "reviewed": 30, "human_correct": 27 }, …],
+  "by_judge_category": [{ "judge_category": "retrieval_miss", "human_cause": "knowledge_missing", "count": 12 }, …],
+  "broad_mode": { "reviewed": 9, "correct": 5 },
+  "strict_on_gap": { "reviewed": 20, "correct": 7 },
+  "by_language": [{ "language": "nl", "reviewed": 70, "correct": 55 }, …]
+}
+```
