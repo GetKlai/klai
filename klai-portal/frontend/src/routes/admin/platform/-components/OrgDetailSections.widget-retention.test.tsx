@@ -72,15 +72,15 @@ describe('WidgetRetentionSection', () => {
     screen.getByText('Standaard: 7 dagen')
   })
 
-  it('PATCHes {days: 90} on save', async () => {
+  it('PATCHes the changed value on save (an unchanged value keeps Save disabled)', async () => {
     render(<WidgetRetentionSection orgId="202" org={makeOrg()} />)
 
     const input = screen.getByLabelText<HTMLInputElement>('Dagen')
-    fireEvent.change(input, { target: { value: '90' } })
+    fireEvent.change(input, { target: { value: '120' } })
     fireEvent.click(screen.getByText('Opslaan'))
 
     await waitFor(() => {
-      expect(retentionMutate).toHaveBeenCalledWith(90, expect.anything())
+      expect(retentionMutate).toHaveBeenCalledWith(120, expect.anything())
     })
   })
 })
