@@ -698,8 +698,15 @@
   color: var(--klai-text-color);
 }
 
+.klai-nerds-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .klai-nerds-panel-back {
   display: inline-flex;
+  text-decoration: none;
   align-items: center;
   gap: 6px;
   border: 1px solid var(--klai-border-color);

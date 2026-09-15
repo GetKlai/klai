@@ -40,6 +40,8 @@ const { MESSAGE_KEYS } = vi.hoisted(() => ({
     'admin_widgets_ai_disclosure_override_label',
     'admin_widgets_ai_disclosure_override_placeholder',
     'admin_widgets_ai_disclosure_default',
+    'admin_widgets_footer_links_in_widget_help',
+    'admin_widgets_footer_links_in_widget_label',
     'admin_widgets_footer_text_help',
     'admin_widgets_footer_text_label',
     'admin_widgets_footer_text_placeholder',

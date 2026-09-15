@@ -3046,6 +3046,9 @@ async def widget_config(
         "conversation_starters": widget_config_data.get("conversation_starters", []),
         "hide_disclaimer": widget_config_data.get("hide_disclaimer", False),
         "footer_text": widget_config_data.get("footer_text"),
+        # Opt-in per widget: footer links then open in the widget's own in-chat
+        # panel instead of a new tab. Absent → False, i.e. the new-tab default.
+        "footer_links_in_widget": widget_config_data.get("footer_links_in_widget", False),
         # Name drives the TWD-pattern header (avatar + title). description
         # is admin-only scope/behaviour config, not rendered to visitors —
         # kept in the response only as a widget-frontend locale hint.
@@ -3193,6 +3196,7 @@ async def public_bot_config(
         "conversation_starters": widget_config_data.get("conversation_starters", []),
         "hide_disclaimer": widget_config_data.get("hide_disclaimer", False),
         "footer_text": widget_config_data.get("footer_text"),
+        "footer_links_in_widget": widget_config_data.get("footer_links_in_widget", False),
         "primary_color": widget_config_data.get("primary_color", "#fcaa2d"),
         "theme": widget_config_data.get("theme", "light"),
         "collect_user_info": widget_config_data.get("collect_user_info", False),
