@@ -3,6 +3,8 @@
  * Selected by explicit widget locale, then widget copy, then page/browser locale.
  */
 
+import { createSignal } from "solid-js"
+
 export interface WidgetLabels {
   placeholder: string
   sendMessage: string
@@ -76,6 +78,18 @@ export interface WidgetLabels {
   broadModeOffButton: string
   broadModePausedLabel: string
   broadModeOnButton: string
+  // Sources/agent-activity disclosure under an assistant answer, plus the
+  // meta line under it. The count strings carry a {count} placeholder; the
+  // one/other split covers 1 vs everything else (0 included) in both
+  // languages.
+  sourcesTitle: string
+  sourceCountOne: string
+  sourceCountOther: string
+  agentActivityTitle: string
+  activityCountOne: string
+  activityCountOther: string
+  answerBasedOnSourcesOne: string
+  answerBasedOnSourcesOther: string
 }
 
 const nl: WidgetLabels = {
@@ -138,6 +152,14 @@ const nl: WidgetLabels = {
   broadModeOffButton: "Zet uit",
   broadModePausedLabel: "Brede modus uit — de bot antwoordt weer alleen uit de helpartikelen.",
   broadModeOnButton: "Zet aan",
+  sourcesTitle: "Bronnen",
+  sourceCountOne: "1 bron",
+  sourceCountOther: "{count} bronnen",
+  agentActivityTitle: "Agent activiteit",
+  activityCountOne: "1 stap",
+  activityCountOther: "{count} stappen",
+  answerBasedOnSourcesOne: "Antwoord gebaseerd op 1 bron uit de kennisbank.",
+  answerBasedOnSourcesOther: "Antwoord gebaseerd op {count} bronnen uit de kennisbank.",
 }
 
 const en: WidgetLabels = {
@@ -198,12 +220,27 @@ const en: WidgetLabels = {
   broadModeOffButton: "Turn off",
   broadModePausedLabel: "Broad mode off — the bot again answers only from the help articles.",
   broadModeOnButton: "Turn on",
+  sourcesTitle: "Sources",
+  sourceCountOne: "1 source",
+  sourceCountOther: "{count} sources",
+  agentActivityTitle: "Agent activity",
+  activityCountOne: "1 step",
+  activityCountOther: "{count} steps",
+  answerBasedOnSourcesOne: "Answer based on 1 source from the knowledge base.",
+  answerBasedOnSourcesOther: "Answer based on {count} sources from the knowledge base.",
 }
 
 const locales: Record<string, WidgetLabels> = { nl, en }
 
-let _labels: WidgetLabels = nl
-let _locale: "nl" | "en" = "nl"
+// A signal, not a plain module variable: t() is called from inside ~70 JSX
+// expressions, and only a signal accessor makes Solid re-render them when
+// the active label set changes mid-conversation (see setLanguage below).
+const [labelsSignal, setLabelsSignal] = createSignal<WidgetLabels>(nl)
+
+// Frozen at load time on purpose, unlike the label set above. The Nerds
+// booking panel is a third-party page loaded in an iframe; its language is
+// picked once from this value and stays out of the per-turn switching.
+let _initialLocale: "nl" | "en" = "nl"
 
 export function initLabels(locale?: string, samples: string[] = []): void {
   const explicitLang = locale?.slice(0, 2).toLowerCase()
@@ -213,19 +250,46 @@ export function initLabels(locale?: string, samples: string[] = []): void {
     document.documentElement.lang?.slice(0, 2).toLowerCase() ||
     navigator.language?.slice(0, 2).toLowerCase() ||
     "nl"
-  _labels = locales[lang] ?? locales.en ?? nl
-  _locale = _labels === en ? "en" : "nl"
+  const labels = locales[lang] ?? locales.en ?? nl
+  setLabelsSignal(labels)
+  _initialLocale = labels === en ? "en" : "nl"
 }
 
-// The locale the labels were resolved to. The Nerds booking panel sends it
-// as the embed's `lng` parameter, so the framed page and the widget copy
-// always speak the same language.
+/** Switches the active label set mid-conversation, driven by the backend's
+ * per-turn language signal (chat-stream.ts normalizeLanguage). Only "nl"
+ * and "en" have a label set, so the caller already filters out anything
+ * else — this never falls back to a default, it only ever moves to a label
+ * set the widget actually has. */
+export function setLanguage(code: "nl" | "en"): void {
+  setLabelsSignal(locales[code])
+}
+
+// The locale the labels were resolved to at load time. The Nerds booking
+// panel sends it as the embed's `lng` parameter; that framed page is loaded
+// externally and deliberately does NOT follow the conversation language, so
+// this must not read the label signal.
 export function currentLocale(): "nl" | "en" {
-  return _locale
+  return _initialLocale
 }
 
 export function t(): WidgetLabels {
-  return _labels
+  return labelsSignal()
+}
+
+function pluralLabel(count: number, one: string, other: string): string {
+  return count === 1 ? one : other.replace("{count}", String(count))
+}
+
+export function sourceCountLabel(count: number): string {
+  return pluralLabel(count, t().sourceCountOne, t().sourceCountOther)
+}
+
+export function activityCountLabel(count: number): string {
+  return pluralLabel(count, t().activityCountOne, t().activityCountOther)
+}
+
+export function answerBasedOnSourcesLabel(count: number): string {
+  return pluralLabel(count, t().answerBasedOnSourcesOne, t().answerBasedOnSourcesOther)
 }
 
 function detectLanguageFromSamples(samples: string[]): string | undefined {

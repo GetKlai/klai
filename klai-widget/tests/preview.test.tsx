@@ -75,4 +75,40 @@ describe("admin preview", () => {
     preview.dispose();
     Object.defineProperty(window, "parent", { configurable: true, value: parentWindow });
   });
+
+  it("keeps the conversation language when the admin edits the config", async () => {
+    const script = document.createElement("script");
+    script.dataset.mode = "preview";
+    script.dataset.widgetId = "preview-widget";
+    document.head.append(script);
+
+    const { mountPreview } = await import("../src/main");
+    const { setLanguage } = await import("../src/i18n/labels");
+    const parentWindow = window.parent;
+    Object.defineProperty(window, "parent", { configurable: true, value: {} });
+    const host = document.createElement("div");
+    document.body.append(host);
+    const preview = mountPreview(host, {
+      widgetId: "preview-widget",
+      locale: "nl",
+      config: widgetConfig("Draft", "draft-token"),
+      fetchConfig: vi.fn(async () => widgetConfig("Restarted", "restart-token")),
+    });
+    const placeholder = () =>
+      host.shadowRoot!.querySelector<HTMLTextAreaElement>(".klai-textarea")!.placeholder;
+
+    expect(placeholder()).toBe("Stel een vraag...");
+    // Stands in for the backend's per-turn language signal, whose route into
+    // this call is covered by language-switch.test.tsx.
+    setLanguage("en");
+    await waitFor(() => expect(placeholder()).toBe("Ask a question..."));
+
+    preview.updateConfig({ ...widgetConfig("Updated", "updated-token"), primary_color: "#270697" });
+
+    expect(host.style.getPropertyValue("--klai-primary-color")).toBe("#270697");
+    expect(placeholder()).toBe("Ask a question...");
+
+    preview.dispose();
+    Object.defineProperty(window, "parent", { configurable: true, value: parentWindow });
+  });
 });

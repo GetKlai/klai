@@ -36,7 +36,7 @@ import {
   startHubSpotHandoff,
   streamHubSpotHandoffEvents,
 } from "../api/handoff";
-import { currentLocale, t } from "../i18n/labels";
+import { currentLocale, setLanguage, t } from "../i18n/labels";
 
 interface ChatWindowProps {
   title: string;
@@ -341,6 +341,9 @@ export function ChatWindow(props: ChatWindowProps) {
         },
         onEscalation: (escalation) => {
           setLastMessageEscalation(escalation);
+        },
+        onLanguage: (language) => {
+          setLanguage(language);
         },
         onDone: () => {
           finishStreaming();

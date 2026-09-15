@@ -203,11 +203,15 @@ export function mountPreview(host: HTMLElement, options: PreviewOptions) {
     const values = previewAppearance(config);
     for (const [key, value] of values) host.style.setProperty(key, value);
     applied = new Set(values.keys());
-    initLabels(options.locale, [config.title, config.welcome_message]);
     return config;
   };
   const sessionId = options.config.session_id ?? crypto.randomUUID().replace(/-/g, "");
   const initialConfig = applyConfig(options.config);
+  // Labels are picked once, from the config as it stands at mount. Re-running
+  // the detection on every edit would reset the label set mid-conversation:
+  // applyConfig also runs from updateConfig (see below), which the admin
+  // preview calls on each keystroke in the settings form.
+  initLabels(options.locale, [initialConfig.title, initialConfig.welcome_message]);
   setPreviewWidgetConfigProvider(async (_widgetId, fetchOptions) =>
     previewConfig(await options.fetchConfig(fetchOptions.sessionId ?? sessionId))
   );

@@ -282,12 +282,19 @@ def _augment_messages_with_system_prompt(
     messages: list[dict],
     system_prompt: str,
     page_context: PageContext | None = None,
+    *,
+    response_language: str | None,
 ) -> list[dict]:
     """Assemble the provider payload: system prompt, turns, language contract.
 
-    The response-language decision is taken on the CALLER's message list, before
-    anything is inserted: the page-context block below enters the payload as a
-    user turn, and a Dutch page excerpt must never outvote an English question.
+    ``response_language`` is the caller's already-computed
+    :func:`resolve_conversation_language` result (taken on the CALLER's message
+    list, before anything here is inserted: the page-context block below
+    enters the payload as a user turn, and a Dutch page excerpt must never
+    outvote an English question). It is passed in rather than recomputed here
+    so the client-facing language signal (``delta.language`` / ``message.language``)
+    can share the exact same decision — a second call could disagree and hand
+    the widget English buttons under a Dutch answer.
     Assistant turns never vote either, which matters on the first turn of a
     widget conversation — the widget seeds its (usually Dutch) welcome line as
     an assistant message and sends it back with every request.
@@ -301,7 +308,7 @@ def _augment_messages_with_system_prompt(
     normalized = [msg for m in messages if (msg := _normalize_llm_message(m)) is not None]
     language_reminder = {
         "role": "system",
-        "content": final_response_language_reminder(resolve_conversation_language(messages).language),
+        "content": final_response_language_reminder(response_language),
     }
     page_context_message = _render_page_context_message(page_context)
     if not page_context_message:
@@ -1328,6 +1335,11 @@ def _sse_activity_delta(activity: list[dict[str, str | int]]) -> bytes:
 
 def _sse_broad_mode_delta(mode: str) -> bytes:
     payload = {"choices": [{"delta": {"broad_mode": mode}}]}
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
+
+
+def _sse_language_delta(language: str) -> bytes:
+    payload = {"choices": [{"delta": {"language": language}}]}
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
 
 
@@ -2752,8 +2764,15 @@ async def chat_completion_non_streaming(
 
     ``answer_signals`` is the caller's audit sink (see :func:`_fill_answer_signals`);
     it is filled on the marker path and never added to the returned body.
+
+    ``message.language`` carries the same per-turn :func:`resolve_conversation_language`
+    decision that steered the system prompt (see ``response_language`` above);
+    the key is omitted entirely when the decision is ``None``.
     """
-    augmented_messages = _augment_messages_with_system_prompt(messages, system_prompt, page_context)
+    language_decision = resolve_conversation_language(messages)
+    augmented_messages = _augment_messages_with_system_prompt(
+        messages, system_prompt, page_context, response_language=language_decision.language
+    )
 
     litellm_url = settings.litellm_base_url
     chat_url = f"{litellm_url}/v1/chat/completions"
@@ -2818,6 +2837,10 @@ async def chat_completion_non_streaming(
             message = choice.get("message") if isinstance(choice, dict) else None
             content = message.get("content") if isinstance(message, dict) else None
             if isinstance(message, dict) and isinstance(content, str):
+                # Same per-turn decision as the system prompt's language reminder
+                # (see language_decision above) — never a second, independent guess.
+                if language_decision.language is not None:
+                    message["language"] = language_decision.language
                 if safety_reason := output_safety_violation(content):
                     logger.warning(
                         "partner_chat_output_blocked",
@@ -2883,6 +2906,10 @@ async def chat_completion_non_streaming(
             message = choice.get("message") if isinstance(choice, dict) else None
             content = message.get("content") if isinstance(message, dict) else None
             if isinstance(message, dict) and isinstance(content, str):
+                # Same per-turn decision as the system prompt's language reminder
+                # (see language_decision above) — never a second, independent guess.
+                if language_decision.language is not None:
+                    message["language"] = language_decision.language
                 if safety_reason := output_safety_violation(content):
                     logger.warning(
                         "partner_chat_output_blocked",
@@ -2952,10 +2979,20 @@ async def chat_completion_streaming(
     once the answer is composed. The legacy link sanitizer has no composed
     answer to score, so it leaves the sink empty and the turn is audited
     without signals.
-    """
 
-    augmented_messages = _augment_messages_with_system_prompt(messages, system_prompt, page_context)
+    Every turn (both citation_output modes, including a safety refusal or a
+    broad-mode answer) opens with one ``delta.language`` frame carrying the
+    same :func:`resolve_conversation_language` decision that steered the
+    system prompt below — never a second, independently-computed guess. The
+    frame is omitted entirely when the decision is ``None``.
+    """
+    language_decision = resolve_conversation_language(messages)
+    augmented_messages = _augment_messages_with_system_prompt(
+        messages, system_prompt, page_context, response_language=language_decision.language
+    )
     user_query = source_query or _last_user_message(messages) or ""
+    if language_decision.language is not None:
+        yield _sse_language_delta(language_decision.language)
     if citation_output == "markers":
         async for chunk in _chat_completion_streaming_with_composed_citations(
             augmented_messages=augmented_messages,

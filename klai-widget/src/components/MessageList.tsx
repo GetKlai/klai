@@ -4,7 +4,7 @@ import { marked } from "marked";
 import { TypingIndicator } from "./TypingIndicator";
 import { chatState, setMessageRating } from "../store/chat";
 import { sendTurnFeedback } from "../api/feedback";
-import { t } from "../i18n/labels";
+import { activityCountLabel, answerBasedOnSourcesLabel, sourceCountLabel, t } from "../i18n/labels";
 import type { Message, MessageRating, MessageSource } from "../api/chat-stream";
 import { normalizeSourceUrl } from "../api/chat-stream";
 
@@ -33,14 +33,6 @@ function sourceMapFromSources(sources?: MessageSource[]): Map<string, MessageSou
     });
   }
   return sourceMap;
-}
-
-function sourceCountLabel(count: number): string {
-  return count === 1 ? "1 bron" : `${count} bronnen`;
-}
-
-function activityCountLabel(count: number): string {
-  return count === 1 ? "1 stap" : `${count} stappen`;
 }
 
 function decorateLinks(template: HTMLTemplateElement): void {
@@ -336,9 +328,9 @@ export function MessageList(props: MessageListProps) {
                   sources.length > 0
                 }
               >
-                <details class="klai-disclosure klai-disclosure--sources" aria-label="Bronnen">
+                <details class="klai-disclosure klai-disclosure--sources" aria-label={t().sourcesTitle}>
                   <summary class="klai-disclosure-summary">
-                    <span class="klai-disclosure-title">Bronnen</span>
+                    <span class="klai-disclosure-title">{t().sourcesTitle}</span>
                     <span class="klai-disclosure-count">{sourceCountLabel(sources.length)}</span>
                   </summary>
                   <ol class="klai-sources-list">
@@ -380,9 +372,9 @@ export function MessageList(props: MessageListProps) {
                   activity.length > 0
                 }
               >
-                <details class="klai-disclosure klai-disclosure--activity" aria-label="Agent activiteit">
+                <details class="klai-disclosure klai-disclosure--activity" aria-label={t().agentActivityTitle}>
                   <summary class="klai-disclosure-summary">
-                    <span class="klai-disclosure-title">Agent activiteit</span>
+                    <span class="klai-disclosure-title">{t().agentActivityTitle}</span>
                     <span class="klai-disclosure-count">{activityCountLabel(activity.length)}</span>
                   </summary>
                   <ol class="klai-activity-list">
@@ -409,11 +401,7 @@ export function MessageList(props: MessageListProps) {
                   sources.length > 0
                 }
               >
-                <p class="klai-meta">
-                  Antwoord gebaseerd op {sources.length}{" "}
-                  {sources.length === 1 ? "bron" : "bronnen"} uit de
-                  kennisbank.
-                </p>
+                <p class="klai-meta">{answerBasedOnSourcesLabel(sources.length)}</p>
               </Show>
             </Show>
           );

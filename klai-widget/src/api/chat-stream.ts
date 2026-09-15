@@ -10,6 +10,14 @@ export type MessageRating = "thumbsUp" | "thumbsDown";
  * of the stored content, the flag drives UI state only). */
 export type BroadModeSignal = "offer" | "answer";
 
+/** Per-turn answer language, from ``delta.language`` (streaming) or
+ * ``message.language`` (non-streaming) — same field, same two possible
+ * shapes as MessageEscalation below. The backend's codes are ISO-639-1
+ * across six languages, but the widget only ships nl/en label sets, so
+ * ``normalizeLanguage`` narrows to those two; anything else, or no code at
+ * all, is left for the caller to ignore. */
+export type LanguageSignal = "nl" | "en";
+
 /** Escalation signal for one assistant turn, from ``delta.escalation``
  * (streaming) or ``message.escalation`` (non-streaming). Exactly one shape:
  * ``{ appointment: boolean }``. ``appointment: true`` means "this answer
@@ -67,6 +75,7 @@ export interface StreamCallbacks {
   onActivity?: (activity: AgentActivity[]) => void;
   onBroadMode?: (mode: BroadModeSignal) => void;
   onEscalation?: (escalation: MessageEscalation) => void;
+  onLanguage?: (language: LanguageSignal) => void;
   onDone: () => void;
   onError: (error: KlaiWidgetError | Error) => void;
   /** Fired after a 401 re-mint succeeded, with the replacement token. The
@@ -267,6 +276,20 @@ export function normalizeEscalation(rawEscalation: unknown): MessageEscalation |
   return escalation.appointment === true ? { appointment: true } : null;
 }
 
+const KNOWN_LANGUAGES = new Set<string>(["nl", "en"] satisfies LanguageSignal[]);
+
+/** Strict reader for the language signal. The backend may answer in any of
+ * six ISO-639-1 codes, but the widget only has label sets for nl/en — a
+ * code outside that set, or a missing field, returns null so the caller
+ * leaves the current label set exactly as it is. Never falls back to a
+ * default: that fallback is the mid-conversation language reset this
+ * signal exists to fix. */
+export function normalizeLanguage(rawLanguage: unknown): LanguageSignal | null {
+  return typeof rawLanguage === "string" && KNOWN_LANGUAGES.has(rawLanguage)
+    ? (rawLanguage as LanguageSignal)
+    : null;
+}
+
 export function normalizeAgentActivity(rawActivity: unknown): AgentActivity[] {
   if (!Array.isArray(rawActivity)) {
     return [];
@@ -367,7 +390,9 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
                     activity?: unknown;
                     broad_mode?: unknown;
                     escalation?: unknown;
+                    language?: unknown;
                   };
+                  message?: { language?: unknown };
                   finish_reason?: string;
                 }>;
               }
@@ -382,7 +407,9 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
                   activity?: unknown;
                   broad_mode?: unknown;
                   escalation?: unknown;
+                  language?: unknown;
                 };
+                message?: { language?: unknown };
                 finish_reason?: string;
               }>;
             };
@@ -417,6 +444,14 @@ export async function streamChat(options: ChatStreamOptions): Promise<void> {
           const escalation = normalizeEscalation(delta?.escalation);
           if (escalation) {
             callbacks.onEscalation?.(escalation);
+          }
+          // The same field can arrive on either shape depending on whether
+          // this particular chunk streamed the turn or completed it in one
+          // go (see LanguageSignal above) — check both, same as the
+          // contract documents for escalation.
+          const language = normalizeLanguage(delta?.language ?? parsed.choices?.[0]?.message?.language);
+          if (language) {
+            callbacks.onLanguage?.(language);
           }
           if (parsed.choices?.[0]?.finish_reason === "stop") {
             callbacks.onDone();
