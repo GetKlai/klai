@@ -2138,6 +2138,8 @@
   "widget_ai_disclaimer": "AI answers can contain mistakes. Always verify important information at the source.",
   "widget_chat_status_online": "Online",
   "widget_chat_new_conversation": "New conversation",
+  "widget_chat_panel_back": "Back to the chat",
+  "widget_chat_panel_open_new_tab": "Open in a new tab",
   "widget_chat_copied": "Copied",
   "widget_chat_share_link": "Share link",
   "widget_chat_default_empty_state": "Ask your question and I will help you.",

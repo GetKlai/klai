@@ -67,6 +67,7 @@ export function AppearanceTab({ widget }: Props) {
     hideDisclaimer: false,
     aiDisclosureOverride,
     footerText,
+    footerLinksInWidget,
     cssVariablesJson: JSON.stringify(cssVariables),
   })
 

@@ -2138,6 +2138,8 @@
   "widget_ai_disclaimer": "AI-antwoorden kunnen fouten bevatten. Verifieer belangrijke informatie altijd bij de bron.",
   "widget_chat_status_online": "Online",
   "widget_chat_new_conversation": "Nieuw gesprek",
+  "widget_chat_panel_back": "Terug naar de chat",
+  "widget_chat_panel_open_new_tab": "Openen in een nieuw tabblad",
   "widget_chat_copied": "Gekopieerd",
   "widget_chat_share_link": "Deel link",
   "widget_chat_default_empty_state": "Stel je vraag en ik help je verder.",
