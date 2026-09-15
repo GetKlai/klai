@@ -33,7 +33,10 @@ export function AnswerSignals({ signals }: { signals: ConversationAnswerSignals 
   if (typeof signals.sources_count === 'number') {
     facts.push({
       label: m.activity_signals_sources_label(),
-      value: m.activity_signals_sources_count({ count: signals.sources_count }),
+      value:
+        signals.sources_count === 1
+          ? m.activity_signals_sources_count_one()
+          : m.activity_signals_sources_count_other({ count: String(signals.sources_count) }),
     })
   }
   if (signals.refused) facts.push({ label: m.activity_signals_answer(), value: m.activity_signals_refused() })
@@ -49,7 +52,9 @@ export function AnswerSignals({ signals }: { signals: ConversationAnswerSignals 
           <span className="min-w-0 flex-1 font-medium">{m.activity_signals_title()}</span>
           {typeof signals.sources_count === 'number' && (
             <span className="shrink-0 text-xs font-normal tabular-nums text-[color:rgb(25_25_24_/_0.3)] before:mr-1.5 before:text-[color:rgb(25_25_24_/_0.2)] before:content-['·']">
-              {m.activity_signals_sources_count({ count: signals.sources_count })}
+              {signals.sources_count === 1
+                ? m.activity_signals_sources_count_one()
+                : m.activity_signals_sources_count_other({ count: String(signals.sources_count) })}
             </span>
           )}
         </summary>

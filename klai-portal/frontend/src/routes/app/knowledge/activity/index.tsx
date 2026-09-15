@@ -28,37 +28,20 @@ import {
   type ConversationBand,
 } from '@/features/chat-activity'
 import * as m from '@/paraglide/messages'
+import {
+  BANDS,
+  DAYS,
+  ofSet,
+  OUTCOMES,
+  parseActivitySearch,
+  RATINGS,
+  type ActivitySearch,
+} from './-search'
 
 // SPEC-KNOWLEDGE-ACTIVITY-001 §4.3: the knowledge admin's conversation work
 // queue. Filters are URL search state (a filtered list is shareable) and the
 // list itself is server-paginated by cursor, so there is no client-side search.
 
-type ActivitySearch = {
-  days: number
-  widget_id?: string
-  language?: string
-  judge_outcome?: string
-  failure_category?: string
-  review_status?: 'unreviewed' | 'reviewed'
-  cause?: string
-  band?: ConversationBand
-  rating?: 'thumbsUp' | 'thumbsDown' | 'none'
-  queue: boolean
-  sort: 'newest' | 'worst'
-  cursor?: string
-}
-
-const DAYS = [7, 14, 30]
-const BANDS: ConversationBand[] = ['high', 'medium', 'low', 'unknown']
-const OUTCOMES = [
-  'resolved',
-  'partially_resolved',
-  'escalated',
-  'unresolved',
-  'abandoned_early',
-  'out_of_scope',
-]
-const RATINGS = ['thumbsUp', 'thumbsDown', 'none'] as const
 // Language codes are data, not copy: rendered as-is.
 const LANGUAGES = ['nl', 'en', 'de', 'fr']
 
@@ -85,34 +68,8 @@ const OUTCOME_LABEL: Record<string, () => string> = {
   out_of_scope: m.activity_outcome_out_of_scope,
 }
 
-const ofSet = <T extends string | number>(allowed: readonly T[], value: unknown): T | undefined =>
-  allowed.includes(value as T) ? (value as T) : undefined
-
-const text = (value: unknown): string | undefined =>
-  typeof value === 'string' && value ? value : undefined
-
-const parseBoolean = (value: unknown, fallback: boolean): boolean =>
-  value === 'true' || value === true
-    ? true
-    : value === 'false' || value === false
-      ? false
-      : fallback
-
 export const Route = createFileRoute('/app/knowledge/activity/')({
-  validateSearch: (search: Record<string, unknown>): ActivitySearch => ({
-    days: ofSet(DAYS, Number(search.days)) ?? 7,
-    widget_id: text(search.widget_id),
-    language: text(search.language),
-    judge_outcome: ofSet(OUTCOMES, search.judge_outcome),
-    failure_category: text(search.failure_category),
-    review_status: ofSet(['unreviewed', 'reviewed'] as const, search.review_status),
-    cause: text(search.cause),
-    band: ofSet(BANDS, search.band),
-    rating: ofSet(RATINGS, search.rating),
-    queue: parseBoolean(search.queue, true),
-    sort: ofSet(['newest', 'worst'] as const, search.sort) ?? 'newest',
-    cursor: text(search.cursor),
-  }),
+  validateSearch: parseActivitySearch,
   component: () => (
     <ProductGuard product="knowledge">
       <RoleGuard minRole="kb_manager">
@@ -177,7 +134,9 @@ export function ActivityPage() {
           <p>{m.activity_page_intro()}</p>
           {queueCount.data ? (
             <p className="text-xs text-[var(--color-muted-foreground)]">
-              {m.activity_queue_count({ count: queueCount.data.count })}
+              {queueCount.data.count === 1
+                ? m.activity_queue_count_one()
+                : m.activity_queue_count_other({ count: String(queueCount.data.count) })}
             </p>
           ) : null}
         </PageIntro>
@@ -319,6 +278,7 @@ export function ActivityPage() {
                     void navigate({
                       to: '/app/knowledge/activity/$conversationId',
                       params: { conversationId: String(item.id) },
+                      search: { list: null },
                     })
                   }
                 >

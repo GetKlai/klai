@@ -153,10 +153,12 @@ export function ReviewForm({
 
   const save = () => {
     if (form.verdict === null) return
+    const cause = needsCause(form.verdict) ? form.cause : 'none'
+    if (cause === null) return
     upsert.mutate(
       {
         verdict: form.verdict,
-        cause: needsCause(form.verdict) ? form.cause : 'none',
+        cause,
         note: form.note.trim() || null,
         kb_slug: form.kbSlug || null,
       },

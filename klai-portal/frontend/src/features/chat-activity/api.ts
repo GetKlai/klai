@@ -8,6 +8,7 @@ import {
   useQuery,
   useInfiniteQuery,
   useQueryClient,
+  type InfiniteData,
   type QueryClient,
   type QueryKey,
 } from '@tanstack/react-query'
@@ -116,7 +117,13 @@ function useActivityAccess(): boolean {
 export function useActivityConversations(query: ActivityConversationQuery) {
   const enabled = useActivityAccess()
   const { cursor, limit, ...filters } = query
-  return useInfiniteQuery<ConversationListResponse, Error, unknown, QueryKey, string | null>({
+  return useInfiniteQuery<
+    ConversationListResponse,
+    Error,
+    InfiniteData<ConversationListResponse, string | null>,
+    QueryKey,
+    string | null
+  >({
     queryKey: ['activity', 'conversations', filters],
     queryFn: async ({ pageParam }) => {
       try {

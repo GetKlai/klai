@@ -69,7 +69,8 @@ vi.mock('@/components/layout/RoleGuard', () => ({
   RoleGuard: ({ children }: { children: ReactNode }) => <>{children}</>,
 }))
 
-import { ActivityPage, Route } from '../activity/index'
+import { ActivityPage } from '../activity/index'
+import { parseActivitySearch } from '../activity/-search'
 
 function Harness() {
   const [tick, bump] = useReducer((n: number) => n + 1, 0)
@@ -198,11 +199,11 @@ describe('activity list', () => {
 
 describe('activity search contract', () => {
   it('defaults to the work queue over the last 7 days, newest first', () => {
-    expect(Route.validateSearch({})).toMatchObject({ days: 7, queue: true, sort: 'newest' })
+    expect(parseActivitySearch({})).toMatchObject({ days: 7, queue: true, sort: 'newest' })
   })
 
   it('keeps only known filter values and drops anything else', () => {
-    const parsed = Route.validateSearch({
+    const parsed = parseActivitySearch({
       days: '90',
       judge_outcome: 'not-an-outcome',
       band: 'low',
@@ -227,7 +228,7 @@ describe('activity search contract', () => {
       sort: 'worst',
       cursor: 'c-9',
     })
-    expect(Route.validateSearch({ queue: false }).queue).toBe(false)
-    expect(Route.validateSearch({ queue: true }).queue).toBe(true)
+    expect(parseActivitySearch({ queue: false }).queue).toBe(false)
+    expect(parseActivitySearch({ queue: true }).queue).toBe(true)
   })
 })

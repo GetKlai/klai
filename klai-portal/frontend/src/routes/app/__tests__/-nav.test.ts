@@ -26,7 +26,7 @@ function knowledgeChildren(
   const knowledge = getAppNavItems(['knowledge'], access(capabilities, unlockedFeatures)).find(
     (item) => item.to === '/app/knowledge',
   )
-  return knowledge?.children?.map((child) => child.to)
+  return knowledge?.children?.flatMap((child) => (child.to === undefined ? [] : [child.to]))
 }
 
 describe('app nav — Kennis children (SPEC-KNOWLEDGE-ACTIVITY-001 §3)', () => {

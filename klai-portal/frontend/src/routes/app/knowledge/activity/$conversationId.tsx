@@ -18,6 +18,7 @@ import { useActivityConversation } from '@/features/chat-activity/api'
 import { AnswerSignals } from '@/features/chat-activity/AnswerSignals'
 import { ReviewForm } from '@/features/chat-activity/ReviewForm'
 import * as m from '@/paraglide/messages'
+import { parseActivitySearch } from './-search'
 
 /** The list's own filter keys; whatever comes along is carried back to it. */
 const LIST_SEARCH_KEYS = [
@@ -99,7 +100,7 @@ export function ActivityDetailPage() {
         description={detail?.widget_name}
         actions={
           <Button variant="outline" size="sm" asChild>
-            <Link to="/app/knowledge/activity" search={listSearch ?? undefined}>
+            <Link to="/app/knowledge/activity" search={parseActivitySearch(listSearch ?? {})}>
               <ArrowLeft className="mr-2 h-4 w-4" />
               {backLabel}
             </Link>

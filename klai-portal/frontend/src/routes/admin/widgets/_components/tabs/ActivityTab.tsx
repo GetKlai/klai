@@ -3,6 +3,7 @@ import { Link } from '@tanstack/react-router'
 import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import * as m from '@/paraglide/messages'
+import { parseActivitySearch } from '@/routes/app/knowledge/activity/-search'
 import { useWidgetStats } from '../../-hooks'
 import type { StatsPeriod, WidgetDetailResponse } from '../../-types'
 
@@ -155,9 +156,13 @@ export function ActivityTab({ widget }: Props) {
       </div>
 
       {/* SPEC-KNOWLEDGE-ACTIVITY-001 §3: reviewing conversations happens on
-          the knowledge side, pre-filtered to this widget. */}
+          the knowledge side, pre-filtered to this widget. The list's own search
+          parser supplies the defaults so this tab stops guessing them. */}
       <Button asChild variant="outline">
-        <Link to="/app/knowledge/activity" search={{ widget_id: widget.id }}>
+        <Link
+          to="/app/knowledge/activity"
+          search={parseActivitySearch({ widget_id: String(widget.id) })}
+        >
           {m.admin_widgets_activity_review_conversations_link()}
         </Link>
       </Button>
