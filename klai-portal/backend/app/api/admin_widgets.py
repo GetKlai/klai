@@ -105,6 +105,9 @@ class WidgetConfig(BaseModel):
     # Tenant-editable Markdown shown below the chat input. Links are rendered
     # and sanitised by the widget; no separate link-label or URL fields exist.
     footer_text: str | None = Field(default=None, max_length=2000)
+    # When true, links in footer_text open in the widget's in-chat panel
+    # instead of a new browser tab. No effect unless footer_text has a link.
+    footer_links_in_widget: bool = False
     # Optional reference to a Template (app/templates) — when set, the
     # template's prompt_text is appended to system_prompt at runtime so
     # admins can re-use named prompts across widgets without copy-paste.
@@ -223,6 +226,7 @@ def _widget_to_response(widget: Widget, kb_access_count: int) -> WidgetResponse:
             hide_disclaimer=config.get("hide_disclaimer", False),
             ai_disclosure_override=config.get("ai_disclosure_override"),
             footer_text=config.get("footer_text"),
+            footer_links_in_widget=config.get("footer_links_in_widget", False),
             template_slug=config.get("template_slug"),
             primary_color=config.get("primary_color", "#fcaa2d"),
             theme=config.get("theme", "light"),

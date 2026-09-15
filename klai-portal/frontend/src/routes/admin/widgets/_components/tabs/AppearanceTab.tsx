@@ -49,6 +49,7 @@ export function AppearanceTab({ widget }: Props) {
     config.ai_disclosure_override ?? defaultAiDisclosure,
   )
   const [footerText, setFooterText] = useState(config.footer_text ?? defaultFooterText)
+  const [footerLinksInWidget, setFooterLinksInWidget] = useState(config.footer_links_in_widget ?? false)
   const [widgetPosition, setWidgetPosition] = useState<'left' | 'right'>(config.widget_position || 'right')
 
   // Everything on this tab is presentation, so the preview panel can follow
@@ -81,12 +82,15 @@ export function AppearanceTab({ widget }: Props) {
     setCollectUserInfo(config.collect_user_info ?? false)
     setAiDisclosureOverride(config.ai_disclosure_override ?? defaultAiDisclosure)
     setFooterText(config.footer_text ?? defaultFooterText)
+    setFooterLinksInWidget(config.footer_links_in_widget ?? false)
     setWidgetPosition(config.widget_position || 'right')
   }, [config, defaultAiDisclosure, defaultFooterText, widget.name])
 
   const starters = startersRaw.split('\n').map((l) => l.trim()).filter(Boolean).slice(0, WIDGET_MAX_CONVERSATION_STARTERS)
   const introductionChanged = aiDisclosureOverride.trim() !== (config.ai_disclosure_override ?? defaultAiDisclosure)
   const footerChanged = footerText.trim() !== (config.footer_text ?? defaultFooterText)
+  // No link in the footer means the switch could do nothing, so it stays hidden.
+  const footerHasLink = /https?:\/\//i.test(footerText)
 
   const isDirty =
     headerTitle !== (config.title ?? widget.name) ||
@@ -100,6 +104,7 @@ export function AppearanceTab({ widget }: Props) {
     collectUserInfo !== (config.collect_user_info ?? false) ||
     introductionChanged ||
     footerChanged ||
+    footerLinksInWidget !== (config.footer_links_in_widget ?? false) ||
     widgetPosition !== (config.widget_position || 'right')
 
   function handleSubmit(e: React.FormEvent) {
@@ -117,6 +122,7 @@ export function AppearanceTab({ widget }: Props) {
       collect_user_info: collectUserInfo,
       ...(introductionChanged ? { hide_disclaimer: false, ai_disclosure_override: aiDisclosureOverride.trim() } : {}),
       ...(footerChanged ? { footer_text: footerText.trim() } : {}),
+      footer_links_in_widget: footerLinksInWidget,
       widget_position: widgetPosition,
     }
     updateMutation.mutate(
@@ -286,6 +292,10 @@ export function AppearanceTab({ widget }: Props) {
             rows={3}
             placeholder={m.admin_widgets_footer_text_placeholder()}
           />
+          {footerHasLink && (
+            <WidgetToggleCard id="footer-links-in-widget" checked={footerLinksInWidget} onChange={setFooterLinksInWidget}
+              label={m.admin_widgets_footer_links_in_widget_label()} help={m.admin_widgets_footer_links_in_widget_help()} />
+          )}
         </div>
       </section>
 
