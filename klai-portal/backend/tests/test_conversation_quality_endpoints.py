@@ -1,12 +1,12 @@
-"""Regression tests for the per-conversation quality-judgment read endpoints.
+"""Regression tests for the per-conversation quality-judgment read endpoint.
 
 SPEC-CHAT-QUALITY-LOOP-001 REQ-3: the nightly judge (REQ-2) writes one row
-per conversation into ``conversation_quality_judgments``; the tenant admin
-(`/api/admin/widgets/{widget_id}/conversations/{conv_id}/quality`) and the
-platform console
-(`/api/admin/platform/bots/{widget_id}/conversations/{conv_id}/quality`)
-expose it as a read-only sidecar. A missing row is a 404 — "not judged yet"
+per conversation into ``conversation_quality_judgments``; the platform
+console (`/api/admin/platform/bots/{widget_id}/conversations/{conv_id}/quality`)
+exposes it as a read-only sidecar. A missing row is a 404 — "not judged yet"
 is a normal state the frontend renders as nothing, never an error dialog.
+The tenant-side routes here were removed in SPEC-KNOWLEDGE-ACTIVITY-001 §4.4;
+the judgment contract now lives on /api/app/activity (tests/test_app_activity.py).
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 
 from tests.conftest import make_perms
 
@@ -84,38 +84,6 @@ def _judgment_row():
 
 def _widget_row():
     return SimpleNamespace(id=WIDGET_UUID, org_id=42)
-
-
-@pytest.mark.asyncio
-async def test_tenant_quality_route_returns_judgment_fields() -> None:
-    from app.api.admin_widgets import get_widget_conversation_quality
-
-    row = _judgment_row()
-    db = AsyncMock()
-    db.execute = AsyncMock(side_effect=[TextRows([_widget_row()]), TextRows([row])])
-
-    judgment = await get_widget_conversation_quality(
-        widget_id=WIDGET_UUID, conv_id=7, perms=_tenant_admin_perms(), db=db
-    )
-
-    assert judgment.outcome == "escalated"
-    assert judgment.failure_category == "retrieval_miss"
-    assert judgment.reasoning == "De bot kende het actuele prijsplan niet."
-    assert judgment.confidence == "high"
-    assert judgment.suggested_action == "Prijs-KB opnieuw in de index opnemen."
-    assert judgment.judged_at == row.judged_at
-
-
-@pytest.mark.asyncio
-async def test_tenant_quality_route_404_when_conversation_not_judged() -> None:
-    from app.api.admin_widgets import get_widget_conversation_quality
-
-    db = AsyncMock()
-    db.execute = AsyncMock(side_effect=[TextRows([_widget_row()]), TextRows([])])
-
-    with pytest.raises(HTTPException) as exc:
-        await get_widget_conversation_quality(widget_id=WIDGET_UUID, conv_id=7, perms=_tenant_admin_perms(), db=db)
-    assert exc.value.status_code == 404
 
 
 @pytest.mark.asyncio

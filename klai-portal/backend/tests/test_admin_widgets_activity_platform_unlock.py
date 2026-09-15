@@ -1,10 +1,12 @@
 """REQ-13 (Finding B-6, SPEC-SEC-CROSS-TENANT-FOLLOWUP-001): admin widget
 activity endpoints must enforce the platform-unlock gate.
 
-AC13.1, AC13.2, AC13.3 — list_widget_conversations, get_widget_conversation,
-widget_activity_stats must include Depends(require_platform_unlocked("widgets"))
-so admins of revoked tenants cannot read conversation logs / stats for widgets
-that already exist.
+AC13.3 — widget_activity_stats must include
+Depends(require_platform_unlocked("widgets")) so admins of revoked tenants
+cannot read stats for widgets that already exist. The conversation routes
+(AC13.1/AC13.2) were removed in SPEC-KNOWLEDGE-ACTIVITY-001 §4.4; the
+knowledge-side replacement gates on the kb.activity capability
+(tests/test_app_activity.py).
 
 Route-introspection tests: walk each route's resolved dependant tree and
 assert that one of the dependencies closes over the literal string ``"widgets"``
@@ -19,11 +21,7 @@ from fastapi.dependencies.models import Dependant
 from app.main import app
 
 # Routes that REQ-13 protects.
-REQ13_ROUTE_PATHS: tuple[str, ...] = (
-    "/api/admin/widgets/{widget_id}/conversations",
-    "/api/admin/widgets/{widget_id}/conversations/{conv_id}",
-    "/api/admin/widgets/{widget_id}/stats",
-)
+REQ13_ROUTE_PATHS: tuple[str, ...] = ("/api/admin/widgets/{widget_id}/stats",)
 
 
 def _dep_closes_over_widgets(dep: Dependant) -> bool:

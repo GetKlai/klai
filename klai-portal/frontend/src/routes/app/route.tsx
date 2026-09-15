@@ -1,9 +1,12 @@
 import { createFileRoute, Outlet } from '@tanstack/react-router'
+import { useQuery } from '@tanstack/react-query'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { TopBar, TopBarSlotProvider } from '@/components/layout/TopBar'
 import { KlaiAssistantLauncher } from '@/features/klai-assistant/KlaiAssistantLauncher'
+import { useActivityQueueCount } from '@/features/chat-activity'
 import { useProtectedRoute } from '@/hooks/useProtectedRoute'
-import { getAccessibleAppTools } from './-app-tools'
+import { fetchMe } from '@/lib/api-me'
+import { appNavActivityIsVisible, getAppNavItems, type AppNavAccess } from './-app-tools'
 
 export const Route = createFileRoute('/app')({
   component: AppLayout,
@@ -13,11 +16,24 @@ function AppLayout() {
   const { user, canRender } = useProtectedRoute()
 
   const products = user?.products ?? []
-  const appNav = getAccessibleAppTools(products).map((tool) => ({
-    to: tool.href,
-    label: tool.title(),
-    icon: tool.icon,
-  }))
+  // Tenant unlocks behind the review queue; reads the same ['me'] cache entry
+  // the admin shell uses, and only for callers whose capability allows it.
+  const { data: me } = useQuery({
+    queryKey: ['me'],
+    queryFn: ({ signal }) => fetchMe(signal),
+    enabled: user?.hasCapability('kb.activity') === true,
+  })
+
+  const access: AppNavAccess = {
+    hasCapability: (capability) => user?.hasCapability(capability) === true,
+    unlockedFeatures: me?.platform_unlocked_features ?? [],
+  }
+  const showActivityNav = appNavActivityIsVisible(access)
+  const queueCount = useActivityQueueCount(showActivityNav)
+  const appNav = getAppNavItems(products, {
+    ...access,
+    activityQueueCount: queueCount.data?.count,
+  })
 
   if (!canRender) {
     return (
