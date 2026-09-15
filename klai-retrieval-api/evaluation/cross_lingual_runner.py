@@ -43,8 +43,9 @@ _PKG_ROOT = Path(__file__).resolve().parent.parent
 if str(_PKG_ROOT) not in sys.path:
     sys.path.insert(0, str(_PKG_ROOT))
 
-from retrieval_api.util.language_detect import (  # noqa: E402
-    detect_language,
+from klai_chat_prompts.language import (  # noqa: E402
+    UNKNOWN_LANGUAGE,
+    identify_surface_language,
     language_correctness,
 )
 
@@ -171,7 +172,7 @@ async def score_query(
             "error": str(exc),
         }
 
-    detected = detect_language(response or "")
+    detected = identify_surface_language(response or "") or UNKNOWN_LANGUAGE
     correct = language_correctness(expected_language, detected)
     return {
         "query": query,

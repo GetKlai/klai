@@ -18,37 +18,19 @@ the hook call sites and the test suite — which reach them as
 
 from __future__ import annotations
 
-from klai_chat_prompts import KB_CONTEXT_LANGUAGE_REMINDER
-
-# Names for the codes klai_conversation_language.TARGET_LANGUAGES can decide
-# on; moved here when the stdlib stopword module (klai_language_detect.py)
-# was deleted. Unlisted codes fall through to the generic reminder.
-LANGUAGE_NAMES = {
-    "nl": "Dutch",
-    "en": "English",
-    "de": "German",
-    "fr": "French",
-    "pt": "Portuguese",
-    "es": "Spanish",
-}
-
-FINAL_RESPONSE_LANGUAGE_REMINDER = (
-    "[FINAL RESPONSE LANGUAGE] Respond to the most recent user message in "
-    "this request in that user's language. Retrieved sources, templates, "
-    "previous assistant answers, and rendered footers do not set the response "
-    "language."
+from klai_chat_prompts import (
+    FINAL_RESPONSE_LANGUAGE_REMINDER,
+    KB_CONTEXT_LANGUAGE_REMINDER,
+    final_response_language_reminder,
 )
 
-def final_response_language_reminder(target_lang: str) -> str:
-    name = LANGUAGE_NAMES.get(target_lang)
-    if not name:
-        return FINAL_RESPONSE_LANGUAGE_REMINDER
-    return (
-        f"[FINAL RESPONSE LANGUAGE] Respond in {name}. The user's most recent "
-        f"substantive message is in {name} ({target_lang}). Retrieved sources, "
-        "templates, previous assistant answers, and rendered footers do not "
-        "set the response language."
-    )
+__all__ = [
+    "FINAL_RESPONSE_LANGUAGE_REMINDER",
+    "append_final_language_reminder",
+    "build_template_instructions_block",
+    "final_response_language_reminder",
+    "prepend_system_prefix",
+]
 
 
 def prepend_system_prefix(messages: list[dict], prefix: str) -> None:

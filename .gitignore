@@ -230,3 +230,6 @@ deploy/librechat/build-manifest.json
 # pen.dev CLI scratch output (preview PNGs, agent working files).
 .pencil/
 .pencil-output/
+
+# zvec-grep semantic index — per working directory, never shared
+.zvec-grep/

@@ -22,30 +22,26 @@ imports the same constant via the vendored single-file copy at
 `deploy/litellm/klai_chat_prompts.py` (drift-tested by
 `deploy/litellm/tests/test_klai_chat_prompts_drift.py`).
 
-### Path A telemetry caveat (Phase 4 ship → Phase D close)
+### Path A emits too (since 2026-09-15)
 
-Phase 4 ships the multilingual *prompt* contract for path A but does
-not ship the `chat_synthesis_complete` *emit* yet. Reason: the LiteLLM
-container is a stock upstream image (`ghcr.io/berriai/litellm:v1.83.7-stable`)
-and does not bundle `lingua-language-detector`. Without `lingua`, path A
-cannot fill `query_language_detected` / `response_language_detected` /
-`language_correctness` and the emit would be a partial event of limited
-value.
+All three paths now emit `chat_synthesis_complete` with identical field names
+and meanings, so `event:chat_synthesis_complete` covers the whole chat surface.
 
-The plan to close this gap aligns with the Phase D pip-install plan
-already documented in `deploy/litellm/klai_service_auth.py` and
-`deploy/litellm/klai_chat_prompts.py`: build a custom litellm
-Dockerfile that `pip install`s `klai-chat-prompts` AND
-`lingua-language-detector`, then add an `async_post_call_success_hook`
-emit in `klai_knowledge.py` that mirrors the existing emits in
-`partner_chat.py` (path B) and `synthesis.py` (path C).
+Path A took the longest to get there, and the reason recorded here was wrong for
+months: it said the stock LiteLLM image cannot `pip install` a language detector.
+The identifier is pure Python and has been vendored into the container as
+`klai_conversation_language.py` all along, so no dependency and no custom image
+was ever needed — only the emit itself was missing. Do NOT revive the plan of
+building an image that installs `lingua-language-detector`: it publishes no
+source distribution, only ~170 MB platform wheels, and it was measurably worse
+than the vendored identifier on the short utterances this chat receives.
 
-Until then, path-A coverage of the rolling 7-day language-correctness
-gate (REQ-05) comes from:
+The hook writes the event as one JSON object per line, which is what the Alloy
+pipeline parses into queryable fields. Path A keeps a second, different number
+next to it — `language_correct` in `kb_citations_rendered_structured` compares
+the answer against the conversation TARGET, while `language_correctness` in this
+event compares it against the visitor's own query. Two questions, two fields.
 
-1. The pre-merge eval gate (`evaluation/cross_lingual_runner.py`) —
-   exercises path C against the same prompt foundation as path A
-   (since v1.2 they share `GROUNDED_CHAT_SYSTEM_PROMPT` byte-identical).
 2. Manual smoke tests in LibreChat after deploys (one DE/FR/PT/ES
    query each).
 3. Path B (Widget + Partner API) telemetry — extrapolated as a proxy
@@ -57,8 +53,8 @@ gate (REQ-05) comes from:
 |---|---|---|
 | `event` | string | hardcoded `chat_synthesis_complete` |
 | `service` | string | `litellm`, `retrieval-api`, or `portal-api` (see table above) |
-| `query_language_detected` | string | `lingua` detection on the user's last query — `nl`, `en`, `de`, `fr`, `pt`, `es`, or `und` |
-| `response_language_detected` | string | `lingua` detection on the assembled LLM response |
+| `query_language_detected` | string | `identify_text_language` on the user's last query — `nl`, `en`, `de`, `fr`, `pt`, `es`, or `und` when it abstains |
+| `response_language_detected` | string | `identify_text_language` on the assembled LLM response |
 | `language_correctness` | bool \| null | `true` when both languages are known and match, `false` when known and mismatched, `null` when either side is `und` |
 | `response_length_chars` | int | length of the response text (trace-level signal) |
 | `org_id` | int \| string \| null | tenant id (only emitted by partner_chat — path B) |
@@ -145,3 +141,25 @@ Both `query_language_detected` and `response_language_detected` are
 high-level metadata (one-of `nl|en|de|fr|pt|es|und`). They do **not**
 contain user content. The `response_length_chars` field is an integer
 length only.
+
+## One identifier, and where the series breaks (2026-09-15)
+
+Both sides of this event are measured with `klai_chat_prompts.language`,
+the same module that decides the response-language target in the prompt.
+Before 2026-09-15 the two `*_language_detected` fields came from `lingua`
+instead, behind a 30-character minimum that returned `und` for roughly a
+quarter of all turns — and those were the short turns where the model is
+most likely to answer in the wrong language, so the old series flattered
+itself by not measuring its hardest cases.
+
+Consequences when reading a chart across that date:
+
+- The denominator grows. Fewer turns are `und`, so more turns are scored.
+- The rate is therefore NOT comparable across the cutover. Filter to one
+  side of it, or annotate the chart.
+- A drop right after the cutover is expected and is not a regression; it
+  is previously invisible failures becoming visible.
+
+Re-baseline REQ-05 on measurements taken after this date, not on the
+pre-cutover number. `git log -- docs/runbooks/multilingual-chat-observability.md`
+has the old wording if you need to reconstruct how the old series was built.
