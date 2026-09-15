@@ -168,6 +168,15 @@
   max-height: calc(100dvh - 108px);
 }
 
+/* Takes over the flex column .klai-window used to give its contents directly,
+   so the link panel can stay an overlay on top of the chat while open. */
+.klai-window-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
 /* Header colours can be scoped per widget without changing deployed defaults. */
 .klai-header {
   padding: 14px 14px 16px;
@@ -698,8 +707,15 @@
   color: var(--klai-text-color);
 }
 
+.klai-nerds-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .klai-nerds-panel-back {
   display: inline-flex;
+  text-decoration: none;
   align-items: center;
   gap: 6px;
   border: 1px solid var(--klai-border-color);

@@ -22,7 +22,12 @@ from klai_citations import (
     strip_injected_evidence_labels,
     strip_model_citation_artifacts,
 )
-from klai_conversation_language import identify_text_language
+from klai_conversation_language import (
+    UNKNOWN_LANGUAGE,
+    identify_surface_language,
+    identify_text_language,
+    language_correctness,
+)
 from klai_kb_answer_policy import strict_kb_unavailable_message
 from klai_kb_chat_mode import prompt_mode_is_known, prompt_mode_is_strict
 
@@ -949,8 +954,14 @@ def _citation_user_content_flags(kb_meta: dict[str, Any]) -> tuple[bool, bool]:
     )
 
 
+# The public render helpers take a logger argument so their lines carry the
+# hook's name; the telemetry emit below is self-contained and uses the module
+# logger, like klai_knowledge and klai_kb_llm_safety do.
+_telemetry_logger = logging.getLogger(__name__)
+
+
 def _record_answer_language(answer: str, kb_meta: dict[str, Any]) -> None:
-    answer_language = identify_text_language(answer)
+    answer_language = identify_surface_language(answer)
     target = kb_meta.get("response_language_target")
     target_language = target if isinstance(target, str) else None
     kb_meta["answer_language"] = answer_language
@@ -966,6 +977,58 @@ def _record_answer_language(answer: str, kb_meta: dict[str, Any]) -> None:
         kb_meta["language_correct"] = (
             None if answer_language is None else answer_language == target_language
         )
+    _emit_chat_synthesis_complete(answer, answer_language, kb_meta)
+
+
+def _emit_chat_synthesis_complete(
+    answer: str, answer_language: str | None, kb_meta: dict[str, Any]
+) -> None:
+    """Emit the cross-path language event for path A.
+
+    partner_chat (path B) and synthesis (path C) emit ``chat_synthesis_complete``
+    as structured JSON; path A only ever wrote its language numbers as key=value
+    text inside a prose log line, so the runbook's ``event:`` queries returned
+    nothing for ``service:litellm`` and the documented coverage gap was blamed on
+    a missing detector that has been vendored here all along.
+
+    One JSON object per line, because that is what the Alloy pipeline parses into
+    queryable fields — the same reason the other services' structlog output is
+    queryable. Field names and meanings match paths B and C exactly, or the
+    dashboard would average three different questions: the query side measures
+    the visitor's own text, never the conversation target. ``language_correct``
+    on the same request answers a different question (did the answer follow the
+    target we asked for) and stays where it is.
+
+    Failure-safe: telemetry MUST NOT break an answer that was already rendered.
+    """
+    try:
+        query_language = identify_text_language(str(kb_meta.get("user_query") or ""))
+        # WARNING, not info: the LiteLLM container runs its root logger at
+        # WARNING, so an info line is dropped before it reaches stdout. Every
+        # other line in this module logs at warning for the same reason — the
+        # level here is a delivery requirement, not a severity claim, which is
+        # why the payload carries its own "level". Verified in production on
+        # 2026-09-15: three path-A answers rendered, zero events arrived, and
+        # logger.isEnabledFor(INFO) is False inside the container.
+        _telemetry_logger.warning(
+            json.dumps(
+                {
+                    "event": "chat_synthesis_complete",
+                    "level": "info",
+                    "service": "litellm",
+                    "org_id": kb_meta.get("org_id"),
+                    "request_id": kb_meta.get("request_id"),
+                    "chunks_injected": kb_meta.get("chunks_injected"),
+                    "query_language_detected": query_language or UNKNOWN_LANGUAGE,
+                    "response_language_detected": answer_language or UNKNOWN_LANGUAGE,
+                    "language_correctness": language_correctness(query_language, answer_language),
+                    "response_length_chars": len(answer or ""),
+                },
+                ensure_ascii=False,
+            )
+        )
+    except Exception:
+        _telemetry_logger.warning("chat_synthesis_language_log_failed", exc_info=True)
 
 
 # Internal evidence labels ("(E3)", "(Evidence E3)", bare "Evidence E3")

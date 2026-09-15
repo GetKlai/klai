@@ -40,6 +40,8 @@ const { MESSAGE_KEYS } = vi.hoisted(() => ({
     'admin_widgets_ai_disclosure_override_label',
     'admin_widgets_ai_disclosure_override_placeholder',
     'admin_widgets_ai_disclosure_default',
+    'admin_widgets_footer_links_in_widget_help',
+    'admin_widgets_footer_links_in_widget_label',
     'admin_widgets_footer_text_help',
     'admin_widgets_footer_text_label',
     'admin_widgets_footer_text_placeholder',
@@ -149,7 +151,7 @@ vi.mock('@/lib/apiFetch', () => ({
 }))
 
 interface StubProps {
-  config: WidgetEmbedPreviewConfig & { name?: string; primary_color?: string; ai_disclosure_override?: string | null; footer_text?: string | null; hide_disclaimer?: boolean }
+  config: WidgetEmbedPreviewConfig & { name?: string; primary_color?: string; ai_disclosure_override?: string | null; footer_text?: string | null; hide_disclaimer?: boolean; footer_links_in_widget?: boolean }
   fetchConfig: (sessionId?: string) => Promise<unknown>
 }
 vi.mock('../WidgetEmbedPreview', () => ({
@@ -162,6 +164,7 @@ vi.mock('../WidgetEmbedPreview', () => ({
       data-background-color={config.css_variables['--klai-background-color']}
       data-ai-disclosure={config.ai_disclosure_override}
       data-footer-text={config.footer_text ?? ''}
+      data-footer-links-in-widget={String(config.footer_links_in_widget)}
       data-hide-disclaimer={String(config.hide_disclaimer)}
     >
       {config.welcome_message}
@@ -284,6 +287,22 @@ describe('WidgetPreviewPanel - SPEC-WIDGET-PREVIEW-001', () => {
 
     expect(screen.getByTestId('chat-surface').textContent).toContain('Hoi, kan ik helpen?')
     expect(screen.getByTestId('chat-surface').dataset.primaryColor).toBe('#2266ee')
+  })
+
+  it('follows the unsaved footer link toggle from the appearance form', async () => {
+    const widget = makeWidget()
+    widget.widget_config.footer_text = 'Meer info: https://klai.com'
+    widget.widget_config.footer_links_in_widget = false
+    renderScreen(widget, 'appearance')
+
+    const surface = await screen.findByTestId('chat-surface')
+    expect(surface.dataset.footerLinksInWidget).toBe('false')
+
+    fireEvent.click(document.getElementById('footer-links-in-widget') as HTMLInputElement)
+
+    expect(screen.getByTestId('chat-surface').dataset.footerLinksInWidget).toBe('true')
+    // Still a draft: nothing was saved to the widget.
+    expect(apiFetchMock.mock.calls.some(([url]) => url === '/api/admin/widgets/widget-uuid-1')).toBe(false)
   })
 
   it('previews saved and unsaved background, introduction, and footer settings', async () => {

@@ -11,9 +11,12 @@ the prompt here — both this service and ``klai-retrieval-api``'s
 ``services/synthesis.py`` MUST load the same constant. A CI lint
 asserts no service contains a hardcoded copy.
 
-REQ-07 wires a passive ``lingua``-based language detector on both the
-user query and the model response so VictoriaLogs gets
-``language_correctness`` per ``chat_synthesis_complete`` event.
+REQ-07 measures the visitor's query and the model response with the SAME
+identifier that steers the prompt (``klai_chat_prompts.language``), so
+VictoriaLogs gets ``language_correctness`` per ``chat_synthesis_complete``
+event. There is deliberately no second detector: a second library is a second
+guess, not a second opinion, and it measured a different thing than the prompt
+targeted.
 """
 
 from __future__ import annotations
@@ -37,12 +40,19 @@ from klai_chat_prompts import (
     SUPPORT_CHAT_SYSTEM_PROMPT,
     SUPPORT_EXPRESSIVE_CHAT_SYSTEM_PROMPT,
     broad_mode_answer_marker,
+    final_response_language_reminder,
     strip_appointment_offer_marker,
 )
 from klai_chat_prompts import (
     no_citable_sources_message as _no_citable_sources_message,
 )
-from klai_chat_prompts.language import identify_text_language
+from klai_chat_prompts.language import (
+    UNKNOWN_LANGUAGE,
+    identify_surface_language,
+    identify_text_language,
+    language_correctness,
+    resolve_conversation_language,
+)
 
 from app.core.config import Settings
 from app.core.config import settings as global_settings
@@ -64,10 +74,6 @@ from app.services.llm_safety_adapter import (
 )
 from app.services.widget_audit import find_conversation_id
 from app.trace import get_trace_headers
-from app.utils.language_detect import (
-    detect_language,
-    language_correctness,
-)
 
 logger = structlog.get_logger()
 
@@ -275,14 +281,34 @@ def _augment_messages_with_system_prompt(
     system_prompt: str,
     page_context: PageContext | None = None,
 ) -> list[dict]:
+    """Assemble the provider payload: system prompt, turns, language contract.
+
+    The response-language decision is taken on the CALLER's message list, before
+    anything is inserted: the page-context block below enters the payload as a
+    user turn, and a Dutch page excerpt must never outvote an English question.
+    Assistant turns never vote either, which matters on the first turn of a
+    widget conversation — the widget seeds its (usually Dutch) welcome line as
+    an assistant message and sends it back with every request.
+
+    The decision is rendered as a system message AFTER the last user turn, so
+    it is the final provider instruction before generation. The reminder next
+    to the retrieved chunks is not enough on its own: production showed Mistral
+    following the Dutch source language despite it, and on a turn with no
+    chunks that reminder is not in the prompt at all.
+    """
     normalized = [msg for m in messages if (msg := _normalize_llm_message(m)) is not None]
+    language_reminder = {
+        "role": "system",
+        "content": final_response_language_reminder(resolve_conversation_language(messages).language),
+    }
     page_context_message = _render_page_context_message(page_context)
     if not page_context_message:
-        return [{"role": "system", "content": system_prompt}, *normalized]
+        return [{"role": "system", "content": system_prompt}, *normalized, language_reminder]
     return [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": page_context_message},
         *normalized,
+        language_reminder,
     ]
 
 
@@ -301,10 +327,17 @@ def _emit_language_correctness_log(
     ``chunks_injected`` distinguishes chunks-present from no-chunks answers
     so language mismatches can be attributed to KB-content anchoring
     (``None`` = the call site could not determine the count).
+
+    Both sides are measured with the identifier that steers the prompt, so the
+    event compares two texts rather than two libraries. This is deliberately a
+    measurement of the visitor's own last message, not the conversation target
+    the prompt was built from: the field is named ``query_language_detected``,
+    and logging our own target under that name would make the metric confirm
+    itself.
     """
     try:
-        query_lang = detect_language(query)
-        response_lang = detect_language(response_text)
+        query_lang = identify_text_language(query) or UNKNOWN_LANGUAGE
+        response_lang = identify_surface_language(response_text) or UNKNOWN_LANGUAGE
         correct = language_correctness(query_lang, response_lang)
         logger.info(
             "chat_synthesis_complete",
@@ -1672,7 +1705,9 @@ def _fill_answer_signals(
                 # Only "answer" is a broad answer; "offer" is a refusal that
                 # asks the visitor for broad-mode consent.
                 "broad_mode": decision.get("broad_mode") == "answer",
-                "language": detect_language(query_text),
+                # Visitor text, so the intent-aware entry point: "graag in het
+                # Nederlands" is a Dutch turn whatever language it is typed in.
+                "language": identify_text_language(query_text) or UNKNOWN_LANGUAGE,
                 "model": model,
             }
         )

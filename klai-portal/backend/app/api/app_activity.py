@@ -74,7 +74,11 @@ SELECT c.id, c.widget_id, w.name AS widget_name, c.started_at, c.last_message_at
  WHERE c.org_id = :org_id
    AND c.is_preview = false
    AND c.started_at >= :cutoff
-   {clauses}
+   -- Optional filters as NULL-guarded predicates so the statement stays a
+   -- constant: no string assembly around text(), the driver binds every value.
+   AND (CAST(:cursor AS timestamptz) IS NULL OR c.started_at < CAST(:cursor AS timestamptz))
+   AND (CAST(:widget_id AS uuid) IS NULL OR c.widget_id = CAST(:widget_id AS uuid))
+   AND (CAST(:language AS text) IS NULL OR c.language_detected = CAST(:language AS text))
  ORDER BY c.started_at DESC
  LIMIT :scan_cap
 """
@@ -405,19 +409,16 @@ async def _load_candidates(
     channel: str,
 ) -> list[_Candidate]:
     """Every conversation in the window with its aggregates, newest first."""
-    params: dict[str, object] = {"org_id": org_id, "cutoff": cutoff, "scan_cap": _WINDOW_SCAN_CAP}
-    clauses = ""
-    if cursor is not None:
-        clauses += "   AND c.started_at < :cursor\n"
-        params["cursor"] = cursor
-    if widget_id is not None:
-        clauses += "   AND c.widget_id = CAST(:widget_id AS uuid)\n"
-        params["widget_id"] = widget_id
-    if language is not None:
-        clauses += "   AND c.language_detected = :language\n"
-        params["language"] = language
+    params: dict[str, object] = {
+        "org_id": org_id,
+        "cutoff": cutoff,
+        "scan_cap": _WINDOW_SCAN_CAP,
+        "cursor": cursor,
+        "widget_id": widget_id,
+        "language": language,
+    }
 
-    rows = (await db.execute(text(_WINDOW_SQL.format(clauses=clauses)), params)).all()
+    rows = (await db.execute(text(_WINDOW_SQL), params)).all()
     if not rows:
         return []
 

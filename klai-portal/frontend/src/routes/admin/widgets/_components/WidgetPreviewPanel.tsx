@@ -35,6 +35,7 @@ export function buildWidgetRendererConfig(widget: WidgetDetailResponse, preview:
     hide_disclaimer: preview.hideDisclaimer,
     ai_disclosure_override: preview.aiDisclosureOverride,
     footer_text: preview.footerText,
+    footer_links_in_widget: preview.footerLinksInWidget,
     primary_color: preview.primaryColor,
     css_variables: cssVariables,
     tenant_css_variables: session.tenant_css_variables ?? {},

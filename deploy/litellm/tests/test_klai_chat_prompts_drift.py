@@ -143,6 +143,45 @@ def test_vendored_kb_context_language_reminder_matches_canonical() -> None:
     )
 
 
+def test_vendored_final_response_language_reminder_matches_canonical() -> None:
+    """``final_response_language_reminder`` MUST render identically on both copies.
+
+    This is the last provider instruction before generation on every chat
+    surface: path A appends the vendored copy via klai_kb_system_prompt, path B
+    the canonical one via partner_chat. The ``__all__`` test only catches a
+    missing NAME, so content drift here would hand the LibreChat chat and the
+    widget different response-language contracts — the exact split this helper
+    was moved into the shared library to prevent. Every supported code is
+    checked, plus both fallbacks, because a broken NAME lookup degrades
+    silently to the generic wording instead of failing.
+    """
+    vendored = _load("_drift_vendored_final_reminder", _VENDORED_PATH)
+    canonical = _load("_drift_canonical_final_reminder", _CANONICAL_PATH)
+
+    assert (
+        vendored.FINAL_RESPONSE_LANGUAGE_REMINDER
+        == canonical.FINAL_RESPONSE_LANGUAGE_REMINDER
+    ), (
+        "FINAL_RESPONSE_LANGUAGE_REMINDER drift between vendored and canonical.\n"
+        "  Update deploy/litellm/klai_chat_prompts.py to match "
+        "klai-libs/chat-prompts/klai_chat_prompts/__init__.py."
+    )
+    assert vendored.LANGUAGE_NAMES == canonical.LANGUAGE_NAMES, (
+        "LANGUAGE_NAMES drift between vendored and canonical.\n"
+        "  Update deploy/litellm/klai_chat_prompts.py to match "
+        "klai-libs/chat-prompts/klai_chat_prompts/__init__.py."
+    )
+    for target in (*canonical.LANGUAGE_NAMES, "zz", "", None):
+        assert vendored.final_response_language_reminder(
+            target
+        ) == canonical.final_response_language_reminder(target), (
+            f"final_response_language_reminder({target!r}) drift between vendored "
+            "and canonical.\n"
+            "  Update deploy/litellm/klai_chat_prompts.py to match "
+            "klai-libs/chat-prompts/klai_chat_prompts/__init__.py."
+        )
+
+
 def test_vendored_no_citable_sources_message_matches_canonical() -> None:
     """``no_citable_sources_message`` MUST produce the same output for
     the same input on both the vendored and canonical copies. Drift here

@@ -16,6 +16,9 @@ export interface WidgetConfig {
   // Tenant-editable Markdown below the chat input. null/empty → the
   // widget's existing default footer.
   footer_text?: string | null
+  // Open the footer's Markdown link inside the chat window instead of a new
+  // tab (backend default: false).
+  footer_links_in_widget?: boolean
   template_slug: string | null
   primary_color: string
   theme: 'light' | 'dark'

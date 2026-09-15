@@ -1,6 +1,23 @@
 {
   "$schema": "https://raw.githubusercontent.com/anthropics/claude-code/main/.mcp.schema.json",
   "mcpServers": {
+    "serena": {
+      "$comment": "Semantic code navigation (find_symbol, find_referencing_symbols, replace_symbol_body) over LSP for Python and TypeScript. --project . binds Serena to the directory Claude Code spawns it in, which is the worktree root; --project-from-cwd guesses instead, and guesses wrong when Agent Teams spawn inside a worktree (oraios/serena#1496). --context claude-code drops Serena's own read/search/shell tools so it only adds the symbolic ones on top of Claude Code's native Read/Grep/Bash. no-onboarding suppresses the onboarding tool: this repo's knowledge lives in AGENTS.md and .claude/rules, and a per-worktree onboarding run would rebuild a throwaway copy of it every session. --open-web-dashboard False stops Serena opening a browser tab on every server start, which with one server per session per worktree is every session. It does not control whether the dashboard runs: web_dashboard in ~/.serena/serena_config.yml does, it is false on this machine, and nothing listens on 24282 as a result. Install and troubleshooting: docs/setup/mcp-servers.md Section 1.",
+      "type": "stdio",
+      "command": "serena",
+      "args": [
+        "start-mcp-server",
+        "--context",
+        "claude-code",
+        "--project",
+        ".",
+        "--add-mode",
+        "no-onboarding",
+        "--open-web-dashboard",
+        "False"
+      ],
+      "env": {}
+    },
     "context7": {
       "$comment": "Up-to-date documentation and code examples via Context7",
       "type": "stdio",

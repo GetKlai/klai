@@ -35,7 +35,7 @@ WARN=""
 if [ "$WT_EXTRA" -gt 5 ]; then
     WARN="${WARN}  ⚠ $WT_EXTRA worktrees besides canonical repo (threshold 5)\n"
     WARN="${WARN}    Audit:    git worktree list\n"
-    WARN="${WARN}    Cleanup:  see SPEC-INFRA-AI-WORKFLOW-001\n"
+    WARN="${WARN}    Cleanup:  see docs/specs/SPEC-INFRA-AI-WORKFLOW-001.md\n"
 fi
 if [ "$GONE_COUNT" -gt 3 ]; then
     WARN="${WARN}  ⚠ $GONE_COUNT local branches with 'gone' upstream (threshold 3)\n"

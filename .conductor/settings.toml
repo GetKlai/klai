@@ -1,6 +1,29 @@
 "$schema" = "https://conductor.build/schemas/settings.repo.schema.json"
 
 [scripts]
-# codebase-memory-mcp: index on workspace creation, drop the index on archive (see AGENTS.md)
-setup = "make setup ; ~/bin/codebase-memory-mcp cli index_repository --repo-path . >/dev/null 2>&1 || true"
-archive = "~/bin/codebase-memory-mcp cli delete_project --project \"$(pwd -P | sed 's#^/##; s#/#-#g')\" >/dev/null 2>&1 || true"
+# make code-tools builds the per-worktree zvec-grep, Serena and
+# codebase-memory-mcp indexes. All three key their state off the working
+# directory, so a fresh workspace has none of it and the tools answer "no
+# index" rather than failing — see docs/setup/code-intelligence.md.
+setup = "make setup && make code-tools"
+# Only codebase-memory-mcp stores its graph outside the workspace
+# (~/.cache/codebase-memory-mcp), so only it needs cleaning up on archive. The
+# zvec-grep index and the Serena cache live in the workspace and go with it.
+# The project name is the workspace path as a slug, not the repo name.
+#
+# The guard call is the second half and the one that matters beyond this repo:
+# archiving is exactly the moment a shared daemon can be left rooted in a
+# directory that is about to stop existing, which breaks indexing for EVERY
+# repo on the machine while still reporting "ready". Running it here rehomes
+# the daemon to $HOME while this directory is still there. It runs after
+# delete_project because that call still needs a working daemon.
+archive = "~/bin/codebase-memory-mcp cli delete_project --project \"$(pwd -P | sed 's#^/##; s#/#-#g')\" >/dev/null 2>&1 || true; ./scripts/code-daemon-guard.sh >/dev/null 2>&1 || true"
+run_mode = "concurrent"
+
+[scripts.run.dev]
+# CONDUCTOR_PORT only exists in local workspaces, and this starts a Vite dev
+# server on it.
+available_in = ["local"]
+command = "make local-dev-status && make frontend"
+default = true
+icon = "play"

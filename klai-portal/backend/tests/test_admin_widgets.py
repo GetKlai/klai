@@ -116,6 +116,32 @@ def test_widget_config_footer_text_roundtrip():
     assert _widget_to_response(widget, kb_access_count=0).widget_config.footer_text == footer
 
 
+def test_widget_config_footer_links_in_widget_roundtrip():
+    """The in-chat footer-link flag survives admin response normalisation, and
+    widgets written before the flag existed keep the new-tab default."""
+    from app.api.admin_widgets import _widget_to_response
+
+    widget = MagicMock()
+    widget.id = "uuid-footer-links"
+    widget.name = "Help Bot"
+    widget.description = None
+    widget.widget_id = "wgt_footer_links"
+    widget.widget_config = {
+        "footer_text": "Zie onze [privacyverklaring](https://example.com/privacy).",
+        "footer_links_in_widget": True,
+    }
+    widget.public_share_enabled = False
+    widget.rate_limit_rpm = 60
+    widget.last_used_at = None
+    widget.created_at = "2026-01-01"
+    widget.created_by = "user-1"
+
+    assert _widget_to_response(widget, kb_access_count=0).widget_config.footer_links_in_widget is True
+
+    del widget.widget_config["footer_links_in_widget"]
+    assert _widget_to_response(widget, kb_access_count=0).widget_config.footer_links_in_widget is False
+
+
 def test_widget_config_nerds_integration_defaults_and_roundtrip():
     """The nerds booking integration exists, defaults to disabled, and
     survives the response mapping — so a PATCH with it stored reads back
