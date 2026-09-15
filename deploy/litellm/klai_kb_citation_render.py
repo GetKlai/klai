@@ -22,7 +22,7 @@ from klai_citations import (
     strip_injected_evidence_labels,
     strip_model_citation_artifacts,
 )
-from klai_conversation_language import identify_text_language
+from klai_conversation_language import identify_surface_language, identify_text_language
 from klai_kb_answer_policy import strict_kb_unavailable_message
 from klai_kb_chat_mode import prompt_mode_is_known, prompt_mode_is_strict
 
@@ -950,7 +950,7 @@ def _citation_user_content_flags(kb_meta: dict[str, Any]) -> tuple[bool, bool]:
 
 
 def _record_answer_language(answer: str, kb_meta: dict[str, Any]) -> None:
-    answer_language = identify_text_language(answer)
+    answer_language = identify_surface_language(answer)
     target = kb_meta.get("response_language_target")
     target_language = target if isinstance(target, str) else None
     kb_meta["answer_language"] = answer_language

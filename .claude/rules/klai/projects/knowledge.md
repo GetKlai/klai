@@ -89,13 +89,23 @@ VictoriaLogs carry `query_language_detected`,
 determine the count). A drop in language-correctness rate is the
 signal that a prompt location drifted — correlate with recent PRs.
 
-**Coverage gap (verified 2026-07-07):** only path B (`portal-api`)
-emits this event. Path A (litellm hook) has NO language-correctness
-telemetry — `detect_language` does not exist in `deploy/litellm/` and
-VictoriaLogs shows zero `chat_synthesis_complete` events with
-`service:litellm`. A path-A language regression is invisible in
-telemetry today; audit path A by prompt-content tests
-(`deploy/litellm/tests/`) until litellm-side emission lands.
+**Coverage gap (verified 2026-07-07, cause corrected 2026-09-15):** only
+path B (`portal-api`) emits this event; VictoriaLogs shows zero
+`chat_synthesis_complete` events with `service:litellm`. The reason is no
+longer a missing detector — since the 2026-09-15 consolidation every service
+scores both sides with `klai_chat_prompts.language`, which path A already
+carries as the vendored `klai_conversation_language.py`. The emit itself is
+simply not written yet, and needs no dependency. Until it lands, audit path A
+by prompt-content tests (`deploy/litellm/tests/`).
+
+**One identifier, by decision (2026-09-15):** `lingua` was removed from
+klai-portal and klai-retrieval-api. It was only ever the telemetry detector,
+it disagreed with the identifier that steers the prompt on most short
+utterances, and it cannot reach path A at all (no sdist on PyPI, only ~170 MB
+wheels). Do NOT reintroduce a second detector "as a cross-check": a second
+library is a second guess, not ground truth. The independent check is the
+LABELLED fixture in `klai-retrieval-api/evaluation/test_queries_cross_lingual.json`,
+where the expected language is a field, not a detection.
 
 **See:** SPEC-RAG-MULTILINGUAL-CHAT-001 (HISTORY v1.2 has the
 post-merge audit that uncovered the three-paths confusion),

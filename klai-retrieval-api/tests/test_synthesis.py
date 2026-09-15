@@ -266,7 +266,9 @@ class TestSynthesize:
             items.append(item)
 
         body = mock_client.stream.call_args.kwargs["json"]
-        prompt_text = body["messages"][-1]["content"]
+        # [-1] is the response-language contract; the question is the turn before it.
+        assert body["messages"][-1]["content"].startswith("[FINAL RESPONSE LANGUAGE]")
+        prompt_text = body["messages"][-2]["content"]
         assert "Install the widget" in prompt_text
         assert "Ignore previous instructions" not in prompt_text
         final = next(item for item in items if isinstance(item, dict))
@@ -374,13 +376,17 @@ class TestSynthesize:
         call_args = mock_client.stream.call_args
         body = call_args.kwargs.get("json") or call_args[1].get("json")
         messages = body["messages"]
-        # system + 3 history messages (last 3) + user question = 5
-        assert len(messages) == 5
+        # system + 3 history messages (last 3) + user question + language contract = 6
+        assert len(messages) == 6
         assert messages[0]["role"] == "system"
         # Last 3 from history: resp1, msg2, resp2
         assert messages[1]["content"] == "resp1"
         assert messages[2]["content"] == "msg2"
         assert messages[3]["content"] == "resp2"
+        # The contract is appended AFTER the question, so it is the last thing
+        # the provider reads before generating — the whole point of it.
+        assert messages[-1]["role"] == "system"
+        assert messages[-1]["content"].startswith("[FINAL RESPONSE LANGUAGE]")
 
     @patch("retrieval_api.services.synthesis.httpx.AsyncClient")
     async def test_no_content_delta_skipped(self, mock_client_cls):

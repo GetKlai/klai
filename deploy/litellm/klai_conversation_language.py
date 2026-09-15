@@ -77,7 +77,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Final
 
 __all__ = [
     "EVIDENCE_EMPTY",
@@ -105,11 +105,14 @@ __all__ = [
     "SHORT_PROSE_MAX_WORDS",
     "SUBSEQUENT_SWITCH_CONFIRMATIONS",
     "TARGET_LANGUAGES",
+    "UNKNOWN_LANGUAGE",
     "LanguageDecision",
     "TurnEvidence",
     "classify_turn_evidence",
     "detect_explicit_language_request",
+    "identify_surface_language",
     "identify_text_language",
+    "language_correctness",
     "resolve_conversation_language",
 ]
 
@@ -815,19 +818,36 @@ def _identify(identifier: Any, text: str) -> tuple[str, str] | None:
 
 
 def identify_text_language(text: str) -> str | None:
-    """Identify the language of ONE standalone text. Public single-text entry.
+    """Identify the language ONE standalone user text should be answered in.
 
     Runs exactly the steps :func:`resolve_conversation_language` runs per user
     turn — evidence gate, explicit-request table, confidence-tiered
     identification — on a single text, for call sites that have a lone query
-    (or an answer to measure) and no conversation to replay. Returns a target
-    code, or ``None`` for "we do not know" (no prose, machine-dominated text,
-    sub-threshold confidence, or langid unavailable); never raises.
+    and no conversation to replay. Returns a target code, or ``None`` for "we
+    do not know" (no prose, machine-dominated text, sub-threshold confidence,
+    or langid unavailable); never raises.
+
+    This answers "what language does this person want", so "Please reply in
+    English" resolves to ``en`` whatever language the request itself is in.
+    That makes it the WRONG function for measuring text the model produced —
+    use :func:`identify_surface_language` there.
     """
-    evidence = classify_turn_evidence(text)
-    requested = detect_explicit_language_request(evidence.prose)
+    requested = detect_explicit_language_request(classify_turn_evidence(text).prose)
     if requested is not None:
         return requested
+    return identify_surface_language(text)
+
+
+def identify_surface_language(text: str) -> str | None:
+    """Identify the language a text IS WRITTEN IN. No intent, just surface.
+
+    Same evidence gate and identifier as :func:`identify_text_language`, minus
+    the explicit-request table. Use it on anything the model wrote: an answer
+    that happens to discuss languages ("I can answer in Dutch.") is English
+    prose, and reading it as a request to switch made the telemetry and the
+    cross-lingual eval score that turn as a correct Dutch answer.
+    """
+    evidence = classify_turn_evidence(text)
     if not evidence.has_evidence:
         return None
     identifier = _get_identifier()  # cached; repeated calls are cheap
@@ -1114,3 +1134,27 @@ def resolve_conversation_language(messages: list[dict]) -> LanguageDecision:
         locked=locked,
         method=state.last_method,
     )
+
+
+UNKNOWN_LANGUAGE: Final[str] = "und"
+
+
+def language_correctness(query_language: str | None, response_language: str | None) -> bool | None:
+    """Did the answer come back in the language the user wrote in?
+
+    Both arguments are codes from :func:`identify_text_language` (or the
+    conversation decision), so ``None`` means the identifier abstained; the
+    literal :data:`UNKNOWN_LANGUAGE` is accepted too, because that is how the
+    abstention is rendered into the log event. Either side unknown returns
+    ``None``: the sample is unmeasurable, not a failure, and aggregate metrics
+    MUST skip it rather than count it against the rate.
+
+    Kept next to the identifier so the three surfaces that emit
+    ``chat_synthesis_complete`` (partner_chat, synthesis, the cross-lingual
+    eval) score it identically. A second implementation is a second metric.
+    """
+    if query_language in (None, "", UNKNOWN_LANGUAGE):
+        return None
+    if response_language in (None, "", UNKNOWN_LANGUAGE):
+        return None
+    return query_language == response_language

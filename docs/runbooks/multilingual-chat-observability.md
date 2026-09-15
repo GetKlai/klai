@@ -22,26 +22,26 @@ imports the same constant via the vendored single-file copy at
 `deploy/litellm/klai_chat_prompts.py` (drift-tested by
 `deploy/litellm/tests/test_klai_chat_prompts_drift.py`).
 
-### Path A telemetry caveat (Phase 4 ship → Phase D close)
+### Path A telemetry caveat
 
-Phase 4 ships the multilingual *prompt* contract for path A but does
-not ship the `chat_synthesis_complete` *emit* yet. Reason: the LiteLLM
-container is a stock upstream image (`ghcr.io/berriai/litellm:v1.83.7-stable`)
-and does not bundle `lingua-language-detector`. Without `lingua`, path A
-cannot fill `query_language_detected` / `response_language_detected` /
-`language_correctness` and the emit would be a partial event of limited
-value.
+Path A ships the multilingual *prompt* contract but does not emit
+`chat_synthesis_complete` yet. The reason given here used to be that the
+stock LiteLLM image (`ghcr.io/berriai/litellm:v1.83.7-stable`) cannot
+`pip install` a language detector. **That blocker no longer exists.** The
+identifier is `klai_chat_prompts.language`, which is pure Python and is
+already vendored into the container as
+`deploy/litellm/klai_conversation_language.py` (byte-identical, drift-tested).
+Path A can emit the same event as paths B and C with no new dependency and
+no custom image.
 
-The plan to close this gap aligns with the Phase D pip-install plan
-already documented in `deploy/litellm/klai_service_auth.py` and
-`deploy/litellm/klai_chat_prompts.py`: build a custom litellm
-Dockerfile that `pip install`s `klai-chat-prompts` AND
-`lingua-language-detector`, then add an `async_post_call_success_hook`
-emit in `klai_knowledge.py` that mirrors the existing emits in
-`partner_chat.py` (path B) and `synthesis.py` (path C).
+Do NOT revive the old plan of building a custom image that pip-installs
+`lingua-language-detector`. Lingua has no source distribution on PyPI — only
+~170 MB platform wheels — so it cannot be vendored, and it was measurably
+worse than the vendored identifier on the short utterances this chat actually
+receives. It was removed from every service on 2026-09-15.
 
-Until then, path-A coverage of the rolling 7-day language-correctness
-gate (REQ-05) comes from:
+Until the path-A emit lands, path-A coverage of the rolling 7-day
+language-correctness gate (REQ-05) comes from:
 
 1. The pre-merge eval gate (`evaluation/cross_lingual_runner.py`) —
    exercises path C against the same prompt foundation as path A
@@ -57,8 +57,8 @@ gate (REQ-05) comes from:
 |---|---|---|
 | `event` | string | hardcoded `chat_synthesis_complete` |
 | `service` | string | `litellm`, `retrieval-api`, or `portal-api` (see table above) |
-| `query_language_detected` | string | `lingua` detection on the user's last query — `nl`, `en`, `de`, `fr`, `pt`, `es`, or `und` |
-| `response_language_detected` | string | `lingua` detection on the assembled LLM response |
+| `query_language_detected` | string | `identify_text_language` on the user's last query — `nl`, `en`, `de`, `fr`, `pt`, `es`, or `und` when it abstains |
+| `response_language_detected` | string | `identify_text_language` on the assembled LLM response |
 | `language_correctness` | bool \| null | `true` when both languages are known and match, `false` when known and mismatched, `null` when either side is `und` |
 | `response_length_chars` | int | length of the response text (trace-level signal) |
 | `org_id` | int \| string \| null | tenant id (only emitted by partner_chat — path B) |
@@ -145,3 +145,25 @@ Both `query_language_detected` and `response_language_detected` are
 high-level metadata (one-of `nl|en|de|fr|pt|es|und`). They do **not**
 contain user content. The `response_length_chars` field is an integer
 length only.
+
+## One identifier, and where the series breaks (2026-09-15)
+
+Both sides of this event are measured with `klai_chat_prompts.language`,
+the same module that decides the response-language target in the prompt.
+Before 2026-09-15 the two `*_language_detected` fields came from `lingua`
+instead, behind a 30-character minimum that returned `und` for roughly a
+quarter of all turns — and those were the short turns where the model is
+most likely to answer in the wrong language, so the old series flattered
+itself by not measuring its hardest cases.
+
+Consequences when reading a chart across that date:
+
+- The denominator grows. Fewer turns are `und`, so more turns are scored.
+- The rate is therefore NOT comparable across the cutover. Filter to one
+  side of it, or annotate the chart.
+- A drop right after the cutover is expected and is not a regression; it
+  is previously invisible failures becoming visible.
+
+Re-baseline REQ-05 on measurements taken after this date, not on the
+pre-cutover number. `git log -- docs/runbooks/multilingual-chat-observability.md`
+has the old wording if you need to reconstruct how the old series was built.

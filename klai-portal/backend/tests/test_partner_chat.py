@@ -82,7 +82,9 @@ def test_llm_messages_strip_widget_metadata():
 
     augmented = _augment_messages_with_system_prompt(messages, "system prompt")
 
-    assert augmented == [
+    # The trailing element is the response-language contract, asserted on its own
+    # in test_augment_messages_ends_with_the_response_language_contract.
+    assert augmented[:-1] == [
         {"role": "system", "content": "system prompt"},
         {"role": "user", "content": "What is Klai?"},
         {"role": "assistant", "content": "Klai is an AI workspace. (1)"},
@@ -1587,6 +1589,72 @@ def test_augment_messages_adds_page_context_as_untrusted_user_context():
     assert messages[2] == {"role": "user", "content": "Wat betekent deze knop?"}
 
 
+def test_augment_messages_ends_with_the_response_language_contract():
+    """An English opener after the widget's Dutch welcome line must answer in English.
+
+    Reported on the Voys widget (conversation #495, 2026-09-14): the visitor
+    opened with "Hi do you speak english" and got a Dutch reply. The widget
+    replays its seeded welcome line as an assistant turn on every request, so
+    the model saw Dutch immediately before the question, with the language rules
+    thousands of characters earlier in the system prompt.
+    """
+    from app.services.partner_chat import _augment_messages_with_system_prompt
+
+    messages = _augment_messages_with_system_prompt(
+        [
+            {"role": "assistant", "content": "Hoi! Waar kan ik je mee helpen?"},
+            {"role": "user", "content": "Hi do you speak english"},
+        ],
+        "System rules",
+    )
+
+    assert messages[-1]["role"] == "system"
+    assert messages[-1]["content"].startswith("[FINAL RESPONSE LANGUAGE] Respond in English.")
+
+
+def test_augment_messages_language_contract_ignores_dutch_page_context():
+    """Page context enters the payload as a user turn — it must not vote.
+
+    The excerpt is scraped from the page the widget sits on, so on a Dutch site
+    every English question would arrive next to Dutch prose in a user-role
+    message. The decision is therefore taken on the caller's list, before the
+    page-context block is inserted.
+    """
+    from app.services.partner_chat import _augment_messages_with_system_prompt
+
+    messages = _augment_messages_with_system_prompt(
+        [{"role": "user", "content": "How do I change my invoice address?"}],
+        "System rules",
+        {
+            "url": "https://www.voys.nl/klantenservice",
+            "path": "/klantenservice",
+            "title": "Klantenservice",
+            "excerpt": "Alles over onze telefooncentrale, je nummers en de facturen die je ontvangt.",
+        },
+    )
+
+    assert "Untrusted current page context" in messages[1]["content"]
+    assert messages[-1]["content"].startswith("[FINAL RESPONSE LANGUAGE] Respond in English.")
+
+
+def test_augment_messages_language_contract_survives_a_chunkless_turn():
+    """KB_CONTEXT_LANGUAGE_REMINDER is only in the prompt when chunks are.
+
+    _build_system_prompt returns early on an empty chunk list, so on a failed or
+    empty retrieval the language rules used to sit only at the very top of the
+    system prompt. The contract below is appended regardless of retrieval.
+    """
+    from app.services.partner_chat import _augment_messages_with_system_prompt, _build_system_prompt
+
+    prompt = _build_system_prompt([], support_mode=True, backend_managed_citations=True)
+    assert "[LANGUAGE REMINDER]" not in prompt
+
+    messages = _augment_messages_with_system_prompt(
+        [{"role": "user", "content": "Hi do you speak english"}], prompt
+    )
+    assert messages[-1]["content"].startswith("[FINAL RESPONSE LANGUAGE] Respond in English.")
+
+
 def test_build_system_prompt_can_leave_citations_to_backend():
     """Widget prompts should not invite the model to write source markers."""
     from app.services.partner_chat import _build_system_prompt
@@ -2685,13 +2753,11 @@ def test_language_correctness_log_does_not_duplicate_structlog_event(monkeypatch
 
     logger = MagicMock()
     monkeypatch.setattr(partner_chat, "logger", logger)
-    monkeypatch.setattr(partner_chat, "detect_language", MagicMock(return_value="nl"))
-    monkeypatch.setattr(partner_chat, "language_correctness", MagicMock(return_value=True))
 
     partner_chat._emit_language_correctness_log(
         org_id=1,
-        query="Wat verzamelt Klai?",
-        response_text="Klai verzamelt accountgegevens.",
+        query="Wat verzamelt Klai precies aan gegevens over mij?",
+        response_text="Klai verzamelt alleen accountgegevens en gebruiksstatistieken.",
     )
 
     logger.info.assert_called_once()
@@ -2699,6 +2765,11 @@ def test_language_correctness_log_does_not_duplicate_structlog_event(monkeypatch
     assert args == ("chat_synthesis_complete",)
     assert "event" not in kwargs
     assert kwargs["org_id"] == 1
+    # Not mocked: the same identifier that steers the prompt scores both sides,
+    # so this also pins that a Dutch turn answered in Dutch counts as correct.
+    assert kwargs["query_language_detected"] == "nl"
+    assert kwargs["response_language_detected"] == "nl"
+    assert kwargs["language_correctness"] is True
     # No chunk count passed → logged as None, so no-chunks answers stay
     # distinguishable from chunks-present answers in VictoriaLogs.
     assert kwargs["chunks_injected"] is None
@@ -2710,19 +2781,21 @@ def test_language_correctness_log_records_chunks_injected(monkeypatch):
 
     logger = MagicMock()
     monkeypatch.setattr(partner_chat, "logger", logger)
-    monkeypatch.setattr(partner_chat, "detect_language", MagicMock(return_value="en"))
-    monkeypatch.setattr(partner_chat, "language_correctness", MagicMock(return_value=True))
 
     partner_chat._emit_language_correctness_log(
         org_id=1,
-        query="What does Klai collect?",
-        response_text="Klai collects account data.",
+        query="What exactly does Klai collect about me?",
+        response_text="Klai verzamelt alleen accountgegevens en gebruiksstatistieken.",
         chunks_injected=4,
     )
 
     logger.info.assert_called_once()
     _, kwargs = logger.info.call_args
     assert kwargs["chunks_injected"] == 4
+    # The reported failure shape: English question, Dutch answer, counted wrong.
+    assert kwargs["query_language_detected"] == "en"
+    assert kwargs["response_language_detected"] == "nl"
+    assert kwargs["language_correctness"] is False
 
 
 @pytest.mark.asyncio
