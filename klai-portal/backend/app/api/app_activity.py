@@ -283,6 +283,23 @@ UPDATE answer_reviews
    AND org_id = :org_id
 """
 
+_RETYPE_GAP_SQL = """
+UPDATE portal_retrieval_gaps
+   SET gap_type = :gap_type
+ WHERE id = :gap_id
+   AND org_id = :org_id
+   AND resolved_at IS NULL
+"""
+
+_OPEN_GAPS_SQL = """
+SELECT conversation_id, COUNT(*) AS open_gaps
+  FROM portal_retrieval_gaps
+ WHERE org_id = :org_id
+   AND resolved_at IS NULL
+   AND conversation_id = ANY(:ids)
+ GROUP BY conversation_id
+"""
+
 _RESOLVE_GAP_SQL = """
 UPDATE portal_retrieval_gaps
    SET resolved_at = NOW()
@@ -588,6 +605,10 @@ async def _load_candidates(
     ids = [row.id for row in rows]
     turns = {t.conversation_id: t for t in (await db.execute(text(_TURNS_SQL), {"ids": ids, "org_id": org_id})).all()}
     judges = {j.conversation_id: j for j in (await db.execute(text(_JUDGES_SQL), {"ids": ids})).all()}
+    open_gaps = {
+        g.conversation_id: int(g.open_gaps)
+        for g in (await db.execute(text(_OPEN_GAPS_SQL), {"ids": ids, "org_id": org_id})).all()
+    }
     review_rows: dict[int, list[Any]] = {}
     for review in (await db.execute(text(_REVIEWS_SQL), {"ids": ids, "org_id": org_id})).all():
         review_rows.setdefault(review.conversation_id, []).append(review)
@@ -621,6 +642,7 @@ async def _load_candidates(
                     ),
                     ratings=RatingsOut(up=turn.ratings_up if turn else 0, down=turn.ratings_down if turn else 0),
                     review=_review_summary(review_rows.get(row.id, [])),
+                    open_gap_count=open_gaps.get(row.id, 0),
                 ),
                 refused_turns=turn.refused_turns if turn else 0,
             )
@@ -859,30 +881,34 @@ async def _sync_review_gap(
     """Keep the gaps dashboard in step with the review's cause.
 
     A knowledge cause files one gap under the visitor's question (reused on a
-    re-review, so a second PUT never opens a second gap); any other cause
-    resolves the gap the review had opened. The gap write must not cost the
-    reviewer their review: on failure the review stands with gap_id NULL and
-    one warning says why.
+    re-review, only its type follows the cause, so a second PUT never opens a
+    second gap); any other cause resolves the gap the review had opened. The
+    gap work must not cost the reviewer their review, which is already
+    committed: on any failure the review stands and one warning says why.
     """
     gap_type = _GAP_TYPE_FOR_CAUSE.get(body.cause)
     scope = {"message_id": message.id, "org_id": perms.org_id}
-    if gap_type is None:
-        if existing_gap_id is not None:
-            await db.execute(text(_RESOLVE_GAP_SQL), {"gap_id": existing_gap_id, "org_id": perms.org_id})
-            await db.execute(text(_SET_REVIEW_GAP_SQL), {**scope, "gap_id": None})
-            await db.commit()
-        return
-    if existing_gap_id is not None:
-        return
-    question = (
-        await db.execute(
-            text(_PRECEDING_QUESTION_SQL),
-            {"conversation_id": message.conversation_id, "sequence": message.sequence},
-        )
-    ).first()
-    if question is None:
-        return
     try:
+        if gap_type is None:
+            if existing_gap_id is not None:
+                await db.execute(text(_RESOLVE_GAP_SQL), {"gap_id": existing_gap_id, "org_id": perms.org_id})
+                await db.execute(text(_SET_REVIEW_GAP_SQL), {**scope, "gap_id": None})
+                await db.commit()
+            return
+        if existing_gap_id is not None:
+            await db.execute(
+                text(_RETYPE_GAP_SQL), {"gap_id": existing_gap_id, "org_id": perms.org_id, "gap_type": gap_type}
+            )
+            await db.commit()
+            return
+        question = (
+            await db.execute(
+                text(_PRECEDING_QUESTION_SQL),
+                {"conversation_id": message.conversation_id, "sequence": message.sequence},
+            )
+        ).first()
+        if question is None:
+            return
         result = await record_gap_event(
             db,
             zitadel_org_id=perms.zitadel_org_id,
@@ -894,13 +920,19 @@ async def _sync_review_gap(
             chunks_retrieved=int(signals.get("sources_count") or 0),
             caller_client_id=_HUMAN_REVIEW_CALLER,
             conversation_id=message.conversation_id,
-            language=message.language_detected,
+            language=_question_language(message, signals),
         )
         if result.gap_id is not None:
             await db.execute(text(_SET_REVIEW_GAP_SQL), {**scope, "gap_id": result.gap_id})
             await db.commit()
     except Exception:
         logger.warning("activity_review_gap_failed", exc_info=True)
+
+
+def _question_language(message: Any, signals: dict[str, Any]) -> str | None:
+    """The conversation's detected language, or the answer's signal when the
+    conversation row predates the widget path writing it (phase 0 rows)."""
+    return message.language_detected or signals.get("language")
 
 
 @router.put("/messages/{message_id}/review", response_model=ReviewOut)
@@ -942,8 +974,8 @@ async def put_review(
         band_at_review=signals.get("band") or "unknown",
         judge_outcome_at_review=judged.outcome if judged is not None else None,
         judge_failure_category_at_review=judged.failure_category if judged is not None else None,
-        language=message.language_detected,
-        # Phase 2 links a review to the gap it produced.
+        language=_question_language(message, signals),
+        # Phase 2 links a review to the gap it produced (see _sync_review_gap).
         gap_id=None,
     )
     upsert = insert_stmt.on_conflict_do_update(

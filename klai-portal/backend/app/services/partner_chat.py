@@ -2259,6 +2259,9 @@ def _schedule_gap_event(
     # audit trail either.
     audit_widget_id: str | None = None,
     audit_session_key: str | None = None,
+    # The user-turn audit write of this request, when the caller started one:
+    # the gap task waits for it so a first-turn gap still finds its conversation.
+    audit_write: asyncio.Future[Any] | None = None,
 ) -> None:
     """Gap detection + fire-and-forget registration for the widget / partner pad.
 
@@ -2307,6 +2310,10 @@ def _schedule_gap_event(
             # never from this caller), and stays in this fire-and-forget task
             # so a slow or broken read cannot touch the chat request.
             conversation_id: int | None = None
+            if audit_write is not None:
+                # Bounded wait: the audit write is best-effort and may itself
+                # fail; a gap without provenance beats a gap that never lands.
+                await asyncio.wait({audit_write}, timeout=5)
             if audit_widget_id is not None and audit_session_key is not None:
                 try:
                     conversation_id = await find_conversation_id(
@@ -2321,11 +2328,9 @@ def _schedule_gap_event(
                         gap_type=gap_type,
                         exc_info=True,
                     )
-            # ``conversation_id`` is NULL when the row does not exist yet: the
-            # user-turn audit write is a separate fire-and-forget task started
-            # in the same request and can lose the race against this one. The
-            # gap is still worth recording; provenance can wait for the next
-            # turn's gap.
+            # ``conversation_id`` stays NULL when the audit write failed or was
+            # never started (partner-key traffic); the gap is still worth
+            # recording.
             try:
                 async with tenant_scoped_session(org_id) as session:
                     result = await record_gap_event(
@@ -2390,6 +2395,7 @@ async def retrieve_context(
     # ``_schedule_gap_event``.
     audit_widget_id: str | None = None,
     audit_session_key: str | None = None,
+    audit_write: asyncio.Future[Any] | None = None,
 ) -> tuple[list[dict], str, list[dict[str, Any]], bool]:
     """Call retrieval-api and return (chunks, augmented_system_prompt, trusted_sources, broad).
 
@@ -2595,6 +2601,7 @@ async def retrieve_context(
         is_preview=is_preview,
         audit_widget_id=audit_widget_id,
         audit_session_key=audit_session_key,
+        audit_write=audit_write,
     )
 
     return chunks, system_prompt, ([] if broad else trusted_sources), broad

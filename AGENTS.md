@@ -156,7 +156,7 @@ Portal design (.pen files): see `.claude/rules/klai/design/pen-files.md` (loads 
 
 ## Production bugfix gate
 
-Steps 1–5 apply to class M and L fixes (see the global size-before-shape rule),
+Steps 1–5 apply to class M and L fixes (the size class is measured on the PR diff),
 and to any bug touching auth, tenancy, data loss, money or a multi-path helper.
 For a class S fix (one reproduced cause, one place) the gate is: reproduce with
 data, one failing test that names the symptom, patch, full suite green, and the

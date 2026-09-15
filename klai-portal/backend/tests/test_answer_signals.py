@@ -335,3 +335,15 @@ def test_language_is_the_visitor_question_language():
     sink = _fill([_chunk(0.7)], query="How do I reset my password for the desk phone?")
 
     assert sink["language"] == "en"
+
+
+@pytest.mark.asyncio
+async def test_user_turn_carries_the_question_language(monkeypatch):
+    """The conversation row's language is what the knowledge side filters and
+    groups on; it comes from the visitor's first question, written by the
+    route, not left for a later pass."""
+    record, _body = await _widget_chat(monkeypatch, model_text=ANSWER_TEXT, chunks=[_chunk(0.71)], stream=False)
+
+    user_turns = [c.kwargs for c in record.await_args_list if c.kwargs.get("role") == "user"]
+    assert user_turns, "record_widget_turn never wrote the user turn"
+    assert user_turns[0]["language_detected"] == "nl"

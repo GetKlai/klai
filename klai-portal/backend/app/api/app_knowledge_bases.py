@@ -109,6 +109,8 @@ async def _qdrant_count_for_kb(zitadel_org_id: str, kb_slug: str) -> int | None:
         return None
 
 
+_RESERVED_KB_SLUGS = frozenset({"activity", "gaps"})
+
 router = APIRouter(prefix="/api/app", tags=["app-knowledge-bases"])
 
 
@@ -572,6 +574,15 @@ async def create_app_knowledge_base(
         await assert_can_create_personal_kb(user_id=perms.user_id, org=org, db=db, role=perms.role)
     elif body.owner_type == "org":
         await assert_can_create_org_kb(org=org, role=perms.role)
+
+    # /app/knowledge/<slug> is also where the static activity and gaps screens
+    # live (SPEC-KNOWLEDGE-ACTIVITY-001); a KB with one of those slugs would be
+    # unreachable because the router prefers the static route.
+    if body.slug in _RESERVED_KB_SLUGS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"slug '{body.slug}' is reserved",
+        )
 
     owner_user_id = perms.user_id if body.owner_type == "user" else None
 

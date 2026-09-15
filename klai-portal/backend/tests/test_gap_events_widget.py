@@ -357,3 +357,36 @@ async def test_widget_gap_survives_conversation_lookup_failure(monkeypatch):
     assert mock_record.await_args.kwargs["conversation_id"] is None
     assert len(mock_logger.warning.call_args_list) == 1
     assert mock_logger.warning.call_args_list[0].args[0] == "partner_chat_gap_conversation_lookup_failed"
+
+
+@pytest.mark.asyncio
+async def test_widget_gap_waits_for_the_user_turn_audit_write(monkeypatch):
+    """First-turn provenance: the conversation row is created by the user-turn
+    audit task started in the same request. The gap task waits for that task
+    before looking the row up, so a single-turn gap still links to its
+    conversation instead of racing the insert and losing."""
+    loop = asyncio.get_running_loop()
+    audit_write: asyncio.Future[None] = loop.create_future()
+    seen_done: list[bool] = []
+
+    async def _lookup(**_kwargs: Any) -> int:
+        seen_done.append(audit_write.done())
+        return 77
+
+    captured: dict[str, Any] = {}
+    _patch_retrieve(monkeypatch, {"chunks": []})
+    monkeypatch.setattr("app.services.partner_chat.tenant_scoped_session", _fake_tenant_session(captured))
+    with (
+        patch("app.services.partner_chat.find_conversation_id", AsyncMock(side_effect=_lookup)),
+        patch("app.services.partner_chat.record_gap_event", AsyncMock()) as mock_record,
+    ):
+        await _call_retrieve_context(
+            audit_widget_id="11111111-1111-1111-1111-111111111111",
+            audit_session_key="sk",
+            audit_write=audit_write,
+        )
+        loop.call_later(0.05, audit_write.set_result, None)
+        await _drain_gap_tasks()
+
+    assert seen_done == [True]
+    assert mock_record.await_args.kwargs["conversation_id"] == 77

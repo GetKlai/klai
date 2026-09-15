@@ -19,6 +19,7 @@ from urllib.parse import urlsplit
 import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from klai_chat_prompts.language import identify_text_language
 from pydantic import BaseModel, Field, ValidationError
 from redis.exceptions import RedisError
 from sqlalchemy import select, text
@@ -1780,6 +1781,36 @@ async def chat_completions(  # noqa: C901
             audit_ip_hash = hash_audit_value(http_request.client.host if http_request.client else None)
             audit_ua_hash = hash_audit_value(http_request.headers.get("user-agent"))
 
+    # The user turn is written before retrieval so the gap task can wait for
+    # the conversation row instead of racing it (first-turn gaps used to lose
+    # their provenance). Still fire-and-forget: the chat never waits on it.
+    user_turn_write: asyncio.Task[None] | None = None
+    if is_widget_chat and audit_widget_id is not None:
+        last_user_msg = next(
+            (str(m.get("content", "")) for m in reversed(request.messages) if m.get("role") == "user"),
+            "",
+        )
+        if audit_session_key and last_user_msg:
+            user_turn_write = asyncio.create_task(
+                record_widget_turn(
+                    widget_id=audit_widget_id,
+                    session_key=audit_session_key,
+                    role="user",
+                    content=last_user_msg,
+                    ip_hash=audit_ip_hash,
+                    user_agent_hash=audit_ua_hash,
+                    # The visitor's question language; COALESCE on the row keeps
+                    # the first detected value for the conversation.
+                    language_detected=identify_text_language(last_user_msg) or None,
+                    loaded_origin=http_request.headers.get("origin") or None,
+                    is_preview=getattr(auth, "is_preview", False),
+                    visitor_name=request.visitor_name,
+                    visitor_email=request.visitor_email,
+                )
+            )
+            _pending.add(user_turn_write)
+            user_turn_write.add_done_callback(_pending.discard)
+
     # SPEC-PARTNER-KB-SCOPE-001 invariant: when retrieval is enabled,
     # kb_slugs must never be empty here — retrieve_context() only sends
     # kb_slugs to retrieval-api when the list is truthy, and an empty list
@@ -1813,6 +1844,7 @@ async def chat_completions(  # noqa: C901
             is_preview=getattr(auth, "is_preview", False),
             audit_widget_id=audit_widget_id,
             audit_session_key=audit_session_key,
+            audit_write=user_turn_write,
             retrieval_query=knowledge.query if knowledge is not None else None,
             top_k=knowledge.top_k if knowledge is not None and knowledge.top_k is not None else 8,
             retrieval_enabled=knowledge.enabled if knowledge is not None else True,
@@ -1904,29 +1936,6 @@ async def chat_completions(  # noqa: C901
     # assistant turn once the response is composed. Fire-and-forget so
     # an audit hiccup never breaks the chat. The identity these writes use
     # was resolved in step 6a, before retrieval. SPEC-WIDGET-ACTIVITY-001.
-    if is_widget_chat and audit_widget_id is not None:
-        last_user_msg = next(
-            (str(m.get("content", "")) for m in reversed(request.messages) if m.get("role") == "user"),
-            "",
-        )
-        if audit_session_key and last_user_msg:
-            task = asyncio.create_task(
-                record_widget_turn(
-                    widget_id=audit_widget_id,
-                    session_key=audit_session_key,
-                    role="user",
-                    content=last_user_msg,
-                    ip_hash=audit_ip_hash,
-                    user_agent_hash=audit_ua_hash,
-                    loaded_origin=http_request.headers.get("origin") or None,
-                    is_preview=getattr(auth, "is_preview", False),
-                    visitor_name=request.visitor_name,
-                    visitor_email=request.visitor_email,
-                )
-            )
-            _pending.add(task)
-            task.add_done_callback(_pending.discard)
-
     audit_ready = is_widget_chat and audit_widget_id is not None and audit_session_key is not None
     (
         allowed_source_urls,

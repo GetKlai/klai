@@ -154,4 +154,4 @@ lint: ## Run linters (ruff + eslint)
 
 check: ## Run type checks (pyright + tsc)
 	cd $(BACKEND_DIR) && uv run pyright
-	cd $(FRONTEND_DIR) && npx tsc --noEmit
+	cd $(FRONTEND_DIR) && npx tsc -b

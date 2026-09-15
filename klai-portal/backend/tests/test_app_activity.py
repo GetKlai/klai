@@ -80,9 +80,11 @@ class FakeSession:
         summary_by_language: list[Any] | None = None,
         question: Any | None = None,
         review_gap_id: int | None = None,
+        open_gaps: list[Any] | None = None,
     ) -> None:
         self.question = question
         self.review_gap_id = review_gap_id
+        self.open_gaps = open_gaps or []
         self.conversations = conversations or []
         self.turns = turns or []
         self.judges = judges or []
@@ -167,6 +169,8 @@ class FakeSession:
             return _Rows([self.question] if self.question else [])
         if sql.startswith("SELECT gap_id FROM answer_reviews"):
             return _Rows([SimpleNamespace(gap_id=self.review_gap_id)])
+        if "FROM portal_retrieval_gaps" in sql:
+            return _Rows(self.open_gaps)
         return None
 
     async def commit(self) -> None:
@@ -869,3 +873,45 @@ async def test_delete_review_resolves_the_gap_it_opened() -> None:
     assert response.status_code == 204
     assert db.params_for("UPDATE portal_retrieval_gaps SET resolved_at") == [{"gap_id": 77, "org_id": 101}]
     assert db.params_for("DELETE FROM answer_reviews") == [{"message_id": 9002, "org_id": 101}]
+
+
+@pytest.mark.asyncio
+async def test_list_counts_open_gaps_per_conversation() -> None:
+    db = FakeSession(
+        conversations=[_conv(255)],
+        open_gaps=[SimpleNamespace(conversation_id=255, open_gaps=2)],
+    )
+    response = await _call(db, _perms("kb_manager"), "get", "/api/app/activity/conversations?queue=false")
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["open_gap_count"] == 2
+    assert db.params_for("SELECT conversation_id, COUNT(*) AS open_gaps")[0]["org_id"] == 101
+
+
+@pytest.mark.asyncio
+async def test_re_review_with_another_knowledge_cause_retypes_the_gap() -> None:
+    db = FakeSession(
+        message=_assistant_message_row(),
+        reviewed_returning=SimpleNamespace(reviewed_at=T0, gap_id=77),
+    )
+    _response, mock = await _put_with_gap_mock(db, _review_body(verdict="wrong", cause="knowledge_wrong"))
+
+    mock.assert_not_awaited()
+    assert db.params_for("UPDATE portal_retrieval_gaps SET gap_type") == [
+        {"gap_id": 77, "org_id": 101, "gap_type": "soft"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_review_language_falls_back_to_the_answer_signal() -> None:
+    """Conversations written before the widget path stored the question
+    language have language_detected NULL; the answer signal carries it."""
+    db = FakeSession(
+        message=_assistant_message_row(language_detected=None, answer_signals={"band": "low", "language": "en"}),
+        question=SimpleNamespace(content="How do I reset my password?"),
+    )
+    _response, mock = await _put_with_gap_mock(db, _review_body(verdict="wrong", cause="knowledge_missing"))
+
+    assert mock.await_args.kwargs["language"] == "en"
+    params = db.statements_starting_with("INSERT INTO answer_reviews")[-1].compile().params
+    assert params["language"] == "en"

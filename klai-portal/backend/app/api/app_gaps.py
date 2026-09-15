@@ -156,7 +156,16 @@ async def list_gaps(
             PortalRetrievalGap.conversation_id.isnot(None),
             PortalRetrievalGap.query_text.in_({r.query_text for r in rows}),
         )
-        .order_by(PortalRetrievalGap.occurred_at.desc(), PortalRetrievalGap.id.desc())
+        # DISTINCT ON keeps one row per group in PostgreSQL instead of streaming
+        # every occurrence of a frequent question to pick the newest here.
+        .distinct(PortalRetrievalGap.query_text, PortalRetrievalGap.gap_type, PortalRetrievalGap.language)
+        .order_by(
+            PortalRetrievalGap.query_text,
+            PortalRetrievalGap.gap_type,
+            PortalRetrievalGap.language,
+            PortalRetrievalGap.occurred_at.desc(),
+            PortalRetrievalGap.id.desc(),
+        )
     )
     conversation_by_group: dict[tuple[str, str, str | None], int] = {}
     for row in conv_result.all():
