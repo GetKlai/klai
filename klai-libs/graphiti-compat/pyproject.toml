@@ -3,7 +3,7 @@ name = "klai-graphiti-compat"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "graphiti-core[falkordb]>=0.29,<0.30",
+    "graphiti-core[falkordb]>=0.30,<0.31",
 ]
 
 [project.optional-dependencies]
