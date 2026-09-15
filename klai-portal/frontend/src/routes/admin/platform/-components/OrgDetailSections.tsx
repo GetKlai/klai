@@ -233,11 +233,15 @@ export function WidgetRetentionSection({
   const [days, setDays] = useState('')
   const [saved, setSaved] = useState(false)
 
+  // Keyed on the stored value, not the response object: re-seeding the field
+  // on every new object identity would wipe what the admin is typing.
+  const storedDays = retention.data?.days
+  const storedLoaded = retention.data !== undefined
   useEffect(() => {
-    if (retention.data) {
-      setDays(retention.data.days === null ? '' : String(retention.data.days))
+    if (storedLoaded) {
+      setDays(storedDays == null ? '' : String(storedDays))
     }
-  }, [retention.data])
+  }, [storedLoaded, storedDays])
 
   function save(value: number | null) {
     updateRetention.mutate(value, {
