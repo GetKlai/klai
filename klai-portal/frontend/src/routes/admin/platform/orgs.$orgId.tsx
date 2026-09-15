@@ -11,8 +11,6 @@ import {
   MessageSquare,
   Settings,
   BarChart3,
-  ThumbsDown,
-  ThumbsUp,
   Users,
   X,
 } from 'lucide-react'
@@ -45,9 +43,13 @@ import type {
   PlatformUsageRange,
 } from './-types'
 import { PageContainer } from '@/components/ui/page-container'
-// REQ-9 (Finding B-9): reuse the tested URL-scheme allowlist for conversation
-// source links rather than re-implementing it here.
-import { _isSafeHttpUrl } from '../widgets/_components/tabs/ActivityTab'
+// SPEC-KNOWLEDGE-ACTIVITY-001 §4.3: transcript and judge panel come from the
+// shared feature, not from the tenant-side drawer any more.
+import {
+  ConversationTranscript,
+  QualityPanel,
+  type ConversationQuality,
+} from '@/features/chat-activity'
 
 type TabId =
   | 'features'
@@ -393,48 +395,6 @@ function ConversationsSection({
   )
 }
 
-/**
- * REQ-3 (SPEC-CHAT-QUALITY-LOOP-001): the nightly judge's verdict via the
- * platform cross-tenant sidecar endpoint. Local shape, mirroring the
- * tenant-side drawer in widgets/…/ActivityTab.tsx — deliberately not shared.
- */
-interface PlatformConversationQuality {
-  outcome: string
-  failure_category: string | null
-  reasoning: string | null
-  confidence: string | null
-  suggested_action: string | null
-  judged_at: string | null
-}
-
-/** Outcome → existing Badge semantic variant; no ad-hoc colors. */
-const OUTCOME_BADGE_VARIANT: Record<string, 'success' | 'warning' | 'secondary'> = {
-  resolved: 'success',
-  partially_resolved: 'success',
-  escalated: 'warning',
-  unresolved: 'secondary',
-  abandoned_early: 'secondary',
-  out_of_scope: 'secondary',
-}
-
-/** Judge verdict panel. Renders only when a judgment exists — a 404
- * ("not judged yet") is normal and shows nothing. */
-function QualityPanel({ quality }: { quality: PlatformConversationQuality }) {
-  return (
-    <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
-      <Badge variant={OUTCOME_BADGE_VARIANT[quality.outcome] ?? 'secondary'}>
-        {quality.outcome}
-      </Badge>
-      {quality.reasoning && (
-        <p className="mt-2 text-xs leading-5 text-gray-600">{quality.reasoning}</p>
-      )}
-      {quality.suggested_action && (
-        <p className="mt-1.5 text-xs leading-5 text-gray-700">{quality.suggested_action}</p>
-      )}
-    </div>
-  )
-}
-
 function PlatformConversationDrawer({
   widgetId,
   convId,
@@ -457,7 +417,7 @@ function PlatformConversationDrawer({
   const qualityQuery = useQuery({
     queryKey: ['platform-bot-conversation-quality', widgetId, convId],
     queryFn: () =>
-      apiFetch<PlatformConversationQuality>(
+      apiFetch<ConversationQuality>(
         `/api/admin/platform/bots/${widgetId}/conversations/${convId}/quality`,
       ),
     enabled: !!convId && auth.isAuthenticated,
@@ -506,64 +466,7 @@ function PlatformConversationDrawer({
               Kon gesprek niet laden.
             </p>
           )}
-          {query.data?.messages.map((msg) => (
-            <div
-              key={msg.id}
-              className={
-                msg.role === 'user'
-                  ? 'ml-auto max-w-[85%] rounded-2xl rounded-br-md bg-gray-900 px-4 py-2.5 text-sm text-white whitespace-pre-wrap'
-                  : 'mr-auto max-w-[85%] rounded-2xl rounded-bl-md bg-[var(--color-rl-cream)] px-4 py-2.5 text-sm text-gray-900 whitespace-pre-wrap'
-              }
-            >
-              {msg.content}
-              {msg.role === 'assistant' &&
-                msg.sources &&
-                msg.sources.length > 0 && (
-                  <ul className="mt-2 flex flex-wrap gap-1.5">
-                    {msg.sources.map((s) => (
-                      <li key={`${msg.id}-${s.label}`}>
-                        {/* REQ-9: only http/https schemes render as anchors */}
-                        {_isSafeHttpUrl(s.url) ? (
-                          <a
-                            href={s.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            title={s.title}
-                            className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[0.6875rem] text-gray-700 klai-hover"
-                          >
-                            <span className="font-medium">({s.label})</span>
-                            <span className="truncate max-w-[12rem]">{s.title}</span>
-                          </a>
-                        ) : (
-                          <span
-                            title={s.title}
-                            className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[0.6875rem] text-gray-700"
-                          >
-                            <span className="font-medium">({s.label})</span>
-                            <span className="truncate max-w-[12rem]">{s.title}</span>
-                          </span>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              {msg.role === 'assistant' && msg.rating && (
-                msg.rating === 'thumbsUp' ? (
-                  <ThumbsUp
-                    role="img"
-                    aria-label="Door klant beoordeeld met duim omhoog"
-                    className="mt-2 h-3.5 w-3.5 text-[var(--color-success-text)]"
-                  />
-                ) : (
-                  <ThumbsDown
-                    role="img"
-                    aria-label="Door klant beoordeeld met duim omlaag"
-                    className="mt-2 h-3.5 w-3.5 text-[var(--color-destructive)]"
-                  />
-                )
-              )}
-            </div>
-          ))}
+          <ConversationTranscript messages={query.data?.messages ?? []} />
         </div>
       </div>
     </div>
