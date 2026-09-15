@@ -268,3 +268,92 @@ async def test_off_telemetry_level_writes_nothing(monkeypatch):
 
     assert captured["rows"] == []
     captured["session"].commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_widget_gap_records_visitor_question_language(monkeypatch):
+    """§4.5: 'missing in English' is a different gap than 'missing in Dutch'.
+    The language recorded is that of the visitor's question — never the
+    answer, which does not exist yet when the gap is scheduled."""
+    for query, expected in (
+        ("Where do I find the return policy?", "en"),
+        ("Waar vind ik het retourbeleid?", "nl"),
+    ):
+        captured: dict[str, Any] = {}
+        _patch_retrieve(monkeypatch, {"chunks": []})
+        monkeypatch.setattr("app.services.partner_chat.tenant_scoped_session", _fake_tenant_session(captured))
+
+        with patch("app.services.partner_chat.record_gap_event", AsyncMock()) as mock_record:
+            await _call_retrieve_context(messages=[{"role": "user", "content": query}])
+            await _drain_gap_tasks()
+
+        mock_record.assert_awaited_once()
+        assert mock_record.await_args.kwargs["language"] == expected
+
+
+@pytest.mark.asyncio
+async def test_widget_gap_attaches_audit_conversation_id(monkeypatch):
+    """§4.5 provenance: a gap from a widget turn points at the conversation
+    row the audit trail keys on (widget_id, session_key), so the knowledge
+    side can jump to the conversation. When that row does not exist yet —
+    the audit write is fire-and-forget and can lose the race against this
+    one — the gap is still written, just without provenance."""
+    with patch("app.services.partner_chat.find_conversation_id", AsyncMock(return_value=77)) as mock_find:
+        captured: dict[str, Any] = {}
+        _patch_retrieve(monkeypatch, {"chunks": []})
+        monkeypatch.setattr("app.services.partner_chat.tenant_scoped_session", _fake_tenant_session(captured))
+        with patch("app.services.partner_chat.record_gap_event", AsyncMock()) as mock_record:
+            await _call_retrieve_context(audit_widget_id="11111111-1111-1111-1111-111111111111", audit_session_key="sk")
+            await _drain_gap_tasks()
+
+    mock_find.assert_awaited_once_with(
+        widget_id="11111111-1111-1111-1111-111111111111",
+        session_key="sk",
+    )
+    assert mock_record.await_args.kwargs["conversation_id"] == 77
+
+    with patch("app.services.partner_chat.find_conversation_id", AsyncMock(return_value=None)):
+        captured_missing: dict[str, Any] = {}
+        _patch_retrieve(monkeypatch, {"chunks": []})
+        monkeypatch.setattr(
+            "app.services.partner_chat.tenant_scoped_session",
+            _fake_tenant_session(captured_missing),
+        )
+        with patch("app.services.partner_chat.record_gap_event", AsyncMock()) as mock_missing:
+            await _call_retrieve_context(audit_widget_id="11111111-1111-1111-1111-111111111111", audit_session_key="sk")
+            await _drain_gap_tasks()
+
+    mock_missing.assert_awaited_once()
+    assert mock_missing.await_args.kwargs["conversation_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_widget_gap_survives_conversation_lookup_failure(monkeypatch):
+    """Provenance is optional metadata: a failing conversation lookup costs
+    the conversation id, never the gap row and never the chat answer."""
+    captured: dict[str, Any] = {}
+    _patch_retrieve(monkeypatch, {"chunks": []})
+    monkeypatch.setattr("app.services.partner_chat.tenant_scoped_session", _fake_tenant_session(captured))
+    mock_logger = MagicMock()
+    monkeypatch.setattr("app.services.partner_chat.logger", mock_logger)
+
+    with (
+        patch(
+            "app.services.partner_chat.find_conversation_id",
+            AsyncMock(side_effect=RuntimeError("connection reset")),
+        ),
+        patch("app.services.partner_chat.record_gap_event", AsyncMock()) as mock_record,
+    ):
+        chunks, system_prompt, trusted_sources, _broad = await _call_retrieve_context(
+            audit_widget_id="11111111-1111-1111-1111-111111111111",
+            audit_session_key="sk",
+        )
+        await _drain_gap_tasks()
+
+    assert chunks == []
+    assert system_prompt
+    assert trusted_sources == []
+    mock_record.assert_awaited_once()
+    assert mock_record.await_args.kwargs["conversation_id"] is None
+    assert len(mock_logger.warning.call_args_list) == 1
+    assert mock_logger.warning.call_args_list[0].args[0] == "partner_chat_gap_conversation_lookup_failed"

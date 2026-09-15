@@ -1757,6 +1757,29 @@ async def chat_completions(  # noqa: C901
         request.page_context.model_dump(exclude_none=True) if page_context_enabled and request.page_context else None
     )
 
+    # 6a. Widget audit identity, resolved BEFORE retrieval. The gap event the
+    # pad schedules inside retrieve_context must be able to point back at the
+    # conversation the question came from, and (widget_id, session_key) is the
+    # pair the audit writer keys on (SPEC-KNOWLEDGE-ACTIVITY-001 §4.5). Values
+    # and exclusions are unchanged from when this block ran after retrieval:
+    # non-widget traffic and a widget key with no widgets row still get no
+    # audit at all. SPEC-WIDGET-ACTIVITY-001.
+    audit_widget_id: str | None = None
+    audit_session_key: str | None = None
+    audit_ip_hash: str | None = None
+    audit_ua_hash: str | None = None
+    if is_widget_chat:
+        widget_uuid_row = (
+            await db.execute(select(Widget.id).where(Widget.widget_id == str(auth.key_id)))
+        ).scalar_one_or_none()
+        if widget_uuid_row is not None:
+            audit_widget_id = str(widget_uuid_row)
+            bearer = http_request.headers.get("authorization", "")
+            raw_token = bearer.removeprefix("Bearer ").strip()
+            audit_session_key = getattr(auth, "session_key", None) or session_key_from_token(raw_token)
+            audit_ip_hash = hash_audit_value(http_request.client.host if http_request.client else None)
+            audit_ua_hash = hash_audit_value(http_request.headers.get("user-agent"))
+
     # SPEC-PARTNER-KB-SCOPE-001 invariant: when retrieval is enabled,
     # kb_slugs must never be empty here — retrieve_context() only sends
     # kb_slugs to retrieval-api when the list is truthy, and an empty list
@@ -1788,6 +1811,8 @@ async def chat_completions(  # noqa: C901
             broad_mode=bool(request.broad_mode),
             tone_register=tone_register,
             is_preview=getattr(auth, "is_preview", False),
+            audit_widget_id=audit_widget_id,
+            audit_session_key=audit_session_key,
             retrieval_query=knowledge.query if knowledge is not None else None,
             top_k=knowledge.top_k if knowledge is not None and knowledge.top_k is not None else 8,
             retrieval_enabled=knowledge.enabled if knowledge is not None else True,
@@ -1877,43 +1902,30 @@ async def chat_completions(  # noqa: C901
 
     # 7b. Widget audit-trail: log the user turn immediately, and the
     # assistant turn once the response is composed. Fire-and-forget so
-    # an audit hiccup never breaks the chat. SPEC-WIDGET-ACTIVITY-001.
-    audit_widget_id: str | None = None
-    audit_session_key: str | None = None
-    audit_ip_hash: str | None = None
-    audit_ua_hash: str | None = None
-    if is_widget_chat:
-        widget_uuid_row = (
-            await db.execute(select(Widget.id).where(Widget.widget_id == str(auth.key_id)))
-        ).scalar_one_or_none()
-        if widget_uuid_row is not None:
-            audit_widget_id = str(widget_uuid_row)
-            bearer = http_request.headers.get("authorization", "")
-            raw_token = bearer.removeprefix("Bearer ").strip()
-            audit_session_key = getattr(auth, "session_key", None) or session_key_from_token(raw_token)
-            audit_ip_hash = hash_audit_value(http_request.client.host if http_request.client else None)
-            audit_ua_hash = hash_audit_value(http_request.headers.get("user-agent"))
-            last_user_msg = next(
-                (str(m.get("content", "")) for m in reversed(request.messages) if m.get("role") == "user"),
-                "",
-            )
-            if audit_session_key and last_user_msg:
-                task = asyncio.create_task(
-                    record_widget_turn(
-                        widget_id=audit_widget_id,
-                        session_key=audit_session_key,
-                        role="user",
-                        content=last_user_msg,
-                        ip_hash=audit_ip_hash,
-                        user_agent_hash=audit_ua_hash,
-                        loaded_origin=http_request.headers.get("origin") or None,
-                        is_preview=getattr(auth, "is_preview", False),
-                        visitor_name=request.visitor_name,
-                        visitor_email=request.visitor_email,
-                    )
+    # an audit hiccup never breaks the chat. The identity these writes use
+    # was resolved in step 6a, before retrieval. SPEC-WIDGET-ACTIVITY-001.
+    if is_widget_chat and audit_widget_id is not None:
+        last_user_msg = next(
+            (str(m.get("content", "")) for m in reversed(request.messages) if m.get("role") == "user"),
+            "",
+        )
+        if audit_session_key and last_user_msg:
+            task = asyncio.create_task(
+                record_widget_turn(
+                    widget_id=audit_widget_id,
+                    session_key=audit_session_key,
+                    role="user",
+                    content=last_user_msg,
+                    ip_hash=audit_ip_hash,
+                    user_agent_hash=audit_ua_hash,
+                    loaded_origin=http_request.headers.get("origin") or None,
+                    is_preview=getattr(auth, "is_preview", False),
+                    visitor_name=request.visitor_name,
+                    visitor_email=request.visitor_email,
                 )
-                _pending.add(task)
-                task.add_done_callback(_pending.discard)
+            )
+            _pending.add(task)
+            task.add_done_callback(_pending.discard)
 
     audit_ready = is_widget_chat and audit_widget_id is not None and audit_session_key is not None
     (

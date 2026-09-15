@@ -68,6 +68,49 @@ def session_key_from_claims(
     return hash_audit_value(f"{org_id}:{wgt_id}:{jti}", secret)
 
 
+async def find_conversation_id(*, widget_id: str, session_key: str) -> int | None:
+    """Return the ``widget_conversations`` id for (widget_id, session_key).
+
+    Same identification as ``record_widget_turn``: the owning org is derived
+    from the widgets row (REQ-14), never from the caller, and the read then
+    runs on that org's tenant-scoped session so Cat-D RLS applies.
+
+    Returns ``None`` when the row does not exist yet. That is normal, not an
+    error: the audit write is fire-and-forget, so a gap event fired from the
+    same turn can legitimately arrive first
+    (SPEC-KNOWLEDGE-ACTIVITY-001 §4.5).
+
+    DB failures are NOT swallowed here — unlike the audit writer, this
+    helper is called by readers that decide what a missing provenance costs
+    them (see ``_schedule_gap_event`` in app.services.partner_chat).
+    """
+    async with cross_org_session() as lookup_db:
+        row = (
+            await lookup_db.execute(
+                text("SELECT org_id FROM widgets WHERE id = CAST(:widget_id AS uuid)"),
+                {"widget_id": widget_id},
+            )
+        ).first()
+    if row is None:
+        return None
+    org_id = int(row[0])
+
+    async with tenant_scoped_session(org_id) as db:
+        conv_id = (
+            await db.execute(
+                text(
+                    """
+                    SELECT id FROM widget_conversations
+                     WHERE widget_id = CAST(:widget_id AS uuid)
+                       AND session_key = :session_key
+                    """
+                ),
+                {"widget_id": widget_id, "session_key": session_key},
+            )
+        ).scalar_one_or_none()
+    return None if conv_id is None else int(conv_id)
+
+
 async def record_widget_turn(
     *,
     widget_id: str,  # UUID-as-string from widgets.id
