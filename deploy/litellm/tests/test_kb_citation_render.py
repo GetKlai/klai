@@ -78,3 +78,37 @@ def test_path_a_event_never_breaks_a_rendered_answer(caplog):
     """Telemetry runs after rendering; a bad kb_meta must not raise."""
     caplog.set_level(logging.INFO)
     ccr._record_answer_language("Ga naar Beheer.", {"user_query": object()})
+
+
+def test_path_a_event_is_emitted_above_the_container_log_level():
+    """The event must survive a root logger set to WARNING.
+
+    The LiteLLM image runs at WARNING. An info-level emit is dropped before it
+    reaches stdout, which is how this shipped inert once: the code was in the
+    container, three answers rendered, and zero events arrived. Every other line
+    in the module logs at warning for the same reason.
+    """
+    records = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    root = logging.getLogger()
+    handler = _Capture()
+    previous = root.level
+    root.addHandler(handler)
+    root.setLevel(logging.WARNING)
+    try:
+        ccr._record_answer_language(
+            "Go to Settings and open the Billing tab.",
+            {"org_id": 8, "user_query": "How do I change my invoice address?"},
+        )
+    finally:
+        root.removeHandler(handler)
+        root.setLevel(previous)
+
+    assert any(
+        r.getMessage().startswith("{") and '"chat_synthesis_complete"' in r.getMessage()
+        for r in records
+    ), "the event did not survive a WARNING root logger"

@@ -1003,10 +1003,18 @@ def _emit_chat_synthesis_complete(
     """
     try:
         query_language = identify_text_language(str(kb_meta.get("user_query") or ""))
-        _telemetry_logger.info(
+        # WARNING, not info: the LiteLLM container runs its root logger at
+        # WARNING, so an info line is dropped before it reaches stdout. Every
+        # other line in this module logs at warning for the same reason — the
+        # level here is a delivery requirement, not a severity claim, which is
+        # why the payload carries its own "level". Verified in production on
+        # 2026-09-15: three path-A answers rendered, zero events arrived, and
+        # logger.isEnabledFor(INFO) is False inside the container.
+        _telemetry_logger.warning(
             json.dumps(
                 {
                     "event": "chat_synthesis_complete",
+                    "level": "info",
                     "service": "litellm",
                     "org_id": kb_meta.get("org_id"),
                     "request_id": kb_meta.get("request_id"),
