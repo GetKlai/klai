@@ -198,6 +198,14 @@ class PortalOrg(Base):
         default=list,
         server_default=sa.text("'[]'::jsonb"),
     )
+    # @MX:NOTE: per-org override of settings.widget_messages_retention_days
+    # (the 7-day global default, lowered 2026-09-11). NULL means "use the
+    # global default" — most tenants. A non-NULL value is a Klai-staff
+    # decision made per tenant (e.g. Voys keeps 90 days so customers can be
+    # contacted), set via PATCH /api/admin/orgs/{slug}/widget-retention.
+    # CHECK ck_portal_orgs_widget_retention_days (migration 63e87b89aa64)
+    # enforces NULL or 1..365 server-side.
+    widget_messages_retention_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     users: Mapped[list["PortalUser"]] = relationship(back_populates="org")
 

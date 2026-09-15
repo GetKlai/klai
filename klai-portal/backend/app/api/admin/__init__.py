@@ -56,6 +56,7 @@ from .products import router as products_router  # noqa: E402
 from .retry_provisioning import router as retry_provisioning_router  # noqa: E402
 from .settings import router as settings_router  # noqa: E402
 from .users import router as users_router  # noqa: E402
+from .widget_retention import router as widget_retention_router  # noqa: E402
 
 router.include_router(users_router)
 router.include_router(products_router)
@@ -71,6 +72,7 @@ router.include_router(platform_router)
 router.include_router(platform_stats_router)
 router.include_router(platform_messages_router)
 router.include_router(platform_manage_router)
+router.include_router(widget_retention_router)
 
 __all__ = [
     "_require_platform_admin",

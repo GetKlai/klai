@@ -261,7 +261,7 @@ async def test_retention_run_once_skips_delete_when_no_candidates():
         result = await _retention_run_once()
 
     assert result == {"deleted_count": 0, "chunk_count": 0}
-    assert any("SELECT id, conversation_id FROM widget_messages" in sql for sql in captured_sql)
+    assert any("SELECT wm.id, wm.conversation_id" in sql and "FROM widget_messages wm" in sql for sql in captured_sql)
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +344,87 @@ async def test_retention_run_once_uses_settings_retention_days():
 
     # The SQL must have been called with a cutoff param
     assert captured_params, "No SQL params captured — DELETE not issued"
+
+
+# ---------------------------------------------------------------------------
+# SPEC-CHAT-QUALITY-LOOP-001 open item #2 — per-org retention override
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_retention_run_once_applies_per_org_override_over_default():
+    """A 90-day org keeps a 30-day-old conversation; a NULL (default 7) org purges it.
+
+    The candidate SELECT joins portal_orgs and filters on
+    COALESCE(po.widget_messages_retention_days, :default_days). This fakes
+    that join server-side: org 1 has a 90-day override, org 2 has NULL (so
+    the 7-day default applies), and both have one 30-day-old widget_messages
+    row — only org 2's row is old enough to be a delete candidate.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from app.services.widget_messages_retention import _retention_run_once
+
+    now = datetime.now(UTC)
+    thirty_days_ago = now - timedelta(days=30)
+    org_override_days = {1: 90, 2: None}
+    rows = [
+        {"id": 501, "conversation_id": 50, "org_id": 1, "created_at": thirty_days_ago},
+        {"id": 502, "conversation_id": 60, "org_id": 2, "created_at": thirty_days_ago},
+    ]
+
+    captured_select_params: list[dict] = []
+    captured_select_sql: list[str] = []
+    returned_candidates: list[tuple[int, int]] = []
+    served = False
+    db = AsyncMock()
+
+    async def _execute(stmt, params=None, **kwargs):
+        nonlocal served
+        sql = str(stmt)
+        result = MagicMock()
+        if "SELECT wm.id, wm.conversation_id" in sql and "FROM widget_messages wm" in sql:
+            captured_select_params.append(dict(params or {}))
+            captured_select_sql.append(sql)
+            if served:
+                result.all = MagicMock(return_value=[])
+                return result
+            served = True
+            default_days = params["default_days"]
+            candidates = [
+                (row["id"], row["conversation_id"])
+                for row in rows
+                if row["created_at"] < now - timedelta(days=org_override_days[row["org_id"]] or default_days)
+            ]
+            returned_candidates.extend(candidates)
+            result.all = MagicMock(return_value=candidates)
+            return result
+        if "DELETE FROM widget_messages" in sql:
+            result.rowcount = len(returned_candidates)
+            return result
+        result.rowcount = 0
+        return result
+
+    db.execute = _execute
+    db.commit = AsyncMock()
+
+    @asynccontextmanager
+    async def _fake_session():
+        yield db
+
+    with (
+        patch("app.services.widget_messages_retention.cross_org_session", _fake_session),
+        patch("app.services.widget_messages_retention.settings") as mock_settings,
+    ):
+        mock_settings.widget_messages_retention_days = 7
+        result = await _retention_run_once()
+
+    assert captured_select_params[0]["default_days"] == 7
+    assert "COALESCE(po.widget_messages_retention_days, :default_days)" in captured_select_sql[0]
+    # Only org 2's message purges (default 7-day window); org 1's 90-day
+    # override keeps its 30-day-old message out of the candidate set.
+    assert returned_candidates == [(502, 60)]
+    assert result["deleted_count"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -474,7 +555,7 @@ async def test_retention_run_once_clears_visitor_contact_of_purged_conversations
         sql = str(stmt)
         statements.append(sql)
         result = MagicMock()
-        if "SELECT id, conversation_id FROM widget_messages" in sql:
+        if "SELECT wm.id, wm.conversation_id" in sql and "FROM widget_messages wm" in sql:
             if candidates_served:
                 result.all = MagicMock(return_value=[])
             else:

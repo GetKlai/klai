@@ -30,6 +30,8 @@ import {
   usePlatformInvite,
   usePlatformUnlocks,
   usePlatformUpdateUnlocks,
+  usePlatformUpdateWidgetRetention,
+  usePlatformWidgetRetention,
   usePlatformRetryDeleteUser,
   usePlatformSuspend,
 } from '../-hooks'
@@ -212,6 +214,123 @@ export function TenantFeaturesSection({
           </>
         ) : (
           <ListEmptyState title={m.platform_tenant_features_empty()} />
+        )}
+      </form>
+    </section>
+  )
+}
+
+export function WidgetRetentionSection({
+  orgId,
+  org,
+}: {
+  orgId: string
+  org: PlatformOrg
+}) {
+  const retention = usePlatformWidgetRetention(org.slug)
+  const updateRetention = usePlatformUpdateWidgetRetention(orgId, org.slug)
+  const [days, setDays] = useState('')
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    if (retention.data) {
+      setDays(retention.data.days === null ? '' : String(retention.data.days))
+    }
+  }, [retention.data])
+
+  function save(value: number | null) {
+    updateRetention.mutate(value, {
+      onSuccess: () => {
+        setSaved(true)
+        setTimeout(() => setSaved(false), 2500)
+        toast.success(m.admin_settings_saved())
+      },
+      onError: (err) =>
+        toast.error(
+          err instanceof Error ? err.message : m.admin_settings_error_save(),
+        ),
+    })
+  }
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const value = days.trim() === '' ? null : Number(days)
+    if (value !== null && (!Number.isInteger(value) || value < 1 || value > 365)) {
+      toast.error(m.widget_retention_error_invalid())
+      return
+    }
+    save(value)
+  }
+
+  function handleReset() {
+    setDays('')
+    save(null)
+  }
+
+  return (
+    <section className="space-y-4">
+      <div className="space-y-1">
+        <h2 className="text-base font-display-bold text-gray-900">
+          {m.widget_retention_title()}
+        </h2>
+        <p className="text-sm text-gray-600">{m.widget_retention_description()}</p>
+      </div>
+
+      <form onSubmit={handleSubmit} className="space-y-3">
+        {retention.isLoading ? (
+          <p className="text-sm text-gray-600">{m.admin_users_loading()}</p>
+        ) : retention.error ? (
+          <p className="text-sm text-[var(--color-destructive)]">
+            {m.admin_settings_error_fetch()}
+          </p>
+        ) : (
+          <>
+            <div className="max-w-xs space-y-1.5">
+              <Label htmlFor="widget-retention-days">
+                {m.widget_retention_label()}
+              </Label>
+              <Input
+                id="widget-retention-days"
+                type="number"
+                min={1}
+                max={365}
+                placeholder={String(retention.data?.default_days ?? '')}
+                value={days}
+                onChange={(e) => setDays(e.target.value)}
+                disabled={updateRetention.isPending}
+              />
+              <p className="text-xs text-gray-600">
+                {m.widget_retention_default_hint({
+                  days: retention.data?.default_days ?? 0,
+                })}
+              </p>
+            </div>
+            {updateRetention.error && (
+              <p className="text-sm text-[var(--color-destructive)]">
+                {m.admin_settings_error_save()}
+              </p>
+            )}
+            <div className="flex items-center gap-3 pt-1">
+              <Button type="submit" disabled={updateRetention.isPending || saved}>
+                {updateRetention.isPending && (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                )}
+                {saved
+                  ? m.admin_settings_saved()
+                  : updateRetention.isPending
+                    ? m.admin_settings_saving()
+                    : m.admin_settings_save()}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleReset}
+                disabled={updateRetention.isPending || retention.data?.days === null}
+              >
+                {m.widget_retention_reset()}
+              </Button>
+            </div>
+          </>
         )}
       </form>
     </section>

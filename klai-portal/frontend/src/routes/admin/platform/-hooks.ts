@@ -26,6 +26,7 @@ import type {
   PlatformUsageRange,
   PlatformUsageTenantDetail,
   PlatformUsageTenantRow,
+  WidgetRetentionResponse,
 } from './-types'
 
 export function usePlatformSubdomains(enabled = true) {
@@ -175,6 +176,36 @@ export function usePlatformUpdateUnlocks(orgId: string, slug: string) {
       void qc.invalidateQueries({ queryKey: ['platform-org-detail', orgId] })
       void qc.invalidateQueries({ queryKey: ['platform-orgs'] })
       void qc.invalidateQueries({ queryKey: ['me'] })
+    },
+  })
+}
+
+export function usePlatformWidgetRetention(slug: string | undefined) {
+  const auth = useAuth()
+  return useQuery({
+    queryKey: ['widget-retention', slug],
+    queryFn: async () =>
+      apiFetch<WidgetRetentionResponse>(
+        `/api/admin/orgs/${encodeURIComponent(slug ?? '')}/widget-retention`,
+      ),
+    enabled: auth.isAuthenticated && !!slug,
+  })
+}
+
+export function usePlatformUpdateWidgetRetention(orgId: string, slug: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (days: number | null) =>
+      apiFetch<WidgetRetentionResponse>(
+        `/api/admin/orgs/${encodeURIComponent(slug)}/widget-retention`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ days }),
+        },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['widget-retention', slug] })
+      void qc.invalidateQueries({ queryKey: ['platform-org-detail', orgId] })
     },
   })
 }

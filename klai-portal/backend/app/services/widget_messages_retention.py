@@ -2,13 +2,17 @@
 Widget message retention worker.
 
 Background loop that runs every 24 hours and deletes widget_messages rows
-older than ``settings.widget_messages_retention_days`` days in chunks of
-10 000 rows. Before each delete pass it anonymizes the
+older than each row's org's retention window in chunks of 10 000 rows.
+The per-org window is ``portal_orgs.widget_messages_retention_days`` when
+set, else ``settings.widget_messages_retention_days`` (the global default,
+7 days since 2026-09-11). Before each delete pass it anonymizes the
 ``conversation_quality_judgments.reasoning`` of the purged conversations
 (REQ-4, SPEC-CHAT-QUALITY-LOOP-001 §11).
 
 Design mirrors ``telemetry_purge.py``:
-- cross-org: retention is platform-wide, not per-tenant.
+- cross-org: the loop itself is not tenant-scoped, but the candidate query
+  now applies a per-org cutoff (SPEC-CHAT-QUALITY-LOOP-001 open item #2:
+  Voys keeps 90 days, every other tenant stays on the global default).
 - chunked: bounded-time deletes avoid long-running transactions.
 - audit: emits ``widget_messages.retention_deleted`` via structlog.
 - resilient: exceptions are caught and logged; the loop continues.
@@ -50,23 +54,33 @@ async def _retention_run_once() -> dict[str, int]:
     Returns a dict with ``deleted_count`` (total rows removed) and
     ``chunk_count`` (number of DELETE passes executed).
     """
-    cutoff = datetime.now(UTC) - timedelta(days=settings.widget_messages_retention_days)
+    default_days = settings.widget_messages_retention_days
+    default_cutoff = datetime.now(UTC) - timedelta(days=default_days)
     deleted_total = 0
     anonymized_total = 0
     chunk_count = 0
 
     while True:
         async with cross_org_session() as db:
+            # Per-org cutoff: portal_orgs.widget_messages_retention_days
+            # overrides the global default (NULL = default). Joined on
+            # widget_messages.org_id, which is already denormalised onto
+            # the row for the RLS Cat-D policy, so this needs no separate
+            # lookup per conversation.
             candidate_result = await db.execute(
                 text(
                     """
-                    SELECT id, conversation_id FROM widget_messages
-                    WHERE created_at < :cutoff
-                    ORDER BY id
+                    SELECT wm.id, wm.conversation_id
+                    FROM widget_messages wm
+                    JOIN portal_orgs po ON po.id = wm.org_id
+                    WHERE wm.created_at < now() - (
+                        COALESCE(po.widget_messages_retention_days, :default_days) * interval '1 day'
+                    )
+                    ORDER BY wm.id
                     LIMIT :chunk_size
                     """
                 ),
-                {"cutoff": cutoff, "chunk_size": _CHUNK_SIZE},
+                {"default_days": default_days, "chunk_size": _CHUNK_SIZE},
             )
             rows = list(candidate_result.all())
             if not rows:
@@ -129,8 +143,8 @@ async def _retention_run_once() -> dict[str, int]:
         deleted_count=deleted_total,
         anonymized_judgments=anonymized_total,
         chunk_count=chunk_count,
-        cutoff=cutoff.isoformat(),
-        retention_days=settings.widget_messages_retention_days,
+        default_cutoff=default_cutoff.isoformat(),
+        default_retention_days=default_days,
     )
     return {"deleted_count": deleted_total, "chunk_count": chunk_count}
 
