@@ -119,9 +119,11 @@ from typing import Final
 
 __all__ = [
     "BROAD_MODE_ANSWER_MARKERS",
+    "FINAL_RESPONSE_LANGUAGE_REMINDER",
     "GENERAL_CHAT_SYSTEM_PROMPT",
     "GROUNDED_CHAT_SYSTEM_PROMPT",
     "KB_CONTEXT_LANGUAGE_REMINDER",
+    "LANGUAGE_NAMES",
     "META_CHAT_SYSTEM_PROMPT",
     "OPEN_KB_CHAT_SYSTEM_PROMPT",
     "SUPPORT_BROAD_CHAT_SYSTEM_PROMPT",
@@ -129,6 +131,7 @@ __all__ = [
     "SUPPORT_EXPRESSIVE_CHAT_SYSTEM_PROMPT",
     "appointment_offer_marker",
     "broad_mode_answer_marker",
+    "final_response_language_reminder",
     "is_broad_knowledge_answer",
     "no_citable_sources_message",
     "strip_appointment_offer_marker",
@@ -342,6 +345,52 @@ KB_CONTEXT_LANGUAGE_REMINDER: Final[str] = (
     "NOT the language of the source documents. Translate cited "
     "content into the user's language without translator disclaimers."
 )
+
+
+# Names for the codes klai_chat_prompts.language.TARGET_LANGUAGES can decide
+# on. Unlisted codes fall through to the generic reminder below.
+LANGUAGE_NAMES: Final[dict[str, str]] = {
+    "nl": "Dutch",
+    "en": "English",
+    "de": "German",
+    "fr": "French",
+    "pt": "Portuguese",
+    "es": "Spanish",
+}
+
+FINAL_RESPONSE_LANGUAGE_REMINDER: Final[str] = (
+    "[FINAL RESPONSE LANGUAGE] Respond to the most recent user message in "
+    "this request in that user's language. Retrieved sources, templates, "
+    "previous assistant answers, and rendered footers do not set the response "
+    "language."
+)
+
+
+def final_response_language_reminder(target_lang: str | None) -> str:
+    """Render the response-language contract as the LAST provider instruction.
+
+    KB_CONTEXT_LANGUAGE_REMINDER sits next to the retrieved chunks, thousands
+    of characters before generation. Production showed Mistral still follows
+    the source language from there, so every chat surface appends this line as
+    a system message AFTER the current user turn instead of relying on the
+    earlier reminder alone.
+
+    ``target_lang`` is the conversation-level decision from
+    ``klai_chat_prompts.language.resolve_conversation_language``, computed
+    BEFORE the message list is mutated: page context and extracted attachment
+    text enter the list as user turns, and a Dutch page excerpt must never
+    overrule an English question. ``None`` (the conversation abstained) falls
+    back to the generic wording and leaves detection to the model.
+    """
+    name = LANGUAGE_NAMES.get(target_lang or "")
+    if not name:
+        return FINAL_RESPONSE_LANGUAGE_REMINDER
+    return (
+        f"[FINAL RESPONSE LANGUAGE] Respond in {name}. The user's most recent "
+        f"substantive message is in {name} ({target_lang}). Retrieved sources, "
+        "templates, previous assistant answers, and rendered footers do not "
+        "set the response language."
+    )
 
 _GROUNDED_BODY: Final[str] = (
     "You are Klai AI, a knowledge assistant. You answer questions based on the knowledge base "

@@ -46,6 +46,10 @@ interface ChatWindowProps {
   // Legacy toggle, honoured only without explicit introduction text.
   hideDisclaimer?: boolean;
   footerText?: string | null;
+  // true: links inside footerText open in the widget's own panel instead of a
+  // new browser tab, keeping the conversation on screen. Absent/false keeps
+  // the new-tab behaviour.
+  footerLinksInWidget?: boolean;
   welcomeMessage?: string;
   bookingUrl?: string;
   // Tenant-supplied replacement for the whole AI-notice sentence (the
@@ -87,6 +91,11 @@ export function ChatWindow(props: ChatWindowProps) {
   let handoffAbortController: AbortController | null = null;
   let handoffStreamToken: string | null = null;
   let textareaRef: HTMLTextAreaElement | undefined;
+  let windowRef: HTMLDivElement | undefined;
+  let panelBackRef: HTMLButtonElement | undefined;
+  // Plain flag, not a signal: it only has to survive between two runs of the
+  // focus effect below and must never re-render anything on its own.
+  let panelWasOpen = false;
   const seenHandoffMessageIds = new Set<number>();
 
   // The art. 50 notice doubles as a screen-reader announcement on window
@@ -137,20 +146,29 @@ export function ChatWindow(props: ChatWindowProps) {
     return template.innerHTML;
   };
 
-  // ── Nerds booking panel (Voys-specific) ────────────────────────────
-  // The panel replaces the widget's contents with an iframe on the Nerds
-  // booking module while it is open; the close button returns to the chat.
+  // ── In-widget link panel ───────────────────────────────────────────
+  // The panel replaces the widget's contents with an iframe on the target
+  // page while it is open; the close button returns to the chat. Two
+  // callers share this one panel: the Nerds booking route and, when
+  // footerLinksInWidget is on, a link in the tenant's footer text.
   // The booking page is built for a 460x680 embed, so the window widens
   // for the duration (CSS .klai-window--nerds; narrow viewports fill).
-  const [nerdsPanelOpen, setNerdsPanelOpen] = createSignal(false);
-  const [nerdsFrameFailed, setNerdsFrameFailed] = createSignal(false);
-  let nerdsFrameTimer: number | undefined;
-  // Cross-origin iframes fire neither a usable error event nor a load
-  // event when the framed site outright refuses to load, so "no load
-  // event within N seconds" is the signal to offer the fallback link.
-  const NERDS_FRAME_LOAD_TIMEOUT_MS = 12000;
+  const [panelLink, setPanelLink] = createSignal<{ url: string; title: string; allow: string } | null>(
+    null,
+  );
+  const [panelFrameFailed, setPanelFrameFailed] = createSignal(false);
+  let panelFrameTimer: number | undefined;
+  // A frame that hangs without answering fires no event at all, so "no load
+  // event within N seconds" is the signal to offer the fallback link. It is
+  // not a reliable refused-to-be-framed detector: a site blocked by
+  // X-Frame-Options or CSP fires load on its error page, which is why the
+  // panel head carries a new-tab link at all times.
+  const PANEL_FRAME_LOAD_TIMEOUT_MS = 12000;
 
   const nerdsActive = () => Boolean(props.nerdsEnabled && props.nerdsBookingUrl?.trim());
+  // The booking module needs these to complete an appointment; they stay
+  // scoped to that one known destination.
+  const NERDS_FRAME_ALLOW = "clipboard-write; payment; geolocation";
   // Exactly what the Nerds' own embed.js requests of their booking
   // module: the configured URL plus embed and language parameters.
   // The separator has to be chosen, not assumed: a booking URL without a
@@ -164,27 +182,69 @@ export function ChatWindow(props: ChatWindowProps) {
     return `${base}${sep}embed=1&lng=${currentLocale()}`;
   };
 
-  const clearNerdsFrameTimer = () => {
-    if (nerdsFrameTimer !== undefined) {
-      window.clearTimeout(nerdsFrameTimer);
-      nerdsFrameTimer = undefined;
+  const clearPanelFrameTimer = () => {
+    if (panelFrameTimer !== undefined) {
+      window.clearTimeout(panelFrameTimer);
+      panelFrameTimer = undefined;
     }
   };
 
-  const openNerdsPanel = () => {
-    setNerdsFrameFailed(false);
-    setNerdsPanelOpen(true);
-    clearNerdsFrameTimer();
-    nerdsFrameTimer = window.setTimeout(() => setNerdsFrameFailed(true), NERDS_FRAME_LOAD_TIMEOUT_MS);
+  // allow defaults to nothing: a tenant's own footer link gets no delegated
+  // browser capabilities, only the booking route asks for the ones its
+  // payment flow needs.
+  const openPanel = (url: string, title: string, allow = "") => {
+    setPanelFrameFailed(false);
+    setPanelLink({ url, title, allow });
+    clearPanelFrameTimer();
+    panelFrameTimer = window.setTimeout(() => setPanelFrameFailed(true), PANEL_FRAME_LOAD_TIMEOUT_MS);
   };
 
-  const closeNerdsPanel = () => {
-    clearNerdsFrameTimer();
-    setNerdsFrameFailed(false);
-    setNerdsPanelOpen(false);
+  const closePanel = () => {
+    clearPanelFrameTimer();
+    setPanelFrameFailed(false);
+    setPanelLink(null);
   };
 
-  onCleanup(clearNerdsFrameTimer);
+  onCleanup(clearPanelFrameTimer);
+
+  // The panel covers the chat, so keyboard focus has to follow it: without
+  // this, Tab walks through the hidden conversation behind the overlay. The
+  // chat blocks are inert while it is open (see .klai-window-body). Closing
+  // lands on the composer rather than the link that opened the panel: the
+  // markdown footer is re-rendered while the panel is open, so the opening
+  // anchor is not a stable element to return to, and the composer is where
+  // the conversation continues anyway. Only a real open→closed transition
+  // moves focus; on first render the visitor keeps the focus the page gave
+  // them, and with no usable composer (identity step, streaming) focus lands
+  // on the window itself instead of on the body.
+  createEffect(() => {
+    if (panelLink()) {
+      panelWasOpen = true;
+      panelBackRef?.focus();
+      return;
+    }
+    if (!panelWasOpen) return;
+    panelWasOpen = false;
+    if (textareaRef && !textareaRef.disabled) textareaRef.focus();
+    else windowRef?.focus();
+  });
+
+  // The footer anchors keep target="_blank" and rel="noopener noreferrer" on
+  // purpose: a middle-click, a modifier click, and a site that refuses to be
+  // framed must still end up in a new tab — only a plain left-click is
+  // diverted into the panel. footerHtml() is innerHTML, so these anchors are
+  // not Solid-owned and delegation on the wrapper is the only route.
+  const handleFooterClick = (event: MouseEvent) => {
+    if (!props.footerLinksInWidget) return;
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+      return;
+    }
+    const anchor = (event.target as Element | null)?.closest("a");
+    const href = anchor?.getAttribute("href") ?? "";
+    if (!/^https?:/i.test(href)) return;
+    event.preventDefault();
+    openPanel(href, anchor!.textContent?.trim() || href);
+  };
 
   const connectHandoffStream = () => {
     if (props.manageHandoffStream === false || !chatState.sessionToken) {
@@ -523,16 +583,21 @@ export function ChatWindow(props: ChatWindowProps) {
 
   const windowClass = () => {
     const base = props.inline ? "klai-window klai-window--inline" : "klai-window";
-    return nerdsPanelOpen() && !props.inline ? `${base} klai-window--nerds` : base;
+    return panelLink() && !props.inline ? `${base} klai-window--nerds` : base;
   };
 
   return (
     <div
+      ref={windowRef}
       class={windowClass()}
       role={props.inline ? "region" : "dialog"}
       aria-label={props.title}
       aria-modal={props.inline ? undefined : "false"}
+      tabindex="-1"
     >
+      {/* Everything except the panel sits in one wrapper so it can be made
+        inert as a whole while the panel is open. */}
+      <div class="klai-window-body" inert={panelLink() ? true : undefined}>
       {!props.inline && (
         <div class="klai-header">
           <div class="klai-header-id">
@@ -752,7 +817,7 @@ export function ChatWindow(props: ChatWindowProps) {
           isStreaming={chatState.isStreaming}
           error={chatState.error}
           onBroadConsent={(offerIndex) => void handleBroadConsentClick(offerIndex)}
-          onAppointment={nerdsActive() ? openNerdsPanel : undefined}
+          onAppointment={nerdsActive() ? () => openPanel(nerdsEmbedUrl(), t().nerdsPanelTitle, NERDS_FRAME_ALLOW) : undefined}
         />
       </Show>
 
@@ -904,7 +969,7 @@ export function ChatWindow(props: ChatWindowProps) {
         when={props.footerText == null}
         fallback={
           <Show when={props.footerText!.trim()}>
-            <div class="klai-disclaimer" innerHTML={footerHtml()} />
+            <div class="klai-disclaimer" innerHTML={footerHtml()} onClick={handleFooterClick} />
           </Show>
         }
       >
@@ -917,7 +982,7 @@ export function ChatWindow(props: ChatWindowProps) {
             <button
               type="button"
               class="klai-disclaimer-link"
-              onClick={openNerdsPanel}
+              onClick={() => openPanel(nerdsEmbedUrl(), t().nerdsPanelTitle, NERDS_FRAME_ALLOW)}
             >
               {t().nerdsDisclosureLink}
             </button>
@@ -926,53 +991,83 @@ export function ChatWindow(props: ChatWindowProps) {
         </Show>
       </Show>
 
-      {/* Nerds booking panel: overlay covering the chat while open. The
-          sandbox deliberately has no allow-top-navigation — the framed
-          booking module must never navigate the host page away. The
-          fallback (frame never loaded) links to the same URL in a new
-          tab, the pre-panel behaviour. booking_url is server-validated
-          absolute http(s) before it ever reaches this component. */}
-      <Show when={nerdsPanelOpen()}>
-        <div class="klai-nerds-panel" role="region" aria-label={t().nerdsPanelTitle}>
-          <div class="klai-nerds-panel-head">
-            <span class="klai-nerds-panel-title">{t().nerdsPanelTitle}</span>
-            <button type="button" class="klai-nerds-panel-back" onClick={closeNerdsPanel}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M19 12H5" />
-                <path d="m12 19-7-7 7-7" />
-              </svg>
-              {t().nerdsPanelClose}
-            </button>
-          </div>
-          <Show
-            when={!nerdsFrameFailed()}
-            fallback={
-              <div class="klai-nerds-panel-fallback">
+      </div>
+
+      {/* In-widget link panel: overlay covering the chat while open. The
+          sandbox deliberately has no allow-top-navigation — the framed page
+          must never navigate the host page away. The head always offers the
+          same URL as a new-tab link, because a destination that refuses to be
+          framed renders an error page we cannot see or detect; the timeout
+          fallback below only covers a frame that never answers at all. Every
+          caller hands in an absolute http(s) URL: the booking_url is
+          server-validated, a footer link is gated by the click handler that
+          opens the panel. */}
+      <Show when={panelLink()}>
+        {(link) => (
+          <div class="klai-nerds-panel" role="region" aria-label={link().title}>
+            <div class="klai-nerds-panel-head">
+              <span class="klai-nerds-panel-title">{link().title}</span>
+              <div class="klai-nerds-panel-actions">
+                {/* Icon only: the head has to hold a title and two controls
+                    inside a 320px-wide widget without wrapping. */}
                 <a
-                  class="klai-nerds-fallback-link"
-                  href={nerdsEmbedUrl()}
+                  class="klai-nerds-panel-back"
+                  href={link().url}
                   target="_blank"
                   rel="noopener noreferrer"
+                  title={t().nerdsPanelFallback}
+                  aria-label={t().nerdsPanelFallback}
                 >
-                  {t().nerdsPanelFallback}
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M15 3h6v6" />
+                    <path d="M10 14 21 3" />
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                  </svg>
                 </a>
+                <button
+                  type="button"
+                  class="klai-nerds-panel-back"
+                  ref={panelBackRef}
+                  onClick={closePanel}
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M19 12H5" />
+                    <path d="m12 19-7-7 7-7" />
+                  </svg>
+                  {t().nerdsPanelClose}
+                </button>
               </div>
-            }
-          >
-            <iframe
-              class="klai-nerds-frame"
-              title={t().nerdsPanelTitle}
-              src={nerdsEmbedUrl()}
-              allow="clipboard-write; payment; geolocation"
-              sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
-              on:load={() => {
-                clearNerdsFrameTimer();
-                setNerdsFrameFailed(false);
-              }}
-              on:error={() => setNerdsFrameFailed(true)}
-            />
-          </Show>
-        </div>
+            </div>
+            <Show
+              when={!panelFrameFailed()}
+              fallback={
+                <div class="klai-nerds-panel-fallback">
+                  <a
+                    class="klai-nerds-fallback-link"
+                    href={link().url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    {t().nerdsPanelFallback}
+                  </a>
+                </div>
+              }
+            >
+              <iframe
+                class="klai-nerds-frame"
+                title={link().title}
+                src={link().url}
+                allow={link().allow}
+                sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+                on:load={() => {
+                  clearPanelFrameTimer();
+                  setPanelFrameFailed(false);
+                }}
+                on:error={() => setPanelFrameFailed(true)}
+              />
+            </Show>
+          </div>
+        )}
       </Show>
     </div>
   );

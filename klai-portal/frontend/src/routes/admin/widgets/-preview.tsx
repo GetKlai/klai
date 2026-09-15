@@ -51,6 +51,7 @@ export interface WidgetPreviewDraft {
   hideDisclaimer?: boolean
   aiDisclosureOverride?: string
   footerText?: string
+  footerLinksInWidget?: boolean
   cssVariablesJson?: string
 }
 
@@ -67,6 +68,7 @@ export interface WidgetPreviewValues {
   backgroundColor?: string
   aiDisclosureOverride?: string
   footerText?: string | null
+  footerLinksInWidget: boolean
   theme: 'light' | 'dark'
   showSources: boolean
   showMeta: boolean
@@ -130,6 +132,7 @@ export function resolvePreview(widget: WidgetDetailResponse, scopes: Scopes = {}
       appearance.footerText !== undefined
         ? appearance.footerText
         : config.footer_text ?? undefined,
+    footerLinksInWidget: appearance.footerLinksInWidget ?? config.footer_links_in_widget ?? false,
     modelBehaviorDirty: details.modelBehaviorDirty ?? false,
     cssVariables,
   }

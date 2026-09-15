@@ -55,9 +55,6 @@ dependencies = [
     "klai-citations",
     # Shared deterministic LLM safety policy for user input/model output guardrails.
     "klai-llm-safety",
-    # SPEC-RAG-MULTILINGUAL-CHAT-001 REQ-07: passive language detection
-    # for the chat_synthesis_complete log event in partner_chat.
-    "lingua-language-detector>=2.2.0",
     # SPEC-MCP-AUTH-001: Jinja2 for the OAuth consent page renderer.
     # Replaces the str.replace marker-substitution that previously broke
     # silently on whitespace edits to the template.

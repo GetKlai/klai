@@ -23,6 +23,9 @@ interface PublicConfig {
   hide_disclaimer?: boolean
   ai_disclosure_override?: string | null
   footer_text?: string | null
+  // On, a plain click on a footer link opens it in the surface's in-page
+  // panel instead of a new tab.
+  footer_links_in_widget?: boolean
   primary_color?: string
   theme?: 'light' | 'dark'
   show_sources?: boolean
@@ -88,6 +91,7 @@ function PublicBotPage() {
       hideDisclaimer={cfg.hide_disclaimer}
       aiDisclosureOverride={cfg.ai_disclosure_override}
       footerText={cfg.footer_text}
+      footerLinksInWidget={cfg.footer_links_in_widget}
       backgroundColor={cfg.css_variables?.['--klai-background-color']}
       primaryColor={cfg.primary_color}
       theme={cfg.theme}

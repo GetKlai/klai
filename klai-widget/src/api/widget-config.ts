@@ -10,6 +10,10 @@ export interface WidgetConfig {
   // Legacy toggle, used only while no explicit introduction text is stored.
   hide_disclaimer?: boolean;
   footer_text?: string | null;
+  // true: a link inside footer_text opens in the widget's own panel instead
+  // of a new browser tab, so the visitor keeps the conversation. Absent or
+  // false keeps the current new-tab behaviour.
+  footer_links_in_widget?: boolean;
   // INTERIM appointment redirect — remove once the chat booking API
   // integration lands. Booking-module URL of the support partner, rendered
   // as the "schedule an appointment" button. The server only delivers
