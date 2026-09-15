@@ -95,3 +95,13 @@ def test_kb_activity_survives_the_seat_filter():
     assert "kb.activity" in effective_capabilities("kb_manager", SeatType.KNOWLEDGE)
     assert "kb.activity" in effective_capabilities("admin", SeatType.KNOWLEDGE)
     assert "kb.activity" not in effective_capabilities("company", SeatType.KNOWLEDGE)
+
+
+def test_kb_activity_is_in_the_knowledge_plan_tier():
+    """The route dependency (app.api.dependencies.require_capability) intersects
+    the role capabilities with PLAN_LIMITS[plan].capabilities, so a capability
+    missing from the knowledge tier is a 403 for every non-admin caller."""
+    from app.core.plan_limits import PLAN_LIMITS
+
+    assert "kb.activity" in PLAN_LIMITS["knowledge"].capabilities
+    assert "kb.activity" not in PLAN_LIMITS["chat"].capabilities

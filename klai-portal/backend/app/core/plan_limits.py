@@ -78,6 +78,10 @@ PLAN_LIMITS: dict[str, KBLimits] = {
                 "kb.members",
                 "kb.taxonomy",
                 "kb.gaps",
+                # SPEC-KNOWLEDGE-ACTIVITY-001 §4.4: same tier as the gaps
+                # dashboard; the per-tenant knowledge_activity unlock gates it
+                # separately at the router.
+                "kb.activity",
                 "templates.manage_org",
             }
         ),
