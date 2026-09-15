@@ -89,14 +89,14 @@ VictoriaLogs carry `query_language_detected`,
 determine the count). A drop in language-correctness rate is the
 signal that a prompt location drifted — correlate with recent PRs.
 
-**Coverage gap (verified 2026-07-07, cause corrected 2026-09-15):** only
-path B (`portal-api`) emits this event; VictoriaLogs shows zero
-`chat_synthesis_complete` events with `service:litellm`. The reason is no
-longer a missing detector — since the 2026-09-15 consolidation every service
-scores both sides with `klai_chat_prompts.language`, which path A already
-carries as the vendored `klai_conversation_language.py`. The emit itself is
-simply not written yet, and needs no dependency. Until it lands, audit path A
-by prompt-content tests (`deploy/litellm/tests/`).
+**Coverage closed (2026-09-15):** all three paths emit
+`chat_synthesis_complete` with the same field names and meanings. Path A took
+longest not because it lacked a detector — `klai_conversation_language.py` has
+been vendored in that container all along — but because the emit was never
+written. It now logs one JSON object per line from
+`klai_kb_citation_render._emit_chat_synthesis_complete`. On every path the query
+side measures the visitor's own text, never the conversation target; logging our
+own target under a field named `*_detected` would make the metric confirm itself.
 
 **One identifier, by decision (2026-09-15):** `lingua` was removed from
 klai-portal and klai-retrieval-api. It was only ever the telemetry detector,

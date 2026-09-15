@@ -1649,9 +1649,7 @@ def test_augment_messages_language_contract_survives_a_chunkless_turn():
     prompt = _build_system_prompt([], support_mode=True, backend_managed_citations=True)
     assert "[LANGUAGE REMINDER]" not in prompt
 
-    messages = _augment_messages_with_system_prompt(
-        [{"role": "user", "content": "Hi do you speak english"}], prompt
-    )
+    messages = _augment_messages_with_system_prompt([{"role": "user", "content": "Hi do you speak english"}], prompt)
     assert messages[-1]["content"].startswith("[FINAL RESPONSE LANGUAGE] Respond in English.")
 
 

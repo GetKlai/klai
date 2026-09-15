@@ -22,30 +22,26 @@ imports the same constant via the vendored single-file copy at
 `deploy/litellm/klai_chat_prompts.py` (drift-tested by
 `deploy/litellm/tests/test_klai_chat_prompts_drift.py`).
 
-### Path A telemetry caveat
+### Path A emits too (since 2026-09-15)
 
-Path A ships the multilingual *prompt* contract but does not emit
-`chat_synthesis_complete` yet. The reason given here used to be that the
-stock LiteLLM image (`ghcr.io/berriai/litellm:v1.83.7-stable`) cannot
-`pip install` a language detector. **That blocker no longer exists.** The
-identifier is `klai_chat_prompts.language`, which is pure Python and is
-already vendored into the container as
-`deploy/litellm/klai_conversation_language.py` (byte-identical, drift-tested).
-Path A can emit the same event as paths B and C with no new dependency and
-no custom image.
+All three paths now emit `chat_synthesis_complete` with identical field names
+and meanings, so `event:chat_synthesis_complete` covers the whole chat surface.
 
-Do NOT revive the old plan of building a custom image that pip-installs
-`lingua-language-detector`. Lingua has no source distribution on PyPI — only
-~170 MB platform wheels — so it cannot be vendored, and it was measurably
-worse than the vendored identifier on the short utterances this chat actually
-receives. It was removed from every service on 2026-09-15.
+Path A took the longest to get there, and the reason recorded here was wrong for
+months: it said the stock LiteLLM image cannot `pip install` a language detector.
+The identifier is pure Python and has been vendored into the container as
+`klai_conversation_language.py` all along, so no dependency and no custom image
+was ever needed — only the emit itself was missing. Do NOT revive the plan of
+building an image that installs `lingua-language-detector`: it publishes no
+source distribution, only ~170 MB platform wheels, and it was measurably worse
+than the vendored identifier on the short utterances this chat receives.
 
-Until the path-A emit lands, path-A coverage of the rolling 7-day
-language-correctness gate (REQ-05) comes from:
+The hook writes the event as one JSON object per line, which is what the Alloy
+pipeline parses into queryable fields. Path A keeps a second, different number
+next to it — `language_correct` in `kb_citations_rendered_structured` compares
+the answer against the conversation TARGET, while `language_correctness` in this
+event compares it against the visitor's own query. Two questions, two fields.
 
-1. The pre-merge eval gate (`evaluation/cross_lingual_runner.py`) —
-   exercises path C against the same prompt foundation as path A
-   (since v1.2 they share `GROUNDED_CHAT_SYSTEM_PROMPT` byte-identical).
 2. Manual smoke tests in LibreChat after deploys (one DE/FR/PT/ES
    query each).
 3. Path B (Widget + Partner API) telemetry — extrapolated as a proxy
