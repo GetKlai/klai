@@ -429,6 +429,36 @@ async def test_detail_carries_signals_judge_and_review() -> None:
     }
 
 
+@pytest.mark.asyncio
+async def test_detail_carries_the_judgment_when_present() -> None:
+    """REQ-3 sidecar on the detail (SPEC-CHAT-QUALITY-LOOP-001): a judged
+    conversation returns every judgment field; the null-without-judgment
+    branch is covered by test_detail_carries_signals_judge_and_review."""
+    db = FakeSession(
+        conversation=_conv(255),
+        messages=[_message(9002, sequence=2)],
+        judged=SimpleNamespace(
+            outcome="escalated",
+            failure_category="retrieval_miss",
+            reasoning="De bot kende het actuele prijsplan niet.",
+            confidence="high",
+            suggested_action="Prijs-KB opnieuw in de index opnemen.",
+            judged_at=T0,
+        ),
+    )
+    response = await _call(db, _perms("admin"), "get", "/api/app/activity/conversations/255")
+
+    assert response.status_code == 200
+    assert response.json()["quality"] == {
+        "outcome": "escalated",
+        "failure_category": "retrieval_miss",
+        "reasoning": "De bot kende het actuele prijsplan niet.",
+        "confidence": "high",
+        "suggested_action": "Prijs-KB opnieuw in de index opnemen.",
+        "judged_at": "2026-09-14T09:12:00Z",
+    }
+
+
 # ---------------------------------------------------------------------------
 # PUT /messages/{message_id}/review
 # ---------------------------------------------------------------------------
