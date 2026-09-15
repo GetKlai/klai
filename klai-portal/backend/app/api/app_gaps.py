@@ -5,13 +5,14 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import func, select, update
+from sqlalchemy import case, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import require_capability
 from app.core.database import get_db
 from app.core.permissions import UserPermissions, get_caller
 from app.core.profiles import Capability
+from app.models.portal import PortalUser
 from app.models.retrieval_gaps import PortalRetrievalGap
 from app.models.taxonomy import PortalTaxonomyNode
 from app.models.widgets import WidgetConversation
@@ -43,6 +44,9 @@ class GapOut(BaseModel):
     occurrence_count: int
     last_occurred: datetime
     resolved_at: datetime | None = None
+    # From the newest resolved row of the group; null for an open group.
+    resolved_by: str | None = None
+    resolved_by_name: str | None = None
 
 
 class GapsResponse(BaseModel):
@@ -110,7 +114,12 @@ async def list_gaps(
             func.max(PortalRetrievalGap.nearest_kb_slug).label("nearest_kb_slug"),
             func.count().label("occurrence_count"),
             func.max(PortalRetrievalGap.occurred_at).label("last_occurred"),
-            func.max(PortalRetrievalGap.resolved_at).label("resolved_at"),
+            # Closed only when every occurrence is closed: a reopened question
+            # must keep its close action in the mixed list.
+            case(
+                (func.bool_and(PortalRetrievalGap.resolved_at.isnot(None)), func.max(PortalRetrievalGap.resolved_at)),
+                else_=None,
+            ).label("resolved_at"),
             func.bool_or(PortalRetrievalGap.caller_client_id == _REVIEW_CALLER_CLIENT_ID).label("has_review"),
         )
         .where(
@@ -172,6 +181,45 @@ async def list_gaps(
         # Rows arrive newest-first, so the first hit per group is the one.
         conversation_by_group.setdefault((row.query_text, row.gap_type, row.language), row.conversation_id)
 
+    # Who closed it: only asked for when closed rows are actually in view —
+    # an open-only list never has a resolved row to attribute. Same
+    # newest-row-per-group pick as the conversation link above, but ordered
+    # by resolved_at (the group's occurred_at winner need not be the row that
+    # closed it).
+    resolved_by_group: dict[tuple[str, str, str | None], tuple[str | None, str | None]] = {}
+    if include_resolved:
+        resolved_result = await db.execute(
+            select(
+                PortalRetrievalGap.query_text,
+                PortalRetrievalGap.gap_type,
+                PortalRetrievalGap.language,
+                PortalRetrievalGap.resolved_by,
+                func.coalesce(PortalUser.display_name, PortalUser.email).label("resolved_by_name"),
+            )
+            .outerjoin(
+                PortalUser,
+                (PortalUser.id == PortalRetrievalGap.resolved_by_user_id) & (PortalUser.org_id == perms.org_id),
+            )
+            .where(
+                PortalRetrievalGap.org_id == perms.org_id,
+                PortalRetrievalGap.occurred_at >= cutoff,
+                PortalRetrievalGap.resolved_at.isnot(None),
+                PortalRetrievalGap.query_text.in_({r.query_text for r in rows}),
+            )
+            .distinct(PortalRetrievalGap.query_text, PortalRetrievalGap.gap_type, PortalRetrievalGap.language)
+            .order_by(
+                PortalRetrievalGap.query_text,
+                PortalRetrievalGap.gap_type,
+                PortalRetrievalGap.language,
+                PortalRetrievalGap.resolved_at.desc(),
+                PortalRetrievalGap.id.desc(),
+            )
+        )
+        for row in resolved_result.all():
+            resolved_by_group.setdefault(
+                (row.query_text, row.gap_type, row.language), (row.resolved_by, row.resolved_by_name)
+            )
+
     gaps = [
         GapOut(
             query_text=r.query_text,
@@ -184,6 +232,17 @@ async def list_gaps(
             occurrence_count=r.occurrence_count,
             last_occurred=r.last_occurred,
             resolved_at=r.resolved_at,
+            # A reopened group is open: its old closer must not travel along.
+            resolved_by=(
+                resolved_by_group.get((r.query_text, r.gap_type, r.language), (None, None))[0]
+                if r.resolved_at is not None
+                else None
+            ),
+            resolved_by_name=(
+                resolved_by_group.get((r.query_text, r.gap_type, r.language), (None, None))[1]
+                if r.resolved_at is not None
+                else None
+            ),
         )
         for r in rows
     ]
@@ -205,6 +264,15 @@ async def resolve_gap(
     includes another org's group, since the org predicate excludes it (and RLS
     Category-D bounds the statement to that org anyway).
     """
+    caller_id = (
+        await db.execute(
+            select(PortalUser.id).where(
+                PortalUser.zitadel_user_id == perms.user_id,
+                PortalUser.org_id == perms.org_id,
+            )
+        )
+    ).scalar_one_or_none()
+
     stmt = (
         update(PortalRetrievalGap)
         .where(
@@ -213,7 +281,7 @@ async def resolve_gap(
             PortalRetrievalGap.gap_type == body.gap_type,
             PortalRetrievalGap.resolved_at.is_(None),
         )
-        .values(resolved_at=datetime.now(tz=UTC))
+        .values(resolved_at=datetime.now(tz=UTC), resolved_by="manual", resolved_by_user_id=caller_id)
     )
     # None means "the group without a language", not "any language" — same key
     # the GET grouping used to show it.

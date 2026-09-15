@@ -94,6 +94,7 @@ def _group_row(
     language: str | None = None,
     *,
     has_review: bool = False,
+    resolved_at: datetime | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         query_text=query_text,
@@ -103,8 +104,25 @@ def _group_row(
         nearest_kb_slug="kb-a",
         occurrence_count=1,
         last_occurred=_NOW,
-        resolved_at=None,
+        resolved_at=resolved_at,
         has_review=has_review,
+    )
+
+
+def _resolved_by_row(
+    query_text: str,
+    gap_type: str = "hard",
+    language: str | None = None,
+    *,
+    resolved_by: str | None = "review",
+    resolved_by_name: str | None = "Klaas Klai",
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        query_text=query_text,
+        gap_type=gap_type,
+        language=language,
+        resolved_by=resolved_by,
+        resolved_by_name=resolved_by_name,
     )
 
 
@@ -131,9 +149,15 @@ class _FakeGapDb:
     conversation the retention job already purged simply never comes back.
     """
 
-    def __init__(self, group_rows: list[Any], conversation_rows: list[Any] | None = None) -> None:
+    def __init__(
+        self,
+        group_rows: list[Any],
+        conversation_rows: list[Any] | None = None,
+        resolved_by_rows: list[Any] | None = None,
+    ) -> None:
         self.group_rows = group_rows
         self.conversation_rows = conversation_rows or []
+        self.resolved_by_rows = resolved_by_rows or []
         self.compiled: list[Any] = []
 
     @property
@@ -143,9 +167,14 @@ class _FakeGapDb:
     async def execute(self, stmt: Any, *args: Any, **kwargs: Any) -> MagicMock:
         compiled = stmt.compile(dialect=postgresql.dialect())
         self.compiled.append(compiled)
-        is_attribution = "widget_conversations" in str(compiled)
+        sql = str(compiled)
         result = MagicMock()
-        result.all.return_value = self.conversation_rows if is_attribution else self.group_rows
+        if "widget_conversations" in sql:
+            result.all.return_value = self.conversation_rows
+        elif "portal_users" in sql:
+            result.all.return_value = self.resolved_by_rows
+        else:
+            result.all.return_value = self.group_rows
         return result
 
 
@@ -257,25 +286,67 @@ async def test_list_gaps_without_rows_runs_no_attribution_query() -> None:
     assert len(db.statements) == 1
 
 
+@pytest.mark.asyncio
+async def test_list_gaps_include_resolved_carries_closer_fields() -> None:
+    """A resolved group in an ``include_resolved=true`` list carries who
+    closed it; an open group in the same list stays null on all three."""
+    db = _FakeGapDb(
+        [
+            _group_row(query_text="gesloten", resolved_at=_NOW),
+            _group_row(query_text="open"),
+        ],
+        resolved_by_rows=[_resolved_by_row("gesloten", resolved_by="review", resolved_by_name="Klaas Klai")],
+    )
+
+    out = await _list_gaps(db, include_resolved=True)
+
+    by_query = {g.query_text: g for g in out.gaps}
+    assert by_query["gesloten"].resolved_at == _NOW
+    assert by_query["gesloten"].resolved_by == "review"
+    assert by_query["gesloten"].resolved_by_name == "Klaas Klai"
+    assert by_query["open"].resolved_by is None
+    assert by_query["open"].resolved_by_name is None
+
+
+@pytest.mark.asyncio
+async def test_list_gaps_open_only_skips_the_resolved_by_query() -> None:
+    """The default (``include_resolved=false``) list never has a resolved row
+    to attribute, so it must not pay for the extra query."""
+    db = _FakeGapDb([_group_row(query_text="open")])
+
+    await _list_gaps(db)
+
+    assert not any("portal_users" in stmt for stmt in db.statements)
+
+
 # ---------------------------------------------------------------------------
 # POST /api/app/gaps/resolve — the human close action
 # ---------------------------------------------------------------------------
 
 
 class _FakeResolveDb:
-    def __init__(self, rowcount: int) -> None:
+    def __init__(self, rowcount: int, caller_id: int | None = 55) -> None:
         self.rowcount = rowcount
+        self.caller_id = caller_id
         self.compiled: list[Any] = []
         self.commits = 0
 
     async def execute(self, stmt: Any, *args: Any, **kwargs: Any) -> MagicMock:
-        self.compiled.append(stmt.compile(dialect=postgresql.dialect()))
+        compiled = stmt.compile(dialect=postgresql.dialect())
+        self.compiled.append(compiled)
         result = MagicMock()
-        result.rowcount = self.rowcount
+        if "portal_users" in str(compiled):
+            result.scalar_one_or_none.return_value = self.caller_id
+        else:
+            result.rowcount = self.rowcount
         return result
 
     async def commit(self) -> None:
         self.commits += 1
+
+
+def _update_stmt(db: _FakeResolveDb) -> Any:
+    return next(c for c in db.compiled if "UPDATE portal_retrieval_gaps" in str(c))
 
 
 @pytest.mark.asyncio
@@ -290,13 +361,28 @@ async def test_resolve_gap_closes_open_group_rows_in_own_org() -> None:
 
     assert out.resolved == 3
     assert db.commits == 1
-    stmt = db.compiled[0]
+    stmt = _update_stmt(db)
     sql = str(stmt)
     assert "UPDATE portal_retrieval_gaps" in sql
     assert "portal_retrieval_gaps.resolved_at IS NULL" in sql
     assert "portal_retrieval_gaps.language = " in sql
     assert "portal_retrieval_gaps.org_id = " in sql
     assert make_perms(role="admin").org_id in stmt.params.values()
+
+
+@pytest.mark.asyncio
+async def test_resolve_gap_writes_manual_and_the_caller_id() -> None:
+    db = _FakeResolveDb(1, caller_id=55)
+
+    await resolve_gap(
+        GapResolveRequest(query_text="retourbeleid", gap_type="hard", language="nl"),
+        perms=make_perms(role="admin"),
+        db=db,
+    )
+
+    params = _update_stmt(db).params
+    assert params["resolved_by"] == "manual"
+    assert params["resolved_by_user_id"] == 55
 
 
 @pytest.mark.asyncio
@@ -314,5 +400,5 @@ async def test_resolve_gap_404s_when_nothing_open_and_matches_null_language() ->
 
     assert exc.value.status_code == 404
     assert db.commits == 0
-    sql = str(db.compiled[0])
+    sql = str(_update_stmt(db))
     assert "portal_retrieval_gaps.language IS NULL" in sql

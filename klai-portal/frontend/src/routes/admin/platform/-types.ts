@@ -391,6 +391,11 @@ export interface PlatformUnlocksResponse {
   features: PlatformUnlockFeature[]
 }
 
+export interface WidgetRetentionResponse {
+  days: number | null
+  default_days: number
+}
+
 export interface CreateTenantPayload {
   company_name: string
   owner_email: string

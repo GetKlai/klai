@@ -302,7 +302,7 @@ SELECT conversation_id, COUNT(*) AS open_gaps
 
 _RESOLVE_GAP_SQL = """
 UPDATE portal_retrieval_gaps
-   SET resolved_at = NOW()
+   SET resolved_at = NOW(), resolved_by = :resolved_by, resolved_by_user_id = :resolved_by_user_id
  WHERE id = :gap_id
    AND org_id = :org_id
    AND resolved_at IS NULL
@@ -877,6 +877,7 @@ async def _sync_review_gap(
     body: ReviewRequest,
     signals: dict[str, Any],
     existing_gap_id: int | None,
+    reviewer_user_id: int,
 ) -> None:
     """Keep the gaps dashboard in step with the review's cause.
 
@@ -891,7 +892,15 @@ async def _sync_review_gap(
     try:
         if gap_type is None:
             if existing_gap_id is not None:
-                await db.execute(text(_RESOLVE_GAP_SQL), {"gap_id": existing_gap_id, "org_id": perms.org_id})
+                await db.execute(
+                    text(_RESOLVE_GAP_SQL),
+                    {
+                        "gap_id": existing_gap_id,
+                        "org_id": perms.org_id,
+                        "resolved_by": "review",
+                        "resolved_by_user_id": reviewer_user_id,
+                    },
+                )
                 await db.execute(text(_SET_REVIEW_GAP_SQL), {**scope, "gap_id": None})
                 await db.commit()
             return
@@ -999,6 +1008,7 @@ async def put_review(
         body=body,
         signals=signals,
         existing_gap_id=getattr(stored, "gap_id", None),
+        reviewer_user_id=caller.id,
     )
 
     return ReviewOut(
@@ -1024,7 +1034,16 @@ async def delete_review(
     scope = {"message_id": message_id, "org_id": perms.org_id}
     linked = (await db.execute(text(_REVIEW_GAP_SQL), scope)).first()
     if linked is not None and linked.gap_id is not None:
-        await db.execute(text(_RESOLVE_GAP_SQL), {"gap_id": linked.gap_id, "org_id": perms.org_id})
+        caller: Any = (await db.execute(text(_CALLER_SQL), {"user_id": perms.user_id, "org_id": perms.org_id})).first()
+        await db.execute(
+            text(_RESOLVE_GAP_SQL),
+            {
+                "gap_id": linked.gap_id,
+                "org_id": perms.org_id,
+                "resolved_by": "review",
+                "resolved_by_user_id": caller.id,
+            },
+        )
     await db.execute(text(_DELETE_REVIEW_SQL), scope)
     await db.commit()
 

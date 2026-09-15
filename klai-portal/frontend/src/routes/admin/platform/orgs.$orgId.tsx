@@ -34,6 +34,7 @@ import {
   TenantDangerZone,
   TenantFeaturesSection,
   UsersSection,
+  WidgetRetentionSection,
 } from './-components/OrgDetailSections'
 import { UsageSection } from './-components/stats/UsageSection'
 import type {
@@ -243,7 +244,10 @@ function PlatformOrgDetailPage() {
       />
 
       {activeTab === 'features' && (
-        <TenantFeaturesSection orgId={orgId} org={data.org} />
+        <>
+          <TenantFeaturesSection orgId={orgId} org={data.org} />
+          <WidgetRetentionSection orgId={orgId} org={data.org} />
+        </>
       )}
       {activeTab === 'users' && (
         <UsersSection orgId={orgId} users={data.users} />

@@ -89,6 +89,11 @@ async def test_rescore_marks_resolved_when_no_longer_gap() -> None:
     # Should have committed to persist resolved_at updates
     mock_db.commit.assert_called_once()
 
+    # Third execute() call is the UPDATE that resolves the gap; the rescorer
+    # must stamp its own closer identity (SPEC-KNOWLEDGE-ACTIVITY-001 §4.9).
+    update_stmt = mock_db.execute.call_args_list[2].args[0]
+    assert update_stmt.compile(dialect=postgresql.dialect()).params["resolved_by"] == "rescorer"
+
     # Regression-guard for SPEC-SEC-IDENTITY-ASSERT-001 silent-degradation:
     # the /retrieve call MUST send X-Caller-Service or retrieval-api 400s.
     post_headers = mock_client.post.call_args.kwargs["headers"]

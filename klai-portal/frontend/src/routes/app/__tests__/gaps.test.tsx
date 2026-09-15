@@ -13,7 +13,7 @@ import type { ReactNode } from 'react'
 
 // Route search params are injected through the createFileRoute stub, so the
 // page renders without a full router (repo route-test pattern).
-const searchValue: { days?: number; gapType?: string; language?: string } = {}
+const searchValue: { days?: number; gapType?: string; language?: string; include_resolved?: boolean } = {}
 const navigate = vi.fn()
 
 vi.mock('@tanstack/react-router', async () => {
@@ -92,6 +92,9 @@ function gapItem(overrides: Record<string, unknown> = {}) {
     language: 'nl',
     source: 'automatic',
     conversation_id: null,
+    resolved_at: null,
+    resolved_by: null,
+    resolved_by_name: null,
     ...overrides,
   }
 }
@@ -193,6 +196,31 @@ describe('GapsPage close action', () => {
     })
 
     await waitFor(() => expect(gapsFetchUrls().length).toBeGreaterThan(1))
+  })
+})
+
+describe('GapsPage closed rows', () => {
+  it('with include_resolved a closed row shows the badge and closer name and has no close button', async () => {
+    searchValue.include_resolved = true
+    mockGaps([
+      gapItem({
+        query_text: 'Wat kost Freedom?',
+        resolved_at: '2026-09-10T08:00:00Z',
+        resolved_by: 'manual',
+        resolved_by_name: 'Klaas Klai',
+      }),
+    ])
+
+    render(
+      <Wrapper>
+        <GapsPage />
+      </Wrapper>,
+    )
+
+    await waitForRow('Wat kost Freedom?')
+    expect(screen.getAllByText(/gesloten|closed/i).length).toBeGreaterThan(0)
+    expect(screen.getByText(/Klaas Klai/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /sluiten|close gap/i })).toBeNull()
   })
 })
 
