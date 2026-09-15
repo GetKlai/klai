@@ -176,7 +176,7 @@ async def rescore_open_gaps(
                         PortalRetrievalGap.language.is_not_distinct_from(row.language),
                         PortalRetrievalGap.resolved_at.is_(None),
                     )
-                    .values(resolved_at=datetime.now(tz=UTC))
+                    .values(resolved_at=datetime.now(tz=UTC), resolved_by="rescorer")
                 )
                 resolved_count += 1
                 logger.info(

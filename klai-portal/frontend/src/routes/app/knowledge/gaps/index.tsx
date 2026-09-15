@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { Select } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 import { BorderedRowActionIconButton, RowActionGroup } from '@/components/ui/row-action'
 import {
@@ -30,7 +31,7 @@ import { Tooltip } from '@/components/ui/tooltip'
 import { PageContainer } from '@/components/ui/page-container'
 import { appNavActivityIsVisible } from '@/routes/app/-app-tools'
 
-type GapsSearch = { days?: number; gapType?: string; language?: string }
+type GapsSearch = { days?: number; gapType?: string; language?: string; include_resolved?: boolean }
 const VALID_DAYS = new Set([7, 14, 30, 60, 90])
 // BCP-47-ish: 2-3 letter language subtag, optional 2-4 letter script/region
 // subtag, or the "undetermined" code. Matches the values the backend groups
@@ -44,6 +45,8 @@ export const Route = createFileRoute('/app/knowledge/gaps/')({
     days: VALID_DAYS.has(Number(search.days)) ? Number(search.days) : undefined,
     gapType: search.gapType === 'hard' || search.gapType === 'soft' ? (search.gapType as string) : undefined,
     language: isValidLanguageCode(search.language) ? search.language : undefined,
+    include_resolved:
+      search.include_resolved === true || search.include_resolved === 'true' ? true : undefined,
   }),
   component: () => (
     <ProductGuard product="knowledge">
@@ -64,6 +67,38 @@ interface GapRow {
   language: string | null
   source: 'automatic' | 'review'
   conversation_id: number | null
+  resolved_at: string | null
+  resolved_by: 'rescorer' | 'review' | 'manual' | null
+  resolved_by_name: string | null
+}
+
+/** Relative timestamps for the closed-row line; same approach as
+    knowledge/activity/index.tsx (not shared -- the two routes don't share a
+    lib module today and this is the only other caller). */
+function formatRelativeTime(isoString: string): string {
+  const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
+  const diffSeconds = (new Date(isoString).getTime() - Date.now()) / 1000
+  const units: [Intl.RelativeTimeFormatUnit, number][] = [
+    ['year', 31536000],
+    ['month', 2592000],
+    ['day', 86400],
+    ['hour', 3600],
+    ['minute', 60],
+  ]
+  for (const [unit, seconds] of units) {
+    if (Math.abs(diffSeconds) >= seconds) {
+      return rtf.format(Math.round(diffSeconds / seconds), unit)
+    }
+  }
+  return rtf.format(Math.round(diffSeconds), 'second')
+}
+
+/** "rescorer" and "beoordeling/review" are fixed labels; only 'manual' names
+    the actual colleague who closed it. */
+function closerLabel(gap: GapRow): string {
+  if (gap.resolved_by === 'rescorer') return m.gaps_resolved_by_rescorer()
+  if (gap.resolved_by === 'review') return m.gaps_resolved_by_review()
+  return gap.resolved_by_name ?? ''
 }
 
 interface GapsResponse {
@@ -104,19 +139,26 @@ export function GapsPage() {
   })
   const navigate = useNavigate({ from: '/app/knowledge/gaps/' })
 
-  const { days: daysParam, gapType: gapTypeParam, language: languageParam } = Route.useSearch()
+  const {
+    days: daysParam,
+    gapType: gapTypeParam,
+    language: languageParam,
+    include_resolved: includeResolvedParam,
+  } = Route.useSearch()
   const days = daysParam ?? 30
   const gapType = gapTypeParam ?? ''
   const language = languageParam ?? ''
+  const includeResolved = includeResolvedParam ?? false
   const [activePicker, setActivePicker] = useState<string | null>(null)
   const [closingKey, setClosingKey] = useState<string | null>(null)
 
   const { data, isLoading } = useQuery<GapsResponse>({
-    queryKey: ['app-gaps', days, gapType, language],
+    queryKey: ['app-gaps', days, gapType, language, includeResolved],
     queryFn: async () => {
       const params = new URLSearchParams({ days: String(days), limit: '100' })
       if (gapType) params.set('gap_type', gapType)
       if (language) params.set('language', language)
+      if (includeResolved) params.set('include_resolved', 'true')
       try {
         return await apiFetch<GapsResponse>(`/api/app/gaps?${params}`)
       } catch (err) {
@@ -249,6 +291,16 @@ export function GapsPage() {
             ))}
           </Select>
         </div>
+        <div className="flex items-center gap-2 pb-2">
+          <Switch
+            id="gap-include-resolved"
+            checked={includeResolved}
+            onCheckedChange={(checked) =>
+              void navigate({ search: (prev) => ({ ...prev, include_resolved: checked || undefined }) })
+            }
+          />
+          <Label htmlFor="gap-include-resolved">{m.gaps_filter_show_resolved()}</Label>
+        </div>
       </div>
 
       {/* Table */}
@@ -276,10 +328,22 @@ export function GapsPage() {
               // include language or two gaps with the same question and type in
               // different languages collide and clobber each other's row state.
               const rowKey = `${gap.query_text}|${gap.gap_type}|${gap.language ?? ''}`
+              const isResolved = gap.resolved_at != null
               return (
                 <DataTableRow key={rowKey} confirming={closingKey === rowKey}>
                   <DataTableCell className="truncate" title={gap.query_text}>
-                    {gap.query_text}
+                    <div className="truncate">{gap.query_text}</div>
+                    {isResolved && (
+                      <div className="mt-1 flex items-center gap-2">
+                        <Badge variant="secondary">{m.gaps_status_resolved()}</Badge>
+                        <span className="text-xs text-gray-500">
+                          {m.gaps_resolved_line({
+                            time: formatRelativeTime(gap.resolved_at!),
+                            closer: closerLabel(gap),
+                          })}
+                        </span>
+                      </div>
+                    )}
                   </DataTableCell>
                   <DataTableCell>
                     <Badge variant={gap.gap_type === 'hard' ? 'destructive' : 'warning'}>
@@ -346,12 +410,14 @@ export function GapsPage() {
                             onClick={() => setActivePicker(rowKey)}
                           />
                         )}
-                        <BorderedRowActionIconButton
-                          icon={Check}
-                          tone="neutral"
-                          label={m.gaps_action_close()}
-                          onClick={() => setClosingKey(rowKey)}
-                        />
+                        {!isResolved && (
+                          <BorderedRowActionIconButton
+                            icon={Check}
+                            tone="neutral"
+                            label={m.gaps_action_close()}
+                            onClick={() => setClosingKey(rowKey)}
+                          />
+                        )}
                       </RowActionGroup>
                     </InlineDeleteConfirm>
                     {activePicker === rowKey && (

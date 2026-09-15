@@ -849,7 +849,9 @@ async def test_changing_the_cause_away_from_knowledge_resolves_the_linked_gap() 
 
     assert response.status_code == 200
     mock.assert_not_awaited()
-    assert db.params_for("UPDATE portal_retrieval_gaps SET resolved_at") == [{"gap_id": 77, "org_id": 101}]
+    assert db.params_for("UPDATE portal_retrieval_gaps SET resolved_at") == [
+        {"gap_id": 77, "org_id": 101, "resolved_by": "review", "resolved_by_user_id": CALLER_PORTAL_USER_ID}
+    ]
     assert db.params_for("UPDATE answer_reviews SET gap_id") == [{"message_id": 9002, "org_id": 101, "gap_id": None}]
 
 
@@ -871,7 +873,9 @@ async def test_delete_review_resolves_the_gap_it_opened() -> None:
     response = await _call(db, _perms("kb_manager"), "delete", "/api/app/activity/messages/9002/review")
 
     assert response.status_code == 204
-    assert db.params_for("UPDATE portal_retrieval_gaps SET resolved_at") == [{"gap_id": 77, "org_id": 101}]
+    assert db.params_for("UPDATE portal_retrieval_gaps SET resolved_at") == [
+        {"gap_id": 77, "org_id": 101, "resolved_by": "review", "resolved_by_user_id": CALLER_PORTAL_USER_ID}
+    ]
     assert db.params_for("DELETE FROM answer_reviews") == [{"message_id": 9002, "org_id": 101}]
 
 

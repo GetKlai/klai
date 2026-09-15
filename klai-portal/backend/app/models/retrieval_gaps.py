@@ -27,6 +27,10 @@ class PortalRetrievalGap(Base):
             "gap_type IN ('hard', 'soft')",
             name="ck_retrieval_gaps_gap_type",
         ),
+        CheckConstraint(
+            "resolved_by IN ('rescorer', 'review', 'manual')",
+            name="ck_retrieval_gaps_resolved_by",
+        ),
         Index("ix_retrieval_gaps_org_occurred", "org_id", "occurred_at"),
         Index("ix_retrieval_gaps_org_query", "org_id", "query_text"),
         Index("ix_retrieval_gaps_open", "org_id", "query_text", postgresql_where=text("resolved_at IS NULL")),
@@ -63,3 +67,14 @@ class PortalRetrievalGap(Base):
     language: Mapped[str | None] = mapped_column(String(8), nullable=True, default=None)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
+    # Who closed the gap: 'rescorer' (app/services/gap_rescorer.py),
+    # 'review' (the answer-review cause moved away from knowledge, or the
+    # review that opened it was deleted), or 'manual' (POST
+    # /api/app/gaps/resolve). NULL while the gap is open.
+    resolved_by: Mapped[str | None] = mapped_column(String(16), nullable=True, default=None)
+    # The portal user who closed it via 'review' or 'manual'; NULL for
+    # 'rescorer' and for open gaps. No ForeignKey() here for the same reason
+    # as conversation_id above -- portal_api has no REFERENCES privilege on
+    # portal_users (klai-owned); the FK (ON DELETE SET NULL) is added by
+    # post_deploy_997e0b66f750_gaps_resolved_by_fk.sql as klai superuser.
+    resolved_by_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
