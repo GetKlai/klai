@@ -62,6 +62,7 @@ from app.services.llm_safety_adapter import (
     check_widget_or_partner_input,
     safe_refusal_text,
 )
+from app.services.widget_audit import find_conversation_id
 from app.trace import get_trace_headers
 from app.utils.language_detect import (
     detect_language,
@@ -2217,6 +2218,12 @@ def _schedule_gap_event(
     chunks: list[dict],
     retrieval_ms: int,
     is_preview: bool = False,
+    # Audit identity of the widget conversation this turn belongs to, resolved
+    # by the caller before retrieval. None for partner-key traffic and for
+    # widget keys without a widgets row — exactly the traffic that has no
+    # audit trail either.
+    audit_widget_id: str | None = None,
+    audit_session_key: str | None = None,
 ) -> None:
     """Gap detection + fire-and-forget registration for the widget / partner pad.
 
@@ -2236,6 +2243,11 @@ def _schedule_gap_event(
     ``nearest_kb_slug`` stays None in practice: the evidence-pack chunks on
     this path carry no ``metadata.kb_slug`` (unlike the hook's raw chunks),
     so the async taxonomy classification never triggers for widget rows.
+
+    ``conversation_id`` / ``language`` add the provenance the knowledge side
+    needs to triage a gap: which conversation to jump back to, and in which
+    language the answer is missing (§4.5). Both are best-effort — a gap
+    without them is still a gap.
     """
     # Admin preview traffic never reaches the gaps dashboard. Stats and the
     # outcome label already exclude preview conversations, so letting it in
@@ -2249,8 +2261,36 @@ def _schedule_gap_event(
             return
         top_chunk, top_score = _top_chunk_score(chunks)
         nearest_kb_slug = top_chunk.get("metadata", {}).get("kb_slug") if top_chunk and gap_type == "soft" else None
+        # The visitor's question, not the answer: the answer does not exist
+        # yet at this point, and "ontbreekt in het Engels" is a different
+        # editorial gap than "ontbreekt in het Nederlands".
+        language = detect_language(query_text)
 
         async def _write() -> None:
+            # Reading the conversation row is org-scoped inside
+            # ``find_conversation_id`` (org derived from the widgets row,
+            # never from this caller), and stays in this fire-and-forget task
+            # so a slow or broken read cannot touch the chat request.
+            conversation_id: int | None = None
+            if audit_widget_id is not None and audit_session_key is not None:
+                try:
+                    conversation_id = await find_conversation_id(
+                        widget_id=audit_widget_id,
+                        session_key=audit_session_key,
+                    )
+                except Exception:
+                    logger.warning(
+                        "partner_chat_gap_conversation_lookup_failed",
+                        org_id=org_id,
+                        widget_id=audit_widget_id,
+                        gap_type=gap_type,
+                        exc_info=True,
+                    )
+            # ``conversation_id`` is NULL when the row does not exist yet: the
+            # user-turn audit write is a separate fire-and-forget task started
+            # in the same request and can lose the race against this one. The
+            # gap is still worth recording; provenance can wait for the next
+            # turn's gap.
             try:
                 async with tenant_scoped_session(org_id) as session:
                     result = await record_gap_event(
@@ -2264,6 +2304,8 @@ def _schedule_gap_event(
                         chunks_retrieved=len(chunks),
                         retrieval_ms=retrieval_ms,
                         caller_client_id=_WIDGET_GAP_CALLER_CLIENT_ID,
+                        conversation_id=conversation_id,
+                        language=language,
                     )
                     # 'skipped' (telemetry off) is expected policy; 'not_found'
                     # means org_id and zitadel_org_id disagree — a real defect
@@ -2308,6 +2350,11 @@ async def retrieve_context(
     broad_mode: bool = False,
     tone_register: str = "restrained",
     is_preview: bool = False,
+    # Audit identity of the widget conversation, resolved by the caller before
+    # retrieval so the gap event can point at it (§4.5). See
+    # ``_schedule_gap_event``.
+    audit_widget_id: str | None = None,
+    audit_session_key: str | None = None,
 ) -> tuple[list[dict], str, list[dict[str, Any]], bool]:
     """Call retrieval-api and return (chunks, augmented_system_prompt, trusted_sources, broad).
 
@@ -2511,6 +2558,8 @@ async def retrieve_context(
         chunks=chunks,
         retrieval_ms=retrieval_ms,
         is_preview=is_preview,
+        audit_widget_id=audit_widget_id,
+        audit_session_key=audit_session_key,
     )
 
     return chunks, system_prompt, ([] if broad else trusted_sources), broad
