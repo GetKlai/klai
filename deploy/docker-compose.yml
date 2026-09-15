@@ -658,7 +658,7 @@ services:
 
   # ─── Ollama (CPU fallback) ────────────────────────────────────────────────
   ollama:
-    image: ollama/ollama:0.32.9
+    image: ollama/ollama:0.33.3
     restart: unless-stopped
     volumes:
       - /opt/klai/ollama/models:/root/.ollama
@@ -1747,7 +1747,7 @@ services:
   # order + additive column/index sync, never dropping). meeting-api depends on
   # it being healthy so the tables exist before the first query.
   vexa12-admin-api:
-    image: vexaai/v012-admin-api:v0.12.26
+    image: vexaai/v012-admin-api:v0.13.1
     restart: unless-stopped
     environment:
       DB_HOST: postgres
@@ -1787,7 +1787,7 @@ services:
   # mounts the raw docker.sock; we do not). Reuses the existing socat bridge —
   # its listener is `fork,reuseaddr`, so a second client is fine.
   vexa12-runtime:
-    image: vexaai/v012-runtime:v0.12.26
+    image: vexaai/v012-runtime:v0.13.1
     restart: unless-stopped
     environment:
       DOCKER_NETWORK: vexa12-bots
@@ -1821,7 +1821,7 @@ services:
 
   # ─── Vexa 0.12 meeting-api (bot lifecycle + transcript collector) ───────
   vexa12-meeting-api:
-    image: vexaai/v012-meeting-api:v0.12.26
+    image: vexaai/v012-meeting-api:v0.13.1
     restart: unless-stopped
     environment:
       DB_HOST: postgres
@@ -2054,7 +2054,7 @@ services:
   #   - S3 API on :3900 (authenticated uploads from klai-connector)
   #   - Web endpoint on :3902 (anonymous reads via Caddy /kb-images/ route)
   garage:
-    image: dxflrs/garage:v2.3.0
+    image: dxflrs/garage:v2.4.1
     restart: unless-stopped
     volumes:
       - /opt/klai/garage-meta:/var/lib/garage/meta
