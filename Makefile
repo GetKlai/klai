@@ -8,7 +8,7 @@ FRONTEND_PORT ?= $(if $(CONDUCTOR_PORT),$(CONDUCTOR_PORT),5174)
 BACKEND_PORT ?= $(if $(CONDUCTOR_PORT),$(shell expr $(CONDUCTOR_PORT) + 1),8010)
 FRONTEND_URL ?= http://localhost:$(FRONTEND_PORT)
 
-.PHONY: help setup local-dev-status e2e-prod-status dev-up dev-down dev-reset dev-bootstrap dev-status dev-logs seed postdeploy backend frontend migrate lint check
+.PHONY: help setup code-tools code-doctor mcp-smoke local-dev-status e2e-prod-status dev-up dev-down dev-reset dev-bootstrap dev-status dev-logs seed postdeploy backend frontend migrate lint check
 
 # ── Help ─────────────────────────────────────────────────────────────────────
 
@@ -134,6 +134,17 @@ migrate: ## Run Alembic database migrations
 
 frontend: ## Start Vite dev server (default port 5174, or CONDUCTOR_PORT)
 	cd $(FRONTEND_DIR) && VITE_API_PROXY_TARGET=$${VITE_API_PROXY_TARGET:-http://localhost:$(BACKEND_PORT)} VITE_DEV_SERVER_PORT=$(FRONTEND_PORT) npm run dev -- --host 127.0.0.1 --port $(FRONTEND_PORT) --strictPort
+
+# ── Code intelligence ────────────────────────────────────────────────────────
+
+code-tools: ## Build the per-worktree zvec-grep, Serena and codebase-memory indexes
+	scripts/code-tools-setup.sh
+
+code-doctor: ## Check the shared daemons are rooted at $$HOME (exit 1 if not)
+	scripts/code-daemon-guard.sh --check
+
+mcp-smoke: ## Prove every server in .mcp.json starts and answers over stdio
+	node .claude/scripts/mcp-smoke.mjs
 
 # ── Quality ──────────────────────────────────────────────────────────────────
 

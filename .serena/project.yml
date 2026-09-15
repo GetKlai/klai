@@ -121,7 +121,8 @@ initial_prompt: |
   to .serena/memories. Put production operations in the private klai-infra repo;
   put business, GTM, compliance, and research context in the private klai-private repo.
 
-  Do NOT call activate_project — the project is already active via --project-from-cwd.
+  Do NOT call activate_project — .mcp.json starts Serena with --project . so this
+  worktree is already the active project.
 
 # time budget (seconds) per tool call for the retrieval of additional symbol information
 # such as docstrings or parameter information.

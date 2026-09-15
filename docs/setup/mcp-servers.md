@@ -31,50 +31,23 @@ eviction. Re-run `uv tool install git+https://github.com/oraios/serena` and rest
 
 ## 2. Configure `.mcp.json`
 
-The MCP config lives at `.mcp.json` in the klai repo root (committed to git).
-It is **cross-platform** — all platform-specific settings live in local config files (see below).
+The MCP config lives at `.mcp.json` in the repo root and is committed, so a new
+machine or a new Conductor worktree needs no per-repo MCP setup at all. Read the
+file itself for the current server list; every entry carries a `$comment`
+explaining what it is for and why its flags look the way they do.
 
-**Current content:**
+It is cross-platform: anything machine-specific lives in a launcher script under
+`.claude/scripts/` or in your shell profile, never in the JSON.
 
-```json
-{
-  "$schema": "https://raw.githubusercontent.com/anthropics/claude-code/main/.mcp.schema.json",
-  "mcpServers": {
-    "serena": {
-      "type": "stdio",
-      "command": "serena",
-      "args": ["start-mcp-server", "--project-from-cwd"],
-      "env": {}
-    },
-    "context7": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp@latest"],
-      "env": {}
-    },
-    "playwright": {
-      "type": "stdio",
-      "command": "node",
-      "args": [".claude/scripts/playwright-launcher.mjs"],
-      "env": {}
-    },
-    "grafana": {
-      "type": "stdio",
-      "command": "node",
-      "args": [".claude/scripts/grafana-launcher.mjs"],
-      "env": {}
-    },
-    "victorialogs": {
-      "type": "stdio",
-      "command": "node",
-      "args": [".claude/scripts/victorialogs-launcher.mjs"],
-      "env": {
-        "VL_INSTANCE_ENTRYPOINT": "http://localhost:9428"
-      }
-    }
-  }
-}
+Verify the whole file at once, from any worktree:
+
+```bash
+make mcp-smoke
 ```
+
+That opens a real MCP stdio session against every declared server. How Claude
+Code decides to trust a project-scoped `.mcp.json`, and the one case where it
+still asks, is in `docs/setup/code-intelligence.md`.
 
 ### What each server does
 
@@ -383,28 +356,33 @@ For the full failure-mode history, see `playwright-mcp-config-cycle` in
 2026-05-13 confirmation that `{workspace-hash}` makes persistent profiles
 parallel-safe.
 
-## 4. Disable Serena web dashboard
+## 4. Serena web dashboard and project config
 
-By default Serena starts a web dashboard and opens a browser tab on every Claude Code launch.
-Disable it completely in `~/.serena/serena_config.yml`:
+Nothing to do per machine. `.mcp.json` passes `--open-web-dashboard False`, so
+Serena no longer steals a browser tab on every launch while the dashboard stays
+reachable at `http://localhost:24282/dashboard/` when you want it. Configuring
+this in `~/.serena/serena_config.yml` still works, but it only fixes the machine
+you remember to do it on.
 
-```yaml
-web_dashboard: false
+`.serena/project.yml` is committed, so a fresh clone or worktree already has the
+language list, the ignore paths and the project prompt. `.serena/cache` is the
+regenerable LSP cache and is gitignored; `make code-tools` warms it.
+
+## 5. Install zvec-grep
+
+Semantic search over the workspace. The `zg` MCP server is declared once in your
+own `~/.claude.json`, not per repo, so it is available in every project on the
+machine.
+
+```bash
+npm install -g @zvec/zvec-grep
+zg --version
 ```
 
-If you want the dashboard running but not auto-opening a tab, use this instead:
-
-```yaml
-web_dashboard: true
-web_dashboard_open_on_launch: false
-```
-
-The dashboard is then available at `http://localhost:24282/dashboard/` when needed.
-
-## 5. Restore Serena memories and project config
-
-Serena memories and `project.yml` are stored in the workspace at `.serena/` (not committed to git).
-After a fresh clone, activate the project and Serena will initialise a fresh memory store.
+The default embedding model (`local/potion-code-16m-v2`) runs on-device, so no
+API key and no authorization step is needed. Each worktree still needs its own
+index; `make code-tools` builds it. Index behaviour, the shared-daemon failure
+mode, and the fix are in `docs/setup/code-intelligence.md`.
 
 ## 6. Install GitHub CLI
 
@@ -423,6 +401,9 @@ The code knowledge graph for this repo, used through its CLI only. Install via t
 dotfiles `install.sh`: pinned `CBM_VERSION` (v0.10.8), sha256-checksummed download,
 installed to `~/bin/codebase-memory-mcp`. It also sets `auto_watch`, `auto_index` and `ui_enabled` to false.
 
+`make code-tools` indexes it per worktree and prints the project name, which is
+the worktree path as a slug and not `klai`. By hand:
+
 ```bash
 codebase-memory-mcp cli index_repository --repo-path .   # first use in a worktree; ~10 s, incremental on rerun
 ```
@@ -434,7 +415,9 @@ directories the built-in skip-list would otherwise drop.
 Deliberately not used: the MCP server, the daemon watcher (`auto_watch false`), and
 the vendor installer's client-hook integrations. The CLI is the interface.
 
-Usage: the `codebase-memory` block in `AGENTS.md` and the global `codebase-memory` skill.
+Usage: the `codebase-memory` block in `AGENTS.md` and the global `codebase-memory`
+skill. The project-name trap and the warm-daemon startup cost are in
+`docs/setup/code-intelligence.md`.
 
 ## 8. Install VictoriaLogs MCP
 
@@ -561,15 +544,22 @@ uvx mcp-grafana --help
    installed with `uv tool install`. Fix: `uv tool install git+https://github.com/oraios/serena`
 2. **uvx in .mcp.json** — If `command` is `"uvx"` instead of `"serena"`, it clones and rebuilds
    on every startup → MCP timeout → Serena never available. Fix: use `"command": "serena"`.
-3. **MCP timeout** — Serena takes too long to index. Check `.serena/project.yml` for overly broad
-   file patterns.
-4. **Playwright launcher fails to start** — `node` not on PATH or the launcher script missing. Fix: verify `node --version` works in your shell and `.claude/scripts/playwright-launcher.mjs` exists. Restart Claude Code.
-5. **Playwright sessions start logged-out in a workspace** — first decide which environment was requested. For Voys/voice/real-user work, run `cd klai-portal/frontend && npm run e2e:verify-voys-session`; if it fails, run `npm run e2e:capture-session` and complete Google SSO once, then restart the MCP session so the launcher preloads `_config/storageState.voys.json`. For isolated login-flow testing, use `PLAYWRIGHT_ISOLATED=1`. Do not click Log out in the persistent profile.
-6. **Playwright fails with `Browser is already in use`** — two MCP clients inside the same workspace are trying to open the same persistent profile. Fix: set `PLAYWRIGHT_ISOLATED=1` on the second instance (ephemeral profile, no lock). A leftover Chromium process from a previous crash can be killed with `taskkill /F /IM chrome.exe` (Windows) or `pkill -f playwright` (Mac/Linux).
-7. **Playwright window opens but immediately closes** — corrupt profile directory or corrupt storage-state file. Fix: nuke the workspace's profile (`rm -rf ~/Library/Caches/ms-playwright/mcp-chrome-*` on macOS — see Section 3 "Starting from scratch") and, if used, the storage-state file. Restart Claude Code.
-8. **Login state visible in one profile but missing in this MCP workspace** — workspace-hashed profiles are separate. Do not copy live Chrome cookie databases between profiles. For Voys, capture a portable storage-state with `npm run e2e:capture-session` or recover it from a known-good profile by launching that profile and calling `context.storageState({ path: '.../storageState.voys.json' })`; then verify with `npm run e2e:verify-voys-session`.
-9. **codebase-memory-mcp missing or stale** — `codebase-memory-mcp` not on PATH: run the dotfiles `install.sh` (see section 7). No or stale graph for this worktree: `codebase-memory-mcp cli index_repository --repo-path .`. Treat graph output as advisory and verify branch-local files directly.
-10. **VictoriaLogs tunnel not running** — MCP queries fail silently or timeout. Fix: `./scripts/victorialogs-tunnel.sh` then restart Claude Code.
-11. **VictoriaLogs auth missing** — `VICTORIALOGS_BASIC_AUTH_B64` not set in `~/.zshrc`. Symptoms: MCP connects but queries return 401. Fix: get the base64 value from SOPS and export it.
-12. **VictoriaLogs container IP changed** — Tunnel connects but queries fail. Cause: VictoriaLogs container restarted, got a new IP. Fix: `./scripts/victorialogs-tunnel.sh --stop && ./scripts/victorialogs-tunnel.sh` (re-resolves IP).
-13. **Grafana token missing** — `GRAFANA_SERVICE_ACCOUNT_TOKEN` not set. Symptoms: Grafana MCP fails to connect. Fix: create a per-developer service account in Grafana (see section 10) and export the token in your shell profile.
+3. **Serena answers about the wrong checkout** — it starts, lists its tools, and describes code that
+   is not on your branch. Cause: `--project-from-cwd` instead of `--project .` in `.mcp.json`
+   (oraios/serena#1496). Fix: `make mcp-smoke`, which fails the `serena (default)` line when the
+   project root is wrong.
+4. **zvec-grep search returns `[INDEX_MISSING]`** — either the worktree has no index yet
+   (`make code-tools`), or the shared `zg` daemon is running with a working directory that was
+   archived away and can no longer write one. The second case reports `ready` in `zg server status`
+   and still fails; fix it with `cd ~ && zg server off && zg server on`. See
+   `docs/setup/code-intelligence.md`.
+5. **Playwright launcher fails to start** — `node` not on PATH or the launcher script missing. Fix: verify `node --version` works in your shell and `.claude/scripts/playwright-launcher.mjs` exists. Restart Claude Code.
+6. **Playwright sessions start logged-out in a workspace** — first decide which environment was requested. For Voys/voice/real-user work, run `cd klai-portal/frontend && npm run e2e:verify-voys-session`; if it fails, run `npm run e2e:capture-session` and complete Google SSO once, then restart the MCP session so the launcher preloads `_config/storageState.voys.json`. For isolated login-flow testing, use `PLAYWRIGHT_ISOLATED=1`. Do not click Log out in the persistent profile.
+7. **Playwright fails with `Browser is already in use`** — two MCP clients inside the same workspace are trying to open the same persistent profile. Fix: set `PLAYWRIGHT_ISOLATED=1` on the second instance (ephemeral profile, no lock). A leftover Chromium process from a previous crash can be killed with `taskkill /F /IM chrome.exe` (Windows) or `pkill -f playwright` (Mac/Linux).
+8. **Playwright window opens but immediately closes** — corrupt profile directory or corrupt storage-state file. Fix: nuke the workspace's profile (`rm -rf ~/Library/Caches/ms-playwright/mcp-chrome-*` on macOS — see Section 3 "Starting from scratch") and, if used, the storage-state file. Restart Claude Code.
+9. **Login state visible in one profile but missing in this MCP workspace** — workspace-hashed profiles are separate. Do not copy live Chrome cookie databases between profiles. For Voys, capture a portable storage-state with `npm run e2e:capture-session` or recover it from a known-good profile by launching that profile and calling `context.storageState({ path: '.../storageState.voys.json' })`; then verify with `npm run e2e:verify-voys-session`.
+10. **codebase-memory-mcp missing or stale** — `codebase-memory-mcp` not on PATH: run the dotfiles `install.sh` (see section 7). No or stale graph for this worktree: `codebase-memory-mcp cli index_repository --repo-path .`. Treat graph output as advisory and verify branch-local files directly.
+11. **VictoriaLogs tunnel not running** — MCP queries fail silently or timeout. Fix: `./scripts/victorialogs-tunnel.sh` then restart Claude Code.
+12. **VictoriaLogs auth missing** — `VICTORIALOGS_BASIC_AUTH_B64` not set in `~/.zshrc`. Symptoms: MCP connects but queries return 401. Fix: get the base64 value from SOPS and export it.
+13. **VictoriaLogs container IP changed** — Tunnel connects but queries fail. Cause: VictoriaLogs container restarted, got a new IP. Fix: `./scripts/victorialogs-tunnel.sh --stop && ./scripts/victorialogs-tunnel.sh` (re-resolves IP).
+14. **Grafana token missing** — `GRAFANA_SERVICE_ACCOUNT_TOKEN` not set. Symptoms: Grafana MCP fails to connect. Fix: create a per-developer service account in Grafana (see section 10) and export the token in your shell profile.
