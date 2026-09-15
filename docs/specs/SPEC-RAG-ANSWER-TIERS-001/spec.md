@@ -1,6 +1,6 @@
 ---
 id: SPEC-RAG-ANSWER-TIERS-001
-version: "0.6.0"
+version: "0.7.0"
 status: REQ-1 and REQ-3 built; REQ-2 measured and dropped; REQ-4 partly built
 created: 2026-09-15
 author: Fable (Opus 5), commissioned by Mark Vletter
@@ -18,6 +18,7 @@ related:
 
 | Version | Date | Change |
 |---|---|---|
+| 0.7.0 | 2026-09-15 | Shipped and did nothing, because the classifier answered "needs grounding" to every message including "dankjewel". Not a model failure: the prompt asked for one boolean and told the model that answering yes was always the safe choice, so a small model took that free pass every time. Probed against the running service — naming the three classes and making the model pick one scores 11/11 on the same set where the boolean scored 0 on all six conversational cases. Also completes the two halves left open: the class now reaches the generation profile (the model was still being told to refuse, and the composer never reads the words) and every classified turn logs its class, not only the conversational ones. |
 | 0.6.0 | 2026-09-15 | Second review round. The classifier moved out of the gather to behind `classify_gap`, so grounded turns pay nothing instead of risking two seconds. Three more reproduced defects fixed: scheme-cased URLs survived the shared stripper (case-sensitive regex, fixed in klai-citations), schemeless link shapes were never covered at all (REQ-5 got its own pattern), and internal evidence labels reached the visitor because the sanitiser was called without the ids that let it remove them. The classifier prompt also called "translate that" conversational, which would have let a grounded price answer be restated without its sources; that clause is gone and the residual misclassification risk is named with its upgrade path. |
 | 0.5.0 | 2026-09-15 | REQ-5 added and built after Mark asked that the middle mode never return links unless they were retrieved and passed the gate. Checking that turned up the same bypass in the consented broad-mode branch, where it had been live since that feature shipped: an arbitrary model-written URL reached the visitor. Both source-less branches now strip through one function, with a parametrised invariant test. |
 | 0.4.0 | 2026-09-15 | Review corrections. Two defects in the REQ-1 implementation: skipping the composer also skipped the only mechanical guard against a model-written URL or fake citation reaching the visitor (reproduced, now stripped), and `force_escalation` — which fires on frustration and shouting, not just an explicit request for a person — sent conversational turns back to the canned refusal. The offer now survives without the refusal text. Also corrected an overclaim: concurrency bounds the added latency, it does not zero it, and the two classifiers do not share a timeout. |
@@ -182,7 +183,7 @@ One function, `_answer_without_retrieved_sources`, owns the invariant, and the
 test is parametrised over the source-less branches so that a third one added
 later belongs in the list by construction.
 
-## REQ-4 [SHOULD] — The classification is observable and falsifiable · partly built
+## REQ-4 [SHOULD] — The classification is observable and falsifiable · built
 
 Every turn logs its class and, for class three, whether the rendered answer
 contained an organisation-specific claim. Without this the boundary drifts
