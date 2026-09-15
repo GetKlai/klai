@@ -26,7 +26,12 @@ ALTER TABLE tenant_lifecycle_events
             'provisioned'::text,
             'deprovisioned'::text,
             'failed_deprovisioning'::text,
-            'platform_features_updated'::text
+            'platform_features_updated'::text,
+            -- SPEC-KNOWLEDGE-ACTIVITY-001 follow-up (15 Sep 2026): per-tenant widget
+            -- retention override. Kept in this script on purpose: post-deploy
+            -- scripts run alphabetically and this one recreates the CHECK, so a
+            -- separate later value would be dropped again.
+            'widget_retention_updated'::text
         ])
     );
 

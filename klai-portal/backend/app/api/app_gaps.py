@@ -232,8 +232,17 @@ async def list_gaps(
             occurrence_count=r.occurrence_count,
             last_occurred=r.last_occurred,
             resolved_at=r.resolved_at,
-            resolved_by=resolved_by_group.get((r.query_text, r.gap_type, r.language), (None, None))[0],
-            resolved_by_name=resolved_by_group.get((r.query_text, r.gap_type, r.language), (None, None))[1],
+            # A reopened group is open: its old closer must not travel along.
+            resolved_by=(
+                resolved_by_group.get((r.query_text, r.gap_type, r.language), (None, None))[0]
+                if r.resolved_at is not None
+                else None
+            ),
+            resolved_by_name=(
+                resolved_by_group.get((r.query_text, r.gap_type, r.language), (None, None))[1]
+                if r.resolved_at is not None
+                else None
+            ),
         )
         for r in rows
     ]

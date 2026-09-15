@@ -45,7 +45,7 @@ _VALID_EVENT_TYPES = frozenset(
         "platform_features_updated",
         # Per-tenant widget retention override (SPEC-KNOWLEDGE-ACTIVITY-001
         # follow-up); the DB CHECK is widened in
-        # post_deploy_63e87b89aa64_tenant_lifecycle_widget_retention.sql.
+        # post_deploy_c0d5e2a7b9f3_tenant_lifecycle_platform_features.sql.
         "widget_retention_updated",
     }
 )

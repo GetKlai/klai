@@ -226,7 +226,9 @@ class TestPatchWidgetRetention:
 def test_widget_retention_audit_event_type_is_valid_in_code_and_sql() -> None:
     """The route emits ``widget_retention_updated``; if the validator or the DB
     CHECK does not list it, every PATCH fails before its commit (found in
-    review: the emitter was mocked in the route tests)."""
+    review: the emitter was mocked in the route tests). The CHECK lives in the
+    platform_features script because post-deploy scripts run alphabetically
+    and that one recreates the constraint."""
     from pathlib import Path
 
     from app.services.audit.tenant_lifecycle import _VALID_EVENT_TYPES
@@ -236,6 +238,6 @@ def test_widget_retention_audit_event_type_is_valid_in_code_and_sql() -> None:
         Path(__file__).parents[1]
         / "alembic"
         / "versions"
-        / "post_deploy_63e87b89aa64_tenant_lifecycle_widget_retention.sql"
+        / "post_deploy_c0d5e2a7b9f3_tenant_lifecycle_platform_features.sql"
     )
     assert "'widget_retention_updated'::text" in sql.read_text()
