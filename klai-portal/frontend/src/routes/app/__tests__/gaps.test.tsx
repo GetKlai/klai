@@ -111,7 +111,7 @@ beforeEach(() => {
   apiFetchMock.mockReset()
   capabilities.length = 0
   capabilities.push('kb.gaps')
-  for (const key of Object.keys(searchValue)) delete searchValue[key]
+  for (const key of Object.keys(searchValue) as Array<keyof typeof searchValue>) delete searchValue[key]
 })
 
 describe('GapsPage source column', () => {
