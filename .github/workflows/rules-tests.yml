@@ -95,5 +95,10 @@ jobs:
         # suite is plain unittest with no dependencies.
         run: python3 .claude/hooks/klai/tests/public-github-mutation-guard.test.py
 
+      - name: Run worktree guard tests
+        # The worktree guard blocked its own documented escapes until this suite
+        # existed; plain bash, no dependencies.
+        run: bash .claude/hooks/klai/tests/worktree-no-main.test.sh
+
       - name: Check active agent knowledge
         run: bash scripts/check-agent-knowledge.sh

@@ -6,8 +6,9 @@
 # to switch to main. This caused 33 worktrees of cross-worktree
 # friction in the 2026-05-04 cleanup. Block at source.
 #
-# Allowed: `git worktree add <path> -b <branch> main`
-#          (creates a NEW branch FROM main — main stays canonical)
+# Allowed: `git worktree add <path> -b <branch> main` and the same with the flag
+#          before the path (creates a NEW branch FROM main — main stays
+#          canonical), plus `--detach`, which claims no branch at all.
 # Blocked: `git worktree add <path> main`
 #          `git worktree add <path> origin/main`
 #          `git worktree add <path> refs/heads/main`
@@ -41,8 +42,11 @@ if ! echo "$COMMAND" | grep -qE 'git[[:space:]]+worktree[[:space:]]+add[[:space:
     exit 0
 fi
 
-# Allow `-b <branch> [<base>]` form — that creates a new branch FROM the base.
-if echo "$COMMAND" | grep -qE 'git[[:space:]]+worktree[[:space:]]+add[[:space:]].*[[:space:]]-b[[:space:]]'; then
+# Allow the forms that never claim the branch: `-b`/`-B` create a new branch FROM
+# the base, `--detach` checks out the commit without a branch at all. Matched
+# anywhere in the command, because git takes its flags before or after the path
+# and the earlier `add[[:space:]]` here ate the space an anchored pattern needed.
+if echo "$COMMAND" | grep -qE '(^|[[:space:]])(-b|-B|--detach)([[:space:]]|$)'; then
     exit 0
 fi
 
