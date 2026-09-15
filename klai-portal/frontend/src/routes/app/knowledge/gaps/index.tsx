@@ -30,6 +30,7 @@ import { RoleGuard } from '@/components/layout/RoleGuard'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { Tooltip } from '@/components/ui/tooltip'
 import { PageContainer } from '@/components/ui/page-container'
+import { QueryErrorState } from '@/components/ui/query-error-state'
 import { appNavActivityIsVisible, appNavGapsIsVisible } from '@/routes/app/-app-tools'
 
 type GapsSearch = { days?: number; gapType?: string; language?: string; include_resolved?: boolean }
@@ -231,6 +232,22 @@ export function GapsPage() {
   ).sort()
   if (language && !languageOptions.includes(language)) languageOptions.push(language)
 
+  // The unlock read decides everything below: show its own loading and
+  // error states instead of an empty gaps list while it is unresolved.
+  if (hasGapsCapability && meQuery.isLoading) {
+    return (
+      <PageContainer width="6xl" gap="6">
+        <ListLoadingState label={m.admin_shared_loading()} />
+      </PageContainer>
+    )
+  }
+  if (hasGapsCapability && meQuery.isError) {
+    return (
+      <PageContainer width="6xl" gap="6">
+        <QueryErrorState error={meQuery.error} onRetry={() => void meQuery.refetch()} />
+      </PageContainer>
+    )
+  }
   if (hasGapsCapability && me !== undefined && !gapsUnlocked) {
     return (
       <PageContainer width="6xl" gap="6">
