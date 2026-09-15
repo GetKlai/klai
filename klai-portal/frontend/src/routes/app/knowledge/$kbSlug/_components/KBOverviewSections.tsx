@@ -7,6 +7,7 @@ import {
 import { Button } from '@/components/ui/button'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
+import { fetchMe } from '@/lib/api-me'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { DashboardSection } from '../-kb-helpers'
 import type { KnowledgeBase, KBStats } from '../-kb-types'
@@ -23,6 +24,14 @@ import { kbQueryKeys } from '@/lib/kb-query-keys'
 export function KBOverviewSections({ kbSlug }: { kbSlug: string }) {
   const auth = useAuth()
   const { user } = useCurrentUser()
+  // The gaps screen is behind the knowledge_gaps unlock; no tile to a screen
+  // the tenant cannot open.
+  const { data: me } = useQuery({
+    queryKey: ['me'],
+    queryFn: ({ signal }) => fetchMe(signal),
+    enabled: user?.isAdmin === true,
+  })
+  const gapsUnlocked = (me?.platform_unlocked_features ?? []).includes('knowledge_gaps')
 
   // These queries reuse the same queryKeys as the parent layout -- TanStack Query
   // serves cached data without re-fetching.
@@ -103,7 +112,7 @@ export function KBOverviewSections({ kbSlug }: { kbSlug: string }) {
                 : m.knowledge_detail_usage_unknown()}
             </p>
           </div>
-          {user?.isAdmin === true && stats?.org_gap_count_7d != null && (
+          {user?.isAdmin === true && gapsUnlocked && stats?.org_gap_count_7d != null && (
             <Link to="/app/knowledge/gaps" className="group">
               <div>
                 <p className="text-xs text-gray-600 tracking-wide mb-1 flex items-center gap-1">

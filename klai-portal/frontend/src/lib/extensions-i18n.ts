@@ -33,6 +33,8 @@ export function extensionLabel(key: string): string {
       return m.admin_extension_docs_label()
     case 'knowledge_activity':
       return m.admin_extension_knowledge_activity_label()
+    case 'knowledge_gaps':
+      return m.admin_extension_knowledge_gaps_label()
     case 'librechat_quality_judge':
       return m.admin_extension_librechat_quality_judge_label()
     default:
@@ -54,6 +56,8 @@ export function extensionDescription(key: string): string {
       return m.admin_extension_docs_description()
     case 'knowledge_activity':
       return m.admin_extension_knowledge_activity_description()
+    case 'knowledge_gaps':
+      return m.admin_extension_knowledge_gaps_description()
     case 'librechat_quality_judge':
       return m.admin_extension_librechat_quality_judge_description()
     default:

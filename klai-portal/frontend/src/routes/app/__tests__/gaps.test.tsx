@@ -60,7 +60,7 @@ vi.mock('@/hooks/useCurrentUser', () => ({
 // fetchMe goes through raw fetch, not apiFetch, so the tenant unlocks the
 // drill-in link depends on are mocked at the module boundary (same pattern as
 // ActivityTab.conversations-link.test.tsx).
-let unlockedFeatures: string[] = ['widgets', 'knowledge_activity']
+let unlockedFeatures: string[] = ['widgets', 'knowledge_activity', 'knowledge_gaps']
 vi.mock('@/lib/api-me', () => ({
   fetchMe: () =>
     Promise.resolve({
@@ -128,7 +128,7 @@ beforeEach(() => {
   apiFetchMock.mockReset()
   capabilities.length = 0
   capabilities.push('kb.gaps')
-  unlockedFeatures = ['widgets', 'knowledge_activity']
+  unlockedFeatures = ['widgets', 'knowledge_activity', 'knowledge_gaps']
   for (const key of Object.keys(searchValue) as Array<keyof typeof searchValue>) delete searchValue[key]
 })
 
@@ -254,7 +254,7 @@ describe('GapsPage conversation drill-in', () => {
 
   it('hides the conversation link with kb.activity but without the knowledge_activity unlock', async () => {
     capabilities.push('kb.activity')
-    unlockedFeatures = ['widgets']
+    unlockedFeatures = ['widgets', 'knowledge_gaps']
     mockGaps([gapItem({ conversation_id: 42 })])
 
     const { container } = render(
