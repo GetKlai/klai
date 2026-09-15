@@ -119,6 +119,7 @@ class TestGetEffectiveCapabilities:
             "kb.members",
             "kb.taxonomy",
             "kb.gaps",
+            "kb.activity",
             "templates.manage_org",
         }
         assert caps == expected
@@ -152,6 +153,7 @@ class TestGetEffectiveCapabilities:
             "kb.members",
             "kb.taxonomy",
             "kb.gaps",
+            "kb.activity",
             "templates.manage_org",
         }
         assert caps == expected
@@ -239,6 +241,7 @@ class TestRequireCapability:
             "kb.members",
             "kb.taxonomy",
             "kb.gaps",
+            "kb.activity",
             "templates.manage_org",
         ]:
             dep = require_capability(cap)

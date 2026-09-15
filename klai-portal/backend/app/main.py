@@ -13,6 +13,7 @@ from app.api.admin import router as admin_router
 from app.api.admin_api_keys import router as admin_api_keys_router
 from app.api.admin_widgets import router as admin_widgets_router
 from app.api.app_account import router as app_account_router
+from app.api.app_activity import router as app_activity_router
 from app.api.app_assistant import router as app_assistant_router
 from app.api.app_chat import router as app_chat_router
 from app.api.app_gaps import router as app_gaps_router
@@ -423,6 +424,7 @@ app.include_router(app_knowledge_sources_router)
 app.include_router(app_product_updates_router)
 app.include_router(app_templates_router)
 app.include_router(app_gaps_router)
+app.include_router(app_activity_router)
 app.include_router(connectors_router)
 app.include_router(taxonomy_router)
 app.include_router(vitals_router)

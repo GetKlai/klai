@@ -34,6 +34,7 @@ class Capability(StrEnum):
     KB_MEMBERS = "kb.members"
     KB_TAXONOMY = "kb.taxonomy"
     KB_GAPS = "kb.gaps"
+    KB_ACTIVITY = "kb.activity"
     TEMPLATES_MANAGE_ORG = "templates.manage_org"
 
 
@@ -97,6 +98,9 @@ _KB_FULL_CAPS: frozenset[str] = _KB_BASIC_CAPS | frozenset(
         Capability.KB_MEMBERS,
         Capability.KB_TAXONOMY,
         Capability.KB_GAPS,
+        # SPEC-KNOWLEDGE-ACTIVITY-001 §4.2: filing/reviewing answer reviews is
+        # knowledge-side management, so it starts at kb_manager.
+        Capability.KB_ACTIVITY,
         Capability.TEMPLATES_MANAGE_ORG,
     }
 )

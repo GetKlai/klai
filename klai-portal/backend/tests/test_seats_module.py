@@ -101,6 +101,10 @@ class TestCapabilityToSeatFeature:
     # represented here. If a future Capability lands without a mapping,
     # this test fails -- the implementer must explicitly opt out via the
     # allow-list below if the cap is intentionally outside the seat layer.
+    # SPEC-KNOWLEDGE-ACTIVITY-001 §4.4: kb.activity is gated per tenant by the
+    # `knowledge_activity` platform unlock (Klai staff decide which tenants see
+    # the knowledge-side activity view), so no seat tier unlocks it and a seat
+    # mapping would wrongly tie it to billing.
     _ALLOWED_TO_BE_UNMAPPED: frozenset[str] = frozenset()
 
     def test_every_capability_member_has_a_mapping(self) -> None:
@@ -237,6 +241,7 @@ class TestEffectiveCapabilities:
             Capability.KB_MEMBERS,
             Capability.KB_TAXONOMY,
             Capability.KB_GAPS,
+            Capability.KB_ACTIVITY,
             Capability.TEMPLATES_MANAGE_ORG,
         }
 

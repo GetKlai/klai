@@ -1,5 +1,6 @@
 import type { LucideIcon } from 'lucide-react'
-import { BookMarked, Brain, MessageSquare, Mic, Sliders } from 'lucide-react'
+import { AlertTriangle, BookMarked, Brain, Library, MessageSquare, Mic, Sliders } from 'lucide-react'
+import type { NavItem } from '@/components/layout/Sidebar'
 import * as m from '@/paraglide/messages'
 
 interface AppTool {
@@ -57,5 +58,53 @@ export function getAccessibleAppTools(products: string[]): AppTool[] {
   return APP_TOOLS.filter((tool) => {
     if (!tool.requiredProducts) return true
     return tool.requiredProducts.some((product) => products.includes(product))
+  })
+}
+
+/**
+ * SPEC-KNOWLEDGE-ACTIVITY-001 §3: what the sidebar needs beyond the product
+ * list — the caller's capabilities and the tenant's platform unlocks.
+ */
+export interface AppNavAccess {
+  hasCapability: (capability: string) => boolean
+  unlockedFeatures: string[]
+  activityQueueCount?: number
+}
+
+// The review queue only makes sense for a tenant that unlocked both the widget
+// channel and knowledge activity, on top of the seat capability.
+const ACTIVITY_UNLOCKS = ['widgets', 'knowledge_activity']
+
+/** Whether the sidebar may show (and therefore fetch for) Gesprekken. */
+export function appNavActivityIsVisible(access: AppNavAccess): boolean {
+  return (
+    access.hasCapability('kb.activity') &&
+    ACTIVITY_UNLOCKS.every((feature) => access.unlockedFeatures.includes(feature))
+  )
+}
+
+export function getAppNavItems(products: string[], access: AppNavAccess): NavItem[] {
+  return getAccessibleAppTools(products).map((tool) => {
+    const item: NavItem = { to: tool.href, label: tool.title(), icon: tool.icon }
+    if (tool.href !== '/app/knowledge') return item
+
+    const children: NavItem[] = [
+      // `end` keeps Kennisbanken from staying active on its own children's paths.
+      { to: '/app/knowledge', label: m.app_nav_knowledge_bases(), icon: Library, end: true },
+    ]
+    if (appNavActivityIsVisible(access)) {
+      children.push({
+        to: '/app/knowledge/activity',
+        label: m.app_nav_conversations(),
+        icon: MessageSquare,
+        badgeCount: access.activityQueueCount,
+      })
+    }
+    // @MX:SPEC: SPEC-KNOWLEDGE-ACTIVITY-001 §3 — this path moves in phase 2.
+    if (access.hasCapability('kb.gaps')) {
+      children.push({ to: '/app/gaps', label: m.app_nav_knowledge_gaps(), icon: AlertTriangle })
+    }
+
+    return { ...item, children }
   })
 }

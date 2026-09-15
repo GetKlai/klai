@@ -257,3 +257,41 @@ def test_generate_widget_id():
     wid = generate_widget_id()
     assert wid.startswith("wgt_")
     assert len(wid) == 44  # wgt_ (4) + 40 hex
+
+
+def test_admin_conversation_routes_removed():
+    """SPEC-KNOWLEDGE-ACTIVITY-001 §4.4: the three tenant-admin conversation
+    routes are gone — app/api/app_activity.py is the only conversation
+    reader now. The stats route (kanaalbeheer) stays registered."""
+    import asyncio
+
+    import httpx
+    from fastapi import FastAPI
+
+    from app.api.admin_widgets import router
+
+    app = FastAPI()
+    app.include_router(router)
+
+    async def probe():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            return [
+                await client.get("/api/admin/widgets/wgt_abc/conversations"),
+                await client.get("/api/admin/widgets/wgt_abc/conversations/7"),
+                await client.get("/api/admin/widgets/wgt_abc/conversations/7/quality"),
+            ]
+
+    responses = asyncio.run(probe())
+    assert [r.status_code for r in responses] == [404, 404, 404]
+
+    registered = {
+        path
+        for r in app.routes
+        for path in (
+            [getattr(r, "path", "")]
+            + [getattr(child, "path", "") for child in getattr(getattr(r, "original_router", None), "routes", [])]
+        )
+        if path.startswith("/api/admin/widgets")
+    }
+    assert "/api/admin/widgets/{widget_id}/stats" in registered
+    assert not [path for path in registered if "conversations" in path]

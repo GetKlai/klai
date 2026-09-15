@@ -148,6 +148,7 @@ export function Sidebar({ navItems }: SidebarProps) {
                       >
                         <child.icon size={15} strokeWidth={1.5} />
                         {child.label}
+                        {renderBadge(child.badgeCount, child.label)}
                       </Link>
                     </li>
                   ))}

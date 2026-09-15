@@ -190,6 +190,7 @@ async def test_resolve_admin_on_core_gets_complete_capabilities() -> None:
             Capability.KB_MEMBERS,
             Capability.KB_TAXONOMY,
             Capability.KB_GAPS,
+            Capability.KB_ACTIVITY,
             Capability.TEMPLATES_MANAGE_ORG,
         }
     )
@@ -236,6 +237,7 @@ async def test_resolve_kb_manager_on_knowledge_seat_keeps_full_caps() -> None:
             Capability.KB_MEMBERS,
             Capability.KB_TAXONOMY,
             Capability.KB_GAPS,
+            Capability.KB_ACTIVITY,
             Capability.TEMPLATES_MANAGE_ORG,
         }
     )
