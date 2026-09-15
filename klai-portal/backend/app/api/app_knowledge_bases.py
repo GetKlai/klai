@@ -25,7 +25,7 @@ from app.core.profiles import Capability, ProfileRole
 from app.models.connectors import PortalConnector
 from app.models.groups import PortalGroup
 from app.models.kb_uploads import KBUpload
-from app.models.knowledge_bases import PortalGroupKBAccess, PortalKnowledgeBase, PortalUserKBAccess
+from app.models.knowledge_bases import RESERVED_KB_SLUGS, PortalGroupKBAccess, PortalKnowledgeBase, PortalUserKBAccess
 from app.models.portal import PortalUser
 from app.models.retrieval_gaps import PortalRetrievalGap
 from app.services import docs_client, kb_uploads_repo, knowledge_ingest_client
@@ -572,6 +572,12 @@ async def create_app_knowledge_base(
         await assert_can_create_personal_kb(user_id=perms.user_id, org=org, db=db, role=perms.role)
     elif body.owner_type == "org":
         await assert_can_create_org_kb(org=org, role=perms.role)
+
+    if body.slug in RESERVED_KB_SLUGS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"slug '{body.slug}' is reserved",
+        )
 
     owner_user_id = perms.user_id if body.owner_type == "user" else None
 

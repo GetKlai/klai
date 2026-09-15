@@ -108,6 +108,7 @@ import { Route as AppKnowledgeKbSlugAddConnectorRouteImport } from './routes/app
 import { Route as AppKnowledgeKbSlugAddSourceRouteImport } from './routes/app/knowledge/$kbSlug_.add-source'
 import { Route as AppKnowledgeActivityIndexRouteImport } from './routes/app/knowledge/activity/index'
 import { Route as AppKnowledgeActivityConversationIdRouteImport } from './routes/app/knowledge/activity/$conversationId'
+import { Route as AppKnowledgeGapsIndexRouteImport } from './routes/app/knowledge/gaps/index'
 import { Route as AdminPlatformFeedbackItemsItemIdRouteImport } from './routes/admin/platform/feedback.items.$itemId'
 import { Route as AdminPlatformFeedbackSubmissionsSubmissionIdRouteImport } from './routes/admin/platform/feedback.submissions.$submissionId'
 import { Route as AppKnowledgeKbSlugEditConnectorConnectorIdRouteImport } from './routes/app/knowledge/$kbSlug_.edit-connector.$connectorId'
@@ -628,6 +629,11 @@ const AppKnowledgeActivityConversationIdRoute =
     path: '/knowledge/activity/$conversationId',
     getParentRoute: () => AppRouteRoute,
   } as any)
+const AppKnowledgeGapsIndexRoute = AppKnowledgeGapsIndexRouteImport.update({
+  id: '/knowledge/gaps/',
+  path: '/knowledge/gaps/',
+  getParentRoute: () => AppRouteRoute,
+} as any)
 const AdminPlatformFeedbackItemsItemIdRoute =
   AdminPlatformFeedbackItemsItemIdRouteImport.update({
     id: '/platform/feedback/items/$itemId',
@@ -747,6 +753,7 @@ export interface FileRoutesByFullPath {
   '/app/docs/$kbSlug/': typeof AppDocsKbSlugIndexRoute
   '/app/knowledge/$kbSlug/': typeof AppKnowledgeKbSlugIndexRoute
   '/app/knowledge/activity/': typeof AppKnowledgeActivityIndexRoute
+  '/app/knowledge/gaps/': typeof AppKnowledgeGapsIndexRoute
   '/admin/platform/feedback/items/$itemId': typeof AdminPlatformFeedbackItemsItemIdRoute
   '/admin/platform/feedback/submissions/$submissionId': typeof AdminPlatformFeedbackSubmissionsSubmissionIdRoute
   '/app/knowledge/$kbSlug/edit-connector/$connectorId': typeof AppKnowledgeKbSlugEditConnectorConnectorIdRoute
@@ -846,6 +853,7 @@ export interface FileRoutesByTo {
   '/app/docs/$kbSlug': typeof AppDocsKbSlugIndexRoute
   '/app/knowledge/$kbSlug': typeof AppKnowledgeKbSlugIndexRoute
   '/app/knowledge/activity': typeof AppKnowledgeActivityIndexRoute
+  '/app/knowledge/gaps': typeof AppKnowledgeGapsIndexRoute
   '/admin/platform/feedback/items/$itemId': typeof AdminPlatformFeedbackItemsItemIdRoute
   '/admin/platform/feedback/submissions/$submissionId': typeof AdminPlatformFeedbackSubmissionsSubmissionIdRoute
   '/app/knowledge/$kbSlug/edit-connector/$connectorId': typeof AppKnowledgeKbSlugEditConnectorConnectorIdRoute
@@ -951,6 +959,7 @@ export interface FileRoutesById {
   '/app/docs/$kbSlug/': typeof AppDocsKbSlugIndexRoute
   '/app/knowledge/$kbSlug/': typeof AppKnowledgeKbSlugIndexRoute
   '/app/knowledge/activity/': typeof AppKnowledgeActivityIndexRoute
+  '/app/knowledge/gaps/': typeof AppKnowledgeGapsIndexRoute
   '/admin/platform/feedback/items/$itemId': typeof AdminPlatformFeedbackItemsItemIdRoute
   '/admin/platform/feedback/submissions/$submissionId': typeof AdminPlatformFeedbackSubmissionsSubmissionIdRoute
   '/app/knowledge/$kbSlug_/edit-connector/$connectorId': typeof AppKnowledgeKbSlugEditConnectorConnectorIdRoute
@@ -1057,6 +1066,7 @@ export interface FileRouteTypes {
     | '/app/docs/$kbSlug/'
     | '/app/knowledge/$kbSlug/'
     | '/app/knowledge/activity/'
+    | '/app/knowledge/gaps/'
     | '/admin/platform/feedback/items/$itemId'
     | '/admin/platform/feedback/submissions/$submissionId'
     | '/app/knowledge/$kbSlug/edit-connector/$connectorId'
@@ -1156,6 +1166,7 @@ export interface FileRouteTypes {
     | '/app/docs/$kbSlug'
     | '/app/knowledge/$kbSlug'
     | '/app/knowledge/activity'
+    | '/app/knowledge/gaps'
     | '/admin/platform/feedback/items/$itemId'
     | '/admin/platform/feedback/submissions/$submissionId'
     | '/app/knowledge/$kbSlug/edit-connector/$connectorId'
@@ -1260,6 +1271,7 @@ export interface FileRouteTypes {
     | '/app/docs/$kbSlug/'
     | '/app/knowledge/$kbSlug/'
     | '/app/knowledge/activity/'
+    | '/app/knowledge/gaps/'
     | '/admin/platform/feedback/items/$itemId'
     | '/admin/platform/feedback/submissions/$submissionId'
     | '/app/knowledge/$kbSlug_/edit-connector/$connectorId'
@@ -1984,6 +1996,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppKnowledgeActivityConversationIdRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/app/knowledge/gaps/': {
+      id: '/app/knowledge/gaps/'
+      path: '/knowledge/gaps'
+      fullPath: '/app/knowledge/gaps/'
+      preLoaderRoute: typeof AppKnowledgeGapsIndexRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
     '/admin/platform/feedback/items/$itemId': {
       id: '/admin/platform/feedback/items/$itemId'
       path: '/platform/feedback/items/$itemId'
@@ -2203,6 +2222,7 @@ interface AppRouteRouteChildren {
   AppKnowledgeKbSlugAddSourceRoute: typeof AppKnowledgeKbSlugAddSourceRoute
   AppKnowledgeActivityConversationIdRoute: typeof AppKnowledgeActivityConversationIdRoute
   AppKnowledgeActivityIndexRoute: typeof AppKnowledgeActivityIndexRoute
+  AppKnowledgeGapsIndexRoute: typeof AppKnowledgeGapsIndexRoute
   AppKnowledgeKbSlugEditConnectorConnectorIdRoute: typeof AppKnowledgeKbSlugEditConnectorConnectorIdRoute
 }
 
@@ -2234,6 +2254,7 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppKnowledgeActivityConversationIdRoute:
     AppKnowledgeActivityConversationIdRoute,
   AppKnowledgeActivityIndexRoute: AppKnowledgeActivityIndexRoute,
+  AppKnowledgeGapsIndexRoute: AppKnowledgeGapsIndexRoute,
   AppKnowledgeKbSlugEditConnectorConnectorIdRoute:
     AppKnowledgeKbSlugEditConnectorConnectorIdRoute,
 }

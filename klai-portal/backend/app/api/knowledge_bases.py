@@ -13,7 +13,7 @@ from app.api.dependencies import _load_org_or_500
 from app.core.database import get_db
 from app.core.permissions import ProfileRole, UserPermissions, get_caller_at_least
 from app.models.groups import PortalGroup
-from app.models.knowledge_bases import PortalGroupKBAccess, PortalKnowledgeBase
+from app.models.knowledge_bases import RESERVED_KB_SLUGS, PortalGroupKBAccess, PortalKnowledgeBase
 from app.services import docs_client, knowledge_ingest_client
 
 logger = logging.getLogger(__name__)
@@ -127,6 +127,12 @@ async def create_knowledge_base(
     perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> KBOut:
+    if body.slug in RESERVED_KB_SLUGS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"slug '{body.slug}' is reserved",
+        )
+
     kb = PortalKnowledgeBase(
         org_id=perms.org_id,
         name=body.name,

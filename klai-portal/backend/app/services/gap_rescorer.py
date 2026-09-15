@@ -38,6 +38,10 @@ def _open_gap_queries_stmt(org_id: int, kb_slug: str | None, cutoff: datetime):
         select(
             PortalRetrievalGap.query_text.label("query_text"),
             PortalRetrievalGap.gap_type.label("gap_type"),
+            # Gaps group per question language (SPEC-KNOWLEDGE-ACTIVITY-001
+            # §4.9): a re-ask that succeeds in English must not close the
+            # Dutch group for the same words.
+            PortalRetrievalGap.language.label("language"),
             func.max(PortalRetrievalGap.occurred_at).label("last_occurred"),
             PortalOrg.telemetry_level.label("telemetry_level"),
         )
@@ -50,6 +54,7 @@ def _open_gap_queries_stmt(org_id: int, kb_slug: str | None, cutoff: datetime):
         .group_by(
             PortalRetrievalGap.query_text,
             PortalRetrievalGap.gap_type,
+            PortalRetrievalGap.language,
             PortalOrg.telemetry_level,
         )
         .order_by(func.max(PortalRetrievalGap.occurred_at).desc())
@@ -168,6 +173,7 @@ async def rescore_open_gaps(
                     .where(
                         PortalRetrievalGap.org_id == org_id,
                         PortalRetrievalGap.query_text == row.query_text,
+                        PortalRetrievalGap.language.is_not_distinct_from(row.language),
                         PortalRetrievalGap.resolved_at.is_(None),
                     )
                     .values(resolved_at=datetime.now(tz=UTC))

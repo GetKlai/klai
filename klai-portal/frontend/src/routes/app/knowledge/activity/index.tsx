@@ -1,4 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { useQuery } from '@tanstack/react-query'
 import { AlertTriangle, MessageSquare, ThumbsDown, ThumbsUp } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -21,12 +22,16 @@ import { QueryErrorState } from '@/components/ui/query-error-state'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 import { RoleGuard } from '@/components/layout/RoleGuard'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
+import { fetchMe } from '@/lib/api-me'
+import { appNavActivityIsVisible } from '@/routes/app/-app-tools'
 import {
   OUTCOME_BADGE_VARIANT,
   useActivityConversations,
   useActivityQueueCount,
+  useActivitySummary,
   type ConversationBand,
 } from '@/features/chat-activity'
+import { CalibrationPanel } from '@/features/chat-activity/CalibrationPanel'
 import * as m from '@/paraglide/messages'
 import {
   BANDS,
@@ -106,6 +111,18 @@ export function ActivityPage() {
   const { user } = useCurrentUser()
   // Same capability gate as /app/gaps: admins bypass through hasCapability.
   const hasActivityCapability = user?.hasCapability('kb.activity') === true
+  // The screen also needs the tenant unlocks the sidebar checks
+  // (appNavActivityIsVisible, -app-tools.ts): capability alone lets the nav
+  // item stay hidden while the underlying queries still 403 without this.
+  const meQuery = useQuery({
+    queryKey: ['me'],
+    queryFn: ({ signal }) => fetchMe(signal),
+    enabled: hasActivityCapability,
+  })
+  const isUnlocked = appNavActivityIsVisible({
+    hasCapability: (cap) => user?.hasCapability(cap) === true,
+    unlockedFeatures: meQuery.data?.platform_unlocked_features ?? [],
+  })
 
   const list = useActivityConversations({
     days: search.days,
@@ -122,6 +139,7 @@ export function ActivityPage() {
     cursor: search.cursor,
   })
   const queueCount = useActivityQueueCount()
+  const summary = useActivitySummary(search.days)
 
   if (!hasActivityCapability) {
     return (
@@ -136,6 +154,31 @@ export function ActivityPage() {
           <p className="text-sm text-gray-600">{m.capability_tooltip_knowledge_only()}</p>
         </Tooltip>
       </div>
+    )
+  }
+
+  if (meQuery.isLoading) {
+    return (
+      <PageContainer width="6xl" gap="6">
+        <ListLoadingState label={m.admin_shared_loading()} />
+      </PageContainer>
+    )
+  }
+
+  if (meQuery.isError) {
+    // A failed /api/me read is not a missing unlock: say so and offer a retry.
+    return (
+      <PageContainer width="6xl" gap="6">
+        <QueryErrorState error={meQuery.error} onRetry={() => void meQuery.refetch()} />
+      </PageContainer>
+    )
+  }
+
+  if (!isUnlocked) {
+    return (
+      <PageContainer width="6xl" gap="6">
+        <ListEmptyState icon={AlertTriangle} title={m.activity_unlock_required()} />
+      </PageContainer>
     )
   }
 
@@ -162,6 +205,12 @@ export function ActivityPage() {
           ) : null}
         </PageIntro>
       </div>
+
+      {summary.isError ? (
+        <QueryErrorState error={summary.error} onRetry={() => void summary.refetch()} />
+      ) : summary.data ? (
+        <CalibrationPanel summary={summary.data} />
+      ) : null}
 
       <div className="flex flex-wrap items-end gap-4">
         <div className="space-y-1.5">

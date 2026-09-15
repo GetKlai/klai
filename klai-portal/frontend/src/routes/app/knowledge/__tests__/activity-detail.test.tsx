@@ -47,6 +47,18 @@ vi.mock('@/hooks/useCurrentUser', () => ({
   }),
 }))
 
+// fetchMe goes through raw fetch, not apiFetch; the tenant is unlocked for
+// every test here unless a test overrides it (SPEC §4.3 access model).
+vi.mock('@/lib/api-me', () => ({
+  fetchMe: () =>
+    Promise.resolve({
+      portal_role: 'user',
+      roles: [],
+      capabilities: [],
+      platform_unlocked_features: ['widgets', 'knowledge_activity'],
+    }),
+}))
+
 vi.mock('@/components/layout/ProductGuard', () => ({
   ProductGuard: ({ children }: { children: ReactNode }) => <>{children}</>,
 }))

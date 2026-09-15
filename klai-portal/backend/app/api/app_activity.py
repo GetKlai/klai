@@ -17,6 +17,7 @@ drift apart. The scan is bounded by the ``days`` window and
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
@@ -32,6 +33,9 @@ from app.core.database import get_db
 from app.core.permissions import ProfileRole, UserPermissions, get_caller, require_platform_unlocked
 from app.core.profiles import PROFILE_RANK, Capability
 from app.models.answer_reviews import AnswerReview
+from app.services.gap_events import record_gap_event
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/app/activity",
@@ -172,6 +176,143 @@ DELETE FROM answer_reviews
    AND org_id = :org_id
 """
 
+# Calibration readout (§4.6/§4.7): all six read the answer_reviews snapshots
+# for the window, never the live band/judge state, so the nightly purge of
+# the underlying conversation does not erase what was measured. Channel is a
+# literal, not a bound param — the surface only ever reviews webchat turns
+# (see the module docstring). Each statement is a full constant (no string
+# assembly into text()) so the driver binds every value.
+_SUMMARY_TOTAL_SQL = """
+SELECT COUNT(*) AS reviewed
+  FROM answer_reviews
+ WHERE org_id = :org_id
+   AND channel = 'webchat'
+   AND reviewed_at >= :cutoff
+"""
+
+_SUMMARY_BY_BAND_SQL = """
+SELECT band_at_review AS band,
+       COUNT(*) AS reviewed,
+       COUNT(*) FILTER (WHERE verdict = 'correct') AS correct
+  FROM answer_reviews
+ WHERE org_id = :org_id
+   AND channel = 'webchat'
+   AND reviewed_at >= :cutoff
+ GROUP BY band_at_review
+"""
+
+_SUMMARY_BY_JUDGE_OUTCOME_SQL = """
+SELECT judge_outcome_at_review AS judge_outcome,
+       COUNT(*) AS reviewed,
+       COUNT(*) FILTER (WHERE verdict = 'correct') AS human_correct
+  FROM answer_reviews
+ WHERE org_id = :org_id
+   AND channel = 'webchat'
+   AND reviewed_at >= :cutoff
+ GROUP BY judge_outcome_at_review
+"""
+
+_SUMMARY_BY_JUDGE_CATEGORY_SQL = """
+SELECT judge_failure_category_at_review AS judge_category,
+       cause AS human_cause,
+       COUNT(*) AS row_count
+  FROM answer_reviews
+ WHERE org_id = :org_id
+   AND channel = 'webchat'
+   AND reviewed_at >= :cutoff
+ GROUP BY judge_failure_category_at_review, cause
+"""
+
+_SUMMARY_BY_LANGUAGE_SQL = """
+SELECT language,
+       COUNT(*) AS reviewed,
+       COUNT(*) FILTER (WHERE verdict = 'correct') AS correct
+  FROM answer_reviews
+ WHERE org_id = :org_id
+   AND channel = 'webchat'
+   AND reviewed_at >= :cutoff
+ GROUP BY language
+"""
+
+# broad_mode/strict_on_gap read the reviewed answer's answer_signals via the
+# message it was filed against; a purged message (LEFT JOIN miss) simply does
+# not count towards either bucket (Appendix A).
+_SUMMARY_MODES_SQL = """
+SELECT COUNT(*) FILTER (WHERE wm.answer_signals ->> 'broad_mode' = 'true') AS broad_mode_reviewed,
+       COUNT(*) FILTER (
+           WHERE wm.answer_signals ->> 'broad_mode' = 'true' AND ar.verdict = 'correct'
+       ) AS broad_mode_correct,
+       COUNT(*) FILTER (
+           WHERE COALESCE(wm.answer_signals ->> 'broad_mode', 'false') <> 'true'
+             AND wm.answer_signals ->> 'gap_type' IS NOT NULL
+       ) AS strict_gap_reviewed,
+       COUNT(*) FILTER (
+           WHERE COALESCE(wm.answer_signals ->> 'broad_mode', 'false') <> 'true'
+             AND wm.answer_signals ->> 'gap_type' IS NOT NULL
+             AND ar.verdict = 'correct'
+       ) AS strict_gap_correct
+  FROM answer_reviews ar
+  LEFT JOIN widget_messages wm ON wm.id = ar.message_id
+ WHERE ar.org_id = :org_id
+   AND ar.channel = 'webchat'
+   AND ar.reviewed_at >= :cutoff
+"""
+# The visitor question the reviewed answer replied to: the gap a review opens
+# is filed under that question, so the rescorer can ask it again later.
+_PRECEDING_QUESTION_SQL = """
+SELECT content
+  FROM widget_messages
+ WHERE conversation_id = :conversation_id
+   AND role = 'user'
+   AND sequence < :sequence
+ ORDER BY sequence DESC
+ LIMIT 1
+"""
+
+_REVIEW_GAP_SQL = """
+SELECT gap_id
+  FROM answer_reviews
+ WHERE message_id = :message_id
+   AND org_id = :org_id
+"""
+
+_SET_REVIEW_GAP_SQL = """
+UPDATE answer_reviews
+   SET gap_id = :gap_id
+ WHERE message_id = :message_id
+   AND org_id = :org_id
+"""
+
+_RETYPE_GAP_SQL = """
+UPDATE portal_retrieval_gaps
+   SET gap_type = :gap_type
+ WHERE id = :gap_id
+   AND org_id = :org_id
+   AND resolved_at IS NULL
+"""
+
+_OPEN_GAPS_SQL = """
+SELECT conversation_id, COUNT(*) AS open_gaps
+  FROM portal_retrieval_gaps
+ WHERE org_id = :org_id
+   AND resolved_at IS NULL
+   AND conversation_id = ANY(:ids)
+ GROUP BY conversation_id
+"""
+
+_RESOLVE_GAP_SQL = """
+UPDATE portal_retrieval_gaps
+   SET resolved_at = NOW()
+ WHERE id = :gap_id
+   AND org_id = :org_id
+   AND resolved_at IS NULL
+"""
+
+# A knowledge cause is a gap by definition; the other causes are not the
+# knowledge base's fault (SPEC-KNOWLEDGE-ACTIVITY-001 §4.2, Appendix B).
+_GAP_TYPE_FOR_CAUSE = {"knowledge_missing": "hard", "knowledge_wrong": "soft"}
+_HUMAN_REVIEW_CALLER = "human-review"
+
 # Columns a re-review overwrites; everything else on the row is immutable
 # context or a snapshot taken when the review was filed.
 _REVIEW_OVERWRITTEN = (
@@ -300,6 +441,45 @@ class QueueCountOut(BaseModel):
     count: int
 
 
+class BandSummaryOut(BaseModel):
+    band: str
+    reviewed: int
+    correct: int
+
+
+class JudgeOutcomeSummaryOut(BaseModel):
+    judge_outcome: str | None
+    reviewed: int
+    human_correct: int
+
+
+class JudgeCategorySummaryOut(BaseModel):
+    judge_category: str | None
+    human_cause: str
+    count: int
+
+
+class ModeSummaryOut(BaseModel):
+    reviewed: int
+    correct: int
+
+
+class LanguageSummaryOut(BaseModel):
+    language: str | None
+    reviewed: int
+    correct: int
+
+
+class ActivitySummaryOut(BaseModel):
+    reviewed: int
+    by_band: list[BandSummaryOut]
+    by_judge_outcome: list[JudgeOutcomeSummaryOut]
+    by_judge_category: list[JudgeCategorySummaryOut]
+    broad_mode: ModeSummaryOut
+    strict_on_gap: ModeSummaryOut
+    by_language: list[LanguageSummaryOut]
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -425,6 +605,10 @@ async def _load_candidates(
     ids = [row.id for row in rows]
     turns = {t.conversation_id: t for t in (await db.execute(text(_TURNS_SQL), {"ids": ids, "org_id": org_id})).all()}
     judges = {j.conversation_id: j for j in (await db.execute(text(_JUDGES_SQL), {"ids": ids})).all()}
+    open_gaps = {
+        g.conversation_id: int(g.open_gaps)
+        for g in (await db.execute(text(_OPEN_GAPS_SQL), {"ids": ids, "org_id": org_id})).all()
+    }
     review_rows: dict[int, list[Any]] = {}
     for review in (await db.execute(text(_REVIEWS_SQL), {"ids": ids, "org_id": org_id})).all():
         review_rows.setdefault(review.conversation_id, []).append(review)
@@ -458,6 +642,7 @@ async def _load_candidates(
                     ),
                     ratings=RatingsOut(up=turn.ratings_up if turn else 0, down=turn.ratings_down if turn else 0),
                     review=_review_summary(review_rows.get(row.id, [])),
+                    open_gap_count=open_gaps.get(row.id, 0),
                 ),
                 refused_turns=turn.refused_turns if turn else 0,
             )
@@ -684,6 +869,75 @@ async def get_conversation(
     return payload
 
 
+async def _sync_review_gap(
+    db: AsyncSession,
+    perms: UserPermissions,
+    *,
+    message: Any,
+    body: ReviewRequest,
+    signals: dict[str, Any],
+    existing_gap_id: int | None,
+) -> None:
+    """Keep the gaps dashboard in step with the review's cause.
+
+    A knowledge cause files one gap under the visitor's question (reused on a
+    re-review, only its type follows the cause, so a second PUT never opens a
+    second gap); any other cause resolves the gap the review had opened. The
+    gap work must not cost the reviewer their review, which is already
+    committed: on any failure the review stands and one warning says why.
+    """
+    gap_type = _GAP_TYPE_FOR_CAUSE.get(body.cause)
+    scope = {"message_id": message.id, "org_id": perms.org_id}
+    try:
+        if gap_type is None:
+            if existing_gap_id is not None:
+                await db.execute(text(_RESOLVE_GAP_SQL), {"gap_id": existing_gap_id, "org_id": perms.org_id})
+                await db.execute(text(_SET_REVIEW_GAP_SQL), {**scope, "gap_id": None})
+                await db.commit()
+            return
+        if existing_gap_id is not None:
+            await db.execute(
+                text(_RETYPE_GAP_SQL), {"gap_id": existing_gap_id, "org_id": perms.org_id, "gap_type": gap_type}
+            )
+            await db.commit()
+            return
+        question = (
+            await db.execute(
+                text(_PRECEDING_QUESTION_SQL),
+                {"conversation_id": message.conversation_id, "sequence": message.sequence},
+            )
+        ).first()
+        if question is None:
+            return
+        result = await record_gap_event(
+            db,
+            zitadel_org_id=perms.zitadel_org_id,
+            user_id=perms.user_id,
+            query_text=question.content,
+            gap_type=gap_type,
+            top_score=signals.get("top_score"),
+            nearest_kb_slug=body.kb_slug,
+            chunks_retrieved=int(signals.get("sources_count") or 0),
+            caller_client_id=_HUMAN_REVIEW_CALLER,
+            conversation_id=message.conversation_id,
+            language=_question_language(message, signals),
+        )
+        if result.gap_id is not None:
+            await db.execute(text(_SET_REVIEW_GAP_SQL), {**scope, "gap_id": result.gap_id})
+            await db.commit()
+    except Exception:
+        logger.warning("activity_review_gap_failed", exc_info=True)
+
+
+def _question_language(message: Any, signals: dict[str, Any]) -> str | None:
+    """The language of the question this answer replied to.
+
+    The answer signal is exact for the turn; the conversation column holds the
+    newest detected language and only serves rows from before the signals
+    existed."""
+    return signals.get("language") or message.language_detected
+
+
 @router.put("/messages/{message_id}/review", response_model=ReviewOut)
 async def put_review(
     message_id: int,
@@ -723,8 +977,8 @@ async def put_review(
         band_at_review=signals.get("band") or "unknown",
         judge_outcome_at_review=judged.outcome if judged is not None else None,
         judge_failure_category_at_review=judged.failure_category if judged is not None else None,
-        language=message.language_detected,
-        # Phase 2 links a review to the gap it produced.
+        language=_question_language(message, signals),
+        # Phase 2 links a review to the gap it produced (see _sync_review_gap).
         gap_id=None,
     )
     upsert = insert_stmt.on_conflict_do_update(
@@ -735,9 +989,17 @@ async def put_review(
             "reviewed_at": func.now(),
             "updated_at": func.now(),
         },
-    ).returning(AnswerReview.reviewed_at)
+    ).returning(AnswerReview.reviewed_at, AnswerReview.gap_id)
     stored: Any = (await db.execute(upsert)).first()
     await db.commit()
+    await _sync_review_gap(
+        db,
+        perms,
+        message=message,
+        body=body,
+        signals=signals,
+        existing_gap_id=getattr(stored, "gap_id", None),
+    )
 
     return ReviewOut(
         verdict=body.verdict,
@@ -755,6 +1017,60 @@ async def delete_review(
     perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    """Withdraw the review of one answer; reviews are org-scoped by their own row."""
-    await db.execute(text(_DELETE_REVIEW_SQL), {"message_id": message_id, "org_id": perms.org_id})
+    """Withdraw the review of one answer; reviews are org-scoped by their own row.
+
+    A gap the review opened closes with it: nobody vouches for it any more.
+    """
+    scope = {"message_id": message_id, "org_id": perms.org_id}
+    linked = (await db.execute(text(_REVIEW_GAP_SQL), scope)).first()
+    if linked is not None and linked.gap_id is not None:
+        await db.execute(text(_RESOLVE_GAP_SQL), {"gap_id": linked.gap_id, "org_id": perms.org_id})
+    await db.execute(text(_DELETE_REVIEW_SQL), scope)
     await db.commit()
+
+
+@router.get("/summary", response_model=ActivitySummaryOut)
+async def get_summary(
+    days: int = Query(default=7, ge=1, le=90),
+    perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
+) -> ActivitySummaryOut:
+    """Calibration readout (§4.6/§4.7): how certain the system was per answer,
+    whether that certainty was justified, and how often the nightly judge and
+    the human reviewer agree — computed from the answer_reviews snapshots so
+    the retention purge of the conversation does not erase it."""
+    params = {"org_id": perms.org_id, "cutoff": datetime.now(UTC) - timedelta(days=days)}
+
+    reviewed_row = (await db.execute(text(_SUMMARY_TOTAL_SQL), params)).first()
+    band_rows = (await db.execute(text(_SUMMARY_BY_BAND_SQL), params)).all()
+    judge_outcome_rows = (await db.execute(text(_SUMMARY_BY_JUDGE_OUTCOME_SQL), params)).all()
+    judge_category_rows = (await db.execute(text(_SUMMARY_BY_JUDGE_CATEGORY_SQL), params)).all()
+    mode_row = (await db.execute(text(_SUMMARY_MODES_SQL), params)).first()
+    language_rows = (await db.execute(text(_SUMMARY_BY_LANGUAGE_SQL), params)).all()
+
+    return ActivitySummaryOut(
+        reviewed=reviewed_row.reviewed if reviewed_row is not None else 0,
+        by_band=[BandSummaryOut(band=row.band, reviewed=row.reviewed, correct=row.correct) for row in band_rows],
+        by_judge_outcome=[
+            JudgeOutcomeSummaryOut(
+                judge_outcome=row.judge_outcome, reviewed=row.reviewed, human_correct=row.human_correct
+            )
+            for row in judge_outcome_rows
+        ],
+        by_judge_category=[
+            JudgeCategorySummaryOut(judge_category=row.judge_category, human_cause=row.human_cause, count=row.row_count)
+            for row in judge_category_rows
+        ],
+        broad_mode=ModeSummaryOut(
+            reviewed=mode_row.broad_mode_reviewed if mode_row is not None else 0,
+            correct=mode_row.broad_mode_correct if mode_row is not None else 0,
+        ),
+        strict_on_gap=ModeSummaryOut(
+            reviewed=mode_row.strict_gap_reviewed if mode_row is not None else 0,
+            correct=mode_row.strict_gap_correct if mode_row is not None else 0,
+        ),
+        by_language=[
+            LanguageSummaryOut(language=row.language, reviewed=row.reviewed, correct=row.correct)
+            for row in language_rows
+        ],
+    )

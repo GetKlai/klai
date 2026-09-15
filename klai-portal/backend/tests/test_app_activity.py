@@ -72,7 +72,19 @@ class FakeSession:
         judged: Any | None = None,
         reviewed_returning: Any | None = None,
         widget_exists: bool = True,
+        summary_total: Any | None = None,
+        summary_by_band: list[Any] | None = None,
+        summary_by_judge_outcome: list[Any] | None = None,
+        summary_by_judge_category: list[Any] | None = None,
+        summary_modes: Any | None = None,
+        summary_by_language: list[Any] | None = None,
+        question: Any | None = None,
+        review_gap_id: int | None = None,
+        open_gaps: list[Any] | None = None,
     ) -> None:
+        self.question = question
+        self.review_gap_id = review_gap_id
+        self.open_gaps = open_gaps or []
         self.conversations = conversations or []
         self.turns = turns or []
         self.judges = judges or []
@@ -84,6 +96,12 @@ class FakeSession:
         self.judged = judged
         self.reviewed_returning = reviewed_returning
         self.widget_exists = widget_exists
+        self.summary_total = summary_total
+        self.summary_by_band = summary_by_band or []
+        self.summary_by_judge_outcome = summary_by_judge_outcome or []
+        self.summary_by_judge_category = summary_by_judge_category or []
+        self.summary_modes = summary_modes
+        self.summary_by_language = summary_by_language or []
         # (normalised sql, params, original statement) per execute() call.
         self.calls: list[tuple[str, dict[str, Any], Any]] = []
         self.commits = 0
@@ -91,10 +109,8 @@ class FakeSession:
     async def execute(self, statement: Any, params: dict[str, Any] | None = None) -> _Rows:
         sql = " ".join(str(statement).split())
         self.calls.append((sql, params or {}, statement))
-        if sql.startswith("INSERT INTO answer_reviews"):
-            return _Rows([self.reviewed_returning or SimpleNamespace(reviewed_at=T0)])
-        if sql.startswith("DELETE FROM answer_reviews"):
-            return _Rows([])
+        if (review_rows := self._review_write_rows(sql)) is not None:
+            return review_rows
         if "SELECT 1 FROM widgets" in sql:
             return _Rows([SimpleNamespace(one=1)] if self.widget_exists else [])
         if "c.id = :conversation_id" in sql:
@@ -118,9 +134,44 @@ class FakeSession:
             return _Rows(self.message_reviews)
         if "FROM portal_users" in sql:
             return _Rows([SimpleNamespace(id=CALLER_PORTAL_USER_ID, display_name=CALLER_DISPLAY_NAME)])
+        summary = self._summary_rows(sql)
+        if summary is not None:
+            return summary
         if "FROM answer_reviews" in sql:
             return _Rows(self.reviews)
         raise AssertionError(f"FakeSession got unexpected SQL:\n{sql}")
+
+    def _summary_rows(self, sql: str) -> _Rows | None:
+        """GET /summary markers (most specific first): every one of them also
+        matches the generic "FROM answer_reviews" fallback in execute()."""
+        if "LEFT JOIN widget_messages wm" in sql:
+            return _Rows([self.summary_modes] if self.summary_modes else [])
+        if "GROUP BY band_at_review" in sql:
+            return _Rows(self.summary_by_band)
+        if "GROUP BY judge_outcome_at_review" in sql:
+            return _Rows(self.summary_by_judge_outcome)
+        if "GROUP BY judge_failure_category_at_review, cause" in sql:
+            return _Rows(self.summary_by_judge_category)
+        if "GROUP BY language" in sql:
+            return _Rows(self.summary_by_language)
+        if sql.startswith("SELECT COUNT(*) AS reviewed"):
+            return _Rows([self.summary_total] if self.summary_total else [])
+
+    def _review_write_rows(self, sql: str) -> _Rows | None:
+        """Review writes and the phase 2 gap link statements."""
+        if sql.startswith("INSERT INTO answer_reviews"):
+            return _Rows([self.reviewed_returning or SimpleNamespace(reviewed_at=T0)])
+        if sql.startswith("DELETE FROM answer_reviews"):
+            return _Rows([])
+        if sql.startswith("UPDATE answer_reviews") or sql.startswith("UPDATE portal_retrieval_gaps"):
+            return _Rows([])
+        if "role = 'user' AND sequence < :sequence" in sql:
+            return _Rows([self.question] if self.question else [])
+        if sql.startswith("SELECT gap_id FROM answer_reviews"):
+            return _Rows([SimpleNamespace(gap_id=self.review_gap_id)])
+        if "FROM portal_retrieval_gaps" in sql:
+            return _Rows(self.open_gaps)
+        return None
 
     async def commit(self) -> None:
         self.commits += 1
@@ -653,3 +704,214 @@ async def test_queue_count_counts_the_same_set_as_queue_true() -> None:
     assert counted.status_code == 200
     assert counted.json() == {"count": 1}
     assert counted.json()["count"] == len(listed.json()["items"])
+
+
+# ---------------------------------------------------------------------------
+# GET /summary — calibration readout (§4.6/§4.7, Appendix A)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("role", "expected"), [("kb_manager", 200), ("company", 403)])
+async def test_summary_gate_follows_kb_activity_capability(role: str, expected: int) -> None:
+    """Same router-wide gate as the rest of Appendix A — no route-specific check needed."""
+    response = await _call(FakeSession(), _perms(role), "get", "/api/app/activity/summary")
+    assert response.status_code == expected
+
+
+@pytest.mark.asyncio
+async def test_summary_computes_the_documented_aggregates() -> None:
+    """Appendix A ``GET /summary`` shape, built from a fixed set of fake rows
+    so every field is checked against a hand-computed expectation."""
+    db = FakeSession(
+        summary_total=SimpleNamespace(reviewed=84),
+        summary_by_band=[
+            SimpleNamespace(band="high", reviewed=40, correct=34),
+            SimpleNamespace(band="low", reviewed=10, correct=3),
+        ],
+        summary_by_judge_outcome=[
+            SimpleNamespace(judge_outcome="resolved", reviewed=30, human_correct=27),
+            SimpleNamespace(judge_outcome=None, reviewed=5, human_correct=2),
+        ],
+        summary_by_judge_category=[
+            SimpleNamespace(judge_category="retrieval_miss", human_cause="knowledge_missing", row_count=12),
+            SimpleNamespace(judge_category=None, human_cause="none", row_count=8),
+        ],
+        summary_modes=SimpleNamespace(
+            broad_mode_reviewed=9,
+            broad_mode_correct=5,
+            strict_gap_reviewed=20,
+            strict_gap_correct=7,
+        ),
+        summary_by_language=[
+            SimpleNamespace(language="nl", reviewed=70, correct=55),
+            SimpleNamespace(language="en", reviewed=14, correct=9),
+        ],
+    )
+    response = await _call(db, _perms("kb_manager"), "get", "/api/app/activity/summary?days=30")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "reviewed": 84,
+        "by_band": [
+            {"band": "high", "reviewed": 40, "correct": 34},
+            {"band": "low", "reviewed": 10, "correct": 3},
+        ],
+        "by_judge_outcome": [
+            {"judge_outcome": "resolved", "reviewed": 30, "human_correct": 27},
+            {"judge_outcome": None, "reviewed": 5, "human_correct": 2},
+        ],
+        "by_judge_category": [
+            {"judge_category": "retrieval_miss", "human_cause": "knowledge_missing", "count": 12},
+            {"judge_category": None, "human_cause": "none", "count": 8},
+        ],
+        "broad_mode": {"reviewed": 9, "correct": 5},
+        "strict_on_gap": {"reviewed": 20, "correct": 7},
+        "by_language": [
+            {"language": "nl", "reviewed": 70, "correct": 55},
+            {"language": "en", "reviewed": 14, "correct": 9},
+        ],
+    }
+    assert db.params_for("SELECT COUNT(*) AS reviewed")[-1]["org_id"] == 101
+    assert all(params["org_id"] == 101 for _sql, params, _stmt in db.calls)
+
+
+# ─── phase 2: a knowledge cause files a gap, any other cause closes it ───
+
+
+def _gap_result(gap_id: int | None = 77) -> Any:
+    from app.services.gap_events import GapEventResult
+
+    return GapEventResult("created", 101, gap_id)
+
+
+async def _put_with_gap_mock(db: FakeSession, body: dict[str, Any], result: Any = None, raises: bool = False):
+    """PUT a review with record_gap_event replaced; returns (response, mock)."""
+    from unittest.mock import AsyncMock, patch
+
+    mock = AsyncMock(return_value=result if result is not None else _gap_result())
+    if raises:
+        mock.side_effect = RuntimeError("gap write failed")
+    with patch("app.api.app_activity.record_gap_event", mock):
+        response = await _call(db, _perms("kb_manager"), "put", "/api/app/activity/messages/9002/review", json=body)
+    return response, mock
+
+
+@pytest.mark.asyncio
+async def test_knowledge_missing_review_files_a_hard_gap_under_the_visitor_question() -> None:
+    db = FakeSession(
+        message=_assistant_message_row(),
+        question=SimpleNamespace(content="Hoe koppel ik Salesforce?"),
+    )
+    response, mock = await _put_with_gap_mock(db, _review_body(verdict="wrong", cause="knowledge_missing"))
+
+    assert response.status_code == 200
+    mock.assert_awaited_once()
+    kwargs = mock.await_args.kwargs
+    assert kwargs["query_text"] == "Hoe koppel ik Salesforce?"
+    assert kwargs["gap_type"] == "hard"
+    assert kwargs["caller_client_id"] == "human-review"
+    assert kwargs["conversation_id"] == 255
+    assert kwargs["language"] == "nl"
+    assert kwargs["nearest_kb_slug"] == "voys-help"
+    link = db.params_for("UPDATE answer_reviews SET gap_id")
+    assert link == [{"message_id": 9002, "org_id": 101, "gap_id": 77}]
+
+
+@pytest.mark.asyncio
+async def test_knowledge_wrong_review_files_a_soft_gap() -> None:
+    db = FakeSession(message=_assistant_message_row(), question=SimpleNamespace(content="Wat kost Freedom?"))
+    _response, mock = await _put_with_gap_mock(db, _review_body(verdict="wrong", cause="knowledge_wrong"))
+
+    assert mock.await_args.kwargs["gap_type"] == "soft"
+
+
+@pytest.mark.asyncio
+async def test_re_review_with_a_knowledge_cause_reuses_the_existing_gap() -> None:
+    db = FakeSession(
+        message=_assistant_message_row(),
+        question=SimpleNamespace(content="Wat kost Freedom?"),
+        reviewed_returning=SimpleNamespace(reviewed_at=T0, gap_id=77),
+    )
+    _response, mock = await _put_with_gap_mock(db, _review_body(verdict="incomplete", cause="knowledge_wrong"))
+
+    mock.assert_not_awaited()
+    assert db.params_for("UPDATE answer_reviews SET gap_id") == []
+
+
+@pytest.mark.asyncio
+async def test_changing_the_cause_away_from_knowledge_resolves_the_linked_gap() -> None:
+    db = FakeSession(
+        message=_assistant_message_row(),
+        reviewed_returning=SimpleNamespace(reviewed_at=T0, gap_id=77),
+    )
+    response, mock = await _put_with_gap_mock(db, _review_body(verdict="correct", cause="none"))
+
+    assert response.status_code == 200
+    mock.assert_not_awaited()
+    assert db.params_for("UPDATE portal_retrieval_gaps SET resolved_at") == [{"gap_id": 77, "org_id": 101}]
+    assert db.params_for("UPDATE answer_reviews SET gap_id") == [{"message_id": 9002, "org_id": 101, "gap_id": None}]
+
+
+@pytest.mark.asyncio
+async def test_gap_write_failure_keeps_the_review_and_leaves_gap_id_null() -> None:
+    db = FakeSession(message=_assistant_message_row(), question=SimpleNamespace(content="Wat kost Freedom?"))
+    response, _mock = await _put_with_gap_mock(
+        db, _review_body(verdict="wrong", cause="knowledge_missing"), raises=True
+    )
+
+    assert response.status_code == 200
+    assert db.params_for("UPDATE answer_reviews SET gap_id") == []
+    assert db.commits >= 1
+
+
+@pytest.mark.asyncio
+async def test_delete_review_resolves_the_gap_it_opened() -> None:
+    db = FakeSession(review_gap_id=77)
+    response = await _call(db, _perms("kb_manager"), "delete", "/api/app/activity/messages/9002/review")
+
+    assert response.status_code == 204
+    assert db.params_for("UPDATE portal_retrieval_gaps SET resolved_at") == [{"gap_id": 77, "org_id": 101}]
+    assert db.params_for("DELETE FROM answer_reviews") == [{"message_id": 9002, "org_id": 101}]
+
+
+@pytest.mark.asyncio
+async def test_list_counts_open_gaps_per_conversation() -> None:
+    db = FakeSession(
+        conversations=[_conv(255)],
+        open_gaps=[SimpleNamespace(conversation_id=255, open_gaps=2)],
+    )
+    response = await _call(db, _perms("kb_manager"), "get", "/api/app/activity/conversations?queue=false")
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["open_gap_count"] == 2
+    assert db.params_for("SELECT conversation_id, COUNT(*) AS open_gaps")[0]["org_id"] == 101
+
+
+@pytest.mark.asyncio
+async def test_re_review_with_another_knowledge_cause_retypes_the_gap() -> None:
+    db = FakeSession(
+        message=_assistant_message_row(),
+        reviewed_returning=SimpleNamespace(reviewed_at=T0, gap_id=77),
+    )
+    _response, mock = await _put_with_gap_mock(db, _review_body(verdict="wrong", cause="knowledge_wrong"))
+
+    mock.assert_not_awaited()
+    assert db.params_for("UPDATE portal_retrieval_gaps SET gap_type") == [
+        {"gap_id": 77, "org_id": 101, "gap_type": "soft"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_review_language_falls_back_to_the_answer_signal() -> None:
+    """Conversations written before the widget path stored the question
+    language have language_detected NULL; the answer signal carries it."""
+    db = FakeSession(
+        message=_assistant_message_row(language_detected=None, answer_signals={"band": "low", "language": "en"}),
+        question=SimpleNamespace(content="How do I reset my password?"),
+    )
+    _response, mock = await _put_with_gap_mock(db, _review_body(verdict="wrong", cause="knowledge_missing"))
+
+    assert mock.await_args.kwargs["language"] == "en"
+    params = db.statements_starting_with("INSERT INTO answer_reviews")[-1].compile().params
+    assert params["language"] == "en"

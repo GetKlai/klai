@@ -72,3 +72,10 @@ class PortalKBTombstone(Base):
     slug: Mapped[str] = mapped_column(String(64), nullable=False)
     deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     deleted_by: Mapped[str] = mapped_column(String, nullable=False)
+
+
+# /app/knowledge/<slug> is also where the static activity and gaps screens live
+# (SPEC-KNOWLEDGE-ACTIVITY-001); a KB with one of these slugs would be
+# unreachable because the router prefers the static route. Checked on every
+# create route.
+RESERVED_KB_SLUGS: frozenset[str] = frozenset({"activity", "gaps"})

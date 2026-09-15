@@ -12,6 +12,7 @@ import { useEffect, useReducer, type ReactNode } from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import * as m from '@/paraglide/messages'
 
 // The page reads its filters through the route's validated search, so the test
 // harness keeps a validated-shaped search object and re-renders whenever a
@@ -59,6 +60,20 @@ const currentUser = {
 }
 vi.mock('@/hooks/useCurrentUser', () => ({
   useCurrentUser: () => ({ user: currentUser }),
+}))
+
+// fetchMe goes through raw fetch, not apiFetch, so the tenant unlocks the
+// screen depends on are mocked at the module boundary (same pattern as
+// ActivityTab.conversations-link.test.tsx and the gaps drill-in test).
+let unlockedFeatures: string[] = ['widgets', 'knowledge_activity']
+vi.mock('@/lib/api-me', () => ({
+  fetchMe: () =>
+    Promise.resolve({
+      portal_role: 'user',
+      roles: [],
+      capabilities: [],
+      platform_unlocked_features: unlockedFeatures,
+    }),
 }))
 
 vi.mock('@/components/layout/ProductGuard', () => ({
@@ -137,6 +152,7 @@ beforeEach(() => {
   apiFetchMock.mockReset()
   rerenderers.clear()
   currentUser.capabilities = ['kb.activity']
+  unlockedFeatures = ['widgets', 'knowledge_activity']
   // What validateSearch guarantees for a bare visit to the screen.
   searchRef.current = { days: 7, queue: true, sort: 'newest' }
 })
@@ -241,6 +257,18 @@ describe('activity list', () => {
       expect(container.querySelector('[aria-disabled="true"]')).not.toBeNull(),
     )
     expect(apiFetchMock).not.toHaveBeenCalled()
+  })
+
+  it('shows the unlock-required message and never fetches /api/app/activity without the tenant unlock', async () => {
+    unlockedFeatures = ['widgets']
+    mockConversations([item()])
+
+    renderPage()
+
+    await waitFor(() => expect(screen.getByText(m.activity_unlock_required())).toBeTruthy())
+    expect(
+      apiFetchMock.mock.calls.some((call) => String(call[0]).startsWith('/api/app/activity')),
+    ).toBe(false)
   })
 })
 
