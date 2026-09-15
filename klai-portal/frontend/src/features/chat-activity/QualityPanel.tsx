@@ -1,15 +1,6 @@
 import { Badge } from '@/components/ui/badge'
+import { OUTCOME_BADGE_VARIANT } from './badgeVariant'
 import type { ConversationQuality } from './types'
-
-/** Outcome → existing Badge semantic variant; no ad-hoc colors. */
-const OUTCOME_BADGE_VARIANT: Record<string, 'success' | 'warning' | 'secondary'> = {
-  resolved: 'success',
-  partially_resolved: 'success',
-  escalated: 'warning',
-  unresolved: 'secondary',
-  abandoned_early: 'secondary',
-  out_of_scope: 'secondary',
-}
 
 /**
  * REQ-3 (SPEC-CHAT-QUALITY-LOOP-001): judge verdict panel for a conversation
