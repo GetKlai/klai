@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowUp, Calendar, ChevronDown, MessageSquare, Pencil, Share2, X } from 'lucide-react'
+import { ArrowUp, Calendar, ChevronDown, ExternalLink, MessageSquare, Pencil, Share2, X } from 'lucide-react'
 import Markdown from 'react-markdown'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -30,6 +30,21 @@ const NERDS_DISCLOSURE = {
   },
 } as const
 
+// The booking module needs these to complete an appointment; they stay
+// scoped to that one known destination, never to a tenant's own footer link.
+const NERDS_FRAME_ALLOW = 'clipboard-write; payment; geolocation'
+
+// Only a plain left-click is diverted into the panel; a middle-click or a
+// modifier click must still reach the anchor's own new tab. Returns whether
+// this click belongs to the panel, having cancelled the navigation.
+function claimPlainLinkClick(event: React.MouseEvent<HTMLAnchorElement>) {
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+    return false
+  }
+  event.preventDefault()
+  return true
+}
+
 export interface WidgetChatSurfaceProps {
   botName: string
   headerTitle?: string
@@ -44,11 +59,15 @@ export interface WidgetChatSurfaceProps {
   hideDisclaimer?: boolean
   // Nerds booking panel (Voys-specific). Enabled + booking_url always
   // arrive as a pair, pre-validated to absolute http(s) server-side
-  // (partner.py _widget_nerds_integration). Unlike the embeddable widget
-  // this surface has no in-page panel: "onze nerds" links to the same
-  // booking URL in a new tab. Both unset → footer stays as before.
+  // (partner.py _widget_nerds_integration). Like the embeddable widget,
+  // "onze nerds" and the appointment offer open that URL in the in-page
+  // panel. Both unset → footer stays as before.
   nerdsEnabled?: boolean
   nerdsBookingUrl?: string
+  // Tenant footer links: on, a plain click opens them in the in-page panel
+  // instead of a new tab. Mirrors footer_links_in_widget in the public
+  // config; the booking panel does not depend on it.
+  footerLinksInWidget?: boolean
   primaryColor?: string
   theme?: 'light' | 'dark'
   showSources?: boolean
@@ -185,6 +204,7 @@ export function WidgetChatSurface({
   hideDisclaimer = false,
   nerdsEnabled = false,
   nerdsBookingUrl = '',
+  footerLinksInWidget = false,
   primaryColor = WIDGET_DEFAULT_PRIMARY_COLOR,
   theme = 'light',
   showSources = true,
@@ -206,6 +226,14 @@ export function WidgetChatSurface({
   // deliberately not persisted here: this surface is a share link people open
   // once, and the embeddable widget owns its own "remember me" storage.
   const [identityDone, setIdentityDone] = useState(false)
+  // In-page link panel: an iframe over the chat, opened by the footer links,
+  // the "onze nerds" sentence and the appointment offer. One panel for all
+  // three callers; `allow` carries the delegated browser rights, empty for a
+  // tenant's own link.
+  const [panelLink, setPanelLink] = useState<{ url: string; title: string; allow: string } | null>(null)
+  const panelBackRef = useRef<HTMLButtonElement>(null)
+  const panelWasOpenRef = useRef(false)
+  const surfaceRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -216,8 +244,8 @@ export function WidgetChatSurface({
   const nerdsUrl = nerdsBookingUrl.trim()
   const nerdsActive = nerdsEnabled && nerdsUrl.length > 0
   const nerdsLang = getLocale() === 'nl' ? 'nl' : 'en'
-  // Same embed request the widget's iframe panel makes; here it opens in
-  // a new tab. The server validated the URL before delivering it.
+  // Same embed request the widget's iframe panel makes. The server validated
+  // the URL before delivering it.
   // Choose the separator; do not assume one. The configured Voys URL has no
   // query string, and appending "&embed=1" to a bare path makes their router
   // answer with a 404 page. Verified against the live booking URL.
@@ -232,6 +260,29 @@ export function WidgetChatSurface({
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, isStreaming])
+
+  // The panel covers the chat, so keyboard focus has to follow it: without
+  // this, Tab walks through the hidden conversation behind the overlay. The
+  // chat blocks are inert while it is open. Closing lands on the composer
+  // rather than the link that opened the panel: the markdown footer is
+  // re-rendered while the panel is open, so the opening anchor is not a
+  // stable element to return to, and the composer is where the conversation
+  // continues anyway. Only a real open→closed transition moves focus; on
+  // first render the visitor keeps the focus the page gave them, and with
+  // no usable composer (identity step, streaming) focus lands on the
+  // surface itself instead of on the body.
+  useEffect(() => {
+    if (panelLink) {
+      panelWasOpenRef.current = true
+      panelBackRef.current?.focus()
+      return
+    }
+    if (!panelWasOpenRef.current) return
+    panelWasOpenRef.current = false
+    const composer = textareaRef.current
+    if (composer && !composer.disabled) composer.focus()
+    else surfaceRef.current?.focus()
+  }, [panelLink])
 
   function autoResize() {
     const el = textareaRef.current
@@ -390,13 +441,26 @@ export function WidgetChatSurface({
     })
   }
 
+  function openPanel(url: string, title: string, allow = '') {
+    setPanelLink({ url, title, allow })
+  }
+
+  // Shared by the "onze nerds" sentence and the appointment offer: the same
+  // panel, the same booking arguments.
+  function openNerdsPanel(event: React.MouseEvent<HTMLAnchorElement>) {
+    if (!claimPlainLinkClick(event)) return
+    openPanel(nerdsHref, NERDS_DISCLOSURE[nerdsLang].link, NERDS_FRAME_ALLOW)
+  }
+
   return (
     <div
       data-widget-chat-surface
-      className={`${embedded ? 'relative h-full w-full overflow-hidden' : 'fixed inset-0 z-[60]'} flex flex-col ${isDark ? 'bg-[var(--color-rl-dark)] text-[var(--color-rl-bg)]' : 'bg-white text-gray-900'}`}
+      ref={surfaceRef}
+      tabIndex={-1}
+      className={`${embedded ? 'relative h-full w-full overflow-hidden' : 'fixed inset-0 z-[60]'} flex flex-col outline-none ${isDark ? 'bg-[var(--color-rl-dark)] text-[var(--color-rl-bg)]' : 'bg-white text-gray-900'}`}
       style={{ ...(!embedded && { height: '100vh' }), backgroundColor: surfaceBackground }}
     >
-      <div className={`flex h-14 shrink-0 items-center justify-between border-b px-4 sm:px-6 ${isDark ? 'border-white/10 bg-[var(--color-rl-dark)]' : 'border-gray-200 bg-white'}`}>
+      <div inert={panelLink ? true : undefined} className={`flex h-14 shrink-0 items-center justify-between border-b px-4 sm:px-6 ${isDark ? 'border-white/10 bg-[var(--color-rl-dark)]' : 'border-gray-200 bg-white'}`}>
         <div className="flex min-w-0 items-center gap-3">
           <div
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
@@ -452,7 +516,7 @@ export function WidgetChatSurface({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto" style={{ backgroundColor: surfaceBackground }}>
+      <div inert={panelLink ? true : undefined} className="min-h-0 flex-1 overflow-y-auto" style={{ backgroundColor: surfaceBackground }}>
         <div className={`mx-auto max-w-3xl px-4 sm:px-6 ${messages.length === 0 ? 'h-full flex flex-col' : 'py-6'}`}>
           {/* py-8 on the empty state, not pb-8: with justify-center and padding
               on one side only, a short container — the admin preview panel, a
@@ -567,6 +631,7 @@ export function WidgetChatSurface({
                   showMeta={showMeta}
                   nerdsActive={nerdsActive}
                   nerdsHref={nerdsHref}
+                  onOpenNerds={openNerdsPanel}
                 />
               ))}
               <div ref={messagesEndRef} />
@@ -575,7 +640,7 @@ export function WidgetChatSurface({
         </div>
       </div>
 
-      <div className="shrink-0" style={{ backgroundColor: surfaceBackground }}>
+      <div inert={panelLink ? true : undefined} className="shrink-0" style={{ backgroundColor: surfaceBackground }}>
         <div className="mx-auto max-w-3xl px-4 pb-4 pt-2 sm:px-6">
           {!showIdentityStep && (
           <form
@@ -618,7 +683,21 @@ export function WidgetChatSurface({
             <div data-widget-footer className={`mt-2.5 text-center text-[0.6875rem] ${isDark ? 'text-[var(--color-rl-bg)]/45' : 'text-gray-600'}`}>
               {footerText != null ? (
                 <Markdown skipHtml allowedElements={['a', 'p', 'br', 'strong', 'em']}
-                  components={{ a: ({ children, href }) => <a href={href} target="_blank" rel="noopener noreferrer" className="underline">{children}</a> }}
+                  components={{ a: ({ children, href }) => (
+                    <a
+                      href={href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline"
+                      onClick={(event) => {
+                        if (!footerLinksInWidget || !href || !/^https?:/i.test(href)) return
+                        if (!claimPlainLinkClick(event)) return
+                        openPanel(href, event.currentTarget.textContent?.trim() || href)
+                      }}
+                    >
+                      {children}
+                    </a>
+                  ) }}
                 >{footerText}</Markdown>
               ) : nerdsActive ? (
                 <>
@@ -628,6 +707,7 @@ export function WidgetChatSurface({
                     target="_blank"
                     rel="noopener noreferrer"
                     className="underline decoration-1 underline-offset-2"
+                    onClick={openNerdsPanel}
                   >
                     {NERDS_DISCLOSURE[nerdsLang].link}
                   </a>
@@ -640,6 +720,56 @@ export function WidgetChatSurface({
           )}
         </div>
       </div>
+
+      {/* In-page link panel: an overlay covering the chat while it is open.
+          The sandbox deliberately omits allow-top-navigation — the framed
+          page must never move the host page. The head carries the new-tab
+          link at all times rather than only after a failed load: a page that
+          refuses to be framed (X-Frame-Options / CSP) still fires `load` on
+          the browser's error page, so that event cannot carry the fallback. */}
+      {panelLink && (
+        <div
+          role="region"
+          aria-label={panelLink.title}
+          className={`absolute inset-0 z-10 flex flex-col ${isDark ? 'bg-[var(--color-rl-dark)] text-[var(--color-rl-bg)]' : 'bg-white text-gray-900'}`}
+          style={{ backgroundColor: surfaceBackground }}
+        >
+          <div className={`flex h-14 shrink-0 items-center gap-3 border-b px-4 ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
+            <span className={`min-w-0 flex-1 truncate text-sm font-display-medium ${isDark ? 'text-[var(--color-rl-bg)]' : 'text-gray-900'}`}>
+              {panelLink.title}
+            </span>
+            <a
+              href={panelLink.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={m.widget_chat_panel_open_new_tab()}
+              title={m.widget_chat_panel_open_new_tab()}
+              className={`shrink-0 ${isDark ? 'text-[var(--color-rl-bg)]/55 hover:text-[var(--color-rl-bg)]' : 'text-gray-500 hover:text-gray-900'}`}
+            >
+              {/* Icon only, so the head holds title and controls on a narrow
+                  share page without wrapping. */}
+              <ExternalLink className="h-4 w-4" strokeWidth={2} />
+            </a>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              ref={panelBackRef}
+              onClick={() => setPanelLink(null)}
+              className="h-8 shrink-0 rounded-lg px-3 text-[0.8125rem]"
+            >
+              {m.widget_chat_panel_back()}
+            </Button>
+          </div>
+          <iframe
+            className="min-h-0 flex-1 w-full border-0"
+            title={panelLink.title}
+            src={panelLink.url}
+            allow={panelLink.allow}
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+          />
+        </div>
+      )}
     </div>
   )
 }
@@ -688,9 +818,18 @@ function TypingIndicator({ isDark, bubble = false }: { isDark: boolean; bubble?:
 }
 
 // Offered under an assistant message that carried the escalation signal
-// (see normalizeEscalation). Opens the same booking URL the "onze nerds"
-// footer link uses, in a new tab — this surface has no in-widget panel.
-function EscalationCta({ href, isDark }: { href: string; isDark: boolean }) {
+// (see normalizeEscalation). Opens the same panel the "onze nerds" footer
+// link uses; the anchor stays a real new-tab link, so a middle-click or a
+// modifier click still leaves the conversation.
+function EscalationCta({
+  href,
+  isDark,
+  onOpen,
+}: {
+  href: string
+  isDark: boolean
+  onOpen: (event: React.MouseEvent<HTMLAnchorElement>) => void
+}) {
   return (
     <div className="mt-2">
       <Button
@@ -699,7 +838,7 @@ function EscalationCta({ href, isDark }: { href: string; isDark: boolean }) {
         size="sm"
         className={isDark ? 'border-white/15 bg-white/10 text-[var(--color-rl-bg)] hover:bg-white/15' : undefined}
       >
-        <a href={href} target="_blank" rel="noopener noreferrer">
+        <a href={href} target="_blank" rel="noopener noreferrer" onClick={onOpen}>
           <Calendar className="h-3.5 w-3.5" strokeWidth={2} />
           {m.widget_chat_book_appointment()}
         </a>
@@ -720,6 +859,7 @@ function MessageBubble({
   showMeta,
   nerdsActive,
   nerdsHref,
+  onOpenNerds,
 }: {
   message: ChatMessage
   isLast: boolean
@@ -732,6 +872,7 @@ function MessageBubble({
   showMeta: boolean
   nerdsActive: boolean
   nerdsHref: string
+  onOpenNerds: (event: React.MouseEvent<HTMLAnchorElement>) => void
 }) {
   if (message.role === 'user') {
     return (
@@ -773,7 +914,7 @@ function MessageBubble({
           ) : isStreaming && isLast ? (
             <TypingIndicator isDark={isDark} />
           ) : null}
-          {showEscalation && <EscalationCta href={nerdsHref} isDark={isDark} />}
+          {showEscalation && <EscalationCta href={nerdsHref} isDark={isDark} onOpen={onOpenNerds} />}
           <SourceDetails message={message} showSources={showSources} showMeta={showMeta} isDark={isDark} />
         </div>
       </div>
@@ -791,7 +932,7 @@ function MessageBubble({
               <Markdown>{message.content}</Markdown>
             </div>
           </div>
-          {showEscalation && <EscalationCta href={nerdsHref} isDark={isDark} />}
+          {showEscalation && <EscalationCta href={nerdsHref} isDark={isDark} onOpen={onOpenNerds} />}
           <SourceDetails message={message} showSources={showSources} showMeta={showMeta} isDark={isDark} />
         </div>
       ) : isStreaming && isLast ? (

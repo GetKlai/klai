@@ -80,6 +80,13 @@ async def record_widget_turn(
     # POST /partner/v1/widget/feedback can address this exact answer without
     # ever exposing widget_messages.id to the browser.
     turn_id: str | None = None,
+    # Retrieval certainty of an assistant answer (top_score, band, gap_type,
+    # sources_count, refused, broad_mode, language, model) — the material a
+    # later rating-vs-certainty calibration needs, and which only exists while
+    # the answer is generated. Written on the assistant row only: the DB CHECK
+    # rejects signals on a visitor row, and the caller has none to give there.
+    # @MX:SPEC: SPEC-KNOWLEDGE-ACTIVITY-001 §4.1
+    answer_signals: dict[str, Any] | None = None,
     ip_hash: str | None = None,
     user_agent_hash: str | None = None,
     language_detected: str | None = None,
@@ -205,10 +212,11 @@ async def record_widget_turn(
                     """
                     INSERT INTO widget_messages
                         (conversation_id, org_id, role, content, sources,
-                         sequence, turn_id)
+                         sequence, turn_id, answer_signals)
                     VALUES
                         (:conversation_id, :org_id, :role, :content,
-                         CAST(:sources AS jsonb), :sequence, :turn_id)
+                         CAST(:sources AS jsonb), :sequence, :turn_id,
+                         CAST(:answer_signals AS jsonb))
                     """
                 ),
                 {
@@ -219,6 +227,11 @@ async def record_widget_turn(
                     "sources": None if sources is None else json.dumps(sources),
                     "sequence": sequence,
                     "turn_id": turn_id,
+                    # Assistant-only by the column CHECK, so a user turn must
+                    # arrive here as NULL even if a caller passed signals.
+                    "answer_signals": (
+                        None if role != "assistant" or answer_signals is None else json.dumps(answer_signals)
+                    ),
                 },
             )
             await db.execute(

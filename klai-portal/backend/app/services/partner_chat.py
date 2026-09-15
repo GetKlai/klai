@@ -55,6 +55,7 @@ from klai_chat_prompts.language import (
 )
 
 from app.core.config import Settings
+from app.core.config import settings as global_settings
 from app.core.database import tenant_scoped_session
 from app.services.citations import (
     compose_answer_with_trusted_sources,
@@ -1606,6 +1607,111 @@ def _appointment_escalation_signal(decision: object) -> dict[str, bool] | None:
     return None
 
 
+_NO_CITABLE_SOURCES_DECISION_KEY = "no_citable_sources_refusal"
+"""Decision key marking "this answer IS the fixed no-citable-sources refusal".
+
+Only the composer knows that — it decides between a grounded answer and the
+canned text — and the audit trail must record it without reading the
+visitor-facing wording back. Callers ``pop`` it before the decision is logged,
+so ``partner_chat_citation_selection_decision`` keeps its exact payload.
+"""
+
+
+def _answer_confidence_band(
+    top_score: float | None,
+    *,
+    settings_obj: Settings | None = None,
+) -> Literal["high", "medium", "low", "unknown"]:
+    """Band an answer's top retrieval score using the two configured thresholds.
+
+    Pure and settings-driven on purpose: the band is stored on the audit row,
+    so recalibrating certainty must be an env change, never an edit here.
+    """
+    cfg = settings_obj or global_settings
+    if top_score is None:
+        return "unknown"
+    if top_score >= cfg.answer_confidence_high_threshold:
+        return "high"
+    if top_score < cfg.answer_confidence_low_threshold:
+        return "low"
+    return "medium"
+
+
+def _top_chunk_score(chunks: list[dict]) -> tuple[dict | None, float | None]:
+    """Return ``(top chunk, its score)`` — reranker score when present, else dense.
+
+    One derivation shared by the gap event and answer_signals, so the two can
+    never disagree about what the top score of a turn was.
+    """
+    top_chunk = max(chunks, key=lambda c: c.get("reranker_score") or c.get("score", 0.0)) if chunks else None
+    if top_chunk is None:
+        return None, None
+    return top_chunk, top_chunk.get("reranker_score") or top_chunk.get("score")
+
+
+def _max_reranker_score(chunks: list[dict]) -> float | None:
+    """Highest numeric ``reranker_score``; ``None`` when nothing was reranked.
+
+    Mirrors the retrieval-api's ``_compute_confidence_band`` input rule: only a
+    cross-encoder score is evidence of certainty, so a fallback pack whose
+    chunks carry a dense score but no reranker score bands as ``unknown`` on
+    both chat paths instead of banding here and not there.
+    """
+    scores = [c["reranker_score"] for c in chunks if isinstance(c.get("reranker_score"), (int, float))]
+    return max(scores) if scores else None
+
+
+def _fill_answer_signals(
+    sink: dict[str, Any] | None,
+    *,
+    decision: dict[str, Any],
+    refused: bool,
+    chunks: list[dict] | None,
+    sources: list[dict],
+    model: str | None,
+    query_text: str,
+    settings_obj: Settings | None = None,
+) -> None:
+    """Write this answer's certainty signals into the caller-owned audit sink.
+
+    The sink is an in-process hand-off to ``record_widget_turn`` (partner.py
+    creates it and reads it back once the turn is done): nothing in it is ever
+    emitted as an SSE frame or written into the completion body, so a visitor
+    cannot see how certain we were — only the audit row can
+    (SPEC-KNOWLEDGE-ACTIVITY-001 §4.1).
+
+    ``chunks`` must be the retrieval result the turn was decided on, not the
+    citation list: a broad-mode turn deliberately cites nothing, yet its
+    certainty is exactly the weak retrieval that triggered broad mode.
+    ``language`` is the visitor's question language, not the answer's, so a
+    gap in English knowledge groups as English even when the model answered
+    in Dutch (spec §4.9).
+
+    Deriving the signals must never cost the visitor their answer, so a
+    failure costs the audit row its signals and one loud warning.
+    """
+    if sink is None:
+        return
+    try:
+        _, top_score = _top_chunk_score(chunks or [])
+        sink.update(
+            {
+                "top_score": top_score,
+                "band": _answer_confidence_band(_max_reranker_score(chunks or []), settings_obj=settings_obj),
+                "gap_type": classify_gap(chunks or []),
+                "sources_count": len(sources),
+                "refused": refused,
+                # Only "answer" is a broad answer; "offer" is a refusal that
+                # asks the visitor for broad-mode consent.
+                "broad_mode": decision.get("broad_mode") == "answer",
+                "language": detect_language(query_text),
+                "model": model,
+            }
+        )
+    except Exception:
+        logger.warning("partner_chat_answer_signals_failed", exc_info=True)
+
+
 def _compose_backend_managed_answer(
     text: str,
     trusted_sources: list[dict[str, Any]] | None,
@@ -1684,7 +1790,10 @@ def _compose_backend_managed_answer(
         if not text.strip():
             # The model produced nothing even with the broad profile; stay on
             # the honest refusal. No offer signal: consent already happened.
-            decision: dict[str, Any] = {"reason": "broad_mode_no_output"}
+            decision: dict[str, Any] = {
+                "reason": "broad_mode_no_output",
+                _NO_CITABLE_SOURCES_DECISION_KEY: True,
+            }
             # The helpdesk refusal itself offers an appointment, so the widget
             # gets the button even though the model wrote nothing at all.
             if helpdesk:
@@ -1708,6 +1817,7 @@ def _compose_backend_managed_answer(
     )
     if not composed.content:
         decision = dict(composed.decision)
+        decision[_NO_CITABLE_SOURCES_DECISION_KEY] = True
         if helpdesk:
             decision["broad_mode"] = "offer"
             decision["escalation"] = _appointment_escalation()
@@ -1737,6 +1847,7 @@ def _compose_backend_managed_answer(
 
     sources = _renumber_sources(kb_sources + web_sources)
     if not sources:
+        decision[_NO_CITABLE_SOURCES_DECISION_KEY] = True
         if helpdesk:
             decision["broad_mode"] = "offer"
             decision["escalation"] = _appointment_escalation()
@@ -1792,6 +1903,8 @@ async def _chat_completion_streaming_with_composed_citations(
     broad_mode: bool = False,
     force_escalation: bool = False,
     sentiment: Literal["negative", "neutral", "positive"] | None = None,
+    answer_signals: dict[str, Any] | None = None,
+    signal_chunks: list[dict] | None = None,
 ) -> AsyncGenerator[bytes]:
     """Collect text, compose deterministic citations, then stream once.
 
@@ -1813,6 +1926,12 @@ async def _chat_completion_streaming_with_composed_citations(
     ``delta.escalation`` frame carrying ``{"appointment": true}`` — the widget
     puts its booking button under that one message instead of keeping a bar on
     screen forever. Absent frame = no offer.
+
+    ``answer_signals`` is the caller's audit sink (see :func:`_fill_answer_signals`)
+    — filled once the answer is composed, and never part of any frame.
+    ``signal_chunks`` is the retrieval result to score it on; it defaults to
+    ``citation_chunks`` but differs on a broad-mode turn, where the caller
+    empties the citation list on purpose.
     """
     raw_text_parts: list[str] = []
     # The page-context message is prepended, so the last user turn in
@@ -1895,6 +2014,9 @@ async def _chat_completion_streaming_with_composed_citations(
         content = safety_refusal_message(visitor_query)
         sources = []
         decision = {"reason": safety_reason}
+    # Consumed before the decision is logged so that event keeps its exact
+    # payload: the marker only travels to the audit sink (see _fill_answer_signals).
+    refused = bool(decision.pop(_NO_CITABLE_SOURCES_DECISION_KEY, False))
     logger.info(
         "partner_chat_citation_selection_decision",
         org_id=org_id,
@@ -1902,6 +2024,16 @@ async def _chat_completion_streaming_with_composed_citations(
         decision=decision,
     )
     _log_citation_rescues(decision, org_id=org_id)
+    _fill_answer_signals(
+        answer_signals,
+        decision=decision,
+        refused=refused,
+        chunks=signal_chunks if signal_chunks is not None else citation_chunks,
+        sources=sources,
+        model=model,
+        query_text=visitor_query,
+        settings_obj=settings,
+    )
     # Safety refusals above replace the decision dict, so no broad signal
     # survives on a blocked turn — deliberate: a blocked answer neither
     # labels itself general knowledge nor invites the visitor to broaden.
@@ -2148,8 +2280,7 @@ def _schedule_gap_event(
         gap_type = classify_gap(chunks)
         if gap_type is None:
             return
-        top_chunk = max(chunks, key=lambda c: c.get("reranker_score") or c.get("score", 0.0)) if chunks else None
-        top_score = (top_chunk.get("reranker_score") or top_chunk.get("score")) if top_chunk else None
+        top_chunk, top_score = _top_chunk_score(chunks)
         nearest_kb_slug = top_chunk.get("metadata", {}).get("kb_slug") if top_chunk and gap_type == "soft" else None
 
         async def _write() -> None:
@@ -2454,6 +2585,8 @@ async def chat_completion_non_streaming(
     broad_mode: bool = False,
     force_escalation: bool = False,
     sentiment: Literal["negative", "neutral", "positive"] | None = None,
+    answer_signals: dict[str, Any] | None = None,
+    signal_chunks: list[dict] | None = None,
 ) -> dict:
     """Forward to LiteLLM and return complete response as dict.
 
@@ -2469,6 +2602,9 @@ async def chat_completion_non_streaming(
     An answer that offers the visitor an appointment carries
     ``message.escalation = {"appointment": true}``, the non-streaming twin of
     the ``delta.escalation`` frame. Absent key = no offer.
+
+    ``answer_signals`` is the caller's audit sink (see :func:`_fill_answer_signals`);
+    it is filled on the marker path and never added to the returned body.
     """
     augmented_messages = _augment_messages_with_system_prompt(messages, system_prompt, page_context)
 
@@ -2560,6 +2696,9 @@ async def chat_completion_non_streaming(
                     visitor_query=visitor_query,
                 )
                 decision.update({"sentiment": sentiment} if support_mode and sentiment else {})
+                # Popped before the log so that event keeps its exact payload;
+                # the marker only travels to the audit sink.
+                refused = bool(decision.pop(_NO_CITABLE_SOURCES_DECISION_KEY, False))
                 logger.info(
                     "partner_chat_citation_selection_decision",
                     org_id=org_id,
@@ -2567,6 +2706,16 @@ async def chat_completion_non_streaming(
                     decision=decision,
                 )
                 _log_citation_rescues(decision, org_id=org_id)
+                _fill_answer_signals(
+                    answer_signals,
+                    decision=decision,
+                    refused=refused,
+                    chunks=signal_chunks if signal_chunks is not None else citation_chunks,
+                    sources=sources,
+                    model=model,
+                    query_text=visitor_query,
+                    settings_obj=settings,
+                )
                 message["content"] = rendered_content
                 message["sources"] = sources
                 if isinstance(decision, dict) and decision.get("broad_mode") in ("offer", "answer"):
@@ -2637,6 +2786,8 @@ async def chat_completion_streaming(
     broad_mode: bool = False,
     force_escalation: bool = False,
     sentiment: Literal["negative", "neutral", "positive"] | None = None,
+    answer_signals: dict[str, Any] | None = None,
+    signal_chunks: list[dict] | None = None,
 ) -> AsyncGenerator[bytes]:
     """Stream LiteLLM SSE response with backend-managed KB citations.
 
@@ -2647,6 +2798,11 @@ async def chat_completion_streaming(
     ``broad_mode`` is the API layer's per-turn general-knowledge decision
     (see ``_broad_mode_active``); it only affects the marker path and is
     ignored by the legacy link sanitizer.
+
+    ``answer_signals`` is the caller's audit sink, filled by the marker path
+    once the answer is composed. The legacy link sanitizer has no composed
+    answer to score, so it leaves the sink empty and the turn is audited
+    without signals.
     """
 
     augmented_messages = _augment_messages_with_system_prompt(messages, system_prompt, page_context)
@@ -2668,6 +2824,8 @@ async def chat_completion_streaming(
             broad_mode=broad_mode,
             force_escalation=force_escalation,
             sentiment=sentiment,
+            answer_signals=answer_signals,
+            signal_chunks=signal_chunks,
         ):
             yield chunk
         return

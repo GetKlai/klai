@@ -306,6 +306,7 @@ async function bootstrap(): Promise<void> {
         bookingUrl: config.booking_url,
         aiDisclosureOverride: config.ai_disclosure_override,
         footerText: config.footer_text,
+        footerLinksInWidget: config.footer_links_in_widget,
         nerdsEnabled: config.nerds?.enabled,
         nerdsBookingUrl: config.nerds?.booking_url,
         collectUserInfo: config.collect_user_info,

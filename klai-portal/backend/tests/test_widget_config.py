@@ -119,8 +119,32 @@ async def test_widget_config_happy_path():
     assert '"page_context_enabled": false' in body
     assert json.loads(body)["ai_disclosure_override"] is None
     assert json.loads(body)["footer_text"] is None
+    assert json.loads(body)["footer_links_in_widget"] is False
     assert json.loads(body)["css_variables"]["--klai-message-gap"] == "20px"
     assert "system_prompt" not in body
+
+
+@pytest.mark.asyncio
+async def test_widget_config_delivers_footer_links_in_widget():
+    """A tenant that opted in gets the flag, so footer links open in the widget panel."""
+    widget = FakeWidget()
+    widget.widget_config["footer_links_in_widget"] = True
+    org = FakeOrg()
+    db = _make_db_chain(widget, org, [1])
+    request = _make_request("https://example.com")
+
+    with (
+        patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.get_redis_pool"),
+        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner.set_tenant", new=AsyncMock()),
+        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
+    ):
+        mock_settings.widget_jwt_secret = "shared-secret"
+
+        response = await widget_config(id=widget.widget_id, request=request, db=db)
+
+    assert json.loads(response.body.decode())["footer_links_in_widget"] is True
 
 
 @pytest.mark.asyncio
@@ -474,6 +498,42 @@ async def test_public_bot_config_delivers_enabled_nerds_integration():
     assert body["nerds"] == {"enabled": True, "booking_url": "https://support.voys.nl/book/voys?t=abc"}
     assert body["ai_disclosure_override"] == ""
     assert body["footer_text"] == ""
+    assert body["footer_links_in_widget"] is False
+
+
+@pytest.mark.asyncio
+async def test_public_bot_config_delivers_footer_links_in_widget():
+    from app.api.partner import public_bot_config
+
+    org = FakeOrg()
+    widget = FakeWidget(
+        public_share_enabled=True,
+        widget_config={
+            "allowed_origins": [],
+            "title": "Public",
+            "welcome_message": "",
+            "system_prompt": "",
+            "css_variables": {},
+            "ai_disclosure_override": "",
+            "footer_text": "Zie onze [privacyverklaring](https://example.com/privacy).",
+            "footer_links_in_widget": True,
+        },
+    )
+    db = _make_db_chain(widget, org, [10])
+
+    with (
+        patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.get_redis_pool"),
+        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner.set_tenant", new=AsyncMock()),
+        patch("app.api.partner.generate_session_token", return_value="public.jwt.token"),
+    ):
+        mock_settings.widget_jwt_secret = "shared-secret"
+        response = await public_bot_config(id=widget.widget_id, request=_make_request(), db=db)
+
+    body = json.loads(response.body.decode())
+    assert body["footer_text"] == "Zie onze [privacyverklaring](https://example.com/privacy)."
+    assert body["footer_links_in_widget"] is True
 
 
 @pytest.mark.asyncio
