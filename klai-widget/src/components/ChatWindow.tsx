@@ -91,6 +91,11 @@ export function ChatWindow(props: ChatWindowProps) {
   let handoffAbortController: AbortController | null = null;
   let handoffStreamToken: string | null = null;
   let textareaRef: HTMLTextAreaElement | undefined;
+  let windowRef: HTMLDivElement | undefined;
+  let panelBackRef: HTMLButtonElement | undefined;
+  // Plain flag, not a signal: it only has to survive between two runs of the
+  // focus effect below and must never re-render anything on its own.
+  let panelWasOpen = false;
   const seenHandoffMessageIds = new Set<number>();
 
   // The art. 50 notice doubles as a screen-reader announcement on window
@@ -201,6 +206,28 @@ export function ChatWindow(props: ChatWindowProps) {
   };
 
   onCleanup(clearPanelFrameTimer);
+
+  // The panel covers the chat, so keyboard focus has to follow it: without
+  // this, Tab walks through the hidden conversation behind the overlay. The
+  // chat blocks are inert while it is open (see .klai-window-body). Closing
+  // lands on the composer rather than the link that opened the panel: the
+  // markdown footer is re-rendered while the panel is open, so the opening
+  // anchor is not a stable element to return to, and the composer is where
+  // the conversation continues anyway. Only a real open→closed transition
+  // moves focus; on first render the visitor keeps the focus the page gave
+  // them, and with no usable composer (identity step, streaming) focus lands
+  // on the window itself instead of on the body.
+  createEffect(() => {
+    if (panelLink()) {
+      panelWasOpen = true;
+      panelBackRef?.focus();
+      return;
+    }
+    if (!panelWasOpen) return;
+    panelWasOpen = false;
+    if (textareaRef && !textareaRef.disabled) textareaRef.focus();
+    else windowRef?.focus();
+  });
 
   // The footer anchors keep target="_blank" and rel="noopener noreferrer" on
   // purpose: a middle-click, a modifier click, and a site that refuses to be
@@ -561,11 +588,16 @@ export function ChatWindow(props: ChatWindowProps) {
 
   return (
     <div
+      ref={windowRef}
       class={windowClass()}
       role={props.inline ? "region" : "dialog"}
       aria-label={props.title}
       aria-modal={props.inline ? undefined : "false"}
+      tabindex="-1"
     >
+      {/* Everything except the panel sits in one wrapper so it can be made
+        inert as a whole while the panel is open. */}
+      <div class="klai-window-body" inert={panelLink() ? true : undefined}>
       {!props.inline && (
         <div class="klai-header">
           <div class="klai-header-id">
@@ -959,6 +991,8 @@ export function ChatWindow(props: ChatWindowProps) {
         </Show>
       </Show>
 
+      </div>
+
       {/* In-widget link panel: overlay covering the chat while open. The
           sandbox deliberately has no allow-top-navigation — the framed page
           must never navigate the host page away. The head always offers the
@@ -990,7 +1024,12 @@ export function ChatWindow(props: ChatWindowProps) {
                     <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
                   </svg>
                 </a>
-                <button type="button" class="klai-nerds-panel-back" onClick={closePanel}>
+                <button
+                  type="button"
+                  class="klai-nerds-panel-back"
+                  ref={panelBackRef}
+                  onClick={closePanel}
+                >
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <path d="M19 12H5" />
                     <path d="m12 19-7-7 7-7" />
