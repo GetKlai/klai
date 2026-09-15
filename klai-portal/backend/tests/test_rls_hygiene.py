@@ -303,6 +303,20 @@ def test_a5_tenant_lifecycle_events_uses_org_id_snapshot_column() -> None:
     assert "org_id_snapshot" in block
 
 
+def test_a5_tenant_lifecycle_events_insert_allows_platform_admin() -> None:
+    """A platform admin writes audit rows for OTHER orgs from their own org
+    context (platform unlocks, retention override); the org-match alone
+    rejected every such INSERT with an RLS violation (15 Sep 2026)."""
+    sql = _read_sql()
+    m = re.search(
+        r"CREATE POLICY tenant_lifecycle_events_insert ON tenant_lifecycle_events.*?;\n",
+        sql,
+        re.DOTALL,
+    )
+    assert m
+    assert "current_setting('app.is_platform_admin', true) = '1'" in m.group(0)
+
+
 # ---------------------------------------------------------------------------
 # A-6: tenant_lifecycle_events SELECT GUC documentation
 # ---------------------------------------------------------------------------

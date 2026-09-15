@@ -2702,6 +2702,8 @@
   "klai_assistant_error": "Versturen mislukt. Probeer het opnieuw.",
   "klai_assistant_add_another": "Nog iets doorgeven",
   "klai_assistant_disclaimer": "AI-antwoorden kunnen fouten bevatten. Controleer belangrijke informatie altijd bij de bron.",
+  "admin_extension_knowledge_activity_label": "Gesprekken beoordelen",
+  "admin_extension_knowledge_activity_description": "Kennisbeheerders zien de widget-gesprekken onder Kennis, beoordelen antwoorden en zien welke kennis ontbreekt of niet klopt.",
   "admin_extension_librechat_quality_judge_label": "Gespreksbeoordeling (LibreChat)",
   "admin_extension_librechat_quality_judge_description": "Laat de nachtelijke kwaliteitsbeoordeling ook LibreChat-gesprekken van deze tenant beoordelen (los van webchat)."
 ,
