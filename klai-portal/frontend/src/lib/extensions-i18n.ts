@@ -31,6 +31,10 @@ export function extensionLabel(key: string): string {
       return m.admin_extension_scribe_label()
     case 'docs':
       return m.admin_extension_docs_label()
+    case 'knowledge_activity':
+      return m.admin_extension_knowledge_activity_label()
+    case 'librechat_quality_judge':
+      return m.admin_extension_librechat_quality_judge_label()
     default:
       return key
   }
@@ -48,6 +52,10 @@ export function extensionDescription(key: string): string {
       return m.admin_extension_scribe_description()
     case 'docs':
       return m.admin_extension_docs_description()
+    case 'knowledge_activity':
+      return m.admin_extension_knowledge_activity_description()
+    case 'librechat_quality_judge':
+      return m.admin_extension_librechat_quality_judge_description()
     default:
       return ''
   }

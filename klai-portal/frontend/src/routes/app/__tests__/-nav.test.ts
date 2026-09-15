@@ -47,10 +47,10 @@ describe('app nav — Kennis children (SPEC-KNOWLEDGE-ACTIVITY-001 §3)', () => 
     expect(knowledge?.children?.find((child) => child.to === '/app/knowledge/activity')?.badgeCount).toBe(3)
   })
 
-  it('hides Gesprekken without the knowledge_activity tenant unlock', () => {
+  it('hides Gesprekken and Kennisgaten without the knowledge_activity tenant unlock', () => {
     expect(
       knowledgeChildren(['kb.activity', 'kb.gaps'], ['widgets']),
-    ).toEqual(['/app/knowledge', '/app/knowledge/gaps'])
+    ).toEqual(['/app/knowledge'])
   })
 
   it('hides Kennisgaten without the kb.gaps capability', () => {

@@ -101,7 +101,9 @@ export function getAppNavItems(products: string[], access: AppNavAccess): NavIte
       })
     }
     // @MX:SPEC: SPEC-KNOWLEDGE-ACTIVITY-001 §3 — phase 2 moved the screen under /app/knowledge.
-    if (access.hasCapability('kb.gaps')) {
+    // Gaps ride on the same tenant unlock as Gesprekken: the screen is part of
+    // the same rollout and not ready for every tenant yet.
+    if (access.hasCapability('kb.gaps') && appNavActivityIsVisible(access)) {
       children.push({
         to: '/app/knowledge/gaps',
         label: m.app_nav_knowledge_gaps(),

@@ -192,6 +192,11 @@ CREATE POLICY tenant_lifecycle_events_insert ON tenant_lifecycle_events
     WITH CHECK (
         current_setting('app.current_org_id', true) = ''
         OR org_id_snapshot = NULLIF(current_setting('app.current_org_id', true), '')::integer
+        -- A platform admin acts on other tenants (platform unlocks, retention
+        -- override) from their own org context; the audit row then carries the
+        -- target org, which the org match above rejects. Same GUC the select
+        -- policy already trusts. Found 15 Sep 2026: every PATCH returned 500.
+        OR current_setting('app.is_platform_admin', true) = '1'
     );
 
 -- ============================================================
