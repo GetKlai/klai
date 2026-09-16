@@ -181,6 +181,9 @@ export function ActivityDetailPage() {
               <>
                 <AnswerSignals signals={activeMessage.answer_signals ?? null} />
                 <ReviewForm
+                  // A fresh form per answer: a draft for one answer must never
+                  // be saved against another when the reviewer switches.
+                  key={activeMessage.id}
                   messageId={activeMessage.id}
                   review={activeMessage.review ?? null}
                   quality={detail.quality}

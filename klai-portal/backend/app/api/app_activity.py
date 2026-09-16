@@ -279,6 +279,8 @@ SELECT MIN(pkb.slug) AS slug
   JOIN widget_kb_access wka ON wka.widget_id = wc.widget_id
   JOIN portal_knowledge_bases pkb ON pkb.id = wka.kb_id
  WHERE wc.id = :conversation_id
+   AND wc.org_id = :org_id
+   AND pkb.org_id = :org_id
 HAVING COUNT(*) = 1
 """
 
@@ -963,14 +965,15 @@ def _question_language(message: Any, signals: dict[str, Any]) -> str | None:
     return signals.get("language") or message.language_detected
 
 
-async def _nearest_kb_slug(db: AsyncSession, conversation_id: int) -> str | None:
+async def _nearest_kb_slug(db: AsyncSession, conversation_id: int, org_id: int) -> str | None:
     """The slug of the conversation's widget's one knowledge base.
 
     SPEC-KNOWLEDGE-ACTIVITY-001 §4.5: the backend decides the KB, not the
     reviewer, so `ReviewRequest.kb_slug` (kept for compatibility) is never
     read here.
     """
-    row = (await db.execute(text(_NEAREST_KB_SLUG_SQL), {"conversation_id": conversation_id})).first()
+    # Both tenant tables are scoped explicitly, not only through RLS.
+    row = (await db.execute(text(_NEAREST_KB_SLUG_SQL), {"conversation_id": conversation_id, "org_id": org_id})).first()
     return row.slug if row is not None else None
 
 
@@ -1000,7 +1003,7 @@ async def put_review(
     signals = message.answer_signals or {}
     # The backend decides the KB (§4.5): derived from the widget, never from
     # the request body.
-    kb_slug = await _nearest_kb_slug(db, message.conversation_id)
+    kb_slug = await _nearest_kb_slug(db, message.conversation_id, perms.org_id)
 
     insert_stmt = pg_insert(AnswerReview).values(
         org_id=perms.org_id,

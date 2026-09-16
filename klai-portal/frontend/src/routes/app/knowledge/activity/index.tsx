@@ -423,8 +423,9 @@ export function ActivityPage() {
                     })
                   }
                 >
-                  <DataTableCell className="line-clamp-3" title={item.first_user_query ?? undefined}>
-                    {item.first_user_query ?? '—'}
+                  <DataTableCell title={item.first_user_query ?? undefined}>
+                    {/* Clamp a child block, not the cell: -webkit-box on a td breaks table layout. */}
+                    <div className="line-clamp-3">{item.first_user_query ?? '—'}</div>
                   </DataTableCell>
                   <DataTableCell className="text-gray-600">{item.language ?? '—'}</DataTableCell>
                   <DataTableCell>
