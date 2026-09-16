@@ -997,6 +997,7 @@ async def platform_bot_conversations(
                     "FROM widget_conversations "
                     "WHERE widget_id = CAST(:widget_id AS uuid) "
                     "AND is_preview = false "
+                    "AND is_test = false "
                     "AND started_at < :cursor "
                     "ORDER BY started_at DESC LIMIT :limit"
                 ),
@@ -1010,6 +1011,7 @@ async def platform_bot_conversations(
                     "FROM widget_conversations "
                     "WHERE widget_id = CAST(:widget_id AS uuid) "
                     "AND is_preview = false "
+                    "AND is_test = false "
                     "ORDER BY started_at DESC LIMIT :limit"
                 ),
                 params,

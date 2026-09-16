@@ -262,3 +262,14 @@ def test_platform_bot_conversations_sql_filters_preview_rows() -> None:
         f"branches on is_preview = false; found {source.count('is_preview = false')} "
         "occurrences. Otherwise admin preview/test chats leak into the platform view."
     )
+
+
+def test_platform_conversations_sql_filters_test_rows() -> None:
+    """A reviewer's test mark (is_test) must hide the conversation from the
+    platform-admin list as well, not only from the tenant-side screens."""
+    import inspect
+
+    from app.api.admin.platform import platform_bot_conversations
+
+    source = inspect.getsource(platform_bot_conversations)
+    assert source.count("AND is_test = false") == 2
