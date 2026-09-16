@@ -2043,8 +2043,10 @@ async def _chat_completion_streaming_with_composed_citations(
     """
     raw_text_parts: list[str] = []
     # The page-context message is prepended, so the last user turn in
-    # augmented_messages is the human's own words — the language they should
-    # be refused in, never the rewritten retrieval query.
+    # augmented_messages is the human's own words, never the rewritten
+    # retrieval query. The canned source refusal follows the conversation
+    # decision (response_language above); this stays the input for the
+    # output-safety refusal, which has no conversation decision to follow.
     visitor_query = _last_user_message(augmented_messages) or ""
     chat_url = f"{settings.litellm_base_url}/v1/chat/completions"
     try:
@@ -2835,8 +2837,9 @@ async def chat_completion_non_streaming(
     # on the widget path source_query is the KB-rewritten search query and
     # must never reach the refusal language.
     composer_query = source_query or _last_user_message(messages) or ""
-    # The refusal language always comes from the visitor's own last turn —
     # augmented_messages prepends page context, so this IS the human's words.
+    # Used by the output-safety refusal, which identifies this one turn; the
+    # source refusal and the broad marker follow language_decision instead.
     visitor_query = _last_user_message(augmented_messages) or ""
     if citation_output == "markers":
         for choice in body.get("choices") or []:

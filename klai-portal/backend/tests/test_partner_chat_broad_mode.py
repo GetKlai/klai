@@ -655,21 +655,30 @@ async def test_stream_refusal_language_follows_visitor_not_source_query(monkeypa
     settings.litellm_base_url = "http://litellm:4000"
     settings.litellm_master_key = "key"
 
-    frames = await _collect(
-        augmented_messages=[{"role": "user", "content": "Wat gaat hier mis met doorverbinden?"}],
-        model="klai-primary",
-        temperature=0.7,
-        settings=settings,
-        org_id=42,
-        # What chat_completion_streaming computes on the widget path:
-        # source_query wins over the visitor's message — English-identifiable.
-        user_query="call transfer SIP REFER error timeout fix",
-        trusted_sources=[],
-        citation_chunks=[],
-        support_mode=True,
-    )
+    # Driven through the public entry, not the internal helper: the decision is
+    # taken there now, so that is the only level where "source_query cannot
+    # decide the language" is a property of production rather than of the test.
+    frames = [
+        frame
+        async for frame in partner_chat.chat_completion_streaming(
+            messages=[{"role": "user", "content": "Wat gaat hier mis met doorverbinden?"}],
+            model="klai-primary",
+            temperature=0.7,
+            system_prompt="sys",
+            settings=settings,
+            org_id=42,
+            # The KB-tuned rewrite the widget path threads in — English-identifiable.
+            source_query="call transfer SIP REFER error timeout fix",
+            trusted_sources=[],
+            citation_chunks=[],
+            citation_output="markers",
+            support_mode=True,
+        )
+    ]
 
-    content = "".join(_delta_values(_parse_frames(frames), "content"))
+    deltas = _parse_frames(frames)
+    assert _delta_values(deltas, "language") == ["nl"]
+    content = "".join(_delta_values(deltas, "content"))
     assert content == no_citable_sources_message("nl", helpdesk=True)
 
 

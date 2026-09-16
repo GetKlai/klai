@@ -290,9 +290,10 @@ def no_citable_sources_message(language: object, *, suggest_open_mode: bool = Fa
     """Pick the language for the canned strict-mode refusal.
 
     Takes a language CODE decided upstream — never raw user text: the
-    conversation-level decision (path A) or the single-text identifier
-    (``identify_text_language``, next to this library) on the lone query
-    (paths B/C). Returns the Dutch refusal for ``"nl"``, otherwise
+    conversation-level decision on every chat path. The single-text
+    identifier (``identify_text_language``, next to this library) still
+    feeds the separate output-safety refusal, which fires where no
+    conversation decision has been taken. Returns the Dutch refusal for ``"nl"``, otherwise
     English; None/abstain fall through to DUTCH, other codes to English, so the
     refusal is never empty (deliberate degradation, see
     :func:`_language_is_dutch`).
