@@ -9,10 +9,8 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Field } from '@/components/ui/field'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
-import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import {
-  useActivityKnowledgeBases,
   useDeleteReview,
   useUpsertReview,
   type ConversationReview,
@@ -34,9 +32,6 @@ const CAUSES: { value: ConversationReviewCause; label: () => string }[] = [
   { value: 'knowledge_wrong', label: m.activity_cause_knowledge_wrong },
   { value: 'behaviour', label: m.activity_cause_behaviour },
 ]
-
-/** A knowledge cause points at a knowledge base the admin can open directly. */
-const KNOWLEDGE_CAUSES: ConversationReviewCause[] = ['knowledge_missing', 'knowledge_wrong']
 
 /** The two failure verdicts are only valid together with a real cause. */
 const needsCause = (verdict: ConversationReviewVerdict | null) =>
@@ -110,13 +105,11 @@ export function ReviewForm({
   const fieldId = useId()
   const upsert = useUpsertReview(messageId)
   const remove = useDeleteReview(messageId)
-  const knowledgeBases = useActivityKnowledgeBases()
 
   const seed = () => ({
     verdict: review?.verdict ?? suggestion?.verdict ?? null,
     cause: review?.cause ?? suggestion?.cause ?? null,
     note: review?.note ?? '',
-    kbSlug: review?.kb_slug ?? '',
   })
 
   const [form, setForm] = useState(seed)
@@ -156,12 +149,7 @@ export function ReviewForm({
     const cause = needsCause(form.verdict) ? form.cause : 'none'
     if (cause === null) return
     upsert.mutate(
-      {
-        verdict: form.verdict,
-        cause,
-        note: form.note.trim() || null,
-        kb_slug: form.kbSlug || null,
-      },
+      { verdict: form.verdict, cause, note: form.note.trim() || null },
       {
         onSuccess: () => toast.success(m.activity_review_saved()),
         onError: () => toast.error(m.activity_review_failed()),
@@ -169,11 +157,11 @@ export function ReviewForm({
     )
   }
 
-  const orgKbs = (knowledgeBases.data?.knowledge_bases ?? []).filter(
-    (kb) => kb.owner_type === 'org',
-  )
-  const openInKb =
-    form.kbSlug !== '' && form.cause !== null && KNOWLEDGE_CAUSES.includes(form.cause)
+  // The backend derives the knowledge base from the widget the conversation
+  // came from (SPEC-KNOWLEDGE-ACTIVITY-001 §4.5); the link only appears once a
+  // saved review actually carries one, which needs the widget bound to
+  // exactly one KB.
+  const openInKbSlug = review?.kb_slug ?? null
 
   return (
     <form
@@ -220,36 +208,20 @@ export function ReviewForm({
         </div>
       )}
 
-      <div className="flex flex-wrap items-end gap-4">
-        <Field label={m.activity_review_note_label()} className="min-w-56 flex-1">
-          <Textarea
-            rows={2}
-            value={form.note}
-            placeholder={m.activity_review_note_placeholder()}
-            onChange={(event) => patch({ note: event.target.value })}
-          />
-        </Field>
-        <Field label={m.activity_review_kb_label()}>
-          <Select
-            containerClassName="w-56"
-            value={form.kbSlug}
-            onChange={(event) => patch({ kbSlug: event.target.value })}
-          >
-            <option value="">{m.activity_review_kb_none()}</option>
-            {orgKbs.map((kb) => (
-              <option key={kb.slug} value={kb.slug}>
-                {kb.name}
-              </option>
-            ))}
-          </Select>
-        </Field>
-      </div>
+      <Field label={m.activity_review_note_label()} className="min-w-56">
+        <Textarea
+          rows={2}
+          value={form.note}
+          placeholder={m.activity_review_note_placeholder()}
+          onChange={(event) => patch({ note: event.target.value })}
+        />
+      </Field>
 
-      {openInKb && (
+      {openInKbSlug && (
         <p>
           <Link
             to="/app/docs/$kbSlug"
-            params={{ kbSlug: form.kbSlug }}
+            params={{ kbSlug: openInKbSlug }}
             className="text-xs text-gray-900 underline underline-offset-2"
           >
             {m.activity_review_open_in_kb()}

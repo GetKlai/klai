@@ -68,7 +68,6 @@ export function getAccessibleAppTools(products: string[]): AppTool[] {
 export interface AppNavAccess {
   hasCapability: (capability: string) => boolean
   unlockedFeatures: string[]
-  activityQueueCount?: number
 }
 
 // The review queue only makes sense for a tenant that unlocked both the widget
@@ -103,7 +102,6 @@ export function getAppNavItems(products: string[], access: AppNavAccess): NavIte
         to: '/app/knowledge/activity',
         label: m.app_nav_conversations(),
         icon: MessageSquare,
-        badgeCount: access.activityQueueCount,
       })
     }
     // @MX:SPEC: SPEC-KNOWLEDGE-ACTIVITY-001 §3 — phase 2 moved the screen under /app/knowledge.

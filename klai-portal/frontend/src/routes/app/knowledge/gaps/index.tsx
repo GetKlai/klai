@@ -417,7 +417,6 @@ export function GapsPage() {
                           >
                             <Link
                               to="/app/knowledge/activity/$conversationId"
-                              search={{ list: null }}
                               params={{ conversationId: String(gap.conversation_id) }}
                             >
                               <MessageCircle />

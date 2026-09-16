@@ -269,6 +269,19 @@ SELECT content
  LIMIT 1
 """
 
+# The backend decides the KB, not the reviewer (SPEC-KNOWLEDGE-ACTIVITY-001
+# §4.5): the slug of the conversation's widget's one knowledge base, or no
+# row at all when the widget is bound to zero or more than one. MIN() is safe
+# here because HAVING COUNT(*) = 1 guarantees at most one candidate row.
+_NEAREST_KB_SLUG_SQL = """
+SELECT MIN(pkb.slug) AS slug
+  FROM widget_conversations wc
+  JOIN widget_kb_access wka ON wka.widget_id = wc.widget_id
+  JOIN portal_knowledge_bases pkb ON pkb.id = wka.kb_id
+ WHERE wc.id = :conversation_id
+HAVING COUNT(*) = 1
+"""
+
 _REVIEW_GAP_SQL = """
 SELECT gap_id
   FROM answer_reviews
@@ -424,6 +437,8 @@ class ReviewRequest(BaseModel):
     verdict: Literal["correct", "incomplete", "wrong", "not_a_fault"]
     cause: Literal["knowledge_missing", "knowledge_wrong", "behaviour", "none"]
     note: str | None = None
+    # Accepted for compatibility, never read: the backend derives the KB from
+    # the conversation's widget instead (§4.5, _nearest_kb_slug).
     kb_slug: str | None = None
 
     @model_validator(mode="after")
@@ -878,6 +893,7 @@ async def _sync_review_gap(
     signals: dict[str, Any],
     existing_gap_id: int | None,
     reviewer_user_id: int,
+    kb_slug: str | None,
 ) -> None:
     """Keep the gaps dashboard in step with the review's cause.
 
@@ -925,7 +941,7 @@ async def _sync_review_gap(
             query_text=question.content,
             gap_type=gap_type,
             top_score=signals.get("top_score"),
-            nearest_kb_slug=body.kb_slug,
+            nearest_kb_slug=kb_slug,
             chunks_retrieved=int(signals.get("sources_count") or 0),
             caller_client_id=_HUMAN_REVIEW_CALLER,
             conversation_id=message.conversation_id,
@@ -945,6 +961,17 @@ def _question_language(message: Any, signals: dict[str, Any]) -> str | None:
     newest detected language and only serves rows from before the signals
     existed."""
     return signals.get("language") or message.language_detected
+
+
+async def _nearest_kb_slug(db: AsyncSession, conversation_id: int) -> str | None:
+    """The slug of the conversation's widget's one knowledge base.
+
+    SPEC-KNOWLEDGE-ACTIVITY-001 §4.5: the backend decides the KB, not the
+    reviewer, so `ReviewRequest.kb_slug` (kept for compatibility) is never
+    read here.
+    """
+    row = (await db.execute(text(_NEAREST_KB_SLUG_SQL), {"conversation_id": conversation_id})).first()
+    return row.slug if row is not None else None
 
 
 @router.put("/messages/{message_id}/review", response_model=ReviewOut)
@@ -971,6 +998,9 @@ async def put_review(
     # resolved the token against it.
     caller: Any = (await db.execute(text(_CALLER_SQL), {"user_id": perms.user_id, "org_id": perms.org_id})).first()
     signals = message.answer_signals or {}
+    # The backend decides the KB (§4.5): derived from the widget, never from
+    # the request body.
+    kb_slug = await _nearest_kb_slug(db, message.conversation_id)
 
     insert_stmt = pg_insert(AnswerReview).values(
         org_id=perms.org_id,
@@ -982,7 +1012,7 @@ async def put_review(
         verdict=body.verdict,
         cause=body.cause,
         note=body.note,
-        kb_slug=body.kb_slug,
+        kb_slug=kb_slug,
         band_at_review=signals.get("band") or "unknown",
         judge_outcome_at_review=judged.outcome if judged is not None else None,
         judge_failure_category_at_review=judged.failure_category if judged is not None else None,
@@ -1009,13 +1039,14 @@ async def put_review(
         signals=signals,
         existing_gap_id=getattr(stored, "gap_id", None),
         reviewer_user_id=caller.id,
+        kb_slug=kb_slug,
     )
 
     return ReviewOut(
         verdict=body.verdict,
         cause=body.cause,
         note=body.note,
-        kb_slug=body.kb_slug,
+        kb_slug=kb_slug,
         reviewer_name=caller.display_name,
         reviewed_at=stored.reviewed_at,
     )
