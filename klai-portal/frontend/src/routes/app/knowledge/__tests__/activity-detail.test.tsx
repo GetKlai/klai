@@ -271,4 +271,19 @@ describe('activity conversation detail', () => {
     expect(String(path)).toBe('/api/app/activity/conversations/12/test')
     expect(JSON.parse((rawInit as RequestInit).body as string)).toEqual({ is_test: true })
   })
+
+  it('hides the review form and shows the muted line for a test-marked conversation', async () => {
+    mockApi(detail({ is_test: true }))
+    renderPage()
+
+    await waitFor(() => expect(screen.getByText('Je kunt binnen 14 dagen retourneren.')).toBeTruthy())
+
+    expect(
+      screen.getByText(/telt nergens mee en wordt niet beoordeeld|does not count anywhere and is not reviewed/i),
+    ).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /opslaan|save/i })).toBeNull()
+    // The badge and the unmark action stay visible.
+    expect(screen.getByText(/^(testbericht|test message)$/i)).toBeTruthy()
+    expect(screen.getByRole('button', { name: /toch geen testbericht|not a test message after all/i })).toBeTruthy()
+  })
 })

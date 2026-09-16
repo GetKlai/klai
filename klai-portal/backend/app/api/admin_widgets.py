@@ -962,6 +962,7 @@ async def widget_activity_stats(
                 "FROM widget_conversations "
                 "WHERE widget_id = CAST(:widget_id AS uuid) "
                 "AND is_preview = false "
+                "AND is_test = false "
                 "AND started_at >= :cutoff"
             ),
             params,
@@ -973,7 +974,8 @@ async def widget_activity_stats(
                 "COALESCE(SUM(message_count), 0) AS total_messages "
                 "FROM widget_conversations "
                 "WHERE widget_id = CAST(:widget_id AS uuid) "
-                "AND is_preview = false"
+                "AND is_preview = false "
+                "AND is_test = false"
             ),
             params,
         )
@@ -990,6 +992,7 @@ async def widget_activity_stats(
                 "WHERE widget_id = CAST(:widget_id AS uuid) "
                 "AND first_user_query IS NOT NULL "
                 "AND is_preview = false "
+                "AND is_test = false "
                 "AND started_at >= :cutoff "
                 "GROUP BY first_user_query "
                 "ORDER BY c DESC, q ASC LIMIT 10"
@@ -1004,6 +1007,7 @@ async def widget_activity_stats(
                 "WHERE widget_id = CAST(:widget_id AS uuid) "
                 "AND first_user_query IS NOT NULL "
                 "AND is_preview = false "
+                "AND is_test = false "
                 "GROUP BY first_user_query "
                 "ORDER BY c DESC, q ASC LIMIT 10"
             ),
@@ -1018,6 +1022,7 @@ async def widget_activity_stats(
                 "FROM widget_conversations "
                 "WHERE widget_id = CAST(:widget_id AS uuid) "
                 "AND is_preview = false "
+                "AND is_test = false "
                 "AND started_at >= :cutoff "
                 "GROUP BY hour"
             ),
@@ -1030,6 +1035,7 @@ async def widget_activity_stats(
                 "FROM widget_conversations "
                 "WHERE widget_id = CAST(:widget_id AS uuid) "
                 "AND is_preview = false "
+                "AND is_test = false "
                 "GROUP BY hour"
             ),
             params,
@@ -1046,6 +1052,7 @@ async def widget_activity_stats(
                 "FROM widget_conversations "
                 "WHERE widget_id = CAST(:widget_id AS uuid) "
                 "AND is_preview = false "
+                "AND is_test = false "
                 "AND started_at >= :cutoff "
                 "GROUP BY outcome"
             ),
@@ -1058,6 +1065,7 @@ async def widget_activity_stats(
                 "FROM widget_conversations "
                 "WHERE widget_id = CAST(:widget_id AS uuid) "
                 "AND is_preview = false "
+                "AND is_test = false "
                 "GROUP BY outcome"
             ),
             params,

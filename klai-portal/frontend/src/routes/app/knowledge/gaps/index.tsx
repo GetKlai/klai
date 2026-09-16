@@ -70,7 +70,7 @@ interface GapRow {
   source: 'automatic' | 'review'
   conversation_id: number | null
   resolved_at: string | null
-  resolved_by: 'rescorer' | 'review' | 'manual' | null
+  resolved_by: 'rescorer' | 'review' | 'manual' | 'test' | null
   resolved_by_name: string | null
 }
 
@@ -96,11 +96,12 @@ function formatRelativeTime(isoString: string): string {
   return rtf.format(Math.round(diffSeconds), 'second')
 }
 
-/** "rescorer" and "beoordeling/review" are fixed labels; only 'manual' names
-    the actual colleague who closed it. */
+/** "rescorer", "beoordeling/review" and "testbericht" are fixed labels; only
+    'manual' names the actual colleague who closed it. */
 function closerLabel(gap: GapRow): string {
   if (gap.resolved_by === 'rescorer') return m.gaps_resolved_by_rescorer()
   if (gap.resolved_by === 'review') return m.gaps_resolved_by_review()
+  if (gap.resolved_by === 'test') return m.gaps_resolved_by_test()
   return gap.resolved_by_name ?? ''
 }
 

@@ -28,7 +28,7 @@ class PortalRetrievalGap(Base):
             name="ck_retrieval_gaps_gap_type",
         ),
         CheckConstraint(
-            "resolved_by IN ('rescorer', 'review', 'manual')",
+            "resolved_by IN ('rescorer', 'review', 'manual', 'test')",
             name="ck_retrieval_gaps_resolved_by",
         ),
         Index("ix_retrieval_gaps_org_occurred", "org_id", "occurred_at"),
@@ -69,10 +69,12 @@ class PortalRetrievalGap(Base):
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
     # Who closed the gap: 'rescorer' (app/services/gap_rescorer.py),
     # 'review' (the answer-review cause moved away from knowledge, or the
-    # review that opened it was deleted), or 'manual' (POST
-    # /api/app/gaps/resolve). NULL while the gap is open.
+    # review that opened it was deleted), 'manual' (POST /api/app/gaps/resolve),
+    # or 'test' (PUT .../conversations/{id}/test marked the conversation as a
+    # test message; unmarking reopens exactly the rows this closer stamped).
+    # NULL while the gap is open.
     resolved_by: Mapped[str | None] = mapped_column(String(16), nullable=True, default=None)
-    # The portal user who closed it via 'review' or 'manual'; NULL for
+    # The portal user who closed it via 'review', 'manual' or 'test'; NULL for
     # 'rescorer' and for open gaps. No ForeignKey() here for the same reason
     # as conversation_id above -- portal_api has no REFERENCES privilege on
     # portal_users (klai-owned); the FK (ON DELETE SET NULL) is added by

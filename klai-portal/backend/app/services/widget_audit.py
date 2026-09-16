@@ -68,12 +68,15 @@ def session_key_from_claims(
     return hash_audit_value(f"{org_id}:{wgt_id}:{jti}", secret)
 
 
-async def find_conversation_id(*, widget_id: str, session_key: str) -> int | None:
-    """Return the ``widget_conversations`` id for (widget_id, session_key).
+async def find_conversation_id(*, widget_id: str, session_key: str) -> tuple[int, bool] | None:
+    """Return ``(conversation_id, is_test)`` for (widget_id, session_key).
 
     Same identification as ``record_widget_turn``: the owning org is derived
     from the widgets row (REQ-14), never from the caller, and the read then
-    runs on that org's tenant-scoped session so Cat-D RLS applies.
+    runs on that org's tenant-scoped session so Cat-D RLS applies. ``is_test``
+    rides along so a fire-and-forget gap write can skip a conversation a
+    reviewer already marked as a test message
+    (SPEC-KNOWLEDGE-ACTIVITY-001, see ``_schedule_gap_event`` below).
 
     Returns ``None`` when the row does not exist yet. That is normal, not an
     error: the audit write is fire-and-forget, so a gap event fired from the
@@ -96,19 +99,19 @@ async def find_conversation_id(*, widget_id: str, session_key: str) -> int | Non
     org_id = int(row[0])
 
     async with tenant_scoped_session(org_id) as db:
-        conv_id = (
+        conv = (
             await db.execute(
                 text(
                     """
-                    SELECT id FROM widget_conversations
+                    SELECT id, is_test FROM widget_conversations
                      WHERE widget_id = CAST(:widget_id AS uuid)
                        AND session_key = :session_key
                     """
                 ),
                 {"widget_id": widget_id, "session_key": session_key},
             )
-        ).scalar_one_or_none()
-    return None if conv_id is None else int(conv_id)
+        ).first()
+    return None if conv is None else (int(conv.id), bool(conv.is_test))
 
 
 async def record_widget_turn(

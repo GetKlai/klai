@@ -216,14 +216,21 @@ export function ActivityDetailPage() {
             {activeMessage && (
               <>
                 <AnswerSignals signals={activeMessage.answer_signals ?? null} sources={activeMessage.sources} />
-                <ReviewForm
-                  // A fresh form per answer: a draft for one answer must never
-                  // be saved against another when the reviewer switches.
-                  key={activeMessage.id}
-                  messageId={activeMessage.id}
-                  review={activeMessage.review ?? null}
-                  quality={detail.quality}
-                />
+                {isTest ? (
+                  // The backend also 422s a review PUT for a test conversation
+                  // (put_review); hiding the form here keeps the UI honest
+                  // about that instead of letting a reviewer hit the error.
+                  <p className="text-xs text-gray-500">{m.activity_test_review_disabled()}</p>
+                ) : (
+                  <ReviewForm
+                    // A fresh form per answer: a draft for one answer must never
+                    // be saved against another when the reviewer switches.
+                    key={activeMessage.id}
+                    messageId={activeMessage.id}
+                    review={activeMessage.review ?? null}
+                    quality={detail.quality}
+                  />
+                )}
               </>
             )}
           </div>

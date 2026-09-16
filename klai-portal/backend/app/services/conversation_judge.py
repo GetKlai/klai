@@ -292,6 +292,7 @@ async def _judge_org(org_id: int) -> int:
                  WHERE wc.org_id = :org_id
                    AND wc.outcome IS NOT NULL
                    AND wc.is_preview = false
+                   AND wc.is_test = false
                    AND cqj.id IS NULL
                  ORDER BY wc.last_message_at
                  LIMIT :batch_size
@@ -384,6 +385,7 @@ async def _judge_run_once() -> dict[str, int]:
                          ON cqj.conversation_id = wc.id
                  WHERE wc.outcome IS NOT NULL
                    AND wc.is_preview = false
+                   AND wc.is_test = false
                    AND cqj.id IS NULL
                  ORDER BY wc.org_id
                 """
