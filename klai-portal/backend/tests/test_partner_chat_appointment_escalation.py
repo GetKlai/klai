@@ -28,6 +28,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from helpers import FakeResult, make_partner_auth
 from klai_chat_prompts import appointment_offer_marker, no_citable_sources_message
+from klai_chat_prompts.language import resolve_conversation_language
 
 from app.api import partner
 from app.services import partner_chat
@@ -150,7 +151,7 @@ def test_helpdesk_refusal_offers_an_appointment():
         [],
         "wat kost het abonnement?",
         helpdesk=True,
-        visitor_query="wat kost het abonnement?",
+        response_language="nl",
     )
     assert text == no_citable_sources_message("nl", helpdesk=True)
     assert decision["escalation"] == {"appointment": True}
@@ -162,7 +163,7 @@ def test_broad_mode_no_output_still_offers_an_appointment():
     # Consent was already given, so no broad re-offer — but the visitor is
     # looking at the refusal text, which does offer an appointment.
     _text, _sources, decision = _compose_backend_managed_answer(
-        "   ", [], [], "wat kost het abonnement?", helpdesk=True, broad=True, visitor_query="wat kost het abonnement?"
+        "   ", [], [], "wat kost het abonnement?", helpdesk=True, broad=True, response_language="nl"
     )
     assert decision["escalation"] == {"appointment": True}
 
@@ -171,7 +172,7 @@ def test_partner_refusal_carries_no_escalation():
     """Partner API callers never run the SUPPORT prompt and have no booking
     panel; their refusal wording does not offer anything."""
     _text, _sources, decision = _compose_backend_managed_answer(
-        "Whatever the model said.", [], [], "what is the price", helpdesk=False, visitor_query="what is the price"
+        "Whatever the model said.", [], [], "what is the price", helpdesk=False, response_language="en"
     )
     assert "escalation" not in decision
 
@@ -192,7 +193,7 @@ def test_model_marker_becomes_the_signal_and_leaves_the_text():
         [_good_chunk()],
         "hoe reset ik mijn wachtwoord",
         helpdesk=True,
-        visitor_query="hoe reset ik mijn wachtwoord",
+        response_language="nl",
     )
     assert decision["escalation"] == {"appointment": True}
     assert MARKER not in text
@@ -210,7 +211,7 @@ def test_grounded_answer_without_the_marker_has_no_escalation():
         [_good_chunk()],
         "hoe reset ik mijn wachtwoord",
         helpdesk=True,
-        visitor_query="hoe reset ik mijn wachtwoord",
+        response_language="nl",
     )
     assert "escalation" not in decision
     assert sources
@@ -228,7 +229,7 @@ def test_broad_answer_marker_is_stripped_and_signals():
         "hoe lang duurt portering?",
         helpdesk=True,
         broad=True,
-        visitor_query="hoe lang duurt portering?",
+        response_language="nl",
     )
     assert decision["escalation"] == {"appointment": True}
     assert MARKER not in text
@@ -245,7 +246,7 @@ def test_partner_path_strips_the_marker_but_never_signals():
         [_good_chunk()],
         "how do I reset",
         helpdesk=False,
-        visitor_query="how do I reset",
+        response_language="en",
     )
     assert MARKER not in text
     assert "escalation" not in decision
@@ -255,7 +256,7 @@ def test_marker_only_reply_is_not_rendered_as_a_bare_marker():
     """Degenerate output (nothing but the marker) must not turn into a message
     whose entire content is the token."""
     text, _sources, decision = _compose_backend_managed_answer(
-        MARKER, [], [], "help me", helpdesk=True, visitor_query="help me"
+        MARKER, [], [], "help me", helpdesk=True, response_language=None
     )
     assert MARKER not in text
     assert text == no_citable_sources_message("nl", helpdesk=True)
@@ -303,6 +304,13 @@ def _settings() -> MagicMock:
 
 
 async def _collect(**kwargs) -> list[bytes]:
+    # Mirrors chat_completion_streaming: the language decision is taken on the
+    # visitor's messages, never on user_query. These cases are about escalation
+    # frames, not language, but the helper still needs the real input.
+    kwargs.setdefault(
+        "response_language",
+        resolve_conversation_language(kwargs["augmented_messages"]).language,
+    )
     return [frame async for frame in _chat_completion_streaming_with_composed_citations(**kwargs)]
 
 
@@ -537,7 +545,7 @@ def test_forced_escalation_sets_signal_on_grounded_answer() -> None:
         "IK WIL EEN MEDEWERKER SPREKEN",
         helpdesk=True,
         force_escalation=True,
-        visitor_query="IK WIL EEN MEDEWERKER SPREKEN",
+        response_language="nl",
     )
     assert MARKER not in content
     assert sources, "the grounded answer keeps its sources"
@@ -553,7 +561,7 @@ def test_forced_escalation_is_ignored_off_the_helpdesk_path() -> None:
         "I want a human",
         helpdesk=False,
         force_escalation=True,
-        visitor_query="I want a human",
+        response_language="en",
     )
     assert "escalation" not in decision
 
@@ -565,7 +573,7 @@ def test_grounded_answer_without_force_or_marker_has_no_signal() -> None:
         [_good_chunk()],
         "Hoe reset ik mijn wachtwoord?",
         helpdesk=True,
-        visitor_query="Hoe reset ik mijn wachtwoord?",
+        response_language="nl",
     )
     assert "escalation" not in decision
 
@@ -581,7 +589,7 @@ def test_bare_marker_without_an_offer_in_the_text_is_ignored() -> None:
         [_good_chunk()],
         "Hoe voeg ik een gebruiker toe?",
         helpdesk=True,
-        visitor_query="Hoe voeg ik een gebruiker toe?",
+        response_language="nl",
     )
     assert MARKER not in content
     assert "escalation" not in decision
@@ -595,7 +603,7 @@ def test_marker_with_a_real_offer_in_the_text_still_counts() -> None:
         [_good_chunk()],
         "Ik wil iemand spreken",
         helpdesk=True,
-        visitor_query="Ik wil iemand spreken",
+        response_language="nl",
     )
     assert decision.get("escalation") == {"appointment": True}
 
@@ -609,6 +617,6 @@ def test_forced_escalation_needs_no_offer_sentence() -> None:
         "IK WIL EEN MEDEWERKER SPREKEN",
         helpdesk=True,
         force_escalation=True,
-        visitor_query="IK WIL EEN MEDEWERKER SPREKEN",
+        response_language="nl",
     )
     assert decision.get("escalation") == {"appointment": True}

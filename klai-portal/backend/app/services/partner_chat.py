@@ -1794,7 +1794,7 @@ def _compose_backend_managed_answer(
     conversational: bool = False,
     force_escalation: bool = False,
     *,
-    visitor_query: str,
+    response_language: str | None,
 ) -> tuple[str, list[dict], dict[str, Any]]:
     """Compose the answer with KB and (optionally) web sources as separate tiers.
 
@@ -1814,13 +1814,14 @@ def _compose_backend_managed_answer(
     offer to reach support) instead of the internal-team "kennisbronnen" phrasing.
     Default False keeps every existing caller's refusal text identical.
 
-    ``visitor_query`` is the visitor's own last message — the sole input for
-    the refusal/marker language. It is a required keyword-only parameter on
-    purpose: on the widget path ``user_query`` is the KB-tuned rewritten search
-    query (``source_query``), a keyword bag whose language is not the visitor's,
-    and a caller must not be able to re-introduce that bug by omission. The
-    rewritten query stays the right input for citation composition and web
-    validation (``query_text=``), which is why the two are separate parameters.
+    ``response_language`` is this turn's conversation-level decision, the same
+    one that steers the system prompt and the client-facing ``delta.language``
+    frame. It is a required keyword-only parameter on purpose: a refusal that
+    disagrees with the language the rest of the turn committed to is the bug
+    this parameter exists to prevent, and a caller must not be able to
+    re-introduce it by omission. ``user_query`` stays the rewritten KB search
+    query, the right input for citation composition and web validation
+    (``query_text=``), which is why the two are separate parameters.
 
     ``broad`` marks a consented general-knowledge turn on the helpdesk widget:
     the model had the SUPPORT_BROAD profile, no article context was injected,
@@ -1850,13 +1851,17 @@ def _compose_backend_managed_answer(
     offered_appointment = helpdesk and (
         (model_offered_appointment and _text_offers_appointment(text)) or force_escalation
     )
-    # The refusal/marker language is identified from the visitor's own words,
-    # never from user_query (on the widget path that is the rewritten KB search
-    # query) and not from the conversation: full conversation replay on the
-    # widget path is a separate change. Same gate+identifier as every other
-    # surface (klai_chat_prompts.language), abstain renders Dutch — see
-    # klai_chat_prompts._language_is_dutch for the measured rationale.
-    refusal_language = identify_text_language(visitor_query)
+    # The refusal and the broad-mode marker follow the conversation decision,
+    # not a fresh identification of the visitor's last turn. Identifying one
+    # turn abstains often — measured in 594de988d on ten typical short Dutch
+    # widget questions it abstains on five — and an abstention renders Dutch
+    # (see klai_chat_prompts._language_is_dutch for that measured rationale).
+    # That combination produced the reported defect: an English conversation
+    # whose latest turn is a short "Why?" answers in English, frames the widget
+    # in English via delta.language, and then refuses in Dutch. The replay
+    # carries the whole conversation, so it abstains far less; when it does
+    # abstain the Dutch default still applies, deliberately.
+    refusal_language = response_language
     if conversational:
         # SPEC-RAG-ANSWER-TIERS-001 REQ-1. The answer to this turn asserts
         # nothing checkable outside this chat window — which language we speak,
@@ -1997,6 +2002,7 @@ async def _chat_completion_streaming_with_composed_citations(
     user_query: str,
     trusted_sources: list[dict[str, Any]] | None,
     citation_chunks: list[dict] | None,
+    response_language: str | None,
     web_chunks: list[dict] | None = None,
     web_query: str | None = None,
     emit_sources: bool = True,
@@ -2037,8 +2043,10 @@ async def _chat_completion_streaming_with_composed_citations(
     """
     raw_text_parts: list[str] = []
     # The page-context message is prepended, so the last user turn in
-    # augmented_messages is the human's own words — the language they should
-    # be refused in, never the rewritten retrieval query.
+    # augmented_messages is the human's own words, never the rewritten
+    # retrieval query. The canned source refusal follows the conversation
+    # decision (response_language above); this stays the input for the
+    # output-safety refusal, which has no conversation decision to follow.
     visitor_query = _last_user_message(augmented_messages) or ""
     chat_url = f"{settings.litellm_base_url}/v1/chat/completions"
     try:
@@ -2102,7 +2110,7 @@ async def _chat_completion_streaming_with_composed_citations(
         broad=broad_mode,
         conversational=conversational,
         force_escalation=force_escalation,
-        visitor_query=visitor_query,
+        response_language=response_language,
     )
     decision.update({"sentiment": sentiment} if support_mode and sentiment else {})
     if safety_reason := output_safety_violation("".join(raw_text_parts)):
@@ -2113,7 +2121,7 @@ async def _chat_completion_streaming_with_composed_citations(
             reason=safety_reason,
         )
         # Visitor's own words, never user_query (on the widget path that is
-        # the KB-rewritten search query — see the composer's visitor_query).
+        # the KB-rewritten search query).
         content = safety_refusal_message(visitor_query)
         sources = []
         decision = {"reason": safety_reason}
@@ -2829,8 +2837,9 @@ async def chat_completion_non_streaming(
     # on the widget path source_query is the KB-rewritten search query and
     # must never reach the refusal language.
     composer_query = source_query or _last_user_message(messages) or ""
-    # The refusal language always comes from the visitor's own last turn —
     # augmented_messages prepends page context, so this IS the human's words.
+    # Used by the output-safety refusal, which identifies this one turn; the
+    # source refusal and the broad marker follow language_decision instead.
     visitor_query = _last_user_message(augmented_messages) or ""
     if citation_output == "markers":
         for choice in body.get("choices") or []:
@@ -2862,9 +2871,7 @@ async def chat_completion_non_streaming(
                     broad=broad_mode,
                     conversational=conversational,
                     force_escalation=force_escalation,
-                    # Visitor's own words decide the refusal language, not the
-                    # rewritten source_query (see the composer docstring).
-                    visitor_query=visitor_query,
+                    response_language=language_decision.language,
                 )
                 decision.update({"sentiment": sentiment} if support_mode and sentiment else {})
                 # Popped before the log so that event keeps its exact payload;
@@ -3003,6 +3010,7 @@ async def chat_completion_streaming(
             user_query=user_query,
             trusted_sources=trusted_sources,
             citation_chunks=citation_chunks,
+            response_language=language_decision.language,
             web_chunks=web_chunks,
             web_query=web_query,
             emit_sources=emit_sources,

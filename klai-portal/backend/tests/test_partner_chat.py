@@ -3578,7 +3578,7 @@ def _compose(text, *, conversational, trusted=None, force_escalation=False):
         helpdesk=True,
         conversational=conversational,
         force_escalation=force_escalation,
-        visitor_query="Can I also talk english?",
+        response_language="en",
     )
 
 
@@ -3699,7 +3699,7 @@ def test_no_branch_without_sources_may_return_a_link(branch):
         None,
         None,
         helpdesk=True,
-        visitor_query="hoi",
+        response_language=None,
         **branch,
     )
 
@@ -3720,7 +3720,7 @@ def test_the_link_guard_leaves_ordinary_prose_alone():
         "Let op: dit kan even duren.",
     ):
         content, _, _ = _compose_backend_managed_answer(
-            sentence, [], [], "q", None, None, helpdesk=True, conversational=True, visitor_query="hoi"
+            sentence, [], [], "q", None, None, helpdesk=True, conversational=True, response_language=None
         )
         assert content == sentence
 
@@ -3751,7 +3751,7 @@ def test_internal_evidence_labels_never_reach_the_visitor():
         None,
         helpdesk=True,
         conversational=True,
-        visitor_query="hoi",
+        response_language=None,
     )
 
     assert "E1" not in content
