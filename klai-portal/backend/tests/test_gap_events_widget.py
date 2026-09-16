@@ -298,7 +298,7 @@ async def test_widget_gap_attaches_audit_conversation_id(monkeypatch):
     side can jump to the conversation. When that row does not exist yet —
     the audit write is fire-and-forget and can lose the race against this
     one — the gap is still written, just without provenance."""
-    with patch("app.services.partner_chat.find_conversation_id", AsyncMock(return_value=77)) as mock_find:
+    with patch("app.services.partner_chat.find_conversation_id", AsyncMock(return_value=(77, False))) as mock_find:
         captured: dict[str, Any] = {}
         _patch_retrieve(monkeypatch, {"chunks": []})
         monkeypatch.setattr("app.services.partner_chat.tenant_scoped_session", _fake_tenant_session(captured))
@@ -325,6 +325,23 @@ async def test_widget_gap_attaches_audit_conversation_id(monkeypatch):
 
     mock_missing.assert_awaited_once()
     assert mock_missing.await_args.kwargs["conversation_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_widget_gap_skips_a_test_marked_conversation(monkeypatch):
+    """SPEC-KNOWLEDGE-ACTIVITY-001 test-mark: a conversation a reviewer
+    already marked as a test message must not editorialise the gap backlog,
+    same as it drops out of the activity list, the summary, the outcome loop
+    and the nightly judge."""
+    with patch("app.services.partner_chat.find_conversation_id", AsyncMock(return_value=(77, True))):
+        captured: dict[str, Any] = {}
+        _patch_retrieve(monkeypatch, {"chunks": []})
+        monkeypatch.setattr("app.services.partner_chat.tenant_scoped_session", _fake_tenant_session(captured))
+        with patch("app.services.partner_chat.record_gap_event", AsyncMock()) as mock_record:
+            await _call_retrieve_context(audit_widget_id="11111111-1111-1111-1111-111111111111", audit_session_key="sk")
+            await _drain_gap_tasks()
+
+    mock_record.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -369,9 +386,9 @@ async def test_widget_gap_waits_for_the_user_turn_audit_write(monkeypatch):
     audit_write: asyncio.Future[None] = loop.create_future()
     seen_done: list[bool] = []
 
-    async def _lookup(**_kwargs: Any) -> int:
+    async def _lookup(**_kwargs: Any) -> tuple[int, bool]:
         seen_done.append(audit_write.done())
-        return 77
+        return (77, False)
 
     captured: dict[str, Any] = {}
     _patch_retrieve(monkeypatch, {"chunks": []})

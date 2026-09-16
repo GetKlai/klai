@@ -2424,11 +2424,12 @@ def _schedule_gap_event(
                 await asyncio.wait({audit_write}, timeout=5)
             if audit_widget_id is not None and audit_session_key is not None:
                 try:
-                    conversation_id = await find_conversation_id(
+                    found = await find_conversation_id(
                         widget_id=audit_widget_id,
                         session_key=audit_session_key,
                     )
                 except Exception:
+                    found = None
                     logger.warning(
                         "partner_chat_gap_conversation_lookup_failed",
                         org_id=org_id,
@@ -2436,6 +2437,14 @@ def _schedule_gap_event(
                         gap_type=gap_type,
                         exc_info=True,
                     )
+                if found is not None:
+                    conversation_id, conversation_is_test = found
+                    if conversation_is_test:
+                        # A reviewer already marked this conversation as a
+                        # test message: it must not editorialise the gap
+                        # backlog any more than it counts anywhere else
+                        # (SPEC-KNOWLEDGE-ACTIVITY-001 test-mark).
+                        return
             # ``conversation_id`` stays NULL when the audit write failed or was
             # never started (partner-key traffic); the gap is still worth
             # recording.

@@ -77,6 +77,7 @@ SELECT c.id, c.widget_id, w.name AS widget_name, c.started_at, c.last_message_at
   JOIN widgets w ON w.id = c.widget_id
  WHERE c.org_id = :org_id
    AND c.is_preview = false
+   AND c.is_test = false
    AND c.started_at >= :cutoff
    -- Optional filters as NULL-guarded predicates so the statement stays a
    -- constant: no string assembly around text(), the driver binds every value.
@@ -119,12 +120,50 @@ SELECT conversation_id, message_id, verdict, cause
 
 _CONVERSATION_SQL = """
 SELECT c.id, c.widget_id, w.name AS widget_name, c.started_at, c.language_detected,
-       c.visitor_name, c.visitor_email
+       c.visitor_name, c.visitor_email, c.is_test
   FROM widget_conversations c
   JOIN widgets w ON w.id = c.widget_id
  WHERE c.id = :conversation_id
    AND c.org_id = :org_id
    AND c.is_preview = false
+"""
+
+_CONVERSATION_TEST_PROBE_SQL = """
+SELECT id
+  FROM widget_conversations
+ WHERE id = :conversation_id
+   AND org_id = :org_id
+"""
+
+_SET_CONVERSATION_TEST_SQL = """
+UPDATE widget_conversations
+   SET is_test = :is_test
+ WHERE id = :conversation_id
+   AND org_id = :org_id
+"""
+
+# Only run when marking (is_test=true): a test message must not leave a live
+# gap behind that a real visitor never actually hit. `resolved_by` is a
+# literal 'test', not `:resolved_by` like `_RESOLVE_GAP_SQL` ('review'/
+# 'rescorer'), so unmarking (`_REOPEN_CONVERSATION_GAPS_SQL`) can reopen
+# exactly the rows this closer stamped and no others.
+_RESOLVE_CONVERSATION_GAPS_SQL = """
+UPDATE portal_retrieval_gaps
+   SET resolved_at = NOW(), resolved_by = 'test', resolved_by_user_id = :resolved_by_user_id
+ WHERE conversation_id = :conversation_id
+   AND org_id = :org_id
+   AND resolved_at IS NULL
+"""
+
+# Only run when unmarking: reverses exactly what marking did, and nothing
+# else — a row this reviewer resolved by hand (`resolved_by = 'manual'`)
+# before or after the test mark must stay resolved.
+_REOPEN_CONVERSATION_GAPS_SQL = """
+UPDATE portal_retrieval_gaps
+   SET resolved_at = NULL, resolved_by = NULL, resolved_by_user_id = NULL
+ WHERE conversation_id = :conversation_id
+   AND org_id = :org_id
+   AND resolved_by = 'test'
 """
 
 _MESSAGES_SQL = """
@@ -157,7 +196,7 @@ SELECT outcome, failure_category
 
 _MESSAGE_PROBE_SQL = """
 SELECT m.id, m.conversation_id, m.role, m.sequence, m.answer_signals,
-       wc.org_id, wc.language_detected, wc.is_preview
+       wc.org_id, wc.language_detected, wc.is_preview, wc.is_test
   FROM widget_messages m
   JOIN widget_conversations wc ON wc.id = m.conversation_id
  WHERE m.id = :message_id
@@ -182,56 +221,73 @@ DELETE FROM answer_reviews
 # literal, not a bound param — the surface only ever reviews webchat turns
 # (see the module docstring). Each statement is a full constant (no string
 # assembly into text()) so the driver binds every value.
+#
+# Every query LEFT JOINs widget_conversations to drop reviews of a test-marked
+# conversation from the calibration numbers — a reviewer's own test turns must
+# not count as evidence of how the real traffic calibrates. LEFT JOIN (not an
+# inner join) plus COALESCE(..., false) keeps a purged conversation counted:
+# its row is gone from widget_conversations, not from answer_reviews, and the
+# review is real signal either way (SPEC-KNOWLEDGE-ACTIVITY-001 test-mark).
 _SUMMARY_TOTAL_SQL = """
 SELECT COUNT(*) AS reviewed
-  FROM answer_reviews
- WHERE org_id = :org_id
-   AND channel = 'webchat'
-   AND reviewed_at >= :cutoff
+  FROM answer_reviews ar
+  LEFT JOIN widget_conversations wc ON wc.id = ar.conversation_id
+ WHERE ar.org_id = :org_id
+   AND ar.channel = 'webchat'
+   AND ar.reviewed_at >= :cutoff
+   AND COALESCE(wc.is_test, false) = false
 """
 
 _SUMMARY_BY_BAND_SQL = """
-SELECT band_at_review AS band,
+SELECT ar.band_at_review AS band,
        COUNT(*) AS reviewed,
-       COUNT(*) FILTER (WHERE verdict = 'correct') AS correct
-  FROM answer_reviews
- WHERE org_id = :org_id
-   AND channel = 'webchat'
-   AND reviewed_at >= :cutoff
- GROUP BY band_at_review
+       COUNT(*) FILTER (WHERE ar.verdict = 'correct') AS correct
+  FROM answer_reviews ar
+  LEFT JOIN widget_conversations wc ON wc.id = ar.conversation_id
+ WHERE ar.org_id = :org_id
+   AND ar.channel = 'webchat'
+   AND ar.reviewed_at >= :cutoff
+   AND COALESCE(wc.is_test, false) = false
+ GROUP BY ar.band_at_review
 """
 
 _SUMMARY_BY_JUDGE_OUTCOME_SQL = """
-SELECT judge_outcome_at_review AS judge_outcome,
+SELECT ar.judge_outcome_at_review AS judge_outcome,
        COUNT(*) AS reviewed,
-       COUNT(*) FILTER (WHERE verdict = 'correct') AS human_correct
-  FROM answer_reviews
- WHERE org_id = :org_id
-   AND channel = 'webchat'
-   AND reviewed_at >= :cutoff
- GROUP BY judge_outcome_at_review
+       COUNT(*) FILTER (WHERE ar.verdict = 'correct') AS human_correct
+  FROM answer_reviews ar
+  LEFT JOIN widget_conversations wc ON wc.id = ar.conversation_id
+ WHERE ar.org_id = :org_id
+   AND ar.channel = 'webchat'
+   AND ar.reviewed_at >= :cutoff
+   AND COALESCE(wc.is_test, false) = false
+ GROUP BY ar.judge_outcome_at_review
 """
 
 _SUMMARY_BY_JUDGE_CATEGORY_SQL = """
-SELECT judge_failure_category_at_review AS judge_category,
-       cause AS human_cause,
+SELECT ar.judge_failure_category_at_review AS judge_category,
+       ar.cause AS human_cause,
        COUNT(*) AS row_count
-  FROM answer_reviews
- WHERE org_id = :org_id
-   AND channel = 'webchat'
-   AND reviewed_at >= :cutoff
- GROUP BY judge_failure_category_at_review, cause
+  FROM answer_reviews ar
+  LEFT JOIN widget_conversations wc ON wc.id = ar.conversation_id
+ WHERE ar.org_id = :org_id
+   AND ar.channel = 'webchat'
+   AND ar.reviewed_at >= :cutoff
+   AND COALESCE(wc.is_test, false) = false
+ GROUP BY ar.judge_failure_category_at_review, ar.cause
 """
 
 _SUMMARY_BY_LANGUAGE_SQL = """
-SELECT language,
+SELECT ar.language,
        COUNT(*) AS reviewed,
-       COUNT(*) FILTER (WHERE verdict = 'correct') AS correct
-  FROM answer_reviews
- WHERE org_id = :org_id
-   AND channel = 'webchat'
-   AND reviewed_at >= :cutoff
- GROUP BY language
+       COUNT(*) FILTER (WHERE ar.verdict = 'correct') AS correct
+  FROM answer_reviews ar
+  LEFT JOIN widget_conversations wc ON wc.id = ar.conversation_id
+ WHERE ar.org_id = :org_id
+   AND ar.channel = 'webchat'
+   AND ar.reviewed_at >= :cutoff
+   AND COALESCE(wc.is_test, false) = false
+ GROUP BY ar.language
 """
 
 # broad_mode/strict_on_gap read the reviewed answer's answer_signals via the
@@ -253,9 +309,11 @@ SELECT COUNT(*) FILTER (WHERE wm.answer_signals ->> 'broad_mode' = 'true') AS br
        ) AS strict_gap_correct
   FROM answer_reviews ar
   LEFT JOIN widget_messages wm ON wm.id = ar.message_id
+  LEFT JOIN widget_conversations wc ON wc.id = ar.conversation_id
  WHERE ar.org_id = :org_id
    AND ar.channel = 'webchat'
    AND ar.reviewed_at >= :cutoff
+   AND COALESCE(wc.is_test, false) = false
 """
 # The visitor question the reviewed answer replied to: the gap a review opens
 # is filed under that question, so the rescorer can ask it again later.
@@ -430,6 +488,9 @@ class ConversationDetailOut(BaseModel):
     channel: str
     started_at: datetime
     language: str | None
+    # `widget_conversations.is_test`: true for a conversation a reviewer
+    # marked as a test message (PUT .../conversations/{id}/test).
+    is_test: bool
     visitor: VisitorOut | None = None
     quality: QualityOut | None = None
     messages: list[MessageOut] = Field(default_factory=list)
@@ -456,6 +517,14 @@ class ReviewRequest(BaseModel):
 
 class QueueCountOut(BaseModel):
     count: int
+
+
+class ConversationTestRequest(BaseModel):
+    is_test: bool
+
+
+class ConversationTestOut(BaseModel):
+    is_test: bool
 
 
 class BandSummaryOut(BaseModel):
@@ -822,7 +891,9 @@ async def get_conversation(
     ).first()
     if row is None:
         # Also covers another org's conversation and preview runs: neither is
-        # ever confirmed to exist.
+        # ever confirmed to exist. A conversation the caller's own org marked
+        # as a test message IS returned (is_test true) — the detail route
+        # stays reachable by URL so the reviewer can see and undo the mark.
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="conversation not found")
 
     messages = (await db.execute(text(_MESSAGES_SQL), {"conversation_id": conversation_id})).all()
@@ -840,6 +911,7 @@ async def get_conversation(
         channel=_WEBCHAT,
         started_at=row.started_at,
         language=row.language_detected,
+        is_test=row.is_test,
         visitor=VisitorOut(name=row.visitor_name, email=row.visitor_email),
         quality=(
             QualityOut(
@@ -884,6 +956,51 @@ async def get_conversation(
     if not _may_see_visitor(perms):
         payload.pop("visitor")
     return payload
+
+
+@router.put("/conversations/{conversation_id}/test", response_model=ConversationTestOut)
+async def set_conversation_test(
+    conversation_id: int,
+    body: ConversationTestRequest,
+    perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
+) -> ConversationTestOut:
+    """Mark or unmark a conversation as a reviewer test message.
+
+    Own ``widget_conversations.is_test`` column (not a second use of
+    ``is_preview``, which means one specific thing: an admin's own preview
+    session). Marking resolves the conversation's open gaps in the same
+    transaction, stamped ``resolved_by='test'`` — a test message must not
+    leave a knowledge gap open that no real visitor actually hit. Unmarking
+    reverses exactly that: it reopens the rows this closer stamped, and only
+    those, so a gap a reviewer closed by hand around the same time stays
+    closed.
+    """
+    probe = (
+        await db.execute(
+            text(_CONVERSATION_TEST_PROBE_SQL), {"conversation_id": conversation_id, "org_id": perms.org_id}
+        )
+    ).first()
+    if probe is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="conversation not found")
+
+    await db.execute(
+        text(_SET_CONVERSATION_TEST_SQL),
+        {"conversation_id": conversation_id, "org_id": perms.org_id, "is_test": body.is_test},
+    )
+    if body.is_test:
+        caller: Any = (await db.execute(text(_CALLER_SQL), {"user_id": perms.user_id, "org_id": perms.org_id})).first()
+        await db.execute(
+            text(_RESOLVE_CONVERSATION_GAPS_SQL),
+            {"conversation_id": conversation_id, "org_id": perms.org_id, "resolved_by_user_id": caller.id},
+        )
+    else:
+        await db.execute(
+            text(_REOPEN_CONVERSATION_GAPS_SQL),
+            {"conversation_id": conversation_id, "org_id": perms.org_id},
+        )
+    await db.commit()
+    return ConversationTestOut(is_test=body.is_test)
 
 
 async def _sync_review_gap(
@@ -995,6 +1112,10 @@ async def put_review(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="message not found")
     if message.role != "assistant":
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="only assistant answers can be reviewed")
+    if message.is_test:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, detail="cannot review a message in a test conversation"
+        )
 
     judged = (await db.execute(text(_JUDGE_SNAPSHOT_SQL), {"conversation_id": message.conversation_id})).first()
     # Raw rows are dynamically shaped; the caller row exists because get_caller

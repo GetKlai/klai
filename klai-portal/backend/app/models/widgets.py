@@ -143,6 +143,16 @@ class WidgetConversation(Base):
     first_user_query: Mapped[str | None] = mapped_column(Text, nullable=True)
     language_detected: Mapped[str | None] = mapped_column(String(8), nullable=True)
     is_preview: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    # True for a conversation a knowledge reviewer marked as a test message
+    # (PUT /api/app/activity/conversations/{id}/test, SPEC-KNOWLEDGE-ACTIVITY-001)
+    # — a colleague poking the widget or reproducing a bug report, not real
+    # visitor traffic. Own column, not a second meaning for ``is_preview``
+    # above (an admin's own preview session): the two are set by different
+    # actors at different times, and conflating them would make every reader
+    # of ``is_preview`` implicitly also a reader of this flag. Every consumer
+    # that excludes ``is_preview`` excludes this too: the activity list, queue
+    # count, stats, the outcome loop, the nightly judge, gap events.
+    is_test: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     # REQ-2 (Finding B-2): record origin of each conversation for audit visibility.
     # Truncated to 200 chars. NULL when Origin header was absent (e.g. direct API call).
     # @MX:SPEC: SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-2

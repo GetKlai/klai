@@ -184,6 +184,7 @@ async def _label_org(org_id: int, cutoff: datetime) -> int:
                  WHERE org_id = :org_id
                    AND outcome IS NULL
                    AND is_preview = false
+                   AND is_test = false
                    AND last_message_at < :cutoff
                  ORDER BY last_message_at
                  LIMIT :batch_size
@@ -282,6 +283,7 @@ async def _outcome_run_once() -> dict[str, int]:
                   FROM widget_conversations
                  WHERE outcome IS NULL
                    AND is_preview = false
+                   AND is_test = false
                    AND last_message_at < :cutoff
                  ORDER BY org_id
                 """
