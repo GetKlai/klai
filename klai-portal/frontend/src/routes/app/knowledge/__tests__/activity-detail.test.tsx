@@ -79,6 +79,7 @@ function detail(overrides: Record<string, unknown> = {}) {
     channel: 'webchat',
     started_at: '2026-09-14T09:00:00Z',
     language: 'nl',
+    is_test: false,
     visitor: { name: 'Ada L', email: 'ada@example.com' },
     quality: {
       outcome: 'unresolved',
@@ -138,6 +139,7 @@ function mockApi(body: Record<string, unknown>) {
   apiFetchMock.mockImplementation((path: unknown, init?: RequestInit) => {
     const url = String(path)
     const method = init?.method ?? 'GET'
+    if (method === 'PUT' && url.endsWith('/test')) return Promise.resolve({ is_test: true })
     if (method === 'PUT') return Promise.resolve(reviewFixture)
     if (method === 'DELETE') return Promise.resolve(null)
     if (url.startsWith('/api/app/activity/conversations/')) {
@@ -190,10 +192,8 @@ describe('activity conversation detail', () => {
       expect(screen.getByText('De kennisbank bevat het retourbeleid niet.')).toBeTruthy(),
     )
 
-    const signals = document.querySelector('details')
-    expect(signals).not.toBeNull()
-    // Chat Disclosure Rows: provenance stays secondary, closed by default.
-    expect((signals as HTMLDetailsElement).open).toBe(false)
+    // The confidence signals block is always visible now (no disclosure to open).
+    expect(document.querySelector('details')).toBeNull()
     expect(screen.getByText(/^0\.31$/)).toBeTruthy()
     expect(screen.getByText(/^(laag|low)$/i).className).toContain('var(--color-warning)')
   })
@@ -244,5 +244,31 @@ describe('activity conversation detail', () => {
     await waitFor(() => expect(screen.getByText('Je kunt binnen 14 dagen retourneren.')).toBeTruthy())
     expect(screen.queryByText(/Ada L/)).toBeNull()
     expect(screen.queryByText(/ada@example\.com/)).toBeNull()
+  })
+
+  it('marks the conversation as a test message through PUT .../test after inline confirmation', async () => {
+    mockApi(detail())
+    renderPage()
+
+    await waitFor(() => expect(screen.getByText('Je kunt binnen 14 dagen retourneren.')).toBeTruthy())
+
+    fireEvent.click(screen.getByRole('button', { name: /markeer als testbericht|mark as test message/i }))
+    const confirmButtons = await screen.findAllByRole('button', {
+      name: /markeer als testbericht|mark as test message/i,
+    })
+    fireEvent.click(confirmButtons[confirmButtons.length - 1])
+
+    await waitFor(() =>
+      expect(
+        apiFetchMock.mock.calls.find(
+          ([path, init]) => String(path).endsWith('/test') && (init as RequestInit)?.method === 'PUT',
+        ),
+      ).toBeTruthy(),
+    )
+    const [path, rawInit] = apiFetchMock.mock.calls.find(
+      ([callPath, init]) => String(callPath).endsWith('/test') && (init as RequestInit)?.method === 'PUT',
+    )!
+    expect(String(path)).toBe('/api/app/activity/conversations/12/test')
+    expect(JSON.parse((rawInit as RequestInit).body as string)).toEqual({ is_test: true })
   })
 })

@@ -224,6 +224,9 @@ export interface ConversationDetail {
   channel: 'webchat' | 'librechat'
   started_at: string
   language: string | null
+  /** `widget_conversations.is_preview`, reused: true for a reviewer-marked
+      test conversation (or an admin preview session). */
+  is_test: boolean
   /** Only present when the backend exposes the visitor to this role. */
   visitor?: { name: string | null; email: string | null } | null
   quality: ConversationQuality | null
@@ -338,6 +341,23 @@ export function useDeleteReview(messageId: number) {
   return useMutation<null, Error>({
     mutationFn: () =>
       apiFetch<null>(`/api/app/activity/messages/${messageId}/review`, { method: 'DELETE' }),
+    onSuccess: () => invalidateActivityViews(queryClient),
+  })
+}
+
+/**
+ * Mark or unmark a conversation as a reviewer test message (PUT .../test).
+ * Same invalidation as a review write: marking removes the conversation from
+ * the list, the queue count and the calibration summary.
+ */
+export function useSetConversationTest(conversationId: string | number) {
+  const queryClient = useQueryClient()
+  return useMutation<{ is_test: boolean }, Error, boolean>({
+    mutationFn: (isTest) =>
+      apiFetch<{ is_test: boolean }>(`/api/app/activity/conversations/${conversationId}/test`, {
+        method: 'PUT',
+        body: JSON.stringify({ is_test: isTest }),
+      }),
     onSuccess: () => invalidateActivityViews(queryClient),
   })
 }

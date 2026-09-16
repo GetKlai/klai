@@ -7,7 +7,10 @@ import { useState } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { AlertTriangle, ArrowLeft } from 'lucide-react'
+import { toast } from 'sonner'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { PageContainer } from '@/components/ui/page-container'
 import { PageHeader } from '@/components/ui/page-header'
 import { ListEmptyState, ListLoadingState } from '@/components/ui/list-state'
@@ -19,7 +22,7 @@ import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { fetchMe } from '@/lib/api-me'
 import { appNavActivityIsVisible } from '@/routes/app/-app-tools'
 import { ConversationTranscript, QualityPanel } from '@/features/chat-activity'
-import { useActivityConversation } from '@/features/chat-activity/api'
+import { useActivityConversation, useSetConversationTest } from '@/features/chat-activity/api'
 import { AnswerSignals } from '@/features/chat-activity/AnswerSignals'
 import { ReviewForm } from '@/features/chat-activity/ReviewForm'
 import * as m from '@/paraglide/messages'
@@ -68,6 +71,8 @@ export function ActivityDetailPage() {
   // default" (the last assistant turn) rather than pinning turn 1 while the
   // conversation is still loading.
   const [selectedMessageId, setSelectedMessageId] = useState<number | null>(null)
+  const setTest = useSetConversationTest(conversationId)
+  const [confirmingTest, setConfirmingTest] = useState(false)
 
   if (!hasActivityCapability) {
     return (
@@ -115,19 +120,50 @@ export function ActivityDetailPage() {
   const assistantMessages = detail?.messages.filter((message) => message.role === 'assistant') ?? []
   const activeMessage =
     assistantMessages.find((message) => message.id === selectedMessageId) ?? assistantMessages.at(-1) ?? null
+  const isTest = detail?.is_test ?? false
 
   return (
     <PageContainer width="6xl" gap="6">
       <PageHeader
-        title={firstQuestion ?? m.activity_page_title()}
+        title={
+          <span className="inline-flex items-center gap-2">
+            {firstQuestion ?? m.activity_page_title()}
+            {isTest && <Badge variant="secondary">{m.activity_test_badge()}</Badge>}
+          </span>
+        }
         description={detail?.widget_name}
         actions={
-          <Button variant="outline" size="sm" asChild>
-            <Link to="/app/knowledge/activity" search={parseActivitySearch(Object.fromEntries(new URLSearchParams(back ?? '')))}>
-              <ArrowLeft className="mr-2 h-4 w-4" />
-              {backLabel}
-            </Link>
-          </Button>
+          <div className="flex items-center gap-2">
+            {detail && (
+              <InlineDeleteConfirm
+                isConfirming={confirmingTest}
+                isPending={setTest.isPending}
+                label={isTest ? m.activity_test_unmark_confirm() : m.activity_test_mark_confirm()}
+                cancelLabel={m.activity_test_cancel()}
+                onConfirm={() => {
+                  const nextIsTest = !isTest
+                  setTest.mutate(nextIsTest, {
+                    onSuccess: () => {
+                      setConfirmingTest(false)
+                      toast.success(nextIsTest ? m.activity_test_marked() : m.activity_test_unmarked())
+                    },
+                    onError: () => toast.error(m.activity_test_failed()),
+                  })
+                }}
+                onCancel={() => setConfirmingTest(false)}
+              >
+                <Button variant="secondary" size="sm" onClick={() => setConfirmingTest(true)}>
+                  {isTest ? m.activity_test_unmark_button() : m.activity_test_mark_button()}
+                </Button>
+              </InlineDeleteConfirm>
+            )}
+            <Button variant="outline" size="sm" asChild>
+              <Link to="/app/knowledge/activity" search={parseActivitySearch(Object.fromEntries(new URLSearchParams(back ?? '')))}>
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                {backLabel}
+              </Link>
+            </Button>
+          </div>
         }
       />
 
@@ -179,7 +215,7 @@ export function ActivityDetailPage() {
             {detail.quality && <QualityPanel quality={detail.quality} />}
             {activeMessage && (
               <>
-                <AnswerSignals signals={activeMessage.answer_signals ?? null} />
+                <AnswerSignals signals={activeMessage.answer_signals ?? null} sources={activeMessage.sources} />
                 <ReviewForm
                   // A fresh form per answer: a draft for one answer must never
                   // be saved against another when the reviewer switches.

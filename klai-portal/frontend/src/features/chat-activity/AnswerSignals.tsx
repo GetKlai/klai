@@ -1,9 +1,10 @@
-// SPEC-KNOWLEDGE-ACTIVITY-001 §4.3: the confidence signals the answer pipeline
-// wrote for one assistant turn, shown as a Chat Disclosure Row under the answer
-// so provenance stays available but secondary to the answer itself.
-import { ChevronRight } from 'lucide-react'
+// SPEC-KNOWLEDGE-ACTIVITY-001 §4.3: the confidence signals and sources for
+// the answer under review, always visible next to the review form — a
+// reviewer must see the evidence before judging, not open a disclosure for
+// it. The judge panel above (QualityPanel) stays a separate, existing block.
 import { Badge } from '@/components/ui/badge'
-import type { ConversationAnswerSignals } from './types'
+import { _isSafeHttpUrl } from './urlAllowlist'
+import type { ConversationAnswerSignals, MessageSource } from './types'
 import * as m from '@/paraglide/messages'
 
 const BAND_BADGE_VARIANT: Record<
@@ -23,55 +24,90 @@ const BAND_LABEL: Record<NonNullable<ConversationAnswerSignals['band']>, () => s
   unknown: m.activity_band_unknown,
 }
 
-export function AnswerSignals({ signals }: { signals: ConversationAnswerSignals | null }) {
-  if (!signals) return null
+function answerTypeLabel(signals: ConversationAnswerSignals): string {
+  if (signals.refused) return m.activity_signals_refused()
+  if (signals.broad_mode) return m.activity_signals_broad_mode()
+  return m.activity_signals_answer_type_normal()
+}
 
-  const facts: { label: string; value: string }[] = []
-  if (typeof signals.top_score === 'number') {
-    facts.push({ label: m.activity_signals_top_score(), value: signals.top_score.toFixed(2) })
+function gapLabel(gapType: ConversationAnswerSignals['gap_type']): string {
+  if (gapType === 'hard') return m.gaps_type_hard()
+  if (gapType === 'soft') return m.gaps_type_soft()
+  return m.activity_cause_none()
+}
+
+export function AnswerSignals({
+  signals,
+  sources,
+}: {
+  signals: ConversationAnswerSignals | null
+  sources: MessageSource[] | null
+}) {
+  if (!signals) {
+    return <p className="mt-4 text-xs text-gray-500">{m.activity_signals_none()}</p>
   }
-  if (typeof signals.sources_count === 'number') {
-    facts.push({
-      label: m.activity_signals_sources_label(),
-      value:
-        signals.sources_count === 1
-          ? m.activity_signals_sources_count_one()
-          : m.activity_signals_sources_count_other({ count: String(signals.sources_count) }),
-    })
-  }
-  if (signals.refused) facts.push({ label: m.activity_signals_answer(), value: m.activity_signals_refused() })
-  if (signals.broad_mode) facts.push({ label: m.activity_signals_answer(), value: m.activity_signals_broad_mode() })
-  if (signals.language) facts.push({ label: m.activity_signals_language(), value: signals.language })
-  if (signals.model) facts.push({ label: m.activity_signals_model(), value: signals.model })
+
+  const sourceList = sources ?? []
 
   return (
-    <div className="mt-4 space-y-0.5">
-      <details className="group max-w-xl bg-transparent">
-        <summary className="inline-flex min-h-7 cursor-pointer list-none items-center gap-1.5 rounded-md px-1 py-0.5 text-[13px] text-[color:rgb(25_25_24_/_0.5)] hover:bg-[var(--color-muted)]/60 hover:text-gray-900 [&::-webkit-details-marker]:hidden">
-          <ChevronRight className="h-3 w-3 shrink-0 text-[color:rgb(25_25_24_/_0.3)] transition-transform group-open:rotate-90" />
-          <span className="min-w-0 flex-1 font-medium">{m.activity_signals_title()}</span>
-          {typeof signals.sources_count === 'number' && (
-            <span className="shrink-0 text-xs font-normal tabular-nums text-[color:rgb(25_25_24_/_0.3)] before:mr-1.5 before:text-[color:rgb(25_25_24_/_0.2)] before:content-['·']">
-              {signals.sources_count === 1
-                ? m.activity_signals_sources_count_one()
-                : m.activity_signals_sources_count_other({ count: String(signals.sources_count) })}
-            </span>
-          )}
-        </summary>
-        <div className="pb-2 pl-4 pt-1 text-[13px] text-[color:rgb(25_25_24_/_0.5)]">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+    <div className="mt-4 space-y-3 rounded-xl border border-gray-200 px-4 py-3">
+      <dl className="grid grid-cols-2 gap-x-3 gap-y-2.5 text-xs">
+        <div>
+          <dt className="text-gray-500">{m.activity_signals_certainty_label()}</dt>
+          <dd className="mt-1 flex items-center gap-1.5">
             {signals.band && (
               <Badge variant={BAND_BADGE_VARIANT[signals.band]}>{BAND_LABEL[signals.band]()}</Badge>
             )}
-            {facts.map((fact) => (
-              <span key={fact.label} className="whitespace-nowrap">
-                {fact.label}:{' '}
-                <span className="font-medium text-gray-900 tabular-nums">{fact.value}</span>
-              </span>
-            ))}
-          </div>
+            {typeof signals.top_score === 'number' && (
+              <span className="font-medium tabular-nums text-gray-900">{signals.top_score.toFixed(2)}</span>
+            )}
+          </dd>
         </div>
-      </details>
+        <div>
+          <dt className="text-gray-500">{m.activity_signals_language()}</dt>
+          <dd className="mt-1 font-medium text-gray-900">{signals.language ?? '—'}</dd>
+        </div>
+        <div>
+          <dt className="text-gray-500">{m.activity_signals_model()}</dt>
+          <dd className="mt-1 truncate font-medium text-gray-900">{signals.model ?? '—'}</dd>
+        </div>
+        <div>
+          <dt className="text-gray-500">{m.activity_signals_answer_type_label()}</dt>
+          <dd className="mt-1 font-medium text-gray-900">{answerTypeLabel(signals)}</dd>
+        </div>
+        <div>
+          <dt className="text-gray-500">{m.activity_signals_gap_label()}</dt>
+          <dd className="mt-1 font-medium text-gray-900">{gapLabel(signals.gap_type ?? null)}</dd>
+        </div>
+      </dl>
+
+      <div>
+        <p className="text-xs font-medium text-gray-900">
+          {m.activity_signals_sources_label()} ({sourceList.length})
+        </p>
+        {sourceList.length > 0 && (
+          <ul className="mt-1.5 space-y-1 text-xs">
+            {sourceList.map((source) => (
+              <li key={`${source.label}-${source.title}`} className="text-gray-700">
+                {/* REQ-9: only http/https schemes render as anchors, same allowlist as the transcript */}
+                {_isSafeHttpUrl(source.url) ? (
+                  <a
+                    href={source.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="klai-hover text-gray-900 underline underline-offset-2"
+                  >
+                    {source.title}
+                  </a>
+                ) : (
+                  <span className="text-gray-900">{source.title}</span>
+                )}
+                <span className="ml-1 text-gray-500">({source.label})</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   )
 }

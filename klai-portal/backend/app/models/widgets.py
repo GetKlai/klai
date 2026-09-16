@@ -142,6 +142,13 @@ class WidgetConversation(Base):
     user_agent_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     first_user_query: Mapped[str | None] = mapped_column(Text, nullable=True)
     language_detected: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    # True for an admin's own preview session in the widget (see
+    # app/services/widget_auth.py), which every consumer of this table
+    # already excludes: the activity list, queue count, stats, the outcome
+    # loop, the nightly judge, gap events. SPEC-KNOWLEDGE-ACTIVITY-001 reuses
+    # the same column for a reviewer-marked test conversation (PUT
+    # /api/app/activity/conversations/{id}/test) instead of adding a second
+    # flag every one of those consumers would need to learn about too.
     is_preview: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     # REQ-2 (Finding B-2): record origin of each conversation for audit visibility.
     # Truncated to 200 chars. NULL when Origin header was absent (e.g. direct API call).

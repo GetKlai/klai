@@ -149,19 +149,24 @@ class FakeSession:
         matches the generic "FROM answer_reviews" fallback in execute()."""
         if "LEFT JOIN widget_messages wm" in sql:
             return _Rows([self.summary_modes] if self.summary_modes else [])
-        if "GROUP BY band_at_review" in sql:
+        if "GROUP BY ar.band_at_review" in sql:
             return _Rows(self.summary_by_band)
-        if "GROUP BY judge_outcome_at_review" in sql:
+        if "GROUP BY ar.judge_outcome_at_review" in sql:
             return _Rows(self.summary_by_judge_outcome)
-        if "GROUP BY judge_failure_category_at_review, cause" in sql:
+        if "GROUP BY ar.judge_failure_category_at_review, ar.cause" in sql:
             return _Rows(self.summary_by_judge_category)
-        if "GROUP BY language" in sql:
+        if "GROUP BY ar.language" in sql:
             return _Rows(self.summary_by_language)
         if sql.startswith("SELECT COUNT(*) AS reviewed"):
             return _Rows([self.summary_total] if self.summary_total else [])
 
     def _review_write_rows(self, sql: str) -> _Rows | None:
-        """Review writes and the phase 2 gap link statements."""
+        """Review writes, the phase 2 gap link statements, and the test-mark
+        writes (SELECT/UPDATE widget_conversations for PUT .../test)."""
+        if sql.startswith("SELECT id FROM widget_conversations"):
+            return _Rows([self.conversation] if self.conversation else [])
+        if sql.startswith("UPDATE widget_conversations"):
+            return _Rows([])
         if sql.startswith("INSERT INTO answer_reviews"):
             return _Rows([self.reviewed_returning or SimpleNamespace(reviewed_at=T0)])
         if sql.startswith("DELETE FROM answer_reviews"):
@@ -197,6 +202,7 @@ def _conv(
     started_at: dt.datetime = T0,
     language: str | None = "nl",
     first_query: str | None = "Hoe koppel ik Salesforce?",
+    is_preview: bool = False,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         id=cid,
@@ -209,6 +215,7 @@ def _conv(
         language_detected=language,
         visitor_name=None,
         visitor_email=None,
+        is_preview=is_preview,
     )
 
 
@@ -431,13 +438,21 @@ async def test_list_is_empty_for_a_widget_of_another_org() -> None:
 
 
 @pytest.mark.asyncio
-async def test_every_read_excludes_preview_conversations() -> None:
-    db = FakeSession(conversations=[_conv(255)], conversation=_conv(255), messages=[])
+async def test_list_excludes_preview_but_detail_stays_reachable_when_marked_test() -> None:
+    """The list is the review worklist and must never surface a test/preview
+    conversation. The detail route stays reachable by URL either way — a
+    reviewer who just marked one as a test still needs to see (and undo) that
+    state (SPEC-KNOWLEDGE-ACTIVITY-001 test-mark contract)."""
+    db = FakeSession(conversations=[_conv(255)], conversation=_conv(255, is_preview=True), messages=[])
     await _call(db, _perms("admin"), "get", "/api/app/activity/conversations")
-    await _call(db, _perms("admin"), "get", "/api/app/activity/conversations/255")
+    detail = await _call(db, _perms("admin"), "get", "/api/app/activity/conversations/255")
 
-    for sql in db.sql_containing("widget_conversations c"):
-        assert "is_preview = false" in sql
+    list_sql = db.sql_containing("ORDER BY c.started_at DESC")
+    assert list_sql and "c.is_preview = false" in list_sql[0]
+    detail_sql = db.sql_containing("c.id = :conversation_id")
+    assert detail_sql and "is_preview = false" not in detail_sql[0]
+    assert detail.status_code == 200
+    assert detail.json()["is_test"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -802,7 +817,20 @@ async def test_summary_computes_the_documented_aggregates() -> None:
     assert all(params["org_id"] == 101 for _sql, params, _stmt in db.calls)
 
 
-# ─── phase 2: a knowledge cause files a gap, any other cause closes it ───
+@pytest.mark.asyncio
+async def test_summary_sql_excludes_reviews_of_test_conversations() -> None:
+    """Test-mark contract: every summary bucket must drop reviews of a
+    conversation with is_preview=true, but keep a review whose conversation
+    was purged (no widget_conversations row at all) — COALESCE(..., false)."""
+    db = FakeSession()
+    response = await _call(db, _perms("kb_manager"), "get", "/api/app/activity/summary")
+
+    assert response.status_code == 200
+    summary_sql = db.sql_containing("FROM answer_reviews ar")
+    assert len(summary_sql) == 6  # total, band, judge_outcome, judge_category, language, modes
+    for sql in summary_sql:
+        assert "LEFT JOIN widget_conversations wc ON wc.id = ar.conversation_id" in sql
+        assert "COALESCE(wc.is_preview, false) = false" in sql
 
 
 def _gap_result(gap_id: int | None = 77) -> Any:
@@ -946,3 +974,48 @@ async def test_review_language_falls_back_to_the_answer_signal() -> None:
     assert mock.await_args.kwargs["language"] == "en"
     params = db.statements_starting_with("INSERT INTO answer_reviews")[-1].compile().params
     assert params["language"] == "en"
+
+
+# ---------------------------------------------------------------------------
+# PUT /conversations/{id}/test — mark/unmark a reviewer test conversation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mark_conversation_as_test_resolves_open_gaps_with_the_caller_id() -> None:
+    db = FakeSession(conversation=_conv(255, is_preview=False))
+    response = await _call(
+        db, _perms("admin"), "put", "/api/app/activity/conversations/255/test", json={"is_test": True}
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"is_test": True}
+    assert db.params_for("UPDATE widget_conversations") == [{"conversation_id": 255, "org_id": 101, "is_test": True}]
+    assert db.params_for("UPDATE portal_retrieval_gaps SET resolved_at = NOW(), resolved_by = 'manual'") == [
+        {"conversation_id": 255, "org_id": 101, "resolved_by_user_id": CALLER_PORTAL_USER_ID}
+    ]
+    assert db.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_unmark_conversation_as_test_does_not_touch_gaps() -> None:
+    db = FakeSession(conversation=_conv(255, is_preview=True))
+    response = await _call(
+        db, _perms("admin"), "put", "/api/app/activity/conversations/255/test", json={"is_test": False}
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"is_test": False}
+    assert db.params_for("UPDATE widget_conversations") == [{"conversation_id": 255, "org_id": 101, "is_test": False}]
+    assert db.params_for("UPDATE portal_retrieval_gaps SET resolved_at = NOW(), resolved_by = 'manual'") == []
+
+
+@pytest.mark.asyncio
+async def test_mark_conversation_as_test_404_for_another_org() -> None:
+    db = FakeSession()  # no conversation row -> the org-scoped probe finds nothing
+    response = await _call(
+        db, _perms("admin"), "put", "/api/app/activity/conversations/255/test", json={"is_test": True}
+    )
+
+    assert response.status_code == 404
+    assert db.params_for("UPDATE widget_conversations") == []
