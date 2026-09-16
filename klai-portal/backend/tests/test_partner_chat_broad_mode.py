@@ -40,6 +40,7 @@ from klai_chat_prompts import (
     broad_mode_answer_marker,
     no_citable_sources_message,
 )
+from klai_chat_prompts.language import resolve_conversation_language
 
 from app.services import partner_chat
 from app.services.partner_chat import (
@@ -128,7 +129,7 @@ def test_compose_broad_answer_prefixes_marker_and_drops_sources():
         "wat is een sip trunk?",
         helpdesk=True,
         broad=True,
-        visitor_query="wat is een sip trunk?",
+        response_language="nl",
     )
     marker = broad_mode_answer_marker("nl")
     assert text == f"{marker}\n\nEen SIP trunk is een virtuele telefoonlijn."
@@ -145,7 +146,7 @@ def test_compose_broad_answer_english_marker_for_english_query():
         "what is a sip trunk",
         helpdesk=True,
         broad=True,
-        visitor_query="what is a sip trunk",
+        response_language="en",
     )
     assert text.startswith("General knowledge — not from our help articles.")
 
@@ -155,7 +156,7 @@ def test_compose_broad_empty_output_falls_back_to_refusal_without_signals():
     # unlabelled (nothing was claimed as general knowledge) and no offer
     # re-pitch (consent already happened this turn).
     text, sources, decision = _compose_backend_managed_answer(
-        "   ", [], [], "wat is een sip trunk?", helpdesk=True, broad=True, visitor_query="wat is een sip trunk?"
+        "   ", [], [], "wat is een sip trunk?", helpdesk=True, broad=True, response_language="nl"
     )
     assert text == no_citable_sources_message("nl", helpdesk=True)
     assert sources == []
@@ -172,7 +173,7 @@ def test_compose_helpdesk_refusal_tags_offer():
         [],
         "wat kost het abonnement?",
         helpdesk=True,
-        visitor_query="wat kost het abonnement?",
+        response_language="nl",
     )
     assert text == _HELPDESK_REFUSAL_NL  # byte-identical canned refusal
     assert sources == []
@@ -181,7 +182,7 @@ def test_compose_helpdesk_refusal_tags_offer():
 
 def test_compose_partner_refusal_does_not_tag_offer():
     _, _, decision = _compose_backend_managed_answer(
-        "Whatever the model said.", [], [], "what is the price", helpdesk=False, visitor_query="what is the price"
+        "Whatever the model said.", [], [], "what is the price", helpdesk=False, response_language="en"
     )
     assert "broad_mode" not in decision
 
@@ -195,7 +196,7 @@ def test_compose_grounded_helpdesk_answer_carries_no_broad_signal():
         [chunk],
         "hoe reset ik mijn wachtwoord",
         helpdesk=True,
-        visitor_query="hoe reset ik mijn wachtwoord",
+        response_language="nl",
     )
     assert "broad_mode" not in decision
     assert sources
@@ -446,6 +447,15 @@ def _stream_patches(monkeypatch, model_text: str):
 
 
 async def _collect(**kwargs) -> list[bytes]:
+    # Mirrors what chat_completion_streaming does: the decision comes from the
+    # visitor's messages, never from user_query (the KB-tuned rewrite). Tests
+    # that care about the language therefore still prove the rewrite cannot
+    # decide it; test_stream_refusal_language_follows_the_conversation covers
+    # the production wiring itself, one level up.
+    kwargs.setdefault(
+        "response_language",
+        resolve_conversation_language(kwargs["augmented_messages"]).language,
+    )
     return [frame async for frame in _chat_completion_streaming_with_composed_citations(**kwargs)]
 
 
@@ -732,3 +742,56 @@ def test_request_model_broad_mode_defaults_false():
 
     req = ChatCompletionsRequest(messages=[{"role": "user", "content": "hi"}])
     assert req.broad_mode is False
+
+
+# The reported defect. An English conversation whose latest turn is too short to
+# identify on its own ("Why?") answered in English, framed the widget in English
+# via delta.language, and then refused in Dutch: the refusal identified that one
+# turn, and an abstention renders Dutch by design (594de988d measured that short
+# Dutch questions abstain far more often than short English ones). The
+# conversation replay carries every turn, so it decides where one turn cannot.
+_EN_SHORT_FOLLOW_UP = [
+    {"role": "user", "content": "Hi, I am looking for information about your pricing plans for a small team."},
+    {"role": "assistant", "content": "Sure, here is what I found about our plans."},
+    {"role": "user", "content": "Why?"},
+]
+
+
+@pytest.mark.asyncio
+async def test_stream_refusal_speaks_the_conversation_language_not_the_latest_turn(monkeypatch):
+    _stream_patches(monkeypatch, "I do not know the answer.")
+    settings = MagicMock()
+    settings.litellm_base_url = "http://litellm:4000"
+    settings.litellm_master_key = "key"
+
+    frames = [
+        frame
+        async for frame in partner_chat.chat_completion_streaming(
+            messages=_EN_SHORT_FOLLOW_UP,
+            model="klai-primary",
+            temperature=0.7,
+            system_prompt="sys",
+            settings=settings,
+            org_id=42,
+            support_mode=True,
+            trusted_sources=[],
+            citation_chunks=[],
+            citation_output="markers",
+        )
+    ]
+
+    content = "".join(_delta_values(_parse_frames(frames), "content"))
+    assert content == no_citable_sources_message("en", helpdesk=True)
+
+
+@pytest.mark.asyncio
+async def test_non_streaming_refusal_speaks_the_conversation_language_not_the_latest_turn(monkeypatch):
+    body = await _call_non_streaming(
+        monkeypatch,
+        "I do not know the answer.",
+        messages=_EN_SHORT_FOLLOW_UP,
+        source_query="pricing plans small team",
+        support_mode=True,
+    )
+    message = body["choices"][0]["message"]
+    assert message["content"] == no_citable_sources_message("en", helpdesk=True)
