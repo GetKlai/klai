@@ -42,6 +42,22 @@ const parseBoolean = (value: unknown, fallback: boolean): boolean =>
       ? false
       : fallback
 
+/**
+ * Serialises the list's filters into one flat string. main.tsx installs a
+ * router-wide `stringifySearch`/`parseSearch` that only supports flat string
+ * values (kept flat so 18-digit Zitadel ids in the URL are never coerced to
+ * Number); a nested object under a search key stringifies as
+ * "[object Object]" instead of a query string. Carrying the list's filters as
+ * one string value (the `back` param) keeps them inside that flat contract.
+ */
+export function stringifyActivitySearch(search: ActivitySearch): string {
+  const params = new URLSearchParams()
+  for (const [key, value] of Object.entries(search)) {
+    if (value !== undefined && value !== null) params.set(key, String(value))
+  }
+  return params.toString()
+}
+
 /** The list's URL search contract: exported so links and tests build the same
     search the route validates, instead of guessing at the defaults. */
 export function parseActivitySearch(search: Record<string, unknown>): ActivitySearch {

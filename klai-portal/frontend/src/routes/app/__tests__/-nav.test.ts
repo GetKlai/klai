@@ -7,15 +7,10 @@
 import { describe, expect, it } from 'vitest'
 import { getAppNavItems, type AppNavAccess } from '../-app-tools'
 
-function access(
-  capabilities: string[],
-  unlockedFeatures: string[],
-  activityQueueCount = 3,
-): AppNavAccess {
+function access(capabilities: string[], unlockedFeatures: string[]): AppNavAccess {
   return {
     hasCapability: (cap) => capabilities.includes(cap),
     unlockedFeatures,
-    activityQueueCount,
   }
 }
 
@@ -30,7 +25,7 @@ function knowledgeChildren(
 }
 
 describe('app nav — Kennis children (SPEC-KNOWLEDGE-ACTIVITY-001 §3)', () => {
-  it('lists the three knowledge children and badges Gesprekken with the queue count', () => {
+  it('lists the three knowledge children', () => {
     const nav = getAppNavItems(
       ['knowledge'],
       access(['kb.activity', 'kb.gaps'], ['widgets', 'knowledge_activity', 'knowledge_gaps']),
@@ -44,7 +39,6 @@ describe('app nav — Kennis children (SPEC-KNOWLEDGE-ACTIVITY-001 §3)', () => 
     ])
     // Kennisbanken must not stay active for its own children's paths.
     expect(knowledge?.children?.[0]?.end).toBe(true)
-    expect(knowledge?.children?.find((child) => child.to === '/app/knowledge/activity')?.badgeCount).toBe(3)
   })
 
   it('hides Gesprekken without the knowledge_activity tenant unlock', () => {

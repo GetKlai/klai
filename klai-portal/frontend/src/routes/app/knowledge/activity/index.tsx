@@ -40,6 +40,7 @@ import {
   OUTCOMES,
   parseActivitySearch,
   RATINGS,
+  stringifyActivitySearch,
   type ActivitySearch,
 } from './-search'
 
@@ -401,7 +402,7 @@ export function ActivityPage() {
                 <DataTableHead className="w-44">{m.activity_col_judge()}</DataTableHead>
                 <DataTableHead className="w-24">{m.activity_col_ratings()}</DataTableHead>
                 <DataTableHead className="w-36">{m.activity_col_review()}</DataTableHead>
-                <DataTableHead align="right" className="w-28">
+                <DataTableHead align="right" className="w-36 whitespace-nowrap">
                   {m.activity_col_time()}
                 </DataTableHead>
               </DataTableRow>
@@ -415,14 +416,16 @@ export function ActivityPage() {
                     void navigate({
                       to: '/app/knowledge/activity/$conversationId',
                       params: { conversationId: String(item.id) },
-                      // The detail folds this back into its own back link, so
-                      // returning lands on this exact filtered list.
-                      search: { list: search },
+                      // One flat string, never a nested object (main.tsx's
+                      // stringifySearch only supports flat values) — the
+                      // detail page parses it back for its back link.
+                      search: { back: stringifyActivitySearch(search) },
                     })
                   }
                 >
-                  <DataTableCell className="truncate" title={item.first_user_query ?? undefined}>
-                    {item.first_user_query ?? '—'}
+                  <DataTableCell title={item.first_user_query ?? undefined}>
+                    {/* Clamp a child block, not the cell: -webkit-box on a td breaks table layout. */}
+                    <div className="line-clamp-3">{item.first_user_query ?? '—'}</div>
                   </DataTableCell>
                   <DataTableCell className="text-gray-600">{item.language ?? '—'}</DataTableCell>
                   <DataTableCell>

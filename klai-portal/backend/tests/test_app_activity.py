@@ -82,8 +82,10 @@ class FakeSession:
         question: Any | None = None,
         review_gap_id: int | None = None,
         open_gaps: list[Any] | None = None,
+        nearest_kb_slug: str | None = None,
     ) -> None:
         self.question = question
+        self.nearest_kb_slug = nearest_kb_slug
         self.review_gap_id = review_gap_id
         self.open_gaps = open_gaps or []
         self.conversations = conversations or []
@@ -166,6 +168,8 @@ class FakeSession:
             return _Rows([])
         if sql.startswith("UPDATE answer_reviews") or sql.startswith("UPDATE portal_retrieval_gaps"):
             return _Rows([])
+        if "JOIN widget_kb_access" in sql:
+            return _Rows([SimpleNamespace(slug=self.nearest_kb_slug)] if self.nearest_kb_slug else [])
         if "role = 'user' AND sequence < :sequence" in sql:
             return _Rows([self.question] if self.question else [])
         if sql.startswith("SELECT gap_id FROM answer_reviews"):
@@ -588,7 +592,9 @@ async def test_put_review_snapshots_server_side_values_and_ignores_client_fields
         "put",
         "/api/app/activity/messages/9002/review",
         # reviewer_user_id and the snapshots are not client-supplied at all;
-        # the extra keys below must be ignored, not trusted.
+        # kb_slug ("voys-help") is a client value too — the backend derives
+        # its own from the widget (§4.5) and never reads the request's — so
+        # both it and the extra key below must be ignored, not trusted.
         json={**_review_body(band_at_review="high", reviewer_user_id=1, turn_sequence=99), "unknown_field": "x"},
     )
 
@@ -597,12 +603,13 @@ async def test_put_review_snapshots_server_side_values_and_ignores_client_fields
         "verdict": "correct",
         "cause": "none",
         "note": "Klopt",
-        "kb_slug": "voys-help",
+        "kb_slug": None,
         "reviewer_name": "Klaas Klai",
         "reviewed_at": "2026-09-14T09:12:00Z",
     }
     params = db.statements_starting_with("INSERT INTO answer_reviews")[-1].compile().params
     assert params["band_at_review"] == "low"  # from answer_signals.band
+    assert params["kb_slug"] is None  # no widget_kb_access row in this fake session
     assert params["reviewer_user_id"] == CALLER_PORTAL_USER_ID  # the caller, not the body
     assert params["judge_outcome_at_review"] == "unresolved"
     assert params["judge_failure_category_at_review"] == "retrieval_miss"
@@ -613,6 +620,24 @@ async def test_put_review_snapshots_server_side_values_and_ignores_client_fields
     assert params["org_id"] == 101
     assert params["gap_id"] is None
     assert db.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_review_kb_slug_is_derived_from_the_widget_not_the_client() -> None:
+    """SPEC-KNOWLEDGE-ACTIVITY-001 §4.5: the backend decides the KB. A client
+    sending a slug (the removed frontend picker's old shape) must not
+    override the one derived from widget_kb_access."""
+    db = FakeSession(message=_assistant_message_row(), nearest_kb_slug="voys-help")
+    response = await _call(
+        db,
+        _perms("admin"),
+        "put",
+        "/api/app/activity/messages/9002/review",
+        json=_review_body(kb_slug="a-client-guess"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["kb_slug"] == "voys-help"
 
 
 @pytest.mark.asyncio
@@ -803,6 +828,7 @@ async def test_knowledge_missing_review_files_a_hard_gap_under_the_visitor_quest
     db = FakeSession(
         message=_assistant_message_row(),
         question=SimpleNamespace(content="Hoe koppel ik Salesforce?"),
+        nearest_kb_slug="voys-help",
     )
     response, mock = await _put_with_gap_mock(db, _review_body(verdict="wrong", cause="knowledge_missing"))
 
@@ -814,7 +840,7 @@ async def test_knowledge_missing_review_files_a_hard_gap_under_the_visitor_quest
     assert kwargs["caller_client_id"] == "human-review"
     assert kwargs["conversation_id"] == 255
     assert kwargs["language"] == "nl"
-    assert kwargs["nearest_kb_slug"] == "voys-help"
+    assert kwargs["nearest_kb_slug"] == "voys-help"  # derived from the widget's KB, not the request
     link = db.params_for("UPDATE answer_reviews SET gap_id")
     assert link == [{"message_id": 9002, "org_id": 101, "gap_id": 77}]
 

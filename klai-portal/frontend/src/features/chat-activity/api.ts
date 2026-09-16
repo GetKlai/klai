@@ -203,11 +203,12 @@ export interface ConversationReview {
   reviewed_at: string | null
 }
 
+/** The backend derives `kb_slug` from the conversation's widget (SPEC
+    §4.5); the reviewer no longer picks it. */
 export interface ConversationReviewInput {
   verdict: ConversationReviewVerdict
   cause: ConversationReviewCause
   note: string | null
-  kb_slug: string | null
 }
 
 /** One message of the detail payload: the transcript shape plus the admin review. */
@@ -229,14 +230,6 @@ export interface ConversationDetail {
   messages: ConversationDetailMessage[]
 }
 
-/** Org knowledge bases offered by the review's `kb_slug` picker. */
-export interface KnowledgeBaseOption {
-  id: number
-  name: string
-  slug: string
-  owner_type: string
-}
-
 export function useActivityConversation(conversationId: string | number) {
   const enabled = useActivityAccess()
   return useQuery<ConversationDetail, Error>({
@@ -248,25 +241,6 @@ export function useActivityConversation(conversationId: string | number) {
         )
       } catch (err) {
         queryLogger.warn('Activity conversation fetch failed', { error: err })
-        throw err
-      }
-    },
-    enabled,
-    retry: false,
-  })
-}
-
-export function useActivityKnowledgeBases() {
-  const enabled = useActivityAccess()
-  return useQuery<{ knowledge_bases: KnowledgeBaseOption[] }>({
-    queryKey: ['activity', 'knowledge-bases'],
-    queryFn: async () => {
-      try {
-        return await apiFetch<{ knowledge_bases: KnowledgeBaseOption[] }>(
-          '/api/app/knowledge-bases',
-        )
-      } catch (err) {
-        queryLogger.warn('Activity knowledge bases fetch failed', { error: err })
         throw err
       }
     },

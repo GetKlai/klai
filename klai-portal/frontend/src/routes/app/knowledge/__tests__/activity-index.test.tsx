@@ -213,7 +213,9 @@ describe('activity list', () => {
       expect.objectContaining({
         to: '/app/knowledge/activity/$conversationId',
         params: { conversationId: '1' },
-        search: { list: { days: 14, queue: true, sort: 'newest', band: 'low' } },
+        // One flat string, not a nested object: main.tsx's router-wide
+        // stringifySearch only supports flat values.
+        search: { back: 'days=14&queue=true&sort=newest&band=low' },
       }),
     )
   })

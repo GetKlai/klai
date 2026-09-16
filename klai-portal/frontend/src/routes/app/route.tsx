@@ -3,10 +3,9 @@ import { useQuery } from '@tanstack/react-query'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { TopBar, TopBarSlotProvider } from '@/components/layout/TopBar'
 import { KlaiAssistantLauncher } from '@/features/klai-assistant/KlaiAssistantLauncher'
-import { useActivityQueueCount } from '@/features/chat-activity'
 import { useProtectedRoute } from '@/hooks/useProtectedRoute'
 import { fetchMe } from '@/lib/api-me'
-import { appNavActivityIsVisible, getAppNavItems, type AppNavAccess } from './-app-tools'
+import { getAppNavItems, type AppNavAccess } from './-app-tools'
 
 export const Route = createFileRoute('/app')({
   component: AppLayout,
@@ -28,12 +27,7 @@ function AppLayout() {
     hasCapability: (capability) => user?.hasCapability(capability) === true,
     unlockedFeatures: me?.platform_unlocked_features ?? [],
   }
-  const showActivityNav = appNavActivityIsVisible(access)
-  const queueCount = useActivityQueueCount(showActivityNav)
-  const appNav = getAppNavItems(products, {
-    ...access,
-    activityQueueCount: queueCount.data?.count,
-  })
+  const appNav = getAppNavItems(products, access)
 
   if (!canRender) {
     return (
