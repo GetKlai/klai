@@ -63,6 +63,18 @@ async def _purge_org_chunk(org_id: int, message_ids: list[int], conversation_ids
     Returns ``(deleted_messages, anonymized_judgments)``.
     """
     async with tenant_scoped_session(org_id) as db:
+        # Bounded waits, so one org cannot stall this sequential run: a blocked
+        # or runaway statement raises and takes the caller's skip-and-log path
+        # (portal-api sets no server-side timeouts). SET LOCAL runs after the
+        # after_begin set_config() calls of this same transaction and ends
+        # with it. Each statement touches at most _CHUNK_SIZE (10 000) rows by
+        # primary key or the unique conversation_id index, which takes well
+        # under a second, so 60 s only ends a run that is truly stuck. Row
+        # locks from live writers (widget turns, the judge) last milliseconds
+        # to one judge batch; 5 s of waiting means the lock is long-held, and
+        # the next daily run retries the org.
+        await db.execute(text("SET LOCAL lock_timeout = '5s'"))
+        await db.execute(text("SET LOCAL statement_timeout = '60s'"))
         anon_result = await db.execute(
             text(
                 """

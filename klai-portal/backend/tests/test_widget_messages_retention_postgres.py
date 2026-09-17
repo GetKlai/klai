@@ -26,6 +26,8 @@ Local run::
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 from collections.abc import AsyncIterator
 from unittest.mock import patch
@@ -71,17 +73,25 @@ _SETUP_SQL = [
     $$
     """,
     f"CREATE TABLE {_SCHEMA}.portal_orgs (id integer PRIMARY KEY, widget_messages_retention_days integer)",
+    # Only the columns the retention sweep and the judge's selection read or
+    # write.
     f"""CREATE TABLE {_SCHEMA}.widget_conversations (
-        id bigint PRIMARY KEY, org_id integer NOT NULL, visitor_name text, visitor_email text)""",
+        id bigint PRIMARY KEY, org_id integer NOT NULL, visitor_name text, visitor_email text,
+        started_at timestamptz NOT NULL DEFAULT now(), last_message_at timestamptz NOT NULL DEFAULT now(),
+        outcome text, is_preview boolean NOT NULL DEFAULT false, is_test boolean NOT NULL DEFAULT false)""",
     f"""CREATE TABLE {_SCHEMA}.widget_messages (
         id bigint PRIMARY KEY,
         conversation_id bigint NOT NULL REFERENCES {_SCHEMA}.widget_conversations(id) ON DELETE CASCADE,
-        org_id integer NOT NULL, created_at timestamptz NOT NULL)""",
+        org_id integer NOT NULL, created_at timestamptz NOT NULL,
+        role text, content text, sources jsonb, rating text, sequence integer NOT NULL DEFAULT 0)""",
     f"""CREATE TABLE {_SCHEMA}.conversation_quality_judgments (
-        id bigint PRIMARY KEY, org_id integer NOT NULL,
-        conversation_id bigint REFERENCES {_SCHEMA}.widget_conversations(id) ON DELETE SET NULL,
-        reasoning text, anonymized_at timestamptz)""",
-    f"GRANT SELECT ON {_SCHEMA}.portal_orgs TO {_ROLE}",
+        id bigserial PRIMARY KEY, org_id integer NOT NULL,
+        conversation_id bigint UNIQUE REFERENCES {_SCHEMA}.widget_conversations(id) ON DELETE SET NULL,
+        channel text, outcome text, failure_category text, reasoning text, confidence text,
+        suggested_action text, model_used text, judged_at timestamptz, anonymized_at timestamptz)""",
+    f"CREATE TABLE {_SCHEMA}.widget_handoff_sessions (conversation_id bigint)",
+    f"GRANT SELECT ON {_SCHEMA}.portal_orgs, {_SCHEMA}.widget_handoff_sessions TO {_ROLE}",
+    f"GRANT USAGE ON SEQUENCE {_SCHEMA}.conversation_quality_judgments_id_seq TO {_ROLE}",
 ]
 for _table in ("widget_conversations", "widget_messages", "conversation_quality_judgments"):
     _SETUP_SQL += [
@@ -100,12 +110,13 @@ for _table in ("widget_conversations", "widget_messages", "conversation_quality_
 # the test schema.
 _SEED_SQL = [
     "INSERT INTO portal_orgs VALUES (1, NULL), (2, NULL)",
-    "INSERT INTO widget_conversations VALUES (10, 1, 'Anna', 'anna@example.com'), (20, 2, 'Bram', 'bram@example.com')",
-    "INSERT INTO widget_messages VALUES "
+    "INSERT INTO widget_conversations (id, org_id, visitor_name, visitor_email) "
+    "VALUES (10, 1, 'Anna', 'anna@example.com'), (20, 2, 'Bram', 'bram@example.com')",
+    "INSERT INTO widget_messages (id, conversation_id, org_id, created_at) VALUES "
     "(101, 10, 1, now() - interval '30 days'), (102, 10, 1, now()), "
     "(201, 20, 2, now() - interval '30 days')",
-    "INSERT INTO conversation_quality_judgments VALUES "
-    "(1, 1, 10, 'Anna asked about invoices', NULL), (2, 2, 20, 'Bram asked about refunds', NULL)",
+    "INSERT INTO conversation_quality_judgments (org_id, conversation_id, reasoning) "
+    "VALUES (1, 10, 'Anna asked about invoices'), (2, 20, 'Bram asked about refunds')",
 ]
 
 
@@ -212,3 +223,76 @@ async def test_one_failing_org_neither_blocks_the_others_nor_loses_its_anonymiza
 
     failures = [e for e in captured if e.get("event") == "widget_messages_retention_org_failed"]
     assert [(e["org_id"], e["log_level"]) for e in failures] == [(1, "error")]
+
+
+async def test_a_locked_org_times_out_and_is_skipped_while_the_other_org_is_purged(
+    admin_engine: AsyncEngine,
+) -> None:
+    """A row lock held elsewhere on org 1's conversation must not stall the run:
+    org 1's purge gives up, is logged, and org 2 is still purged."""
+    from app.services.widget_messages_retention import _retention_run_once
+
+    async with admin_engine.connect() as locker:
+        await locker.begin()
+        await locker.execute(text("SELECT 1 FROM widget_conversations WHERE id = 10 FOR UPDATE"))
+
+        with structlog.testing.capture_logs() as captured:
+            # Without a lock timeout the run waits on this lock forever.
+            result = await asyncio.wait_for(_retention_run_once(), timeout=30)
+
+        await locker.rollback()
+
+    assert result["deleted_count"] == 1
+    state = await _state(admin_engine)
+    assert state["messages"] == [101, 102]
+    assert state["visitors"] == [(10, "Anna", "anna@example.com"), (20, None, None)]
+    assert state["reasoning"] == [(10, "Anna asked about invoices", False), (20, None, True)]
+    failures = [e for e in captured if e.get("event") == "widget_messages_retention_org_failed"]
+    assert [(e["org_id"], e["log_level"]) for e in failures] == [(1, "error")]
+
+
+async def test_judge_skips_a_conversation_close_to_its_retention_cutoff(admin_engine: AsyncEngine) -> None:
+    """A judgment written after retention purged the conversation would quote
+    deleted messages and never be anonymized, so the judge leaves a conversation
+    near its cutoff (default 7 days here) alone and still judges a younger one."""
+    from app.services import conversation_judge as cj
+
+    async with admin_engine.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO widget_conversations (id, org_id, started_at, outcome) VALUES "
+                "(30, 1, now() - interval '7 days' + interval '3 hours', 'resolved'), "
+                "(40, 1, now() - interval '2 days', 'resolved')"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO widget_messages (id, conversation_id, org_id, created_at, role, content) VALUES "
+                "(301, 30, 1, now() - interval '7 days' + interval '3 hours', 'user', 'old question'), "
+                "(401, 40, 1, now() - interval '2 days', 'user', 'recent question')"
+            )
+        )
+
+    verdict = {
+        "outcome": "resolved",
+        "failure_category": "none",
+        "reasoning": "quoted",
+        "confidence": "high",
+        "suggested_action": None,
+    }
+
+    async def _fake_llm(*, model: str, user: str) -> str:
+        return json.dumps(verdict)
+
+    with (
+        patch.object(cj, "_call_judge_llm", _fake_llm),
+        patch.object(cj.settings, "widget_messages_retention_days", 7),
+    ):
+        judged = await cj._judge_org(1)
+
+    assert judged == 1
+    async with admin_engine.connect() as conn:
+        judged_ids = set(
+            (await conn.execute(text("SELECT conversation_id FROM conversation_quality_judgments"))).scalars()
+        )
+    assert judged_ids == {10, 20, 40}
