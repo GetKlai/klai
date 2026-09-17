@@ -307,6 +307,7 @@ async def _run_chat_completions(*, support_mode_flag: bool, stream: bool, tone_r
             "app.api.partner._widget_support_mode_enabled",
             new=AsyncMock(return_value=support_mode_flag),
         ),
+        patch("app.api.partner._clarify_flow_enabled", new=AsyncMock(return_value=False)),
         patch(
             "app.api.partner._widget_tone_register",
             new=tone_reader,
@@ -402,6 +403,7 @@ async def _run_with_scope(*, chunks, scope_result):
         patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=False)),
         patch("app.api.partner._widget_support_mode_enabled", new=AsyncMock(return_value=True)),
         patch("app.api.partner._widget_tone_register", new=AsyncMock(return_value=None)),
+        patch("app.api.partner._clarify_flow_enabled", new=AsyncMock(return_value=False)),
         patch("app.api.partner.turn_scope.classify_turn_scope", new=classifier),
         patch(
             "app.api.partner.chat_completion_non_streaming",

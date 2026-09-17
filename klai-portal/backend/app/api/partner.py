@@ -19,6 +19,7 @@ from urllib.parse import urlsplit
 import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from klai_chat_prompts import CLARIFY_TURN_ADDENDUM, has_direct_evidence_for_query, should_clarify
 from klai_chat_prompts.language import identify_text_language
 from pydantic import BaseModel, Field, ValidationError
 from redis.exceptions import RedisError
@@ -461,6 +462,25 @@ async def _widget_tone_register(auth: PartnerAuthContext, db: AsyncSession) -> s
     config = result.scalar_one_or_none() or {}
     register = config.get("tone_register") if isinstance(config, dict) else None
     return register if register == "expressive" else "restrained"
+
+
+# SPEC-RAG-CLARIFY-FLOW-001 REQ-2/REQ-3 switch. A platform unlock rather than a
+# widget_config field for two reasons: Klai staff decide where a change to the
+# grounding boundary goes live first (Voys and Klai), not tenant admins, and the
+# admin widget editor rewrites widget_config wholesale from its schema, so a
+# hand-set key there would silently disappear on the next save.
+_CLARIFY_FLOW_FEATURE = "widget_clarify_flow"
+
+
+async def _clarify_flow_enabled(auth: PartnerAuthContext, db: AsyncSession) -> bool:
+    """Return whether this tenant has the widget clarify flow unlocked.
+
+    One switch for both decisions on purpose: the clarifying question REQ-3
+    asks the model for is only ever shown because REQ-2 lets uncited text
+    through, so the first may never be on without the second.
+    """
+    result = await db.execute(select(PortalOrg.platform_unlocked_features).where(PortalOrg.id == auth.org_id))
+    return _CLARIFY_FLOW_FEATURE in (result.scalar_one_or_none() or [])
 
 
 def _citation_runtime_options(
@@ -1756,6 +1776,9 @@ async def chat_completions(  # noqa: C901
     # Register only matters when support mode is on; for internal widgets and
     # partner-key traffic it stays the default and changes nothing.
     tone_register = await _widget_tone_register(auth, db) if is_widget_chat and support_mode else "restrained"
+    # Only the public help-page widget: both the clarify addendum and the answer
+    # classifier are written for an external visitor.
+    clarify_flow = support_mode and await _clarify_flow_enabled(auth, db)
     page_context = (
         request.page_context.model_dump(exclude_none=True) if page_context_enabled and request.page_context else None
     )
@@ -1931,6 +1954,40 @@ async def chat_completions(  # noqa: C901
         system_prompt += escalation_service.ESCALATION_TURN_ADDENDUM[escalation]
     force_escalation = escalation is not None
 
+    # SPEC-RAG-CLARIFY-FLOW-001 REQ-3, decision 1: on weak retrieval without
+    # direct evidence, ask one clarifying question instead of guessing. The band
+    # is the one retrieve_context stored from retrieval-api; a turn without one
+    # never retrieved, so no decision is taken and none is logged (REQ-6 counts
+    # decided turns only). Not on a broad-mode turn (consent already widened the
+    # answer) or an escalation turn (the visitor is to be offered a person, and
+    # two competing per-turn instructions produce neither).
+    clarify = False
+    scope_classified = gap is not None
+    band = answer_signals.get("band")
+    if clarify_flow and band is not None and not (broad_turn or escalation):
+        clarify = should_clarify(band, has_direct_evidence=has_direct_evidence_for_query(visitor_turn, chunks))
+        if clarify and not scope_classified:
+            # turn_scope only ran on a retrieval gap, but this decision follows
+            # retrieval-api's band, and the two disagree (reranker 0.9 with band
+            # "low" is no gap). A "dankjewel" must not get a clarifying question,
+            # so classify here. Sequential by necessity: the band only exists
+            # once retrieval returned, and only this path pays the bounded 2 s.
+            turn_asserts = await turn_scope.classify_turn_scope(visitor_turn, settings)
+            scope_classified = True
+        if turn_scope.is_conversational(turn_asserts):
+            # A conversational turn has its own instruction below.
+            clarify = False
+        else:
+            clarify_decision = "clarify" if clarify else "answer"
+            answer_signals["clarify_decision"] = clarify_decision
+            logger.info(
+                "partner_chat_clarify_decision",
+                org_id=auth.org_id,
+                wgt_id=auth.key_id,
+                clarify_decision=clarify_decision,
+                band=band,
+            )
+
     # SPEC-RAG-ANSWER-TIERS-001 REQ-1, second half. Letting the class decide only
     # what the composer does still left the model reading a profile that tells it
     # to refuse when the articles do not cover the question. It could therefore
@@ -1938,6 +1995,8 @@ async def chat_completions(  # noqa: C901
     # never reads the words. The class now reaches the generation too.
     if turn_scope.is_conversational(turn_asserts):
         system_prompt += turn_scope.CONVERSATIONAL_TURN_ADDENDUM
+    if clarify:
+        system_prompt += CLARIFY_TURN_ADDENDUM["external"]
 
     # REQ-4. Every classified turn logs its class, not just the conversational
     # ones: a share you cannot see is a boundary that drifts unnoticed.
@@ -1946,7 +2005,7 @@ async def chat_completions(  # noqa: C901
             "partner_chat_turn_scope",
             org_id=auth.org_id,
             wgt_id=auth.key_id if str(auth.key_id).startswith("wgt_") else None,
-            turn_scope=turn_scope.scope_label(turn_asserts) if turn_asserts is not None or gap else "not_classified",
+            turn_scope=turn_scope.scope_label(turn_asserts) if scope_classified else "not_classified",
             retrieval_gap=gap,
         )
 
@@ -2011,6 +2070,7 @@ async def chat_completions(  # noqa: C901
             broad_mode=broad_turn,
             force_escalation=force_escalation,
             conversational=turn_scope.is_conversational(turn_asserts),
+            clarify_flow=clarify_flow,
             sentiment=sentiment,
             answer_signals=answer_signals if audit_ready else None,
             signal_chunks=chunks,
@@ -2052,6 +2112,7 @@ async def chat_completions(  # noqa: C901
         broad_mode=broad_turn,
         force_escalation=force_escalation,
         conversational=turn_scope.is_conversational(turn_asserts),
+        clarify_flow=clarify_flow,
         sentiment=sentiment,
         answer_signals=answer_signals if audit_ready else None,
         signal_chunks=chunks,

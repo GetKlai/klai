@@ -41,6 +41,7 @@ from klai_chat_prompts import (
     SUPPORT_EXPRESSIVE_CHAT_SYSTEM_PROMPT,
     broad_mode_answer_marker,
     final_response_language_reminder,
+    may_show_model_text_without_sources,
     strip_appointment_offer_marker,
 )
 from klai_chat_prompts import (
@@ -56,6 +57,7 @@ from klai_chat_prompts.language import (
 
 from app.core.config import Settings
 from app.core.database import tenant_scoped_session
+from app.services.answer_claims import answer_claims_label, classify_answer_claims
 from app.services.citations import (
     compose_answer_with_trusted_sources,
     evidence_chunks_from_chunks,
@@ -1930,6 +1932,88 @@ def _compose_backend_managed_answer(
     return composed.content, sources, decision
 
 
+async def _show_uncited_reply_without_claims(
+    content: str,
+    sources: list[dict],
+    decision: dict[str, Any],
+    *,
+    enabled: bool,
+    draft: str,
+    visitor_query: str,
+    citation_chunks: list[dict] | None,
+    settings: Settings,
+    org_id: int | str | None,
+    answer_signals: dict[str, Any] | None,
+    helpdesk: bool,
+    response_language: str | None,
+) -> tuple[str, list[dict], dict[str, Any]]:
+    """Decision 2 of SPEC-RAG-CLARIFY-FLOW-001: model-written text without sources
+    reaches the visitor only when it asserts nothing about the organisation.
+
+    Runs on the composer's result rather than inside it. The composer is
+    synchronous and has two production callers plus a large body of direct
+    tests; the classification is an HTTP call. Making the composer async would
+    push ``await`` into every one of those without changing what they test,
+    while this one async step after it keeps a single home for the rule. With
+    ``enabled`` off (the tenant has no clarify-flow unlock) it returns the
+    composer's result untouched and makes no model call.
+
+    Two composer outcomes carry model-written text with zero sources:
+
+    * the no-citable-sources refusal, whose draft may be a clarifying question
+      or a natural "not found": shown on ``no_claims``, refusal otherwise;
+    * a conversational turn (turn_scope said "conversation"), already shown
+      without the citation firewall: kept on ``no_claims``, replaced by the
+      refusal otherwise. turn_scope names a misclassified turn as its residual
+      risk (reproduced in review: "Wij rekenen 5 euro." passed as
+      conversational), and this post-generation check is the upgrade it names.
+
+    A consented broad-mode answer is deliberately NOT gated. It is labelled
+    general knowledge, and the classifier counts every fact about the world as
+    a claim, so gating it would switch broad mode off entirely.
+
+    The stripper runs over the draft BEFORE classification, so the classifier
+    judges exactly the text the visitor would see; an empty result (a broad
+    turn with no output) has nothing to show and makes no call. Fixed texts
+    never reach the classifier: only the model's draft is ever sent, and callers
+    do not call this on a safety-blocked turn.
+
+    A passed refusal keeps its decision flags (broad-mode offer, appointment
+    escalation), as the spec requires; only the audit marker comes off.
+    """
+    if not enabled or sources or decision.get("broad_mode") == "answer":
+        return content, sources, decision
+    safe_text = _answer_without_retrieved_sources(strip_appointment_offer_marker(draft)[0], citation_chunks)
+    if not safe_text:
+        return content, sources, decision
+    titles = [title for title in dict.fromkeys(map(_chunk_source_title, citation_chunks or [])) if title != "Source"]
+    result = await classify_answer_claims(
+        visitor_query=visitor_query,
+        draft=safe_text,
+        article_titles=titles,
+        settings=settings,
+    )
+    # REQ-6: one queryable word per classified turn, including failures.
+    label = answer_claims_label(result)
+    logger.info("partner_chat_answer_claims", org_id=org_id, answer_claims=label)
+    if answer_signals is not None:
+        answer_signals["answer_claims"] = label
+    refused = decision.get(_NO_CITABLE_SOURCES_DECISION_KEY)
+    if may_show_model_text_without_sources(result):
+        if not refused:
+            return content, sources, decision
+        passed = {key: value for key, value in decision.items() if key != _NO_CITABLE_SOURCES_DECISION_KEY}
+        passed["reason"] = "uncited_no_claims"
+        return safe_text, [], passed
+    if refused:
+        return content, sources, decision
+    refusal: dict[str, Any] = {"reason": "conversational_turn_claims", _NO_CITABLE_SOURCES_DECISION_KEY: True}
+    if helpdesk:
+        refusal["broad_mode"] = "offer"
+        refusal["escalation"] = _appointment_escalation()
+    return _no_citable_sources_message(response_language, helpdesk=helpdesk), [], refusal
+
+
 def _count_citation_rescues(decision: dict[str, Any]) -> int:
     """Count applied rescues across the separate KB and web trust tiers."""
     count = sum(
@@ -1977,6 +2061,7 @@ async def _chat_completion_streaming_with_composed_citations(
     broad_mode: bool = False,
     conversational: bool = False,
     force_escalation: bool = False,
+    clarify_flow: bool = False,
     sentiment: Literal["negative", "neutral", "positive"] | None = None,
     answer_signals: dict[str, Any] | None = None,
     signal_chunks: list[dict] | None = None,
@@ -2092,6 +2177,21 @@ async def _chat_completion_streaming_with_composed_citations(
         content = safety_refusal_message(visitor_query)
         sources = []
         decision = {"reason": safety_reason}
+    else:
+        content, sources, decision = await _show_uncited_reply_without_claims(
+            content,
+            sources,
+            decision,
+            enabled=clarify_flow,
+            draft="".join(raw_text_parts),
+            visitor_query=visitor_query,
+            citation_chunks=citation_chunks,
+            settings=settings,
+            org_id=org_id,
+            answer_signals=answer_signals,
+            helpdesk=support_mode,
+            response_language=response_language,
+        )
     # Consumed before the decision is logged so that event keeps its exact
     # payload: the marker only travels to the audit sink (see _fill_answer_signals).
     refused = bool(decision.pop(_NO_CITABLE_SOURCES_DECISION_KEY, False))
@@ -2756,6 +2856,7 @@ async def chat_completion_non_streaming(
     broad_mode: bool = False,
     conversational: bool = False,
     force_escalation: bool = False,
+    clarify_flow: bool = False,
     sentiment: Literal["negative", "neutral", "positive"] | None = None,
     answer_signals: dict[str, Any] | None = None,
     signal_chunks: list[dict] | None = None,
@@ -2889,6 +2990,20 @@ async def chat_completion_non_streaming(
                     force_escalation=force_escalation,
                     response_language=language_decision.language,
                 )
+                rendered_content, sources, decision = await _show_uncited_reply_without_claims(
+                    rendered_content,
+                    sources,
+                    decision,
+                    enabled=clarify_flow,
+                    draft=content,
+                    visitor_query=visitor_query,
+                    citation_chunks=citation_chunks,
+                    settings=settings,
+                    org_id=org_id,
+                    answer_signals=answer_signals,
+                    helpdesk=support_mode,
+                    response_language=language_decision.language,
+                )
                 decision.update({"sentiment": sentiment} if support_mode and sentiment else {})
                 # Popped before the log so that event keeps its exact payload;
                 # the marker only travels to the audit sink.
@@ -2983,6 +3098,7 @@ async def chat_completion_streaming(
     broad_mode: bool = False,
     conversational: bool = False,
     force_escalation: bool = False,
+    clarify_flow: bool = False,
     sentiment: Literal["negative", "neutral", "positive"] | None = None,
     answer_signals: dict[str, Any] | None = None,
     signal_chunks: list[dict] | None = None,
@@ -3033,6 +3149,7 @@ async def chat_completion_streaming(
             broad_mode=broad_mode,
             conversational=conversational,
             force_escalation=force_escalation,
+            clarify_flow=clarify_flow,
             sentiment=sentiment,
             answer_signals=answer_signals,
             signal_chunks=signal_chunks,
