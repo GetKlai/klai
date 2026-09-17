@@ -3650,7 +3650,7 @@ def test_an_empty_model_answer_still_refuses_even_when_conversational():
 
 def test_classifier_failure_reads_as_a_knowledge_question():
     """REQ-1 fail-safe direction: None must never open the firewall."""
-    from app.services.turn_scope import is_conversational, scope_label
+    from app.services.turn_judge import is_conversational, scope_label
 
     assert is_conversational(None) is False
     assert is_conversational("organisation") is False
@@ -3658,8 +3658,8 @@ def test_classifier_failure_reads_as_a_knowledge_question():
     assert is_conversational("conversation") is True
     # REQ-4: a failure is its own label, not folded into "organisation" -- the
     # behaviour is the same but a rising failure rate is a signal about the
-    # classifier rather than about visitors.
-    assert scope_label(None) == "classifier_failed"
+    # judge rather than about visitors.
+    assert scope_label(None) == "judge_failed"
 
 
 # ---------------------------------------------------------------------------

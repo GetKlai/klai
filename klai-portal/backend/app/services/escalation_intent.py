@@ -14,73 +14,18 @@ Two intents, both language-neutral for NL/EN, deliberately conservative:
 * ``human_request`` — the visitor asks to reach a person.
 * ``frustration`` — repeated complaint or an angry register.
 
-Known ceiling: this is a pattern heuristic, not a classifier. Its upgrade path
-is the LLM-as-judge pass from the measurement plan, which can read the whole
-conversation. Until then a miss here still leaves the two other sources of the
-signal in place (the canned refusal and the model's marker).
+Known ceiling: this is a pattern heuristic, not a classifier. The question
+judge (``turn_judge.py``) reads the whole conversation and adds its own
+``wants_human`` and ``sentiment`` beside it; this regex stays because it keeps
+working when that call fails.
 """
 
 from __future__ import annotations
 
-import asyncio
 import re
-from typing import Literal
-
-import httpx
-import structlog
-from pydantic import BaseModel, ConfigDict
-
-from app.core.config import Settings
-
-logger = structlog.get_logger()
 
 HUMAN_REQUEST = "human_request"
 FRUSTRATION = "frustration"
-
-
-class EscalationClassification(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True, hide_input_in_errors=True)
-
-    wants_human: bool
-    sentiment: Literal["negative", "neutral", "positive"]
-
-
-async def classify_escalation(text: str, settings: Settings) -> dict[str, bool | str] | None:
-    try:
-        async with asyncio.timeout(2.0):
-            async with httpx.AsyncClient(timeout=2.0) as client:
-                response = await client.post(
-                    f"{settings.litellm_base_url}/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {settings.litellm_master_key}"},
-                    json={
-                        "model": settings.extraction_model,
-                        "messages": [
-                            {
-                                "role": "system",
-                                "content": (
-                                    "Classify the visitor's latest message. wants_human is true only when the visitor "
-                                    "asks to involve a human; distinguish requests from negation and quoted/reported speech. "
-                                    "sentiment describes the visitor's own tone. Return only the required schema."
-                                ),
-                            },
-                            {"role": "user", "content": text},
-                        ],
-                        "response_format": {
-                            "type": "json_schema",
-                            "json_schema": {
-                                "name": "escalation_classification",
-                                "strict": True,
-                                "schema": EscalationClassification.model_json_schema(),
-                            },
-                        },
-                    },
-                )
-                response.raise_for_status()
-                content = response.json()["choices"][0]["message"]["content"]
-                return EscalationClassification.model_validate_json(content, strict=True).model_dump()
-    except Exception:
-        logger.warning("escalation_classification_failed", exc_info=True)
-    return None
 
 
 # Asking for a person. Word-boundary anchored so "medewerkersportaal" or

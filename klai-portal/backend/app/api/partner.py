@@ -9,9 +9,10 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 import uuid
 from asyncio import gather as asyncio_gather
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from urllib.parse import urlsplit
@@ -19,7 +20,6 @@ from urllib.parse import urlsplit
 import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from klai_chat_prompts import CLARIFY_TURN_ADDENDUM, has_direct_evidence_for_query, should_clarify
 from klai_chat_prompts.language import identify_text_language
 from pydantic import BaseModel, Field, ValidationError
 from redis.exceptions import RedisError
@@ -41,7 +41,7 @@ from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg
 from app.models.widgets import Widget, WidgetKbAccess
 from app.services import escalation_intent as escalation_service
-from app.services import turn_scope
+from app.services import turn_judge
 from app.services.events import emit_event
 from app.services.gap_classification import classify_gap
 from app.services.partner_chat import (
@@ -1650,6 +1650,12 @@ async def canonical_chat_completions(
     )
 
 
+async def _timed[T](awaitable: Awaitable[T]) -> tuple[T, int]:
+    started = time.perf_counter()
+    result = await awaitable
+    return result, round((time.perf_counter() - started) * 1000)
+
+
 async def chat_completions(  # noqa: C901
     request: ChatCompletionsRequest,
     http_request: Request,
@@ -1661,6 +1667,7 @@ async def chat_completions(  # noqa: C901
     TASK-008: Non-streaming path.
     TASK-009: Streaming SSE path.
     """
+    turn_started = time.perf_counter()
     # 1. Permission check
     require_permission(auth, "chat")
 
@@ -1860,29 +1867,21 @@ async def chat_completions(  # noqa: C901
             top_k=knowledge.top_k if knowledge is not None and knowledge.top_k is not None else 8,
             retrieval_enabled=knowledge.enabled if knowledge is not None else True,
         )
-        visitor_turn = _last_user_message(request.messages) or ""
+        # SPEC-RAG-ANSWER-JUDGES-001 REQ-1. The question judge runs on every
+        # support-mode turn beside retrieval, so it costs no wall-clock of its
+        # own; each side is timed separately for partner_chat_turn_timing.
+        turn_judgement: turn_judge.TurnJudgement | None = None
+        turn_timing: dict[str, float] | None = None
         if support_mode:
-            retrieval_result, classification = await asyncio_gather(
-                retrieval,
-                escalation_service.classify_escalation(visitor_turn, settings),
+            (retrieval_result, retrieval_ms), (turn_judgement, turn_judge_ms) = await asyncio_gather(
+                _timed(retrieval),
+                _timed(turn_judge.judge_turn(request.messages, settings)),
             )
+            turn_timing = {"started_at": turn_started, "retrieval_ms": retrieval_ms, "turn_judge_ms": turn_judge_ms}
         else:
             retrieval_result = await retrieval
-            classification = None
         chunks, system_prompt, trusted_sources, broad_turn = retrieval_result
-
-        # SPEC-RAG-ANSWER-TIERS-001 REQ-1. Classify only when retrieval came
-        # back with a gap, which is the only situation where the class can
-        # change the outcome: with usable chunks the composer answers from them
-        # either way. Review on 2026-09-15 showed why this must not ride in the
-        # gather above — gather waits for its slowest member, so a classifier
-        # hitting its timeout would have added two seconds to a perfectly
-        # grounded answer. Now the cost lands on the turns that would otherwise
-        # have refused, measured at 13.5% of widget traffic over seven days.
-        turn_asserts = None
         gap = classify_gap(chunks) if support_mode else None
-        if gap is not None:
-            turn_asserts = await turn_scope.classify_turn_scope(visitor_turn, settings)
     except (httpx.TimeoutException, httpx.ReadTimeout) as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -1919,12 +1918,10 @@ async def chat_completions(  # noqa: C901
     # retrieval found, and the model is told so for this one turn. See
     # escalation_intent.py for why this layer exists.
     escalation = escalation_service.escalation_intent(_last_user_message(request.messages)) if support_mode else None
-    raw_sentiment = classification.get("sentiment") if classification else None
-    sentiment: Literal["negative", "neutral", "positive"] | None = (
-        raw_sentiment if raw_sentiment in ("negative", "neutral", "positive") else None  # type: ignore[assignment]
-    )
-    if escalation is None and classification:
-        if classification.get("wants_human") is True:
+    scope = turn_judgement.scope if turn_judgement else None
+    sentiment = turn_judgement.sentiment if turn_judgement else None
+    if escalation is None and turn_judgement:
+        if turn_judgement.wants_human:
             escalation = escalation_service.HUMAN_REQUEST
         elif sentiment == "negative":
             escalation = escalation_service.FRUSTRATION
@@ -1932,60 +1929,45 @@ async def chat_completions(  # noqa: C901
         system_prompt += escalation_service.ESCALATION_TURN_ADDENDUM[escalation]
     force_escalation = escalation is not None
 
-    # SPEC-RAG-CLARIFY-FLOW-001 REQ-3, decision 1: on weak retrieval without
-    # direct evidence, ask one clarifying question instead of guessing. The band
-    # is the one retrieve_context stored from retrieval-api; a turn without one
-    # never retrieved, so no decision is taken and none is logged (REQ-6 counts
-    # decided turns only). Only on the public help-page widget (support mode):
-    # the addendum is written for an external visitor, and the claims gate that
-    # makes the question visible runs on that path only. Not on a broad-mode turn (consent already widened the
-    # answer) or an escalation turn (the visitor is to be offered a person, and
-    # two competing per-turn instructions produce neither).
-    clarify = False
-    scope_classified = gap is not None
-    band = answer_signals.get("band")
-    if support_mode and band is not None and not (broad_turn or escalation):
-        clarify = should_clarify(band, has_direct_evidence=has_direct_evidence_for_query(visitor_turn, chunks))
-        if clarify and not scope_classified:
-            # turn_scope only ran on a retrieval gap, but this decision follows
-            # retrieval-api's band, and the two disagree (reranker 0.9 with band
-            # "low" is no gap). A "dankjewel" must not get a clarifying question,
-            # so classify here. Sequential by necessity: the band only exists
-            # once retrieval returned, and only this path pays the bounded 2 s.
-            turn_asserts = await turn_scope.classify_turn_scope(visitor_turn, settings)
-            scope_classified = True
-        if turn_scope.is_conversational(turn_asserts):
-            # A conversational turn has its own instruction below.
-            clarify = False
+    # SPEC-RAG-ANSWER-TIERS-001 REQ-1. A conversational turn leaves the
+    # knowledge pipeline only on a retrieval gap: with usable chunks the
+    # composer answers from them either way, and the answer judge still checks
+    # what an uncited reply claims. The class also reaches the generation, or
+    # the profile would tell the model to refuse "do you speak English".
+    conversational = gap is not None and turn_judge.is_conversational(scope)
+    if conversational:
+        system_prompt += turn_judge.CONVERSATIONAL_TURN_ADDENDUM
+
+    # SPEC-RAG-ANSWER-JUDGES-001 REQ-3. An ambiguous question gets one
+    # instruction that lets the model either answer with a check question or
+    # ask the one clarifying question; the answer judge decides afterwards
+    # which of the two the visitor sees. Not on a broad-mode turn (consent
+    # already widened the answer), an escalation turn (two competing per-turn
+    # instructions produce neither) or a conversational one. Only then does the
+    # ambiguous row of the decision table apply, so clarity reads "clear" for
+    # the decision everywhere else. The retrieval band stays a measurement.
+    clarity: Literal["clear", "ambiguous"] | None = turn_judgement.clarity if turn_judgement else None
+    if turn_judgement and clarity == "ambiguous":
+        if broad_turn or escalation or turn_judge.is_conversational(scope):
+            clarity = "clear"
         else:
-            clarify_decision = "clarify" if clarify else "answer"
-            answer_signals["clarify_decision"] = clarify_decision
-            logger.info(
-                "partner_chat_clarify_decision",
-                org_id=auth.org_id,
-                wgt_id=auth.key_id,
-                clarify_decision=clarify_decision,
-                band=band,
-            )
+            system_prompt += turn_judge.AMBIGUOUS_TURN_ADDENDUM
 
-    # SPEC-RAG-ANSWER-TIERS-001 REQ-1, second half. Letting the class decide only
-    # what the composer does still left the model reading a profile that tells it
-    # to refuse when the articles do not cover the question. It could therefore
-    # write that refusal itself, and the composer would pass it through — it
-    # never reads the words. The class now reaches the generation too.
-    if turn_scope.is_conversational(turn_asserts):
-        system_prompt += turn_scope.CONVERSATIONAL_TURN_ADDENDUM
-    if clarify:
-        system_prompt += CLARIFY_TURN_ADDENDUM["external"]
-
-    # REQ-4. Every classified turn logs its class, not just the conversational
-    # ones: a share you cannot see is a boundary that drifts unnoticed.
     if support_mode:
+        # REQ-4. Every judged turn logs its outcome, failures as their own word:
+        # a share you cannot see is a boundary that drifts unnoticed.
+        if turn_judgement is None:
+            answer_signals["judge_failed"] = ["turn"]
+        else:
+            answer_signals["clarity"] = turn_judgement.clarity
         logger.info(
-            "partner_chat_turn_scope",
+            "partner_chat_turn_judge",
             org_id=auth.org_id,
             wgt_id=auth.key_id if str(auth.key_id).startswith("wgt_") else None,
-            turn_scope=turn_scope.scope_label(turn_asserts) if scope_classified else "not_classified",
+            turn_scope=turn_judge.scope_label(scope),
+            wants_human=turn_judgement.wants_human if turn_judgement else None,
+            sentiment=sentiment,
+            clarity=turn_judgement.clarity if turn_judgement else None,
             retrieval_gap=gap,
         )
 
@@ -2049,11 +2031,12 @@ async def chat_completions(  # noqa: C901
             support_mode=support_mode,
             broad_mode=broad_turn,
             force_escalation=force_escalation,
-            clarify_turn=clarify,
-            conversational=turn_scope.is_conversational(turn_asserts),
+            clarity=clarity,
+            conversational=conversational,
             sentiment=sentiment,
             answer_signals=answer_signals if audit_ready else None,
             signal_chunks=chunks,
+            turn_timing=turn_timing,
         )
         if audit_ready:
             streaming_gen = _audit_streaming_wrapper(
@@ -2091,11 +2074,12 @@ async def chat_completions(  # noqa: C901
         support_mode=support_mode,
         broad_mode=broad_turn,
         force_escalation=force_escalation,
-        clarify_turn=clarify,
-        conversational=turn_scope.is_conversational(turn_asserts),
+        clarity=clarity,
+        conversational=conversational,
         sentiment=sentiment,
         answer_signals=answer_signals if audit_ready else None,
         signal_chunks=chunks,
+        turn_timing=turn_timing,
     )
     if knowledge is not None and not knowledge.include_sources:
         for choice in result.get("choices") or []:

@@ -1,6 +1,6 @@
 ---
 id: SPEC-RAG-ANSWER-JUDGES-001
-version: "0.1.0"
+version: "0.2.0"
 status: REQ-1 t/m REQ-4 (pad B, helpdeskwidget) in uitvoering; REQ-5 (pad A) na meting
 created: 2026-09-17
 author: Claude (Opus 5), in opdracht van Mark Vletter
@@ -17,6 +17,7 @@ related:
 
 | Versie | Datum | Wijziging |
 |---|---|---|
+| 0.2.0 | 2026-09-17 | Gemeten tegen productie-`klai-fast` vóór livegang: de booleans uit v0.1.0 vielen om, `grounding` met drie opties hield stand, een wedervraag wordt herkend aan het vraagteken. REQ-1 t/m REQ-4 gebouwd. |
 | 0.1.0 | 2026-09-17 | Eerste versie na onderzoek van gesprekken #900 en #904 (Voys Help NL) en de hele widgetketen. Richting van Mark: "de vraag moet zijn: is dit antwoord goed genoeg, plus vooraf een judge die bepaalt of ik moet doorvragen, en de combinatie bepaalt wat je daarna doet." Goedgekeurd met "Wil je hier een plan voor maken en daarna de implementatie gaan doen?". |
 
 ---
@@ -57,7 +58,7 @@ scope:       "conversation" | "organisation" | "world"
 wants_human: bool
 sentiment:   "negative" | "neutral" | "positive"
 clarity:     "clear" | "ambiguous"
-missing:     string   (kort, wat ontbreekt; leeg bij "clear")
+missing:     string   (kort, wat ontbreekt; leeg bij "clear"; door geen code gelezen)
 ```
 
 ### Antwoord-judge (ná het genereren, vóór tonen)
@@ -65,30 +66,31 @@ missing:     string   (kort, wat ontbreekt; leeg bij "clear")
 Leest de vraag met korte geschiedenis, het concept-antwoord (na het strippen van markers) en de artikelen die het model kreeg (titel plus ingekorte tekst). Draait op elke support-mode-beurt waar het model tekst schreef, behalve een safety-blokkade en een broad-mode-antwoord.
 
 ```
-verdict:              "answered" | "partial" | "not_answered"
-asks_clarification:   bool   (het concept is een verduidelijkingsvraag)
-unsupported_claims:   bool   (het concept beweert iets over de organisatie dat niet in de artikelen staat)
+grounding:  "no_company_statements" | "all_in_articles" | "some_not_in_articles"
+verdict:    "answered" | "partial" | "not_answered"
 ```
+
+Of het concept een verduidelijkingsvraag is, beslist de code: de tekst eindigt op een vraagteken. Zie "Gemeten vóór livegang" voor waarom geen van beide booleans uit v0.1.0 bleef.
 
 ### Beslisfunctie
 
 Eén pure functie, volgorde van voorrang:
 
 1. Safety-blokkade: ongewijzigd.
-2. Escalatie (regex of `wants_human`, of `sentiment == negative`): ongewijzigd, knop onder het antwoord.
+2. Escalatie (regex of `wants_human`, of `sentiment == negative`): het antwoord met knop; tekst zonder bron alleen als `grounding` niet `some_not_in_articles` is.
 3. Broad-mode-antwoord: ongewijzigd, niet gejudged.
-4. Gespreksbeurt (`scope == conversation`): tonen zonder bronnen als `unsupported_claims` false is, anders de vaste weigering.
+4. Gespreksbeurt (`scope == conversation`): tonen zonder bronnen als `grounding` niet `some_not_in_articles` is, anders de vaste weigering.
 5. Daarna de tabel:
 
 | clarity | verdict | Uitkomst |
 |---|---|---|
-| clear | answered | het gecomponeerde antwoord met bronnen; zonder citeerbare bron alleen als `unsupported_claims` false is, anders vaste weigering |
+| clear | answered | het gecomponeerde antwoord met bronnen; zonder citeerbare bron alleen als `grounding` niet `some_not_in_articles` is, anders vaste weigering |
 | clear | partial | als "answered", plus de afspraakknop onder het antwoord |
 | clear | not_answered | vaste "niet gevonden" plus doorverwijzing |
 | ambiguous | answered | het antwoord; het model eindigt met één korte controlevraag (zie addendum) |
-| ambiguous | partial of not_answered | toont de verduidelijkingsvraag van het model als `asks_clarification` true en `unsupported_claims` false is, zonder knoppen; anders vaste weigering |
+| ambiguous | partial of not_answered | toont de verduidelijkingsvraag van het model als die op een vraagteken eindigt en `grounding` niet `some_not_in_articles` is, zonder knoppen; anders vaste weigering |
 
-Het addendum voor een onduidelijke beurt vraagt het model in één generatie: beantwoorden de artikelen de vraag duidelijk, antwoord dan en eindig met één korte controlevraag over wat ontbreekt; anders stel precies één verduidelijkingsvraag over wat ontbreekt. Er is dus geen extra aanroep om een wedervraag te schrijven.
+Het addendum voor een onduidelijke beurt vraagt het model in één generatie: beantwoorden de artikelen de vraag duidelijk, antwoord dan en eindig met één korte controlevraag over wat ontbreekt; anders stel precies één verduidelijkingsvraag over wat ontbreekt. Er is dus geen extra aanroep om een wedervraag te schrijven. Het addendum is vaste tekst: v0.2.0 zette de omschrijving van de vraag-judge van wat ontbreekt tussen aanhalingstekens in de systeeminstructie, maar die tekst is door de bezoeker te sturen modeluitvoer (review 2026-09-17). Het antwoordmodel leest hetzelfde gesprek en benoemt zelf wat ontbreekt. Het veld `missing` blijft wel in het schema: zonder dat veld zag de vraag-judge "mijn telefoon werkt niet" nog maar 1 van de 3 keer als onduidelijk (was 3 van 3) en "dankjewel" nog maar 1 van de 3 keer als gespreksbeurt (was 3 van 3).
 
 ### Faalrichting
 
@@ -99,11 +101,29 @@ Het addendum voor een onduidelijke beurt vraagt het model in één generatie: be
 
 ## Requirements
 
-- **REQ-1 Vraag-judge.** `app/services/turn_judge.py` met het schema hierboven, gevoed met de laatste beurten (geknipt), time-out 2 s. Vervangt `classify_escalation` en `classify_turn_scope` op het widgetpad; de functies en hun modules verdwijnen als er geen andere aanroeper is. `escalation_intent()` (regex) en de addenda blijven. Log `partner_chat_turn_judge` met alle velden behalve `missing`.
+- **REQ-1 Vraag-judge.** `app/services/turn_judge.py` met het schema hierboven, gevoed met de laatste beurten (geknipt), time-out 2 s. Vervangt `classify_escalation` en `classify_turn_scope` op het widgetpad; de functies en hun modules verdwijnen als er geen andere aanroeper is. `escalation_intent()` (regex) en de addenda blijven. Log `partner_chat_turn_judge` met alle velden.
 - **REQ-2 Antwoord-judge.** `app/services/answer_judge.py` met het schema hierboven, time-out 2,5 s. Vervangt `app/services/answer_claims.py` en `_show_uncited_reply_without_claims`.
 - **REQ-3 Beslisfunctie en addendum.** Eén pure functie met de tabel hierboven, gebruikt door zowel het streaming- als het niet-streamingpad. Op het widgetpad verdwijnen `should_clarify`, `has_direct_evidence_for_query` en `CLARIFY_TURN_ADDENDUM` als beslissers; de band blijft als meetgegeven. De gedeelde bibliotheek blijft ongewijzigd zolang pad A haar gebruikt.
-- **REQ-4 Meting per beurt.** `answer_signals` krijgt `clarity`, `verdict`, `unsupported_claims`, `asks_clarification`, `decision` (de uitkomst uit de tabel) en `judge_failed` waar van toepassing. Eén logregel `partner_chat_turn_timing` met `retrieval_ms`, `turn_judge_ms`, `generation_ms`, `answer_judge_ms`, `total_ms`.
+- **REQ-4 Meting per beurt.** `answer_signals` krijgt `clarity`, `verdict`, `grounding`, `decision` (de uitkomst uit de tabel) en `judge_failed` waar van toepassing. Eén logregel `partner_chat_turn_timing` met `retrieval_ms`, `turn_judge_ms`, `generation_ms`, `answer_judge_ms`, `total_ms`.
 - **REQ-5 Pad A.** Dezelfde judges voor de interne chat, eerst alleen in Strict (waar het antwoord al wordt vastgehouden). Pas na meting van REQ-4 op widgetverkeer.
+
+## Gemeten vóór livegang (2026-09-17, productie-`klai-fast`, drie rondes)
+
+**Antwoord-judge, v0.1.0-schema (booleans):** `unsupported_claims` 18 van de 18 keer false, ook bij een verzonnen telefoonnummer ("bel 020-7001234, binnen 3 werkdagen teruggestort") en een verzonnen prijs. Dat is dezelfde ineenstorting die turn_scope in 2026-09-15 had. `asks_clarification` was false bij een pure wedervraag in 2 van 3 rondes.
+
+**Alternatieven op zes concepten × drie rondes:**
+
+| Vorm | Resultaat |
+|---|---|
+| lijst met niet-gedekte uitspraken | markeert "maandelijks" en "achteraf" (staan in het artikel) en de weigering zelf: onbruikbaar |
+| `grounding` met drie opties | 18 van 18 goed; met de uiteindelijke prompt 17 van 18 (één verzonnen prijs gemist in één ronde) |
+| `draft_kind` met drie opties | pure wedervraag 0 van 3 keer herkend: vervangen door de vraagtekenregel |
+
+**Vraag-judge:** "dankjewel" na een antwoord 3/3 `conversation`; "ik wil een medewerker spreken" 3/3 `wants_human`; "mijn telefoon werkt niet" 3/3 `ambiguous` met wat ontbreekt; "wat kost een extra gebruiker" 3/3 `clear`; #904 3/3 `clear` met sentiment negatief; #900 2/3 `clear`.
+
+**Latentie per aanroep:** vraag-judge 424 tot 1398 ms (mediaan ~530), antwoord-judge 352 tot 833 ms (mediaan 495).
+
+**Bekend plafond:** een uitspraak die niet in de artikelen staat maar wel met citeerbare bronnen samenkomt, wordt getoond en alleen gelogd (`grounding` in `answer_signals`). Of dat een weigering moet worden, volgt uit de verdeling op echt verkeer: de valse-positievenkans op lange, parafraserende antwoorden is nog niet gemeten.
 
 ## Performancebudget
 

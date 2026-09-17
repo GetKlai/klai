@@ -41,7 +41,6 @@ from klai_chat_prompts import (
     SUPPORT_EXPRESSIVE_CHAT_SYSTEM_PROMPT,
     broad_mode_answer_marker,
     final_response_language_reminder,
-    may_show_model_text_without_sources,
     strip_appointment_offer_marker,
 )
 from klai_chat_prompts import (
@@ -57,7 +56,7 @@ from klai_chat_prompts.language import (
 
 from app.core.config import Settings
 from app.core.database import tenant_scoped_session
-from app.services.answer_claims import answer_claims_label, classify_answer_claims
+from app.services.answer_judge import decide_answer, is_clarifying_question, judge_answer
 from app.services.citations import (
     compose_answer_with_trusted_sources,
     evidence_chunks_from_chunks,
@@ -1932,96 +1931,125 @@ def _compose_backend_managed_answer(
     return composed.content, sources, decision
 
 
-async def _show_uncited_reply_without_claims(
+async def _judge_composed_answer(
     content: str,
     sources: list[dict],
     decision: dict[str, Any],
     *,
     draft: str,
-    visitor_query: str,
+    messages: list[dict],
     citation_chunks: list[dict] | None,
     settings: Settings,
     org_id: int | str | None,
     answer_signals: dict[str, Any] | None,
     helpdesk: bool,
     response_language: str | None,
-    clarify_turn: bool,
+    force_escalation: bool,
+    conversational: bool,
+    clarity: Literal["clear", "ambiguous"] | None,
 ) -> tuple[str, list[dict], dict[str, Any]]:
-    """Decision 2 of SPEC-RAG-CLARIFY-FLOW-001: model-written text without sources
-    reaches the visitor only when it asserts nothing about the organisation.
+    """SPEC-RAG-ANSWER-JUDGES-001 REQ-2/REQ-3: the answer judge, then the one decision.
 
     Runs on the composer's result rather than inside it. The composer is
-    synchronous and has two production callers plus a large body of direct
-    tests; the classification is an HTTP call. Making the composer async would
-    push ``await`` into every one of those without changing what they test,
-    while this one async step after it keeps a single home for the rule. With
-    ``helpdesk`` off (internal widgets, partner-API keys) it returns the
-    composer's result untouched and makes no model call: the classifier prompt
-    and the refusal it falls back to are written for an external visitor.
+    synchronous with two production callers and a large body of direct tests;
+    the judge is an HTTP call, and one async step after it keeps a single home
+    for the rule. With ``helpdesk`` off (internal widgets, partner-API keys) it
+    returns the composer's result untouched and makes no call: the judge and
+    the refusal are written for an external visitor. A consented broad-mode
+    answer is not judged either; it is labelled general knowledge, and every
+    fact in it would count as unsupported. Callers do not call this on a
+    safety-blocked turn.
 
-    Two composer outcomes carry model-written text with zero sources:
+    The judge sees the draft after the marker and link stripper, exactly the
+    text the visitor would get. An empty result (the model wrote nothing) has
+    nothing to judge and keeps the composer's refusal.
 
-    * the no-citable-sources refusal, whose draft may be a clarifying question
-      or a natural "not found": shown on ``no_claims``, refusal otherwise;
-    * a conversational turn (turn_scope said "conversation"), already shown
-      without the citation firewall: kept on ``no_claims``, replaced by the
-      refusal otherwise. turn_scope names a misclassified turn as its residual
-      risk (reproduced in review: "Wij rekenen 5 euro." passed as
-      conversational), and this post-generation check is the upgrade it names.
-
-    A consented broad-mode answer is deliberately NOT gated. It is labelled
-    general knowledge, and the classifier counts every fact about the world as
-    a claim, so gating it would switch broad mode off entirely.
-
-    The stripper runs over the draft BEFORE classification, so the classifier
-    judges exactly the text the visitor would see; an empty result (a broad
-    turn with no output) has nothing to show and makes no call. Fixed texts
-    never reach the classifier: only the model's draft is ever sent, and callers
-    do not call this on a safety-blocked turn.
-
-    A passed refusal keeps its decision flags (broad-mode offer, appointment
-    escalation); only the audit marker comes off. The exception is a clarify
-    turn (``clarify_turn``: the route added CLARIFY_TURN_ADDENDUM, decided
-    before generation and passed in rather than guessed from the text). There
-    the visitor is being asked a question, and a "broaden the search" or
-    "book an appointment" button under a question reads as a refusal, so both
-    flags come off. Escalation turns never get that addendum, so their button
-    is unaffected.
+    A clarifying question carries no buttons: a "broaden the search" or "book
+    an appointment" button under a question reads as a refusal. An uncited
+    answer keeps only an appointment offer that the backend forced or the
+    model's own words make; a partial answer always gets one.
     """
-    if not helpdesk or sources or decision.get("broad_mode") == "answer":
+    if not helpdesk or decision.get("broad_mode") == "answer":
         return content, sources, decision
-    safe_text = _answer_without_retrieved_sources(strip_appointment_offer_marker(draft)[0], citation_chunks)
+    draft_text, model_offered_appointment = strip_appointment_offer_marker(draft)
+    safe_text = _answer_without_retrieved_sources(draft_text, citation_chunks)
     if not safe_text:
         return content, sources, decision
-    titles = [title for title in dict.fromkeys(map(_chunk_source_title, citation_chunks or [])) if title != "Source"]
-    result = await classify_answer_claims(
-        visitor_query=visitor_query,
-        draft=safe_text,
-        article_titles=titles,
-        settings=settings,
+    articles = [(_chunk_source_title(chunk), str(chunk.get("text") or "")) for chunk in citation_chunks or []]
+    judgement = await judge_answer(messages=messages, draft=safe_text, articles=articles, settings=settings)
+    outcome = decide_answer(
+        has_sources=bool(sources),
+        escalation=force_escalation,
+        conversational=conversational,
+        clarity=clarity,
+        draft_is_question=is_clarifying_question(safe_text),
+        judgement=judgement,
     )
-    # REQ-6: one queryable word per classified turn, including failures.
-    label = answer_claims_label(result)
-    logger.info("partner_chat_answer_claims", org_id=org_id, answer_claims=label)
+    verdicts = judgement.model_dump() if judgement is not None else {}
+    logger.info(
+        "partner_chat_answer_judge", org_id=org_id, decision=outcome, judge_failed=judgement is None, **verdicts
+    )
     if answer_signals is not None:
-        answer_signals["answer_claims"] = label
-    refused = decision.get(_NO_CITABLE_SOURCES_DECISION_KEY)
-    if may_show_model_text_without_sources(result):
-        if not refused:
+        answer_signals.update(verdicts, decision=outcome)
+        if judgement is None:
+            answer_signals.setdefault("judge_failed", []).append("answer")
+
+    refused = bool(decision.get(_NO_CITABLE_SOURCES_DECISION_KEY))
+    if outcome == "refusal":
+        if refused:
             return content, sources, decision
-        passed = {key: value for key, value in decision.items() if key != _NO_CITABLE_SOURCES_DECISION_KEY}
-        passed["reason"] = "uncited_no_claims"
-        if clarify_turn:
-            passed.pop("broad_mode", None)
-            passed.pop("escalation", None)
-        return safe_text, [], passed
+        refusal: dict[str, Any] = {
+            "reason": "answer_judge_refusal",
+            _NO_CITABLE_SOURCES_DECISION_KEY: True,
+            "broad_mode": "offer",
+            "escalation": _appointment_escalation(),
+        }
+        return _no_citable_sources_message(response_language, helpdesk=True), [], refusal
+    if outcome == "clarifying_question":
+        return safe_text, [], {"reason": "clarifying_question"}
     if refused:
-        return content, sources, decision
-    refusal: dict[str, Any] = {"reason": "conversational_turn_claims", _NO_CITABLE_SOURCES_DECISION_KEY: True}
-    if helpdesk:
-        refusal["broad_mode"] = "offer"
-        refusal["escalation"] = _appointment_escalation()
-    return _no_citable_sources_message(response_language, helpdesk=helpdesk), [], refusal
+        content, sources = safe_text, []
+        decision = {
+            key: value
+            for key, value in decision.items()
+            if key not in (_NO_CITABLE_SOURCES_DECISION_KEY, "broad_mode", "escalation")
+        }
+        decision["reason"] = "uncited_no_claims"
+        if force_escalation or (model_offered_appointment and _text_offers_appointment(safe_text)):
+            decision["escalation"] = _appointment_escalation()
+    if outcome == "partial_answer":
+        decision["escalation"] = _appointment_escalation()
+    return content, sources, decision
+
+
+def _log_turn_timing(
+    turn_timing: dict[str, float] | None,
+    *,
+    org_id: int | str | None,
+    generation_ms: int,
+    answer_judge_ms: int,
+) -> None:
+    """REQ-4: one line per support-mode turn with where its wall-clock went.
+
+    ``turn_timing`` comes from the route: ``started_at`` (perf_counter at the
+    start of the request), ``retrieval_ms`` and ``turn_judge_ms``, which ran
+    concurrently, so their sum is not a duration.
+    """
+    if turn_timing is None:
+        return
+    logger.info(
+        "partner_chat_turn_timing",
+        org_id=org_id,
+        retrieval_ms=turn_timing.get("retrieval_ms"),
+        turn_judge_ms=turn_timing.get("turn_judge_ms"),
+        generation_ms=generation_ms,
+        answer_judge_ms=answer_judge_ms,
+        total_ms=_elapsed_ms(turn_timing["started_at"]),
+    )
+
+
+def _elapsed_ms(started_at: float) -> int:
+    return round((time.perf_counter() - started_at) * 1000)
 
 
 def _count_citation_rescues(decision: dict[str, Any]) -> int:
@@ -2071,10 +2099,12 @@ async def _chat_completion_streaming_with_composed_citations(
     broad_mode: bool = False,
     conversational: bool = False,
     force_escalation: bool = False,
-    clarify_turn: bool = False,
+    clarity: Literal["clear", "ambiguous"] | None = None,
     sentiment: Literal["negative", "neutral", "positive"] | None = None,
     answer_signals: dict[str, Any] | None = None,
     signal_chunks: list[dict] | None = None,
+    conversation: list[dict] | None = None,
+    turn_timing: dict[str, float] | None = None,
 ) -> AsyncGenerator[bytes]:
     """Collect text, compose deterministic citations, then stream once.
 
@@ -2111,6 +2141,7 @@ async def _chat_completion_streaming_with_composed_citations(
     # output-safety refusal, which has no conversation decision to follow.
     visitor_query = _last_user_message(augmented_messages) or ""
     chat_url = f"{settings.litellm_base_url}/v1/chat/completions"
+    generation_started = time.perf_counter()
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
             async with client.stream(
@@ -2161,6 +2192,7 @@ async def _chat_completion_streaming_with_composed_citations(
         yield b"data: [DONE]\n\n"
         return
 
+    generation_ms = _elapsed_ms(generation_started)
     content, sources, decision = _compose_backend_managed_answer(
         "".join(raw_text_parts),
         trusted_sources,
@@ -2174,7 +2206,7 @@ async def _chat_completion_streaming_with_composed_citations(
         force_escalation=force_escalation,
         response_language=response_language,
     )
-    decision.update({"sentiment": sentiment} if support_mode and sentiment else {})
+    judge_started = time.perf_counter()
     if safety_reason := output_safety_violation("".join(raw_text_parts)):
         logger.warning(
             "partner_chat_output_blocked",
@@ -2188,20 +2220,26 @@ async def _chat_completion_streaming_with_composed_citations(
         sources = []
         decision = {"reason": safety_reason}
     else:
-        content, sources, decision = await _show_uncited_reply_without_claims(
+        content, sources, decision = await _judge_composed_answer(
             content,
             sources,
             decision,
             draft="".join(raw_text_parts),
-            visitor_query=visitor_query,
+            messages=conversation or [],
             citation_chunks=citation_chunks,
             settings=settings,
             org_id=org_id,
             answer_signals=answer_signals,
             helpdesk=support_mode,
             response_language=response_language,
-            clarify_turn=clarify_turn,
+            force_escalation=force_escalation,
+            conversational=conversational,
+            clarity=clarity,
         )
+        decision.update({"sentiment": sentiment} if support_mode and sentiment else {})
+    _log_turn_timing(
+        turn_timing, org_id=org_id, generation_ms=generation_ms, answer_judge_ms=_elapsed_ms(judge_started)
+    )
     # Consumed before the decision is logged so that event keeps its exact
     # payload: the marker only travels to the audit sink (see _fill_answer_signals).
     refused = bool(decision.pop(_NO_CITABLE_SOURCES_DECISION_KEY, False))
@@ -2866,10 +2904,11 @@ async def chat_completion_non_streaming(
     broad_mode: bool = False,
     conversational: bool = False,
     force_escalation: bool = False,
-    clarify_turn: bool = False,
+    clarity: Literal["clear", "ambiguous"] | None = None,
     sentiment: Literal["negative", "neutral", "positive"] | None = None,
     answer_signals: dict[str, Any] | None = None,
     signal_chunks: list[dict] | None = None,
+    turn_timing: dict[str, float] | None = None,
 ) -> dict:
     """Forward to LiteLLM and return complete response as dict.
 
@@ -2901,6 +2940,7 @@ async def chat_completion_non_streaming(
     litellm_url = settings.litellm_base_url
     chat_url = f"{litellm_url}/v1/chat/completions"
 
+    generation_started = time.perf_counter()
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
@@ -2945,6 +2985,8 @@ async def chat_completion_non_streaming(
             detail={"error": {"type": "upstream_error", "message": "Chat service error"}},
         ) from exc
 
+    generation_ms = _elapsed_ms(generation_started)
+    answer_judge_ms = 0
     allowed_source_urls = allowed_source_urls or set()
     citation_source_urls = citation_source_urls or {}
     citation_source_metadata = citation_source_metadata or {}
@@ -3000,20 +3042,24 @@ async def chat_completion_non_streaming(
                     force_escalation=force_escalation,
                     response_language=language_decision.language,
                 )
-                rendered_content, sources, decision = await _show_uncited_reply_without_claims(
+                judge_started = time.perf_counter()
+                rendered_content, sources, decision = await _judge_composed_answer(
                     rendered_content,
                     sources,
                     decision,
                     draft=content,
-                    visitor_query=visitor_query,
+                    messages=messages,
                     citation_chunks=citation_chunks,
                     settings=settings,
                     org_id=org_id,
                     answer_signals=answer_signals,
                     helpdesk=support_mode,
                     response_language=language_decision.language,
-                    clarify_turn=clarify_turn,
+                    force_escalation=force_escalation,
+                    conversational=conversational,
+                    clarity=clarity,
                 )
+                answer_judge_ms = _elapsed_ms(judge_started)
                 decision.update({"sentiment": sentiment} if support_mode and sentiment else {})
                 # Popped before the log so that event keeps its exact payload;
                 # the marker only travels to the audit sink.
@@ -3041,6 +3087,7 @@ async def chat_completion_non_streaming(
                 if escalation := _appointment_escalation_signal(decision):
                     message["escalation"] = escalation
         stripped_links = 0
+        _log_turn_timing(turn_timing, org_id=org_id, generation_ms=generation_ms, answer_judge_ms=answer_judge_ms)
     else:
         stripped_links = _sanitize_completion_body(
             body,
@@ -3108,10 +3155,11 @@ async def chat_completion_streaming(
     broad_mode: bool = False,
     conversational: bool = False,
     force_escalation: bool = False,
-    clarify_turn: bool = False,
+    clarity: Literal["clear", "ambiguous"] | None = None,
     sentiment: Literal["negative", "neutral", "positive"] | None = None,
     answer_signals: dict[str, Any] | None = None,
     signal_chunks: list[dict] | None = None,
+    turn_timing: dict[str, float] | None = None,
 ) -> AsyncGenerator[bytes]:
     """Stream LiteLLM SSE response with backend-managed KB citations.
 
@@ -3159,10 +3207,12 @@ async def chat_completion_streaming(
             broad_mode=broad_mode,
             conversational=conversational,
             force_escalation=force_escalation,
-            clarify_turn=clarify_turn,
+            clarity=clarity,
             sentiment=sentiment,
             answer_signals=answer_signals,
             signal_chunks=signal_chunks,
+            conversation=messages,
+            turn_timing=turn_timing,
         ):
             yield chunk
         return
