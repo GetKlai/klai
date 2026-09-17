@@ -1923,12 +1923,7 @@ async def chat_completions(  # noqa: C901
     if escalation is None and turn_judgement:
         if turn_judgement.wants_human:
             escalation = escalation_service.HUMAN_REQUEST
-        elif sentiment == "negative" and turn_judgement.clarity != "ambiguous":
-            # A vague complaint is a question to ask about, not a visitor to hand
-            # off. Measured live on 2026-09-17: "mijn telefoon werkt niet" came
-            # back ambiguous AND negative in 2 of 2 turns, so the frustration
-            # offer replaced the clarifying question every time. An angry
-            # register still escalates through the regex above.
+        elif sentiment == "negative":
             escalation = escalation_service.FRUSTRATION
     if escalation:
         system_prompt += escalation_service.ESCALATION_TURN_ADDENDUM[escalation]
@@ -1943,21 +1938,16 @@ async def chat_completions(  # noqa: C901
     if conversational:
         system_prompt += turn_judge.CONVERSATIONAL_TURN_ADDENDUM
 
-    # SPEC-RAG-ANSWER-JUDGES-001 REQ-3. The instruction to ask rather than
-    # answer changes what the model writes, so it only goes in when two
-    # independent signals agree: the question judge calls the turn ambiguous AND
-    # retrieval is weak. On its own the judge called 8 of 9 real Voys questions
-    # ambiguous at least once (including "Ik wil mijn bedrijfsnaam wijzigen"),
-    # and on a strong retrieval the original system answered those well. Not on
-    # a broad-mode, escalation or conversational turn. Everywhere else clarity
-    # reads "clear" for the decision.
-    weak_retrieval = gap is not None or answer_signals.get("band") in ("low", "unknown")
+    # SPEC-RAG-ANSWER-JUDGES-001 REQ-3. Clarity is measured and labels a draft
+    # that ends on a question, but no longer steers the generation. An
+    # instruction to ask rather than answer made answers worse in a blind
+    # comparison on 50 real Voys first questions (old system better in 19 of
+    # 23 turns that received it) and produced a real clarifying question only
+    # 2 times in 150 answers. Not on a broad-mode, escalation or conversational
+    # turn, where a question is never the intended reply.
     clarity: Literal["clear", "ambiguous"] | None = turn_judgement.clarity if turn_judgement else None
-    if turn_judgement and clarity == "ambiguous":
-        if broad_turn or escalation or turn_judge.is_conversational(scope) or not weak_retrieval:
-            clarity = "clear"
-        else:
-            system_prompt += turn_judge.AMBIGUOUS_TURN_ADDENDUM
+    if broad_turn or escalation or turn_judge.is_conversational(scope):
+        clarity = "clear"
 
     if support_mode:
         # REQ-4. Every judged turn logs its outcome, failures as their own word:
