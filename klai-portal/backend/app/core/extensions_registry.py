@@ -46,6 +46,11 @@ KNOWN_FEATURES: frozenset[str] = frozenset(
         # Gaps screen under Kennis: separate switch, default off, because the
         # screen is unfinished; Klai staff turn it on per tenant.
         "knowledge_gaps",
+        # SPEC-RAG-CLARIFY-FLOW-001 REQ-2/REQ-3: support-mode widgets may ask a
+        # clarifying question and show an uncited reply that asserts nothing
+        # about the organisation. Default off; Klai staff turn it on per tenant
+        # (Voys and Klai first), because it moves the widget's grounding boundary.
+        "widget_clarify_flow",
     }
 )
 

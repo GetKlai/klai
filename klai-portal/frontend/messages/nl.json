@@ -2708,6 +2708,8 @@
   "admin_extension_knowledge_activity_description": "Kennisbeheerders zien de widget-gesprekken onder Kennis, beoordelen antwoorden en zien welke kennis ontbreekt of niet klopt.",
   "admin_extension_knowledge_gaps_label": "Kennisgaten",
   "admin_extension_knowledge_gaps_description": "Toont onder Kennis welke vragen de kennisbank niet kon beantwoorden, zodat kennisbeheerders die kunnen invullen. Nog in ontwikkeling.",
+  "admin_extension_widget_clarify_flow_label": "Wedervragen in de helpwidget",
+  "admin_extension_widget_clarify_flow_description": "Laat de helpwidget doorvragen bij een vage vraag en in eigen woorden reageren als een antwoord niet gevonden is, zolang die reactie niets over de organisatie beweert. Wordt nog gemeten.",
   "admin_extension_librechat_quality_judge_label": "Gespreksbeoordeling (LibreChat)",
   "admin_extension_librechat_quality_judge_description": "Laat de nachtelijke kwaliteitsbeoordeling ook LibreChat-gesprekken van deze tenant beoordelen (los van webchat).",
   "activity_page_title": "Gesprekken",

@@ -733,6 +733,7 @@ async def test_api_threads_consent_and_clears_chunks_on_broad_turn(consent: bool
         ),
         patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=False)),
         patch("app.api.partner._widget_support_mode_enabled", new=AsyncMock(return_value=True)),
+        patch("app.api.partner._clarify_flow_enabled", new=AsyncMock(return_value=False)),
         patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()) as chat_stream,
         patch("app.api.partner.asyncio"),
         patch("app.api.partner.write_retrieval_log", new=AsyncMock()),
