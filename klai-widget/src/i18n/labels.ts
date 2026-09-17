@@ -93,7 +93,7 @@ export interface WidgetLabels {
 }
 
 const nl: WidgetLabels = {
-  placeholder: "Stel een vraag...",
+  placeholder: "Beschrijf je vraag zo concreet mogelijk...",
   sendMessage: "Stuur bericht",
   stopGenerating: "Stop genereren",
   closeChat: "Sluit chat",
@@ -163,7 +163,7 @@ const nl: WidgetLabels = {
 }
 
 const en: WidgetLabels = {
-  placeholder: "Ask a question...",
+  placeholder: "Describe your question as specifically as you can...",
   sendMessage: "Send message",
   stopGenerating: "Stop generating",
   closeChat: "Close chat",

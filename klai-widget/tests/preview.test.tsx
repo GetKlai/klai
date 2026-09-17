@@ -97,16 +97,16 @@ describe("admin preview", () => {
     const placeholder = () =>
       host.shadowRoot!.querySelector<HTMLTextAreaElement>(".klai-textarea")!.placeholder;
 
-    expect(placeholder()).toBe("Stel een vraag...");
+    expect(placeholder()).toBe("Beschrijf je vraag zo concreet mogelijk...");
     // Stands in for the backend's per-turn language signal, whose route into
     // this call is covered by language-switch.test.tsx.
     setLanguage("en");
-    await waitFor(() => expect(placeholder()).toBe("Ask a question..."));
+    await waitFor(() => expect(placeholder()).toBe("Describe your question as specifically as you can..."));
 
     preview.updateConfig({ ...widgetConfig("Updated", "updated-token"), primary_color: "#270697" });
 
     expect(host.style.getPropertyValue("--klai-primary-color")).toBe("#270697");
-    expect(placeholder()).toBe("Ask a question...");
+    expect(placeholder()).toBe("Describe your question as specifically as you can...");
 
     preview.dispose();
     Object.defineProperty(window, "parent", { configurable: true, value: parentWindow });
