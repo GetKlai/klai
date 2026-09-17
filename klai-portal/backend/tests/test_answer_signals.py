@@ -182,7 +182,19 @@ def _mock_litellm(monkeypatch, model_text: str) -> None:
     monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", _Client)
 
 
-async def _widget_chat(monkeypatch, *, model_text: str, chunks: list[dict], stream: bool):
+def _fake_retrieval(chunks: list[dict], band: str | None):
+    """retrieve_context stand-in that writes the band into the caller's sink,
+    so these tests fail if the route stops handing its sink to retrieval."""
+
+    def _retrieve(*_, answer_signals=None, **__):
+        if band is not None:
+            answer_signals["band"] = band
+        return chunks, "sys prompt", [], False
+
+    return _retrieve
+
+
+async def _widget_chat(monkeypatch, *, model_text: str, chunks: list[dict], stream: bool, band: str | None = None):
     """POST /partner/v1/chat/completions as a widget caller with the audit
     write mocked; returns (record_widget_turn mock, what the client got)."""
     from helpers import FakeResult, make_partner_auth
@@ -206,7 +218,7 @@ async def _widget_chat(monkeypatch, *, model_text: str, chunks: list[dict], stre
         # KB ids → slugs reads real KB rows; the FakeResult above only knows the
         # widget uuid, so resolve the slugs directly.
         patch("app.api.partner._resolve_kb_slugs", new=AsyncMock(return_value=["kb-test"])),
-        patch("app.api.partner.retrieve_context", return_value=(chunks, "sys prompt", [], False)),
+        patch("app.api.partner.retrieve_context", side_effect=_fake_retrieval(chunks, band)),
         patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=False)),
         patch("app.api.partner._widget_support_mode_enabled", new=AsyncMock(return_value=False)),
         patch("app.api.partner.record_widget_turn", new=AsyncMock()) as record,
@@ -226,29 +238,11 @@ def _assistant_signals(record: AsyncMock) -> dict:
     return assistant[-1]["answer_signals"]
 
 
-def test_band_thresholds():
-    """Band boundaries come from settings, not from literals at the call site."""
-    from app.services.partner_chat import _answer_confidence_band
-
-    assert _answer_confidence_band(0.71) == "high"
-    assert _answer_confidence_band(0.45) == "medium"
-    assert _answer_confidence_band(0.12) == "low"
-    assert _answer_confidence_band(None) == "unknown"
-
-
-def test_config_rejects_low_above_high():
-    """A band ladder with low >= high has no middle band; refuse it at startup."""
-    from pydantic import ValidationError
-
-    from app.core.config import Settings
-
-    with pytest.raises(ValidationError):
-        Settings(answer_confidence_low_threshold=0.7, answer_confidence_high_threshold=0.6)
-
-
 @pytest.mark.asyncio
 async def test_non_streaming_assistant_turn_carries_answer_signals(monkeypatch):
-    record, body = await _widget_chat(monkeypatch, model_text=ANSWER_TEXT, chunks=[_chunk(0.71)], stream=False)
+    record, body = await _widget_chat(
+        monkeypatch, model_text=ANSWER_TEXT, chunks=[_chunk(0.71)], stream=False, band="high"
+    )
 
     signals = _assistant_signals(record)
     assert set(signals) == SIGNAL_KEYS
@@ -264,7 +258,9 @@ async def test_non_streaming_assistant_turn_carries_answer_signals(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_streaming_assistant_turn_carries_answer_signals(monkeypatch):
-    record, frames = await _widget_chat(monkeypatch, model_text=ANSWER_TEXT, chunks=[_chunk(0.71)], stream=True)
+    record, frames = await _widget_chat(
+        monkeypatch, model_text=ANSWER_TEXT, chunks=[_chunk(0.71)], stream=True, band="high"
+    )
 
     assert b"answer_signals" not in b"".join(frames), "answer_signals leaked into an SSE frame"
     signals = _assistant_signals(record)
@@ -314,19 +310,24 @@ def test_broad_turn_scores_the_retrieval_that_triggered_it():
     sink = _fill([_chunk(0.18)], sources=[])
 
     assert sink["top_score"] == 0.18
-    assert sink["band"] == "low"
     assert sink["gap_type"] == "soft"
     assert sink["sources_count"] == 0
 
 
-def test_band_is_unknown_without_a_reranker_score():
-    """Retrieval-api contract: only a cross-encoder score is certainty evidence.
-    A dense-only fallback chunk still yields a top_score (gap-event parity) but
-    bands as unknown, exactly like confidence_band on the LibreChat path."""
-    sink = _fill([{"chunk_id": "c1", "text": "x", "score": 0.9, "reranker_score": None}])
+def test_fill_keeps_the_band_retrieval_wrote_and_defaults_the_rest():
+    """_fill_answer_signals never re-bands: it leaves retrieval's band alone and
+    marks a turn that never retrieved as unknown."""
+    from app.services.partner_chat import _fill_answer_signals
 
-    assert sink["top_score"] == 0.9
-    assert sink["band"] == "unknown"
+    kept: dict = {"band": "high"}
+    empty: dict = {}
+    for sink in (kept, empty):
+        _fill_answer_signals(
+            sink, decision={}, refused=False, chunks=[], sources=[], model=None, query_text="hoe reset ik dit?"
+        )
+
+    assert kept["band"] == "high"
+    assert empty["band"] == "unknown"
 
 
 def test_language_is_the_visitor_question_language():
@@ -347,3 +348,101 @@ async def test_user_turn_carries_the_question_language(monkeypatch):
     user_turns = [c.kwargs for c in record.await_args_list if c.kwargs.get("role") == "user"]
     assert user_turns, "record_widget_turn never wrote the user turn"
     assert user_turns[0]["language_detected"] == "nl"
+
+
+# ─── the band is the retrieval service's decision, not a second one ───
+#
+# retrieval-api already bands every result and the LibreChat path acts on that
+# band. The widget path used to throw it away and re-band on reranker_score
+# alone, which ignores the link-expand and page-context boosts final_rank_score
+# carries — so the band the calibration readout grouped on was not the band
+# that acted.
+
+
+async def _retrieve_with_signals(monkeypatch, payload: dict) -> dict:
+    from app.services import partner_chat
+
+    class _Resp:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return payload
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def post(self, *_, **__):
+            return _Resp()
+
+    settings = MagicMock()
+    settings.knowledge_retrieve_url = "http://retrieval-api:8040"
+    settings.retrieval_api_internal_secret = "secret"
+    settings.internal_secret = "fallback"
+    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _Client())
+    monkeypatch.setattr("app.services.partner_chat._schedule_gap_event", lambda **_: None)
+
+    sink: dict = {}
+    await partner_chat.retrieve_context(
+        org_id=42,
+        zitadel_org_id="zit-org-1",
+        kb_slugs=["kb-alpha"],
+        messages=[{"role": "user", "content": "hoe reset ik mijn wachtwoord?"}],
+        settings=settings,
+        answer_signals=sink,
+    )
+    return sink
+
+
+def _payload(band: str | None) -> dict:
+    # reranker_score 0.45 alone would band "medium"; the service says otherwise.
+    item = {"chunk_id": "c1", "text": ANSWER_TEXT, "source_url": "https://example.com/reset", "reranker_score": 0.45}
+    return {"evidence_pack": {"items": [item], "sources": []}, "confidence_band": band}
+
+
+@pytest.mark.asyncio
+async def test_band_is_the_retrieval_services_band_not_a_recomputation(monkeypatch):
+    sink = await _retrieve_with_signals(monkeypatch, _payload("high"))
+
+    assert sink["band"] == "high"
+
+
+@pytest.mark.asyncio
+async def test_band_is_unknown_when_the_safety_filter_changed_the_retrieved_set(monkeypatch):
+    """The service banded the set it served; once a chunk is dropped here that set
+    no longer reached the prompt, so no band is claimed for it."""
+    monkeypatch.setattr("app.services.partner_chat.context_safety_violation", lambda *_, **__: "test_block")
+
+    sink = await _retrieve_with_signals(monkeypatch, _payload("high"))
+
+    assert sink["band"] == "unknown"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.asyncio
+async def test_output_safety_refusal_still_stores_complete_signals(monkeypatch, stream):
+    """Both pads fill the whole record after an output-safety refusal. The
+    non-streaming pad used to skip it, which left a record holding only the band
+    retrieval had already written."""
+    monkeypatch.setattr("app.services.partner_chat.output_safety_violation", lambda *_: "test_block")
+
+    record, _ = await _widget_chat(
+        monkeypatch, model_text=ANSWER_TEXT, chunks=[_chunk(0.71)], stream=stream, band="high"
+    )
+
+    signals = _assistant_signals(record)
+    assert set(signals) == SIGNAL_KEYS
+    assert signals["band"] == "high"
+    assert signals["sources_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_band_outside_the_contract_is_stored_as_unknown(monkeypatch):
+    """The calibration panel ranks and the review table checks exactly four values."""
+    sink = await _retrieve_with_signals(monkeypatch, _payload("very-high"))
+
+    assert sink["band"] == "unknown"

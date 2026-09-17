@@ -55,7 +55,6 @@ from klai_chat_prompts.language import (
 )
 
 from app.core.config import Settings
-from app.core.config import settings as global_settings
 from app.core.database import tenant_scoped_session
 from app.services.citations import (
     compose_answer_with_trusted_sources,
@@ -1632,26 +1631,6 @@ so ``partner_chat_citation_selection_decision`` keeps its exact payload.
 """
 
 
-def _answer_confidence_band(
-    top_score: float | None,
-    *,
-    settings_obj: Settings | None = None,
-) -> Literal["high", "medium", "low", "unknown"]:
-    """Band an answer's top retrieval score using the two configured thresholds.
-
-    Pure and settings-driven on purpose: the band is stored on the audit row,
-    so recalibrating certainty must be an env change, never an edit here.
-    """
-    cfg = settings_obj or global_settings
-    if top_score is None:
-        return "unknown"
-    if top_score >= cfg.answer_confidence_high_threshold:
-        return "high"
-    if top_score < cfg.answer_confidence_low_threshold:
-        return "low"
-    return "medium"
-
-
 def _top_chunk_score(chunks: list[dict]) -> tuple[dict | None, float | None]:
     """Return ``(top chunk, its score)`` — reranker score when present, else dense.
 
@@ -1664,18 +1643,6 @@ def _top_chunk_score(chunks: list[dict]) -> tuple[dict | None, float | None]:
     return top_chunk, top_chunk.get("reranker_score") or top_chunk.get("score")
 
 
-def _max_reranker_score(chunks: list[dict]) -> float | None:
-    """Highest numeric ``reranker_score``; ``None`` when nothing was reranked.
-
-    Mirrors the retrieval-api's ``_compute_confidence_band`` input rule: only a
-    cross-encoder score is evidence of certainty, so a fallback pack whose
-    chunks carry a dense score but no reranker score bands as ``unknown`` on
-    both chat paths instead of banding here and not there.
-    """
-    scores = [c["reranker_score"] for c in chunks if isinstance(c.get("reranker_score"), (int, float))]
-    return max(scores) if scores else None
-
-
 def _fill_answer_signals(
     sink: dict[str, Any] | None,
     *,
@@ -1685,7 +1652,6 @@ def _fill_answer_signals(
     sources: list[dict],
     model: str | None,
     query_text: str,
-    settings_obj: Settings | None = None,
 ) -> None:
     """Write this answer's certainty signals into the caller-owned audit sink.
 
@@ -1712,7 +1678,6 @@ def _fill_answer_signals(
         sink.update(
             {
                 "top_score": top_score,
-                "band": _answer_confidence_band(_max_reranker_score(chunks or []), settings_obj=settings_obj),
                 "gap_type": classify_gap(chunks or []),
                 "sources_count": len(sources),
                 "refused": refused,
@@ -1725,6 +1690,8 @@ def _fill_answer_signals(
                 "model": model,
             }
         )
+        # retrieve_context writes the band; a turn that never retrieved has none.
+        sink.setdefault("band", "unknown")
     except Exception:
         logger.warning("partner_chat_answer_signals_failed", exc_info=True)
 
@@ -2143,7 +2110,6 @@ async def _chat_completion_streaming_with_composed_citations(
         sources=sources,
         model=model,
         query_text=visitor_query,
-        settings_obj=settings,
     )
     # Safety refusals above replace the decision dict, so no broad signal
     # survives on a blocked turn — deliberate: a blocked answer neither
@@ -2489,6 +2455,32 @@ def _schedule_gap_event(
         logger.warning("partner_chat_gap_detection_failed", org_id=org_id, exc_info=True)
 
 
+_ANSWER_BANDS = frozenset({"high", "medium", "low", "unknown"})
+
+
+def _record_retrieval_band(sink: dict[str, Any] | None, result: dict, *, blocked_chunk_count: int) -> None:
+    """Put retrieval-api's certainty band for this turn into the audit sink.
+
+    That band is the one the LibreChat path acts on: it scores final_rank_score,
+    link-expand and page-context boosts included, which the reranker_score in the
+    chunks handed to the portal does not carry. Re-banding here gave the
+    calibration readout a second band that could differ from the one that acted.
+    When the safety filter dropped a chunk, the set the service banded never
+    reached the prompt, so no band is claimed; measured 2026-09-17, that happened
+    in 0 of 690 widget turns over 30 days.
+    """
+    if sink is None:
+        return
+    band = result.get("confidence_band")
+    if band not in _ANSWER_BANDS:
+        if band is not None:
+            # The review table's CHECK and the calibration panel's ranking accept
+            # exactly these four; drift in retrieval-api must be visible, not stored.
+            logger.warning("partner_chat_unexpected_confidence_band", band=band)
+        band = "unknown"
+    sink["band"] = "unknown" if blocked_chunk_count else band
+
+
 async def retrieve_context(
     org_id: int,
     zitadel_org_id: str,
@@ -2513,6 +2505,9 @@ async def retrieve_context(
     audit_widget_id: str | None = None,
     audit_session_key: str | None = None,
     audit_write: asyncio.Future[Any] | None = None,
+    # Caller-owned audit sink (see _fill_answer_signals); this is where the
+    # answer's certainty band enters it.
+    answer_signals: dict[str, Any] | None = None,
 ) -> tuple[list[dict], str, list[dict[str, Any]], bool]:
     """Call retrieval-api and return (chunks, augmented_system_prompt, trusted_sources, broad).
 
@@ -2687,6 +2682,7 @@ async def retrieve_context(
     if blocked_chunk_count:
         chunks = safe_chunks
         trusted_sources = _filter_trusted_sources_for_chunks(trusted_sources, chunks)
+    _record_retrieval_band(answer_signals, result, blocked_chunk_count=blocked_chunk_count)
     # Consented general-knowledge fallback: decided here, on the same
     # post-safety-filter chunks the gap event sees, and surfaced to the caller
     # as the fourth tuple element so the prompt swap and the answer label can
@@ -2868,6 +2864,17 @@ async def chat_completion_non_streaming(
                     )
                     message["content"] = safety_refusal_message(visitor_query)
                     message["sources"] = []
+                    # Same record as the streaming pad writes for a blocked turn;
+                    # skipping it left only the band retrieval had already stored.
+                    _fill_answer_signals(
+                        answer_signals,
+                        decision={"reason": safety_reason},
+                        refused=False,
+                        chunks=signal_chunks if signal_chunks is not None else citation_chunks,
+                        sources=[],
+                        model=model,
+                        query_text=visitor_query,
+                    )
                     continue
                 rendered_content, sources, decision = _compose_backend_managed_answer(
                     content,
@@ -2901,7 +2908,6 @@ async def chat_completion_non_streaming(
                     sources=sources,
                     model=model,
                     query_text=visitor_query,
-                    settings_obj=settings,
                 )
                 message["content"] = rendered_content
                 message["sources"] = sources
