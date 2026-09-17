@@ -8841,13 +8841,121 @@ class TestClarifyFlowPathA:
             assert not any(m["role"] == "system" for m in data["messages"])
 
     @pytest.mark.asyncio
-    async def test_short_help_request_lands_on_the_meta_prompt(self, monkeypatch):
+    @pytest.mark.parametrize(
+        ("query", "meta"),
+        [
+            ("help", True),
+            ("hulp", True),
+            ("help me", True),
+            ("help me met deze klant", False),
+        ],
+    )
+    async def test_short_help_request_lands_on_the_meta_prompt(
+        self, monkeypatch, query, meta
+    ):
         hook = self._load(monkeypatch).KlaiKnowledgeHook()
         with self._http() as http:
-            data = await self._pre_call(hook, kb_narrow=True, query="help")
+            data = await self._pre_call(hook, kb_narrow=True, query=query)
 
-        assert http.retrieve == []
-        assert "META question about Klai itself" in self._system_text(data)
+        assert ("META question about Klai itself" in self._system_text(data)) is meta
+        assert (http.retrieve == []) is meta
+
+    @pytest.mark.asyncio
+    async def test_held_strict_chunks_carry_no_text_outside_tool_calls(
+        self, monkeypatch
+    ):
+        hook = self._load(monkeypatch).KlaiKnowledgeHook()
+        tool_calls = [
+            {
+                "index": 0,
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "web_search", "arguments": '{"q": "huur"}'},
+            }
+        ]
+        chunks = [
+            {"role": "assistant", "content": "", "tool_calls": tool_calls},
+            {
+                "content": "De kantoorhuur ",
+                "reasoning_content": "SECRET-REASONING",
+                "thinking_blocks": [{"type": "thinking", "thinking": "SECRET-THINK"}],
+                "sources": [{"title": "SECRET-SOURCE"}],
+                "provider_specific_fields": {"citations": ["SECRET-PSF"]},
+                "unknown_field": "SECRET-UNKNOWN",
+            },
+            {"content": "vijfduizend euro maandelijks."},
+        ]
+
+        async def stream():
+            for index, delta in enumerate(chunks):
+                last = index == len(chunks) - 1
+                yield {
+                    "choices": [
+                        {"delta": delta, "finish_reason": "stop" if last else None}
+                    ]
+                }
+
+        with self._http(band="high", classifier='{"category": "claims"}'):
+            data = await self._pre_call(hook, kb_narrow=True)
+            items = [
+                item
+                async for item in hook.async_post_call_streaming_iterator_hook(
+                    None, stream(), data
+                )
+            ]
+
+        held = [item["choices"][0]["delta"] for item in items[: len(chunks) - 1]]
+        assert held[0] == {"role": "assistant", "content": "", "tool_calls": tool_calls}
+        assert held[1] == {"content": ""}
+        assert "SECRET" not in repr(items)
+        assert "kantoorhuur" not in repr(items)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("stream", [True, False])
+    async def test_strict_reply_with_two_choices_shows_no_raw_text(
+        self, monkeypatch, stream
+    ):
+        hook = self._load(monkeypatch).KlaiKnowledgeHook()
+        with self._http(band="high", classifier='{"category": "no_claims"}'):
+            data = await self._pre_call(hook, kb_narrow=True, stream=stream)
+            if stream:
+
+                async def chunks():
+                    for index, (first, second) in enumerate(
+                        [("Welke ", "Kies "), ("module?", "een optie.")]
+                    ):
+                        finish = "stop" if index == 1 else None
+                        yield {
+                            "choices": [
+                                {"index": 0, "delta": {"content": first}, "finish_reason": finish},
+                                {"index": 1, "delta": {"content": second}, "finish_reason": finish},
+                            ]
+                        }
+
+                items = [
+                    item
+                    async for item in hook.async_post_call_streaming_iterator_hook(
+                        None, chunks(), data
+                    )
+                ]
+                visible = [
+                    "".join(item["choices"][i]["delta"]["content"] for item in items)
+                    for i in (0, 1)
+                ]
+            else:
+                response = {
+                    "choices": [
+                        {"message": {"content": "Welke module?"}},
+                        {"message": {"content": "Kies een optie."}},
+                    ]
+                }
+                await hook.async_post_call_success_hook(data, None, response)
+                visible = [c["message"]["content"] for c in response["choices"]]
+
+        for text in visible:
+            assert text.startswith("Ik kan dit niet betrouwbaar beantwoorden")
+            assert "module" not in text
+            assert "optie" not in text
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
