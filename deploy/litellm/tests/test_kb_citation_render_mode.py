@@ -1,12 +1,28 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
+import subprocess
+import sys
+from pathlib import Path
 
 from klai_kb_citation_render import (
-    compose_non_streaming_kb_response,
-    compose_streaming_kb_response,
+    compose_non_streaming_kb_response as _compose_non_streaming_kb_response,
+    compose_streaming_kb_response as _compose_streaming_kb_response,
     log_kb_citation_render,
 )
+
+
+# The composers are async since SPEC-RAG-CLARIFY-FLOW-001 REQ-4 (a Strict
+# refusal may await the answer-claims classification). These contract tests
+# exercise the render itself, so they run each call to completion.
+def compose_non_streaming_kb_response(*args, **kwargs):
+    return asyncio.run(_compose_non_streaming_kb_response(*args, **kwargs))
+
+
+def compose_streaming_kb_response(*args, **kwargs):
+    return asyncio.run(_compose_streaming_kb_response(*args, **kwargs))
 
 
 def _response(content: str) -> dict:
@@ -300,3 +316,59 @@ def test_streaming_render_log_contains_language_fields(caplog):
     assert "response_language_target=en" in messages[0]
     assert "answer_language=en" in messages[0]
     assert "language_correct=True" in messages[0]
+
+
+# Runs against the REAL litellm stream objects in a subprocess: sibling test
+# modules install a fake ``litellm`` into sys.modules, so an in-process import
+# would be order-dependent (same reason as test_litellm_customlogger_contract).
+_HELD_OBJECT_PROBE = """
+import asyncio, json, sys
+sys.path.insert(0, %r)
+from litellm.types.utils import Delta, ModelResponseStream, StreamingChoices
+from klai_kb_citation_render import compose_streaming_kb_response
+
+meta = {
+    'chat_retrieval_prompt_mode': 'strict_kb',
+    'kb_narrow': True,
+    'chunks_injected': 1,
+    'user_query': 'Wat kost de huur?',
+    'response_language_target': 'nl',
+    'citation_chunks': [{'evidence_id': 'E1', 'title': 'Tags',
+                         'source_url': 'https://docs.klai.example/tags',
+                         'text': 'Tabel met supporttags.'}],
+    'trusted_sources': [{'label': '1', 'title': 'Tags',
+                         'url': 'https://docs.klai.example/tags',
+                         'evidence_ids': ['E1']}],
+}
+tool_call = {'index': 0, 'id': 'call_1', 'type': 'function',
+             'function': {'name': 'web_search', 'arguments': '{"q": "huur"}'}}
+tool_delta = Delta(role='assistant', tool_calls=[tool_call])
+text_delta = Delta(content='De kantoorhuur ', reasoning_content='SECRET-REASONING',
+                   provider_specific_fields={'citations': ['SECRET-PSF']})
+text_delta.sources = [{'title': 'SECRET-SOURCE'}]
+chunks = [ModelResponseStream(choices=[StreamingChoices(index=0, delta=d)])
+          for d in (tool_delta, text_delta)]
+before = chunks[0].choices[0].delta.tool_calls[0].model_dump()
+for chunk in chunks:
+    asyncio.run(compose_streaming_kb_response(chunk, meta))
+print(json.dumps({
+    'held': [chunk.model_dump_json() for chunk in chunks],
+    'tool_call_before': before,
+    'tool_call_after': chunks[0].choices[0].delta.tool_calls[0].model_dump(),
+    'delta_type': type(chunks[1].choices[0].delta).__name__,
+}))
+""" % str(Path(__file__).resolve().parents[1])
+
+
+def test_held_strict_litellm_stream_objects_carry_no_text_outside_tool_calls():
+    result = subprocess.run(
+        [sys.executable, "-c", _HELD_OBJECT_PROBE], capture_output=True, text=True
+    )
+    assert result.returncode == 0, result.stderr[-2000:]
+    out = json.loads(result.stdout)
+
+    assert out["delta_type"] == "Delta"
+    assert out["tool_call_after"] == out["tool_call_before"]
+    for serialized in out["held"]:
+        assert "SECRET" not in serialized
+        assert "kantoorhuur" not in serialized

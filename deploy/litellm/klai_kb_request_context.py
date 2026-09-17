@@ -38,7 +38,8 @@ META_QUERY_PATTERNS = re.compile(
     r"|wie\s+ben\s+je"
     r"|waarvoor\s+is\s+(?:dit|klai)"
     r"|waar\s+is\s+(?:dit|klai)\s+voor"
-    r"|help"
+    r"|help(?:\s+me)?"
+    r"|hulp"
     r"|what\s+can\s+(?:i|you)\s+do"
     r"(?:\s+(?:here|with\s+(?:klai|you))){0,2}"
     r"|what\s+(?:is|are|does)\s+klai(?:\s+do)?"
@@ -84,9 +85,16 @@ _FOOTER_BODY_BULLET_RE = re.compile(r"^[ \t]*[-*+•][ \t]+")
 
 
 def is_trivial(text: str) -> bool:
+    # Short fragments ("top", "thx", a thumbs-up) skip retrieval, rewrite and
+    # telemetry as they always have, UNLESS they are question-shaped: a "?"
+    # plus at least one letter or digit. The length-only floor that stood here
+    # sent "VPN?" and "prijs?" to the model without any knowledge, exactly the
+    # turns SPEC-RAG-CLARIFY-FLOW-001 answers with a clarifying question. A
+    # short meta request ("help") is not trivial either: it has its own prompt.
     text = text.strip()
     if len(text) < 8:
-        return True
+        question_shaped = "?" in text and any(char.isalnum() for char in text)
+        return not (question_shaped or META_QUERY_PATTERNS.match(text))
     return bool(TRIVIAL_PATTERNS.match(text))
 
 

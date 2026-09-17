@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 
@@ -12,10 +13,21 @@ from klai_answer_epistemics import (
 from klai_kb_citation_render import (
     KbCitationRenderStats,
     _render_kb_citation_content,
-    compose_non_streaming_kb_response,
-    compose_streaming_kb_response,
+    compose_non_streaming_kb_response as _compose_non_streaming_kb_response,
+    compose_streaming_kb_response as _compose_streaming_kb_response,
     log_kb_citation_render,
 )
+
+
+# The composers are async since SPEC-RAG-CLARIFY-FLOW-001 REQ-4 (a Strict
+# refusal may await the answer-claims classification). These contract tests
+# exercise the render itself, so they run each call to completion.
+def compose_non_streaming_kb_response(*args, **kwargs):
+    return asyncio.run(_compose_non_streaming_kb_response(*args, **kwargs))
+
+
+def compose_streaming_kb_response(*args, **kwargs):
+    return asyncio.run(_compose_streaming_kb_response(*args, **kwargs))
 
 _INCIDENT_QUERY = """Kun je dit analyseren?
 

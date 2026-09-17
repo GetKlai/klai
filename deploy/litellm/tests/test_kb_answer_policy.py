@@ -108,6 +108,7 @@ _EXPECTED_KEYS = {
     "kbs_with_results",
     "kbs_used_as_sources",
     "multi_question",
+    "clarify_turn",
     "sub_query_coverage",
     "unchecked_questions",
     "response_language_target",

@@ -3,6 +3,7 @@
 litellm is not installed locally (runs in Docker), so we mock the import.
 """
 
+import copy
 import importlib
 import sys
 import types
@@ -6982,45 +6983,6 @@ class TestKlaiKnowledgeHookOpenMode:
         assert result["metadata"]["_klai_kb_meta"]["no_citable_sources"] is False
 
     @pytest.mark.asyncio
-    async def test_open_low_confidence_injection_stays_open(
-        self, monkeypatch, _kb_chunks
-    ):
-        mod = _load_hook(monkeypatch)
-        hook = mod.KlaiKnowledgeHook()
-        cache = _make_cache(feature_enabled=True)
-
-        data = {
-            "user": "aabbcc112233445566778899",
-            "messages": [
-                {"role": "user", "content": "Maak een implementatiehandleiding."}
-            ],
-        }
-        retrieval_resp = _make_resp(
-            {
-                "chunks": _kb_chunks,
-                "retrieval_bypassed": False,
-                "confidence_band": "low",
-            }
-        )
-
-        with _patch_http(monkeypatch, retrieval_resp=retrieval_resp):
-            result = await hook.async_pre_call_hook(
-                _make_user_api_key(), cache, data, "completion"
-            )
-
-        sys_content = self._system_msg(result)
-        assert "low relevance in Open mode" in sys_content
-        assert "Open mode stays active" in sys_content
-        assert "do not refuse solely because KB evidence is weak" in sys_content
-        assert (
-            "Answer from general knowledge or visible user context"
-            in sys_content
-        )
-        assert "alleen een algemeen antwoord wanneer dat veilig kan" not in sys_content
-        assert "Cite only what is literally in the chunks" not in sys_content
-        self._assert_open_kb_foundation(sys_content)
-
-    @pytest.mark.asyncio
     async def test_open_low_confidence_screenshot_question_does_not_become_kb_image_only(
         self, monkeypatch
     ):
@@ -7094,131 +7056,6 @@ class TestKlaiKnowledgeHookOpenMode:
         assert meta["low_confidence_inject"] is True
         assert meta["allow_uncited_user_content"] is True
         assert meta["suppress_kb_citations"] is True
-
-    @pytest.mark.asyncio
-    async def test_strict_low_confidence_refuses_before_model(
-        self, monkeypatch, _kb_chunks
-    ):
-        mod = _load_hook(monkeypatch)
-        hook = mod.KlaiKnowledgeHook()
-        cache = _make_cache()
-
-        data = {
-            "user": "aabbcc112233445566778899",
-            "messages": [
-                {"role": "user", "content": "Maak een implementatiehandleiding."}
-            ],
-        }
-        retrieval_resp = _make_resp(
-            {
-                "chunks": _kb_chunks,
-                "retrieval_bypassed": False,
-                "confidence_band": "low",
-            }
-        )
-        portal_resp = _make_resp(
-            {
-                "enabled": True,
-                "kb_retrieval_enabled": True,
-                "kb_personal_enabled": True,
-                "kb_slugs_filter": None,
-                "kb_narrow": True,
-                "kb_pref_version": 12,
-                "zitadel_user_id": "300000000000000002",
-            }
-        )
-
-        with _patch_http(
-            monkeypatch, portal_resp=portal_resp, retrieval_resp=retrieval_resp
-        ) as mock_client:
-            result = await hook.async_pre_call_hook(
-                _make_user_api_key(), cache, data, "completion"
-            )
-
-        assert result.get("mock_response")
-        assert "niet betrouwbaar beantwoorden" in result["mock_response"]
-        meta = result["metadata"]["_klai_kb_meta"]
-        assert meta["answer_policy_state"] == "chunks_present"
-        assert meta["no_citable_sources"] is True
-        assert meta["no_citable_reason"] == "strict_low_confidence_no_direct_evidence"
-        assert meta["confidence_band"] == "low"
-        assert "messages" in result
-        assert all(m.get("role") != "system" for m in result["messages"])
-        assert mock_client.post.call_count == 1
-        cache.async_set_cache.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_strict_low_confidence_streaming_refusal_gets_activity_footer(
-        self, monkeypatch, _kb_chunks
-    ):
-        """Streaming deterministic refusals still need the Strict activity footer."""
-        mod = _load_hook(monkeypatch)
-        hook = mod.KlaiKnowledgeHook()
-        cache = _make_cache()
-
-        data = {
-            "stream": True,
-            "user": "aabbcc112233445566778899",
-            "messages": [
-                {"role": "user", "content": "Maak een implementatiehandleiding."}
-            ],
-        }
-        retrieval_resp = _make_resp(
-            {
-                "chunks": _kb_chunks,
-                "retrieval_bypassed": False,
-                "confidence_band": "low",
-            }
-        )
-        portal_resp = _make_resp(
-            {
-                "enabled": True,
-                "kb_retrieval_enabled": True,
-                "kb_personal_enabled": True,
-                "kb_slugs_filter": None,
-                "kb_narrow": True,
-                "kb_pref_version": 12,
-                "zitadel_user_id": "300000000000000002",
-            }
-        )
-
-        with _patch_http(
-            monkeypatch, portal_resp=portal_resp, retrieval_resp=retrieval_resp
-        ):
-            result = await hook.async_pre_call_hook(
-                _make_user_api_key(), cache, data, "completion"
-            )
-
-        meta = result["metadata"]["_klai_kb_meta"]
-        assert meta["render_mode"] == "streaming_guard"
-        assert result["stream"] is True
-
-        final_item = {
-            "choices": [
-                {
-                    "delta": {"content": result["mock_response"]},
-                    "finish_reason": "stop",
-                }
-            ]
-        }
-
-        async def stream():
-            yield final_item
-
-        streamed = [
-            item
-            async for item in hook.async_post_call_streaming_iterator_hook(
-                None, stream(), result
-            )
-        ]
-
-        assert len(streamed) == 2
-        footer = streamed[0]["choices"][0]["delta"]["content"]
-        assert "Ik kan dit niet betrouwbaar beantwoorden" in footer
-        assert "**Agent activiteit**" in footer
-        assert "- Modus: Strict, alleen kennisbank." in footer
-        assert "- Citeerbaarheid: geen bruikbare bron geselecteerd" in footer
-        assert streamed[1]["choices"][0]["delta"]["content"] == ""
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("kb_narrow", [False, True])
@@ -8481,7 +8318,7 @@ class TestPastedCorrespondenceWiring:
         hook = mod.KlaiKnowledgeHook()
         data = {
             "user": "u1" * 12,
-            "messages": [{"role": "user", "content": "waarom?"}],
+            "messages": [{"role": "user", "content": "ok"}],
         }
 
         result = await hook.async_pre_call_hook(
@@ -8739,3 +8576,482 @@ class TestPastedCorrespondenceWiring:
         )
         meta = result["metadata"]["_klai_kb_meta"]
         assert meta["pasted_correspondence_detected"] is True
+
+
+class TestClarifyFlowPathA:
+    """SPEC-RAG-CLARIFY-FLOW-001 REQ-4/5/6 on path A, driven through the hook.
+
+    Only HTTP is mocked: retrieval, the query rewrite and the answer-claims
+    classification all go through the same patched ``httpx.AsyncClient``. The
+    classification call is recognised by its ``response_format`` schema name,
+    exactly what the proxy would receive.
+    """
+
+    _WEAK_CHUNKS = [
+        {
+            "text": "Tabel met supporttags per module.",
+            "scope": "org",
+            "metadata": {"title": "Using the right tags"},
+            "source_url": "https://docs.klai.example/tags",
+            "chunk_id": "weak-1",
+            "reranker_score": 0.55,
+        }
+    ]
+    _QUERY = "Hoe stel ik dat in?"
+
+    @staticmethod
+    def _is_claims_call(kwargs: dict) -> bool:
+        response_format = (kwargs.get("json") or {}).get("response_format") or {}
+        return (response_format.get("json_schema") or {}).get("name") == "answer_claims"
+
+    @contextmanager
+    def _http(self, *, band="low", classifier=None, chunks=_WEAK_CHUNKS):
+        """Patch HTTP. ``classifier`` is a response body string or an exception."""
+        classify_calls: list[dict] = []
+        retrieve_calls: list[dict] = []
+
+        async def _post(url, **kwargs):
+            if self._is_claims_call(kwargs):
+                classify_calls.append(kwargs)
+                if isinstance(classifier, BaseException):
+                    raise classifier
+                return _make_plain_resp(
+                    {"choices": [{"message": {"content": classifier}}]}
+                )
+            if url.endswith("/chat/completions"):
+                # The query rewrite: hand the user's words back unchanged.
+                prompt = kwargs["json"]["messages"][-1]["content"]
+                current = prompt.split("User's current question: ", 1)[-1]
+                return _make_plain_resp(
+                    {"choices": [{"message": {"content": current.split("\n", 1)[0]}}]}
+                )
+            retrieve_calls.append(kwargs)
+            return _make_resp(
+                {
+                    "chunks": chunks,
+                    "retrieval_bypassed": False,
+                    "confidence_band": band,
+                }
+            )
+
+        client = AsyncMock()
+        client.get = AsyncMock(return_value=_make_resp({"instructions": []}))
+        client.post = AsyncMock(side_effect=_post)
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=None)
+        with patch("klai_knowledge.httpx.AsyncClient", return_value=client):
+            yield SimpleNamespace(classify=classify_calls, retrieve=retrieve_calls)
+
+    def _load(self, monkeypatch):
+        return _load_hook(monkeypatch, extra_env={"LITELLM_MASTER_KEY": "sk-master"})
+
+    async def _pre_call(self, hook, *, kb_narrow, query=None, stream=True):
+        data = {
+            "stream": stream,
+            "user": "aabbcc112233445566778899",
+            "messages": [{"role": "user", "content": query or self._QUERY}],
+        }
+        return await hook.async_pre_call_hook(
+            _make_user_api_key(),
+            _make_cache(feature={"kb_narrow": kb_narrow}),
+            data,
+            "completion",
+        )
+
+    @staticmethod
+    async def _stream_items(hook, data, parts: list[str]) -> list[dict]:
+        """Every SSE chunk the proxy would send, in order."""
+
+        async def stream():
+            for index, part in enumerate(parts):
+                last = index == len(parts) - 1
+                yield {
+                    "choices": [
+                        {
+                            "delta": {"content": part},
+                            "finish_reason": "stop" if last else None,
+                        }
+                    ]
+                }
+
+        return [
+            item
+            async for item in hook.async_post_call_streaming_iterator_hook(
+                None, stream(), data
+            )
+        ]
+
+    async def _model_reply(self, hook, data, parts: list[str]) -> str:
+        """Run the model's reply through the render path the proxy would use."""
+        if data.get("stream"):
+            items = await self._stream_items(hook, data, parts)
+            return "".join(item["choices"][0]["delta"]["content"] for item in items)
+        response = {"choices": [{"message": {"content": "".join(parts)}}]}
+        await hook.async_post_call_success_hook(data, None, response)
+        return response["choices"][0]["message"]["content"]
+
+    @staticmethod
+    def _system_text(data: dict) -> str:
+        return "\n".join(m["content"] for m in data["messages"] if m["role"] == "system")
+
+    @pytest.mark.asyncio
+    async def test_strict_weak_retrieval_asks_instead_of_refusing_before_the_model(
+        self, monkeypatch, caplog
+    ):
+        from klai_chat_prompts import CLARIFY_TURN_ADDENDUM
+
+        caplog.set_level("WARNING")
+        hook = self._load(monkeypatch).KlaiKnowledgeHook()
+        with self._http():
+            data = await self._pre_call(hook, kb_narrow=True)
+
+        assert "mock_response" not in data
+        system = self._system_text(data)
+        assert CLARIFY_TURN_ADDENDUM["internal"].strip() in system
+        assert "[Klai retrieval — low relevance]" not in system
+        assert data["metadata"]["_klai_kb_meta"]["clarify_turn"] is True
+        assert "clarify_decision=clarify" in caplog.text
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("stream", [True, False])
+    async def test_strict_uncited_reply_without_claims_reaches_the_user_stripped(
+        self, monkeypatch, caplog, stream
+    ):
+        caplog.set_level("WARNING")
+        hook = self._load(monkeypatch).KlaiKnowledgeHook()
+        with self._http(classifier='{"category": "no_claims"}') as http:
+            data = await self._pre_call(hook, kb_narrow=True, stream=stream)
+            visible = await self._model_reply(
+                hook,
+                data,
+                [
+                    "Gaat het om [Using the right tags](https://evil.example/x) ",
+                    "of iets anders? (E1)",
+                ],
+            )
+
+        assert visible.startswith("Gaat het om Using the right tags of iets anders?")
+        assert "evil.example" not in visible
+        assert "(E1)" not in visible
+        assert "niet betrouwbaar beantwoorden" not in visible
+        assert len(http.classify) == 1
+        sent = http.classify[0]["json"]["messages"][1]["content"]
+        assert self._QUERY in sent
+        assert "Gaat het om Using the right tags of iets anders?" in sent
+        assert "evil.example" not in sent
+        assert "answer_claims=no_claims" in caplog.text
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("classifier", "label"),
+        [
+            ('{"category": "claims"}', "claims"),
+            (TimeoutError(), "classifier_failed"),
+            ("geen json", "classifier_failed"),
+        ],
+        ids=["claims", "timeout", "garbage"],
+    )
+    async def test_strict_uncited_reply_is_refused_unless_confirmed_without_claims(
+        self, monkeypatch, caplog, classifier, label
+    ):
+        caplog.set_level("WARNING")
+        hook = self._load(monkeypatch).KlaiKnowledgeHook()
+        with self._http(classifier=classifier):
+            data = await self._pre_call(hook, kb_narrow=True)
+            visible = await self._model_reply(
+                hook, data, ["De VPN kost 5 euro ", "per maand."]
+            )
+
+        assert "5 euro" not in visible
+        assert visible.startswith(
+            "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare "
+            "kennisbronnen. Probeer het in Open-modus"
+        )
+        assert "- Modus: Strict, alleen kennisbank." in visible
+        assert "- Citeerbaarheid: geen bruikbare bron geselecteerd" in visible
+        assert f"answer_claims={label}" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_hook_refusal_without_sources_is_not_sent_to_the_classifier(
+        self, monkeypatch, caplog
+    ):
+        caplog.set_level("WARNING")
+        hook = self._load(monkeypatch).KlaiKnowledgeHook()
+        with self._http(classifier='{"category": "no_claims"}', chunks=[]) as http:
+            data = await self._pre_call(hook, kb_narrow=True)
+            visible = await self._model_reply(hook, data, [data["mock_response"]])
+
+        assert visible.startswith(data["mock_response"])
+        assert http.classify == []
+        assert "answer_claims=" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_claims_classification_call_is_not_processed_by_the_hook(
+        self, monkeypatch
+    ):
+        hook = self._load(monkeypatch).KlaiKnowledgeHook()
+        with self._http(classifier='{"category": "no_claims"}') as http:
+            data = await self._pre_call(hook, kb_narrow=True)
+            await self._model_reply(hook, data, ["Welke module bedoel je?"])
+
+        request = http.classify[0]["json"]
+        assert request["model"] == "klai-fast"
+        # PII enforcer attribution travels with the passthrough flag.
+        assert request["metadata"] == {
+            "_klai_openai_passthrough": True,
+            "_klai_delegated_org_id": "org123",
+        }
+        assert http.classify[0]["headers"]["Authorization"] == "Bearer sk-master"
+        # Replay the call into the hook as the proxy would, on a key that DOES
+        # carry an org: only the passthrough flag can make the hook skip it.
+        replay = copy.deepcopy(request)
+        cache = _make_cache(feature={"kb_narrow": True})
+        with self._http() as replay_http:
+            result = await hook.async_pre_call_hook(
+                _make_user_api_key(), cache, replay, "completion"
+            )
+        assert result == request
+        assert replay_http.retrieve == []
+        cache.async_get_cache.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("query", "retrieves"),
+        [
+            ("VPN?", True),
+            ("prijs?", True),
+            ("ok", False),
+            ("bedankt", False),
+            ("top", False),
+            ("thx", False),
+            ("👍", False),
+            ("?", False),
+        ],
+    )
+    async def test_short_real_question_reaches_retrieval_but_acknowledgement_does_not(
+        self, monkeypatch, query, retrieves
+    ):
+        hook = self._load(monkeypatch).KlaiKnowledgeHook()
+        with self._http() as http:
+            data = await self._pre_call(hook, kb_narrow=True, query=query)
+
+        assert bool(http.retrieve) is retrieves
+        if not retrieves:
+            assert "mock_response" not in data
+            assert not any(m["role"] == "system" for m in data["messages"])
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("query", "meta"),
+        [
+            ("help", True),
+            ("hulp", True),
+            ("help me", True),
+            ("help me met deze klant", False),
+        ],
+    )
+    async def test_short_help_request_lands_on_the_meta_prompt(
+        self, monkeypatch, query, meta
+    ):
+        hook = self._load(monkeypatch).KlaiKnowledgeHook()
+        with self._http() as http:
+            data = await self._pre_call(hook, kb_narrow=True, query=query)
+
+        assert ("META question about Klai itself" in self._system_text(data)) is meta
+        assert (http.retrieve == []) is meta
+
+    @pytest.mark.asyncio
+    async def test_held_strict_chunks_carry_no_text_outside_tool_calls(
+        self, monkeypatch
+    ):
+        hook = self._load(monkeypatch).KlaiKnowledgeHook()
+        tool_calls = [
+            {
+                "index": 0,
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "web_search", "arguments": '{"q": "huur"}'},
+            }
+        ]
+        chunks = [
+            {"role": "assistant", "content": "", "tool_calls": tool_calls},
+            {
+                "content": "De kantoorhuur ",
+                "reasoning_content": "SECRET-REASONING",
+                "thinking_blocks": [{"type": "thinking", "thinking": "SECRET-THINK"}],
+                "sources": [{"title": "SECRET-SOURCE"}],
+                "provider_specific_fields": {"citations": ["SECRET-PSF"]},
+                "unknown_field": "SECRET-UNKNOWN",
+            },
+            {"content": "vijfduizend euro maandelijks."},
+        ]
+
+        async def stream():
+            for index, delta in enumerate(chunks):
+                last = index == len(chunks) - 1
+                yield {
+                    "choices": [
+                        {"delta": delta, "finish_reason": "stop" if last else None}
+                    ]
+                }
+
+        with self._http(band="high", classifier='{"category": "claims"}'):
+            data = await self._pre_call(hook, kb_narrow=True)
+            items = [
+                item
+                async for item in hook.async_post_call_streaming_iterator_hook(
+                    None, stream(), data
+                )
+            ]
+
+        held = [item["choices"][0]["delta"] for item in items[: len(chunks) - 1]]
+        assert held[0] == {"role": "assistant", "content": "", "tool_calls": tool_calls}
+        assert held[1] == {"content": ""}
+        assert "SECRET" not in repr(items)
+        assert "kantoorhuur" not in repr(items)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("stream", [True, False])
+    async def test_strict_reply_with_two_choices_shows_no_raw_text(
+        self, monkeypatch, stream
+    ):
+        hook = self._load(monkeypatch).KlaiKnowledgeHook()
+        with self._http(band="high", classifier='{"category": "no_claims"}'):
+            data = await self._pre_call(hook, kb_narrow=True, stream=stream)
+            if stream:
+
+                async def chunks():
+                    for index, (first, second) in enumerate(
+                        [("Welke ", "Kies "), ("module?", "een optie.")]
+                    ):
+                        finish = "stop" if index == 1 else None
+                        yield {
+                            "choices": [
+                                {"index": 0, "delta": {"content": first}, "finish_reason": finish},
+                                {"index": 1, "delta": {"content": second}, "finish_reason": finish},
+                            ]
+                        }
+
+                items = [
+                    item
+                    async for item in hook.async_post_call_streaming_iterator_hook(
+                        None, chunks(), data
+                    )
+                ]
+                visible = [
+                    "".join(item["choices"][i]["delta"]["content"] for item in items)
+                    for i in (0, 1)
+                ]
+            else:
+                response = {
+                    "choices": [
+                        {"message": {"content": "Welke module?"}},
+                        {"message": {"content": "Kies een optie."}},
+                    ]
+                }
+                await hook.async_post_call_success_hook(data, None, response)
+                visible = [c["message"]["content"] for c in response["choices"]]
+
+        for text in visible:
+            assert text.startswith("Ik kan dit niet betrouwbaar beantwoorden")
+            assert "module" not in text
+            assert "optie" not in text
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("classifier", "shows_draft"),
+        [('{"category": "claims"}', False), ('{"category": "no_claims"}', True)],
+        ids=["claims", "no_claims"],
+    )
+    async def test_strict_stream_with_unsupported_sources_shows_nothing_before_the_decision(
+        self, monkeypatch, classifier, shows_draft
+    ):
+        hook = self._load(monkeypatch).KlaiKnowledgeHook()
+        parts = [
+            "De kantoorhuur ",
+            "[bedraagt](https://evil.example/x) ",
+            "vijfduizend euro maandelijks.",
+        ]
+        # Band high: an ordinary Strict answer, not a clarify turn.
+        with self._http(band="high", classifier=classifier) as http:
+            data = await self._pre_call(hook, kb_narrow=True)
+            items = await self._stream_items(hook, data, parts)
+
+        contents = [item["choices"][0]["delta"]["content"] for item in items]
+        # Every model delta still goes out as a chunk (the connection keeps
+        # receiving bytes), but none carries model text before the decision.
+        assert contents[: len(parts) - 1] == [""] * (len(parts) - 1)
+        visible = "".join(contents)
+        assert len(http.classify) == 1
+        refusal = "Ik kan dit niet betrouwbaar beantwoorden"
+        if shows_draft:
+            assert visible.startswith("De kantoorhuur bedraagt vijfduizend euro maandelijks.")
+            assert refusal not in visible
+            assert "evil.example" not in visible
+        else:
+            assert visible.startswith(refusal)
+            assert "kantoorhuur" not in visible
+
+    @pytest.mark.asyncio
+    async def test_strict_user_provided_content_without_sources_stays_refused(
+        self, monkeypatch, caplog
+    ):
+        caplog.set_level("WARNING")
+        hook = self._load(monkeypatch).KlaiKnowledgeHook()
+        data = {
+            "stream": True,
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "wat staat er op deze screenshot?"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": "https://example.test/screenshot.png"},
+                        },
+                    ],
+                }
+            ],
+        }
+        with self._http(classifier='{"category": "no_claims"}', chunks=[]) as http:
+            data = await hook.async_pre_call_hook(
+                _make_user_api_key(),
+                _make_cache(feature={"kb_narrow": True}),
+                data,
+                "completion",
+            )
+            assert "mock_response" not in data
+            visible = await self._model_reply(
+                hook, data, ["Op de screenshot staat ", "een factuur."]
+            )
+
+        assert visible.startswith("Ik kan dit niet betrouwbaar beantwoorden")
+        assert "factuur" not in visible
+        assert http.classify == []
+        assert "answer_claims=" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_open_weak_retrieval_asks_and_makes_no_classification_call(
+        self, monkeypatch, caplog
+    ):
+        from klai_chat_prompts import CLARIFY_TURN_ADDENDUM
+
+        caplog.set_level("WARNING")
+        hook = self._load(monkeypatch).KlaiKnowledgeHook()
+        with self._http(classifier='{"category": "no_claims"}') as http:
+            data = await self._pre_call(hook, kb_narrow=False)
+            visible = await self._model_reply(
+                hook, data, ["Welke module ", "bedoel je?"]
+            )
+
+        system = self._system_text(data)
+        assert CLARIFY_TURN_ADDENDUM["internal"].strip() in system
+        # The labelling rule stays; only "answer anyway" goes.
+        assert "not as something that comes from the knowledge base" in system
+        assert "the knowledge base does not support that specific claim" in system
+        assert "Open mode stays active" not in system
+        assert "Answer from general knowledge" not in system
+        assert visible.startswith("Welke module bedoel je?")
+        assert http.classify == []
+        assert "clarify_decision=clarify" in caplog.text
