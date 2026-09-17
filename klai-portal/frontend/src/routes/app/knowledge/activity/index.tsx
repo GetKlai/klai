@@ -249,8 +249,9 @@ export function ActivityPage() {
             </Select>
           </div>
           <div className="space-y-1.5">
-            <Label>{m.activity_filter_band()}</Label>
+            <Label htmlFor="activity-band">{m.activity_filter_band()}</Label>
             <MultiSelect
+              id="activity-band"
               options={bandOptions}
               value={search.band}
               onChange={(value) => setFilters({ band: value as ConversationBand[] })}
@@ -259,8 +260,9 @@ export function ActivityPage() {
             />
           </div>
           <div className="space-y-1.5">
-            <Label>{m.activity_filter_judge_outcome()}</Label>
+            <Label htmlFor="activity-judge">{m.activity_filter_judge_outcome()}</Label>
             <MultiSelect
+              id="activity-judge"
               options={outcomeOptions}
               value={search.judge_outcome}
               onChange={(value) => setFilters({ judge_outcome: value })}
@@ -269,8 +271,9 @@ export function ActivityPage() {
             />
           </div>
           <div className="space-y-1.5">
-            <Label>{m.activity_filter_failure_category()}</Label>
+            <Label htmlFor="activity-failure-category">{m.activity_filter_failure_category()}</Label>
             <MultiSelect
+              id="activity-failure-category"
               options={failureCategoryOptions}
               value={search.failure_category}
               onChange={(value) => setFilters({ failure_category: value })}
@@ -332,8 +335,9 @@ export function ActivityPage() {
             </Select>
           </div>
           <div className="space-y-1.5">
-            <Label>{m.activity_review_cause_label()}</Label>
+            <Label htmlFor="activity-cause">{m.activity_review_cause_label()}</Label>
             <MultiSelect
+              id="activity-cause"
               options={causeOptions}
               value={search.cause}
               onChange={(value) => setFilters({ cause: value })}
@@ -526,7 +530,12 @@ export function ActivityPage() {
                                     </span>
                                   ) : null}
                                   {item.judge.confidence ? (
-                                    <span className="text-xs text-gray-500">{item.judge.confidence}</span>
+                                    <span className="text-xs text-gray-500">
+                                      {m.activity_judge_confidence({
+                                        level: (BAND_LABEL[item.judge.confidence as ConversationBand] ??
+                                          (() => item.judge!.confidence as string))(),
+                                      })}
+                                    </span>
                                   ) : null}
                                 </div>
                                 {item.judge.reasoning ? (
@@ -551,13 +560,15 @@ export function ActivityPage() {
                                         {(CAUSE_LABEL[review.cause] ?? (() => review.cause))()}
                                       </span>
                                     ) : null}
+                                    {/* Name and time render independently: a review outlives a
+                                        deleted reviewer (reviewer_name null) and keeps its date. */}
                                     {review.reviewer_name ? (
                                       <span className="text-gray-500">
                                         {m.activity_review_by({ name: review.reviewer_name })}
-                                        {review.reviewed_at
-                                          ? ` · ${formatRelativeTime(review.reviewed_at)}`
-                                          : ''}
                                       </span>
+                                    ) : null}
+                                    {review.reviewed_at ? (
+                                      <span className="text-gray-500">{formatRelativeTime(review.reviewed_at)}</span>
                                     ) : null}
                                     {review.note ? <span className="text-gray-700">{review.note}</span> : null}
                                   </div>
