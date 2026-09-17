@@ -375,7 +375,7 @@ async def test_retention_run_once_applies_per_org_override_over_default():
 
     captured_select_params: list[dict] = []
     captured_select_sql: list[str] = []
-    returned_candidates: list[tuple[int, int]] = []
+    returned_candidates: list[tuple[int, int, int]] = []
     served = False
     db = AsyncMock()
 
@@ -392,7 +392,7 @@ async def test_retention_run_once_applies_per_org_override_over_default():
             served = True
             default_days = params["default_days"]
             candidates = [
-                (row["id"], row["conversation_id"])
+                (row["id"], row["conversation_id"], row["org_id"])
                 for row in rows
                 if row["created_at"] < now - timedelta(days=org_override_days[row["org_id"]] or default_days)
             ]
@@ -414,6 +414,10 @@ async def test_retention_run_once_applies_per_org_override_over_default():
 
     with (
         patch("app.services.widget_messages_retention.cross_org_session", _fake_session),
+        patch(
+            "app.services.widget_messages_retention.tenant_scoped_session",
+            lambda org_id: _fake_session(),
+        ),
         patch("app.services.widget_messages_retention.settings") as mock_settings,
     ):
         mock_settings.widget_messages_retention_days = 7
@@ -423,7 +427,7 @@ async def test_retention_run_once_applies_per_org_override_over_default():
     assert "COALESCE(po.widget_messages_retention_days, :default_days)" in captured_select_sql[0]
     # Only org 2's message purges (default 7-day window); org 1's 90-day
     # override keeps its 30-day-old message out of the candidate set.
-    assert returned_candidates == [(502, 60)]
+    assert returned_candidates == [(502, 60, 2)]
     assert result["deleted_count"] == 1
 
 
@@ -436,7 +440,7 @@ async def test_retention_run_once_applies_per_org_override_over_default():
 async def test_retention_anonymizes_judgment_reasoning_before_deleting_messages():
     """Purging a conversation's messages NULLs its judgment's reasoning first.
 
-    The UPDATE runs BEFORE the DELETE, in the same session/transaction, and
+    The UPDATE runs BEFORE the DELETE, in the same org-bound session, and
     only for the DISTINCT conversation_ids of the messages deleted in that
     chunk — a conversation that is not purged keeps its judgment untouched.
     outcome/confidence/judged_at are not in the SET list, so they survive.
@@ -452,8 +456,8 @@ async def test_retention_anonymizes_judgment_reasoning_before_deleting_messages(
         calls.append((session_id, sql, dict(params or {})))
         result = MagicMock()
         if "FROM widget_messages" in sql and sql.lstrip().startswith("SELECT"):
-            # 3 expired messages across conversations 7, 7 and 9
-            result.all.return_value = [(101, 7), (102, 7), (103, 9)]
+            # 3 expired messages of org 4 across conversations 7, 7 and 9
+            result.all.return_value = [(101, 7, 4), (102, 7, 4), (103, 9, 4)]
         elif "UPDATE conversation_quality_judgments" in sql:
             result.rowcount = 2
         else:
@@ -463,16 +467,26 @@ async def test_retention_anonymizes_judgment_reasoning_before_deleting_messages(
     db.execute = _execute
     db.commit = AsyncMock()
 
+    tenant_orgs: dict[int, int] = {}
+
     @asynccontextmanager
     async def _fake_session():
         nonlocal session_id
         session_id += 1
         yield db
 
+    @asynccontextmanager
+    async def _fake_tenant_session(org_id):
+        nonlocal session_id
+        session_id += 1
+        tenant_orgs[session_id] = org_id
+        yield db
+
     import structlog.testing
 
     with (
         patch("app.services.widget_messages_retention.cross_org_session", _fake_session),
+        patch("app.services.widget_messages_retention.tenant_scoped_session", _fake_tenant_session),
         patch("app.services.widget_messages_retention.settings") as mock_settings,
         structlog.testing.capture_logs() as captured,
     ):
@@ -490,8 +504,9 @@ async def test_retention_anonymizes_judgment_reasoning_before_deleting_messages(
     assert "reasoning IS NOT NULL" in update_sql
     assert update_params["conversation_ids"] == [7, 9]
 
-    # Same cross_org_session as the DELETE (no second session/transaction).
+    # Same org-bound session as the DELETE (no second session/transaction).
     assert calls[update_idx][0] == calls[delete_idx][0]
+    assert tenant_orgs[calls[delete_idx][0]] == 4
 
     assert result["deleted_count"] == 3
     audit = [e for e in captured if e.get("event") == "widget_messages.retention_deleted"]
@@ -560,7 +575,7 @@ async def test_retention_run_once_clears_visitor_contact_of_purged_conversations
                 result.all = MagicMock(return_value=[])
             else:
                 candidates_served = True
-                result.all = MagicMock(return_value=[(11, 5), (12, 5), (13, 6)])
+                result.all = MagicMock(return_value=[(11, 5, 1), (12, 5, 1), (13, 6, 1)])
             return result
         result.rowcount = 1
         return result
@@ -574,6 +589,10 @@ async def test_retention_run_once_clears_visitor_contact_of_purged_conversations
 
     with (
         patch("app.services.widget_messages_retention.cross_org_session", _fake_session),
+        patch(
+            "app.services.widget_messages_retention.tenant_scoped_session",
+            lambda org_id: _fake_session(),
+        ),
         patch("app.services.widget_messages_retention.settings") as mock_settings,
     ):
         mock_settings.widget_messages_retention_days = 90
