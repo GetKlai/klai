@@ -457,8 +457,9 @@ services:
       RETRIEVAL_INTERNAL_SECRET: ${RETRIEVAL_API_INTERNAL_SECRET}
       # SPEC-RAG-EVIDENCE-INTEGRITY-001 REQ-CIT — citation-rescue flag +
       # thresholds for klai_citations (path A). Portal-api carries the SAME
-      # three vars for path B; keep them in sync or the two chat surfaces
-      # show diverging citations for identical KB answers.
+      # three vars for path B; parity is enforced by
+      # deploy/litellm/tests/test_citation_rescue_compose_parity.py, not by
+      # this comment.
       # Graduated 2026-08-20 after 25 unique production shadow cases over 23 days.
       CITATION_RESCUE_MODE: ${CITATION_RESCUE_MODE:-active}
       RESCUE_ANSWER_SCORE_THRESHOLD: ${RESCUE_ANSWER_SCORE_THRESHOLD:-19}
@@ -980,8 +981,9 @@ services:
       RETRIEVAL_API_INTERNAL_SECRET: ${RETRIEVAL_API_INTERNAL_SECRET}
       # SPEC-RAG-EVIDENCE-INTEGRITY-001 REQ-CIT — citation-rescue config
       # for klai_citations on path B (widget/partner chat). Mirrors the
-      # litellm block (path A); keep the two in sync.
-      # Keep path B aligned with the graduated LiteLLM citation behavior.
+      # litellm block (path A); parity is enforced by
+      # deploy/litellm/tests/test_citation_rescue_compose_parity.py, not by
+      # this comment.
       CITATION_RESCUE_MODE: ${CITATION_RESCUE_MODE:-active}
       RESCUE_ANSWER_SCORE_THRESHOLD: ${RESCUE_ANSWER_SCORE_THRESHOLD:-19}
       RESCUE_RETRIEVAL_RATIO: ${RESCUE_RETRIEVAL_RATIO:-0.4}
