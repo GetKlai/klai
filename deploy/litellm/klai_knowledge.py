@@ -86,6 +86,7 @@ from klai_kb_answer_policy import (
     settings_unavailable_message as _settings_unavailable_message,
 )
 from klai_chat_prompts import (
+    CLARIFY_TURN_ADDENDUM as _CLARIFY_TURN_ADDENDUM,
     no_citable_sources_message as _no_citable_sources_message,
 )
 from klai_chat_attachments import (
@@ -1447,15 +1448,49 @@ class KlaiKnowledgeHook(CustomLogger):
         if chunk_ids and not result.get("retrieval_bypassed"):
             _fire_retrieval_log(org_id, user_id, chunk_ids, reranker_scores, query)
 
+        # SPEC-RAG-CLARIFY-FLOW-001 REQ-5, decision 1: weak retrieval without
+        # direct evidence (low_confidence_inject is should_clarify, see
+        # klai_kb_confidence_policy) gets one clarifying question instead of a
+        # guess. In Strict this replaces the refusal this hook used to return
+        # before the model ran. That refusal existed so weak evidence could
+        # never surface a general-knowledge answer; what now stops that is
+        # decision 2 (REQ-4) in klai_kb_citation_render, which holds the whole
+        # reply back and shows it only when it asserts nothing about the
+        # organisation, else the same fixed refusal. Not on a multi-part
+        # message (per-question coverage has its own guard), on user-provided
+        # content or pasted correspondence (the user asked about their own
+        # material), nor on a title request (returned above).
+        clarify_eligible = (
+            bool(context_chunks)
+            and confidence_band is not None
+            and not multi_question
+            and not user_provided_content_context
+            and not pasted_correspondence
+        )
+        clarify_turn = clarify_eligible and low_confidence_inject
+        if clarify_eligible:
+            # REQ-6: one queryable word per decided turn.
+            logger.warning(
+                "kb_clarify_decision org_id=%s user_id=%s clarify_decision=%s "
+                "confidence_band=%s kb_narrow=%s",
+                org_id,
+                user_id,
+                "clarify" if clarify_turn else "answer",
+                confidence_band,
+                kb_narrow,
+            )
+
         if (
             context_chunks
             and kb_narrow
             and low_confidence_inject
             and not multi_question
             and not user_provided_content_context
+            and pasted_correspondence
         ):
-            # Strict + weak/tangential chunks is not a prompt problem. Bypass
-            # the model before it can answer from general knowledge.
+            # Pasted correspondence gets no clarify turn, so Strict keeps its
+            # refusal here: weak/tangential chunks are not a prompt problem.
+            # Bypass the model before it can answer from general knowledge.
             logger.warning(
                 "strict_low_confidence_deterministic_refusal "
                 "org_id=%s user_id=%s confidence_band=%s chunks_injected=%d",
@@ -1621,8 +1656,21 @@ class KlaiKnowledgeHook(CustomLogger):
             images_base_url=KB_IMAGES_BASE_URL,
             low_confidence_inject=low_confidence_inject,
             low_confidence_injection_disabled=_LOW_CONFIDENCE_INJECTION_DISABLED,
-            low_confidence_strict_text=_LOW_CONFIDENCE_INJECTION_TEXT,
-            low_confidence_open_text=_LOW_CONFIDENCE_OPEN_CONTEXT_TEXT,
+            # On a clarify turn the addendum takes the place of the mode's
+            # low-relevance text in both modes, not a place next to it: Strict's
+            # "cite what is literally in the chunks" and Open's "answer from
+            # general knowledge" both tell the model to answer now, the addendum
+            # tells it not to answer yet.
+            low_confidence_strict_text=(
+                _CLARIFY_TURN_ADDENDUM["internal"]
+                if clarify_turn
+                else _LOW_CONFIDENCE_INJECTION_TEXT
+            ),
+            low_confidence_open_text=(
+                _CLARIFY_TURN_ADDENDUM["internal"]
+                if clarify_turn
+                else _LOW_CONFIDENCE_OPEN_CONTEXT_TEXT
+            ),
             multi_question_guard_text=(
                 _MULTI_QUESTION_FANOUT_GUARD_TEXT
                 if sub_query_results
@@ -1699,6 +1747,7 @@ class KlaiKnowledgeHook(CustomLogger):
             citable_sources_count=len(trusted_sources),
             confidence_band=confidence_band,
             multi_question=multi_question,
+            clarify_turn=clarify_turn,
             sub_query_coverage=sub_query_results,
             unchecked_questions=unchecked_questions or None,
             original_stream=original_stream,
@@ -1723,7 +1772,7 @@ class KlaiKnowledgeHook(CustomLogger):
             or kb_meta.get("unchecked_questions")
             or kb_meta.get("pasted_correspondence_detected")
         ):
-            stats = _compose_non_streaming_kb_response(response, kb_meta)
+            stats = await _compose_non_streaming_kb_response(response, kb_meta)
             _log_kb_citation_render(logger, kb_meta, stats, stream=False)
             logger.warning(
                 "KB injection: org=%s user=%s chunks=%d retrieval_ms=%d",
@@ -1754,7 +1803,7 @@ class KlaiKnowledgeHook(CustomLogger):
         pending_item = None
         async for item in response:
             if pending_item is not None:
-                stats = _compose_streaming_kb_response(pending_item, kb_meta)
+                stats = await _compose_streaming_kb_response(pending_item, kb_meta)
                 _log_kb_citation_render(logger, kb_meta, stats, stream=True)
                 footer_item = _split_if_rendered_stop_item(pending_item, stats)
                 if footer_item is not None:
@@ -1762,7 +1811,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 yield pending_item
             pending_item = item
         if pending_item is not None:
-            stats = _compose_streaming_kb_response(
+            stats = await _compose_streaming_kb_response(
                 pending_item, kb_meta, flush_stream=True
             )
             _log_kb_citation_render(logger, kb_meta, stats, stream=True)

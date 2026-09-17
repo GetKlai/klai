@@ -84,10 +84,12 @@ _FOOTER_BODY_BULLET_RE = re.compile(r"^[ \t]*[-*+•][ \t]+")
 
 
 def is_trivial(text: str) -> bool:
+    # Acknowledgements only. A length floor (< 8 chars) sat here since the
+    # hook's first commit without a stated reason, and it skipped retrieval
+    # for short real questions such as "VPN?" or "prijs?" — exactly the turns
+    # SPEC-RAG-CLARIFY-FLOW-001 answers with a clarifying question.
     text = text.strip()
-    if len(text) < 8:
-        return True
-    return bool(TRIVIAL_PATTERNS.match(text))
+    return not text or bool(TRIVIAL_PATTERNS.match(text))
 
 
 def is_meta_query(text: str) -> bool:

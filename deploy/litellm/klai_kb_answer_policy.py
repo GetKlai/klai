@@ -249,6 +249,7 @@ class KbAnswerPolicy:
         kbs_with_results: list | None = None,
         kbs_used_as_sources: list | None = None,
         multi_question: bool = False,
+        clarify_turn: bool = False,
         sub_query_coverage: list | None = None,
         unchecked_questions: list | None = None,
         response_language_target: object = None,
@@ -310,6 +311,7 @@ class KbAnswerPolicy:
                 kbs_used_as_sources if kbs_used_as_sources is not None else []
             ),
             "multi_question": multi_question,
+            "clarify_turn": clarify_turn,
             "sub_query_coverage": sub_query_coverage,
             "unchecked_questions": unchecked_questions,
             "response_language_target": response_language_target,

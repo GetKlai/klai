@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import re
 
-from klai_chat_prompts import has_direct_evidence_for_query
+from klai_chat_prompts import has_direct_evidence_for_query, should_clarify
 from klai_citations import extract_salient_query_tokens
 
 # English on purpose: every other instruction block in the prompt stack is
@@ -171,6 +171,9 @@ def should_apply_low_confidence_injection(
     user_query: object,
     evidence_chunks: list[dict],
 ) -> bool:
-    if confidence_band not in ("low", "unknown"):
-        return False
-    return not has_direct_evidence_for_query(user_query, evidence_chunks)
+    # One home for the condition: SPEC-RAG-CLARIFY-FLOW-001 decision 1 fires on
+    # exactly the turns this guard fires on.
+    return should_clarify(
+        confidence_band,
+        has_direct_evidence=has_direct_evidence_for_query(user_query, evidence_chunks),
+    )

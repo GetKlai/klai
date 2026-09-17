@@ -15,7 +15,10 @@ from klai_answer_epistemics import (
     strip_answer_contract_markers,
 )
 from klai_chat_prompts import _language_is_dutch as language_is_dutch
-from klai_chat_prompts import no_citable_sources_message
+from klai_chat_prompts import (
+    may_show_model_text_without_sources,
+    no_citable_sources_message,
+)
 from klai_citations import (
     compose_answer_with_trusted_sources,
     evidence_label_ids,
@@ -37,6 +40,7 @@ from klai_kb_chat_mode import prompt_mode_is_known, prompt_mode_is_strict
 # same prompt-injection hardening (strip brackets, collapse whitespace, cap
 # length). Duplicating the sanitizer would risk the two copies drifting.
 from klai_kb_context_prompt import _sanitize_question_echo
+from klai_kb_query_rewrite import classify_answer_claims
 from klai_kb_traceability import dedupe_strings
 from klai_kb_urls import normalise_guard_url
 from klai_litellm_response import (
@@ -1123,7 +1127,90 @@ def remove_already_streamed_prefix(final_text: str, emitted_text: str) -> str | 
     return None
 
 
-def compose_non_streaming_kb_response(
+# The two places where Strict replaces model-written text with the fixed
+# refusal because no source supports it. A refusal the model wrote itself
+# (strict_refusal_no_supported_sources) and the hook's own refusals are not
+# model drafts and never reach the classifier.
+_ANSWER_CLAIMS_REASONS = frozenset({"no_trusted_sources", "strict_no_sentence_level_support"})
+
+
+async def _show_uncited_strict_draft(
+    text: str,
+    rendered_content: str,
+    no_citable_sources: bool,
+    decision: dict[str, Any],
+    *,
+    kb_meta: dict[str, Any],
+    allowed_image_urls: set[str],
+    trusted_sources: list[dict[str, Any]],
+    citation_chunks: list[dict],
+) -> tuple[str, bool, dict[str, Any]]:
+    """SPEC-RAG-CLARIFY-FLOW-001 REQ-4, decision 2 on path A (Strict).
+
+    Model-written text without a supporting source reaches the user only when
+    it asserts nothing about the organisation: a clarifying question or a
+    plain "I can't find that" does, a price or a procedure does not. Callers
+    only pass text the user has not seen yet (non-streaming, or the buffered
+    stream branch); on a stream that already showed the text the check could
+    not withhold anything.
+
+    The draft is stripped BEFORE classification with the renderer's own
+    cleanup for passed-through text (model links, citations, evidence labels,
+    answer-contract markers), so the classifier judges exactly what the user
+    would see. Anything but a confirmed ``no_claims`` keeps the refusal
+    ``_render_kb_citation_content`` already chose, so a failing classifier
+    restores today's behaviour.
+    """
+    if (
+        not no_citable_sources
+        or decision.get("no_citable_reason") not in _ANSWER_CLAIMS_REASONS
+        # The hook's own mock_response refusals (zero chunks, retrieval
+        # failure) also render as no_trusted_sources; they are not drafts.
+        or _is_strict_refusal_answer(text, refusal_language=kb_meta.get("response_language_target"))
+    ):
+        return rendered_content, no_citable_sources, decision
+    draft = strip_model_citation_artifacts(
+        strip_answer_contract_markers(text),
+        allowed_image_urls=allowed_image_urls,
+        source_titles={
+            source["title"] for source in trusted_sources if isinstance(source.get("title"), str)
+        },
+        evidence_ids=evidence_label_ids(citation_chunks),
+    )
+    if not draft:
+        return rendered_content, no_citable_sources, decision
+    result = await classify_answer_claims(
+        user_query=str(kb_meta.get("user_query") or ""),
+        draft=draft,
+        article_titles=list(
+            dict.fromkeys(
+                chunk["title"]
+                for chunk in citation_chunks
+                if isinstance(chunk.get("title"), str) and chunk["title"].strip()
+            )
+        ),
+        org_id=kb_meta.get("org_id"),
+    )
+    # REQ-6: one queryable word per classified turn; a failure is kept apart
+    # from "claims" because a rising share says something about the classifier.
+    label = result or "classifier_failed"
+    kb_meta["answer_claims"] = label
+    _telemetry_logger.warning(
+        "kb_answer_claims org_id=%s user_id=%s request_id=%s answer_claims=%s "
+        "no_citable_reason=%s clarify_turn=%s",
+        kb_meta.get("org_id"),
+        kb_meta.get("user_id"),
+        kb_meta.get("request_id"),
+        label,
+        decision.get("no_citable_reason"),
+        bool(kb_meta.get("clarify_turn")),
+    )
+    if not may_show_model_text_without_sources(result):
+        return rendered_content, no_citable_sources, decision
+    return draft, no_citable_sources, {**decision, "no_citable_reason": "uncited_no_claims"}
+
+
+async def compose_non_streaming_kb_response(
     response: object,
     kb_meta: dict[str, Any],
 ) -> KbCitationRenderStats:
@@ -1176,6 +1263,16 @@ def compose_non_streaming_kb_response(
                     ),
                 )
             )
+            rendered_content, no_citable_sources, decision = await _show_uncited_strict_draft(
+                inspected_content,
+                rendered_content,
+                no_citable_sources,
+                decision,
+                kb_meta=kb_meta,
+                allowed_image_urls=allowed_image_urls,
+                trusted_sources=trusted_sources,
+                citation_chunks=citation_chunks,
+            )
             _record_answer_language(rendered_content, kb_meta)
             if (
                 rendered_content != content
@@ -1205,7 +1302,7 @@ def compose_non_streaming_kb_response(
     return stats
 
 
-def compose_streaming_kb_response(
+async def compose_streaming_kb_response(
     response: object,
     kb_meta: dict[str, Any],
     *,
@@ -1235,11 +1332,18 @@ def compose_streaming_kb_response(
         return stats
 
     kb_narrow = _kb_meta_is_strict(kb_meta)
-    strict_no_sources = not trusted_sources and (force_no_citable or kb_narrow)
+    # A Strict clarify turn (SPEC-RAG-CLARIFY-FLOW-001 REQ-5) replaced the
+    # refusal the hook used to return before the model. That refusal existed so
+    # weak evidence could never surface a general-knowledge answer, so the reply
+    # is held back in full until REQ-4 has checked it; the streaming guard below
+    # would show it while it is still being written.
+    hold_until_rendered = (not trusted_sources and (force_no_citable or kb_narrow)) or (
+        kb_narrow and bool(kb_meta.get("clarify_turn"))
+    )
     telemetry_only_stream = bool(
         citation_chunks
         and not trusted_sources
-        and not strict_no_sources
+        and not hold_until_rendered
         and not has_visible_activity
         and not correspondence_detected
         and not suppress_user_content_citations
@@ -1268,7 +1372,7 @@ def compose_streaming_kb_response(
                 kb_meta["_citation_stream_full_parts"] = []
                 stats.epistemics_measured = True
             continue
-        if strict_no_sources or suppress_user_content_citations:
+        if hold_until_rendered or suppress_user_content_citations:
             if isinstance(content, str) and content:
                 buffered = kb_meta.get("_citation_stream_guard_buffer") or ""
                 kb_meta["_citation_stream_guard_buffer"] = buffered + content
@@ -1300,12 +1404,25 @@ def compose_streaming_kb_response(
                     ),
                 )
             )
+            rendered_content, no_citable_sources, decision = await _show_uncited_strict_draft(
+                inspected_content,
+                rendered_content,
+                no_citable_sources,
+                decision,
+                kb_meta=kb_meta,
+                allowed_image_urls=allowed_image_urls,
+                trusted_sources=trusted_sources,
+                citation_chunks=citation_chunks,
+            )
             _record_answer_language(rendered_content, kb_meta)
             _remember_citation_decision(
                 kb_meta,
                 decision,
                 no_citable_sources=no_citable_sources,
             )
+            # A held-back clarify turn can still end in a cited answer.
+            if sources:
+                set_message_field(delta, "sources", sources)
             set_message_content(
                 delta,
                 _append_visible_sources_section(
