@@ -1824,6 +1824,12 @@ async def chat_completions(  # noqa: C901
         "chat_completions: retrieve_context must not be called with empty kb_slugs while retrieval is enabled"
     )
 
+    # Retrieval certainty of this answer: retrieve_context writes the band, the
+    # completion pad fills the rest in-process, and we hand the dict to the audit
+    # write, so the widget visitor's response never carries it. Only wired to the
+    # audit trail when it will read it.
+    # @MX:SPEC: SPEC-KNOWLEDGE-ACTIVITY-001 §4.1
+    answer_signals: dict[str, Any] = {}
     try:
         # ``broad`` (4th element) is retrieve_context's per-turn decision:
         # support mode + visitor consent + a real retrieval attempt that
@@ -1832,6 +1838,7 @@ async def chat_completions(  # noqa: C901
         # "passages gevonden" activity. The retrieval log still records the
         # real (weak) chunks: retrieval genuinely ran.
         retrieval = retrieve_context(
+            answer_signals=answer_signals,
             org_id=auth.org_id,
             zitadel_org_id=auth.zitadel_org_id,
             kb_slugs=kb_slugs,
@@ -1981,11 +1988,6 @@ async def chat_completions(  # noqa: C901
     ) = _citation_runtime_options(trusted_sources, is_widget_chat=is_widget_chat)
 
     # 8. Streaming or non-streaming
-    # Retrieval certainty of this answer: the completion pad fills this dict
-    # in-process and we hand it to the audit write, so the widget visitor's
-    # response never carries it. Only wired when the audit trail will read it.
-    # @MX:SPEC: SPEC-KNOWLEDGE-ACTIVITY-001 §4.1
-    answer_signals: dict[str, Any] = {}
     if request.stream:
         streaming_gen = chat_completion_streaming(
             messages=request.messages,
