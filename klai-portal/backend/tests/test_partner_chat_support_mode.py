@@ -28,6 +28,7 @@ from app.services.partner_chat import (
     _build_system_prompt,
     _compose_backend_managed_answer,
 )
+from app.services.turn_judge import TurnJudgement
 
 # Signature phrases that exist in exactly one of the profiles, so a
 # prompt built with the wrong base is caught immediately.
@@ -396,13 +397,14 @@ async def _run_with_scope(*, chunks, scope_result):
         stream=False,
     )
 
-    classifier = AsyncMock(return_value=scope_result)
+    judgement = TurnJudgement(scope=scope_result, wants_human=False, sentiment="neutral", clarity="clear", missing="")
+    classifier = AsyncMock(return_value=judgement)
     with (
         patch("app.api.partner.retrieve_context", return_value=(chunks, "SUPPORT PROFILE", [], False)),
         patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=False)),
         patch("app.api.partner._widget_support_mode_enabled", new=AsyncMock(return_value=True)),
         patch("app.api.partner._widget_tone_register", new=AsyncMock(return_value=None)),
-        patch("app.api.partner.turn_scope.classify_turn_scope", new=classifier),
+        patch("app.api.partner.turn_judge.judge_turn", new=classifier),
         patch(
             "app.api.partner.chat_completion_non_streaming",
             new=AsyncMock(return_value={"choices": []}),
@@ -446,14 +448,10 @@ async def test_a_knowledge_turn_is_not_marked_conversational():
 
 
 @pytest.mark.asyncio
-async def test_a_grounded_turn_never_pays_for_the_classifier():
-    """Only a retrieval gap can change the outcome, so only a gap classifies.
-
-    Before this gate the call sat in the gather beside retrieval, where a
-    classifier hitting its 2 s timeout delayed a perfectly grounded answer.
-    """
+async def test_a_grounded_turn_is_never_conversational():
+    """Only a retrieval gap leaves the knowledge pipeline; with usable chunks the composer answers."""
     good_chunk = {"chunk_id": "c1", "text": "Ga naar Beheer.", "reranker_score": 0.9}
     classifier, chat_call = await _run_with_scope(chunks=[good_chunk], scope_result="conversation")
 
-    classifier.assert_not_awaited()
+    classifier.assert_awaited_once()
     assert chat_call.call_args.kwargs["conversational"] is False

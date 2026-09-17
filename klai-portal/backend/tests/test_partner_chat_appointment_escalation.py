@@ -37,12 +37,18 @@ from app.services.partner_chat import (
     _chat_completion_streaming_with_composed_citations,
     _compose_backend_managed_answer,
 )
+from app.services.turn_judge import TurnJudgement
 
 MARKER = appointment_offer_marker()
 HUMAN_QUERY = "Kan er iemand van jullie hier eens naar kijken?"
 NEGATIVE_QUERY = "Dit werkt al drie dagen niet en ik heb er genoeg van"
 NEUTRAL_QUERY = "Hoe voeg ik een extra gebruiker toe?"
 NEUTRAL = {"wants_human": False, "sentiment": "neutral"}
+
+
+def _turn_judgement(**fields: Any) -> TurnJudgement:
+    base = {"scope": "organisation", "wants_human": False, "sentiment": "neutral", "clarity": "clear", "missing": ""}
+    return TurnJudgement.model_validate({**base, **fields})
 
 
 def _good_chunk() -> dict[str, Any]:
@@ -116,8 +122,8 @@ async def test_widget_classifier_controls_escalation(
     monkeypatch.setattr(partner, "_resolve_kb_slugs", AsyncMock(return_value=["kb-alpha"]))
     monkeypatch.setattr(partner, "_widget_support_mode_enabled", AsyncMock(return_value=support_mode))
     monkeypatch.setattr(partner, "retrieve_context", AsyncMock(return_value=([_good_chunk()], "prompt", [], False)))
-    classifier = AsyncMock(return_value=classification)
-    monkeypatch.setattr(partner.escalation_service, "classify_escalation", classifier)
+    judge = AsyncMock(return_value=_turn_judgement(**classification))
+    monkeypatch.setattr(partner.turn_judge, "judge_turn", judge)
     monkeypatch.setattr(partner, "chat_completion_non_streaming", completion)
     monkeypatch.setattr(partner, "chat_completion_streaming", streaming)
     monkeypatch.setattr(partner, "write_retrieval_log", AsyncMock())
@@ -135,7 +141,7 @@ async def test_widget_classifier_controls_escalation(
     else:
         escalated = "escalation" in response["choices"][0]["message"]
     assert escalated is expected
-    assert classifier.await_count == int(support_mode)
+    assert judge.await_count == int(support_mode)
 
 
 # ─── composer: the backend's own two cases ───────────────────────────────
