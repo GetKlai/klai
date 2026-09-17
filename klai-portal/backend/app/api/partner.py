@@ -1923,7 +1923,12 @@ async def chat_completions(  # noqa: C901
     if escalation is None and turn_judgement:
         if turn_judgement.wants_human:
             escalation = escalation_service.HUMAN_REQUEST
-        elif sentiment == "negative":
+        elif sentiment == "negative" and turn_judgement.clarity != "ambiguous":
+            # A vague complaint is a question to ask about, not a visitor to hand
+            # off. Measured live on 2026-09-17: "mijn telefoon werkt niet" came
+            # back ambiguous AND negative in 2 of 2 turns, so the frustration
+            # offer replaced the clarifying question every time. An angry
+            # register still escalates through the regex above.
             escalation = escalation_service.FRUSTRATION
     if escalation:
         system_prompt += escalation_service.ESCALATION_TURN_ADDENDUM[escalation]

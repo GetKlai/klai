@@ -1,6 +1,6 @@
 ---
 id: SPEC-RAG-ANSWER-JUDGES-001
-version: "0.2.0"
+version: "0.3.0"
 status: REQ-1 t/m REQ-4 (pad B, helpdeskwidget) in uitvoering; REQ-5 (pad A) na meting
 created: 2026-09-17
 author: Claude (Opus 5), in opdracht van Mark Vletter
@@ -17,6 +17,7 @@ related:
 
 | Versie | Datum | Wijziging |
 |---|---|---|
+| 0.3.0 | 2026-09-17 | Live gemeten na deploy (preview-sessies op de Voys-widget). Twee regels bijgesteld: negatief sentiment escaleert niet meer bij een onduidelijke vraag ("mijn telefoon werkt niet" kreeg anders altijd het medewerkeraanbod in plaats van een wedervraag), en een niet volledig beantwoord concept met een uitspraak die niet in de artikelen staat krijgt de weigering, ook met bronnen. |
 | 0.2.0 | 2026-09-17 | Gemeten tegen productie-`klai-fast` vóór livegang: de booleans uit v0.1.0 vielen om, `grounding` met drie opties hield stand, een wedervraag wordt herkend aan het vraagteken. REQ-1 t/m REQ-4 gebouwd. |
 | 0.1.0 | 2026-09-17 | Eerste versie na onderzoek van gesprekken #900 en #904 (Voys Help NL) en de hele widgetketen. Richting van Mark: "de vraag moet zijn: is dit antwoord goed genoeg, plus vooraf een judge die bepaalt of ik moet doorvragen, en de combinatie bepaalt wat je daarna doet." Goedgekeurd met "Wil je hier een plan voor maken en daarna de implementatie gaan doen?". |
 
@@ -77,7 +78,7 @@ Of het concept een verduidelijkingsvraag is, beslist de code: de tekst eindigt o
 Eén pure functie, volgorde van voorrang:
 
 1. Safety-blokkade: ongewijzigd.
-2. Escalatie (regex of `wants_human`, of `sentiment == negative`): het antwoord met knop; tekst zonder bron alleen als `grounding` niet `some_not_in_articles` is.
+2. Escalatie (regex, `wants_human`, of `sentiment == negative` bij een duidelijke vraag): het antwoord met knop; tekst zonder bron alleen als `grounding` niet `some_not_in_articles` is.
 3. Broad-mode-antwoord: ongewijzigd, niet gejudged.
 4. Gespreksbeurt (`scope == conversation`): tonen zonder bronnen als `grounding` niet `some_not_in_articles` is, anders de vaste weigering.
 5. Daarna de tabel:
@@ -85,7 +86,7 @@ Eén pure functie, volgorde van voorrang:
 | clarity | verdict | Uitkomst |
 |---|---|---|
 | clear | answered | het gecomponeerde antwoord met bronnen; zonder citeerbare bron alleen als `grounding` niet `some_not_in_articles` is, anders vaste weigering |
-| clear | partial | als "answered", plus de afspraakknop onder het antwoord |
+| clear | partial | als "answered", plus de afspraakknop onder het antwoord; met `some_not_in_articles` de vaste weigering, ook met bronnen |
 | clear | not_answered | vaste "niet gevonden" plus doorverwijzing |
 | ambiguous | answered | het antwoord; het model eindigt met één korte controlevraag (zie addendum) |
 | ambiguous | partial of not_answered | toont de verduidelijkingsvraag van het model als die op een vraagteken eindigt en `grounding` niet `some_not_in_articles` is, zonder knoppen; anders vaste weigering |
@@ -124,6 +125,18 @@ Het addendum voor een onduidelijke beurt vraagt het model in één generatie: be
 **Latentie per aanroep:** vraag-judge 424 tot 1398 ms (mediaan ~530), antwoord-judge 352 tot 833 ms (mediaan 495).
 
 **Bekend plafond:** een uitspraak die niet in de artikelen staat maar wel met citeerbare bronnen samenkomt, wordt getoond en alleen gelogd (`grounding` in `answer_signals`). Of dat een weigering moet worden, volgt uit de verdeling op echt verkeer: de valse-positievenkans op lange, parafraserende antwoorden is nog niet gemeten.
+
+## Live gemeten na deploy (2026-09-17, preview-sessies, 8 beurten)
+
+| Stap | Bereik |
+|---|---|
+| retrieval | 638 tot 1169 ms |
+| vraag-judge (parallel) | 468 tot 927 ms |
+| generatie | 317 tot 1758 ms |
+| antwoord-judge | 404 tot 566 ms |
+| totaal | 1695 tot 3382 ms |
+
+Twee bevindingen die tot v0.3.0 leidden: "mijn telefoon werkt niet" kwam 2 van 2 keer terug als `ambiguous` én `negative`, waardoor het frustratieaanbod de wedervraag verdrong; en een deels beantwoorde incassovraag met een verzonnen verwerkingstijd naast een echt artikel werd getoond (`partial`, `some_not_in_articles`, met bron).
 
 ## Performancebudget
 
