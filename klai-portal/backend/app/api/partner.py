@@ -1954,6 +1954,40 @@ async def chat_completions(  # noqa: C901
         system_prompt += escalation_service.ESCALATION_TURN_ADDENDUM[escalation]
     force_escalation = escalation is not None
 
+    # SPEC-RAG-CLARIFY-FLOW-001 REQ-3, decision 1: on weak retrieval without
+    # direct evidence, ask one clarifying question instead of guessing. The band
+    # is the one retrieve_context stored from retrieval-api; a turn without one
+    # never retrieved, so no decision is taken and none is logged (REQ-6 counts
+    # decided turns only). Not on a broad-mode turn (consent already widened the
+    # answer) or an escalation turn (the visitor is to be offered a person, and
+    # two competing per-turn instructions produce neither).
+    clarify = False
+    scope_classified = gap is not None
+    band = answer_signals.get("band")
+    if clarify_flow and band is not None and not (broad_turn or escalation):
+        clarify = should_clarify(band, has_direct_evidence=has_direct_evidence_for_query(visitor_turn, chunks))
+        if clarify and not scope_classified:
+            # turn_scope only ran on a retrieval gap, but this decision follows
+            # retrieval-api's band, and the two disagree (reranker 0.9 with band
+            # "low" is no gap). A "dankjewel" must not get a clarifying question,
+            # so classify here. Sequential by necessity: the band only exists
+            # once retrieval returned, and only this path pays the bounded 2 s.
+            turn_asserts = await turn_scope.classify_turn_scope(visitor_turn, settings)
+            scope_classified = True
+        if turn_scope.is_conversational(turn_asserts):
+            # A conversational turn has its own instruction below.
+            clarify = False
+        else:
+            clarify_decision = "clarify" if clarify else "answer"
+            answer_signals["clarify_decision"] = clarify_decision
+            logger.info(
+                "partner_chat_clarify_decision",
+                org_id=auth.org_id,
+                wgt_id=auth.key_id,
+                clarify_decision=clarify_decision,
+                band=band,
+            )
+
     # SPEC-RAG-ANSWER-TIERS-001 REQ-1, second half. Letting the class decide only
     # what the composer does still left the model reading a profile that tells it
     # to refuse when the articles do not cover the question. It could therefore
@@ -1961,31 +1995,8 @@ async def chat_completions(  # noqa: C901
     # never reads the words. The class now reaches the generation too.
     if turn_scope.is_conversational(turn_asserts):
         system_prompt += turn_scope.CONVERSATIONAL_TURN_ADDENDUM
-
-    # SPEC-RAG-CLARIFY-FLOW-001 REQ-3, decision 1: on weak retrieval without
-    # direct evidence, ask one clarifying question instead of guessing. The band
-    # is the one retrieve_context stored from retrieval-api; a turn without one
-    # never retrieved and is not asked about. Not on a conversational turn (it
-    # already has its own instruction), a broad-mode turn (consent already
-    # widened the answer), or an escalation turn (the visitor is to be offered
-    # a person, and two competing per-turn instructions produce neither).
-    if clarify_flow and not (turn_scope.is_conversational(turn_asserts) or broad_turn or escalation):
-        band = answer_signals.get("band")
-        clarify = band is not None and should_clarify(
-            band, has_direct_evidence=has_direct_evidence_for_query(visitor_turn, chunks)
-        )
-        if clarify:
-            system_prompt += CLARIFY_TURN_ADDENDUM["external"]
-        # REQ-6: one queryable word per decided turn.
-        clarify_decision = "clarify" if clarify else "answer"
-        answer_signals["clarify_decision"] = clarify_decision
-        logger.info(
-            "partner_chat_clarify_decision",
-            org_id=auth.org_id,
-            wgt_id=auth.key_id,
-            clarify_decision=clarify_decision,
-            band=band,
-        )
+    if clarify:
+        system_prompt += CLARIFY_TURN_ADDENDUM["external"]
 
     # REQ-4. Every classified turn logs its class, not just the conversational
     # ones: a share you cannot see is a boundary that drifts unnoticed.
@@ -1994,7 +2005,7 @@ async def chat_completions(  # noqa: C901
             "partner_chat_turn_scope",
             org_id=auth.org_id,
             wgt_id=auth.key_id if str(auth.key_id).startswith("wgt_") else None,
-            turn_scope=turn_scope.scope_label(turn_asserts) if turn_asserts is not None or gap else "not_classified",
+            turn_scope=turn_scope.scope_label(turn_asserts) if scope_classified else "not_classified",
             retrieval_gap=gap,
         )
 

@@ -48,6 +48,7 @@ class _LiteLLM:
         self.turn_scope = turn_scope
         self.answer_requests: list[dict] = []
         self.claims_requests: list[dict] = []
+        self.scope_requests: list[dict] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
@@ -63,6 +64,7 @@ class _LiteLLM:
             reply = {"wants_human": False, "sentiment": "neutral"}
             return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(reply)}}]})
         if schema == "turn_category":
+            self.scope_requests.append(body)
             return _classifier_reply(self.turn_scope)
         self.answer_requests.append(body)
         if body.get("stream"):
@@ -86,10 +88,10 @@ def _delta(frames: list[dict], key: str) -> list[Any]:
     return [c["delta"][key] for f in frames for c in f.get("choices") or [] if key in (c.get("delta") or {})]
 
 
-async def _answer(litellm: _LiteLLM, *, stream: bool, clarify_flow: bool = True) -> tuple[str, dict, dict]:
+async def _answer(litellm: _LiteLLM, *, stream: bool, clarify_flow: bool = True, **overrides) -> tuple[str, dict, dict]:
     """Run one widget turn with no citable source; return (visible text, signals, extras)."""
     signals: dict[str, Any] = {}
-    kwargs = {
+    kwargs: dict[str, Any] = {
         "messages": VISITOR,
         "model": "klai-primary",
         "temperature": 0.2,
@@ -103,6 +105,7 @@ async def _answer(litellm: _LiteLLM, *, stream: bool, clarify_flow: bool = True)
         "support_mode": True,
         "clarify_flow": clarify_flow,
         "answer_signals": signals,
+        **overrides,
     }
     with respx.mock(assert_all_called=False) as router:
         router.post(f"{LITELLM}/v1/chat/completions").mock(side_effect=litellm)
@@ -197,22 +200,32 @@ async def test_switched_off_never_classifies_and_refuses_as_today(stream):
 # ─── REQ-3: decision 1, before generation, through the route ────────────
 
 
-def _retrieval_reply(band: str, chunk_text: str) -> httpx.Response:
+def _retrieval_reply(band: str, chunk_text: str, reranker: float | None = None) -> httpx.Response:
     item = {
         "chunk_id": "c1",
         "evidence_id": "ev1",
         "title": "Nummer porteren",
         "text": chunk_text,
         "source_url": "https://help.example.com/porteren",
-        "reranker_score": 0.9 if band == "high" else 0.05,
+        "reranker_score": reranker if reranker is not None else (0.9 if band == "high" else 0.05),
     }
     source = {"source_url": item["source_url"], "title": item["title"], "evidence_ids": ["ev1"]}
     return httpx.Response(200, json={"confidence_band": band, "evidence_pack": {"items": [item], "sources": [source]}})
 
 
 async def _route_turn(
-    monkeypatch, *, question: str, band: str, chunk_text: str, clarify_unlocked: bool, turn_scope: str = "organisation"
-) -> _LiteLLM:
+    monkeypatch,
+    *,
+    question: str,
+    band: str,
+    chunk_text: str,
+    clarify_unlocked: bool,
+    turn_scope: str = "organisation",
+    stream: bool = False,
+    reranker: float | None = None,
+    answer_claims: str = "no_claims",
+) -> tuple[_LiteLLM, str]:
+    """Drive the partner route end to end; return the LiteLLM recorder and the visitor-visible text."""
     from app.api import partner
     from app.api.partner import ChatCompletionsRequest, chat_completions
 
@@ -229,10 +242,10 @@ async def _route_turn(
     db.execute = AsyncMock(return_value=FakeResult(rows=[FakeKB(id=10, name="KB", slug="kb-a", org_id=42)]))
     auth = make_partner_auth(kb_access={10: "read"})
     auth.key_id = "wgt_901"
-    request = ChatCompletionsRequest(messages=[{"role": "user", "content": question}], stream=False)
+    request = ChatCompletionsRequest(messages=[{"role": "user", "content": question}], stream=stream)
     http_request = MagicMock(headers={}, client=MagicMock(host="127.0.0.1"))
 
-    litellm = _LiteLLM(model_text=CLARIFYING_QUESTION, turn_scope=turn_scope)
+    litellm = _LiteLLM(model_text=CLARIFYING_QUESTION, turn_scope=turn_scope, answer_claims=answer_claims)
     with (
         respx.mock(assert_all_called=False) as router,
         # Database readers and fire-and-forget audit/gap writes: not HTTP, not under test.
@@ -245,9 +258,13 @@ async def _route_turn(
         patch("app.services.partner_chat._schedule_gap_event"),
     ):
         router.post(f"{LITELLM}/v1/chat/completions").mock(side_effect=litellm)
-        router.post(f"{RETRIEVAL}/retrieve").mock(return_value=_retrieval_reply(band, chunk_text))
-        await chat_completions(request=request, http_request=http_request, auth=auth, db=db)
-    return litellm
+        router.post(f"{RETRIEVAL}/retrieve").mock(return_value=_retrieval_reply(band, chunk_text, reranker))
+        response = await chat_completions(request=request, http_request=http_request, auth=auth, db=db)
+        if stream:
+            text = "".join(_delta(_frames([chunk async for chunk in response.body_iterator]), "content"))
+        else:
+            text = response["choices"][0]["message"]["content"]
+    return litellm, text
 
 
 def _system_prompt_sent(litellm: _LiteLLM) -> str:
@@ -260,7 +277,7 @@ UNRELATED_CHUNK = "Je neemt je nummer mee door het porteringsformulier in te vul
 
 @pytest.mark.parametrize("band", ["low", "unknown"])
 async def test_weak_retrieval_without_direct_evidence_asks_a_clarifying_question(monkeypatch, band):
-    litellm = await _route_turn(
+    litellm, _ = await _route_turn(
         monkeypatch, question="prijzen?", band=band, chunk_text=UNRELATED_CHUNK, clarify_unlocked=True
     )
 
@@ -268,7 +285,7 @@ async def test_weak_retrieval_without_direct_evidence_asks_a_clarifying_question
 
 
 async def test_confident_retrieval_gets_no_clarify_instruction(monkeypatch):
-    litellm = await _route_turn(
+    litellm, _ = await _route_turn(
         monkeypatch, question="prijzen?", band="high", chunk_text=UNRELATED_CHUNK, clarify_unlocked=True
     )
 
@@ -276,7 +293,7 @@ async def test_confident_retrieval_gets_no_clarify_instruction(monkeypatch):
 
 
 async def test_conversational_turn_gets_no_clarify_instruction(monkeypatch):
-    litellm = await _route_turn(
+    litellm, _ = await _route_turn(
         monkeypatch,
         question="dankjewel!",
         band="low",
@@ -289,7 +306,7 @@ async def test_conversational_turn_gets_no_clarify_instruction(monkeypatch):
 
 
 async def test_switched_off_route_gets_no_clarify_instruction(monkeypatch):
-    litellm = await _route_turn(
+    litellm, _ = await _route_turn(
         monkeypatch, question="prijzen?", band="low", chunk_text=UNRELATED_CHUNK, clarify_unlocked=False
     )
 
@@ -297,7 +314,7 @@ async def test_switched_off_route_gets_no_clarify_instruction(monkeypatch):
     assert litellm.claims_requests == []
 
 
-async def test_the_switch_is_the_tenant_unlock_and_defaults_off():
+async def test_the_switch_is_the_tenant_unlock_scoped_to_the_caller_org():
     from app.api.partner import _clarify_flow_enabled
 
     auth = make_partner_auth()
@@ -307,3 +324,84 @@ async def test_the_switch_is_the_tenant_unlock_and_defaults_off():
 
     assert await _clarify_flow_enabled(auth, unlocked) is True
     assert await _clarify_flow_enabled(auth, default) is False
+    query = str(unlocked.execute.call_args.args[0].compile(compile_kwargs={"literal_binds": True}))
+    assert "FROM portal_orgs" in query
+    assert f"WHERE portal_orgs.id = {auth.org_id}" in query
+
+
+# ─── Review round: route-level decision 2, conversational gate, late scope ──
+
+
+@pytest.mark.parametrize("stream", [True, False])
+async def test_route_with_unlock_shows_a_clarifying_question_classified_no_claims(monkeypatch, stream):
+    litellm, text = await _route_turn(
+        monkeypatch,
+        question="prijzen?",
+        band="low",
+        chunk_text=UNRELATED_CHUNK,
+        clarify_unlocked=True,
+        stream=stream,
+    )
+
+    assert text == CLARIFYING_QUESTION
+    (claims_request,) = litellm.claims_requests
+    # The article titles that were in the prompt reach the classifier.
+    assert "- Nummer porteren" in claims_request["messages"][1]["content"]
+
+
+@pytest.mark.parametrize(("category", "shown"), [("claims", False), ("no_claims", True)])
+async def test_conversational_reply_goes_through_the_claims_gate(category, shown):
+    litellm = _LiteLLM(model_text="Wij rekenen 5 euro." if not shown else "Graag gedaan!", answer_claims=category)
+
+    text, signals, _ = await _answer(litellm, stream=False, conversational=True)
+
+    assert len(litellm.claims_requests) == 1
+    assert signals["answer_claims"] == category
+    if shown:
+        assert text == "Graag gedaan!"
+        assert signals["refused"] is False
+    else:
+        assert text == REFUSAL_NL
+        assert signals["refused"] is True
+
+
+async def test_conversational_reply_is_not_classified_while_switched_off():
+    litellm = _LiteLLM(model_text="Wij rekenen 5 euro.", answer_claims="claims")
+
+    text, _, _ = await _answer(litellm, stream=True, clarify_flow=False, conversational=True)
+
+    assert text == "Wij rekenen 5 euro."
+    assert litellm.claims_requests == []
+
+
+async def test_broad_mode_answer_is_never_classified():
+    litellm = _LiteLLM(model_text="DECT is een standaard voor draadloze telefonie.", answer_claims="claims")
+
+    text, _, _ = await _answer(litellm, stream=True, broad_mode=True)
+
+    assert "DECT is een standaard" in text
+    assert litellm.claims_requests == []
+
+
+async def test_safety_blocked_turn_is_never_classified(monkeypatch):
+    monkeypatch.setattr(partner_chat, "output_safety_violation", lambda text: "prompt_injection")
+    litellm = _LiteLLM(model_text=CLARIFYING_QUESTION, answer_claims="no_claims")
+
+    await _answer(litellm, stream=True)
+
+    assert litellm.claims_requests == []
+
+
+async def test_confident_reranker_with_low_band_still_classifies_scope_before_clarifying(monkeypatch):
+    litellm, _ = await _route_turn(
+        monkeypatch,
+        question="dankjewel!",
+        band="low",
+        reranker=0.9,
+        chunk_text=UNRELATED_CHUNK,
+        clarify_unlocked=True,
+        turn_scope="conversation",
+    )
+
+    assert len(litellm.scope_requests) == 1
+    assert CLARIFY_TURN_ADDENDUM["external"] not in _system_prompt_sent(litellm)

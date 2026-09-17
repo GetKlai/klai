@@ -1944,30 +1944,44 @@ async def _show_uncited_reply_without_claims(
     settings: Settings,
     org_id: int | str | None,
     answer_signals: dict[str, Any] | None,
+    helpdesk: bool,
+    response_language: str | None,
 ) -> tuple[str, list[dict], dict[str, Any]]:
-    """Decision 2 of SPEC-RAG-CLARIFY-FLOW-001: replace the fixed refusal with the
-    model's own uncited reply when that reply asserts nothing about the organisation.
+    """Decision 2 of SPEC-RAG-CLARIFY-FLOW-001: model-written text without sources
+    reaches the visitor only when it asserts nothing about the organisation.
 
     Runs on the composer's result rather than inside it. The composer is
     synchronous and has two production callers plus a large body of direct
     tests; the classification is an HTTP call. Making the composer async would
     push ``await`` into every one of those without changing what they test,
-    while this one async step after it keeps a single home for the rule and
-    leaves the composer's own contract untouched: it still returns the refusal,
-    and only this step may undo that. With ``enabled`` off (the tenant has no
-    clarify-flow unlock) it returns the composer's result without a model call.
+    while this one async step after it keeps a single home for the rule. With
+    ``enabled`` off (the tenant has no clarify-flow unlock) it returns the
+    composer's result untouched and makes no model call.
 
-    Only a turn the composer marked as the no-citable-sources refusal is
-    considered, and only when the draft still has words after the stripper.
-    That excludes a broad-mode turn with no output, where there is nothing to
-    show. The stripper runs over the draft BEFORE classification, so the text
-    the classifier judges is exactly the text the visitor would see.
+    Two composer outcomes carry model-written text with zero sources:
 
-    The refusal's decision flags (broad-mode offer, appointment escalation)
-    stay on the passed reply, as the spec requires; only the audit marker comes
-    off, because this is no longer the fixed refusal.
+    * the no-citable-sources refusal, whose draft may be a clarifying question
+      or a natural "not found": shown on ``no_claims``, refusal otherwise;
+    * a conversational turn (turn_scope said "conversation"), already shown
+      without the citation firewall: kept on ``no_claims``, replaced by the
+      refusal otherwise. turn_scope names a misclassified turn as its residual
+      risk (reproduced in review: "Wij rekenen 5 euro." passed as
+      conversational), and this post-generation check is the upgrade it names.
+
+    A consented broad-mode answer is deliberately NOT gated. It is labelled
+    general knowledge, and the classifier counts every fact about the world as
+    a claim, so gating it would switch broad mode off entirely.
+
+    The stripper runs over the draft BEFORE classification, so the classifier
+    judges exactly the text the visitor would see; an empty result (a broad
+    turn with no output) has nothing to show and makes no call. Fixed texts
+    never reach the classifier: only the model's draft is ever sent, and callers
+    do not call this on a safety-blocked turn.
+
+    A passed refusal keeps its decision flags (broad-mode offer, appointment
+    escalation), as the spec requires; only the audit marker comes off.
     """
-    if not (enabled and decision.get(_NO_CITABLE_SOURCES_DECISION_KEY)):
+    if not enabled or sources or decision.get("broad_mode") == "answer":
         return content, sources, decision
     safe_text = _answer_without_retrieved_sources(strip_appointment_offer_marker(draft)[0], citation_chunks)
     if not safe_text:
@@ -1984,11 +1998,20 @@ async def _show_uncited_reply_without_claims(
     logger.info("partner_chat_answer_claims", org_id=org_id, answer_claims=label)
     if answer_signals is not None:
         answer_signals["answer_claims"] = label
-    if not may_show_model_text_without_sources(result):
+    refused = decision.get(_NO_CITABLE_SOURCES_DECISION_KEY)
+    if may_show_model_text_without_sources(result):
+        if not refused:
+            return content, sources, decision
+        passed = {key: value for key, value in decision.items() if key != _NO_CITABLE_SOURCES_DECISION_KEY}
+        passed["reason"] = "uncited_no_claims"
+        return safe_text, [], passed
+    if refused:
         return content, sources, decision
-    passed = {key: value for key, value in decision.items() if key != _NO_CITABLE_SOURCES_DECISION_KEY}
-    passed["reason"] = "uncited_no_claims"
-    return safe_text, [], passed
+    refusal: dict[str, Any] = {"reason": "conversational_turn_claims", _NO_CITABLE_SOURCES_DECISION_KEY: True}
+    if helpdesk:
+        refusal["broad_mode"] = "offer"
+        refusal["escalation"] = _appointment_escalation()
+    return _no_citable_sources_message(response_language, helpdesk=helpdesk), [], refusal
 
 
 def _count_citation_rescues(decision: dict[str, Any]) -> int:
@@ -2166,6 +2189,8 @@ async def _chat_completion_streaming_with_composed_citations(
             settings=settings,
             org_id=org_id,
             answer_signals=answer_signals,
+            helpdesk=support_mode,
+            response_language=response_language,
         )
     # Consumed before the decision is logged so that event keeps its exact
     # payload: the marker only travels to the audit sink (see _fill_answer_signals).
@@ -2976,6 +3001,8 @@ async def chat_completion_non_streaming(
                     settings=settings,
                     org_id=org_id,
                     answer_signals=answer_signals,
+                    helpdesk=support_mode,
+                    response_language=language_decision.language,
                 )
                 decision.update({"sentiment": sentiment} if support_mode and sentiment else {})
                 # Popped before the log so that event keeps its exact payload;
