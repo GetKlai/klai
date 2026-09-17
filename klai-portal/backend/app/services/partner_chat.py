@@ -1759,7 +1759,6 @@ def _compose_backend_managed_answer(
     web_query: str | None = None,
     helpdesk: bool = False,
     broad: bool = False,
-    conversational: bool = False,
     force_escalation: bool = False,
     *,
     response_language: str | None,
@@ -1790,6 +1789,15 @@ def _compose_backend_managed_answer(
     re-introduce it by omission. ``user_query`` stays the rewritten KB search
     query, the right input for citation composition and web validation
     (``query_text=``), which is why the two are separate parameters.
+
+    A conversational turn (turn_scope "conversation") is NOT special-cased here
+    any more. It used to skip the citation firewall and return the model's text
+    directly, which cost a misclassified real question its sources and turned it
+    into the fixed refusal (measured on 90 real Voys follow-ups on 2026-09-17:
+    11 fires, at least 3 wrong, one refusing "hoe kan ik kijken of er ergens een
+    doorschakeling in zit?"). Such a turn now takes the normal path: with no
+    supporting article the answer judge decides, and text that states nothing
+    about the organisation still reaches the visitor.
 
     ``broad`` marks a consented general-knowledge turn on the helpdesk widget:
     the model had the SUPPORT_BROAD profile, no article context was injected,
@@ -1830,36 +1838,6 @@ def _compose_backend_managed_answer(
     # carries the whole conversation, so it abstains far less; when it does
     # abstain the Dutch default still applies, deliberately.
     refusal_language = response_language
-    if conversational:
-        # SPEC-RAG-ANSWER-TIERS-001 REQ-1. The answer to this turn asserts
-        # nothing checkable outside this chat window — which language we speak,
-        # that the visitor is welcome, that this is an AI — so there is nothing
-        # for the citation firewall to ground and nothing to refuse. Before
-        # this branch such a turn fell into the strict path and came back as
-        # "I can't find this in our help articles" with a consent block and an
-        # appointment button under it.
-        #
-        # The artifact stripper still runs. Skipping the composer also skips
-        # the only MECHANICAL guard against a model-written URL or a fake "[1]"
-        # reaching the visitor; the SUPPORT profile's ban on them is a prompt,
-        # and a prompt is not a guarantee. Reviewed 2026-09-15 by reproducing
-        # exactly that: a conversational answer carrying an arbitrary link went
-        # through untouched.
-        #
-        # An escalation still shows its button. force_escalation fires on a
-        # frustrated or shouting visitor as well as on an explicit request for
-        # a person, and those turns are frequently conversational — a complaint
-        # about the previous answer asserts nothing about the organisation. The
-        # old behaviour answered them with "I can't find this in our help
-        # articles", which is both wrong and unkind. The offer is kept, the
-        # nonsense is not.
-        safe_text = _answer_without_retrieved_sources(text, citation_chunks)
-        if safe_text:
-            decision = {"reason": "conversational_turn", "turn_scope": "conversational"}
-            if offered_appointment:
-                decision["escalation"] = _appointment_escalation()
-            return safe_text, [], decision
-
     if broad:
         if not text.strip():
             # The model produced nothing even with the broad profile; stay on
@@ -2202,7 +2180,6 @@ async def _chat_completion_streaming_with_composed_citations(
         web_query,
         helpdesk=support_mode,
         broad=broad_mode,
-        conversational=conversational,
         force_escalation=force_escalation,
         response_language=response_language,
     )
@@ -3038,7 +3015,6 @@ async def chat_completion_non_streaming(
                     web_query,
                     helpdesk=support_mode,
                     broad=broad_mode,
-                    conversational=conversational,
                     force_escalation=force_escalation,
                     response_language=language_decision.language,
                 )

@@ -224,6 +224,23 @@ async def test_ambiguous_turn_shows_the_clarifying_question_without_buttons(stre
     assert signals["refused"] is False
 
 
+async def test_a_turn_wrongly_called_conversational_keeps_its_sources():
+    """The composer used to skip the citation firewall on a conversational turn.
+
+    Measured on 90 real Voys follow-ups on 2026-09-17: the class fired 11 times,
+    at least 3 of them wrong, and one real question ("hoe kan ik kijken of er
+    ergens een doorschakeling in zit?") came back as the fixed refusal because
+    its sources were dropped.
+    """
+    litellm = _LiteLLM(model_text=ANSWER_900, answer_judge=_answer_verdict("answered"))
+
+    text, signals, extras = await _answer(litellm, stream=True, conversational=True, **_with_900_sources())
+
+    assert text == ANSWER_900
+    assert [s["url"] for s in extras["sources"]] == ["https://help.example.com/factuur"]
+    assert signals["decision"] == "answer"
+
+
 @pytest.mark.parametrize("clarity", ["clear", "ambiguous"])
 async def test_uncited_draft_without_claims_is_shown_as_before_the_judges(clarity):
     # The original claims rule: text without a source that states nothing about

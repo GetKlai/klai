@@ -3565,7 +3565,7 @@ def test_build_conversation_history_window_and_role_filtering():
 # ---------------------------------------------------------------------------
 
 
-def _compose(text, *, conversational, trusted=None, force_escalation=False):
+def _compose(text, *, trusted=None, force_escalation=False):
     from app.services.partner_chat import _compose_backend_managed_answer
 
     return _compose_backend_managed_answer(
@@ -3576,34 +3576,14 @@ def _compose(text, *, conversational, trusted=None, force_escalation=False):
         None,
         None,
         helpdesk=True,
-        conversational=conversational,
         force_escalation=force_escalation,
         response_language="en",
     )
 
 
-def test_conversational_turn_is_not_refused_for_lack_of_help_articles():
-    """The reported turn: a visitor asked, in English, whether they could talk English.
-
-    Production request_id 469e4e48-94ad-4555-943a-a45b92bf46ae: the retriever
-    searched the help articles for "also can english talk", the selector rejected
-    all three candidates, and the citation firewall replaced the model's answer
-    with "I can't find this in our help articles" plus an appointment button.
-    """
-    content, sources, decision = _compose("Yes, I can answer in English.", conversational=True)
-
-    assert content == "Yes, I can answer in English."
-    assert "can't find this" not in content
-    assert sources == []
-    assert decision["turn_scope"] == "conversational"
-    # No consent block and no booking button: neither is an answer to this turn.
-    assert "broad_mode" not in decision
-    assert "escalation" not in decision
-
-
 def test_a_question_about_us_without_sources_still_refuses():
     """REQ-3. The grounding boundary does not move — Moffatt v. Air Canada."""
-    content, sources, decision = _compose("Voys costs 12 euro a month.", conversational=False)
+    content, sources, decision = _compose("Voys costs 12 euro a month.")
 
     assert "can't find this in our help articles" in content
     assert sources == []
@@ -3611,39 +3591,9 @@ def test_a_question_about_us_without_sources_still_refuses():
     assert decision["broad_mode"] == "offer"
 
 
-def test_asking_for_a_person_keeps_the_booking_button_without_the_canned_refusal():
-    """The button is the backend's decision; the canned text is not the answer.
-
-    force_escalation fires on a frustrated or shouting visitor as well as on an
-    explicit request for a person, and those turns are frequently conversational
-    - a complaint about the previous answer asserts nothing about the
-    organisation. Answering it with "I can't find this in our help articles" is
-    both wrong and unkind, so the offer survives and the nonsense does not.
-    """
-    content, _, decision = _compose("Of course, I'll help you with that.", conversational=True, force_escalation=True)
-
-    assert content == "Of course, I'll help you with that."
-    assert "can't find this in our help articles" not in content
-    assert decision["escalation"] == {"appointment": True}
-
-
-def test_conversational_answer_cannot_smuggle_a_link_past_the_composer():
-    """Skipping the composer also skips the only mechanical link guard.
-
-    Reproduced during review on 2026-09-15: an arbitrary URL and a fake "[1]" in
-    a conversational answer reached the visitor untouched, because the ban on
-    them lives in the SUPPORT prompt and a prompt is not a guarantee.
-    """
-    content, sources, _ = _compose("Sure! See https://evil.example.com/phish and the docs [1].", conversational=True)
-
-    assert "evil.example.com" not in content
-    assert "[1]" not in content
-    assert sources == []
-
-
-def test_an_empty_model_answer_still_refuses_even_when_conversational():
-    """A class-three turn with nothing to say falls back, it does not send silence."""
-    content, _, _ = _compose("   ", conversational=True)
+def test_an_empty_model_answer_still_refuses():
+    """A turn with nothing to say falls back, it does not send silence."""
+    content, _, _ = _compose("   ")
 
     assert "can't find this in our help articles" in content
 
@@ -3667,13 +3617,7 @@ def test_classifier_failure_reads_as_a_knowledge_question():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "branch",
-    [
-        pytest.param({"conversational": True}, id="conversational"),
-        pytest.param({"broad": True}, id="broad_mode"),
-    ],
-)
+@pytest.mark.parametrize("branch", [pytest.param({"broad": True}, id="broad_mode")])
 def test_no_branch_without_sources_may_return_a_link(branch):
     """A link reaches a visitor only when retrieval produced it and it was selected.
 
@@ -3681,8 +3625,10 @@ def test_no_branch_without_sources_may_return_a_link(branch):
     the only mechanical place an output URL is checked against the allowed set.
     Measured 2026-09-15: a consented broad-mode answer carrying an arbitrary URL
     reached the visitor untouched, and had been able to since broad mode shipped.
-    Parametrised on purpose — a third source-less branch added later belongs in
-    this list, and leaving it out is the defect.
+    Parametrised on purpose — a second source-less branch added later belongs in
+    this list, and leaving it out is the defect. The conversational branch was
+    removed on 2026-09-18; uncited model text now passes the same stripper in
+    ``_judge_composed_answer``.
     """
     from app.services.partner_chat import _compose_backend_managed_answer
 
@@ -3712,17 +3658,14 @@ def test_no_branch_without_sources_may_return_a_link(branch):
 
 def test_the_link_guard_leaves_ordinary_prose_alone():
     """The guard is aggressive by design; it must not eat normal sentences."""
-    from app.services.partner_chat import _compose_backend_managed_answer
+    from app.services.partner_chat import _answer_without_retrieved_sources
 
     for sentence in (
         "Ga naar Beheer en kies Permissiegroepen.",
         "Dat kan, ik spreek ook Engels.",
         "Let op: dit kan even duren.",
     ):
-        content, _, _ = _compose_backend_managed_answer(
-            sentence, [], [], "q", None, None, helpdesk=True, conversational=True, response_language=None
-        )
-        assert content == sentence
+        assert _answer_without_retrieved_sources(sentence, []) == sentence
 
 
 def test_internal_evidence_labels_never_reach_the_visitor():
@@ -3732,7 +3675,7 @@ def test_internal_evidence_labels_never_reach_the_visitor():
     in ordinary prose "E1" is just a word. Reproduced 2026-09-15: "Evidence E1"
     and "(E1)" reached the visitor on the source-less branches.
     """
-    from app.services.partner_chat import _compose_backend_managed_answer
+    from app.services.partner_chat import _answer_without_retrieved_sources
 
     chunks = [
         {
@@ -3742,17 +3685,7 @@ def test_internal_evidence_labels_never_reach_the_visitor():
             "source_url": "https://help.voys.nl/permissiegroepen",
         }
     ]
-    content, _, _ = _compose_backend_managed_answer(
-        "Zoals beschreven in Evidence E1 en (E1) kan dat.",
-        [],
-        chunks,
-        "q",
-        None,
-        None,
-        helpdesk=True,
-        conversational=True,
-        response_language=None,
-    )
+    content = _answer_without_retrieved_sources("Zoals beschreven in Evidence E1 en (E1) kan dat.", chunks)
 
     assert "E1" not in content
     assert "Evidence" not in content

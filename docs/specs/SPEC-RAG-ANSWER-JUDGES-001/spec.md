@@ -1,6 +1,6 @@
 ---
 id: SPEC-RAG-ANSWER-JUDGES-001
-version: "0.5.0"
+version: "0.6.0"
 status: REQ-1 t/m REQ-4 (pad B, helpdeskwidget) in uitvoering; REQ-5 (pad A) na meting
 created: 2026-09-17
 author: Claude (Opus 5), in opdracht van Mark Vletter
@@ -17,6 +17,7 @@ related:
 
 | Versie | Datum | Wijziging |
 |---|---|---|
+| 0.6.0 | 2026-09-18 | Drie onderzoekslijnen op echte gesprekken afgerond (eerste vraag, vervolgbeurten, verzonnen details). Gespreksbeurten verliezen hun uitzondering in de citatiemotor: die kostte een verkeerd bestempelde vraag haar bronnen (11 keer afgegaan op 90 vervolgbeurten, minstens 3 fout, één echte vraag geweigerd). Tekst zonder bron loopt nu overal via dezelfde controle achteraf. |
 | 0.5.0 | 2026-09-17 | Blinde vergelijking oud tegen nieuw op 50 echte Voys-eerste vragen × 3 rondes (klai-medium als beoordelaar, willekeurige volgorde): oud 69, nieuw 65, gelijk 16. Bij een identieke keten 24 tegen 24. De doorvraag-opdracht maakte antwoorden slechter (oud beter in 19 van 23) en gaf maar 2 echte vervolgvragen op 150 antwoorden: verwijderd. De uitzondering "negatief sentiment escaleert niet bij een onduidelijke vraag" verviel mee. In beide versies bevatte ongeveer een derde van de antwoorden verzonnen details (47 van 150). |
 | 0.4.0 | 2026-09-17 | Achteruitgang hersteld en ontwerp vastgezet op aanwijzing van Mark. Replay van de eerste vraag uit de laatste 9 echte Voys-gesprekken (2×): 7 van de 18 antwoorden werden "niet gevonden", 7 van 7 door het veto van de antwoord-judge op antwoorden mét bron, en 5 van de 9 vragen wisselden van uitkomst. Nieuw uitgangspunt: het oorspronkelijke systeem is de ondergrens; de judges voegen alleen toe. Zie "Definitief ontwerp". |
 | 0.3.0 | 2026-09-17 | Live gemeten na deploy (preview-sessies op de Voys-widget). Twee regels bijgesteld: negatief sentiment escaleert niet meer bij een onduidelijke vraag ("mijn telefoon werkt niet" kreeg anders altijd het medewerkeraanbod in plaats van een wedervraag), en een niet volledig beantwoord concept met een uitspraak die niet in de artikelen staat krijgt de weigering, ook met bronnen. |
@@ -97,7 +98,7 @@ Eén pure functie, volgorde van voorrang:
 1. Safety-blokkade: ongewijzigd.
 2. Escalatie (regex, `wants_human`, of `sentiment == negative` bij een duidelijke vraag): het antwoord met knop; tekst zonder bron alleen als `grounding` niet `some_not_in_articles` is.
 3. Broad-mode-antwoord: ongewijzigd, niet gejudged.
-4. Gespreksbeurt (`scope == conversation`): tonen zonder bronnen als `grounding` niet `some_not_in_articles` is, anders de vaste weigering.
+4. Gespreksbeurt (`scope == conversation`): alleen nog een instructie aan het model, geen uitzondering in de citatiemotor (v0.6.0). Levert de beurt geen bron op, dan geldt regel 2.
 5. Daarna de tabel:
 
 | clarity | verdict | Uitkomst |
