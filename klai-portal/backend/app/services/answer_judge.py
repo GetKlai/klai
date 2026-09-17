@@ -132,7 +132,12 @@ def decide_answer(
         if draft_is_question and not unsupported:
             return "clarifying_question"
         return "refusal"
-    if judgement.verdict == "not_answered" or not may_show:
+    # A draft that does not fully answer AND states something the articles do not
+    # say is not good enough even when a source was cited: measured live on
+    # 2026-09-17, a partial answer on a direct-debit question added an invented
+    # processing time next to a real article. A fully answered draft with sources
+    # stays shown while the false-positive rate on long paraphrases is unmeasured.
+    if judgement.verdict == "not_answered" or not may_show or (unsupported and judgement.verdict != "answered"):
         return "refusal"
     return "partial_answer" if judgement.verdict == "partial" else "answer"
 
