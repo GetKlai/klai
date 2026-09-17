@@ -41,12 +41,14 @@ export interface ConversationListItem {
     outcome: string
     failure_category: string | null
     confidence: string | null
+    reasoning: string | null
   } | null
   ratings: { up: number; down: number }
   review: {
     status: ConversationReviewStatus
     worst_verdict: string | null
     causes: string[]
+    reviews: ConversationReview[]
   }
   open_gap_count: number
 }
@@ -72,7 +74,6 @@ export interface ActivityConversationQuery {
   cause?: string | string[]
   band?: ConversationBand | ConversationBand[]
   rating?: ConversationRating
-  queue?: boolean
   sort?: 'newest' | 'worst'
   cursor?: string | null
   limit?: number
@@ -99,7 +100,6 @@ export function activityConversationsPath(query: ActivityConversationQuery): str
   append('cause', query.cause)
   append('band', query.band)
   if (query.rating) params.set('rating', query.rating)
-  if (query.queue !== undefined) params.set('queue', String(query.queue))
   if (query.cursor) params.set('cursor', query.cursor)
   return `/api/app/activity/conversations?${params.toString()}`
 }

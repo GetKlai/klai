@@ -14,28 +14,13 @@ import {
   DataTableRow,
 } from '@/components/ui/data-table'
 import * as m from '@/paraglide/messages'
-import type { ActivitySummary, ConversationBand } from './api'
+import { BAND_LABEL, CAUSE_LABEL, FAILURE_CATEGORY_LABEL, OUTCOME_LABEL } from './labels'
+import type { ActivitySummary } from './api'
 
-const BAND_LABEL: Record<ConversationBand, () => string> = {
-  high: m.activity_band_high,
-  medium: m.activity_band_medium,
-  low: m.activity_band_low,
-  unknown: m.activity_band_unknown,
-}
-
-const OUTCOME_LABEL: Record<string, () => string> = {
-  resolved: m.activity_outcome_resolved,
-  partially_resolved: m.activity_outcome_partially_resolved,
-  escalated: m.activity_outcome_escalated,
-  unresolved: m.activity_outcome_unresolved,
-  abandoned_early: m.activity_outcome_abandoned_early,
-  out_of_scope: m.activity_outcome_out_of_scope,
-}
-
+// The calibration table's own "no human cause yet" code, not part of the
+// shared CAUSE_LABEL map (which only covers the three failure causes).
 const HUMAN_CAUSE_LABEL: Record<string, () => string> = {
-  knowledge_missing: m.activity_cause_knowledge_missing,
-  knowledge_wrong: m.activity_cause_knowledge_wrong,
-  behaviour: m.activity_cause_behaviour,
+  ...CAUSE_LABEL,
   none: m.activity_cause_none,
 }
 
@@ -94,7 +79,11 @@ function JudgeCategoryTable({ caption, rows }: { caption: string; rows: Activity
         <DataTableBody>
           {rows.map((row) => (
             <DataTableRow key={`${row.judge_category ?? '\u2205'}|${row.human_cause}`}>
-              <DataTableCell>{row.judge_category ?? m.activity_calibration_no_judgment()}</DataTableCell>
+              <DataTableCell>
+                {row.judge_category
+                  ? (FAILURE_CATEGORY_LABEL[row.judge_category] ?? (() => row.judge_category as string))()
+                  : m.activity_calibration_no_judgment()}
+              </DataTableCell>
               <DataTableCell>
                 {(HUMAN_CAUSE_LABEL[row.human_cause] ?? (() => row.human_cause))()}
               </DataTableCell>

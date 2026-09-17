@@ -411,9 +411,9 @@ nieuwste).
       "first_user_query": "Hoe koppel ik Salesforce?",
       "language": "nl",
       "worst_band": "low",
-      "judge": { "outcome": "unresolved", "failure_category": "retrieval_miss", "confidence": "high" },
+      "judge": { "outcome": "unresolved", "failure_category": "retrieval_miss", "confidence": "high", "reasoning": "…" },
       "ratings": { "up": 0, "down": 1 },
-      "review": { "status": "unreviewed", "worst_verdict": null, "causes": [] },
+      "review": { "status": "unreviewed", "worst_verdict": null, "causes": [], "reviews": [] },
       "open_gap_count": 0
     }
   ],
@@ -424,7 +424,14 @@ nieuwste).
 `judge` is `null` zolang de nachtelijke pas het gesprek niet heeft gezien.
 `worst_band` is de laagste band over de assistent-beurten (volgorde
 low < unknown < medium < high), `null` als geen beurt signalen heeft.
-`open_gap_count` komt in fase 2 (tot dan altijd 0).
+`open_gap_count` komt in fase 2 (tot dan altijd 0). `judge.reasoning` is
+dezelfde judge-toelichting als op `GET /conversations/{id}`'s `quality`, nu
+ook op de lijst (fase 1b3: het uitklapbare rijdetail heeft hem nodig zonder
+naar de detailpagina te hoeven). `review.reviews` is dezelfde beoordelingsvorm
+als `GET /conversations/{id}`'s per-bericht review (`verdict`, `cause`,
+`note`, `kb_slug`, `reviewer_name`, `reviewed_at`), hier één lijst per
+gesprek, oplopend gesorteerd op `reviewed_at`, ongeacht welk bericht elke
+beoordeling raakt.
 
 ## GET /conversations/{id}
 
