@@ -1,13 +1,12 @@
 /**
- * Tests for the "open the footer link inside the chat" switch (widget_config
- * key `footer_links_in_widget`).
+ * Tests for the conversation-starters fields on the widget Appearance tab.
  *
- * The switch only makes sense while the footer actually contains a link, so
- * it must appear exactly when the footer text carries an http(s) URL, mirror
- * the saved value, and follow edits to the footer textarea before save.
+ * Three numbered, optional input fields replaced the old single "one per
+ * line" textarea (max was 6, now 3). Saving must produce a list with blank
+ * fields dropped and the filled fields kept in the order they were typed.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 // ---------------------------------------------------------------------------
@@ -18,13 +17,9 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }))
 
-// Paraglide compiles to src/paraglide, which is generated rather than
-// committed; resolve every message key the component tree uses to its own
-// name for stable assertions.
 const { MESSAGE_KEYS } = vi.hoisted(() => ({
   MESSAGE_KEYS: [
     'admin_shared_error_generic',
-    'admin_shared_field_name',
     'admin_shared_save',
     'admin_shared_success_updated',
     'admin_widgets_appearance_section_brand',
@@ -34,7 +29,6 @@ const { MESSAGE_KEYS } = vi.hoisted(() => ({
     'admin_widgets_appearance_section_welcome',
     'admin_widgets_ai_disclosure_override_help',
     'admin_widgets_ai_disclosure_override_label',
-    'admin_widgets_ai_disclosure_override_placeholder',
     'admin_widgets_ai_disclosure_default',
     'admin_widgets_footer_links_in_widget_help',
     'admin_widgets_footer_links_in_widget_label',
@@ -49,30 +43,14 @@ const { MESSAGE_KEYS } = vi.hoisted(() => ({
     'admin_widgets_background_color_placeholder',
     'admin_widgets_collect_user_info_help',
     'admin_widgets_collect_user_info_label',
-    'admin_widgets_details_role_scope_help',
-    'admin_widgets_details_role_scope_label',
-    'admin_widgets_details_section_ai',
-    'admin_widgets_details_section_basics',
-    'admin_widgets_name_placeholder',
     'admin_widgets_page_context_help',
     'admin_widgets_page_context_label',
     'admin_widgets_position_left',
     'admin_widgets_position_right',
-    'admin_widgets_preview_badge',
-    'admin_widgets_preview_close',
-    'admin_widgets_preview_loading',
-    'admin_widgets_preview_model_note',
-    'admin_widgets_preview_not_counted',
-    'admin_widgets_preview_restart',
-    'admin_widgets_preview_retry',
-    'admin_widgets_preview_subtitle',
-    'admin_widgets_role_scope_placeholder',
     'admin_widgets_show_meta_help',
     'admin_widgets_show_meta_label',
     'admin_widgets_show_sources_help',
     'admin_widgets_show_sources_label',
-    'admin_widgets_support_mode_help',
-    'admin_widgets_support_mode_label',
     'admin_widgets_theme_dark',
     'admin_widgets_theme_label',
     'admin_widgets_theme_light',
@@ -85,32 +63,10 @@ const { MESSAGE_KEYS } = vi.hoisted(() => ({
     'admin_widgets_widget_starter_placeholder_2',
     'admin_widgets_widget_starter_placeholder_3',
     'admin_widgets_widget_starters_help',
-    'admin_widgets_widget_system_prompt_help',
-    'admin_widgets_widget_system_prompt_label',
-    'admin_widgets_widget_system_prompt_placeholder',
-    'admin_widgets_widget_template_help',
-    'admin_widgets_widget_template_label',
-    'admin_widgets_widget_template_none',
     'admin_widgets_widget_title_help',
     'admin_widgets_widget_title_label',
     'admin_widgets_widget_welcome_placeholder',
     'widget_ai_disclaimer',
-    'widget_chat_close',
-    'widget_chat_copied',
-    'widget_chat_default_empty_state',
-    'widget_chat_input_placeholder',
-    'widget_chat_meta_sources_many',
-    'widget_chat_meta_sources_one',
-    'widget_chat_new_conversation',
-    'widget_chat_preview_session_error',
-    'widget_chat_send',
-    'widget_chat_share_link',
-    'widget_chat_sources_label',
-    'widget_chat_status_online',
-    'widget_chat_typing',
-    'widget_chat_user_info_email',
-    'widget_chat_user_info_help',
-    'widget_chat_user_info_name',
     'widget_style_advanced_title',
     'widget_style_border_radius',
     'widget_style_content_padding',
@@ -160,9 +116,6 @@ import type { WidgetConfig, WidgetDetailResponse } from '../../-types'
 // Test helpers
 // ---------------------------------------------------------------------------
 
-const FOOTER_WITH_LINK = 'Plan een afspraak met [onze nerds](https://voorbeeld.nl).'
-const FOOTER_WITHOUT_LINK = 'AI-antwoorden kunnen fouten bevatten.'
-
 function makeWidget(configOverrides?: Partial<WidgetConfig>): WidgetDetailResponse {
   return {
     id: 'widget-uuid-1',
@@ -211,10 +164,6 @@ function renderTab(widget: WidgetDetailResponse) {
   )
 }
 
-function linkToggle(): HTMLInputElement | null {
-  return document.getElementById('footer-links-in-widget') as HTMLInputElement | null
-}
-
 beforeEach(() => {
   apiFetchMock.mockReset()
   apiFetchMock.mockResolvedValue([])
@@ -224,37 +173,49 @@ beforeEach(() => {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('AppearanceTab - footer link target', () => {
-  it('offers no in-chat link switch while the footer holds no link', () => {
-    renderTab(makeWidget({ footer_text: FOOTER_WITHOUT_LINK }))
+describe('AppearanceTab - conversation starters', () => {
+  it('renders exactly 3 starter fields, no more and no less', () => {
+    renderTab(makeWidget())
 
-    expect(linkToggle()).toBeNull()
-    expect(screen.queryByText('admin_widgets_footer_links_in_widget_label')).toBeNull()
+    expect(document.getElementById('widget-starter-1')).not.toBeNull()
+    expect(document.getElementById('widget-starter-2')).not.toBeNull()
+    expect(document.getElementById('widget-starter-3')).not.toBeNull()
+    expect(document.getElementById('widget-starter-4')).toBeNull()
   })
 
-  it('shows the switch checked when a footer link is saved with the setting on', () => {
-    renderTab(makeWidget({
-      footer_text: FOOTER_WITHOUT_LINK + ' ' + FOOTER_WITH_LINK,
-      footer_links_in_widget: true,
-    }))
+  it('loads fewer than 3 saved starters into the first fields, leaving the rest blank', () => {
+    renderTab(makeWidget({ conversation_starters: ['Wat zijn de kosten?'] }))
 
-    const toggle = linkToggle()
-    expect(toggle).not.toBeNull()
-    expect(toggle!.checked).toBe(true)
-    expect(screen.getByText('admin_widgets_footer_links_in_widget_label')).toBeTruthy()
-    expect(screen.getByText('admin_widgets_footer_links_in_widget_help')).toBeTruthy()
+    expect((document.getElementById('widget-starter-1') as HTMLInputElement).value).toBe('Wat zijn de kosten?')
+    expect((document.getElementById('widget-starter-2') as HTMLInputElement).value).toBe('')
+    expect((document.getElementById('widget-starter-3') as HTMLInputElement).value).toBe('')
   })
 
-  it('reveals the switch once a link is typed into an empty footer', () => {
-    renderTab(makeWidget({ footer_text: '' }))
-    expect(linkToggle()).toBeNull()
+  it('saves the filled fields as a list, drops blanks, and keeps entry order', async () => {
+    renderTab(makeWidget())
 
-    fireEvent.change(document.getElementById('widget-footer-text')!, {
-      target: { value: FOOTER_WITH_LINK },
+    fireEvent.change(document.getElementById('widget-starter-1')!, { target: { value: 'Eerste vraag' } })
+    // Field 2 left blank on purpose.
+    fireEvent.change(document.getElementById('widget-starter-3')!, { target: { value: '  Derde vraag  ' } })
+    fireEvent.click(screen.getByText('admin_shared_save'))
+
+    await waitFor(() => {
+      const request = apiFetchMock.mock.calls.find(([url]) => url === '/api/admin/widgets/widget-uuid-1')
+      const config = JSON.parse(String(request?.[1]?.body)).widget_config
+      expect(config.conversation_starters).toEqual(['Eerste vraag', 'Derde vraag'])
     })
+  })
 
-    const toggle = linkToggle()
-    expect(toggle).not.toBeNull()
-    expect(toggle!.checked).toBe(false)
+  it('saves an empty list when every field is left blank', async () => {
+    renderTab(makeWidget({ conversation_starters: ['Oude vraag'] }))
+
+    fireEvent.change(document.getElementById('widget-starter-1')!, { target: { value: '' } })
+    fireEvent.click(screen.getByText('admin_shared_save'))
+
+    await waitFor(() => {
+      const request = apiFetchMock.mock.calls.find(([url]) => url === '/api/admin/widgets/widget-uuid-1')
+      const config = JSON.parse(String(request?.[1]?.body)).widget_config
+      expect(config.conversation_starters).toEqual([])
+    })
   })
 })

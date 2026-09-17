@@ -2927,6 +2927,18 @@ def _widget_booking_url(widget_config_data: dict[str, Any]) -> str:
     return _validated_http_url(widget_config_data.get("booking_url"))
 
 
+def _widget_conversation_starters(widget_config_data: dict[str, Any]) -> list[str]:
+    """Starter chips for the empty-state, capped at 3.
+
+    The admin form and its backing model reject more than 3 on save, but a
+    widget saved before that cap dropped from 6 can still carry up to 6
+    stored entries. Truncate here so every widget shows at most 3 chips
+    immediately, without requiring the tenant to re-save.
+    """
+    starters = widget_config_data.get("conversation_starters")
+    return starters[:3] if isinstance(starters, list) else []
+
+
 def _widget_nerds_integration(widget_config_data: dict[str, Any]) -> dict[str, Any]:
     """Nerds booking panel (Voys-specific support-partner integration).
 
@@ -3161,7 +3173,7 @@ async def widget_config(
         # TWD-style additions: chips and the optional AI-intro toggle.
         # system_prompt stays server-side only; footer Markdown is a separate
         # presentation field interpreted by the widget.
-        "conversation_starters": widget_config_data.get("conversation_starters", []),
+        "conversation_starters": _widget_conversation_starters(widget_config_data),
         "hide_disclaimer": widget_config_data.get("hide_disclaimer", False),
         "footer_text": widget_config_data.get("footer_text"),
         # Opt-in per widget: footer links then open in the widget's own in-chat
@@ -3311,7 +3323,7 @@ async def public_bot_config(
         "chat_endpoint": "/partner/v1/chat/completions",
         "session_token": session_token,
         "session_expires_at": expires_at.isoformat(),
-        "conversation_starters": widget_config_data.get("conversation_starters", []),
+        "conversation_starters": _widget_conversation_starters(widget_config_data),
         "hide_disclaimer": widget_config_data.get("hide_disclaimer", False),
         "footer_text": widget_config_data.get("footer_text"),
         "footer_links_in_widget": widget_config_data.get("footer_links_in_widget", False),

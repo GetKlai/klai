@@ -238,6 +238,42 @@ def test_widget_to_response_maps_tone_register():
         assert to_response({"tone_register": junk}).widget_config.tone_register == "restrained"
 
 
+def test_widget_config_conversation_starters_max_three():
+    """conversation_starters is capped at 3 (was 6); a 4th entry is rejected
+    at the same layer FastAPI validates a POST/PATCH body against, so the
+    admin API answers 422 to a 4th starter rather than silently truncating."""
+    import pytest
+
+    from app.api.admin_widgets import WidgetConfig
+
+    assert WidgetConfig(conversation_starters=["a", "b", "c"]).conversation_starters == ["a", "b", "c"]
+    with pytest.raises(ValueError):
+        WidgetConfig(conversation_starters=["a", "b", "c", "d"])
+
+
+def test_widget_to_response_truncates_legacy_conversation_starters():
+    """A widget saved before the cap dropped from 6 to 3 still has up to 6
+    stored starters. Reading it back must truncate to 3, not raise — the
+    model's max_length=3 would otherwise 500 the list/detail response for
+    every legacy widget with 4-6 stored entries."""
+    from app.api.admin_widgets import _widget_to_response
+
+    widget = MagicMock()
+    widget.id = "uuid-legacy-starters"
+    widget.name = "Help Bot"
+    widget.description = None
+    widget.widget_id = "wgt_legacy"
+    widget.widget_config = {"conversation_starters": ["one", "two", "three", "four", "five"]}
+    widget.public_share_enabled = False
+    widget.rate_limit_rpm = 60
+    widget.last_used_at = None
+    widget.created_at = "2026-01-01"
+    widget.created_by = "user-1"
+
+    result = _widget_to_response(widget, kb_access_count=0)
+    assert result.widget_config.conversation_starters == ["one", "two", "three"]
+
+
 def test_widget_model_has_public_share_column():
     """Public share state is a first-class widgets column, not JSON config."""
     from app.models.widgets import Widget

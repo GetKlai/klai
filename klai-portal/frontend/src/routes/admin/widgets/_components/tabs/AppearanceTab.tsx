@@ -9,7 +9,8 @@ import { WidgetToggleCard } from '@/features/widgets/components/WidgetToggleCard
 import { WidgetStyleOverridesFields } from '@/features/widgets/config/WidgetStyleOverridesFields'
 import {
   WIDGET_DEFAULT_PRIMARY_COLOR,
-  WIDGET_MAX_CONVERSATION_STARTERS,
+  starterFieldsToList,
+  toStarterFields,
 } from '@/features/widgets/config/appearance'
 import * as m from '@/paraglide/messages'
 import type { WidgetDetailResponse, WidgetConfig } from '../../-types'
@@ -41,7 +42,7 @@ export function AppearanceTab({ widget }: Props) {
   const [cssVariables, setCssVariables] = useState<Record<string, string>>({ ...config.css_variables })
   const backgroundColor = cssVariables[BACKGROUND_COLOR_VARIABLE] || ''
   const [theme, setTheme] = useState<'light' | 'dark'>(config.theme || 'light')
-  const [startersRaw, setStartersRaw] = useState((config.conversation_starters ?? []).join('\n'))
+  const [starterFields, setStarterFields] = useState(toStarterFields(config.conversation_starters))
   const [showSources, setShowSources] = useState(config.show_sources ?? true)
   const [showMeta, setShowMeta] = useState(config.show_meta ?? false)
   const [collectUserInfo, setCollectUserInfo] = useState(config.collect_user_info ?? false)
@@ -53,11 +54,12 @@ export function AppearanceTab({ widget }: Props) {
   const [widgetPosition, setWidgetPosition] = useState<'left' | 'right'>(config.widget_position || 'right')
 
   // Everything on this tab is presentation, so the preview panel can follow
-  // it verbatim - before save. Starters travel as the raw textarea text.
+  // it verbatim - before save. Starters travel as the three fields joined by
+  // newline, the same shape the preview's parseStarters already parses.
   usePublishWidgetPreview('appearance', {
     headerTitle,
     welcome,
-    starters: startersRaw,
+    starters: starterFields.join('\n'),
     primaryColor,
     backgroundColor,
     theme,
@@ -77,7 +79,7 @@ export function AppearanceTab({ widget }: Props) {
     setPrimaryColor(config.primary_color || WIDGET_DEFAULT_PRIMARY_COLOR)
     setCssVariables({ ...config.css_variables })
     setTheme(config.theme || 'light')
-    setStartersRaw((config.conversation_starters ?? []).join('\n'))
+    setStarterFields(toStarterFields(config.conversation_starters))
     setShowSources(config.show_sources ?? true)
     setShowMeta(config.show_meta ?? false)
     setCollectUserInfo(config.collect_user_info ?? false)
@@ -87,7 +89,12 @@ export function AppearanceTab({ widget }: Props) {
     setWidgetPosition(config.widget_position || 'right')
   }, [config, defaultAiDisclosure, defaultFooterText, widget.name])
 
-  const starters = startersRaw.split('\n').map((l) => l.trim()).filter(Boolean).slice(0, WIDGET_MAX_CONVERSATION_STARTERS)
+  const starters = starterFieldsToList(starterFields)
+  const starterPlaceholders = [
+    m.admin_widgets_widget_starter_placeholder_1(),
+    m.admin_widgets_widget_starter_placeholder_2(),
+    m.admin_widgets_widget_starter_placeholder_3(),
+  ]
   const introductionChanged = aiDisclosureOverride.trim() !== (config.ai_disclosure_override ?? defaultAiDisclosure)
   const footerChanged = footerText.trim() !== (config.footer_text ?? defaultFooterText)
   // No link in the footer means the switch could do nothing, so it stays hidden.
@@ -245,17 +252,23 @@ export function AppearanceTab({ widget }: Props) {
       {/* Conversatie starters */}
       <section className="border-t border-gray-200 pt-6">
         <SectionHeading>{m.admin_widgets_appearance_section_starters()}</SectionHeading>
-        <div className="space-y-1.5">
-          <Label htmlFor="widget-starters">{m.admin_widgets_widget_starters_label()}</Label>
-          <p className="text-xs text-gray-600">{m.admin_widgets_widget_starters_help()}</p>
-          <Textarea
-            id="widget-starters"
-            value={startersRaw}
-            onChange={(e) => setStartersRaw(e.target.value)}
-            rows={4}
-            placeholder={m.admin_widgets_widget_starters_placeholder()}
-          />
-          <p className="text-xs text-gray-600">{starters.length}/{WIDGET_MAX_CONVERSATION_STARTERS}</p>
+        <p className="mb-3 text-xs text-gray-600">{m.admin_widgets_widget_starters_help()}</p>
+        <div className="max-w-lg space-y-3">
+          {starterFields.map((value, i) => (
+            <div key={i} className="space-y-1.5">
+              <Label htmlFor={`widget-starter-${i + 1}`}>
+                {m.admin_widgets_widget_starter_label({ n: i + 1 })}
+              </Label>
+              <Input
+                id={`widget-starter-${i + 1}`}
+                value={value}
+                onChange={(e) =>
+                  setStarterFields((prev) => prev.map((v, idx) => (idx === i ? e.target.value : v)))
+                }
+                placeholder={starterPlaceholders[i]}
+              />
+            </div>
+          ))}
         </div>
       </section>
 

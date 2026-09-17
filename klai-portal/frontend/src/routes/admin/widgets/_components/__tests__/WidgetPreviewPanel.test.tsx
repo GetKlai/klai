@@ -84,9 +84,11 @@ const { MESSAGE_KEYS } = vi.hoisted(() => ({
     'admin_widgets_welcome_label',
     'admin_widgets_widget_hide_disclaimer_help',
     'admin_widgets_widget_hide_disclaimer_label',
+    'admin_widgets_widget_starter_label',
+    'admin_widgets_widget_starter_placeholder_1',
+    'admin_widgets_widget_starter_placeholder_2',
+    'admin_widgets_widget_starter_placeholder_3',
     'admin_widgets_widget_starters_help',
-    'admin_widgets_widget_starters_label',
-    'admin_widgets_widget_starters_placeholder',
     'admin_widgets_widget_system_prompt_help',
     'admin_widgets_widget_system_prompt_label',
     'admin_widgets_widget_system_prompt_placeholder',
@@ -151,7 +153,7 @@ vi.mock('@/lib/apiFetch', () => ({
 }))
 
 interface StubProps {
-  config: WidgetEmbedPreviewConfig & { name?: string; primary_color?: string; ai_disclosure_override?: string | null; footer_text?: string | null; hide_disclaimer?: boolean; footer_links_in_widget?: boolean }
+  config: WidgetEmbedPreviewConfig & { name?: string; primary_color?: string; ai_disclosure_override?: string | null; footer_text?: string | null; hide_disclaimer?: boolean; footer_links_in_widget?: boolean; conversation_starters?: string[] }
   fetchConfig: (sessionId?: string) => Promise<unknown>
 }
 vi.mock('../WidgetEmbedPreview', () => ({
@@ -166,6 +168,7 @@ vi.mock('../WidgetEmbedPreview', () => ({
       data-footer-text={config.footer_text ?? ''}
       data-footer-links-in-widget={String(config.footer_links_in_widget)}
       data-hide-disclaimer={String(config.hide_disclaimer)}
+      data-conversation-starters={JSON.stringify(config.conversation_starters ?? [])}
     >
       {config.welcome_message}
       <button type="button" aria-label="renew-preview" onClick={() => void fetchConfig('preview-conversation-2')} />
@@ -287,6 +290,21 @@ describe('WidgetPreviewPanel - SPEC-WIDGET-PREVIEW-001', () => {
 
     expect(screen.getByTestId('chat-surface').textContent).toContain('Hoi, kan ik helpen?')
     expect(screen.getByTestId('chat-surface').dataset.primaryColor).toBe('#2266ee')
+  })
+
+  it('previews exactly the starters the appearance form is about to save', async () => {
+    const widget = makeWidget()
+    renderScreen(widget, 'appearance')
+
+    const surface = await screen.findByTestId('chat-surface')
+    expect(JSON.parse(surface.dataset.conversationStarters!)).toEqual([])
+
+    fireEvent.change(document.getElementById('widget-starter-1')!, { target: { value: 'Eerste vraag' } })
+    fireEvent.change(document.getElementById('widget-starter-3')!, { target: { value: 'Derde vraag' } })
+
+    // Field 2 stays empty and is dropped, order of the filled fields is kept.
+    expect(JSON.parse(surface.dataset.conversationStarters!)).toEqual(['Eerste vraag', 'Derde vraag'])
+    expect(document.getElementById('widget-starter-4')).toBeNull()
   })
 
   it('follows the unsaved footer link toggle from the appearance form', async () => {
