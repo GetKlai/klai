@@ -420,3 +420,29 @@ async def test_band_is_unknown_when_the_safety_filter_changed_the_retrieved_set(
     sink = await _retrieve_with_signals(monkeypatch, _payload("high"))
 
     assert sink["band"] == "unknown"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.asyncio
+async def test_output_safety_refusal_still_stores_complete_signals(monkeypatch, stream):
+    """Both pads fill the whole record after an output-safety refusal. The
+    non-streaming pad used to skip it, which left a record holding only the band
+    retrieval had already written."""
+    monkeypatch.setattr("app.services.partner_chat.output_safety_violation", lambda *_: "test_block")
+
+    record, _ = await _widget_chat(
+        monkeypatch, model_text=ANSWER_TEXT, chunks=[_chunk(0.71)], stream=stream, band="high"
+    )
+
+    signals = _assistant_signals(record)
+    assert set(signals) == SIGNAL_KEYS
+    assert signals["band"] == "high"
+    assert signals["sources_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_band_outside_the_contract_is_stored_as_unknown(monkeypatch):
+    """The calibration panel ranks and the review table checks exactly four values."""
+    sink = await _retrieve_with_signals(monkeypatch, _payload("very-high"))
+
+    assert sink["band"] == "unknown"

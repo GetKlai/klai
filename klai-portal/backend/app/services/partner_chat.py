@@ -2455,6 +2455,9 @@ def _schedule_gap_event(
         logger.warning("partner_chat_gap_detection_failed", org_id=org_id, exc_info=True)
 
 
+_ANSWER_BANDS = frozenset({"high", "medium", "low", "unknown"})
+
+
 def _record_retrieval_band(sink: dict[str, Any] | None, result: dict, *, blocked_chunk_count: int) -> None:
     """Put retrieval-api's certainty band for this turn into the audit sink.
 
@@ -2468,7 +2471,14 @@ def _record_retrieval_band(sink: dict[str, Any] | None, result: dict, *, blocked
     """
     if sink is None:
         return
-    sink["band"] = "unknown" if blocked_chunk_count else (result.get("confidence_band") or "unknown")
+    band = result.get("confidence_band")
+    if band not in _ANSWER_BANDS:
+        if band is not None:
+            # The review table's CHECK and the calibration panel's ranking accept
+            # exactly these four; drift in retrieval-api must be visible, not stored.
+            logger.warning("partner_chat_unexpected_confidence_band", band=band)
+        band = "unknown"
+    sink["band"] = "unknown" if blocked_chunk_count else band
 
 
 async def retrieve_context(
@@ -2854,6 +2864,17 @@ async def chat_completion_non_streaming(
                     )
                     message["content"] = safety_refusal_message(visitor_query)
                     message["sources"] = []
+                    # Same record as the streaming pad writes for a blocked turn;
+                    # skipping it left only the band retrieval had already stored.
+                    _fill_answer_signals(
+                        answer_signals,
+                        decision={"reason": safety_reason},
+                        refused=False,
+                        chunks=signal_chunks if signal_chunks is not None else citation_chunks,
+                        sources=[],
+                        model=model,
+                        query_text=visitor_query,
+                    )
                     continue
                 rendered_content, sources, decision = _compose_backend_managed_answer(
                     content,
