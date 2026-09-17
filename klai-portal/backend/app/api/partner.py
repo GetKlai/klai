@@ -1943,17 +1943,18 @@ async def chat_completions(  # noqa: C901
     if conversational:
         system_prompt += turn_judge.CONVERSATIONAL_TURN_ADDENDUM
 
-    # SPEC-RAG-ANSWER-JUDGES-001 REQ-3. An ambiguous question gets one
-    # instruction that lets the model either answer with a check question or
-    # ask the one clarifying question; the answer judge decides afterwards
-    # which of the two the visitor sees. Not on a broad-mode turn (consent
-    # already widened the answer), an escalation turn (two competing per-turn
-    # instructions produce neither) or a conversational one. Only then does the
-    # ambiguous row of the decision table apply, so clarity reads "clear" for
-    # the decision everywhere else. The retrieval band stays a measurement.
+    # SPEC-RAG-ANSWER-JUDGES-001 REQ-3. The instruction to ask rather than
+    # answer changes what the model writes, so it only goes in when two
+    # independent signals agree: the question judge calls the turn ambiguous AND
+    # retrieval is weak. On its own the judge called 8 of 9 real Voys questions
+    # ambiguous at least once (including "Ik wil mijn bedrijfsnaam wijzigen"),
+    # and on a strong retrieval the original system answered those well. Not on
+    # a broad-mode, escalation or conversational turn. Everywhere else clarity
+    # reads "clear" for the decision.
+    weak_retrieval = gap is not None or answer_signals.get("band") in ("low", "unknown")
     clarity: Literal["clear", "ambiguous"] | None = turn_judgement.clarity if turn_judgement else None
     if turn_judgement and clarity == "ambiguous":
-        if broad_turn or escalation or turn_judge.is_conversational(scope):
+        if broad_turn or escalation or turn_judge.is_conversational(scope) or not weak_retrieval:
             clarity = "clear"
         else:
             system_prompt += turn_judge.AMBIGUOUS_TURN_ADDENDUM

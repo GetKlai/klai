@@ -170,17 +170,19 @@ def _with_900_sources() -> dict[str, Any]:
 
 
 @pytest.mark.parametrize("stream", [True, False])
-async def test_900_clear_question_the_draft_does_not_answer_gets_the_refusal_without_sources(stream):
-    litellm = _LiteLLM(model_text=ANSWER_900, answer_judge=_answer_verdict("not_answered"))
+@pytest.mark.parametrize(("verdict", "claims"), [("not_answered", False), ("partial", True)])
+async def test_a_judge_that_doubts_an_answer_with_sources_adds_the_button_and_never_removes_it(stream, verdict, claims):
+    # Replayed on nine real Voys questions on 2026-09-17, letting this verdict
+    # remove answers with sources produced 7 "not found" out of 18 answers.
+    litellm = _LiteLLM(model_text=ANSWER_900, answer_judge=_answer_verdict(verdict, claims=claims))
 
     text, signals, extras = await _answer(litellm, stream=stream, clarity="clear", **_with_900_sources())
 
-    assert text == REFUSAL_NL
-    assert extras["sources"] == []
+    assert text == ANSWER_900
+    assert [s["url"] for s in extras["sources"]] == ["https://help.example.com/factuur"]
     assert extras["escalation"] == [{"appointment": True}]
-    assert signals["decision"] == "refusal"
-    assert signals["verdict"] == "not_answered"
-    assert signals["refused"] is True
+    assert signals["decision"] == "partial_answer"
+    assert signals["refused"] is False
     # The judge read the visitor's own question and the article the model had.
     judge_input = litellm.judge_requests[0]["messages"][1]["content"]
     assert "Visitor (LATEST message): " + QUESTION_900 in judge_input
@@ -210,16 +212,6 @@ async def test_partial_answer_keeps_its_sources_and_gets_the_appointment_button(
     assert signals["decision"] == "partial_answer"
 
 
-async def test_partial_answer_with_a_statement_not_in_the_articles_is_refused_despite_its_sources():
-    litellm = _LiteLLM(model_text=ANSWER_900, answer_judge=_answer_verdict("partial", claims=True))
-
-    text, signals, extras = await _answer(litellm, stream=True, **_with_900_sources())
-
-    assert text == REFUSAL_NL
-    assert extras["sources"] == []
-    assert signals["decision"] == "refusal"
-
-
 @pytest.mark.parametrize("stream", [True, False])
 async def test_ambiguous_turn_shows_the_clarifying_question_without_buttons(stream):
     litellm = _LiteLLM(model_text=CLARIFYING_QUESTION, answer_judge=_answer_verdict("not_answered"))
@@ -232,25 +224,17 @@ async def test_ambiguous_turn_shows_the_clarifying_question_without_buttons(stre
     assert signals["refused"] is False
 
 
-async def test_the_same_question_on_a_clear_turn_is_refused():
-    litellm = _LiteLLM(model_text=CLARIFYING_QUESTION, answer_judge=_answer_verdict("not_answered"))
-
-    text, signals, _ = await _answer(litellm, stream=False, clarity="clear")
-
-    assert text == REFUSAL_NL
-    assert signals["decision"] == "refusal"
-
-
-async def test_ambiguous_turn_whose_draft_is_not_a_question_is_refused():
-    # klai-fast could not tell a pure question from an answer (0 of 3 rounds on
-    # 2026-09-17), so a draft reaches the visitor as a clarifying question only
-    # when it ends on one.
+@pytest.mark.parametrize("clarity", ["clear", "ambiguous"])
+async def test_uncited_draft_without_claims_is_shown_as_before_the_judges(clarity):
+    # The original claims rule: text without a source that states nothing about
+    # the organisation reaches the visitor. Only an ambiguous turn whose draft
+    # ends on a question is labelled a clarifying question.
     litellm = _LiteLLM(model_text="Dat kan ik niet vinden.", answer_judge=_answer_verdict("not_answered"))
 
-    text, signals, _ = await _answer(litellm, stream=True, clarity="ambiguous")
+    text, signals, _ = await _answer(litellm, stream=True, clarity=clarity)
 
-    assert text == REFUSAL_NL
-    assert signals["decision"] == "refusal"
+    assert text == "Dat kan ik niet vinden."
+    assert signals["decision"] == "answer"
 
 
 async def test_ambiguous_turn_whose_question_carries_a_claim_is_refused():
@@ -414,12 +398,13 @@ def test_turn_judge_reads_recent_turns_and_marks_the_latest_visitor_message():
 
 def _retrieval_reply(band: str = "low") -> httpx.Response:
     source = {"source_url": CHUNK_900["source_url"], "title": CHUNK_900["title"], "evidence_ids": ["ev1"]}
-    return httpx.Response(
-        200, json={"confidence_band": band, "evidence_pack": {"items": [CHUNK_900], "sources": [source]}}
-    )
+    chunk = CHUNK_900 if band == "low" else {**CHUNK_900, "reranker_score": 0.95}
+    return httpx.Response(200, json={"confidence_band": band, "evidence_pack": {"items": [chunk], "sources": [source]}})
 
 
-async def _route_turn(monkeypatch, *, turn: dict, question: str = QUESTION_900, stream: bool = False):
+async def _route_turn(
+    monkeypatch, *, turn: dict, question: str = QUESTION_900, stream: bool = False, band: str = "low"
+):
     from app.api import partner
     from app.api.partner import ChatCompletionsRequest, chat_completions
 
@@ -450,7 +435,7 @@ async def _route_turn(monkeypatch, *, turn: dict, question: str = QUESTION_900, 
         patch("app.services.partner_chat._schedule_gap_event"),
     ):
         router.post(f"{LITELLM}/v1/chat/completions").mock(side_effect=litellm)
-        router.post(f"{RETRIEVAL}/retrieve").mock(return_value=_retrieval_reply())
+        router.post(f"{RETRIEVAL}/retrieve").mock(return_value=_retrieval_reply(band))
         response = await chat_completions(request=request, http_request=http_request, auth=auth, db=db)
         if stream:
             frames = _frames([chunk async for chunk in response.body_iterator])
@@ -475,12 +460,18 @@ async def test_route_ambiguous_turn_gets_the_instruction_and_shows_the_question(
 
 
 @pytest.mark.parametrize(
-    "turn",
-    [_turn_verdict(clarity="clear"), _turn_verdict(clarity="ambiguous", wants_human=True)],
-    ids=["clear", "ambiguous_but_escalating"],
+    ("turn", "band"),
+    [
+        (_turn_verdict(clarity="clear"), "low"),
+        (_turn_verdict(clarity="ambiguous", wants_human=True), "low"),
+        # The judge alone called 8 of 9 real questions ambiguous; on a strong
+        # retrieval the original system answered them well.
+        (_turn_verdict(clarity="ambiguous"), "high"),
+    ],
+    ids=["clear", "ambiguous_but_escalating", "ambiguous_but_strong_retrieval"],
 )
-async def test_route_adds_no_ambiguity_instruction(monkeypatch, turn):
-    litellm, _ = await _route_turn(monkeypatch, turn=turn)
+async def test_route_adds_no_ambiguity_instruction(monkeypatch, turn, band):
+    litellm, _ = await _route_turn(monkeypatch, turn=turn, band=band)
 
     assert "can mean different things" not in _system_prompt_sent(litellm)
 
