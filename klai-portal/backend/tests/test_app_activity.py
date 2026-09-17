@@ -234,8 +234,16 @@ def _turn(cid: int, *, up: int = 0, down: int = 0, band_rank: int | None = None,
     )
 
 
-def _judge(cid: int, outcome: str, category: str | None = "retrieval_miss") -> SimpleNamespace:
-    return SimpleNamespace(conversation_id=cid, outcome=outcome, failure_category=category, confidence="high")
+def _judge(
+    cid: int,
+    outcome: str,
+    category: str | None = "retrieval_miss",
+    *,
+    reasoning: str | None = None,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        conversation_id=cid, outcome=outcome, failure_category=category, confidence="high", reasoning=reasoning
+    )
 
 
 def _review(
@@ -243,8 +251,22 @@ def _review(
     message_id: int,
     verdict: str = "wrong",
     cause: str = "knowledge_missing",
+    *,
+    note: str | None = None,
+    kb_slug: str | None = None,
+    reviewer_name: str | None = CALLER_DISPLAY_NAME,
+    reviewed_at: dt.datetime | None = T0,
 ) -> SimpleNamespace:
-    return SimpleNamespace(conversation_id=cid, message_id=message_id, verdict=verdict, cause=cause)
+    return SimpleNamespace(
+        conversation_id=cid,
+        message_id=message_id,
+        verdict=verdict,
+        cause=cause,
+        note=note,
+        kb_slug=kb_slug,
+        reviewer_name=reviewer_name,
+        reviewed_at=reviewed_at,
+    )
 
 
 def _message(
@@ -384,10 +406,43 @@ async def test_list_returns_the_contract_shape() -> None:
             "first_user_query": "Hoe koppel ik Salesforce?",
             "language": "nl",
             "worst_band": "low",
-            "judge": {"outcome": "unresolved", "failure_category": "retrieval_miss", "confidence": "high"},
+            "judge": {
+                "outcome": "unresolved",
+                "failure_category": "retrieval_miss",
+                "confidence": "high",
+                "reasoning": None,
+            },
             "ratings": {"up": 0, "down": 1},
-            "review": {"status": "unreviewed", "worst_verdict": None, "causes": []},
+            "review": {"status": "unreviewed", "worst_verdict": None, "causes": [], "reviews": []},
             "open_gap_count": 0,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_list_item_carries_the_judges_reasoning_and_the_reviewers_note() -> None:
+    """Appendix A extension backing the list's expandable row: the judge's
+    ``reasoning`` and the per-review ``note``/``reviewer_name`` travel to the
+    list, not just the conversation detail."""
+    db = FakeSession(
+        conversations=[_conv(256)],
+        turns=[_turn(256, band_rank=3)],
+        judges=[_judge(256, "unresolved", "retrieval_miss", reasoning="De kennisbank mist het antwoord.")],
+        reviews=[_review(256, 9256, note="Sectie ontbreekt in de handleiding.")],
+    )
+    response = await _call(db, _perms("admin"), "get", "/api/app/activity/conversations")
+
+    assert response.status_code == 200
+    item = response.json()["items"][0]
+    assert item["judge"]["reasoning"] == "De kennisbank mist het antwoord."
+    assert item["review"]["reviews"] == [
+        {
+            "verdict": "wrong",
+            "cause": "knowledge_missing",
+            "note": "Sectie ontbreekt in de handleiding.",
+            "kb_slug": None,
+            "reviewer_name": CALLER_DISPLAY_NAME,
+            "reviewed_at": "2026-09-14T09:12:00Z",
         }
     ]
 

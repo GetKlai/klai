@@ -1,13 +1,15 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { Fragment, useState, type ReactNode } from 'react'
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { AlertTriangle, MessageSquare, ThumbsDown, ThumbsUp } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
+import { MultiSelect } from '@/components/ui/multi-select'
 import { PageContainer } from '@/components/ui/page-container'
 import { PageHeader, PageIntro } from '@/components/ui/page-header'
+import { BorderedRowActionIconButton } from '@/components/ui/row-action'
 import { Select } from '@/components/ui/select'
-import { Switch } from '@/components/ui/switch'
 import { Tooltip } from '@/components/ui/tooltip'
 import {
   DataTable,
@@ -25,7 +27,16 @@ import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { fetchMe } from '@/lib/api-me'
 import { appNavActivityIsVisible } from '@/routes/app/-app-tools'
 import {
+  BANDS,
+  BAND_LABEL,
+  CAUSES,
+  CAUSE_LABEL,
+  FAILURE_CATEGORIES,
+  FAILURE_CATEGORY_LABEL,
+  OUTCOMES,
   OUTCOME_BADGE_VARIANT,
+  OUTCOME_LABEL,
+  VERDICT_LABEL,
   useActivityConversations,
   useActivityQueueCount,
   useActivitySummary,
@@ -34,10 +45,8 @@ import {
 import { CalibrationPanel } from '@/features/chat-activity/CalibrationPanel'
 import * as m from '@/paraglide/messages'
 import {
-  BANDS,
   DAYS,
   ofSet,
-  OUTCOMES,
   parseActivitySearch,
   RATINGS,
   stringifyActivitySearch,
@@ -48,24 +57,9 @@ import {
 // queue. Filters are URL search state (a filtered list is shareable) and the
 // list itself is server-paginated by cursor, so there is no client-side search.
 
-// Language and failure-category codes are data, not copy: rendered as-is.
+// Language codes are data, not copy: rendered as-is.
 const LANGUAGES = ['nl', 'en', 'de', 'fr']
-const FAILURE_CATEGORIES = [
-  'retrieval_miss',
-  'retrieval_wrong',
-  'generation_error',
-  'policy_refusal',
-  'scope_mismatch',
-  'user_confusion',
-] as const
-const CAUSES = ['knowledge_missing', 'knowledge_wrong', 'behaviour'] as const
 const SORTS = ['newest', 'worst'] as const
-
-const CAUSE_LABEL: Record<(typeof CAUSES)[number], () => string> = {
-  knowledge_missing: m.activity_cause_knowledge_missing,
-  knowledge_wrong: m.activity_cause_knowledge_wrong,
-  behaviour: m.activity_cause_behaviour,
-}
 
 const SORT_LABEL: Record<(typeof SORTS)[number], () => string> = {
   newest: m.activity_sort_newest,
@@ -79,20 +73,13 @@ const BAND_BADGE_VARIANT: Record<ConversationBand, 'success' | 'secondary' | 'wa
   unknown: 'secondary',
 }
 
-const BAND_LABEL: Record<ConversationBand, () => string> = {
-  high: m.activity_band_high,
-  medium: m.activity_band_medium,
-  low: m.activity_band_low,
-  unknown: m.activity_band_unknown,
-}
-
-const OUTCOME_LABEL: Record<string, () => string> = {
-  resolved: m.activity_outcome_resolved,
-  partially_resolved: m.activity_outcome_partially_resolved,
-  escalated: m.activity_outcome_escalated,
-  unresolved: m.activity_outcome_unresolved,
-  abandoned_early: m.activity_outcome_abandoned_early,
-  out_of_scope: m.activity_outcome_out_of_scope,
+// No verdict->variant mapping exists yet in badgeVariant.ts, so this stays a
+// small local map (SPEC-KNOWLEDGE-ACTIVITY-001 §4.3 expanded row).
+const VERDICT_BADGE_VARIANT: Record<string, 'success' | 'warning' | 'destructive' | 'secondary'> = {
+  correct: 'success',
+  incomplete: 'warning',
+  wrong: 'destructive',
+  not_a_fault: 'secondary',
 }
 
 export const Route = createFileRoute('/app/knowledge/activity/')({
@@ -105,6 +92,19 @@ export const Route = createFileRoute('/app/knowledge/activity/')({
     </ProductGuard>
   ),
 })
+
+/** A labelled cluster of filter controls (SPEC §4.3: Signalen/Gebruikersfeedback/
+    Beoordeling), so the source of each filter signal reads at a glance. */
+function FilterGroup({ caption, children }: { caption: string; children: ReactNode }) {
+  return (
+    <div className="space-y-2">
+      <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted-foreground)]">
+        {caption}
+      </p>
+      <div className="flex flex-wrap items-end gap-4">{children}</div>
+    </div>
+  )
+}
 
 export function ActivityPage() {
   const search = Route.useSearch()
@@ -135,12 +135,22 @@ export function ActivityPage() {
     cause: search.cause,
     band: search.band,
     rating: search.rating,
-    queue: search.queue,
     sort: search.sort,
     cursor: search.cursor,
   })
   const queueCount = useActivityQueueCount()
   const summary = useActivitySummary(search.days)
+
+  // Which rows show their judge/review detail block; local-only (not URL
+  // state — a rendering detail, not a shareable filter).
+  const [expanded, setExpanded] = useState<Set<number>>(new Set())
+  const toggleExpanded = (id: number) =>
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
 
   if (!hasActivityCapability) {
     return (
@@ -191,6 +201,14 @@ export function ActivityPage() {
   const items = list.data?.pages.flatMap((page) => page.items) ?? []
   const nextCursor = list.data?.pages.at(-1)?.next_cursor ?? null
 
+  const outcomeOptions = OUTCOMES.map((value) => ({ value, label: OUTCOME_LABEL[value]() }))
+  const failureCategoryOptions = FAILURE_CATEGORIES.map((value) => ({
+    value,
+    label: FAILURE_CATEGORY_LABEL[value](),
+  }))
+  const causeOptions = CAUSES.map((value) => ({ value, label: CAUSE_LABEL[value]() }))
+  const bandOptions = BANDS.map((value) => ({ value, label: BAND_LABEL[value]() }))
+
   return (
     <PageContainer width="6xl" gap="6">
       <div>
@@ -213,176 +231,155 @@ export function ActivityPage() {
         <CalibrationPanel summary={summary.data} />
       ) : null}
 
-      <div className="flex flex-wrap items-end gap-4">
-        <div className="space-y-1.5">
-          <Label htmlFor="activity-days">{m.activity_filter_days()}</Label>
-          <Select
-            id="activity-days"
-            value={String(search.days)}
-            onChange={(e) => setFilters({ days: Number(e.target.value) })}
-            className="w-auto"
-          >
-            {DAYS.map((days) => (
-              <option key={days} value={String(days)}>
-                {days}d
-              </option>
-            ))}
-          </Select>
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="activity-judge">{m.activity_filter_judge_outcome()}</Label>
-          <Select
-            id="activity-judge"
-            value={search.judge_outcome ?? ''}
-            onChange={(e) => setFilters({ judge_outcome: e.target.value || undefined })}
-            className="w-auto"
-          >
-            <option value="">{m.activity_filter_all()}</option>
-            {OUTCOMES.map((outcome) => (
-              <option key={outcome} value={outcome}>
-                {(OUTCOME_LABEL[outcome] ?? (() => outcome))()}
-              </option>
-            ))}
-          </Select>
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="activity-review">{m.activity_filter_review_status()}</Label>
-          <Select
-            id="activity-review"
-            value={search.review_status ?? ''}
-            onChange={(e) =>
-              setFilters({
-                review_status: ofSet(['unreviewed', 'reviewed'] as const, e.target.value),
-              })
-            }
-            className="w-auto"
-          >
-            <option value="">{m.activity_filter_all()}</option>
-            <option value="unreviewed">{m.activity_review_unreviewed()}</option>
-            <option value="reviewed">{m.activity_review_reviewed()}</option>
-          </Select>
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="activity-band">{m.activity_filter_band()}</Label>
-          <Select
-            id="activity-band"
-            value={search.band ?? ''}
-            onChange={(e) => setFilters({ band: ofSet(BANDS, e.target.value) })}
-            className="w-auto"
-          >
-            <option value="">{m.activity_filter_all()}</option>
-            {BANDS.map((band) => (
-              <option key={band} value={band}>
-                {BAND_LABEL[band]()}
-              </option>
-            ))}
-          </Select>
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="activity-rating">{m.activity_filter_rating()}</Label>
-          <Select
-            id="activity-rating"
-            value={search.rating ?? ''}
-            onChange={(e) => setFilters({ rating: ofSet(RATINGS, e.target.value) })}
-            className="w-auto"
-          >
-            <option value="">{m.activity_filter_all()}</option>
-            <option value="thumbsUp">{m.activity_rating_thumbs_up()}</option>
-            <option value="thumbsDown">{m.activity_rating_thumbs_down()}</option>
-            <option value="none">{m.activity_rating_none()}</option>
-          </Select>
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="activity-language">{m.activity_filter_language()}</Label>
-          <Select
-            id="activity-language"
-            value={search.language ?? ''}
-            onChange={(e) => setFilters({ language: e.target.value || undefined })}
-            className="w-auto"
-          >
-            <option value="">{m.activity_filter_all()}</option>
-            {LANGUAGES.map((language) => (
-              <option key={language} value={language}>
-                {language}
-              </option>
-            ))}
-          </Select>
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="activity-failure-category">
-            {m.activity_filter_failure_category()}
-          </Label>
-          <Select
-            id="activity-failure-category"
-            value={search.failure_category ?? ''}
-            onChange={(e) =>
-              setFilters({ failure_category: ofSet(FAILURE_CATEGORIES, e.target.value) })
-            }
-            className="w-auto"
-          >
-            <option value="">{m.activity_filter_all()}</option>
-            {FAILURE_CATEGORIES.map((category) => (
-              <option key={category} value={category}>
-                {category}
-              </option>
-            ))}
-          </Select>
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="activity-cause">{m.activity_review_cause_label()}</Label>
-          <Select
-            id="activity-cause"
-            value={search.cause ?? ''}
-            onChange={(e) => setFilters({ cause: ofSet(CAUSES, e.target.value) })}
-            className="w-auto"
-          >
-            <option value="">{m.activity_filter_all()}</option>
-            {CAUSES.map((cause) => (
-              <option key={cause} value={cause}>
-                {CAUSE_LABEL[cause]()}
-              </option>
-            ))}
-          </Select>
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="activity-sort">{m.activity_filter_sort()}</Label>
-          <Select
-            id="activity-sort"
-            value={search.sort}
-            onChange={(e) => setFilters({ sort: ofSet(SORTS, e.target.value) ?? 'newest' })}
-            className="w-auto"
-          >
-            {SORTS.map((sort) => (
-              <option key={sort} value={sort}>
-                {SORT_LABEL[sort]()}
-              </option>
-            ))}
-          </Select>
-        </div>
-        <div className="flex items-center gap-2 pb-2">
-          <Switch
-            id="activity-queue"
-            checked={search.queue}
-            onCheckedChange={(checked) => setFilters({ queue: checked })}
-          />
-          <Label htmlFor="activity-queue">{m.activity_filter_queue()}</Label>
-        </div>
-        {search.widget_id ? (
-          // The admin widget tab is what puts widget_id in the URL, and the app
-          // role may not list widgets: the chip names it from the rows on
-          // screen and falls back to the id while the list is still empty.
-          <div className="flex items-center gap-1 pb-2">
-            <Badge variant="secondary">{items[0]?.widget_name ?? search.widget_id}</Badge>
-            <Button
-              variant="link"
-              size="sm"
-              className="px-0"
-              onClick={() => setFilters({ widget_id: undefined })}
+      <div className="space-y-4">
+        <FilterGroup caption={m.activity_filter_group_signals()}>
+          <div className="space-y-1.5">
+            <Label htmlFor="activity-days">{m.activity_filter_days()}</Label>
+            <Select
+              id="activity-days"
+              value={String(search.days)}
+              onChange={(e) => setFilters({ days: Number(e.target.value) })}
+              className="w-auto"
             >
-              {m.activity_filter_widget_clear()}
-            </Button>
+              {DAYS.map((days) => (
+                <option key={days} value={String(days)}>
+                  {days}d
+                </option>
+              ))}
+            </Select>
           </div>
-        ) : null}
+          <div className="space-y-1.5">
+            <Label htmlFor="activity-band">{m.activity_filter_band()}</Label>
+            <MultiSelect
+              id="activity-band"
+              options={bandOptions}
+              value={search.band}
+              onChange={(value) => setFilters({ band: value as ConversationBand[] })}
+              placeholder={m.activity_filter_all()}
+              className="w-48"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="activity-judge">{m.activity_filter_judge_outcome()}</Label>
+            <MultiSelect
+              id="activity-judge"
+              options={outcomeOptions}
+              value={search.judge_outcome}
+              onChange={(value) => setFilters({ judge_outcome: value })}
+              placeholder={m.activity_filter_all()}
+              className="w-56"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="activity-failure-category">{m.activity_filter_failure_category()}</Label>
+            <MultiSelect
+              id="activity-failure-category"
+              options={failureCategoryOptions}
+              value={search.failure_category}
+              onChange={(value) => setFilters({ failure_category: value })}
+              placeholder={m.activity_filter_all()}
+              className="w-56"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="activity-language">{m.activity_filter_language()}</Label>
+            <Select
+              id="activity-language"
+              value={search.language ?? ''}
+              onChange={(e) => setFilters({ language: e.target.value || undefined })}
+              className="w-auto"
+            >
+              <option value="">{m.activity_filter_all()}</option>
+              {LANGUAGES.map((language) => (
+                <option key={language} value={language}>
+                  {language}
+                </option>
+              ))}
+            </Select>
+          </div>
+        </FilterGroup>
+
+        <FilterGroup caption={m.activity_filter_group_feedback()}>
+          <div className="space-y-1.5">
+            <Label htmlFor="activity-rating">{m.activity_filter_rating()}</Label>
+            <Select
+              id="activity-rating"
+              value={search.rating ?? ''}
+              onChange={(e) => setFilters({ rating: ofSet(RATINGS, e.target.value) })}
+              className="w-auto"
+            >
+              <option value="">{m.activity_filter_all()}</option>
+              <option value="thumbsUp">{m.activity_rating_thumbs_up()}</option>
+              <option value="thumbsDown">{m.activity_rating_thumbs_down()}</option>
+              <option value="none">{m.activity_rating_none()}</option>
+            </Select>
+          </div>
+        </FilterGroup>
+
+        <FilterGroup caption={m.activity_filter_group_review()}>
+          <div className="space-y-1.5">
+            <Label htmlFor="activity-review">{m.activity_filter_review_status()}</Label>
+            <Select
+              id="activity-review"
+              value={search.review_status ?? ''}
+              onChange={(e) =>
+                setFilters({
+                  review_status: ofSet(['unreviewed', 'reviewed'] as const, e.target.value),
+                })
+              }
+              className="w-auto"
+            >
+              <option value="">{m.activity_filter_all()}</option>
+              <option value="unreviewed">{m.activity_review_unreviewed()}</option>
+              <option value="reviewed">{m.activity_review_reviewed()}</option>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="activity-cause">{m.activity_review_cause_label()}</Label>
+            <MultiSelect
+              id="activity-cause"
+              options={causeOptions}
+              value={search.cause}
+              onChange={(value) => setFilters({ cause: value })}
+              placeholder={m.activity_filter_all()}
+              className="w-48"
+            />
+          </div>
+        </FilterGroup>
+
+        <div className="flex flex-wrap items-end gap-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="activity-sort">{m.activity_filter_sort()}</Label>
+            <Select
+              id="activity-sort"
+              value={search.sort}
+              onChange={(e) => setFilters({ sort: ofSet(SORTS, e.target.value) ?? 'newest' })}
+              className="w-auto"
+            >
+              {SORTS.map((sort) => (
+                <option key={sort} value={sort}>
+                  {SORT_LABEL[sort]()}
+                </option>
+              ))}
+            </Select>
+          </div>
+          {search.widget_id ? (
+            // The admin widget tab is what puts widget_id in the URL, and the app
+            // role may not list widgets: the chip names it from the rows on
+            // screen and falls back to the id while the list is still empty.
+            <div className="flex items-center gap-1 pb-2">
+              <Badge variant="secondary">{items[0]?.widget_name ?? search.widget_id}</Badge>
+              <Button
+                variant="link"
+                size="sm"
+                className="px-0"
+                onClick={() => setFilters({ widget_id: undefined })}
+              >
+                {m.activity_filter_widget_clear()}
+              </Button>
+            </div>
+          ) : null}
+        </div>
       </div>
 
       {list.isError ? (
@@ -396,99 +393,204 @@ export function ActivityPage() {
           <DataTable className="table-fixed">
             <DataTableHeader>
               <DataTableRow>
+                <DataTableHead className="w-12" />
                 <DataTableHead>{m.activity_col_question()}</DataTableHead>
                 <DataTableHead className="w-20">{m.activity_col_language()}</DataTableHead>
                 <DataTableHead className="w-28">{m.activity_col_band()}</DataTableHead>
                 <DataTableHead className="w-44">{m.activity_col_judge()}</DataTableHead>
-                <DataTableHead className="w-24">{m.activity_col_ratings()}</DataTableHead>
-                <DataTableHead className="w-36">{m.activity_col_review()}</DataTableHead>
+                <DataTableHead className="w-40">{m.activity_col_ratings()}</DataTableHead>
+                <DataTableHead className="w-40">{m.activity_col_review()}</DataTableHead>
                 <DataTableHead align="right" className="w-36 whitespace-nowrap">
                   {m.activity_col_time()}
                 </DataTableHead>
               </DataTableRow>
             </DataTableHeader>
             <DataTableBody>
-              {items.map((item) => (
-                <DataTableRow
-                  key={item.id}
-                  interactive
-                  onClick={() =>
-                    void navigate({
-                      to: '/app/knowledge/activity/$conversationId',
-                      params: { conversationId: String(item.id) },
-                      // One flat string, never a nested object (main.tsx's
-                      // stringifySearch only supports flat values) — the
-                      // detail page parses it back for its back link.
-                      search: { back: stringifyActivitySearch(search) },
-                    })
-                  }
-                >
-                  <DataTableCell title={item.first_user_query ?? undefined}>
-                    {/* Clamp a child block, not the cell: -webkit-box on a td breaks table layout. */}
-                    <div className="line-clamp-3">{item.first_user_query ?? '—'}</div>
-                  </DataTableCell>
-                  <DataTableCell className="text-gray-600">{item.language ?? '—'}</DataTableCell>
-                  <DataTableCell>
-                    {item.worst_band ? (
-                      <Badge variant={BAND_BADGE_VARIANT[item.worst_band]}>
-                        {BAND_LABEL[item.worst_band]()}
-                      </Badge>
-                    ) : (
-                      '—'
-                    )}
-                  </DataTableCell>
-                  <DataTableCell>
-                    {item.judge ? (
-                      <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                        <Badge variant={OUTCOME_BADGE_VARIANT[item.judge.outcome] ?? 'secondary'}>
-                          {(OUTCOME_LABEL[item.judge.outcome] ?? (() => item.judge!.outcome))()}
-                        </Badge>
-                        {item.judge.failure_category ? (
-                          <span className="text-xs text-gray-600">
-                            {item.judge.failure_category}
+              {items.map((item) => {
+                const isOpen = expanded.has(item.id)
+                return (
+                  <Fragment key={item.id}>
+                    <DataTableRow
+                      interactive
+                      onClick={() =>
+                        void navigate({
+                          to: '/app/knowledge/activity/$conversationId',
+                          params: { conversationId: String(item.id) },
+                          // One flat string, never a nested object (main.tsx's
+                          // stringifySearch only supports flat values) — the
+                          // detail page parses it back for its back link.
+                          search: { back: stringifyActivitySearch(search) },
+                        })
+                      }
+                    >
+                      <DataTableCell onClick={(e) => e.stopPropagation()}>
+                        <BorderedRowActionIconButton
+                          action={isOpen ? 'collapse' : 'expand'}
+                          label={isOpen ? m.activity_details_hide() : m.activity_details_show()}
+                          aria-expanded={isOpen}
+                          onClick={() => toggleExpanded(item.id)}
+                        />
+                      </DataTableCell>
+                      <DataTableCell title={item.first_user_query ?? undefined}>
+                        {/* Clamp a child block, not the cell: -webkit-box on a td breaks table layout. */}
+                        <div className="line-clamp-3">{item.first_user_query ?? '—'}</div>
+                      </DataTableCell>
+                      <DataTableCell className="text-gray-600">{item.language ?? '—'}</DataTableCell>
+                      <DataTableCell>
+                        {item.worst_band ? (
+                          <Badge variant={BAND_BADGE_VARIANT[item.worst_band]}>
+                            {BAND_LABEL[item.worst_band]()}
+                          </Badge>
+                        ) : (
+                          '—'
+                        )}
+                      </DataTableCell>
+                      <DataTableCell>
+                        {item.judge ? (
+                          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <Badge variant={OUTCOME_BADGE_VARIANT[item.judge.outcome] ?? 'secondary'}>
+                              {(OUTCOME_LABEL[item.judge.outcome] ?? (() => item.judge!.outcome))()}
+                            </Badge>
+                            {item.judge.failure_category ? (
+                              <span className="text-xs text-gray-600">
+                                {(FAILURE_CATEGORY_LABEL[item.judge.failure_category] ??
+                                  (() => item.judge!.failure_category as string))()}
+                              </span>
+                            ) : null}
                           </span>
-                        ) : null}
-                      </span>
-                    ) : (
-                      '—'
-                    )}
-                  </DataTableCell>
-                  <DataTableCell>
-                    <span className="inline-flex items-center gap-3 tabular-nums">
-                      <span
-                        role="img"
-                        aria-label={m.activity_thumbs_up()}
-                        className="inline-flex items-center gap-1"
-                      >
-                        <ThumbsUp
-                          aria-hidden="true"
-                          className="h-3.5 w-3.5 text-[var(--color-success-text)]"
-                        />
-                        {item.ratings.up}
-                      </span>
-                      <span
-                        role="img"
-                        aria-label={m.activity_thumbs_down()}
-                        className="inline-flex items-center gap-1"
-                      >
-                        <ThumbsDown
-                          aria-hidden="true"
-                          className="h-3.5 w-3.5 text-[var(--color-destructive)]"
-                        />
-                        {item.ratings.down}
-                      </span>
-                    </span>
-                  </DataTableCell>
-                  <DataTableCell className="text-gray-600">
-                    {item.review.status === 'reviewed'
-                      ? (item.review.worst_verdict ?? m.activity_review_reviewed())
-                      : m.activity_review_unreviewed()}
-                  </DataTableCell>
-                  <DataTableCell align="right" className="whitespace-nowrap tabular-nums text-gray-600">
-                    {formatRelativeTime(item.last_message_at)}
-                  </DataTableCell>
-                </DataTableRow>
-              ))}
+                        ) : (
+                          '—'
+                        )}
+                      </DataTableCell>
+                      <DataTableCell>
+                        <span className="inline-flex items-center gap-3 tabular-nums">
+                          <span
+                            role="img"
+                            aria-label={m.activity_thumbs_up()}
+                            className="inline-flex items-center gap-1"
+                          >
+                            <ThumbsUp
+                              aria-hidden="true"
+                              className="h-3.5 w-3.5 text-[var(--color-success-text)]"
+                            />
+                            {item.ratings.up}
+                          </span>
+                          <span
+                            role="img"
+                            aria-label={m.activity_thumbs_down()}
+                            className="inline-flex items-center gap-1"
+                          >
+                            <ThumbsDown
+                              aria-hidden="true"
+                              className="h-3.5 w-3.5 text-[var(--color-destructive)]"
+                            />
+                            {item.ratings.down}
+                          </span>
+                        </span>
+                      </DataTableCell>
+                      <DataTableCell className="text-gray-600">
+                        {item.review.status === 'reviewed' ? (
+                          <div className="space-y-0.5">
+                            <div>
+                              {item.review.worst_verdict
+                                ? (VERDICT_LABEL[item.review.worst_verdict] ??
+                                    (() => item.review.worst_verdict as string))()
+                                : m.activity_review_reviewed()}
+                            </div>
+                            {item.review.causes.length > 0 ? (
+                              <div className="text-xs text-gray-500">
+                                {item.review.causes
+                                  .map((cause) => (CAUSE_LABEL[cause] ?? (() => cause))())
+                                  .join(', ')}
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : (
+                          m.activity_review_unreviewed()
+                        )}
+                      </DataTableCell>
+                      <DataTableCell align="right" className="whitespace-nowrap tabular-nums text-gray-600">
+                        {formatRelativeTime(item.last_message_at)}
+                      </DataTableCell>
+                    </DataTableRow>
+                    {isOpen ? (
+                      <DataTableRow>
+                        <DataTableCell colSpan={8} className="bg-gray-50 align-top">
+                          <div className="space-y-3 py-1">
+                            {item.judge ? (
+                              <div className="space-y-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <Badge variant={OUTCOME_BADGE_VARIANT[item.judge.outcome] ?? 'secondary'}>
+                                    {(OUTCOME_LABEL[item.judge.outcome] ?? (() => item.judge!.outcome))()}
+                                  </Badge>
+                                  {item.judge.failure_category ? (
+                                    <span className="text-xs text-gray-600">
+                                      {(FAILURE_CATEGORY_LABEL[item.judge.failure_category] ??
+                                        (() => item.judge!.failure_category as string))()}
+                                    </span>
+                                  ) : null}
+                                  {item.judge.confidence ? (
+                                    <span className="text-xs text-gray-500">
+                                      {m.activity_judge_confidence({
+                                        level: (BAND_LABEL[item.judge.confidence as ConversationBand] ??
+                                          (() => item.judge!.confidence as string))(),
+                                      })}
+                                    </span>
+                                  ) : null}
+                                </div>
+                                {item.judge.reasoning ? (
+                                  <p className="text-xs leading-5 text-gray-600">{item.judge.reasoning}</p>
+                                ) : null}
+                              </div>
+                            ) : null}
+                            <div className="space-y-2">
+                              {item.review.reviews.length === 0 ? (
+                                <p className="text-xs text-gray-600">{m.activity_reviews_empty()}</p>
+                              ) : (
+                                item.review.reviews.map((review, i) => (
+                                  <div
+                                    key={`${item.id}-review-${i}`}
+                                    className="flex flex-wrap items-center gap-2 text-xs"
+                                  >
+                                    <Badge variant={VERDICT_BADGE_VARIANT[review.verdict] ?? 'secondary'}>
+                                      {(VERDICT_LABEL[review.verdict] ?? (() => review.verdict))()}
+                                    </Badge>
+                                    {review.cause !== 'none' ? (
+                                      <span className="text-gray-600">
+                                        {(CAUSE_LABEL[review.cause] ?? (() => review.cause))()}
+                                      </span>
+                                    ) : null}
+                                    {/* Name and time render independently: a review outlives a
+                                        deleted reviewer (reviewer_name null) and keeps its date. */}
+                                    {review.reviewer_name ? (
+                                      <span className="text-gray-500">
+                                        {m.activity_review_by({ name: review.reviewer_name })}
+                                      </span>
+                                    ) : null}
+                                    {review.reviewed_at ? (
+                                      <span className="text-gray-500">{formatRelativeTime(review.reviewed_at)}</span>
+                                    ) : null}
+                                    {review.note ? <span className="text-gray-700">{review.note}</span> : null}
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                            <Button asChild variant="outline" size="sm">
+                              <Link
+                                to="/app/knowledge/activity/$conversationId"
+                                params={{ conversationId: String(item.id) }}
+                                search={{ back: stringifyActivitySearch(search) }}
+                              >
+                                {m.activity_open_conversation()}
+                              </Link>
+                            </Button>
+                          </div>
+                        </DataTableCell>
+                      </DataTableRow>
+                    ) : null}
+                  </Fragment>
+                )
+              })}
             </DataTableBody>
           </DataTable>
           {nextCursor ? (

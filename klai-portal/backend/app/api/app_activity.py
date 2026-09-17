@@ -104,18 +104,23 @@ SELECT m.conversation_id,
 """
 
 # Nightly judge verdicts (SPEC-CHAT-QUALITY-LOOP-001 REQ-2); no row means the
-# conversation has not been seen yet and `judge` stays null.
+# conversation has not been seen yet and `judge` stays null. `reasoning`
+# backs the list's expandable row (Appendix A extension).
 _JUDGES_SQL = """
-SELECT conversation_id, outcome, failure_category, confidence
+SELECT conversation_id, outcome, failure_category, confidence, reasoning
   FROM conversation_quality_judgments
  WHERE conversation_id = ANY(:ids)
 """
 
+# Same reviewer join as _MESSAGE_REVIEWS_SQL: the list's expandable row shows
+# the same per-review detail the detail page does (Appendix A extension).
 _REVIEWS_SQL = """
-SELECT conversation_id, message_id, verdict, cause
-  FROM answer_reviews
- WHERE conversation_id = ANY(:ids)
-   AND org_id = :org_id
+SELECT r.conversation_id, r.message_id, r.verdict, r.cause, r.note, r.kb_slug,
+       COALESCE(p.display_name, p.email) AS reviewer_name, r.reviewed_at
+  FROM answer_reviews r
+  LEFT JOIN portal_users p ON p.id = r.reviewer_user_id
+ WHERE r.conversation_id = ANY(:ids)
+   AND r.org_id = :org_id
 """
 
 _CONVERSATION_SQL = """
@@ -410,6 +415,7 @@ class JudgeOut(BaseModel):
     outcome: str
     failure_category: str | None = None
     confidence: str | None = None
+    reasoning: str | None = None
 
 
 class RatingsOut(BaseModel):
@@ -417,10 +423,20 @@ class RatingsOut(BaseModel):
     down: int
 
 
+class ReviewOut(BaseModel):
+    verdict: str
+    cause: str
+    note: str | None = None
+    kb_slug: str | None = None
+    reviewer_name: str | None = None
+    reviewed_at: datetime | None = None
+
+
 class ReviewSummaryOut(BaseModel):
     status: Literal["unreviewed", "reviewed"]
     worst_verdict: str | None = None
     causes: list[str] = Field(default_factory=list)
+    reviews: list[ReviewOut] = Field(default_factory=list)
 
 
 class ConversationListItemOut(BaseModel):
@@ -458,15 +474,6 @@ class QualityOut(BaseModel):
     confidence: str | None = None
     suggested_action: str | None = None
     judged_at: datetime | None = None
-
-
-class ReviewOut(BaseModel):
-    verdict: str
-    cause: str
-    note: str | None = None
-    kb_slug: str | None = None
-    reviewer_name: str | None = None
-    reviewed_at: datetime | None = None
 
 
 class MessageOut(BaseModel):
@@ -595,10 +602,22 @@ def _review_summary(review_rows: list[Any]) -> ReviewSummaryOut:
     if not review_rows:
         return ReviewSummaryOut(status="unreviewed")
     worst = min(review_rows, key=lambda r: _VERDICT_SEVERITY.get(r.verdict, len(_VERDICT_SEVERITY)))
+    reviews = sorted(review_rows, key=lambda r: r.reviewed_at or datetime.min.replace(tzinfo=UTC))
     return ReviewSummaryOut(
         status="reviewed",
         worst_verdict=worst.verdict,
         causes=sorted({r.cause for r in review_rows if r.cause != "none"}),
+        reviews=[
+            ReviewOut(
+                verdict=r.verdict,
+                cause=r.cause,
+                note=r.note,
+                kb_slug=r.kb_slug,
+                reviewer_name=r.reviewer_name,
+                reviewed_at=r.reviewed_at,
+            )
+            for r in reviews
+        ],
     )
 
 
@@ -722,6 +741,7 @@ async def _load_candidates(
                             outcome=judge.outcome,
                             failure_category=judge.failure_category,
                             confidence=judge.confidence,
+                            reasoning=judge.reasoning,
                         )
                         if judge is not None
                         else None

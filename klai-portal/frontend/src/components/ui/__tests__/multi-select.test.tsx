@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import * as m from '@/paraglide/messages'
 import { useState } from 'react'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { MultiSelect, type MultiSelectOption } from '../multi-select'
@@ -42,7 +43,7 @@ describe('MultiSelect', () => {
     render(<MultiSelectHarness />)
 
     const trigger = screen.getByRole('button', { name: 'Kennisbank, Chat' })
-    const remove = screen.getByRole('button', { name: 'Verwijder Kennisbank' })
+    const remove = screen.getByRole('button', { name: m.multi_select_remove({ label: 'Kennisbank' }) })
 
     expect(trigger.tagName).toBe('BUTTON')
     expect(trigger.tabIndex).toBe(0)
@@ -61,31 +62,31 @@ describe('MultiSelect', () => {
     unmount()
     render(<MultiSelectHarness />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Verwijder Kennisbank' }))
+    fireEvent.click(screen.getByRole('button', { name: m.multi_select_remove({ label: 'Kennisbank' }) }))
 
-    expect(screen.queryByRole('button', { name: 'Verwijder Kennisbank' })).toBeNull()
+    expect(screen.queryByRole('button', { name: m.multi_select_remove({ label: 'Kennisbank' }) })).toBeNull()
     expect(screen.getByRole('button', { name: 'Chat' }).getAttribute('aria-expanded')).toBe('false')
   })
 
   it('moves focus to the next remove button after removing a chip', async () => {
     render(<MultiSelectHarness />)
 
-    const firstRemove = screen.getByRole('button', { name: 'Verwijder Kennisbank' })
+    const firstRemove = screen.getByRole('button', { name: m.multi_select_remove({ label: 'Kennisbank' }) })
     firstRemove.focus()
     fireEvent.click(firstRemove)
 
-    const nextRemove = screen.getByRole('button', { name: 'Verwijder Chat' })
+    const nextRemove = screen.getByRole('button', { name: m.multi_select_remove({ label: 'Chat' }) })
     await waitFor(() => expect(document.activeElement).toBe(nextRemove))
   })
 
   it('returns focus to the trigger after removing the last chip', async () => {
     render(<SingleMultiSelectHarness />)
 
-    const remove = screen.getByRole('button', { name: 'Verwijder Kennisbank' })
+    const remove = screen.getByRole('button', { name: m.multi_select_remove({ label: 'Kennisbank' }) })
     remove.focus()
     fireEvent.click(remove)
 
-    const trigger = screen.getByRole('button', { name: 'Selecteer...' })
+    const trigger = screen.getByRole('button', { name: m.multi_select_placeholder() })
     await waitFor(() => expect(document.activeElement).toBe(trigger))
   })
 })

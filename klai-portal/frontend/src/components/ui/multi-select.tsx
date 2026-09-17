@@ -5,6 +5,7 @@ import * as React from 'react'
 import { Check, ChevronDown, X } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
+import * as m from '@/paraglide/messages'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   Command,
@@ -22,6 +23,8 @@ export interface MultiSelectOption {
 }
 
 interface MultiSelectProps {
+  /** Forwarded to the trigger so a `<Label htmlFor>` can name the control (KLAI-UI-034). */
+  id?: string
   options: MultiSelectOption[]
   value: string[]
   onChange: (value: string[]) => void
@@ -30,10 +33,11 @@ interface MultiSelectProps {
 }
 
 export function MultiSelect({
+  id,
   options,
   value,
   onChange,
-  placeholder = 'Selecteer...',
+  placeholder,
   className,
 }: MultiSelectProps) {
   const [open, setOpen] = React.useState(false)
@@ -89,12 +93,15 @@ export function MultiSelect({
         <PopoverTrigger asChild>
           <button
             ref={triggerRef}
+            id={id}
             type="button"
             aria-expanded={open}
             className="absolute inset-0 z-0 flex items-center justify-between rounded-md px-3 focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
           >
             {selectedLabels.length === 0 ? (
-              <span className="text-[var(--color-muted-foreground)]">{placeholder}</span>
+              <span className="text-[var(--color-muted-foreground)]">
+                {placeholder ?? m.multi_select_placeholder()}
+              </span>
             ) : (
               <span className="sr-only">{selectedLabels.join(', ')}</span>
             )}
@@ -113,7 +120,7 @@ export function MultiSelect({
                 else removeButtonRefs.current.delete(value[i])
               }}
               type="button"
-              aria-label={`Verwijder ${label}`}
+              aria-label={m.multi_select_remove({ label })}
               onClick={() => remove(value[i])}
               className="pointer-events-auto cursor-pointer rounded-sm opacity-60 hover:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-accent)]"
             >
@@ -124,9 +131,9 @@ export function MultiSelect({
       </div>
       <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
         <Command>
-          <CommandInput placeholder="Zoeken..." />
+          <CommandInput placeholder={m.multi_select_search()} />
           <CommandList>
-            <CommandEmpty>Geen opties gevonden.</CommandEmpty>
+            <CommandEmpty>{m.multi_select_empty()}</CommandEmpty>
             <CommandGroup>
               {options.map((option) => {
                 const selected = value.includes(option.value)

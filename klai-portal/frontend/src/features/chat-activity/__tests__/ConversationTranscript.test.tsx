@@ -90,14 +90,14 @@ describe('QualityPanel', () => {
       />,
     )
 
-    const resolved = screen.getByText('resolved')
+    const resolved = screen.getByText(/^(opgelost|resolved)$/i)
     expect(resolved.className).toContain('var(--color-success-text)')
     expect(screen.getByText('Antwoord dekt de vraag volledig.')).toBeTruthy()
     expect(screen.getByText('Geen actie nodig.')).toBeTruthy()
 
     rerender(<QualityPanel quality={quality({ outcome: 'unresolved' })} />)
 
-    const unresolved = screen.getByText('unresolved')
+    const unresolved = screen.getByText(/^(onopgelost|unresolved)$/i)
     expect(unresolved.className).not.toContain('var(--color-success-text)')
     expect(unresolved.className).toContain('bg-gray-100')
     expect(screen.queryByText('Antwoord dekt de vraag volledig.')).toBeNull()
