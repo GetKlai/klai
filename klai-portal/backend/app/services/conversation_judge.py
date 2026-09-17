@@ -41,7 +41,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import structlog
@@ -62,6 +62,18 @@ JUDGE_INTERVAL_SECONDS = 30 * 60
 # smaller than widget_outcome's 500: a pass here is ~50 network calls, not
 # ~500 UPDATEs.
 _BATCH_SIZE = 50
+# A conversation is only judged while its OLDEST message is at least this far
+# from its org's retention cutoff (``started_at``: the conversation row and its
+# first message are written in the same transaction). Retention anonymizes the
+# existing judgments and then deletes the messages; a judgment inserted after
+# that pass would quote deleted messages and never be revisited, because
+# retention selects off widget_messages. The judge commits a whole batch at
+# the end, so from candidate SELECT to COMMIT it can spend _BATCH_SIZE LLM
+# calls. httpx applies timeout=60s per phase (connect, write, pool, read), so
+# one call is bounded at ~240 s and a batch at 50 x 240 s = 12 000 s (3 h 20).
+# 6 hours clears that, and still leaves an org on the minimum 1-day retention
+# 18 hours in which a finished conversation can be judged.
+_RETENTION_SAFETY_MARGIN = timedelta(hours=6)
 
 # Enum sets mirrored from the ck_cqj_* CHECK constraints on
 # conversation_quality_judgments (app/models/conversation_quality.py) — a
@@ -289,16 +301,27 @@ async def _judge_org(org_id: int) -> int:
                   FROM widget_conversations wc
                   LEFT JOIN conversation_quality_judgments cqj
                          ON cqj.conversation_id = wc.id
+                  LEFT JOIN portal_orgs po ON po.id = wc.org_id
                  WHERE wc.org_id = :org_id
                    AND wc.outcome IS NOT NULL
                    AND wc.is_preview = false
                    AND wc.is_test = false
                    AND cqj.id IS NULL
+                   -- Same per-org cutoff as widget_messages_retention, minus
+                   -- _RETENTION_SAFETY_MARGIN.
+                   AND wc.started_at > now()
+                       - COALESCE(po.widget_messages_retention_days, :default_days) * interval '1 day'
+                       + :safety_margin
                  ORDER BY wc.last_message_at
                  LIMIT :batch_size
                 """
             ),
-            {"org_id": org_id, "batch_size": _BATCH_SIZE},
+            {
+                "org_id": org_id,
+                "batch_size": _BATCH_SIZE,
+                "default_days": settings.widget_messages_retention_days,
+                "safety_margin": _RETENTION_SAFETY_MARGIN,
+            },
         )
         conv_ids = [row.id for row in conv_result.all()]
         if not conv_ids:
