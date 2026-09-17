@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import re
 
+from klai_chat_prompts import has_direct_evidence_for_query
 from klai_citations import extract_salient_query_tokens
 
 # English on purpose: every other instruction block in the prompt stack is
@@ -162,35 +163,6 @@ def low_confidence_query_tokens(query: object) -> set[str]:
     if not isinstance(query, str):
         return set()
     return extract_salient_query_tokens(query)
-
-
-def has_direct_evidence_for_query(query: object, chunks: list[dict]) -> bool:
-    """Return whether low-scored retrieval still has literal answer evidence.
-
-    A single shared token is not evidence: a question about webhooks always
-    shares the token "webhook" with tangential webhook chunks, which let
-    fabricated answers through the low-confidence guard (2026-08-17 Voys
-    incident). Require the chunks to cover at least two salient query tokens
-    (or all of them, for one-token queries) before skipping the guard.
-    """
-    tokens = low_confidence_query_tokens(query)
-    if not tokens:
-        return False
-    required = min(2, len(tokens))
-    covered: set[str] = set()
-    for chunk in chunks:
-        if not isinstance(chunk, dict):
-            continue
-        chunk_tokens = extract_salient_query_tokens(
-            " ".join(
-                str(chunk.get(key) or "")
-                for key in ("title", "heading_path", "source_label", "text", "content")
-            )
-        )
-        covered |= tokens & chunk_tokens
-        if len(covered) >= required:
-            return True
-    return False
 
 
 def should_apply_low_confidence_injection(

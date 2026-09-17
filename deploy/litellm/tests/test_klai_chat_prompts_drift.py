@@ -24,6 +24,7 @@ unique synthetic name (``_drift_vendored_prompts``,
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 from types import ModuleType
 
@@ -35,11 +36,19 @@ _VENDORED_PATH = _REPO_ROOT / "deploy" / "litellm" / "klai_chat_prompts.py"
 
 
 def _load(name: str, path: Path) -> ModuleType:
-    """Load ``path`` as a fresh module under ``name`` (no name-dedup with sys.path)."""
+    """Load ``path`` as a fresh module under ``name`` (no name-dedup with sys.path).
+
+    Registered in ``sys.modules`` under its synthetic name before exec: pydantic
+    resolves a ``from __future__ import annotations`` forward reference (e.g.
+    ``AnswerClaims``'s ``Literal`` field) by looking up ``sys.modules[cls.__module__]``
+    when it builds the schema, so an unregistered module raises "not fully defined"
+    the first time something calls ``model_json_schema()``.
+    """
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:  # pragma: no cover
         raise RuntimeError(f"could not build module spec for {path}")
     mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
     spec.loader.exec_module(mod)
     return mod
 
@@ -206,6 +215,98 @@ def test_vendored_no_citable_sources_message_matches_canonical() -> None:
             f"no_citable_sources_message drift for sample={sample!r}.\n"
             "  Update deploy/litellm/klai_chat_prompts.py to match "
             "klai-libs/chat-prompts/klai_chat_prompts/__init__.py."
+        )
+
+
+def test_vendored_clarify_turn_addendum_matches_canonical() -> None:
+    """``CLARIFY_TURN_ADDENDUM`` MUST be byte-identical between vendored and
+    canonical copies. SPEC-RAG-CLARIFY-FLOW-001 REQ-1a: the LiteLLM hook
+    (path A, REQ-5) and partner_chat.py (path B, REQ-3) wire the same
+    addendum text; drift would give the two chat surfaces different
+    clarifying-question instructions for the same decision.
+    """
+    vendored = _load("_drift_vendored_clarify_addendum", _VENDORED_PATH)
+    canonical = _load("_drift_canonical_clarify_addendum", _CANONICAL_PATH)
+
+    assert vendored.CLARIFY_TURN_ADDENDUM == canonical.CLARIFY_TURN_ADDENDUM, (
+        "CLARIFY_TURN_ADDENDUM drift between vendored and canonical.\n"
+        "  Update deploy/litellm/klai_chat_prompts.py to match "
+        "klai-libs/chat-prompts/klai_chat_prompts/__init__.py."
+    )
+
+
+def test_vendored_answer_claims_schema_matches_canonical() -> None:
+    """``ANSWER_CLAIMS_SYSTEM_PROMPT``, the ``AnswerClaims`` schema, and the
+    ``response_format`` helper MUST match between vendored and canonical
+    copies. SPEC-RAG-CLARIFY-FLOW-001 REQ-1b: both chat paths send this
+    schema to the same classification call; drift here would mean path A
+    and path B validate the model's answer-claims response differently.
+    """
+    vendored = _load("_drift_vendored_answer_claims", _VENDORED_PATH)
+    canonical = _load("_drift_canonical_answer_claims", _CANONICAL_PATH)
+
+    assert vendored.ANSWER_CLAIMS_SYSTEM_PROMPT == canonical.ANSWER_CLAIMS_SYSTEM_PROMPT, (
+        "ANSWER_CLAIMS_SYSTEM_PROMPT drift between vendored and canonical.\n"
+        "  Update deploy/litellm/klai_chat_prompts.py to match "
+        "klai-libs/chat-prompts/klai_chat_prompts/__init__.py."
+    )
+    assert (
+        vendored.AnswerClaims.model_json_schema() == canonical.AnswerClaims.model_json_schema()
+    ), (
+        "AnswerClaims schema drift between vendored and canonical.\n"
+        "  Update deploy/litellm/klai_chat_prompts.py to match "
+        "klai-libs/chat-prompts/klai_chat_prompts/__init__.py."
+    )
+    assert vendored.answer_claims_response_format() == canonical.answer_claims_response_format(), (
+        "answer_claims_response_format() drift between vendored and canonical.\n"
+        "  Update deploy/litellm/klai_chat_prompts.py to match "
+        "klai-libs/chat-prompts/klai_chat_prompts/__init__.py."
+    )
+
+
+def test_vendored_parse_answer_claims_and_should_clarify_match_canonical() -> None:
+    """``parse_answer_claims``, ``may_show_model_text_without_sources``,
+    ``has_direct_evidence_for_query`` and ``should_clarify`` MUST behave
+    identically on both copies — these are the pure decision functions REQ-2
+    through REQ-5 wire into each chat path, so a behavioural drift here would
+    silently diverge which turns get clarified or shown without a source.
+    """
+    vendored = _load("_drift_vendored_clarify_fns", _VENDORED_PATH)
+    canonical = _load("_drift_canonical_clarify_fns", _CANONICAL_PATH)
+
+    for content in (
+        '{"category": "no_claims"}',
+        '{"category": "claims"}',
+        None,
+        "",
+        "not json",
+        '{"category": "maybe"}',
+        '{"category": "no_claims", "extra": "x"}',
+    ):
+        assert vendored.parse_answer_claims(content) == canonical.parse_answer_claims(content), (
+            f"parse_answer_claims({content!r}) drift between vendored and canonical."
+        )
+
+    for result in ("no_claims", "claims", None):
+        assert vendored.may_show_model_text_without_sources(
+            result
+        ) == canonical.may_show_model_text_without_sources(result), (
+            f"may_show_model_text_without_sources({result!r}) drift between vendored and canonical."
+        )
+
+    query = "wie is verantwoordelijk voor Data Readiness?"
+    chunks = [{"title": "CV_Jantine_Doornbos.pdf", "text": "Jantine Doornbos is AI-ontwikkelaar en adviseur."}]
+    assert vendored.has_direct_evidence_for_query(
+        query, chunks
+    ) == canonical.has_direct_evidence_for_query(query, chunks), (
+        "has_direct_evidence_for_query drift between vendored and canonical."
+    )
+
+    for band, has_evidence in (("low", False), ("low", True), ("unknown", False), ("medium", False), ("high", False)):
+        assert vendored.should_clarify(
+            band, has_direct_evidence=has_evidence
+        ) == canonical.should_clarify(band, has_direct_evidence=has_evidence), (
+            f"should_clarify({band!r}, has_direct_evidence={has_evidence}) drift between vendored and canonical."
         )
 
 

@@ -12,7 +12,13 @@ authors = [{ name = "Klai" }]
 # The LiteLLM container cannot pip-install, so it carries a vendored copy of
 # langid next to the flat module instead (see NOTICES.md). All other consumers
 # (portal-backend, retrieval-api) get langid through this path-dependency.
-dependencies = ["langid>=1.1.6"]
+# pydantic backs the answer-claims classification schema (SPEC-RAG-CLARIFY-FLOW-001
+# REQ-1b); klai-citations supplies the salient-token matcher has_direct_evidence_for_query
+# needs (REQ-1c) — both already transitive deps of every consumer of this library.
+dependencies = ["langid>=1.1.6", "pydantic>=2.9", "klai-citations"]
+
+[tool.uv.sources]
+klai-citations = { path = "../citations", editable = true }
 
 [project.optional-dependencies]
 dev = [
