@@ -46,7 +46,6 @@ class TestListExtensions:
             "librechat_quality_judge",
             "knowledge_activity",
             "knowledge_gaps",
-            "widget_clarify_flow",
         }
         enabled = {item.key for item in result.extensions if item.enabled}
         assert enabled == {"scribe", "docs"}

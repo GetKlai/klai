@@ -1937,7 +1937,6 @@ async def _show_uncited_reply_without_claims(
     sources: list[dict],
     decision: dict[str, Any],
     *,
-    enabled: bool,
     draft: str,
     visitor_query: str,
     citation_chunks: list[dict] | None,
@@ -1946,6 +1945,7 @@ async def _show_uncited_reply_without_claims(
     answer_signals: dict[str, Any] | None,
     helpdesk: bool,
     response_language: str | None,
+    clarify_turn: bool,
 ) -> tuple[str, list[dict], dict[str, Any]]:
     """Decision 2 of SPEC-RAG-CLARIFY-FLOW-001: model-written text without sources
     reaches the visitor only when it asserts nothing about the organisation.
@@ -1955,8 +1955,9 @@ async def _show_uncited_reply_without_claims(
     tests; the classification is an HTTP call. Making the composer async would
     push ``await`` into every one of those without changing what they test,
     while this one async step after it keeps a single home for the rule. With
-    ``enabled`` off (the tenant has no clarify-flow unlock) it returns the
-    composer's result untouched and makes no model call.
+    ``helpdesk`` off (internal widgets, partner-API keys) it returns the
+    composer's result untouched and makes no model call: the classifier prompt
+    and the refusal it falls back to are written for an external visitor.
 
     Two composer outcomes carry model-written text with zero sources:
 
@@ -1979,9 +1980,15 @@ async def _show_uncited_reply_without_claims(
     do not call this on a safety-blocked turn.
 
     A passed refusal keeps its decision flags (broad-mode offer, appointment
-    escalation), as the spec requires; only the audit marker comes off.
+    escalation); only the audit marker comes off. The exception is a clarify
+    turn (``clarify_turn``: the route added CLARIFY_TURN_ADDENDUM, decided
+    before generation and passed in rather than guessed from the text). There
+    the visitor is being asked a question, and a "broaden the search" or
+    "book an appointment" button under a question reads as a refusal, so both
+    flags come off. Escalation turns never get that addendum, so their button
+    is unaffected.
     """
-    if not enabled or sources or decision.get("broad_mode") == "answer":
+    if not helpdesk or sources or decision.get("broad_mode") == "answer":
         return content, sources, decision
     safe_text = _answer_without_retrieved_sources(strip_appointment_offer_marker(draft)[0], citation_chunks)
     if not safe_text:
@@ -2004,6 +2011,9 @@ async def _show_uncited_reply_without_claims(
             return content, sources, decision
         passed = {key: value for key, value in decision.items() if key != _NO_CITABLE_SOURCES_DECISION_KEY}
         passed["reason"] = "uncited_no_claims"
+        if clarify_turn:
+            passed.pop("broad_mode", None)
+            passed.pop("escalation", None)
         return safe_text, [], passed
     if refused:
         return content, sources, decision
@@ -2061,7 +2071,7 @@ async def _chat_completion_streaming_with_composed_citations(
     broad_mode: bool = False,
     conversational: bool = False,
     force_escalation: bool = False,
-    clarify_flow: bool = False,
+    clarify_turn: bool = False,
     sentiment: Literal["negative", "neutral", "positive"] | None = None,
     answer_signals: dict[str, Any] | None = None,
     signal_chunks: list[dict] | None = None,
@@ -2182,7 +2192,6 @@ async def _chat_completion_streaming_with_composed_citations(
             content,
             sources,
             decision,
-            enabled=clarify_flow,
             draft="".join(raw_text_parts),
             visitor_query=visitor_query,
             citation_chunks=citation_chunks,
@@ -2191,6 +2200,7 @@ async def _chat_completion_streaming_with_composed_citations(
             answer_signals=answer_signals,
             helpdesk=support_mode,
             response_language=response_language,
+            clarify_turn=clarify_turn,
         )
     # Consumed before the decision is logged so that event keeps its exact
     # payload: the marker only travels to the audit sink (see _fill_answer_signals).
@@ -2856,7 +2866,7 @@ async def chat_completion_non_streaming(
     broad_mode: bool = False,
     conversational: bool = False,
     force_escalation: bool = False,
-    clarify_flow: bool = False,
+    clarify_turn: bool = False,
     sentiment: Literal["negative", "neutral", "positive"] | None = None,
     answer_signals: dict[str, Any] | None = None,
     signal_chunks: list[dict] | None = None,
@@ -2994,7 +3004,6 @@ async def chat_completion_non_streaming(
                     rendered_content,
                     sources,
                     decision,
-                    enabled=clarify_flow,
                     draft=content,
                     visitor_query=visitor_query,
                     citation_chunks=citation_chunks,
@@ -3003,6 +3012,7 @@ async def chat_completion_non_streaming(
                     answer_signals=answer_signals,
                     helpdesk=support_mode,
                     response_language=language_decision.language,
+                    clarify_turn=clarify_turn,
                 )
                 decision.update({"sentiment": sentiment} if support_mode and sentiment else {})
                 # Popped before the log so that event keeps its exact payload;
@@ -3098,7 +3108,7 @@ async def chat_completion_streaming(
     broad_mode: bool = False,
     conversational: bool = False,
     force_escalation: bool = False,
-    clarify_flow: bool = False,
+    clarify_turn: bool = False,
     sentiment: Literal["negative", "neutral", "positive"] | None = None,
     answer_signals: dict[str, Any] | None = None,
     signal_chunks: list[dict] | None = None,
@@ -3149,7 +3159,7 @@ async def chat_completion_streaming(
             broad_mode=broad_mode,
             conversational=conversational,
             force_escalation=force_escalation,
-            clarify_flow=clarify_flow,
+            clarify_turn=clarify_turn,
             sentiment=sentiment,
             answer_signals=answer_signals,
             signal_chunks=signal_chunks,

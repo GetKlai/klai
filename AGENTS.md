@@ -49,6 +49,12 @@ A nested `AGENTS.md` closer to the file you edit overrides anything here.
   the problem demands it. No SPEC for something that affects 1–5 people. Report
   what you deliberately left out as a decision: what, why, and when it must
   still happen.
+- **ship the better path by default** — When a change makes the product better,
+  it goes live for every customer at once. No improvement behind a flag that is
+  off by default, no separate test widget or tenant to prove it first. Build the
+  measurement alongside (logs, counters, an eval you can run), measure on real
+  traffic, and adjust from there. What still gates a rollout is safety, not
+  measurement: a fail-closed direction, a security boundary, a migration order.
 - **verify-changes-landed** — Before reporting done: `git diff --stat` (right
   files?), service health/logs (running new code?), and a Playwright
   click-through for any UI change (real user flow works?).
