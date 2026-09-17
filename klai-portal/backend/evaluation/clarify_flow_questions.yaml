@@ -1,0 +1,102 @@
+# REQ-0 baseline question set for SPEC-RAG-CLARIFY-FLOW-001 (path B only).
+#
+# Target knowledge base: widget wgt_47b8c9c46d10b17c527923e0a5454bef3285b71f
+# ("Klai Website NL", embedded on https://getklai.com). Content grounded in
+# a read-only checkout of klai-website (/Users/mvletter/Developer/Klai/klai-website,
+# checked 2026-09-17): src/i18n/en.json (home.pricing.*, home.faq.*, faq.*),
+# src/content/company/security.md, src/content/docs/legal/sub-processors.md.
+#
+# category: vague | answerable | not_in_kb
+#   vague       - short/ambiguous, no content keyword (spec.md "Probleem" 1).
+#   answerable  - the KB content above answers this, verbatim or by clear inference.
+#   not_in_kb   - plausible visitor question the checkout confirms is absent
+#                 (no pricing/SSO/SLA/mobile-app/on-prem page found).
+#
+# A handful of borderline cases were checked live against the widget before
+# finalizing categories - see evaluation/README.md "Live-checked questions".
+questions:
+  # -- vague / short (30) -----------------------------------------------
+  - {id: v01, category: vague, language: nl, text: "prijzen?"}
+  - {id: v02, category: vague, language: nl, text: "werkt niet"}
+  - {id: v03, category: vague, language: nl, text: "hoe?"}
+  - {id: v04, category: vague, language: nl, text: "integraties"}
+  - {id: v05, category: vague, language: nl, text: "VPN?"}
+  - {id: v06, category: vague, language: nl, text: "kosten?"}
+  - {id: v07, category: vague, language: nl, text: "hulp"}
+  - {id: v08, category: vague, language: nl, text: "login lukt niet"}
+  - {id: v09, category: vague, language: nl, text: "demo?"}
+  - {id: v10, category: vague, language: nl, text: "gratis?"}
+  - {id: v11, category: vague, language: nl, text: "features?"}
+  - {id: v12, category: vague, language: nl, text: "beveiliging?"}
+  - {id: v13, category: vague, language: nl, text: "data?"}
+  - {id: v14, category: vague, language: nl, text: "gdpr?"}
+  - {id: v15, category: vague, language: nl, text: "opzeggen?"}
+  - {id: v16, category: vague, language: en, text: "pricing"}
+  - {id: v17, category: vague, language: en, text: "help"}
+  - {id: v18, category: vague, language: en, text: "not working"}
+  - {id: v19, category: vague, language: en, text: "integrations?"}
+  - {id: v20, category: vague, language: en, text: "security?"}
+  - {id: v21, category: vague, language: en, text: "demo"}
+  - {id: v22, category: vague, language: en, text: "trial?"}
+  - {id: v23, category: vague, language: en, text: "how much?"}
+  - {id: v24, category: vague, language: en, text: "features"}
+  - {id: v25, category: vague, language: en, text: "cancel?"}
+  - {id: v26, category: vague, language: en, text: "contact"}
+  - {id: v27, category: vague, language: en, text: "support?"}
+  - {id: v28, category: vague, language: en, text: "sso?"}
+  - {id: v29, category: vague, language: en, text: "setup?"}
+  - {id: v30, category: vague, language: en, text: "docs?"}
+
+  # -- answerable (30) -----------------------------------------------
+  - {id: a01, category: answerable, language: nl, text: "Wat kost Klai Chat per gebruiker per maand?"}
+  - {id: a02, category: answerable, language: en, text: "How much does the Knowledge tier cost per user per month?"}
+  - {id: a03, category: answerable, language: nl, text: "Krijg ik korting als ik jaarlijks betaal in plaats van maandelijks?"}
+  - {id: a04, category: answerable, language: en, text: "Is there a free trial for Klai?"}
+  - {id: a05, category: answerable, language: nl, text: "Wat gebeurt er met onze data als we opzeggen bij Klai?"}
+  - {id: a06, category: answerable, language: en, text: "Do we pay for modules that some team members never use?"}
+  - {id: a07, category: answerable, language: nl, text: "Wat gebeurt er met de kennis in Klai als een collega het bedrijf verlaat?"}
+  - {id: a08, category: answerable, language: en, text: "Can Klai be acquired by a US company like Microsoft or Google?"}
+  - {id: a09, category: answerable, language: nl, text: "Kan Klai verkocht worden aan een investeringsfonds?"}
+  - {id: a10, category: answerable, language: en, text: "Every AI vendor claims GDPR compliance, why should I trust Klai specifically?"}
+  - {id: a11, category: answerable, language: nl, text: "Hoe snel kunnen we live met Klai Chat?"}
+  - {id: a12, category: answerable, language: en, text: "Where is Klai's infrastructure hosted?"}
+  - {id: a13, category: answerable, language: nl, text: "Loopt onze data risico via de Amerikaanse Cloud Act?"}
+  - {id: a14, category: answerable, language: en, text: "Is Klai's codebase open source?"}
+  - {id: a15, category: answerable, language: nl, text: "Is Klai ISO 27001 gecertificeerd?"}
+  - {id: a16, category: answerable, language: en, text: "Does Mistral retain our query data after answering?"}
+  - {id: a17, category: answerable, language: nl, text: "Wordt onze data gebruikt om Mistral's modellen te trainen?"}
+  - {id: a18, category: answerable, language: en, text: "Who are Klai's sub-processors?"}
+  - {id: a19, category: answerable, language: nl, text: "In welke landen staan de Klai servers?"}
+  - {id: a20, category: answerable, language: en, text: "Is a Data Processing Agreement available without signing an NDA first?"}
+  - {id: a21, category: answerable, language: nl, text: "Ondersteunt Klai multi-factor authenticatie?"}
+  - {id: a22, category: answerable, language: en, text: "How is our organisation's data isolated from other Klai customers?"}
+  - {id: a23, category: answerable, language: nl, text: "Met welke systemen kan Klai Knowledge synchroniseren?"}
+  - {id: a24, category: answerable, language: en, text: "Can we put personal and sensitive data into Klai Chat safely?"}
+  - {id: a25, category: answerable, language: nl, text: "Wat doet Klai Scribe?"}
+  - {id: a26, category: answerable, language: en, text: "What is Klai Focus for?"}
+  - {id: a27, category: answerable, language: nl, text: "Wat is het verschil tussen Klai Docs en Klai Knowledge?"}
+  - {id: a28, category: answerable, language: en, text: "How many knowledge bases can one user create on the Chat plan?"}
+  - {id: a29, category: answerable, language: nl, text: "Hoe voorkomt Klai dat medewerkers stiekem ChatGPT blijven gebruiken?"}
+  - {id: a30, category: answerable, language: en, text: "Is Klai self-hostable, unlike ChatGPT or Microsoft Copilot?"}
+
+  # -- not in the knowledge base, but plausible for a visitor (20) ----
+  - {id: n01, category: not_in_kb, language: nl, text: "Bieden jullie een VPN-koppeling aan voor toegang tot Klai?"}
+  - {id: n02, category: not_in_kb, language: en, text: "Do you support SSO via Okta or Azure AD?"}
+  - {id: n03, category: not_in_kb, language: nl, text: "Is er een Slack-integratie beschikbaar?"}
+  - {id: n04, category: not_in_kb, language: en, text: "Can Klai be used directly inside Microsoft Teams?"}
+  - {id: n05, category: not_in_kb, language: nl, text: "Wat is jullie uptime-garantie in een SLA?"}
+  - {id: n06, category: not_in_kb, language: en, text: "Are you SOC 2 certified?"}
+  - {id: n07, category: not_in_kb, language: nl, text: "Is Klai HIPAA-compliant voor de zorgsector?"}
+  - {id: n08, category: not_in_kb, language: en, text: "Is there a native mobile app for Klai?"}
+  - {id: n09, category: not_in_kb, language: nl, text: "Wat kost een volledig on-premise installatie van Klai?"}
+  - {id: n10, category: not_in_kb, language: en, text: "Is there a minimum number of seats we need to buy?"}
+  - {id: n11, category: not_in_kb, language: nl, text: "Bieden jullie korting voor non-profitorganisaties?"}
+  - {id: n12, category: not_in_kb, language: en, text: "Is the Klai interface WCAG accessible for screen readers?"}
+  - {id: n13, category: not_in_kb, language: nl, text: "Wat zijn jullie telefonische supporturen?"}
+  - {id: n14, category: not_in_kb, language: en, text: "What is your refund policy if we cancel mid-month?"}
+  - {id: n15, category: not_in_kb, language: nl, text: "Kunnen we ons eigen taalmodel aansluiten op Klai?"}
+  - {id: n16, category: not_in_kb, language: en, text: "Do you offer a US-based datacenter option for lower latency?"}
+  - {id: n17, category: not_in_kb, language: nl, text: "Is Klai geschikt voor een overheidsaanbesteding met DigiD-koppeling?"}
+  - {id: n18, category: not_in_kb, language: en, text: "Can we fully white-label the Klai widget, removing every mention of Klai?"}
+  - {id: n19, category: not_in_kb, language: nl, text: "Kunnen jullie factureren in Amerikaanse dollars?"}
+  - {id: n20, category: not_in_kb, language: en, text: "What is the public partner API's rate limit per minute?"}

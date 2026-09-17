@@ -1,7 +1,7 @@
 ---
 id: SPEC-RAG-CLARIFY-FLOW-001
-version: "0.1.0"
-status: goedgekeurd door Mark op 2026-09-17; REQ-0 en REQ-1 in uitvoering
+version: "0.2.0"
+status: REQ-1 gebouwd (PR #1471); REQ-0 pad B gebouwd en baseline gemeten; REQ-0 pad A volgt vóór REQ-4; REQ-2 volgende
 created: 2026-09-17
 author: Claude (Opus 5), in opdracht van Mark Vletter
 priority: high
@@ -17,6 +17,7 @@ related:
 
 | Versie | Datum | Wijziging |
 |---|---|---|
+| 0.2.0 | 2026-09-17 | Baseline gemeten (REQ-0, pad B) en REQ-1 gebouwd. Pad B stelde in 0 van de 80 beurten een wedervraag en liet geen enkele tekst zonder bron door: het pad is vandaag strikt weigeren of citeren. Vage vragen: 43% vaste weigering. Ook 17% van de beantwoordbare vragen eindigde op de vaste weigering, een retrievalbevinding buiten deze spec. De runner voor pad A is naar vóór REQ-4 verschoven, omdat hij alleen op de server kan draaien. |
 | 0.1.0 | 2026-09-17 | Eerste versie na onderzoek in beide ketens, OpenClaw en recent onderzoek. Goedgekeurd door Mark ("Yes go!"), met de opdracht de doorvraagflow generiek te maken voor interne én externe chat. |
 
 ---
@@ -61,6 +62,19 @@ Bewust niet: de token-meting `inspect_answer_epistemics` (pad A). Die ziet het v
 - Runner pad A: via de LiteLLM-proxy met een org-gescoopte sleutel, zodat de hook end-to-end draait; draait op de server, zoals `deploy/litellm/scripts/eval_pasted_correspondence_live.py`.
 - Metingen per beurt: weigering (vaste tekst), wedervraag, antwoord met bronnen, antwoord zonder bronnen. Voor elke doorgelaten tekst zonder bron: bevat hij een bewering over de organisatie (handmatig of met een apart jurymodel beoordeeld, niet met de classificatie die REQ-1b zelf levert).
 - De baseline wordt gemeten en in deze spec vastgelegd vóór REQ-2.
+
+**Baseline pad B, gemeten 2026-09-17** (`klai-portal/backend/evaluation/`, 80 vragen, 1 sample, widget "Klai Website NL"):
+
+| categorie | n | vaste weigering | wedervraag | antwoord met bron | antwoord zonder bron |
+|---|---|---|---|---|---|
+| vaag | 30 | 13 (43%) | 0 | 17 (57%) | 0 |
+| beantwoordbaar | 30 | 5 (17%) | 0 | 25 (83%) | 0 |
+| niet in kennisbank | 20 | 11 (55%) | 0 | 9 (45%) | 0 |
+
+Kanttekeningen bij deze meting:
+- Doorgelaten tekst zonder bron met een bewering over de organisatie: 0, omdat er geen doorgelaten tekst zonder bron was.
+- De kennisbank van deze widget blijkt breder dan de publieke websitepagina's: 9 van de 20 "niet in kennisbank"-vragen kregen een antwoord met bron. Die categorie is dus ruwer dan bedoeld.
+- Het testverkeer is niet als test te markeren vanuit de publieke widgetflow. `is_test` vereist een ingelogde reviewer (`PUT /conversations/{id}/test`), dus deze beurten staan in de activiteit van de Klai-tenant.
 
 **REQ-1 — Gedeelde bouwstenen in `klai-libs/chat-prompts`**, zonder I/O:
 - (a) `CLARIFY_TURN_ADDENDUM` in een externe en een interne variant: één vraag, hooguit drie keuzes en die uitsluitend uit de titels van de meegegeven artikelen, geen enkele uitspraak over de organisatie.

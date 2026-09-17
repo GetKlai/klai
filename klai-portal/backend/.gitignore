@@ -8,3 +8,6 @@ __pycache__/
 
 # Runtime scratch directory (should never be committed)
 app/tmp/
+
+# SPEC-RAG-CLARIFY-FLOW-001 REQ-0: raw eval output stays local; only the summary is kept.
+evaluation/results/*.jsonl
