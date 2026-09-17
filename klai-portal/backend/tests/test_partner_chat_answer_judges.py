@@ -20,7 +20,7 @@ import respx
 from helpers import FakeKB, FakeResult, make_partner_auth
 from klai_chat_prompts import no_citable_sources_message
 
-from app.services import escalation_intent, partner_chat, turn_judge
+from app.services import partner_chat, turn_judge
 
 LITELLM = "http://litellm:4000"
 RETRIEVAL = "http://retrieval-api:8040"
@@ -451,37 +451,14 @@ def _system_prompt_sent(litellm: _LiteLLM) -> str:
 
 
 @pytest.mark.parametrize("stream", [True, False])
-async def test_route_ambiguous_turn_gets_the_instruction_and_shows_the_question(monkeypatch, stream):
+async def test_route_ambiguous_turn_gets_no_ask_instruction_and_a_question_draft_is_shown(monkeypatch, stream):
+    # Blind comparison on 50 real Voys first questions: the ask-instead-of-answer
+    # instruction made answers worse in 19 of 23 turns, so it is gone.
     litellm, text = await _route_turn(monkeypatch, turn=_turn_verdict(clarity="ambiguous"), stream=stream)
 
-    assert turn_judge.AMBIGUOUS_TURN_ADDENDUM in _system_prompt_sent(litellm)
+    assert "can mean different things" not in _system_prompt_sent(litellm)
     assert len(litellm.turn_requests) == 1
     assert text == CLARIFYING_QUESTION
-
-
-@pytest.mark.parametrize(
-    ("turn", "band"),
-    [
-        (_turn_verdict(clarity="clear"), "low"),
-        (_turn_verdict(clarity="ambiguous", wants_human=True), "low"),
-        # The judge alone called 8 of 9 real questions ambiguous; on a strong
-        # retrieval the original system answered them well.
-        (_turn_verdict(clarity="ambiguous"), "high"),
-    ],
-    ids=["clear", "ambiguous_but_escalating", "ambiguous_but_strong_retrieval"],
-)
-async def test_route_adds_no_ambiguity_instruction(monkeypatch, turn, band):
-    litellm, _ = await _route_turn(monkeypatch, turn=turn, band=band)
-
-    assert "can mean different things" not in _system_prompt_sent(litellm)
-
-
-async def test_route_vague_negative_question_gets_the_clarifying_instruction_not_the_frustration_offer(monkeypatch):
-    litellm, _ = await _route_turn(monkeypatch, turn=_turn_verdict(clarity="ambiguous", sentiment="negative"))
-
-    prompt = _system_prompt_sent(litellm)
-    assert turn_judge.AMBIGUOUS_TURN_ADDENDUM in prompt
-    assert escalation_intent.ESCALATION_TURN_ADDENDUM[escalation_intent.FRUSTRATION] not in prompt
 
 
 async def test_turn_judge_runs_concurrently_with_retrieval():

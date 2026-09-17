@@ -94,7 +94,6 @@ class TurnJudgement(BaseModel):
     # klai-fast on 2026-09-17, "mijn telefoon werkt niet" was ambiguous in 1 of 3
     # rounds instead of 3 of 3, and "dankjewel" was conversation in 1 of 3
     # instead of 3 of 3. Naming what is missing makes the model decide clarity.
-    # It never reaches a prompt (see AMBIGUOUS_TURN_ADDENDUM).
     missing: str
 
 
@@ -191,23 +190,6 @@ def scope_label(scope: str | None) -> str:
     about visitors, and a share you cannot see is a boundary that drifts.
     """
     return scope or "judge_failed"
-
-
-# Appended to the system prompt for an ambiguous turn. Static on purpose: an
-# earlier version quoted the judge's own description of what was missing, but
-# that text is model output steered by the visitor, and quotes are no privilege
-# boundary inside a system prompt. The answer model reads the same conversation
-# and can name what is missing itself.
-AMBIGUOUS_TURN_ADDENDUM = (
-    "\n\n[This turn] The visitor's question can mean different things, and a correct answer depends "
-    "on something they have not said yet, such as which product, app, device or procedure they mean. "
-    "If the help articles given to you above clearly answer the question for every likely case, answer "
-    "it and end with ONE short check question about that. Otherwise ask exactly ONE short clarifying "
-    "question about that and nothing else: do not guess an answer, and do not state anything about the "
-    "organisation yet — no prices, products, procedures, settings, availability, or outages. You may "
-    "offer at most three choices, and only the exact titles of the help articles given to you above; "
-    "never invent an option. Write no links and no citations. Do NOT apologise for asking."
-)
 
 
 # Appended to the system prompt for a conversational turn. The profile the model

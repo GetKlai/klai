@@ -1,6 +1,6 @@
 ---
 id: SPEC-RAG-ANSWER-JUDGES-001
-version: "0.4.0"
+version: "0.5.0"
 status: REQ-1 t/m REQ-4 (pad B, helpdeskwidget) in uitvoering; REQ-5 (pad A) na meting
 created: 2026-09-17
 author: Claude (Opus 5), in opdracht van Mark Vletter
@@ -17,6 +17,7 @@ related:
 
 | Versie | Datum | Wijziging |
 |---|---|---|
+| 0.5.0 | 2026-09-17 | Blinde vergelijking oud tegen nieuw op 50 echte Voys-eerste vragen × 3 rondes (klai-medium als beoordelaar, willekeurige volgorde): oud 69, nieuw 65, gelijk 16. Bij een identieke keten 24 tegen 24. De doorvraag-opdracht maakte antwoorden slechter (oud beter in 19 van 23) en gaf maar 2 echte vervolgvragen op 150 antwoorden: verwijderd. De uitzondering "negatief sentiment escaleert niet bij een onduidelijke vraag" verviel mee. In beide versies bevatte ongeveer een derde van de antwoorden verzonnen details (47 van 150). |
 | 0.4.0 | 2026-09-17 | Achteruitgang hersteld en ontwerp vastgezet op aanwijzing van Mark. Replay van de eerste vraag uit de laatste 9 echte Voys-gesprekken (2×): 7 van de 18 antwoorden werden "niet gevonden", 7 van 7 door het veto van de antwoord-judge op antwoorden mét bron, en 5 van de 9 vragen wisselden van uitkomst. Nieuw uitgangspunt: het oorspronkelijke systeem is de ondergrens; de judges voegen alleen toe. Zie "Definitief ontwerp". |
 | 0.3.0 | 2026-09-17 | Live gemeten na deploy (preview-sessies op de Voys-widget). Twee regels bijgesteld: negatief sentiment escaleert niet meer bij een onduidelijke vraag ("mijn telefoon werkt niet" kreeg anders altijd het medewerkeraanbod in plaats van een wedervraag), en een niet volledig beantwoord concept met een uitspraak die niet in de artikelen staat krijgt de weigering, ook met bronnen. |
 | 0.2.0 | 2026-09-17 | Gemeten tegen productie-`klai-fast` vóór livegang: de booleans uit v0.1.0 vielen om, `grounding` met drie opties hield stand, een wedervraag wordt herkend aan het vraagteken. REQ-1 t/m REQ-4 gebouwd. |
@@ -35,7 +36,7 @@ Vastgesteld met Mark op 2026-09-17, na de achteruitgang van v0.2.0 en v0.3.0. Wi
 **Regels.**
 1. Een antwoord met bron wordt altijd getoond. Vindt de antwoord-judge dat het de vraag niet (volledig) beantwoordt, dan komt de afspraakknop eronder. Hij haalt nooit iets weg.
 2. Tekst zonder bron volgt de oorspronkelijke regel: uitspraken die niet in de artikelen staan geven de vaste weigering, anders wordt de tekst getoond. Bij een onduidelijke vraag en een concept dat op een vraagteken eindigt is het een vervolgvraag, zonder knoppen.
-3. De opdracht om door te vragen gaat alleen mee als twee signalen het eens zijn: de vraag-judge noemt de vraag onduidelijk én het zoekresultaat is zwak (gap of band low/unknown). Bij een sterk zoekresultaat schrijft het model zoals vroeger.
+3. De vraag-judge stuurt de generatie niet: er gaat geen opdracht mee om door te vragen (v0.5.0, gemeten schadelijk). Onduidelijkheid wordt gemeten en labelt alleen een concept dat op een vraagteken eindigt. Hoe de eerste vraag rijker wordt, is in onderzoek.
 4. Beide judges draaien met temperatuur 0.
 5. Een gefaalde judge: tonen met bron, weigeren zonder bron.
 
