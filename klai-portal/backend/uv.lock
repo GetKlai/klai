@@ -907,12 +907,16 @@ name = "klai-chat-prompts"
 version = "0.1.0"
 source = { editable = "../../klai-libs/chat-prompts" }
 dependencies = [
+    { name = "klai-citations" },
     { name = "langid" },
+    { name = "pydantic" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "klai-citations", editable = "../../klai-libs/citations" },
     { name = "langid", specifier = ">=1.1.6" },
+    { name = "pydantic", specifier = ">=2.9" },
     { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1.390" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8" },

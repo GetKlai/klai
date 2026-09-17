@@ -115,10 +115,15 @@ customer-support surface where extra confirmation friction pays off.
 from __future__ import annotations
 
 import re
-from typing import Final
+from typing import Final, Literal
+
+from klai_citations import extract_salient_query_tokens
+from pydantic import BaseModel, ConfigDict
 
 __all__ = [
+    "ANSWER_CLAIMS_SYSTEM_PROMPT",
     "BROAD_MODE_ANSWER_MARKERS",
+    "CLARIFY_TURN_ADDENDUM",
     "FINAL_RESPONSE_LANGUAGE_REMINDER",
     "GENERAL_CHAT_SYSTEM_PROMPT",
     "GROUNDED_CHAT_SYSTEM_PROMPT",
@@ -129,11 +134,17 @@ __all__ = [
     "SUPPORT_BROAD_CHAT_SYSTEM_PROMPT",
     "SUPPORT_CHAT_SYSTEM_PROMPT",
     "SUPPORT_EXPRESSIVE_CHAT_SYSTEM_PROMPT",
+    "AnswerClaims",
+    "answer_claims_response_format",
     "appointment_offer_marker",
     "broad_mode_answer_marker",
     "final_response_language_reminder",
+    "has_direct_evidence_for_query",
     "is_broad_knowledge_answer",
+    "may_show_model_text_without_sources",
     "no_citable_sources_message",
+    "parse_answer_claims",
+    "should_clarify",
     "strip_appointment_offer_marker",
 ]
 
@@ -938,3 +949,169 @@ SUPPORT_EXPRESSIVE_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE
 # the widget backend when the help articles came up empty and the visitor
 # explicitly opted in — see the module docstring, rule 9.
 SUPPORT_BROAD_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _SUPPORT_BROAD_BODY
+
+
+# ─── SPEC-RAG-CLARIFY-FLOW-001 REQ-1: clarify decision, shared building blocks ──
+#
+# Pure building blocks only — no HTTP calls live here. Both chat paths (A via
+# the LiteLLM hook, B via partner_chat.py) wire these into an actual model
+# call themselves (REQ-2 through REQ-5); this library only supplies the turn
+# addendum, the classification prompt/schema/parser, and the decision rule.
+
+# Per-turn instruction appended to the system prompt when decision 1 (should
+# a vague turn be answered or clarified?) says "clarify" — same shape as
+# turn_scope.CONVERSATIONAL_TURN_ADDENDUM and escalation_intent.
+# ESCALATION_TURN_ADDENDUM: one short "[This turn]" block, not a whole prompt
+# rewrite. Two variants because the external help-page visitor and an
+# internal colleague get different vocabulary for the same instruction (never
+# "kennisbank"/"knowledge base" externally; the internal variant may name it).
+# Neither variant pins a language: like every other prompt in this module,
+# the response language follows the conversation-level contract already in
+# force, decided elsewhere.
+_CLARIFY_TURN_ADDENDUM_EXTERNAL: Final[str] = (
+    "\n\n[This turn] The visitor's message is too short or vague to search confidently. Ask "
+    "exactly ONE short question that would help you find the right information, then stop and "
+    "wait for the reply — do not guess an answer yet. You may offer at most three choices, and "
+    "only the exact titles of the help articles given to you above; never invent an option. Do "
+    "not state anything about the organisation yet — no prices, products, procedures, settings, "
+    "availability, or outages. Write no links and no citations. Do NOT apologise for asking: a "
+    "good clarifying question is on-brand, not a failing. Ask like a curious colleague, in plain "
+    "customer words, never a technical term for where you look."
+)
+_CLARIFY_TURN_ADDENDUM_INTERNAL: Final[str] = (
+    "\n\n[This turn] The user's message is too short or vague to search confidently. Ask exactly "
+    "ONE short question that would help you find the right information, then stop and wait for "
+    "the reply — do not guess an answer yet. You may offer at most three choices, and only the "
+    "exact titles of the knowledge-base articles given to you above; never invent an option. Do "
+    "not state anything about the organisation yet — no prices, products, procedures, settings, "
+    "availability, or outages. Write no links and no citations. You may say you are searching the "
+    "knowledge base for this."
+)
+
+CLARIFY_TURN_ADDENDUM: Final[dict[str, str]] = {
+    "external": _CLARIFY_TURN_ADDENDUM_EXTERNAL,
+    "internal": _CLARIFY_TURN_ADDENDUM_INTERNAL,
+}
+
+
+# Decision 2: may the model's own uncited text reach the user? Classifies
+# the draft reply, not the visitor's question, against the last user message
+# and the titles of the articles that were available while writing it. Same
+# design lesson as turn_scope.classify_turn_scope's docstring: a boolean with
+# "yes always safe" collapses to always-yes under retrieved context, while
+# naming the classes and asking the model to pick one holds. Two named
+# classes here (not three) because the only decision this makes is whether
+# the draft is safe to show without a citation — everything else is
+# "claims" by construction, including the doubtful middle.
+ANSWER_CLAIMS_SYSTEM_PROMPT: Final[str] = (
+    "Classify a draft reply from a company's help chat into exactly one category, given the "
+    "visitor's last message, the draft reply, and the titles of the articles that were available "
+    "when it was written.\n\n"
+    "no_claims — the draft only asks the visitor a question, says the answer was not found, "
+    "offers help or a referral to a person, or repeats back what the visitor already said. Naming "
+    "one of the given article titles as something the visitor could pick is not a claim.\n"
+    "claims — the draft states anything about the organisation: its products, prices, "
+    "subscriptions, procedures, settings, features, availability, outages, policy, contact "
+    "details, or opening hours. A general fact about the world outside this chat is also claims. "
+    "Naming a product or option that is NOT one of the given article titles is claims, even when "
+    "phrased as a question.\n\n"
+    "The test: could a sentence in the draft be checked against anything outside this chat "
+    "window? If yes for any part of the draft, or the draft mixes a question with a claim, or you "
+    "are unsure, answer claims — a missed claim reaches the visitor as an unverified fact, while a "
+    "false positive only costs a reply that was actually safe to show."
+)
+
+
+class AnswerClaims(BaseModel):
+    """Whether a draft reply asserts anything about the organisation."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, hide_input_in_errors=True)
+
+    category: Literal["no_claims", "claims"]
+
+
+def answer_claims_response_format() -> dict[str, object]:
+    """Return the ``response_format`` json_schema payload for the classification call.
+
+    Both chat paths send this exact dict so the schema can never drift
+    between them; this library only builds the payload; the HTTP call is
+    wired by the caller (REQ-2 through REQ-5), never here.
+    """
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "answer_claims",
+            "strict": True,
+            "schema": AnswerClaims.model_json_schema(),
+        },
+    }
+
+
+def parse_answer_claims(content: str | None) -> Literal["no_claims", "claims"] | None:
+    """Parse a classifier response into ``no_claims``, ``claims``, or ``None``.
+
+    ``None`` covers every failure the same way: missing content, invalid
+    JSON, a category outside the two allowed values, or an extra field (the
+    strict schema forbids one). Callers MUST treat ``None`` like ``claims`` —
+    see :func:`may_show_model_text_without_sources` — because the fail
+    direction here is the fixed refusal: a wrongly withheld answer costs a
+    turn its friendly reply, a wrongly shown one reaches the visitor as an
+    unverified claim about the organisation.
+    """
+    if not content:
+        return None
+    try:
+        return AnswerClaims.model_validate_json(content, strict=True).category
+    except Exception:
+        return None
+
+
+def may_show_model_text_without_sources(result: Literal["no_claims", "claims"] | None) -> bool:
+    """True only for a confirmed ``no_claims`` classification.
+
+    A failed classification (``None``) reads exactly like ``claims`` here —
+    one place decides that, so no call site can get the fail direction wrong.
+    """
+    return result == "no_claims"
+
+
+def has_direct_evidence_for_query(query: object, chunks: list[dict]) -> bool:
+    """Return whether low-scored retrieval still has literal answer evidence.
+
+    A single shared token is not evidence: a question about webhooks always
+    shares the token "webhook" with tangential webhook chunks, which let
+    fabricated answers through the low-confidence guard on path A
+    (2026-08-17 Voys incident, deploy/litellm/klai_kb_confidence_policy.py).
+    Require the chunks to cover at least two salient query tokens (or all of
+    them, for one-token queries) before treating the evidence as direct.
+    """
+    if not isinstance(query, str):
+        return False
+    tokens = extract_salient_query_tokens(query)
+    if not tokens:
+        return False
+    required = min(2, len(tokens))
+    covered: set[str] = set()
+    for chunk in chunks:
+        if not isinstance(chunk, dict):
+            continue
+        chunk_tokens = extract_salient_query_tokens(
+            " ".join(str(chunk.get(key) or "") for key in ("title", "heading_path", "source_label", "text", "content"))
+        )
+        covered |= tokens & chunk_tokens
+        if len(covered) >= required:
+            return True
+    return False
+
+
+def should_clarify(confidence_band: object, *, has_direct_evidence: bool) -> bool:
+    """Decision 1: does this turn get a clarifying question instead of an answer?
+
+    Exactly the condition that triggers path A's pre-generation refusal today
+    (``should_apply_low_confidence_injection`` in
+    ``deploy/litellm/klai_kb_confidence_policy.py``): confidence band ``low``
+    or ``unknown`` and no direct evidence for the query. What is a refusal
+    today becomes a clarifying question wherever a caller wires
+    :data:`CLARIFY_TURN_ADDENDUM` in on this same condition.
+    """
+    return confidence_band in ("low", "unknown") and not has_direct_evidence
