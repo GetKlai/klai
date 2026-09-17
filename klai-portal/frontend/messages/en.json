@@ -2708,8 +2708,6 @@
   "admin_extension_knowledge_activity_description": "Knowledge managers see widget conversations under Knowledge, review answers and see which knowledge is missing or wrong.",
   "admin_extension_knowledge_gaps_label": "Knowledge gaps",
   "admin_extension_knowledge_gaps_description": "Shows under Knowledge which questions the knowledge base could not answer, so knowledge managers can fill them. Still in development.",
-  "admin_extension_widget_clarify_flow_label": "Clarifying questions in the help widget",
-  "admin_extension_widget_clarify_flow_description": "Lets the help widget ask a follow-up question on a vague question, and reply in its own words when an answer is not found, as long as that reply states nothing about the organisation. Still being measured.",
   "admin_extension_librechat_quality_judge_label": "Conversation quality (LibreChat)",
   "admin_extension_librechat_quality_judge_description": "Let the nightly quality judge also evaluate this tenant's LibreChat conversations (separate from webchat).",
   "activity_page_title": "Conversations",

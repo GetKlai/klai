@@ -88,7 +88,7 @@ def _delta(frames: list[dict], key: str) -> list[Any]:
     return [c["delta"][key] for f in frames for c in f.get("choices") or [] if key in (c.get("delta") or {})]
 
 
-async def _answer(litellm: _LiteLLM, *, stream: bool, clarify_flow: bool = True, **overrides) -> tuple[str, dict, dict]:
+async def _answer(litellm: _LiteLLM, *, stream: bool, **overrides) -> tuple[str, dict, dict]:
     """Run one widget turn with no citable source; return (visible text, signals, extras)."""
     signals: dict[str, Any] = {}
     kwargs: dict[str, Any] = {
@@ -103,7 +103,6 @@ async def _answer(litellm: _LiteLLM, *, stream: bool, clarify_flow: bool = True,
         "citation_output": "markers",
         "source_query": "rekening factuur abonnement kosten",
         "support_mode": True,
-        "clarify_flow": clarify_flow,
         "answer_signals": signals,
         **overrides,
     }
@@ -124,7 +123,8 @@ async def _answer(litellm: _LiteLLM, *, stream: bool, clarify_flow: bool = True,
 
 
 @pytest.mark.parametrize("stream", [True, False])
-async def test_clarifying_question_without_claims_reaches_the_visitor(stream):
+async def test_uncited_reply_without_claims_reaches_the_visitor_and_keeps_its_flags(stream):
+    """Not a clarify turn (no clarify_turn from the route): a natural "not found" keeps its buttons."""
     litellm = _LiteLLM(model_text=CLARIFYING_QUESTION, answer_claims="no_claims")
 
     text, signals, extras = await _answer(litellm, stream=stream)
@@ -136,7 +136,7 @@ async def test_clarifying_question_without_claims_reaches_the_visitor(stream):
     classifier_input = litellm.claims_requests[0]["messages"][1]["content"]
     assert VISITOR[0]["content"] in classifier_input
     assert "rekening factuur abonnement kosten" not in classifier_input
-    # The refusal's flags stay with the passed reply, as the spec requires.
+    # The refusal's flags stay with a passed reply on a turn that did not ask to clarify.
     assert extras["broad_mode"] == ["offer"]
     assert extras["escalation"] == [{"appointment": True}]
 
@@ -187,12 +187,13 @@ async def test_passed_reply_is_stripped_of_links_and_citations():
 
 
 @pytest.mark.parametrize("stream", [True, False])
-async def test_switched_off_never_classifies_and_refuses_as_today(stream):
+async def test_outside_support_mode_nothing_is_classified_and_the_refusal_stays(stream):
+    """Internal widgets and partner-API keys: the prompts are written for an external visitor."""
     litellm = _LiteLLM(model_text=CLARIFYING_QUESTION, answer_claims="no_claims")
 
-    text, signals, _ = await _answer(litellm, stream=stream, clarify_flow=False)
+    text, signals, _ = await _answer(litellm, stream=stream, support_mode=False)
 
-    assert text == REFUSAL_NL
+    assert CLARIFYING_QUESTION not in text
     assert litellm.claims_requests == []
     assert "answer_claims" not in signals
 
@@ -219,13 +220,14 @@ async def _route_turn(
     question: str,
     band: str,
     chunk_text: str,
-    clarify_unlocked: bool,
+    support_mode: bool = True,
+    key_id: str = "wgt_901",
     turn_scope: str = "organisation",
     stream: bool = False,
     reranker: float | None = None,
     answer_claims: str = "no_claims",
-) -> tuple[_LiteLLM, str]:
-    """Drive the partner route end to end; return the LiteLLM recorder and the visitor-visible text."""
+) -> tuple[_LiteLLM, str, dict]:
+    """Drive the partner route end to end; return the LiteLLM recorder, visible text and widget signals."""
     from app.api import partner
     from app.api.partner import ChatCompletionsRequest, chat_completions
 
@@ -241,7 +243,7 @@ async def _route_turn(
     db = AsyncMock()
     db.execute = AsyncMock(return_value=FakeResult(rows=[FakeKB(id=10, name="KB", slug="kb-a", org_id=42)]))
     auth = make_partner_auth(kb_access={10: "read"})
-    auth.key_id = "wgt_901"
+    auth.key_id = key_id
     request = ChatCompletionsRequest(messages=[{"role": "user", "content": question}], stream=stream)
     http_request = MagicMock(headers={}, client=MagicMock(host="127.0.0.1"))
 
@@ -250,9 +252,8 @@ async def _route_turn(
         respx.mock(assert_all_called=False) as router,
         # Database readers and fire-and-forget audit/gap writes: not HTTP, not under test.
         patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=False)),
-        patch("app.api.partner._widget_support_mode_enabled", new=AsyncMock(return_value=True)),
+        patch("app.api.partner._widget_support_mode_enabled", new=AsyncMock(return_value=support_mode)),
         patch("app.api.partner._widget_tone_register", new=AsyncMock(return_value="restrained")),
-        patch("app.api.partner._clarify_flow_enabled", new=AsyncMock(return_value=clarify_unlocked)),
         patch("app.api.partner.asyncio"),
         patch("app.api.partner.write_retrieval_log", new=AsyncMock()),
         patch("app.services.partner_chat._schedule_gap_event"),
@@ -261,10 +262,14 @@ async def _route_turn(
         router.post(f"{RETRIEVAL}/retrieve").mock(return_value=_retrieval_reply(band, chunk_text, reranker))
         response = await chat_completions(request=request, http_request=http_request, auth=auth, db=db)
         if stream:
-            text = "".join(_delta(_frames([chunk async for chunk in response.body_iterator]), "content"))
+            frames = _frames([chunk async for chunk in response.body_iterator])
+            text = "".join(_delta(frames, "content"))
+            extras = {"broad_mode": _delta(frames, "broad_mode"), "escalation": _delta(frames, "escalation")}
         else:
-            text = response["choices"][0]["message"]["content"]
-    return litellm, text
+            message = response["choices"][0]["message"]
+            text = message["content"]
+            extras = {key: [message[key]] if key in message else [] for key in ("broad_mode", "escalation")}
+    return litellm, text, extras
 
 
 def _system_prompt_sent(litellm: _LiteLLM) -> str:
@@ -277,73 +282,66 @@ UNRELATED_CHUNK = "Je neemt je nummer mee door het porteringsformulier in te vul
 
 @pytest.mark.parametrize("band", ["low", "unknown"])
 async def test_weak_retrieval_without_direct_evidence_asks_a_clarifying_question(monkeypatch, band):
-    litellm, _ = await _route_turn(
-        monkeypatch, question="prijzen?", band=band, chunk_text=UNRELATED_CHUNK, clarify_unlocked=True
-    )
+    litellm, _, _ = await _route_turn(monkeypatch, question="prijzen?", band=band, chunk_text=UNRELATED_CHUNK)
 
     assert CLARIFY_TURN_ADDENDUM["external"] in _system_prompt_sent(litellm)
 
 
 async def test_confident_retrieval_gets_no_clarify_instruction(monkeypatch):
-    litellm, _ = await _route_turn(
-        monkeypatch, question="prijzen?", band="high", chunk_text=UNRELATED_CHUNK, clarify_unlocked=True
-    )
+    litellm, _, _ = await _route_turn(monkeypatch, question="prijzen?", band="high", chunk_text=UNRELATED_CHUNK)
 
     assert CLARIFY_TURN_ADDENDUM["external"] not in _system_prompt_sent(litellm)
 
 
 async def test_conversational_turn_gets_no_clarify_instruction(monkeypatch):
-    litellm, _ = await _route_turn(
+    litellm, _, _ = await _route_turn(
         monkeypatch,
         question="dankjewel!",
         band="low",
         chunk_text=UNRELATED_CHUNK,
-        clarify_unlocked=True,
         turn_scope="conversation",
     )
 
     assert CLARIFY_TURN_ADDENDUM["external"] not in _system_prompt_sent(litellm)
 
 
-async def test_switched_off_route_gets_no_clarify_instruction(monkeypatch):
-    litellm, _ = await _route_turn(
-        monkeypatch, question="prijzen?", band="low", chunk_text=UNRELATED_CHUNK, clarify_unlocked=False
+@pytest.mark.parametrize(
+    ("support_mode", "key_id"),
+    [(False, "wgt_901"), (False, "key-uuid-1")],
+    ids=["internal_widget", "partner_api_key"],
+)
+async def test_outside_support_mode_the_route_adds_no_clarify_and_classifies_nothing(monkeypatch, support_mode, key_id):
+    litellm, _, _ = await _route_turn(
+        monkeypatch,
+        question="prijzen?",
+        band="low",
+        chunk_text=UNRELATED_CHUNK,
+        support_mode=support_mode,
+        key_id=key_id,
     )
 
     assert CLARIFY_TURN_ADDENDUM["external"] not in _system_prompt_sent(litellm)
     assert litellm.claims_requests == []
 
 
-async def test_the_switch_is_the_tenant_unlock_scoped_to_the_caller_org():
-    from app.api.partner import _clarify_flow_enabled
-
-    auth = make_partner_auth()
-    unlocked, default = AsyncMock(), AsyncMock()
-    unlocked.execute = AsyncMock(return_value=FakeResult(rows=[["widgets", "widget_clarify_flow"]]))
-    default.execute = AsyncMock(return_value=FakeResult(rows=[["partner_api", "scribe", "widgets"]]))
-
-    assert await _clarify_flow_enabled(auth, unlocked) is True
-    assert await _clarify_flow_enabled(auth, default) is False
-    query = str(unlocked.execute.call_args.args[0].compile(compile_kwargs={"literal_binds": True}))
-    assert "FROM portal_orgs" in query
-    assert f"WHERE portal_orgs.id = {auth.org_id}" in query
-
-
 # ─── Review round: route-level decision 2, conversational gate, late scope ──
 
 
 @pytest.mark.parametrize("stream", [True, False])
-async def test_route_with_unlock_shows_a_clarifying_question_classified_no_claims(monkeypatch, stream):
-    litellm, text = await _route_turn(
+async def test_route_shows_a_clarifying_question_without_buttons_under_it(monkeypatch, stream):
+    """Support-mode widget, no switch: a clarify turn's question reaches the visitor with no
+    broaden-search offer and no appointment button, because a button under a question reads as a refusal."""
+    litellm, text, extras = await _route_turn(
         monkeypatch,
         question="prijzen?",
         band="low",
         chunk_text=UNRELATED_CHUNK,
-        clarify_unlocked=True,
         stream=stream,
     )
 
+    assert CLARIFY_TURN_ADDENDUM["external"] in _system_prompt_sent(litellm)
     assert text == CLARIFYING_QUESTION
+    assert extras == {"broad_mode": [], "escalation": []}
     (claims_request,) = litellm.claims_requests
     # The article titles that were in the prompt reach the classifier.
     assert "- Nummer porteren" in claims_request["messages"][1]["content"]
@@ -365,10 +363,10 @@ async def test_conversational_reply_goes_through_the_claims_gate(category, shown
         assert signals["refused"] is True
 
 
-async def test_conversational_reply_is_not_classified_while_switched_off():
+async def test_conversational_reply_outside_support_mode_is_not_classified():
     litellm = _LiteLLM(model_text="Wij rekenen 5 euro.", answer_claims="claims")
 
-    text, _, _ = await _answer(litellm, stream=True, clarify_flow=False, conversational=True)
+    text, _, _ = await _answer(litellm, stream=True, support_mode=False, conversational=True)
 
     assert text == "Wij rekenen 5 euro."
     assert litellm.claims_requests == []
@@ -393,13 +391,12 @@ async def test_safety_blocked_turn_is_never_classified(monkeypatch):
 
 
 async def test_confident_reranker_with_low_band_still_classifies_scope_before_clarifying(monkeypatch):
-    litellm, _ = await _route_turn(
+    litellm, _, _ = await _route_turn(
         monkeypatch,
         question="dankjewel!",
         band="low",
         reranker=0.9,
         chunk_text=UNRELATED_CHUNK,
-        clarify_unlocked=True,
         turn_scope="conversation",
     )
 

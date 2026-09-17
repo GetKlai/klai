@@ -37,8 +37,6 @@ export function extensionLabel(key: string): string {
       return m.admin_extension_knowledge_gaps_label()
     case 'librechat_quality_judge':
       return m.admin_extension_librechat_quality_judge_label()
-    case 'widget_clarify_flow':
-      return m.admin_extension_widget_clarify_flow_label()
     default:
       return key
   }
@@ -62,8 +60,6 @@ export function extensionDescription(key: string): string {
       return m.admin_extension_knowledge_gaps_description()
     case 'librechat_quality_judge':
       return m.admin_extension_librechat_quality_judge_description()
-    case 'widget_clarify_flow':
-      return m.admin_extension_widget_clarify_flow_description()
     default:
       return ''
   }

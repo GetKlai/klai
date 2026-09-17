@@ -464,25 +464,6 @@ async def _widget_tone_register(auth: PartnerAuthContext, db: AsyncSession) -> s
     return register if register == "expressive" else "restrained"
 
 
-# SPEC-RAG-CLARIFY-FLOW-001 REQ-2/REQ-3 switch. A platform unlock rather than a
-# widget_config field for two reasons: Klai staff decide where a change to the
-# grounding boundary goes live first (Voys and Klai), not tenant admins, and the
-# admin widget editor rewrites widget_config wholesale from its schema, so a
-# hand-set key there would silently disappear on the next save.
-_CLARIFY_FLOW_FEATURE = "widget_clarify_flow"
-
-
-async def _clarify_flow_enabled(auth: PartnerAuthContext, db: AsyncSession) -> bool:
-    """Return whether this tenant has the widget clarify flow unlocked.
-
-    One switch for both decisions on purpose: the clarifying question REQ-3
-    asks the model for is only ever shown because REQ-2 lets uncited text
-    through, so the first may never be on without the second.
-    """
-    result = await db.execute(select(PortalOrg.platform_unlocked_features).where(PortalOrg.id == auth.org_id))
-    return _CLARIFY_FLOW_FEATURE in (result.scalar_one_or_none() or [])
-
-
 def _citation_runtime_options(
     trusted_sources: list[dict[str, Any]],
     *,
@@ -1776,9 +1757,6 @@ async def chat_completions(  # noqa: C901
     # Register only matters when support mode is on; for internal widgets and
     # partner-key traffic it stays the default and changes nothing.
     tone_register = await _widget_tone_register(auth, db) if is_widget_chat and support_mode else "restrained"
-    # Only the public help-page widget: both the clarify addendum and the answer
-    # classifier are written for an external visitor.
-    clarify_flow = support_mode and await _clarify_flow_enabled(auth, db)
     page_context = (
         request.page_context.model_dump(exclude_none=True) if page_context_enabled and request.page_context else None
     )
@@ -1958,13 +1936,15 @@ async def chat_completions(  # noqa: C901
     # direct evidence, ask one clarifying question instead of guessing. The band
     # is the one retrieve_context stored from retrieval-api; a turn without one
     # never retrieved, so no decision is taken and none is logged (REQ-6 counts
-    # decided turns only). Not on a broad-mode turn (consent already widened the
+    # decided turns only). Only on the public help-page widget (support mode):
+    # the addendum is written for an external visitor, and the claims gate that
+    # makes the question visible runs on that path only. Not on a broad-mode turn (consent already widened the
     # answer) or an escalation turn (the visitor is to be offered a person, and
     # two competing per-turn instructions produce neither).
     clarify = False
     scope_classified = gap is not None
     band = answer_signals.get("band")
-    if clarify_flow and band is not None and not (broad_turn or escalation):
+    if support_mode and band is not None and not (broad_turn or escalation):
         clarify = should_clarify(band, has_direct_evidence=has_direct_evidence_for_query(visitor_turn, chunks))
         if clarify and not scope_classified:
             # turn_scope only ran on a retrieval gap, but this decision follows
@@ -2069,8 +2049,8 @@ async def chat_completions(  # noqa: C901
             support_mode=support_mode,
             broad_mode=broad_turn,
             force_escalation=force_escalation,
+            clarify_turn=clarify,
             conversational=turn_scope.is_conversational(turn_asserts),
-            clarify_flow=clarify_flow,
             sentiment=sentiment,
             answer_signals=answer_signals if audit_ready else None,
             signal_chunks=chunks,
@@ -2111,8 +2091,8 @@ async def chat_completions(  # noqa: C901
         support_mode=support_mode,
         broad_mode=broad_turn,
         force_escalation=force_escalation,
+        clarify_turn=clarify,
         conversational=turn_scope.is_conversational(turn_asserts),
-        clarify_flow=clarify_flow,
         sentiment=sentiment,
         answer_signals=answer_signals if audit_ready else None,
         signal_chunks=chunks,
