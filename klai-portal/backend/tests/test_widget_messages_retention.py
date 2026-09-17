@@ -186,11 +186,12 @@ async def test_retention_run_once_deletes_old_rows():
     db.commit = AsyncMock()
 
     @asynccontextmanager
-    async def _fake_session():
+    async def _fake_session(org_id: int | None = None):
         yield db
 
     with (
         patch("app.services.widget_messages_retention.cross_org_session", _fake_session),
+        patch("app.services.widget_messages_retention.tenant_scoped_session", _fake_session),
         patch("app.services.widget_messages_retention.settings") as mock_settings,
     ):
         mock_settings.widget_messages_retention_days = 90
@@ -216,11 +217,12 @@ async def test_retention_run_once_returns_zero_when_no_old_rows():
     db.commit = AsyncMock()
 
     @asynccontextmanager
-    async def _fake_session():
+    async def _fake_session(org_id: int | None = None):
         yield db
 
     with (
         patch("app.services.widget_messages_retention.cross_org_session", _fake_session),
+        patch("app.services.widget_messages_retention.tenant_scoped_session", _fake_session),
         patch("app.services.widget_messages_retention.settings") as mock_settings,
     ):
         mock_settings.widget_messages_retention_days = 90
@@ -250,11 +252,12 @@ async def test_retention_run_once_skips_delete_when_no_candidates():
     db.commit = AsyncMock()
 
     @asynccontextmanager
-    async def _fake_session():
+    async def _fake_session(org_id: int | None = None):
         yield db
 
     with (
         patch("app.services.widget_messages_retention.cross_org_session", _fake_session),
+        patch("app.services.widget_messages_retention.tenant_scoped_session", _fake_session),
         patch("app.services.widget_messages_retention.settings") as mock_settings,
     ):
         mock_settings.widget_messages_retention_days = 90
@@ -287,7 +290,7 @@ async def test_retention_run_once_emits_audit_event():
     db.commit = AsyncMock()
 
     @asynccontextmanager
-    async def _fake_session():
+    async def _fake_session(org_id: int | None = None):
         nonlocal call_count
         call_count += 1
         yield db
@@ -296,6 +299,7 @@ async def test_retention_run_once_emits_audit_event():
 
     with (
         patch("app.services.widget_messages_retention.cross_org_session", _fake_session),
+        patch("app.services.widget_messages_retention.tenant_scoped_session", _fake_session),
         patch("app.services.widget_messages_retention.settings") as mock_settings,
         structlog.testing.capture_logs() as captured,
     ):
@@ -332,11 +336,12 @@ async def test_retention_run_once_uses_settings_retention_days():
     db.commit = AsyncMock()
 
     @asynccontextmanager
-    async def _fake_session():
+    async def _fake_session(org_id: int | None = None):
         yield db
 
     with (
         patch("app.services.widget_messages_retention.cross_org_session", _fake_session),
+        patch("app.services.widget_messages_retention.tenant_scoped_session", _fake_session),
         patch("app.services.widget_messages_retention.settings") as mock_settings,
     ):
         mock_settings.widget_messages_retention_days = 30  # custom value
@@ -375,7 +380,7 @@ async def test_retention_run_once_applies_per_org_override_over_default():
 
     captured_select_params: list[dict] = []
     captured_select_sql: list[str] = []
-    returned_candidates: list[tuple[int, int]] = []
+    returned_candidates: list[tuple[int, int, int]] = []
     served = False
     db = AsyncMock()
 
@@ -392,7 +397,7 @@ async def test_retention_run_once_applies_per_org_override_over_default():
             served = True
             default_days = params["default_days"]
             candidates = [
-                (row["id"], row["conversation_id"])
+                (row["id"], row["conversation_id"], row["org_id"])
                 for row in rows
                 if row["created_at"] < now - timedelta(days=org_override_days[row["org_id"]] or default_days)
             ]
@@ -409,11 +414,12 @@ async def test_retention_run_once_applies_per_org_override_over_default():
     db.commit = AsyncMock()
 
     @asynccontextmanager
-    async def _fake_session():
+    async def _fake_session(org_id: int | None = None):
         yield db
 
     with (
         patch("app.services.widget_messages_retention.cross_org_session", _fake_session),
+        patch("app.services.widget_messages_retention.tenant_scoped_session", _fake_session),
         patch("app.services.widget_messages_retention.settings") as mock_settings,
     ):
         mock_settings.widget_messages_retention_days = 7
@@ -423,7 +429,7 @@ async def test_retention_run_once_applies_per_org_override_over_default():
     assert "COALESCE(po.widget_messages_retention_days, :default_days)" in captured_select_sql[0]
     # Only org 2's message purges (default 7-day window); org 1's 90-day
     # override keeps its 30-day-old message out of the candidate set.
-    assert returned_candidates == [(502, 60)]
+    assert returned_candidates == [(502, 60, 2)]
     assert result["deleted_count"] == 1
 
 
@@ -452,8 +458,8 @@ async def test_retention_anonymizes_judgment_reasoning_before_deleting_messages(
         calls.append((session_id, sql, dict(params or {})))
         result = MagicMock()
         if "FROM widget_messages" in sql and sql.lstrip().startswith("SELECT"):
-            # 3 expired messages across conversations 7, 7 and 9
-            result.all.return_value = [(101, 7), (102, 7), (103, 9)]
+            # 3 expired messages across conversations 7, 7 and 9, all org 1
+            result.all.return_value = [(101, 7, 1), (102, 7, 1), (103, 9, 1)]
         elif "UPDATE conversation_quality_judgments" in sql:
             result.rowcount = 2
         else:
@@ -464,7 +470,7 @@ async def test_retention_anonymizes_judgment_reasoning_before_deleting_messages(
     db.commit = AsyncMock()
 
     @asynccontextmanager
-    async def _fake_session():
+    async def _fake_session(org_id: int | None = None):
         nonlocal session_id
         session_id += 1
         yield db
@@ -473,6 +479,7 @@ async def test_retention_anonymizes_judgment_reasoning_before_deleting_messages(
 
     with (
         patch("app.services.widget_messages_retention.cross_org_session", _fake_session),
+        patch("app.services.widget_messages_retention.tenant_scoped_session", _fake_session),
         patch("app.services.widget_messages_retention.settings") as mock_settings,
         structlog.testing.capture_logs() as captured,
     ):
@@ -490,7 +497,7 @@ async def test_retention_anonymizes_judgment_reasoning_before_deleting_messages(
     assert "reasoning IS NOT NULL" in update_sql
     assert update_params["conversation_ids"] == [7, 9]
 
-    # Same cross_org_session as the DELETE (no second session/transaction).
+    # Same tenant session as the DELETE (no second session/transaction).
     assert calls[update_idx][0] == calls[delete_idx][0]
 
     assert result["deleted_count"] == 3
@@ -560,7 +567,7 @@ async def test_retention_run_once_clears_visitor_contact_of_purged_conversations
                 result.all = MagicMock(return_value=[])
             else:
                 candidates_served = True
-                result.all = MagicMock(return_value=[(11, 5), (12, 5), (13, 6)])
+                result.all = MagicMock(return_value=[(11, 5, 1), (12, 5, 1), (13, 6, 1)])
             return result
         result.rowcount = 1
         return result
@@ -569,11 +576,12 @@ async def test_retention_run_once_clears_visitor_contact_of_purged_conversations
     db.commit = AsyncMock()
 
     @asynccontextmanager
-    async def _fake_session():
+    async def _fake_session(org_id: int | None = None):
         yield db
 
     with (
         patch("app.services.widget_messages_retention.cross_org_session", _fake_session),
+        patch("app.services.widget_messages_retention.tenant_scoped_session", _fake_session),
         patch("app.services.widget_messages_retention.settings") as mock_settings,
     ):
         mock_settings.widget_messages_retention_days = 90
@@ -584,3 +592,93 @@ async def test_retention_run_once_clears_visitor_contact_of_purged_conversations
     ]
     assert visitor_updates, f"No visitor-contact anonymization statement ran. Statements: {statements}"
     assert "visitor_name = NULL" in visitor_updates[0]
+
+
+# ---------------------------------------------------------------------------
+# Writes run in the owning tenant's session (RLS WITH CHECK on the judgment
+# and conversation tables rejects a cross-org UPDATE; the loop stalled on it
+# from 2026-09-16, the first day a judged conversation reached its cutoff)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_retention_writes_run_in_the_owning_tenant_session_per_org():
+    """A chunk spanning two orgs anonymizes and deletes each org's rows in
+    that org's tenant session; the cross-org session only lists candidates.
+
+    The fake cross-org session raises on any UPDATE or DELETE, exactly as
+    PostgreSQL does for the WITH CHECK (org_id = _rls_current_org_id())
+    policy when app.current_org_id is unset, so a regression cannot pass by
+    accident.
+    """
+    from app.services.widget_messages_retention import _retention_run_once
+
+    served = False
+    tenant_calls: list[tuple[int, str, dict]] = []
+    tenant_commits: list[int] = []
+
+    cross_db = AsyncMock()
+
+    async def _cross_execute(stmt, params=None, **kwargs):
+        nonlocal served
+        sql = str(stmt)
+        if sql.lstrip().startswith(("UPDATE", "DELETE")):
+            raise AssertionError(f"cross-org write is rejected by RLS WITH CHECK: {sql.strip()[:60]}")
+        result = MagicMock()
+        if served:
+            result.all = MagicMock(return_value=[])
+            return result
+        served = True
+        # (message_id, conversation_id, org_id): org 1 owns conversations 7
+        # and 9, org 2 owns conversation 8.
+        result.all = MagicMock(return_value=[(101, 7, 1), (102, 8, 2), (103, 9, 1), (104, 7, 1)])
+        return result
+
+    cross_db.execute = _cross_execute
+
+    @asynccontextmanager
+    async def _fake_cross_org_session():
+        yield cross_db
+
+    @asynccontextmanager
+    async def _fake_tenant_session(org_id: int):
+        db = AsyncMock()
+
+        async def _execute(stmt, params=None, **kwargs):
+            sql = str(stmt)
+            tenant_calls.append((org_id, sql, dict(params or {})))
+            result = MagicMock()
+            result.rowcount = len(params["message_ids"]) if "DELETE FROM widget_messages" in sql else 1
+            return result
+
+        db.execute = _execute
+
+        async def _commit():
+            tenant_commits.append(org_id)
+
+        db.commit = _commit
+        yield db
+
+    with (
+        patch("app.services.widget_messages_retention.cross_org_session", _fake_cross_org_session),
+        patch("app.services.widget_messages_retention.tenant_scoped_session", _fake_tenant_session),
+        patch("app.services.widget_messages_retention.settings") as mock_settings,
+    ):
+        mock_settings.widget_messages_retention_days = 7
+        result = await _retention_run_once()
+
+    def _params(org_id: int, fragment: str) -> dict:
+        return next(p for o, sql, p in tenant_calls if o == org_id and fragment in sql)
+
+    assert _params(1, "UPDATE conversation_quality_judgments")["conversation_ids"] == [7, 9]
+    assert _params(2, "UPDATE conversation_quality_judgments")["conversation_ids"] == [8]
+    assert _params(1, "UPDATE widget_conversations")["conversation_ids"] == [7, 9]
+    assert _params(1, "DELETE FROM widget_messages")["message_ids"] == [101, 103, 104]
+    assert _params(2, "DELETE FROM widget_messages")["message_ids"] == [102]
+    # Within one org the anonymization precedes the delete, in one committed session.
+    org1 = [sql for o, sql, _ in tenant_calls if o == 1]
+    assert org1.index(next(s for s in org1 if "UPDATE conversation_quality_judgments" in s)) < org1.index(
+        next(s for s in org1 if "DELETE FROM widget_messages" in s)
+    )
+    assert sorted(tenant_commits) == [1, 2]
+    assert result["deleted_count"] == 4

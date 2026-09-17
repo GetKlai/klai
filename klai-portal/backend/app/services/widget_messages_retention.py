@@ -10,9 +10,11 @@ set, else ``settings.widget_messages_retention_days`` (the global default,
 (REQ-4, SPEC-CHAT-QUALITY-LOOP-001 §11).
 
 Design mirrors ``telemetry_purge.py``:
-- cross-org: the loop itself is not tenant-scoped, but the candidate query
-  now applies a per-org cutoff (SPEC-CHAT-QUALITY-LOOP-001 open item #2:
-  Voys keeps 90 days, every other tenant stays on the global default).
+- cross-org read, tenant-scoped writes: the candidate query lists expired
+  rows across all orgs with a per-org cutoff (SPEC-CHAT-QUALITY-LOOP-001
+  open item #2: Voys keeps 90 days, every other tenant stays on the global
+  default); the anonymizing UPDATEs and the DELETE then run per org in that
+  org's tenant session, the same split ``recording_cleanup_loop`` uses.
 - chunked: bounded-time deletes avoid long-running transactions.
 - audit: emits ``widget_messages.retention_deleted`` via structlog.
 - resilient: exceptions are caught and logged; the loop continues.
@@ -31,7 +33,7 @@ import structlog
 from sqlalchemy import text
 
 from app.core.config import settings
-from app.core.database import cross_org_session
+from app.core.database import cross_org_session, tenant_scoped_session
 
 logger = structlog.get_logger()
 
@@ -70,7 +72,7 @@ async def _retention_run_once() -> dict[str, int]:
             candidate_result = await db.execute(
                 text(
                     """
-                    SELECT wm.id, wm.conversation_id
+                    SELECT wm.id, wm.conversation_id, wm.org_id
                     FROM widget_messages wm
                     LEFT JOIN portal_orgs po ON po.id = wm.org_id
                     WHERE wm.created_at < now() - (
@@ -83,59 +85,73 @@ async def _retention_run_once() -> dict[str, int]:
                 {"default_days": default_days, "chunk_size": _CHUNK_SIZE},
             )
             rows = list(candidate_result.all())
-            if not rows:
-                break
-            message_ids = [row[0] for row in rows]
+        if not rows:
+            break
 
-            # Anonymize first, in this same transaction: batched per chunk,
-            # keyed off the messages we are about to delete (no separate
-            # cutoff computation on widget_conversations).
-            conversation_ids = sorted({row[1] for row in rows})
-            anon_result = await db.execute(
-                text(
-                    """
-                    UPDATE conversation_quality_judgments
-                    SET reasoning = NULL, anonymized_at = NOW()
-                    WHERE conversation_id = ANY(CAST(:conversation_ids AS bigint[]))
-                      AND reasoning IS NOT NULL
-                    """
-                ),
-                {"conversation_ids": conversation_ids},
-            )
-            anonymized_total += anon_result.rowcount or 0  # type: ignore[attr-defined]
+        # The writes run in the owning tenant's session, one per org in the
+        # chunk. conversation_quality_judgments and widget_conversations carry
+        # WITH CHECK (org_id = _rls_current_org_id()), and the cross-org bypass
+        # leaves that helper NULL, so an UPDATE from the cross-org session is
+        # rejected outright. That stalled every run from 2026-09-16, the first
+        # day a judged conversation reached its cutoff, and the DELETE behind
+        # it (which has no WITH CHECK) never ran either.
+        by_org: dict[int, list[tuple[int, int]]] = {}
+        for message_id, conversation_id, org_id in rows:
+            by_org.setdefault(org_id, []).append((message_id, conversation_id))
 
-            # Same rule one table over: the visitor's name and e-mail were
-            # given so a reviewer could answer this conversation, so they may
-            # not outlive it. The conversation row itself survives for the
-            # aggregate counts, without the identifiable part.
-            await db.execute(
-                text(
-                    """
-                    UPDATE widget_conversations
-                    SET visitor_name = NULL, visitor_email = NULL
-                    WHERE id = ANY(CAST(:conversation_ids AS bigint[]))
-                      AND (visitor_name IS NOT NULL OR visitor_email IS NOT NULL)
-                    """
-                ),
-                {"conversation_ids": conversation_ids},
-            )
+        rows_deleted = 0
+        for org_id, org_rows in by_org.items():
+            message_ids = [row[0] for row in org_rows]
+            # Anonymize first, in this same transaction: keyed off the
+            # messages we are about to delete (no separate cutoff computation
+            # on widget_conversations).
+            conversation_ids = sorted({row[1] for row in org_rows})
+            async with tenant_scoped_session(org_id) as db:
+                anon_result = await db.execute(
+                    text(
+                        """
+                        UPDATE conversation_quality_judgments
+                        SET reasoning = NULL, anonymized_at = NOW()
+                        WHERE conversation_id = ANY(CAST(:conversation_ids AS bigint[]))
+                          AND reasoning IS NOT NULL
+                        """
+                    ),
+                    {"conversation_ids": conversation_ids},
+                )
+                anonymized_total += anon_result.rowcount or 0  # type: ignore[attr-defined]
 
-            result = await db.execute(
-                text(
-                    """
-                    DELETE FROM widget_messages
-                    WHERE id = ANY(CAST(:message_ids AS bigint[]))
-                    """
-                ),
-                {"message_ids": message_ids},
-            )
-            rows_deleted: int = result.rowcount or 0  # type: ignore[attr-defined]
-            await db.commit()
+                # Same rule one table over: the visitor's name and e-mail were
+                # given so a reviewer could answer this conversation, so they
+                # may not outlive it. The conversation row itself survives for
+                # the aggregate counts, without the identifiable part.
+                await db.execute(
+                    text(
+                        """
+                        UPDATE widget_conversations
+                        SET visitor_name = NULL, visitor_email = NULL
+                        WHERE id = ANY(CAST(:conversation_ids AS bigint[]))
+                          AND (visitor_name IS NOT NULL OR visitor_email IS NOT NULL)
+                        """
+                    ),
+                    {"conversation_ids": conversation_ids},
+                )
+
+                result = await db.execute(
+                    text(
+                        """
+                        DELETE FROM widget_messages
+                        WHERE id = ANY(CAST(:message_ids AS bigint[]))
+                        """
+                    ),
+                    {"message_ids": message_ids},
+                )
+                rows_deleted += result.rowcount or 0  # type: ignore[attr-defined]
+                await db.commit()
 
         chunk_count += 1
         deleted_total += rows_deleted
 
-        if rows_deleted == 0 or len(message_ids) < _CHUNK_SIZE:
+        if rows_deleted == 0 or len(rows) < _CHUNK_SIZE:
             break
 
     logger.info(
