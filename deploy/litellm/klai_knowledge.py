@@ -54,6 +54,7 @@ from klai_citations import (
 from klai_kb_confidence_policy import (
     LOW_CONFIDENCE_INJECTION_DISABLED as _LOW_CONFIDENCE_INJECTION_DISABLED,
     LOW_CONFIDENCE_INJECTION_TEXT as _LOW_CONFIDENCE_INJECTION_TEXT,
+    LOW_CONFIDENCE_OPEN_CLARIFY_TEXT as _LOW_CONFIDENCE_OPEN_CLARIFY_TEXT,
     LOW_CONFIDENCE_OPEN_CONTEXT_TEXT as _LOW_CONFIDENCE_OPEN_CONTEXT_TEXT,
     MAX_SUB_QUESTIONS as _MAX_SUB_QUESTIONS,
     MULTI_QUESTION_FANOUT_GUARD_TEXT as _MULTI_QUESTION_FANOUT_GUARD_TEXT,
@@ -1656,18 +1657,18 @@ class KlaiKnowledgeHook(CustomLogger):
             images_base_url=KB_IMAGES_BASE_URL,
             low_confidence_inject=low_confidence_inject,
             low_confidence_injection_disabled=_LOW_CONFIDENCE_INJECTION_DISABLED,
-            # On a clarify turn the addendum takes the place of the mode's
-            # low-relevance text in both modes, not a place next to it: Strict's
-            # "cite what is literally in the chunks" and Open's "answer from
-            # general knowledge" both tell the model to answer now, the addendum
-            # tells it not to answer yet.
+            # On a clarify turn Strict's "cite what is literally in the chunks"
+            # and Open's "answer from general knowledge" both tell the model to
+            # answer now, and the addendum tells it not to answer yet. Strict's
+            # text is replaced outright (REQ-4 checks the reply); Open keeps its
+            # labelling rules, because nothing checks an Open reply afterwards.
             low_confidence_strict_text=(
                 _CLARIFY_TURN_ADDENDUM["internal"]
                 if clarify_turn
                 else _LOW_CONFIDENCE_INJECTION_TEXT
             ),
             low_confidence_open_text=(
-                _CLARIFY_TURN_ADDENDUM["internal"]
+                _LOW_CONFIDENCE_OPEN_CLARIFY_TEXT + _CLARIFY_TURN_ADDENDUM["internal"]
                 if clarify_turn
                 else _LOW_CONFIDENCE_OPEN_CONTEXT_TEXT
             ),

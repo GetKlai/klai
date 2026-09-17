@@ -1167,6 +1167,13 @@ async def _show_uncited_strict_draft(
         # The hook's own mock_response refusals (zero chunks, retrieval
         # failure) also render as no_trusted_sources; they are not drafts.
         or _is_strict_refusal_answer(text, refusal_language=kb_meta.get("response_language_target"))
+        # Strict stays KB-only for the user's own material (an attachment,
+        # pasted correspondence) and for multi-part messages: the clarify flow
+        # is about knowledge questions, not about opening Strict to summaries
+        # of what the user brought (product note in klai_knowledge.py).
+        or kb_meta.get("user_provided_content_context")
+        or kb_meta.get("pasted_correspondence_detected")
+        or kb_meta.get("multi_question")
     ):
         return rendered_content, no_citable_sources, decision
     draft = strip_model_citation_artifacts(
@@ -1332,14 +1339,14 @@ async def compose_streaming_kb_response(
         return stats
 
     kb_narrow = _kb_meta_is_strict(kb_meta)
-    # A Strict clarify turn (SPEC-RAG-CLARIFY-FLOW-001 REQ-5) replaced the
-    # refusal the hook used to return before the model. That refusal existed so
-    # weak evidence could never surface a general-knowledge answer, so the reply
-    # is held back in full until REQ-4 has checked it; the streaming guard below
-    # would show it while it is still being written.
-    hold_until_rendered = (not trusted_sources and (force_no_citable or kb_narrow)) or (
-        kb_narrow and bool(kb_meta.get("clarify_turn"))
-    )
+    # Every Strict stream is held back in full. Whether a sentence is supported
+    # is only known at the final render, and the incremental guard below used
+    # to show the model's words first and append the fixed refusal after them,
+    # so unsupported text reached the user before any gate ran. Held deltas
+    # still go out as chunks with empty content, one per model token, which
+    # keeps bytes flowing to LibreChat while the answer is written. Open streams
+    # stay incremental: they never replace the model's text.
+    hold_until_rendered = kb_narrow or (not trusted_sources and force_no_citable)
     telemetry_only_stream = bool(
         citation_chunks
         and not trusted_sources
@@ -1508,12 +1515,7 @@ async def compose_streaming_kb_response(
         )
         _record_answer_language(rendered_content, kb_meta)
         tail = remove_already_streamed_prefix(rendered_content, emitted_text)
-        if tail is None and no_citable_sources:
-            # Deliberate replacement (strict refusal): the canned message is
-            # the contract and is short — append it in full after the stream.
-            tail = rendered_content
-            decision["stream_flush_alignment"] = "replacement_appended"
-        elif tail is None:
+        if tail is None:
             # The cleaner changed non-whitespace content inside the region the
             # user already saw, so the rendered answer cannot be aligned with
             # the stream. Never replay the full answer (Voys feedback #21,

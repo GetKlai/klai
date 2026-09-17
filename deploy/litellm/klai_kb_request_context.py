@@ -84,12 +84,17 @@ _FOOTER_BODY_BULLET_RE = re.compile(r"^[ \t]*[-*+•][ \t]+")
 
 
 def is_trivial(text: str) -> bool:
-    # Acknowledgements only. A length floor (< 8 chars) sat here since the
-    # hook's first commit without a stated reason, and it skipped retrieval
-    # for short real questions such as "VPN?" or "prijs?" — exactly the turns
-    # SPEC-RAG-CLARIFY-FLOW-001 answers with a clarifying question.
+    # Short fragments ("top", "thx", a thumbs-up) skip retrieval, rewrite and
+    # telemetry as they always have, UNLESS they are question-shaped: a "?"
+    # plus at least one letter or digit. The length-only floor that stood here
+    # sent "VPN?" and "prijs?" to the model without any knowledge, exactly the
+    # turns SPEC-RAG-CLARIFY-FLOW-001 answers with a clarifying question. A
+    # short meta request ("help") is not trivial either: it has its own prompt.
     text = text.strip()
-    return not text or bool(TRIVIAL_PATTERNS.match(text))
+    if len(text) < 8:
+        question_shaped = "?" in text and any(char.isalnum() for char in text)
+        return not (question_shaped or META_QUERY_PATTERNS.match(text))
+    return bool(TRIVIAL_PATTERNS.match(text))
 
 
 def is_meta_query(text: str) -> bool:

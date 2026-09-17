@@ -8658,28 +8658,33 @@ class TestClarifyFlowPathA:
             "completion",
         )
 
+    @staticmethod
+    async def _stream_items(hook, data, parts: list[str]) -> list[dict]:
+        """Every SSE chunk the proxy would send, in order."""
+
+        async def stream():
+            for index, part in enumerate(parts):
+                last = index == len(parts) - 1
+                yield {
+                    "choices": [
+                        {
+                            "delta": {"content": part},
+                            "finish_reason": "stop" if last else None,
+                        }
+                    ]
+                }
+
+        return [
+            item
+            async for item in hook.async_post_call_streaming_iterator_hook(
+                None, stream(), data
+            )
+        ]
+
     async def _model_reply(self, hook, data, parts: list[str]) -> str:
         """Run the model's reply through the render path the proxy would use."""
         if data.get("stream"):
-
-            async def stream():
-                for index, part in enumerate(parts):
-                    last = index == len(parts) - 1
-                    yield {
-                        "choices": [
-                            {
-                                "delta": {"content": part},
-                                "finish_reason": "stop" if last else None,
-                            }
-                        ]
-                    }
-
-            items = [
-                item
-                async for item in hook.async_post_call_streaming_iterator_hook(
-                    None, stream(), data
-                )
-            ]
+            items = await self._stream_items(hook, data, parts)
             return "".join(item["choices"][0]["delta"]["content"] for item in items)
         response = {"choices": [{"message": {"content": "".join(parts)}}]}
         await hook.async_post_call_success_hook(data, None, response)
@@ -8791,6 +8796,11 @@ class TestClarifyFlowPathA:
 
         request = http.classify[0]["json"]
         assert request["model"] == "klai-fast"
+        # PII enforcer attribution travels with the passthrough flag.
+        assert request["metadata"] == {
+            "_klai_openai_passthrough": True,
+            "_klai_delegated_org_id": "org123",
+        }
         assert http.classify[0]["headers"]["Authorization"] == "Bearer sk-master"
         # Replay the call into the hook as the proxy would, on a key that DOES
         # carry an org: only the passthrough flag can make the hook skip it.
@@ -8807,16 +8817,111 @@ class TestClarifyFlowPathA:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("query", "retrieves"),
-        [("VPN?", True), ("ok", False), ("bedankt", False)],
+        [
+            ("VPN?", True),
+            ("prijs?", True),
+            ("ok", False),
+            ("bedankt", False),
+            ("top", False),
+            ("thx", False),
+            ("👍", False),
+            ("?", False),
+        ],
     )
     async def test_short_real_question_reaches_retrieval_but_acknowledgement_does_not(
         self, monkeypatch, query, retrieves
     ):
         hook = self._load(monkeypatch).KlaiKnowledgeHook()
         with self._http() as http:
-            await self._pre_call(hook, kb_narrow=True, query=query)
+            data = await self._pre_call(hook, kb_narrow=True, query=query)
 
         assert bool(http.retrieve) is retrieves
+        if not retrieves:
+            assert "mock_response" not in data
+            assert not any(m["role"] == "system" for m in data["messages"])
+
+    @pytest.mark.asyncio
+    async def test_short_help_request_lands_on_the_meta_prompt(self, monkeypatch):
+        hook = self._load(monkeypatch).KlaiKnowledgeHook()
+        with self._http() as http:
+            data = await self._pre_call(hook, kb_narrow=True, query="help")
+
+        assert http.retrieve == []
+        assert "META question about Klai itself" in self._system_text(data)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("classifier", "shows_draft"),
+        [('{"category": "claims"}', False), ('{"category": "no_claims"}', True)],
+        ids=["claims", "no_claims"],
+    )
+    async def test_strict_stream_with_unsupported_sources_shows_nothing_before_the_decision(
+        self, monkeypatch, classifier, shows_draft
+    ):
+        hook = self._load(monkeypatch).KlaiKnowledgeHook()
+        parts = [
+            "De kantoorhuur ",
+            "[bedraagt](https://evil.example/x) ",
+            "vijfduizend euro maandelijks.",
+        ]
+        # Band high: an ordinary Strict answer, not a clarify turn.
+        with self._http(band="high", classifier=classifier) as http:
+            data = await self._pre_call(hook, kb_narrow=True)
+            items = await self._stream_items(hook, data, parts)
+
+        contents = [item["choices"][0]["delta"]["content"] for item in items]
+        # Every model delta still goes out as a chunk (the connection keeps
+        # receiving bytes), but none carries model text before the decision.
+        assert contents[: len(parts) - 1] == [""] * (len(parts) - 1)
+        visible = "".join(contents)
+        assert len(http.classify) == 1
+        refusal = "Ik kan dit niet betrouwbaar beantwoorden"
+        if shows_draft:
+            assert visible.startswith("De kantoorhuur bedraagt vijfduizend euro maandelijks.")
+            assert refusal not in visible
+            assert "evil.example" not in visible
+        else:
+            assert visible.startswith(refusal)
+            assert "kantoorhuur" not in visible
+
+    @pytest.mark.asyncio
+    async def test_strict_user_provided_content_without_sources_stays_refused(
+        self, monkeypatch, caplog
+    ):
+        caplog.set_level("WARNING")
+        hook = self._load(monkeypatch).KlaiKnowledgeHook()
+        data = {
+            "stream": True,
+            "user": "aabbcc112233445566778899",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "wat staat er op deze screenshot?"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": "https://example.test/screenshot.png"},
+                        },
+                    ],
+                }
+            ],
+        }
+        with self._http(classifier='{"category": "no_claims"}', chunks=[]) as http:
+            data = await hook.async_pre_call_hook(
+                _make_user_api_key(),
+                _make_cache(feature={"kb_narrow": True}),
+                data,
+                "completion",
+            )
+            assert "mock_response" not in data
+            visible = await self._model_reply(
+                hook, data, ["Op de screenshot staat ", "een factuur."]
+            )
+
+        assert visible.startswith("Ik kan dit niet betrouwbaar beantwoorden")
+        assert "factuur" not in visible
+        assert http.classify == []
+        assert "answer_claims=" not in caplog.text
 
     @pytest.mark.asyncio
     async def test_open_weak_retrieval_asks_and_makes_no_classification_call(
@@ -8834,7 +8939,11 @@ class TestClarifyFlowPathA:
 
         system = self._system_text(data)
         assert CLARIFY_TURN_ADDENDUM["internal"].strip() in system
-        assert "low relevance in Open mode" not in system
+        # The labelling rule stays; only "answer anyway" goes.
+        assert "not as something that comes from the knowledge base" in system
+        assert "the knowledge base does not support that specific claim" in system
+        assert "Open mode stays active" not in system
+        assert "Answer from general knowledge" not in system
         assert visible.startswith("Welke module bedoel je?")
         assert http.classify == []
         assert "clarify_decision=clarify" in caplog.text
