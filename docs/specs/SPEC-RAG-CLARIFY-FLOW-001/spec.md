@@ -107,6 +107,21 @@ Standaard gaat de betere versie meteen live; meten stuurt bij, het houdt niets t
 - **REQ-5 opent op pad A opnieuw een modelaanroep bij zwak bewijs.** Daarom mag REQ-5 alleen na REQ-4.
 - **Latentie:** één extra modelaanroep, alleen op beurten die nu geweigerd worden.
 
+## Bekende restlekken (bewust open, vastgelegd 2026-09-17)
+
+Na REQ-4 houdt een Strict-stream op pad A elke chunk vast tot de claims-controle heeft beslist, en een vastgehouden chunk wordt opnieuw opgebouwd uit een allowlist (`role`, `tool_calls`, `function_call`, lege `content`) in `rebuild_choice_delta` (`deploy/litellm/klai_litellm_response.py`). Twee plekken vallen buiten die allowlist, omdat ze niet in de `delta` zitten:
+
+| # | Wat | Waar | Hoe erg | Vandaag bereikbaar? |
+|---|---|---|---|---|
+| L1 | `choice.logprobs` | per choice, naast `delta` | Kan per token de modeltekst bevatten. Wie die ziet, leest het niet-onderbouwde antwoord vóór de controle. | Nee. Alleen gevuld als de client `logprobs` aanvraagt; LibreChat doet dat niet. |
+| L2 | `provider_specific_fields` en `citations` op chunkniveau van `ModelResponseStream` | op de chunk zelf, niet in de delta | Kan leverancierstekst of bronverwijzingen bevatten die vóór de controle zichtbaar worden. | Nee. De Mistral-modellen achter `klai-primary`, `klai-fast`, `klai-medium` en `klai-large` sturen ze niet mee. |
+
+Ernst als het wél gebeurt: hoog. Het is dezelfde soort lek als het streaminglek dat REQ-4 dichtte, namelijk niet-onderbouwde tekst die in Strict zichtbaar wordt voordat de controle beslist.
+
+**Wanneer het relevant wordt:** zodra een model of leverancier wordt toegevoegd die chunk-niveauvelden of citaties meestuurt (bijvoorbeeld een model met ingebouwde webcitaties), of zodra een client `logprobs` aanvraagt.
+
+**Oplossing:** in de vastgehouden tak ook de chunk zelf opnieuw opbouwen uit een allowlist en `choice.logprobs` weghalen, met dezelfde test in dict- en objectvorm als voor de delta. Klein werk, ongeveer het formaat van de delta-allowlist.
+
 ## Bouwvolgorde (afdwingbaar)
 
 REQ-0 en REQ-1 → REQ-2 en REQ-3 live → REQ-4 → REQ-5 live. Alleen REQ-4 vóór REQ-5 is hard, omdat REQ-5 zonder REQ-4 de groundingsgrens op pad A opent; verder gaat elke stap direct live en wordt er op echt verkeer gemeten.
