@@ -117,6 +117,9 @@ async def structured_judge_call[J: BaseModel](
                     headers={"Authorization": f"Bearer {settings.litellm_master_key}"},
                     json={
                         "model": settings.extraction_model,
+                        # The same turn must get the same verdict: without a
+                        # fixed temperature 5 of 9 replayed questions flipped.
+                        "temperature": 0,
                         "messages": [
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_content},

@@ -109,37 +109,36 @@ def decide_answer(
     draft_is_question: bool,
     judgement: AnswerJudgement | None,
 ) -> AnswerDecision:
-    """What the visitor gets, from both judges; the spec table with its precedence.
+    """What the visitor gets, from both judges. The judges only add; they never remove.
 
-    Safety blocks and broad-mode answers never get here. ``answer`` with
-    ``has_sources`` false means the model's own text may be shown without
-    sources: every path to it has checked ``grounding``.
+    The original system is the floor. It showed every draft the citation
+    composer could anchor to an article, and only checked model text WITHOUT a
+    source for claims. Replayed on the last nine real Voys first turns on
+    2026-09-17, letting the verdict veto answers that had a source turned seven
+    of eighteen answers into "not found": 7 of 7 came from that veto, and the
+    same question flipped outcome in 5 of 9. "Does this answer the question" is
+    an opinion a small model is not stable on, so it no longer removes anything.
 
-    ``clarity`` ``None`` is a failed question judge and reads as clear. An
-    escalation turn keeps its outcome from before the judges (the composed
-    answer, or the uncited reply when it makes no claim), whatever the verdict:
-    its reply points to the appointment button and is not meant to answer.
+    * With a source: always shown. A verdict other than ``answered`` adds the
+      appointment button under the answer (``partial_answer``).
+    * Without a source: the original claims rule. Unsupported statements get the
+      refusal; otherwise the text is shown, as a clarifying question (no
+      buttons) when the turn is ambiguous and the draft ends on a question.
+    * A failed judge: shown with a source, refused without one.
+
+    Safety blocks and broad-mode answers never get here.
     """
     if judgement is None:
         return "answer" if has_sources else "refusal"
-    unsupported = judgement.grounding == "some_not_in_articles"
-    may_show = has_sources or not unsupported
-    if escalation:
-        return "answer" if may_show else "refusal"
-    if conversational:
-        return "refusal" if unsupported else "answer"
-    if clarity == "ambiguous" and judgement.verdict != "answered":
-        if draft_is_question and not unsupported:
-            return "clarifying_question"
+    if has_sources:
+        if escalation or conversational or judgement.verdict == "answered":
+            return "answer"
+        return "partial_answer"
+    if judgement.grounding == "some_not_in_articles":
         return "refusal"
-    # A draft that does not fully answer AND states something the articles do not
-    # say is not good enough even when a source was cited: measured live on
-    # 2026-09-17, a partial answer on a direct-debit question added an invented
-    # processing time next to a real article. A fully answered draft with sources
-    # stays shown while the false-positive rate on long paraphrases is unmeasured.
-    if judgement.verdict == "not_answered" or not may_show or (unsupported and judgement.verdict != "answered"):
-        return "refusal"
-    return "partial_answer" if judgement.verdict == "partial" else "answer"
+    if clarity == "ambiguous" and draft_is_question and not (escalation or conversational):
+        return "clarifying_question"
+    return "answer"
 
 
 def is_clarifying_question(text: str) -> bool:

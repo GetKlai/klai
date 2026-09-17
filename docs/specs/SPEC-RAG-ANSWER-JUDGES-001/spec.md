@@ -1,6 +1,6 @@
 ---
 id: SPEC-RAG-ANSWER-JUDGES-001
-version: "0.3.0"
+version: "0.4.0"
 status: REQ-1 t/m REQ-4 (pad B, helpdeskwidget) in uitvoering; REQ-5 (pad A) na meting
 created: 2026-09-17
 author: Claude (Opus 5), in opdracht van Mark Vletter
@@ -17,6 +17,7 @@ related:
 
 | Versie | Datum | Wijziging |
 |---|---|---|
+| 0.4.0 | 2026-09-17 | Achteruitgang hersteld en ontwerp vastgezet op aanwijzing van Mark. Replay van de eerste vraag uit de laatste 9 echte Voys-gesprekken (2×): 7 van de 18 antwoorden werden "niet gevonden", 7 van 7 door het veto van de antwoord-judge op antwoorden mét bron, en 5 van de 9 vragen wisselden van uitkomst. Nieuw uitgangspunt: het oorspronkelijke systeem is de ondergrens; de judges voegen alleen toe. Zie "Definitief ontwerp". |
 | 0.3.0 | 2026-09-17 | Live gemeten na deploy (preview-sessies op de Voys-widget). Twee regels bijgesteld: negatief sentiment escaleert niet meer bij een onduidelijke vraag ("mijn telefoon werkt niet" kreeg anders altijd het medewerkeraanbod in plaats van een wedervraag), en een niet volledig beantwoord concept met een uitspraak die niet in de artikelen staat krijgt de weigering, ook met bronnen. |
 | 0.2.0 | 2026-09-17 | Gemeten tegen productie-`klai-fast` vóór livegang: de booleans uit v0.1.0 vielen om, `grounding` met drie opties hield stand, een wedervraag wordt herkend aan het vraagteken. REQ-1 t/m REQ-4 gebouwd. |
 | 0.1.0 | 2026-09-17 | Eerste versie na onderzoek van gesprekken #900 en #904 (Voys Help NL) en de hele widgetketen. Richting van Mark: "de vraag moet zijn: is dit antwoord goed genoeg, plus vooraf een judge die bepaalt of ik moet doorvragen, en de combinatie bepaalt wat je daarna doet." Goedgekeurd met "Wil je hier een plan voor maken en daarna de implementatie gaan doen?". |
@@ -24,6 +25,21 @@ related:
 ---
 
 # SPEC-RAG-ANSWER-JUDGES-001: een vraag-judge en een antwoord-judge beslissen samen wat de bezoeker krijgt
+
+## Definitief ontwerp (v0.4.0, leidend boven alles hieronder)
+
+Vastgesteld met Mark op 2026-09-17, na de achteruitgang van v0.2.0 en v0.3.0. Wijk hier niet van af zonder zijn akkoord; de secties daaronder zijn de geschiedenis die tot dit ontwerp leidde.
+
+**Uitgangspunt.** Het oorspronkelijke systeem is de ondergrens. Het toonde elk antwoord dat de citatiemotor aan een artikel kon koppelen, en controleerde alleen tekst zónder bron op beweringen. Dat werkte omdat bewijs besliste en geen mening: dezelfde vraag gaf dezelfde uitkomst. Voys, 14 dagen vóór de judges: 98 antwoorden, 85 met bron, 4 zonder bron, 9 weigeringen; 38 keer een zwak zoekresultaat, waarvan 32 toch een getoond antwoord met bron.
+
+**Regels.**
+1. Een antwoord met bron wordt altijd getoond. Vindt de antwoord-judge dat het de vraag niet (volledig) beantwoordt, dan komt de afspraakknop eronder. Hij haalt nooit iets weg.
+2. Tekst zonder bron volgt de oorspronkelijke regel: uitspraken die niet in de artikelen staan geven de vaste weigering, anders wordt de tekst getoond. Bij een onduidelijke vraag en een concept dat op een vraagteken eindigt is het een vervolgvraag, zonder knoppen.
+3. De opdracht om door te vragen gaat alleen mee als twee signalen het eens zijn: de vraag-judge noemt de vraag onduidelijk én het zoekresultaat is zwak (gap of band low/unknown). Bij een sterk zoekresultaat schrijft het model zoals vroeger.
+4. Beide judges draaien met temperatuur 0.
+5. Een gefaalde judge: tonen met bron, weigeren zonder bron.
+
+**Poort vóór livegang van elke wijziging aan deze regels of prompts.** Replay van de eerste vraag uit echte gesprekken (nu 9, doel 50), drie keer per vraag. Elk antwoord dat het oorspronkelijke systeem met bron toonde moet nog steeds getoond worden; uitzonderingen worden gelezen en aan Mark voorgelegd. Gemeten: weigeringen die een vervolgvraag of antwoord worden, wisselingen per vraag, doorlooptijd.
 
 ## Probleem
 
