@@ -6,7 +6,24 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from retrieval_api.services.coreference import resolve
+from retrieval_api.services.coreference import _rewrite_request, resolve
+
+
+class TestRewriteRequest:
+    def test_history_is_quoted_text_in_one_user_message(self):
+        """The role form made the model answer the conversation (5 of 20 real follow-ups)."""
+        request = _rewrite_request(
+            "ik zie die optie niet",
+            [
+                {"role": "user", "content": "hoe zet ik gespreksopname aan?"},
+                {"role": "assistant", "content": "Ga naar Belplan en voeg de module toe."},
+            ],
+        )
+
+        assert "do not answer it" in request
+        assert "Visitor: hoe zet ik gespreksopname aan?" in request
+        assert "Assistant: Ga naar Belplan en voeg de module toe." in request
+        assert request.endswith("ik zie die optie niet")
 
 
 class TestCoreference:

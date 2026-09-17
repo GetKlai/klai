@@ -652,3 +652,76 @@ class TestSubQuerySharesRawQueryRRFLeg:
         assert len(decision_records) == 2
         for record in decision_records:
             assert record.msg["raw_query_leg_applied"] is True
+
+
+class TestLiteralLegOnServiceRewrite:
+    """The widget path sends no ``raw_query``, so before 2026-09-17 its follow-up
+    turns ran without the literal-term leg: the leg only fired when the CALLER
+    had rewritten. Measured on 90 real Voys follow-ups, adding the leg won 3
+    turns and lost none, so the visitor's own words now always get a leg."""
+
+    @staticmethod
+    def _decision_records(caplog):
+        return [
+            record
+            for record in caplog.records
+            if "retrieval_decision_record" in record.getMessage()
+        ]
+
+    def test_literal_leg_applies_when_this_service_rewrote_without_raw_query(self, client, caplog):
+        import logging
+
+        caplog.set_level(logging.INFO)
+
+        async def _rewrite(
+            query: str, history: list[dict], *, telemetry_level: str = "shadow"
+        ) -> str:
+            return "Waar staat de Connectivity-optie in de FreePBX-webinterface?"
+
+        with (
+            patch(
+                "retrieval_api.api.retrieve.coreference.resolve",
+                new_callable=AsyncMock,
+                side_effect=_rewrite,
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_single",
+                new_callable=AsyncMock,
+                return_value=[0.1, 0.2, 0.3],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.embed_sparse",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "retrieval_api.api.retrieve.search.hybrid_search",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.graph_search.search",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.fetch_source_catalog",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+        ):
+            resp = client.post(
+                "/retrieve",
+                json={
+                    "query": "waar staat connectifyti",
+                    "org_id": "org-1",
+                    "conversation_history": [
+                        {"role": "user", "content": "ik zie connectivity niet"},
+                        {"role": "assistant", "content": "Ga naar de webinterface."},
+                    ],
+                },
+            )
+
+        assert resp.status_code == 200
+        (record,) = self._decision_records(caplog)
+        assert record.msg["raw_query_leg_applied"] is True

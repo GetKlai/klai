@@ -617,15 +617,21 @@ async def _run_embed(state: RetrievalPipelineState) -> None:
 
     req = state.req
     # 2. Embed resolved query (dense + sparse in parallel). When coreference /
-    # query rewrite changed the query, also embed the user's pre-rewrite
-    # raw_query so the search can fuse a literal-term RRF leg (see
+    # query rewrite changed the query, also embed the visitor's own words so the
+    # search can fuse a literal-term RRF leg (see
     # search._search_knowledge). This rescues exact matches — e.g. a product
     # name like "Salesforce" — that an over-eager rewrite would otherwise drop
     # from the candidate pool, where the reranker can no longer recover them.
+    # The pre-rewrite text is ``raw_query`` when the caller rewrote, and
+    # ``req.query`` when this service rewrote — the widget path omits
+    # ``raw_query``, so before 2026-09-17 its follow-ups ran without the literal
+    # leg at all.
     t_embed = time.perf_counter()
     async with state.trace.step("embed", started_at=t_embed) as embed_step:
         raw_query = (
-            req.raw_query if req.raw_query and req.raw_query != state.query_resolved else None
+            req.raw_query or req.query
+            if (req.raw_query or req.query) != state.query_resolved
+            else None
         )
         embed_coros = [embed_single(state.query_resolved), embed_sparse(state.query_resolved)]
         if raw_query is not None:
