@@ -1148,8 +1148,10 @@
   line-height: 1.4;
   color: var(--klai-text-color);
   background-color: var(--klai-background-color);
-  min-height: 42px;
-  max-height: 120px;
+  /* Three lines tall at rest: a one-line box invites one-word questions, and a
+     vague question is what retrieval and the clarify flow handle worst. */
+  min-height: 84px;
+  max-height: 180px;
   overflow-y: auto;
   transition: border-color 0.15s;
 }
