@@ -1,7 +1,7 @@
 ---
 id: SPEC-RAG-CLARIFY-FLOW-001
-version: "0.2.0"
-status: REQ-1 gebouwd (PR #1471); REQ-0 pad B gebouwd en baseline gemeten; REQ-0 pad A volgt vóór REQ-4; REQ-2 volgende
+version: "0.3.0"
+status: REQ-0, REQ-1, REQ-2, REQ-3 en REQ-6 (pad B) live; standaard aan voor elke helpdeskwidget; REQ-4 en REQ-5 (pad A) volgende
 created: 2026-09-17
 author: Claude (Opus 5), in opdracht van Mark Vletter
 priority: high
@@ -17,6 +17,7 @@ related:
 
 | Versie | Datum | Wijziging |
 |---|---|---|
+| 0.3.0 | 2026-09-17 | Uitgangspunt gewijzigd op aanwijzing van Mark: de betere versie gaat meteen live voor elke klant, niet achter een instelling die standaard uit staat en niet eerst op een testwidget. Meten gebeurt op echt verkeer met de REQ-6-woorden; de evaluatierunner is gereedschap, geen poort. De tenant-unlock `widget_clarify_flow` is verwijderd. Onder een wedervraag verdwijnen de knoppen voor breder zoeken en afspraak; onder een eerlijke "niet gevonden" blijven ze. Wat blijft: de faalrichting (twijfel of fout = vaste weigering) en de volgorde REQ-4 vóór REQ-5, omdat die de groundingsgrens bewaken, niet een meting. |
 | 0.2.0 | 2026-09-17 | Baseline gemeten (REQ-0, pad B) en REQ-1 gebouwd. Pad B stelde in 0 van de 80 beurten een wedervraag en liet geen enkele tekst zonder bron door: het pad is vandaag strikt weigeren of citeren. Vage vragen: 43% vaste weigering. Ook 17% van de beantwoordbare vragen eindigde op de vaste weigering, een retrievalbevinding buiten deze spec. De runner voor pad A is naar vóór REQ-4 verschoven, omdat hij alleen op de server kan draaien. |
 | 0.1.0 | 2026-09-17 | Eerste versie na onderzoek in beide ketens, OpenClaw en recent onderzoek. Goedgekeurd door Mark ("Yes go!"), met de opdracht de doorvraagflow generiek te maken voor interne én externe chat. |
 
@@ -82,9 +83,9 @@ Kanttekeningen bij deze meting:
 - (c) Een pure beslisregel `should_clarify(confidence_band, has_direct_evidence)`.
 - De vendored kopie `deploy/litellm/klai_chat_prompts.py` wordt bijgewerkt; de drifttest bewaakt de nieuwe namen.
 
-**REQ-2 — Beslissing 2 op pad B**, op beide plekken in `_compose_backend_managed_answer` die nu `no_citable_sources_message` teruggeven na compositie. Achter een widgetinstelling, standaard uit, eerst aan voor Voys en Klai. De beslissingsvlaggen (brede-modusaanbod, escalatie) blijven meekomen met doorgelaten tekst. Gebouwd door een Opus-uitvoerder: dit is de groundingsgrens.
+**REQ-2 — Beslissing 2 op pad B**, voor elke helpdeskwidget, standaard aan. Elke door het model geschreven tekst zonder bron gaat door de controle, behalve een toegestemd brede-modusantwoord. Onder een doorgelaten wedervraag (een beurt waarop REQ-3 de aanvulling toevoegde) komen geen knoppen voor breder zoeken of een afspraak; onder een doorgelaten "niet gevonden" wel. Gebouwd door een Opus-uitvoerder: dit is de groundingsgrens.
 
-**REQ-3 — Beslissing 1 op pad B**, naast de bestaande aanvullingen in `app/api/partner.py`, achter dezelfde instelling. Mag pas aan waar REQ-2 aan staat.
+**REQ-3 — Beslissing 1 op pad B**, naast de bestaande aanvullingen in `app/api/partner.py`, voor elke helpdeskwidget. Niet op gespreks-, brede-modus- of escalatiebeurten.
 
 **REQ-4 — Beslissing 2 op pad A**, in `klai_kb_citation_render.py` bij `no_trusted_sources` en `strict_no_sentence_level_support`. De uitvoerder stelt eerst vast of de Strict-render de volledige tekst buffert, en zegt het als dat niet zo is.
 
@@ -92,14 +93,13 @@ Kanttekeningen bij deze meting:
 
 **REQ-6 — Telemetrie.** Elke beurt waarop een beslissing viel logt de uitkomst als één doorzoekbaar woord (`clarify` / `answer`, `no_claims` / `claims` / `classifier_failed`), zoals `turn_scope` dat doet. Anders drift een grens ongemerkt.
 
-## Acceptatie
+## Meten
 
-Gemeten met REQ-0 op beide paden, per pad, vóór en na:
-- **Harde grens:** doorgelaten teksten zonder bron met een bewering over de organisatie: 0.
-- Wedervraag op de vage set: stijgt ten opzichte van de baseline. Doel voorlopig ≥ 60%, vastgezet na de baseline.
-- Onnodige wedervraag op de duidelijke set: ≤ 10%. Te vaak doorvragen irriteert.
-- Vaste weigering op de niet-in-kennisbank-set (extern): daalt ten opzichte van de baseline, zonder dat de harde grens wordt geraakt.
-- Faalrichting bewezen met een test: een fout of timeout in de classificatie geeft de vaste weigering.
+Standaard gaat de betere versie meteen live; meten stuurt bij, het houdt niets tegen.
+- **Op echt verkeer:** de REQ-6-woorden (`clarify_decision`, `answer_claims`) per tenant, en het aandeel vaste weigeringen vóór en na.
+- **De harde grens blijft hard:** een doorgelaten tekst zonder bron die iets over de organisatie beweert is een defect, geen meetpunt. Gevonden in logs of reviews → direct repareren.
+- **De evaluatierunner** (`klai-portal/backend/evaluation/`) is gereedschap om een vermoeden snel te toetsen, geen voorwaarde voor uitrol.
+- **Faalrichting bewezen met een test:** een fout of timeout in de classificatie geeft de vaste weigering.
 
 ## Risico's
 
@@ -109,4 +109,4 @@ Gemeten met REQ-0 op beide paden, per pad, vóór en na:
 
 ## Bouwvolgorde (afdwingbaar)
 
-REQ-0 en REQ-1 parallel → baseline vastleggen → REQ-2 → REQ-3 → meten → REQ-4 → REQ-5 → meten → breder aanzetten.
+REQ-0 en REQ-1 → REQ-2 en REQ-3 live → REQ-4 → REQ-5 live. Alleen REQ-4 vóór REQ-5 is hard, omdat REQ-5 zonder REQ-4 de groundingsgrens op pad A opent; verder gaat elke stap direct live en wordt er op echt verkeer gemeten.
