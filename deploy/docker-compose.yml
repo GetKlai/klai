@@ -583,6 +583,21 @@ services:
     logging: *log-rotation
     image: ghcr.io/getklai/presidio-analyzer@sha256:23f1c064761baadc030786aac60b58a42c5157bbf0c6e4a0201c538dc262241d
     restart: unless-stopped
+    # klai_pii_enforce is fail-closed by contract (REQ-10): if this service does
+    # not answer, the chat request is refused rather than forwarded unminimised,
+    # and enforcement defaults to every org. So the window between "container
+    # created" and "analyzer serving" is a window in which chat fails hard —
+    # and without a healthcheck, `docker compose up -d` returns 0 at the start
+    # of it. That made every recreate of this service a silent outage of unknown
+    # length. The probe is what bounds it: curl is in the image, /health is the
+    # analyzer's own endpoint, and the six-language recognizer registry takes a
+    # few seconds to load, which start_period covers without counting failures.
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
     networks:
       - inference
     deploy:
