@@ -305,7 +305,8 @@ contextuele prefix is bovendien al overal toegepast: 0 van 21.052 Voys-chunks is
 verrijking geïndexeerd.
 
 Vier van die zes "niet in de kennisbank" waren geen kennisvragen: twee bezoekers vroegen of ze
-Engels mochten spreken, één wilde een medewerker. Zie 2.17.
+Engels mochten spreken, één wilde een medewerker, en één vroeg of hij met zijn manager een
+gesprek kon inplannen. Zie 2.17.
 
 **Les:** meet welke schakel het plafond is voordat je een schakel verbetert. Herrangschikken
 verbetert per definitie de recall niet, en hier was er ook geen recall-probleem.
@@ -324,19 +325,35 @@ zinnen als "Je kunt een afspraak maken met een medewerker via de knop onder deze
 uitspraak over het chatvenster, niet over Voys. Geen helpartikel zal die zin ooit bevatten.
 
 Niet de drempel verlaagd, want dat zou echte verzinsels doorlaten ("Een portering duurt ongeveer
-vijf werkdagen" levert precies één markering op en hoort geweigerd te worden). In plaats daarvan
-de controle geleerd wat níét over de organisatie gaat: welke talen hij spreekt, dat er een
-medewerker of afspraak via deze chat bereikbaar is, en wat een knop in dit venster doet.
+vijf werkdagen" levert precies één markering op en hoort geweigerd te worden).
 
-| | Oude prompt | Nieuwe prompt |
-|---|---|---|
-| Gespreksbeurten zonder markering (6 echte) | 2 van 6 | **6 van 6** |
-| Verzonnen prijs/stap nog gemarkeerd (4 opzettelijke) | 3 van 4 | 3 van 4 |
-| 30 echte antwoorden: minstens 1 onbewezen | 73% | 73% |
-| 30 echte antwoorden: boven de reparatiedrempel | 60% | 60% |
-| 30 echte antwoorden: andere reparatiebeslissing | – | **0 van 30** |
+**Eerste poging, en waarom hij sneuvelde.** De controle in de prompt laten overslaan wat over de
+assistent zelf gaat, inclusief "wat hij wel en niet kan" en "wat de afspraak oplevert". Dat gaf
+6 van 6 vrije gespreksbeurten, maar de review wees terecht op de prijs: dezelfde uitzondering
+laat "Ik verbind je nu door met een collega", "tijdens die afspraak wordt je contract opgezegd"
+en "met deze knop reset je je account" óók door. Een uitzondering die breed genoeg is voor de
+afspraakzin is te breed voor de rest.
 
-Nul verschil op echte antwoorden, dus dit kost niets aan detectie.
+**Wat het wel werd: het contract als bewijs.** De controleur ziet alleen de vraag, de artikelen
+en het antwoord, dus hij kan niet weten dát er een afspraakknop hangt. Die garantie gaat nu mee
+als één extra artikel met de titel "This chat", alleen wanneer de knop er echt is. Daarmee is de
+afspraakzin gedekt door bewijs en blijft alles wat het antwoord bewéért over wat die afspraak
+doet gewoon beoordeeld.
+
+| | Oude prompt | Brede uitzondering | **Contract als bewijs** |
+|---|---|---|---|
+| Gespreksbeurten zonder markering (6 echte) | 2 van 6 | 6 van 6 | **5 van 6** |
+| Doorverbinden, afspraakuitkomst, knop-effect gevangen (3) | – | **0 van 3** | **3 van 3** |
+| Verzonnen prijs/stap gevangen (4) | 3 van 4 | 3 van 4 | 3 van 4 |
+| 30 echte antwoorden: minstens 1 onbewezen | 73% | 73% | 73% |
+| 30 echte antwoorden: andere reparatiebeslissing | – | 0 van 30 | **0 van 30** |
+
+De enige beurt die blijft hangen is "Die plant een persoonlijke afspraak voor je in", en dat is
+een bewering over wat de afspraak oplevert — precies wat beoordeeld hoort te worden.
+
+**Les:** een uitzondering in een prompt kan niet onderscheiden wat de applicatie garandeert van
+wat het model erbij verzint. Geef de garantie als bewijs, dan hoeft de controleur niets te
+geloven.
 
 ---
 

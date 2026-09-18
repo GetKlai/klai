@@ -144,6 +144,7 @@ __all__ = [
     "answer_claims_response_format",
     "appointment_offer_marker",
     "broad_mode_answer_marker",
+    "chat_contract_article",
     "final_response_language_reminder",
     "grounding_check_response_format",
     "grounding_check_user_content",
@@ -1153,12 +1154,10 @@ GROUNDING_CHECK_SYSTEM_PROMPT = (
     "summarising the visitor's question or situation, a sentence that only asks the visitor what they mean or "
     "which situation applies, a sentence that only introduces a list, an offer to book an appointment or "
     "contact support, saying something was not found, and a sentence that repeats back what the visitor said "
-    "about their own situation. Also skip anything the reply says about ITSELF or about this conversation "
-    "rather than about the company: which languages it speaks or understands, that the visitor may ask in "
-    "another language, what it can or cannot help with, that the visitor can reach an employee or book an "
-    "appointment through this chat, what that appointment will do for them, and what a button or link in "
-    "this chat window does. Those are facts about the chat, not claims about the company, and no help "
-    "article is ever going to state them. "
+    "about their own situation, and a statement about this chat itself that an excerpt titled "
+    "\"This chat\" already covers. Judge everything else normally, including what an appointment or an "
+    "employee will DO for the visitor, any promise to transfer or connect them to a person now, and any "
+    "effect a button has on their account or subscription. "
     "A question that also states something, such as a price or a step, is judged "
     "on that statement.\n\n"
     "For each statement:\n"
@@ -1221,6 +1220,31 @@ class GroundingCheck(BaseModel):
         """
         unsupported = self.unsupported
         return len(unsupported) >= 2 or any(item.support == "contradicted" for item in unsupported)
+
+
+# What this chat guarantees, handed to the checker as evidence like any article.
+# The checker sees a question, the articles and the reply, so it cannot know that
+# a booking button really is attached to this turn, and it flagged "Klik op de
+# knop hieronder om een afspraak in te plannen" as an unsupported claim about the
+# company. No help article will ever carry that sentence. Stating the guarantee
+# as evidence keeps the checker strict about everything else the reply says the
+# appointment or the button will DO, which a skip-list in the prompt could not
+# separate (measured 2026-09-18: a skip-list wide enough to free the booking
+# sentence also let "Ik verbind je nu door" and "tijdens die afspraak wordt je
+# contract opgezegd" through).
+CHAT_CONTRACT_TITLE: Final[str] = "This chat"
+
+
+def chat_contract_article(*, appointment_offered: bool) -> tuple[str, str] | None:
+    """The turn's own guarantees as a (title, text) article, or ``None`` when there are none."""
+    if not appointment_offered:
+        return None
+    return (
+        CHAT_CONTRACT_TITLE,
+        "The visitor can book an appointment with an employee through the button under this reply. "
+        "This chat answers in the language the visitor writes in. It cannot transfer the visitor to a "
+        "person directly, and it does not know what will be agreed during that appointment.",
+    )
 
 
 def render_grounding_articles(articles: Iterable[tuple[str, str]]) -> str:
