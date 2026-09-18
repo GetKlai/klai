@@ -147,7 +147,15 @@ jobs:
               name=$(basename "$script")
               case "$name" in
                 push-health.sh|gpu-health.sh|audit-monitor-coverage.sh|push-component-health.sh) continue ;;
-              esac
+                # deploy-portal-api.sh is installed by portal-api.yml, from the
+                # same checkout that is about to run it. Syncing it from here as
+                # well gives the file two writers on different commits, and the
+                # later one wins: on 2026-09-18 a portal-api run that started 92
+                # seconds before a compose change merged scp'd its older copy 12
+                # seconds after this loop had written the newer one, silently
+                # reverting the file on the server while both workflows reported
+                # success.
+                deploy-portal-api.sh) continue ;;
               bash -n "$script"
               install -m 0755 "$script" "/opt/klai/scripts/$name.tmp"
               mv -f "/opt/klai/scripts/$name.tmp" "/opt/klai/scripts/$name"

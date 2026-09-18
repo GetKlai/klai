@@ -63,6 +63,36 @@ policies:
         repeat_interval: 2m
         continue: false
 
+      # Critical severity, any spec — MUST match before the per-spec routes
+      # below, which is why it sits here rather than at the end.
+      #
+      # core01_disk_usage_high fired continuously from 2026-09-04 and produced
+      # roughly 84 emails to klai-ops-alerts-email over fourteen days. The disk
+      # still reached 100% on 2026-09-18 and took a portal-api deploy with it.
+      # The lesson is not that the mail was too infrequent; it is that a warning
+      # which has been true for two weeks stops being read, and routing its
+      # escalation to the same inbox at the same cadence changes only the
+      # subject prefix.
+      #
+      # So critical goes to both inboxes and repeats hourly. `group_by` lists
+      # service_group rather than service, because the infra rules carry that
+      # label and grouping on an absent label collapses unrelated alerts.
+      #
+      # This is a partial answer. Email is the channel that demonstrably failed
+      # here, and the real escalation is a push notification — see
+      # klai-infra/docs/runbooks/uptime-kuma.md for adding a push monitor, which
+      # needs a DB insert on public-01 and a restart of the status page.
+      - receiver: klai-dev-alerts-email
+        matchers:
+          - severity = critical
+        group_by:
+          - alertname
+          - service_group
+        group_wait: 10s
+        group_interval: 1m
+        repeat_interval: 1h
+        continue: true
+
       - receiver: klai-ops-alerts-email
         matchers:
           - spec = SPEC-OBS-001

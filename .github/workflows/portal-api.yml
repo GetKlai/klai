@@ -10,6 +10,12 @@ on:
       - 'klai-libs/citations/**'
       - 'klai-libs/connector-credentials/**'
       - 'klai-libs/kb-slugs/**'
+      # This workflow is the only writer of deploy-portal-api.sh on core-01, so
+      # a change to the script reaches the server only when this runs. Without
+      # this path a fix to the deploy script sat in main until the next backend
+      # commit happened to carry it — which is how the disk guard added on
+      # 2026-09-18 was still absent from the server after its PR had merged.
+      - 'deploy/scripts/deploy-portal-api.sh'
       - '.github/workflows/portal-api.yml'
 permissions:
   contents: read
