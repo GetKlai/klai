@@ -239,6 +239,8 @@ def _widget_to_response(widget: Widget, kb_access_count: int) -> WidgetResponse:
             # up to 6 stored entries. Truncate on read instead of letting the
             # model's max_length=3 raise here and 500 the list/detail response.
             conversation_starters=(config.get("conversation_starters") or [])[:3],
+            off_topic_subjects=config.get("off_topic_subjects", ""),
+            off_topic_reply=config.get("off_topic_reply", ""),
             hide_disclaimer=config.get("hide_disclaimer", False),
             ai_disclosure_override=config.get("ai_disclosure_override"),
             footer_text=config.get("footer_text"),

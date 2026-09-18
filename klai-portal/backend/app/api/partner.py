@@ -2006,14 +2006,32 @@ async def chat_completions(  # noqa: C901
     # no model writes a word, so a price cannot slip in from an article. The
     # judge decided this beside retrieval, so it costs no wall-clock; the
     # generation this replaces makes the turn faster, not slower.
-    if support_mode and off_topic_reply and turn_judgement and turn_judgement.topic == "not_handled":
-        answer_signals["decision"] = "off_topic"
+    if (
+        support_mode
+        and off_topic_subjects
+        and off_topic_reply
+        and turn_judgement
+        and turn_judgement.topic == "not_handled"
+    ):
+        # A failing judge falls through to the normal answer on purpose: that is
+        # what the visitor got before this setting existed, and refusing every
+        # turn because one call timed out would be worse than answering one
+        # price question. Same fail direction as every other check here.
+        answer_signals.update(
+            decision="off_topic",
+            sources_count=0,
+            refused=False,
+            broad_mode=False,
+            model=request.model,
+        )
         logger.info(
             "partner_chat_off_topic",
             org_id=auth.org_id,
             wgt_id=auth.key_id if str(auth.key_id).startswith("wgt_") else None,
         )
         language = resolve_conversation_language(request.messages).language
+        if language is not None:
+            answer_signals["language"] = language
         if audit_ready:
             task = asyncio.create_task(
                 record_widget_turn(

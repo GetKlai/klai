@@ -641,9 +641,15 @@ async def _route_turn(
         if stream:
             frames = _frames([chunk async for chunk in response.body_iterator])
             text = "".join(_delta(frames, "content"))
+            extras = {"escalation": _delta(frames, "escalation"), "sources": _delta(frames, "sources")}
         else:
-            text = response["choices"][0]["message"]["content"]
-    return litellm, text
+            message = response["choices"][0]["message"]
+            text = message["content"]
+            extras = {
+                "escalation": [message["escalation"]] if "escalation" in message else [],
+                "sources": [message["sources"]] if message.get("sources") else [],
+            }
+    return litellm, text, extras
 
 
 def _system_prompt_sent(litellm: _LiteLLM) -> str:
@@ -655,7 +661,7 @@ def _system_prompt_sent(litellm: _LiteLLM) -> str:
 async def test_route_ambiguous_turn_gets_no_ask_instruction_and_a_question_draft_is_shown(monkeypatch, stream):
     # Blind comparison on 50 real Voys first questions: the ask-instead-of-answer
     # instruction made answers worse in 19 of 23 turns, so it is gone.
-    litellm, text = await _route_turn(monkeypatch, turn=_turn_verdict(clarity="ambiguous"), stream=stream)
+    litellm, text, _ = await _route_turn(monkeypatch, turn=_turn_verdict(clarity="ambiguous"), stream=stream)
 
     assert "can mean different things" not in _system_prompt_sent(litellm)
     assert len(litellm.turn_requests) == 1
@@ -686,29 +692,32 @@ async def test_a_subject_the_widget_does_not_answer_gets_the_tenants_own_sentenc
     """Putting the same rule in the widget's base prompt landed it right 8 of 15
     times on 2026-09-17, once quoting a price from an article. Here no model
     writes at all."""
-    litellm, text = await _off_topic_turn(monkeypatch, topic="not_handled", stream=stream)
+    litellm, text, extras = await _off_topic_turn(monkeypatch, topic="not_handled", stream=stream)
 
     assert text == OFF_TOPIC_REPLY
     # The answer model was never asked, so it cannot quote a price.
     assert litellm.answer_requests == []
+    # Both shapes carry the appointment button and no sources.
+    assert extras["escalation"] == [{"appointment": True}]
+    assert extras["sources"] == []
 
 
 async def test_a_handled_subject_is_answered_as_usual(monkeypatch):
-    litellm, text = await _off_topic_turn(monkeypatch, topic="handled")
+    litellm, text, _ = await _off_topic_turn(monkeypatch, topic="handled")
 
     assert text != OFF_TOPIC_REPLY
     assert litellm.answer_requests
 
 
 async def test_without_a_configured_reply_nothing_changes(monkeypatch):
-    litellm, text = await _off_topic_turn(monkeypatch, topic="not_handled", reply="")
+    litellm, text, _ = await _off_topic_turn(monkeypatch, topic="not_handled", reply="")
 
     assert text != OFF_TOPIC_REPLY
     assert litellm.answer_requests
 
 
 async def test_the_judge_is_told_which_subjects_are_not_answered(monkeypatch):
-    litellm, _ = await _off_topic_turn(monkeypatch, topic="handled")
+    litellm, _, _ = await _off_topic_turn(monkeypatch, topic="handled")
 
     (judge_request,) = litellm.turn_requests
     assert "prijzen, tarieven, offertes" in judge_request["messages"][0]["content"]

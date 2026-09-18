@@ -251,6 +251,32 @@ def test_widget_config_conversation_starters_max_three():
         WidgetConfig(conversation_starters=["a", "b", "c", "d"])
 
 
+def test_widget_to_response_keeps_the_subjects_the_widget_does_not_answer():
+    """A full config save round-trips through this response, so a dropped field
+    does not just hide the setting: the next save writes it back empty."""
+    from app.api.admin_widgets import _widget_to_response
+
+    widget = MagicMock()
+    widget.id = "uuid-off-topic"
+    widget.name = "Help Bot"
+    widget.description = None
+    widget.widget_id = "wgt_off_topic"
+    widget.widget_config = {
+        "off_topic_subjects": "prijzen, offertes",
+        "off_topic_reply": "Daarvoor kun je contact opnemen met Voys.",
+    }
+    widget.public_share_enabled = False
+    widget.rate_limit_rpm = 60
+    widget.last_used_at = None
+    widget.created_at = "2026-01-01"
+    widget.created_by = "user-1"
+
+    result = _widget_to_response(widget, kb_access_count=0)
+
+    assert result.widget_config.off_topic_subjects == "prijzen, offertes"
+    assert result.widget_config.off_topic_reply == "Daarvoor kun je contact opnemen met Voys."
+
+
 def test_widget_to_response_truncates_legacy_conversation_starters():
     """A widget saved before the cap dropped from 6 to 3 still has up to 6
     stored starters. Reading it back must truncate to 3, not raise — the
