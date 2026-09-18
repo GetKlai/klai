@@ -40,6 +40,16 @@ CHUNK_900 = {
     "source_url": "https://help.example.com/factuur",
     "reranker_score": 0.08,
 }
+# A ninth-article, 6000-character case: the answer model receives whole parent
+# chunks, so a checker that clips would call their tail "not in the articles".
+LONG_CHUNK = {
+    "chunk_id": "c9",
+    "evidence_id": "ev9",
+    "title": "Automatische incasso instellen",
+    "text": "Stap voor stap. " * 380 + "De incasso loopt op de laatste werkdag van de maand.",
+    "source_url": "https://help.example.com/incasso",
+    "reranker_score": 0.05,
+}
 SOURCES_900 = [
     {"label": "1", "title": "Factuur betalen", "url": "https://help.example.com/factuur", "evidence_ids": ["ev1"]}
 ]
@@ -202,7 +212,7 @@ async def _answer(litellm: _LiteLLM, *, stream: bool, **overrides) -> tuple[str,
 def _with_900_sources() -> dict[str, Any]:
     return {
         "messages": [{"role": "user", "content": QUESTION_900}],
-        "citation_chunks": [CHUNK_900],
+        "citation_chunks": [CHUNK_900, LONG_CHUNK],
         "trusted_sources": SOURCES_900,
         "source_query": "factuur incasso storneren",
     }
@@ -276,23 +286,27 @@ async def test_an_answer_with_an_unsupported_statement_is_repaired_not_refused(s
     """Measured on 150 real answers: editing took answers with an unsupported
     statement from 49% to 11% and cost no good answer, where refusing them cost
     seven answers out of eighteen in an earlier round."""
-    repaired = "Je betaalt je factuur via automatische incasso."
     litellm = _LiteLLM(
         model_text=ANSWER_900 + " Bel 020-7001234 voor een terugboeking.",
         grounding=_grounding("Bel 020-7001234 voor een terugboeking.", contradicted=True, supported=(ANSWER_900,)),
-        repaired=repaired,
+        repaired=ANSWER_900,
     )
 
     text, signals, extras = await _answer(litellm, stream=stream, **_with_900_sources())
 
-    assert text == repaired
+    # The supported sentence survives whole; only the flagged one is gone.
+    assert text == ANSWER_900
+    assert "020-7001234" not in text
     assert [s["url"] for s in extras["sources"]] == ["https://help.example.com/factuur"]
     assert extras["escalation"] == [{"appointment": True}]
     assert signals["unsupported"] == 1
     assert signals["repaired"] is True
-    # The check reads the article text the model received, not a clipped copy.
+    # The check reads every article the model received, whole: support that sits
+    # deep in a long article must not read as "not in the articles".
     check_input = litellm.grounding_requests[0]["messages"][1]["content"]
     assert CHUNK_900["text"] in check_input
+    assert LONG_CHUNK["text"] in check_input
+    assert LONG_CHUNK["text"][-40:] in check_input
 
 
 async def test_a_single_flag_leaves_the_answer_alone():
@@ -316,10 +330,14 @@ async def test_a_single_flag_leaves_the_answer_alone():
 
 
 async def test_a_reply_that_is_entirely_unsupported_falls_back_to_the_refusal():
+    draft = (
+        "Je betaalt je factuur via automatische incasso. Bel 020-7001234 om te storneren. "
+        "Het bedrag staat binnen 3 werkdagen terug."
+    )
     litellm = _LiteLLM(
-        model_text="Bel 020-7001234, dan storneren we het binnen 3 werkdagen. Het bedrag staat binnen 3 werkdagen terug.",
+        model_text=draft,
         grounding=_grounding(
-            "Bel 020-7001234, dan storneren we het binnen 3 werkdagen.",
+            "Bel 020-7001234 om te storneren.",
             "Het bedrag staat binnen 3 werkdagen terug.",
         ),
         repaired="NOTHING_LEFT",
@@ -327,9 +345,39 @@ async def test_a_reply_that_is_entirely_unsupported_falls_back_to_the_refusal():
 
     text, signals, extras = await _answer(litellm, stream=True, **_with_900_sources())
 
+    assert len(litellm.repair_requests) == 1
     assert text == REFUSAL_NL
     assert extras["sources"] == []
     assert signals["refused"] is True
+
+
+@pytest.mark.parametrize("stream", [True, False])
+async def test_a_repair_cannot_smuggle_a_link_past_the_stripper(stream):
+    """The repair model returns free text, so it passes the same guards the
+    composer's output passed. A prompt that forbids URLs is not a guarantee."""
+    litellm = _LiteLLM(
+        model_text=ANSWER_900 + " Bel 020-7001234 voor een terugboeking.",
+        grounding=_grounding("Bel 020-7001234 voor een terugboeking.", contradicted=True, supported=(ANSWER_900,)),
+        repaired=ANSWER_900 + " Zie https://evil.example.com/phish en [1].",
+    )
+
+    text, _, _ = await _answer(litellm, stream=stream, **_with_900_sources())
+
+    assert "evil.example.com" not in text
+    assert "[1]" not in text
+
+
+async def test_an_empty_repair_keeps_the_answer_the_visitor_would_have_had():
+    litellm = _LiteLLM(
+        model_text=ANSWER_900 + " Bel 020-7001234 voor een terugboeking.",
+        grounding=_grounding("Bel 020-7001234 voor een terugboeking.", contradicted=True, supported=(ANSWER_900,)),
+        repaired="   ",
+    )
+
+    text, _, extras = await _answer(litellm, stream=True, **_with_900_sources())
+
+    assert text.startswith(ANSWER_900)
+    assert extras["sources"]
 
 
 async def test_a_failed_grounding_check_leaves_the_answer_alone():

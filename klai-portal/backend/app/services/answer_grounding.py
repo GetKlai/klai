@@ -38,12 +38,6 @@ logger = structlog.get_logger()
 
 _CHECK_TIMEOUT_SECONDS = 8.0
 _REPAIR_TIMEOUT_SECONDS = 8.0
-# The check reads the article text the model received. Clipping it is what made
-# the earlier checks judge against material the model had but the checker did
-# not: 369 of 657 stored article pieces were cut at 700 characters.
-_ARTICLE_MAX_CHARS = 4000
-_MAX_ARTICLES = 8
-
 NOTHING_LEFT = "NOTHING_LEFT"
 
 _CHECK_SYSTEM_PROMPT = (
@@ -54,9 +48,11 @@ _CHECK_SYSTEM_PROMPT = (
     "button or field name, a setting, a feature or capability, a limitation, a policy, a price, an amount, "
     "a time frame, a phone number or address, a cause of a problem, or a claim that something will now "
     "work. Split a list of steps into one statement per step. Skip greetings, empathy, restating or "
-    "summarising the visitor's question or situation, any sentence ending in a question mark, a sentence "
-    "that only introduces a list, an offer to book an appointment or contact support, saying something was "
-    "not found, and a sentence that repeats back what the visitor said about their own situation.\n\n"
+    "summarising the visitor's question or situation, a sentence that only asks the visitor what they mean or "
+    "which situation applies, a sentence that only introduces a list, an offer to book an appointment or "
+    "contact support, saying something was not found, and a sentence that repeats back what the visitor said "
+    "about their own situation. A question that also states something, such as a price or a step, is judged "
+    "on that statement.\n\n"
     "For each statement:\n"
     "statement: the reply's words, copied exactly.\n"
     "evidence: the shortest excerpt text, copied exactly character for character, that states the same "
@@ -120,8 +116,14 @@ class GroundingCheck(BaseModel):
 
 
 def render_articles(articles: list[tuple[str, str]]) -> str:
-    """The article excerpts as the checker reads them: title plus text, barely clipped."""
-    return "\n\n".join(f"### {title}\n{text[:_ARTICLE_MAX_CHARS]}" for title, text in articles[:_MAX_ARTICLES])
+    """Every article the answer model received, whole.
+
+    Clipping here is what made the earlier checks judge against material the
+    model had but the checker did not: on a first run against stored copies cut
+    at 700 characters, correct steps came back as "not in the articles" and the
+    repair then gutted good answers.
+    """
+    return "\n\n".join(f"### {title}\n{text}" for title, text in articles)
 
 
 async def _call(
@@ -215,4 +217,6 @@ async def repair_answer(*, draft: str, unsupported: list[GroundedStatement], set
     stripped = content.strip()
     if stripped == NOTHING_LEFT:
         return NOTHING_LEFT
-    return cleanup_repair_artifacts(stripped) or NOTHING_LEFT
+    # Empty output is a failed call, not a verdict that nothing was left: only
+    # the sentinel may cost the visitor a sourced answer.
+    return cleanup_repair_artifacts(stripped) or None

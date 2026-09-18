@@ -2030,6 +2030,7 @@ async def _judge_composed_answer(
             sources,
             decision,
             grounding=grounding,
+            citation_chunks=citation_chunks,
             settings=settings,
             org_id=org_id,
             answer_signals=answer_signals,
@@ -2054,6 +2055,7 @@ async def _repair_unsupported_statements(
     decision: dict[str, Any],
     *,
     grounding: GroundingCheck,
+    citation_chunks: list[dict] | None,
     settings: Settings,
     org_id: int | str | None,
     answer_signals: dict[str, Any] | None,
@@ -2068,6 +2070,17 @@ async def _repair_unsupported_statements(
     the visitor got before this check existed.
     """
     repaired = await repair_answer(draft=content, unsupported=grounding.unsupported, settings=settings)
+    if repaired not in (None, NOTHING_LEFT):
+        # The repair model returns free text, so it passes the same two guards
+        # the composer's output already passed: the link and citation stripper,
+        # and the output safety check. A prompt that forbids adding a URL is not
+        # a guarantee (reproduced on the conversational branch, 2026-09-15).
+        repaired = _answer_without_retrieved_sources(str(repaired), citation_chunks)
+        if not repaired:
+            repaired = None
+        elif safety_reason := output_safety_violation(repaired):
+            logger.warning("partner_chat_repair_blocked", org_id=org_id, reason=safety_reason)
+            repaired = None
     logger.info(
         "partner_chat_answer_repair",
         org_id=org_id,
