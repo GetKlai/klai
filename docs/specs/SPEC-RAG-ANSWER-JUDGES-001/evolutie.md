@@ -528,6 +528,37 @@ gelezen. De reparatie draait dus op de niet-streamende renderweg, die met
 de architectuur dit blokkeerde was onjuist: de modus bestaat, hij staat alleen niet aan. De prijs
 is dat de medewerker wacht in plaats van tokens te zien verschijnen.
 
+### 2.23 Wat de interne reparatie de medewerker kost (18 sep)
+De reparatie kan alleen werken waar het antwoord nog in één stuk is, en dat betekent niet
+streamen. Die prijs eerst gemeten op 17 echte interne antwoorden met hun zoekresultaat:
+
+| | Mediaan | Traagste tien procent |
+|---|---|---|
+| Controle | 2,6 s | 6,0 s |
+| Reparatie (bij 13 van 17) | 1,2 s | 2,1 s |
+| Samen | **4,0 s** | **8,3 s** |
+
+Negen van de 17 antwoorden werden daadwerkelijk aangepast. Daar bovenop verliest de lezer het
+woord-voor-woord verschijnen van het antwoord.
+
+**Waarom dat geen globale schakel werd.** Interne kennisbankchat per tenant over 30 dagen:
+
+| Tenant | Antwoorden | Met bronverwijzing |
+|---|---|---|
+| e2e (testtenant) | 1474 | 0 |
+| **Voys** | 272 | **169** |
+| privacy1 | 23 | 0 |
+| panography | 21 | 0 |
+| getklai | 2 | 1 |
+
+Eén tenant gebruikt de kennisbank echt; drie halen er geen enkel gerefereerd antwoord uit. De
+bestaande instelling `KLAI_KB_CHAT_RENDER_MODE` geldt voor alle tenants tegelijk, dus die
+omzetten kost drie tenants hun streaming zonder dat er iets te repareren valt, en verandert
+bovendien het gedrag van de testtenant met 1474 antwoorden per maand.
+
+Daarom nu per organisatie: `KLAI_KB_NON_STREAMING_ORG_IDS`, een lijst Zitadel-org-ids. Leeg
+betekent dat alles streamt zoals nu.
+
 ---
 
 ## 3. Wat er live ging, en waarom

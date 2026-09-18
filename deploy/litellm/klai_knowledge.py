@@ -236,6 +236,7 @@ __all__ = [
     "_KB_RENDER_MODE_LEGACY_STREAMING_GUARD",
     "_KB_RENDER_MODE_DETERMINISTIC_NON_STREAMING",
     "KLAI_KB_CHAT_RENDER_MODE",
+    "KLAI_KB_NON_STREAMING_ORG_IDS",
     "KbCitationRenderStrategy",
     "_resolve_kb_render_mode",
     "_is_streaming_kb_render_mode",
@@ -322,6 +323,20 @@ _STREAM_LINK_GUARD_TAIL_CHARS = 16
 KLAI_KB_CHAT_RENDER_MODE = _resolve_kb_render_mode(
     os.getenv("KLAI_KB_CHAT_RENDER_MODE")
 )
+# Organisations that render KB answers in one piece instead of streaming them,
+# as a comma-separated list of Zitadel org ids. The non-streaming path is what
+# makes the grounding repair reachable (klai_answer_grounding), and the repair
+# changed 9 of 17 real internal answers on 2026-09-18 — but it costs the reader
+# the tokens appearing one by one, plus a median 4.0 s and 8.3 s in the slowest
+# tenth. That trade is worth making where the knowledge base is really used and
+# not where it is not: of five tenants with internal traffic in the last thirty
+# days, one had 169 cited answers and three had none at all. A global switch
+# would take streaming from all of them to serve one.
+KLAI_KB_NON_STREAMING_ORG_IDS = frozenset(
+    part.strip()
+    for part in (os.getenv("KLAI_KB_NON_STREAMING_ORG_IDS") or "").split(",")
+    if part.strip()
+)
 
 
 def _sanitize_upstream_body(body: str, *, max_len: int = 200) -> str:
@@ -338,10 +353,15 @@ def _sanitize_upstream_body(body: str, *, max_len: int = 200) -> str:
     return safe[:max_len]
 
 
-def _select_kb_render_strategy(original_stream: object) -> KbCitationRenderStrategy:
+def _select_kb_render_strategy(
+    original_stream: object, org_id: object = None
+) -> KbCitationRenderStrategy:
+    """How this turn's KB answer is rendered; the policy lives in klai_kb_render_policy."""
     return _select_kb_render_strategy_for_mode(
         original_stream,
         configured_mode=KLAI_KB_CHAT_RENDER_MODE,
+        org_id=org_id,
+        non_streaming_org_ids=KLAI_KB_NON_STREAMING_ORG_IDS,
     )
 
 
@@ -359,7 +379,7 @@ def _attach_correspondence_render_meta(
 ) -> None:
     """Ensure model routes carrying the contract always run the strip pass."""
     original_stream = data.get("stream")
-    render_strategy = _select_kb_render_strategy(original_stream)
+    render_strategy = _select_kb_render_strategy(original_stream, org_id)
     if render_strategy.force_non_streaming:
         data["stream"] = False
     data.setdefault("metadata", {})["_klai_kb_meta"] = {
@@ -1084,7 +1104,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 )
             data["messages"] = messages
             original_stream = data.get("stream")
-            render_strategy = _select_kb_render_strategy(original_stream)
+            render_strategy = _select_kb_render_strategy(original_stream, org_id)
             if kb_narrow and render_strategy.force_non_streaming:
                 data["stream"] = False
             answer_policy = KbAnswerPolicy(
@@ -1140,7 +1160,7 @@ class KlaiKnowledgeHook(CustomLogger):
             _prepend_system_prefix(messages, prefix)
             data["messages"] = messages
             original_stream = data.get("stream")
-            render_strategy = _select_kb_render_strategy(original_stream)
+            render_strategy = _select_kb_render_strategy(original_stream, org_id)
             if render_strategy.force_non_streaming:
                 data["stream"] = False
             answer_policy = KbAnswerPolicy(
@@ -1196,7 +1216,7 @@ class KlaiKnowledgeHook(CustomLogger):
             render_mode = None
             if unchecked_questions or pasted_correspondence:
                 original_stream = data.get("stream")
-                render_strategy = _select_kb_render_strategy(original_stream)
+                render_strategy = _select_kb_render_strategy(original_stream, org_id)
                 if render_strategy.force_non_streaming:
                     data["stream"] = False
                 render_mode = render_strategy.mode
@@ -1241,7 +1261,7 @@ class KlaiKnowledgeHook(CustomLogger):
             )
             data["messages"] = messages
             original_stream = data.get("stream")
-            render_strategy = _select_kb_render_strategy(original_stream)
+            render_strategy = _select_kb_render_strategy(original_stream, org_id)
             if render_strategy.force_non_streaming:
                 data["stream"] = False
             answer_policy = KbAnswerPolicy(
@@ -1501,7 +1521,7 @@ class KlaiKnowledgeHook(CustomLogger):
                 len(context_chunks),
             )
             original_stream = data.get("stream")
-            render_strategy = _select_kb_render_strategy(original_stream)
+            render_strategy = _select_kb_render_strategy(original_stream, org_id)
             if render_strategy.force_non_streaming:
                 data["stream"] = False
             answer_policy = KbAnswerPolicy(
@@ -1586,7 +1606,7 @@ class KlaiKnowledgeHook(CustomLogger):
             data["messages"] = messages
             if has_evidence_pack:
                 original_stream = data.get("stream")
-                render_strategy = _select_kb_render_strategy(original_stream)
+                render_strategy = _select_kb_render_strategy(original_stream, org_id)
                 if render_strategy.force_non_streaming:
                     data["stream"] = False
                 answer_policy = KbAnswerPolicy(
@@ -1717,7 +1737,7 @@ class KlaiKnowledgeHook(CustomLogger):
         )
         data["messages"] = messages
         original_stream = data.get("stream")
-        render_strategy = _select_kb_render_strategy(original_stream)
+        render_strategy = _select_kb_render_strategy(original_stream, org_id)
         if render_strategy.force_non_streaming:
             data["stream"] = False
         answer_policy = KbAnswerPolicy(

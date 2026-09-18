@@ -447,6 +447,10 @@ services:
       KLAI_CHAT_PDF_MAX_BYTES: "20971520"
       KLAI_CHAT_PDF_MAX_EXTRACTED_TOKENS: "120000"
       KLAI_CHAT_PDF_CONVERSION_TIMEOUT_S: "45.0"
+      # Organisations whose KB answers render in one piece instead of streaming,
+      # which is what lets the grounding repair edit them before they are read.
+      # Comma-separated Zitadel org ids; empty means every org keeps streaming.
+      KLAI_KB_NON_STREAMING_ORG_IDS: ${KLAI_KB_NON_STREAMING_ORG_IDS:-}
       PORTAL_API_URL: http://portal-api:8010
       # Two DIFFERENT secrets — one per receiver. portal-api validates the first
       # (entitlement check + templates fetch) against PORTAL_API_INTERNAL_SECRET;

@@ -372,3 +372,41 @@ def test_held_strict_litellm_stream_objects_carry_no_text_outside_tool_calls():
     for serialized in out["held"]:
         assert "SECRET" not in serialized
         assert "kantoorhuur" not in serialized
+
+
+def test_only_a_listed_organisation_stops_streaming():
+    """The non-streaming path is what makes the grounding repair reachable.
+
+    It costs the reader the tokens appearing one by one, a median 4.0 s and
+    8.3 s in the slowest tenth (measured 2026-09-18). Of five tenants with
+    internal traffic in the thirty days to that date one had 169 cited answers
+    and three had none, so a global switch would take streaming from all of
+    them to serve one.
+    """
+    from klai_kb_render_policy import select_kb_render_strategy
+
+    listed = select_kb_render_strategy(
+        True, configured_mode="", org_id="368884765035593759",
+        non_streaming_org_ids=frozenset({"368884765035593759"}),
+    )
+    other = select_kb_render_strategy(
+        True, configured_mode="", org_id="372801852200189969",
+        non_streaming_org_ids=frozenset({"368884765035593759"}),
+    )
+    unknown = select_kb_render_strategy(True, configured_mode="", org_id=None)
+
+    assert listed.force_non_streaming is True
+    assert other.force_non_streaming is False
+    assert unknown.force_non_streaming is False
+
+
+def test_the_org_id_is_compared_as_text():
+    """Zitadel ids arrive as a string on one route and as an int on another."""
+    from klai_kb_render_policy import select_kb_render_strategy
+
+    strategy = select_kb_render_strategy(
+        True, configured_mode="", org_id=368884765035593759,
+        non_streaming_org_ids=frozenset({"368884765035593759"}),
+    )
+
+    assert strategy.force_non_streaming is True
