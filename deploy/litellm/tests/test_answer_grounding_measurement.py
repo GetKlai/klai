@@ -284,7 +284,7 @@ async def test_a_failed_check_hands_back_nothing(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_a_non_streaming_answer_is_repaired(monkeypatch):
-    """The internal path acts where it can, not only where it is cheap.
+    """A non-streaming response: the whole answer is in hand, so it is repaired.
 
     Fifty real answers from a customer's own tenant on 2026-09-18: 86% state
     something the articles do not carry against 64% on the widget, and 70%
@@ -301,7 +301,7 @@ async def test_a_non_streaming_answer_is_repaired(monkeypatch):
 
     monkeypatch.setattr(render, "_render_kb_citation_content", lambda text, **_kw: (text, [], False, {}))
 
-    result = await render._repair_or_measure(
+    result, _sources, _no_citable, _decision = await render._repair_or_measure(
         "Ga naar Belplan en bel 020-1234567.",
         [{"title": "Wachtrij", "text": "Ga naar Belplan."}],
         _kb_meta(),
@@ -331,7 +331,7 @@ async def test_a_streamed_answer_is_only_measured(monkeypatch):
     monkeypatch.setattr(render, "repair_answer", _never)
     monkeypatch.setattr(render, "_measure_answer_grounding", lambda text, _c, _m: measured.append(text))
 
-    result = await render._repair_or_measure(
+    result, _sources, _no_citable, _decision = await render._repair_or_measure(
         "Ga naar Belplan.",
         [],
         _kb_meta(),
@@ -355,7 +355,7 @@ async def test_a_crashing_repair_leaves_the_answer_alone(monkeypatch):
 
     monkeypatch.setattr(render, "repair_answer", _boom)
 
-    result = await render._repair_or_measure(
+    result, _sources, _no_citable, _decision = await render._repair_or_measure(
         "Ga naar Belplan.",
         [],
         _kb_meta(),
@@ -390,7 +390,7 @@ async def test_the_repaired_text_goes_back_through_the_link_guard(monkeypatch):
     monkeypatch.setattr(render, "repair_answer", _repair)
     monkeypatch.setattr(render, "_render_kb_citation_content", _guard)
 
-    result = await render._repair_or_measure(
+    result, _sources, _no_citable, _decision = await render._repair_or_measure(
         "Ga naar Belplan en bel 020-1234567.",
         [{"title": "Wachtrij", "text": "Ga naar Belplan."}],
         _kb_meta(),
@@ -429,7 +429,7 @@ async def test_an_answer_resting_on_what_the_user_pasted_is_not_repaired(monkeyp
     monkeypatch.setattr(render, "repair_answer", _never)
     monkeypatch.setattr(render, "_measure_answer_grounding", lambda *_a: None)
 
-    result = await render._repair_or_measure(
+    result, _sources, _no_citable, _decision = await render._repair_or_measure(
         "Op je screenshot staat de extensie op 201.",
         [],
         {**_kb_meta(), **kb_extra},
@@ -453,7 +453,7 @@ async def test_a_fixed_refusal_is_not_sent_through_the_checker(monkeypatch):
     monkeypatch.setattr(render, "repair_answer", _never)
     monkeypatch.setattr(render, "_measure_answer_grounding", lambda *_a: None)
 
-    result = await render._repair_or_measure(
+    result, _sources, _no_citable, _decision = await render._repair_or_measure(
         "Dit staat niet in onze helpartikelen.",
         [],
         _kb_meta(),
@@ -529,7 +529,7 @@ async def test_an_open_stream_is_only_measured(monkeypatch):
     monkeypatch.setattr(render, "repair_answer", _never)
     monkeypatch.setattr(render, "_measure_answer_grounding", lambda *_a: None)
 
-    result = await render._repair_or_measure(
+    result, _sources, _no_citable, _decision = await render._repair_or_measure(
         "Ga naar Belplan.",
         [],
         _kb_meta(),
@@ -540,3 +540,64 @@ async def test_an_open_stream_is_only_measured(monkeypatch):
     )
 
     assert result == "Ga naar Belplan."
+
+
+@pytest.mark.asyncio
+async def test_a_repair_that_drops_the_cited_claim_drops_its_source(monkeypatch):
+    """Sources are selected against the final wording, not the draft.
+
+    A repair that removes the one statement a source backed leaves a citation
+    under a sentence that no longer makes that claim. The second render already
+    computes the right answer; keeping only its text and pairing it with the old
+    list is what would go wrong.
+    """
+    import klai_kb_citation_render as render
+
+    async def _repair(**_kwargs):
+        return "Dat staat niet in onze helpartikelen."
+
+    def _guard(_text, **_kw):
+        # The re-render finds nothing citable left in the repaired wording.
+        return ("Dat staat niet in onze helpartikelen.", [], True, {"reason": "no_citable"})
+
+    monkeypatch.setattr(render, "repair_answer", _repair)
+    monkeypatch.setattr(render, "_render_kb_citation_content", _guard)
+
+    text, sources, no_citable, decision = await render._repair_or_measure(
+        "Een 0800-nummer kost € 5,- per maand.",
+        [{"title": "Kosten", "text": "Een 0800-nummer heeft geen maandbedrag."}],
+        _kb_meta(),
+        stream=False,
+        allowed_image_urls=set(),
+        trusted_sources=[{"title": "Kosten", "url": "https://help.example.com/kosten"}],
+        no_citable_sources=False,
+    )
+
+    assert text == "Dat staat niet in onze helpartikelen."
+    assert sources == [], "the source backed only the claim the repair removed"
+    assert no_citable is True
+    assert decision == {"reason": "no_citable"}
+
+
+@pytest.mark.asyncio
+async def test_an_untouched_answer_keeps_the_renders_own_outcome(monkeypatch):
+    """No repair means no opinion: the caller keeps what it already had."""
+    import klai_kb_citation_render as render
+
+    async def _no_repair(**_kwargs):
+        return None
+
+    monkeypatch.setattr(render, "repair_answer", _no_repair)
+
+    text, sources, no_citable, decision = await render._repair_or_measure(
+        "Ga naar Belplan.",
+        [{"title": "Wachtrij", "text": "Ga naar Belplan."}],
+        _kb_meta(),
+        stream=False,
+        allowed_image_urls=set(),
+        trusted_sources=[],
+        no_citable_sources=False,
+    )
+
+    assert text == "Ga naar Belplan."
+    assert (sources, no_citable, decision) == (None, None, None)

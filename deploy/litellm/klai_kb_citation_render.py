@@ -1168,7 +1168,7 @@ async def _repair_or_measure(
     allowed_image_urls: set[str],
     trusted_sources: list[dict[str, Any]],
     no_citable_sources: bool,
-) -> str:
+) -> tuple[str, list[dict[str, Any]] | None, bool | None, dict[str, Any] | None]:
     """Repair what the articles do not carry, or measure it when repair is impossible.
 
     Measured on eighty real answers per path on 2026-09-18: 85% of internal
@@ -1186,7 +1186,7 @@ async def _repair_or_measure(
     """
     if _repair_would_be_wrong(rendered_content, kb_meta, stream=stream, no_citable_sources=no_citable_sources):
         _measure_answer_grounding(rendered_content, citation_chunks, kb_meta)
-        return rendered_content
+        return rendered_content, None, None, None
     try:
         repaired = await repair_answer(
             user_query=str(kb_meta.get("user_query") or ""),
@@ -1196,13 +1196,13 @@ async def _repair_or_measure(
         )
     except Exception:
         _telemetry_logger.warning("kb_answer_repair_crashed", exc_info=True)
-        return rendered_content
+        return rendered_content, None, None, None
     if not repaired:
-        return rendered_content
+        return rendered_content, None, None, None
     # Free model text again, so it passes the guard that produced the original:
     # the repair can put back a link or a citation marker the renderer removed.
     # The widget path re-applies its stripper for exactly this reason.
-    guarded, _sources, _no_citable, _decision = _render_kb_citation_content(
+    guarded, guarded_sources, guarded_no_citable, guarded_decision = _render_kb_citation_content(
         repaired,
         allowed_image_urls=allowed_image_urls,
         user_query=kb_meta.get("user_query"),
@@ -1218,8 +1218,12 @@ async def _repair_or_measure(
             kb_meta.get("org_id"),
             kb_meta.get("request_id"),
         )
-        return rendered_content
-    return guarded
+        return rendered_content, None, None, None
+    # The whole render outcome, not just the text: sources are selected against
+    # the final wording, so a repair that drops a claim can drop the source that
+    # only that claim rested on. Keeping the old list would attach a citation to
+    # a sentence that no longer makes the statement it cited.
+    return guarded, guarded_sources, guarded_no_citable, guarded_decision
 
 
 def _repair_would_be_wrong(
@@ -1453,15 +1457,23 @@ async def compose_non_streaming_kb_response(
                     trusted_sources=trusted_sources,
                     citation_chunks=citation_chunks,
                 )
-            rendered_content = await _repair_or_measure(
-                rendered_content,
-                citation_chunks,
-                kb_meta,
-                stream=False,
-                allowed_image_urls=allowed_image_urls,
-                trusted_sources=trusted_sources,
-                no_citable_sources=no_citable_sources,
+            rendered_content, repaired_sources, repaired_no_citable, repaired_decision = (
+                await _repair_or_measure(
+                    rendered_content,
+                    citation_chunks,
+                    kb_meta,
+                    stream=False,
+                    allowed_image_urls=allowed_image_urls,
+                    trusted_sources=trusted_sources,
+                    no_citable_sources=no_citable_sources,
+                )
             )
+            if repaired_decision is not None:
+                sources, no_citable_sources, decision = (
+                    repaired_sources or [],
+                    bool(repaired_no_citable),
+                    repaired_decision,
+                )
             # After the repair, so answer_language describes the text the user
             # reads rather than the draft the repair replaced.
             _record_answer_language(rendered_content, kb_meta)
@@ -1614,15 +1626,23 @@ async def compose_streaming_kb_response(
         # held deltas carry no content. It costs time: median 4.0 s, 8.3 s in the
         # slowest tenth, measured on seventeen real internal answers on
         # 2026-09-18, which changed nine of them.
-        rendered_content = await _repair_or_measure(
-            rendered_content,
-            citation_chunks,
-            kb_meta,
-            stream=not hold_until_rendered,
-            allowed_image_urls=allowed_image_urls,
-            trusted_sources=trusted_sources,
-            no_citable_sources=no_citable_sources,
+        rendered_content, repaired_sources, repaired_no_citable, repaired_decision = (
+            await _repair_or_measure(
+                rendered_content,
+                citation_chunks,
+                kb_meta,
+                stream=not hold_until_rendered,
+                allowed_image_urls=allowed_image_urls,
+                trusted_sources=trusted_sources,
+                no_citable_sources=no_citable_sources,
+            )
         )
+        if repaired_decision is not None:
+            sources, no_citable_sources, decision = (
+                repaired_sources or [],
+                bool(repaired_no_citable),
+                repaired_decision,
+            )
         _record_answer_language(rendered_content, kb_meta)
         _remember_citation_decision(
             kb_meta,
