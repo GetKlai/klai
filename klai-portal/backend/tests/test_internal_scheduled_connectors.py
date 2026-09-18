@@ -206,7 +206,6 @@ class TestListScheduledConnectors:
         # Non-crawler type is reported as-is; the endpoint doesn't filter by type.
         assert items[2].connector_type == "notion"
 
-
     @pytest.mark.asyncio
     async def test_scheduled_connectors_requires_internal_token(self) -> None:
         from app.api.internal import list_scheduled_connectors
