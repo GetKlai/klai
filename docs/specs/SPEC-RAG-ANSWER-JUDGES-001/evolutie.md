@@ -556,14 +556,25 @@ streamen. Mijn poging om hem per organisatie aan te zetten (#1527) zette die vol
 een streamingverzoek met een gewone JSON-response beantwoorden — een gebroken transportcontract,
 gevonden door de review vóór de merge. Die PR is gesloten.
 
-**Wat er dus echt nodig is.** De SSE-stroom vasthouden binnen de bestaande streaming-renderer, het
-antwoord daar repareren en als één zichtbare chunk versturen vóór het slotframe. Dat behoudt het
-contract en maakt de reparatie bereikbaar. Het is een wijziging in de hook waar elk intern bericht
-doorheen gaat, dus hij verdient een eigen ronde met eigen tests.
+**En toen bleek het al gebouwd te zijn.** Boven in `compose_streaming_kb_response` staat:
 
-**Stand:** de reparatie staat in de code (#1526) en draait op geen enkele interne beurt, omdat
-alle interne beurten streamen. Wat er wél gebeurt is de meting, die sinds #1526 elke controle
-logt in plaats van alleen de reparaties.
+> *Every Strict stream is held back in full. ... Held deltas still go out as chunks with empty
+> content, one per model token, which keeps bytes flowing to LibreChat while the answer is
+> written.*
+
+Een strikte beurt streamt de tékst dus niet. De lezer krijgt lege chunks tot het slotframe, waar
+de hele tekst in één keer wordt gezet. Op dat punt is het antwoord nog volledig in handen en heeft
+niemand iets gelezen — precies de voorwaarde die de reparatie nodig heeft. Er hoefde niets
+herbouwd te worden en er gaat geen streamervaring verloren, want die was er voor deze beurten niet.
+
+Wat het wél kost is tijd: mediaan 4,0 s en 8,3 s in de traagste tien procent, bovenop het
+schrijven. Een Open-stroom stuurt de woorden wél zoals ze komen, en daar blijft het bij meten.
+
+**Stand:** de reparatie draait nu op het pad waar alle interne beurten langskomen. Drie keer had ik
+het mis over dezelfde vraag voordat ik de opmerking las die er al twee maanden stond.
+
+**Les:** lees de code van de schakel die je "onmogelijk" noemt, vóórdat je dat opschrijft. Ik heb
+er drie rondes en een gesloten PR aan besteed.
 
 **Waarom niet globaal aanzetten, mocht dat ooit kunnen.** Over dertig dagen had één tenant vrijwel
 alle interne antwoorden mét bronverwijzing; drie andere tenants hadden er nul en de testtenant

@@ -63,7 +63,20 @@ if echo "$CHANGED" | grep -qE '(^|/)\.trivyignore\.ya?ml$'; then
     fi
 fi
 
-# ---- Trigger 4: active agent knowledge ----
+# ---- Trigger 4: per-customer usage data in a public repository ----
+#
+# Runs on EVERY commit, not on a file pattern: the artefact that leaked on
+# 2026-09-18 was a Markdown table in docs/, and the next one will be somewhere
+# else. It reads the staged diff, so it costs nothing when a commit adds no
+# added lines of that shape. This has to be a pre-commit and not CI: a public
+# branch is public the moment it is pushed, and CI only runs afterwards.
+
+# Unconditional: `[ -x … ]` turned a missing or non-executable script into a
+# silent pass, and the script is started through python3 so the executable bit
+# is not needed anyway. A missing file or a Python error blocks the commit.
+python3 -B scripts/audit-public-tenant-data.py --staged
+
+# ---- Trigger 5: active agent knowledge ----
 
 if echo "$CHANGED" | grep -qE '^(AGENTS\.md|CLAUDE\.md|\.agents/skills/|\.claude/(agents|commands|rules)/|\.claude/settings\.json|klai-website/(AGENTS\.md|CLAUDE\.md|\.claude/)|scripts/check-agent-knowledge\.sh)'; then
     echo "[pre-commit] agent configuration change detected — checking active knowledge..."
