@@ -35,9 +35,12 @@ from typing import Any
 
 from klai_chat_prompts import (
     GROUNDING_CHECK_SYSTEM_PROMPT,
+    GROUNDING_NOTHING_LEFT,
+    GROUNDING_REPAIR_SYSTEM_PROMPT,
     GroundingCheck,
     grounding_check_response_format,
     grounding_check_user_content,
+    grounding_repair_user_content,
     parse_grounding_check,
 )
 from klai_kb_query_rewrite import _post_to_rewrite_model, _rewrite_call_metadata
@@ -116,3 +119,106 @@ async def log_answer_grounding(
         len(citation_chunks),
     )
     return check
+
+
+# The widget gives the check 4 s and the repair 3 s because a visitor waits for
+# both. Internal answers are four times longer (median 1173 characters against a
+# few hundred) and their check takes 3.6 s at the median, so the same budget
+# would drop about half of them — measured on 2026-09-18, where the widget's
+# budget lost 17 of 50. These are the same numbers with room for the length.
+REPAIR_CHECK_TIMEOUT = 12.0
+REPAIR_TIMEOUT = 8.0
+
+
+async def _call(system_prompt: str, user_content: str, timeout: float, kb_meta: dict, fmt=None):
+    payload = {
+        "model": ANSWER_GROUNDING_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+        "temperature": 0.0,
+        "metadata": _rewrite_call_metadata(kb_meta.get("org_id")),
+    }
+    if fmt is not None:
+        payload["response_format"] = fmt
+    headers = {
+        "Authorization": f"Bearer {ANSWER_GROUNDING_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    resp = await _post_to_rewrite_model(payload, headers, {"timeout": timeout}, timeout)
+    resp.raise_for_status()
+    return resp.json()["choices"][0]["message"]["content"]
+
+
+async def repair_answer(
+    *,
+    user_query: str,
+    draft: str,
+    citation_chunks: list[dict],
+    kb_meta: dict[str, Any],
+) -> str | None:
+    """The answer without the statements the articles do not carry, or ``None``.
+
+    Same words and same threshold as the widget (shared in ``klai_chat_prompts``),
+    because the two paths are compared against each other. Measured on fifty real
+    answers from a customer's own tenant on 2026-09-18: 86% state something the
+    articles do not carry against 64% on the widget, and 70% reach this threshold
+    against 40%.
+
+    ``None`` means "leave the answer alone": a failed call, an unchanged answer,
+    or a check that stayed under the threshold. The internal path never refuses
+    on this signal — an employee pasting correspondence is not a visitor reading
+    a help page, and the widget's refusal was written for the second.
+    """
+    if not ANSWER_GROUNDING_API_KEY or not draft.strip():
+        return None
+    try:
+        raw = await _call(
+            GROUNDING_CHECK_SYSTEM_PROMPT,
+            grounding_check_user_content(
+                question=user_query, articles=_articles(citation_chunks), draft=draft
+            ),
+            REPAIR_CHECK_TIMEOUT,
+            kb_meta,
+            grounding_check_response_format(),
+        )
+    except Exception as exc:
+        logger.warning("kb_answer_repair_check_failed error=%s", repr(exc)[:120])
+        return None
+    check = parse_grounding_check(raw)
+    if check is None or not check.worth_repairing:
+        return None
+    try:
+        repaired = await _call(
+            GROUNDING_REPAIR_SYSTEM_PROMPT,
+            grounding_repair_user_content(draft=draft, unsupported=check.unsupported),
+            REPAIR_TIMEOUT,
+            kb_meta,
+        )
+    except Exception as exc:
+        logger.warning("kb_answer_repair_failed error=%s", repr(exc)[:120])
+        return None
+    repaired = (repaired or "").strip()
+    # The sentinel means the model judged that nothing survives. On this path the
+    # answer stays as it was: emptying an employee's answer is a bigger change
+    # than the measurement supports, and the log carries the signal instead.
+    if not repaired or repaired == GROUNDING_NOTHING_LEFT or repaired == draft.strip():
+        logger.warning(
+            "kb_answer_repair_kept org_id=%s request_id=%s unsupported=%s reason=%s",
+            kb_meta.get("org_id"),
+            kb_meta.get("request_id"),
+            len(check.unsupported),
+            "nothing_left" if repaired == GROUNDING_NOTHING_LEFT else "unchanged",
+        )
+        return None
+    logger.warning(
+        "kb_answer_repaired org_id=%s request_id=%s unsupported=%s contradicted=%s was=%d now=%d",
+        kb_meta.get("org_id"),
+        kb_meta.get("request_id"),
+        len(check.unsupported),
+        sum(1 for item in check.statements if item.support == "contradicted"),
+        len(draft),
+        len(repaired),
+    )
+    return repaired

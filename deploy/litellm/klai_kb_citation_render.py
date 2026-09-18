@@ -41,7 +41,7 @@ from klai_kb_chat_mode import prompt_mode_is_known, prompt_mode_is_strict
 # same prompt-injection hardening (strip brackets, collapse whitespace, cap
 # length). Duplicating the sanitizer would risk the two copies drifting.
 from klai_kb_context_prompt import _sanitize_question_echo
-from klai_answer_grounding import log_answer_grounding
+from klai_answer_grounding import log_answer_grounding, repair_answer
 from klai_kb_query_rewrite import classify_answer_claims
 from klai_kb_traceability import dedupe_strings
 from klai_kb_urls import normalise_guard_url
@@ -1159,6 +1159,37 @@ def _forget_grounding_task(task: asyncio.Task) -> None:
         _telemetry_logger.warning("kb_answer_grounding_task_failed error=%r", task.exception())
 
 
+async def _repair_or_measure(
+    rendered_content: str, citation_chunks: list[dict], kb_meta: dict[str, Any], *, stream: bool
+) -> str:
+    """Repair what the articles do not carry, or measure it when repair is impossible.
+
+    Measured on fifty real answers from a customer's own tenant on 2026-09-18:
+    86% of internal answers state something the articles do not carry, against
+    64% on the widget, and 70% reach the repair threshold against 40%. So the
+    repair belongs on this path too.
+
+    It can only act where the whole answer is still in hand. A streamed answer
+    has already been read by the time this could speak, so there the check keeps
+    measuring only; ``KLAI_KB_CHAT_RENDER_MODE=deterministic_non_streaming``
+    turns streaming off and this on. Any failure leaves the answer untouched.
+    """
+    if stream or not rendered_content.strip() or not _kb_meta_is_strict(kb_meta):
+        _measure_answer_grounding(rendered_content, citation_chunks, kb_meta)
+        return rendered_content
+    try:
+        repaired = await repair_answer(
+            user_query=str(kb_meta.get("user_query") or ""),
+            draft=rendered_content,
+            citation_chunks=citation_chunks,
+            kb_meta=kb_meta,
+        )
+    except Exception:
+        _telemetry_logger.warning("kb_answer_repair_crashed", exc_info=True)
+        return rendered_content
+    return repaired or rendered_content
+
+
 def _measure_answer_grounding(
     rendered_content: str, citation_chunks: list[dict], kb_meta: dict[str, Any]
 ) -> None:
@@ -1360,7 +1391,9 @@ async def compose_non_streaming_kb_response(
                     citation_chunks=citation_chunks,
                 )
             _record_answer_language(rendered_content, kb_meta)
-            _measure_answer_grounding(rendered_content, citation_chunks, kb_meta)
+            rendered_content = await _repair_or_measure(
+                rendered_content, citation_chunks, kb_meta, stream=False
+            )
             if (
                 rendered_content != content
                 or sources

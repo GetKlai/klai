@@ -280,3 +280,68 @@ async def test_a_failed_check_hands_back_nothing(monkeypatch):
     assert await grounding.log_answer_grounding(
         user_query="Q", draft="D", citation_chunks=[], kb_meta={"org_id": "8"}
     ) is None
+
+
+@pytest.mark.asyncio
+async def test_a_non_streaming_answer_is_repaired(monkeypatch):
+    """The internal path acts where it can, not only where it is cheap.
+
+    Fifty real answers from a customer's own tenant on 2026-09-18: 86% state
+    something the articles do not carry against 64% on the widget, and 70%
+    reach the repair threshold against 40%. Measuring that and doing nothing
+    with it was the gap.
+    """
+    import klai_kb_citation_render as render
+
+    async def _repair(*, user_query, draft, citation_chunks, kb_meta):
+        assert draft == "Ga naar Belplan en bel 020-1234567."
+        return "Ga naar Belplan."
+
+    monkeypatch.setattr(render, "repair_answer", _repair)
+
+    result = await render._repair_or_measure(
+        "Ga naar Belplan en bel 020-1234567.",
+        [{"title": "Wachtrij", "text": "Ga naar Belplan."}],
+        _kb_meta(),
+        stream=False,
+    )
+
+    assert result == "Ga naar Belplan."
+
+
+@pytest.mark.asyncio
+async def test_a_streamed_answer_is_only_measured(monkeypatch):
+    """Text the user has already read cannot be taken back.
+
+    Every internal turn streamed in the week to 2026-09-18 (41 of 41), so this
+    is the live path; the repair reaches it only by turning streaming off with
+    KLAI_KB_CHAT_RENDER_MODE=deterministic_non_streaming.
+    """
+    import klai_kb_citation_render as render
+
+    async def _never(**_kwargs):
+        raise AssertionError("a streamed answer may not be rewritten")
+
+    measured: list[str] = []
+    monkeypatch.setattr(render, "repair_answer", _never)
+    monkeypatch.setattr(render, "_measure_answer_grounding", lambda text, _c, _m: measured.append(text))
+
+    result = await render._repair_or_measure("Ga naar Belplan.", [], _kb_meta(), stream=True)
+
+    assert result == "Ga naar Belplan."
+    assert measured == ["Ga naar Belplan."]
+
+
+@pytest.mark.asyncio
+async def test_a_crashing_repair_leaves_the_answer_alone(monkeypatch):
+    """The user's answer may never be the casualty of this check."""
+    import klai_kb_citation_render as render
+
+    async def _boom(**_kwargs):
+        raise RuntimeError("upstream down")
+
+    monkeypatch.setattr(render, "repair_answer", _boom)
+
+    result = await render._repair_or_measure("Ga naar Belplan.", [], _kb_meta(), stream=False)
+
+    assert result == "Ga naar Belplan."
