@@ -17,6 +17,7 @@ import {
   joinSeedUrl,
   jsonFeedConfigForUpdate,
   previewUrlOnDetailsAdvance,
+  testUrlOnDetailsAdvance,
   VALID_PRESELECT_TYPES,
 } from '../-connector-constants'
 
@@ -101,6 +102,43 @@ describe('previewUrlOnDetailsAdvance', () => {
 
   it('does not treat a look-alike host as in-scope (prefix-boundary safety)', () => {
     expect(previewUrlOnDetailsAdvance('https://support.ascendcloud.com.evil.test/x', BASE)).toBe(BASE)
+  })
+})
+
+/**
+ * Auth-probe test-URL retention on the details -> next step transition.
+ *
+ * Reported 2026-09-18: an operator validated authentication against an
+ * interior page (the redcactus case: base_url is the redirecting site root,
+ * the actual login wall lives on a deeper page), then went back to Details
+ * to fix something and forward again. The "next" button cleared the
+ * validated test URL unconditionally, exactly the same bug class as
+ * previewUrlOnDetailsAdvance above, so the connector saved without it and
+ * the wizard reopened testing against the wrong (non-gated or redirecting)
+ * URL every time.
+ */
+describe('testUrlOnDetailsAdvance', () => {
+  const BASE = 'https://wiki.redcactus.cloud/nl/'
+  const TESTED = 'https://wiki.redcactus.cloud/nl/crm-software/HubSpot'
+
+  it('keeps the validated test URL instead of resetting to empty', () => {
+    expect(testUrlOnDetailsAdvance(TESTED, BASE)).toBe(TESTED)
+  })
+
+  it('keeps the URL across a base_url trailing-slash difference', () => {
+    expect(testUrlOnDetailsAdvance(TESTED, BASE.slice(0, -1))).toBe(TESTED)
+  })
+
+  it('falls back to empty (resolves to the derived base URL) when unset', () => {
+    expect(testUrlOnDetailsAdvance('', BASE)).toBe('')
+  })
+
+  it('drops a test URL that the operator moved out of scope by editing base_url', () => {
+    expect(testUrlOnDetailsAdvance(TESTED, 'https://docs.example.com')).toBe('')
+  })
+
+  it('does not treat a look-alike host as same-origin (safety)', () => {
+    expect(testUrlOnDetailsAdvance('https://wiki.redcactus.cloud.evil.test/x', BASE)).toBe('')
   })
 })
 

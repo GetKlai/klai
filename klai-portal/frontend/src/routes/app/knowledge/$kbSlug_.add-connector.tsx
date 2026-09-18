@@ -35,6 +35,7 @@ import {
   MARKDOWN_PROSE_CLASSES,
   normalizeConnectorPreselectType,
   previewUrlOnDetailsAdvance,
+  testUrlOnDetailsAdvance,
   VALID_PRESELECT_TYPES,
 } from './-connector-constants'
 import { PreviewClassificationFeedback } from './-connector-feedback'
@@ -829,7 +830,9 @@ function AddConnectorPage() {
                           setWcPreviewUrl((current) =>
                             previewUrlOnDetailsAdvance(current, webcrawlerConfig.base_url),
                           )
-                          setWcTestUrl('')
+                          setWcTestUrl((current) =>
+                            testUrlOnDetailsAdvance(current, webcrawlerConfig.base_url),
+                          )
                           invalidateAuthProbe()
                           invalidatePreview()
                           setWcStep('auth-question')
