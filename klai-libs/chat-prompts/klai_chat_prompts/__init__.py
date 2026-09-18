@@ -115,6 +115,7 @@ customer-support surface where extra confirmation friction pays off.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from typing import Final, Literal
 
 from klai_citations import extract_salient_query_tokens
@@ -145,12 +146,15 @@ __all__ = [
     "broad_mode_answer_marker",
     "final_response_language_reminder",
     "grounding_check_response_format",
+    "grounding_check_user_content",
+    "grounding_repair_user_content",
     "has_direct_evidence_for_query",
     "is_broad_knowledge_answer",
     "may_show_model_text_without_sources",
     "no_citable_sources_message",
     "parse_answer_claims",
     "parse_grounding_check",
+    "render_grounding_articles",
     "should_clarify",
     "strip_appointment_offer_marker",
 ]
@@ -1213,6 +1217,44 @@ class GroundingCheck(BaseModel):
         """
         unsupported = self.unsupported
         return len(unsupported) >= 2 or any(item.support == "contradicted" for item in unsupported)
+
+
+def render_grounding_articles(articles: Iterable[tuple[str, str]]) -> str:
+    """Every article the answer model received, whole.
+
+    Clipping is what made an earlier run judge against material the answer model
+    had but the checker did not: against stored copies cut at 700 characters,
+    correct steps came back as "not in the articles" and the repair then gutted
+    good answers. Shortening the input also buys almost nothing — at 2500
+    characters the check was 0.2 s faster and disagreed with the full text on 2
+    of 25 answers (2026-09-18).
+    """
+    return "\n\n".join(f"### {title}\n{text}" for title, text in articles)
+
+
+def grounding_check_user_content(
+    *, question: str, articles: Iterable[tuple[str, str]], draft: str
+) -> str:
+    """The checker's whole user message.
+
+    Both chat paths build this here rather than each writing the same three
+    labels, because a checker that reads a differently shaped prompt is a
+    checker that answers differently, and the two paths are compared against
+    each other.
+    """
+    return (
+        f"Visitor question:\n{question}\n\n"
+        f"Help-article excerpts:\n{render_grounding_articles(articles) or '(none)'}\n\n"
+        f"Reply:\n{draft}"
+    )
+
+
+def grounding_repair_user_content(
+    *, draft: str, unsupported: Iterable[GroundedStatement]
+) -> str:
+    """The repair model's whole user message."""
+    listed = "\n".join(f"- {item.statement}" for item in unsupported)
+    return f"Unsupported statements:\n{listed}\n\nReply:\n{draft}"
 
 
 def grounding_check_response_format() -> dict:

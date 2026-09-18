@@ -365,3 +365,27 @@ def test_vendored_grounding_check_matches_canonical() -> None:
         "The two copies disagree on when an answer is worth repairing."
     )
     assert vendored.parse_grounding_check("not json") is canonical.parse_grounding_check("not json")
+
+    # The text each path puts in front of the checker is shared for the same
+    # reason the prompt is. Comparing the two copies has to happen here: a test
+    # inside either path can only reach its own copy, so it would stay green
+    # while the other one drifted.
+    articles = [("Wachtrij", "Ga naar Belplan."), ("Kosten", "Een 0800-nummer kost niets.")]
+    assert vendored.render_grounding_articles(articles) == canonical.render_grounding_articles(
+        articles
+    ), "The article block the two paths render drifted."
+    assert vendored.grounding_check_user_content(
+        question="Hoe stel ik een wachtrij in?", articles=articles, draft="Ga naar Belplan."
+    ) == canonical.grounding_check_user_content(
+        question="Hoe stel ik een wachtrij in?", articles=articles, draft="Ga naar Belplan."
+    ), "The checker's user message drifted between the two paths."
+    assert vendored.grounding_check_user_content(
+        question="Q", articles=[], draft="D"
+    ) == canonical.grounding_check_user_content(question="Q", articles=[], draft="D"), (
+        "The two paths disagree on what an answer without articles looks like to the checker."
+    )
+    assert vendored.grounding_repair_user_content(
+        draft="Ga naar Belplan.", unsupported=vendored_check.unsupported
+    ) == canonical.grounding_repair_user_content(
+        draft="Ga naar Belplan.", unsupported=canonical_check.unsupported
+    ), "The repair model's user message drifted between the two paths."
