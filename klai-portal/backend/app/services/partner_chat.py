@@ -40,6 +40,7 @@ from klai_chat_prompts import (
     SUPPORT_CHAT_SYSTEM_PROMPT,
     SUPPORT_EXPRESSIVE_CHAT_SYSTEM_PROMPT,
     broad_mode_answer_marker,
+    chat_contract_article,
     final_response_language_reminder,
     strip_appointment_offer_marker,
 )
@@ -1993,6 +1994,13 @@ async def _judge_composed_answer(
     if not safe_text:
         return content, sources, decision
     articles = [(_chunk_source_title(chunk), str(chunk.get("text") or "")) for chunk in citation_chunks or []]
+    # The checker only sees the question, the articles and the reply, so it cannot
+    # know a booking button is really attached and flagged "Klik op de knop hieronder
+    # om een afspraak in te plannen" as an unsupported claim about the company. Handing
+    # it the guarantee as one more article keeps it strict about what that appointment
+    # will DO, which a skip-list in the prompt could not separate.
+    if (contract := chat_contract_article(appointment_offered=True)) is not None:
+        articles = [*articles, contract]
     # Both checks read the same draft and run together, so the heavier one costs
     # its own 2.1 s median once and nothing on top of the light judge's 0.4 s.
     checks_started = time.perf_counter()
