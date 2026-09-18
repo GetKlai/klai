@@ -11,7 +11,9 @@ visitor, carrying a goal taken from a real conversation, and talks to the live
 widget for several turns. The first message is the real visitor's own words, not
 generated, so the first turn of every simulated conversation can be compared
 against the replay measurements — if those disagree, the simulator is wrong and
-nothing after turn one is worth reading.
+nothing after turn one is worth reading. Conversations that never complete are
+excluded from that comparison on both sides, so a widget outage does not
+silently move the ratio.
 
 What it is not: real traffic. A simulated visitor is more patient and more
 articulate than a person on a help page. Use it to compare two versions against
@@ -90,17 +92,31 @@ _VISITOR_SYSTEM = (
     "You are a visitor on a company's help page, talking to its chat assistant. You have one goal, "
     "given below, taken from a real conversation. Write ONLY your next message to the assistant, in the "
     "language of your goal, the way a person types on a help page: short, no pleasantries, no explaining "
-    "yourself. Do not invent facts about your own situation beyond the goal. If the assistant has answered "
-    "your goal, or has made clear it cannot and offered a person, reply with exactly: DONE."
+    "yourself. Do not invent facts about your own situation beyond the goal. Reply with exactly DONE only "
+    "when your goal has been answered. If the assistant says it cannot help or offers a person instead, "
+    "try once more first: rephrase your question, or add one detail that is already in your goal. If it "
+    "still cannot help after that, reply with exactly: DONE."
 )
 
 _SCORE_SYSTEM = (
     "You read a conversation between a visitor and a company's help assistant, and the goal the visitor "
-    'had. Answer with JSON only: {"reached": true|false, "turns_wasted": <int>, "why": "<8 words>"}. '
-    "reached — did the visitor end up with what the goal asked for, or with an honest statement that it is "
-    "not in the help articles plus a way to reach a person. turns_wasted — how many assistant turns said "
-    "nothing the visitor could act on."
+    'had. Answer with JSON only: {"reached": true|false, "handed_off": true|false, "turns_wasted": <int>, '
+    '"why": "<8 words>"}. reached — did the visitor end up with information they can act on for the goal. '
+    "A hand-off to a person is never reached, even when the assistant was honest about not finding it. "
+    "handed_off — did the assistant say it could not find the answer and point the visitor to a person. "
+    "turns_wasted — how many assistant turns said nothing the visitor could act on."
 )
+
+# Model for the goal summary, the simulated visitor and the scorer. Not
+# klai-primary/klai-fast: those share the live widget's 100 RPM quota, and an
+# unpaced run against that quota caused the 502 incident of 2026-09-18. Not
+# klai-medium either: that is answer_grounding_model, the model under test —
+# scoring it with itself would judge the grounding check by its own opinion.
+# klai-large is Mistral Large at 13 RPM per key (two keys), which is why the
+# existing pacing below (6s between conversations, 1.5s between turns, at
+# most five model calls per conversation) is what keeps this harness under
+# that limit.
+_SIMULATION_MODEL = os.getenv("KLAI_SIMULATION_MODEL") or "klai-large"
 
 
 async def _session_token(widget_id: str) -> tuple[str, str]:
@@ -160,7 +176,7 @@ async def _model(client: httpx.AsyncClient, system: str, user: str, *, max_token
             f"{settings.litellm_base_url}/v1/chat/completions",
             headers={"Authorization": f"Bearer {settings.litellm_master_key}"},
             json={
-                "model": settings.answer_grounding_model,
+                "model": _SIMULATION_MODEL,
                 "temperature": 0.3,
                 "max_tokens": max_tokens,
                 "messages": [
@@ -265,6 +281,7 @@ async def _one_conversation(client: httpx.AsyncClient, token: str, goal: dict, m
         "beurten": sum(1 for line in transcript if line.startswith("Assistant:")),
         "eerste_bronnen": eerste_bronnen,
         "bereikt": score.get("reached"),
+        "doorverwezen": score.get("handed_off"),
         "verspild": score.get("turns_wasted"),
         "waarom": score.get("why"),
         "transcript": transcript,
@@ -281,18 +298,22 @@ def _parse_score(raw: str) -> dict:
     try:
         parsed = json.loads(raw[raw.index("{") : raw.rindex("}") + 1])
     except Exception:
-        return {"reached": None, "turns_wasted": None, "why": "score unparseable"}
-    if not isinstance(parsed.get("reached"), bool):
-        return {"reached": None, "turns_wasted": None, "why": "score has no verdict"}
+        return {"reached": None, "handed_off": None, "turns_wasted": None, "why": "score unparseable"}
+    if not isinstance(parsed.get("reached"), bool) or not isinstance(parsed.get("handed_off"), bool):
+        return {"reached": None, "handed_off": None, "turns_wasted": None, "why": "score has no verdict"}
     wasted = parsed.get("turns_wasted")
     return {
         "reached": parsed["reached"],
+        "handed_off": parsed["handed_off"],
         "turns_wasted": wasted if isinstance(wasted, int) else None,
         "why": str(parsed.get("why") or "")[:60],
     }
 
 
 async def main(widget_id: str, aantal: int, beurten: int) -> None:
+    if _SIMULATION_MODEL == settings.answer_grounding_model:
+        raise SystemExit("De simulatie mag niet op hetzelfde model draaien als de grounding check die ze meet.")
+
     token, _ = await _session_token(widget_id)
 
     resultaten: list[dict] = []
@@ -327,21 +348,27 @@ async def main(widget_id: str, aantal: int, beurten: int) -> None:
     onbeoordeeld = len(resultaten) - len(beoordeeld)
     n = len(beoordeeld) or 1
     bereikt = sum(1 for r in beoordeeld if r["bereikt"])
+    doorverwezen = sum(1 for r in beoordeeld if r["doorverwezen"])
     met_bron = sum(1 for r in resultaten if r["eerste_bronnen"] > 0)
     verspild = [r["verspild"] for r in beoordeeld if isinstance(r["verspild"], int)]
 
     print(f"\n=== {len(resultaten)} GESIMULEERDE GESPREKKEN ===")
     print(f"doel bereikt: {bereikt} van {len(beoordeeld)} beoordeeld ({round(100 * bereikt / n)}%)")
+    print(f"eerlijk doorverwezen zonder antwoord: {doorverwezen} van {len(beoordeeld)} beoordeeld")
     if onbeoordeeld:
         print(f"niet te beoordelen (buiten de noemer): {onbeoordeeld}")
     if mislukt:
         print(f"gesprekken die niet rondkwamen: {len(mislukt)}")
         for line in mislukt[:3]:
             print(f"  {line}")
-    print(
+    ijkpunt = (
         f"eerste antwoord met bron: {met_bron} van {len(resultaten)} "
-        f"({round(100 * met_bron / len(resultaten))}%)  <- ijkpunt tegen de replay"
+        f"({round(100 * met_bron / len(resultaten))}%)  <- ijkpunt tegen de replay; mislukte "
+        "gesprekken staan aan beide kanten buiten de noemer"
     )
+    if mislukt:
+        ijkpunt += f" ({len(mislukt)} mislukt)"
+    print(ijkpunt)
     print(f"gemiddeld aantal assistentbeurten: {sum(r['beurten'] for r in resultaten) / len(resultaten):.1f}")
     if verspild:
         print(f"gemiddeld verspilde beurten: {sum(verspild) / len(verspild):.1f}")

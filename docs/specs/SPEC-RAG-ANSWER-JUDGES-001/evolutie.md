@@ -2,7 +2,7 @@
 
 Doel van dit bestand: wat er gemeten is, wat daaruit volgde, en wat er live staat. Zo hoeft niemand een meting of een onderzoek over te doen. De spec ernaast (`spec.md`) beschrijft het ontwerp; dit bestand beschrijft de weg ernaartoe.
 
-Bijgewerkt: 2026-09-18, na 2.21.
+Bijgewerkt: 2026-09-18, na 2.24.
 
 ---
 
@@ -18,9 +18,9 @@ Een beurt van een bezoeker loopt door deze schakels. Per schakel: wat het doet, 
 | 4 | Controle vooraf op de vraag | `services/turn_judge.py` | beslist niets meer over doorvragen (v0.5.0), praatje-uitzondering weg (v0.6.0), beoordeelt sinds v0.9.0 ook of de vraag binnen de niet-behandelde onderwerpen valt |
 | 5 | Antwoord schrijven | `partner_chat.py` + profiel in `klai-libs/chat-prompts` | ongewijzigd; promptvarianten gemeten en afgevallen. Valt de vraag binnen de onderwerpen die de widget niet behandelt, dan wordt deze schakel overgeslagen (v0.9.0) |
 | 6 | Koppelen aan bronnen | `klai-libs/citations` | ongewijzigd, dit is de ondergrens |
-| 7 | Controle achteraf op het antwoord | `services/answer_judge.py` + `services/answer_grounding.py` | licht oordeel plus controle per zin met reparatie, live 18 sep |
+| 7 | Controle achteraf op het antwoord | `services/answer_judge.py` + `services/answer_grounding.py`; intern `deploy/litellm/klai_answer_grounding.py` | licht oordeel plus controle per zin met reparatie, live 18 sep; dezelfde reparatie op het interne pad sinds #1526 en #1530, platform-breed (2.22, 2.23) |
 | 8 | Kennisbank | Voys-artikelen | het echte plafond, niet aangepakt. De widget zoekt in één van de negen kennisbanken van Voys (`support`, 8947 chunks); prijzen, Ascend en de nerds-wiki staan buiten bereik |
-| — | Meten van de keten | `scripts/simulate_conversations.py` | hele gesprekken sinds 18 sep, geijkt op 75% tegen 76% van de herspeling (2.19) |
+| — | Meten van de keten | `scripts/simulate_conversations.py` | hele gesprekken sinds 18 sep; ijking eerlijk gerekend 75% tegen 81% van de herspeling (2.19, gecorrigeerd in 2.24); bezoeker en scoorder sinds 2.24 op een ander model dan de controle die ze meten |
 
 ---
 
@@ -205,6 +205,8 @@ Gemeten op 13 echte vraagsoorten, twee rondes, met de Voys-onderwerpen (prijzen,
 Het scheelt bovendien tijd: de antwoordronde vervalt.
 
 ### 2.11 Dezelfde controle op de interne chat, alleen meekijkend (18 sep)
+*Achterhaald door 2.22 en 2.23: sinds #1526 en #1530 repareert het interne pad ook, voor elke tenant. Deze sectie beschrijft de meekijkfase.*
+
 De interne chat (LibreChat via de LiteLLM-hook) doet nu dezelfde controle per zin als de widget, met letterlijk dezelfde tekst uit de gedeelde bibliotheek. Daar verandert hij niets aan het antwoord en wacht de gebruiker nergens op: de controle wordt naast het antwoord gestart en logt alleen wat er niet in de artikelen staat. Zo kunnen beide paden straks naast elkaar gelegd worden.
 
 Wat de review ving, en wat het waard was: de controle keek naar een veld dat alleen in mijn tests bestond (`kb_chat_mode`), terwijl productie `chat_retrieval_prompt_mode` schrijft. Hij zou dus nooit gedraaid hebben, met groene tests. Nu gebruikt hij dezelfde strikt-check als de renderer zelf, en testen de tests op de productiewaarde.
@@ -407,9 +409,12 @@ Run na de reviewcorrecties, 12 echte gesprekken van de Voys-widget, maximaal 4 b
 | Gemiddeld aantal assistentbeurten | 2,7 |
 | Gemiddeld verspilde beurten | 1,0 |
 
-**IJking:** de herspeling van 2.15 gaf 38 van de 50 eerste antwoorden met bron (76%), de
-simulator 75%. De eerste beurt van de simulatie gedraagt zich dus als echt verkeer, en de
-beurten erna zijn de moeite van het lezen waard.
+**IJking, gecorrigeerd in 2.24:** hier stond eerst "38 van de 50 (76%) tegen 75%". Die 50 telde
+de 3 mislukte herspelingen mee in de noemer, terwijl het harnas mislukte gesprekken juist buiten de
+noemer houdt. Gelijk gerekend is de herspeling 38 van 47 (81%) tegen 9 van 12 (75%) in de
+simulatie. Bij twaalf gesprekken is dat verschil één gesprek, dus de eerste beurt gedraagt zich
+nog steeds als echt verkeer, maar de ijking is zwakker dan de oude zin suggereerde en er zat een
+rekenfout in.
 
 **Twee fouten in de eerste versie, allebei door de review gevonden.** Het "doel" van de bezoeker
 bestond uit álle opgeslagen bezoekersbeurten, dus juist de vervolgvragen die afhangen van wat het
@@ -576,10 +581,47 @@ het mis over dezelfde vraag voordat ik de opmerking las die er al twee maanden s
 **Les:** lees de code van de schakel die je "onmogelijk" noemt, vóórdat je dat opschrijft. Ik heb
 er drie rondes en een gesloten PR aan besteed.
 
-**Waarom niet globaal aanzetten, mocht dat ooit kunnen.** Over dertig dagen had één tenant vrijwel
-alle interne antwoorden mét bronverwijzing; drie andere tenants hadden er nul en de testtenant
-produceerde het grootste volume zonder één bronverwijzing. Aantallen per tenant staan in de
-private operationele documentatie.
+**De reparatie staat aan voor elke tenant.** Er is geen poort per organisatie: `_repair_would_be_wrong`
+kent alleen technische voorwaarden (Strict, citeerbare bronnen, het hele antwoord nog in handen,
+niets dat op geplakte tekst rust). Dat is ook houdbaar zonder poort, omdat een antwoord zonder
+citeerbare bron alleen gemeten wordt: de tenants die geen bronverwijzingen produceren (over dertig
+dagen hadden drie tenants er nul, en de testtenant het grootste volume zonder één) worden dus niet
+geraakt. De eerdere alinea hier, die tegen globaal aanzetten pleitte, beschreef een zorg die de code
+nooit heeft gehad; spec regel 8 en REQ-5 zeiden tot 18 sep nog "alleen meekijkend" en zijn in
+v0.10.0 gelijkgetrokken. Aantallen per tenant staan in de private operationele documentatie.
+
+### 2.24 Het harnas mat zichzelf, en de ijking rekende met twee noemers (18 sep)
+Drie fouten in `scripts/simulate_conversations.py` en in wat 2.19 erover zei, alle drie nagekeken in
+de code en gerepareerd zonder nieuwe meting, want ze gaan over het meetinstrument en niet over de
+keten.
+
+1. **Eén model voor alles.** De gesimuleerde bezoeker, de doelschrijver en de scoorder draaiden op
+   `settings.answer_grounding_model`, hetzelfde `klai-medium` dat de controle per zin en de reparatie
+   doet. Het harnas beoordeelde de gegrondheidscontrole dus met de mening van het model dat die
+   controle is. Nu draaien alle drie op `klai-large` (`KLAI_SIMULATION_MODEL`), en het script weigert
+   te starten als dat model gelijk is aan het controlemodel. Niet `klai-primary` of `klai-fast`, want
+   die delen het quotum met echte bezoekers (het 502-incident van 2.19). `klai-large` heeft 13
+   aanroepen per minuut per sleutel; de bestaande rem (zes seconden tussen gesprekken, anderhalve
+   seconde tussen beurten, hooguit vijf modelaanroepen per gesprek) blijft daar onder.
+2. **De scoorder beloonde de oplossing die getoetst werd.** "Een eerlijke 'niet gevonden' plus een weg
+   naar een persoon" telde als doel bereikt, en de bezoeker stopte zodra een persoon was aangeboden.
+   Precies dat gedrag is in 2.21 gebouwd, dus het harnas kon die wijziging alleen maar goedkeuren.
+   Nu is `reached` alleen waar als de bezoeker iets kreeg waarmee hij zijn doel kan halen; een
+   doorverwijzing wordt apart geteld (`handed_off`, in het rapport "eerlijk doorverwezen zonder
+   antwoord") en telt nooit als bereikt. De bezoeker probeert het bij een weigering of doorverwijzing
+   één keer opnieuw (herformuleren of één detail uit zijn doel toevoegen) voordat hij stopt.
+3. **Ongelijke noemers bij de ijking.** 2.19 zette "38 van de 50 (76%)" uit de herspeling naast "75%"
+   van het harnas. Die 50 telde 3 mislukte herspelingen mee, terwijl het harnas mislukte gesprekken
+   buiten de noemer houdt. Gelijk gerekend: 38 van 47 (81%) tegen 9 van 12 (75%). De regel in het
+   rapport zegt nu expliciet dat mislukte gesprekken aan beide kanten buiten de noemer staan en
+   hoeveel het er waren. Het verschil van zes punten is bij twaalf gesprekken één gesprek, dus de
+   ijking houdt, maar de oude zin was fout en te stellig.
+
+**Gevolg voor 2.19 en 2.21:** de cijfers daar (75% doel bereikt, voor en na) zijn met de oude
+scoorder gemeten en tellen doorverwijzingen als succes. Ze zijn onderling vergelijkbaar, niet met
+wat het harnas vanaf nu rapporteert. Een nieuwe nulmeting met de gescheiden modellen is niet
+gedraaid: elke ronde van twaalf gesprekken kost gedeelde snelheidslimiet (2.19), en er stond geen
+wijziging aan de keten klaar om ertegen af te zetten.
 
 ---
 
@@ -603,6 +645,8 @@ private operationele documentatie.
 | 18 sep | Gespreksbeurten weigeren niet meer; het chatcontract gaat als bewijs mee (#1517) | 2.17 |
 | 18 sep | Gesimuleerde bezoeker voor hele gesprekken (#1519) | 2.19 |
 | 18 sep | Doodlopend antwoord zonder bron krijgt de afspraakknop (#1520) | 2.21 |
+| 18 sep | Het interne pad repareert, niet-streamend (#1526) | 2.22 |
+| 18 sep | De reparatie ook op de vastgehouden Strict-stroom, waar elke interne beurt langskomt (#1530) | 2.23 |
 
 ---
 
@@ -633,26 +677,22 @@ Op volgorde van wat de metingen als grootste rem aanwijzen.
    bezoekers stellen. Voor een publieke helppagina is dat waarschijnlijk bewust, maar het is een
    keuze die sinds de inrichting niet is herzien, en de instelling uit 2.10f vangt nu precies de
    vragen af waarvan het antwoord in de kennisbank ernaast staat.
-3. **Reparatie op het interne pad.** Intern beweert 86% van de antwoorden iets dat de artikelen
-   niet dragen, tegen 64% extern (2.14), en er gebeurt niets mee. Elke interne beurt streamt
-   (41 van 41), dus repareren vóór het tonen betekent het hele antwoord vasthouden. De cijfers om
-   de keuze op te baseren staan er: 8% tegenspraak tegen 62% alleen-onbewezen.
-4. **Meten op echt verkeer.** Alles hierboven is gemeten met herspelingen en simulaties. Het
+3. **Meten op echt verkeer.** Alles hierboven is gemeten met herspelingen en simulaties. Het
    dagrapport (`scripts/grounding_report.py`) had op 18 sep twee antwoorden. Wat er vandaag live
    ging is dus nog nergens op echte bezoekers bevestigd.
-5. **Het harnas groter draaien.** Twaalf gesprekken kunnen een effect van de grootte van 2.21 niet
+4. **Het harnas groter draaien.** Twaalf gesprekken kunnen een effect van de grootte van 2.21 niet
    aantonen, en meer gesprekken kosten snelheidslimiet die met bezoekers gedeeld wordt. Meerdere
    rondes buiten kantooruren.
-6. **Het valse alarm in de niet-behandelde onderwerpen.** Eén op de vijftig hulpvragen krijgt de
+5. **Het valse alarm in de niet-behandelde onderwerpen.** Eén op de vijftig hulpvragen krijgt de
    doorverwijstekst; drie oplossingen gemeten en alle drie duurder dan de kwaal (2.18). Dit is een
    afweging voor de eigenaar van de widget.
-7. **Varianten voor het herschrijven meten** (onderwerpwissel, trefwoord-stijl, geschiedenis zonder
+6. **Varianten voor het herschrijven meten** (onderwerpwissel, trefwoord-stijl, geschiedenis zonder
    de antwoorden van de assistent).
-8. **Geen nieuwe gok zonder nieuw artikel:** bij een vervolgbeurt zonder nieuw gevonden artikel een
+7. **Geen nieuwe gok zonder nieuw artikel:** bij een vervolgbeurt zonder nieuw gevonden artikel een
    medewerker aanbieden (23 van de 38 correctiebeurten).
 
-Afgehandeld: de zware controle op verzonnen details (2.8, 2.9), dezelfde controle op het interne
-pad (2.11, 2.14), de instelling per widget (2.10f, 2.13), de korte vraag met vervolgvraag (2.10),
+Afgehandeld: de zware controle op verzonnen details (2.8, 2.9), dezelfde controle én reparatie op
+het interne pad (2.11, 2.14, 2.22, 2.23), de instelling per widget (2.10f, 2.13), de korte vraag met vervolgvraag (2.10),
 de stijlregels uit de basisprompt (2.5, 2.13) en aspectgericht doorvragen (2.20).
 
 ---

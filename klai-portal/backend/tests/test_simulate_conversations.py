@@ -47,7 +47,7 @@ class _Response:
 
 @pytest.mark.asyncio
 async def test_a_visitor_with_its_answer_stops_instead_of_filling_the_budget():
-    client = _Client(["DONE", '{"reached": true, "turns_wasted": 0, "why": "answered"}'])
+    client = _Client(["DONE", '{"reached": true, "handed_off": false, "turns_wasted": 0, "why": "answered"}'])
 
     result = await sim._one_conversation(
         client, "tok", {"cid": "c1", "eerste": "Hoe stel ik een wachtrij in?", "doel": "een wachtrij instellen"}, 4
@@ -56,6 +56,43 @@ async def test_a_visitor_with_its_answer_stops_instead_of_filling_the_budget():
     assert result["beurten"] == 1, "the visitor said DONE, so the widget may not be asked again"
     assert client.widget_calls == 1
     assert result["bereikt"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_hand_off_is_reported_and_not_counted_as_reached():
+    """The harness used to reward a hand-off because that is the feature it was checking.
+
+    A visitor sent to a person did not get the answer their goal asked for, so
+    ``bereikt`` must stay False even though the assistant behaved honestly.
+    """
+    client = _Client(["DONE", '{"reached": false, "handed_off": true, "turns_wasted": 1, "why": "sent to human"}'])
+
+    result = await sim._one_conversation(
+        client, "tok", {"cid": "c1", "eerste": "Hoe stel ik een wachtrij in?", "doel": "een wachtrij instellen"}, 4
+    )
+
+    assert result["bereikt"] is False
+    assert result["doorverwezen"] is True
+
+
+@pytest.mark.asyncio
+async def test_model_calls_never_use_the_model_under_test():
+    """Scoring the grounding check with the grounding check's own model judges nothing.
+
+    Goal, visitor and scorer all go through ``_model``, so one call is enough
+    to prove none of them can reach ``answer_grounding_model``.
+    """
+    calls: list[str] = []
+
+    class _RecordingClient:
+        async def post(self, url: str, **kwargs):
+            calls.append(kwargs["json"]["model"])
+            return _Response({"choices": [{"message": {"content": "ok"}}]})
+
+    await sim._model(_RecordingClient(), "system", "user")
+
+    assert calls[0] != sim.settings.answer_grounding_model
+    assert calls[0] == sim._SIMULATION_MODEL
 
 
 @pytest.mark.asyncio
@@ -102,10 +139,12 @@ def test_a_score_without_a_verdict_is_not_a_failure():
     versions, so anything unusable has to leave the denominator rather than
     quietly lower it.
     """
-    assert sim._parse_score('{"reached": "yes", "turns_wasted": 0}')["reached"] is None
+    assert sim._parse_score('{"reached": "yes", "handed_off": false, "turns_wasted": 0}')["reached"] is None
     assert sim._parse_score('{"turns_wasted": 2}')["reached"] is None
-    assert sim._parse_score('{"reached": true, "turns_wasted": "two", "why": "ok"}') == {
+    assert sim._parse_score('{"reached": true, "handed_off": "no", "turns_wasted": 0, "why": "ok"}')["reached"] is None
+    assert sim._parse_score('{"reached": true, "handed_off": false, "turns_wasted": "two", "why": "ok"}') == {
         "reached": True,
+        "handed_off": False,
         "turns_wasted": None,
         "why": "ok",
     }
