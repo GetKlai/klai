@@ -63,6 +63,7 @@ RLS_DML_TABLES: frozenset[str] = frozenset(
         "portal_knowledge_bases",
         "portal_mcp_tokens",  # SPEC-MCP-AUTH-001 Cat-D
         "portal_retrieval_gaps",
+        "portal_support_cases",  # SPEC-RAG-SUPPORT-GAP Cat-D
         "portal_taxonomy_nodes",
         "portal_taxonomy_proposals",
         "portal_templates",  # SPEC-PLATFORM-ADMIN-001 Cat-D (helper policy)

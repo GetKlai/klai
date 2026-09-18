@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useAuth } from '@/lib/auth'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { AlertTriangle, ArrowLeft, BookOpen, Check, MessageCircle, PlusCircle } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, BookOpen, Check, FileText, MessageCircle, PlusCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -32,6 +32,8 @@ import { Tooltip } from '@/components/ui/tooltip'
 import { PageContainer } from '@/components/ui/page-container'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import { appNavActivityIsVisible, appNavGapsIsVisible } from '@/routes/app/-app-tools'
+import { TranscriptImportDialog } from './_components/TranscriptImportDialog'
+import { diagnosisLabel } from './-support-helpers'
 
 type GapsSearch = { days?: number; gapType?: string; language?: string; include_resolved?: boolean }
 const VALID_DAYS = new Set([7, 14, 30, 60, 90])
@@ -61,17 +63,24 @@ export const Route = createFileRoute('/app/knowledge/gaps/')({
 
 interface GapRow {
   query_text: string
+  // "hard"/"soft" for retrieval telemetry; "content" for support-case findings
+  // (support-gap-detection.md: support findings use gap_type="content").
   gap_type: string
   top_score: number | null
   nearest_kb_slug: string | null
   occurrence_count: number
   last_occurred: string
   language: string | null
-  source: 'automatic' | 'review'
+  source: 'automatic' | 'review' | 'support'
   conversation_id: number | null
   resolved_at: string | null
   resolved_by: 'rescorer' | 'review' | 'manual' | 'test' | null
   resolved_by_name: string | null
+  // Support-case fields (null for automatic/review rows). diagnosis is one of
+  // the six content diagnoses; support_case_ids links the evidence detail page.
+  diagnosis: string | null
+  audience: string | null
+  support_case_ids: number[]
 }
 
 /** Relative timestamps for the closed-row line; same approach as
@@ -187,15 +196,31 @@ export function GapsPage() {
   })
 
   const closeMutation = useMutation({
-    mutationFn: (gap: GapRow) =>
-      apiFetch<{ resolved: number }>('/api/app/gaps/resolve', {
+    mutationFn: (gap: GapRow) => {
+      // Ordinary (automatic/review) closing is unchanged. A support finding is
+      // grouped by diagnosis + nearest_kb + audience as well, so those values
+      // are sent too — otherwise the resolve would also close a different
+      // diagnosis or KB group for the same question (support-gap-detection.md).
+      const body =
+        gap.source === 'support'
+          ? {
+              query_text: gap.query_text,
+              gap_type: gap.gap_type,
+              language: gap.language,
+              diagnosis: gap.diagnosis,
+              audience: gap.audience,
+              nearest_kb_slug: gap.nearest_kb_slug,
+            }
+          : {
+              query_text: gap.query_text,
+              gap_type: gap.gap_type,
+              language: gap.language,
+            }
+      return apiFetch<{ resolved: number }>('/api/app/gaps/resolve', {
         method: 'POST',
-        body: JSON.stringify({
-          query_text: gap.query_text,
-          gap_type: gap.gap_type,
-          language: gap.language,
-        }),
-      }),
+        body: JSON.stringify(body),
+      })
+    },
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['app-gaps'] }),
     onError: (err: unknown) => {
       queryLogger.warn('Gap close failed', { error: err })
@@ -258,7 +283,7 @@ export function GapsPage() {
   }
 
   return (
-    <PageContainer width="3xl">
+    <PageContainer width="6xl">
       <div className="flex items-start justify-between mb-6">
         <div className="flex items-center gap-3">
           <AlertTriangle className="h-7 w-7 text-gray-900" />
@@ -266,12 +291,21 @@ export function GapsPage() {
             {m.gaps_page_title()}
           </h1>
         </div>
-        <Button variant="outline" size="sm" asChild>
-          <Link to="/app/knowledge">
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            {m.knowledge_page_intro_heading()}
-          </Link>
-        </Button>
+        <div className="flex items-center gap-2">
+          <TranscriptImportDialog orgKbs={orgKbs} />
+          <Button variant="outline" size="sm" asChild>
+            <Link to="/app/knowledge/gaps/support-cases">
+              <FileText className="h-4 w-4 mr-2" />
+              {m.support_cases_action_open()}
+            </Link>
+          </Button>
+          <Button variant="outline" size="sm" asChild>
+            <Link to="/app/knowledge">
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              {m.knowledge_page_intro_heading()}
+            </Link>
+          </Button>
+        </div>
       </div>
 
       <p className="text-gray-600 mb-6 leading-relaxed">
@@ -342,7 +376,8 @@ export function GapsPage() {
       ) : gaps.length === 0 ? (
         <ListEmptyState icon={AlertTriangle} title={m.gaps_empty_state()} />
       ) : (
-        <DataTable className="table-fixed">
+        <div className="overflow-x-auto">
+        <DataTable className="table-fixed min-w-5xl">
           <DataTableHeader>
             <DataTableRow>
               <DataTableHead>{m.gaps_column_query()}</DataTableHead>
@@ -357,15 +392,23 @@ export function GapsPage() {
           </DataTableHeader>
           <DataTableBody>
             {gaps.map((gap) => {
-              // The API groups gaps by (question, type, language); the key must
-              // include language or two gaps with the same question and type in
-              // different languages collide and clobber each other's row state.
-              const rowKey = `${gap.query_text}|${gap.gap_type}|${gap.language ?? ''}`
+              const rowKey = JSON.stringify([
+                gap.query_text, gap.gap_type, gap.language,
+                gap.diagnosis, gap.nearest_kb_slug, gap.audience,
+              ])
               const isResolved = gap.resolved_at != null
               return (
                 <DataTableRow key={rowKey} confirming={closingKey === rowKey}>
                   <DataTableCell className="truncate" title={gap.query_text}>
                     <div className="truncate">{gap.query_text}</div>
+                    {gap.source === 'support' && gap.diagnosis && (
+                      <div className="mt-1 flex items-center gap-2">
+                        <Badge variant="outline">{diagnosisLabel(gap.diagnosis)}</Badge>
+                        {gap.audience && (
+                          <span className="text-xs text-gray-500 truncate">{gap.audience}</span>
+                        )}
+                      </div>
+                    )}
                     {isResolved && (
                       <div className="mt-1 flex items-center gap-2">
                         <Badge variant="secondary">{m.gaps_status_resolved()}</Badge>
@@ -381,14 +424,30 @@ export function GapsPage() {
                     )}
                   </DataTableCell>
                   <DataTableCell>
-                    <Badge variant={gap.gap_type === 'hard' ? 'destructive' : 'warning'}>
-                      {gap.gap_type === 'hard' ? m.gaps_type_hard() : m.gaps_type_soft()}
+                    <Badge
+                      variant={
+                        gap.gap_type === 'hard'
+                          ? 'destructive'
+                          : gap.gap_type === 'content'
+                            ? 'info'
+                            : 'warning'
+                      }
+                    >
+                      {gap.gap_type === 'hard'
+                        ? m.gaps_type_hard()
+                        : gap.gap_type === 'content'
+                          ? m.gaps_type_content()
+                          : m.gaps_type_soft()}
                     </Badge>
                   </DataTableCell>
                   <DataTableCell className="text-gray-600">{gap.language ?? '–'}</DataTableCell>
                   <DataTableCell>
-                    <Badge variant={gap.source === 'review' ? 'info' : 'secondary'}>
-                      {gap.source === 'review' ? m.gaps_source_review() : m.gaps_source_automatic()}
+                    <Badge variant={gap.source === 'automatic' ? 'secondary' : 'info'}>
+                      {gap.source === 'support'
+                        ? m.gaps_source_support()
+                        : gap.source === 'review'
+                          ? m.gaps_source_review()
+                          : m.gaps_source_automatic()}
                     </Badge>
                   </DataTableCell>
                   <DataTableCell className="text-gray-600">
@@ -410,6 +469,20 @@ export function GapsPage() {
                       onCancel={() => setClosingKey(null)}
                     >
                       <RowActionGroup>
+                        {gap.source === 'support' && gap.support_case_ids.length > 0 && (
+                          <BorderedRowActionIconButton
+                            asChild
+                            tone="neutral"
+                            label={m.gaps_action_view_evidence()}
+                          >
+                            <Link
+                              to="/app/knowledge/gaps/support-cases/$caseId"
+                              params={{ caseId: String(gap.support_case_ids[0]) }}
+                            >
+                              <FileText />
+                            </Link>
+                          </BorderedRowActionIconButton>
+                        )}
                         {gap.conversation_id != null && canDrillIntoActivity && (
                           <BorderedRowActionIconButton
                             asChild
@@ -484,6 +557,7 @@ export function GapsPage() {
             })}
           </DataTableBody>
         </DataTable>
+        </div>
       )}
     </PageContainer>
   )

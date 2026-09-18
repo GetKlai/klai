@@ -1,11 +1,11 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import {
   ArrowLeft, Braces, ChevronRight, Settings, ChevronDown, CheckCircle2, Loader2, Sparkles, Globe, FileText, Shield,
 } from 'lucide-react'
-import { SiGithub, SiNotion, SiGoogledrive, SiAirtable, SiConfluence } from '@icons-pack/react-simple-icons'
+import { SiGithub, SiNotion, SiGoogledrive, SiAirtable, SiConfluence, SiHubspot } from '@icons-pack/react-simple-icons'
 import { Button } from '@/components/ui/button'
 import { StepIndicator, type StepItem } from '@/components/ui/step-indicator'
 import { Badge } from '@/components/ui/badge'
@@ -15,7 +15,10 @@ import { Textarea } from '@/components/ui/textarea'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { MS_SITE_URL_PATTERN } from '@/lib/ms-docs'
-import type { CookieRow } from './$kbSlug/-kb-types'
+import { useCurrentUser } from '@/hooks/useCurrentUser'
+import { fetchMe } from '@/lib/api-me'
+import { appNavGapsIsVisible } from '@/routes/app/-app-tools'
+import type { CookieRow, KnowledgeBase } from './$kbSlug/-kb-types'
 import type {
   AirtableConfig,
   AuthGuardSuggestion,
@@ -23,6 +26,7 @@ import type {
   ConfluenceConfig,
   ConnectorType,
   GitHubConfig,
+  HubSpotSupportConfig,
   JsonFeedConfig,
   NotionAddConfig,
   PreviewResult,
@@ -30,6 +34,10 @@ import type {
   WebCrawlerConfig,
 } from './-connector-types'
 import {
+  HUBSPOT_SUPPORT_LOOKBACK_DEFAULT,
+  HUBSPOT_SUPPORT_LOOKBACK_MAX,
+  HUBSPOT_SUPPORT_LOOKBACK_MIN,
+  hubspotSupportConfig,
   isWithinBaseUrl,
   joinSeedUrl,
   MARKDOWN_PROSE_CLASSES,
@@ -64,6 +72,7 @@ const CONNECTOR_TYPES: {
   { type: 'airtable',     label: m.admin_connectors_type_airtable,      available: true,  Icon: SiAirtable },
   { type: 'confluence',   label: m.admin_connectors_type_confluence,    available: true,  Icon: SiConfluence },
   { type: 'json_feed',    label: m.admin_connectors_type_json_feed,     available: true,  Icon: Braces },
+  { type: 'hubspot_support', label: m.admin_connectors_type_hubspot_support, available: true, Icon: SiHubspot },
 ]
 
 // -- Route -------------------------------------------------------------------
@@ -87,9 +96,33 @@ function AddConnectorPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 
+  const { user } = useCurrentUser()
+  const hasGapsCapability = user?.hasCapability('kb.gaps') === true
+  const meQuery = useQuery({
+    queryKey: ['me'],
+    queryFn: ({ signal }) => fetchMe(signal),
+    enabled: hasGapsCapability,
+  })
+  const { data: kb } = useQuery<KnowledgeBase>({
+    queryKey: kbQueryKeys.knowledgeBase(kbSlug),
+    queryFn: () => apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`),
+    enabled: hasGapsCapability,
+  })
+  const supportGapsAvailable =
+    kb?.owner_type === 'org' &&
+    appNavGapsIsVisible({
+      hasCapability: (cap) => user?.hasCapability(cap) === true,
+      unlockedFeatures: meQuery.data?.platform_unlocked_features ?? [],
+    })
+  const visibleConnectorTypes = CONNECTOR_TYPES.filter(
+    (t) => t.type !== 'hubspot_support' || supportGapsAvailable,
+  )
+
   const [selectedType, setSelectedType] = useState<ConnectorType | null>(
     normalizeConnectorPreselectType(preselectType) ?? null,
   )
+  const showTypePicker =
+    !selectedType || (selectedType === 'hubspot_support' && !supportGapsAvailable)
   const [name, setName] = useState('')
   const [githubConfig, setGithubConfig] = useState<GitHubConfig>({
     installation_id: '', repo_owner: '', repo_name: '', branch: 'main', path_filter: '',
@@ -112,6 +145,10 @@ function AddConnectorPage() {
     base_url: '', email: '', api_token: '', space_keys: '',
   })
   const [jsonFeedConfig, setJsonFeedConfig] = useState<JsonFeedConfig>({ url: '' })
+  const [hubspotConfig, setHubspotConfig] = useState<HubSpotSupportConfig>({
+    access_token: '', account_id: '', lookback_days: String(HUBSPOT_SUPPORT_LOOKBACK_DEFAULT),
+    pipeline_ids: '', inbox_ids: '',
+  })
   // ms_docs (SPEC-KB-MS-DOCS-001): optional site_url + drive_id - both empty = personal OneDrive
   const [msSiteUrl, setMsSiteUrl] = useState('')
   const [msDriveId, setMsDriveId] = useState('')
@@ -235,6 +272,9 @@ function AddConnectorPage() {
       }
       if (selectedType === 'json_feed') {
         config.url = jsonFeedConfig.url.trim()
+      }
+      if (selectedType === 'hubspot_support') {
+        Object.assign(config, hubspotSupportConfig(hubspotConfig, { includeAccessToken: true }))
       }
       await apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/`, {
         method: 'POST',
@@ -400,6 +440,7 @@ function AddConnectorPage() {
       {(() => {
         const isSimple = selectedType === 'github' || selectedType === 'notion' || selectedType === 'google_drive' || selectedType === 'ms_docs'
           || selectedType === 'airtable' || selectedType === 'confluence' || selectedType === 'json_feed'
+          || selectedType === 'hubspot_support'
 
         const steps: StepItem[] = isSimple
           ? [
@@ -422,7 +463,7 @@ function AddConnectorPage() {
           selector: 3,
           settings: 4,
         }
-        const currentIndex = !selectedType
+        const currentIndex = showTypePicker
           ? 0
           : isSimple
             ? 1
@@ -434,9 +475,9 @@ function AddConnectorPage() {
       <div className="mt-6 space-y-4">
 
             {/* Step 1: Type selection */}
-            {!selectedType && (
+            {showTypePicker && (
               <div className="grid grid-cols-2 gap-3">
-                {CONNECTOR_TYPES.map(({ type, label, available, Icon }) => (
+                {visibleConnectorTypes.map(({ type, label, available, Icon }) => (
                   <button
                     key={type}
                     type="button"
@@ -793,6 +834,53 @@ function AddConnectorPage() {
                 )}
                 <div className="flex gap-2 pt-1">
                   <Button type="submit" size="sm" disabled={createMutation.isPending || !name || !jsonFeedConfig.url.trim()}>
+                    {createMutation.isPending ? m.admin_connectors_create_submit_loading() : m.admin_connectors_create_submit()}
+                  </Button>
+                  <Button type="button" size="sm" variant="outline" onClick={() => setSelectedType(null)}>
+                    {m.admin_connectors_webcrawler_back()}
+                  </Button>
+                </div>
+              </form>
+            )}
+
+            {/* HubSpot support (support-gap-detection.md). Read-only case sync:
+                the KB is the comparison scope, never a raw-case destination.
+                Gated on the knowledge_gaps unlock (supportGapsAvailable). */}
+            {selectedType === 'hubspot_support' && supportGapsAvailable && (
+              <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate() }} className="space-y-3">
+                <p className="text-sm text-gray-600 leading-relaxed">{m.admin_connectors_hubspot_support_intro()}</p>
+                <div className="space-y-1.5">
+                  <Label htmlFor="hs-name">{m.admin_connectors_field_name()}</Label>
+                  <Input id="hs-name" required placeholder={m.admin_connectors_field_name_placeholder()} value={name} onChange={(e) => setName(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="hs-token">{m.admin_connectors_hubspot_support_access_token()}</Label>
+                  <Input id="hs-token" type="password" required placeholder={m.admin_connectors_hubspot_support_access_token_hint()} value={hubspotConfig.access_token} onChange={(e) => setHubspotConfig((p) => ({ ...p, access_token: e.target.value }))} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="hs-account-id">{m.admin_connectors_hubspot_support_account_id()}</Label>
+                  <Input id="hs-account-id" required inputMode="numeric" placeholder={m.admin_connectors_hubspot_support_account_id_hint()} value={hubspotConfig.account_id} onChange={(e) => setHubspotConfig((p) => ({ ...p, account_id: e.target.value }))} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="hs-lookback">{m.admin_connectors_hubspot_support_lookback_days()}</Label>
+                  <Input id="hs-lookback" type="number" min={HUBSPOT_SUPPORT_LOOKBACK_MIN} max={HUBSPOT_SUPPORT_LOOKBACK_MAX} value={hubspotConfig.lookback_days} onChange={(e) => setHubspotConfig((p) => ({ ...p, lookback_days: e.target.value }))} />
+                  <p className="text-xs text-gray-600">{m.admin_connectors_hubspot_support_lookback_days_help()}</p>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="hs-pipelines">{m.admin_connectors_hubspot_support_pipeline_ids()}</Label>
+                  <Input id="hs-pipelines" inputMode="numeric" placeholder={m.admin_connectors_hubspot_support_pipeline_ids_hint()} value={hubspotConfig.pipeline_ids} onChange={(e) => setHubspotConfig((p) => ({ ...p, pipeline_ids: e.target.value }))} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="hs-inboxes">{m.admin_connectors_hubspot_support_inbox_ids()}</Label>
+                  <Input id="hs-inboxes" inputMode="numeric" placeholder={m.admin_connectors_hubspot_support_inbox_ids_hint()} value={hubspotConfig.inbox_ids} onChange={(e) => setHubspotConfig((p) => ({ ...p, inbox_ids: e.target.value }))} />
+                </div>
+                {createMutation.error && (
+                  <p className="text-sm text-[var(--color-destructive)]">
+                    {createMutation.error instanceof Error ? createMutation.error.message : m.admin_connectors_error_create_generic()}
+                  </p>
+                )}
+                <div className="flex gap-2 pt-1">
+                  <Button type="submit" size="sm" disabled={createMutation.isPending || !name || !hubspotConfig.access_token || !hubspotConfig.account_id.trim()}>
                     {createMutation.isPending ? m.admin_connectors_create_submit_loading() : m.admin_connectors_create_submit()}
                   </Button>
                   <Button type="button" size="sm" variant="outline" onClick={() => setSelectedType(null)}>

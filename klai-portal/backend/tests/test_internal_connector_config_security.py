@@ -213,3 +213,85 @@ class TestInternalConnectorConfigSecurity:
 
             assert exc_info.value.status_code == 500
             assert exc_info.value.detail == {"error_code": "connector_required_credentials_missing"}
+
+
+def _hubspot_row(connector: MagicMock, *, unlocked: list[str]) -> MagicMock:
+    kb = MagicMock()
+    kb.slug = "support-kb"
+    org = MagicMock()
+    org.zitadel_org_id = "200000000000000009"
+    org.platform_unlocked_features = unlocked
+    result = MagicMock()
+    result.one_or_none.return_value = (connector, kb, org)
+    return result
+
+
+class TestInternalHubspotSupportFeatureGate:
+    """SPEC-RAG-SUPPORT-GAP: the internal connector-config endpoint feeds
+    klai-connector. A hubspot_support connector whose tenant no longer has
+    ``knowledge_gaps`` unlocked must be refused BEFORE any credential decrypt,
+    so no support access token is ever handed to a disabled-feature sync."""
+
+    @pytest.mark.asyncio
+    async def test_hubspot_support_config_rejected_when_feature_off_before_decrypt(self) -> None:
+        from app.api.internal import get_connector_config
+
+        connector = _connector(
+            connector_type="hubspot_support",
+            config={"account_id": "12345"},
+            encrypted_credentials=b"ENCRYPTED",
+        )
+        db = AsyncMock()
+        db.get = AsyncMock(return_value=connector)
+        db.execute = AsyncMock(return_value=_hubspot_row(connector, unlocked=[]))
+
+        with (
+            patch("app.api.internal.settings") as mock_settings,
+            patch("app.api.internal.set_tenant", new=AsyncMock()),
+            patch("app.api.internal._audit_internal_call", new=AsyncMock()),
+            patch("app.api.internal.credential_store") as mock_store,
+        ):
+            mock_settings.internal_secret = _PLACEHOLDER_INTERNAL
+            mock_store.decrypt_credentials = AsyncMock()
+
+            with pytest.raises(HTTPException) as exc_info:
+                await get_connector_config(
+                    connector_id="conn-hs-1",
+                    request=_request(),
+                    db=db,
+                )
+
+            assert exc_info.value.status_code == 403
+            assert exc_info.value.detail == {"error_code": "feature_not_unlocked", "feature": "knowledge_gaps"}
+            mock_store.decrypt_credentials.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_hubspot_support_config_merged_when_feature_on(self) -> None:
+        from app.api.internal import get_connector_config
+
+        connector = _connector(
+            connector_type="hubspot_support",
+            config={"account_id": "12345"},
+            encrypted_credentials=b"ENCRYPTED",
+        )
+        db = AsyncMock()
+        db.get = AsyncMock(return_value=connector)
+        db.execute = AsyncMock(return_value=_hubspot_row(connector, unlocked=["knowledge_gaps"]))
+
+        with (
+            patch("app.api.internal.settings") as mock_settings,
+            patch("app.api.internal.set_tenant", new=AsyncMock()),
+            patch("app.api.internal._audit_internal_call", new=AsyncMock()),
+            patch("app.api.internal.credential_store") as mock_store,
+        ):
+            mock_settings.internal_secret = _PLACEHOLDER_INTERNAL
+            mock_store.decrypt_credentials = AsyncMock(return_value={"access_token": _PLACEHOLDER_TOKEN})
+
+            result = await get_connector_config(
+                connector_id="conn-hs-1",
+                request=_request(),
+                db=db,
+            )
+
+        assert result.config["access_token"] == _PLACEHOLDER_TOKEN
+        mock_store.decrypt_credentials.assert_awaited_once()

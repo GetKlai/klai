@@ -5,17 +5,21 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import case, func, select, update
+from sqlalchemy import case, distinct, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import require_capability
+from app.api.dependencies import get_kb_with_access, require_capability
 from app.core.database import get_db
 from app.core.permissions import UserPermissions, get_caller, require_platform_unlocked
 from app.core.profiles import Capability
-from app.models.portal import PortalUser
+from app.models.portal import PortalOrg, PortalUser
 from app.models.retrieval_gaps import PortalRetrievalGap
+from app.models.support_cases import PortalSupportCase
 from app.models.taxonomy import PortalTaxonomyNode
 from app.models.widgets import WidgetConversation
+from app.services.access import is_personal_kb
+from app.services.support_case_reviews import compute_analysis_revision, reviews_for_current_revision
+from app.services.support_cases import _question_key
 
 router = APIRouter(
     prefix="/api/app",
@@ -37,8 +41,8 @@ class GapOut(BaseModel):
     query_text: str
     gap_type: str
     language: str | None = None
-    # "review" = a human already saw this question (answer-review flow);
-    # "automatic" = telemetry only.
+    # "support" = a case-backed content finding; "review" = a human already saw
+    # this question (answer-review flow); "automatic" = telemetry only.
     source: str
     # Conversation the newest row of the group came from, NULL when the gap
     # has no conversation or that conversation no longer exists.
@@ -51,6 +55,12 @@ class GapOut(BaseModel):
     # From the newest resolved row of the group; null for an open group.
     resolved_by: str | None = None
     resolved_by_name: str | None = None
+    # SPEC-RAG-SUPPORT-GAP: defaulted for legacy telemetry groups, populated for
+    # case-backed support groups. ``support_case_ids`` is the set of distinct
+    # cases behind the group; its length is the unique-case frequency.
+    diagnosis: str | None = None
+    audience: str | None = None
+    support_case_ids: list[int] = []
 
 
 class GapsResponse(BaseModel):
@@ -60,11 +70,21 @@ class GapsResponse(BaseModel):
 
 class GapResolveRequest(BaseModel):
     """Identifies one gap group; ``language=None`` means the group whose rows
-    carry no language, not "any language"."""
+    carry no language, not "any language".
+
+    For a support (case-backed) group the UI also submits ``diagnosis`` (and
+    optionally ``audience`` / ``nearest_kb_slug``): a manual close must target
+    exactly that diagnosis+KB group and cannot close an unrelated one. When
+    ``diagnosis`` is absent the close only ever touches legacy telemetry rows
+    (``support_case_id IS NULL``), so it never silently closes a support row.
+    """
 
     query_text: str
-    gap_type: Literal["hard", "soft"]
+    gap_type: Literal["hard", "soft", "content"]
     language: str | None = None
+    diagnosis: str | None = None
+    audience: str | None = None
+    nearest_kb_slug: str | None = None
 
 
 class GapResolveResponse(BaseModel):
@@ -129,6 +149,10 @@ async def list_gaps(
         .where(
             PortalRetrievalGap.org_id == perms.org_id,
             PortalRetrievalGap.occurred_at >= cutoff,
+            # Case-backed findings are grouped separately below (by question_key
+            # with unique-case frequency); keep them out of the legacy
+            # query_text grouping so the two never mix.
+            PortalRetrievalGap.support_case_id.is_(None),
         )
         .group_by(PortalRetrievalGap.query_text, PortalRetrievalGap.gap_type, PortalRetrievalGap.language)
         .order_by(func.count().desc())
@@ -147,7 +171,18 @@ async def list_gaps(
     result = await db.execute(stmt)
     rows = result.all()
     if not rows:
-        return GapsResponse(gaps=[], total=0)
+        # No legacy telemetry groups, but the org may still have case-backed
+        # support findings — fetch those before returning empty.
+        support_only = await _list_support_gaps(
+            perms=perms,
+            db=db,
+            cutoff=cutoff,
+            gap_type=gap_type,
+            language=language,
+            include_resolved=include_resolved,
+            limit=limit,
+        )
+        return GapsResponse(gaps=support_only, total=len(support_only))
 
     # §4.5: link each group to the conversation its newest row came from. A
     # per-row value cannot ride along in the grouped query, so pick the newest
@@ -250,7 +285,100 @@ async def list_gaps(
         )
         for r in rows
     ]
+
+    gaps.extend(
+        await _list_support_gaps(
+            perms=perms,
+            db=db,
+            cutoff=cutoff,
+            gap_type=gap_type,
+            language=language,
+            include_resolved=include_resolved,
+            limit=limit,
+        )
+    )
+    # Highest-frequency groups first across both kinds.
+    gaps.sort(key=lambda g: g.occurrence_count, reverse=True)
     return GapsResponse(gaps=gaps, total=len(gaps))
+
+
+async def _list_support_gaps(
+    *,
+    perms: UserPermissions,
+    db: AsyncSession,
+    cutoff: datetime,
+    gap_type: str | None,
+    language: str | None,
+    include_resolved: bool,
+    limit: int,
+) -> list[GapOut]:
+    """Case-backed findings, grouped by ``question_key`` with UNIQUE-CASE
+    frequency (SPEC-RAG-SUPPORT-GAP).
+
+    ``question_key`` already encodes normalized question + diagnosis + language
+    + KB + audience, so equivalent questions across cases collapse into one
+    group while different diagnoses/KBs/audiences stay distinct. Frequency is
+    ``COUNT(DISTINCT support_case_id)`` — one case counts once no matter how
+    many times it was imported. Rows are only visible to a ``full``-telemetry
+    org, so a downgraded tenant sees no support evidence here.
+    """
+    org = (await db.execute(select(PortalOrg).where(PortalOrg.id == perms.org_id))).scalar_one_or_none()
+    if org is None or org.telemetry_level != "full":
+        return []
+
+    stmt = (
+        select(
+            PortalRetrievalGap.question_key,
+            func.max(PortalRetrievalGap.query_text).label("query_text"),
+            func.max(PortalRetrievalGap.gap_type).label("gap_type"),
+            func.max(PortalRetrievalGap.language).label("language"),
+            func.max(PortalRetrievalGap.diagnosis).label("diagnosis"),
+            func.max(PortalRetrievalGap.audience).label("audience"),
+            func.max(PortalRetrievalGap.nearest_kb_slug).label("nearest_kb_slug"),
+            func.max(PortalRetrievalGap.top_score).label("top_score"),
+            func.count(distinct(PortalRetrievalGap.support_case_id)).label("occurrence_count"),
+            func.array_agg(distinct(PortalRetrievalGap.support_case_id)).label("support_case_ids"),
+            func.max(PortalRetrievalGap.occurred_at).label("last_occurred"),
+            case(
+                (func.bool_and(PortalRetrievalGap.resolved_at.isnot(None)), func.max(PortalRetrievalGap.resolved_at)),
+                else_=None,
+            ).label("resolved_at"),
+        )
+        .where(
+            PortalRetrievalGap.org_id == perms.org_id,
+            PortalRetrievalGap.occurred_at >= cutoff,
+            PortalRetrievalGap.support_case_id.isnot(None),
+        )
+        .group_by(PortalRetrievalGap.question_key)
+        .order_by(func.count(distinct(PortalRetrievalGap.support_case_id)).desc())
+        .limit(limit)
+    )
+    if gap_type:
+        stmt = stmt.where(PortalRetrievalGap.gap_type == gap_type)
+    if language:
+        stmt = stmt.where(PortalRetrievalGap.language == language)
+    if not include_resolved:
+        stmt = stmt.where(PortalRetrievalGap.resolved_at.is_(None))
+
+    result = await db.execute(stmt)
+    return [
+        GapOut(
+            query_text=r.query_text,
+            gap_type=r.gap_type,
+            language=r.language,
+            source="support",
+            conversation_id=None,
+            top_score=r.top_score,
+            nearest_kb_slug=r.nearest_kb_slug,
+            occurrence_count=r.occurrence_count,
+            last_occurred=r.last_occurred,
+            resolved_at=r.resolved_at,
+            diagnosis=r.diagnosis,
+            audience=r.audience,
+            support_case_ids=sorted(cid for cid in (r.support_case_ids or []) if cid is not None),
+        )
+        for r in result.all()
+    ]
 
 
 @router.post("/gaps/resolve", response_model=GapResolveResponse)
@@ -281,18 +409,48 @@ async def resolve_gap(
         update(PortalRetrievalGap)
         .where(
             PortalRetrievalGap.org_id == perms.org_id,
-            PortalRetrievalGap.query_text == body.query_text,
             PortalRetrievalGap.gap_type == body.gap_type,
             PortalRetrievalGap.resolved_at.is_(None),
         )
         .values(resolved_at=datetime.now(tz=UTC), resolved_by="manual", resolved_by_user_id=caller_id)
     )
-    # None means "the group without a language", not "any language" — same key
-    # the GET grouping used to show it.
-    if body.language is None:
-        stmt = stmt.where(PortalRetrievalGap.language.is_(None))
+
+    # SPEC-RAG-SUPPORT-GAP: a diagnosis marks a support (case-backed) close.
+    # Without one, the close only ever touches legacy telemetry rows (exact
+    # query text), so it can never silently close a case-backed row.
+    if body.diagnosis is None:
+        stmt = stmt.where(
+            PortalRetrievalGap.support_case_id.is_(None),
+            PortalRetrievalGap.query_text == body.query_text,
+        )
+        # None means "the group without a language", not "any language".
+        if body.language is None:
+            stmt = stmt.where(PortalRetrievalGap.language.is_(None))
+        else:
+            stmt = stmt.where(PortalRetrievalGap.language == body.language)
     else:
-        stmt = stmt.where(PortalRetrievalGap.language == body.language)
+        # A support group is identified by its persisted question_key (the same
+        # normalized question + diagnosis + language + KB + audience the inbox
+        # grouped on), so every spelling variant in the group closes together.
+        # The KB selector is required — omitting it must not close every KB's
+        # group — and the audience is matched deliberately (NULL matches NULL
+        # via the empty-string slot in the key).
+        if not body.nearest_kb_slug:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="nearest_kb_slug is required to close a support finding group",
+            )
+        key = _question_key(
+            question=body.query_text,
+            diagnosis=body.diagnosis,
+            language=body.language,
+            kb_slug=body.nearest_kb_slug,
+            audience=body.audience,
+        )
+        stmt = stmt.where(
+            PortalRetrievalGap.support_case_id.isnot(None),
+            PortalRetrievalGap.question_key == key,
+        )
 
     result = await db.execute(stmt)
     resolved = result.rowcount or 0  # type: ignore[attr-defined]
@@ -303,6 +461,82 @@ async def resolve_gap(
         )
     await db.commit()
     return GapResolveResponse(resolved=resolved)
+
+
+class SupportCaseDetailOut(BaseModel):
+    id: int
+    kb_slug: str
+    payload: dict
+    status: str
+    # Each finding is the raw analysis dict with a ``review`` key added: the
+    # current-revision human verdict, or None. NULL analysis stays NULL.
+    analysis: list | None = None
+    analysis_version: str | None = None
+    # Identifies the exact analysis shown, so a review PATCH can be rejected when
+    # it was made against a superseded analysis. None when analysis is NULL.
+    analysis_revision: str | None = None
+    imported_at: datetime
+
+
+@router.get("/gaps/support-cases/{case_id}", response_model=SupportCaseDetailOut)
+async def get_support_case(
+    case_id: int,
+    perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
+) -> SupportCaseDetailOut:
+    """Return one imported case's evidence and analysis (SPEC-RAG-SUPPORT-GAP).
+
+    Access-checked: bounded to the caller's org (explicit predicate plus Cat-D
+    RLS). Telemetry policy is re-checked on read — a tenant that downgraded away
+    from ``full`` cannot view literal support evidence even for a case imported
+    while it still could, and the purge removes those rows shortly after.
+    """
+    org = await db.get(PortalOrg, perms.org_id)
+    if org is None or org.telemetry_level != "full":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error_code": "telemetry_level_forbids_support_evidence"},
+        )
+    result = await db.execute(
+        select(PortalSupportCase).where(
+            PortalSupportCase.id == case_id,
+            PortalSupportCase.org_id == perms.org_id,
+        )
+    )
+    case = result.scalar_one_or_none()
+    if case is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Support case not found")
+    # Shared contract: evidence is gated by tenant/KB access, not org+policy
+    # alone. Resolve the case's comparison-scope KB through the same firewall
+    # every KB route uses (existence + personal-firewall), and require it to be
+    # org-owned, as import does. Raises 404 for a missing / personal / cross-org
+    # KB. No new ACL — existing KB_GAPS capability + KB access apply.
+    kb = await get_kb_with_access(case.kb_slug, perms, db)
+    if is_personal_kb(kb):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Support case not found")
+
+    # Lay the human review over each finding without persisting the enriched
+    # shape back: the revision hashes the raw analysis, and only the review for
+    # the CURRENT revision is surfaced (older-revision reviews stay on the row).
+    analysis_out: list | None = None
+    revision: str | None = None
+    if case.analysis is not None:
+        revision = compute_analysis_revision(
+            content_hash=case.content_hash, analysis_version=case.analysis_version, analysis=case.analysis
+        )
+        reviews = reviews_for_current_revision(case.reviews, revision, len(case.analysis))
+        analysis_out = [{**finding, "review": reviews[i]} for i, finding in enumerate(case.analysis)]
+
+    return SupportCaseDetailOut(
+        id=case.id,
+        kb_slug=case.kb_slug,
+        payload=case.payload,
+        status=case.status,
+        analysis=analysis_out,
+        analysis_version=case.analysis_version,
+        analysis_revision=revision,
+        imported_at=case.imported_at,
+    )
 
 
 @router.get("/gaps/summary", response_model=GapSummaryResponse)

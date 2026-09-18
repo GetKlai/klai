@@ -1,15 +1,18 @@
 /**
  * Top-of-tab action bar for the Sources list.
  *
- * Three slots, right-aligned:
- *   1. "Open in editor" - only when docs are enabled AND there are pages.
- *   2. "Synchroniseer alles" - only when there is at least one connector source.
- *   3. "Bron toevoegen" - always.
+ * Slots, right-aligned:
+ *   1. "Support cases" - only for an organisation KB. A personal (user-owned)
+ *      KB has no support inbox, and the target screen is org-only, so the link
+ *      stays hidden while ownership is unknown or user-owned.
+ *   2. "Open in editor" - only when docs are enabled AND there are pages.
+ *   3. "Synchroniseer alles" - only when there is at least one connector source.
+ *   4. "Bron toevoegen" - always.
  *
  * Left of the slots: subtle count ("N bronnen" / "N bron").
  */
 import { Link } from '@tanstack/react-router'
-import { Loader2, NotebookPen, Plus, RefreshCw } from 'lucide-react'
+import { FileText, Loader2, NotebookPen, Plus, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { PageHeader } from '@/components/ui/page-header'
 import * as m from '@/paraglide/messages'
@@ -21,6 +24,7 @@ interface SourcesActionBarProps {
   sources: Source[]
   connectorSources: Source[]
   showEditorLink: boolean
+  showSupportCases: boolean
 }
 
 export function SourcesActionBar({
@@ -28,6 +32,7 @@ export function SourcesActionBar({
   sources,
   connectorSources,
   showEditorLink,
+  showSupportCases,
 }: SourcesActionBarProps) {
   const syncAll = useSyncAllConnectors(kbSlug, connectorSources)
   const sourceCount =
@@ -41,6 +46,14 @@ export function SourcesActionBar({
       description={sourceCount}
       actions={
         <div className="flex items-center gap-2">
+          {showSupportCases && (
+            <Button asChild variant="outline" size="sm">
+              <Link to="/app/knowledge/gaps/support-cases" search={{ kbSlug }}>
+                <FileText className="h-4 w-4" />
+                {m.support_cases_action_open()}
+              </Link>
+            </Button>
+          )}
           {showEditorLink && (
             <Button asChild variant="outline" size="sm">
               <Link to="/app/docs/$kbSlug" params={{ kbSlug }}>

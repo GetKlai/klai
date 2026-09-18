@@ -55,6 +55,7 @@ def _make_connector(connector_id: str = "conn-1", kb_id: int = 1, enabled: bool 
     connector.kb_id = kb_id
     connector.is_enabled = enabled
     connector.last_sync_status = "idle"
+    connector.last_sync_at = None
     connector.connector_type = "web_crawler"
     return connector
 

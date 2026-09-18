@@ -75,7 +75,7 @@ async def test_set_telemetry_level_happy_path(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_set_telemetry_level_idempotent_noop(monkeypatch):
+async def test_set_telemetry_level_idempotent_noop(monkeypatch, support_purge):
     """Setting the same level skips commit but still audits + invalidates."""
     from app.services.telemetry_level import set_telemetry_level
 
@@ -190,3 +190,35 @@ async def test_set_telemetry_level_org_not_found(monkeypatch):
             operator_user_id="op",
             reason="missing org",
         )
+
+
+@pytest.fixture
+def support_purge(monkeypatch):
+    context = MagicMock()
+    context.__aenter__.return_value = AsyncMock()
+    monkeypatch.setattr("app.core.database.tenant_scoped_session", MagicMock(return_value=context))
+    purge = AsyncMock(return_value=0)
+    monkeypatch.setattr("app.services.support_cases.purge_support_cases_for_org", purge)
+    return purge
+
+
+@pytest.mark.asyncio
+async def test_failed_opt_out_cleanup_runs_again_on_retry(monkeypatch, support_purge):
+    from app.services.telemetry_level import set_telemetry_level
+
+    org = _FakeOrg(level="full")
+    db = AsyncMock()
+    db.execute.return_value = _scalar_result(org)
+    monkeypatch.setattr("app.services.telemetry_level.invalidate_kb_cache", AsyncMock())
+    monkeypatch.setattr("app.services.telemetry_level.log_event", AsyncMock())
+    support_purge.side_effect = [RuntimeError("cleanup unavailable"), 0]
+    kwargs = dict(
+        org_id=42, new_level="shadow", operator_kind="operator", operator_user_id="internal-admin", reason="Opt out"
+    )
+
+    with pytest.raises(RuntimeError, match="cleanup unavailable"):
+        await set_telemetry_level(db, **kwargs)
+    assert org.telemetry_level == "shadow"
+
+    assert await set_telemetry_level(db, **kwargs) == ("shadow", "shadow")
+    assert support_purge.await_count == 2

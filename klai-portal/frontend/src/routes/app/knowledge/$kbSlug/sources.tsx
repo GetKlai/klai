@@ -17,6 +17,8 @@ import { ListEmptyState, ListLoadingState } from '@/components/ui/list-state'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import { apiFetch } from '@/lib/apiFetch'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
+import { fetchMe } from '@/lib/api-me'
+import { appNavGapsIsVisible } from '@/routes/app/-app-tools'
 import { DOCS_BASE, getOrgSlug } from '@/lib/kb-editor/tree-utils'
 import * as m from '@/paraglide/messages'
 import { editablePageIdForSource, sourcesPollIntervalMs } from './-sources-helpers'
@@ -24,6 +26,7 @@ import { SourcesActionBar } from './-sources-actionbar'
 import { SourceRow } from './-sources-row'
 import { kbQueryKeys } from '@/lib/kb-query-keys'
 import type { PageIndexEntry, SourcesResponse } from './-sources-types'
+import type { KnowledgeBase } from './-kb-types'
 
 export const Route = createFileRoute('/app/knowledge/$kbSlug/sources')({
   component: SourcesTab,
@@ -44,10 +47,11 @@ function SourcesTab() {
   const sources = data?.sources ?? []
   const connectorSources = sources.filter((s) => s.kind === 'connector')
 
-  // KB data is already cached by the route shell; reuse same query key.
-  const { data: kb } = useQuery<{ docs_enabled: boolean }>({
+  // KB data is already cached by the route shell; reuse same query key. The
+  // full KB detail carries owner_type, which gates the org-only support inbox.
+  const { data: kb } = useQuery<KnowledgeBase>({
     queryKey: kbQueryKeys.knowledgeBase(kbSlug),
-    queryFn: () => apiFetch<{ docs_enabled: boolean }>(`/api/app/knowledge-bases/${kbSlug}`),
+    queryFn: () => apiFetch<KnowledgeBase>(`/api/app/knowledge-bases/${kbSlug}`),
   })
 
   // Sources and docs-editor pages are two separate stores: sources live in
@@ -58,6 +62,17 @@ function SourcesTab() {
   // as route.tsx so a tree hit here warms the cache for the editor route.
   const { user } = useCurrentUser()
   const orgSlug = getOrgSlug(user?.workspace_url)
+
+  const hasGapsCapability = user?.hasCapability('kb.gaps') === true
+  const meQuery = useQuery({
+    queryKey: ['me'],
+    queryFn: ({ signal }) => fetchMe(signal),
+    enabled: hasGapsCapability,
+  })
+  const gapsUnlocked = appNavGapsIsVisible({
+    hasCapability: (cap) => user?.hasCapability(cap) === true,
+    unlockedFeatures: meQuery.data?.platform_unlocked_features ?? [],
+  })
   const { data: docsTree } = useQuery<{ id: string }[]>({
     queryKey: kbQueryKeys.docsTree(orgSlug, kbSlug),
     queryFn: () => apiFetch<{ id: string }[]>(`${DOCS_BASE}/orgs/${orgSlug}/kbs/${kbSlug}/tree`),
@@ -99,6 +114,7 @@ function SourcesTab() {
         sources={sources}
         connectorSources={connectorSources}
         showEditorLink={!!kb?.docs_enabled && hasEditorPages}
+        showSupportCases={kb?.owner_type === 'org' && gapsUnlocked}
       />
 
       {isLoading ? (

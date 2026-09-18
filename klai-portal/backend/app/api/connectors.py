@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import _load_org_or_500, get_effective_capabilities, get_kb_with_access, require_capability
 from app.core.database import get_db
-from app.core.permissions import UserPermissions, get_caller
+from app.core.permissions import UserPermissions, assert_platform_unlocked, get_caller
 from app.core.profiles import Capability, ProfileRole, check_connector_allowed
 from app.models.connectors import PortalConnector
 from app.models.knowledge_bases import PortalKnowledgeBase
@@ -289,6 +289,37 @@ class JsonFeedConfig(BaseModel):
         return self
 
 
+class HubspotSupportConfig(BaseModel):
+    """Validated configuration for a read-only HubSpot support-case connector.
+
+    SPEC-RAG-SUPPORT-GAP → "Source and evidence boundary". Static private-app
+    authentication only (``access_token`` is encrypted and stripped by the
+    credential store, exactly like ``confluence.api_token``); no new server
+    environment variables. The connector's KB is the comparison scope, never a
+    publication target — raw cases go to ``portal_support_cases``, not KB
+    ingestion.
+    """
+
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+    access_token: str = Field(min_length=1)
+    account_id: str = Field(min_length=1)
+    lookback_days: int = Field(default=30, ge=1, le=90)
+    pipeline_ids: list[str] = Field(default_factory=list)
+    inbox_ids: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_numeric_ids(self) -> "HubspotSupportConfig":
+        # HubSpot account, pipeline and inbox ids are numeric strings; reject a
+        # typo'd non-numeric id at save time rather than on first failed sync.
+        if not self.account_id.isdigit():
+            raise ValueError("account_id must be a numeric string")
+        for field, values in (("pipeline_ids", self.pipeline_ids), ("inbox_ids", self.inbox_ids)):
+            if any(not v.isdigit() for v in values):
+                raise ValueError(f"{field} must be numeric strings")
+        return self
+
+
 # Connector-type -> pydantic config class. Adding a new entry wires
 # validation (including SSRF) into both create_connector and
 # update_connector without further per-endpoint code.
@@ -297,6 +328,7 @@ _CONFIG_SCHEMA: dict[str, type[BaseModel]] = {
     "confluence": ConfluenceConfig,
     "airtable": AirtableConfig,
     "json_feed": JsonFeedConfig,
+    "hubspot_support": HubspotSupportConfig,
 }
 
 
@@ -326,6 +358,43 @@ def _validate_connector_config(connector_type: str, config: dict) -> dict:
     return validated.model_dump(exclude_unset=False)
 
 
+async def _assert_unique_hubspot_support_connector(
+    db: AsyncSession,
+    *,
+    org_id: int,
+    kb_id: int,
+    connector_type: str,
+    config: dict,
+    exclude_connector_id: str | None = None,
+) -> None:
+    """Reject a second active hubspot_support connector for the same account.
+
+    Support cases are keyed by (org, kb, account), not by connector, so two
+    connectors sharing that triple would import the same cases and either could
+    reconcile-delete them. One active connector per triple keeps case ownership
+    unambiguous. No-op for other connector types.
+    """
+    if connector_type != "hubspot_support":
+        return
+    account_id = config.get("account_id")
+    if not account_id:
+        return
+    stmt = select(PortalConnector.id).where(
+        PortalConnector.org_id == org_id,
+        PortalConnector.kb_id == kb_id,
+        PortalConnector.connector_type == "hubspot_support",
+        PortalConnector.state == "active",
+        PortalConnector.config["account_id"].astext == account_id,
+    )
+    if exclude_connector_id is not None:
+        stmt = stmt.where(PortalConnector.id != exclude_connector_id)
+    if (await db.execute(stmt)).first() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error_code": "hubspot_support_connector_account_conflict"},
+        )
+
+
 # @MX:ANCHOR: ConnectorType Literal — Pydantic validation boundary for connector_type.
 # @MX:REASON: Extended by SPEC-KB-CONNECTORS-001 R6 to include airtable, confluence,
 #   google_docs, google_sheets, google_slides. CHECK constraint in Alembic migration
@@ -342,6 +411,7 @@ ConnectorType = Literal[
     "google_sheets",
     "google_slides",
     "json_feed",
+    "hubspot_support",
 ]
 
 # Default content_type per connector_type (SPEC-EVIDENCE-001, R10)
@@ -360,6 +430,9 @@ CONTENT_TYPE_DEFAULTS: dict[str, str] = {
     "google_sheets": "kb_article",
     "google_slides": "kb_article",
     "json_feed": "kb_article",
+    # Raw cases never enter KB ingestion; this default only labels the connector
+    # row. "support_case" keeps it out of the knowledge content types.
+    "hubspot_support": "support_case",
 }
 
 
@@ -815,6 +888,31 @@ def _normalize_schedule(schedule: str | None) -> str | None:
     return stripped
 
 
+async def _assert_knowledge_gaps_unlocked(db: AsyncSession, org_id: int) -> None:
+    org = await _load_org_or_500(db, org_id)
+    assert_platform_unlocked(org, "knowledge_gaps")
+
+
+async def _assert_support_update_allowed(
+    db: AsyncSession,
+    org_id: int,
+    connector: PortalConnector,
+    body: "ConnectorUpdateRequest",
+) -> None:
+    if connector.connector_type != "hubspot_support":
+        return
+    reconfig_or_reenable = (
+        body.name is not None
+        or body.config is not None
+        or body.schedule is not None
+        or body.content_type is not None
+        or body.allowed_assertion_modes is not None
+        or body.is_enabled is True
+    )
+    if reconfig_or_reenable:
+        await _assert_knowledge_gaps_unlocked(db, org_id)
+
+
 # -- Endpoints ----------------------------------------------------------------
 
 
@@ -864,6 +962,8 @@ async def create_connector(
 
     # REQ-3: personal/company roles may only use url/upload connector types
     check_connector_allowed(perms, body.connector_type)
+    if body.connector_type == "hubspot_support":
+        await _assert_knowledge_gaps_unlocked(db, perms.org_id)
     # G1: Plan-ceiling on external connectors. The role-level check above already
     # blocks personal/company. For roles that pass (kb_manager+), ensure the org
     # plan also permits external connectors.
@@ -891,6 +991,13 @@ async def create_connector(
     # BEFORE _auto_fill_canary_fingerprint, so a malicious base_url /
     # canary_url cannot trigger an internal fingerprint fetch.
     validated_config = _validate_connector_config(body.connector_type, body.config)
+    # SPEC-RAG-SUPPORT-GAP: at most one active hubspot_support connector per
+    # (org, kb, account), so two connectors cannot share imported cases and let
+    # one reconcile-delete the other's evidence. DB partial-unique index is the
+    # race-proof guarantee; this is the clean 409.
+    await _assert_unique_hubspot_support_connector(
+        db, org_id=perms.org_id, kb_id=kb.id, connector_type=body.connector_type, config=validated_config
+    )
     # SPEC-CRAWL-004: auto-compute canary fingerprint before encryption
     # (needs plaintext cookies from config).
     config_for_save = await _auto_fill_canary_fingerprint(validated_config)
@@ -1015,6 +1122,7 @@ async def update_connector(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Connector not found",
         )
+    await _assert_support_update_allowed(db, perms.org_id, connector, body)
     if body.clear_credentials and body.config is not None:
         sensitive_fields = set(SENSITIVE_FIELDS.get(connector.connector_type, []))
         if sensitive_fields.intersection(body.config):
@@ -1199,6 +1307,8 @@ async def trigger_sync(
     connector = result.scalar_one_or_none()
     if not connector:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
+    if connector.connector_type == "hubspot_support":
+        assert_platform_unlocked(org, "knowledge_gaps")
     if not connector.is_enabled:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Connector is disabled")
     if connector.last_sync_status == "running":
@@ -1225,9 +1335,11 @@ async def trigger_sync(
         logger.exception("Failed to reach klai-connector for connector %s", connector_id)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Sync service unavailable") from exc
 
-    # Optimistically mark as running so the UI reflects it immediately.
-    connector.last_sync_status = "running"
-    connector.last_sync_at = sync_run.started_at
+    # A fast worker can report completion before this start response arrives.
+    await db.refresh(connector, with_for_update=True)
+    if connector.last_sync_at is None or connector.last_sync_at < sync_run.started_at:
+        connector.last_sync_status = "running"
+        connector.last_sync_at = sync_run.started_at
     await db.commit()
     emit_event(
         "knowledge.uploaded",

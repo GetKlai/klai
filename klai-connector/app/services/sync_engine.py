@@ -12,6 +12,7 @@ import asyncio
 import base64
 import time
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -38,6 +39,11 @@ from app.models.sync_run import SyncRun
 from app.reason_codes import PersistSkipReason  # SPEC-INGEST-RECONCILE-001 AC-9
 from app.services.parser import parse_document_with_images
 from app.services.portal_client import PortalClient
+from app.services.support_source import (
+    HubSpotAccountMismatchError,
+    HubSpotError,
+    HubSpotSupportReader,
+)
 from app.services.url_guard import (
     PersistedUrlRejectedError,
     validate_web_crawler_config_strict,
@@ -94,6 +100,7 @@ class SyncEngine:
         settings: Settings,
         image_store: ImageStore | None = None,
         crawl_sync_client: CrawlSyncClient | None = None,
+        support_reader_factory: Callable[[dict[str, Any]], HubSpotSupportReader] | None = None,
     ) -> None:
         self._session_maker = session_maker
         self._registry = registry
@@ -101,6 +108,12 @@ class SyncEngine:
         self._portal_client = portal_client
         self._settings = settings
         self._image_store = image_store
+        # SPEC-RAG-SUPPORT-GAP: support-case reader is built per sync from
+        # the decrypted connector config. Injectable so tests exercise the
+        # engine's reconcile-gating without contacting HubSpot.
+        self._support_reader_factory: Callable[[dict[str, Any]], HubSpotSupportReader] = (
+            support_reader_factory or HubSpotSupportReader
+        )
         # SPEC-SEC-SSRF-001 REQ-7.4 / REQ-7.6 / AC-23: wrap the image
         # http client in a ``PinnedResolverTransport`` so every adapter
         # image fetch (Notion / Confluence / GitHub / Airtable) inherits
@@ -211,6 +224,20 @@ class SyncEngine:
         # on the connector side; moves pipeline execution to ingest.
         if portal_config.connector_type == "web_crawler" and self._crawl_sync_client is not None:
             await self._run_web_crawler_delegation(
+                portal_config=portal_config,
+                connector_id=connector_id,
+                sync_run_id=sync_run_id,
+                start_time=start_time,
+            )
+            return
+
+        # SPEC-RAG-SUPPORT-GAP: HubSpot support cases are evidence, not KB
+        # documents. They are read here and POSTed to the portal support
+        # endpoint; they NEVER enter knowledge ingestion. Branch mirrors the
+        # web_crawler delegation above: a distinct destination sink handled
+        # before the ordinary DocumentRef ingest loop.
+        if portal_config.connector_type == "hubspot_support":
+            await self._run_hubspot_support_sync(
                 portal_config=portal_config,
                 connector_id=connector_id,
                 sync_run_id=sync_run_id,
@@ -790,6 +817,186 @@ class SyncEngine:
             error_details=failure_error_details or None,
         )
 
+    async def _run_hubspot_support_sync(
+        self,
+        *,
+        portal_config: Any,
+        connector_id: uuid.UUID,
+        sync_run_id: uuid.UUID,
+        start_time: float,
+    ) -> None:
+        """SPEC-RAG-SUPPORT-GAP: read HubSpot cases into the portal sink.
+
+        Enumeration (account verification + ticket selection) runs first and
+        completely, then every selected case is fetched and POSTed to the
+        portal evidence endpoint. Reconciliation of absent IDs runs ONLY
+        after a fully successful snapshot with every case write durable —
+        a raised fetch, a failed POST, or a case whose analysis came back
+        ``failed`` marks the run failed and skips reconcile. Knowledge
+        ingestion is never touched on this path.
+        """
+        reader = self._support_reader_factory(portal_config.config)
+
+        status = SyncStatus.COMPLETED
+        documents_total = 0
+        documents_ok = 0
+        documents_failed = 0
+        error_details: list[dict[str, Any]] = []
+        posted_external_ids: list[str] = []
+        enumeration_ok = False
+
+        async with self._session_maker() as session:
+            sync_run = await session.get(SyncRun, sync_run_id)
+            if sync_run is None:
+                logger.error("SyncRun not found: %s", sync_run_id)
+                await reader.aclose()
+                return
+
+            try:
+                await reader.verify_account()
+                selected = await reader.select_tickets()
+                enumeration_ok = True
+                documents_total = len(selected)
+
+                for ticket in selected:
+                    external_id = str(ticket.get("id"))
+                    try:
+                        case = await reader.fetch_case(ticket)
+                        if case is None:
+                            # Out of the selected inbox scope: not evidence and
+                            # not a failure. Absent from the reconcile set so a
+                            # stale copy is removed on a fully successful run.
+                            continue
+                        result = await self._portal_client.send_support_case(
+                            connector_id,
+                            case.to_payload(),
+                        )
+                    except HubSpotError as case_err:
+                        # A required page of this case could not be read.
+                        # Persist the failure; other cases still get posted.
+                        documents_failed += 1
+                        error_details.append({"external_id": external_id, "error": str(case_err)})
+                        logger.warning(
+                            "support_case_fetch_failed",
+                            extra={"connector_id": str(connector_id), "external_id": external_id},
+                        )
+                        continue
+                    except httpx.HTTPError as post_err:
+                        documents_failed += 1
+                        error_details.append(
+                            {
+                                "external_id": external_id,
+                                "error": "portal_support_case_post_failed",
+                                "detail": str(post_err),
+                            }
+                        )
+                        logger.warning(
+                            "support_case_post_failed",
+                            extra={"connector_id": str(connector_id), "external_id": external_id},
+                        )
+                        if isinstance(post_err, httpx.HTTPStatusError) and post_err.response.status_code in (401, 403):
+                            break
+                        continue
+
+                    # A case counts as synced only when its evidence is
+                    # complete AND the portal analysed it. Any other state
+                    # (incomplete evidence, pending/unknown analysis) leaves
+                    # the evidence stored but fails the run and blocks
+                    # reconciliation.
+                    if case.complete and result.get("status") == "analyzed":
+                        documents_ok += 1
+                        posted_external_ids.append(case.external_id)
+                    else:
+                        documents_failed += 1
+                        error_details.append(
+                            {
+                                "external_id": external_id,
+                                "error": "case_not_analyzed",
+                                "complete": case.complete,
+                                "status": result.get("status"),
+                            }
+                        )
+
+                # Reconcile deletions ONLY from a fully successful snapshot.
+                if documents_failed == 0:
+                    await self._portal_client.reconcile_support_cases(connector_id, external_ids=posted_external_ids)
+                else:
+                    status = SyncStatus.FAILED
+
+            except HubSpotAccountMismatchError as err:
+                status = SyncStatus.FAILED
+                error_details.append({"error": "account_mismatch", "reason": str(err)})
+                logger.warning(
+                    "support_account_mismatch",
+                    extra={"connector_id": str(connector_id)},
+                )
+            except HubSpotError as err:
+                # Enumeration failed (auth / API). 401/403 => reconnect needed.
+                code = getattr(err, "status_code", None)
+                status = SyncStatus.AUTH_ERROR if code in (401, 403) else SyncStatus.FAILED
+                error_details.append({"error": "hubspot_read_failed", "reason": str(err)})
+                logger.warning(
+                    "support_enumeration_failed",
+                    extra={"connector_id": str(connector_id), "status_code": code},
+                )
+            except Exception as err:
+                status = SyncStatus.FAILED
+                error_details.append({"error": str(err)})
+                logger.exception(
+                    "support_sync_unexpected_error",
+                    extra={"connector_id": str(connector_id)},
+                )
+            finally:
+                await reader.aclose()
+
+            if not enumeration_ok:
+                documents_total = 0
+
+            completed_at = datetime.now(UTC)
+            sync_run.status = status
+            sync_run.completed_at = completed_at
+            sync_run.quality_status = "healthy" if status == SyncStatus.COMPLETED else None
+            sync_run.documents_total = documents_total
+            sync_run.documents_ok = documents_ok
+            sync_run.documents_failed = documents_failed
+            sync_run.error_details = error_details if error_details else None
+            # Only a fully successful snapshot advances the checkpoint. A
+            # failed/partial run leaves it unset so the last good
+            # last_synced_at is preserved.
+            if status == SyncStatus.COMPLETED:
+                sync_run.cursor_state = {
+                    "last_synced_at": completed_at.isoformat(),
+                    "selected_count": documents_total,
+                }
+            else:
+                sync_run.cursor_state = None
+            await session.commit()
+
+            logger.info(
+                "support_sync_complete",
+                extra={
+                    "event": "sync_complete",
+                    "connector_id": str(connector_id),
+                    "duration_seconds": round(time.monotonic() - start_time, 1),
+                    "documents_total": documents_total,
+                    "documents_ok": documents_ok,
+                    "documents_failed": documents_failed,
+                    "status": status,
+                },
+            )
+
+        await self._portal_client.report_sync_status(
+            connector_id=connector_id,
+            sync_run_id=sync_run_id,
+            sync_status=status,
+            completed_at=completed_at,
+            documents_total=documents_total,
+            documents_ok=documents_ok,
+            documents_failed=documents_failed,
+            bytes_processed=0,
+            error_details=error_details if error_details else None,
+        )
+
     async def _upload_images(
         self,
         *,
@@ -842,10 +1049,23 @@ class SyncEngine:
         async with self._session_maker() as session:
             sync_run = await session.get(SyncRun, sync_run_id)
             if sync_run:
+                completed_at = datetime.now(UTC)
+                error_details = [{"error": error_message}]
                 sync_run.status = SyncStatus.FAILED
-                sync_run.completed_at = datetime.now(UTC)
-                sync_run.error_details = [{"error": error_message}]
+                sync_run.completed_at = completed_at
+                sync_run.error_details = error_details
                 await session.commit()
+                await self._portal_client.report_sync_status(
+                    connector_id=sync_run.connector_id,
+                    sync_run_id=sync_run_id,
+                    sync_status=SyncStatus.FAILED,
+                    completed_at=completed_at,
+                    documents_total=0,
+                    documents_ok=0,
+                    documents_failed=0,
+                    bytes_processed=0,
+                    error_details=error_details,
+                )
 
     @staticmethod
     async def _get_last_successful_run(session: AsyncSession, connector_id: uuid.UUID) -> SyncRun | None:

@@ -101,6 +101,12 @@ class TestSensitiveFieldsMapping:
     def test_json_feed_fields(self) -> None:
         assert SENSITIVE_FIELDS["json_feed"] == ["url"]
 
+    def test_hubspot_support_fields(self) -> None:
+        # SPEC-RAG-SUPPORT-GAP: the key MUST be exactly 'access_token' — the name
+        # the portal HubspotSupportConfig writes — or encryption is silently
+        # skipped and the token stays in plaintext JSONB (the KB-020 failure).
+        assert SENSITIVE_FIELDS["hubspot_support"] == ["access_token"]
+
     def test_all_connector_types_present(self) -> None:
         assert set(SENSITIVE_FIELDS.keys()) == {
             "github",
@@ -111,6 +117,7 @@ class TestSensitiveFieldsMapping:
             "confluence",
             "airtable",
             "json_feed",
+            "hubspot_support",
         }
 
 
@@ -165,6 +172,31 @@ class TestRoundTrip:
                 "installation_token": FAKE_TOKEN_B,
                 "app_private_key": FAKE_TOKEN_C,
             }
+
+    @pytest.mark.asyncio()
+    async def test_hubspot_support_roundtrip(self) -> None:
+        store = _make_store()
+        db = AsyncMock()
+        config = {
+            "access_token": FAKE_TOKEN_A,
+            "account_id": "12345678",
+            "lookback_days": 30,
+            "pipeline_ids": ["1", "2"],
+            "inbox_ids": [],
+        }
+        with patch.object(store, "get_or_create_dek", return_value=os.urandom(32)):
+            blob, stripped = await store.encrypt_credentials(
+                org_id=7, connector_type="hubspot_support", config=config, db=db
+            )
+            # The token is encrypted and removed; the non-secret workflow config
+            # stays in the plaintext dict on the connector row.
+            assert "access_token" not in stripped
+            assert stripped["account_id"] == "12345678"
+            assert stripped["pipeline_ids"] == ["1", "2"]
+
+            assert blob is not None
+            decrypted = await store.decrypt_credentials(org_id=7, encrypted_credentials=blob, db=db)
+            assert decrypted == {"access_token": FAKE_TOKEN_A}
 
     @pytest.mark.asyncio()
     async def test_web_crawler_roundtrip(self) -> None:
