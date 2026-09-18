@@ -1176,10 +1176,13 @@ async def _repair_or_measure(
     and 72% reach the repair threshold against 65%. So the repair belongs here
     too.
 
-    It can only act where the whole answer is still in hand. A streamed answer
-    has already been read by the time this could speak, so there the check keeps
-    measuring only; ``KLAI_KB_CHAT_RENDER_MODE=deterministic_non_streaming``
-    turns streaming off and this on. Any failure leaves the answer untouched.
+    It can only act where the whole answer is still in hand. That is true for a
+    non-streaming response, and also for a Strict stream, which this renderer
+    holds back in full and sends at the flush — the reader sees empty deltas
+    until then, so nothing has been read yet. An Open stream really does send
+    the model's words as they come, and there this only measures.
+
+    Any failure leaves the answer untouched.
     """
     if _repair_would_be_wrong(rendered_content, kb_meta, stream=stream, no_citable_sources=no_citable_sources):
         _measure_answer_grounding(rendered_content, citation_chunks, kb_meta)
@@ -1604,8 +1607,23 @@ async def compose_streaming_kb_response(
                 trusted_sources=trusted_sources,
                 citation_chunks=citation_chunks,
             )
+        # A Strict stream is held back in full (see hold_until_rendered above), so
+        # at the flush the whole answer is still in hand and nothing has been
+        # read yet. That makes this the one point on the streaming path where the
+        # repair can act, and it costs the reader no tokens they were seeing —
+        # held deltas carry no content. It costs time: median 4.0 s, 8.3 s in the
+        # slowest tenth, measured on seventeen real internal answers on
+        # 2026-09-18, which changed nine of them.
+        rendered_content = await _repair_or_measure(
+            rendered_content,
+            citation_chunks,
+            kb_meta,
+            stream=not hold_until_rendered,
+            allowed_image_urls=allowed_image_urls,
+            trusted_sources=trusted_sources,
+            no_citable_sources=no_citable_sources,
+        )
         _record_answer_language(rendered_content, kb_meta)
-        _measure_answer_grounding(rendered_content, citation_chunks, kb_meta)
         _remember_citation_decision(
             kb_meta,
             decision,

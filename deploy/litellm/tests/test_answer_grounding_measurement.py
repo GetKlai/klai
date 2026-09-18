@@ -464,3 +464,79 @@ async def test_a_fixed_refusal_is_not_sent_through_the_checker(monkeypatch):
     )
 
     assert result == "Dit staat niet in onze helpartikelen."
+
+
+@pytest.mark.asyncio
+async def test_a_held_strict_stream_is_repaired_before_the_reader_sees_it(monkeypatch):
+    """The live path, and the only one that matters.
+
+    Every internal turn streams (41 of 41 in the week to 2026-09-18), so a
+    repair that skips streams reaches nothing. A Strict stream is held back in
+    full: the reader gets empty deltas until the flush, where the whole answer
+    is still in hand. This asserts the delta the reader finally receives carries
+    the repaired text, not the draft.
+    """
+    import klai_kb_citation_render as render
+
+    async def _repair(*, user_query, draft, citation_chunks, kb_meta):
+        assert "020-1234567" in draft, "the repair has to see the whole held answer"
+        return "Ga naar Belplan."
+
+    monkeypatch.setattr(render, "repair_answer", _repair)
+    monkeypatch.setattr(render, "_render_kb_citation_content_guard_passthrough", None, raising=False)
+
+    kb_meta = {
+        "chat_retrieval_prompt_mode": "strict_kb",
+        "kb_narrow": True,
+        "allowed_image_urls": [],
+        "citation_chunks": [
+            {
+                "chunk_id": "c1",
+                "title": "Wachtrij",
+                "text": "Ga naar Belplan en voeg de wachtrijmodule toe.",
+                "source_url": "https://help.example.com/wachtrij",
+            }
+        ],
+        "trusted_sources": [
+            {"title": "Wachtrij", "url": "https://help.example.com/wachtrij", "chunk_id": "c1"}
+        ],
+        "user_query": "Hoe stel ik een wachtrij in?",
+        "response_language_target": "nl",
+    }
+
+    first = {"choices": [{"delta": {"content": "Ga naar Belplan "}, "finish_reason": None}]}
+    final = {"choices": [{"delta": {"content": "en bel 020-1234567.", }, "finish_reason": "stop"}]}
+
+    await render.compose_streaming_kb_response(first, kb_meta)
+    # Nothing readable has gone out yet: the held delta carries no content.
+    assert not (first["choices"][0]["delta"].get("content") or "")
+
+    await render.compose_streaming_kb_response(final, kb_meta, flush_stream=True)
+
+    delivered = final["choices"][0]["delta"].get("content") or ""
+    assert "020-1234567" not in delivered, "the reader may not receive the unsupported number"
+    assert "Ga naar Belplan" in delivered
+
+
+@pytest.mark.asyncio
+async def test_an_open_stream_is_only_measured(monkeypatch):
+    """An Open stream really does send the model's words as they come."""
+    import klai_kb_citation_render as render
+
+    async def _never(**_kwargs):
+        raise AssertionError("text already sent may not be rewritten")
+
+    monkeypatch.setattr(render, "repair_answer", _never)
+    monkeypatch.setattr(render, "_measure_answer_grounding", lambda *_a: None)
+
+    result = await render._repair_or_measure(
+        "Ga naar Belplan.",
+        [],
+        _kb_meta(),
+        stream=True,
+        allowed_image_urls=set(),
+        trusted_sources=[],
+        no_citable_sources=False,
+    )
+
+    assert result == "Ga naar Belplan."
