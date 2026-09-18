@@ -1962,10 +1962,12 @@ async def _judge_composed_answer(
     articles = [(_chunk_source_title(chunk), str(chunk.get("text") or "")) for chunk in citation_chunks or []]
     # Both checks read the same draft and run together, so the heavier one costs
     # its own 2.1 s median once and nothing on top of the light judge's 0.4 s.
+    checks_started = time.perf_counter()
     judgement, grounding = await asyncio.gather(
         judge_answer(messages=messages, draft=safe_text, articles=articles, settings=settings),
         check_grounding(question=_visitor_question(messages), draft=safe_text, articles=articles, settings=settings),
     )
+    checks_ms = _elapsed_ms(checks_started)
     if judgement is not None and grounding is not None:
         # The statement-level check decides grounding: measured against 54
         # hand-checked answers it catches 96% where the light judge caught 22%.
@@ -1985,6 +1987,7 @@ async def _judge_composed_answer(
         decision=outcome,
         judge_failed=judgement is None,
         grounding_checked=grounding is not None,
+        checks_ms=checks_ms,
         unsupported=len(grounding.unsupported) if grounding is not None else None,
         **verdicts,
     )
