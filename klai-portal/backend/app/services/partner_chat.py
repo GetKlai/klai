@@ -164,6 +164,39 @@ def safety_refusal_response(*, model: str, query: str = "") -> dict:
     }
 
 
+def off_topic_response(*, model: str, reply: str, language: str | None) -> dict:
+    """The tenant's own reply for a subject this widget does not answer.
+
+    No model writes here: the visitor gets the configured sentence and the
+    appointment button, so a price or a procedure cannot slip in. Putting the
+    same rule in the widget's base prompt was measured on 2026-09-17 and landed
+    it right 8 times out of 15.
+    """
+    message = {
+        "role": "assistant",
+        "content": reply,
+        "sources": [],
+        "escalation": _appointment_escalation(),
+    }
+    if language is not None:
+        message["language"] = language
+    return {
+        "id": "chatcmpl-off-topic",
+        "object": "chat.completion",
+        "model": model,
+        "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
+    }
+
+
+async def off_topic_stream(*, reply: str, language: str | None) -> AsyncGenerator[bytes]:
+    """The same reply as :func:`off_topic_response`, in the widget's frames."""
+    if language is not None:
+        yield _sse_language_delta(language)
+    yield _sse_escalation_delta(_appointment_escalation())
+    yield _sse_content_delta(reply)
+    yield b"data: [DONE]\n\n"
+
+
 async def safety_refusal_stream(query: str = "") -> AsyncGenerator[bytes]:
     yield _sse_content_delta(safety_refusal_message(query))
     yield b"data: [DONE]\n\n"

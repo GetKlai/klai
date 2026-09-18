@@ -85,6 +85,7 @@ def _grounding(*unsupported: str, supported: tuple[str, ...] = (), contradicted:
 
 def _turn_verdict(**overrides: Any) -> dict:
     return {
+        "topic": "handled",
         "scope": "organisation",
         "wants_human": False,
         "sentiment": "neutral",
@@ -661,6 +662,58 @@ async def test_route_ambiguous_turn_gets_no_ask_instruction_and_a_question_draft
     assert text == CLARIFYING_QUESTION
 
 
+# ─── Subjects this widget does not answer ───────────────────────────────
+
+
+OFF_TOPIC_REPLY = "Deze assistent helpt bij het gebruik van Voys, niet bij prijzen of offertes."
+
+
+async def _off_topic_turn(monkeypatch, *, topic: str, reply: str = OFF_TOPIC_REPLY, stream: bool = False):
+    from app.api import partner
+
+    monkeypatch.setattr(
+        partner,
+        "_widget_off_topic",
+        AsyncMock(return_value=("prijzen, tarieven, offertes, uitstel van betaling", reply)),
+    )
+    return await _route_turn(
+        monkeypatch, turn=_turn_verdict(topic=topic), question="Wat kost een 0800-nummer?", stream=stream
+    )
+
+
+@pytest.mark.parametrize("stream", [True, False])
+async def test_a_subject_the_widget_does_not_answer_gets_the_tenants_own_sentence(monkeypatch, stream):
+    """Putting the same rule in the widget's base prompt landed it right 8 of 15
+    times on 2026-09-17, once quoting a price from an article. Here no model
+    writes at all."""
+    litellm, text = await _off_topic_turn(monkeypatch, topic="not_handled", stream=stream)
+
+    assert text == OFF_TOPIC_REPLY
+    # The answer model was never asked, so it cannot quote a price.
+    assert litellm.answer_requests == []
+
+
+async def test_a_handled_subject_is_answered_as_usual(monkeypatch):
+    litellm, text = await _off_topic_turn(monkeypatch, topic="handled")
+
+    assert text != OFF_TOPIC_REPLY
+    assert litellm.answer_requests
+
+
+async def test_without_a_configured_reply_nothing_changes(monkeypatch):
+    litellm, text = await _off_topic_turn(monkeypatch, topic="not_handled", reply="")
+
+    assert text != OFF_TOPIC_REPLY
+    assert litellm.answer_requests
+
+
+async def test_the_judge_is_told_which_subjects_are_not_answered(monkeypatch):
+    litellm, _ = await _off_topic_turn(monkeypatch, topic="handled")
+
+    (judge_request,) = litellm.turn_requests
+    assert "prijzen, tarieven, offertes" in judge_request["messages"][0]["content"]
+
+
 async def test_turn_judge_runs_concurrently_with_retrieval():
     """Each side waits for the other to have started; run one after the other, this times out."""
     from app.api.partner import ChatCompletionsRequest, chat_completions
@@ -672,7 +725,7 @@ async def test_turn_judge_runs_concurrently_with_retrieval():
         await asyncio.wait_for(judge_started.wait(), 1)
         return [CHUNK_900], "SUPPORT PROFILE", [], False
 
-    async def judge(_messages, _settings):
+    async def judge(_messages, _settings, **_kwargs):
         judge_started.set()
         await asyncio.wait_for(retrieval_started.wait(), 1)
         return turn_judge.TurnJudgement.model_validate(_turn_verdict())

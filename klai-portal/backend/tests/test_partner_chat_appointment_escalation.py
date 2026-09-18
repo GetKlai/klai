@@ -47,7 +47,14 @@ NEUTRAL = {"wants_human": False, "sentiment": "neutral"}
 
 
 def _turn_judgement(**fields: Any) -> TurnJudgement:
-    base = {"scope": "organisation", "wants_human": False, "sentiment": "neutral", "clarity": "clear", "missing": ""}
+    base = {
+        "topic": "handled",
+        "scope": "organisation",
+        "wants_human": False,
+        "sentiment": "neutral",
+        "clarity": "clear",
+        "missing": "",
+    }
     return TurnJudgement.model_validate({**base, **fields})
 
 
