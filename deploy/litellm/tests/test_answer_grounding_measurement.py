@@ -24,8 +24,11 @@ def _fresh_modules():
 
 
 def _kb_meta() -> dict:
+    # The key production writes is chat_retrieval_prompt_mode (klai_kb_answer_policy);
+    # an earlier version of this gate read a key that only tests set, so it would
+    # never have measured a real internal chat.
     return {
-        "kb_chat_mode": "strict",
+        "chat_retrieval_prompt_mode": "strict_kb",
         "user_query": "Hoe stel ik een wachtrij in?",
         "org_id": "8",
         "user_id": "u1",
@@ -55,17 +58,46 @@ async def test_the_check_reads_the_answer_the_user_gets_and_the_articles_behind_
 
 
 @pytest.mark.asyncio
-async def test_a_failing_check_changes_nothing(monkeypatch, caplog):
+async def test_a_crashing_check_stays_inside_its_own_task(monkeypatch, caplog):
+    """The answer is already rendered when this runs; a crash may not reach the
+    event loop as an unhandled exception."""
     import klai_kb_citation_render as render
 
     async def _boom(**_kwargs):
         raise RuntimeError("upstream down")
 
     monkeypatch.setattr(render, "log_answer_grounding", _boom)
+    loop_errors: list[dict] = []
+    asyncio.get_running_loop().set_exception_handler(lambda _loop, context: loop_errors.append(context))
+
+    with caplog.at_level(logging.WARNING):
+        render._measure_answer_grounding("Ga naar Belplan.", [], _kb_meta())
+        await asyncio.sleep(0.01)
+
+    assert any("kb_answer_grounding_task_failed" in r.getMessage() for r in caplog.records)
+    assert loop_errors == []
+
+
+@pytest.mark.asyncio
+async def test_the_answer_does_not_wait_for_the_check(monkeypatch):
+    """The check may not add a second to the user's turn."""
+    import klai_kb_citation_render as render
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _slow(**_kwargs):
+        started.set()
+        await release.wait()
+
+    monkeypatch.setattr(render, "log_answer_grounding", _slow)
 
     render._measure_answer_grounding("Ga naar Belplan.", [], _kb_meta())
+    # Control is back here immediately; the check has not even started yet.
+    assert not started.is_set()
     await asyncio.sleep(0)
-    # The answer was returned before this ran; nothing here can undo that.
+    assert started.is_set()
+    release.set()
 
 
 @pytest.mark.asyncio
@@ -80,7 +112,9 @@ async def test_only_the_strict_mode_is_measured(monkeypatch):
 
     monkeypatch.setattr(render, "log_answer_grounding", _fake)
 
-    render._measure_answer_grounding("Een antwoord.", [], {**_kb_meta(), "kb_chat_mode": "open"})
+    render._measure_answer_grounding(
+        "Een antwoord.", [], {**_kb_meta(), "chat_retrieval_prompt_mode": "open_kb", "kb_narrow": False}
+    )
     await asyncio.sleep(0)
 
     assert called is False

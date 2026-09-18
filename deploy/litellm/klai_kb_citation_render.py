@@ -1147,26 +1147,40 @@ _ANSWER_CLAIMS_REASONS = frozenset({"no_trusted_sources", "strict_no_sentence_le
 _grounding_tasks: set[asyncio.Task] = set()
 
 
+def _forget_grounding_task(task: asyncio.Task) -> None:
+    """Drop the finished task and read its outcome.
+
+    Reading it is what keeps a crash inside the measurement from surfacing as an
+    unhandled task exception on the event loop; the measurement itself already
+    swallows its own errors, so this only covers what it cannot.
+    """
+    _grounding_tasks.discard(task)
+    if not task.cancelled() and task.exception() is not None:
+        _telemetry_logger.warning("kb_answer_grounding_task_failed error=%r", task.exception())
+
+
 def _measure_answer_grounding(
     rendered_content: str, citation_chunks: list[dict], kb_meta: dict[str, Any]
 ) -> None:
     """Schedule the grounding check for this answer; never raises, never blocks."""
-    if not rendered_content.strip() or kb_meta.get("kb_chat_mode") != "strict":
+    if not rendered_content.strip() or not _kb_meta_is_strict(kb_meta):
         return
     try:
-        task = asyncio.create_task(
-            log_answer_grounding(
-                user_query=str(kb_meta.get("user_query") or ""),
-                draft=rendered_content,
-                citation_chunks=citation_chunks,
-                kb_meta=kb_meta,
-            )
-        )
+        # Ask for the loop BEFORE building the coroutine: a coroutine created
+        # without a loop to run it is never awaited and warns at GC.
+        asyncio.get_running_loop()
     except RuntimeError:
-        # No running loop (sync call site in a test): nothing to measure.
         return
+    task = asyncio.create_task(
+        log_answer_grounding(
+            user_query=str(kb_meta.get("user_query") or ""),
+            draft=rendered_content,
+            citation_chunks=citation_chunks,
+            kb_meta=kb_meta,
+        )
+    )
     _grounding_tasks.add(task)
-    task.add_done_callback(_grounding_tasks.discard)
+    task.add_done_callback(_forget_grounding_task)
 
 
 async def _show_uncited_strict_draft(
