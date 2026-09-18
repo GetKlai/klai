@@ -148,6 +148,7 @@ __all__ = [
     "final_response_language_reminder",
     "grounding_check_response_format",
     "grounding_check_user_content",
+    "grounding_repair_system_prompt",
     "grounding_repair_user_content",
     "has_direct_evidence_for_query",
     "is_broad_knowledge_answer",
@@ -1187,6 +1188,23 @@ GROUNDING_REPAIR_SYSTEM_PROMPT = (
     f"longer support it. If nothing useful remains, return exactly: {GROUNDING_NOTHING_LEFT}. Return only the edited "
     "reply."
 )
+
+
+# The repair may point at a person only where there is one to point at. On the
+# widget that is the booking button under the reply; the internal chat has no
+# such contract and its reader IS an employee, so the same sentence would invent
+# a product promise. Same schema and same threshold on both paths; only this
+# clause differs.
+_REPAIR_HANDOFF_CLAUSE: Final[str] = (
+    "and that they can book an appointment with an employee for a definite answer"
+)
+
+
+def grounding_repair_system_prompt(*, appointment_offered: bool) -> str:
+    """The repair instruction, with the hand-off sentence only where it is true."""
+    if appointment_offered:
+        return GROUNDING_REPAIR_SYSTEM_PROMPT
+    return GROUNDING_REPAIR_SYSTEM_PROMPT.replace(f" {_REPAIR_HANDOFF_CLAUSE}", "")
 
 
 class GroundedStatement(BaseModel):

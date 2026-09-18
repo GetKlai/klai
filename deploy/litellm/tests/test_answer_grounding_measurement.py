@@ -299,11 +299,16 @@ async def test_a_non_streaming_answer_is_repaired(monkeypatch):
 
     monkeypatch.setattr(render, "repair_answer", _repair)
 
+    monkeypatch.setattr(render, "_render_kb_citation_content", lambda text, **_kw: (text, [], False, {}))
+
     result = await render._repair_or_measure(
         "Ga naar Belplan en bel 020-1234567.",
         [{"title": "Wachtrij", "text": "Ga naar Belplan."}],
         _kb_meta(),
         stream=False,
+        allowed_image_urls=set(),
+        trusted_sources=[],
+        no_citable_sources=False,
     )
 
     assert result == "Ga naar Belplan."
@@ -326,7 +331,15 @@ async def test_a_streamed_answer_is_only_measured(monkeypatch):
     monkeypatch.setattr(render, "repair_answer", _never)
     monkeypatch.setattr(render, "_measure_answer_grounding", lambda text, _c, _m: measured.append(text))
 
-    result = await render._repair_or_measure("Ga naar Belplan.", [], _kb_meta(), stream=True)
+    result = await render._repair_or_measure(
+        "Ga naar Belplan.",
+        [],
+        _kb_meta(),
+        stream=True,
+        allowed_image_urls=set(),
+        trusted_sources=[],
+        no_citable_sources=False,
+    )
 
     assert result == "Ga naar Belplan."
     assert measured == ["Ga naar Belplan."]
@@ -342,6 +355,112 @@ async def test_a_crashing_repair_leaves_the_answer_alone(monkeypatch):
 
     monkeypatch.setattr(render, "repair_answer", _boom)
 
-    result = await render._repair_or_measure("Ga naar Belplan.", [], _kb_meta(), stream=False)
+    result = await render._repair_or_measure(
+        "Ga naar Belplan.",
+        [],
+        _kb_meta(),
+        stream=False,
+        allowed_image_urls=set(),
+        trusted_sources=[],
+        no_citable_sources=False,
+    )
 
     assert result == "Ga naar Belplan."
+
+
+@pytest.mark.asyncio
+async def test_the_repaired_text_goes_back_through_the_link_guard(monkeypatch):
+    """Free model text again, so it can put back what the renderer removed.
+
+    The widget path re-applies its stripper to repaired text for this reason,
+    and there it was reproduced: a reply carrying a link the retrieval never
+    supplied reached the visitor untouched.
+    """
+    import klai_kb_citation_render as render
+
+    async def _repair(**_kwargs):
+        return "Ga naar Belplan. Zie https://evil.example.com/phish"
+
+    seen: dict = {}
+
+    def _guard(text, **_kw):
+        seen["text"] = text
+        return ("Ga naar Belplan.", [], False, {})
+
+    monkeypatch.setattr(render, "repair_answer", _repair)
+    monkeypatch.setattr(render, "_render_kb_citation_content", _guard)
+
+    result = await render._repair_or_measure(
+        "Ga naar Belplan en bel 020-1234567.",
+        [{"title": "Wachtrij", "text": "Ga naar Belplan."}],
+        _kb_meta(),
+        stream=False,
+        allowed_image_urls=set(),
+        trusted_sources=[],
+        no_citable_sources=False,
+    )
+
+    assert "evil.example.com" in seen["text"], "the guard has to see what the repair produced"
+    assert result == "Ga naar Belplan."
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kb_extra",
+    [
+        {"allow_uncited_user_content": True},
+        {"suppress_kb_citations": True},
+        {"user_provided_content_context": True},
+        {"pasted_correspondence_detected": True},
+    ],
+)
+async def test_an_answer_resting_on_what_the_user_pasted_is_not_repaired(monkeypatch, kb_extra):
+    """The renderer lets these through without KB citations on purpose.
+
+    Judging them against the articles alone reads two correct observations from
+    a screenshot as two unsupported statements, which is exactly the threshold
+    that deletes them.
+    """
+    import klai_kb_citation_render as render
+
+    async def _never(**_kwargs):
+        raise AssertionError("an answer about the user's own material may not be repaired")
+
+    monkeypatch.setattr(render, "repair_answer", _never)
+    monkeypatch.setattr(render, "_measure_answer_grounding", lambda *_a: None)
+
+    result = await render._repair_or_measure(
+        "Op je screenshot staat de extensie op 201.",
+        [],
+        {**_kb_meta(), **kb_extra},
+        stream=False,
+        allowed_image_urls=set(),
+        trusted_sources=[],
+        no_citable_sources=False,
+    )
+
+    assert result == "Op je screenshot staat de extensie op 201."
+
+
+@pytest.mark.asyncio
+async def test_a_fixed_refusal_is_not_sent_through_the_checker(monkeypatch):
+    """It states nothing to repair, and the call would add up to twelve seconds."""
+    import klai_kb_citation_render as render
+
+    async def _never(**_kwargs):
+        raise AssertionError("a fixed refusal may not cost a model call")
+
+    monkeypatch.setattr(render, "repair_answer", _never)
+    monkeypatch.setattr(render, "_measure_answer_grounding", lambda *_a: None)
+
+    result = await render._repair_or_measure(
+        "Dit staat niet in onze helpartikelen.",
+        [],
+        _kb_meta(),
+        stream=False,
+        allowed_image_urls=set(),
+        trusted_sources=[],
+        no_citable_sources=True,
+    )
+
+    assert result == "Dit staat niet in onze helpartikelen."

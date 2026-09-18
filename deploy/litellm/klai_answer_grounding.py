@@ -36,7 +36,7 @@ from typing import Any
 from klai_chat_prompts import (
     GROUNDING_CHECK_SYSTEM_PROMPT,
     GROUNDING_NOTHING_LEFT,
-    GROUNDING_REPAIR_SYSTEM_PROMPT,
+    grounding_repair_system_prompt,
     GroundingCheck,
     grounding_check_response_format,
     grounding_check_user_content,
@@ -151,6 +151,21 @@ async def _call(system_prompt: str, user_content: str, timeout: float, kb_meta: 
     return resp.json()["choices"][0]["message"]["content"]
 
 
+def _log_check(check: GroundingCheck, citation_chunks: list[dict], kb_meta: dict[str, Any]) -> None:
+    logger.warning(
+        "kb_answer_grounding org_id=%s user_id=%s request_id=%s statements=%s unsupported=%s "
+        "contradicted=%s worth_repairing=%s sources=%s",
+        kb_meta.get("org_id"),
+        kb_meta.get("user_id"),
+        kb_meta.get("request_id"),
+        len(check.statements),
+        len(check.unsupported),
+        sum(1 for item in check.statements if item.support == "contradicted"),
+        check.worth_repairing,
+        len(citation_chunks),
+    )
+
+
 async def repair_answer(
     *,
     user_query: str,
@@ -187,11 +202,19 @@ async def repair_answer(
         logger.warning("kb_answer_repair_check_failed error=%s", repr(exc)[:120])
         return None
     check = parse_grounding_check(raw)
-    if check is None or not check.worth_repairing:
+    if check is None:
+        logger.warning("kb_answer_grounding_unparseable org_id=%s", kb_meta.get("org_id"))
+        return None
+    # One check, always logged: an answer under the threshold is still a
+    # measurement, and the comparison between the two paths is built on those
+    # counts. Only reparations used to reach the log, which made the trend read
+    # as if nothing else had been checked.
+    _log_check(check, citation_chunks, kb_meta)
+    if not check.worth_repairing:
         return None
     try:
         repaired = await _call(
-            GROUNDING_REPAIR_SYSTEM_PROMPT,
+            grounding_repair_system_prompt,
             grounding_repair_user_content(draft=draft, unsupported=check.unsupported),
             REPAIR_TIMEOUT,
             kb_meta,
