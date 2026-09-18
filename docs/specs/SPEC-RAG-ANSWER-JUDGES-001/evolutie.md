@@ -541,20 +541,12 @@ streamen. Die prijs eerst gemeten op 17 echte interne antwoorden met hun zoekres
 Negen van de 17 antwoorden werden daadwerkelijk aangepast. Daar bovenop verliest de lezer het
 woord-voor-woord verschijnen van het antwoord.
 
-**Waarom dat geen globale schakel werd.** Interne kennisbankchat per tenant over 30 dagen:
-
-| Tenant | Antwoorden | Met bronverwijzing |
-|---|---|---|
-| e2e (testtenant) | 1474 | 0 |
-| **Voys** | 272 | **169** |
-| privacy1 | 23 | 0 |
-| panography | 21 | 0 |
-| getklai | 2 | 1 |
-
-Eén tenant gebruikt de kennisbank echt; drie halen er geen enkel gerefereerd antwoord uit. De
-bestaande instelling `KLAI_KB_CHAT_RENDER_MODE` geldt voor alle tenants tegelijk, dus die
-omzetten kost drie tenants hun streaming zonder dat er iets te repareren valt, en verandert
-bovendien het gedrag van de testtenant met 1474 antwoorden per maand.
+**Waarom dat geen globale schakel werd.** Over dertig dagen had één tenant vrijwel alle interne
+antwoorden mét bronverwijzing; drie andere tenants met interne beurten hadden er nul, en de
+testtenant produceerde het grootste volume van allemaal zonder één bronverwijzing. (Aantallen per
+tenant staan in de private operationele documentatie, niet hier.) De bestaande instelling
+`KLAI_KB_CHAT_RENDER_MODE` geldt voor alle tenants tegelijk, dus die omzetten kost tenants hun
+streaming zonder dat er iets te repareren valt, en verandert bovendien wat de testtenant oefent.
 
 Daarom nu per organisatie: `KLAI_KB_NON_STREAMING_ORG_IDS`, een lijst Zitadel-org-ids. Leeg
 betekent dat alles streamt zoals nu.
