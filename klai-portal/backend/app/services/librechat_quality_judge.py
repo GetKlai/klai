@@ -45,7 +45,8 @@ logger = structlog.get_logger()
 # Platform-unlock key from KNOWN_FEATURES (app/core/extensions_registry.py).
 _FEATURE = "librechat_quality_judge"
 # Conversations fetched per org per pass — same cap as the webchat batch;
-# the newest come first, already-judged ones are filtered out afterwards.
+# already-judged ids are excluded inside the Mongo query, so this bounds the
+# number of UNJUDGED candidates fetched, newest first.
 _BATCH_SIZE = 50
 # Same constructor values as librechat_chat_context.py::_sync_recent_conversations.
 _MONGO_TIMEOUT_MS = 2000
@@ -159,13 +160,16 @@ def _mongo_client() -> pymongo.MongoClient:
     )
 
 
-def _sync_fetch_conversations(db_name: str, limit: int) -> list[dict]:
-    """The tenant's most recent LibreChat conversations, newest first."""
+def _sync_fetch_conversations(db_name: str, limit: int, excluded_ids: list[str]) -> list[dict]:
+    """The tenant's most recent not-yet-judged LibreChat conversations, newest
+    first. Already-judged ids are excluded inside the Mongo query so the limit
+    selects unjudged candidates instead of stopping at the newest ``limit``
+    conversations and starving an older unjudged tail behind them."""
     with _mongo_client() as client:
         cursor = (
             client[db_name]
             .conversations.find(
-                {},
+                {"conversationId": {"$nin": excluded_ids}},
                 {"conversationId": 1, "title": 1, "updatedAt": 1, "_id": 0},
             )
             .sort("updatedAt", pymongo.DESCENDING)
@@ -284,13 +288,11 @@ async def _judge_org(org_id: int, slug: str) -> int:
         excl_result = await db.execute(text(_EXCLUDE_SQL), {"org_id": org_id})
         excluded = {row.external_conversation_id for row in excl_result.all()}
 
-        conversations = await asyncio.to_thread(_sync_fetch_conversations, db_name, _BATCH_SIZE)
+        conversations = await asyncio.to_thread(_sync_fetch_conversations, db_name, _BATCH_SIZE, sorted(excluded))
         todo = [
             conv["conversationId"]
             for conv in conversations
-            if isinstance(conv.get("conversationId"), str)
-            and conv["conversationId"]
-            and conv["conversationId"] not in excluded
+            if isinstance(conv.get("conversationId"), str) and conv["conversationId"]
         ]
         if not todo:
             return 0

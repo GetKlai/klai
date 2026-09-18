@@ -99,7 +99,7 @@ The [Conversations API](https://developers.hubspot.com/docs/api-reference/legacy
 
 Add a HubSpot source type to the existing connector configuration/scheduling workflow, with a case-analysis destination. Start with selected pipelines/inboxes and a bounded historical window; fetch subsequent changes on a schedule. Keep raw external data out of the customer-facing KB.
 
-Select tickets server-side with the read-only CRM search endpoint: selected pipelines AND (created within the window OR still open). Paginate on the fixed API host and reject a scope above HubSpot's 10,000-result search ceiling. This avoids scanning an account's entire ticket history without accepting a truncated snapshot as complete.
+Select tickets server-side with the read-only CRM search endpoint: selected pipelines AND (created within the window OR modified within the window OR still open). Use `hs_lastmodifieddate` for the modification group. Paginate on the fixed API host and reject a scope above HubSpot's 10,000-result search ceiling. This avoids scanning an account's entire ticket history without accepting a truncated snapshot as complete.
 
 Preserve source account/ticket/thread/message identity, source revision, timestamps, content hash, visibility, language and fetch completeness. Record anonymous aggregate completeness counters so field selection can evolve from real use. Missing required pages or failed fetches leave the case incomplete and the run visibly failed/partial.
 
@@ -165,7 +165,7 @@ This contract coordinates the source reader, evidence store, analyzer and portal
 - Add connector type `hubspot_support`. Reuse existing connector credentials, scheduling, status and deletion. Its KB is the comparison scope, never the destination for raw cases. Only organization-owned KBs are supported initially.
 - Configuration: `access_token` (encrypted and masked using the existing credential store), `account_id` (numeric string), `lookback_days` (1–90, default 30), `pipeline_ids` and `inbox_ids` (lists of numeric strings, empty means all). Use Bearer authentication with a private-app token or a [HubSpot service key](https://developers.hubspot.com/docs/apps/developer-platform/build-apps/authentication/account-service-keys). Service keys support the scheduled REST reader, not webhooks. OAuth onboarding is a later extension; no new mandatory server environment variables.
 - Read metadata, pipelines, tickets, linked threads, all message pages and linked notes/emails. Verify the configured account. Any unavailable required content makes the case incomplete; unsupported attachments are explicit incomplete evidence. Never infer a resolved outcome from a closed stage.
-- Reconcile a bounded ticket-creation window on every run, also including older open tickets. Re-reading the selected cases catches message/note changes independently of ticket update timestamps. This deliberately favors completeness over incremental performance. Older closed cases outside that window are outside initial coverage; incremental streams and periodic wider reconciliation are the upgrade path.
+- Reconcile a bounded ticket-creation/modification window on every run, also including older open tickets. A recently modified closed ticket remains eligible even when it was created before the window. Keep the creation and open-stage groups: message/note changes do not necessarily update the ticket timestamp. Older closed cases without a recent ticket modification remain outside coverage; incremental streams and periodic wider reconciliation are the upgrade path.
 - A failed or incomplete enumeration must not delete cases or advance a successful checkpoint. Only a fully successful snapshot may reconcile absent IDs. Deletion and retention remove derived findings together with evidence.
 
 ### Case payload and storage
@@ -324,3 +324,58 @@ After an approved article edit, replay the affected reference questions and
 compare answerability before and after. Operational follow-up measures repeated
 support demand and customer resolution. A successful deployment, a large count
 of generated gaps, or the disappearance of all inbox rows is not a quality gate.
+
+### Continuous improvement across channels
+
+Prioritize support tickets, calls and internal support questions. Public webchat
+is an additional signal, not an equally sized quota for every experiment.
+Keep source system, conversation medium, audience and case identity separate:
+a call can also appear in a ticket, and an internal question need not represent
+customer demand. Link contacts through verified source relationships, not just
+similar wording. Scope product, country, language and knowledge base before
+combining needs.
+
+Each iteration follows the same sequence:
+
+1. Find a concrete limitation in production data and relevant primary research.
+2. Trace the responsible code and record the existing behavior as a baseline.
+3. Write a failing behavior test with independently specified expected results.
+4. Implement the smallest change and compare on the same inputs. Preserve a
+   separate unseen cohort for later model-quality evaluation.
+5. Run regression checks and independent review. Publish only when the claimed
+   improvement has evidence; verify the deployed version and live behavior.
+6. Update this research record with the result, limitations and next question.
+
+The evaluator adds `by_channel` to the existing pooled report. Exported
+`payload.source` maps `audio` to `phone` and `hubspot` to `hubspot`. Prepared
+evaluation records may explicitly declare `channel` as `phone`, `hubspot`,
+`librechat` or `webchat`; conflicting source/channel declarations are rejected.
+Absent provenance remains `unknown`. Every observed channel reports processing
+status, abstentions, human-reference coverage and its own precision/recall;
+unreviewed channels retain null quality metrics. Chat outcome judgments are not
+per-question reference answers and cannot be relabelled as such.
+
+The first iteration addresses source coverage before changing model prompts:
+
+- HubSpot includes recently modified older closed tickets, while retaining the
+  creation-window and open-stage groups. [CRM search](https://developers.hubspot.com/docs/api-reference/legacy/crm/objects/tickets/search/search-tickets)
+  provides the filter boundary; compare real API selections without importing
+  the entire expanded cohort. A larger selection is not proof of more true gaps.
+- LibreChat excludes judged conversation IDs before the Mongo batch limit.
+  Excluding them after the limit can permanently hide older unjudged chats.
+  The existing batch size remains bounded. The [Mongo `$nin` documentation](https://www.mongodb.com/docs/manual/reference/operator/query/nin/)
+  notes its limited selectivity: measure query cost as the judged set grows
+  before replacing it with incremental processing.
+- Calls with unknown customer attribution remain provisional. Existing tests
+  check both unknown-role abstention and explicit-role evidence. Speaker labels
+  from [diarization](https://docs.aws.amazon.com/transcribe/latest/dg/diarization.html)
+  do not establish customer/agent roles. Obtain provider role metadata or human
+  correction before treating those findings as confirmed customer knowledge needs.
+
+Keep operational coverage, detector quality and customer outcomes separate.
+Use [offline and online evaluation](https://docs.langchain.com/langsmith/evaluation-types)
+for different questions, and calibrate model graders against human judgments
+as described in [Anthropic's evaluation guidance](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents).
+Research changes the next experiment; it does not authorize automatic knowledge
+publication or turn generated labels into expert truth. Private customer inputs,
+production counts and experiment artifacts stay outside this public document.

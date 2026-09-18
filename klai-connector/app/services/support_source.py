@@ -433,11 +433,17 @@ class HubSpotSupportReader:
 
     def _selection_search_body(self, open_stages: set[str], window_start_ms: int) -> dict[str, Any]:
         """Build the search body scoping tickets to (created within the window)
-        OR (still open), each AND-ed with the configured pipelines.
+        OR (modified within the window) OR (still open), each AND-ed with the
+        configured pipelines.
 
         Filter groups are OR-ed by HubSpot; filters within a group are AND-ed.
-        The open group is omitted when no open stage exists, so the ``IN`` filter
-        never carries an empty value list (which the API rejects).
+        The ``hs_lastmodifieddate`` group brings in tickets whose original
+        create date and closed stage would otherwise exclude them but which
+        changed inside the window; it does not replace the created/open groups
+        because a note or message edit does not always bump that timestamp, so
+        those groups stay as the completeness floor. The open group is omitted
+        when no open stage exists, so the ``IN`` filter never carries an empty
+        value list (which the API rejects).
         """
         pipeline_filter = (
             {"propertyName": "hs_pipeline", "operator": "IN", "values": sorted(self._pipeline_ids)}
@@ -451,7 +457,10 @@ class HubSpotSupportReader:
                 group.append(pipeline_filter)
             return {"filters": group}
 
-        filter_groups = [_group({"propertyName": "createdate", "operator": "GTE", "value": str(window_start_ms)})]
+        filter_groups = [
+            _group({"propertyName": "createdate", "operator": "GTE", "value": str(window_start_ms)}),
+            _group({"propertyName": "hs_lastmodifieddate", "operator": "GTE", "value": str(window_start_ms)}),
+        ]
         if open_stages:
             filter_groups.append(
                 _group({"propertyName": "hs_pipeline_stage", "operator": "IN", "values": sorted(open_stages)})
@@ -500,14 +509,17 @@ class HubSpotSupportReader:
             seen_cursors.add(after)
 
     async def select_tickets(self) -> list[dict[str, Any]]:
-        """Tickets in scope: created within the window OR still open.
+        """Tickets in scope: created within the window OR modified within the
+        window OR still open.
 
         Coverage deliberately favours completeness: every run re-selects the
-        same window plus all older still-open tickets, so changed
-        notes/messages surface without relying on the ticket's own
-        modification timestamp. The scope is applied server-side by
-        ``POST /crm/v3/objects/tickets/search`` so a large account is never
-        fully enumerated; a scope above the
+        same window plus all older still-open tickets, and additionally any
+        ticket whose ``hs_lastmodifieddate`` falls inside the window even when
+        its create date is older and its stage is closed. The older-open group
+        stays because ``hs_lastmodifieddate`` does not update on every note or
+        message edit, so it cannot be the only signal for a changed case. The
+        scope is applied server-side by ``POST /crm/v3/objects/tickets/search``
+        so a large account is never fully enumerated; a scope above the
         10,000-result ceiling fails loudly instead of truncating.
         """
         open_stages = await self._open_stage_ids()
