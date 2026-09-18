@@ -450,6 +450,45 @@ te grof: "Telefonie-instellingen en hardware" beslaat een derde van de kennisban
 onderzochte routes bereikt hem: doorvragen schaadt, keuzes uit artikelen kan niet, en een
 taxonomie-aspect voegt geen zoeksignaal toe.
 
+### 2.21 Eerste vondst van het harnas, en wat de nameting wel en niet laat zien (18 sep)
+Het gesprek dat de simulatie liet zien:
+
+> **Bezoeker:** Ik heb een factuur betaald maar die is ook geïncasseerd. Hoe kan ik bedrag laten storneren?
+> **Assistent:** Dat staat niet in onze helpartikelen. Laat het gerust weten als je vastloopt.
+> **Bezoeker:** *(herhaalt de vraag)*
+> **Assistent:** Ik vind dit niet terug in onze helpartikelen. Je kunt een afspraak maken met een medewerker.
+> **Bezoeker:** Hoe kan ik een afspraak maken met een medewerker?
+
+Drie beurten om te ontdekken dat er een mens bereikbaar was. De eerste weigering schrijft het
+model zelf; die bereikt de bezoeker ongewijzigd omdat hij niets over de organisatie beweert, en
+hij kwam zonder knop. De vaste weigering van de achterkant heeft die knop altijd gehad.
+
+Gerepareerd: een antwoord zonder bron waarvan de lichte beoordelaar zegt dat het de vraag niet
+beantwoordt, krijgt dezelfde knop. Niet op een gespreksbeurt, want die geldt bewust als antwoord
+en een knop onder "graag gedaan" biedt hulp met niets.
+
+**Nameting op dezelfde 12 gesprekken:**
+
+| | Voor | Na |
+|---|---|---|
+| Doel bereikt | 75% | 75% |
+| Eerste antwoord met bron | 75% | 67% |
+| Gemiddeld aantal assistentbeurten | 2,7 | 2,4 |
+| Gemiddeld verspilde beurten | 1,0 | 1,1 |
+| Het gerichte gesprek (dubbele incasso) | 3 beurten, 2 verspild | **1 beurt, 0 verspild** |
+
+**Wat dit wel zegt:** het geval waarvoor de reparatie is gemaakt, is aantoonbaar opgelost.
+
+**Wat dit niet zegt:** dat de widget als geheel beter is geworden. Het totaal beweegt binnen de
+ruis, en bij twaalf gesprekken met een model aan beide kanten is dat te verwachten — de
+meetafspraak hieronder noemt alles onder ongeveer tien beurten ruis. Eén gesprek sloeg van 1 beurt
+naar 4 om, in de andere richting.
+
+**Wat het harnas hiermee zelf laat zien:** twaalf gesprekken is te weinig om een effect van deze
+grootte te meten, en meer gesprekken kost gedeelde snelheidslimiet op productie. Een verbetering
+die niet één specifiek gesprek repareert, is met dit harnas alleen aan te tonen met meerdere
+rondes of een groter aantal, en dat moet dan buiten kantooruren.
+
 ---
 
 ## 3. Wat er live ging, en waarom
@@ -470,6 +509,8 @@ taxonomie-aspect voegt geen zoeksignaal toe.
 | 18 sep | Die twee velden in het beheerscherm (#1510) | de instelling was anders alleen via de database te zetten |
 | 18 sep | Controle van de grondslag op één plek voor beide paden (#1516) | 2.14 |
 | 18 sep | Gespreksbeurten weigeren niet meer; het chatcontract gaat als bewijs mee (#1517) | 2.17 |
+| 18 sep | Gesimuleerde bezoeker voor hele gesprekken (#1519) | 2.19 |
+| 18 sep | Doodlopend antwoord zonder bron krijgt de afspraakknop (#1520) | 2.21 |
 
 ---
 
