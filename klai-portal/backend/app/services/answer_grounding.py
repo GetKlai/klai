@@ -36,8 +36,12 @@ from app.core.config import Settings
 
 logger = structlog.get_logger()
 
-_CHECK_TIMEOUT_SECONDS = 8.0
-_REPAIR_TIMEOUT_SECONDS = 8.0
+# Measured live on 2026-09-18: the check runs in 1.0 to 1.8 s and the repair of
+# a short answer in under a second, but repairing a long step list took 8.4 s and
+# put one turn at 12.3 s end to end. A visitor waits for the whole turn, so both
+# calls are bounded well under that; a timeout keeps the answer as it was.
+_CHECK_TIMEOUT_SECONDS = 5.0
+_REPAIR_TIMEOUT_SECONDS = 5.0
 NOTHING_LEFT = "NOTHING_LEFT"
 
 _CHECK_SYSTEM_PROMPT = (
