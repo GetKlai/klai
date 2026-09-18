@@ -529,10 +529,15 @@ async def test_conversational_reply_is_shown_only_without_unsupported_claims(cla
     reply = "Wij rekenen 5 euro." if claims else "Graag gedaan!"
     litellm = _LiteLLM(model_text=reply, answer_judge=_answer_verdict("not_answered", claims=claims))
 
-    text, signals, _ = await _answer(litellm, stream=False, conversational=True)
+    text, signals, extras = await _answer(litellm, stream=False, conversational=True)
 
     assert text == (reply if shown else REFUSAL_NL)
     assert signals["refused"] is not shown
+    if shown:
+        # A conversational turn is an answer by design, even when the light judge
+        # calls it unanswered, so the dead-end button may not appear under it:
+        # "graag gedaan" with an offer to book reads as help with nothing.
+        assert not extras.get("escalation")
 
 
 async def test_passed_reply_is_stripped_of_links_before_the_judge_and_the_visitor_see_it():

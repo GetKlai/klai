@@ -2069,7 +2069,10 @@ async def _judge_composed_answer(
         # on 2026-09-18 needed two more turns to find out a person was reachable
         # at all: they repeated their question, got the backend refusal with the
         # button, and then had to ask how to book.
-        dead_end = judgement is not None and judgement.verdict != "answered"
+        # Not on a conversational turn: decide_answer deliberately treats one as an
+        # answer even when the light judge calls it unanswered, and a button under
+        # "graag gedaan" offers help with nothing.
+        dead_end = not conversational and judgement is not None and judgement.verdict != "answered"
         if force_escalation or dead_end or (model_offered_appointment and _text_offers_appointment(safe_text)):
             decision["escalation"] = _appointment_escalation()
     if outcome == "partial_answer":
