@@ -496,20 +496,26 @@ andere week. Dat was een keuze van mij, geen beperking: de controle kost alleen 
 en de tenant heeft honderden opgeslagen beurten op beide paden. Opnieuw gedaan, identiek
 behandeld — opgeslagen vraag, opgeslagen antwoord, en de artikelen die het zoeken vandaag levert.
 
-| | Widget (80 beurten) | Interne chat (40 beurten) |
+| | Widget (80 beurten) | Interne chat (80 beurten) |
 |---|---|---|
-| Minstens 1 onbewezen uitspraak | 75% | 80% |
-| Boven de reparatiedrempel | **65%** | **65%** |
-| Minstens 1 tegenspraak | 4% | **10%** |
-| Mediaan antwoordlengte | 349 tekens | 1026 tekens |
+| Minstens 1 onbewezen uitspraak | 75% | 85% |
+| Boven de reparatiedrempel | 65% | 72% |
+| Minstens 1 tegenspraak | 4% | 6% |
+| Mediaan uitspraken per antwoord | 5 | 5 |
+| Mediaan antwoordlengte | 349 tekens | 1173 tekens |
 
-**Dit corrigeert 2.14.** Daar stond 64% extern tegen 86% intern. Op grotere en gelijkgetrokken
-steekproeven liggen de paden veel dichter bij elkaar, en op de maat die de reparatie aanstuurt
-zijn ze gelijk: 65% om 65%. Het echte verschil zit in tegenspraak (10% om 4%) en in lengte, en
-die twee hangen samen — drie keer zoveel tekst is drie keer zoveel gelegenheid.
+**Dit verfijnt 2.14.** Daar stond 64% extern tegen 86% intern, op 25 tegen 50 antwoorden uit
+verschillende weken. De richting klopte: intern is slechter, 85% om 75% en 72% om 65% boven de
+drempel. De kloof is alleen kleiner dan de eerste meting suggereerde, en het aantal uitspraken per
+antwoord is gelijk (5 om 5) terwijl de antwoorden drie keer zo lang zijn.
 
-**Wat dit betekent voor de vraag of de paden gelijk moeten zijn:** ja, en niet omdat het intern
-erger is, maar omdat het even erg is.
+**Tussenstand niet als eindstand lezen.** Op de eerste 40 interne antwoorden stond 80% / 65% /
+10%; op alle 80 werd het 85% / 72% / 6%. Bij deze aantallen schuift een percentage nog makkelijk
+tien punten, en de tegenspraakcategorie is klein genoeg (5 antwoorden) om er geen drempel op te
+bouwen.
+
+**Wat dit betekent voor de vraag of de paden gelijk moeten zijn:** ja. Beide zitten ruim boven de
+drempel waarop de reparatie op de widget bewezen hielp (49% naar 11%), en intern iets hoger.
 
 **Wat er nu gebouwd is.** Het interne pad repareert, met dezelfde woorden, hetzelfde schema en
 dezelfde drempel als de widget. Het budget is ruimer (12 s controle, 8 s reparatie tegen 4 en 3),
