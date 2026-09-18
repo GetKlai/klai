@@ -41,7 +41,7 @@ from klai_kb_chat_mode import prompt_mode_is_known, prompt_mode_is_strict
 # same prompt-injection hardening (strip brackets, collapse whitespace, cap
 # length). Duplicating the sanitizer would risk the two copies drifting.
 from klai_kb_context_prompt import _sanitize_question_echo
-from klai_answer_grounding import log_answer_grounding
+from klai_answer_grounding import log_answer_grounding, repair_answer
 from klai_kb_query_rewrite import classify_answer_claims
 from klai_kb_traceability import dedupe_strings
 from klai_kb_urls import normalise_guard_url
@@ -1159,6 +1159,97 @@ def _forget_grounding_task(task: asyncio.Task) -> None:
         _telemetry_logger.warning("kb_answer_grounding_task_failed error=%r", task.exception())
 
 
+async def _repair_or_measure(
+    rendered_content: str,
+    citation_chunks: list[dict],
+    kb_meta: dict[str, Any],
+    *,
+    stream: bool,
+    allowed_image_urls: set[str],
+    trusted_sources: list[dict[str, Any]],
+    no_citable_sources: bool,
+) -> str:
+    """Repair what the articles do not carry, or measure it when repair is impossible.
+
+    Measured on eighty real answers per path on 2026-09-18: 85% of internal
+    answers state something the articles do not carry against 75% on the widget,
+    and 72% reach the repair threshold against 65%. So the repair belongs here
+    too.
+
+    It can only act where the whole answer is still in hand. A streamed answer
+    has already been read by the time this could speak, so there the check keeps
+    measuring only; ``KLAI_KB_CHAT_RENDER_MODE=deterministic_non_streaming``
+    turns streaming off and this on. Any failure leaves the answer untouched.
+    """
+    if _repair_would_be_wrong(rendered_content, kb_meta, stream=stream, no_citable_sources=no_citable_sources):
+        _measure_answer_grounding(rendered_content, citation_chunks, kb_meta)
+        return rendered_content
+    try:
+        repaired = await repair_answer(
+            user_query=str(kb_meta.get("user_query") or ""),
+            draft=rendered_content,
+            citation_chunks=citation_chunks,
+            kb_meta=kb_meta,
+        )
+    except Exception:
+        _telemetry_logger.warning("kb_answer_repair_crashed", exc_info=True)
+        return rendered_content
+    if not repaired:
+        return rendered_content
+    # Free model text again, so it passes the guard that produced the original:
+    # the repair can put back a link or a citation marker the renderer removed.
+    # The widget path re-applies its stripper for exactly this reason.
+    guarded, _sources, _no_citable, _decision = _render_kb_citation_content(
+        repaired,
+        allowed_image_urls=allowed_image_urls,
+        user_query=kb_meta.get("user_query"),
+        refusal_language=kb_meta.get("response_language_target"),
+        trusted_sources=trusted_sources,
+        evidence_chunks=citation_chunks,
+        kb_narrow=_kb_meta_is_strict(kb_meta),
+        retrieval_confidence_band=kb_meta.get("confidence_band"),
+    )
+    if not guarded.strip():
+        _telemetry_logger.warning(
+            "kb_answer_repair_dropped_by_guard org_id=%s request_id=%s",
+            kb_meta.get("org_id"),
+            kb_meta.get("request_id"),
+        )
+        return rendered_content
+    return guarded
+
+
+def _repair_would_be_wrong(
+    rendered_content: str, kb_meta: dict[str, Any], *, stream: bool, no_citable_sources: bool
+) -> bool:
+    """Where the repair must not run, and the check only measures.
+
+    * A streamed answer: the user has already read it.
+    * A non-strict turn: nothing here claims the articles are the only evidence.
+    * A fixed refusal the backend composed itself: it states nothing to repair,
+      and a blocking model call would add up to twelve seconds to a reply that
+      is already final.
+    * An answer resting on what the user pasted or attached: the renderer lets
+      that through without KB citations on purpose (``allow_uncited_user_content``,
+      ``suppress_kb_citations``, ``user_provided_content_context``), and judging
+      it against the articles alone would read two correct observations from a
+      screenshot as two unsupported statements and delete them.
+    """
+    if stream or not rendered_content.strip() or not _kb_meta_is_strict(kb_meta):
+        return True
+    if no_citable_sources:
+        return True
+    return any(
+        bool(kb_meta.get(key))
+        for key in (
+            "allow_uncited_user_content",
+            "suppress_kb_citations",
+            "user_provided_content_context",
+            "pasted_correspondence_detected",
+        )
+    )
+
+
 def _measure_answer_grounding(
     rendered_content: str, citation_chunks: list[dict], kb_meta: dict[str, Any]
 ) -> None:
@@ -1359,8 +1450,18 @@ async def compose_non_streaming_kb_response(
                     trusted_sources=trusted_sources,
                     citation_chunks=citation_chunks,
                 )
+            rendered_content = await _repair_or_measure(
+                rendered_content,
+                citation_chunks,
+                kb_meta,
+                stream=False,
+                allowed_image_urls=allowed_image_urls,
+                trusted_sources=trusted_sources,
+                no_citable_sources=no_citable_sources,
+            )
+            # After the repair, so answer_language describes the text the user
+            # reads rather than the draft the repair replaced.
             _record_answer_language(rendered_content, kb_meta)
-            _measure_answer_grounding(rendered_content, citation_chunks, kb_meta)
             if (
                 rendered_content != content
                 or sources
