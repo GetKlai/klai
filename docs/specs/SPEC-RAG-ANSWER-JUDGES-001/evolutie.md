@@ -415,6 +415,29 @@ verkeer en de beurten erna zijn de moeite van het lezen waard.
 is geduldiger en formuleert beter dan iemand op een helppagina. Het getal is bruikbaar om twee
 versies met elkaar te vergelijken, nooit als absolute claim.
 
+### 2.20 Aspectgericht doorvragen vanuit de taxonomie: mechanisme werkt niet (18 sep)
+De laatste kandidaat uit het literatuuronderzoek. De [ASK-aanpak](https://aclanthology.org/2025.acl-industry.63.pdf)
+vraagt bij hoge ambiguïteit door op domeinaspecten in plaats van op de gevonden artikelen, en die
+tweede variant was hier al gemeten en gevallen (het zoeken levert nooit meer dan drie
+verschillende artikelen). De support-kennisbank van Voys heeft acht taxonomie-onderwerpen, dus de
+eerste variant was wél te proberen.
+
+Mechanisme eerst getest, vóór de bouw. Voor de 12 magere eerste vragen uit de simulatie bepaalde
+het echte doel van de bezoeker welk aspect hij gekozen zou hebben; daarna dezelfde vraag opnieuw
+gezocht met dat aspect ervoor.
+
+| | Artikel dat het doel dekt |
+|---|---|
+| Kale vraag | 7 van 12 |
+| Met gekozen aspect | **7 van 12** |
+
+Twee gewonnen (beide belplan-vragen), twee verloren (factuur, Engels). Netto nul. Het aspect is
+te grof: "Telefonie-instellingen en hardware" beslaat een derde van de kennisbank.
+
+**Niet gebouwd.** De winst van een rijkere vraag (29 om 7) is echt, maar geen van de drie
+onderzochte routes bereikt hem: doorvragen schaadt, keuzes uit artikelen kan niet, en een
+taxonomie-aspect voegt geen zoeksignaal toe.
+
 ---
 
 ## 3. Wat er live ging, en waarom
@@ -454,6 +477,7 @@ Bronnen: [Alhena over herschrijven bij meerdere beurten](https://alhena.ai/blog/
 
 ## 5. Wat nog open staat
 
+1. ~~Aspectgericht doorvragen vanuit de taxonomie~~ — mechanisme gemeten en gevallen, zie 2.20.
 1. **Varianten voor het herschrijven meten** (onderwerpwissel, trefwoord-stijl, geschiedenis zonder de antwoorden van de assistent) en de beste live zetten.
 2. ~~Zware controle op verzonnen details bouwen~~ — gebouwd, gemeten en live op 18 sep, zie 2.8 en 2.9.
 3. **Reparatie op het interne pad aanzetten.** De controle draait daar sinds 18 sep meekijkend (2.11). De cijfers van beide paden liggen nu naast elkaar (2.14): intern 86% tegen extern 64%, en 70% tegen 40% boven de reparatiedrempel. Openstaand is niet meer óf het moet, maar met welk tijdsbudget: de mediane controle duurt daar 3,6 s.
