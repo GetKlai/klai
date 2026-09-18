@@ -183,6 +183,14 @@ De nameting schreef 0,45 tot 0,8 s extra zoektijd toe aan de letterlijke zoekreg
 
 De zoekregel kost dus 20 ms; het herschrijven kost ongeveer 400 ms, en dat deed het altijd al. De extra tijd in de nameting kwam van een machine die tegelijk drie proeven draaide. Niets teruggedraaid.
 
+### 2.10e Minder "bruikbare" passages bij vervolgvragen, deels verklaard (18 sep)
+Na de nieuwe herschrijving komt het juiste artikel even vaak mee (39% tegen 39-41%), maar het aandeel beurten met minstens één bruikbare passage zakte van 74-76% naar 67%. Nagekeken op de 30 beurten die erop achteruit gingen:
+
+- Bij 10 van de 30 was de oude zoekvraag zelf een antwoord (de herschrijving zette het gesprek voort). Zulke tekst lijkt op een artikel en haalt daarom makkelijk "bruikbare" passages op, terwijl er iets anders gezocht werd dan de bezoeker vroeg.
+- Bij de overige 20 is het gewoon een andere, kortere zoekvraag met een andere uitslag; 18 beurten gingen er juist op vooruit.
+
+De maat "minstens één bruikbare passage" beloont dus deels de fout die we net hebben weggehaald. Wat telt is of het antwoordgevende artikel meekomt, en dat bleef gelijk, terwijl de blinde vergelijking op vervolgbeurten in het voordeel van de nieuwe versie uitvalt (23 om 13). Geen actie; wel de reden om die maat niet als doel te nemen.
+
 ### 2.11 Dezelfde controle op de interne chat, alleen meekijkend (18 sep)
 De interne chat (LibreChat via de LiteLLM-hook) doet nu dezelfde controle per zin als de widget, met letterlijk dezelfde tekst uit de gedeelde bibliotheek. Daar verandert hij niets aan het antwoord en wacht de gebruiker nergens op: de controle wordt naast het antwoord gestart en logt alleen wat er niet in de artikelen staat. Zo kunnen beide paden straks naast elkaar gelegd worden.
 
