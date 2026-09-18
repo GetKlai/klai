@@ -2,7 +2,7 @@
 
 Doel van dit bestand: wat er gemeten is, wat daaruit volgde, en wat er live staat. Zo hoeft niemand een meting of een onderzoek over te doen. De spec ernaast (`spec.md`) beschrijft het ontwerp; dit bestand beschrijft de weg ernaartoe.
 
-Bijgewerkt: 2026-09-18, na 2.33.
+Bijgewerkt: 2026-09-19, na 2.34.
 
 ---
 
@@ -924,6 +924,30 @@ beslisrecord (`query_variants_run`, `query_variants_failed`, `query_variants_add
 `retrieval_paraphrase_model` (`klai-medium`), 2,5 s budget, en bij een mislukte aanroep gaat de vraag
 zoals voorheen. Vervolgbeurten blijven ongewijzigd (2.32).
 
+### 2.34 De herformuleringen live, en het harnas ernaast (19 sep, direct na de deploy van #1548)
+Dezelfde twaalf gesprekken als de nulmeting van 2.30, door de live widget, met de gescheiden
+beoordelaar. Nul 429's, nul 502's.
+
+| | Nulmeting (2.30) | Na de deploy |
+|---|---|---|
+| Doel bereikt | 4 van 12 | 4 van 12 |
+| Eerlijk doorverwezen zonder antwoord | 8 van 12 | 9 van 12 |
+| Eerste antwoord met bron | 9 van 12 | 10 van 12 |
+| Gemiddeld verspilde beurten | 1,2 | 1,1 |
+
+Per gesprek sloegen er vier om, twee elke kant. Bij twaalf gesprekken is dat ruis, precies zoals
+2.21 en §6 zeggen; het harnas kan een effect van deze grootte niet zien, de herspeling van 2.33
+(54 vragen, twee rondes) wel.
+
+**Dat de nieuwe code draaide, staat in de containerlogs:** twaalf keer `partner_chat_query_paraphrase`
+met twee herformuleringen en nul mislukkingen, en twaalf beslisrecords met `query_variants_run=2`,
+`query_variants_failed=0` en 2 tot 6 chunks in de top-8 die zonder de herformuleringen niet meegekomen
+waren (mediaan 4 van 8). De beurt waar het om ging in 2.21 (dubbele incasso) bleef een eerlijke
+doorverwijzing.
+
+**Wat nu volgt** staat in §5 punt 1: het dagrapport van de controle per zin op eerste beurten, want in
+de herspeling liep die controle met de herformuleringen vaker tegen haar 4 s aan.
+
 ---
 
 ## 3. Wat er live ging, en waarom
@@ -948,7 +972,7 @@ zoals voorheen. Vervolgbeurten blijven ongewijzigd (2.32).
 | 18 sep | Doodlopend antwoord zonder bron krijgt de afspraakknop (#1520) | 2.21 |
 | 18 sep | Het interne pad repareert, niet-streamend (#1526) | 2.22 |
 | 18 sep | De reparatie ook op de vastgehouden Strict-stroom, waar elke interne beurt langskomt (#1530) | 2.23 |
-| 18 sep | Twee herformuleringen van de eerste vraag als eigen zoekpasses, na herrangschikken samengevoegd (retrieval-api `query_variants`, widget `query_paraphrase.py`) | 2.27 op zoekniveau, 2.33 eind-tot-eind: 63 om 43 |
+| 19 sep | Twee herformuleringen van de eerste vraag als eigen zoekpasses, na herrangschikken samengevoegd (retrieval-api `query_variants`, widget `query_paraphrase.py`, #1548) | 2.27 op zoekniveau, 2.33 eind-tot-eind: 63 om 43; live bevestigd in 2.34 |
 
 ---
 
