@@ -528,6 +528,48 @@ gelezen. De reparatie draait dus op de niet-streamende renderweg, die met
 de architectuur dit blokkeerde was onjuist: de modus bestaat, hij staat alleen niet aan. De prijs
 is dat de medewerker wacht in plaats van tokens te zien verschijnen.
 
+### 2.23 De interne reparatie is niet bereikbaar zonder de SSE-stroom te herbouwen (18 sep)
+De reparatie uit #1526 kan alleen een antwoord bewerken dat nog in één stuk is. Eerst gemeten wat
+dat de lezer zou kosten, op 17 echte interne antwoorden met hun zoekresultaat:
+
+| | Mediaan | Traagste tien procent |
+|---|---|---|
+| Controle | 2,6 s | 6,0 s |
+| Reparatie (bij 13 van 17) | 1,2 s | 2,1 s |
+| Samen | **4,0 s** | **8,3 s** |
+
+Negen van de 17 antwoorden werden daadwerkelijk aangepast.
+
+**Twee keer fout gezeten over hetzelfde.** Eerst schreef ik dat de streamingarchitectuur de
+reparatie blokkeerde. Toen corrigeerde ik dat: de modus `deterministic_non_streaming` bestaat,
+hij staat alleen niet aan. Die correctie was óók fout. In `select_kb_render_strategy` staat de
+streamingcheck vóór de modus:
+
+```python
+if original_stream is True:
+    return KbCitationRenderStrategy(mode=KB_RENDER_MODE_STREAMING_GUARD)
+```
+
+`force_non_streaming` is dus nooit van toepassing op een client die om een stroom vraagt, en de
+interne chat vraagt daar altijd om (41 van de 41 beurten). De modus bestaat voor clients die niet
+streamen. Mijn poging om hem per organisatie aan te zetten (#1527) zette die volgorde om en zou
+een streamingverzoek met een gewone JSON-response beantwoorden — een gebroken transportcontract,
+gevonden door de review vóór de merge. Die PR is gesloten.
+
+**Wat er dus echt nodig is.** De SSE-stroom vasthouden binnen de bestaande streaming-renderer, het
+antwoord daar repareren en als één zichtbare chunk versturen vóór het slotframe. Dat behoudt het
+contract en maakt de reparatie bereikbaar. Het is een wijziging in de hook waar elk intern bericht
+doorheen gaat, dus hij verdient een eigen ronde met eigen tests.
+
+**Stand:** de reparatie staat in de code (#1526) en draait op geen enkele interne beurt, omdat
+alle interne beurten streamen. Wat er wél gebeurt is de meting, die sinds #1526 elke controle
+logt in plaats van alleen de reparaties.
+
+**Waarom niet globaal aanzetten, mocht dat ooit kunnen.** Over dertig dagen had één tenant vrijwel
+alle interne antwoorden mét bronverwijzing; drie andere tenants hadden er nul en de testtenant
+produceerde het grootste volume zonder één bronverwijzing. Aantallen per tenant staan in de
+private operationele documentatie.
+
 ---
 
 ## 3. Wat er live ging, en waarom
