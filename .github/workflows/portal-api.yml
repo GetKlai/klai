@@ -504,6 +504,20 @@ jobs:
 
   deploy:
     if: github.ref == 'refs/heads/main'
+    # One production deploy at a time. This job installs
+    # deploy/scripts/deploy-portal-api.sh at a fixed path on core-01 and then
+    # runs it several steps later, so two overlapping runs interleave a copy
+    # with an execute. On 2026-09-18 a run that had started 92 seconds before a
+    # compose change merged wrote its older copy of that script over the newer
+    # one; both runs reported success and the server kept the revision main had
+    # already replaced.
+    #
+    # cancel-in-progress: false because the in-flight run may be mid-migration.
+    # GitHub keeps only the newest pending run, so a burst of merges still
+    # converges on the newest commit — it just stops them running at once.
+    concurrency:
+      group: portal-api-production-deploy
+      cancel-in-progress: false
     # `needs: scan` ensures Trivy gate from SPEC-CI-TRIVY-POLICY-001 REQ-2
     # actually blocks production deploy: if scan job exits 1 on a HIGH/CRIT
     # finding, deploy is skipped. Previously deploy only depended on
@@ -514,13 +528,40 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # The concurrency group above gives mutual exclusion, not ordering.
+      # GitHub grants the lock in the order jobs start waiting, which depends on
+      # how long each run's gates took — so a run for an older commit can still
+      # acquire it after a newer one has already deployed, and then write its
+      # older deploy script and image over the newer ones.
+      #
+      # Holding the lock, ask the only question that settles it: is this run's
+      # commit still the tip of main? If not, a run for a newer commit exists and
+      # is the one that should land, so everything below is skipped.
+      #
+      # Known gap: if that newer run then fails its own gates, neither deploys,
+      # and main sits undeployed until the next push. That is the safe direction
+      # — main is red at that point and wants attention either way.
+      - name: Is this still the newest commit on main?
+        id: freshness
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          git fetch --depth=1 origin main
+          TIP="$(git rev-parse FETCH_HEAD)"
+          if [ "$TIP" = "$GITHUB_SHA" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+            echo "This run is main's tip ($GITHUB_SHA); deploying."
+          else
+            echo "current=false" >> "$GITHUB_OUTPUT"
+            echo "main has moved to $TIP; this run is for $GITHUB_SHA. Leaving the deploy to the newer run."
+          fi
+
       # Audit 2026-05-05: defence-in-depth gate. The deploy job is gated
       # via `needs: build-push` (build-push is itself gated), but the
       # Pre-deploy env check step has no `if:` — if a future change
       # loosens the build-push gate, this step would SSH into prod from
       # PR context. Match the Deploy step's gate explicitly.
       - name: Pre-deploy env check
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.freshness.outputs.current == 'true'
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.CORE01_HOST }}
@@ -546,7 +587,7 @@ jobs:
             echo "Pre-flight OK — all critical vars present."
 
       - name: Install portal-api deploy script on core-01
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.freshness.outputs.current == 'true'
         uses: appleboy/scp-action@v1
         with:
           host: ${{ secrets.CORE01_HOST }}
@@ -568,7 +609,7 @@ jobs:
       # a runbook entry / local-dev tool — its logic is mirrored here.
       # SPEC-DEPLOY-AUTO-MIGRATE-001 may consolidate this into a synced script.
       - name: REQ-2 widget cohort impact gate
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.freshness.outputs.current == 'true'
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.CORE01_HOST }}
@@ -607,7 +648,7 @@ jobs:
       # serving traffic, then recreate the app container only after the DB is at
       # the expected shape.
       - name: Deploy to core-01
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.freshness.outputs.current == 'true'
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.CORE01_HOST }}
