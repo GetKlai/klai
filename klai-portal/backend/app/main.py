@@ -20,6 +20,7 @@ from app.api.app_gaps import router as app_gaps_router
 from app.api.app_knowledge_bases import router as app_knowledge_bases_router
 from app.api.app_knowledge_sources import router as app_knowledge_sources_router
 from app.api.app_product_updates import router as app_product_updates_router
+from app.api.app_support_cases import router as app_support_cases_router
 from app.api.app_templates import router as app_templates_router
 from app.api.auth import _get_sso_fernet
 from app.api.auth import router as auth_router
@@ -28,6 +29,7 @@ from app.api.connectors import router as connectors_router
 from app.api.groups import router as groups_router
 from app.api.internal import router as internal_router
 from app.api.internal_connectors import router as internal_connectors_router
+from app.api.internal_support_cases import router as internal_support_cases_router
 from app.api.kb_images import router as kb_images_router
 from app.api.knowledge import router as knowledge_router
 from app.api.knowledge_bases import router as knowledge_bases_router
@@ -415,6 +417,10 @@ app.include_router(internal_router)
 # knowledge-ingest connector_purge_task to hard-delete a connector row
 # after the cascade-cleanup completes.
 app.include_router(internal_connectors_router)
+# SPEC-RAG-SUPPORT-GAP: internal HubSpot support-case ingest + reconcile, and
+# the app-facing transcript import (both restricted-evidence, no KB publish).
+app.include_router(internal_support_cases_router)
+app.include_router(app_support_cases_router)
 app.include_router(knowledge_bases_router)
 app.include_router(app_account_router)
 app.include_router(app_assistant_router)

@@ -283,7 +283,11 @@ async def test_list_gaps_without_rows_runs_no_attribution_query() -> None:
     out = await _list_gaps(db)
 
     assert out.gaps == []
-    assert len(db.statements) == 1
+    # No legacy rows -> the expensive widget-conversation and resolved_by
+    # attribution joins are skipped. (A cheap org-telemetry PK lookup still
+    # runs to decide whether case-backed support findings are visible.)
+    assert not any("widget_conversations" in stmt for stmt in db.statements)
+    assert not any("portal_users" in stmt for stmt in db.statements)
 
 
 @pytest.mark.asyncio

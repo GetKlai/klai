@@ -119,6 +119,18 @@ BEGIN
     END;
 END $$;
 
+SELECT '=== Test 11: portal_support_cases (SPEC-RAG-SUPPORT-GAP Cat-D) ===' AS test;
+-- Strict Cat-D: a SELECT without tenant context must raise insufficient_privilege.
+DO $$
+BEGIN
+    BEGIN
+        PERFORM COUNT(*) FROM portal_support_cases;
+        RAISE EXCEPTION 'RLS SMOKE FAILURE: SELECT on portal_support_cases without tenant context did not raise';
+    EXCEPTION WHEN insufficient_privilege THEN
+        RAISE NOTICE 'OK: portal_support_cases raised insufficient_privilege as expected (SPEC-RAG-SUPPORT-GAP)';
+    END;
+END $$;
+
 SELECT '=== Test 10: cleanup ===' AS test;
 SELECT set_config('app.current_org_id', '', false);
 SELECT set_config('app.cross_org_admin', '', false);

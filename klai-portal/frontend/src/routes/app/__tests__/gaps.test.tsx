@@ -199,6 +199,82 @@ describe('GapsPage close action', () => {
   })
 })
 
+describe('GapsPage support gap close', () => {
+  it('sends diagnosis, audience and nearest_kb_slug so a support close cannot touch another group', async () => {
+    mockGaps([
+      gapItem({
+        query_text: 'How do I export my invoices?',
+        gap_type: 'content',
+        language: 'en',
+        source: 'support',
+        diagnosis: 'missing',
+        audience: 'customer',
+        nearest_kb_slug: 'billing-kb',
+        support_case_ids: [7],
+      }),
+      gapItem({
+        query_text: 'How do I export my invoices?',
+        gap_type: 'content',
+        language: 'en',
+        source: 'support',
+        diagnosis: 'incomplete',
+        audience: 'customer',
+        nearest_kb_slug: 'billing-kb',
+        support_case_ids: [8],
+      }),
+    ])
+
+    render(
+      <Wrapper>
+        <GapsPage />
+      </Wrapper>,
+    )
+
+    await screen.findAllByText('How do I export my invoices?')
+    fireEvent.click(screen.getAllByRole('button', { name: /sluiten|close gap/i })[0])
+    const confirmButtons = await screen.findAllByRole('button', { name: /^(sluiten|close)$/i })
+    expect(confirmButtons).toHaveLength(1)
+    fireEvent.click(confirmButtons[0])
+
+    await waitFor(() =>
+      expect(apiFetchMock.mock.calls.find((call) => call[0] === '/api/app/gaps/resolve')).toBeTruthy(),
+    )
+    const [, rawInit] = apiFetchMock.mock.calls.find((call) => call[0] === '/api/app/gaps/resolve')!
+    const init = rawInit as { body?: string }
+    expect(JSON.parse(init.body ?? '{}')).toEqual({
+      query_text: 'How do I export my invoices?',
+      gap_type: 'content',
+      language: 'en',
+      diagnosis: 'missing',
+      audience: 'customer',
+      nearest_kb_slug: 'billing-kb',
+    })
+  })
+
+  it('links to the support-case evidence page', async () => {
+    mockGaps([
+      gapItem({
+        query_text: 'How do I export my invoices?',
+        gap_type: 'content',
+        source: 'support',
+        diagnosis: 'missing',
+        support_case_ids: [7],
+      }),
+    ])
+
+    const { container } = render(
+      <Wrapper>
+        <GapsPage />
+      </Wrapper>,
+    )
+
+    await waitForRow('How do I export my invoices?')
+    expect(
+      container.querySelector('a[href="/app/knowledge/gaps/support-cases/$caseId"]'),
+    ).not.toBeNull()
+  })
+})
+
 describe('GapsPage closed rows', () => {
   it('with include_resolved a closed row shows the badge and closer name and has no close button', async () => {
     searchValue.include_resolved = true

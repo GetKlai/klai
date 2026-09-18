@@ -53,6 +53,10 @@ SENSITIVE_FIELDS: dict[str, list[str]] = {
     "confluence": ["api_token"],
     "airtable": ["api_key"],
     "json_feed": ["url"],
+    # SPEC-RAG-SUPPORT-GAP: HubSpot static private-app token. Key name matches
+    # the ``access_token`` field the portal HubspotSupportConfig writes to
+    # connector.config, so the store encrypts and strips it before persistence.
+    "hubspot_support": ["access_token"],
 }
 
 

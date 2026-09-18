@@ -89,6 +89,19 @@ async def set_telemetry_level(
         org.telemetry_level = new_level
         await db.commit()
 
+    # SPEC-RAG-SUPPORT-GAP: leaving 'full' revokes the right to hold literal
+    # support evidence, so purge it (the FK cascade drops derived findings with
+    # the cases). Runs in its own tenant-scoped session so RLS context is
+    # correct regardless of the caller's (operator vs tenant-admin) scope.
+    # Repeat on retries: the level can already be saved when an earlier purge failed.
+    if new_level != "full":
+        from app.core.database import tenant_scoped_session
+        from app.services.support_cases import purge_support_cases_for_org
+
+        async with tenant_scoped_session(org_id) as purge_db:
+            purged = await purge_support_cases_for_org(purge_db, org_id)
+        logger.info("support_evidence_purged_on_downgrade", org_id=org_id, cases_removed=purged)
+
     # Cache invalidation runs even on no-op so a stuck hook can be nudged
     # by re-applying the same level (operator escape hatch). Org-wide
     # (librechat_user_id=None) keyed on the Zitadel org-id string the hook uses.

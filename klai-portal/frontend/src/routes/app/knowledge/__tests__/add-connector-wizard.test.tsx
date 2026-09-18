@@ -33,6 +33,18 @@ vi.mock('@/lib/apiFetch', async () => {
   return { ...actual, apiFetch: (...args: unknown[]) => apiFetchMock(...args) }
 })
 
+// The knowledge_gaps gate added useCurrentUser/fetchMe to the wizard. These
+// tests don't exercise the HubSpot gate, so stub the caller as gaps-incapable:
+// that keeps the extra /api/me + KB reads from firing and disturbing the
+// mockResolvedValueOnce sequencing the wizard flow relies on.
+vi.mock('@/lib/auth', () => ({ useAuth: () => ({ isAuthenticated: true }) }))
+vi.mock('@/hooks/useCurrentUser', () => ({
+  useCurrentUser: () => ({ user: { isAdmin: false, hasCapability: () => false } }),
+}))
+vi.mock('@/lib/api-me', () => ({
+  fetchMe: () => Promise.resolve({ platform_unlocked_features: [] }),
+}))
+
 vi.mock('@/paraglide/messages', async () => {
   const actual = await vi.importActual<typeof import('@/paraglide/messages')>(
     '@/paraglide/messages',

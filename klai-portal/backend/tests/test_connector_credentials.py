@@ -111,6 +111,7 @@ class TestSensitiveFieldsMapping:
             "confluence",
             "airtable",
             "json_feed",
+            "hubspot_support",
         }
 
 

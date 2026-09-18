@@ -122,6 +122,42 @@ class TestListScheduledConnectors:
         assert "portal_knowledge_bases.owner_type = 'org'" in sql
 
     @pytest.mark.asyncio
+    async def test_support_connectors_omitted_for_tenants_without_feature(self) -> None:
+        """SPEC-RAG-SUPPORT-GAP: a hubspot_support connector is dropped from the
+        scheduler bootstrap when its tenant lacks ``knowledge_gaps``, while other
+        connector types and feature-enabled tenants keep firing on schedule."""
+        from app.api.internal import list_scheduled_connectors
+
+        def _typed_row(connector_id, connector_type, unlocked):
+            connector = MagicMock()
+            connector.id = connector_id
+            connector.connector_type = connector_type
+            connector.schedule = "0 3 * * *"
+            org = MagicMock()
+            org.zitadel_org_id = f"zit-{connector_id}"
+            org.platform_unlocked_features = unlocked
+            return connector, org
+
+        db = AsyncMock()
+        db.info = {}
+        result = MagicMock()
+        result.all.return_value = [
+            _typed_row("web", "web_crawler", []),  # generic: always scheduled
+            _typed_row("hs-off", "hubspot_support", []),  # support, feature off: dropped
+            _typed_row("hs-on", "hubspot_support", ["knowledge_gaps"]),  # support, feature on: kept
+        ]
+        db.execute = AsyncMock(return_value=result)
+
+        with (
+            patch("app.api.internal._require_internal_token", new=AsyncMock()),
+            patch("app.api.internal._audit_internal_call", new=AsyncMock()),
+            patch("app.api.internal.cross_org_scope", _fake_cross_org_scope),
+        ):
+            items = await list_scheduled_connectors(request=_request(), db=db)
+
+        assert [item.connector_id for item in items] == ["web", "hs-on"]
+
+    @pytest.mark.asyncio
     async def test_scheduled_connectors_reports_type_and_saved_credentials(self) -> None:
         """klai-connector's session-touch job needs connector_type + has_saved_credentials
         to find web-crawler connectors with a stored login to keep alive between crawls."""

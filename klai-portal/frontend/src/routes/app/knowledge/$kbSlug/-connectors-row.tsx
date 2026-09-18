@@ -1,11 +1,15 @@
 import type { ComponentType } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { AlertTriangle, Braces, FileText, Globe, Loader2 } from 'lucide-react'
-import { SiGithub, SiGoogledrive, SiNotion } from '@icons-pack/react-simple-icons'
+import { SiGithub, SiGoogledrive, SiHubspot, SiNotion } from '@icons-pack/react-simple-icons'
 import { Button } from '@/components/ui/button'
 import { Tooltip } from '@/components/ui/tooltip'
 import { DataTableRow, DataTableCell } from '@/components/ui/data-table'
 import { RowActionGroup, BorderedRowActionIconButton } from '@/components/ui/row-action'
 import * as m from '@/paraglide/messages'
+import { useCurrentUser } from '@/hooks/useCurrentUser'
+import { fetchMe } from '@/lib/api-me'
+import { appNavGapsIsVisible } from '@/routes/app/-app-tools'
 import { SyncStatusBadge } from './-kb-helpers'
 import type { ConnectorSummary } from './-kb-types'
 
@@ -19,6 +23,7 @@ const CONNECTOR_TYPE_MAP: Record<string, ConnectorTypeInfo> = {
   google_drive: { label: m.admin_connectors_type_google_drive, IconComponent: SiGoogledrive },
   ms_docs:      { label: m.admin_connectors_type_ms_docs,      IconComponent: FileText },
   json_feed:    { label: m.admin_connectors_type_json_feed,    IconComponent: Braces },
+  hubspot_support: { label: m.admin_connectors_type_hubspot_support, IconComponent: SiHubspot },
 }
 
 /** OAuth-backed connector types that support the /api/oauth/{provider}/authorize reconnect flow.
@@ -67,6 +72,20 @@ export function ConnectorRow({
   const Icon = info?.IconComponent ?? FileText
   const typeLabel = info?.label() ?? connector.connector_type
   const isRunning = connector.last_sync_status?.toUpperCase() === 'RUNNING'
+
+  const { user } = useCurrentUser()
+  const hasGapsCapability = user?.hasCapability('kb.gaps') === true
+  const meQuery = useQuery({
+    queryKey: ['me'],
+    queryFn: ({ signal }) => fetchMe(signal),
+    enabled: hasGapsCapability,
+  })
+  const supportGated =
+    connector.connector_type === 'hubspot_support' &&
+    !appNavGapsIsVisible({
+      hasCapability: (cap) => user?.hasCapability(cap) === true,
+      unlockedFeatures: meQuery.data?.platform_unlocked_features ?? [],
+    })
 
   return (
     <DataTableRow className="group klai-hover">
@@ -135,18 +154,22 @@ export function ConnectorRow({
       {isOwner && (
         <DataTableCell align="right" className="w-28 align-top">
           <RowActionGroup>
-            <BorderedRowActionIconButton
-              action="sync"
-              label={isSyncing || isRunning ? m.admin_connectors_syncing() : m.admin_connectors_action_sync()}
-              disabled={isSyncing || isRunning}
-              spinner={isSyncing || isRunning ? <Loader2 className="animate-spin" /> : undefined}
-              onClick={() => onSync(connector.id)}
-            />
-            <BorderedRowActionIconButton
-              action="edit"
-              label={m.admin_connectors_action_edit()}
-              onClick={() => onEdit(connector.id)}
-            />
+            {!supportGated && (
+              <BorderedRowActionIconButton
+                action="sync"
+                label={isSyncing || isRunning ? m.admin_connectors_syncing() : m.admin_connectors_action_sync()}
+                disabled={isSyncing || isRunning}
+                spinner={isSyncing || isRunning ? <Loader2 className="animate-spin" /> : undefined}
+                onClick={() => onSync(connector.id)}
+              />
+            )}
+            {!supportGated && (
+              <BorderedRowActionIconButton
+                action="edit"
+                label={m.admin_connectors_action_edit()}
+                onClick={() => onEdit(connector.id)}
+              />
+            )}
             <BorderedRowActionIconButton
               action="delete"
               label={m.admin_connectors_action_delete()}

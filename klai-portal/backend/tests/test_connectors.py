@@ -4,8 +4,10 @@ from datetime import UTC
 from pathlib import Path
 from runpy import run_path
 from typing import get_args
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.api.connectors import (
@@ -14,6 +16,7 @@ from app.api.connectors import (
     ConnectorUpdateRequest,
     _connector_out,
 )
+from tests.conftest import make_perms
 
 # -- Schema tests --------------------------------------------------------------
 
@@ -145,6 +148,7 @@ class TestContentTypeDefaults:
             "google_sheets",
             "google_slides",
             "json_feed",
+            "hubspot_support",  # SPEC-RAG-SUPPORT-GAP
         }
         assert set(CONTENT_TYPE_DEFAULTS.keys()) == expected_types
 
@@ -341,9 +345,265 @@ class TestContentTypeDefaultsExtended:
     def test_database_constraint_matches_connector_type_literal(self):
         from app.api.connectors import ConnectorType
 
-        migration = run_path(
+        # SPEC-RAG-SUPPORT-GAP: hubspot_support extended the CHECK constraint via
+        # migration s1p2c3a4s5e6; its _CONNECTOR_TYPES must match the Literal.
+        support_migration = run_path(
+            str(Path(__file__).parents[1] / "alembic/versions/s1p2c3a4s5e6_add_support_cases.py")
+        )
+        assert set(support_migration["_CONNECTOR_TYPES"]) == set(get_args(ConnectorType))
+        assert "hubspot_support" in get_args(ConnectorType)
+
+        # Earlier json_feed migration remains a regression anchor.
+        json_feed_migration = run_path(
             str(Path(__file__).parents[1] / "alembic/versions/9bf37c021a4e_add_json_feed_connector_type.py")
         )
+        assert set(json_feed_migration["CONNECTOR_TYPES_AFTER"]).issubset(set(get_args(ConnectorType)))
+        assert "json_feed" not in json_feed_migration["CONNECTOR_TYPES_BEFORE"]
 
-        assert set(migration["CONNECTOR_TYPES_AFTER"]) == set(get_args(ConnectorType))
-        assert "json_feed" not in migration["CONNECTOR_TYPES_BEFORE"]
+
+# -- knowledge_gaps rollout gate on hubspot_support connectors -----------------
+# SPEC-RAG-SUPPORT-GAP: support collection/analysis is only permitted while the
+# tenant has ``knowledge_gaps`` in PortalOrg.platform_unlocked_features (source
+# of truth, fail-closed when absent). The lifecycle boundary here gates
+# create / reconfigure / re-enable / trigger-sync for the hubspot_support type,
+# while leaving disable / delete / clear-credentials cleanup and every other
+# connector type untouched.
+
+
+def _org(*, unlocked: list[str]) -> MagicMock:
+    org = MagicMock()
+    org.id = 101
+    org.zitadel_org_id = "zitadel-org-101"
+    org.platform_unlocked_features = unlocked
+    return org
+
+
+def _hubspot_connector(*, is_enabled: bool = True, connector_type: str = "hubspot_support") -> MagicMock:
+    connector = MagicMock()
+    connector.id = "conn-hs-1"
+    connector.kb_id = 1
+    connector.connector_type = connector_type
+    connector.is_enabled = is_enabled
+    connector.last_sync_status = None
+    connector.last_sync_at = None
+    connector.state = "active"
+    return connector
+
+
+def _kb() -> MagicMock:
+    kb = MagicMock()
+    kb.id = 1
+    kb.slug = "support-kb"
+    kb.owner_type = "org"
+    return kb
+
+
+def _execute_returning(connector: MagicMock) -> AsyncMock:
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = connector
+    return AsyncMock(return_value=result)
+
+
+class TestHubspotSupportFeatureGate:
+    @pytest.mark.asyncio
+    async def test_create_hubspot_support_blocked_when_feature_off(self) -> None:
+        from app.api.connectors import create_connector
+
+        db = AsyncMock()
+        with (
+            patch("app.api.connectors._get_kb_with_owner_check", new=AsyncMock(return_value=_kb())),
+            patch("app.api.connectors.check_connector_allowed"),
+            patch("app.api.connectors._load_org_or_500", new=AsyncMock(return_value=_org(unlocked=[]))),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await create_connector(
+                    kb_slug="support-kb",
+                    body=ConnectorCreateRequest(name="HS", connector_type="hubspot_support", config={}),
+                    perms=make_perms(),
+                    db=db,
+                )
+        assert exc.value.status_code == 403
+        assert exc.value.detail == {"error_code": "feature_not_unlocked", "feature": "knowledge_gaps"}
+        db.add.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_trigger_sync_blocked_when_feature_off_before_network(self) -> None:
+        from app.api.connectors import trigger_sync
+
+        connector = _hubspot_connector()
+        db = AsyncMock()
+        db.execute = _execute_returning(connector)
+        with (
+            patch("app.api.connectors._load_org_or_500", new=AsyncMock(return_value=_org(unlocked=[]))),
+            patch("app.api.connectors._get_kb_with_owner_check", new=AsyncMock(return_value=_kb())),
+            patch("app.api.connectors.assert_can_add_item_to_kb", new=AsyncMock()),
+            patch("app.api.connectors.klai_connector_client") as client,
+        ):
+            client.trigger_sync = AsyncMock()
+            with pytest.raises(HTTPException) as exc:
+                await trigger_sync(kb_slug="support-kb", connector_id="conn-hs-1", perms=make_perms(), db=db)
+        assert exc.value.status_code == 403
+        # Never reach klai-connector: no sync run, no credential decrypt downstream.
+        client.trigger_sync.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_trigger_sync_allowed_when_feature_on(self) -> None:
+        from app.api.connectors import trigger_sync
+
+        connector = _hubspot_connector()
+        db = AsyncMock()
+        db.execute = _execute_returning(connector)
+        with (
+            patch(
+                "app.api.connectors._load_org_or_500",
+                new=AsyncMock(return_value=_org(unlocked=["knowledge_gaps"])),
+            ),
+            patch("app.api.connectors._get_kb_with_owner_check", new=AsyncMock(return_value=_kb())),
+            patch("app.api.connectors.assert_can_add_item_to_kb", new=AsyncMock()),
+            patch("app.api.connectors.emit_event"),
+            patch("app.api.connectors.klai_connector_client") as client,
+        ):
+            client.trigger_sync = AsyncMock(return_value=MagicMock(started_at=None))
+            await trigger_sync(kb_slug="support-kb", connector_id="conn-hs-1", perms=make_perms(), db=db)
+        client.trigger_sync.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_trigger_sync_generic_connector_not_gated_when_feature_off(self) -> None:
+        from app.api.connectors import trigger_sync
+
+        connector = _hubspot_connector(connector_type="github")
+        db = AsyncMock()
+        db.execute = _execute_returning(connector)
+        with (
+            patch("app.api.connectors._load_org_or_500", new=AsyncMock(return_value=_org(unlocked=[]))),
+            patch("app.api.connectors._get_kb_with_owner_check", new=AsyncMock(return_value=_kb())),
+            patch("app.api.connectors.assert_can_add_item_to_kb", new=AsyncMock()),
+            patch("app.api.connectors.emit_event"),
+            patch("app.api.connectors.klai_connector_client") as client,
+        ):
+            client.trigger_sync = AsyncMock(return_value=MagicMock(started_at=None))
+            await trigger_sync(kb_slug="support-kb", connector_id="conn-hs-1", perms=make_perms(), db=db)
+        client.trigger_sync.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_start_response_preserves_a_failure_already_reported_by_worker(self) -> None:
+        from datetime import UTC, datetime, timedelta
+
+        from app.api.connectors import trigger_sync
+
+        connector = _hubspot_connector()
+        started = datetime.now(UTC)
+        completed = started + timedelta(seconds=1)
+        db = AsyncMock()
+        db.execute = _execute_returning(connector)
+
+        async def completed_callback(*args, **kwargs):
+            connector.last_sync_status = "failed"
+            connector.last_sync_at = completed
+
+        db.refresh.side_effect = completed_callback
+        with (
+            patch("app.api.connectors._load_org_or_500", AsyncMock(return_value=_org(unlocked=["knowledge_gaps"]))),
+            patch("app.api.connectors._get_kb_with_owner_check", AsyncMock(return_value=_kb())),
+            patch("app.api.connectors.assert_can_add_item_to_kb", AsyncMock()),
+            patch("app.api.connectors.emit_event"),
+            patch(
+                "app.api.connectors.klai_connector_client.trigger_sync",
+                AsyncMock(return_value=MagicMock(started_at=started)),
+            ),
+        ):
+            await trigger_sync(kb_slug="support-kb", connector_id="conn-hs-1", perms=make_perms(), db=db)
+
+        assert connector.last_sync_status == "failed"
+        assert connector.last_sync_at == completed
+
+    @pytest.mark.asyncio
+    async def test_update_reconfigure_blocked_when_feature_off(self) -> None:
+        from app.api.connectors import update_connector
+
+        connector = _hubspot_connector()
+        db = AsyncMock()
+        db.execute = _execute_returning(connector)
+        with (
+            patch("app.api.connectors._get_kb_with_owner_check", new=AsyncMock(return_value=_kb())),
+            patch("app.api.connectors._load_org_or_500", new=AsyncMock(return_value=_org(unlocked=[]))),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await update_connector(
+                    kb_slug="support-kb",
+                    connector_id="conn-hs-1",
+                    body=ConnectorUpdateRequest(config={"lookback_days": 45}),
+                    perms=make_perms(),
+                    db=db,
+                )
+        assert exc.value.status_code == 403
+        assert exc.value.detail == {"error_code": "feature_not_unlocked", "feature": "knowledge_gaps"}
+
+    @pytest.mark.asyncio
+    async def test_update_reenable_blocked_when_feature_off(self) -> None:
+        from app.api.connectors import update_connector
+
+        connector = _hubspot_connector(is_enabled=False)
+        db = AsyncMock()
+        db.execute = _execute_returning(connector)
+        with (
+            patch("app.api.connectors._get_kb_with_owner_check", new=AsyncMock(return_value=_kb())),
+            patch("app.api.connectors._load_org_or_500", new=AsyncMock(return_value=_org(unlocked=[]))),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await update_connector(
+                    kb_slug="support-kb",
+                    connector_id="conn-hs-1",
+                    body=ConnectorUpdateRequest(is_enabled=True),
+                    perms=make_perms(),
+                    db=db,
+                )
+        assert exc.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_update_disable_allowed_when_feature_off(self) -> None:
+        from app.api.connectors import update_connector
+
+        connector = _hubspot_connector()
+        db = AsyncMock()
+        db.execute = _execute_returning(connector)
+        with (
+            patch("app.api.connectors._get_kb_with_owner_check", new=AsyncMock(return_value=_kb())),
+            patch("app.api.connectors._connector_out", return_value=MagicMock()),
+            patch(
+                "app.api.connectors._load_org_or_500",
+                new=AsyncMock(side_effect=AssertionError("feature gate must not load org for a pure disable")),
+            ),
+        ):
+            await update_connector(
+                kb_slug="support-kb",
+                connector_id="conn-hs-1",
+                body=ConnectorUpdateRequest(is_enabled=False),
+                perms=make_perms(),
+                db=db,
+            )
+        assert connector.is_enabled is False
+
+    @pytest.mark.asyncio
+    async def test_update_clear_credentials_allowed_when_feature_off(self) -> None:
+        from app.api.connectors import update_connector
+
+        connector = _hubspot_connector()
+        db = AsyncMock()
+        db.execute = _execute_returning(connector)
+        with (
+            patch("app.api.connectors._get_kb_with_owner_check", new=AsyncMock(return_value=_kb())),
+            patch("app.api.connectors._connector_out", return_value=MagicMock()),
+            patch(
+                "app.api.connectors._load_org_or_500",
+                new=AsyncMock(side_effect=AssertionError("feature gate must not load org for a credential clear")),
+            ),
+        ):
+            await update_connector(
+                kb_slug="support-kb",
+                connector_id="conn-hs-1",
+                body=ConnectorUpdateRequest(clear_credentials=True),
+                perms=make_perms(),
+                db=db,
+            )
+        assert connector.encrypted_credentials is None

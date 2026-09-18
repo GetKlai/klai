@@ -168,6 +168,10 @@ jobs:
           CREATE TABLE portal_taxonomy_proposals (id SERIAL PRIMARY KEY, kb_id INTEGER NOT NULL);
           CREATE TABLE portal_user_products (id SERIAL PRIMARY KEY, org_id INTEGER NOT NULL, zitadel_user_id VARCHAR(64) NOT NULL, product VARCHAR(32) NOT NULL);
           CREATE TABLE portal_connectors (id SERIAL PRIMARY KEY, org_id INTEGER NOT NULL);
+          -- SPEC-RAG-SUPPORT-GAP Cat-D: portal_support_cases (referenced by rls-smoke-test Test 11).
+          -- Its strict policy is applied by the "Apply support-cases RLS policy" step below,
+          -- after _rls_current_org_id() exists (mirrors product_update_reads).
+          CREATE TABLE portal_support_cases (id BIGSERIAL PRIMARY KEY, org_id INTEGER NOT NULL);
           CREATE TABLE vexa_meetings (id UUID PRIMARY KEY, org_id INTEGER, status VARCHAR(32));
           CREATE TABLE partner_api_keys (id UUID PRIMARY KEY, org_id INTEGER NOT NULL);
           CREATE TABLE partner_api_key_kb_access (partner_api_key_id UUID NOT NULL, kb_id INTEGER NOT NULL, PRIMARY KEY (partner_api_key_id, kb_id));
@@ -203,7 +207,8 @@ jobs:
                   ('portal_taxonomy_proposals'), ('portal_user_products'),
                   ('portal_connectors'), ('vexa_meetings'),
                   ('partner_api_keys'), ('partner_api_key_kb_access'),
-                  ('widgets'), ('widget_kb_access'), ('portal_mcp_tokens')
+                  ('widgets'), ('widget_kb_access'), ('portal_mcp_tokens'),
+                  ('portal_support_cases')
               LOOP
                   EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
                   EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
@@ -265,6 +270,18 @@ jobs:
         # policies depend on _rls_current_org_id() created by the step above.
         run: psql -h localhost -U klai -d klai -v ON_ERROR_STOP=1 < alembic/versions/post_deploy_p1r2o3d4u5p6_product_updates_rls.sql
 
+      - name: Apply support-cases RLS policy
+        env:
+          PGPASSWORD: klai
+        working-directory: klai-portal/backend
+        # SPEC-RAG-SUPPORT-GAP: the strict Cat-D policy for portal_support_cases
+        # (smoke-test Test 11) depends on _rls_current_org_id(), so it is applied
+        # here after the forward RLS step, like product-updates. The full
+        # post-deploy also adds FKs to app tables the smoke fixture does not have;
+        # the smoke test only needs the RLS policy, so only that is applied.
+        run: |
+          psql -h localhost -U klai -d klai -v ON_ERROR_STOP=1 -c "DROP POLICY IF EXISTS tenant_isolation ON portal_support_cases; CREATE POLICY tenant_isolation ON portal_support_cases USING (public._rls_current_org_id() IS NULL OR org_id = public._rls_current_org_id()) WITH CHECK (org_id = public._rls_current_org_id());"
+
       - name: Run RLS smoke test
         env:
           PGPASSWORD: portal_api_test
@@ -283,6 +300,7 @@ jobs:
           for marker in \
               "portal_knowledge_bases raised insufficient_privilege as expected" \
               "vexa_meetings UPDATE raised insufficient_privilege as expected" \
+              "portal_support_cases raised insufficient_privilege as expected" \
               "RLS smoke test complete"; do
               grep -Fq "$marker" /tmp/smoke.out || { echo "MISSING marker: $marker"; exit 1; }
           done
@@ -298,7 +316,7 @@ jobs:
         # *_rollback_*.sql — deploy-portal-api.sh skips it). Remove the dependents
         # so the generic rollback can DROP the function cleanly.
         run: |
-          psql -h localhost -U klai -d klai -v ON_ERROR_STOP=1 -c "DROP POLICY IF EXISTS product_update_reads_select ON product_update_reads; DROP POLICY IF EXISTS product_update_reads_insert ON product_update_reads;"
+          psql -h localhost -U klai -d klai -v ON_ERROR_STOP=1 -c "DROP POLICY IF EXISTS product_update_reads_select ON product_update_reads; DROP POLICY IF EXISTS product_update_reads_insert ON product_update_reads; DROP POLICY IF EXISTS tenant_isolation ON portal_support_cases;"
 
       - name: Apply rollback migration (smoke-test rollback path too)
         env:

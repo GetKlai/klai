@@ -15,6 +15,7 @@ Platform-wide architectural decisions relevant to all Klai repositories.
 | [knowledge-rag-improvement-plan.md](knowledge-rag-improvement-plan.md) | **Improvement plan (2026-06-11)** — merged code-verified plan across all knowledge/RAG themes: stale-backlog corrections, phased roadmap (Phase 0-3), per-theme improvements with code paths, verification plan, and verified research sources |
 | [product-gaps-backlog.md](product-gaps-backlog.md) | **Type-B gaps** — where these docs describe a richer design than the code implements today; product-improvement opportunities with code evidence, referenced inline by `GAP-*` IDs |
 | [scribe-transcription.md](scribe-transcription.md) | Public-safe Scribe/transcription architecture, contributor model, and build/deploy split |
+| [support-gap-detection.md](support-gap-detection.md) | Research-backed support gap detection, existing Klai integration seams, and a HubSpot-first case-analysis proposal |
 
 > **Engineering references are authoritative.** When there is a conflict between an architecture doc and an engineering reference, the engineering reference wins — it is verified against live code.
 >

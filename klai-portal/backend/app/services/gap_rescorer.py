@@ -50,6 +50,11 @@ def _open_gap_queries_stmt(org_id: int, kb_slug: str | None, cutoff: datetime):
             PortalRetrievalGap.org_id == org_id,
             PortalRetrievalGap.resolved_at.is_(None),
             PortalRetrievalGap.occurred_at >= cutoff,
+            # SPEC-RAG-SUPPORT-GAP: case-backed content findings are never
+            # closed by retrieval re-scoring — a better retrieval score does
+            # not mean the answer was written. Exclude them from selection so
+            # they are not even re-queried.
+            PortalRetrievalGap.support_case_id.is_(None),
         )
         .group_by(
             PortalRetrievalGap.query_text,
@@ -175,6 +180,10 @@ async def rescore_open_gaps(
                         PortalRetrievalGap.query_text == row.query_text,
                         PortalRetrievalGap.language.is_not_distinct_from(row.language),
                         PortalRetrievalGap.resolved_at.is_(None),
+                        # Belt-and-braces with the selection filter: a
+                        # case-backed content finding must never be closed by
+                        # the rescorer even if a legacy row shares its text.
+                        PortalRetrievalGap.support_case_id.is_(None),
                     )
                     .values(resolved_at=datetime.now(tz=UTC), resolved_by="rescorer")
                 )

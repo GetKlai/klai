@@ -24,6 +24,7 @@ export type ConnectorType =
   | 'github' | 'web_crawler' | 'google_drive' | 'notion' | 'ms_docs'
   | 'airtable' | 'confluence'
   | 'json_feed'
+  | 'hubspot_support'
   | 'google_docs' | 'google_sheets' | 'google_slides'
 
 export type AuthProbeClassification =
@@ -102,6 +103,20 @@ export interface ConfluenceConfig {
 
 export interface JsonFeedConfig {
   url: string
+}
+
+// HubSpot support connector (support-gap-detection.md "First implementation
+// contract"). The connector's KB is the comparison scope, never a raw-case
+// destination. `access_token` is stored via the existing masked-credential
+// pattern: on edit it stays blank and only a fresh value is sent. `pipeline_ids`
+// and `inbox_ids` are comma-separated numeric-string lists in the form; empty
+// means "all". `lookback_days` is 1-90, default 30.
+export interface HubSpotSupportConfig {
+  access_token: string
+  account_id: string
+  lookback_days: string
+  pipeline_ids: string
+  inbox_ids: string
 }
 
 export interface NotionAddConfig {

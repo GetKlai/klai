@@ -14,6 +14,7 @@ from app.models.portal import PortalOrg, PortalUser  # noqa: F401 - registers mo
 from app.models.product_updates import ProductUpdate, ProductUpdateRead  # noqa: F401 - registers models
 from app.models.products import PortalUserProduct  # noqa: F401 - registers models
 from app.models.shield import PortalShieldLog, PortalShieldToken  # noqa: F401 - registers models
+from app.models.support_cases import PortalSupportCase  # noqa: F401 - registers models
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

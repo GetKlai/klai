@@ -22,8 +22,53 @@ export const MARKDOWN_PROSE_CLASSES =
 // by the route's validateSearch to gate the deep-link.
 export const VALID_PRESELECT_TYPES = new Set<ConnectorType>([
   'github', 'notion', 'google_drive', 'google_docs', 'google_sheets', 'google_slides',
-  'airtable', 'confluence', 'json_feed', 'ms_docs', 'web_crawler',
+  'airtable', 'confluence', 'json_feed', 'ms_docs', 'web_crawler', 'hubspot_support',
 ])
+
+// lookback_days bound from the support-gap contract (1-90, default 30). Shared
+// by the add and edit connector forms so the clamp cannot drift between them.
+export const HUBSPOT_SUPPORT_LOOKBACK_MIN = 1
+export const HUBSPOT_SUPPORT_LOOKBACK_MAX = 90
+export const HUBSPOT_SUPPORT_LOOKBACK_DEFAULT = 30
+
+/**
+ * Build the `config` object for a hubspot_support connector from its form state.
+ *
+ * `include_access_token` is false on edit when the operator left the token field
+ * blank: the existing encrypted token is preserved server-side and must not be
+ * overwritten with an empty string. `pipeline_ids`/`inbox_ids` are split on
+ * commas into numeric-string lists; empty means "all" and is omitted so the
+ * backend default applies.
+ */
+export function hubspotSupportConfig(
+  form: {
+    access_token: string
+    account_id: string
+    lookback_days: string
+    pipeline_ids: string
+    inbox_ids: string
+  },
+  options: { includeAccessToken: boolean },
+): Record<string, unknown> {
+  const config: Record<string, unknown> = {
+    account_id: form.account_id.trim(),
+  }
+  if (options.includeAccessToken && form.access_token.trim()) {
+    config.access_token = form.access_token.trim()
+  }
+  const lookback = Number(form.lookback_days)
+  if (Number.isFinite(lookback)) {
+    config.lookback_days = Math.min(
+      HUBSPOT_SUPPORT_LOOKBACK_MAX,
+      Math.max(HUBSPOT_SUPPORT_LOOKBACK_MIN, Math.trunc(lookback)),
+    )
+  }
+  const pipelineIds = form.pipeline_ids.split(',').map((s) => s.trim()).filter(Boolean)
+  if (pipelineIds.length > 0) config.pipeline_ids = pipelineIds
+  const inboxIds = form.inbox_ids.split(',').map((s) => s.trim()).filter(Boolean)
+  if (inboxIds.length > 0) config.inbox_ids = inboxIds
+  return config
+}
 
 export function normalizeConnectorPreselectType(type?: ConnectorType): ConnectorType | undefined {
   if (type === 'google_docs' || type === 'google_sheets' || type === 'google_slides') {

@@ -200,6 +200,64 @@ class PortalClient:
                 sync_run_id,
             )
 
+    async def send_support_case(
+        self,
+        connector_id: uuid.UUID,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Post one HubSpot support case to the portal evidence endpoint.
+
+        SPEC-RAG-SUPPORT-GAP: the portal derives org/owner/KB from the
+        active connector; the payload never selects another tenant. Unlike
+        the best-effort status callback this is NOT swallowed — the caller
+        must know whether the evidence was durably stored before it counts
+        the case as synced or reconciles deletions.
+
+        Args:
+            connector_id: Portal connector UUID.
+            payload: A validated ``CasePayload`` (see support_source).
+
+        Returns:
+            ``{case_id, status, changed, findings_count}`` from portal.
+
+        Raises:
+            httpx.HTTPStatusError: On 4xx/5xx. The caller fails the run and
+                must not reconcile from a partial snapshot.
+        """
+        # The portal persists evidence, then analyzes synchronously before
+        # responding (bounded extraction + retrieval + judge), so this
+        # timeout must cover the whole request, not just the write.
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            response = await client.post(
+                f"{self._base_url}/api/internal/connectors/{connector_id}/support-cases",
+                headers=self._headers(),
+                json=payload,
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def reconcile_support_cases(
+        self,
+        connector_id: uuid.UUID,
+        external_ids: list[str],
+    ) -> None:
+        """Delete portal cases no longer in this connector's selected scope.
+
+        SPEC-RAG-SUPPORT-GAP: only ever called after a fully successful
+        snapshot with every case write durable. A partial or failed run
+        must never reach here (see SyncEngine._run_hubspot_support_sync).
+
+        Raises:
+            httpx.HTTPStatusError: On 4xx/5xx.
+        """
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{self._base_url}/api/internal/connectors/{connector_id}/support-cases/reconcile",
+                headers=self._headers(),
+                json={"external_ids": external_ids},
+            )
+            response.raise_for_status()
+
     async def update_credentials(
         self,
         connector_id: str,

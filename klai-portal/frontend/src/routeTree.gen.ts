@@ -112,6 +112,8 @@ import { Route as AppKnowledgeGapsIndexRouteImport } from './routes/app/knowledg
 import { Route as AdminPlatformFeedbackItemsItemIdRouteImport } from './routes/admin/platform/feedback.items.$itemId'
 import { Route as AdminPlatformFeedbackSubmissionsSubmissionIdRouteImport } from './routes/admin/platform/feedback.submissions.$submissionId'
 import { Route as AppKnowledgeKbSlugEditConnectorConnectorIdRouteImport } from './routes/app/knowledge/$kbSlug_.edit-connector.$connectorId'
+import { Route as AppKnowledgeGapsSupportCasesIndexRouteImport } from './routes/app/knowledge/gaps/support-cases.index'
+import { Route as AppKnowledgeGapsSupportCasesCaseIdRouteImport } from './routes/app/knowledge/gaps/support-cases.$caseId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -652,6 +654,18 @@ const AppKnowledgeKbSlugEditConnectorConnectorIdRoute =
     path: '/knowledge/$kbSlug/edit-connector/$connectorId',
     getParentRoute: () => AppRouteRoute,
   } as any)
+const AppKnowledgeGapsSupportCasesIndexRoute =
+  AppKnowledgeGapsSupportCasesIndexRouteImport.update({
+    id: '/knowledge/gaps/support-cases/',
+    path: '/knowledge/gaps/support-cases/',
+    getParentRoute: () => AppRouteRoute,
+  } as any)
+const AppKnowledgeGapsSupportCasesCaseIdRoute =
+  AppKnowledgeGapsSupportCasesCaseIdRouteImport.update({
+    id: '/knowledge/gaps/support-cases/$caseId',
+    path: '/knowledge/gaps/support-cases/$caseId',
+    getParentRoute: () => AppRouteRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -757,6 +771,8 @@ export interface FileRoutesByFullPath {
   '/admin/platform/feedback/items/$itemId': typeof AdminPlatformFeedbackItemsItemIdRoute
   '/admin/platform/feedback/submissions/$submissionId': typeof AdminPlatformFeedbackSubmissionsSubmissionIdRoute
   '/app/knowledge/$kbSlug/edit-connector/$connectorId': typeof AppKnowledgeKbSlugEditConnectorConnectorIdRoute
+  '/app/knowledge/gaps/support-cases/$caseId': typeof AppKnowledgeGapsSupportCasesCaseIdRoute
+  '/app/knowledge/gaps/support-cases/': typeof AppKnowledgeGapsSupportCasesIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -857,6 +873,8 @@ export interface FileRoutesByTo {
   '/admin/platform/feedback/items/$itemId': typeof AdminPlatformFeedbackItemsItemIdRoute
   '/admin/platform/feedback/submissions/$submissionId': typeof AdminPlatformFeedbackSubmissionsSubmissionIdRoute
   '/app/knowledge/$kbSlug/edit-connector/$connectorId': typeof AppKnowledgeKbSlugEditConnectorConnectorIdRoute
+  '/app/knowledge/gaps/support-cases/$caseId': typeof AppKnowledgeGapsSupportCasesCaseIdRoute
+  '/app/knowledge/gaps/support-cases': typeof AppKnowledgeGapsSupportCasesIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -963,6 +981,8 @@ export interface FileRoutesById {
   '/admin/platform/feedback/items/$itemId': typeof AdminPlatformFeedbackItemsItemIdRoute
   '/admin/platform/feedback/submissions/$submissionId': typeof AdminPlatformFeedbackSubmissionsSubmissionIdRoute
   '/app/knowledge/$kbSlug_/edit-connector/$connectorId': typeof AppKnowledgeKbSlugEditConnectorConnectorIdRoute
+  '/app/knowledge/gaps/support-cases/$caseId': typeof AppKnowledgeGapsSupportCasesCaseIdRoute
+  '/app/knowledge/gaps/support-cases/': typeof AppKnowledgeGapsSupportCasesIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -1070,6 +1090,8 @@ export interface FileRouteTypes {
     | '/admin/platform/feedback/items/$itemId'
     | '/admin/platform/feedback/submissions/$submissionId'
     | '/app/knowledge/$kbSlug/edit-connector/$connectorId'
+    | '/app/knowledge/gaps/support-cases/$caseId'
+    | '/app/knowledge/gaps/support-cases/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -1170,6 +1192,8 @@ export interface FileRouteTypes {
     | '/admin/platform/feedback/items/$itemId'
     | '/admin/platform/feedback/submissions/$submissionId'
     | '/app/knowledge/$kbSlug/edit-connector/$connectorId'
+    | '/app/knowledge/gaps/support-cases/$caseId'
+    | '/app/knowledge/gaps/support-cases'
   id:
     | '__root__'
     | '/'
@@ -1275,6 +1299,8 @@ export interface FileRouteTypes {
     | '/admin/platform/feedback/items/$itemId'
     | '/admin/platform/feedback/submissions/$submissionId'
     | '/app/knowledge/$kbSlug_/edit-connector/$connectorId'
+    | '/app/knowledge/gaps/support-cases/$caseId'
+    | '/app/knowledge/gaps/support-cases/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -2024,6 +2050,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppKnowledgeKbSlugEditConnectorConnectorIdRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/app/knowledge/gaps/support-cases/': {
+      id: '/app/knowledge/gaps/support-cases/'
+      path: '/knowledge/gaps/support-cases'
+      fullPath: '/app/knowledge/gaps/support-cases/'
+      preLoaderRoute: typeof AppKnowledgeGapsSupportCasesIndexRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/knowledge/gaps/support-cases/$caseId': {
+      id: '/app/knowledge/gaps/support-cases/$caseId'
+      path: '/knowledge/gaps/support-cases/$caseId'
+      fullPath: '/app/knowledge/gaps/support-cases/$caseId'
+      preLoaderRoute: typeof AppKnowledgeGapsSupportCasesCaseIdRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
   }
 }
 
@@ -2224,6 +2264,8 @@ interface AppRouteRouteChildren {
   AppKnowledgeActivityIndexRoute: typeof AppKnowledgeActivityIndexRoute
   AppKnowledgeGapsIndexRoute: typeof AppKnowledgeGapsIndexRoute
   AppKnowledgeKbSlugEditConnectorConnectorIdRoute: typeof AppKnowledgeKbSlugEditConnectorConnectorIdRoute
+  AppKnowledgeGapsSupportCasesCaseIdRoute: typeof AppKnowledgeGapsSupportCasesCaseIdRoute
+  AppKnowledgeGapsSupportCasesIndexRoute: typeof AppKnowledgeGapsSupportCasesIndexRoute
 }
 
 const AppRouteRouteChildren: AppRouteRouteChildren = {
@@ -2257,6 +2299,10 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppKnowledgeGapsIndexRoute: AppKnowledgeGapsIndexRoute,
   AppKnowledgeKbSlugEditConnectorConnectorIdRoute:
     AppKnowledgeKbSlugEditConnectorConnectorIdRoute,
+  AppKnowledgeGapsSupportCasesCaseIdRoute:
+    AppKnowledgeGapsSupportCasesCaseIdRoute,
+  AppKnowledgeGapsSupportCasesIndexRoute:
+    AppKnowledgeGapsSupportCasesIndexRoute,
 }
 
 const AppRouteRouteWithChildren = AppRouteRoute._addFileChildren(

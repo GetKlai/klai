@@ -4,16 +4,20 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
 import {
-  ArrowLeft, Shield,
+  AlertTriangle, ArrowLeft, Shield,
   Loader2, Sparkles, Settings, ChevronDown, ChevronRight,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { ListEmptyState } from '@/components/ui/list-state'
 import { StepIndicator, type StepItem } from '@/components/ui/step-indicator'
 import { Textarea } from '@/components/ui/textarea'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
+import { useCurrentUser } from '@/hooks/useCurrentUser'
+import { fetchMe } from '@/lib/api-me'
+import { appNavGapsIsVisible } from '@/routes/app/-app-tools'
 import { MS_SITE_URL_PATTERN } from '@/lib/ms-docs'
 import type { ConnectorSummary, CookieRow } from './$kbSlug/-kb-types'
 import { GoogleDrivePicker } from './$kbSlug/_components/GoogleDrivePicker'
@@ -35,6 +39,7 @@ import type {
   AuthProbeResult,
   ConfluenceConfig,
   GitHubConfig,
+  HubSpotSupportConfig,
   JsonFeedConfig,
   NotionEditConfig,
   PreviewResult,
@@ -43,6 +48,10 @@ import type {
   WebCrawlerConfig,
 } from './-connector-types'
 import {
+  HUBSPOT_SUPPORT_LOOKBACK_DEFAULT,
+  HUBSPOT_SUPPORT_LOOKBACK_MAX,
+  HUBSPOT_SUPPORT_LOOKBACK_MIN,
+  hubspotSupportConfig,
   isWithinBaseUrl,
   jsonFeedConfigForUpdate,
   joinSeedUrl,
@@ -110,6 +119,19 @@ function EditConnectorPage() {
   const hasSavedWebCrawlerCredentials =
     connector?.connector_type === 'web_crawler' && connector.has_saved_credentials === true
 
+  const { user } = useCurrentUser()
+  const hasGapsCapability = user?.hasCapability('kb.gaps') === true
+  const meQuery = useQuery({
+    queryKey: ['me'],
+    queryFn: ({ signal }) => fetchMe(signal),
+    enabled: hasGapsCapability,
+  })
+  const gapsUnlocked = appNavGapsIsVisible({
+    hasCapability: (cap) => user?.hasCapability(cap) === true,
+    unlockedFeatures: meQuery.data?.platform_unlocked_features ?? [],
+  })
+  const hubspotLocked = connector?.connector_type === 'hubspot_support' && !gapsUnlocked
+
   const { data: savedCredentialMetadata } = useQuery<SavedCredentialMetadata>({
     queryKey: ['connector-credential-metadata', kbSlug, connectorId],
     queryFn: async () =>
@@ -157,6 +179,12 @@ function EditConnectorPage() {
     base_url: '', email: '', api_token: '', space_keys: '',
   })
   const [jsonFeedConfig, setJsonFeedConfig] = useState<JsonFeedConfig>({ url: '' })
+  // hubspot_support: access_token stays blank on edit (masked-secret pattern,
+  // like notion/confluence) and is only sent when the operator types a new one.
+  const [hubspotConfig, setHubspotConfig] = useState<HubSpotSupportConfig>({
+    access_token: '', account_id: '', lookback_days: String(HUBSPOT_SUPPORT_LOOKBACK_DEFAULT),
+    pipeline_ids: '', inbox_ids: '',
+  })
 
   // -- Web crawler wizard state (SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-1) ----
   // SPEC D-1: deep-link via ?step=auth opens at auth-setup (pre-set requiresLogin=true),
@@ -356,6 +384,19 @@ function EditConnectorPage() {
       const cfg = connector.config as { url?: string }
       setJsonFeedConfig({ url: String(cfg.url ?? '') })
     }
+    if (connector.connector_type === 'hubspot_support') {
+      const cfg = connector.config as {
+        account_id?: string; lookback_days?: number
+        pipeline_ids?: string[]; inbox_ids?: string[]
+      }
+      setHubspotConfig({
+        access_token: '', // never pre-populate the masked token
+        account_id: String(cfg.account_id ?? ''),
+        lookback_days: String(cfg.lookback_days ?? HUBSPOT_SUPPORT_LOOKBACK_DEFAULT),
+        pipeline_ids: (cfg.pipeline_ids ?? []).join(', '),
+        inbox_ids: (cfg.inbox_ids ?? []).join(', '),
+      })
+    }
   }, [connector?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const updateMutation = useMutation({
@@ -482,6 +523,11 @@ function EditConnectorPage() {
       }
       if (connector.connector_type === 'json_feed') {
         Object.assign(config, jsonFeedConfigForUpdate(jsonFeedConfig.url))
+      }
+      if (connector.connector_type === 'hubspot_support') {
+        // includeAccessToken=true but the helper omits an empty token, so a
+        // blank field preserves the existing encrypted credential.
+        Object.assign(config, hubspotSupportConfig(hubspotConfig, { includeAccessToken: true }))
       }
       await apiFetch(`/api/app/knowledge-bases/${kbSlug}/connectors/${connectorId}`, {
         method: 'PATCH',
@@ -1406,8 +1452,50 @@ function EditConnectorPage() {
             </form>
           )}
 
+          {/* HubSpot support edit form is blocked while the knowledge_gaps
+              unlock is revoked (hubspotLocked); the row keeps delete/cleanup. */}
+          {hubspotLocked && (
+            <ListEmptyState icon={AlertTriangle} title={m.gaps_unlock_required()} />
+          )}
+
+          {/* HubSpot support (support-gap-detection.md). Masked token: blank
+              keeps the stored credential. */}
+          {connector?.connector_type === 'hubspot_support' && gapsUnlocked && (
+            <form onSubmit={(e) => { e.preventDefault(); updateMutation.mutate() }} className="space-y-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-conn-name">{m.admin_connectors_field_name()}</Label>
+                <Input id="edit-conn-name" required value={name} onChange={(e) => setName(e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-hs-token">{m.admin_connectors_hubspot_support_access_token()}</Label>
+                <Input id="edit-hs-token" type="password" placeholder={m.admin_connectors_hubspot_support_access_token_hint()} value={hubspotConfig.access_token} onChange={(e) => setHubspotConfig((p) => ({ ...p, access_token: e.target.value }))} />
+                <p className="text-xs text-gray-600">{m.admin_connectors_hubspot_support_access_token_update_help()}</p>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-hs-account-id">{m.admin_connectors_hubspot_support_account_id()}</Label>
+                <Input id="edit-hs-account-id" required inputMode="numeric" placeholder={m.admin_connectors_hubspot_support_account_id_hint()} value={hubspotConfig.account_id} onChange={(e) => setHubspotConfig((p) => ({ ...p, account_id: e.target.value }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-hs-lookback">{m.admin_connectors_hubspot_support_lookback_days()}</Label>
+                <Input id="edit-hs-lookback" type="number" min={HUBSPOT_SUPPORT_LOOKBACK_MIN} max={HUBSPOT_SUPPORT_LOOKBACK_MAX} value={hubspotConfig.lookback_days} onChange={(e) => setHubspotConfig((p) => ({ ...p, lookback_days: e.target.value }))} />
+                <p className="text-xs text-gray-600">{m.admin_connectors_hubspot_support_lookback_days_help()}</p>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-hs-pipelines">{m.admin_connectors_hubspot_support_pipeline_ids()}</Label>
+                <Input id="edit-hs-pipelines" inputMode="numeric" placeholder={m.admin_connectors_hubspot_support_pipeline_ids_hint()} value={hubspotConfig.pipeline_ids} onChange={(e) => setHubspotConfig((p) => ({ ...p, pipeline_ids: e.target.value }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-hs-inboxes">{m.admin_connectors_hubspot_support_inbox_ids()}</Label>
+                <Input id="edit-hs-inboxes" inputMode="numeric" placeholder={m.admin_connectors_hubspot_support_inbox_ids_hint()} value={hubspotConfig.inbox_ids} onChange={(e) => setHubspotConfig((p) => ({ ...p, inbox_ids: e.target.value }))} />
+              </div>              {renderError()}
+              <div className="pt-2">
+                <Button type="submit" size="sm" disabled={updateMutation.isPending || !name || !hubspotConfig.account_id.trim()}>{m.admin_connectors_save()}</Button>
+              </div>
+            </form>
+          )}
+
           {/* Generic fallback for unsupported connector types */}
-          {connector && !['web_crawler', 'github', 'notion', 'google_drive', 'ms_docs', 'airtable', 'confluence', 'json_feed', 'google_docs', 'google_sheets', 'google_slides'].includes(connector.connector_type) && (
+          {connector && !['web_crawler', 'github', 'notion', 'google_drive', 'ms_docs', 'airtable', 'confluence', 'json_feed', 'hubspot_support', 'google_docs', 'google_sheets', 'google_slides'].includes(connector.connector_type) && (
             <form onSubmit={(e) => { e.preventDefault(); updateMutation.mutate() }} className="space-y-3">
               <div className="space-y-1.5">
                 <Label htmlFor="edit-conn-name">{m.admin_connectors_field_name()}</Label>

@@ -40,7 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import get_effective_capabilities
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal, cross_org_scope, get_db, set_tenant
-from app.core.permissions import resolve_user_permissions
+from app.core.permissions import assert_platform_unlocked, resolve_user_permissions
 from app.core.provisioning_names import validate_slug_for_provisioning
 from app.models.connectors import PortalConnector
 from app.models.knowledge_bases import PortalKnowledgeBase
@@ -583,6 +583,9 @@ async def get_connector_config(
         )
     connector, kb, org = row
 
+    if connector.connector_type == "hubspot_support":
+        assert_platform_unlocked(org, "knowledge_gaps")
+
     _assert_connector_credentials_readable(connector)
 
     # Merge decrypted credentials into config for internal consumers.
@@ -677,6 +680,8 @@ async def list_scheduled_connectors(
             has_saved_credentials=connector.encrypted_credentials is not None,
         )
         for connector, org in rows
+        if connector.connector_type != "hubspot_support"
+        or "knowledge_gaps" in (getattr(org, "platform_unlocked_features", None) or [])
     ]
 
 

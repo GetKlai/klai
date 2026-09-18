@@ -30,6 +30,7 @@ CATEGORY_D_MODELS: frozenset[str] = frozenset(
         "PortalUserKBAccess",
         "PortalUserProduct",
         "PortalRetrievalGap",
+        "PortalSupportCase",
         "PortalTaxonomyNode",
         "PortalTaxonomyProposal",
         "VexaMeeting",
@@ -62,6 +63,15 @@ TENANT_ESTABLISHING_CALLS: frozenset[str] = frozenset(
 # helper, with a one-line justification.
 ALLOWED_HELPER_FUNCTIONS: frozenset[str] = frozenset(
     {
+        # Support-store helpers only run inside upsert_support_case's tenant
+        # session; _finding_gap constructs an unpersisted row with explicit org_id.
+        "_load_case_for_update",
+        "_prepare_evidence",
+        "_delete_case_findings",
+        "_case_findings_count",
+        "_finding_gap",
+        # Only called by list_gaps after its get_caller dependency scopes the session.
+        "_list_support_gaps",
         # app/services/access.py — all entry points take org_id parameter
         # and are only called from routes that ran _get_caller_org first.
         "_accessible_meetings_filter",

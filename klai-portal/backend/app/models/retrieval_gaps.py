@@ -14,7 +14,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -24,17 +24,32 @@ class PortalRetrievalGap(Base):
     __tablename__ = "portal_retrieval_gaps"
     __table_args__ = (
         CheckConstraint(
-            "gap_type IN ('hard', 'soft')",
+            # 'content' is the fixed gap_type for case-backed support findings:
+            # a content gap can exist even when retrieval scores are healthy, so
+            # the analyzer's nullable hard/soft signal is kept in ``evidence``
+            # instead. 'hard'/'soft' keep their retrieval-telemetry meaning.
+            "gap_type IN ('hard', 'soft', 'content')",
             name="ck_retrieval_gaps_gap_type",
         ),
         CheckConstraint(
             "resolved_by IN ('rescorer', 'review', 'manual', 'test')",
             name="ck_retrieval_gaps_resolved_by",
         ),
+        # Only the six diagnoses that create inbox findings ever land on a gap
+        # row; the analyzer keeps covered/non_knowledge/uncertain on the case.
+        # NULL = a legacy retrieval-telemetry row (no content diagnosis).
+        CheckConstraint(
+            "diagnosis IS NULL OR diagnosis IN "
+            "('missing', 'incomplete', 'outdated', 'contradictory', 'findability', 'audience')",
+            name="ck_retrieval_gaps_diagnosis",
+        ),
         Index("ix_retrieval_gaps_org_occurred", "org_id", "occurred_at"),
         Index("ix_retrieval_gaps_org_query", "org_id", "query_text"),
         Index("ix_retrieval_gaps_open", "org_id", "query_text", postgresql_where=text("resolved_at IS NULL")),
         Index("ix_retrieval_gaps_conversation", "conversation_id"),
+        # One finding per case; also the hot filter for case-detail links and
+        # for excluding case rows from the rescorer.
+        Index("ix_retrieval_gaps_support_case", "support_case_id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -80,3 +95,25 @@ class PortalRetrievalGap(Base):
     # portal_users (klai-owned); the FK (ON DELETE SET NULL) is added by
     # post_deploy_997e0b66f750_gaps_resolved_by_fk.sql as klai superuser.
     resolved_by_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    # SPEC-RAG-SUPPORT-GAP: case-backed findings. A gap sourced from an
+    # imported support case links to it (single case per finding); the grouped
+    # inbox aggregates distinct case ids per group into ``support_case_ids``.
+    # NULL keeps the historic retrieval-telemetry meaning intact. No
+    # ForeignKey() here — portal_api has no REFERENCES privilege on
+    # portal_support_cases in the same split as conversation_id/resolved_by
+    # above; the real FK (ON DELETE CASCADE, so deleting a case removes its
+    # derived findings) is added by post_deploy_<rev>_support_cases_rls.sql.
+    support_case_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, default=None)
+    # Content diagnosis (missing/incomplete/outdated/contradictory/findability/
+    # audience), separate from the hard/soft retrieval signal. NULL for legacy
+    # telemetry rows.
+    diagnosis: Mapped[str | None] = mapped_column(String(24), nullable=True, default=None)
+    # Normalized grouping key for support findings: equivalent questions across
+    # cases collapse into one inbox group without touching the legacy
+    # query_text grouping. NULL for retrieval-telemetry rows.
+    question_key: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    # Who the answer is for (e.g. 'customer' | 'internal'); NULL when unknown.
+    audience: Mapped[str | None] = mapped_column(String(16), nullable=True, default=None)
+    # Analyzer evidence for this finding: message_ids, compared articles,
+    # missing_information and rationale. NULL for telemetry rows.
+    evidence: Mapped[dict | None] = mapped_column(JSONB, nullable=True, default=None)
