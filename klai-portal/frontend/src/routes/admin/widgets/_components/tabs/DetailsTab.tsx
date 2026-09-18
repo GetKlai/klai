@@ -84,6 +84,11 @@ export function DetailsTab({ widget }: Props) {
     offTopicSubjects.trim() !== (config.off_topic_subjects ?? '') ||
     offTopicReply.trim() !== (config.off_topic_reply ?? '')
 
+  // The backend only hands a turn off when subjects AND reply are both set,
+  // so saving one of them would show a success toast for a setting that does
+  // nothing. Block the save instead of letting the admin believe it is live.
+  const offTopicHalfFilled = !offTopicSubjects.trim() !== !offTopicReply.trim()
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     const next: WidgetConfig = {
@@ -246,6 +251,11 @@ export function DetailsTab({ widget }: Props) {
                   placeholder={m.admin_widgets_off_topic_reply_placeholder()}
                 />
               </div>
+              {offTopicHalfFilled && (
+                <p className="text-sm text-[var(--color-destructive)]">
+                  {m.admin_widgets_off_topic_incomplete()}
+                </p>
+              )}
             </div>
           )}
         </div>
@@ -258,7 +268,7 @@ export function DetailsTab({ widget }: Props) {
       )}
 
       <div className="pt-2">
-        <Button type="submit" disabled={updateMutation.isPending || name.trim().length < 3 || !isDirty}>
+        <Button type="submit" disabled={updateMutation.isPending || name.trim().length < 3 || !isDirty || offTopicHalfFilled}>
           {updateMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
           {m.admin_shared_save()}
         </Button>

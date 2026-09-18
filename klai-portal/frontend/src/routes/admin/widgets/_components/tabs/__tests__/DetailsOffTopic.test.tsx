@@ -29,6 +29,7 @@ const { MESSAGE_KEYS } = vi.hoisted(() => ({
     'admin_widgets_details_section_ai',
     'admin_widgets_details_section_basics',
     'admin_widgets_name_placeholder',
+    'admin_widgets_off_topic_incomplete',
     'admin_widgets_off_topic_reply_help',
     'admin_widgets_off_topic_reply_label',
     'admin_widgets_off_topic_reply_placeholder',
@@ -155,7 +156,7 @@ describe('DetailsTab - subjects the widget does not answer', () => {
     )
   })
 
-  it('saves both fields trimmed, so a half-filled setting cannot reach the backend unnoticed', async () => {
+  it('saves both fields trimmed', async () => {
     renderTab(makeWidget())
 
     fireEvent.change(document.getElementById('widget-off-topic-subjects')!, {
@@ -172,5 +173,17 @@ describe('DetailsTab - subjects the widget does not answer', () => {
       expect(config.off_topic_subjects).toBe('prijzen, tarieven, offertes')
       expect(config.off_topic_reply).toBe('Plan hiervoor een afspraak.')
     })
+  })
+
+  it.each([
+    ['subjects', 'widget-off-topic-subjects'],
+    ['reply', 'widget-off-topic-reply'],
+  ])('refuses to save when only the %s field is filled, because the backend would ignore it', (_label, id) => {
+    renderTab(makeWidget())
+
+    fireEvent.change(document.getElementById(id)!, { target: { value: 'prijzen' } })
+
+    expect(screen.getByText('admin_widgets_off_topic_incomplete')).toBeTruthy()
+    expect(screen.getByText('admin_shared_save').disabled).toBe(true)
   })
 })
