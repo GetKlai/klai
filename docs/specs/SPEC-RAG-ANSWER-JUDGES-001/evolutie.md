@@ -387,6 +387,69 @@ opleverde).
 **Les:** een klasse die een antwoord volledig stillegt, verdient een zachtere faalrichting dan
 een klasse die alleen een knop toevoegt. Dat is hier niet opgelost.
 
+### 2.19 Gesimuleerde bezoeker: hele gesprekken meetbaar (18 sep)
+Het probleem dat Mark benoemde: alleen de eerste vraag is toetsbaar, want de tweede vraag hangt
+af van het antwoord op de eerste. Elke eind-tot-eind vergelijking hier (2.4, 2.15) gaat daarom
+over beurt één; de vervolgmetingen (2.6, 2.10e) zijn stapmetingen met een vaste voorgeschiedenis,
+wat voor het zoeken klopt maar geen gesprek meet.
+
+`scripts/simulate_conversations.py`: een model speelt de bezoeker met een doel uit een echt
+gesprek en praat meerdere beurten met de live widget via een preview-sessie. De eerste vraag is
+de echte, letterlijk, want dat is het ijkpunt.
+
+Run na de reviewcorrecties, 12 echte gesprekken van de Voys-widget, maximaal 4 beurten:
+
+| | Uitkomst |
+|---|---|
+| Doel bereikt | 9 van 12 (75%) |
+| Eerste antwoord met bron | 9 van 12 (75%) |
+| Gemiddeld aantal assistentbeurten | 2,7 |
+| Gemiddeld verspilde beurten | 1,0 |
+
+**IJking:** de herspeling van 2.15 gaf 38 van de 50 eerste antwoorden met bron (76%), de
+simulator 75%. De eerste beurt van de simulatie gedraagt zich dus als echt verkeer, en de
+beurten erna zijn de moeite van het lezen waard.
+
+**Twee fouten in de eerste versie, allebei door de review gevonden.** Het "doel" van de bezoeker
+bestond uit álle opgeslagen bezoekersbeurten, dus juist de vervolgvragen die afhangen van wat het
+oude systeem antwoordde — daarmee stuurde het harnas de simulatie terug het oude pad op. Het doel
+is nu één afgeleide zin intentie. En een gesprek zonder bruikbaar oordeel telde als mislukking
+mee; die vallen nu buiten de noemer. De eerste versie rapporteerde daardoor 90% doelen bereikt,
+wat te rooskleurig was.
+
+**Wat het niet is.** Ook die 75% is geen slagingspercentage van de widget. Een gesimuleerde
+bezoeker is geduldiger en formuleert beter dan iemand op een helppagina. Het getal vergelijkt
+twee versies, nooit als absolute claim.
+
+**Wat het kostte om dit te leren.** De ongeremde eerste versie verbruikte de gedeelde
+snelheidslimiet: het model gaf 429, de widget gaf 502, en een echte bezoeker in dat venster kreeg
+een foutmelding. Eén gesimuleerd gesprek kost tot vier widgetbeurten en vijf modelaanroepen, en
+elke widgetbeurt besteedt er zelf nog drie op hetzelfde budget. Het harnas wacht nu tussen
+gesprekken en loopt op bij een 429; dat is geen nette toevoeging maar een voorwaarde.
+
+### 2.20 Aspectgericht doorvragen vanuit de taxonomie: mechanisme werkt niet (18 sep)
+De laatste kandidaat uit het literatuuronderzoek. De [ASK-aanpak](https://aclanthology.org/2025.acl-industry.63.pdf)
+vraagt bij hoge ambiguïteit door op domeinaspecten in plaats van op de gevonden artikelen, en die
+tweede variant was hier al gemeten en gevallen (het zoeken levert nooit meer dan drie
+verschillende artikelen). De support-kennisbank van Voys heeft acht taxonomie-onderwerpen, dus de
+eerste variant was wél te proberen.
+
+Mechanisme eerst getest, vóór de bouw. Voor de 12 magere eerste vragen uit de simulatie bepaalde
+het echte doel van de bezoeker welk aspect hij gekozen zou hebben; daarna dezelfde vraag opnieuw
+gezocht met dat aspect ervoor.
+
+| | Artikel dat het doel dekt |
+|---|---|
+| Kale vraag | 7 van 12 |
+| Met gekozen aspect | **7 van 12** |
+
+Twee gewonnen (beide belplan-vragen), twee verloren (factuur, Engels). Netto nul. Het aspect is
+te grof: "Telefonie-instellingen en hardware" beslaat een derde van de kennisbank.
+
+**Niet gebouwd.** De winst van een rijkere vraag (29 om 7) is echt, maar geen van de drie
+onderzochte routes bereikt hem: doorvragen schaadt, keuzes uit artikelen kan niet, en een
+taxonomie-aspect voegt geen zoeksignaal toe.
+
 ---
 
 ## 3. Wat er live ging, en waarom
@@ -426,6 +489,7 @@ Bronnen: [Alhena over herschrijven bij meerdere beurten](https://alhena.ai/blog/
 
 ## 5. Wat nog open staat
 
+1. ~~Aspectgericht doorvragen vanuit de taxonomie~~ — mechanisme gemeten en gevallen, zie 2.20.
 1. **Varianten voor het herschrijven meten** (onderwerpwissel, trefwoord-stijl, geschiedenis zonder de antwoorden van de assistent) en de beste live zetten.
 2. ~~Zware controle op verzonnen details bouwen~~ — gebouwd, gemeten en live op 18 sep, zie 2.8 en 2.9.
 3. **Reparatie op het interne pad aanzetten.** De controle draait daar sinds 18 sep meekijkend (2.11). De cijfers van beide paden liggen nu naast elkaar (2.14): intern 86% tegen extern 64%, en 70% tegen 40% boven de reparatiedrempel. Openstaand is niet meer óf het moet, maar met welk tijdsbudget: de mediane controle duurt daar 3,6 s.
