@@ -145,6 +145,19 @@ Het aantal antwoorden waarin de beoordelaar iets verzonnen zag steeg van 4 naar 
 
 **Les:** de winst van een rijkere eerste vraag (29 om 7 bij een echt verrijkte vraag) komt niet binnen bereik door het model om die rijkdom te laten vragen. Kansrijker is de bezoeker vooraf laten kiezen uit onderwerpen uit de kennisbank, want het zoeken levert nooit meer dan drie verschillende artikelen.
 
+### 2.10b Snelheid van de controle: wat wel en niet helpt (18 sep)
+Na de strakkere grenzen (controle 4 s, reparatie 3 s) opnieuw dezelfde zes vragen live: 2,8 tot 5,1 s, en de lange wachtrijvraag 8,3 s. Die bestaat uit ongeveer 3,2 s schrijven plus de controle en de reparatie.
+
+Getest of de controle sneller wordt door de artikelen in te korten, op 25 echte antwoorden:
+
+| Lengte artikelen | Mediaan | Traagste tien procent | Zelfde oordeel als volledig |
+|---|---|---|---|
+| volledig | 2,3 s | 4,2 s | – |
+| 4000 tekens | 2,2 s | 4,1 s | 24 van 25 |
+| 2500 tekens | 2,1 s | 3,5 s | 23 van 25 |
+
+Inkorten levert dus nauwelijks tijd op en kost wel oordelen. De artikelen gaan volledig naar de controle. Wie de staart korter wil, moet bij de reparatie zijn of bij de lengte van het antwoord zelf, niet bij de invoer van de controle.
+
 ### 2.11 Dezelfde controle op de interne chat, alleen meekijkend (18 sep)
 De interne chat (LibreChat via de LiteLLM-hook) doet nu dezelfde controle per zin als de widget, met letterlijk dezelfde tekst uit de gedeelde bibliotheek. Daar verandert hij niets aan het antwoord en wacht de gebruiker nergens op: de controle wordt naast het antwoord gestart en logt alleen wat er niet in de artikelen staat. Zo kunnen beide paden straks naast elkaar gelegd worden.
 
