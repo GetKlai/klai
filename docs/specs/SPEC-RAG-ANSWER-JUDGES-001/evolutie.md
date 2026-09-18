@@ -387,6 +387,34 @@ opleverde).
 **Les:** een klasse die een antwoord volledig stillegt, verdient een zachtere faalrichting dan
 een klasse die alleen een knop toevoegt. Dat is hier niet opgelost.
 
+### 2.19 Gesimuleerde bezoeker: hele gesprekken meetbaar (18 sep)
+Het probleem dat Mark benoemde: alleen de eerste vraag is toetsbaar, want de tweede vraag hangt
+af van het antwoord op de eerste. Elke eind-tot-eind vergelijking hier (2.4, 2.15) gaat daarom
+over beurt één; de vervolgmetingen (2.6, 2.10e) zijn stapmetingen met een vaste voorgeschiedenis,
+wat voor het zoeken klopt maar geen gesprek meet.
+
+`scripts/simulate_conversations.py`: een model speelt de bezoeker met een doel uit een echt
+gesprek en praat meerdere beurten met de live widget via een preview-sessie. De eerste vraag is
+de echte, letterlijk, want dat is het ijkpunt.
+
+Eerste run, 30 echte gesprekken van de Voys-widget, maximaal 4 beurten:
+
+| | Uitkomst |
+|---|---|
+| Doel bereikt | 27 van 30 (90%) |
+| Eerste antwoord met bron | 24 van 30 (80%) |
+| Gemiddeld aantal assistentbeurten | 3,0 |
+| Gemiddeld verspilde beurten | 1,0 |
+
+**IJking:** de herspeling van 2.15 gaf 38 van de 50 eerste antwoorden met bron (76%). De
+simulator komt op 80% op een steekproef die alleen gesprekken met meerdere beurten bevat. Die
+twee liggen binnen elkaars ruis, dus de eerste beurt van de simulatie gedraagt zich als echt
+verkeer en de beurten erna zijn de moeite van het lezen waard.
+
+**Wat het niet is.** Die 90% is geen slagingspercentage van de widget. Een gesimuleerde bezoeker
+is geduldiger en formuleert beter dan iemand op een helppagina. Het getal is bruikbaar om twee
+versies met elkaar te vergelijken, nooit als absolute claim.
+
 ---
 
 ## 3. Wat er live ging, en waarom
