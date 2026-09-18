@@ -20,7 +20,7 @@ on:
       - 'deploy/scripts/**'
       - 'scripts/mistral-api-probe.sh'
       - 'scripts/check-vexa12-deploy-preconditions.sh'
-      - '.github/workflows/deploy-compose.yml'
+      - '.github/workflows/**'
       - 'deploy/librechat/tests/**'
       - '**/Dockerfile'
       - '**/Dockerfile.*'
@@ -33,7 +33,7 @@ on:
       - 'deploy/scripts/**'
       - 'scripts/mistral-api-probe.sh'
       - 'scripts/check-vexa12-deploy-preconditions.sh'
-      - '.github/workflows/deploy-compose.yml'
+      - '.github/workflows/**'
       - 'deploy/librechat/tests/**'
       - '**/Dockerfile'
       - '**/Dockerfile.*'
@@ -58,6 +58,14 @@ jobs:
           for script in deploy/scripts/*.sh; do
             bash -n "$script"
           done
+
+      # The shell inside the workflows themselves had no parser either. An edit
+      # to deploy-compose.yml dropped an `esac` on 2026-09-18: YAML still parsed,
+      # every check stayed green, and the break would have surfaced on core-01
+      # mid-deploy — after the new compose file was in place and before anything
+      # was recreated.
+      - name: Parse the shell inside every workflow
+        run: python3 scripts/check-workflow-shell-syntax.py
 
       - name: public script ownership suite
         run: bash deploy/scripts/tests/status-monitoring.test.sh

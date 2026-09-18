@@ -103,6 +103,22 @@ contactPoints:
             {{- end }}
         disableResolveMessage: false
 
+  # Uptime Kuma push monitor 75, "core-01 disk headroom", wired to the
+  # klai-alerter-down-emergency notification. This exists because all three
+  # email contact points in this file deliver to the same shared mailbox:
+  # core01_disk_usage_high sent roughly 84 messages there over fourteen days and
+  # the disk filled anyway on 2026-09-18. Kuma mails a personal address, so it is
+  # a different channel rather than the same one at a higher rate.
+  - orgId: 1
+    name: disk-headroom-kuma
+    receivers:
+      - uid: disk-headroom-kuma-push
+        type: webhook
+        settings:
+          url: ${KUMA_DISK_HEADROOM_URL}
+          httpMethod: POST
+        disableResolveMessage: true
+
   - orgId: 1
     name: heartbeat-kuma
     receivers:

@@ -1,0 +1,99 @@
+# core-01 root disk headroom — inverted heartbeat to Uptime Kuma.
+#
+# Why this is not simply a third threshold rule on the same metric:
+# core01_disk_usage_high (infra-rules.yaml R17) fired continuously from
+# 2026-09-04 and delivered roughly 84 emails to hello@getklai.com over fourteen
+# days. On 2026-09-18 the disk still reached 100%, /tmp filled, and a portal-api
+# deploy died at mktemp after its Alembic migrations had already run. All three
+# Grafana email contact points resolve to that one shared mailbox, so any
+# escalation expressed as another email is the same channel at a higher rate.
+#
+# Uptime Kuma notifies a personal address. So this rule is written upside down:
+# it fires while the disk is HEALTHY, and each dispatch pushes to Kuma's push
+# API. Losing the push is the signal.
+#
+# That inversion buys a second property for free. The push also stops when
+# VictoriaMetrics stops answering, when Grafana stops evaluating, or when
+# core-01 goes down entirely — all cases where a normal threshold rule would sit
+# silently at OK and report nothing. Same construction as the alerter heartbeat
+# in heartbeat-rules.yaml, for the same reason.
+#
+# Timing: eval every 1m, group repeat_interval 5m (policies.yaml), against
+# Kuma's 300s interval with 2 retries at 20s. One push per ~5 min lands inside
+# Kuma's window; losing headroom is reported within roughly 6 minutes.
+#
+# The 8% floor matches core01_disk_usage_critical so the two agree on what
+# "critical" means. 8% of 436 GB is ~35 GB, comfortably above the largest single
+# image pull (docling-serve, 17.3 GB) and one backup run's working set (~10 GB),
+# so neither a deploy nor the nightly backup trips it on its own.
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: obs-001-disk-headroom
+    folder: Klai
+    interval: 1m
+    rules:
+      - uid: obs-001-core01-disk-headroom
+        title: core01_disk_headroom_ok
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victoriametrics
+            queryType: instant
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: prometheus
+                uid: victoriametrics
+              # Same series and same mountpoint filter as R17/R17b. node-exporter
+              # runs containerised and cannot see the host root directly, so this
+              # reads a bind-mount that lives on the same /dev/md2.
+              expr: |
+                max(
+                  node_filesystem_avail_bytes{device="/dev/md2",fstype="ext4",mountpoint=~"/etc/.*"}
+                  /
+                  node_filesystem_size_bytes{device="/dev/md2",fstype="ext4",mountpoint=~"/etc/.*"}
+                ) >= 0.08
+              instant: true
+              queryType: instant
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: query
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        # NoData must NOT keep the push alive. Below 8% the comparison returns no
+        # series, which is exactly the case this rule exists to report, so
+        # noDataState has to stop the rule firing rather than mask it. Same for an
+        # execution error: if we cannot read the metric we do not get to claim the
+        # disk is fine.
+        noDataState: OK
+        execErrState: OK
+        for: 0s
+        keepFiringFor: 0s
+        isPaused: false
+        labels:
+          spec: SPEC-OBS-001
+          alert_type: disk_headroom
+        annotations:
+          summary: 'core-01 root disk has headroom'
+          runbook_url: 'https://github.com/GetKlai/klai-infra/blob/main/docs/runbooks/platform-recovery.md#core01-disk-usage-high'
+          description: |
+            Inverted heartbeat: this fires while /dev/md2 has at least 8% free
+            and each dispatch pushes to Uptime Kuma. If Kuma reports "core-01
+            disk headroom" DOWN, either the disk is below 8% free or the
+            monitoring path behind it has stopped answering. Both need looking
+            at; triage is in core01_disk_usage_high.

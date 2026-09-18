@@ -5,6 +5,7 @@
 #   - spec=SPEC-SEC-024                          → klai-dev-alerts-email (SEC-024-R12/R13)
 #   - spec=SPEC-INFRA-005                        → klai-dev-alerts-email (SPEC-INFRA-005 persistence)
 #   - spec=SPEC-OBS-001 + alert_type=heartbeat   → heartbeat-kuma (OBS-001-R22)
+#   - spec=SPEC-OBS-001 + alert_type=disk_headroom → disk-headroom-kuma (inverted; push stops = alert)
 #   - spec=SPEC-OBS-001                          → klai-ops-alerts-email (OBS-001-R4/R5)
 #   - spec=SPEC-INFRA-CONTAINER-HYGIENE-001      → klai-ops-alerts-email (REQ-5 orphan-audit)
 #   - spec=SPEC-INGEST-LOGIN-WALL-DETECT-001     → klai-ops-alerts-email (REQ-08 login-wall)
@@ -63,35 +64,30 @@ policies:
         repeat_interval: 2m
         continue: false
 
-      # Critical severity, any spec — MUST match before the per-spec routes
-      # below, which is why it sits here rather than at the end.
+      # OBS-001 disk headroom — MUST match BEFORE the general OBS-001 route,
+      # for the same reason as the heartbeat above: it is a push, not a page.
       #
-      # core01_disk_usage_high fired continuously from 2026-09-04 and produced
-      # roughly 84 emails to klai-ops-alerts-email over fourteen days. The disk
-      # still reached 100% on 2026-09-18 and took a portal-api deploy with it.
-      # The lesson is not that the mail was too infrequent; it is that a warning
-      # which has been true for two weeks stops being read, and routing its
-      # escalation to the same inbox at the same cadence changes only the
-      # subject prefix.
+      # An inverted rule (see disk-headroom-rules.yaml) fires while the disk is
+      # healthy, so this route pushes to Uptime Kuma every ~5 min and losing the
+      # push is the alert. repeat_interval 5m against Kuma's 300s interval plus
+      # two 20s retries.
       #
-      # So critical goes to both inboxes and repeats hourly. `group_by` lists
-      # service_group rather than service, because the infra rules carry that
-      # label and grouping on an absent label collapses unrelated alerts.
-      #
-      # This is a partial answer. Email is the channel that demonstrably failed
-      # here, and the real escalation is a push notification — see
-      # klai-infra/docs/runbooks/uptime-kuma.md for adding a push monitor, which
-      # needs a DB insert on public-01 and a restart of the status page.
-      - receiver: klai-dev-alerts-email
+      # Deliberately not a fourth email route: all three email contact points in
+      # contact-points.yaml deliver to hello@getklai.com, and
+      # core01_disk_usage_high already sent roughly 84 messages there over
+      # fourteen days while the disk filled anyway. Kuma mails a personal
+      # address, which is what makes this a different channel rather than the
+      # same one repeated faster.
+      - receiver: disk-headroom-kuma
         matchers:
-          - severity = critical
+          - spec = SPEC-OBS-001
+          - alert_type = disk_headroom
         group_by:
           - alertname
-          - service_group
-        group_wait: 10s
-        group_interval: 1m
-        repeat_interval: 1h
-        continue: true
+        group_wait: 0s
+        group_interval: 5m
+        repeat_interval: 5m
+        continue: false
 
       - receiver: klai-ops-alerts-email
         matchers:

@@ -1435,8 +1435,14 @@ services:
       # ALERTS_EMAIL_RECIPIENTS: comma-separated list for klai-ops-alerts-email.
       # KUMA_HEARTBEAT_URL: full Uptime Kuma push URL incl. token for the
       # dead-man's-switch heartbeat (fires every 5 min from the synthetic rule).
+      # KUMA_DISK_HEADROOM_URL: same shape, push monitor 75. The disk rule is
+      # inverted — it fires while /dev/md2 has headroom — so losing this push is
+      # the alert. It exists because every email contact point here lands in the
+      # same shared mailbox, which is where core01_disk_usage_high went unread
+      # for fourteen days before the disk filled on 2026-09-18.
       ALERTS_EMAIL_RECIPIENTS: ${ALERTS_EMAIL_RECIPIENTS}
       KUMA_HEARTBEAT_URL: ${KUMA_HEARTBEAT_URL}
+      KUMA_DISK_HEADROOM_URL: ${KUMA_DISK_HEADROOM_URL}
     depends_on:
       - victoriametrics
       - victorialogs

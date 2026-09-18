@@ -156,6 +156,7 @@ jobs:
                 # reverting the file on the server while both workflows reported
                 # success.
                 deploy-portal-api.sh) continue ;;
+              esac
               bash -n "$script"
               install -m 0755 "$script" "/opt/klai/scripts/$name.tmp"
               mv -f "/opt/klai/scripts/$name.tmp" "/opt/klai/scripts/$name"
