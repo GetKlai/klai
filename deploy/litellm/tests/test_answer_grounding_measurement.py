@@ -158,3 +158,47 @@ async def test_the_measurement_logs_what_the_articles_do_not_support(monkeypatch
     assert "statements=3" in record.getMessage()
     assert "unsupported=2" in record.getMessage()
     assert "worth_repairing=True" in record.getMessage()
+
+
+@pytest.mark.asyncio
+async def test_both_paths_hand_the_checker_the_same_text(monkeypatch):
+    """The internal payload must be what the shared builder produces.
+
+    The two paths used to write these three labels separately, which is how a
+    checker starts answering differently on one path than the other while both
+    look correct in review. Their numbers are compared against each other
+    (86% internal against 64% on the widget, 2026-09-18), so the input has to
+    be identical by construction, not by inspection.
+    """
+    import klai_answer_grounding as grounding
+    from klai_chat_prompts import grounding_check_user_content
+
+    sent: dict = {}
+
+    class _Resp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": '{"statements": []}'}}]}
+
+    async def _capture(payload, headers, _opts, _timeout):
+        sent.update(payload)
+        return _Resp()
+
+    monkeypatch.setattr(grounding, "_post_to_rewrite_model", _capture)
+    monkeypatch.setattr(grounding, "ANSWER_GROUNDING_API_KEY", "k")
+
+    chunks = [{"title": "Wachtrij", "text": "Ga naar Belplan."}, {"title": "Leeg", "text": "  "}]
+    await grounding.log_answer_grounding(
+        user_query="Hoe stel ik een wachtrij in?",
+        draft="Ga naar Belplan.",
+        citation_chunks=chunks,
+        kb_meta={"org_id": "8"},
+    )
+
+    assert sent["messages"][1]["content"] == grounding_check_user_content(
+        question="Hoe stel ik een wachtrij in?",
+        articles=[("Wachtrij", "Ga naar Belplan.")],
+        draft="Ga naar Belplan.",
+    )

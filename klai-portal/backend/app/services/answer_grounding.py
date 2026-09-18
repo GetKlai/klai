@@ -10,8 +10,9 @@ number at all: temperature 0, a stricter generation instruction and removing the
 profile's closing rule each left the rate where it was (49% of answers with any
 unsupported statement, 29% serious).
 
-The prompts and the schema live in ``klai-libs/chat-prompts`` so the internal
-chat path judges by the same words; this module is the widget's caller.
+The prompts, the schema and the request text live in ``klai-libs/chat-prompts``
+so the internal chat path judges by the same words and reads the same shape;
+this module is the widget's caller and owns the repair.
 
 The answer is repaired, not refused. Deleting flagged sentences in code cost one
 good answer and damaged two of 150; letting the same model edit the reply cost
@@ -39,6 +40,8 @@ from klai_chat_prompts import (
     GroundedStatement,
     GroundingCheck,
     grounding_check_response_format,
+    grounding_check_user_content,
+    grounding_repair_user_content,
     parse_grounding_check,
 )
 
@@ -55,17 +58,6 @@ logger = structlog.get_logger()
 _CHECK_TIMEOUT_SECONDS = 4.0
 _REPAIR_TIMEOUT_SECONDS = 3.0
 NOTHING_LEFT = GROUNDING_NOTHING_LEFT
-
-
-def render_articles(articles: list[tuple[str, str]]) -> str:
-    """Every article the answer model received, whole.
-
-    Clipping here is what made the earlier checks judge against material the
-    model had but the checker did not: on a first run against stored copies cut
-    at 700 characters, correct steps came back as "not in the articles" and the
-    repair then gutted good answers.
-    """
-    return "\n\n".join(f"### {title}\n{text}" for title, text in articles)
 
 
 async def _call(
@@ -107,10 +99,8 @@ async def check_grounding(
     """List the reply's statements with their evidence; ``None`` when the call fails."""
     content = await _call(
         system_prompt=GROUNDING_CHECK_SYSTEM_PROMPT,
-        user_content=(
-            f"Visitor question:\n{question}\n\n"
-            f"Help-article excerpts:\n{render_articles(articles) or '(none)'}\n\n"
-            f"Reply:\n{draft}"
+        user_content=grounding_check_user_content(
+            question=question, articles=articles, draft=draft
         ),
         settings=settings,
         timeout_seconds=_CHECK_TIMEOUT_SECONDS,
@@ -143,10 +133,9 @@ async def repair_answer(*, draft: str, unsupported: list[GroundedStatement], set
     """
     if not unsupported:
         return draft
-    listed = "\n".join(f"- {item.statement}" for item in unsupported)
     content = await _call(
         system_prompt=GROUNDING_REPAIR_SYSTEM_PROMPT,
-        user_content=f"Unsupported statements:\n{listed}\n\nReply:\n{draft}",
+        user_content=grounding_repair_user_content(draft=draft, unsupported=unsupported),
         settings=settings,
         timeout_seconds=_REPAIR_TIMEOUT_SECONDS,
     )
