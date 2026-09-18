@@ -145,7 +145,14 @@ Het aantal antwoorden waarin de beoordelaar iets verzonnen zag steeg van 4 naar 
 
 **Les:** de winst van een rijkere eerste vraag (29 om 7 bij een echt verrijkte vraag) komt niet binnen bereik door het model om die rijkdom te laten vragen. Kansrijker is de bezoeker vooraf laten kiezen uit onderwerpen uit de kennisbank, want het zoeken levert nooit meer dan drie verschillende artikelen.
 
-### 2.11 Financiële en commerciële vragen via de basisprompt (17 sep)
+### 2.11 Dezelfde controle op de interne chat, alleen meekijkend (18 sep)
+De interne chat (LibreChat via de LiteLLM-hook) doet nu dezelfde controle per zin als de widget, met letterlijk dezelfde tekst uit de gedeelde bibliotheek. Daar verandert hij niets aan het antwoord en wacht de gebruiker nergens op: de controle wordt naast het antwoord gestart en logt alleen wat er niet in de artikelen staat. Zo kunnen beide paden straks naast elkaar gelegd worden.
+
+Wat de review ving, en wat het waard was: de controle keek naar een veld dat alleen in mijn tests bestond (`kb_chat_mode`), terwijl productie `chat_retrieval_prompt_mode` schrijft. Hij zou dus nooit gedraaid hebben, met groene tests. Nu gebruikt hij dezelfde strikt-check als de renderer zelf, en testen de tests op de productiewaarde.
+
+Eerste live regels, 18 sep: twee interne beurten gemeten, beide met nul uitspraken over de organisatie (een weigering of een kort antwoord zonder bron). Te weinig om iets te zeggen; de cijfers komen als er verkeer is.
+
+### 2.12 Financiële en commerciële vragen via de basisprompt (17 sep)
 Onderaan de basisprompt: 3 van de 10 goed. Bovenaan, strenger geformuleerd: 8 van de 15. Gewone factuurvragen bleven goed (6 van 6). Eén keer noemde het model tóch een prijs.
 
 **Les:** de basisprompt alleen is hiervoor te zwak; een instelling per widget met een vaste tekst is de betrouwbare route.
@@ -183,7 +190,7 @@ Bronnen: [Alhena over herschrijven bij meerdere beurten](https://alhena.ai/blog/
 
 1. **Varianten voor het herschrijven meten** (onderwerpwissel, trefwoord-stijl, geschiedenis zonder de antwoorden van de assistent) en de beste live zetten.
 2. ~~Zware controle op verzonnen details bouwen~~ — gebouwd, gemeten en live op 18 sep, zie 2.8 en 2.9.
-3. **Dezelfde controle naar het interne pad**, eerst alleen meekijkend, zodat beide paden vergelijkbaar worden.
+3. ~~Dezelfde controle naar het interne pad~~ — live op 18 sep, meekijkend, zie 2.11. Openstaand: de cijfers van beide paden naast elkaar leggen zodra er intern verkeer is gemeten.
 4. **Geen nieuwe gok zonder nieuw artikel:** bij een vervolgbeurt zonder nieuw gevonden artikel een medewerker aanbieden (23 van de 38 correctiebeurten).
 5. ~~Korte vraag: antwoorden plus één vervolgvraag~~ — gemeten op 18 sep en afgevallen, zie 2.10.
 6. **Stijlregels uit de Voys-basisprompt halen** ("Je hebt nu…", overgenomen voorbeeldzinnen).
