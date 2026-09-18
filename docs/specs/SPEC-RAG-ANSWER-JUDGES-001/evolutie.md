@@ -2,7 +2,7 @@
 
 Doel van dit bestand: wat er gemeten is, wat daaruit volgde, en wat er live staat. Zo hoeft niemand een meting of een onderzoek over te doen. De spec ernaast (`spec.md`) beschrijft het ontwerp; dit bestand beschrijft de weg ernaartoe.
 
-Bijgewerkt: 2026-09-18 (na de livegang bij Voys).
+Bijgewerkt: 2026-09-18, na 2.21.
 
 ---
 
@@ -19,7 +19,8 @@ Een beurt van een bezoeker loopt door deze schakels. Per schakel: wat het doet, 
 | 5 | Antwoord schrijven | `partner_chat.py` + profiel in `klai-libs/chat-prompts` | ongewijzigd; promptvarianten gemeten en afgevallen. Valt de vraag binnen de onderwerpen die de widget niet behandelt, dan wordt deze schakel overgeslagen (v0.9.0) |
 | 6 | Koppelen aan bronnen | `klai-libs/citations` | ongewijzigd, dit is de ondergrens |
 | 7 | Controle achteraf op het antwoord | `services/answer_judge.py` + `services/answer_grounding.py` | licht oordeel plus controle per zin met reparatie, live 18 sep |
-| 8 | Kennisbank | Voys-artikelen | het echte plafond, niet aangepakt |
+| 8 | Kennisbank | Voys-artikelen | het echte plafond, niet aangepakt. De widget zoekt in één van de negen kennisbanken van Voys (`support`, 8947 chunks); prijzen, Ascend en de nerds-wiki staan buiten bereik |
+| — | Meten van de keten | `scripts/simulate_conversations.py` | hele gesprekken sinds 18 sep, geijkt op 75% tegen 76% van de herspeling (2.19) |
 
 ---
 
@@ -530,15 +531,38 @@ Bronnen: [Alhena over herschrijven bij meerdere beurten](https://alhena.ai/blog/
 
 ## 5. Wat nog open staat
 
-1. ~~Aspectgericht doorvragen vanuit de taxonomie~~ — mechanisme gemeten en gevallen, zie 2.20.
-1. **Varianten voor het herschrijven meten** (onderwerpwissel, trefwoord-stijl, geschiedenis zonder de antwoorden van de assistent) en de beste live zetten.
-2. ~~Zware controle op verzonnen details bouwen~~ — gebouwd, gemeten en live op 18 sep, zie 2.8 en 2.9.
-3. **Reparatie op het interne pad aanzetten.** De controle draait daar sinds 18 sep meekijkend (2.11). De cijfers van beide paden liggen nu naast elkaar (2.14): intern 86% tegen extern 64%, en 70% tegen 40% boven de reparatiedrempel. Openstaand is niet meer óf het moet, maar met welk tijdsbudget: de mediane controle duurt daar 3,6 s.
-4. **Geen nieuwe gok zonder nieuw artikel:** bij een vervolgbeurt zonder nieuw gevonden artikel een medewerker aanbieden (23 van de 38 correctiebeurten).
-5. ~~Korte vraag: antwoorden plus één vervolgvraag~~ — gemeten op 18 sep en afgevallen, zie 2.10.
-6. ~~Stijlregels uit de Voys-basisprompt halen~~ — **teruggenomen als advies.** Meting 2.5 liet zien dat álle stijlregels weghalen het juist slechter maakte (62% tegen 49%). Wat wél gebeurd is op 18 sep: de herhaalde weiger-alinea en de vijf letterlijke voorbeeldzinnen eruit, zie 2.13. Niet apart gemeten.
-7. ~~Instelling per widget voor onderwerpen die de assistent niet behandelt~~ — live op 18 sep (#1509, #1510), ingevuld en live geverifieerd bij Voys, zie 2.10f en 2.13.
-8. **Kennisbank aanvullen**; dat is het plafond dat geen enkele schakel wegneemt.
+Op volgorde van wat de metingen als grootste rem aanwijzen.
+
+1. **De kennisbank aanvullen.** Van de negen beurten zonder antwoord (2.16) stond het bij zes niet
+   in de artikelen, en bij twee liep de artikelketen halverwege dood ("hoe schakel ik het account
+   in voor internationale gesprekken"). Geen enkele schakel in deze keten neemt dat weg. Dit is
+   inhoudswerk, en het is de grootste overgebleven hefboom.
+2. **De reikwijdte van de widget heroverwegen.** Hij mag in één van de negen kennisbanken zoeken.
+   `priceright-prijzen-voys` (4527 chunks) en `ascend` (6710) bevatten antwoorden op vragen die
+   bezoekers stellen. Voor een publieke helppagina is dat waarschijnlijk bewust, maar het is een
+   keuze die sinds de inrichting niet is herzien, en de instelling uit 2.10f vangt nu precies de
+   vragen af waarvan het antwoord in de kennisbank ernaast staat.
+3. **Reparatie op het interne pad.** Intern beweert 86% van de antwoorden iets dat de artikelen
+   niet dragen, tegen 64% extern (2.14), en er gebeurt niets mee. Elke interne beurt streamt
+   (41 van 41), dus repareren vóór het tonen betekent het hele antwoord vasthouden. De cijfers om
+   de keuze op te baseren staan er: 8% tegenspraak tegen 62% alleen-onbewezen.
+4. **Meten op echt verkeer.** Alles hierboven is gemeten met herspelingen en simulaties. Het
+   dagrapport (`scripts/grounding_report.py`) had op 18 sep twee antwoorden. Wat er vandaag live
+   ging is dus nog nergens op echte bezoekers bevestigd.
+5. **Het harnas groter draaien.** Twaalf gesprekken kunnen een effect van de grootte van 2.21 niet
+   aantonen, en meer gesprekken kosten snelheidslimiet die met bezoekers gedeeld wordt. Meerdere
+   rondes buiten kantooruren.
+6. **Het valse alarm in de niet-behandelde onderwerpen.** Eén op de vijftig hulpvragen krijgt de
+   doorverwijstekst; drie oplossingen gemeten en alle drie duurder dan de kwaal (2.18). Dit is een
+   afweging voor de eigenaar van de widget.
+7. **Varianten voor het herschrijven meten** (onderwerpwissel, trefwoord-stijl, geschiedenis zonder
+   de antwoorden van de assistent).
+8. **Geen nieuwe gok zonder nieuw artikel:** bij een vervolgbeurt zonder nieuw gevonden artikel een
+   medewerker aanbieden (23 van de 38 correctiebeurten).
+
+Afgehandeld: de zware controle op verzonnen details (2.8, 2.9), dezelfde controle op het interne
+pad (2.11, 2.14), de instelling per widget (2.10f, 2.13), de korte vraag met vervolgvraag (2.10),
+de stijlregels uit de basisprompt (2.5, 2.13) en aspectgericht doorvragen (2.20).
 
 ---
 
