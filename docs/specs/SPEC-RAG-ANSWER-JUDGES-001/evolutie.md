@@ -288,6 +288,56 @@ tijd, die hij evenmin ziet.
 behulpzaamheid, niet gegrondheid. Wie gegrondheid wil meten moet de artikelen meegeven of per
 zin nalezen.
 
+### 2.16 Waar de winst nog zat: niet in het zoeken (18 sep)
+Voor de bulk-experimenten eerst uitgezocht welke schakel het plafond vormt. Van de negen
+herspeelde vragen die geen bron opleverden, vijftig kandidaten opgehaald in plaats van acht en
+laten beoordelen of er een antwoord tussen zat:
+
+| Oorzaak | Aantal |
+|---|---|
+| Stond dieper dan plek 8 (rangschikking) | **0 van 9** |
+| Stond niet in de kennisbank | 6 van 9 |
+| Stond binnen de acht en werd toch niet gebruikt | 3 van 9 |
+
+Nul rangschikkingsproblemen. Elke klassieke zoekverbetering uit de literatuur
+(fusie-varianten, andere chunkgrootte, contextuele prefix) zou hier niets bewegen. De
+contextuele prefix is bovendien al overal toegepast: 0 van 21.052 Voys-chunks is zonder
+verrijking geïndexeerd.
+
+Vier van die zes "niet in de kennisbank" waren geen kennisvragen: twee bezoekers vroegen of ze
+Engels mochten spreken, één wilde een medewerker. Zie 2.17.
+
+**Les:** meet welke schakel het plafond is voordat je een schakel verbetert. Herrangschikken
+verbetert per definitie de recall niet, en hier was er ook geen recall-probleem.
+
+### 2.17 De controle markeerde de assistent zijn eigen woorden (18 sep)
+Gevonden in de nameting van 2.15. Een gespreksbeurt kreeg de vaste weigering:
+
+| Vraag | Vóór de controles | Erna |
+|---|---|---|
+| "Ik wil graag een medewerker spreken." | "Je kunt een afspraak maken met een medewerker via de knop onder deze tekst." | "Dit vind ik niet terug in onze helpartikelen." |
+| "Can I speak english?" | "Yes, you can." | "Dit vind ik niet terug in onze helpartikelen." |
+
+De logregel wees de oorzaak aan: `grounding=some_not_in_articles, unsupported=1, verdict=answered`.
+Zonder bron is één onbewezen uitspraak genoeg voor een weigering, en de controle markeerde
+zinnen als "Je kunt een afspraak maken met een medewerker via de knop onder deze tekst" — een
+uitspraak over het chatvenster, niet over Voys. Geen helpartikel zal die zin ooit bevatten.
+
+Niet de drempel verlaagd, want dat zou echte verzinsels doorlaten ("Een portering duurt ongeveer
+vijf werkdagen" levert precies één markering op en hoort geweigerd te worden). In plaats daarvan
+de controle geleerd wat níét over de organisatie gaat: welke talen hij spreekt, dat er een
+medewerker of afspraak via deze chat bereikbaar is, en wat een knop in dit venster doet.
+
+| | Oude prompt | Nieuwe prompt |
+|---|---|---|
+| Gespreksbeurten zonder markering (6 echte) | 2 van 6 | **6 van 6** |
+| Verzonnen prijs/stap nog gemarkeerd (4 opzettelijke) | 3 van 4 | 3 van 4 |
+| 30 echte antwoorden: minstens 1 onbewezen | 73% | 73% |
+| 30 echte antwoorden: boven de reparatiedrempel | 60% | 60% |
+| 30 echte antwoorden: andere reparatiebeslissing | – | **0 van 30** |
+
+Nul verschil op echte antwoorden, dus dit kost niets aan detectie.
+
 ---
 
 ## 3. Wat er live ging, en waarom
