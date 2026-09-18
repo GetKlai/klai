@@ -128,7 +128,7 @@ Zes echte vragen als proefgesprek door de live keten:
 | Internationaal bellen aanzetten | "niet gevonden": alle vijf uitspraken stonden niet in de gevonden artikelen |
 | Hoe stel ik een wachtrij in | antwoord met bron, twee uitspraken weggehaald |
 
-Tijd per beurt 2,4 tot 4,1 s, met één uitschieter van 12,3 s doordat het repareren van een lange stappenlijst 8,4 s kostte. Daarom staan de controle en de reparatie sinds 18 sep elk op maximaal 5 s; loopt die af, dan blijft het antwoord zoals het was.
+Tijd per beurt 2,4 tot 4,1 s, met één uitschieter van 12,3 s doordat het repareren van een lange stappenlijst 8,4 s kostte. Daarom kregen de controle en de reparatie eerst elk maximaal 5 s. Dezelfde zes vragen opnieuw: 2,9 tot 4,4 s, en dezelfde lange vraag nog 9,0 s (3,2 s schrijven plus 5,0 s controleren en repareren). Daarom staat de controle nu op 4 s en de reparatie op 3 s, en wordt elke stap apart gelogd. Loopt een limiet af, dan blijft het antwoord zoals het was.
 
 Wat dit kost: een antwoord dat het model uit eigen kennis opschrijft verdwijnt nu, ook als het misschien klopt. De oorzaak ligt dan in de zoekstap, niet in de controle.
 

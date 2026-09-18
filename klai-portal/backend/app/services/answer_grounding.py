@@ -46,12 +46,14 @@ from app.core.config import Settings
 
 logger = structlog.get_logger()
 
-# Measured live on 2026-09-18: the check runs in 1.0 to 1.8 s and the repair of
-# a short answer in under a second, but repairing a long step list took 8.4 s and
-# put one turn at 12.3 s end to end. A visitor waits for the whole turn, so both
-# calls are bounded well under that; a timeout keeps the answer as it was.
-_CHECK_TIMEOUT_SECONDS = 5.0
-_REPAIR_TIMEOUT_SECONDS = 5.0
+# Measured live on 2026-09-18. The check runs in 1.9 s at the median and 3.4 s in
+# the slowest tenth; a short repair takes under a second. On a long step list the
+# two together still filled the whole 5 s budget and put a turn at 9.0 s, on top
+# of 3.2 s of writing. The visitor waits for all of it, so the check gets 4 s and
+# the repair 3 s: the median is untouched and the worst case drops by 3 s. A
+# timeout keeps the answer exactly as it was.
+_CHECK_TIMEOUT_SECONDS = 4.0
+_REPAIR_TIMEOUT_SECONDS = 3.0
 NOTHING_LEFT = GROUNDING_NOTHING_LEFT
 
 
