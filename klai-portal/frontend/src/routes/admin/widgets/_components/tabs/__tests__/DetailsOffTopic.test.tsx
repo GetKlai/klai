@@ -184,6 +184,6 @@ describe('DetailsTab - subjects the widget does not answer', () => {
     fireEvent.change(document.getElementById(id)!, { target: { value: 'prijzen' } })
 
     expect(screen.getByText('admin_widgets_off_topic_incomplete')).toBeTruthy()
-    expect(screen.getByText('admin_shared_save').disabled).toBe(true)
+    expect(document.querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled).toBe(true)
   })
 })
