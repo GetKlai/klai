@@ -68,9 +68,15 @@ policies:
       # for the same reason as the heartbeat above: it is a push, not a page.
       #
       # An inverted rule (see disk-headroom-rules.yaml) fires while the disk is
-      # healthy, so this route pushes to Uptime Kuma every ~5 min and losing the
-      # push is the alert. repeat_interval 5m against Kuma's 300s interval plus
-      # two 20s retries.
+      # healthy, so this route pushes to Uptime Kuma and losing the push is the
+      # alert.
+      #
+      # repeat_interval 2m against Kuma's 300s window, matching the heartbeat
+      # route above. 5m was tried first and is wrong: it equals the window
+      # exactly, so ordinary dispatch jitter arrives late and Kuma reports DOWN
+      # on a healthy disk. Observed 2026-09-18 — last push 18:58:09, monitor
+      # down at 19:03:50. A false page here is worse than a missed one, because
+      # it is the failure that teaches people to ignore the channel.
       #
       # Deliberately not a fourth email route: all three email contact points in
       # contact-points.yaml deliver to hello@getklai.com, and
@@ -85,8 +91,8 @@ policies:
         group_by:
           - alertname
         group_wait: 0s
-        group_interval: 5m
-        repeat_interval: 5m
+        group_interval: 2m
+        repeat_interval: 2m
         continue: false
 
       - receiver: klai-ops-alerts-email
