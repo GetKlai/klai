@@ -397,23 +397,35 @@ wat voor het zoeken klopt maar geen gesprek meet.
 gesprek en praat meerdere beurten met de live widget via een preview-sessie. De eerste vraag is
 de echte, letterlijk, want dat is het ijkpunt.
 
-Eerste run, 30 echte gesprekken van de Voys-widget, maximaal 4 beurten:
+Run na de reviewcorrecties, 12 echte gesprekken van de Voys-widget, maximaal 4 beurten:
 
 | | Uitkomst |
 |---|---|
-| Doel bereikt | 27 van 30 (90%) |
-| Eerste antwoord met bron | 24 van 30 (80%) |
-| Gemiddeld aantal assistentbeurten | 3,0 |
+| Doel bereikt | 9 van 12 (75%) |
+| Eerste antwoord met bron | 9 van 12 (75%) |
+| Gemiddeld aantal assistentbeurten | 2,7 |
 | Gemiddeld verspilde beurten | 1,0 |
 
-**IJking:** de herspeling van 2.15 gaf 38 van de 50 eerste antwoorden met bron (76%). De
-simulator komt op 80% op een steekproef die alleen gesprekken met meerdere beurten bevat. Die
-twee liggen binnen elkaars ruis, dus de eerste beurt van de simulatie gedraagt zich als echt
-verkeer en de beurten erna zijn de moeite van het lezen waard.
+**IJking:** de herspeling van 2.15 gaf 38 van de 50 eerste antwoorden met bron (76%), de
+simulator 75%. De eerste beurt van de simulatie gedraagt zich dus als echt verkeer, en de
+beurten erna zijn de moeite van het lezen waard.
 
-**Wat het niet is.** Die 90% is geen slagingspercentage van de widget. Een gesimuleerde bezoeker
-is geduldiger en formuleert beter dan iemand op een helppagina. Het getal is bruikbaar om twee
-versies met elkaar te vergelijken, nooit als absolute claim.
+**Twee fouten in de eerste versie, allebei door de review gevonden.** Het "doel" van de bezoeker
+bestond uit álle opgeslagen bezoekersbeurten, dus juist de vervolgvragen die afhangen van wat het
+oude systeem antwoordde — daarmee stuurde het harnas de simulatie terug het oude pad op. Het doel
+is nu één afgeleide zin intentie. En een gesprek zonder bruikbaar oordeel telde als mislukking
+mee; die vallen nu buiten de noemer. De eerste versie rapporteerde daardoor 90% doelen bereikt,
+wat te rooskleurig was.
+
+**Wat het niet is.** Ook die 75% is geen slagingspercentage van de widget. Een gesimuleerde
+bezoeker is geduldiger en formuleert beter dan iemand op een helppagina. Het getal vergelijkt
+twee versies, nooit als absolute claim.
+
+**Wat het kostte om dit te leren.** De ongeremde eerste versie verbruikte de gedeelde
+snelheidslimiet: het model gaf 429, de widget gaf 502, en een echte bezoeker in dat venster kreeg
+een foutmelding. Eén gesimuleerd gesprek kost tot vier widgetbeurten en vijf modelaanroepen, en
+elke widgetbeurt besteedt er zelf nog drie op hetzelfde budget. Het harnas wacht nu tussen
+gesprekken en loopt op bij een 429; dat is geen nette toevoeging maar een voorwaarde.
 
 ### 2.20 Aspectgericht doorvragen vanuit de taxonomie: mechanisme werkt niet (18 sep)
 De laatste kandidaat uit het literatuuronderzoek. De [ASK-aanpak](https://aclanthology.org/2025.acl-industry.63.pdf)
