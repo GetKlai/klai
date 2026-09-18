@@ -13,6 +13,7 @@
 // router/query-client setup required).
 
 import { Alert } from '@/components/ui/alert'
+import * as m from '@/paraglide/messages'
 import type { AuthProbeResult, PreviewClassification } from './-connector-types'
 
 /**
@@ -23,29 +24,29 @@ export function AuthProbeFeedback({ result }: { result: AuthProbeResult }) {
   if (result.classification === 'auth_ok') {
     return (
       <Alert variant="success" size="sm">
-        <span>You&apos;re in. Continue to Selector.</span>
+        <span>{m.admin_connectors_webcrawler_auth_probe_ok()}</span>
       </Alert>
     )
   }
   const reasons = result.match_reasons.length > 0
-    ? ` Detected: ${result.match_reasons.join(', ')}`
+    ? ` ${m.admin_connectors_webcrawler_auth_probe_detected({ reasons: result.match_reasons.join(', ') })}`
     : ''
   let message: string
   switch (result.classification) {
     case 'auth_failed_no_cookies':
-      message = 'This page requires authentication. Go back to step 3 and answer Yes.'
+      message = m.admin_connectors_webcrawler_auth_probe_no_cookies()
       break
     case 'auth_failed_still_walled':
-      message = `Cookies didn't unlock the content. Re-paste a fresh session cookie.${reasons}`
+      message = `${m.admin_connectors_webcrawler_auth_probe_still_walled()}${reasons}`
       break
     case 'auth_failed_credentials_invalid':
-      message = '401/403 - credentials rejected.'
+      message = m.admin_connectors_webcrawler_auth_probe_credentials_invalid()
       break
     case 'auth_failed_unreachable':
-      message = 'Could not reach the page. Check the Base URL.'
+      message = m.admin_connectors_webcrawler_auth_probe_unreachable()
       break
     default:
-      message = `Authentication check failed.${reasons}`
+      message = `${m.admin_connectors_webcrawler_auth_probe_failed()}${reasons}`
   }
   return (
     <Alert variant="warning" size="sm">
@@ -75,7 +76,7 @@ export function PreviewClassificationFeedback({
         {/* When the verdict came from the site sample, `reason` explains that the
             entry page is navigation while the pages behind it hold content. Without
             it a green check above an empty preview body reads as a bug. */}
-        <span>{reason ?? 'Selector matches real article content. You can save the connector.'}</span>
+        <span>{reason ?? m.admin_connectors_webcrawler_preview_success_default()}</span>
       </Alert>
     )
   }
@@ -83,33 +84,29 @@ export function PreviewClassificationFeedback({
   switch (classification) {
     case 'selector_required':
       message =
-        reason ?? 'The output looks like a navigation menu. Configure a Content Selector.'
+        reason ?? m.admin_connectors_webcrawler_preview_selector_required()
       break
     case 'selector_returns_empty':
       message =
-        reason ?? "Selector matched no content. Try a different selector or click 'Let AI find'."
+        reason ?? m.admin_connectors_webcrawler_preview_selector_empty()
       break
     case 'requires_javascript':
-      message =
-        "This page needs JavaScript to load its content, and the preview didn't catch it in time. " +
-        "There's nothing to configure here - save anyway and Klai will index what the full crawl can reach."
+      message = m.admin_connectors_webcrawler_preview_requires_js()
       break
     case 'entry_point_empty':
       // The reason from the backend already spells out the fix (paste a
       // specific deeper URL); fall back defensively if it is ever absent.
       message =
-        reason ??
-        "Couldn't read this page or the pages linked from it. If this is a homepage, " +
-          'paste a specific article or section URL instead.'
+        reason ?? m.admin_connectors_webcrawler_preview_entry_empty()
       break
     case 'auth_wall_detected':
-      message = 'This page requires authentication. Go back to step 4.'
+      message = m.admin_connectors_webcrawler_preview_auth_wall()
       break
     case 'unknown':
-      message = reason ?? 'Preview service did not respond. Try again.'
+      message = reason ?? m.admin_connectors_webcrawler_preview_unknown()
       break
     default:
-      message = reason ?? 'Selector check failed.'
+      message = reason ?? m.admin_connectors_webcrawler_preview_selector_check_failed()
   }
   return (
     <div className="space-y-2">
@@ -125,8 +122,7 @@ export function PreviewClassificationFeedback({
         classification !== 'unknown' &&
         classification !== 'entry_point_empty' && (
           <p className="text-xs text-gray-500">
-            You can still save this connector. Klai will crawl the pages it can reach and
-            report what it indexed after the first sync.
+            {m.admin_connectors_webcrawler_preview_can_still_save()}
           </p>
         )}
       {classification === 'unknown' && onRetry && (
@@ -135,7 +131,7 @@ export function PreviewClassificationFeedback({
           className="flex items-center gap-1 text-xs text-gray-600 hover:text-gray-900 transition-colors"
           onClick={onRetry}
         >
-          Retry
+          {m.admin_connectors_webcrawler_preview_retry()}
         </button>
       )}
     </div>

@@ -12,6 +12,7 @@ the SSRF reject-list itself is covered by ``test_connectors_ssrf.py``.
 
 from __future__ import annotations
 
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -306,6 +307,36 @@ class TestWebcrawlerConfigDiscoverySeed:
     def test_no_seed_is_fine(self) -> None:
         cfg = WebcrawlerConfig(base_url="https://wiki.example.com")
         assert cfg.discovery_seed_url is None
+
+
+class TestValidateConnectorConfigErrorShape:
+    """_validate_connector_config must surface a structured issue list, not
+    pydantic's raw ValidationError repr.
+
+    Reported 2026-09-18: a scope-mismatched discovery_seed_url 422'd on save
+    with str(exc) as the detail - pydantic's multi-line debug dump, ending in
+    a link to errors.pydantic.dev, rendered verbatim on the Save button.
+    apiFetch.ts already expects FastAPI's own {loc, msg, type} shape
+    (ValidationIssue[]) and renders it as a readable "field: reason" summary
+    - this only needed the backend to emit that shape instead of str(exc).
+    """
+
+    def test_detail_is_a_structured_issue_list_not_a_raw_dump(self) -> None:
+        with pytest.raises(HTTPException) as exc_info:
+            _validate_connector_config(
+                "web_crawler",
+                {
+                    "base_url": "https://wiki.redcactus.cloud/nl",
+                    "discovery_seed_url": "https://wiki.redcactus.cloud/en/crm-software/accelerate",
+                },
+            )
+        detail = cast(list, exc_info.value.detail)
+        assert isinstance(detail, list)
+        assert detail[0]["type"] == "value_error"
+        assert "discovery_seed_url must start with" in detail[0]["msg"]
+        # The two symptoms of the raw dump: never present in the structured form.
+        assert "errors.pydantic.dev" not in str(detail)
+        assert "input_value=" not in str(detail)
 
 
 class TestWebcrawlerConfigTestUrl:

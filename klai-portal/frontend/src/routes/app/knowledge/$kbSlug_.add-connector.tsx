@@ -417,7 +417,7 @@ function AddConnectorPage() {
               // SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-1: 5-step web_crawler wizard.
               { label: m.admin_connectors_step_type(),                onClick: () => setSelectedType(null) },
               { label: m.admin_connectors_webcrawler_step_details(),  onClick: () => setWcStep('details') },
-              { label: 'Authentication',                              onClick: () => setWcStep('auth-question') },
+              { label: m.admin_connectors_webcrawler_step_authentication(), onClick: () => setWcStep('auth-question') },
               { label: m.admin_connectors_webcrawler_step_preview(),  onClick: () => setWcStep('selector') },
               { label: m.admin_connectors_webcrawler_step_settings() },
             ]
@@ -858,11 +858,10 @@ function AddConnectorPage() {
                   <div className="space-y-4">
                     <div className="rounded-lg border border-gray-200 p-4 space-y-3">
                       <p className="text-sm font-medium text-gray-900">
-                        Is this site behind a login?
+                        {m.admin_connectors_webcrawler_auth_question()}
                       </p>
                       <p className="text-xs text-gray-600">
-                        Some knowledge bases require you to be logged in to see the content.
-                        We&apos;ll verify either way before letting you save.
+                        {m.admin_connectors_webcrawler_auth_question_hint()}
                       </p>
                       <div className="flex gap-2">
                         <Button
@@ -876,7 +875,7 @@ function AddConnectorPage() {
                             invalidatePreview()
                           }}
                         >
-                          Public site
+                          {m.admin_connectors_webcrawler_auth_public_site()}
                         </Button>
                         <Button
                           type="button"
@@ -888,7 +887,7 @@ function AddConnectorPage() {
                             invalidatePreview()
                           }}
                         >
-                          Login required
+                          {m.admin_connectors_webcrawler_auth_login_required()}
                         </Button>
                       </div>
                     </div>
@@ -971,7 +970,7 @@ function AddConnectorPage() {
                           onClick={() => setShowAdvancedSelector((p) => !p)}
                         >
                           <Settings className="h-3 w-3" />
-                          Content selector
+                          {m.admin_connectors_webcrawler_content_selector_toggle()}
                           {showAdvancedSelector ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
                         </button>
                         {showAdvancedSelector && (
@@ -983,8 +982,7 @@ function AddConnectorPage() {
                               onChange={(e) => setWebcrawlerConfig((p) => ({ ...p, content_selector: e.target.value }))}
                             />
                             <p className="text-xs text-gray-600">
-                              Only needed if the preview picks up menus instead of the article.
-                              Leave empty to let AI detect this automatically.
+                              {m.admin_connectors_webcrawler_content_selector_hint()}
                             </p>
                           </div>
                         )}
@@ -1103,12 +1101,12 @@ function AddConnectorPage() {
                           <div className="rounded-lg border border-[var(--color-success)]/30 bg-[var(--color-success)]/5 p-3 space-y-2">
                             <div className="flex gap-2 items-center text-xs text-[var(--color-success-text)]">
                               <Shield className="h-3.5 w-3.5 shrink-0" />
-                              <span>Auth protection enabled</span>
+                              <span>{m.admin_connectors_webcrawler_auth_guard_enabled()}</span>
                             </div>
                             <p className="text-xs text-gray-600 ml-5.5">
-                              We&apos;ll check this page before every sync to detect expired logins.
+                              {m.admin_connectors_webcrawler_auth_guard_hint()}
                               {authGuard.login_indicator_selector && (
-                                <> Pages without login indicator will be excluded.</>
+                                <>{m.admin_connectors_webcrawler_auth_guard_login_indicator_hint()}</>
                               )}
                             </p>
                             <button
@@ -1117,12 +1115,12 @@ function AddConnectorPage() {
                               onClick={() => setShowAdvancedAuthGuard(!showAdvancedAuthGuard)}
                             >
                               <Settings className="h-3 w-3" />
-                              Advanced settings
+                              {m.admin_connectors_webcrawler_auth_guard_advanced()}
                             </button>
                             {showAdvancedAuthGuard && (
                               <div className="ml-5.5 space-y-2 pt-1">
                                 <div className="space-y-1">
-                                  <Label className="text-xs">Canary page URL</Label>
+                                  <Label className="text-xs">{m.admin_connectors_webcrawler_auth_guard_canary_url()}</Label>
                                   <Input
                                     className="text-xs h-7"
                                     value={authGuard.canary_url ?? ''}
@@ -1134,7 +1132,7 @@ function AddConnectorPage() {
                                   />
                                 </div>
                                 <div className="space-y-1">
-                                  <Label className="text-xs">Login indicator selector</Label>
+                                  <Label className="text-xs">{m.admin_connectors_webcrawler_auth_guard_login_indicator()}</Label>
                                   <Input
                                     className="text-xs h-7"
                                     placeholder=".logged-in-user-menu"
