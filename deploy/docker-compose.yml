@@ -154,6 +154,7 @@ services:
 
   # ─── Caddy (reverse proxy + wildcard TLS) ────────────────────────────────
   caddy:
+    logging: *log-rotation
     image: ghcr.io/getklai/caddy-hetzner:latest
     restart: unless-stopped
     ports:
@@ -342,6 +343,7 @@ services:
 
   # ─── LiteLLM ──────────────────────────────────────────────────────────────
   litellm:
+    logging: *log-rotation
     image: ghcr.io/berriai/litellm:v1.96.2
     restart: unless-stopped
     command: ["--config", "/app/config.yaml", "--port", "4000"]
@@ -578,6 +580,7 @@ services:
     # merges without a follow-up bump changes nothing in production.
     # This is where REQ-3's Dutch recognizers (BSN/KvK/BTW/postcode) and
     # REQ-4's SECRET recognizer actually enter the request path.
+    logging: *log-rotation
     image: ghcr.io/getklai/presidio-analyzer@sha256:23f1c064761baadc030786aac60b58a42c5157bbf0c6e4a0201c538dc262241d
     restart: unless-stopped
     networks:
@@ -632,6 +635,7 @@ services:
     #
     # Rollback: put ghcr.io/danny-avila/librechat:v0.8.7 back here and restore
     # the four patch bind-mounts removed below (git revert this commit).
+    logging: *log-rotation
     image: ghcr.io/getklai/librechat@sha256:1b8fa0a19a2c7fae85b99e56b8e9a8b44fffd069e87a30705e4b23412f8485cb
     container_name: librechat-getklai
     restart: unless-stopped
@@ -806,6 +810,7 @@ services:
   #     :2375  portal-api      — binds confined to /opt/klai/librechat
   #     :2376  vexa12-runtime  — no binds at all, NetworkMode vexa12-bots only
   klai-docker-authz:
+    logging: *log-rotation
     image: ghcr.io/getklai/klai-docker-authz:latest
     restart: unless-stopped
     environment:
@@ -829,6 +834,7 @@ services:
 
   # ─── klai-mailer (Zitadel HTTP notification provider) ────────────────────
   klai-mailer:
+    logging: *log-rotation
     image: ghcr.io/getklai/klai-mailer:latest
     restart: unless-stopped
     ports:
@@ -930,6 +936,7 @@ services:
   # compose file once the team is in. Admin token in SOPS (env-first per
   # validator-env-parity).
   vaultwarden:
+    logging: *log-rotation
     image: vaultwarden/server:1.37.2
     restart: unless-stopped
     environment:
@@ -959,6 +966,7 @@ services:
 
   # ─── Portal API (FastAPI tenant provisioning) ─────────────────────────────
   portal-api:
+    logging: *log-rotation
     image: ghcr.io/getklai/portal-api:latest
     restart: unless-stopped
     # SPEC-SEC-ENVFILE-SCOPE-001 — portal-api's process env is scoped
@@ -1147,6 +1155,7 @@ services:
 
   # ─── GlitchTip (frontend error tracking) ────────────────────────────────
   glitchtip-web:
+    logging: *log-rotation
     image: glitchtip/glitchtip:6.2.6
     restart: unless-stopped
     depends_on:
@@ -1180,6 +1189,7 @@ services:
       start_period: 60s
 
   glitchtip-worker:
+    logging: *log-rotation
     image: glitchtip/glitchtip:6.2.6
     restart: unless-stopped
     command: ./bin/run-celery-with-beat.sh
@@ -1204,6 +1214,7 @@ services:
       - net-redis
 
   glitchtip-migrate:
+    logging: *log-rotation
     image: glitchtip/glitchtip:6.2.6
     command: "./manage.py migrate"
     restart: "no"
@@ -1245,6 +1256,7 @@ services:
       start_period: 30s
 
   victorialogs:
+    logging: *log-rotation
     image: victoriametrics/victoria-logs:v1.51.1
     restart: unless-stopped
     volumes:
@@ -1296,6 +1308,7 @@ services:
   # else to the 30d `victorialogs` instance. Volume is tiny: only
   # retrieval_decision_record/query_rewrite events from full-mode tenants.
   victorialogs-content:
+    logging: *log-rotation
     image: victoriametrics/victoria-logs:v1.51.1
     restart: unless-stopped
     volumes:
@@ -1358,6 +1371,7 @@ services:
       - monitoring
 
   alloy:
+    logging: *log-rotation
     image: grafana/alloy:v1.19.2
     restart: unless-stopped
     volumes:
@@ -1388,6 +1402,7 @@ services:
       - socket-proxy-ro   # SPEC-SEC-DOCKER-AUTHZ-001 REQ-U-002a: GET-only daemon access
 
   grafana:
+    logging: *log-rotation
     image: grafana/grafana:13.1.3
     restart: unless-stopped
     volumes:
@@ -1494,6 +1509,7 @@ services:
     # NOT exposed via Caddy — internal Docker network only
 
   retrieval-api:
+    logging: *log-rotation
     image: ghcr.io/getklai/retrieval-api:latest
     restart: unless-stopped
     # SPEC-SEC-ENVFILE-SCOPE-001 — retrieval-api's process env is scoped
@@ -1574,6 +1590,7 @@ services:
   # ─── Klai Docs ────────────────────────────────────────────────────────────
 
   gitea:
+    logging: *log-rotation
     image: gitea/gitea:1.27.3
     restart: unless-stopped
     environment:
@@ -1611,6 +1628,7 @@ services:
       start_period: 60s
 
   docs-app:
+    logging: *log-rotation
     image: ghcr.io/getklai/klai-docs:latest
     restart: unless-stopped
     environment:
@@ -1641,6 +1659,7 @@ services:
 
   # ─── Klai Knowledge MCP ───────────────────────────────────────────────────
   klai-knowledge-mcp:
+    logging: *log-rotation
     image: ghcr.io/getklai/klai-knowledge-mcp:latest
     restart: unless-stopped
     environment:
@@ -1670,6 +1689,7 @@ services:
 
   # ─── Scribe: transcription service ───────────────────────────────────────
   scribe-api:
+    logging: *log-rotation
     image: ghcr.io/getklai/scribe-api:latest
     restart: unless-stopped
     # SPEC-SEC-ENVFILE-SCOPE-001 — scribe's process env is scoped to what
@@ -1798,6 +1818,7 @@ services:
   # one listener, one fixed destination, no environment or secret surface. Its
   # fixed address is the sole tcp/8000 exception in the host INPUT firewall.
   vexa12-transcription-proxy:
+    logging: *log-rotation
     image: alpine/socat:1.8.1.3
     restart: unless-stopped
     command: >
@@ -1823,6 +1844,7 @@ services:
   # order + additive column/index sync, never dropping). meeting-api depends on
   # it being healthy so the tables exist before the first query.
   vexa12-admin-api:
+    logging: *log-rotation
     image: vexaai/v012-admin-api:v0.12.26
     restart: unless-stopped
     environment:
@@ -1863,6 +1885,7 @@ services:
   # mounts the raw docker.sock; we do not). Reuses the existing socat bridge —
   # its listener is `fork,reuseaddr`, so a second client is fine.
   vexa12-runtime:
+    logging: *log-rotation
     image: vexaai/v012-runtime:v0.12.26
     restart: unless-stopped
     environment:
@@ -1897,6 +1920,7 @@ services:
 
   # ─── Vexa 0.12 meeting-api (bot lifecycle + transcript collector) ───────
   vexa12-meeting-api:
+    logging: *log-rotation
     image: vexaai/v012-meeting-api:v0.12.26
     restart: unless-stopped
     environment:
@@ -1991,6 +2015,7 @@ services:
 
   # ─── Qdrant (vector store for Klai Knowledge) ────────────────────────────
   qdrant:
+    logging: *log-rotation
     image: qdrant/qdrant:v1.19.1
     restart: unless-stopped
     volumes:
@@ -2012,6 +2037,7 @@ services:
   # The previous /data mount was cosmetic and caused total graph loss on 2026-04-19
   # when the container was recreated during the falkordb:latest -> v4.18.1 pin (5d12587e).
   falkordb:
+    logging: *log-rotation
     image: falkordb/falkordb:v4.20.4
     restart: unless-stopped
     # SPEC-GRAPH-SCALE-001 REQ-2: the image bakes FALKORDB_ARGS="MAX_QUEUED_QUERIES 25
@@ -2047,6 +2073,7 @@ services:
 
   # ─── Knowledge Ingest (RAG ingestion + retrieval for LiteLLM hook) ──────────
   knowledge-ingest:
+    logging: *log-rotation
     image: ghcr.io/getklai/knowledge-ingest:latest
     restart: unless-stopped
     # SPEC-PROCRASTINATE-ZOMBIE-001: graphiti enrichment tasks call LiteLLM
@@ -2157,6 +2184,7 @@ services:
 
   # ─── Klai Connector (external source sync to knowledge layer) ───────────────
   klai-connector:
+    logging: *log-rotation
     image: ghcr.io/getklai/klai-connector:latest
     restart: unless-stopped
     # SPEC-SEC-AUDIT-2026-04 B3 / SPEC-SEC-ENVFILE-SCOPE-001 — migrated off
@@ -2227,6 +2255,7 @@ services:
   # `body_visibility_timeout` as a real config field (our issue #2129), so it
   # is set per request in knowledge_ingest/crawl4ai_config.py now.
   crawl4ai:
+    logging: *log-rotation
     image: ghcr.io/getklai/crawl4ai:0.9.3-local-260911-1204
     restart: unless-stopped
     environment:
@@ -2290,6 +2319,7 @@ services:
       - ./firecrawl-nuq-init.sql:/docker-entrypoint-initdb.d/nuq-schema.sql:ro
 
   firecrawl-rabbitmq:
+    logging: *log-rotation
     image: rabbitmq:3.13.7-alpine
     restart: unless-stopped
     networks:
@@ -2302,6 +2332,7 @@ services:
       start_period: 15s
 
   firecrawl-api:
+    logging: *log-rotation
     image: ghcr.io/firecrawl/firecrawl:2.11.325
     restart: unless-stopped
     environment:

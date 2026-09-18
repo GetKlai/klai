@@ -504,6 +504,20 @@ jobs:
 
   deploy:
     if: github.ref == 'refs/heads/main'
+    # One production deploy at a time. This job installs
+    # deploy/scripts/deploy-portal-api.sh at a fixed path on core-01 and then
+    # runs it several steps later, so two overlapping runs interleave a copy
+    # with an execute. On 2026-09-18 a run that had started 92 seconds before a
+    # compose change merged wrote its older copy of that script over the newer
+    # one; both runs reported success and the server kept the revision main had
+    # already replaced.
+    #
+    # cancel-in-progress: false because the in-flight run may be mid-migration.
+    # GitHub keeps only the newest pending run, so a burst of merges still
+    # converges on the newest commit — it just stops them running at once.
+    concurrency:
+      group: portal-api-production-deploy
+      cancel-in-progress: false
     # `needs: scan` ensures Trivy gate from SPEC-CI-TRIVY-POLICY-001 REQ-2
     # actually blocks production deploy: if scan job exits 1 on a HIGH/CRIT
     # finding, deploy is skipped. Previously deploy only depended on
