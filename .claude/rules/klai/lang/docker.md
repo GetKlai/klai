@@ -136,3 +136,39 @@ implicitly — and the derivation does not happen on a bare reconnect.
    ```
 3. A service that others dial by name should prefer the long form with an
    explicit `aliases:` entry. It is the only form that survived here.
+
+## Recreating the data layer leaves its consumers on dead connections (HIGH)
+
+A compose change that touches postgres, redis, qdrant or ollama recreates those
+containers. Every long-running service that holds a pool against them keeps
+running, keeps passing its healthcheck, keeps answering HTTP — and keeps a pool
+of sockets to a container that no longer exists. Nothing reports an error,
+because nothing tries to use the pool until real work arrives.
+
+Observed 2026-09-18. Adding `logging:` to eighteen services recreated postgres
+and redis at 18:35. `knowledge-ingest` was not part of that set, so it kept
+running with its original pool. It still served `identity_assert` calls from
+portal-api, so both `docker ps` and the logs looked healthy, but no knowledge
+source reached `synced` again: the prod-tenant E2E failed J05 three runs in a
+row on `Expected: "synced" / Received: "pending"`, twenty minutes after the
+deploy reported success. `compose-up.sh --force-recreate knowledge-ingest`
+fixed it, and the next E2E passed.
+
+The trap is that compose recreates exactly the services whose definition
+changed, which is normally the behaviour you want. Consumers are by definition
+unchanged, so they are exactly what it leaves alone.
+
+**After recreating a stateful backing service, recreate the services that hold
+connections to it**, in dependency order, and prove it with a real transaction
+rather than a healthcheck:
+
+```bash
+/opt/klai/scripts/compose-up.sh --force-recreate knowledge-ingest
+```
+
+Current consumers worth checking: knowledge-ingest, retrieval-api, portal-api,
+klai-connector, scribe-api. `docker compose config --services` plus the
+`depends_on` of the recreated service is the reliable way to enumerate them —
+`docker ps` cannot tell you, because a container on a dead pool looks identical
+to a healthy one. When a deploy recreates a backing service, treat a green
+healthcheck as insufficient evidence and run the prod-tenant E2E.
