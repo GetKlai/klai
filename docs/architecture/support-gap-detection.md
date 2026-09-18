@@ -99,6 +99,8 @@ The [Conversations API](https://developers.hubspot.com/docs/api-reference/legacy
 
 Add a HubSpot source type to the existing connector configuration/scheduling workflow, with a case-analysis destination. Start with selected pipelines/inboxes and a bounded historical window; fetch subsequent changes on a schedule. Keep raw external data out of the customer-facing KB.
 
+Select tickets server-side with the read-only CRM search endpoint: selected pipelines AND (created within the window OR still open). Paginate on the fixed API host and reject a scope above HubSpot's 10,000-result search ceiling. This avoids scanning an account's entire ticket history without accepting a truncated snapshot as complete.
+
 Preserve source account/ticket/thread/message identity, source revision, timestamps, content hash, visibility, language and fetch completeness. Record anonymous aggregate completeness counters so field selection can evolve from real use. Missing required pages or failed fetches leave the case incomplete and the run visibly failed/partial.
 
 Handle pagination, rate limits, bounded retries, repeat imports and changed cases. Commit source checkpoints only after corresponding evidence is durably stored. Do not rely solely on ticket modification timestamps to discover changed notes/messages; reconcile the relevant streams and periodically verify their associations. Handle source deletion, access loss and retention expiry without treating a transient fetch failure as a deletion. Add webhooks when polling evidence demonstrates a need; they do not replace reconciliation.
@@ -198,7 +200,7 @@ Use one tenant-scoped `portal_support_cases` table with the validated payload in
 
 Only organizations with `telemetry_level=full` may import or view literal support evidence. Other levels receive an explicit rejection before persistence or model calls. Recheck policy when reading/analyzing; the existing privacy purge must also remove support evidence after a downgrade. No raw case content in application logs.
 
-Case upserts serialize by stable identity. Repeated identical imports do not inflate counts or re-run successful analysis. Changed evidence invalidates old findings; stale analysis must never overwrite a newer revision. Persist evidence before analysis; analysis failure is visible and retryable. The import response is `{case_id, status, changed, findings_count}`. An unsuccessful analysis must not be reported as a successful complete sync.
+Case upserts serialize by stable identity. Repeated identical imports do not inflate counts; explicit reanalysis and successful knowledge updates bypass the usual unchanged-evidence shortcut. Changed evidence invalidates old findings; stale analysis must never overwrite a newer revision. Persist evidence before analysis; analysis failure is visible and retryable. The import response is `{case_id, status, changed, findings_count}`. An unsuccessful analysis must not be reported as a successful complete sync.
 
 `POST /api/internal/connectors/{connector_id}/support-cases/reconcile` accepts `{external_ids: string[]}` after a complete successful snapshot and deletes cases no longer in that connector's selected scope. Reconciliation also enforces the configured window; partial snapshots never call it.
 
@@ -207,7 +209,7 @@ Case upserts serialize by stable identity. Repeated identical imports do not inf
 `app.services.support_case_analysis.analyze_support_case(*, case: dict, kb_slug: str, zitadel_org_id: str, user_id: str) -> list[dict]` is stateless; storage and API authorization belong to its caller. The module exports `ANALYSIS_VERSION` as a string.
 
 1. Group source exchanges by medium and thread, then extract distinct reusable questions, applicability, audience and source message IDs covering the question, relevant support replies and outcome evidence. Use medium-specific preparation while keeping the downstream question contract shared. Pass those actual message texts to the answerability assessment, not only the extracted question. Treat the transcript and retrieved text as untrusted evidence, never as instructions. Unknown speaker roles and unknown outcomes stay unknown.
-   Call-backed candidates receive a separate request verification before retrieval: an agent's configuration choices must not become invented customer how-to requests. Retained candidates must cite existing request message IDs; original source text is preserved. A call-backed gap additionally requires a source message with customer role, excluding internal messages and notes. Speaker labels alone do not establish that role. Without customer attribution, potential gaps become `uncertain` with the provisional KB comparison retained; they do not enter the gap inbox. A customer request established by a related email can supply that attribution. This is a conservative guard, not automatic speaker-role inference; correcting roles at the source and reanalyzing is required to promote an uncertain call finding. Malformed verification results fail analysis; independent email/chat candidates bypass this call-specific check. Each model stage has a bounded 120-second timeout to accommodate long transcripts.
+   Every candidate receives a separate request verification before retrieval: an agent's configuration choices must not become invented customer how-to requests. Retained candidates must cite existing request message IDs; original source text is preserved. A call-backed gap additionally requires a source message with customer role, excluding internal messages and notes. Speaker labels alone do not establish that role. Without customer attribution, potential gaps become `uncertain` with the provisional KB comparison retained; they do not enter the gap inbox. A customer request established by a related email can supply that attribution. This is a conservative guard, not automatic speaker-role inference; correcting roles at the source and reanalyzing is required to promote an uncertain call finding. Malformed verification results fail analysis. Email, chat and internal-note candidates also require an evidenced customer need; only call-backed requests require the additional customer-speaker attribution check. Each model stage has a bounded 120-second timeout to accommodate long transcripts.
 2. Retrieve approved content using the existing retrieval service, explicitly scoped to the selected organization KB and authorized identity.
 3. Assess answerability against retrieved passages using the existing configured LiteLLM judge model. Return validated findings with `question`, `language`, `diagnosis`, `rationale`, `missing_information`, `audience`, `message_ids`, `articles`, `gap_type` and `top_score`.
 
@@ -218,7 +220,7 @@ Article evidence contains actual returned `chunk_id`, `artifact_id`, `kb_slug`, 
 ### Existing inbox and transcript input
 
 - Extend `PortalRetrievalGap` with nullable case linkage, diagnosis, stable question key and evidence. Support findings use `gap_type="content"`; retain the analyzer's nullable hard/soft retrieval signal in evidence. This keeps existing hard/soft meanings and callers intact, including when highly relevant articles still have a content gap. One finding per case/question/diagnosis, regardless of import retries. Keep source cases separate from widget conversation IDs.
-- Exclude case-backed rows from both the rescorer's selection and closing UPDATE. Group support findings separately from retrieval telemetry, and keep diagnosis, KB and audience distinctions. Initially group normalized equivalent questions; semantic merging requires a later measured evaluation.
+- Exclude case-backed rows from both the score rescorer's selection and closing UPDATE. Group support findings separately from retrieval telemetry, keeping diagnosis, KB, language and audience distinctions. Bounded semantic matching can assign a verified existing group; measure its accuracy against human-labelled pairs before using frequency as a quality measure.
 - Extend the existing gap inbox with source `support`, diagnosis and evidence access. Case detail shows source messages/segments, rationale, missing information and compared articles. Use existing capability/unlock checks, tenant/KB access and explicit loading/error states. Manual close cannot close an unrelated diagnosis or KB group.
 - `GET /api/app/gaps/support-cases/{case_id}` returns authorized case evidence and analysis. `POST /api/app/knowledge-bases/{kb_slug}/support-cases/transcript` accepts `{transcript: <native Whisper verbose-JSON result including _source>}`; normalize it to this case contract. Use `_source.sha256` as recording identity; validate finite, ordered segment timing against recording duration (allow up to two seconds of model timestamp overrun) and do not fabricate speakers or dates. Identical recording copies count as one case.
 - Add HubSpot setup to the existing connector form and JSON transcript import to the gap workflow. Both use the same backend case analysis; neither publishes knowledge.
@@ -232,10 +234,93 @@ First prove negative cases: raw support cases never call knowledge ingestion; re
 
 The support-case list includes all imported cases, including failed/pending analyses and cases with only covered or uncertain outcomes. It is scoped to one accessible organization knowledge base. Import opens the resulting case even when no gap was created. A case opens on its questions, with cited source excerpts and compared knowledge passages; the original conversation remains available separately.
 
-A reviewer can mark an analysis as correct, incorrect or uncertain and add a note. These are evaluation labels, not source-role corrections, gap approval or publication. Store them separately from machine analysis in the case's `reviews` JSONB column, keyed by the exact analysis revision and finding index. The revision includes the evidence hash, analysis version and raw analysis output. Reanalysis preserves older review entries without applying them to new output; case deletion and privacy purge delete the annotations with their evidence. There is no separate permanent evaluation archive in this iteration. The additive `reviews` column must exist before the updated endpoints serve traffic; the accompanying owner SQL handles installations where the application migration role does not own the evidence table.
+A reviewer can mark an analysis as correct, incorrect or uncertain and add a note. These are revision-bound judgments; an optional corrected diagnosis controls the derived inbox finding without changing the machine output or publishing knowledge. Source-role corrections and whole-case reference reviews have separate actions. Store them separately from machine analysis in the case's `reviews` JSONB column, keyed by the exact analysis revision and finding index. The revision includes the evidence hash, analysis version and raw analysis output. Reanalysis preserves older review entries without applying them to new output; case deletion and privacy purge delete the annotations with their evidence. There is no separate permanent evaluation archive in this iteration. The additive `reviews` column must exist before the updated endpoints serve traffic; the accompanying owner SQL handles installations where the application migration role does not own the evidence table.
 
 - `GET /api/app/knowledge-bases/{kb_slug}/support-cases?limit=25&offset=0` returns paginated case summaries, including uncertain and reviewed counts.
 - Case detail adds `analysis_revision` and each current finding's optional `review`.
-- `PATCH /api/app/knowledge-bases/{kb_slug}/support-cases/{case_id}/findings/{finding_index}/review` accepts the expected analysis revision, decision and optional note. Reviewer identity and time come from the server. An outdated analysis returns 409; it is never silently applied to a different question.
+- `PATCH /api/app/knowledge-bases/{kb_slug}/support-cases/{case_id}/findings/{finding_index}/review` accepts the expected analysis revision, decision, optional corrected diagnosis and note. Reviewer identity and time come from the server. An outdated analysis returns 409; it is never silently applied to a different question.
 
 The existing capability, feature unlock, organization/KB access and full-evidence telemetry requirements apply to listing, reading and reviewing. Review writes acquire the organization policy lock before the case row lock, matching ingestion order. Concurrent reviews of different findings merge without overwriting one another. No model or external service runs inside that transaction.
+
+
+## Quality remediation: evidence, review and validation
+
+The ingestion and tenant-isolation tests prove software contracts; they do not
+establish detection precision or recall. Release quality must be assessed on
+complete conversations, including needs the extractor did not return.
+
+### Comparison and grouping
+
+Use a bounded second retrieval grounded in the case context when the first
+search does not establish coverage. Preserve both queries and the compared
+source passages. An answer recovered only on the second search is evidence of
+a retrieval/findability problem, not missing content. A missing-content finding
+remains a candidate: bounded retrieval cannot prove exhaustive corpus absence.
+Failures in either search fail the analysis visibly.
+
+Group paraphrases only within the same tenant, comparison KB, language, audience
+and diagnosis. A model may select an existing group from a bounded candidate
+set; it may not invent a group key. Different devices, product conditions or
+procedures must not merge merely because they share a topic. Count distinct
+cases, preserve every original question and citation, and retain an explicit
+ungrouped outcome. Review grouping against human-labelled pairs before treating
+frequency as a reliable measure of demand. Frequency is one prioritization
+signal; severity, likely preventability and support effort require observed data.
+
+### Source roles and human corrections
+
+Call speaker IDs and customer/agent roles are separate facts. Accept explicit
+roles or a supplied speaker-to-role mapping from the authenticated transcript
+source. Unknown roles stay unknown. An authorized reviewer can correct cited
+call-message roles and request reanalysis; record the actor and original source
+roles. Do not infer roles from speaker numbering. Raw API transcripts use this
+same evidence contract; audio upload is not a required production interface.
+Human role overrides are server-owned review data. They survive reimport only
+when the message ID, text, kind, medium, timing and speaker still match. Provider
+metadata cannot replace that audit. Complete failed or pending cases expose a
+revision for retry and role correction; incomplete source cases remain blocked.
+
+Finding verdicts are revision-bound human annotations, separate from machine
+output. A corrected diagnosis determines whether a reviewed finding enters the
+inbox; a dismissal or uncertain verdict suppresses it. This is editorial
+feedback, not automatic model training. A full-case reference review is stored
+separately, bound to the evidence content hash. It can contain questions the
+model missed, and an explicitly complete empty review means no reusable needs.
+Machine output must never be pre-certified as an expert reference.
+
+### Reanalysis and closure
+
+Manual reanalysis and a successful knowledge update must bypass the unchanged
+case shortcut. Use the existing update notification and tenant-scoped execution
+path. Analysis runs have distinct identities so an older result cannot replace
+a newer run even when the source text is unchanged. Do not hold database locks
+while retrieving knowledge or calling a model. Preserve tenant feature and
+telemetry checks before processing and before applying results.
+
+Recheck content answerability after an article change. Retrieval-score recovery
+alone must not close a content gap. Explicit dismissals and historical human
+judgments remain auditable; a changed analysis must not silently inherit a
+verdict about another finding. Failed analysis remains visible and retryable.
+
+### Evaluation contract
+
+Keep the recordings already used for prompt tuning in a development cohort.
+Reserve newly acquired conversations as unseen evaluation cases before tuning;
+split at case level, not extracted-question level. Record input hashes, analyzer
+version and compared article hashes. No raw customer evidence or credentials
+belong in this public repository.
+
+Report source completeness, analysis failures, abstentions, reviewed-case
+coverage, false positive findings and missed reference needs separately. Measure
+precision and recall only against complete human reference reviews. Unreviewed
+cases have unavailable quality metrics, never zero error or a perfect score.
+An empty prediction set with positive reference gaps has zero recall and
+undefined precision. Explain the matching method and independently review
+semantic matches rather than presenting model agreement as expert truth.
+
+`klai-portal/backend/scripts/evaluate_support_gaps.py --input cases.json` evaluates exported case-detail records. `--alignment matches.json` supplies explicit human matches between finding and reference indexes, bound to the case content hash and analysis revision. Cases with both predictions and reference questions require this alignment. The report counts the scored subset and unreviewed cases separately; it never guesses matches or emits customer text.
+
+After an approved article edit, replay the affected reference questions and
+compare answerability before and after. Operational follow-up measures repeated
+support demand and customer resolution. A successful deployment, a large count
+of generated gaps, or the disappearance of all inbox rows is not a quality gate.

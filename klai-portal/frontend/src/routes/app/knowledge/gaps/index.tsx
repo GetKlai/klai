@@ -81,6 +81,7 @@ interface GapRow {
   diagnosis: string | null
   audience: string | null
   support_case_ids: number[]
+  group_key?: string | null
 }
 
 /** Relative timestamps for the closed-row line; same approach as
@@ -210,6 +211,7 @@ export function GapsPage() {
               diagnosis: gap.diagnosis,
               audience: gap.audience,
               nearest_kb_slug: gap.nearest_kb_slug,
+              group_key: gap.group_key,
             }
           : {
               query_text: gap.query_text,

@@ -2,7 +2,76 @@
 // support-case detail page (support-gap-detection.md). All three route files
 // under `gaps/` use these, so per the file-organisation rule they live in a
 // `-`-prefixed sibling rather than being duplicated or imported across routes.
+import type { QueryClient } from '@tanstack/react-query'
 import * as m from '@/paraglide/messages'
+
+export type CaseMessageRole = 'customer' | 'agent' | 'unknown'
+
+/** One conversation turn (email/chat message or call segment). Shared by the
+    detail page, the speaker-role editor and the reference form, so it lives
+    here rather than being redefined in each. */
+export interface CaseMessage {
+  id: string
+  kind: string
+  role: CaseMessageRole
+  text: string
+  occurred_at: string | null
+  visibility: 'customer' | 'internal' | 'unknown'
+  start_seconds: number | null
+  end_seconds: number | null
+  medium: string | null
+  thread_id: string | null
+  reply_to_id: string | null
+  speaker_id: string | null
+}
+
+export interface CaseReferenceQuestion {
+  question: string
+  diagnosis: string
+  message_ids: string[]
+}
+
+/** The reviewer's whole-case answer key, saved separately from the machine
+    analysis. `complete` with an empty `questions` records "reviewed, nothing
+    reusable"; it is never auto-filled from the analyser's findings. */
+export interface CaseReference {
+  content_hash: string
+  questions: CaseReferenceQuestion[]
+  complete: boolean
+  reviewed_by: string
+  reviewed_at: string
+}
+
+/** The nine analyser diagnoses, in the order a reviewer scans them (content
+    gaps first, then the non-gap outcomes). Used by the finding-review diagnosis
+    correction and the whole-case reference form so both offer the same set. */
+export const DIAGNOSES = [
+  'missing',
+  'incomplete',
+  'outdated',
+  'contradictory',
+  'findability',
+  'audience',
+  'covered',
+  'non_knowledge',
+  'uncertain',
+] as const
+
+export type Diagnosis = (typeof DIAGNOSES)[number]
+
+/** `{value,label}` options for a diagnosis `<Select>`; the label is localised
+    through the same `diagnosisLabel` the read-only finding view uses. */
+export function diagnosisOptions(): { value: Diagnosis; label: string }[] {
+  return DIAGNOSES.map((value) => ({ value, label: diagnosisLabel(value) }))
+}
+
+/** Every reviewer mutation on a case changes what the detail page, the case
+    list and the gap inbox show, so all three caches are refetched together. */
+export function invalidateCaseCaches(queryClient: QueryClient, caseId: string, kbSlug: string): void {
+  void queryClient.invalidateQueries({ queryKey: ['support-case', caseId] })
+  void queryClient.invalidateQueries({ queryKey: ['support-cases', kbSlug] })
+  void queryClient.invalidateQueries({ queryKey: ['app-gaps'] })
+}
 
 /** A finding is not always a content gap: the analyser also reports that the
     knowledge base already covered the question, that it was uncertain, or that

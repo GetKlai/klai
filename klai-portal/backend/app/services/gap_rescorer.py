@@ -15,19 +15,32 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 import httpx
+from fastapi import HTTPException
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.portal import PortalOrg
 from app.models.retrieval_gaps import PortalRetrievalGap
+from app.models.support_cases import PortalSupportCase
+from app.schemas_support_cases import SupportCasePayload
 from app.services.gap_classification import classify_gap
+from app.services.support_cases import (
+    GAP_FEATURE,
+    OversizedCaseError,
+    StaleCaseError,
+    SupportTelemetryError,
+    upsert_support_case,
+)
 from app.trace import get_trace_headers
 
 logger = logging.getLogger(__name__)
 
 MAX_QUERIES_PER_TRIGGER = 50
 RESCORE_WINDOW_DAYS = 30
+# A KB ingestion may touch many support cases; reanalyse a bounded batch per
+# trigger (oldest-analysed first) so one large sync cannot fan out unboundedly.
+MAX_SUPPORT_CASES_PER_TRIGGER = 50
 
 
 def _open_gap_queries_stmt(org_id: int, kb_slug: str | None, cutoff: datetime):
@@ -207,6 +220,86 @@ async def rescore_open_gaps(
     return resolved_count
 
 
+async def reanalyse_scoped_support_cases(
+    org_id: int,
+    zitadel_org_id: str,
+    kb_slug: str | None,
+    db: AsyncSession,
+) -> tuple[int, int]:
+    """Force-reanalyse the org's analysed support cases after new content lands.
+
+    A retrieval score never closes a support finding — only a fresh analysis
+    against the new content decides whether the answer now exists. So when
+    ingestion completes we re-run the shared analysis (``force_reanalysis=True``)
+    for the affected cases, scoped to the changed KB when one is given (a page
+    save) or across the org when none is (a connector sync). The store keeps a
+    good prior analysis if the run fails and preserves manual/review closes for
+    findings it still returns, so a transient analyzer outage or an already-closed
+    finding is never redelivered as a new open gap. Bounded per trigger; failures
+    are logged and counted, never swallowed as success. Returns ``(ok, failed)``.
+
+    Gated on the same full-telemetry + ``knowledge_gaps`` policy as every other
+    support path; a tenant outside it reanalyses nothing.
+    """
+    from app.core.database import set_tenant
+
+    await set_tenant(db, org_id)
+    policy = (
+        await db.execute(
+            select(PortalOrg.telemetry_level, PortalOrg.platform_unlocked_features).where(PortalOrg.id == org_id)
+        )
+    ).one_or_none()
+    if (
+        policy is None
+        or policy.telemetry_level != "full"
+        or GAP_FEATURE not in (policy.platform_unlocked_features or [])
+    ):
+        return 0, 0
+
+    stmt = select(PortalSupportCase).where(PortalSupportCase.org_id == org_id, PortalSupportCase.status == "analyzed")
+    if kb_slug is not None:
+        stmt = stmt.where(PortalSupportCase.kb_slug == kb_slug)
+    stmt = stmt.order_by(PortalSupportCase.updated_at.asc()).limit(MAX_SUPPORT_CASES_PER_TRIGGER)
+    cases = (await db.execute(stmt)).scalars().all()
+
+    ok = 0
+    failed = 0
+    for case in cases:
+        payload = SupportCasePayload.model_validate(case.payload)
+        payload.bind_kb(case.kb_slug)
+        try:
+            result = await upsert_support_case(
+                db,
+                org_id=org_id,
+                zitadel_org_id=zitadel_org_id,
+                telemetry_level=policy.telemetry_level,
+                connector_id=case.connector_id,
+                created_by=case.created_by,
+                kb_slug=case.kb_slug,
+                payload=payload,
+                force_reanalysis=True,
+                expected_content_hash=case.content_hash,
+            )
+        except (SupportTelemetryError, StaleCaseError, OversizedCaseError, HTTPException) as exc:
+            failed += 1
+            logger.warning("gap_rescorer: support reanalysis error case_id=%s: %s", case.id, type(exc).__name__)
+            continue
+        if result.reanalysis_failed or result.status == "failed":
+            failed += 1
+        else:
+            ok += 1
+
+    logger.info(
+        "gap_rescorer: support reanalysis org_id=%s kb_slug=%s candidates=%d ok=%d failed=%d",
+        org_id,
+        kb_slug,
+        len(cases),
+        ok,
+        failed,
+    )
+    return ok, failed
+
+
 async def schedule_rescore(
     org_id: int,
     zitadel_org_id: str,
@@ -214,9 +307,11 @@ async def schedule_rescore(
     db_factory,
     delay_seconds: float = 5.0,
 ) -> None:
-    """Fire-and-forget wrapper: delay then run rescore_open_gaps with a fresh DB session.
+    """Fire-and-forget wrapper: delay then rescore telemetry gaps and reanalyse
+    support cases, each on its own fresh DB session.
 
-    Uses asyncio.create_task for non-blocking execution. All exceptions are caught and logged.
+    Uses asyncio.create_task for non-blocking execution. All exceptions are caught
+    and logged so one failing pass never aborts the other.
     """
 
     async def _run() -> None:
@@ -227,6 +322,12 @@ async def schedule_rescore(
             except Exception:
                 logger.exception("gap_rescorer: unhandled error in background task")
             break  # only one session needed
+        async for db in db_factory():
+            try:
+                await reanalyse_scoped_support_cases(org_id, zitadel_org_id, kb_slug, db)
+            except Exception:
+                logger.exception("gap_rescorer: unhandled error reanalysing support cases")
+            break  # fresh tenant session for the support-case pass
 
     try:
         asyncio.get_running_loop().create_task(_run())

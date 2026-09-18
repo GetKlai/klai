@@ -413,3 +413,29 @@ def test_rescore_groups_and_resolves_per_question_language() -> None:
         _open_gap_queries_stmt(1, None, datetime(2026, 1, 1, tzinfo=UTC)).compile(dialect=postgresql.dialect())
     )
     assert "portal_retrieval_gaps.language" in compiled.split("GROUP BY", 1)[1]
+
+
+@pytest.mark.asyncio
+async def test_schedule_rescore_also_reanalyses_support_cases() -> None:
+    """The ingestion-completion trigger both rescoes telemetry gaps and force-
+    reanalyses support cases, each on its own fresh session."""
+    import asyncio
+
+    from app.services import gap_rescorer
+
+    rescore = AsyncMock()
+    reanalyse = AsyncMock(return_value=(0, 0))
+    with (
+        patch.object(gap_rescorer, "rescore_open_gaps", rescore),
+        patch.object(gap_rescorer, "reanalyse_scoped_support_cases", reanalyse),
+    ):
+
+        async def factory():
+            yield AsyncMock()
+
+        await gap_rescorer.schedule_rescore(1, "zit-1", "kb-a", factory, delay_seconds=0)
+        await asyncio.sleep(0.05)  # let the fire-and-forget task run
+
+    rescore.assert_awaited_once()
+    reanalyse.assert_awaited_once()
+    assert reanalyse.await_args.args[:3] == (1, "zit-1", "kb-a")

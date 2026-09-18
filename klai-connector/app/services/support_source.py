@@ -4,16 +4,18 @@ SPEC-RAG-SUPPORT-GAP (support-gap-detection.md, "First implementation
 contract"). This module turns HubSpot tickets + conversation threads +
 linked CRM notes/emails into the tenant-neutral ``SupportCase`` payload
 the portal evidence endpoint accepts. It reads ``api.hubapi.com`` over
-GET only (``after`` cursor on a fixed host, never ``paging.next.link``),
-keeps the token in the Authorization header alone, and never touches
-knowledge ingestion. Provider drift (a missing ``results`` envelope, an
-unresolved truncation, an unclassifiable ticket) fails visibly rather
-than producing an empty snapshot that could reconcile-delete evidence.
+GET plus the read-only ``POST /crm/v3/objects/tickets/search`` (``after``
+cursor on a fixed host, never ``paging.next.link``), keeps the token in
+the Authorization header alone, and never touches knowledge ingestion.
+Provider drift (a missing ``results`` envelope, an unresolved truncation,
+an unclassifiable ticket) fails visibly rather than producing an empty
+snapshot that could reconcile-delete evidence.
 
 API contracts verified against current HubSpot docs on 2026-09-17:
 ``GET /account-info/v3/details`` (``portalId``), ``GET
-/crm/v3/pipelines/tickets`` (stage ``metadata.isClosed``), ``GET
-/crm/v3/objects/tickets`` (results + ``paging.next.after``),
+/crm/v3/pipelines/tickets`` (stage ``metadata.isClosed``), ``POST
+/crm/v3/objects/tickets/search`` (server-side scope, results +
+``paging.next.after``, ``total``, max 200/page and 10,000/query),
 ``GET /conversations/v3/conversations/threads?associatedTicketId=`` and
 ``/threads/{id}/messages`` (``paging.next.after``; message
 ``truncationStatus`` values ``NOT_TRUNCATED`` /
@@ -58,15 +60,23 @@ _TICKET_PROPERTIES = (
 
 _PAGE_LIMIT = 100
 
+# CRM search page size (documented max 200) and the hard 10,000-result ceiling a
+# single search can page through. A scope above the ceiling cannot be read
+# completely, so it must fail rather than reconcile from a truncated first page.
+_SEARCH_PAGE_LIMIT = 200
+_SEARCH_RESULT_CEILING = 10000
+
 
 class HubSpotError(Exception):
     """Base class for HubSpot reader failures."""
 
 
 class HubSpotAPIError(HubSpotError):
-    """A HubSpot GET failed (enumeration/auth stage). Carries the status code.
+    """A HubSpot read (GET or the ticket-search POST) failed. Carries the status
+    code.
 
-    The message is built from the path and status only — never the token.
+    The message is built from the method and path and status only — never the
+    token.
     """
 
     def __init__(self, message: str, *, status_code: int | None = None) -> None:
@@ -299,26 +309,40 @@ class HubSpotSupportReader:
         except ValueError:
             return 1.0
 
-    async def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        """GET a fixed api.hubapi.com path with bounded retry on 429/5xx.
+    async def _send(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Send a request to a fixed api.hubapi.com path with bounded retry on
+        429/5xx.
 
         Raises :class:`HubSpotAPIError` on a non-retryable 4xx or after the
-        retry budget is exhausted. The message names the path + status
-        only, so the access token can never leak into an error string.
+        retry budget is exhausted. The message names the method + path +
+        status only, so the access token can never leak into an error string.
         """
         for attempt in range(self._max_retries + 1):
-            resp = await self._client.get(path, params=params)
+            resp = await self._client.request(method, path, params=params, json=json)
             if resp.status_code in _RETRYABLE_STATUS and attempt < self._max_retries:
                 await self._sleep(self._retry_delay(resp))
                 continue
             if resp.status_code >= 400:
                 raise HubSpotAPIError(
-                    f"HubSpot GET {path} -> {resp.status_code}",
+                    f"HubSpot {method} {path} -> {resp.status_code}",
                     status_code=resp.status_code,
                 )
             return resp.json()
         # Unreachable: the loop either returns or raises above.
-        raise HubSpotAPIError(f"HubSpot GET {path} exhausted retries")
+        raise HubSpotAPIError(f"HubSpot {method} {path} exhausted retries")
+
+    async def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        return await self._send("GET", path, params=params)
+
+    async def _post(self, path: str, json: dict[str, Any]) -> dict[str, Any]:
+        return await self._send("POST", path, json=json)
 
     async def _paginate(self, path: str, params: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
         """Yield every result across pages using the ``after`` cursor only.
@@ -407,46 +431,98 @@ class HubSpotSupportReader:
         if unknown:
             raise HubSpotAPIError(f"HubSpot configured inbox_ids not found in live metadata: {sorted(unknown)}")
 
+    def _selection_search_body(self, open_stages: set[str], window_start_ms: int) -> dict[str, Any]:
+        """Build the search body scoping tickets to (created within the window)
+        OR (still open), each AND-ed with the configured pipelines.
+
+        Filter groups are OR-ed by HubSpot; filters within a group are AND-ed.
+        The open group is omitted when no open stage exists, so the ``IN`` filter
+        never carries an empty value list (which the API rejects).
+        """
+        pipeline_filter = (
+            {"propertyName": "hs_pipeline", "operator": "IN", "values": sorted(self._pipeline_ids)}
+            if self._pipeline_ids
+            else None
+        )
+
+        def _group(*filters: dict[str, Any]) -> dict[str, Any]:
+            group = list(filters)
+            if pipeline_filter is not None:
+                group.append(pipeline_filter)
+            return {"filters": group}
+
+        filter_groups = [_group({"propertyName": "createdate", "operator": "GTE", "value": str(window_start_ms)})]
+        if open_stages:
+            filter_groups.append(
+                _group({"propertyName": "hs_pipeline_stage", "operator": "IN", "values": sorted(open_stages)})
+            )
+
+        return {
+            "filterGroups": filter_groups,
+            "properties": list(_TICKET_PROPERTIES),
+            "limit": _SEARCH_PAGE_LIMIT,
+            "sorts": [{"propertyName": "createdate", "direction": "ASCENDING"}],
+        }
+
+    async def _search_tickets(self, body: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
+        """Yield every ticket matching the search body across pages.
+
+        Pagination uses the ``after`` cursor in the POST body only (never
+        ``paging.next.link``), validates the envelope per page, and stops a
+        repeated cursor. When ``total`` exceeds the search ceiling the scope
+        cannot be read completely, so it raises rather than reconcile from a
+        silently-truncated snapshot.
+        """
+        path = "/crm/v3/objects/tickets/search"
+        after: str | None = None
+        seen_cursors: set[str] = set()
+        while True:
+            page_body = dict(body)
+            if after:
+                page_body["after"] = after
+            data = await self._post(path, page_body)
+            total = data.get("total")
+            if isinstance(total, int) and total > _SEARCH_RESULT_CEILING:
+                raise HubSpotAPIError(
+                    f"HubSpot {path}: {total} tickets exceed the {_SEARCH_RESULT_CEILING}-result search "
+                    "ceiling; narrow pipeline_ids or lookback_days"
+                )
+            for item in _require_results(data, path):
+                yield item
+            paging: dict[str, Any] = data.get("paging") or {}
+            next_page: dict[str, Any] = paging.get("next") or {}
+            raw_after = next_page.get("after")
+            if not raw_after:
+                return
+            after = str(raw_after)
+            if after in seen_cursors:
+                raise HubSpotAPIError(f"HubSpot {path}: pagination cursor repeated ({after})")
+            seen_cursors.add(after)
+
     async def select_tickets(self) -> list[dict[str, Any]]:
         """Tickets in scope: created within the window OR still open.
 
-        Coverage deliberately favours completeness: every run re-selects
-        the same window plus all older still-open tickets, so changed
+        Coverage deliberately favours completeness: every run re-selects the
+        same window plus all older still-open tickets, so changed
         notes/messages surface without relying on the ticket's own
-        modification timestamp. Selection scans the full ticket list and
-        filters client-side — a naive O(all tickets) enumeration whose
-        upgrade path is the ``/crm/v3/objects/tickets/search`` API once
-        polling shows the volume warrants it.
+        modification timestamp. The scope is applied server-side by
+        ``POST /crm/v3/objects/tickets/search`` so a large account is never
+        fully enumerated; a scope above the
+        10,000-result ceiling fails loudly instead of truncating.
         """
         open_stages = await self._open_stage_ids()
         await self._validate_inbox_ids()
-        window_start = self._now - timedelta(days=self._lookback_days)
+        window_start_ms = int((self._now - timedelta(days=self._lookback_days)).timestamp() * 1000)
 
         selected: list[dict[str, Any]] = []
-        params = {
-            "limit": _PAGE_LIMIT,
-            "properties": ",".join(_TICKET_PROPERTIES),
-            "archived": "false",
-        }
-        async for ticket in self._paginate("/crm/v3/objects/tickets", params):
+        async for ticket in self._search_tickets(self._selection_search_body(open_stages, window_start_ms)):
             ticket_id = ticket.get("id")
             if not ticket_id:
                 raise HubSpotAPIError("HubSpot ticket missing 'id' in selection page")
             props: dict[str, Any] = ticket.get("properties") or {}
-            if self._pipeline_ids and str(props.get("hs_pipeline")) not in self._pipeline_ids:
-                continue
-            created = _parse_ts(props.get("createdate"))
-            if created is None:
+            if _parse_ts(props.get("createdate")) is None:
                 raise HubSpotAPIError(f"HubSpot ticket {ticket_id}: missing/unparseable createdate")
-            stage = props.get("hs_pipeline_stage")
-            is_recent = created >= window_start
-            is_open = bool(stage) and str(stage) in open_stages
-            # An out-of-window ticket with no stage cannot be proven out of
-            # scope; dropping it silently would let reconcile delete it.
-            if not is_recent and not stage:
-                raise HubSpotAPIError(f"HubSpot ticket {ticket_id}: missing stage on out-of-window ticket")
-            if is_recent or is_open:
-                selected.append(ticket)
+            selected.append(ticket)
         return selected
 
     # -- Per-case assembly --------------------------------------------------

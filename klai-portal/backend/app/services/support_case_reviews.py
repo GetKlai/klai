@@ -24,6 +24,22 @@ from typing import Literal
 
 ReviewDecision = Literal["correct", "incorrect", "uncertain"]
 
+# The reviewer may re-diagnose a finding with any of the analyzer's nine
+# diagnoses — the six that make a finding actionable plus the three that keep it
+# out of the inbox (covered/non_knowledge/uncertain). This human override drives
+# the finding's derived gap visibility; it never edits the machine analysis.
+CorrectedDiagnosis = Literal[
+    "missing",
+    "incomplete",
+    "outdated",
+    "contradictory",
+    "findability",
+    "audience",
+    "covered",
+    "non_knowledge",
+    "uncertain",
+]
+
 
 def _raw_finding(finding: object) -> object:
     """A finding as it was analysed, without any API-enriched ``review`` key.
@@ -50,6 +66,12 @@ def compute_analysis_revision(*, content_hash: str, analysis_version: str | None
         default=str,
     )
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+# Reserved key under ``PortalSupportCase.reviews`` for the case-level human
+# reference (contract 4). It never collides with a per-finding key
+# (``"{revision}:{index}"``) and is ignored by ``reviews_for_current_revision``.
+REFERENCE_KEY = "_reference"
 
 
 def review_key(revision: str, index: int) -> str:

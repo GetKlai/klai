@@ -200,7 +200,7 @@ describe('GapsPage close action', () => {
 })
 
 describe('GapsPage support gap close', () => {
-  it('sends diagnosis, audience and nearest_kb_slug so a support close cannot touch another group', async () => {
+  it('closes the canonical group even when the displayed question is a paraphrase', async () => {
     mockGaps([
       gapItem({
         query_text: 'How do I export my invoices?',
@@ -211,6 +211,7 @@ describe('GapsPage support gap close', () => {
         audience: 'customer',
         nearest_kb_slug: 'billing-kb',
         support_case_ids: [7],
+        group_key: 'canonical-export-group',
       }),
       gapItem({
         query_text: 'How do I export my invoices?',
@@ -248,6 +249,7 @@ describe('GapsPage support gap close', () => {
       diagnosis: 'missing',
       audience: 'customer',
       nearest_kb_slug: 'billing-kb',
+      group_key: 'canonical-export-group',
     })
   })
 

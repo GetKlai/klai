@@ -454,6 +454,97 @@ def test_transcript_accepts_large_valid_file() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Transcript role assignment — explicit only, never inferred from position
+# --------------------------------------------------------------------------- #
+
+
+def test_transcript_explicit_segment_role_is_honoured() -> None:
+    t = normalize_whisper_transcript(
+        {
+            "_source": {"sha256": _HASH},
+            "segments": [
+                {"start": 0, "end": 1, "text": "hi", "role": "customer"},
+                {"start": 1, "end": 2, "text": "how can I help", "role": "agent"},
+            ],
+        }
+    )
+    assert [m.role for m in t.messages] == ["customer", "agent"]
+
+
+def test_transcript_speaker_roles_map_resolves_by_speaker_id() -> None:
+    t = normalize_whisper_transcript(
+        {
+            "_source": {"sha256": _HASH, "speaker_roles": {"SPEAKER_00": "customer", "SPEAKER_01": "agent"}},
+            "segments": [
+                {"start": 0, "end": 1, "text": "hi", "speaker": "SPEAKER_00"},
+                {"start": 1, "end": 2, "text": "hello", "speaker": "SPEAKER_01"},
+                {"start": 2, "end": 3, "text": "?", "speaker": "SPEAKER_00"},
+            ],
+        }
+    )
+    assert [m.role for m in t.messages] == ["customer", "agent", "customer"]
+    # The mapping is preserved verbatim for audit; the diarization label is not a role.
+    assert t.metadata["speaker_roles"] == {"SPEAKER_00": "customer", "SPEAKER_01": "agent"}
+
+
+def test_transcript_speaker_present_without_mapping_stays_unknown() -> None:
+    """A speaker label alone never becomes a business role — no index guessing."""
+    t = normalize_whisper_transcript(
+        {
+            "_source": {"sha256": _HASH},
+            "segments": [{"start": 0, "end": 1, "text": "hi", "speaker": "SPEAKER_00"}],
+        }
+    )
+    assert t.messages[0].role == "unknown"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        # Malformed per-segment role.
+        {"_source": {"sha256": _HASH}, "segments": [{"start": 0, "end": 1, "text": "x", "role": "boss"}]},
+        # Malformed speaker_roles container / value.
+        {
+            "_source": {"sha256": _HASH, "speaker_roles": ["customer"]},
+            "segments": [{"start": 0, "end": 1, "text": "x"}],
+        },
+        {
+            "_source": {"sha256": _HASH, "speaker_roles": {"SPEAKER_00": "boss"}},
+            "segments": [{"start": 0, "end": 1, "text": "x", "speaker": "SPEAKER_00"}],
+        },
+        # Conflict: explicit segment role disagrees with the mapping for its speaker.
+        {
+            "_source": {"sha256": _HASH, "speaker_roles": {"SPEAKER_00": "agent"}},
+            "segments": [{"start": 0, "end": 1, "text": "x", "speaker": "SPEAKER_00", "role": "customer"}],
+        },
+        # Mismatch: one speaker carries two different explicit roles.
+        {
+            "_source": {"sha256": _HASH},
+            "segments": [
+                {"start": 0, "end": 1, "text": "a", "speaker": "SPEAKER_00", "role": "customer"},
+                {"start": 1, "end": 2, "text": "b", "speaker": "SPEAKER_00", "role": "agent"},
+            ],
+        },
+    ],
+)
+def test_transcript_rejects_bad_roles(body: dict) -> None:
+    with pytest.raises(TranscriptError):
+        normalize_whisper_transcript(body)
+
+
+def test_transcript_roles_move_the_content_hash() -> None:
+    """Assigning roles is a real evidence change, so the hash moves and stale
+    analysis is invalidated (contract 1: role correction re-runs analysis)."""
+    plain = normalize_whisper_transcript(
+        {"_source": {"sha256": _HASH}, "segments": [{"start": 0, "end": 1, "text": "hi"}]}
+    )
+    roled = normalize_whisper_transcript(
+        {"_source": {"sha256": _HASH}, "segments": [{"start": 0, "end": 1, "text": "hi", "role": "customer"}]}
+    )
+    assert plain.content_hash() != roled.content_hash()
+
+
+# --------------------------------------------------------------------------- #
 # #C: case-detail evidence is gated by tenant/KB access, not org+policy alone
 # --------------------------------------------------------------------------- #
 
@@ -640,3 +731,29 @@ async def test_internal_reconcile_rejects_when_feature_not_unlocked() -> None:
     assert exc.value.status_code == 403
     assert exc.value.detail == {"error_code": "feature_not_unlocked", "feature": "knowledge_gaps"}
     reconcile.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_grouping_failure_logs_no_customer_text() -> None:
+    from traceback import format_exception
+
+    from app.services.support_cases import _grouped_findings
+
+    secret = "CUSTOMER_TEXT_RETURNED_AS_GROUP_KEY"
+    diagnostics = []
+
+    def record_warning(*args, **kwargs):
+        info = sys.exc_info() if kwargs.get("exc_info") is True else kwargs["exc_info"]
+        diagnostics.append("".join(format_exception(*info)))
+
+    findings = [{"question": "Reusable question", "diagnosis": "missing"}]
+    with (
+        patch("app.services.support_cases._open_group_candidates", AsyncMock(return_value=[{"question_key": "key"}])),
+        patch("app.services.support_gap_grouping.group_findings", AsyncMock(side_effect=ValueError(secret))),
+        patch("app.services.support_cases.logger") as logger,
+    ):
+        logger.warning.side_effect = record_warning
+        result = await _grouped_findings(AsyncMock(), org_id=901, kb_slug="kb-a", exclude_case_id=1, findings=findings)
+    assert result == findings
+    assert diagnostics and "_grouped_findings" in diagnostics[0]
+    assert secret not in diagnostics[0]

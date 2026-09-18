@@ -17,6 +17,7 @@ Run: ``uv run pytest tests/test_support_cases_postgres.py -m postgres -q``
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import os
 import sys
@@ -25,7 +26,7 @@ from collections.abc import AsyncIterator, Iterator
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 
 from app.core import database as db_module
@@ -195,7 +196,9 @@ async def _counts(admin: AsyncEngine, org_id: int = 901) -> tuple[int, int]:
     return cases, finds
 
 
-async def _upsert(factory, cid: str, payload: SupportCasePayload, org_id: int = 901) -> svc.UpsertResult:
+async def _upsert(
+    factory, cid: str, payload: SupportCasePayload, org_id: int = 901, force: bool = False
+) -> svc.UpsertResult:
     async with factory() as db:
         await set_tenant(db, org_id)
         return await svc.upsert_support_case(
@@ -207,7 +210,17 @@ async def _upsert(factory, cid: str, payload: SupportCasePayload, org_id: int = 
             created_by="u-901",
             kb_slug="kb-a",
             payload=payload,
+            force_reanalysis=force,
         )
+
+
+async def _analysis(admin: AsyncEngine, org_id: int = 901) -> tuple[str, list]:
+    async with admin.connect() as conn:
+        row = (
+            await conn.execute(text("SELECT status, analysis FROM portal_support_cases WHERE org_id=:o"), {"o": org_id})
+        ).first()
+    assert row is not None
+    return row[0], row[1]
 
 
 # --------------------------------------------------------------------------- #
@@ -376,6 +389,77 @@ async def test_failed_analysis_can_retry_on_same_payload(pg) -> None:
     r2 = await _upsert(factory, cid, _payload())  # identical payload, previously failed
     assert (r2.status, r2.findings_count) == ("analyzed", 1)
     assert await _counts(admin) == (1, 1)
+
+
+async def test_force_reanalysis_reruns_an_already_analysed_case(pg) -> None:
+    """A byte-identical re-import is a no-op, but force_reanalysis=True re-runs the
+    analyzer against the same evidence (contract 2: reanalyse even when the payload
+    and version are unchanged, because the KB behind it may have moved)."""
+    admin, factory, cid, analyzer = pg
+    await _upsert(factory, cid, _payload())
+    await _upsert(factory, cid, _payload())  # no-op, not re-analysed
+    assert analyzer.analyze_support_case.await_count == 1
+
+    r = await _upsert(factory, cid, _payload(), force=True)
+    assert (r.status, r.reanalysis_failed) == ("analyzed", False)
+    assert analyzer.analyze_support_case.await_count == 2
+    assert await _counts(admin) == (1, 1)
+
+
+async def test_force_reanalysis_preserves_old_findings_when_analysis_fails(pg) -> None:
+    """A forced reanalysis that fails (judge down) must not blank the previously
+    good analysis: the old findings and status stay, the result flags the failure,
+    and the case remains retryable (contract 2 + the changed-KB/failed-analysis
+    semantics reported in the summary)."""
+    admin, factory, cid, analyzer = pg
+    await _upsert(factory, cid, _payload())
+    assert await _counts(admin) == (1, 1)
+
+    analyzer.analyze_support_case = AsyncMock(side_effect=RuntimeError("judge down"))
+    r = await _upsert(factory, cid, _payload(), force=True)
+    assert r.reanalysis_failed is True
+    assert r.status == "analyzed"  # old analysis preserved, not dropped to 'failed'
+    status, analysis = await _analysis(admin)
+    assert status == "analyzed" and analysis and analysis[0]["question"] == "Reset 2FA?"
+    assert await _counts(admin) == (1, 1)  # the old finding is still there
+
+
+async def test_force_run_token_stops_a_stale_run_overwriting_a_fresher_one(pg) -> None:
+    """Same-hash concurrency: a slow forced run must not overwrite the result of a
+    newer forced run that started and finished while it was still analysing. The
+    run token (row xmin) makes the older run discard its stale result rather than
+    clobber the fresher one (contract 2: force must not defeat stale-run protection)."""
+    admin, factory, cid, analyzer = pg
+    await _upsert(factory, cid, _payload())  # seed an analysed case (1 finding)
+
+    gate = asyncio.Event()
+
+    async def _slow(**_: object) -> list[dict]:
+        gate.set()
+        await asyncio.sleep(0.4)
+        return [{"question": "STALE", "diagnosis": "missing", "gap_type": "hard", "language": "en"}]
+
+    analyzer.analyze_support_case = AsyncMock(side_effect=_slow)
+    slow_run = asyncio.create_task(_upsert(factory, cid, _payload(), force=True))
+    await gate.wait()  # slow run has checkpointed its token and is analysing
+
+    # A newer forced run starts and finishes while the slow one is still analysing.
+    analyzer.analyze_support_case = AsyncMock(
+        return_value=[
+            {"question": "FRESH-A", "diagnosis": "missing", "gap_type": "hard", "language": "en"},
+            {"question": "FRESH-B", "diagnosis": "incomplete", "gap_type": None, "language": "en"},
+        ]
+    )
+    fresh = await _upsert(factory, cid, _payload(), force=True)
+    assert (fresh.status, fresh.findings_count) == ("analyzed", 2)
+
+    await slow_run  # completes late; its token no longer matches -> discards result
+
+    status, analysis = await _analysis(admin)
+    assert status == "analyzed"
+    questions = sorted(f["question"] for f in analysis)
+    assert questions == ["FRESH-A", "FRESH-B"]  # the fresh run won; the stale one did not clobber it
+    assert await _counts(admin) == (1, 2)
 
 
 async def test_incomplete_case_is_stored_but_not_analysed(pg) -> None:
@@ -626,6 +710,7 @@ async def _review(
     org_id: int = 901,
     user_id: str = "rv-1",
     decision: str = "correct",
+    corrected_diagnosis: str | None = None,
 ):
     from app.api.app_support_cases import FindingReviewRequest, review_finding
     from tests.conftest import make_perms
@@ -635,7 +720,9 @@ async def _review(
         return await review_finding(
             case_id=case_id,
             finding_index=index,
-            body=FindingReviewRequest(analysis_revision=revision, decision=decision, note="ok"),
+            body=FindingReviewRequest(
+                analysis_revision=revision, decision=decision, corrected_diagnosis=corrected_diagnosis, note="ok"
+            ),
             kb=_kb("kb-a" if org_id == 901 else "kb-b"),
             perms=make_perms(org_id=org_id, user_id=user_id),
             db=db,
@@ -799,3 +886,473 @@ async def test_list_includes_every_status_and_outcome(pg) -> None:
     assert by_id[ids["failed"]].question_count == 0
     assert by_id[ids["pending"]].question_count == 0
     assert sorted(by_id[ids["gap"]].mediums) == ["call", "email"]
+
+
+# --------------------------------------------------------------------------- #
+# Review-driven gap visibility — the human override, proven on real rows
+# --------------------------------------------------------------------------- #
+
+
+async def _apply_visibility(
+    factory, case_id: int, index: int, decision: str, corrected: str | None, org: int = 901, reviewer: int = 7
+) -> None:
+    from app.models.support_cases import PortalSupportCase
+
+    async with factory() as db:
+        await set_tenant(db, org)
+        case = (
+            await db.execute(select(PortalSupportCase).where(PortalSupportCase.id == case_id).with_for_update())
+        ).scalar_one()
+        await svc.apply_review_visibility(
+            db,
+            case=case,
+            finding=case.analysis[index],
+            decision=decision,
+            corrected_diagnosis=corrected,
+            reviewer_user_id=reviewer,
+        )
+        await db.commit()
+
+
+async def _gap_rows(admin: AsyncEngine, case_id: int, org: int = 901) -> list:
+    async with admin.connect() as conn:
+        return list(
+            await conn.execute(
+                text(
+                    "SELECT diagnosis, resolved_by, (resolved_at IS NOT NULL) AS closed, question_key, query_text "
+                    "FROM portal_retrieval_gaps WHERE org_id=:o AND support_case_id=:c ORDER BY id"
+                ),
+                {"o": org, "c": case_id},
+            )
+        )
+
+
+async def test_review_dismiss_suppresses_the_finding_gap(pg) -> None:
+    admin, factory, cid, _ = pg
+    r = await _upsert(factory, cid, _payload())  # one open 'missing' finding
+    await _apply_visibility(factory, r.case_id, 0, "incorrect", None)  # incorrect + no correction = dismiss
+    rows = await _gap_rows(admin, r.case_id)
+    assert len(rows) == 1
+    assert (rows[0].closed, rows[0].resolved_by) == (True, "review")
+
+
+async def test_review_correct_restores_a_dismissed_finding(pg) -> None:
+    admin, factory, cid, _ = pg
+    r = await _upsert(factory, cid, _payload())
+    await _apply_visibility(factory, r.case_id, 0, "incorrect", None)  # dismiss
+    await _apply_visibility(factory, r.case_id, 0, "correct", None)  # restore
+    rows = await _gap_rows(admin, r.case_id)
+    assert (rows[0].closed, rows[0].resolved_by) == (False, None)
+
+
+async def test_review_correction_to_non_actionable_suppresses(pg) -> None:
+    admin, factory, cid, _ = pg
+    r = await _upsert(factory, cid, _payload())
+    await _apply_visibility(factory, r.case_id, 0, "incorrect", "covered")
+    rows = await _gap_rows(admin, r.case_id)
+    assert (rows[0].closed, rows[0].resolved_by) == (True, "review")
+
+
+async def test_review_correction_rebuckets_the_diagnosis(pg) -> None:
+    admin, factory, cid, _ = pg
+    r = await _upsert(factory, cid, _payload())
+    await _apply_visibility(factory, r.case_id, 0, "incorrect", "outdated")
+    rows = await _gap_rows(admin, r.case_id)
+    assert rows[0].diagnosis == "outdated" and rows[0].closed is False
+    assert "outdated" in rows[0].question_key  # the group key moved with the correction
+
+
+async def test_review_promotes_an_uncertain_finding_into_a_candidate(pg) -> None:
+    admin, factory, cid, analyzer = pg
+    analyzer.analyze_support_case = AsyncMock(
+        return_value=[{"question": "Odd one?", "diagnosis": "uncertain", "gap_type": None, "language": "en"}]
+    )
+    r = await _upsert(factory, cid, _payload())
+    assert await _counts(admin) == (1, 0)  # uncertain produced no gap row
+    await _apply_visibility(factory, r.case_id, 0, "incorrect", "missing")  # promote
+    rows = await _gap_rows(admin, r.case_id)
+    assert len(rows) == 1
+    assert rows[0].diagnosis == "missing" and rows[0].closed is False
+
+
+async def test_review_leaves_a_content_closed_row_closed(pg) -> None:
+    """Content closure (manual / rescorer) is separate from a review dismissal, so
+    a 'correct' verdict must not resurface a finding whose answer was written."""
+    admin, factory, cid, _ = pg
+    r = await _upsert(factory, cid, _payload())
+    async with admin.begin() as conn:
+        await conn.execute(
+            text("UPDATE portal_retrieval_gaps SET resolved_at=now(), resolved_by='manual' WHERE support_case_id=:c"),
+            {"c": r.case_id},
+        )
+    await _apply_visibility(factory, r.case_id, 0, "correct", None)  # visible/restore
+    rows = await _gap_rows(admin, r.case_id)
+    assert (rows[0].closed, rows[0].resolved_by) == (True, "manual")  # content closure untouched
+
+
+# --------------------------------------------------------------------------- #
+# KB-change reanalysis — a close survives, a genuinely covered finding drops
+# --------------------------------------------------------------------------- #
+
+
+async def test_force_reanalysis_preserves_a_close_for_a_still_missing_finding(pg) -> None:
+    """A forced reanalysis after a KB change must not redeliver a manually-closed
+    finding whose answer was not actually written: if the analyzer still returns
+    the same question, the prior close carries over (contract: manual close
+    remains until content is genuinely covered)."""
+    admin, factory, cid, _ = pg
+    r = await _upsert(factory, cid, _payload())  # one 'missing' finding, open
+    async with admin.begin() as conn:
+        await conn.execute(
+            text("UPDATE portal_retrieval_gaps SET resolved_at=now(), resolved_by='manual' WHERE support_case_id=:c"),
+            {"c": r.case_id},
+        )
+    # KB changed but the same question is still missing -> analyzer returns it again.
+    await _upsert(factory, cid, _payload(), force=True)
+    rows = await _gap_rows(admin, r.case_id)
+    assert len(rows) == 1
+    assert (rows[0].closed, rows[0].resolved_by) == (True, "manual")  # the close survived
+
+
+async def test_force_reanalysis_drops_a_now_covered_finding(pg) -> None:
+    """When the KB change genuinely covers the question, the analyzer stops
+    returning it and the finding leaves the inbox (no stale open row)."""
+    admin, factory, cid, analyzer = pg
+    await _upsert(factory, cid, _payload())
+    assert await _counts(admin) == (1, 1)
+    analyzer.analyze_support_case = AsyncMock(
+        return_value=[{"question": "Reset 2FA?", "diagnosis": "covered", "gap_type": None, "language": "en"}]
+    )
+    await _upsert(factory, cid, _payload(), force=True)
+    assert await _counts(admin) == (1, 0)  # covered -> no gap row
+
+
+# --------------------------------------------------------------------------- #
+# Knowledge update -> support-case reanalysis (rescore trigger)
+# --------------------------------------------------------------------------- #
+
+
+async def _reanalyse_scoped(factory, kb_slug: str | None, org: int = 901) -> tuple[int, int]:
+    from app.services import gap_rescorer
+
+    async with factory() as db:
+        return await gap_rescorer.reanalyse_scoped_support_cases(org, f"zit-{org}", kb_slug, db)
+
+
+async def test_rescore_reanalyses_scoped_support_cases(pg) -> None:
+    _, factory, cid, analyzer = pg
+    await _upsert(factory, cid, _payload(external_id="a"))
+    await _upsert(factory, cid, _payload(external_id="b"))
+    before = analyzer.analyze_support_case.await_count
+    ok, failed = await _reanalyse_scoped(factory, "kb-a")
+    assert (ok, failed) == (2, 0)
+    assert analyzer.analyze_support_case.await_count == before + 2  # forced, both re-run
+
+
+async def test_rescore_support_reanalysis_is_gated_on_full_telemetry(pg) -> None:
+    admin, factory, cid, analyzer = pg
+    await _upsert(factory, cid, _payload())
+    async with admin.begin() as conn:
+        await conn.execute(text("UPDATE portal_orgs SET telemetry_level='shadow' WHERE id=901"))
+    before = analyzer.analyze_support_case.await_count
+    assert await _reanalyse_scoped(factory, "kb-a") == (0, 0)
+    assert analyzer.analyze_support_case.await_count == before  # nothing re-run
+
+
+async def test_rescore_support_reanalysis_is_kb_scoped(pg) -> None:
+    _, factory, cid, _ = pg
+    await _upsert(factory, cid, _payload())  # kb-a
+    assert await _reanalyse_scoped(factory, "some-other-kb") == (0, 0)  # different KB -> no candidates
+
+
+async def test_rescore_support_reanalysis_counts_failures_and_preserves(pg) -> None:
+    admin, factory, cid, analyzer = pg
+    await _upsert(factory, cid, _payload())
+    analyzer.analyze_support_case = AsyncMock(side_effect=RuntimeError("judge down"))
+    assert await _reanalyse_scoped(factory, "kb-a") == (0, 1)  # visible failure, not a silent success
+    status, analysis = await _analysis(admin)
+    assert status == "analyzed" and analysis[0]["question"] == "Reset 2FA?"  # old analysis preserved
+    assert await _counts(admin) == (1, 1)
+
+
+# --------------------------------------------------------------------------- #
+# Grouping integration — fold a case's finding into an existing open group
+# --------------------------------------------------------------------------- #
+
+
+def _fake_grouping(group_key: str):
+    """Inject a stand-in grouping module that folds any 'missing' finding into
+    ``group_key`` when it is among the candidates. The real module imports the
+    analyzer internals, which the stub analyzer here does not provide, so the
+    store's lazy import picks this up from ``sys.modules`` instead."""
+    module = types.ModuleType("app.services.support_gap_grouping")
+
+    async def group_findings(findings: list[dict], candidates: list[dict]) -> list[dict]:
+        out = copy.deepcopy(findings)
+        keys = {c["question_key"] for c in candidates}
+        for f in out:
+            if group_key in keys and f.get("diagnosis") == "missing":
+                f["group_question_key"] = group_key
+        return out
+
+    module.group_findings = group_findings  # type: ignore[attr-defined]
+    return patch.dict(sys.modules, {"app.services.support_gap_grouping": module})
+
+
+async def test_grouping_folds_finding_into_group_and_preserves_original_question(pg) -> None:
+    """A verified merge stamps the new finding with the existing group's key, so it
+    folds into one group while the row keeps the case's own question verbatim."""
+    admin, factory, cid, analyzer = pg
+    questions = iter(["How do I export data?", "Exporting my account data?"])  # same need, different wording
+
+    async def _analyze(**_: object) -> list[dict]:
+        return [{"question": next(questions), "diagnosis": "missing", "gap_type": "hard", "language": "en"}]
+
+    analyzer.analyze_support_case = AsyncMock(side_effect=_analyze)
+    ra = await _upsert(factory, cid, _payload(external_id="A"))
+    key_a = (await _gap_rows(admin, ra.case_id))[0].question_key
+
+    with _fake_grouping(key_a):
+        rb = await _upsert(factory, cid, _payload(external_id="B"))
+
+    rows_b = await _gap_rows(admin, rb.case_id)
+    assert len(rows_b) == 1
+    assert rows_b[0].question_key == key_a  # folded into A's group despite different wording
+    assert rows_b[0].query_text == "Exporting my account data?"  # the case's own question is preserved
+
+
+async def test_grouping_distinct_case_count_and_resolve_by_group_key(pg) -> None:
+    admin, factory, cid, analyzer = pg
+    questions = iter(["How do I export data?", "Exporting my account data?"])
+
+    async def _analyze(**_: object) -> list[dict]:
+        return [{"question": next(questions), "diagnosis": "missing", "gap_type": "hard", "language": "en"}]
+
+    analyzer.analyze_support_case = AsyncMock(side_effect=_analyze)
+    ra = await _upsert(factory, cid, _payload(external_id="A"))
+    key_a = (await _gap_rows(admin, ra.case_id))[0].question_key
+
+    with _fake_grouping(key_a):
+        await _upsert(factory, cid, _payload(external_id="B"))
+
+    async with admin.connect() as conn:
+        distinct = (
+            await conn.execute(
+                text(
+                    "SELECT count(DISTINCT support_case_id) FROM portal_retrieval_gaps "
+                    "WHERE org_id=901 AND question_key=:k"
+                ),
+                {"k": key_a},
+            )
+        ).scalar_one()
+    assert distinct == 2  # two cases fold into one group; the unique-case count is 2
+
+    # Closing by the persisted group key closes both, though their wording differs.
+    from app.api.app_gaps import GapResolveRequest, resolve_gap
+    from tests.conftest import make_perms
+
+    async with factory() as db:
+        await set_tenant(db, 901)
+        out = await resolve_gap(
+            GapResolveRequest(query_text="ignored", gap_type="content", group_key=key_a),
+            perms=make_perms(org_id=901),
+            db=db,
+        )
+    assert out.resolved == 2
+
+
+async def test_force_reanalysis_close_survives_a_regrouping(pg) -> None:
+    """Regression: a reanalysis that folds a still-missing finding under a DIFFERENT
+    group key must still preserve its manual close. Closures are matched on the
+    finding's verbatim question, not the group-folded key which can move."""
+    admin, factory, cid, _ = pg
+    # A second case gives an open candidate group, so grouping runs on the reanalysis.
+    await _upsert(factory, cid, _payload(external_id="B", text_value="other case"))
+    ra = await _upsert(factory, cid, _payload(external_id="A"))
+    async with admin.begin() as conn:
+        await conn.execute(
+            text("UPDATE portal_retrieval_gaps SET resolved_at=now(), resolved_by='manual' WHERE support_case_id=:c"),
+            {"c": ra.case_id},
+        )
+    orig_key = (await _gap_rows(admin, ra.case_id))[0].question_key
+
+    module = types.ModuleType("app.services.support_gap_grouping")
+
+    async def group_findings(findings: list[dict], candidates: list[dict]) -> list[dict]:
+        out = copy.deepcopy(findings)
+        for f in out:
+            if f.get("diagnosis") == "missing":
+                f["group_question_key"] = "regrouped-key"  # a key different from the finding's own
+        return out
+
+    module.group_findings = group_findings  # type: ignore[attr-defined]
+    with patch.dict(sys.modules, {"app.services.support_gap_grouping": module}):
+        await _upsert(factory, cid, _payload(external_id="A"), force=True)
+
+    rows = await _gap_rows(admin, ra.case_id)
+    assert len(rows) == 1
+    assert rows[0].question_key == "regrouped-key" != orig_key  # the group key did move
+    assert (rows[0].closed, rows[0].resolved_by) == (True, "manual")  # yet the close survived
+
+
+# --------------------------------------------------------------------------- #
+# Trusted speaker-role override — survives a provider re-import (#2)
+# --------------------------------------------------------------------------- #
+
+
+def _call_pg_payload(
+    external_id: str = "call-1", text_value: str = "I cannot log in", role: str = "unknown"
+) -> SupportCasePayload:
+    p = SupportCasePayload(
+        source="hubspot",
+        account_id="12345",
+        external_id=external_id,
+        subject="Login",
+        complete=True,
+        messages=[
+            SupportCaseMessage(
+                id="seg-0",
+                kind="message",
+                role=role,  # type: ignore[arg-type]
+                text=text_value,
+                medium="call",
+                speaker_id="spk-1",
+                start_seconds=0.0,
+                end_seconds=2.0,
+            )
+        ],
+    )
+    p.bind_kb("kb-a")
+    return p
+
+
+async def _upsert_override(
+    factory, cid: str, payload: SupportCasePayload, roles: dict, reviewer: str, expected_hash: str, org_id: int = 901
+) -> svc.UpsertResult:
+    """The trusted store-level correction path: force a reanalysis with a
+    server-owned role override (what the role-correction route passes)."""
+    async with factory() as db:
+        await set_tenant(db, org_id)
+        return await svc.upsert_support_case(
+            db,
+            org_id=org_id,
+            zitadel_org_id=f"zit-{org_id}",
+            telemetry_level="full",
+            connector_id=cid,
+            created_by="u-901",
+            kb_slug="kb-a",
+            payload=payload,
+            force_reanalysis=True,
+            expected_content_hash=expected_hash,
+            role_overrides=roles,
+            role_override_reviewer=reviewer,
+        )
+
+
+async def test_role_override_persists_across_provider_reimport(pg) -> None:
+    """A human corrects unknown->customer; the connector then re-imports the ORIGINAL
+    unknown payload. The override lives in server-owned reviews and is overlaid before
+    hashing, so the effective evidence is unchanged: the customer role survives, the
+    re-import is a no-op, and no duplicate finding appears."""
+    admin, factory, cid, analyzer = pg
+    await _upsert(factory, cid, _call_pg_payload())  # role unknown
+    async with admin.connect() as conn:
+        hash1 = (await conn.execute(text("SELECT content_hash FROM portal_support_cases"))).scalar_one()
+
+    r2 = await _upsert_override(factory, cid, _call_pg_payload(), {"seg-0": "customer"}, "rev-1", hash1)
+    assert r2.status == "analyzed"
+    async with admin.connect() as conn:
+        row = (await conn.execute(text("SELECT payload, reviews, content_hash FROM portal_support_cases"))).first()
+    payload, reviews, hash2 = row
+    assert payload["messages"][0]["role"] == "customer"
+    override = reviews[svc.ROLE_OVERRIDE_KEY]["seg-0"]
+    assert (override["role"], override["provider_role"], override["reviewed_by"]) == ("customer", "unknown", "rev-1")
+    assert hash2 != hash1  # the correction moved the effective evidence
+
+    before = analyzer.analyze_support_case.await_count
+    r3 = await _upsert(factory, cid, _call_pg_payload())  # provider re-imports the ORIGINAL unknown roles
+    assert (r3.status, r3.changed) == ("analyzed", False)  # same effective evidence -> no-op
+    assert analyzer.analyze_support_case.await_count == before  # not re-analysed
+    async with admin.connect() as conn:
+        role_now = (
+            await conn.execute(text("SELECT payload->'messages'->0->>'role' FROM portal_support_cases"))
+        ).scalar_one()
+    assert role_now == "customer"  # the human role survived the re-import
+    assert await _counts(admin) == (1, 1)  # stable, no duplicate findings
+
+
+async def test_changed_text_under_same_id_does_not_inherit_override(pg) -> None:
+    """A correction pins to the exact segment identity: if the provider re-imports
+    CHANGED text under the same message id, the stale human role must NOT carry over."""
+    admin, factory, cid, _ = pg
+    await _upsert(factory, cid, _call_pg_payload())
+    async with admin.connect() as conn:
+        hash1 = (await conn.execute(text("SELECT content_hash FROM portal_support_cases"))).scalar_one()
+    await _upsert_override(factory, cid, _call_pg_payload(), {"seg-0": "customer"}, "rev-1", hash1)
+
+    r = await _upsert(factory, cid, _call_pg_payload(text_value="a totally different question"))
+    assert r.changed is True
+    async with admin.connect() as conn:
+        role_now = (
+            await conn.execute(text("SELECT payload->'messages'->0->>'role' FROM portal_support_cases"))
+        ).scalar_one()
+    assert role_now == "unknown"  # changed segment keeps the provider role
+
+
+async def test_injected_provider_metadata_is_not_a_trusted_override(pg) -> None:
+    """Provider-controlled payload metadata that forges role-override/review shapes
+    must NOT become trusted state: overrides are read only from the server-owned
+    reviews column, so an injected payload never relabels a segment or forges audit."""
+    admin, factory, cid, _ = pg
+    payload = _call_pg_payload()
+    payload.metadata = {
+        "_role_overrides": {"seg-0": {"role": "customer", "provider_role": "customer"}},
+        "role_reviews": [{"reviewed_by": "attacker"}],
+    }
+    r = await _upsert(factory, cid, payload)
+    assert r.status == "analyzed"
+    async with admin.connect() as conn:
+        role_now, reviews = (
+            await conn.execute(text("SELECT payload->'messages'->0->>'role', reviews FROM portal_support_cases"))
+        ).first()
+    assert role_now == "unknown"  # provider metadata never relabels a segment
+    assert reviews is None or svc.ROLE_OVERRIDE_KEY not in reviews  # no trusted override forged
+
+
+@pytest.mark.parametrize(
+    "machine,corrected,closed",
+    [("uncertain", "missing", False), ("missing", "incomplete", False), ("uncertain", "missing", True)],
+)
+async def test_identical_reanalysis_preserves_current_human_correction(pg, machine, corrected, closed) -> None:
+    from app.services.support_case_reviews import compute_analysis_revision, review_key
+
+    admin, factory, cid, analyzer = pg
+    analyzer.analyze_support_case.return_value = [{"question": "Reset 2FA?", "diagnosis": machine, "language": "en"}]
+    result = await _upsert(factory, cid, _payload())
+    async with admin.connect() as conn:
+        row = (
+            await conn.execute(
+                text("SELECT content_hash, analysis_version, analysis FROM portal_support_cases WHERE id=:id"),
+                {"id": result.case_id},
+            )
+        ).one()
+    revision = compute_analysis_revision(
+        content_hash=row.content_hash, analysis_version=row.analysis_version, analysis=row.analysis
+    )
+    await _review(
+        factory, case_id=result.case_id, index=0, revision=revision, decision="incorrect", corrected_diagnosis=corrected
+    )
+    if closed:
+        async with admin.begin() as conn:
+            await conn.execute(
+                text(
+                    "UPDATE portal_retrieval_gaps SET resolved_at=now(), resolved_by='manual' WHERE support_case_id=:id"
+                ),
+                {"id": result.case_id},
+            )
+    await _upsert(factory, cid, _payload(), force=True)
+    rows = await _gap_rows(admin, result.case_id)
+    assert len(rows) == 1 and rows[0].diagnosis == corrected and rows[0].closed == closed
+    if closed:
+        assert rows[0].resolved_by == "manual"
+    assert (await _read_reviews(admin, result.case_id))[review_key(revision, 0)]["corrected_diagnosis"] == corrected
