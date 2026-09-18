@@ -2,7 +2,7 @@
 
 Doel van dit bestand: wat er gemeten is, wat daaruit volgde, en wat er live staat. Zo hoeft niemand een meting of een onderzoek over te doen. De spec ernaast (`spec.md`) beschrijft het ontwerp; dit bestand beschrijft de weg ernaartoe.
 
-Bijgewerkt: 2026-09-18, na 2.29.
+Bijgewerkt: 2026-09-18, na 2.33.
 
 ---
 
@@ -13,14 +13,14 @@ Een beurt van een bezoeker loopt door deze schakels. Per schakel: wat het doet, 
 | # | Schakel | Waar | Stand |
 |---|---|---|---|
 | 1 | Vraag binnen, eerste of vervolg | `partner.py::chat_completions` | ongewijzigd |
-| 2 | Vervolgvraag omzetten naar zoekvraag | retrieval-api `services/coreference.py` | verbeterd, live 2026-09-18; het vorige antwoord als extra zoekleg gemeten op 39% naar 64%, niet gebouwd (2.28) |
-| 3 | Zoeken (vector, graaf, herrangschikken) | retrieval-api `api/retrieve.py` | letterlijke zoekregel toegevoegd, live 2026-09-18; twee herformuleringen samengevoegd gemeten op 35% naar 59%, niet gebouwd (2.27); paginaboost gemeten als onschadelijk en bijna zonder effect (2.26) |
+| 2 | Vervolgvraag omzetten naar zoekvraag | retrieval-api `services/coreference.py` | verbeterd, live 2026-09-18; het vorige antwoord als extra zoekleg won op zoekniveau (39% naar 64%, 2.28) en bleef eind-tot-eind gelijk (65 om 61, 2.32): niet live |
+| 3 | Zoeken (vector, graaf, herrangschikken) | retrieval-api `api/retrieve.py` + `app/services/query_paraphrase.py` | letterlijke zoekregel toegevoegd, live 2026-09-18; twee herformuleringen van de eerste vraag als eigen passes, na herrangschikken samengevoegd: 35% naar 59% op zoekniveau (2.27), 63 om 43 eind-tot-eind (2.33), live na merge; paginaboost gemeten als onschadelijk en bijna zonder effect (2.26) |
 | 4 | Controle vooraf op de vraag | `services/turn_judge.py` | beslist niets meer over doorvragen (v0.5.0), praatje-uitzondering weg (v0.6.0), beoordeelt sinds v0.9.0 ook of de vraag binnen de niet-behandelde onderwerpen valt |
 | 5 | Antwoord schrijven | `partner_chat.py` + profiel in `klai-libs/chat-prompts` | ongewijzigd; promptvarianten gemeten en afgevallen. Valt de vraag binnen de onderwerpen die de widget niet behandelt, dan wordt deze schakel overgeslagen (v0.9.0) |
 | 6 | Koppelen aan bronnen | `klai-libs/citations` | ongewijzigd, dit is de ondergrens |
 | 7 | Controle achteraf op het antwoord | `services/answer_judge.py` + `services/answer_grounding.py`; intern `deploy/litellm/klai_answer_grounding.py` | licht oordeel plus controle per zin met reparatie, live 18 sep; dezelfde reparatie op het interne pad sinds #1526 en #1530, platform-breed (2.22, 2.23) |
-| 8 | Kennisbank | Voys-artikelen | plafond voor hooguit een derde van de kennisvragen (2.29), niet aangepakt. De widget zoekt in één van de negen kennisbanken van Voys (`support`, 8947 chunks); prijzen, Ascend en de nerds-wiki staan buiten bereik |
-| — | Meten van de keten | `scripts/simulate_conversations.py` | hele gesprekken sinds 18 sep; ijking eerlijk gerekend 75% tegen 81% van de herspeling (2.19, gecorrigeerd in 2.24); bezoeker en scoorder sinds 2.24 op een ander model dan de controle die ze meten |
+| 8 | Kennisbank | Voys-artikelen | ontbreekt bij één op de negen kennisvragen (6 van 54, met de zes onderwerpen erbij in 2.31); bij nog eens één op de acht staat het er maar is de eerste vraag te mager om het te bereiken. Niet aangepakt. De widget zoekt in één van de negen kennisbanken van Voys (`support`, 8947 chunks); prijzen, Ascend en de nerds-wiki staan buiten bereik |
+| — | Meten van de keten | `scripts/simulate_conversations.py` | hele gesprekken sinds 18 sep; ijking eerlijk gerekend 75% tegen 81% van de herspeling (2.19, gecorrigeerd in 2.24); bezoeker en scoorder sinds 2.24 op een ander model dan de controle die ze meten; nulmeting daarmee 33% doel bereikt, 8 van 12 doorverwezen (2.30). Voor één schakel: de widgetroute in-process herspelen met de echte controles (2.32, 2.33) |
 
 ---
 
@@ -800,6 +800,130 @@ negen bronloze beurten bij zes het eerste. Neem 30% dus als bovengrens van het k
 daarmee af was. De kennisbank is het plafond voor ongeveer een derde van de kennisvragen; voor een
 ander derde is het de formulering, en dat is met 2.27 en 2.28 te verhelpen. §5 is hierop herschreven.
 
+### 2.30 Nulmeting van het harnas met de gescheiden beoordelaar (18 sep)
+Dezelfde twaalf gesprekken als 2.19 en 2.21, nu met bezoeker, doelschrijver en scoorder op `klai-large`
+en de scoorder uit 2.24 die een doorverwijzing niet als succes telt. Nul 429's, nul 502's.
+
+| | 2.19 (oude scoorder) | Nu |
+|---|---|---|
+| Doel bereikt | 9 van 12 (75%) | **4 van 12 (33%)** |
+| Eerlijk doorverwezen zonder antwoord | niet geteld | 8 van 12 |
+| Eerste antwoord met bron | 9 van 12 (75%) | 9 van 12 (75%) |
+| Gemiddeld aantal assistentbeurten | 2,7 | 4,0 |
+| Gemiddeld verspilde beurten | 1,0 | 1,2 |
+
+**Wat er nu zichtbaar is:** twee derde van de gesimuleerde gesprekken eindigt bij een medewerker
+zonder dat de bezoeker zijn antwoord kreeg. Dat was in 2.19 en 2.21 onzichtbaar omdat de scoorder
+precies die uitkomst als "bereikt" telde. De eerste beurt gedraagt zich nog steeds als in de
+herspeling (75%).
+
+**Bijwerking van de nieuwe bezoeker:** alle twaalf gesprekken liepen de vier beurten vol. De
+bezoeker die pas stopt als zijn doel beantwoord is, geeft na een doorverwijzing niet op, ook niet als
+het gesprek aantoonbaar vastzit. Beurttellingen en "verspilde beurten" zijn daardoor niet met 2.19 te
+vergelijken; het getal dat vergelijkbaar blijft tussen versies is "doel bereikt". Dit is de nulmeting
+waartegen de wijzigingen hieronder na livegang gelegd worden.
+
+### 2.31 Het plafond per vraag: de kennisbank ontbreekt bij één op de negen, niet één op de drie (18 sep)
+De dertien kennisvragen uit 2.29 waarvoor nergens een antwoordende passage stond, één voor één
+nagezocht met wat de bezoeker uiteindelijk wilde (afgeleid uit al zijn beurten) als zoekvraag plus
+vier herformuleringen daarvan, elk top-50, alle passages beoordeeld.
+
+| Uitkomst | Aantal | Wat het betekent |
+|---|---|---|
+| Wél een antwoordend artikel gevonden | 7 | Het staat in de kennisbank, maar is vanuit de eerste vraag alleen niet te vinden: pas met wat de bezoeker later zei (openingstijden geavanceerd, gespreksopname, keuzemenu, tijdelijke omleiding, belplanextensies, belkosten, overige VoIP-telefoon) |
+| Geen antwoordend artikel, wel aangrenzende | 6 | Beschikbaarheid in de app op vaste tijden, gemiste-oproep-log als een ander toestel opneemt, het notificatie-adres wijzigen, een belplan tijdelijk uitschakelen, een ontruimingsbel op alle toestellen, "connectivity" in de app |
+| Geen kennisvraag | 3 | Trein, klant worden, een contactformulier dat als chat binnenkwam |
+
+**Stand:** van de 54 kennisvragen staat bij 6 (11%) het antwoord niet in de artikelen; bij 7 (13%)
+staat het er wel maar is de eerste vraag te mager om het te bereiken, en dat is het gat waar 2.4,
+2.7, 2.10 en 2.20 op stukliepen (doorvragen schaadt, en zonder doorvragen weet het systeem het
+ontbrekende detail niet). De "30% bovengrens" uit 2.29 is dus 11% echte kennisbankgrens plus 13%
+vraaggrens. De zes concrete gaten staan hierboven; dat is de startlijst voor het inhoudswerk.
+
+### 2.32 Het vorige antwoord als zoekleg: gebouwd, eind-tot-eind gemeten, afgevallen (18 sep)
+Drie stappen, waarvan de laatste het verschil maakte.
+
+**Eerst als goedkope leg vóór het herrangschikken.** Dezelfde tekst ("vorig antwoord[:500] +
+vervolgvraag") als extra prefetch-leg in de RRF van Qdrant, daarna de gewone herrangschikking tegen
+de vraag, op dezelfde 90 vervolgbeurten en met dezelfde beoordelingen: 43% tegen 43%, 5 winsten en
+5 verliezen. De herrangschikker, die tegen de kale vraag scoort, duwt precies de kandidaten weer weg
+die de leg binnenbracht. Dat is wat de literatuur voorspelde (RAG-Fusion in productie, §4).
+
+**Dan gebouwd zoals gemeten.** Een tweede volledige pass (embedding, zoeken, herrangschikken tegen de
+eigen tekst) parallel aan de eerste, en de twee top-8-lijsten met RRF samengevoegd na de
+bronselectie. Op zoekniveau is dat de 39% naar 64% uit 2.28.
+
+**Toen eind-tot-eind, en daar viel het om.** De echte widgetroute in-process (zelfde code, zelfde
+controles en reparatie, previewtoken, niets opgeslagen) op de 70 vervolgbeurten die een artikel
+nodig hebben, met hun echte geschiedenis, twee rondes per variant, blind beoordeeld door
+`klai-large` mét de passages die beide varianten hadden, volgorde afgewisseld:
+
+| | Ronde 1 | Ronde 2 | Samen |
+|---|---|---|---|
+| Oud beter | 39 | 26 | **65** |
+| Nieuw beter | 25 | 36 | **61** |
+| Gelijk | 6 | 8 | 14 |
+| Antwoord met bron, oud → nieuw | 49 → 58 | 50 → 58 | |
+| Vaste weigering, oud → nieuw | 19 → 11 | 19 → 11 | |
+| "Bevat iets dat niet in de passages staat", oud → nieuw | 12 → 23 | 17 → 19 | 29 → 42 |
+| Tijd per beurt, mediaan | 5,4 → 6,3 s | 5,4 → 6,4 s | |
+
+Geen verschil in het blinde oordeel, en de twee rondes wijzen tegengesteld: hetzelfde paar kreeg in
+23 van de 70 gevallen in beide rondes hetzelfde oordeel. De variatie van het antwoordmodel is groter
+dan het effect. Wat wél consistent verschoof: meer antwoorden met bron, minder weigeringen, en meer
+beweringen die de artikelen niet dragen. Per soort vervolgbeurt (140 paren): nieuwe vraag 13 om 7
+voor nieuw, correctie ("dat werkt niet") 30 om 29, extra detail 25 om 18 voor oud. De tweede pass
+bracht in 52 van de 69 beurten het artikel terug dat het vorige antwoord al citeerde; bij een
+correctie krijgt het model dus het artikel dat net niet hielp als vers bewijs, en schrijft opnieuw
+in plaats van eerlijk "niet gevonden".
+
+**Nog één variant:** het eerder geciteerde artikel uit de tweede pass weglaten (59 beurten zonder
+nieuwe-vraag-type, één ronde): 26 om 25, gelijk 8; verzonnen 15 → 13. Het extra verzinnen verdwijnt,
+de winst komt niet.
+
+**Besluit:** niet live. De code (een tweede pass in `retrieve.py`, RRF na bronselectie) is
+hergebruikt voor 2.33, waar hij wél wint; de vorig-antwoord-invoer is eruit.
+
+**Twee lessen die de meetafspraken raken.** Een zoekmeting ("antwoordende passage in de top-8") is
+geen antwoordmeting: 2.27 en 2.28 wonnen beide op zoekniveau, één won eind-tot-eind. En één ronde is
+geen meting: ronde 1 gaf hier oud 39 om 25, ronde 2 nieuw 36 om 26, op dezelfde beurten.
+
+### 2.33 Twee herformuleringen van de eerste vraag: eind-tot-eind gewonnen, gebouwd (18 sep)
+Dezelfde opstelling als 2.32, op de 54 echte eerste kennisvragen van 2.27: `klai-medium` schrijft
+twee herformuleringen (zelfde taal, hooguit vijftien woorden, artikeltaal, geen details toevoegen),
+elk gaat als eigen pass door het zoeken, en de drie top-8-lijsten worden na de herrangschikking
+samengevoegd.
+
+| | Ronde 1 | Ronde 2 | Samen |
+|---|---|---|---|
+| Nieuw beter | 32 | 31 | **63** |
+| Oud beter | 22 | 21 | **43** |
+| Gelijk | 0 | 2 | 2 |
+| "Lost de vraag op", oud → nieuw | 15 → 28 | 15 → 26 | |
+| "Bevat iets dat niet in de passages staat", oud → nieuw | 16 → 11 | 14 → 12 | 30 → 23 |
+| Antwoord met bron, oud → nieuw | 50 → 53 | 51 → 51 | |
+| Vaste weigering, oud → nieuw | 4 → 0 | 3 → 3 | |
+| Tijd per beurt, mediaan / traagste tien procent | 4,9 / 7,0 → 7,3 / 10,0 s | 5,4 / 7,7 → 7,1 / 9,7 s | |
+
+Twintig paren verschil, in beide rondes dezelfde richting, en minder verzonnen in plaats van meer:
+het model krijgt het juiste artikel en hoeft niets in te vullen. Zoals op zoekniveau zit de winst bij
+de lange, specifieke eerste vragen (51 om 32) en niet bij de magere (12 om 11).
+
+**Kosten.** De herformulering 0,6 s mediaan op `klai-medium`; de drie passes parallel 1,95 s tegen
+0,7 s voor één (ze delen één herrangschikker). Per eerste beurt ongeveer 2,3 s extra, ook in de
+traagste tien procent. **Bijwerking:** de controle per zin haalde haar budget van 4 s vaker niet
+(`judge_failed` 3 en 7 van 54 → 15 en 15 van 54), vermoedelijk omdat drie passes meer verschillende
+artikelen opleveren en de controle meer tekst te lezen krijgt; het antwoord blijft dan
+ongecontroleerd staan. Het aantal verzonnen beweringen daalde toch, maar dit hoort in de
+nameting op echt verkeer (§5).
+
+**Gebouwd:** `query_variants` op `RetrieveRequest` (hooguit drie, 500 tekens), elke variant een
+eigen pass parallel aan coreferentie en hoofdzoekopdracht, RRF na bronselectie, tellingen in het
+beslisrecord (`query_variants_run`, `query_variants_failed`, `query_variants_added`). In de widget
+(`app/services/query_paraphrase.py`) alleen op de eerste beurt in support-modus, model
+`retrieval_paraphrase_model` (`klai-medium`), 2,5 s budget, en bij een mislukte aanroep gaat de vraag
+zoals voorheen. Vervolgbeurten blijven ongewijzigd (2.32).
+
 ---
 
 ## 3. Wat er live ging, en waarom
@@ -824,6 +948,7 @@ ander derde is het de formulering, en dat is met 2.27 en 2.28 te verhelpen. §5 
 | 18 sep | Doodlopend antwoord zonder bron krijgt de afspraakknop (#1520) | 2.21 |
 | 18 sep | Het interne pad repareert, niet-streamend (#1526) | 2.22 |
 | 18 sep | De reparatie ook op de vastgehouden Strict-stroom, waar elke interne beurt langskomt (#1530) | 2.23 |
+| 18 sep | Twee herformuleringen van de eerste vraag als eigen zoekpasses, na herrangschikken samengevoegd (retrieval-api `query_variants`, widget `query_paraphrase.py`) | 2.27 op zoekniveau, 2.33 eind-tot-eind: 63 om 43 |
 
 ---
 
@@ -852,16 +977,16 @@ Context rond de vraag als zoeksignaal (18 sep, voor 2.25 t/m 2.28):
 
 Op volgorde van wat de metingen als grootste rem aanwijzen.
 
-1. **De formulering van de zoekvraag, twee bouwstenen met gemeten winst.** Twee herformuleringen
-   van de eerste vraag als `sub_queries` (35% naar 59% antwoordende passage in de top-8, 14 winsten
-   tegen 1 verlies, 2.27) en het vorige antwoord als extra RRF-leg bij vervolgbeurten (39% naar
-   64%, 18 tegen 0, 2.28). Beide zonder de bezoeker iets te vragen; de eerste kost ~0,6 s op het
-   ruime model, de tweede geen modelaanroep. Vóór livegang de poort uit §6 eind-tot-eind, want
-   beide zijn op zoekniveau gemeten en niet op het antwoord.
-2. **De kennisbank aanvullen.** Voor hooguit een derde van de kennisvragen staat het antwoord nergens
-   (2.29, bovengrens), en bij twee beurten uit 2.16 liep de artikelketen halverwege dood ("hoe
-   schakel ik het account in voor internationale gesprekken"). Geen schakel in deze keten neemt dat
-   weg; dit is inhoudswerk.
+1. **De herformuleringen op echt verkeer nameten.** 2.33 is live na de merge; de nulmeting van het
+   harnas (2.30) ligt klaar en het dagrapport van de controle per zin moet laten zien of de
+   controle op eerste beurten vaker haar 4 s haalt (in de herspeling liep zij bij 15 van de 54 af
+   tegen 3 tot 7 daarvoor). Zo niet, dan is het budget op de eerste beurt aan de beurt, niet de
+   herformulering.
+2. **De kennisbank aanvullen, met de lijst uit 2.31.** Zes onderwerpen ontbreken aantoonbaar
+   (beschikbaarheid in de app op vaste tijden, gemiste-oproep-log als een ander toestel opneemt,
+   notificatie-adres wijzigen, belplan tijdelijk uitschakelen, ontruimingsbel, "connectivity" in de
+   app); daarnaast liep in 2.16 de artikelketen halverwege dood bij internationale gesprekken. Dat
+   is één op de negen kennisvragen, geen derde; verder zoekwerk haalt dat niet weg.
 3. **De reikwijdte van de widget heroverwegen.** Hij mag in één van de negen kennisbanken zoeken.
    `priceright-prijzen-voys` (4527 chunks) en `ascend` (6710) bevatten antwoorden op vragen die
    bezoekers stellen. Voor een publieke helppagina is dat waarschijnlijk bewust, maar het is een
@@ -898,4 +1023,6 @@ de 29 om 7).
 - Dezelfde vraag drie keer stellen, want het antwoordmodel varieert; een verschil onder ongeveer tien beurten is ruis.
 - De beoordelaar krijgt beide antwoorden in willekeurige volgorde en weet niet welke versie wat schreef. Hij kiest iets vaker het eerst getoonde antwoord (76 tegen 58), dus bij twijfelgevallen wordt in beide volgordes beoordeeld.
 - Meetopstellingen staan buiten de repo (`/tmp/probe` lokaal, `/tmp/exp` per onderzoekslijn, `/tmp/ctx` voor 2.25 t/m 2.29); de uitkomsten die ertoe doen staan in dit bestand.
-- Een zoekmeting (welk artikel komt mee) is geen antwoordmeting; wat op zoekniveau wint gaat vóór livegang alsnog door de eind-tot-eind poort hierboven.
+- Een zoekmeting (welk artikel komt mee) is geen antwoordmeting: 2.27 en 2.28 wonnen beide op zoekniveau, alleen 2.27 won eind-tot-eind (2.32, 2.33). Wat op zoekniveau wint gaat vóór livegang alsnog door de eind-tot-eind poort hierboven.
+- Eén ronde is geen meting. In 2.32 gaf ronde 1 oud 39 om 25 en ronde 2 nieuw 36 om 26 op dezelfde beurten; hetzelfde paar kreeg in 23 van de 70 gevallen twee keer hetzelfde oordeel. Twee rondes zijn het minimum, en een verschil dat in beide rondes dezelfde kant op wijst (2.33: 32 om 22 en 31 om 21) telt; een verschil dat omslaat is ruis, hoe groot het per ronde ook is.
+- De widgetroute in-process herspelen (ASGI-transport, previewtoken, `record_widget_turn` en `write_retrieval_log` uitgeschakeld) is de manier om één schakel eind-tot-eind te meten vóór livegang: dezelfde code, dezelfde controles en reparatie, en de zoekstap is per variant te vervangen door twee aanroepen die samengevoegd worden. Eén beurt per 7,5 s houdt het onder het gedeelde antwoordquotum; het draait in een eigen container van het portal-image (`docker run` op hetzelfde netwerk), want een deploy maakt de productiecontainer opnieuw aan en neemt een lopende meting mee.

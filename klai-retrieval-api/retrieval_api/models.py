@@ -73,6 +73,13 @@ class RetrieveRequest(BaseModel):
     # plus per-question coverage in ``sub_results``. Bounded to 6 entries and
     # 500 chars each; ``query`` stays the primary/combined query.
     sub_queries: list[str] | None = Field(None, max_length=6)
+    # Alternative formulations of ``query`` that the caller wrote (SPEC-RAG-
+    # ANSWER-JUDGES-001, 2.27): each runs as its own retrieval pass and the
+    # reranked top-k lists are RRF-fused with the main pass. Unlike
+    # ``sub_queries`` these are the SAME question in other words, so the
+    # evidence pack stays one pack without per-question namespacing. Bounded
+    # like sub_queries: at most 3 entries of 500 characters.
+    query_variants: list[str] | None = Field(None, max_length=3)
 
     @field_validator("conversation_history")
     @classmethod
@@ -90,7 +97,7 @@ class RetrieveRequest(BaseModel):
                 )
         return history
 
-    @field_validator("sub_queries")
+    @field_validator("sub_queries", "query_variants")
     @classmethod
     def _validate_sub_query_content_length(cls, sub_queries: list[str] | None) -> list[str] | None:
         """Reject any sub_queries entry exceeding ``_SUB_QUERY_MAX_CHARS``.

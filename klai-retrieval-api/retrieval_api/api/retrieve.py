@@ -441,6 +441,9 @@ class RetrievalPipelineState:
     retrieval_ms: float = 0.0
     confidence_band: ConfidenceBand = "unknown"
     evidence_pack: EvidencePack | None = None
+    query_variant_tasks: list[asyncio.Task[list[dict[str, Any]]]] = dataclass_field(
+        default_factory=list
+    )
 
 
 async def _resolve_identity_and_telemetry(
@@ -561,6 +564,84 @@ async def _resolve_identity_and_telemetry(
         trace=trace,
         decision_record=decision_record,
         ranking_contract_mode=ranking_contract_mode,
+    )
+
+
+# SPEC-RAG-ANSWER-JUDGES-001, logbook 2.27 and 2.33. A visitor's own words often
+# miss the article that answers them: on 54 real first questions of the help
+# widget an answering passage sat in the top-8 for 35%, and for 13 of the 16
+# questions a paraphrase rescued, it was nowhere in the literal query's top-50.
+# Two paraphrases the caller supplies, each run as its own pass and RRF-fused
+# with the main pass, raised that to 59% (14 wins, 1 loss); end to end, blind
+# with the articles shown, 63 against 43 over two rounds. The fusion happens
+# AFTER each pass has been reranked against its own text: the same words as
+# extra prefetch legs before the reranker changed nothing, because the
+# reranker, scoring against the bare query, pushed those candidates back out.
+
+
+async def _query_variant_pass(req: RetrieveRequest, text: str) -> list[dict[str, Any]]:
+    """Embed, search and rerank one variant on its own text; top_k results."""
+    query_vector, sparse_vector = await asyncio.gather(embed_single(text), embed_sparse(text))
+    raw = await search.hybrid_search(
+        cast(list[float], query_vector),
+        req,
+        settings.retrieval_candidates,
+        cast(SparseVector | None, sparse_vector),
+    )
+    if not raw or not settings.reranker_enabled:
+        return raw[: req.top_k]
+    reranked = await reranker.rerank(text, raw[: settings.reranker_candidates], req.top_k)
+    if settings.ranking_contract_mode == "active":
+        _set_final_rank_scores(reranked)
+    return reranked
+
+
+def _start_query_variant_passes(state: RetrievalPipelineState) -> None:
+    """Start one pass per variant so they run alongside coreference, search and rerank."""
+    seen = {state.req.query.strip().lower()}
+    for variant in state.req.query_variants or []:
+        text = variant.strip()
+        if not text or text.lower() in seen:
+            continue
+        seen.add(text.lower())
+        state.query_variant_tasks.append(asyncio.create_task(_query_variant_pass(state.req, text)))
+
+
+async def _merge_query_variant_passes(state: RetrievalPipelineState) -> None:
+    """RRF-fuse the main top-k with every variant's top-k.
+
+    Membership and order follow the fusion; every chunk keeps its own reranker
+    score, so the confidence band and the client-facing scores keep their
+    meaning. A failed variant pass is logged and skipped: the main pass has
+    already produced a result and losing a variant is not worth failing over.
+    """
+    if not state.query_variant_tasks:
+        return
+    ranked_lists: list[list[dict[str, Any]]] = [state.reranked]
+    failed = 0
+    for outcome in await asyncio.gather(*state.query_variant_tasks, return_exceptions=True):
+        if isinstance(outcome, BaseException):
+            failed += 1
+            logger.warning("retrieval_query_variant_pass_failed", error=type(outcome).__name__)
+            continue
+        ranked_lists.append(outcome)
+    fused: dict[str, float] = {}
+    items: dict[str, dict[str, Any]] = {}
+    for ranked in ranked_lists:
+        for rank, chunk in enumerate(ranked):
+            cid = chunk["chunk_id"]
+            fused[cid] = fused.get(cid, 0.0) + 1.0 / (60 + rank + 1)
+            items.setdefault(cid, chunk)
+    before = {chunk["chunk_id"] for chunk in state.reranked}
+    state.reranked = sorted(items.values(), key=lambda c: fused[c["chunk_id"]], reverse=True)[
+        : state.req.top_k
+    ]
+    # No trace step: the step vocabulary is pinned by the trace tests and these
+    # two counts are what the measurement needs.
+    state.decision_record["query_variants_run"] = len(ranked_lists) - 1
+    state.decision_record["query_variants_failed"] = failed
+    state.decision_record["query_variants_added"] = sum(
+        1 for chunk in state.reranked if chunk["chunk_id"] not in before
     )
 
 
@@ -1389,6 +1470,7 @@ async def retrieve(
     if isinstance(preamble_result, RetrieveResponse):
         return preamble_result
     state = preamble_result
+    _start_query_variant_passes(state)
     await _run_coreference(state)
     await _run_embed(state)
 
@@ -1410,6 +1492,7 @@ async def retrieve(
     await _run_rerank(state)
     _run_quality_floor(state)
     _run_source_select(state)
+    await _merge_query_variant_passes(state)
     _run_quality_boost(state)
 
     await _run_parent_lookup(state)

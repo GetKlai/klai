@@ -81,6 +81,7 @@ from app.services.llm_safety_adapter import (
     check_widget_or_partner_input,
     safe_refusal_text,
 )
+from app.services.query_paraphrase import first_question_variants
 from app.services.widget_audit import find_conversation_id
 from app.trace import get_trace_headers
 
@@ -2865,6 +2866,9 @@ async def retrieve_context(
         )
 
     conversation_history = _build_conversation_history(messages)
+    # A first question travels with two paraphrases; a follow-up has its
+    # history to search on instead (query_paraphrase.py has the numbers).
+    query_variants = await first_question_variants(messages, query, settings, support_mode=support_mode)
 
     retrieve_body: dict = {
         # Clipped below the 8000-char retrieval-api hard limit (SPEC-SEC-010
@@ -2880,6 +2884,7 @@ async def retrieve_context(
     }
     if kb_slugs:
         retrieve_body["kb_slugs"] = kb_slugs
+    retrieve_body["query_variants"] = query_variants or None
     if partner_user_id is not None:
         # F2: synthetic partner-level identity for product_events tagging.
         retrieve_body["user_id"] = partner_user_id
