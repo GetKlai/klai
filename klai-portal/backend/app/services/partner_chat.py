@@ -2062,7 +2062,15 @@ async def _judge_composed_answer(
             if key not in (_NO_CITABLE_SOURCES_DECISION_KEY, "broad_mode", "escalation")
         }
         decision["reason"] = "uncited_no_claims"
-        if force_escalation or (model_offered_appointment and _text_offers_appointment(safe_text)):
+        # A reply with no source that does not answer the question is a dead end
+        # for the visitor, so it carries the same button the backend's own
+        # refusal carries. Without this the model's own "dat staat niet in onze
+        # helpartikelen" arrived bare, and a visitor in a simulated conversation
+        # on 2026-09-18 needed two more turns to find out a person was reachable
+        # at all: they repeated their question, got the backend refusal with the
+        # button, and then had to ask how to book.
+        dead_end = judgement is not None and judgement.verdict != "answered"
+        if force_escalation or dead_end or (model_offered_appointment and _text_offers_appointment(safe_text)):
             decision["escalation"] = _appointment_escalation()
     if outcome == "partial_answer":
         decision["escalation"] = _appointment_escalation()

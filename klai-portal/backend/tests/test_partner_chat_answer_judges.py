@@ -438,6 +438,35 @@ async def test_uncited_draft_without_claims_is_shown_as_before_the_judges(clarit
     assert signals["decision"] == "answer"
 
 
+async def test_an_uncited_dead_end_carries_the_appointment_button():
+    """A reply with no source that does not answer leaves the visitor nowhere.
+
+    Seen in a simulated conversation on 2026-09-18: the model wrote its own
+    "dat staat niet in onze helpartikelen" without offering anything, the reply
+    arrived bare, and the visitor spent two more turns discovering a person was
+    reachable at all — they repeated the question, got the backend's refusal
+    with the button, then had to ask how to book.
+    """
+    litellm = _LiteLLM(
+        model_text="Dat staat niet in onze helpartikelen. Laat het gerust weten als je vastloopt.",
+        answer_judge=_answer_verdict("not_answered"),
+    )
+
+    text, _, extras = await _answer(litellm, stream=True)
+
+    assert text == "Dat staat niet in onze helpartikelen. Laat het gerust weten als je vastloopt."
+    assert extras["escalation"] == [{"appointment": True}]
+
+
+async def test_an_uncited_reply_that_answers_keeps_no_button():
+    """The button means "this went nowhere"; on an answer it would read as one."""
+    litellm = _LiteLLM(model_text="Graag gedaan!", answer_judge=_answer_verdict("answered"))
+
+    _, _, extras = await _answer(litellm, stream=True)
+
+    assert not extras.get("escalation")
+
+
 async def test_ambiguous_turn_whose_question_carries_a_claim_is_refused():
     litellm = _LiteLLM(
         model_text="Bedoel je je abonnement van 5 euro per maand?",
