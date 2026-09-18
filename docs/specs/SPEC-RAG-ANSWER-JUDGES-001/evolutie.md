@@ -158,6 +158,31 @@ Getest of de controle sneller wordt door de artikelen in te korten, op 25 echte 
 
 Inkorten levert dus nauwelijks tijd op en kost wel oordelen. De artikelen gaan volledig naar de controle. Wie de staart korter wil, moet bij de reparatie zijn of bij de lengte van het antwoord zelf, niet bij de invoer van de controle.
 
+### 2.10c Twee controles achteraf: samenvoegen nog niet doen (18 sep)
+Sinds de controle per zin live staat, levert de lichte controle op het snelle model nog maar één ding dat echt gebruikt wordt: het oordeel "beantwoordt dit de vraag", dat de afspraakknop bepaalt. Het oordeel over wat in de artikelen staat komt van de zware controle.
+
+Getest of de zware controle dat oordeel er gratis bij kan geven, op 25 echte antwoorden:
+
+| | Lichte controle | Zware controle met oordeel erbij |
+|---|---|---|
+| "beantwoordt de vraag" | 19 van 25 | 10 van 25 |
+| Zelfde oordeel als de ander | – | 16 van 25 |
+| Tijd (mediaan) | 0,4 s | 2,2 s, tegen 1,9 s zonder oordeel |
+| Reparatiebeslissingen | – | ongewijzigd (8) |
+
+Het zware model is dus veel strenger over "beantwoordt de vraag". Samenvoegen scheelt een aanroep, maar zou bij bijna de helft van de antwoorden een andere knop opleveren, en welke van de twee gelijk heeft weten we niet. Daarom blijft het voorlopig zoals het is, met deze meting als reden.
+
+### 2.10d De letterlijke zoekregel kost bijna niets (18 sep)
+De nameting schreef 0,45 tot 0,8 s extra zoektijd toe aan de letterlijke zoekregel. Apart gemeten op 15 echte vervolgvragen:
+
+| Variant | Mediaan |
+|---|---|
+| Herschrijven én letterlijke zoekregel | 889 ms |
+| Zonder herschrijven, zonder zoekregel | 471 ms |
+| Zonder herschrijven, met zoekregel | 491 ms |
+
+De zoekregel kost dus 20 ms; het herschrijven kost ongeveer 400 ms, en dat deed het altijd al. De extra tijd in de nameting kwam van een machine die tegelijk drie proeven draaide. Niets teruggedraaid.
+
 ### 2.11 Dezelfde controle op de interne chat, alleen meekijkend (18 sep)
 De interne chat (LibreChat via de LiteLLM-hook) doet nu dezelfde controle per zin als de widget, met letterlijk dezelfde tekst uit de gedeelde bibliotheek. Daar verandert hij niets aan het antwoord en wacht de gebruiker nergens op: de controle wordt naast het antwoord gestart en logt alleen wat er niet in de artikelen staat. Zo kunnen beide paden straks naast elkaar gelegd worden.
 
