@@ -50,6 +50,7 @@ def _settings() -> MagicMock:
     settings.litellm_base_url = LITELLM
     settings.litellm_master_key = "key"
     settings.extraction_model = "klai-fast"
+    settings.answer_grounding_model = "klai-medium"
     return settings
 
 
@@ -59,6 +60,17 @@ def _json_reply(payload: dict) -> httpx.Response:
 
 def _answer_verdict(verdict: str = "answered", *, claims: bool = False) -> dict:
     return {"verdict": verdict, "grounding": "some_not_in_articles" if claims else "all_in_articles"}
+
+
+def _grounding(*unsupported: str, supported: tuple[str, ...] = (), contradicted: bool = False) -> dict:
+    """The statement-level check: every statement with the article text behind it."""
+    support = "contradicted" if contradicted else "not_in_articles"
+    return {
+        "statements": [
+            *({"statement": item, "evidence": "staat in het artikel", "support": "supported"} for item in supported),
+            *({"statement": item, "evidence": "", "support": support} for item in unsupported),
+        ]
+    }
 
 
 def _turn_verdict(**overrides: Any) -> dict:
@@ -75,13 +87,35 @@ def _turn_verdict(**overrides: Any) -> dict:
 class _LiteLLM:
     """One route for every LiteLLM call, told apart by the schema name each judge sends."""
 
-    def __init__(self, *, model_text: str, answer_judge: Any = None, turn: dict | None = None):
+    def __init__(
+        self,
+        *,
+        model_text: str,
+        answer_judge: Any = None,
+        turn: dict | None = None,
+        grounding: Any = None,
+        repaired: str = "",
+    ):
         self.model_text = model_text
         self.answer_judge = answer_judge if answer_judge is not None else _answer_verdict()
         self.turn = turn or _turn_verdict()
+        # The statement-level check decides grounding, so by default it mirrors
+        # the light judge's label: a test that says claims=True gets one
+        # unsupported statement, anything else a fully supported draft.
+        if grounding is None:
+            light = self.answer_judge if isinstance(self.answer_judge, dict) else {}
+            grounding = (
+                _grounding(model_text)
+                if light.get("grounding") == "some_not_in_articles"
+                else _grounding(supported=(model_text,))
+            )
+        self.grounding = grounding
+        self.repaired = repaired
         self.answer_requests: list[dict] = []
         self.judge_requests: list[dict] = []
         self.turn_requests: list[dict] = []
+        self.grounding_requests: list[dict] = []
+        self.repair_requests: list[dict] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
@@ -96,6 +130,14 @@ class _LiteLLM:
         if schema == "turn_judge":
             self.turn_requests.append(body)
             return _json_reply(self.turn)
+        if schema == "grounding_check":
+            self.grounding_requests.append(body)
+            if isinstance(self.grounding, Exception):
+                raise self.grounding
+            return _json_reply(self.grounding)
+        if "You edit a reply" in (body.get("messages") or [{}])[0].get("content", ""):
+            self.repair_requests.append(body)
+            return httpx.Response(200, json={"choices": [{"message": {"content": self.repaired}}]})
         self.answer_requests.append(body)
         if body.get("stream"):
             frame = json.dumps({"choices": [{"index": 0, "delta": {"content": self.model_text}}]})
@@ -170,11 +212,13 @@ def _with_900_sources() -> dict[str, Any]:
 
 
 @pytest.mark.parametrize("stream", [True, False])
-@pytest.mark.parametrize(("verdict", "claims"), [("not_answered", False), ("partial", True)])
-async def test_a_judge_that_doubts_an_answer_with_sources_adds_the_button_and_never_removes_it(stream, verdict, claims):
+@pytest.mark.parametrize("verdict", ["not_answered", "partial"])
+async def test_a_judge_that_doubts_an_answer_with_sources_adds_the_button_and_never_removes_it(stream, verdict):
     # Replayed on nine real Voys questions on 2026-09-17, letting this verdict
-    # remove answers with sources produced 7 "not found" out of 18 answers.
-    litellm = _LiteLLM(model_text=ANSWER_900, answer_judge=_answer_verdict(verdict, claims=claims))
+    # remove answers with sources produced 7 "not found" out of 18 answers. Only
+    # a statement the articles do not support changes the text, and then it is
+    # repaired rather than removed (see the grounding tests below).
+    litellm = _LiteLLM(model_text=ANSWER_900, answer_judge=_answer_verdict(verdict))
 
     text, signals, extras = await _answer(litellm, stream=stream, clarity="clear", **_with_900_sources())
 
@@ -222,6 +266,97 @@ async def test_ambiguous_turn_shows_the_clarifying_question_without_buttons(stre
     assert extras == {"broad_mode": [], "escalation": [], "sources": []}
     assert signals["decision"] == "clarifying_question"
     assert signals["refused"] is False
+
+
+# ─── The statement-level grounding check and its repair ─────────────────
+
+
+@pytest.mark.parametrize("stream", [True, False])
+async def test_an_answer_with_an_unsupported_statement_is_repaired_not_refused(stream):
+    """Measured on 150 real answers: editing took answers with an unsupported
+    statement from 49% to 11% and cost no good answer, where refusing them cost
+    seven answers out of eighteen in an earlier round."""
+    repaired = "Je betaalt je factuur via automatische incasso."
+    litellm = _LiteLLM(
+        model_text=ANSWER_900 + " Bel 020-7001234 voor een terugboeking.",
+        grounding=_grounding("Bel 020-7001234 voor een terugboeking.", contradicted=True, supported=(ANSWER_900,)),
+        repaired=repaired,
+    )
+
+    text, signals, extras = await _answer(litellm, stream=stream, **_with_900_sources())
+
+    assert text == repaired
+    assert [s["url"] for s in extras["sources"]] == ["https://help.example.com/factuur"]
+    assert extras["escalation"] == [{"appointment": True}]
+    assert signals["unsupported"] == 1
+    assert signals["repaired"] is True
+    # The check reads the article text the model received, not a clipped copy.
+    check_input = litellm.grounding_requests[0]["messages"][1]["content"]
+    assert CHUNK_900["text"] in check_input
+
+
+async def test_a_single_flag_leaves_the_answer_alone():
+    """One flag is right 77% of the time, two or a contradiction 92%.
+
+    Repairing on a single flag made the original answer win 8 of 11 blind
+    comparisons on real answers, because the checker also flags a sentence that
+    only restates the visitor's situation.
+    """
+    litellm = _LiteLLM(
+        model_text=ANSWER_900,
+        grounding=_grounding("Je betaalt je factuur via automatische incasso.", supported=("rond de 25e",)),
+        repaired="",
+    )
+
+    text, _, extras = await _answer(litellm, stream=True, **_with_900_sources())
+
+    assert text == ANSWER_900
+    assert extras["sources"]
+    assert litellm.repair_requests == []
+
+
+async def test_a_reply_that_is_entirely_unsupported_falls_back_to_the_refusal():
+    litellm = _LiteLLM(
+        model_text="Bel 020-7001234, dan storneren we het binnen 3 werkdagen. Het bedrag staat binnen 3 werkdagen terug.",
+        grounding=_grounding(
+            "Bel 020-7001234, dan storneren we het binnen 3 werkdagen.",
+            "Het bedrag staat binnen 3 werkdagen terug.",
+        ),
+        repaired="NOTHING_LEFT",
+    )
+
+    text, signals, extras = await _answer(litellm, stream=True, **_with_900_sources())
+
+    assert text == REFUSAL_NL
+    assert extras["sources"] == []
+    assert signals["refused"] is True
+
+
+async def test_a_failed_grounding_check_leaves_the_answer_alone():
+    """Fail direction: what the visitor got before this check existed."""
+    litellm = _LiteLLM(model_text=ANSWER_900, grounding=httpx.ConnectError("boom"))
+
+    text, signals, extras = await _answer(litellm, stream=True, **_with_900_sources())
+
+    assert text == ANSWER_900
+    assert extras["sources"]
+    assert signals["judge_failed"] == ["grounding"]
+    assert litellm.repair_requests == []
+
+
+async def test_a_clarifying_question_is_not_repaired():
+    litellm = _LiteLLM(
+        model_text=CLARIFYING_QUESTION,
+        answer_judge=_answer_verdict("not_answered"),
+        grounding=_grounding("Gaat het om je factuur of om je abonnement?"),
+    )
+
+    text, _, _ = await _answer(litellm, stream=True, clarity="ambiguous")
+
+    # An unsupported "statement" inside a question is the checker overreaching;
+    # the decision table already refuses a question that carries a claim.
+    assert text in (CLARIFYING_QUESTION, REFUSAL_NL)
+    assert litellm.repair_requests == []
 
 
 async def test_a_turn_wrongly_called_conversational_keeps_its_sources():

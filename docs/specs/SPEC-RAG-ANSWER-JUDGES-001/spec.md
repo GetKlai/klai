@@ -1,6 +1,6 @@
 ---
 id: SPEC-RAG-ANSWER-JUDGES-001
-version: "0.6.0"
+version: "0.7.0"
 status: REQ-1 t/m REQ-4 (pad B, helpdeskwidget) in uitvoering; REQ-5 (pad A) na meting
 created: 2026-09-17
 author: Claude (Opus 5), in opdracht van Mark Vletter
@@ -17,6 +17,7 @@ related:
 
 | Versie | Datum | Wijziging |
 |---|---|---|
+| 0.7.0 | 2026-09-18 | Controle per zin op het zwaardere model, met reparatie in plaats van weigeren. Gemeten op 25 echte antwoorden met de volledige artikelteksten: 68% bevat minstens één uitspraak die niet in de artikelen staat, 8 haalden de reparatiedrempel (2 of meer, of tegenspraak), 6 werden gerepareerd en 2 bleken volledig verzonnen (verzonnen prijzen van € 25,- en € 5,-, en een verzonnen terugboekprocedure) en werden de eerlijke weigering. Controle 1,9 s mediaan, 3,2 s in de traagste tien procent. |
 | 0.6.0 | 2026-09-18 | Drie onderzoekslijnen op echte gesprekken afgerond (eerste vraag, vervolgbeurten, verzonnen details). Gespreksbeurten verliezen hun uitzondering in de citatiemotor: die kostte een verkeerd bestempelde vraag haar bronnen (11 keer afgegaan op 90 vervolgbeurten, minstens 3 fout, één echte vraag geweigerd). Tekst zonder bron loopt nu overal via dezelfde controle achteraf. |
 | 0.5.0 | 2026-09-17 | Blinde vergelijking oud tegen nieuw op 50 echte Voys-eerste vragen × 3 rondes (klai-medium als beoordelaar, willekeurige volgorde): oud 69, nieuw 65, gelijk 16. Bij een identieke keten 24 tegen 24. De doorvraag-opdracht maakte antwoorden slechter (oud beter in 19 van 23) en gaf maar 2 echte vervolgvragen op 150 antwoorden: verwijderd. De uitzondering "negatief sentiment escaleert niet bij een onduidelijke vraag" verviel mee. In beide versies bevatte ongeveer een derde van de antwoorden verzonnen details (47 van 150). |
 | 0.4.0 | 2026-09-17 | Achteruitgang hersteld en ontwerp vastgezet op aanwijzing van Mark. Replay van de eerste vraag uit de laatste 9 echte Voys-gesprekken (2×): 7 van de 18 antwoorden werden "niet gevonden", 7 van 7 door het veto van de antwoord-judge op antwoorden mét bron, en 5 van de 9 vragen wisselden van uitkomst. Nieuw uitgangspunt: het oorspronkelijke systeem is de ondergrens; de judges voegen alleen toe. Zie "Definitief ontwerp". |
@@ -35,11 +36,12 @@ Vastgesteld met Mark op 2026-09-17, na de achteruitgang van v0.2.0 en v0.3.0. Wi
 **Uitgangspunt.** Het oorspronkelijke systeem is de ondergrens. Het toonde elk antwoord dat de citatiemotor aan een artikel kon koppelen, en controleerde alleen tekst zónder bron op beweringen. Dat werkte omdat bewijs besliste en geen mening: dezelfde vraag gaf dezelfde uitkomst. Voys, 14 dagen vóór de judges: 98 antwoorden, 85 met bron, 4 zonder bron, 9 weigeringen; 38 keer een zwak zoekresultaat, waarvan 32 toch een getoond antwoord met bron.
 
 **Regels.**
-1. Een antwoord met bron wordt altijd getoond. Vindt de antwoord-judge dat het de vraag niet (volledig) beantwoordt, dan komt de afspraakknop eronder. Hij haalt nooit iets weg.
+1. Een antwoord met bron wordt altijd getoond. Vindt de antwoord-judge dat het de vraag niet (volledig) beantwoordt, dan komt de afspraakknop eronder; zijn oordeel haalt nooit iets weg. Alleen de controle per zin mag tekst aanpassen: uitspraken die niet in de artikelen staan worden eruit gehaald (v0.7.0), en alleen als er niets bruikbaars overblijft wordt het de eerlijke weigering.
 2. Tekst zonder bron volgt de oorspronkelijke regel: uitspraken die niet in de artikelen staan geven de vaste weigering, anders wordt de tekst getoond. Bij een onduidelijke vraag en een concept dat op een vraagteken eindigt is het een vervolgvraag, zonder knoppen.
 3. De vraag-judge stuurt de generatie niet: er gaat geen opdracht mee om door te vragen (v0.5.0, gemeten schadelijk). Onduidelijkheid wordt gemeten en labelt alleen een concept dat op een vraagteken eindigt. Hoe de eerste vraag rijker wordt, is in onderzoek.
-4. Beide judges draaien met temperatuur 0.
-5. Een gefaalde judge: tonen met bron, weigeren zonder bron.
+4. Alle controles draaien met temperatuur 0. De controle per zin en de reparatie draaien op het zwaardere model (`answer_grounding_model`, 900 aanroepen per minuut), zodat ze het quotum van het antwoordmodel niet opeten.
+5. Repareren gebeurt pas bij twee of meer afgekeurde uitspraken, of bij één die het artikel tegenspreekt: één afgekeurde uitspraak klopt in 77% van de gevallen, deze drempel in 92%.
+6. Een gefaalde judge: tonen met bron, weigeren zonder bron. Een gefaalde controle per zin of reparatie laat het antwoord staan zoals het was.
 
 **Poort vóór livegang van elke wijziging aan deze regels of prompts.** Replay van de eerste vraag uit echte gesprekken (nu 9, doel 50), drie keer per vraag. Elk antwoord dat het oorspronkelijke systeem met bron toonde moet nog steeds getoond worden; uitzonderingen worden gelezen en aan Mark voorgelegd. Gemeten: weigeringen die een vervolgvraag of antwoord worden, wisselingen per vraag, doorlooptijd.
 
