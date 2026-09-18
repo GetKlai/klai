@@ -27,7 +27,7 @@ from typing import Any, Literal
 
 import structlog
 from fastapi import HTTPException
-from sqlalchemy import Row, delete, select, text
+from sqlalchemy import Row, delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import set_tenant
@@ -202,12 +202,12 @@ async def _delete_case_findings(db: AsyncSession, org_id: int, case_id: int) -> 
 
 async def _case_findings_count(db: AsyncSession, org_id: int, case_id: int) -> int:
     result = await db.execute(
-        select(PortalRetrievalGap.id).where(
+        select(func.count(PortalRetrievalGap.id)).where(
             PortalRetrievalGap.org_id == org_id,
             PortalRetrievalGap.support_case_id == case_id,
         )
     )
-    return len(result.all())
+    return result.scalar_one()
 
 
 async def _org_policy(db: AsyncSession, org_id: int) -> Row[Any] | None:
