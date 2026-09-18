@@ -1140,10 +1140,12 @@ def remove_already_streamed_prefix(final_text: str, emitted_text: str) -> str | 
 _ANSWER_CLAIMS_REASONS = frozenset({"no_trusted_sources", "strict_no_sentence_level_support"})
 
 
-# Measuring only, on the same words the widget path judges by: the check lists
-# every concrete statement in the answer with the article text behind it. It
-# runs beside the response instead of in front of it, so the user waits for
-# nothing, and it never changes what the answer says. SPEC-RAG-ANSWER-JUDGES-001.
+# The measurement half of the grounding check, on the same words the widget
+# path judges by: the check lists every concrete statement in the answer with
+# the article text behind it. It runs beside the response instead of in front
+# of it, so the user waits for nothing, and it never changes what the answer
+# says. Where the whole answer is still in hand, ``_repair_or_measure`` below
+# repairs instead, for every tenant. SPEC-RAG-ANSWER-JUDGES-001.
 _grounding_tasks: set[asyncio.Task] = set()
 
 

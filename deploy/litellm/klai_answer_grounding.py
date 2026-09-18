@@ -1,4 +1,4 @@
-"""Statement-level grounding check for the internal chat, measuring only.
+"""Statement-level grounding check and repair for the internal chat.
 
 SPEC-RAG-ANSWER-JUDGES-001. The widget path has this check deciding what the
 visitor sees: every concrete statement in a draft is listed with the article
@@ -8,27 +8,27 @@ contradicts an article) is repaired. Measured on 25 real widget answers on
 invented end to end.
 
 The internal chat asks different questions — employees paste correspondence and
-tickets — so the same number was not a given. Measured on 2026-09-18 against 50
-real answers from a customer's own LibreChat tenant it is worse here: 86% state
-something the articles do not carry (widget: 64%), and 70% would reach the
-repair threshold (widget: 40%). Internal answers are also four times longer
-(median 1173 characters), which is most of the difference.
+tickets — so the same number was not a given. Measured evenly on 80 stored
+answers per path on 2026-09-18 it is worse here: 85% state something the
+articles do not carry (widget: 75%), and 72% reach the repair threshold
+(widget: 65%). Internal answers are three times longer (median 1173 characters
+against 349).
 
-The repair the widget runs cannot simply be ported. Every internal answer is
-streamed (41 of 41 turns in the week to 2026-09-18), so by the time this check
-could speak the user has already read the text. Repairing would mean buffering
-the whole answer and showing nothing for the length of the generation plus the
-check, and the check alone takes 3.6 s at the median here. So this module still
-hands the caller a verdict and, when it is worth repairing, the edited answer.
+Since #1526 and #1530 (both 2026-09-18) the repair therefore runs here too, for
+every tenant: there is no per-organisation switch, the only conditions are the
+ones in ``_repair_would_be_wrong`` (Strict mode, citable sources, the whole
+answer still in hand, nothing resting on what the user pasted). Same words,
+same schema and same threshold as the widget, shared through
+``klai_chat_prompts``; a wider time budget because the answers are longer.
 
 Two transports, and the difference is not streaming versus not. An Open stream
 sends the model's words as they come, so by the time this could speak they have
-been read: there the caller only measures, on a scheduled task that delays
+been read: there ``log_answer_grounding`` only measures, on a task that delays
 nobody. A Strict stream is held back in full by the renderer — its deltas carry
 no content — so at the flush the whole answer is still in hand and nothing has
-been read. There the caller waits for this, and the user waits with it: median
-4.0 s and 8.3 s in the slowest tenth, measured on seventeen real internal
-answers on 2026-09-18, which it changed nine of.
+been read. There the caller waits for ``repair_answer``, and the user waits with
+it: median 4.0 s and 8.3 s in the slowest tenth, measured on seventeen real
+internal answers on 2026-09-18, which it changed nine of.
 """
 
 from __future__ import annotations

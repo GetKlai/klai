@@ -1,11 +1,11 @@
 ---
 id: SPEC-RAG-ANSWER-JUDGES-001
-version: "0.8.0"
-status: REQ-1 t/m REQ-4 (pad B, helpdeskwidget) in uitvoering; REQ-5 (pad A) na meting
+version: "0.10.0"
+status: REQ-1 t/m REQ-4 (pad B, helpdeskwidget) live; REQ-5 (pad A) live sinds 18 sep, reparatie aan voor elke tenant
 created: 2026-09-17
 author: Claude (Opus 5), in opdracht van Mark Vletter
 priority: high
-tenant_scope: platform-breed; eerst pad B (widget in support mode via portal-api), daarna pad A (LibreChat via de LiteLLM-hook)
+tenant_scope: platform-breed, geen poort per tenant; pad B (widget in support mode via portal-api) en pad A (LibreChat via de LiteLLM-hook, Strict)
 related:
   - SPEC-RAG-CLARIFY-FLOW-001 (vervangt op pad B de trigger van beslissing 1 en de claimscheck van beslissing 2)
   - SPEC-RAG-ANSWER-TIERS-001 (turn_scope gaat op in de vraag-judge)
@@ -17,6 +17,8 @@ related:
 
 | Versie | Datum | Wijziging |
 |---|---|---|
+| 0.10.0 | 2026-09-18 | Regel 8 en REQ-5 gelijkgetrokken met wat draait: de reparatie staat sinds #1526 (niet-streamend) en #1530 (de vastgehouden Strict-stroom) ook op het interne pad aan, platform-breed en zonder poort per omgeving. De voorwaarden zijn alleen technisch (`_repair_would_be_wrong`: Strict, citeerbare bronnen, hele antwoord nog in handen, niets dat op geplakte tekst rust). Meting: 80 antwoorden per pad, intern 85% / 72% boven de drempel tegen 75% / 65% op de widget (logboek 2.22); kosten intern mediaan 4,0 s, 8,3 s in de traagste tien procent (2.23). |
+| 0.9.0 | 2026-09-18 | Onderwerpen die de widget niet behandelt, per widget instelbaar (#1509, #1510): de vraag-judge beoordeelt of de vraag erin valt en de bezoeker krijgt dan de vaste tekst met de afspraakknop, zonder generatie. Gemeten 14 van 14 afgevangen, 12 van 12 hulpvragen ongemoeid (logboek 2.10f, 2.13). |
 | 0.8.0 | 2026-09-18 | Tijdsbudget per stap vastgelegd (controle 4 s, reparatie 3 s) na twee live metingen, en de controle per zin draait meekijkend op de interne chat met dezelfde gedeelde tekst. Inkorten van de artikelen voor de controle is gemeten en afgevallen. |
 | 0.7.0 | 2026-09-18 | Controle per zin op het zwaardere model, met reparatie in plaats van weigeren. Gemeten op 25 echte antwoorden met de volledige artikelteksten, na de reviewfixes: 64% bevat minstens één uitspraak die niet in de artikelen staat, 10 haalden de reparatiedrempel (2 of meer, of tegenspraak), 8 werden gerepareerd (2 daarvan hielden nog een melding over) en 2 bleken volledig verzonnen (prijzen van € 25,- en € 5,- voor een 0800-nummer, en een terugboekprocedure) en werden de eerlijke weigering. Een blinde vergelijking voor en na reparatie: 5 keer het gerepareerde antwoord, 3 keer het origineel. Controle 1,9 s mediaan, 3,4 s in de traagste tien procent. |
 | 0.6.0 | 2026-09-18 | Drie onderzoekslijnen op echte gesprekken afgerond (eerste vraag, vervolgbeurten, verzonnen details). Gespreksbeurten verliezen hun uitzondering in de citatiemotor: die kostte een verkeerd bestempelde vraag haar bronnen (11 keer afgegaan op 90 vervolgbeurten, minstens 3 fout, één echte vraag geweigerd). Tekst zonder bron loopt nu overal via dezelfde controle achteraf. |
@@ -30,7 +32,7 @@ related:
 
 # SPEC-RAG-ANSWER-JUDGES-001: een vraag-judge en een antwoord-judge beslissen samen wat de bezoeker krijgt
 
-## Definitief ontwerp (bijgewerkt t/m v0.8.0, leidend boven alles hieronder)
+## Definitief ontwerp (bijgewerkt t/m v0.10.0, leidend boven alles hieronder)
 
 Vastgesteld met Mark op 2026-09-17, na de achteruitgang van v0.2.0 en v0.3.0. Wijk hier niet van af zonder zijn akkoord; de secties daaronder zijn de geschiedenis die tot dit ontwerp leidde.
 
@@ -44,7 +46,7 @@ Vastgesteld met Mark op 2026-09-17, na de achteruitgang van v0.2.0 en v0.3.0. Wi
 5. Repareren gebeurt pas bij twee of meer afgekeurde uitspraken, of bij één die het artikel tegenspreekt: één afgekeurde uitspraak klopt in 77% van de gevallen, deze drempel in 92%.
 6. Een gefaalde judge: tonen met bron, weigeren zonder bron. Een gefaalde controle per zin of reparatie laat het antwoord staan zoals het was.
 7. Tijdsbudget: de controle per zin hooguit 4 s, de reparatie hooguit 3 s. De controle loopt naast de lichte judge, de reparatie erna en alleen bij de drempel uit regel 5. Elke stap logt zijn eigen tijd (`checks_ms`, `repair_ms`). De artikelen gaan volledig naar de controle: inkorten scheelde 0,2 s en veranderde 2 van de 25 oordelen.
-8. De interne chat draait dezelfde controle met dezelfde tekst uit `klai-libs/chat-prompts`, maar alleen meekijkend: hij verandert daar niets aan het antwoord en wacht nergens op. Repareren op dat pad pas als de cijfers van beide paden naast elkaar liggen.
+8. De interne chat draait dezelfde controle én dezelfde reparatie, met dezelfde tekst, hetzelfde schema en dezelfde drempel uit `klai-libs/chat-prompts`, voor elke tenant en zonder poort per organisatie (#1526, #1530). De reparatie draait overal waar het hele antwoord nog in handen is: het niet-streamende pad en de Strict-stroom, die de renderer volledig vasthoudt tot het slotframe. Een Open-stroom stuurt de woorden zoals ze komen en wordt daar alleen gemeten. Budget intern 12 s controle en 8 s reparatie (tegen 4 en 3 op de widget), omdat de antwoorden drie keer zo lang zijn; loopt een limiet af, dan blijft het antwoord zoals het was. Anders dan op de widget wordt intern nooit geweigerd op dit signaal: blijft er niets over, dan blijft het antwoord staan en logt de stap dat.
 
 **Poort vóór livegang van elke wijziging aan deze regels of prompts.** Replay van de eerste vraag uit echte gesprekken (nu 9, doel 50), drie keer per vraag. Elk antwoord dat het oorspronkelijke systeem met bron toonde moet nog steeds getoond worden; uitzonderingen worden gelezen en aan Mark voorgelegd. Gemeten: weigeringen die een vervolgvraag of antwoord worden, wisselingen per vraag, doorlooptijd.
 
@@ -129,7 +131,7 @@ Het addendum voor een onduidelijke beurt vraagt het model in één generatie: be
 - **REQ-2 Antwoord-judge.** `app/services/answer_judge.py` met het schema hierboven, time-out 2,5 s. Vervangt `app/services/answer_claims.py` en `_show_uncited_reply_without_claims`.
 - **REQ-3 Beslisfunctie en addendum.** Eén pure functie met de tabel hierboven, gebruikt door zowel het streaming- als het niet-streamingpad. Op het widgetpad verdwijnen `should_clarify`, `has_direct_evidence_for_query` en `CLARIFY_TURN_ADDENDUM` als beslissers; de band blijft als meetgegeven. De gedeelde bibliotheek blijft ongewijzigd zolang pad A haar gebruikt.
 - **REQ-4 Meting per beurt.** `answer_signals` krijgt `clarity`, `verdict`, `grounding`, `decision` (de uitkomst uit de tabel) en `judge_failed` waar van toepassing. Eén logregel `partner_chat_turn_timing` met `retrieval_ms`, `turn_judge_ms`, `generation_ms`, `answer_judge_ms`, `total_ms`.
-- **REQ-5 Pad A.** De controle per zin draait sinds 18 sep meekijkend op de interne chat in Strict, met dezelfde gedeelde tekst en schema (drift-test bewaakt de kopie). Beslissen doet hij daar nog niet; dat volgt als de cijfers van beide paden vergelijkbaar zijn.
+- **REQ-5 Pad A.** De controle per zin draait sinds 18 sep op de interne chat in Strict met dezelfde gedeelde tekst en hetzelfde schema (drift-test bewaakt de kopie), en sinds #1526 en #1530 repareert hij daar ook, voor elke tenant: niet-streamend en op de vastgehouden Strict-stroom (`_repair_or_measure` in `deploy/litellm/klai_kb_citation_render.py`), alleen meten op een Open-stroom. Er is geen instelling per organisatie; de enige voorwaarden staan in `_repair_would_be_wrong`.
 
 ## Gemeten vóór livegang (2026-09-17, productie-`klai-fast`, drie rondes)
 

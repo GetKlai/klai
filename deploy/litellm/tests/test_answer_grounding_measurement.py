@@ -1,9 +1,11 @@
-"""The internal chat measures how much of an answer the articles support.
+"""The internal chat checks and repairs what the articles do not support.
 
-SPEC-RAG-ANSWER-JUDGES-001. The widget path decides with this check; here it
-only measures, so the two paths can be compared on the same words before the
-repair is worth porting. What must hold: the check sees the answer the user
-gets, it never delays that answer, and a failing check costs nothing.
+SPEC-RAG-ANSWER-JUDGES-001. The widget path decides with this check, and since
+#1526/#1530 so does the internal path wherever the whole answer is still in
+hand (non-streaming, and the held Strict stream); an Open stream is only
+measured. What must hold: the check sees the answer the user gets, the
+measurement never delays that answer, a failing check or repair leaves the
+answer as it was, and the two paths hand the checker the same words.
 """
 
 from __future__ import annotations
