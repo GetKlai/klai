@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -314,12 +314,16 @@ def _validate_connector_config(connector_type: str, config: dict) -> dict:
         return config
     try:
         validated = schema.model_validate(config)
-    except ValueError as exc:
-        # Surface the original validation message so the UI can
-        # display which field was rejected.
+    except ValidationError as exc:
+        # Structured issue list, same shape as FastAPI's own request-body
+        # validation errors (loc/msg/type) - app/lib/apiFetch.ts already
+        # renders this as a readable "field: reason" summary. str(exc) used
+        # to be passed here directly, which is pydantic's full debug repr
+        # (multi-line, ends with a link to errors.pydantic.dev) and rendered
+        # verbatim on the Save button (reported 2026-09-18).
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=str(exc),
+            detail=exc.errors(include_url=False, include_input=False, include_context=False),
         ) from exc
     # model_dump keeps the dict-on-disk contract; sensitive fields
     # are re-masked later by the credential store.

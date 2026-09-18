@@ -1,5 +1,6 @@
 import { CheckCircle2 } from 'lucide-react'
 import { Alert } from '@/components/ui/alert'
+import * as m from '@/paraglide/messages'
 
 export type CrawlerAuthStatusState =
   | { kind: 'public'; onChange: () => void }
@@ -13,14 +14,14 @@ export function CrawlerAuthStatus({ status }: { status: CrawlerAuthStatusState |
       <div className="flex items-center justify-between rounded-lg border border-gray-200 px-4 py-3">
         <div className="flex items-center gap-2 text-xs text-gray-600">
           <CheckCircle2 className="h-3.5 w-3.5 text-[var(--color-success-text)]" />
-          Public site - no login needed
+          {m.admin_connectors_webcrawler_auth_status_public()}
         </div>
         <button
           type="button"
           className="text-xs text-gray-600 hover:text-gray-900"
           onClick={status.onChange}
         >
-          Actually, it needs login
+          {m.admin_connectors_webcrawler_auth_status_needs_login()}
         </button>
       </div>
     )
@@ -31,15 +32,17 @@ export function CrawlerAuthStatus({ status }: { status: CrawlerAuthStatusState |
       <div className="flex items-center justify-between">
         <span>
           {status.credentialKind === 'saved'
-            ? 'Logged in - saved authentication verified'
-            : 'Logged in - cookies verified'}
+            ? m.admin_connectors_webcrawler_auth_status_saved_verified()
+            : m.admin_connectors_webcrawler_auth_status_cookies_verified()}
         </span>
         <button
           type="button"
           className="text-xs text-gray-600 hover:text-gray-900"
           onClick={status.onChange}
         >
-          {status.credentialKind === 'saved' ? 'Change authentication' : 'Edit cookies'}
+          {status.credentialKind === 'saved'
+            ? m.admin_connectors_webcrawler_auth_status_change()
+            : m.admin_connectors_webcrawler_auth_status_edit_cookies()}
         </button>
       </div>
     </Alert>

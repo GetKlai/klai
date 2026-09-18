@@ -78,7 +78,7 @@ export function CrawlerAuthSetupStep({
     <div className="space-y-4">
       <div className="rounded-lg border border-gray-200 p-4 space-y-3">
         <div className="space-y-1.5">
-          <Label htmlFor="wc-auth-test-url">URL to test</Label>
+          <Label htmlFor="wc-auth-test-url">{m.admin_connectors_webcrawler_test_url()}</Label>
           <Input
             id="wc-auth-test-url"
             type="url"
@@ -87,11 +87,11 @@ export function CrawlerAuthSetupStep({
             onChange={(e) => onTestUrlChange(e.target.value)}
           />
           <p className="text-xs text-gray-600">
-            Defaults to your base URL. If the login wall lives on a different page, paste that page&apos;s URL here instead.
+            {m.admin_connectors_webcrawler_test_url_hint()}
           </p>
           {testUrlCrossOrigin && (
             <p className="text-xs text-[var(--color-destructive)]">
-              This URL is on a different domain than your base URL. For safety, cookies can only be tested against the same site.
+              {m.admin_connectors_webcrawler_test_url_cross_origin()}
             </p>
           )}
         </div>
@@ -99,24 +99,24 @@ export function CrawlerAuthSetupStep({
         {hasSavedCredentials ? (
           <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="text-sm font-medium text-gray-900">Authentication cookies</p>
-              <p className="text-xs text-gray-600">Saved cookies are encrypted and stay hidden.</p>
+              <p className="text-sm font-medium text-gray-900">{m.admin_connectors_webcrawler_cookies_label()}</p>
+              <p className="text-xs text-gray-600">{m.admin_connectors_webcrawler_auth_cookies_hint()}</p>
             </div>
             {mode.kind === 'cookies' && mode.savedCredentials && (
               <Button type="button" size="sm" variant="outline" onClick={mode.savedCredentials.onUseSaved}>
-                Use saved
+                {m.admin_connectors_webcrawler_auth_use_saved()}
               </Button>
             )}
           </div>
         ) : (
-          <p className="text-sm font-medium text-gray-900">Authentication cookies</p>
+          <p className="text-sm font-medium text-gray-900">{m.admin_connectors_webcrawler_cookies_label()}</p>
         )}
 
         {mode.kind === 'saved' ? (
           <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-3 space-y-3">
             <div className="flex items-center gap-2 text-sm text-gray-900">
               <KeyRound className="h-4 w-4 text-gray-500" />
-              Saved authentication configured
+              {m.admin_connectors_webcrawler_auth_saved_configured()}
             </div>
             <div className="flex flex-wrap gap-2">
               <Button
@@ -127,16 +127,16 @@ export function CrawlerAuthSetupStep({
                 onClick={() => onProbe({ use_saved_credentials: true })}
               >
                 {isPending ? (
-                  <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />Testing...</>
+                  <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />{m.admin_connectors_webcrawler_auth_testing()}</>
                 ) : (
-                  'Test saved authentication'
+                  m.admin_connectors_webcrawler_auth_test_saved()
                 )}
               </Button>
               <Button type="button" size="sm" variant="outline" onClick={mode.onReplace}>
-                Replace cookies
+                {m.admin_connectors_webcrawler_auth_replace_cookies()}
               </Button>
               <Button type="button" size="sm" variant="outline" onClick={mode.onUseWithoutLogin}>
-                Use without login
+                {m.admin_connectors_webcrawler_auth_use_without_login()}
               </Button>
             </div>
           </div>
@@ -145,8 +145,7 @@ export function CrawlerAuthSetupStep({
             <CookieRowsInput idPrefix={mode.idPrefix} value={mode.rows} onChange={mode.onChange} />
             {mode.savedCredentials?.hasPrefilledNames && !allRowsRemoved && (
               <p className="text-xs text-gray-600">
-                Cookie names are prefilled from saved authentication. Leave a value blank
-                to keep the one already saved; remove a row to drop that cookie.
+                {m.admin_connectors_webcrawler_auth_prefilled_hint()}
               </p>
             )}
             {allRowsRemoved && (
@@ -155,9 +154,7 @@ export function CrawlerAuthSetupStep({
               // empty form cannot mean "delete them all" -- and reading it
               // that way would wipe an org's session on a stray second click.
               <p className="text-xs text-[var(--color-destructive)]">
-                Every row is empty, so saving now leaves the saved cookies exactly as they
-                are. To remove authentication entirely, go back and choose
-                &ldquo;Use without login&rdquo;.
+                {m.admin_connectors_webcrawler_auth_all_rows_empty()}
               </p>
             )}
             <Button
@@ -168,9 +165,9 @@ export function CrawlerAuthSetupStep({
               onClick={() => onProbe({ cookies: buildCrawlerCookies(mode.rows, baseUrl) })}
             >
               {isPending ? (
-                <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />Testing...</>
+                <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />{m.admin_connectors_webcrawler_auth_testing()}</>
               ) : (
-                'Test authentication'
+                m.admin_connectors_webcrawler_auth_test()
               )}
             </Button>
           </>
