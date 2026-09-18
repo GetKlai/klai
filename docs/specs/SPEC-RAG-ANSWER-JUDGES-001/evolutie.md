@@ -2,7 +2,7 @@
 
 Doel van dit bestand: wat er gemeten is, wat daaruit volgde, en wat er live staat. Zo hoeft niemand een meting of een onderzoek over te doen. De spec ernaast (`spec.md`) beschrijft het ontwerp; dit bestand beschrijft de weg ernaartoe.
 
-Bijgewerkt: 2026-09-18, na 2.24.
+Bijgewerkt: 2026-09-18, na 2.29.
 
 ---
 
@@ -13,13 +13,13 @@ Een beurt van een bezoeker loopt door deze schakels. Per schakel: wat het doet, 
 | # | Schakel | Waar | Stand |
 |---|---|---|---|
 | 1 | Vraag binnen, eerste of vervolg | `partner.py::chat_completions` | ongewijzigd |
-| 2 | Vervolgvraag omzetten naar zoekvraag | retrieval-api `services/coreference.py` | verbeterd, live 2026-09-18 |
-| 3 | Zoeken (vector, graaf, herrangschikken) | retrieval-api `api/retrieve.py` | letterlijke zoekregel toegevoegd, live 2026-09-18 |
+| 2 | Vervolgvraag omzetten naar zoekvraag | retrieval-api `services/coreference.py` | verbeterd, live 2026-09-18; het vorige antwoord als extra zoekleg gemeten op 39% naar 64%, niet gebouwd (2.28) |
+| 3 | Zoeken (vector, graaf, herrangschikken) | retrieval-api `api/retrieve.py` | letterlijke zoekregel toegevoegd, live 2026-09-18; twee herformuleringen samengevoegd gemeten op 35% naar 59%, niet gebouwd (2.27); paginaboost gemeten als onschadelijk en bijna zonder effect (2.26) |
 | 4 | Controle vooraf op de vraag | `services/turn_judge.py` | beslist niets meer over doorvragen (v0.5.0), praatje-uitzondering weg (v0.6.0), beoordeelt sinds v0.9.0 ook of de vraag binnen de niet-behandelde onderwerpen valt |
 | 5 | Antwoord schrijven | `partner_chat.py` + profiel in `klai-libs/chat-prompts` | ongewijzigd; promptvarianten gemeten en afgevallen. Valt de vraag binnen de onderwerpen die de widget niet behandelt, dan wordt deze schakel overgeslagen (v0.9.0) |
 | 6 | Koppelen aan bronnen | `klai-libs/citations` | ongewijzigd, dit is de ondergrens |
 | 7 | Controle achteraf op het antwoord | `services/answer_judge.py` + `services/answer_grounding.py`; intern `deploy/litellm/klai_answer_grounding.py` | licht oordeel plus controle per zin met reparatie, live 18 sep; dezelfde reparatie op het interne pad sinds #1526 en #1530, platform-breed (2.22, 2.23) |
-| 8 | Kennisbank | Voys-artikelen | het echte plafond, niet aangepakt. De widget zoekt in één van de negen kennisbanken van Voys (`support`, 8947 chunks); prijzen, Ascend en de nerds-wiki staan buiten bereik |
+| 8 | Kennisbank | Voys-artikelen | plafond voor hooguit een derde van de kennisvragen (2.29), niet aangepakt. De widget zoekt in één van de negen kennisbanken van Voys (`support`, 8947 chunks); prijzen, Ascend en de nerds-wiki staan buiten bereik |
 | — | Meten van de keten | `scripts/simulate_conversations.py` | hele gesprekken sinds 18 sep; ijking eerlijk gerekend 75% tegen 81% van de herspeling (2.19, gecorrigeerd in 2.24); bezoeker en scoorder sinds 2.24 op een ander model dan de controle die ze meten |
 
 ---
@@ -623,6 +623,183 @@ wat het harnas vanaf nu rapporteert. Een nieuwe nulmeting met de gescheiden mode
 gedraaid: elke ronde van twaalf gesprekken kost gedeelde snelheidslimiet (2.19), en er stond geen
 wijziging aan de keten klaar om ertegen af te zetten.
 
+### 2.25 Het fundament onder de 29 om 7: wat de "verrijkte vraag" van 2.7 werkelijk was (18 sep)
+Voordat er op dat cijfer gebouwd wordt, nagekeken hoe het tot stand kwam (`/tmp/exp/first-question`,
+`build_nat.py`, `summary.json`).
+
+- **Geen antwoord-orakel, wel een vraag-orakel.** De verrijkte vraag was de magere eerste vraag plus
+  wat de bezoeker zélf later in hetzelfde gesprek typte ("Hoe stel ik mijn belplan in?" + "ik wil
+  graag naar het buitenland kunnen bellen"). Het antwoord zat er niet in, maar de informatie is pas
+  beschikbaar nadat het oude systeem een half antwoord had gegeven en de bezoeker corrigeerde. Het
+  meet dus "wat als de bezoeker het meteen had gezegd", en dat is precies wat doorvragen had moeten
+  opleveren (2.4: schadelijk). Het is een bovengrens van vragen, niet van zoeken.
+- **Negen gevallen, twee rondes.** De 29 om 7 komt uit 9 magere vragen × 2 rondes, paarsgewijs in
+  beide volgordes. Bij `n=9` is dat één afwijkend gesprek verwijderd van ruis volgens de eigen
+  meetafspraak (§6).
+- **Het verrijkte antwoord verzon vier keer zo vaak.** Uit dezelfde meting (`answers_thin_2rounds`):
+  "bevat iets verzonnen" T (mager) 3 van 18, E (verrijkt) 12 van 18, H (hele geschiedenis) 14 van
+  18. De paarsgewijze beoordelaar koos tóch 29 om 7 voor E, terwijl zijn opdracht zei dat verzinsels
+  zwaar wegen. Dat is dezelfde blinde vlek als in 2.15: een rijker antwoord leest als een beter
+  antwoord. "Lost het echte probleem op" was E 6 van 18 tegen T 0 van 18, dus de winst is echt, maar
+  kleiner dan 29 om 7 suggereert en gekocht met verzinsels die de controle per zin nu weghaalt.
+- **Wat er wél uit te halen is:** het zoeken vond het goede artikel met de magere vraag 1 van 8 keer,
+  met de verrijkte 3 van 8, met de hele geschiedenis 6 van 8 (`retrieval_gold_title_hit_thin_n8`).
+  Dat de geschiedenis als zoeksignaal het meeste opleverde, stond er dus al en is nooit opgevolgd.
+  Zie 2.28.
+
+**Stand:** 29 om 7 is geen haalbaar zoekdoel, maar een maat voor wat de bezoeker weet en niet zegt.
+De haalbare winst zit in wat het systeem wél heeft zonder te vragen: de pagina, de geschiedenis en
+de vraag zelf anders geformuleerd. Die drie zijn hieronder gemeten.
+
+### 2.26 Paginacontext: draait, is gratis, doet bijna niets (18 sep)
+De widget stuurt de URL van de helppagina mee en de zoekdienst geeft chunks van diezelfde pagina een
+factor 1,08 na het herrangschikken (`page_context.py::_apply_page_context_boost`). In 23 metingen
+stond nergens of dat helpt. De pagina van echte bezoekers wordt niet opgeslagen (niet in
+`widget_messages`, niet in `answer_signals`), dus gemeten met drie kunstmatige pagina's per vraag.
+
+Hoe vaak het speelt, uit de zoeklogs (`retrieval_decision_record`, 10 t/m 17 sep, Voys): 7 tot 14
+zoekopdrachten per dag hadden een pagina die met een kandidaat overlapte, tegen 24 tot 48 echte
+beurten per dag. Ruwweg een kwart tot een derde van de beurten komt dus van een artikelpagina.
+
+Gemeten op de 22 kennisvragen uit 2.27 waarvoor een antwoordende passage in de top-50 zat:
+
+| Pagina meegegeven | Antwoordende passage in top-8 | Antwoord op plek 1 |
+|---|---|---|
+| Geen (huidig gedrag zonder pagina) | 19 van 22 | 8 |
+| De pagina die het antwoord bevat | 19 van 22 | **11** |
+| Een verkeerde pagina uit de top-8 (19 vragen) | 16 van 19 (gelijk aan zonder) | 6 (gelijk) |
+| De startpagina van het helpcentrum | 19 van 22, top-8 identiek in 21 van 22 | 8 |
+
+De boost verandert de top-8 in de helft van de gevallen (11 van 22 bij de goede pagina, 7 van 19 bij
+een verkeerde), maar brengt geen antwoord binnen dat er niet al stond en gooit er ook geen uit. Wat
+hij wél doet: het antwoord drie keer naar plek 1 tillen als de bezoeker op de juiste pagina staat.
+Schaden doet hij niet, ook niet als de bezoeker op een pagina staat die zijn vraag niet beantwoordde.
+
+**Stand:** laten staan, niets aan doen. Een boost van 8% na het herrangschikken kan alleen binnen de
+top-8 schuiven en dat is niet waar het probleem zit: bij 3 van de 22 stond het antwoord op plek 9
+tot 50, en de boost haalt die niet omhoog omdat de pagina van de bezoeker zelden dat artikel is.
+Een sterkere boost is niet gemeten en niet aan te raden zolang het volgende punt niet gebouwd is.
+
+### 2.27 Twee herformuleringen van de eerste vraag, samengevoegd: 35% naar 59% (18 sep)
+Meervoudige zoekvragen vanuit de vraag zelf, zonder de bezoeker iets te vragen en zonder details toe
+te voegen. `klai-medium` schrijft twee alternatieve formuleringen ("zoals een andere bezoeker met
+hetzelfde probleem had kunnen typen, hooguit vijftien woorden, met woorden die in helpartikelen
+staan, geen apparaten of oorzaken toevoegen"), elk gaat apart door het zoeken, en de drie top-8
+lijsten worden met RRF samengevoegd tot één top-8.
+
+Data: alle 75 verschillende eerste vragen van echte Voys-gesprekken (60 dagen, plus de export van
+17 sep), waarvan 54 kennisvragen (8 commercieel, 7 medewerker, 6 taal). De behoefte van de bezoeker
+is afgeleid uit ál zijn beurten, zodat de beoordelaar weet wat hij uiteindelijk wilde; de zoekvraag
+zelf ziet alleen de eerste beurt. Elke passage blind beoordeeld door `klai-medium` (antwoordt /
+gedeeltelijk / irrelevant), één beoordelingspool per vraag over alle varianten.
+
+| Variant (54 kennisvragen) | Antwoordende passage in top-8 | Goede artikel in top-8 | Winst / verlies t.o.v. huidig |
+|---|---|---|---|
+| Huidig: de letterlijke vraag | 19 (35%) | 26 (48%) | – |
+| Herformulering 1 alleen | 21 (40%) | 24 (45%) | 10 / 8 |
+| Herformulering 2 alleen | 19 (36%) | 23 (43%) | 8 / 8 |
+| Vraag + beide herformuleringen als één lange zoekvraag | 24 (44%) | 27 (50%) | 9 / 4 |
+| **Drie aparte zoekvragen, RRF-samengevoegd** | **32 (59%)** | **34 (63%)** | **14 / 1** |
+
+Veertien winsten tegen één verlies is ruim boven de ruisgrens van tien. Drie dingen die het cijfer
+verklaren:
+
+- **Het is recall, geen rangschikking.** Bij 13 van de 14 winsten stond de antwoordende passage
+  nergens in de top-50 van de letterlijke vraag. De formulering van de bezoeker haalt het artikel
+  gewoon niet op; een andere formulering wel. Dit corrigeert 2.16, dat op negen bronloze beurten
+  "nul rangschikkingsproblemen" vond en daaruit afleidde dat zoekverbeteringen niets zouden bewegen.
+  Dat klopte voor rangschikking en niet voor formulering.
+- **De winst zit niet bij de magere vragen.** Mager (≤ 6 woorden, n=12): 50% naar 58%. Specifiek
+  (n=42): 31% naar 60%. Lange, pratende eerste berichten ("Goedemorgen, mijn vaste lijn en mobiele
+  lijn gaan gelijk over tot voicemail. Kan niet zo snel vinden…") zoeken slecht als één vector; een
+  herformulering van vijftien woorden in artikeltaal zoekt goed. Het probleem van 2.7 was dus half
+  verkeerd gesteld: niet te weinig woorden, maar de verkeerde.
+- **De band ziet het niet.** 16 van de 54 kennisvragen kregen band `high` zonder antwoordende
+  passage in de top-8, en 5 kregen `low` mét. De zoekscore is geen bruikbare poort voor wanneer dit
+  aan zou moeten; het moet dan altijd.
+
+Het ene verlies: "Mijn voys die laad niet…", waar de herformuleringen op "app laadt niet" zoeken en
+de letterlijke tekst een ander artikel raakte.
+
+Kosten, tien echte vragen sequentieel: de herformulering op `klai-medium` mediaan 0,54 s (0,45 tot
+1,09 s), één zoekopdracht mediaan 0,68 s. De drie zoekopdrachten kunnen parallel; de zoekdienst heeft
+daar al een mechanisme voor (`sub_queries` in `RetrieveRequest`, fan-out met samengevoegd
+bewijspakket), alleen gebruikt de widget dat niet. Netto ongeveer 0,6 s extra per eerste beurt,
+op het model met 900 aanroepen per minuut, niet op het quotum van het antwoordmodel.
+
+**Wat dit niet bewijst:** dat het antwoord beter wordt. Het meet of het antwoordende artikel bij de
+acht zit die het model krijgt; wat het model ermee doet en of de controle per zin het daarna laat
+staan, moet vooraf per §6 gemeten worden (eind-tot-eind, drie rondes, blind, mét de artikelen voor de
+beoordelaar). De literatuur waarschuwt dat de winst van herformuleren na herrangschikken vaak
+wegvalt (RAG-Fusion in productie: Hit@10 0,51 naar 0,48) en dat het model soms zijn eigen kennis in
+de herformulering stopt (query2doc-lekkage). Het eerste is hier gemeten en niet gebeurd: de fusie
+staat ná het herrangschikken per leg. Het tweede is hier klein gehouden door de instructie geen
+details toe te voegen, maar niet apart geteld.
+
+**Stand:** niet gebouwd, wel de grootste gemeten zoekwinst tot nu toe. Bouwvoorstel: bij een eerste
+beurt (geen geschiedenis) twee herformuleringen via `klai-medium`, mee als `sub_queries`, met de
+letterlijke vraag als primaire. Vóór livegang: de eind-tot-eind poort uit §6 op dezelfde 54 vragen.
+
+### 2.28 Het vorige antwoord als extra zoekleg bij vervolgbeurten: 39% naar 64% (18 sep)
+Vraag 4 uit de opdracht: de geschiedenis wordt alleen gebruikt om verwijzingen op te lossen
+(`coreference.py`); of eerdere beurten als zoeksignaal iets toevoegen was niet gemeten. Gemeten op
+dezelfde 90 echte vervolgbeurten als 2.6 (89 rondgekomen, 70 hebben een artikel nodig volgens de
+beoordeling van toen), met de bestaande beoordelingen hergebruikt en alleen nieuwe passages
+bijbeoordeeld.
+
+| Variant (70 vervolgbeurten die een artikel nodig hebben) | Antwoordende passage in top-8 | Winst / verlies t.o.v. huidig |
+|---|---|---|
+| Huidig: herschrijving met geschiedenis + letterlijke zoekregel | 27 (39%) | – |
+| Vorige bezoekersbeurt + vervolgvraag als één zoekvraag, geen herschrijving | 22 (31%) | 7 / 12 |
+| Vorig assistentantwoord (eerste 500 tekens) + vervolgvraag, geen herschrijving | 35 (50%) | 21 / 13 |
+| Huidig + leg "vorige bezoekersbeurt", RRF | 34 (49%) | 7 / 0 |
+| **Huidig + leg "vorig antwoord", RRF** | **45 (64%)** | **18 / 0** |
+| Huidig + beide legs, RRF | 43 (61%) | 16 / 0 |
+
+Achttien winsten, nul verliezen. Het vorige antwoord is het sterkste signaal omdat de meeste
+vervolgbeurten correcties of verdiepingen zijn op datzelfde artikel ("die optie zie ik niet", "en
+per collega?"): de tekst van het antwoord staat qua woorden dicht bij het artikel waar het uit kwam,
+dus die leg haalt het terug ook als de herschrijving van de korte vervolgvraag ernaast zit. Als
+vervanging is hij slechter (21 om 13), als extra leg naast de bestaande herschrijving kost hij niets
+aan recall. De 21 beurten met band `low` in de huidige keten: 12 daarvan krijgen met deze leg wel een
+antwoordende passage.
+
+Dit sluit aan op 2.7, waar de hele geschiedenis als zoekvraag het goede artikel 6 van 8 keer vond
+tegen 1 van 8 voor de magere vraag, en op de CAsT-literatuur (Historical Query Expansion was het beste
+automatische systeem in 2019). Het is ook de eerste maatregel op het zoeken die geen modelaanroep
+kost: de tekst is er al.
+
+**Wat dit niet bewijst:** hetzelfde als bij 2.27. Bovendien kan het vorige antwoord een verzinsel
+bevatten; de leg zoekt dan naar het verzinsel. In deze meting was dat geen probleem (de beoordelaar
+beoordeelt tegen de vraag, en het aantal antwoordende passages steeg zonder verlies), maar bij
+livegang moet het dagrapport van de controle per zin op vervolgbeurten in de gaten gehouden worden.
+
+**Stand:** niet gebouwd. Bouwvoorstel: in de zoekdienst één extra RRF-leg met de vector van "vorig
+assistentantwoord + vervolgvraag" naast de bestaande legs (`hybrid_search` heeft er al drie), alleen
+als er geschiedenis is. Geen extra modelaanroep, ongeveer 150 ms extra embedding. Vóór livegang de
+poort uit §6.
+
+### 2.29 Het plafond opnieuw gemeten: de kennisbank is het bij een derde, het zoeken bij een derde (18 sep)
+§5 zet de kennisbank bovenaan als grootste rem, op grond van 2.16 (6 van 9 bronloze beurten niet in
+de artikelen). Met de 54 kennisvragen van 2.27 en top-50 van de letterlijke vraag plus de
+herformuleringen:
+
+| Waar het antwoord zat | Aantal | Aandeel |
+|---|---|---|
+| In de top-8 van de letterlijke vraag (nu goed) | 19 | 35% |
+| Op plek 9 tot 50 (rangschikking) | 3 | 6% |
+| Alleen via een herformulering (formulering) | 16 | 30% |
+| Nergens gevonden, ook niet via herformuleringen | 16 | 30% |
+
+Van de 16 nergens gevonden zijn 3 geen kennisvragen ondanks het label ("Hoe snel gaat een trein?",
+klant worden, een contactformulier dat als chatbericht binnenkwam). Voor de overige 13 is niet per
+vraag nagegaan of het artikel ontbreekt of een derde formulering het wel had gevonden; 2.16 vond op
+negen bronloze beurten bij zes het eerste. Neem 30% dus als bovengrens van het kennisbankplafond.
+
+**Stand:** 2.16 had gelijk dat rangschikking geen probleem is (6%), en ongelijk dat het zoeken
+daarmee af was. De kennisbank is het plafond voor ongeveer een derde van de kennisvragen; voor een
+ander derde is het de formulering, en dat is met 2.27 en 2.28 te verhelpen. §5 is hierop herschreven.
+
 ---
 
 ## 3. Wat er live ging, en waarom
@@ -660,6 +837,13 @@ Herschrijven bij meerdere beurten, uit gepubliceerde praktijk:
 
 Bronnen: [Alhena over herschrijven bij meerdere beurten](https://alhena.ai/blog/query-rewriting-before-retrieval-multi-turn-rag/), [Leveraging historical information to boost RAG in conversations](https://www.sciencedirect.com/science/article/pii/S0306457325003905), [Learning When to Retrieve, What to Rewrite, and How to Respond](https://arxiv.org/pdf/2409.15515), [NVIDIA over meerdere beurten](https://docs.nvidia.com/rag/2.4.0/multiturn.html).
 
+Context rond de vraag als zoeksignaal (18 sep, voor 2.25 t/m 2.28):
+- Herformuleren en samenvoegen helpt vooral bij woordverschil tussen vraag en corpus en kan na herrangschikken wegvallen; in één productiemeting daalde Hit@10 van 0,51 naar 0,48 ([RAG-Fusion in productie](https://arxiv.org/abs/2603.02153)). Hier gemeten mét herrangschikken per leg: 35% naar 59% (2.27).
+- Pseudo-documenten (HyDE, query2doc) winnen deels door lekkage van wat het model al weet ([Hypothetical Documents or Knowledge Leakage?](https://arxiv.org/html/2504.14175v1)); daarom hier alleen herformuleringen zonder toegevoegde details.
+- Over de huidige pagina als zoeksignaal bestaat geen gemeten literatuur, alleen leveranciersclaims zonder cijfers (Zendesk Contextual Help e.a.). Hier gemeten: onschadelijk, drie keer plek 1, geen recall (2.26).
+- Geschiedenis als zoeksignaal: in TREC CAsT 2019 was uitbreiding met termen uit eerdere beurten het beste automatische systeem, en herschrijven tot één zelfstandige vraag won daar nog ~18% NDCG@3 op ([overzicht CAsT](https://trec.nist.gov/pubs/trec30/papers/Overview-CAsT.pdf)); onderwerpwissels maken het corpusafhankelijk ([TopiOCQA](https://aclanthology.org/2022.tacl-1.27/)). Hier is het geen óf-óf: herschrijving plus een leg met het vorige antwoord, 39% naar 64% (2.28).
+- Orakel tegen haalbaar: de kloof tussen handmatige en automatische herschrijving loopt van 3% tot 30% NDCG@3 afhankelijk van de dataset ([Vakulenko e.a.](https://ar5iv.labs.arxiv.org/html/2101.07382)), en het samenvoegen van meerdere automatische herschrijvingen dichtte die kloof het meest ([CMU bij CAsT](https://trec.nist.gov/pubs/trec30/papers/CMU-LTI-CAsT.pdf)). Dat is de reden om in 2.27 te fuseren in plaats van één "beste" herformulering te kiezen.
+
 **Belangrijker dan de literatuur:** het interne chatpad (LibreChat via de LiteLLM-hook, `deploy/litellm/klai_kb_query_rewrite.py`) doet dit grotendeels al. Het geeft de geschiedenis als geciteerde tekst, heeft een uitgewerkt voorbeeld van een onderwerpwissel, schrijft de zoekvraag in trefwoorden, verbreedt merknamen, en stuurt de letterlijke vraag mee naar de zoekdienst. De widget liep daarop achter. Het interne pad heeft wél nog de lichte controle op beweringen, die extern maar 22% ving.
 
 ---
@@ -668,32 +852,42 @@ Bronnen: [Alhena over herschrijven bij meerdere beurten](https://alhena.ai/blog/
 
 Op volgorde van wat de metingen als grootste rem aanwijzen.
 
-1. **De kennisbank aanvullen.** Van de negen beurten zonder antwoord (2.16) stond het bij zes niet
-   in de artikelen, en bij twee liep de artikelketen halverwege dood ("hoe schakel ik het account
-   in voor internationale gesprekken"). Geen enkele schakel in deze keten neemt dat weg. Dit is
-   inhoudswerk, en het is de grootste overgebleven hefboom.
-2. **De reikwijdte van de widget heroverwegen.** Hij mag in één van de negen kennisbanken zoeken.
+1. **De formulering van de zoekvraag, twee bouwstenen met gemeten winst.** Twee herformuleringen
+   van de eerste vraag als `sub_queries` (35% naar 59% antwoordende passage in de top-8, 14 winsten
+   tegen 1 verlies, 2.27) en het vorige antwoord als extra RRF-leg bij vervolgbeurten (39% naar
+   64%, 18 tegen 0, 2.28). Beide zonder de bezoeker iets te vragen; de eerste kost ~0,6 s op het
+   ruime model, de tweede geen modelaanroep. Vóór livegang de poort uit §6 eind-tot-eind, want
+   beide zijn op zoekniveau gemeten en niet op het antwoord.
+2. **De kennisbank aanvullen.** Voor hooguit een derde van de kennisvragen staat het antwoord nergens
+   (2.29, bovengrens), en bij twee beurten uit 2.16 liep de artikelketen halverwege dood ("hoe
+   schakel ik het account in voor internationale gesprekken"). Geen schakel in deze keten neemt dat
+   weg; dit is inhoudswerk.
+3. **De reikwijdte van de widget heroverwegen.** Hij mag in één van de negen kennisbanken zoeken.
    `priceright-prijzen-voys` (4527 chunks) en `ascend` (6710) bevatten antwoorden op vragen die
    bezoekers stellen. Voor een publieke helppagina is dat waarschijnlijk bewust, maar het is een
    keuze die sinds de inrichting niet is herzien, en de instelling uit 2.10f vangt nu precies de
    vragen af waarvan het antwoord in de kennisbank ernaast staat.
-3. **Meten op echt verkeer.** Alles hierboven is gemeten met herspelingen en simulaties. Het
+4. **Meten op echt verkeer.** Alles hierboven is gemeten met herspelingen en simulaties. Het
    dagrapport (`scripts/grounding_report.py`) had op 18 sep twee antwoorden. Wat er vandaag live
    ging is dus nog nergens op echte bezoekers bevestigd.
-4. **Het harnas groter draaien.** Twaalf gesprekken kunnen een effect van de grootte van 2.21 niet
+5. **Het harnas groter draaien.** Twaalf gesprekken kunnen een effect van de grootte van 2.21 niet
    aantonen, en meer gesprekken kosten snelheidslimiet die met bezoekers gedeeld wordt. Meerdere
    rondes buiten kantooruren.
-5. **Het valse alarm in de niet-behandelde onderwerpen.** Eén op de vijftig hulpvragen krijgt de
+6. **Het valse alarm in de niet-behandelde onderwerpen.** Eén op de vijftig hulpvragen krijgt de
    doorverwijstekst; drie oplossingen gemeten en alle drie duurder dan de kwaal (2.18). Dit is een
    afweging voor de eigenaar van de widget.
-6. **Varianten voor het herschrijven meten** (onderwerpwissel, trefwoord-stijl, geschiedenis zonder
-   de antwoorden van de assistent).
 7. **Geen nieuwe gok zonder nieuw artikel:** bij een vervolgbeurt zonder nieuw gevonden artikel een
    medewerker aanbieden (23 van de 38 correctiebeurten).
 
 Afgehandeld: de zware controle op verzonnen details (2.8, 2.9), dezelfde controle én reparatie op
 het interne pad (2.11, 2.14, 2.22, 2.23), de instelling per widget (2.10f, 2.13), de korte vraag met vervolgvraag (2.10),
-de stijlregels uit de basisprompt (2.5, 2.13) en aspectgericht doorvragen (2.20).
+de stijlregels uit de basisprompt (2.5, 2.13), aspectgericht doorvragen (2.20), de paginaboost (2.26) en
+varianten voor het herschrijven (2.28: het vorige antwoord als leg wint, de vorige bezoekersbeurt niet).
+
+Niet meer proberen, met de meting erbij: doorvragen vóór het antwoord (2.4, 2.7, 2.10), keuzes uit
+gevonden artikelen (2.7), een taxonomie-aspect als zoekprefix (2.20), een sterkere paginaboost (2.26),
+en de zoekvraag verrijken met wat de bezoeker niet gezegd heeft (2.25: dat is het vraag-orakel achter
+de 29 om 7).
 
 ---
 
@@ -703,4 +897,5 @@ de stijlregels uit de basisprompt (2.5, 2.13) en aspectgericht doorvragen (2.20)
 - Een antwoord dat het oorspronkelijke systeem met bron toonde, mag niet verdwijnen.
 - Dezelfde vraag drie keer stellen, want het antwoordmodel varieert; een verschil onder ongeveer tien beurten is ruis.
 - De beoordelaar krijgt beide antwoorden in willekeurige volgorde en weet niet welke versie wat schreef. Hij kiest iets vaker het eerst getoonde antwoord (76 tegen 58), dus bij twijfelgevallen wordt in beide volgordes beoordeeld.
-- Meetopstellingen staan buiten de repo (`/tmp/probe` lokaal, `/tmp/exp` per onderzoekslijn); de uitkomsten die ertoe doen staan in dit bestand.
+- Meetopstellingen staan buiten de repo (`/tmp/probe` lokaal, `/tmp/exp` per onderzoekslijn, `/tmp/ctx` voor 2.25 t/m 2.29); de uitkomsten die ertoe doen staan in dit bestand.
+- Een zoekmeting (welk artikel komt mee) is geen antwoordmeting; wat op zoekniveau wint gaat vóór livegang alsnog door de eind-tot-eind poort hierboven.
