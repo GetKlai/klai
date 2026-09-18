@@ -27,6 +27,7 @@ from app.services.support_cases import (
     TranscriptError,
     _analyze_case,
     _apply_findings,
+    _classify_findings,
     _finding_gap,
     _question_key,
     normalize_whisper_transcript,
@@ -256,6 +257,21 @@ def test_finding_gap_is_always_content_type_with_signal_in_evidence() -> None:
     assert gap.top_score == 0.91
     assert gap.evidence["retrieval_signal"] is None
     assert gap.evidence["message_ids"] == ["m1"]
+
+
+@pytest.mark.asyncio
+async def test_classify_findings_stamps_only_actionable_findings() -> None:
+    findings = [
+        {"question": "Reset 2FA?", "diagnosis": "missing"},
+        {"question": "All good", "diagnosis": "covered"},  # not an inbox diagnosis
+    ]
+    classify = AsyncMock(return_value=[5, 7])
+    with patch("app.services.knowledge_ingest_client.classify_gap_taxonomy", classify):
+        out = await _classify_findings(zitadel_org_id="z1", kb_slug="kb-a", findings=findings)
+
+    classify.assert_awaited_once_with("z1", "kb-a", "Reset 2FA?")
+    assert out[0]["taxonomy_node_ids"] == [5, 7]
+    assert "taxonomy_node_ids" not in out[1]
 
 
 def test_question_key_keeps_kb_audience_diagnosis_distinct() -> None:

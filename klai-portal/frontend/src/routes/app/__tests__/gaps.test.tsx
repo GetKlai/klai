@@ -90,11 +90,14 @@ function gapItem(overrides: Record<string, unknown> = {}) {
     occurrence_count: 3,
     last_occurred: '2026-09-01T10:00:00Z',
     language: 'nl',
-    source: 'automatic',
+    // Default to a human-review row so the default (content) view renders it;
+    // tests covering the automatic search-signals view set source explicitly.
+    source: 'review',
     conversation_id: null,
     resolved_at: null,
     resolved_by: null,
     resolved_by_name: null,
+    topic: null,
     ...overrides,
   }
 }
@@ -142,8 +145,12 @@ describe('GapsPage source column', () => {
       </Wrapper>,
     )
 
+    // The review row is an asserted gap: shown in the default content view.
     await waitFor(() => expect(screen.getByText(/beoordeling|review/i)).toBeTruthy())
-    expect(screen.getByText(/automatisch|automatic/i)).toBeTruthy()
+    // The automatic signal only appears once the search-signals view is active.
+    fireEvent.click(screen.getByRole('tab', { name: /zoeksignalen|search signals/i }))
+    await screen.findByText('Andere vraag')
+    expect(screen.getAllByText(/^(automatisch|automatic)$/i).length).toBeGreaterThan(0)
   })
 })
 
@@ -345,6 +352,60 @@ describe('GapsPage conversation drill-in', () => {
     await waitFor(() =>
       expect(container.querySelector('a[href*="/app/knowledge/activity/"]')).toBeNull(),
     )
+  })
+})
+
+describe('GapsPage content grouping', () => {
+  it('groups content needs by topic and excludes automatic search signals until the view is switched', async () => {
+    mockGaps([
+      gapItem({
+        query_text: 'Hoe behoud ik mijn nummer?',
+        source: 'support',
+        gap_type: 'content',
+        diagnosis: 'missing',
+        nearest_kb_slug: 'company-kb',
+        support_case_ids: [1],
+        group_key: 'g1',
+        topic: { id: 10, name: 'Nummerbehoud' },
+      }),
+      gapItem({
+        query_text: 'Wat kost porteren?',
+        source: 'support',
+        gap_type: 'content',
+        diagnosis: 'incomplete',
+        nearest_kb_slug: 'company-kb',
+        support_case_ids: [2],
+        group_key: 'g2',
+        topic: { id: 10, name: 'Nummerbehoud' },
+      }),
+      gapItem({
+        query_text: 'Hoe stel ik voicemail in?',
+        source: 'review',
+        nearest_kb_slug: 'company-kb',
+        topic: { id: 20, name: 'Voicemail' },
+      }),
+      gapItem({ query_text: 'ruwe retrieval-misser', source: 'automatic', topic: null }),
+    ])
+
+    render(
+      <Wrapper>
+        <GapsPage />
+      </Wrapper>,
+    )
+
+    // Default (content) view: two needs under one topic heading, plus a
+    // distinct topic. Each need is rendered once.
+    await screen.findByText('Nummerbehoud')
+    expect(screen.getByText('Hoe behoud ik mijn nummer?')).toBeTruthy()
+    expect(screen.getByText('Wat kost porteren?')).toBeTruthy()
+    expect(screen.getByText('Voicemail')).toBeTruthy()
+    // The raw automatic retrieval signal is not an asserted gap: hidden here.
+    expect(screen.queryByText('ruwe retrieval-misser')).toBeNull()
+
+    // Switching to the search-signals view reveals the automatic signal.
+    fireEvent.click(screen.getByRole('tab', { name: /zoeksignalen|search signals/i }))
+    await screen.findByText('ruwe retrieval-misser')
+    expect(screen.queryByText('Wat kost porteren?')).toBeNull()
   })
 })
 
