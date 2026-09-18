@@ -127,6 +127,9 @@ __all__ = [
     "FINAL_RESPONSE_LANGUAGE_REMINDER",
     "GENERAL_CHAT_SYSTEM_PROMPT",
     "GROUNDED_CHAT_SYSTEM_PROMPT",
+    "GROUNDING_CHECK_SYSTEM_PROMPT",
+    "GROUNDING_NOTHING_LEFT",
+    "GROUNDING_REPAIR_SYSTEM_PROMPT",
     "KB_CONTEXT_LANGUAGE_REMINDER",
     "LANGUAGE_NAMES",
     "META_CHAT_SYSTEM_PROMPT",
@@ -135,22 +138,19 @@ __all__ = [
     "SUPPORT_CHAT_SYSTEM_PROMPT",
     "SUPPORT_EXPRESSIVE_CHAT_SYSTEM_PROMPT",
     "AnswerClaims",
-    "GROUNDING_CHECK_SYSTEM_PROMPT",
-    "GROUNDING_NOTHING_LEFT",
-    "GROUNDING_REPAIR_SYSTEM_PROMPT",
     "GroundedStatement",
     "GroundingCheck",
-    "grounding_check_response_format",
-    "parse_grounding_check",
     "answer_claims_response_format",
     "appointment_offer_marker",
     "broad_mode_answer_marker",
     "final_response_language_reminder",
+    "grounding_check_response_format",
     "has_direct_evidence_for_query",
     "is_broad_knowledge_answer",
     "may_show_model_text_without_sources",
     "no_citable_sources_message",
     "parse_answer_claims",
+    "parse_grounding_check",
     "should_clarify",
     "strip_appointment_offer_marker",
 ]
@@ -1225,7 +1225,7 @@ def grounding_check_response_format() -> dict:
     }
 
 
-def parse_grounding_check(content: str | None) -> "GroundingCheck | None":
+def parse_grounding_check(content: str | None) -> GroundingCheck | None:
     """Parse a checker response; ``None`` on any failure, which reads as "not checked"."""
     if not content:
         return None
