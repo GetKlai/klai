@@ -6,21 +6,26 @@ volume and how many of those answers carried a citation was committed here and
 pushed. It never reached main and the branch was deleted, but the commit stays
 reachable by SHA through the closed pull request, and GitHub keeps the edit
 history of the PR body. That is the failure this guard exists for: the damage is
-done at ``git push``, so a CI check that runs afterwards can only report it.
+done at ``git push``, so a check that runs afterwards can only report it.
 
-What it looks for, in ADDED lines only, so existing content is never re-judged:
+What it looks for:
 
-1. A Markdown table whose header names tenants, organisations or customers and
-   whose rows carry numbers. That is the exact artefact that leaked: a name and
-   a count on the same row.
+1. A Markdown table whose header names tenants, organisations or customers, with
+   a digit anywhere in a data cell of an ADDED row. That is the artefact that
+   leaked: a name and a count on the same row.
 2. A LibreChat database name (``librechat-<slug>``) that does not already appear
    on the default branch. Those names are per-customer by construction.
 
-What it deliberately does NOT do: carry a list of customer names. Such a list
-would itself be the disclosure, and it would go stale. The shape is enough.
+Only added rows are reported, but the surrounding context is read, because a
+row appended to a table whose header is untouched would otherwise be invisible.
+That is why the caller passes a diff WITH context.
 
-Run by .githooks/pre-commit on staged files, and by CI as a backstop for commits
-made without the hook installed.
+It never prints the offending text. A finding names the file, the line and the
+kind — echoing the row would copy the customer data into a CI log, and workflow
+logs of a public repository are themselves public.
+
+It deliberately carries no list of customer names: such a list would be the
+disclosure, and it would go stale. The shape is enough.
 """
 
 from __future__ import annotations
@@ -29,14 +34,20 @@ import re
 import subprocess
 import sys
 
-# A header cell that means "this row is about one organisation".
-_TENANT_HEADER = re.compile(
-    r"\|[^|]*\b(tenant|tenants|klant|klanten|organisatie|organisaties|customer|customers|org)\b[^|]*\|",
+_TENANT_WORD = re.compile(
+    r"\b(tenant|tenants|klant|klanten|organisatie|organisaties|customer|customers|org|orgs)\b",
     re.IGNORECASE,
 )
-_TABLE_ROW = re.compile(r"^\+\s*\|.*\|\s*$")
-_HAS_NUMBER = re.compile(r"\|\s*\*{0,2}\d[\d.,]*\*{0,2}\s*\|")
+# Outer pipes are optional: "Tenant | Usage" is a valid Markdown table.
+_TABLE_LINE = re.compile(r"^\s*\|?[^|]*\|.*$")
+_SEPARATOR_CELL = re.compile(r"^:?-{2,}:?$")
 _LIBRECHAT_DB = re.compile(r"\blibrechat-([a-z0-9][a-z0-9-]{2,})\b")
+_DIGIT = re.compile(r"\d")
+
+# This guard's own tests exist to contain the shapes it detects, so scanning
+# them blocks every change to them. Exactly one path, spelled out: anything
+# wider would let a real leak hide in a file with "test" in its name.
+_EXEMPT = "scripts/tests/test_audit_public_tenant_data.py"
 
 _ADVICE = (
     "Per-customer figures belong in the private klai-infra documentation.\n"
@@ -45,61 +56,94 @@ _ADVICE = (
 )
 
 
-def _added_lines(diff: str) -> list[tuple[str, str]]:
-    """(file, added line) for every + line, ignoring the +++ header."""
-    out: list[tuple[str, str]] = []
-    current = ""
-    for line in diff.splitlines():
-        if line.startswith("+++ b/"):
-            current = line[6:]
-        elif line.startswith("+") and not line.startswith("+++"):
-            out.append((current, line))
-    return out
+def _cells(line: str) -> list[str]:
+    return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+
+def _is_separator(line: str) -> bool:
+    cells = _cells(line)
+    return bool(cells) and all(_SEPARATOR_CELL.match(cell) for cell in cells if cell)
+
+
+def check(diff: str) -> list[str]:
+    """Findings as "<file>:<line>: <kind>". Never includes the matched text."""
+    problems: list[str] = []
+    known = _known_librechat_names()
+    path = ""
+    line_no = 0
+    in_tenant_table = False
+    exempt = False
+
+    for raw in diff.splitlines():
+        if raw.startswith("+++ b/"):
+            path = raw[6:]
+            exempt = path == _EXEMPT
+            # Table state may not survive a file boundary: a header at the end of
+            # one file would otherwise condemn an innocent numeric row in the next.
+            in_tenant_table = False
+            line_no = 0
+            continue
+        if raw.startswith("@@"):
+            match = re.search(r"\+(\d+)", raw)
+            line_no = int(match.group(1)) - 1 if match else 0
+            in_tenant_table = False
+            continue
+        if raw.startswith("---") or raw.startswith("diff "):
+            continue
+
+        added = raw.startswith("+")
+        context = raw.startswith(" ")
+        if not (added or context):
+            continue  # a removed line is not in the result
+        body = raw[1:]
+        line_no += 1
+        if exempt:
+            continue
+
+        # Before the table logic: a database name on a header line is still one.
+        if added:
+            for match in _LIBRECHAT_DB.finditer(body):
+                if match.group(1) not in known:
+                    problems.append(f"{path}:{line_no}: a customer database name that is new here")
+
+        if not _TABLE_LINE.match(body):
+            in_tenant_table = False
+            continue
+        if _TENANT_WORD.search(body):
+            # Context counts here on purpose: a row appended under an untouched
+            # header is exactly the case a diff without context cannot see.
+            in_tenant_table = True
+            continue
+        if _is_separator(body):
+            continue
+        if in_tenant_table and added and any(_DIGIT.search(cell) for cell in _cells(body)):
+            problems.append(f"{path}:{line_no}: a per-tenant row carrying numbers")
+
+    return list(dict.fromkeys(problems))
 
 
 def _known_librechat_names() -> set[str]:
     """Names already on the default branch stay; only new ones are the risk."""
-    try:
-        existing = subprocess.run(
-            ["git", "grep", "-hoE", r"librechat-[a-z0-9][a-z0-9-]{2,}", "origin/main"],
+    for ref in ("origin/main", "main"):
+        result = subprocess.run(
+            ["git", "grep", "-hoE", r"librechat-[a-z0-9][a-z0-9-]{2,}", ref],
             capture_output=True,
             text=True,
             check=False,
-        ).stdout
-    except Exception:
-        return set()
-    return {m.group(1) for m in _LIBRECHAT_DB.finditer(existing)}
-
-
-def check(diff: str) -> list[str]:
-    problems: list[str] = []
-    known = _known_librechat_names()
-    in_tenant_table = False
-
-    for path, line in _added_lines(diff):
-        body = line[1:]
-        if _TENANT_HEADER.search(body):
-            in_tenant_table = True
-            continue
-        if in_tenant_table:
-            if not _TABLE_ROW.match(line):
-                in_tenant_table = False
-            elif _HAS_NUMBER.search(body) and not set("-: ") >= set(body.replace("|", "")):
-                problems.append(f"{path}: a per-tenant row with numbers -> {body.strip()[:90]}")
-        for match in _LIBRECHAT_DB.finditer(body):
-            if match.group(1) not in known:
-                problems.append(f"{path}: a customer database name that is new here -> {match.group(0)}")
-    # The same name twice on one line is one problem, not two.
-    return list(dict.fromkeys(problems))
+        )
+        if result.returncode == 0:
+            return {m.group(1) for m in _LIBRECHAT_DB.finditer(result.stdout)}
+    return set()
 
 
 def main() -> int:
-    # An explicit flag, not a guess at stdin. The first version asked
-    # ``sys.stdin.isatty()``, and a git hook runs with stdin already redirected,
-    # so it read an empty string, found nothing, and let a real table through.
+    # An explicit flag, not a guess at stdin: a git hook runs with stdin already
+    # redirected, and the first version read an empty string there and let a real
+    # table through. Context lines are requested because a row appended under an
+    # untouched header is invisible without them.
     if "--staged" in sys.argv:
         diff = subprocess.run(
-            ["git", "diff", "--cached", "-U0"], capture_output=True, text=True, check=True
+            ["git", "diff", "--cached", "-U3"], capture_output=True, text=True, check=True
         ).stdout
     else:
         diff = sys.stdin.read()

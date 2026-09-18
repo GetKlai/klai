@@ -9,6 +9,10 @@ name: Guard per-customer data
 on:
   pull_request:
     branches: [main]
+  # Also on a bare push: a branch without a pull request is public too, and
+  # this is the only place that would notice.
+  push:
+    branches-ignore: [main]
 
 permissions:
   contents: read
@@ -21,9 +25,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Scan the pull request's added lines
+      - name: Scan the added lines against the default branch
         run: |
           set -euo pipefail
-          git diff --no-color -U0 \
-            "origin/${{ github.base_ref }}...HEAD" \
+          base="origin/${{ github.base_ref || github.event.repository.default_branch }}"
+          # Context lines on purpose: a row appended under an untouched table
+          # header is invisible in a diff without them.
+          git diff --no-color -U3 "$base...HEAD" \
             | python3 -B scripts/audit-public-tenant-data.py
