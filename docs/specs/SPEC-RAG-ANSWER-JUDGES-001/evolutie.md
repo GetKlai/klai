@@ -2,7 +2,7 @@
 
 Doel van dit bestand: wat er gemeten is, wat daaruit volgde, en wat er live staat. Zo hoeft niemand een meting of een onderzoek over te doen. De spec ernaast (`spec.md`) beschrijft het ontwerp; dit bestand beschrijft de weg ernaartoe.
 
-Bijgewerkt: 2026-09-18.
+Bijgewerkt: 2026-09-18 (na de livegang bij Voys).
 
 ---
 
@@ -15,8 +15,8 @@ Een beurt van een bezoeker loopt door deze schakels. Per schakel: wat het doet, 
 | 1 | Vraag binnen, eerste of vervolg | `partner.py::chat_completions` | ongewijzigd |
 | 2 | Vervolgvraag omzetten naar zoekvraag | retrieval-api `services/coreference.py` | verbeterd, live 2026-09-18 |
 | 3 | Zoeken (vector, graaf, herrangschikken) | retrieval-api `api/retrieve.py` | letterlijke zoekregel toegevoegd, live 2026-09-18 |
-| 4 | Controle vooraf op de vraag | `services/turn_judge.py` | beslist niets meer over doorvragen (v0.5.0), praatje-uitzondering weg (v0.6.0) |
-| 5 | Antwoord schrijven | `partner_chat.py` + profiel in `klai-libs/chat-prompts` | ongewijzigd; promptvarianten gemeten en afgevallen |
+| 4 | Controle vooraf op de vraag | `services/turn_judge.py` | beslist niets meer over doorvragen (v0.5.0), praatje-uitzondering weg (v0.6.0), beoordeelt sinds v0.9.0 ook of de vraag binnen de niet-behandelde onderwerpen valt |
+| 5 | Antwoord schrijven | `partner_chat.py` + profiel in `klai-libs/chat-prompts` | ongewijzigd; promptvarianten gemeten en afgevallen. Valt de vraag binnen de onderwerpen die de widget niet behandelt, dan wordt deze schakel overgeslagen (v0.9.0) |
 | 6 | Koppelen aan bronnen | `klai-libs/citations` | ongewijzigd, dit is de ondergrens |
 | 7 | Controle achteraf op het antwoord | `services/answer_judge.py` + `services/answer_grounding.py` | licht oordeel plus controle per zin met reparatie, live 18 sep |
 | 8 | Kennisbank | Voys-artikelen | het echte plafond, niet aangepakt |
@@ -215,6 +215,29 @@ Onderaan de basisprompt: 3 van de 10 goed. Bovenaan, strenger geformuleerd: 8 va
 
 **Les:** de basisprompt alleen is hiervoor te zwak; een instelling per widget met een vaste tekst is de betrouwbare route.
 
+### 2.13 De instelling live op de Voys-widget, en de basisprompt ingekort (18 sep)
+De onderwerpen en de vaste tekst staan ingevuld op `Voys Help NL`. Zes vragen door de
+productiewidget gehaald, met de echte sessietoken en `Origin: https://help.voys.nl`:
+
+| Vraag | Uitkomst |
+|---|---|
+| Kan ik uitstel van betaling krijgen voor mijn factuur? | vaste tekst, afspraakknop, 0 bronnen |
+| Wat kost een extra belnummer bij jullie? | vaste tekst, afspraakknop, 0 bronnen |
+| Ik wil graag een offerte voor 25 gebruikers | vaste tekst, afspraakknop, 0 bronnen |
+| Hoe zeg ik mijn contract op? | vaste tekst, afspraakknop, 0 bronnen |
+| Waar vind ik mijn facturen in de webinterface? | beantwoord uit 1 artikel |
+| Hoe stel ik automatische incasso in? | beantwoord uit 1 artikel |
+
+Tegelijk is de basisprompt ingekort: de alinea die het weigeren herhaalde is eruit (dat
+staat al in de regels erboven en wordt sinds 18 sep ook per zin gecontroleerd), en de vijf
+letterlijke voorbeeldzinnen zijn vervangen door een beschrijving van de vorm. Bij de regel
+over beperkingen staat nu dat alle drie de delen uit het artikel moeten komen.
+
+**Let op bij het lezen van 2.5:** dáár is gemeten dat álle stijlregels weghalen het
+slechter maakte (62% tegen 49% met iets verzonnen). Deze ingreep is gerichter — alleen de
+kopieerbare zinnen — en is niet apart gemeten. Het is een beredeneerde aanpassing, geen
+bewezen winst. De oude configuratie staat als back-up buiten de repo.
+
 ---
 
 ## 3. Wat er live ging, en waarom
@@ -227,6 +250,12 @@ Onderaan de basisprompt: 3 van de 10 goed. Bovenaan, strenger geformuleerd: 8 va
 | 17 sep | Doorvraag-opdracht verwijderd (#1486) | meting 2.4 |
 | 18 sep | Herschrijven met geciteerde geschiedenis, letterlijke zoekregel altijd mee (#1487) | meting 2.6 |
 | 18 sep | Praatje-uitzondering uit de bronnencontrole (#1488) | meting 2.6 |
+| 18 sep | Controle per zin met reparatie in plaats van weigeren (#1495) | meting 2.5: 49% naar 11% met iets verzonnen |
+| 18 sep | Tijdsbudget per stap op de controle en de reparatie (#1496, #1503) | meting 2.9 |
+| 18 sep | Dagrapport over wat de artikelen niet dragen (#1502, #1506) | om op echt verkeer te kunnen sturen |
+| 18 sep | Dezelfde controle meekijkend op de interne chat (#1498) | meting 2.11 |
+| 18 sep | Onderwerpen die de widget niet beantwoordt, per widget instelbaar (#1509) | meting 2.12: basisprompt haalde 8 van 15 |
+| 18 sep | Die twee velden in het beheerscherm (#1510) | de instelling was anders alleen via de database te zetten |
 
 ---
 
@@ -251,8 +280,8 @@ Bronnen: [Alhena over herschrijven bij meerdere beurten](https://alhena.ai/blog/
 3. ~~Dezelfde controle naar het interne pad~~ — live op 18 sep, meekijkend, zie 2.11. Openstaand: de cijfers van beide paden naast elkaar leggen zodra er intern verkeer is gemeten.
 4. **Geen nieuwe gok zonder nieuw artikel:** bij een vervolgbeurt zonder nieuw gevonden artikel een medewerker aanbieden (23 van de 38 correctiebeurten).
 5. ~~Korte vraag: antwoorden plus één vervolgvraag~~ — gemeten op 18 sep en afgevallen, zie 2.10.
-6. **Stijlregels uit de Voys-basisprompt halen** ("Je hebt nu…", overgenomen voorbeeldzinnen).
-7. **Instelling per widget** voor onderwerpen die de assistent niet behandelt, zoals financiële en commerciële vragen.
+6. ~~Stijlregels uit de Voys-basisprompt halen~~ — **teruggenomen als advies.** Meting 2.5 liet zien dat álle stijlregels weghalen het juist slechter maakte (62% tegen 49%). Wat wél gebeurd is op 18 sep: de herhaalde weiger-alinea en de vijf letterlijke voorbeeldzinnen eruit, zie 2.13. Niet apart gemeten.
+7. ~~Instelling per widget voor onderwerpen die de assistent niet behandelt~~ — live op 18 sep (#1509, #1510), ingevuld en live geverifieerd bij Voys, zie 2.10f en 2.13.
 8. **Kennisbank aanvullen**; dat is het plafond dat geen enkele schakel wegneemt.
 
 ---
