@@ -1,0 +1,29 @@
+name: Guard per-customer data
+
+# The pre-commit hook in .githooks/ is the real guard: a branch on a public
+# repository is public the moment it is pushed, so anything that runs here can
+# only report what already happened. This exists because that hook only runs
+# when a checkout has core.hooksPath set to .githooks, and a fresh clone does
+# not. Treat a failure here as "it is already out there", not as "blocked".
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Scan the pull request's added lines
+        run: |
+          set -euo pipefail
+          git diff --no-color -U0 \
+            "origin/${{ github.base_ref }}...HEAD" \
+            | python3 -B scripts/audit-public-tenant-data.py
