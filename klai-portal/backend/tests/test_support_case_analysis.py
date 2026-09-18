@@ -62,20 +62,29 @@ class _FakeHTTP:
     """Routes ``/retrieve`` and ``/v1/chat/completions`` and records every call.
 
     The first chat call (system == EXTRACTION prompt) returns ``extraction``;
-    every later chat call is an assessment. Assessments are routed by matching
-    a substring of the question against ``assessment_by`` keys, falling back to
-    the single ``assessment`` payload. Retrieval returns ``retrieval`` for every
-    ``/retrieve`` unless ``retrieval_status`` is an error code.
+    the first-pass judge (system == ASSESSMENT prompt) returns ``assessment``;
+    the second-pass judge (system == REASSESSMENT prompt) returns
+    ``reassessment`` when set, else falls back to ``assessment``. Assessments are
+    routed by matching a substring of the question against ``assessment_by``
+    keys, falling back to the single ``assessment`` payload. Retrieval returns
+    the next payload from ``retrieval_sequence`` (last element repeats) when set,
+    otherwise ``retrieval`` for every ``/retrieve``; ``retrieval_status`` >= 400
+    fails the current call, and ``retrieval_status_sequence`` gives per-call
+    status codes so an alternate-search failure can be exercised in isolation.
     """
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict | None, dict | None]] = []
         self.extraction: object = None
         self.assessment: object = None
+        self.reassessment: object = None
         self.assessment_by: dict[str, object] = {}
         self.verification: object = None
         self.retrieval: dict = {}
+        self.retrieval_sequence: list[dict] | None = None
         self.retrieval_status = 200
+        self.retrieval_status_sequence: list[int] | None = None
+        self._retrieve_calls = 0
         self.llm_status = 200
 
     def _verify(self, user: str) -> object:
@@ -95,8 +104,15 @@ class _FakeHTTP:
     async def post(self, url: str, *, json: dict | None = None, headers: dict | None = None, **_):
         self.calls.append((url, json, headers))
         if url.endswith("/retrieve"):
-            if self.retrieval_status >= 400:
-                return httpx.Response(self.retrieval_status, request=httpx.Request("POST", url))
+            idx = self._retrieve_calls
+            self._retrieve_calls += 1
+            status = self.retrieval_status
+            if self.retrieval_status_sequence is not None:
+                status = self.retrieval_status_sequence[min(idx, len(self.retrieval_status_sequence) - 1)]
+            if status >= 400:
+                return httpx.Response(status, request=httpx.Request("POST", url))
+            if self.retrieval_sequence is not None:
+                return _Resp(self.retrieval_sequence[min(idx, len(self.retrieval_sequence) - 1)])
             return _Resp(self.retrieval)
         # chat/completions
         if self.llm_status >= 400:
@@ -106,8 +122,10 @@ class _FakeHTTP:
         # Extraction prompt = stable base + medium blocks, so match the prefix.
         if system.startswith(sca.EXTRACTION_SYSTEM_PROMPT):
             return _Resp(_chat(self.extraction))
-        if system == getattr(sca, "CALL_VERIFICATION_SYSTEM_PROMPT", None):
+        if system == getattr(sca, "NEED_VERIFICATION_SYSTEM_PROMPT", None):
             return _Resp(_chat(self._verify(user)))
+        if system == getattr(sca, "REASSESSMENT_SYSTEM_PROMPT", None):
+            return _Resp(_chat(self.reassessment if self.reassessment is not None else self.assessment))
         for needle, payload in self.assessment_by.items():
             if needle in user:
                 return _Resp(_chat(payload))
@@ -220,11 +238,13 @@ async def test_high_similarity_missing_step_is_incomplete(fake):
         "diagnosis": "incomplete",
         "rationale": "The article shows where invoices live but never covers the CSV export action.",
         "missing_information": "The steps to trigger a CSV export are not documented.",
+        "proposed_change": "Document the CSV export action in the Billing invoices article.",
         "article_ids": ["c1"],
     }
     findings = await _run(fake, _case([_msg("m1", "customer", "How do I export invoices to CSV?")]))
     assert findings[0]["diagnosis"] == "incomplete"
     assert findings[0]["missing_information"].strip()
+    assert findings[0]["proposed_change"].strip()  # a gap diagnosis carries an actionable change
 
 
 async def test_account_specific_action_is_non_knowledge(fake):
@@ -685,6 +705,7 @@ async def test_agent_provided_step_reaches_assessment_evidence(fake):
         "diagnosis": "incomplete",
         "rationale": "The agent required disabling the SIM lock first, which the article never mentions.",
         "missing_information": "Disable the SIM lock in the old portal before submitting the port-in form.",
+        "proposed_change": "Add the SIM-lock prerequisite step to the number-porting article.",
         "article_ids": ["c1"],
     }
     findings = await _run(fake, case)
@@ -812,10 +833,13 @@ def call_candidates(covered):
 
 
 async def test_agent_configuration_choice_is_removed_before_retrieval(covered, call_candidates):
+    # Every candidate is now submitted for need-verification, including the email
+    # question (q3), not only the call candidates.
     covered.verification = {
         "decisions": [
             {"index": 0, "keep": True, "request_message_ids": ["q1"]},
             {"index": 1, "keep": False, "request_message_ids": []},
+            {"index": 2, "keep": True, "request_message_ids": ["q3"]},
         ]
     }
     findings = await _run(covered, call_candidates)
@@ -827,21 +851,30 @@ async def test_agent_configuration_choice_is_removed_before_retrieval(covered, c
     verification = next(
         body
         for url, body, _ in covered.calls
-        if url.endswith("/chat/completions") and body["messages"][0]["content"] == sca.CALL_VERIFICATION_SYSTEM_PROMPT
+        if url.endswith("/chat/completions") and body["messages"][0]["content"] == sca.NEED_VERIFICATION_SYSTEM_PROMPT
     )
-    assert [q["index"] for q in json.loads(verification["messages"][-1]["content"])["candidates"]] == [0, 1]
+    assert [q["index"] for q in json.loads(verification["messages"][-1]["content"])["candidates"]] == [0, 1, 2]
     assert findings[0]["message_ids"] == ["q1"]
 
 
 @pytest.mark.parametrize(
     "decisions",
     [
-        [],
-        [{"index": 0, "keep": False}, {"index": 0, "keep": False}],
-        [{"index": 0, "keep": False}, {"index": 9, "keep": False}],
-        [{"index": 0, "keep": False}, {"index": True, "keep": False}],
-        [{"index": 0, "keep": "yes"}, {"index": 1, "keep": False}],
-        [{"index": 0, "keep": True, "request_message_ids": ["invented-id"]}, {"index": 1, "keep": False}],
+        [],  # wrong count: every candidate must be decided
+        [{"index": 0, "keep": False}, {"index": 0, "keep": False}, {"index": 2, "keep": False}],  # duplicate index
+        [{"index": 0, "keep": False}, {"index": 9, "keep": False}, {"index": 2, "keep": False}],  # out-of-range index
+        [{"index": 0, "keep": False}, {"index": True, "keep": False}, {"index": 2, "keep": False}],  # non-int index
+        [{"index": 0, "keep": "yes"}, {"index": 1, "keep": False}, {"index": 2, "keep": False}],  # non-bool keep
+        [
+            {"index": 0, "keep": True, "request_message_ids": ["invented-id"]},  # ungrounded request id
+            {"index": 1, "keep": False},
+            {"index": 2, "keep": False},
+        ],
+        [
+            {"index": 0, "keep": True, "request_message_ids": []},
+            {"index": 1, "keep": False},
+            {"index": 2, "keep": False},
+        ],
     ],
 )
 async def test_invalid_call_verification_fails_before_retrieval(covered, call_candidates, decisions):
@@ -851,9 +884,81 @@ async def test_invalid_call_verification_fails_before_retrieval(covered, call_ca
     assert not any(url.endswith("/retrieve") for url, _, _ in covered.calls)
 
 
-async def test_email_does_not_require_call_verification(covered):
-    await _run(covered, _case([_msg("m1", "customer", "How do I port my number?") | {"medium": "email"}]))
-    assert sum(url.endswith("/chat/completions") for url, _, _ in covered.calls) == 2
+async def test_email_question_is_verified_and_retained(covered):
+    # Replaces the old "email skips verification" contract: need-verification now
+    # runs for every medium, and a genuine public-customer email request survives.
+    findings = await _run(covered, _case([_msg("m1", "customer", "How do I port my number?") | {"medium": "email"}]))
+    verification = [
+        body
+        for url, body, _ in covered.calls
+        if url.endswith("/chat/completions") and body["messages"][0]["content"] == sca.NEED_VERIFICATION_SYSTEM_PROMPT
+    ]
+    assert len(verification) == 1
+    assert [q["index"] for q in json.loads(verification[0]["messages"][-1]["content"])["candidates"]] == [0]
+    assert [f["question"] for f in findings] == ["How do I port my number to Klai?"]
+
+
+async def test_payment_agreed_note_candidate_is_rejected_before_retrieval(fake):
+    # Real development case: a ticket whose only substantive content is an internal
+    # note recording agent work and a support-cost agreement. The extractor can
+    # still hallucinate a how-to; need-verification must reject it as agent work /
+    # a payment agreement, so no retrieval runs and no finding is produced.
+    note = (
+        "Je geeft aan dat je een belplan wil opstellen: drie geluiden, voicemail en doorschakelen. "
+        "Uitgevoerde werkzaamheden: Supportkosten akkoord; geluiden geupload; belplan opgesteld; "
+        "supportkosten geregistreerd (2x 15min)."
+    )
+    case = _case([_msg("n1", "agent", note) | {"kind": "note", "visibility": "internal"}], subject="supportkosten")
+    fake.extraction = {
+        "questions": [
+            {
+                "question": "What are the support costs for setting up a call plan?",
+                "language": "en",
+                "audience": "customer",
+                "applicability": "support costs",
+                "message_ids": ["n1"],
+            }
+        ]
+    }
+    fake.verification = {"decisions": [{"index": 0, "keep": False, "request_message_ids": []}]}
+    findings = await _run(fake, case)
+    assert findings == []
+    assert not any(url.endswith("/retrieve") for url, _, _ in fake.calls)
+
+
+async def test_internal_note_reporting_customer_howto_is_retained(fake):
+    # A support note explicitly reports the customer's own knowledge question. The
+    # request is established by the note without inventing call speaker roles, so
+    # verification keeps it and a genuine gap survives — NOT downgraded to uncertain
+    # the way an unattributed call request would be.
+    note = "Customer asks how to set up a call plan with three greetings and voicemail."
+    case = _case([_msg("n1", "agent", note) | {"kind": "note", "visibility": "internal"}], subject="call plan help")
+    fake.extraction = {
+        "questions": [
+            {
+                "question": "How do I set up a call plan with greetings and voicemail?",
+                "language": "en",
+                "audience": "customer",
+                "applicability": "call plan",
+                "message_ids": ["n1"],
+            }
+        ]
+    }
+    fake.verification = {"decisions": [{"index": 0, "keep": True, "request_message_ids": ["n1"]}]}
+    fake.retrieval = _retrieval([_chunk("c1", "Unrelated content about billing.")])
+    fake.assessment = {
+        "diagnosis": "missing",
+        "rationale": "No passage documents how to set up a call plan.",
+        "missing_information": "Call-plan setup steps",
+        "proposed_change": "Create a call-plan setup how-to article.",
+        "article_ids": [],
+    }
+    findings = await _run(fake, case)
+    assert len(findings) == 1
+    f = findings[0]
+    assert f["diagnosis"] == "missing"
+    assert f["message_ids"] == ["n1"]
+    assert "customer attribution" not in f["rationale"]
 
 
 @pytest.mark.parametrize(
@@ -871,6 +976,7 @@ async def test_call_gap_requires_a_source_customer_request(covered, role, visibi
         "diagnosis": "missing",
         "rationale": "The porting procedure is absent.",
         "missing_information": "Porting steps",
+        "proposed_change": "Create a number-porting how-to article.",
         "article_ids": [],
     }
     case = _case(
@@ -886,3 +992,141 @@ async def test_call_gap_requires_a_source_customer_request(covered, role, visibi
     assert findings[0]["missing_information"] == "Porting steps"
     if expected == "uncertain":
         assert "customer attribution" in findings[0]["rationale"]
+        # A provisional/unknown outcome carries no actionable change.
+        assert findings[0]["proposed_change"] == ""
+
+
+# --- Bounded source-grounded second retrieval --------------------------------
+
+
+def _agent_backed_case() -> dict:
+    """A customer question plus the agent's real answer (KB terminology) as email."""
+    return _case(
+        [
+            _msg("m1", "customer", "How do I move my number over?") | {"medium": "email"},
+            _msg("m2", "agent", "Submit the port-in form under Numbers > Porting in the portal.") | {"medium": "email"},
+        ]
+    )
+
+
+def _one_question(mids: list[str], question: str = "How do I move my number over?") -> dict:
+    return {
+        "questions": [
+            {
+                "question": question,
+                "language": "en",
+                "audience": "customer",
+                "applicability": "number porting",
+                "message_ids": mids,
+            }
+        ]
+    }
+
+
+async def test_alternate_search_finds_article_missed_by_original_yields_findability(fake):
+    # First reported failure: the customer's own phrasing misses the article, so
+    # the first pass returns missing. A second search grounded in the actual
+    # support exchange surfaces the correct article, and the combined evidence is
+    # re-judged as findability with a real citation — never left as missing.
+    fake.extraction = _one_question(["m1", "m2"])
+    fake.retrieval_sequence = [
+        _retrieval([_chunk("c_wrong", "Unrelated billing content about invoices.")]),
+        _retrieval([_chunk("c_right", "To port a number, submit the port-in form under Numbers > Porting.")]),
+    ]
+    fake.assessment = {
+        "diagnosis": "missing",
+        "rationale": "Nothing in the retrieved passages answers how to port a number.",
+        "missing_information": "Porting steps",
+        "proposed_change": "Create a number-porting how-to article.",
+        "article_ids": [],
+    }
+    fake.reassessment = {
+        "diagnosis": "findability",
+        "rationale": "The porting article exists but only the alternate search surfaced it.",
+        "missing_information": "",
+        "proposed_change": "Add porting synonyms and a clearer title so the customer phrasing finds it.",
+        "article_ids": ["c_right"],
+    }
+    findings = await _run(fake, _agent_backed_case())
+    assert len(findings) == 1
+    f = findings[0]
+    assert f["diagnosis"] == "findability"
+    assert [a["chunk_id"] for a in f["articles"]] == ["c_right"]
+    assert f["proposed_change"].strip()
+    assert f["comparison_limitations"] == []  # not an absence, so no bounded-absence caveat
+
+    retrieve_calls = [c for c in fake.calls if c[0].endswith("/retrieve")]
+    assert len(retrieve_calls) == 2
+    # search_queries records both issued queries, original first.
+    assert f["search_queries"][0] == "How do I move my number over?"
+    assert len(f["search_queries"]) == 2
+    # The alternate search stays scoped to the same tenant KB and carries the
+    # original question as raw_query so retrieval matches evidence against both.
+    _, first_body, _ = retrieve_calls[0]
+    _, second_body, _ = retrieve_calls[1]
+    assert "raw_query" not in first_body
+    assert second_body["raw_query"] == "How do I move my number over?"
+    assert second_body["org_id"] == ORG
+    assert second_body["scope"] == "org"
+    assert second_body["kb_slugs"] == [KB]
+    assert second_body["user_id"] == USER
+    assert second_body["query"] != first_body["query"]  # a genuinely different, source-grounded query
+
+
+async def test_alternate_retrieval_failure_fails_analysis_visibly(fake):
+    # A failing second retrieval must surface as an error, not silently collapse
+    # into the first pass's "missing" verdict.
+    fake.extraction = _one_question(["m1", "m2"])
+    fake.retrieval = _retrieval([_chunk("c1", "Unrelated content.")])
+    fake.retrieval_status_sequence = [200, 500]
+    fake.assessment = {
+        "diagnosis": "missing",
+        "rationale": "Nothing answers the porting question.",
+        "missing_information": "Porting steps",
+        "proposed_change": "Create a number-porting how-to article.",
+        "article_ids": [],
+    }
+    with pytest.raises(httpx.HTTPStatusError):
+        await _run(fake, _agent_backed_case())
+    assert sum(url.endswith("/retrieve") for url, _, _ in fake.calls) == 2
+
+
+async def test_persistent_missing_never_claims_exhaustive_absence(fake):
+    # When the alternate search also finds nothing, the verdict stays missing but
+    # the finding explicitly bounds the absence to the searched queries.
+    fake.extraction = _one_question(["m1", "m2"])
+    fake.retrieval = _retrieval([_chunk("c1", "Unrelated content.")])
+    fake.assessment = {
+        "diagnosis": "missing",
+        "rationale": "Nothing answers the porting question.",
+        "missing_information": "Porting steps",
+        "proposed_change": "Create a number-porting how-to article.",
+        "article_ids": [],
+    }
+    findings = await _run(fake, _agent_backed_case())
+    f = findings[0]
+    assert f["diagnosis"] == "missing"
+    assert len(f["search_queries"]) == 2
+    assert f["comparison_limitations"]
+    caveat = " ".join(f["comparison_limitations"]).lower()
+    assert "not an exhaustive" in caveat
+    assert "2" in caveat
+
+
+async def test_covered_verdict_skips_second_retrieval_and_has_no_proposed_change(fake):
+    # A definite covered verdict is trusted: no alternate search, empty change.
+    fake.extraction = _one_question(["m1", "m2"])
+    fake.retrieval = _retrieval([_chunk("c1", "Submit the port-in form under Numbers > Porting.")])
+    fake.assessment = {
+        "diagnosis": "covered",
+        "rationale": "The article gives the exact porting steps.",
+        "missing_information": "",
+        "proposed_change": "an accidental suggestion that must be dropped",
+        "article_ids": ["c1"],
+    }
+    findings = await _run(fake, _agent_backed_case())
+    f = findings[0]
+    assert f["diagnosis"] == "covered"
+    assert f["proposed_change"] == ""  # non-gap verdicts never carry a change
+    assert f["search_queries"] == ["How do I move my number over?"]
+    assert sum(url.endswith("/retrieve") for url, _, _ in fake.calls) == 1

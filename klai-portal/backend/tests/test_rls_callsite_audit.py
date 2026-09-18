@@ -70,6 +70,20 @@ ALLOWED_HELPER_FUNCTIONS: frozenset[str] = frozenset(
         "_delete_case_findings",
         "_case_findings_count",
         "_finding_gap",
+        # Also inside upsert_support_case's tenant session: the reanalysis
+        # closure-preservation snapshot/replay and the grouping candidate read all
+        # run after set_tenant, scoped by an explicit org_id predicate.
+        "_snapshot_closures",
+        "_reapply_closures",
+        "_open_group_candidates",
+        # Called by review_finding (a route) after get_caller established tenant
+        # context; scoped by explicit org_id + support_case_id predicates.
+        "apply_review_visibility",
+        # app/api/app_support_cases.py — helpers called from support-case routes
+        # after Depends(get_caller)/get_db established tenant context; each also
+        # bounds its SELECT by an explicit org_id predicate.
+        "_lock_case_for_human_write",
+        "_load_case_for_reanalysis",
         # Only called by list_gaps after its get_caller dependency scopes the session.
         "_list_support_gaps",
         # app/services/access.py — all entry points take org_id parameter

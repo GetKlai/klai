@@ -18,7 +18,7 @@ from app.models.support_cases import PortalSupportCase
 from app.models.taxonomy import PortalTaxonomyNode
 from app.models.widgets import WidgetConversation
 from app.services.access import is_personal_kb
-from app.services.support_case_reviews import compute_analysis_revision, reviews_for_current_revision
+from app.services.support_case_reviews import REFERENCE_KEY, compute_analysis_revision, reviews_for_current_revision
 from app.services.support_cases import _question_key
 
 router = APIRouter(
@@ -61,6 +61,10 @@ class GapOut(BaseModel):
     diagnosis: str | None = None
     audience: str | None = None
     support_case_ids: list[int] = []
+    # The group's persisted ``question_key`` for a support group — the reliable
+    # handle to close it, since folded findings share one key while their wording
+    # differs. NULL for legacy telemetry groups.
+    group_key: str | None = None
 
 
 class GapsResponse(BaseModel):
@@ -77,6 +81,11 @@ class GapResolveRequest(BaseModel):
     exactly that diagnosis+KB group and cannot close an unrelated one. When
     ``diagnosis`` is absent the close only ever touches legacy telemetry rows
     (``support_case_id IS NULL``), so it never silently closes a support row.
+
+    ``group_key`` is the authoritative way to close a support group: findings
+    folded together share one persisted key even though their wording differs, so
+    recomputing the key from a displayed question would miss them. When present it
+    matches that key directly.
     """
 
     query_text: str
@@ -85,6 +94,7 @@ class GapResolveRequest(BaseModel):
     diagnosis: str | None = None
     audience: str | None = None
     nearest_kb_slug: str | None = None
+    group_key: str | None = None
 
 
 class GapResolveResponse(BaseModel):
@@ -376,6 +386,7 @@ async def _list_support_gaps(
             diagnosis=r.diagnosis,
             audience=r.audience,
             support_case_ids=sorted(cid for cid in (r.support_case_ids or []) if cid is not None),
+            group_key=r.question_key,
         )
         for r in result.all()
     ]
@@ -415,10 +426,18 @@ async def resolve_gap(
         .values(resolved_at=datetime.now(tz=UTC), resolved_by="manual", resolved_by_user_id=caller_id)
     )
 
-    # SPEC-RAG-SUPPORT-GAP: a diagnosis marks a support (case-backed) close.
-    # Without one, the close only ever touches legacy telemetry rows (exact
-    # query text), so it can never silently close a case-backed row.
-    if body.diagnosis is None:
+    # SPEC-RAG-SUPPORT-GAP: the persisted group key closes a support group
+    # authoritatively — folded findings share one key while their wording differs,
+    # so it matches them all where recomputing from a displayed question would not.
+    if body.group_key is not None:
+        stmt = stmt.where(
+            PortalRetrievalGap.support_case_id.isnot(None),
+            PortalRetrievalGap.question_key == body.group_key,
+        )
+    # A diagnosis marks a support (case-backed) close. Without a key or a
+    # diagnosis, the close only ever touches legacy telemetry rows (exact query
+    # text), so it can never silently close a case-backed row.
+    elif body.diagnosis is None:
         stmt = stmt.where(
             PortalRetrievalGap.support_case_id.is_(None),
             PortalRetrievalGap.query_text == body.query_text,
@@ -469,12 +488,20 @@ class SupportCaseDetailOut(BaseModel):
     payload: dict
     status: str
     # Each finding is the raw analysis dict with a ``review`` key added: the
-    # current-revision human verdict, or None. NULL analysis stays NULL.
+    # current-revision human verdict (carrying its ``corrected_diagnosis``), or
+    # None. NULL analysis stays NULL.
     analysis: list | None = None
     analysis_version: str | None = None
     # Identifies the exact analysis shown, so a review PATCH can be rejected when
-    # it was made against a superseded analysis. None when analysis is NULL.
+    # it was made against a superseded analysis. Present for every case (a null
+    # analysis hashes as an empty list) so a failed/pending case stays retryable.
     analysis_revision: str | None = None
+    # The evidence version, so a reference PUT can be rejected when it was written
+    # against superseded evidence.
+    content_hash: str
+    # The human case-level reference, surfaced only while it still matches the
+    # current evidence (a later change makes it stale and it drops to None).
+    reference: dict | None = None
     imported_at: datetime
 
 
@@ -515,17 +542,29 @@ async def get_support_case(
     if is_personal_kb(kb):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Support case not found")
 
-    # Lay the human review over each finding without persisting the enriched
-    # shape back: the revision hashes the raw analysis, and only the review for
-    # the CURRENT revision is surfaced (older-revision reviews stay on the row).
+    # A revision is computed for EVERY case, even one with a null analysis (it
+    # hashes as an empty list): a failed or pending case is retryable and role-
+    # correctable, so the reviewer needs a revision to act on. The finding review
+    # itself still requires analyzed findings, gated separately. Lay the human
+    # review over each finding without persisting the enriched shape back — the
+    # revision hashes the raw analysis, and only the current-revision review shows.
+    revision = compute_analysis_revision(
+        content_hash=case.content_hash, analysis_version=case.analysis_version, analysis=case.analysis
+    )
     analysis_out: list | None = None
-    revision: str | None = None
     if case.analysis is not None:
-        revision = compute_analysis_revision(
-            content_hash=case.content_hash, analysis_version=case.analysis_version, analysis=case.analysis
-        )
         reviews = reviews_for_current_revision(case.reviews, revision, len(case.analysis))
         analysis_out = [{**finding, "review": reviews[i]} for i, finding in enumerate(case.analysis)]
+
+    # Surface the case-level human reference only while it still matches the
+    # current evidence; a reference written against superseded evidence is not gold
+    # for what is shown now.
+    stored_reference = (case.reviews or {}).get(REFERENCE_KEY)
+    reference = (
+        stored_reference
+        if isinstance(stored_reference, dict) and stored_reference.get("content_hash") == case.content_hash
+        else None
+    )
 
     return SupportCaseDetailOut(
         id=case.id,
@@ -535,6 +574,8 @@ async def get_support_case(
         analysis=analysis_out,
         analysis_version=case.analysis_version,
         analysis_revision=revision,
+        content_hash=case.content_hash,
+        reference=reference,
         imported_at=case.imported_at,
     )
 

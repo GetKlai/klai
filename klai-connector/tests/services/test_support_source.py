@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -139,33 +139,41 @@ def _pipelines_payload() -> dict[str, Any]:
     }
 
 
-async def test_select_tickets_paginates_and_retains_older_open() -> None:
-    """Recent tickets AND older still-open tickets are selected across pages;
+_SEARCH_PATH = "/crm/v3/objects/tickets/search"
 
-    an older closed ticket outside the window is excluded.
+
+def _search_body(request: httpx.Request) -> dict[str, Any]:
+    return json.loads(request.content.decode())
+
+
+def _filter(body: dict[str, Any], prop: str) -> dict[str, Any]:
+    """The single filter for `prop` across all OR groups (fails if absent)."""
+    return next(f for g in body["filterGroups"] for f in g["filters"] if f["propertyName"] == prop)
+
+
+async def test_select_tickets_scoped_search_retains_recent_or_open() -> None:
+    """Selection is a server-side POST search, never a full ticket enumeration:
+    a recent CLOSED ticket is kept (created-within-window group) and an OLD
+    still-OPEN ticket is kept (open-stage group). The request carries both OR
+    groups with documented operators and the lookback window as epoch-ms.
     """
+    captured: dict[str, Any] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
         if path == "/crm/v3/pipelines/tickets":
             return _json(_pipelines_payload())
         if path == "/crm/v3/objects/tickets":
-            after = request.url.params.get("after")
-            if after is None:
-                # page 1: one recent open ticket
-                return _json(
-                    {
-                        "results": [_ticket("201", "1", "2026-09-16T09:00:00Z")],
-                        "paging": {"next": {"after": "p2", "link": "https://evil.example/next"}},
-                    }
-                )
-            assert after == "p2"
-            # page 2: an OLD but still-open ticket, and an OLD closed ticket
+            raise AssertionError("selection must not enumerate the full ticket list")
+        if path == _SEARCH_PATH:
+            assert request.method == "POST"
+            captured.update(_search_body(request))
             return _json(
                 {
+                    "total": 2,
                     "results": [
+                        _ticket("201", "9", "2026-09-16T09:00:00Z"),  # recent + closed -> keep
                         _ticket("150", "2", "2026-01-01T09:00:00Z"),  # old + open -> keep
-                        _ticket("120", "9", "2026-01-01T09:00:00Z"),  # old + closed -> drop
                     ],
                 }
             )
@@ -175,15 +183,42 @@ async def test_select_tickets_paginates_and_retains_older_open() -> None:
     tickets = await reader.select_tickets()
     await reader.aclose()
 
-    ids = sorted(t["id"] for t in tickets)
-    assert ids == ["150", "201"], "recent + older-open kept, older-closed dropped"
+    assert sorted(t["id"] for t in tickets) == ["150", "201"]
+    created = _filter(captured, "createdate")
+    assert created["operator"] == "GTE"
+    expected_ms = str(int((datetime(2026, 9, 17, 12, 0, 0, tzinfo=UTC) - timedelta(days=30)).timestamp() * 1000))
+    assert created["value"] == expected_ms, "created filter uses the lookback window in epoch-ms"
+    stage = _filter(captured, "hs_pipeline_stage")
+    assert stage["operator"] == "IN"
+    assert sorted(stage["values"]) == ["1", "2"], "open stages from pipeline metadata drive the open group"
+    assert captured["limit"] == 200
 
 
-async def test_select_tickets_never_follows_paging_link_host() -> None:
-    """The reader paginates with the `after` cursor on api.hubapi.com only;
+async def test_select_tickets_search_scopes_by_configured_pipeline() -> None:
+    """A configured pipeline_ids set becomes an AND filter inside every OR group,
+    so the search itself is scoped to those pipelines server-side."""
+    captured: dict[str, Any] = {}
 
-    it must never fetch the attacker-controlled paging.next.link URL.
-    """
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/crm/v3/pipelines/tickets":
+            return _json(_pipelines_payload())
+        if path == _SEARCH_PATH:
+            captured.update(_search_body(request))
+            return _json({"total": 0, "results": []})
+        raise AssertionError(path)
+
+    reader = _reader(handler, config={"pipeline_ids": ["0"]})
+    await reader.select_tickets()
+    await reader.aclose()
+    for group in captured["filterGroups"]:
+        pipeline = next(f for f in group["filters"] if f["propertyName"] == "hs_pipeline")
+        assert pipeline["operator"] == "IN" and pipeline["values"] == ["0"]
+
+
+async def test_select_tickets_search_paginates_via_after_cursor() -> None:
+    """The reader pages the search with the `after` cursor in the POST body on
+    api.hubapi.com only; it never leaves the fixed host."""
     seen_hosts: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -191,21 +226,50 @@ async def test_select_tickets_never_follows_paging_link_host() -> None:
         path = request.url.path
         if path == "/crm/v3/pipelines/tickets":
             return _json(_pipelines_payload())
-        if path == "/crm/v3/objects/tickets":
-            if request.url.params.get("after") is None:
+        if path == _SEARCH_PATH:
+            body = _search_body(request)
+            if body.get("after") is None:
                 return _json(
                     {
+                        "total": 2,
                         "results": [_ticket("201", "1", "2026-09-16T09:00:00Z")],
-                        "paging": {"next": {"after": "p2", "link": "https://evil.example/next"}},
+                        "paging": {"next": {"after": "200"}},
                     }
                 )
-            return _json({"results": [_ticket("202", "1", "2026-09-16T10:00:00Z")]})
+            assert body["after"] == "200"
+            return _json({"total": 2, "results": [_ticket("202", "1", "2026-09-16T10:00:00Z")]})
         raise AssertionError(path)
 
     reader = _reader(handler)
-    await reader.select_tickets()
+    tickets = await reader.select_tickets()
     await reader.aclose()
+    assert sorted(t["id"] for t in tickets) == ["201", "202"]
     assert set(seen_hosts) == {"api.hubapi.com"}
+
+
+async def test_select_tickets_result_ceiling_raises_not_partial() -> None:
+    """A scope wider than the 10,000-result search ceiling fails loudly instead
+    of returning a silently-truncated first page reconcile could delete from."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/crm/v3/pipelines/tickets":
+            return _json(_pipelines_payload())
+        if path == _SEARCH_PATH:
+            return _json(
+                {
+                    "total": 10001,
+                    "results": [_ticket("201", "1", "2026-09-16T09:00:00Z")],
+                    "paging": {"next": {"after": "200"}},
+                }
+            )
+        raise AssertionError(path)
+
+    reader = _reader(handler)
+    with pytest.raises(HubSpotAPIError) as exc:
+        await reader.select_tickets()
+    await reader.aclose()
+    assert "10000" in str(exc.value), "the search ceiling is named"
 
 
 # ---------------------------------------------------------------------------
@@ -480,7 +544,7 @@ async def test_missing_results_envelope_fails_not_empty_snapshot() -> None:
         pipelines = _pipelines_or(request)
         if pipelines is not None:
             return pipelines
-        if request.url.path == "/crm/v3/objects/tickets":
+        if request.url.path == _SEARCH_PATH:
             return _json({})  # provider drift: no 'results' array
         raise AssertionError(request.url.path)
 
@@ -507,8 +571,8 @@ async def test_ticket_missing_createdate_fails() -> None:
         pipelines = _pipelines_or(request)
         if pipelines is not None:
             return pipelines
-        if request.url.path == "/crm/v3/objects/tickets":
-            return _json({"results": [{"id": "201", "properties": {"hs_pipeline_stage": "1"}}]})
+        if request.url.path == _SEARCH_PATH:
+            return _json({"total": 1, "results": [{"id": "201", "properties": {"hs_pipeline_stage": "1"}}]})
         raise AssertionError(request.url.path)
 
     reader = _reader(handler)
@@ -522,10 +586,11 @@ async def test_pagination_cursor_cycle_fails() -> None:
         pipelines = _pipelines_or(request)
         if pipelines is not None:
             return pipelines
-        if request.url.path == "/crm/v3/objects/tickets":
+        if request.url.path == _SEARCH_PATH:
             # every page returns the SAME cursor -> would loop forever
             return _json(
                 {
+                    "total": 2,
                     "results": [_ticket("201", "1", "2026-09-16T09:00:00Z")],
                     "paging": {"next": {"after": "loop"}},
                 }
@@ -565,8 +630,8 @@ async def test_configured_inbox_ids_validated_across_pages() -> None:
             return _json(_pipelines_payload())
         if path == "/conversations/v3/conversations/inboxes":
             return _inboxes_page(request, inbox_pages)
-        if path == "/crm/v3/objects/tickets":
-            return _json({"results": [_ticket("201", "1", "2026-09-16T09:00:00Z")]})
+        if path == _SEARCH_PATH:
+            return _json({"total": 1, "results": [_ticket("201", "1", "2026-09-16T09:00:00Z")]})
         raise AssertionError(path)
 
     reader = _reader(handler, config={"inbox_ids": ["7", "8"]})
@@ -645,8 +710,8 @@ async def test_valid_scope_subset_with_empty_tickets_still_succeeds() -> None:
             return _json(_pipelines_payload())
         if path == "/conversations/v3/conversations/inboxes":
             return _inboxes_page(request, inbox_pages)
-        if path == "/crm/v3/objects/tickets":
-            return _json({"results": []})
+        if path == _SEARCH_PATH:
+            return _json({"total": 0, "results": []})
         raise AssertionError(path)
 
     reader = _reader(handler, config={"pipeline_ids": ["0"], "inbox_ids": ["7"]})

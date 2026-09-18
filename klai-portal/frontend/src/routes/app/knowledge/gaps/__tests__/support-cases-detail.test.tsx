@@ -70,6 +70,8 @@ function detail(overrides: Record<string, unknown> = {}) {
     status: 'analyzed',
     analysis_version: 'v1',
     analysis_revision: 'rev-abc',
+    content_hash: 'hash-1',
+    reference: null,
     imported_at: '2026-09-10T08:00:00Z',
     payload: {
       source: 'hubspot',
@@ -110,6 +112,18 @@ beforeEach(() => {
 })
 
 describe('SupportCaseDetailPage', () => {
+  it('offers role correction for call evidence received through HubSpot', async () => {
+    const data = detail()
+    data.payload.messages = [
+      message({ kind: 'transcript', medium: 'call', role: 'unknown' }),
+      message({ id: 'email-2', kind: 'email', medium: 'email', role: 'customer' }),
+    ]
+    apiFetchMock.mockResolvedValue(data)
+    render(<Wrapper><SupportCaseDetailPage /></Wrapper>)
+    const summary = (await screen.findAllByText(/speaker roles|sprekerrollen/i)).find((el) => el.tagName === 'SUMMARY')!
+    fireEvent.click(summary)
+    expect(screen.getAllByLabelText(/role for this segment|rol voor dit segment/i)).toHaveLength(1)
+  })
   it('renders the pending status distinctly and does not crash on null analysis', async () => {
     apiFetchMock.mockResolvedValue(detail({ status: 'pending', analysis: null, analysis_revision: null }))
 
@@ -217,6 +231,97 @@ describe('SupportCaseDetailPage', () => {
     await screen.findByText('A different customer question?')
     expect(screen.getByRole<HTMLTextAreaElement>('textbox').value).toBe('')
     expect(screen.getByRole('button', { name: /beoordeling opslaan|save review/i }).hasAttribute('disabled')).toBe(true)
+  })
+
+  it('re-runs analysis against the seen revision and surfaces a failed run as a failure', async () => {
+    apiFetchMock.mockImplementation((_path: string, init?: { method?: string }) => {
+      if (init?.method === 'POST') {
+        return Promise.resolve({ case_id: '7', status: 'failed', changed: false, findings_count: 0 })
+      }
+      return Promise.resolve(detail())
+    })
+
+    render(
+      <Wrapper>
+        <SupportCaseDetailPage />
+      </Wrapper>,
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: /re-run analysis|analyse opnieuw/i }))
+
+    await waitFor(() => {
+      const post = apiFetchMock.mock.calls.find((c) => (c[1] as { method?: string })?.method === 'POST')
+      expect(post).toBeTruthy()
+    })
+    const post = apiFetchMock.mock.calls.find((c) => (c[1] as { method?: string })?.method === 'POST')!
+    expect(String(post[0])).toBe(
+      '/api/app/knowledge-bases/company-kb/support-cases/7/reanalyze',
+    )
+    expect(JSON.parse((post[1] as { body: string }).body)).toEqual({ analysis_revision: 'rev-abc' })
+    // Failed re-analysis is a visible failure, never a success toast.
+    await waitFor(() => expect(toastError).toHaveBeenCalled())
+    expect(toastSuccess).not.toHaveBeenCalled()
+  })
+
+  it('offers a diagnosis correction when a finding is judged wrong and sends it', async () => {
+    apiFetchMock.mockImplementation((_path: string, init?: { method?: string }) => {
+      if (init?.method === 'PATCH') {
+        return Promise.resolve({
+          analysis_revision: 'rev-abc',
+          review: { decision: 'incorrect', note: '', corrected_diagnosis: 'incomplete', reviewed_by: 'R', reviewed_at: '2026-09-11T00:00:00Z' },
+        })
+      }
+      return Promise.resolve(detail())
+    })
+
+    render(
+      <Wrapper>
+        <SupportCaseDetailPage />
+      </Wrapper>,
+    )
+
+    fireEvent.click(await screen.findByText(/the analysis is wrong|de analyse klopt niet/i))
+    // The correction control only appears once a finding is judged wrong.
+    const correction = screen.getByLabelText(/correct the diagnosis|corrigeer de diagnose/i)
+    fireEvent.change(correction, { target: { value: 'incomplete' } })
+    fireEvent.click(screen.getByRole('button', { name: /beoordeling opslaan|save review/i }))
+
+    await waitFor(() => {
+      const patch = apiFetchMock.mock.calls.find((c) => (c[1] as { method?: string })?.method === 'PATCH')
+      expect(patch).toBeTruthy()
+    })
+    const patch = apiFetchMock.mock.calls.find((c) => (c[1] as { method?: string })?.method === 'PATCH')!
+    expect(JSON.parse((patch[1] as { body: string }).body)).toEqual({
+      analysis_revision: 'rev-abc',
+      decision: 'incorrect',
+      note: '',
+      corrected_diagnosis: 'incomplete',
+    })
+  })
+
+  it('renders the analyser follow-through fields when present', async () => {
+    apiFetchMock.mockResolvedValue(
+      detail({
+        analysis: [
+          {
+            ...detail().analysis[0],
+            proposed_change: 'Add a step-by-step invoice export article.',
+            comparison_limitations: ['Only three articles were in scope.'],
+            search_queries: ['export invoices', 'download billing pdf'],
+          },
+        ],
+      }),
+    )
+
+    render(
+      <Wrapper>
+        <SupportCaseDetailPage />
+      </Wrapper>,
+    )
+
+    await screen.findByText('Add a step-by-step invoice export article.')
+    expect(screen.getByText('Only three articles were in scope.')).toBeTruthy()
+    expect(screen.getByText('download billing pdf')).toBeTruthy()
   })
 
 })

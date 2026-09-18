@@ -12,8 +12,9 @@
 // empty states otherwise. Internal model IDs are deliberately not rendered.
 import { useState } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { useQuery } from '@tanstack/react-query'
-import { ArrowLeft, ChevronDown, ChevronRight, ExternalLink } from 'lucide-react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { ArrowLeft, ChevronDown, ChevronRight, ExternalLink, Loader2, RotateCw } from 'lucide-react'
+import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { PageContainer } from '@/components/ui/page-container'
@@ -23,25 +24,20 @@ import { QueryErrorState } from '@/components/ui/query-error-state'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 import { RoleGuard } from '@/components/layout/RoleGuard'
 import * as m from '@/paraglide/messages'
-import { apiFetch } from '@/lib/apiFetch'
+import { ApiError, apiFetch } from '@/lib/apiFetch'
 import { queryLogger } from '@/lib/logger'
-import { diagnosisLabel, findingKind, supportCaseStatusBadge } from './-support-helpers'
+import {
+  diagnosisLabel,
+  findingKind,
+  invalidateCaseCaches,
+  supportCaseStatusBadge,
+  type CaseMessage,
+  type CaseReference,
+} from './-support-helpers'
 import { CaseFindingReview, type FindingReviewValue } from './_components/CaseFindingReview'
-
-interface CaseMessage {
-  id: string
-  kind: string
-  role: 'customer' | 'agent' | 'unknown'
-  text: string
-  occurred_at: string | null
-  visibility: 'customer' | 'internal' | 'unknown'
-  start_seconds: number | null
-  end_seconds: number | null
-  medium: string | null
-  thread_id: string | null
-  reply_to_id: string | null
-  speaker_id: string | null
-}
+import { CaseRoleReview } from './_components/CaseRoleReview'
+import { CaseReferenceForm } from './_components/CaseReferenceForm'
+import { CaseStalePrompt } from './_components/CaseStalePrompt'
 
 interface CasePayload {
   source: string
@@ -74,6 +70,11 @@ interface CaseFinding {
   gap_type: string | null
   top_score: number | null
   review: FindingReviewValue | null
+  // Optional analyser follow-through, rendered only when returned: the concrete
+  // change it suggests, and why its knowledge-base comparison was limited.
+  proposed_change?: string | null
+  comparison_limitations?: string[] | null
+  search_queries?: string[] | null
 }
 
 interface SupportCaseDetail {
@@ -84,6 +85,8 @@ interface SupportCaseDetail {
   analysis: CaseFinding[] | null
   analysis_version: string
   analysis_revision: string | null
+  content_hash: string
+  reference: CaseReference | null
   imported_at: string
 }
 
@@ -152,6 +155,69 @@ function MessageCard({ message }: { message: CaseMessage }) {
   )
 }
 
+/** Re-runs the analyser for this case against the revision the reviewer saw.
+    A failed re-analysis is surfaced as a visible failure, never a success
+    toast; a 409 means the case changed underneath and prompts a refresh rather
+    than discarding the reviewer's context. */
+function ReanalyzeControl({
+  caseId,
+  kbSlug,
+  analysisRevision,
+}: {
+  caseId: string
+  kbSlug: string
+  analysisRevision: string
+}) {
+  const queryClient = useQueryClient()
+  const [stale, setStale] = useState(false)
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      apiFetch<{ case_id: string; status: string; changed: boolean; findings_count: number }>(
+        `/api/app/knowledge-bases/${kbSlug}/support-cases/${caseId}/reanalyze`,
+        { method: 'POST', body: JSON.stringify({ analysis_revision: analysisRevision }) },
+      ),
+    onSuccess: (res) => {
+      setStale(false)
+      invalidateCaseCaches(queryClient, caseId, kbSlug)
+      if (res.status === 'failed') {
+        toast.error(m.support_case_reanalyze_failed())
+        return
+      }
+      toast.success(
+        res.changed
+          ? m.support_case_reanalyze_success({ count: String(res.findings_count) })
+          : m.support_case_reanalyze_unchanged(),
+      )
+    },
+    onError: (err: unknown) => {
+      queryLogger.warn('Support case reanalyze failed', { error: err })
+      if (err instanceof ApiError && err.status === 409) {
+        setStale(true)
+        return
+      }
+      if (err instanceof ApiError && err.status === 503) {
+        invalidateCaseCaches(queryClient, caseId, kbSlug)
+      }
+      toast.error(m.support_case_reanalyze_error())
+    },
+  })
+
+  return (
+    <div className="flex flex-col items-end gap-2">
+      <Button variant="outline" size="sm" disabled={mutation.isPending} onClick={() => mutation.mutate()}>
+        {mutation.isPending ? (
+          <Loader2 className="h-4 w-4 animate-spin mr-2" />
+        ) : (
+          <RotateCw className="h-4 w-4 mr-2" />
+        )}
+        {mutation.isPending ? m.support_case_reanalyzing() : m.support_case_reanalyze()}
+      </Button>
+      {stale && <CaseStalePrompt caseId={caseId} message={m.support_case_reanalyze_stale()} />}
+    </div>
+  )
+}
+
 export function SupportCaseDetailPage() {
   const { caseId } = Route.useParams()
   const [conversationOpen, setConversationOpen] = useState(false)
@@ -213,6 +279,7 @@ export function SupportCaseDetailPage() {
   }
 
   const { payload } = detail
+  const callMessages = payload.messages.filter((message) => message.medium === 'call' || message.kind === 'transcript')
   const status = supportCaseStatusBadge(detail.status)
   const sourceUrl = safeHttpUrl(payload.source_url)
   const messageById = new Map(payload.messages.map((message) => [message.id, message]))
@@ -252,8 +319,36 @@ export function SupportCaseDetailPage() {
         </a>
       )}
 
+      {/* Call evidence arrives with every speaker "unknown"; the reviewer sets
+          roles here before the analysis below can be trusted. */}
+      {payload.complete && detail.analysis_revision && callMessages.length > 0 && (
+        <details className="mb-6 rounded-xl border border-gray-200">
+          <summary className="cursor-pointer rounded-xl p-4 text-sm font-semibold focus-visible:outline-2 focus-visible:outline-offset-2">
+            {m.support_case_roles_heading()}
+            {callMessages.some((message) => message.role === 'unknown') && (
+              <Badge variant="warning" className="ml-2">{m.support_case_roles_needs_review()}</Badge>
+            )}
+          </summary>
+          <CaseRoleReview
+            caseId={caseId}
+            kbSlug={detail.kb_slug}
+            analysisRevision={detail.analysis_revision}
+            messages={callMessages}
+          />
+        </details>
+      )}
+
       {/* Analysis — question-first, one block per finding. */}
-      <h2 className="text-sm font-semibold text-gray-900 mb-2">{m.support_case_analysis_heading()}</h2>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold text-gray-900">{m.support_case_analysis_heading()}</h2>
+        {payload.complete && detail.analysis_revision && (
+          <ReanalyzeControl
+            caseId={caseId}
+            kbSlug={detail.kb_slug}
+            analysisRevision={detail.analysis_revision}
+          />
+        )}
+      </div>
       {detail.status === 'pending' ? (
         <ListEmptyState title={m.support_case_analysis_pending()} />
       ) : detail.status === 'failed' ? (
@@ -304,6 +399,40 @@ export function SupportCaseDetailPage() {
                     </p>
                   </div>
                 )}
+                {finding.proposed_change && (
+                  <div>
+                    <p className="text-xs font-medium text-gray-500">
+                      {m.support_case_finding_proposed_change()}
+                    </p>
+                    <p className="text-sm text-gray-900 whitespace-pre-wrap break-words">
+                      {finding.proposed_change}
+                    </p>
+                  </div>
+                )}
+                {finding.comparison_limitations && finding.comparison_limitations.length > 0 && (
+                  <div>
+                    <p className="text-xs font-medium text-gray-500">
+                      {m.support_case_finding_comparison_limitations()}
+                    </p>
+                    <ul className="list-disc pl-5 text-sm text-gray-900">
+                      {finding.comparison_limitations.map((limit, k) => (
+                        <li key={k} className="break-words">{limit}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {finding.search_queries && finding.search_queries.length > 0 && (
+                  <div>
+                    <p className="text-xs font-medium text-gray-500">
+                      {m.support_case_finding_search_queries()}
+                    </p>
+                    <ul className="list-disc pl-5 text-sm text-gray-600">
+                      {finding.search_queries.map((query, k) => (
+                        <li key={k} className="break-words">{query}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
 
                 <div className="grid gap-3 md:grid-cols-2">
                   {citedMessages.length > 0 && (
@@ -348,12 +477,26 @@ export function SupportCaseDetailPage() {
                     kbSlug={detail.kb_slug}
                     analysisRevision={detail.analysis_revision}
                     findingIndex={i}
+                    machineDiagnosis={finding.diagnosis}
                     review={finding.review}
                   />
                 )}
               </div>
             )
           })}
+        </div>
+      )}
+
+      {/* Whole-case reference answer key, the reviewer's own record. */}
+      {detail.content_hash && (
+        <div className="mt-8">
+          <CaseReferenceForm
+            caseId={caseId}
+            kbSlug={detail.kb_slug}
+            contentHash={detail.content_hash}
+            messages={payload.messages}
+            reference={detail.reference}
+          />
         </div>
       )}
 
