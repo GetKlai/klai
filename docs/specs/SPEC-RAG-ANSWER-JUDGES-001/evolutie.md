@@ -18,7 +18,7 @@ Een beurt van een bezoeker loopt door deze schakels. Per schakel: wat het doet, 
 | 4 | Controle vooraf op de vraag | `services/turn_judge.py` | beslist niets meer over doorvragen (v0.5.0), praatje-uitzondering weg (v0.6.0) |
 | 5 | Antwoord schrijven | `partner_chat.py` + profiel in `klai-libs/chat-prompts` | ongewijzigd; promptvarianten gemeten en afgevallen |
 | 6 | Koppelen aan bronnen | `klai-libs/citations` | ongewijzigd, dit is de ondergrens |
-| 7 | Controle achteraf op het antwoord | `services/answer_judge.py` | licht; zware variant gemeten, nog niet gebouwd |
+| 7 | Controle achteraf op het antwoord | `services/answer_judge.py` + `services/answer_grounding.py` | licht oordeel plus controle per zin met reparatie, live 18 sep |
 | 8 | Kennisbank | Voys-artikelen | het echte plafond, niet aangepakt |
 
 ---
@@ -98,7 +98,54 @@ Maatregelen, elk op dezelfde vragen gemeten:
 - Herkennen van een magere vraag: de controle vooraf noemt 45% van de specifieke vragen ten onrechte onduidelijk; de regel "zes woorden of minder" is 89% raak.
 - Plafond: bij de vijf gevallen waarin de bezoeker wél specifiek was, stond het antwoord in geen enkele variant in de artikelen.
 
-### 2.8 Financiële en commerciële vragen via de basisprompt (17 sep)
+### 2.8 Controle per zin en reparatie (18 sep)
+Eerste poging gaf een vertekend beeld: de opgeslagen kopieën hadden artikelteksten die op 700 tekens waren afgekapt, dus de controle zag het bewijs niet en keurde goede antwoorden af. Opnieuw gemeten met de volledige artikelteksten, 25 echte antwoorden, na de reviewfixes:
+
+| Uitkomst | Aantal |
+|---|---|
+| Minstens één uitspraak niet in de artikelen | 16 van 25 (64%) |
+| Haalde de reparatiedrempel (2 of meer, of tegenspraak) | 10 |
+| Gerepareerd | 8, waarvan 2 daarna nog een melding hadden |
+| Volledig verzonnen, dus eerlijke weigering | 2 |
+| Mislukte controles | 0 |
+| Blind voor tegen na reparatie | 5 voor het gerepareerde antwoord, 3 voor het origineel |
+
+Tijd: controle 1,9 s mediaan, 3,4 s in de traagste tien procent.
+
+De twee volledig verzonnen antwoorden waren het doelwit: prijzen van € 25,- eenmalig en € 5,- per maand voor een 0800-nummer, en een verzonnen terugboekprocedure.
+
+**Les uit de eerste poging:** repareren bij één melding maakte het slechter (het origineel won toen 8 van de 11 blinde vergelijkingen), omdat de controle ook een zin afkeurt die alleen de situatie van de bezoeker herhaalt. Vandaar de drempel van twee meldingen of één tegenspraak.
+
+### 2.9 Live na livegang van de controle per zin (18 sep)
+Zes echte vragen als proefgesprek door de live keten:
+
+| Vraag | Uitkomst |
+|---|---|
+| Kosten van een nieuw 0800-nummer | eerlijke "niet gevonden" (was: verzonnen prijzen) |
+| Factuur dubbel geïncasseerd | eerlijke "niet gevonden" met doorverwijzing |
+| Waar vind ik mijn facturen | antwoord met bron |
+| Hoe wijzig ik mijn belplan | antwoord met bron |
+| Internationaal bellen aanzetten | "niet gevonden": alle vijf uitspraken stonden niet in de gevonden artikelen |
+| Hoe stel ik een wachtrij in | antwoord met bron, twee uitspraken weggehaald |
+
+Tijd per beurt 2,4 tot 4,1 s, met één uitschieter van 12,3 s doordat het repareren van een lange stappenlijst 8,4 s kostte. Daarom staan de controle en de reparatie sinds 18 sep elk op maximaal 5 s; loopt die af, dan blijft het antwoord zoals het was.
+
+Wat dit kost: een antwoord dat het model uit eigen kennis opschrijft verdwijnt nu, ook als het misschien klopt. De oorzaak ligt dan in de zoekstap, niet in de controle.
+
+### 2.10 Korte vraag: antwoord plus één vervolgvraag — afgevallen (18 sep)
+Gebouwd en gemeten, niet live gezet. Bij een vraag van zes woorden of minder kreeg het model de opdracht te antwoorden én één korte vervolgvraag te stellen uit de gevonden artikelen. Zestien echte korte vragen, twee rondes per versie, blinde vergelijking:
+
+| Uitkomst | Aantal |
+|---|---|
+| Huidige versie beter | 15 |
+| Met vervolgvraag beter | 12 |
+| Gelijk | 5 |
+
+Het aantal antwoorden waarin de beoordelaar iets verzonnen zag steeg van 4 naar 9, en maar 7 van de 32 antwoorden eindigde echt met een vraag. De code staat op de branch `feat/short-question-follow-up` en is niet samengevoegd.
+
+**Les:** de winst van een rijkere eerste vraag (29 om 7 bij een echt verrijkte vraag) komt niet binnen bereik door het model om die rijkdom te laten vragen. Kansrijker is de bezoeker vooraf laten kiezen uit onderwerpen uit de kennisbank, want het zoeken levert nooit meer dan drie verschillende artikelen.
+
+### 2.11 Financiële en commerciële vragen via de basisprompt (17 sep)
 Onderaan de basisprompt: 3 van de 10 goed. Bovenaan, strenger geformuleerd: 8 van de 15. Gewone factuurvragen bleven goed (6 van 6). Eén keer noemde het model tóch een prijs.
 
 **Les:** de basisprompt alleen is hiervoor te zwak; een instelling per widget met een vaste tekst is de betrouwbare route.
@@ -135,7 +182,7 @@ Bronnen: [Alhena over herschrijven bij meerdere beurten](https://alhena.ai/blog/
 ## 5. Wat nog open staat
 
 1. **Varianten voor het herschrijven meten** (onderwerpwissel, trefwoord-stijl, geschiedenis zonder de antwoorden van de assistent) en de beste live zetten.
-2. **Zware controle op verzonnen details bouwen**, met repareren per zin in plaats van weigeren, plus een eerlijke regel en de afspraakknop. Kost ongeveer 3 s.
+2. ~~Zware controle op verzonnen details bouwen~~ — gebouwd, gemeten en live op 18 sep, zie 2.8 en 2.9.
 3. **Dezelfde controle naar het interne pad**, eerst alleen meekijkend, zodat beide paden vergelijkbaar worden.
 4. **Geen nieuwe gok zonder nieuw artikel:** bij een vervolgbeurt zonder nieuw gevonden artikel een medewerker aanbieden (23 van de 38 correctiebeurten).
 5. ~~Korte vraag: antwoorden plus één vervolgvraag~~ — gemeten op 18 sep en afgevallen, zie 2.10.
