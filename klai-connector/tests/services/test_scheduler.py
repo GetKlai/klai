@@ -42,8 +42,16 @@ def _scheduled(
     connector_id: uuid.UUID | None = None,
     org_id: str = "org-a",
     schedule: str = "0 3 * * *",
+    connector_type: str = "github",
+    has_saved_credentials: bool = False,
 ) -> ScheduledConnector:
-    return ScheduledConnector(connector_id=connector_id or uuid.uuid4(), org_id=org_id, schedule=schedule)
+    return ScheduledConnector(
+        connector_id=connector_id or uuid.uuid4(),
+        org_id=org_id,
+        schedule=schedule,
+        connector_type=connector_type,
+        has_saved_credentials=has_saved_credentials,
+    )
 
 
 def _portal_mock(items: list[ScheduledConnector]) -> MagicMock:

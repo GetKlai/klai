@@ -58,6 +58,8 @@ class ScheduledConnector:
     connector_id: uuid.UUID
     org_id: str
     schedule: str
+    connector_type: str
+    has_saved_credentials: bool
 
 
 class PortalClient:
@@ -123,7 +125,8 @@ class PortalClient:
         synced on a schedule, with the tenant org_id the sync run needs.
 
         Returns:
-            List of ScheduledConnector (connector_id, org_id, crontab schedule).
+            List of ScheduledConnector (connector_id, org_id, crontab schedule,
+            connector_type, has_saved_credentials).
 
         Raises:
             httpx.HTTPStatusError: On 4xx/5xx.
@@ -139,6 +142,8 @@ class PortalClient:
                     connector_id=uuid.UUID(item["connector_id"]),
                     org_id=item["zitadel_org_id"],
                     schedule=item["schedule"],
+                    connector_type=item["connector_type"],
+                    has_saved_credentials=item["has_saved_credentials"],
                 )
                 for item in response.json()
             ]

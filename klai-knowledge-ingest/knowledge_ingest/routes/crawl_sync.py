@@ -44,6 +44,8 @@ from knowledge_ingest.connector_state import (
 )
 from knowledge_ingest.db import get_pool, tenant_scoped_connection
 from knowledge_ingest.resource_jobs import cancel_jobs_by_resource_key, connector_resource_key
+from knowledge_ingest.routes.crawl import _probe_fetch
+from knowledge_ingest.utils.url_validator import validate_url_pinned
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -439,3 +441,97 @@ async def crawl_sync_cancel(job_id: str) -> None:
             job_id=job_id,
             proc_job_id=proc_row["id"],
         )
+
+
+class CrawlKeepAliveRequest(BaseModel):
+    """Payload for POST /ingest/v1/crawl/keep-alive.
+
+    Same contract shape as CrawlSyncRequest: callers send connector_id, never
+    a cookie value — knowledge-ingest resolves cookies itself via the shared
+    credentials library.
+    """
+
+    connector_id: uuid.UUID
+    org_id: str
+    url: str
+
+
+class CrawlKeepAliveResponse(BaseModel):
+    ok: bool
+
+
+@router.post("/ingest/v1/crawl/keep-alive", response_model=CrawlKeepAliveResponse)
+async def crawl_keepalive(req: CrawlKeepAliveRequest) -> CrawlKeepAliveResponse:
+    """Touch a connector's stored session with one cheap authenticated GET.
+
+    Best-effort liveness ping for klai-connector's keep-alive job (a stored
+    session goes idle-timeout between once-daily scheduled crawls). Never
+    raises — a failed touch is just ``ok=False``, not a 500.
+    """
+    try:
+        cookies = await load_connector_cookies(
+            connector_id=req.connector_id,
+            expected_zitadel_org_id=req.org_id,
+            pool=await get_pool(),
+            kek_hex=settings.encryption_key,
+        )
+    except (
+        ConnectorNotFoundError,
+        ConnectorOrgMismatchError,
+        ConnectorDecryptError,
+        ValueError,
+    ) as exc:
+        logger.warning(
+            "crawl_keepalive_cookie_load_failed",
+            connector_id=str(req.connector_id),
+            error=str(exc),
+        )
+        return CrawlKeepAliveResponse(ok=False)
+
+    if not cookies:
+        return CrawlKeepAliveResponse(ok=False)
+
+    cookie_dict = {
+        c["name"]: c["value"]
+        for c in cookies
+        if isinstance(c, dict) and c.get("name") and c.get("value")
+    }
+
+    try:
+        validated = await validate_url_pinned(req.url)
+    except ValueError as exc:
+        logger.warning(
+            "crawl_keepalive_url_invalid",
+            connector_id=str(req.connector_id),
+            url=req.url,
+            error=str(exc),
+        )
+        return CrawlKeepAliveResponse(ok=False)
+
+    pin_map = {validated.hostname: validated.preferred_ip}
+    try:
+        result = await _probe_fetch(req.url, pin_map, cookie_dict)
+    except Exception as exc:
+        logger.warning(
+            "crawl_keepalive_fetch_failed",
+            connector_id=str(req.connector_id),
+            url=req.url,
+            error=str(exc),
+        )
+        return CrawlKeepAliveResponse(ok=False)
+
+    # `_probe_fetch` runs with follow_redirects=False, so any 3xx is a
+    # redirect that was never followed — commonly a redirect to a login page
+    # for an expired session (exactly the RedCactus failure mode this
+    # endpoint exists to prevent). Treating status_code < 400 as success
+    # misreported that as a live session. Only a direct 2xx counts.
+    ok = 200 <= result.status_code < 300
+    logger.info(
+        "crawl_keepalive_probe",
+        connector_id=str(req.connector_id),
+        org_id=req.org_id,
+        url=req.url,
+        status_code=result.status_code,
+        ok=ok,
+    )
+    return CrawlKeepAliveResponse(ok=ok)
