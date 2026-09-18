@@ -18,10 +18,18 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from pathlib import Path
 
-from sqlalchemy import text
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+if str(BACKEND_ROOT) not in sys.path:
+    # Running "python scripts/grounding_report.py" puts scripts/ on the path,
+    # not the backend root, so ``app`` would not import. Same bootstrap as
+    # create_product_update.py.
+    sys.path.insert(0, str(BACKEND_ROOT))
 
-from app.core.database import cross_org_session
+from sqlalchemy import text  # noqa: E402
+
+from app.core.database import cross_org_session  # noqa: E402
 
 _QUERY = text(
     """
