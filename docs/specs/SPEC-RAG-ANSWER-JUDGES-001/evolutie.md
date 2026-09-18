@@ -138,7 +138,7 @@ Bronnen: [Alhena over herschrijven bij meerdere beurten](https://alhena.ai/blog/
 2. **Zware controle op verzonnen details bouwen**, met repareren per zin in plaats van weigeren, plus een eerlijke regel en de afspraakknop. Kost ongeveer 3 s.
 3. **Dezelfde controle naar het interne pad**, eerst alleen meekijkend, zodat beide paden vergelijkbaar worden.
 4. **Geen nieuwe gok zonder nieuw artikel:** bij een vervolgbeurt zonder nieuw gevonden artikel een medewerker aanbieden (23 van de 38 correctiebeurten).
-5. **Korte vraag: antwoorden plus één vervolgvraag**, herkend op zes woorden of minder.
+5. ~~Korte vraag: antwoorden plus één vervolgvraag~~ — gemeten op 18 sep en afgevallen, zie 2.10.
 6. **Stijlregels uit de Voys-basisprompt halen** ("Je hebt nu…", overgenomen voorbeeldzinnen).
 7. **Instelling per widget** voor onderwerpen die de assistent niet behandelt, zoals financiële en commerciële vragen.
 8. **Kennisbank aanvullen**; dat is het plafond dat geen enkele schakel wegneemt.
