@@ -99,9 +99,7 @@ async def check_grounding(
     """List the reply's statements with their evidence; ``None`` when the call fails."""
     content = await _call(
         system_prompt=GROUNDING_CHECK_SYSTEM_PROMPT,
-        user_content=grounding_check_user_content(
-            question=question, articles=articles, draft=draft
-        ),
+        user_content=grounding_check_user_content(question=question, articles=articles, draft=draft),
         settings=settings,
         timeout_seconds=_CHECK_TIMEOUT_SECONDS,
         response_format=grounding_check_response_format(),
