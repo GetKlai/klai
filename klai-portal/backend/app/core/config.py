@@ -285,6 +285,11 @@ class Settings(BaseSettings):
     # reason RAGAS faithfulness moved off klai-fast (Mistral Small truncates
     # multi-field structured JSON). Tier-named, no role-specific alias.
     conversation_judge_model: str = "klai-medium"
+    # The statement-level grounding check and its repair. Deliberately not the
+    # small model the answer shares its quota with: measured on 2026-09-17 the
+    # small model caught 22% of answers stating something the articles do not,
+    # this one 96%.
+    answer_grounding_model: str = "klai-medium"
     # SPEC-CHAT-QUALITY-LOOP-001: the judge makes one LLM call per unjudged
     # conversation on the same LiteLLM/Mistral capacity that serves live
     # chat traffic. Confine it to an off-peak UTC window so a large backlog

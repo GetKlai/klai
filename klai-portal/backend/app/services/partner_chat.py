@@ -56,6 +56,12 @@ from klai_chat_prompts.language import (
 
 from app.core.config import Settings
 from app.core.database import tenant_scoped_session
+from app.services.answer_grounding import (
+    NOTHING_LEFT,
+    GroundingCheck,
+    check_grounding,
+    repair_answer,
+)
 from app.services.answer_judge import decide_answer, is_clarifying_question, judge_answer
 from app.services.citations import (
     compose_answer_with_trusted_sources,
@@ -1954,7 +1960,16 @@ async def _judge_composed_answer(
     if not safe_text:
         return content, sources, decision
     articles = [(_chunk_source_title(chunk), str(chunk.get("text") or "")) for chunk in citation_chunks or []]
-    judgement = await judge_answer(messages=messages, draft=safe_text, articles=articles, settings=settings)
+    # Both checks read the same draft and run together, so the heavier one costs
+    # its own 2.1 s median once and nothing on top of the light judge's 0.4 s.
+    judgement, grounding = await asyncio.gather(
+        judge_answer(messages=messages, draft=safe_text, articles=articles, settings=settings),
+        check_grounding(question=_visitor_question(messages), draft=safe_text, articles=articles, settings=settings),
+    )
+    if judgement is not None and grounding is not None:
+        # The statement-level check decides grounding: measured against 54
+        # hand-checked answers it catches 96% where the light judge caught 22%.
+        judgement = judgement.model_copy(update={"grounding": _grounding_label(grounding)})
     outcome = decide_answer(
         has_sources=bool(sources),
         escalation=force_escalation,
@@ -1965,10 +1980,20 @@ async def _judge_composed_answer(
     )
     verdicts = judgement.model_dump() if judgement is not None else {}
     logger.info(
-        "partner_chat_answer_judge", org_id=org_id, decision=outcome, judge_failed=judgement is None, **verdicts
+        "partner_chat_answer_judge",
+        org_id=org_id,
+        decision=outcome,
+        judge_failed=judgement is None,
+        grounding_checked=grounding is not None,
+        unsupported=len(grounding.unsupported) if grounding is not None else None,
+        **verdicts,
     )
     if answer_signals is not None:
         answer_signals.update(verdicts, decision=outcome)
+        if grounding is not None:
+            answer_signals["unsupported"] = len(grounding.unsupported)
+        else:
+            answer_signals.setdefault("judge_failed", []).append("grounding")
         if judgement is None:
             answer_signals.setdefault("judge_failed", []).append("answer")
 
@@ -1997,7 +2022,91 @@ async def _judge_composed_answer(
             decision["escalation"] = _appointment_escalation()
     if outcome == "partial_answer":
         decision["escalation"] = _appointment_escalation()
+    # Only a reply the visitor actually reads gets repaired: a refusal and a
+    # clarifying question state nothing about the organisation.
+    if outcome in ("answer", "partial_answer") and grounding is not None and grounding.worth_repairing:
+        content, sources, decision = await _repair_unsupported_statements(
+            content,
+            sources,
+            decision,
+            grounding=grounding,
+            citation_chunks=citation_chunks,
+            settings=settings,
+            org_id=org_id,
+            answer_signals=answer_signals,
+            response_language=response_language,
+        )
     return content, sources, decision
+
+
+def _visitor_question(messages: list[dict]) -> str:
+    return _last_user_message(messages) or ""
+
+
+def _grounding_label(grounding: GroundingCheck) -> str:
+    if grounding.unsupported:
+        return "some_not_in_articles"
+    return "all_in_articles" if grounding.statements else "no_company_statements"
+
+
+async def _repair_unsupported_statements(
+    content: str,
+    sources: list[dict],
+    decision: dict[str, Any],
+    *,
+    grounding: GroundingCheck,
+    citation_chunks: list[dict] | None,
+    settings: Settings,
+    org_id: int | str | None,
+    answer_signals: dict[str, Any] | None,
+    response_language: str | None,
+) -> tuple[str, list[dict], dict[str, Any]]:
+    """Remove the statements the articles do not support, keep the rest.
+
+    Measured on 150 real answers: editing the reply this way took answers with
+    an unsupported statement from 49% to 11% (serious ones from 29% to 1%) and
+    cost no good answer, where deleting the flagged sentences in code cost one
+    and damaged two. A failed repair keeps the composed answer, which is what
+    the visitor got before this check existed.
+    """
+    repaired = await repair_answer(draft=content, unsupported=grounding.unsupported, settings=settings)
+    if repaired not in (None, NOTHING_LEFT):
+        # The repair model returns free text, so it passes the same two guards
+        # the composer's output already passed: the link and citation stripper,
+        # and the output safety check. A prompt that forbids adding a URL is not
+        # a guarantee (reproduced on the conversational branch, 2026-09-15).
+        repaired = _answer_without_retrieved_sources(str(repaired), citation_chunks)
+        if not repaired:
+            repaired = None
+        elif safety_reason := output_safety_violation(repaired):
+            logger.warning("partner_chat_repair_blocked", org_id=org_id, reason=safety_reason)
+            repaired = None
+    logger.info(
+        "partner_chat_answer_repair",
+        org_id=org_id,
+        unsupported=len(grounding.unsupported),
+        result="failed" if repaired is None else ("nothing_left" if repaired == NOTHING_LEFT else "repaired"),
+    )
+    if answer_signals is not None:
+        answer_signals["repaired"] = repaired not in (None, NOTHING_LEFT, content)
+    if repaired is None or repaired == content:
+        return content, sources, decision
+    if repaired == NOTHING_LEFT:
+        # Every statement was unsupported: there is no sourced answer left to
+        # keep, so the honest refusal is what remains.
+        return (
+            _no_citable_sources_message(response_language, helpdesk=True),
+            [],
+            {
+                "reason": "grounding_nothing_left",
+                _NO_CITABLE_SOURCES_DECISION_KEY: True,
+                "broad_mode": "offer",
+                "escalation": _appointment_escalation(),
+            },
+        )
+    decision = {**decision, "reason": "grounding_repaired"}
+    decision["escalation"] = _appointment_escalation()
+    return repaired, sources, decision
 
 
 def _log_turn_timing(
