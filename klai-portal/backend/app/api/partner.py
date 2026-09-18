@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from klai_chat_prompts.language import identify_text_language
+from klai_chat_prompts.language import identify_text_language, resolve_conversation_language
 from pydantic import BaseModel, Field, ValidationError
 from redis.exceptions import RedisError
 from sqlalchemy import select, text
@@ -48,6 +48,8 @@ from app.services.partner_chat import (
     _last_user_message,
     chat_completion_non_streaming,
     chat_completion_streaming,
+    off_topic_response,
+    off_topic_stream,
     openai_chat_completion_non_streaming,
     openai_chat_completion_streaming,
     retrieve_context,
@@ -439,6 +441,32 @@ async def _widget_support_mode_enabled(auth: PartnerAuthContext, db: AsyncSessio
     )
     config = result.scalar_one_or_none() or {}
     return bool(config.get("support_mode")) if isinstance(config, dict) else False
+
+
+async def _widget_off_topic(auth: PartnerAuthContext, db: AsyncSession) -> tuple[str, str]:
+    """Return this widget's (subjects it does not answer, reply to give instead).
+
+    Both empty means the feature is off, which is every widget until an admin
+    fills them in. Same shape and same widget-JWT restriction as
+    :func:`_widget_support_mode_enabled`.
+    """
+    if not str(auth.key_id).startswith("wgt_"):
+        return "", ""
+    result = await db.execute(
+        select(Widget.widget_config).where(
+            Widget.widget_id == auth.key_id,
+            Widget.org_id == auth.org_id,
+        )
+    )
+    config = result.scalar_one_or_none() or {}
+    if not isinstance(config, dict):
+        return "", ""
+    subjects = config.get("off_topic_subjects")
+    reply = config.get("off_topic_reply")
+    return (
+        subjects.strip() if isinstance(subjects, str) else "",
+        reply.strip() if isinstance(reply, str) else "",
+    )
 
 
 async def _widget_tone_register(auth: PartnerAuthContext, db: AsyncSession) -> str:
@@ -1761,6 +1789,7 @@ async def chat_completions(  # noqa: C901
     widget_system_prompt = await _widget_system_prompt(auth, db)
     page_context_enabled = await _widget_page_context_enabled(auth, db) if is_widget_chat else False
     support_mode = await _widget_support_mode_enabled(auth, db) if is_widget_chat else False
+    off_topic_subjects, off_topic_reply = await _widget_off_topic(auth, db) if is_widget_chat else ("", "")
     # Register only matters when support mode is on; for internal widgets and
     # partner-key traffic it stays the default and changes nothing.
     tone_register = await _widget_tone_register(auth, db) if is_widget_chat and support_mode else "restrained"
@@ -1790,6 +1819,10 @@ async def chat_completions(  # noqa: C901
             audit_session_key = getattr(auth, "session_key", None) or session_key_from_token(raw_token)
             audit_ip_hash = hash_audit_value(http_request.client.host if http_request.client else None)
             audit_ua_hash = hash_audit_value(http_request.headers.get("user-agent"))
+
+    # Known as soon as the audit identity is resolved, and needed before the
+    # first early return that still has to record its answer.
+    audit_ready = is_widget_chat and audit_widget_id is not None and audit_session_key is not None
 
     # The user turn is written before retrieval so the gap task can wait for
     # the conversation row instead of racing it (first-turn gaps used to lose
@@ -1875,7 +1908,7 @@ async def chat_completions(  # noqa: C901
         if support_mode:
             (retrieval_result, retrieval_ms), (turn_judgement, turn_judge_ms) = await asyncio_gather(
                 _timed(retrieval),
-                _timed(turn_judge.judge_turn(request.messages, settings)),
+                _timed(turn_judge.judge_turn(request.messages, settings, off_topic_subjects=off_topic_subjects)),
             )
             turn_timing = {"started_at": turn_started, "retrieval_ms": retrieval_ms, "turn_judge_ms": turn_judge_ms}
         else:
@@ -1964,8 +1997,62 @@ async def chat_completions(  # noqa: C901
             wants_human=turn_judgement.wants_human if turn_judgement else None,
             sentiment=sentiment,
             clarity=turn_judgement.clarity if turn_judgement else None,
+            topic=turn_judgement.topic if turn_judgement else None,
             retrieval_gap=gap,
         )
+
+    # A subject this widget does not answer (prices, quotes, payment terms):
+    # the visitor gets the tenant's own sentence and the appointment button, and
+    # no model writes a word, so a price cannot slip in from an article. The
+    # judge decided this beside retrieval, so it costs no wall-clock; the
+    # generation this replaces makes the turn faster, not slower.
+    if (
+        support_mode
+        and off_topic_subjects
+        and off_topic_reply
+        and turn_judgement
+        and turn_judgement.topic == "not_handled"
+    ):
+        # A failing judge falls through to the normal answer on purpose: that is
+        # what the visitor got before this setting existed, and refusing every
+        # turn because one call timed out would be worse than answering one
+        # price question. Same fail direction as every other check here.
+        answer_signals.update(
+            decision="off_topic",
+            sources_count=0,
+            refused=False,
+            broad_mode=False,
+            model=request.model,
+        )
+        logger.info(
+            "partner_chat_off_topic",
+            org_id=auth.org_id,
+            wgt_id=auth.key_id if str(auth.key_id).startswith("wgt_") else None,
+        )
+        language = resolve_conversation_language(request.messages).language
+        if language is not None:
+            answer_signals["language"] = language
+        if audit_ready:
+            task = asyncio.create_task(
+                record_widget_turn(
+                    widget_id=audit_widget_id,  # type: ignore[arg-type]
+                    session_key=audit_session_key,  # type: ignore[arg-type]
+                    role="assistant",
+                    content=off_topic_reply,
+                    loaded_origin=http_request.headers.get("origin") or None,
+                    is_preview=getattr(auth, "is_preview", False),
+                    turn_id=request.widget_turn_id,
+                    answer_signals=answer_signals or None,
+                )
+            )
+            _pending.add(task)
+            task.add_done_callback(_pending.discard)
+        if request.stream:
+            return StreamingResponse(
+                content=off_topic_stream(reply=off_topic_reply, language=language),
+                media_type="text/event-stream",
+            )
+        return off_topic_response(model=request.model, reply=off_topic_reply, language=language)
 
     system_prompt, web_chunks, web_query = await _maybe_apply_web_search(
         request=request,
@@ -1996,7 +2083,6 @@ async def chat_completions(  # noqa: C901
     # assistant turn once the response is composed. Fire-and-forget so
     # an audit hiccup never breaks the chat. The identity these writes use
     # was resolved in step 6a, before retrieval. SPEC-WIDGET-ACTIVITY-001.
-    audit_ready = is_widget_chat and audit_widget_id is not None and audit_session_key is not None
     (
         allowed_source_urls,
         citation_source_urls,

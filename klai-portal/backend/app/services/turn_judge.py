@@ -77,8 +77,19 @@ _SYSTEM_PROMPT = (
     "device or subscription they mean, or which of several different procedures applies. A short message "
     "is not ambiguous by itself; a greeting, a thank-you or a request for a person is clear.\n\n"
     "missing — when ambiguous, a few words naming what the visitor has not told you, in the visitor's "
-    "language. Empty when clear."
+    "language. Empty when clear.\n\n"
+    "topic — exactly one category:\n"
+    "not_handled — the visitor's latest message asks about one of the subjects this help chat does not "
+    "answer, listed below. Judge what the visitor wants, not which words they use.\n"
+    "handled — anything else, and everything when the list below is empty."
 )
+
+_NO_SUBJECTS = "(none: every subject is handled)"
+
+
+def _system_prompt(off_topic_subjects: str) -> str:
+    subjects = " ".join(off_topic_subjects.split()) or _NO_SUBJECTS
+    return f"{_SYSTEM_PROMPT}\n\nSubjects this help chat does not answer:\n{subjects}"
 
 
 class TurnJudgement(BaseModel):
@@ -86,6 +97,7 @@ class TurnJudgement(BaseModel):
 
     model_config = ConfigDict(extra="forbid", strict=True, hide_input_in_errors=True)
 
+    topic: Literal["handled", "not_handled"]
     scope: Literal["conversation", "organisation", "world"]
     wants_human: bool
     sentiment: Literal["negative", "neutral", "positive"]
@@ -162,14 +174,14 @@ def conversation_excerpt(messages: list[dict]) -> str:
     return "\n\n".join(lines)
 
 
-async def judge_turn(messages: list[dict], settings: Settings) -> TurnJudgement | None:
+async def judge_turn(messages: list[dict], settings: Settings, *, off_topic_subjects: str = "") -> TurnJudgement | None:
     """Judge the visitor's latest turn; ``None`` means the judge failed. Never raises."""
     excerpt = conversation_excerpt(messages)
     if "(LATEST message)" not in excerpt:
         return None
     return await structured_judge_call(
         name="turn_judge",
-        system_prompt=_SYSTEM_PROMPT,
+        system_prompt=_system_prompt(off_topic_subjects),
         user_content=excerpt,
         schema=TurnJudgement,
         timeout_seconds=_TURN_JUDGE_TIMEOUT_SECONDS,

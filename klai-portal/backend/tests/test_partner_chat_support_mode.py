@@ -397,7 +397,9 @@ async def _run_with_scope(*, chunks, scope_result):
         stream=False,
     )
 
-    judgement = TurnJudgement(scope=scope_result, wants_human=False, sentiment="neutral", clarity="clear", missing="")
+    judgement = TurnJudgement(
+        topic="handled", scope=scope_result, wants_human=False, sentiment="neutral", clarity="clear", missing=""
+    )
     classifier = AsyncMock(return_value=judgement)
     with (
         patch("app.api.partner.retrieve_context", return_value=(chunks, "SUPPORT PROFILE", [], False)),

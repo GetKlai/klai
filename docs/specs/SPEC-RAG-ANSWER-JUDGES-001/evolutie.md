@@ -191,6 +191,18 @@ Na de nieuwe herschrijving komt het juiste artikel even vaak mee (39% tegen 39-4
 
 De maat "minstens één bruikbare passage" beloont dus deels de fout die we net hebben weggehaald. Wat telt is of het antwoordgevende artikel meekomt, en dat bleef gelijk, terwijl de blinde vergelijking op vervolgbeurten in het voordeel van de nieuwe versie uitvalt (23 om 13). Geen actie; wel de reden om die maat niet als doel te nemen.
 
+### 2.10f Onderwerpen die de assistent niet behandelt (18 sep)
+De vraag van Mark: financiële en commerciële vragen niet beantwoorden maar meteen doorverwijzen. Via de basisprompt lukte dat 8 van de 15 keer (zie 2.12). Nu als instelling per widget: de onderwerpen die de assistent niet behandelt plus de tekst die de bezoeker krijgt. De controle vooraf, die al naast het zoeken draait, beoordeelt of de vraag daarin valt; zo ja, dan krijgt de bezoeker precies die tekst met de afspraakknop en schrijft het model niets.
+
+Gemeten op 13 echte vraagsoorten, twee rondes, met de Voys-onderwerpen (prijzen, tarieven, kortingen, offertes, uitstel van betaling, terugbetalingen, contract en opzeggen):
+
+| | Uitkomst |
+|---|---|
+| Financiële en commerciële vragen afgevangen | 14 van 14 |
+| Hulpvragen ongemoeid (facturen vinden, incasso, factuuradres, belplan, meldingen) | 12 van 12 |
+
+Het scheelt bovendien tijd: de antwoordronde vervalt.
+
 ### 2.11 Dezelfde controle op de interne chat, alleen meekijkend (18 sep)
 De interne chat (LibreChat via de LiteLLM-hook) doet nu dezelfde controle per zin als de widget, met letterlijk dezelfde tekst uit de gedeelde bibliotheek. Daar verandert hij niets aan het antwoord en wacht de gebruiker nergens op: de controle wordt naast het antwoord gestart en logt alleen wat er niet in de artikelen staat. Zo kunnen beide paden straks naast elkaar gelegd worden.
 
