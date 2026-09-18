@@ -138,6 +138,18 @@ volumes:
 # read-only socket proxy wrote ~19 lines/second and VictoriaLogs received 17
 # lines in total.
 
+# Bound every container's json.log, declared per service rather than left to the
+# daemon default. Docker copies /etc/docker/daemon.json's log-opts into a
+# container's own config only when the container is created, so the default
+# silently skips any container that predates the daemon last reading that file.
+# On 2026-09-18 that was 63 of 92 containers on core-01 and it filled the root
+# filesystem. An anchor here makes the bound a property of the service.
+x-log-rotation: &log-rotation
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "3"
+
 services:
 
   # ─── Caddy (reverse proxy + wildcard TLS) ────────────────────────────────
@@ -169,6 +181,7 @@ services:
 
   # ─── MongoDB ──────────────────────────────────────────────────────────────
   mongodb:
+    logging: *log-rotation
     image: mongo:8.2.12
     restart: unless-stopped
     ulimits:
@@ -190,6 +203,7 @@ services:
 
   # ─── PostgreSQL ───────────────────────────────────────────────────────────
   postgres:
+    logging: *log-rotation
     image: pgvector/pgvector:0.8.6-pg18
     restart: unless-stopped
     volumes:
@@ -209,6 +223,7 @@ services:
 
   # ─── Redis ────────────────────────────────────────────────────────────────
   redis:
+    logging: *log-rotation
     image: redis:8.10.0-alpine
     restart: unless-stopped
     volumes:
@@ -226,6 +241,7 @@ services:
 
   # ─── listmonk PostgreSQL (mailing.getklai.com) ───────────────────────────
   listmonk-db:
+    logging: *log-rotation
     image: postgres:17.10-alpine
     restart: unless-stopped
     volumes:
@@ -244,6 +260,7 @@ services:
 
   # ─── Meilisearch ──────────────────────────────────────────────────────────
   meilisearch:
+    logging: *log-rotation
     image: getmeili/meilisearch:v1.53.0
     restart: unless-stopped
     volumes:
@@ -263,6 +280,7 @@ services:
 
   # ─── Zitadel ──────────────────────────────────────────────────────────────
   zitadel:
+    logging: *log-rotation
     image: ghcr.io/zitadel/zitadel:v4.17.0
     restart: unless-stopped
     ports:
@@ -588,6 +606,7 @@ services:
           memory: 512M
 
   presidio-anonymizer:
+    logging: *log-rotation
     image: ghcr.io/data-privacy-stack/presidio-anonymizer@sha256:a10a12a2a613d13cf29d3ad3641e3258444dd8c90403dd644a0a114c472c2483
     restart: unless-stopped
     networks:
@@ -676,6 +695,7 @@ services:
 
   # ─── Ollama (CPU fallback) ────────────────────────────────────────────────
   ollama:
+    logging: *log-rotation
     image: ollama/ollama:0.32.9
     restart: unless-stopped
     volumes:
@@ -716,11 +736,7 @@ services:
     # than Alloy's discovery loop and is far lower-volume, which is why it was
     # not the container that filled the disk on 2026-09-18 — not a difference in
     # kind.
-    logging:
-      driver: json-file
-      options:
-        max-size: "50m"
-        max-file: "3"
+    logging: *log-rotation
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
@@ -764,11 +780,7 @@ services:
     # carried an empty log config and never rotated; this service was one of
     # them. Declaring it in compose makes the bound a property of the service
     # instead of a property of when someone last recreated it.
-    logging:
-      driver: json-file
-      options:
-        max-size: "50m"
-        max-file: "3"
+    logging: *log-rotation
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
@@ -873,6 +885,7 @@ services:
   # Purpose: compose campaigns, manage templates/lists/subscribers, and receive
   # selected Twenty CRM People via workflow HTTP requests.
   listmonk:
+    logging: *log-rotation
     image: listmonk/listmonk:v6.2.0
     restart: unless-stopped
     hostname: mailing.${DOMAIN}
@@ -1208,6 +1221,7 @@ services:
   # To migrate: update Alloy endpoint URLs to point to monitor-01.
 
   victoriametrics:
+    logging: *log-rotation
     image: victoriametrics/victoria-metrics:v1.149.0
     restart: unless-stopped
     volumes:
@@ -1317,6 +1331,7 @@ services:
       start_period: 30s
 
   cadvisor:
+    logging: *log-rotation
     image: ghcr.io/google/cadvisor:v0.60.5
     restart: unless-stopped
     privileged: false
@@ -1420,8 +1435,14 @@ services:
       # ALERTS_EMAIL_RECIPIENTS: comma-separated list for klai-ops-alerts-email.
       # KUMA_HEARTBEAT_URL: full Uptime Kuma push URL incl. token for the
       # dead-man's-switch heartbeat (fires every 5 min from the synthetic rule).
+      # KUMA_DISK_HEADROOM_URL: same shape, push monitor 75. The disk rule is
+      # inverted — it fires while /dev/md2 has headroom — so losing this push is
+      # the alert. It exists because every email contact point here lands in the
+      # same shared mailbox, which is where core01_disk_usage_high went unread
+      # for fourteen days before the disk filled on 2026-09-18.
       ALERTS_EMAIL_RECIPIENTS: ${ALERTS_EMAIL_RECIPIENTS}
       KUMA_HEARTBEAT_URL: ${KUMA_HEARTBEAT_URL}
+      KUMA_DISK_HEADROOM_URL: ${KUMA_DISK_HEADROOM_URL}
     depends_on:
       - victoriametrics
       - victorialogs
@@ -1447,6 +1468,7 @@ services:
   # ─── Research: document Q&A service ─────────────────────────────────────
 
   docling-serve:
+    logging: *log-rotation
     image: ghcr.io/docling-project/docling-serve:v1.30.0
     restart: unless-stopped
     environment:
@@ -1460,6 +1482,7 @@ services:
     # NOT exposed via Caddy — internal Docker network only
 
   searxng:
+    logging: *log-rotation
     image: searxng/searxng:2026.8.12-cdfdaa5a8
     restart: unless-stopped
     environment:
@@ -1690,6 +1713,7 @@ services:
   # docker-socket-proxy:2375, which enforces the CONTAINERS/NETWORKS/POST/DELETE
   # whitelist. Runtime-api never sees the real host docker socket.
   runtime-api-socket-proxy:
+    logging: *log-rotation
     image: alpine/socat:1.8.1.3
     restart: unless-stopped
     command: >
@@ -1750,6 +1774,7 @@ services:
   # database — so a second Vexa deployment sharing this instance would collide on
   # channel names even on a different DB index. Vexa offers no channel prefix.
   vexa12-redis:
+    logging: *log-rotation
     image: redis:8.10.0-alpine
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes", "--requirepass", "${VEXA_REDIS_PASSWORD}", "--appendfsync", "everysec"]
@@ -2105,6 +2130,7 @@ services:
   #   - S3 API on :3900 (authenticated uploads from klai-connector)
   #   - Web endpoint on :3902 (anonymous reads via Caddy /kb-images/ route)
   garage:
+    logging: *log-rotation
     image: dxflrs/garage:v2.3.0
     restart: unless-stopped
     volumes:
@@ -2244,6 +2270,7 @@ services:
   # Bumping means running deploy/tests/firecrawl-contract.sh against the
   # candidate first, then editing here.
   firecrawl-postgres:
+    logging: *log-rotation
     image: postgres:18.4-alpine
     restart: unless-stopped
     environment:
@@ -2329,6 +2356,7 @@ services:
   # Deployment target and DNS records are environment-specific. Klai production
   # host details live in the private infra repository.
   cal-com:
+    logging: *log-rotation
     image: calcom/cal.com:v6.2.0
     restart: unless-stopped
     environment:

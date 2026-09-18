@@ -5,6 +5,7 @@
 #   - spec=SPEC-SEC-024                          → klai-dev-alerts-email (SEC-024-R12/R13)
 #   - spec=SPEC-INFRA-005                        → klai-dev-alerts-email (SPEC-INFRA-005 persistence)
 #   - spec=SPEC-OBS-001 + alert_type=heartbeat   → heartbeat-kuma (OBS-001-R22)
+#   - spec=SPEC-OBS-001 + alert_type=disk_headroom → disk-headroom-kuma (inverted; push stops = alert)
 #   - spec=SPEC-OBS-001                          → klai-ops-alerts-email (OBS-001-R4/R5)
 #   - spec=SPEC-INFRA-CONTAINER-HYGIENE-001      → klai-ops-alerts-email (REQ-5 orphan-audit)
 #   - spec=SPEC-INGEST-LOGIN-WALL-DETECT-001     → klai-ops-alerts-email (REQ-08 login-wall)
@@ -61,6 +62,31 @@ policies:
         group_wait: 0s
         group_interval: 2m
         repeat_interval: 2m
+        continue: false
+
+      # OBS-001 disk headroom — MUST match BEFORE the general OBS-001 route,
+      # for the same reason as the heartbeat above: it is a push, not a page.
+      #
+      # An inverted rule (see disk-headroom-rules.yaml) fires while the disk is
+      # healthy, so this route pushes to Uptime Kuma every ~5 min and losing the
+      # push is the alert. repeat_interval 5m against Kuma's 300s interval plus
+      # two 20s retries.
+      #
+      # Deliberately not a fourth email route: all three email contact points in
+      # contact-points.yaml deliver to hello@getklai.com, and
+      # core01_disk_usage_high already sent roughly 84 messages there over
+      # fourteen days while the disk filled anyway. Kuma mails a personal
+      # address, which is what makes this a different channel rather than the
+      # same one repeated faster.
+      - receiver: disk-headroom-kuma
+        matchers:
+          - spec = SPEC-OBS-001
+          - alert_type = disk_headroom
+        group_by:
+          - alertname
+        group_wait: 0s
+        group_interval: 5m
+        repeat_interval: 5m
         continue: false
 
       - receiver: klai-ops-alerts-email
