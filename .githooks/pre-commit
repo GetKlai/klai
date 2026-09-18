@@ -72,7 +72,7 @@ fi
 # branch is public the moment it is pushed, and CI only runs afterwards.
 
 if [ -x scripts/audit-public-tenant-data.py ]; then
-    python3 -B scripts/audit-public-tenant-data.py < /dev/null
+    python3 -B scripts/audit-public-tenant-data.py --staged
 fi
 
 # ---- Trigger 5: active agent knowledge ----

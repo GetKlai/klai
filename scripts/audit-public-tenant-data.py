@@ -94,9 +94,15 @@ def check(diff: str) -> list[str]:
 
 
 def main() -> int:
-    diff = sys.stdin.read() if not sys.stdin.isatty() else subprocess.run(
-        ["git", "diff", "--cached", "-U0"], capture_output=True, text=True, check=True
-    ).stdout
+    # An explicit flag, not a guess at stdin. The first version asked
+    # ``sys.stdin.isatty()``, and a git hook runs with stdin already redirected,
+    # so it read an empty string, found nothing, and let a real table through.
+    if "--staged" in sys.argv:
+        diff = subprocess.run(
+            ["git", "diff", "--cached", "-U0"], capture_output=True, text=True, check=True
+        ).stdout
+    else:
+        diff = sys.stdin.read()
     problems = check(diff)
     if not problems:
         return 0
