@@ -249,7 +249,7 @@ async def _gap_topics(factory, org_id: int = 901) -> list:
 
 async def test_support_gap_classified_topic_surfaces_in_gaps(pg) -> None:
     admin, factory, cid, _analyzer = pg
-    async with admin.connect() as conn:
+    async with admin.begin() as conn:
         node_a = (
             await conn.execute(
                 text(
@@ -258,10 +258,19 @@ async def test_support_gap_classified_topic_surfaces_in_gaps(pg) -> None:
                 )
             )
         ).scalar_one()
+        primary_id = (
+            await conn.execute(
+                text(
+                    "INSERT INTO portal_taxonomy_nodes (kb_id, name) "
+                    "SELECT id, 'Number porting' FROM portal_knowledge_bases "
+                    "WHERE org_id=901 AND slug='kb-a' RETURNING id"
+                )
+            )
+        ).scalar_one()
 
     with patch(
         "app.services.knowledge_ingest_client.classify_gap_taxonomy",
-        AsyncMock(return_value=[node_a]),
+        AsyncMock(return_value=[primary_id, node_a]),
     ):
         await _upsert(factory, cid, _payload())
 
@@ -274,12 +283,12 @@ async def test_support_gap_classified_topic_surfaces_in_gaps(pg) -> None:
                 )
             )
         ).scalar_one()
-    assert stored == [node_a]
+    assert stored == [primary_id, node_a]
 
     gaps = await _gap_topics(factory)
     assert len(gaps) == 1
     assert gaps[0].topic is not None
-    assert (gaps[0].topic.id, gaps[0].topic.name) == (node_a, "Billing")
+    assert (gaps[0].topic.id, gaps[0].topic.name) == (primary_id, "Number porting")
 
 
 async def test_support_topic_excludes_foreign_unknown_and_legacy_null(pg) -> None:

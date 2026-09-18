@@ -432,7 +432,11 @@ async def _list_support_gaps(
                     PortalRetrievalGap.question_key.in_(keys),
                 )
                 .distinct(PortalRetrievalGap.question_key)
-                .order_by(PortalRetrievalGap.question_key, PortalTaxonomyNode.id)
+                .order_by(
+                    PortalRetrievalGap.question_key,
+                    func.array_position(PortalRetrievalGap.taxonomy_node_ids, PortalTaxonomyNode.id),
+                    PortalTaxonomyNode.id,
+                )
             )
         ).all()
         topic_by_key = {tr.question_key: GapTopic(id=tr.id, name=tr.name) for tr in topic_rows}
