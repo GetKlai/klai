@@ -208,7 +208,7 @@ De interne chat (LibreChat via de LiteLLM-hook) doet nu dezelfde controle per zi
 
 Wat de review ving, en wat het waard was: de controle keek naar een veld dat alleen in mijn tests bestond (`kb_chat_mode`), terwijl productie `chat_retrieval_prompt_mode` schrijft. Hij zou dus nooit gedraaid hebben, met groene tests. Nu gebruikt hij dezelfde strikt-check als de renderer zelf, en testen de tests op de productiewaarde.
 
-Eerste live regels, 18 sep: twee interne beurten gemeten, beide met nul uitspraken over de organisatie (een weigering of een kort antwoord zonder bron). Te weinig om iets te zeggen; de cijfers komen als er verkeer is.
+**Correctie, 18 sep:** de eerste live regels die hier stonden kwamen van de `e2e`-testtenant (org 22), niet van een klant. Ik had het tenant-id nooit nagekeken en rapporteerde ze als "interne beurten". Wachten op verkeer was sowieso de verkeerde aanpak: echte interne gesprekken staan in de database en konden meteen gemeten worden. Dat is alsnog gedaan, zie 2.14.
 
 ### 2.12 Financiële en commerciële vragen via de basisprompt (17 sep)
 Onderaan de basisprompt: 3 van de 10 goed. Bovenaan, strenger geformuleerd: 8 van de 15. Gewone factuurvragen bleven goed (6 van 6). Eén keer noemde het model tóch een prijs.
@@ -237,6 +237,56 @@ over beperkingen staat nu dat alle drie de delen uit het artikel moeten komen.
 slechter maakte (62% tegen 49% met iets verzonnen). Deze ingreep is gerichter — alleen de
 kopieerbare zinnen — en is niet apart gemeten. Het is een beredeneerde aanpassing, geen
 bewezen winst. De oude configuratie staat als back-up buiten de repo.
+
+### 2.14 Dezelfde controle op echte interne gesprekken van Voys (18 sep)
+Uit de LibreChat-tenant van Voys: 1097 vragen van 20 gebruikers over vijf maanden, waarvan
+751 antwoorden een bronverwijzing dragen. De 50 meest recente daarvan (9 tot en met 18 sep)
+door exact dezelfde controle als de widget, met de artikelen die het zoeken nu oplevert.
+
+| | Widget (2.8) | Interne chat |
+|---|---|---|
+| Minstens één uitspraak die de artikelen niet dragen | 64% | **86%** |
+| Haalt de reparatiedrempel (2+ of tegenspraak) | 40% | **70%** |
+| Mediaan niet-gedragen uitspraken per antwoord | – | 3 |
+| Mediaan antwoordlengte | enkele honderden tekens | 1173 tekens |
+| Mediaan controletijd | 1,9 s | 3,6 s |
+
+**Conclusie:** het interne pad heeft dit probleem niet minder maar meer, en de reparatie hoort
+daar dus ook te draaien, niet alleen de meting.
+
+**De tijdsafweging ligt er wel anders.** De mediane controletijd is 3,6 s tegen 4 s budget op de
+widget, dus ongeveer de helft van de interne antwoorden zou op dat budget afkappen. Bij de
+eerste ronde met het widgetbudget vielen 17 van de 50 controles af, en juist de langste. Intern
+moet het budget dus omhoog, of de controle moet blijven draaien zonder dat de gebruiker wacht.
+
+**Twee beperkingen van dit cijfer.** De artikelen komen uit het zoeken van vandaag, niet uit wat
+het model destijds zag; over negen dagen is die afwijking klein maar niet nul. En dit meet de
+antwoorden zoals ze zijn opgeslagen, zonder de reparatie die het cijfer op de widget van 64%
+naar 11% bracht.
+
+### 2.15 Totaalmeting widget: oud tegen nu, blind (18 sep)
+50 echte eerste vragen van 11 tot en met 16 sep, opnieuw door de huidige keten via een
+preview-sessie, blind vergeleken met het antwoord dat de bezoeker destijds werkelijk kreeg.
+Elk paar twee keer beoordeeld, in beide volgordes.
+
+| Uitkomst | Aantal | Aandeel |
+|---|---|---|
+| Oud beter | 41 | 44% |
+| Nieuw beter | 47 | 50% |
+| Gelijk | 6 | 6% |
+
+Uit de herhaling zelf: 38 van de 50 met bron, 24 met afspraakknop, 3 mislukt.
+
+**Dit is geen verschil** — de meetafspraak hieronder noemt alles onder ongeveer tien beurten
+ruis, en het verschil is zes. Dat is consistent met 2.4 (69 om 65) en het heeft een aanwijsbare
+oorzaak: de beoordelaar krijgt de vraag en twee antwoorden, niet de artikelen, en kan een
+verzonnen detail dus niet herkennen. De winst van deze week zit in een maat die deze opzet niet
+kan zien (49% naar 11% met iets verzonnen, zin voor zin nagelezen), en de kosten zitten in
+tijd, die hij evenmin ziet.
+
+**Les voor volgende metingen:** een blinde vergelijking van twee antwoorden meet leesbaarheid en
+behulpzaamheid, niet gegrondheid. Wie gegrondheid wil meten moet de artikelen meegeven of per
+zin nalezen.
 
 ---
 
@@ -277,7 +327,7 @@ Bronnen: [Alhena over herschrijven bij meerdere beurten](https://alhena.ai/blog/
 
 1. **Varianten voor het herschrijven meten** (onderwerpwissel, trefwoord-stijl, geschiedenis zonder de antwoorden van de assistent) en de beste live zetten.
 2. ~~Zware controle op verzonnen details bouwen~~ — gebouwd, gemeten en live op 18 sep, zie 2.8 en 2.9.
-3. ~~Dezelfde controle naar het interne pad~~ — live op 18 sep, meekijkend, zie 2.11. Openstaand: de cijfers van beide paden naast elkaar leggen zodra er intern verkeer is gemeten.
+3. **Reparatie op het interne pad aanzetten.** De controle draait daar sinds 18 sep meekijkend (2.11). De cijfers van beide paden liggen nu naast elkaar (2.14): intern 86% tegen extern 64%, en 70% tegen 40% boven de reparatiedrempel. Openstaand is niet meer óf het moet, maar met welk tijdsbudget: de mediane controle duurt daar 3,6 s.
 4. **Geen nieuwe gok zonder nieuw artikel:** bij een vervolgbeurt zonder nieuw gevonden artikel een medewerker aanbieden (23 van de 38 correctiebeurten).
 5. ~~Korte vraag: antwoorden plus één vervolgvraag~~ — gemeten op 18 sep en afgevallen, zie 2.10.
 6. ~~Stijlregels uit de Voys-basisprompt halen~~ — **teruggenomen als advies.** Meting 2.5 liet zien dat álle stijlregels weghalen het juist slechter maakte (62% tegen 49%). Wat wél gebeurd is op 18 sep: de herhaalde weiger-alinea en de vijf letterlijke voorbeeldzinnen eruit, zie 2.13. Niet apart gemeten.
