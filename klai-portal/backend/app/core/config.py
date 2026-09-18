@@ -290,6 +290,10 @@ class Settings(BaseSettings):
     # small model caught 22% of answers stating something the articles do not,
     # this one 96%.
     answer_grounding_model: str = "klai-medium"
+    # Two paraphrases of a first question for retrieval (SPEC-RAG-ANSWER-
+    # JUDGES-001, 2.33). The roomier model for the same reason as above: this
+    # call runs on every first widget turn and must not eat the answer quota.
+    retrieval_paraphrase_model: str = "klai-medium"
     # SPEC-CHAT-QUALITY-LOOP-001: the judge makes one LLM call per unjudged
     # conversation on the same LiteLLM/Mistral capacity that serves live
     # chat traffic. Confine it to an off-peak UTC window so a large backlog

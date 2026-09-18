@@ -141,6 +141,10 @@ class _LiteLLM:
         if schema == "turn_judge":
             self.turn_requests.append(body)
             return _json_reply(self.turn)
+        if schema == "query_paraphrase":
+            # Retrieval input only (query_paraphrase.py); the judges under test
+            # never see it, and it is not the answer request.
+            return _json_reply({"variants": []})
         if schema == "grounding_check":
             self.grounding_requests.append(body)
             if isinstance(self.grounding, Exception):

@@ -117,8 +117,10 @@ async def structured_judge_call[J: BaseModel](
     schema: type[J],
     timeout_seconds: float,
     settings: Settings,
+    model: str | None = None,
 ) -> J | None:
-    """One strict-json_schema call on klai-fast; ``None`` and ``<name>_failed`` on any failure."""
+    """One strict-json_schema call, on klai-fast unless ``model`` says otherwise;
+    ``None`` and ``<name>_failed`` on any failure."""
     failure_event = f"{name}_failed"
     try:
         async with asyncio.timeout(timeout_seconds):
@@ -127,7 +129,7 @@ async def structured_judge_call[J: BaseModel](
                     f"{settings.litellm_base_url}/v1/chat/completions",
                     headers={"Authorization": f"Bearer {settings.litellm_master_key}"},
                     json={
-                        "model": settings.extraction_model,
+                        "model": model or settings.extraction_model,
                         # The same turn must get the same verdict: without a
                         # fixed temperature 5 of 9 replayed questions flipped.
                         "temperature": 0,
