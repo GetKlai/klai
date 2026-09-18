@@ -116,11 +116,27 @@ volumes:
   runtime-api-docker-socket:   # SPEC-SEC-021 socat bridge socket (runtime-api <-> docker-socket-proxy)
   vaultwarden-data:            # Vaultwarden SQLite DB + attachments
 
-# Default log rotation — prevents unbounded disk growth on json-file driver.
-# Alloy captures logs in real-time via Docker socket, so rotated logs are only
-# a local fallback. Configure Docker daemon default: /etc/docker/daemon.json
+# Log rotation. The daemon default lives outside this repo, in core-01's
+# /etc/docker/daemon.json:
 #   { "log-driver": "json-file", "log-opts": { "max-size": "50m", "max-file": "3" } }
-# This applies to ALL containers without per-service config.
+#
+# It does NOT apply to all containers without per-service config, which this
+# comment claimed until 2026-09-18. Docker copies the default into a container's
+# own config when the container is CREATED, so a container that predates the
+# daemon last reading that file keeps an empty log config and never rotates. On
+# core-01 that was 63 of 92 containers, two of them holding 21.9 GB and 18.9 GB
+# in one json.log; together they filled the root filesystem and broke a
+# portal-api deploy. Recreating a container is what applies the default —
+# restarting it is not.
+#
+# Services that are known to produce a high-rate log declare `logging:`
+# explicitly, so the bound holds regardless of when the container was created.
+# Check with: docker inspect <ctr> --format '{{json .HostConfig.LogConfig.Config}}'
+#
+# Alloy is not a reason to care less about this. It forwards these logs to
+# VictoriaLogs but does not keep up with a high-rate producer: over 41 hours the
+# read-only socket proxy wrote ~19 lines/second and VictoriaLogs received 17
+# lines in total.
 
 services:
 
@@ -695,6 +711,16 @@ services:
       NETWORKS: 1     # GET /networks + /networks/{id} — list, inspect, connect
       POST: 1         # enables POST verbs: /containers/create+start+restart, /networks/connect
       DELETE: 1       # enables DELETE /containers/{id} — provisioning rollback + stale cleanup
+    # Same image and same `option httplog` as the read-only proxy below, so the
+    # same unbounded access log. This one carries provisioning traffic rather
+    # than Alloy's discovery loop and is far lower-volume, which is why it was
+    # not the container that filled the disk on 2026-09-18 — not a difference in
+    # kind.
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
@@ -721,6 +747,28 @@ services:
                       # review). Still read-only: no POST means no /connect.
       # POST / DELETE deliberately unset: this principal never mutates. That is
       # what keeps this a GET-only lane rather than a second create path.
+    # This proxy writes one access line per request Alloy makes — 19 lines a
+    # second — and on 2026-09-18 that reached 18.9 GB in a single json.log,
+    # filling the root filesystem and breaking a portal-api deploy at `mktemp`.
+    #
+    # Rotation is the fix rather than LOG_LEVEL: the drop-stage in
+    # deploy/alloy/config.alloy already explains why raising the proxy's log
+    # level is the wrong lever — `warning` silences the 403s too, and a 403 on
+    # this GET-only lane is the signal worth keeping. That filter runs after
+    # HAProxy has already written the line to disk, so it never bounded this
+    # file.
+    #
+    # Stated here rather than left to /etc/docker/daemon.json because Docker
+    # copies that default into a container's config only at creation time. The
+    # 63 containers on core-01 that predated the 2026-08-22 daemon restart each
+    # carried an empty log config and never rotated; this service was one of
+    # them. Declaring it in compose makes the bound a property of the service
+    # instead of a property of when someone last recreated it.
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:

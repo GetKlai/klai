@@ -98,8 +98,33 @@ code alone when the relevant runtime data should be available.
 | `level` | structlog | All services |
 
 ## Docker log rotation
-`/etc/docker/daemon.json`: `max-size: 50m`, `max-file: 3`.
-Alloy captures real-time — rotation only affects local Docker cache.
+
+`/etc/docker/daemon.json` sets `max-size: 50m`, `max-file: 3`. Docker materialises
+that default into a container's own `HostConfig.LogConfig` **when the container is
+created**, so it protects containers created after the daemon last read that file
+and nothing else. A container created before it, still running, keeps an empty
+log config and never rotates.
+
+That is not theoretical. On 2026-09-18, 63 of 92 containers on core-01 had an
+empty log config — every one created before the 2026-08-22 daemon restart. Two of
+them held 21.9 GB and 18.9 GB in a single `json.log`, together filling the root
+filesystem to 100% and breaking a portal-api deploy at `mktemp`. The 29 containers
+created after that restart were all under 118 MB, as 50m×3 implies.
+
+Check before assuming a container rotates:
+
+```bash
+docker inspect <ctr> --format '{{json .HostConfig.LogConfig.Config}}'   # {} means no rotation
+```
+
+Recreating the container (not restarting it) is what applies the default.
+
+**Alloy is not a backup of these files.** It reads the same Docker socket and
+forwards to VictoriaLogs, but it does not keep up with a container that logs
+faster than the pipeline drains: over 41 hours the socket-proxy wrote roughly 19
+lines/second and VictoriaLogs received 17 lines total. Before truncating a large
+`json.log`, save a tail of it: at the volume that makes a log worth truncating,
+assume the content is not in VictoriaLogs.
 
 ## Grafana provisioning UIDs and deletion
 

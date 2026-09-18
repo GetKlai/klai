@@ -221,9 +221,91 @@ groups:
 
             Triage:
               1. ssh core-01 "df -h /"
-              2. ssh core-01 "sudo du -hx --max-depth=1 /var/lib/docker | sort -h | tail"
-              3. Common culprits: docker images (`docker system df`), VictoriaLogs
-                 retention buildup (/var/lib/docker/volumes/klai-core_victorialogs-data),
-                 portal-api logs.
-              4. Cleanup: `docker system prune -af --volumes` is the nuclear option;
-                 prefer targeted volume cleanup. Confirm with df -h after.
+              2. ssh core-01 "sudo du -hx --max-depth=1 /var/lib /opt | sort -h | tail"
+                 Not /var/lib/docker on its own. Docker runs the containerd
+                 snapshotter here, so images live in /var/lib/containerd and
+                 /var/lib/docker holds only container logs and volumes. On
+                 2026-09-18 that was 224 GB against 50 GB, and looking at the
+                 documented path alone hid the largest consumer entirely.
+              3. Known consumers, measured 2026-09-18: images in
+                 /var/lib/containerd, local backup sets in /opt/klai/backups,
+                 and per-container json.log under /var/lib/docker/containers.
+              4. Cleanup: take the targeted route. `docker image prune -f`
+                 (dangling only) and truncating a named oversized json.log are
+                 both safe. Never `docker system prune --volumes` — it deletes
+                 customer data, and the daily docker-cleanup.timer already does
+                 the safe subset.
+
+      # ── R17b: core01_disk_usage_critical ─────────────────────────────────
+      # R17 above fired continuously from 2026-09-04 and the disk still reached
+      # 100% on 2026-09-18, taking a portal-api deploy down with it. A warning
+      # that has been true for fourteen days is wallpaper; nothing escalated
+      # because nothing could. This rule is the escalation: same query, same
+      # series, a floor low enough that it cannot coexist with a healthy host.
+      #
+      # 8% of 436 GB is ~35 GB. That is above the largest single image pull we
+      # do (docling-serve, 17.3 GB) and above one backup run's working set
+      # (~10 GB: one 5 GiB day-set plus its encrypted copy), so a deploy or a
+      # backup cannot trip it on its own. `for: 10m` rather than R17's 30m
+      # because at this level the remaining headroom is measured in hours.
+      - uid: obs-001-core01-disk-usage-critical
+        title: core01_disk_usage_critical
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victoriametrics
+            queryType: instant
+            relativeTimeRange:
+              from: 1800
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: prometheus
+                uid: victoriametrics
+              expr: |
+                max(
+                  node_filesystem_avail_bytes{device="/dev/md2",fstype="ext4",mountpoint=~"/etc/.*"}
+                  /
+                  node_filesystem_size_bytes{device="/dev/md2",fstype="ext4",mountpoint=~"/etc/.*"}
+                ) < 0.08
+              instant: true
+              queryType: instant
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 1800
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: query
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: Alerting
+        for: 10m
+        keepFiringFor: 1h
+        isPaused: false
+        labels:
+          severity: critical
+          spec: SPEC-OBS-001
+          service_group: infra-host
+        annotations:
+          summary: 'core-01 root disk under 8% free — deploys will fail'
+          runbook_url: 'https://github.com/GetKlai/klai-infra/blob/main/docs/runbooks/platform-recovery.md#core01-disk-usage-high'
+          description: |
+            The host root filesystem on core-01 (/dev/md2) is below 8% free.
+            /tmp and the Docker data root share this filesystem, so at this
+            level deploys fail mid-flight: on 2026-09-18 portal-api applied its
+            Alembic migrations and then died at mktemp with ENOSPC.
+
+            deploy-portal-api.sh now refuses to start under 4 GiB, so the
+            likeliest symptom is a deploy that stops before it does anything.
+
+            Act now, same triage as core01_disk_usage_high. Fastest safe wins,
+            measured 2026-09-18: truncate an oversized container json.log
+            (40 GB came back that way), then `docker image prune -f`.
