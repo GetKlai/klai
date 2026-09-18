@@ -438,6 +438,35 @@ async def test_uncited_draft_without_claims_is_shown_as_before_the_judges(clarit
     assert signals["decision"] == "answer"
 
 
+async def test_an_uncited_dead_end_carries_the_appointment_button():
+    """A reply with no source that does not answer leaves the visitor nowhere.
+
+    Seen in a simulated conversation on 2026-09-18: the model wrote its own
+    "dat staat niet in onze helpartikelen" without offering anything, the reply
+    arrived bare, and the visitor spent two more turns discovering a person was
+    reachable at all — they repeated the question, got the backend's refusal
+    with the button, then had to ask how to book.
+    """
+    litellm = _LiteLLM(
+        model_text="Dat staat niet in onze helpartikelen. Laat het gerust weten als je vastloopt.",
+        answer_judge=_answer_verdict("not_answered"),
+    )
+
+    text, _, extras = await _answer(litellm, stream=True)
+
+    assert text == "Dat staat niet in onze helpartikelen. Laat het gerust weten als je vastloopt."
+    assert extras["escalation"] == [{"appointment": True}]
+
+
+async def test_an_uncited_reply_that_answers_keeps_no_button():
+    """The button means "this went nowhere"; on an answer it would read as one."""
+    litellm = _LiteLLM(model_text="Graag gedaan!", answer_judge=_answer_verdict("answered"))
+
+    _, _, extras = await _answer(litellm, stream=True)
+
+    assert not extras.get("escalation")
+
+
 async def test_ambiguous_turn_whose_question_carries_a_claim_is_refused():
     litellm = _LiteLLM(
         model_text="Bedoel je je abonnement van 5 euro per maand?",
@@ -500,10 +529,15 @@ async def test_conversational_reply_is_shown_only_without_unsupported_claims(cla
     reply = "Wij rekenen 5 euro." if claims else "Graag gedaan!"
     litellm = _LiteLLM(model_text=reply, answer_judge=_answer_verdict("not_answered", claims=claims))
 
-    text, signals, _ = await _answer(litellm, stream=False, conversational=True)
+    text, signals, extras = await _answer(litellm, stream=False, conversational=True)
 
     assert text == (reply if shown else REFUSAL_NL)
     assert signals["refused"] is not shown
+    if shown:
+        # A conversational turn is an answer by design, even when the light judge
+        # calls it unanswered, so the dead-end button may not appear under it:
+        # "graag gedaan" with an offer to book reads as help with nothing.
+        assert not extras.get("escalation")
 
 
 async def test_passed_reply_is_stripped_of_links_before_the_judge_and_the_visitor_see_it():
