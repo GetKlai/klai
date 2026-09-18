@@ -26,10 +26,19 @@ cd "$COMPOSE_DIR"
 # the layer extraction, and the migration's own temp files with room to spare. It
 # is a floor against a full disk, not a capacity plan: the Grafana rule
 # core01_disk_usage_high is what should catch the slope long before this fires.
+#
+# Three paths, because three different filesystems could be the one that fills:
+# the compose directory, the temp directory mktemp actually writes to, and the
+# image store. Under the containerd snapshotter that store is
+# /var/lib/containerd, not /var/lib/docker. All three are /dev/md2 on core-01
+# today, which is exactly why measuring only one would keep passing on the day
+# that stops being true.
 required_free_kib=$((4 * 1024 * 1024))
-available_kib="$(df -Pk . | awk 'NR==2 {print $4}')"
+available_kib="$(df -Pk . "${TMPDIR:-/tmp}" /var/lib/containerd 2>/dev/null \
+    | awk 'NR > 1 && (min == "" || $4 + 0 < min) { min = $4 + 0 } END { print min + 0 }')"
 if [[ "$available_kib" -lt "$required_free_kib" ]]; then
-    echo "ERROR: $(( available_kib / 1024 / 1024 )) GiB free on $(pwd), need 4 GiB to deploy safely." >&2
+    echo "ERROR: $(( available_kib / 1024 / 1024 )) GiB free on the tightest of" >&2
+    echo "       $(pwd), ${TMPDIR:-/tmp} and /var/lib/containerd; need 4 GiB to deploy safely." >&2
     echo "       Refusing to start: a deploy that fails mid-flight can leave migrations applied" >&2
     echo "       with post-deploy SQL unapplied. Free space first, then re-run." >&2
     exit 1

@@ -95,6 +95,14 @@ jobs:
       - name: backup retention suite
         run: bash deploy/scripts/tests/backup-retention.test.sh
 
+      # Local retention drops to 7 day-sets, so the budget is small enough that
+      # the partial directories a failed night leaves behind could spend it.
+      - name: backup retention partial-set suite
+        run: bash deploy/scripts/tests/backup-retention-partial-sets.test.sh
+
+      - name: portal-api deploy disk-guard suite
+        run: bash deploy/scripts/tests/deploy-portal-api-disk-guard.test.sh
+
       # The Vexa host-readiness checks are run by hand over SSH, which is
       # precisely why they rotted unnoticed: a guard nobody executes on a
       # schedule cannot report that it stopped working. Its third check reported

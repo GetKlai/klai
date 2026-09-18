@@ -95,6 +95,10 @@ jobs:
           # so a mid-flight failure is the expensive kind. Its disk guard is
           # what keeps a full disk from producing one.
           bash deploy/scripts/tests/deploy-portal-api-disk-guard.test.sh
+          # This job installs backup.sh on core-01, so its retention tests
+          # belong here too — the second one covers the window shrinking to 7.
+          bash deploy/scripts/tests/backup-retention.test.sh
+          bash deploy/scripts/tests/backup-retention-partial-sets.test.sh
 
       - name: Sync docker-compose.yml + config + run smoke-test
         uses: appleboy/ssh-action@v1

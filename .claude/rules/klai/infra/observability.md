@@ -123,8 +123,8 @@ Recreating the container (not restarting it) is what applies the default.
 forwards to VictoriaLogs, but it does not keep up with a container that logs
 faster than the pipeline drains: over 41 hours the socket-proxy wrote roughly 19
 lines/second and VictoriaLogs received 17 lines total. Before truncating a large
-`json.log`, save a tail of it — do not assume the content is already in
-VictoriaLogs because it usually is.
+`json.log`, save a tail of it: at the volume that makes a log worth truncating,
+assume the content is not in VictoriaLogs.
 
 ## Grafana provisioning UIDs and deletion
 

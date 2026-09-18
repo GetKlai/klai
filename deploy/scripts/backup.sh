@@ -45,7 +45,8 @@ readonly TOTAL_STEPS=16
 # largest consumer on a disk that reached 100% and broke a production deploy on
 # 2026-09-18. Seven days keeps "something broke and we noticed late" a local
 # restore, and hands the rest to the Storage Box.
-readonly LOCAL_RETENTION_DAYS="${LOCAL_RETENTION_DAYS:-7}"
+readonly LOCAL_RETENTION_DAYS=7
+readonly COMPLETE_MARKER=".backup-complete"
 
 readonly AGE_RECIPIENTS=(
   "age1lyd243tsj8j7rn2wy4hdmnya99wsf2p87fpphys9k65kammerqsqnzpsur"
@@ -654,11 +655,37 @@ encrypt_and_upload() {
 }
 
 local_retention() {
-  local remaining
+  local remaining oldest_kept
 
   printf '\n'
-  log "Local cleanup: removing backups older than the newest ${LOCAL_RETENTION_DAYS} days..."
-  find "${BACKUP_ROOT}/" -maxdepth 1 -type d -name '20*' | sort | head -n "-${LOCAL_RETENTION_DAYS}" | xargs -r rm -rf
+
+  # main() creates the dated directory before the first step runs, so a failed
+  # night leaves one behind and nothing ever removes it — retention is skipped
+  # precisely when steps failed. Counting directories would therefore let a run
+  # of bad nights evict good sets: at seven days, six consecutive failures would
+  # leave a single restorable set, and the Vexa Redis step already failed three
+  # nights running in August 2026. So count completed sets, not directories.
+  #
+  # This function is only reached when no step failed, which is what makes the
+  # marker true by construction.
+  : >"${BACKUP_DIR}/${COMPLETE_MARKER}"
+
+  oldest_kept="$(find "${BACKUP_ROOT}" -mindepth 2 -maxdepth 2 -name "${COMPLETE_MARKER}" \
+    | sed "s|/${COMPLETE_MARKER}\$||" | sort | tail -n "${LOCAL_RETENTION_DAYS}" | head -n 1)"
+
+  # Only reachable if the marker write above failed, since that write happens
+  # first. Keep everything rather than delete on an unreadable inventory.
+  if [ -z "${oldest_kept}" ]; then
+    log "Local cleanup skipped: no completed backup set found under ${BACKUP_ROOT}"
+    return 1
+  fi
+
+  log "Local cleanup: keeping the newest ${LOCAL_RETENTION_DAYS} completed sets (from $(basename "${oldest_kept}"))..."
+  # Lexical comparison is date comparison for YYYY-MM-DD directory names. This
+  # also reaps the partial directories left by failed nights once they fall
+  # outside the window, which the count-based form never did.
+  find "${BACKUP_ROOT}/" -maxdepth 1 -type d -name '20*' \
+    | sort | awk -v cut="${oldest_kept}" '$0 < cut' | xargs -r rm -rf
   remaining="$(find "${BACKUP_ROOT}/" -maxdepth 1 -type d -name '20*' | wc -l)"
   log "Local backups retained: ${remaining}"
 }
