@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import asyncio
 import logging
 import re
 from dataclasses import dataclass, field
@@ -40,6 +41,7 @@ from klai_kb_chat_mode import prompt_mode_is_known, prompt_mode_is_strict
 # same prompt-injection hardening (strip brackets, collapse whitespace, cap
 # length). Duplicating the sanitizer would risk the two copies drifting.
 from klai_kb_context_prompt import _sanitize_question_echo
+from klai_answer_grounding import log_answer_grounding
 from klai_kb_query_rewrite import classify_answer_claims
 from klai_kb_traceability import dedupe_strings
 from klai_kb_urls import normalise_guard_url
@@ -1138,6 +1140,49 @@ def remove_already_streamed_prefix(final_text: str, emitted_text: str) -> str | 
 _ANSWER_CLAIMS_REASONS = frozenset({"no_trusted_sources", "strict_no_sentence_level_support"})
 
 
+# Measuring only, on the same words the widget path judges by: the check lists
+# every concrete statement in the answer with the article text behind it. It
+# runs beside the response instead of in front of it, so the user waits for
+# nothing, and it never changes what the answer says. SPEC-RAG-ANSWER-JUDGES-001.
+_grounding_tasks: set[asyncio.Task] = set()
+
+
+def _forget_grounding_task(task: asyncio.Task) -> None:
+    """Drop the finished task and read its outcome.
+
+    Reading it is what keeps a crash inside the measurement from surfacing as an
+    unhandled task exception on the event loop; the measurement itself already
+    swallows its own errors, so this only covers what it cannot.
+    """
+    _grounding_tasks.discard(task)
+    if not task.cancelled() and task.exception() is not None:
+        _telemetry_logger.warning("kb_answer_grounding_task_failed error=%r", task.exception())
+
+
+def _measure_answer_grounding(
+    rendered_content: str, citation_chunks: list[dict], kb_meta: dict[str, Any]
+) -> None:
+    """Schedule the grounding check for this answer; never raises, never blocks."""
+    if not rendered_content.strip() or not _kb_meta_is_strict(kb_meta):
+        return
+    try:
+        # Ask for the loop BEFORE building the coroutine: a coroutine created
+        # without a loop to run it is never awaited and warns at GC.
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    task = asyncio.create_task(
+        log_answer_grounding(
+            user_query=str(kb_meta.get("user_query") or ""),
+            draft=rendered_content,
+            citation_chunks=citation_chunks,
+            kb_meta=kb_meta,
+        )
+    )
+    _grounding_tasks.add(task)
+    task.add_done_callback(_forget_grounding_task)
+
+
 async def _show_uncited_strict_draft(
     text: str,
     rendered_content: str,
@@ -1315,6 +1360,7 @@ async def compose_non_streaming_kb_response(
                     citation_chunks=citation_chunks,
                 )
             _record_answer_language(rendered_content, kb_meta)
+            _measure_answer_grounding(rendered_content, citation_chunks, kb_meta)
             if (
                 rendered_content != content
                 or sources
@@ -1458,6 +1504,7 @@ async def compose_streaming_kb_response(
                 citation_chunks=citation_chunks,
             )
         _record_answer_language(rendered_content, kb_meta)
+        _measure_answer_grounding(rendered_content, citation_chunks, kb_meta)
         _remember_citation_decision(
             kb_meta,
             decision,
@@ -1568,6 +1615,7 @@ async def compose_streaming_kb_response(
             )
         )
         _record_answer_language(rendered_content, kb_meta)
+        _measure_answer_grounding(rendered_content, citation_chunks, kb_meta)
         tail = remove_already_streamed_prefix(rendered_content, emitted_text)
         if tail is None:
             # The cleaner changed non-whitespace content inside the region the

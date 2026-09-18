@@ -324,3 +324,44 @@ def test_vendored_module_all_matches_canonical() -> None:
         f"  canonical.__all__ = {canonical.__all__}\n"
         "  If a new constant was added canonically, vendor it too."
     )
+
+
+def test_vendored_grounding_check_matches_canonical() -> None:
+    """The statement-level grounding prompts and their schema MUST be identical
+    on both chat paths: the whole point of checking the internal chat with the
+    same words is that the two paths can be laid side by side.
+    """
+    canonical = _load("canonical_chat_prompts_grounding", _CANONICAL_PATH)
+    vendored = _load("vendored_chat_prompts_grounding", _VENDORED_PATH)
+
+    assert vendored.GROUNDING_CHECK_SYSTEM_PROMPT == canonical.GROUNDING_CHECK_SYSTEM_PROMPT, (
+        "Vendored GROUNDING_CHECK_SYSTEM_PROMPT drifted from the canonical copy.\n"
+        "  Update deploy/litellm/klai_chat_prompts.py to match klai-libs/chat-prompts."
+    )
+    assert vendored.GROUNDING_REPAIR_SYSTEM_PROMPT == canonical.GROUNDING_REPAIR_SYSTEM_PROMPT, (
+        "Vendored GROUNDING_REPAIR_SYSTEM_PROMPT drifted from the canonical copy."
+    )
+    assert vendored.GROUNDING_NOTHING_LEFT == canonical.GROUNDING_NOTHING_LEFT
+    assert (
+        vendored.grounding_check_response_format() == canonical.grounding_check_response_format()
+    ), "The strict schema the two paths send drifted."
+
+    # The same checker reply must produce the same decision on both paths: the
+    # prompts being equal is not enough if the parsing or the repair threshold
+    # differs.
+    reply = (
+        '{"statements": ['
+        '{"statement": "Ga naar Belplan.", "evidence": "Ga naar Belplan", "support": "supported"},'
+        '{"statement": "Bel 020-1234567.", "evidence": "", "support": "not_in_articles"},'
+        '{"statement": "Dat kost 5 euro.", "evidence": "", "support": "contradicted"}'
+        "]}"
+    )
+    canonical_check = canonical.parse_grounding_check(reply)
+    vendored_check = vendored.parse_grounding_check(reply)
+    assert [item.statement for item in vendored_check.unsupported] == [
+        item.statement for item in canonical_check.unsupported
+    ], "The two copies select different statements as unsupported."
+    assert vendored_check.worth_repairing == canonical_check.worth_repairing, (
+        "The two copies disagree on when an answer is worth repairing."
+    )
+    assert vendored.parse_grounding_check("not json") is canonical.parse_grounding_check("not json")

@@ -10,6 +10,9 @@ number at all: temperature 0, a stricter generation instruction and removing the
 profile's closing rule each left the rate where it was (49% of answers with any
 unsupported statement, 29% serious).
 
+The prompts and the schema live in ``klai-libs/chat-prompts`` so the internal
+chat path judges by the same words; this module is the widget's caller.
+
 The answer is repaired, not refused. Deleting flagged sentences in code cost one
 good answer and damaged two of 150; letting the same model edit the reply cost
 none, so that is what runs here. What the repair cannot fix is a real article
@@ -26,11 +29,18 @@ from __future__ import annotations
 
 import asyncio
 import re
-from typing import Literal
 
 import httpx
 import structlog
-from pydantic import BaseModel, ConfigDict
+from klai_chat_prompts import (
+    GROUNDING_CHECK_SYSTEM_PROMPT,
+    GROUNDING_NOTHING_LEFT,
+    GROUNDING_REPAIR_SYSTEM_PROMPT,
+    GroundedStatement,
+    GroundingCheck,
+    grounding_check_response_format,
+    parse_grounding_check,
+)
 
 from app.core.config import Settings
 
@@ -42,81 +52,7 @@ logger = structlog.get_logger()
 # calls are bounded well under that; a timeout keeps the answer as it was.
 _CHECK_TIMEOUT_SECONDS = 5.0
 _REPAIR_TIMEOUT_SECONDS = 5.0
-NOTHING_LEFT = "NOTHING_LEFT"
-
-_CHECK_SYSTEM_PROMPT = (
-    "You audit a reply from a company's help chat before a visitor sees it. You get the visitor's "
-    "question, the help-article excerpts the reply was written from, and the reply. Judge ONLY against "
-    "the excerpts, never against what you know.\n\n"
-    "List every concrete statement in the reply about the company or its product: a step, a menu path, a "
-    "button or field name, a setting, a feature or capability, a limitation, a policy, a price, an amount, "
-    "a time frame, a phone number or address, a cause of a problem, or a claim that something will now "
-    "work. Split a list of steps into one statement per step. Skip greetings, empathy, restating or "
-    "summarising the visitor's question or situation, a sentence that only asks the visitor what they mean or "
-    "which situation applies, a sentence that only introduces a list, an offer to book an appointment or "
-    "contact support, saying something was not found, and a sentence that repeats back what the visitor said "
-    "about their own situation. A question that also states something, such as a price or a step, is judged "
-    "on that statement.\n\n"
-    "For each statement:\n"
-    "statement: the reply's words, copied exactly.\n"
-    "evidence: the shortest excerpt text, copied exactly character for character, that states the same "
-    "thing; empty if there is none.\n"
-    "support: supported (the excerpts state it, a faithful paraphrase or translation counts), "
-    "not_in_articles (the excerpts do not state it, including a plausible step, label or consequence you "
-    "would have to infer or guess), contradicted (the excerpts say otherwise, or the text is about a "
-    "different product, situation or country than the reply applies it to).\n"
-    "A blank in an excerpt such as 'Ga naar .' means a link was removed; a reply that fills in a name for "
-    "it is not_in_articles."
-)
-
-_REPAIR_SYSTEM_PROMPT = (
-    "You edit a reply from a company's help chat before a visitor sees it. A checker found statements in "
-    "it that the help articles do not support. Return the reply with ONLY those statements removed or cut "
-    "back to the part the articles do support. Keep every other sentence exactly as written, in the same "
-    "order and format, and renumber a step list so it stays consecutive with no empty entries. Never add a "
-    "fact, step, name, number or advice that is not already in the reply, and never invert the meaning of a "
-    "sentence you keep: when a removal would leave a sentence saying the opposite or saying nothing, remove "
-    "that whole sentence. Leave a sentence that only says something was not found exactly as it is. Where a "
-    "removal leaves a gap the "
-    "visitor needs, add one short sentence in the reply's language saying that this part is not described "
-    "in our help articles and that they can book an appointment with an employee for a definite answer. "
-    "Add that sentence at most once. Remove a closing line that claims the task is now done if the steps no "
-    f"longer support it. If nothing useful remains, return exactly: {NOTHING_LEFT}. Return only the edited "
-    "reply."
-)
-
-
-class GroundedStatement(BaseModel):
-    """One concrete statement the reply makes about the organisation."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    statement: str
-    evidence: str
-    support: Literal["supported", "not_in_articles", "contradicted"]
-
-
-class GroundingCheck(BaseModel):
-    """Every statement in one reply, with the article text that backs it."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    statements: list[GroundedStatement]
-
-    @property
-    def unsupported(self) -> list[GroundedStatement]:
-        return [item for item in self.statements if item.support != "supported"]
-
-    @property
-    def worth_repairing(self) -> bool:
-        """Two unsupported statements, or one that contradicts an article.
-
-        A single flag is right 77% of the time; this threshold was right 92% of
-        the time on the same 54 hand-checked answers. Repairing on one flag
-        deleted sentences that only restated the visitor's own situation.
-        """
-        unsupported = self.unsupported
-        return len(unsupported) >= 2 or any(item.support == "contradicted" for item in unsupported)
+NOTHING_LEFT = GROUNDING_NOTHING_LEFT
 
 
 def render_articles(articles: list[tuple[str, str]]) -> str:
@@ -168,7 +104,7 @@ async def check_grounding(
 ) -> GroundingCheck | None:
     """List the reply's statements with their evidence; ``None`` when the call fails."""
     content = await _call(
-        system_prompt=_CHECK_SYSTEM_PROMPT,
+        system_prompt=GROUNDING_CHECK_SYSTEM_PROMPT,
         user_content=(
             f"Visitor question:\n{question}\n\n"
             f"Help-article excerpts:\n{render_articles(articles) or '(none)'}\n\n"
@@ -176,18 +112,14 @@ async def check_grounding(
         ),
         settings=settings,
         timeout_seconds=_CHECK_TIMEOUT_SECONDS,
-        response_format={
-            "type": "json_schema",
-            "json_schema": {"name": "grounding_check", "strict": True, "schema": GroundingCheck.model_json_schema()},
-        },
+        response_format=grounding_check_response_format(),
     )
     if content is None:
         return None
-    try:
-        return GroundingCheck.model_validate_json(content)
-    except Exception:
-        logger.warning("answer_grounding_unparseable", exc_info=True)
-    return None
+    check = parse_grounding_check(content)
+    if check is None:
+        logger.warning("answer_grounding_unparseable")
+    return check
 
 
 # A removal can leave "1." or "**Stap 2:**" with nothing behind it. The repair
@@ -211,7 +143,7 @@ async def repair_answer(*, draft: str, unsupported: list[GroundedStatement], set
         return draft
     listed = "\n".join(f"- {item.statement}" for item in unsupported)
     content = await _call(
-        system_prompt=_REPAIR_SYSTEM_PROMPT,
+        system_prompt=GROUNDING_REPAIR_SYSTEM_PROMPT,
         user_content=f"Unsupported statements:\n{listed}\n\nReply:\n{draft}",
         settings=settings,
         timeout_seconds=_REPAIR_TIMEOUT_SECONDS,
