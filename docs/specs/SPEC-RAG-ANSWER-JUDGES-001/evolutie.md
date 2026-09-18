@@ -355,6 +355,38 @@ een bewering over wat de afspraak oplevert — precies wat beoordeeld hoort te w
 wat het model erbij verzint. Geef de garantie als bewijs, dan hoeft de controleur niets te
 geloven.
 
+### 2.18 Vals alarm in de niet-behandelde onderwerpen: drie routes, alle drie afgevallen (18 sep)
+Gevonden in de herspeling van 2.15. "ik wil graag uitgaand kunnen bellen met mijn mobiele nummer"
+krijgt de vaste tekst voor commerciële vragen. Dezelfde vraag als "hoe stel ik mijn mobiele
+nummer in als uitgaand nummer" wordt gewoon beantwoord, mét bron. Het is dus de formulering
+"ik wil graag", die als aanvraag wordt gelezen. Reproduceerbaar. Eén op de vijftig echte eerste
+vragen.
+
+Drie oplossingen gebouwd en gemeten op 8 commerciële en 10 hulpvragen, twee rondes:
+
+| Route | Commercieel afgevangen | Hulpvragen ongemoeid |
+|---|---|---|
+| Huidig | 12 van 16 | 18 van 20 |
+| Beoordelaarsprompt: "iets willen gebruiken is een hulpvraag" | 16 van 16 | **10 van 20** |
+| Strakkere onderwerptekst voor Voys | 12 van 16 | 19 van 20, maar "Hoe zeg ik mijn contract op?" ontsnapt |
+| Zoekresultaat overruled de beoordelaar | – | onbruikbaar, zie hieronder |
+
+De tweede maakte het duidelijk slechter: door de formulering te bénoemen ging het model erop
+letten en ving het élke wens af, ook "Ik wil graag een wachtrij instellen". De derde faalde op de
+meting die hem moest onderbouwen: bij 3 van de 6 commerciële vragen beantwoordt een helpartikel
+de vraag óók ("Wat kost een extra belnummer", "Kan ik uitstel van betaling krijgen", "Hoe zeg ik
+mijn contract op?"), dus die regel zou de helft van de commerciële vragen doorlaten. Het signaal
+scheidt niet.
+
+**Stand:** het valse alarm blijft, en elke gemeten oplossing kost meer dan hij oplevert. Dat is
+een afweging voor de eigenaar van de widget, geen technische keuze: één op de vijftig hulpvragen
+krijgt de doorverwijstekst, tegenover commerciële vragen die anders met een verzonnen prijs
+beantwoord zouden worden (zie de oude nameting in 2.15, waar een prijsvraag "€ per maand"
+opleverde).
+
+**Les:** een klasse die een antwoord volledig stillegt, verdient een zachtere faalrichting dan
+een klasse die alleen een knop toevoegt. Dat is hier niet opgelost.
+
 ---
 
 ## 3. Wat er live ging, en waarom
@@ -373,6 +405,8 @@ geloven.
 | 18 sep | Dezelfde controle meekijkend op de interne chat (#1498) | meting 2.11 |
 | 18 sep | Onderwerpen die de widget niet beantwoordt, per widget instelbaar (#1509) | meting 2.12: basisprompt haalde 8 van 15 |
 | 18 sep | Die twee velden in het beheerscherm (#1510) | de instelling was anders alleen via de database te zetten |
+| 18 sep | Controle van de grondslag op één plek voor beide paden (#1516) | 2.14 |
+| 18 sep | Gespreksbeurten weigeren niet meer; het chatcontract gaat als bewijs mee (#1517) | 2.17 |
 
 ---
 
