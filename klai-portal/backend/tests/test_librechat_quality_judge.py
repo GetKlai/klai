@@ -481,6 +481,70 @@ async def test_roles_and_signals_come_from_the_real_librechat_fields():
     assert org.inserts["c1"]["outcome"] == "unresolved"
 
 
+@pytest.mark.asyncio
+async def test_structured_content_error_with_false_legacy_flag_reaches_the_judge():
+    from app.services import librechat_quality_judge as lj
+
+    mongo = _FakeMongo(
+        {
+            "librechat-voys": {
+                "conversations": [_conv("c-err", minutes=5)],
+                "messages": [
+                    _msg("c-err", user=True, minutes=0, text="hoe los ik dit op?"),
+                    _msg(
+                        "c-err",
+                        user=False,
+                        minutes=1,
+                        text="",
+                        content=[{"type": "error", "error": "Something went wrong."}],
+                        error=False,
+                    ),
+                ],
+            }
+        }
+    )
+    org = _OrgDb(org_id=7)
+
+    captured: dict = {}
+
+    async def _fake_llm(*, model: str, user: str, system: str) -> str:
+        signals = json.loads(user)["signals"]
+        captured["had_error"] = signals["had_error"]
+        # Distinguishable verdict driven by the observed platform signal, so the
+        # persisted row proves the signal reached the judge (not just the shape).
+        if signals["had_error"]:
+            return _verdict_raw(outcome="unresolved", failure_category="generation_error", confidence="medium")
+        return _verdict_raw()
+
+    with (
+        patch(f"{_LJ}.pymongo.MongoClient", mongo.client),
+        patch.object(lj, "cross_org_session", _cross_org_returning([(7, "voys", ["librechat_quality_judge"])])),
+        patch.object(lj, "tenant_scoped_session", _tenant_returning(org)),
+        patch.object(lj, "_call_judge_llm", _fake_llm),
+    ):
+        result = await lj.librechat_judge_run_once()
+
+    assert captured["had_error"] is True
+    assert result == {"org_count": 1, "judged_count": 1}
+    assert org.inserts["c-err"]["failure_category"] == "generation_error"
+    assert org.inserts["c-err"]["outcome"] == "unresolved"
+
+
+@pytest.mark.parametrize(
+    ("docs", "expected"),
+    [
+        ([_msg("c", user=True, minutes=0, content=[{"type": "error", "error": "x"}])], False),
+        ([_msg("c", user=False, minutes=0, content=[{"type": "text", "text": "hi"}])], False),
+        ([_msg("c", user=False, minutes=0, content="plain")], False),
+        ([_msg("c", user=False, minutes=0, text="hi")], False),
+    ],
+)
+def test_derive_signals_had_error_branches(docs, expected):
+    from app.services import librechat_quality_judge as lj
+
+    assert lj._derive_signals(docs)["had_error"] is expected
+
+
 # ---------------------------------------------------------------------------
 # (e) invalid judge JSON: conversation skipped, batch continues
 # ---------------------------------------------------------------------------

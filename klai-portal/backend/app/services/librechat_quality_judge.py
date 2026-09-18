@@ -239,13 +239,22 @@ def _turns_from_messages(docs: list[dict]) -> list[dict]:
     return turns
 
 
+def _doc_had_error(doc: dict) -> bool:
+    if doc.get("error"):
+        return True
+    content = doc.get("content")
+    return isinstance(content, list) and any(isinstance(p, dict) and p.get("type") == "error" for p in content)
+
+
 def _derive_signals(docs: list[dict]) -> dict:
     """The two known signals of the REQ-5 rubric, from stored data.
 
     ``explicit_rating``: ``feedback.rating`` of the LAST assistant message
     (same last-answer rule as the webchat pass).
-    ``had_error``: any assistant message flagged ``error: true`` by the
-    platform itself.
+    ``had_error``: any assistant message the platform flagged as a failure,
+    via the legacy top-level ``error`` flag or a structured content error part
+    (see ``_doc_had_error``). A user turn that merely contains error-shaped
+    content is not a platform signal — only assistant messages are inspected.
     """
     assistant_docs = [d for d in docs if not d.get("isCreatedByUser")]
     explicit_rating = None
@@ -255,7 +264,7 @@ def _derive_signals(docs: list[dict]) -> dict:
             explicit_rating = feedback["rating"]
     return {
         "explicit_rating": explicit_rating,
-        "had_error": any(d.get("error") for d in assistant_docs),
+        "had_error": any(_doc_had_error(d) for d in assistant_docs),
     }
 
 

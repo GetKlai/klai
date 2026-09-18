@@ -366,6 +366,14 @@ The first iteration addresses source coverage before changing model prompts:
   The existing batch size remains bounded. The [Mongo `$nin` documentation](https://www.mongodb.com/docs/manual/reference/operator/query/nin/)
   notes its limited selectivity: measure query cost as the judged set grows
   before replacing it with incremental processing.
+- LibreChat marks an assistant failure with a structured `content` error part,
+  not only the legacy top-level `error` flag, so the platform-error signal reads
+  both. A structured platform error is not itself a knowledge gap: a failure
+  after an already-answered turn does not prove the conversation was unresolved,
+  so outcome stays an LLM judgment rather than a deterministic label. Feeding a
+  large diagnostic error payload to the judge needs its own input and cost
+  evaluation, and a longer timeout only proves the turn finished, not that its
+  answer was correct.
 - Calls with unknown customer attribution remain provisional. Existing tests
   check both unknown-role abstention and explicit-role evidence. Speaker labels
   from [diarization](https://docs.aws.amazon.com/transcribe/latest/dg/diarization.html)
