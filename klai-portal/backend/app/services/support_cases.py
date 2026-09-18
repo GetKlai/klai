@@ -19,6 +19,7 @@ It owns the contract in ``docs/architecture/support-gap-detection.md`` →
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import math
@@ -177,6 +178,7 @@ def _finding_gap(
         top_score=finding.get("top_score"),
         nearest_kb_slug=kb_slug,
         language=finding.get("language"),
+        taxonomy_node_ids=finding.get("taxonomy_node_ids"),
         support_case_id=case_id,
         diagnosis=finding["diagnosis"],
         audience=finding.get("audience"),
@@ -390,6 +392,21 @@ async def _grouped_findings(
             exc_info=(RuntimeError, RuntimeError("Support case grouping failed"), exc.__traceback__),
         )
         return findings
+
+
+async def _classify_findings(*, zitadel_org_id: str, kb_slug: str, findings: list[dict]) -> list[dict]:
+    actionable = [f for f in findings if f.get("diagnosis") in INBOX_DIAGNOSES]
+    if not actionable:
+        return findings
+    from app.services.knowledge_ingest_client import classify_gap_taxonomy
+
+    node_id_lists = await asyncio.gather(
+        *(classify_gap_taxonomy(zitadel_org_id, kb_slug, f["question"]) for f in actionable)
+    )
+    for finding, node_ids in zip(actionable, node_id_lists, strict=True):
+        if node_ids:
+            finding["taxonomy_node_ids"] = node_ids
+    return findings
 
 
 async def _org_policy(db: AsyncSession, org_id: int) -> Row[Any] | None:
@@ -839,6 +856,7 @@ async def upsert_support_case(
         findings = await _grouped_findings(
             db, org_id=org_id, kb_slug=kb_slug, exclude_case_id=case_id, findings=findings
         )
+        findings = await _classify_findings(zitadel_org_id=zitadel_org_id, kb_slug=kb_slug, findings=findings)
 
     # Take the policy lock before the case lock, as in phase 1. Both telemetry and
     # the knowledge_gaps unlock are re-read here (freshly, FOR SHARE) so a revoke

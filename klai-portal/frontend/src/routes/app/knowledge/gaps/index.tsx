@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { Select } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
+import { Tabs } from '@/components/ui/tabs'
 import { Label } from '@/components/ui/label'
 import { BorderedRowActionIconButton, RowActionGroup } from '@/components/ui/row-action'
 import {
@@ -82,6 +83,39 @@ interface GapRow {
   audience: string | null
   support_case_ids: number[]
   group_key?: string | null
+  topic: { id: number; name: string } | null
+}
+
+interface TopicGroup {
+  key: string
+  kbSlug: string | null
+  topicName: string
+  needs: GapRow[]
+}
+
+function groupContentByTopic(gaps: GapRow[], ungroupedLabel: string): TopicGroup[] {
+  const groups = new Map<string, TopicGroup>()
+  for (const gap of gaps) {
+    const kbSlug = gap.nearest_kb_slug
+    const key = `${kbSlug ?? ''}::${gap.topic?.id ?? 'null'}`
+    let group = groups.get(key)
+    if (!group) {
+      group = { key, kbSlug, topicName: gap.topic?.name ?? ungroupedLabel, needs: [] }
+      groups.set(key, group)
+    }
+    group.needs.push(gap)
+  }
+  return Array.from(groups.values()).sort((a, b) => {
+    if (a.kbSlug !== b.kbSlug) {
+      if (a.kbSlug == null) return 1
+      if (b.kbSlug == null) return -1
+      return a.kbSlug.localeCompare(b.kbSlug)
+    }
+    const aUngrouped = a.topicName === ungroupedLabel
+    const bUngrouped = b.topicName === ungroupedLabel
+    if (aUngrouped !== bUngrouped) return aUngrouped ? 1 : -1
+    return a.topicName.localeCompare(b.topicName)
+  })
 }
 
 /** Relative timestamps for the closed-row line; same approach as
@@ -170,6 +204,7 @@ export function GapsPage() {
   const includeResolved = includeResolvedParam ?? false
   const [activePicker, setActivePicker] = useState<string | null>(null)
   const [closingKey, setClosingKey] = useState<string | null>(null)
+  const [view, setView] = useState<'content' | 'signals'>('content')
 
   const { data, isLoading } = useQuery<GapsResponse>({
     queryKey: ['app-gaps', days, gapType, language, includeResolved],
@@ -252,6 +287,17 @@ export function GapsPage() {
   }
 
   const gaps = data?.gaps ?? []
+  const contentGaps = gaps.filter((gap) => gap.source !== 'automatic')
+  const signalGaps = gaps.filter((gap) => gap.source === 'automatic')
+  const topicGroups = groupContentByTopic(contentGaps, m.gaps_topic_ungrouped())
+  const activeRows = view === 'content' ? contentGaps : signalGaps
+  const rows: Array<{ heading: TopicGroup } | { gap: GapRow }> =
+    view === 'content'
+      ? topicGroups.flatMap((group) => [
+          { heading: group },
+          ...group.needs.map((gap) => ({ gap })),
+        ])
+      : signalGaps.map((gap) => ({ gap }))
   // The API groups gaps by (question, type, language), so the language filter
   // options come from what is actually loaded rather than a fixed nl/en list;
   // the current search value is kept even if the loaded page has no row for it.
@@ -286,14 +332,14 @@ export function GapsPage() {
 
   return (
     <PageContainer width="6xl">
-      <div className="flex items-start justify-between mb-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:justify-between mb-6">
         <div className="flex items-center gap-3">
           <AlertTriangle className="h-7 w-7 text-gray-900" />
           <h1 className="text-xl font-display-bold text-gray-900">
             {m.gaps_page_title()}
           </h1>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <TranscriptImportDialog orgKbs={orgKbs} />
           <Button variant="outline" size="sm" asChild>
             <Link to="/app/knowledge/gaps/support-cases">
@@ -310,8 +356,18 @@ export function GapsPage() {
         </div>
       </div>
 
+      <Tabs
+        className="mb-4"
+        value={view}
+        onValueChange={setView}
+        tabs={[
+          { id: 'content', label: m.gaps_view_content() },
+          { id: 'signals', label: m.gaps_view_signals() },
+        ]}
+      />
+
       <p className="text-gray-600 mb-6 leading-relaxed">
-        {m.gaps_index_card_body()}
+        {view === 'content' ? m.gaps_index_card_body() : m.gaps_signals_note()}
       </p>
 
       {/* Filters */}
@@ -375,7 +431,7 @@ export function GapsPage() {
       {/* Table */}
       {isLoading ? (
         <ListLoadingState label={m.admin_shared_loading()} />
-      ) : gaps.length === 0 ? (
+      ) : activeRows.length === 0 ? (
         <ListEmptyState icon={AlertTriangle} title={m.gaps_empty_state()} />
       ) : (
         <div className="overflow-x-auto">
@@ -393,10 +449,32 @@ export function GapsPage() {
             </DataTableRow>
           </DataTableHeader>
           <DataTableBody>
-            {gaps.map((gap) => {
+            {rows.map((item) => {
+              if ('heading' in item) {
+                const group = item.heading
+                return (
+                  <DataTableRow key={`h:${group.key}`} className="bg-gray-50">
+                    <DataTableCell colSpan={8}>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-gray-900">{group.topicName}</span>
+                        {group.kbSlug && (
+                          <span className="text-xs text-gray-500">{group.kbSlug}</span>
+                        )}
+                        <Badge
+                          variant="secondary"
+                          aria-label={m.gaps_topic_need_count({ count: group.needs.length })}
+                        >
+                          {group.needs.length}
+                        </Badge>
+                      </div>
+                    </DataTableCell>
+                  </DataTableRow>
+                )
+              }
+              const gap = item.gap
               const rowKey = JSON.stringify([
-                gap.query_text, gap.gap_type, gap.language,
-                gap.diagnosis, gap.nearest_kb_slug, gap.audience,
+                gap.source, gap.query_text, gap.gap_type, gap.language,
+                gap.diagnosis, gap.nearest_kb_slug, gap.audience, gap.group_key,
               ])
               const isResolved = gap.resolved_at != null
               return (

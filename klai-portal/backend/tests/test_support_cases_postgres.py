@@ -23,12 +23,14 @@ import os
 import sys
 import types
 from collections.abc import AsyncIterator, Iterator
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 
+from app.api.app_gaps import _list_support_gaps
 from app.core import database as db_module
 from app.core.database import TenantContextSession, set_tenant
 from app.schemas_support_cases import SupportCaseMessage, SupportCasePayload
@@ -70,6 +72,8 @@ _SETUP = [
     f"zitadel_user_id varchar(64))",
     f"CREATE TABLE {_SCHEMA}.portal_knowledge_bases (id bigserial PRIMARY KEY, org_id integer NOT NULL, "
     f"slug varchar(64) NOT NULL, UNIQUE(org_id, slug))",
+    f"CREATE TABLE {_SCHEMA}.portal_taxonomy_nodes (id bigserial PRIMARY KEY, kb_id integer NOT NULL, "
+    f"parent_id integer, name varchar(128) NOT NULL)",
     f"CREATE TABLE {_SCHEMA}.portal_connectors (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), "
     f"org_id integer NOT NULL, kb_id integer NOT NULL, config jsonb NOT NULL DEFAULT '{{}}'::jsonb, "
     f"state text NOT NULL DEFAULT 'active')",
@@ -113,6 +117,9 @@ _SEED = [
     "INSERT INTO portal_orgs (id, telemetry_level, platform_unlocked_features) "
     "VALUES (901,'full',ARRAY['knowledge_gaps']),(902,'full',ARRAY['knowledge_gaps'])",
     "INSERT INTO portal_knowledge_bases (org_id, slug) VALUES (901,'kb-a'),(902,'kb-b')",
+    "INSERT INTO portal_taxonomy_nodes (kb_id, name) VALUES "
+    "((SELECT id FROM portal_knowledge_bases WHERE org_id=901 AND slug='kb-a'),'Billing'),"
+    "((SELECT id FROM portal_knowledge_bases WHERE org_id=902 AND slug='kb-b'),'Foreign')",
 ]
 
 
@@ -224,6 +231,105 @@ async def _analysis(admin: AsyncEngine, org_id: int = 901) -> tuple[str, list]:
 
 
 # --------------------------------------------------------------------------- #
+
+
+async def _gap_topics(factory, org_id: int = 901) -> list:
+    async with factory() as db:
+        await set_tenant(db, org_id)
+        return await _list_support_gaps(
+            perms=types.SimpleNamespace(org_id=org_id),
+            db=db,
+            cutoff=datetime.now(tz=UTC) - timedelta(days=30),
+            gap_type=None,
+            language=None,
+            include_resolved=False,
+            limit=50,
+        )
+
+
+async def test_support_gap_classified_topic_surfaces_in_gaps(pg) -> None:
+    admin, factory, cid, _analyzer = pg
+    async with admin.connect() as conn:
+        node_a = (
+            await conn.execute(
+                text(
+                    "SELECT n.id FROM portal_taxonomy_nodes n JOIN portal_knowledge_bases kb ON kb.id=n.kb_id "
+                    "WHERE kb.org_id=901 AND kb.slug='kb-a' AND n.name='Billing'"
+                )
+            )
+        ).scalar_one()
+
+    with patch(
+        "app.services.knowledge_ingest_client.classify_gap_taxonomy",
+        AsyncMock(return_value=[node_a]),
+    ):
+        await _upsert(factory, cid, _payload())
+
+    async with admin.connect() as conn:
+        stored = (
+            await conn.execute(
+                text(
+                    "SELECT taxonomy_node_ids FROM portal_retrieval_gaps "
+                    "WHERE org_id=901 AND support_case_id IS NOT NULL"
+                )
+            )
+        ).scalar_one()
+    assert stored == [node_a]
+
+    gaps = await _gap_topics(factory)
+    assert len(gaps) == 1
+    assert gaps[0].topic is not None
+    assert (gaps[0].topic.id, gaps[0].topic.name) == (node_a, "Billing")
+
+
+async def test_support_topic_excludes_foreign_unknown_and_legacy_null(pg) -> None:
+    admin, factory, _cid, _analyzer = pg
+    async with admin.begin() as conn:
+        await conn.execute(
+            text("INSERT INTO portal_knowledge_bases (org_id, slug) VALUES (901, 'kb-other'), (902, 'kb-a')")
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO portal_taxonomy_nodes (kb_id, name) SELECT id, 'Foreign' FROM portal_knowledge_bases WHERE (org_id=901 AND slug='kb-other') OR (org_id=902 AND slug='kb-a')"
+            )
+        )
+        node_b = (
+            (
+                await conn.execute(
+                    text(
+                        "SELECT n.id FROM portal_taxonomy_nodes n JOIN portal_knowledge_bases kb ON kb.id=n.kb_id "
+                        "WHERE n.name='Foreign'"
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        case_id = (
+            await conn.execute(
+                text(
+                    "INSERT INTO portal_support_cases "
+                    "(org_id, kb_slug, source, account_id, external_id, created_by, payload, content_hash, status) "
+                    "VALUES (901,'kb-a','hubspot','a','ext-x','u','{}'::jsonb, :h, 'analyzed') RETURNING id"
+                ),
+                {"h": "b" * 64},
+            )
+        ).scalar_one()
+        await conn.execute(
+            text(
+                "INSERT INTO portal_retrieval_gaps "
+                "(org_id, user_id, query_text, gap_type, nearest_kb_slug, support_case_id, diagnosis, "
+                "question_key, taxonomy_node_ids) VALUES "
+                "(901,'u','foreign','content','kb-a',:c,'missing','k-foreign', CAST(:nb AS integer[])),"
+                "(901,'u','unknown','content','kb-a',:c,'missing','k-unknown', ARRAY[999999]),"
+                "(901,'u','legacy','content','kb-a',:c,'missing','k-legacy', NULL)"
+            ),
+            {"c": case_id, "nb": node_b},
+        )
+
+    gaps = await _gap_topics(factory)
+    assert {g.group_key for g in gaps} == {"k-foreign", "k-unknown", "k-legacy"}
+    assert all(g.topic is None for g in gaps)
 
 
 async def test_repeat_identical_import_is_one_case_one_finding_no_reanalysis(pg) -> None:

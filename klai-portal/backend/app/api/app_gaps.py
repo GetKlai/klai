@@ -12,6 +12,7 @@ from app.api.dependencies import get_kb_with_access, require_capability
 from app.core.database import get_db
 from app.core.permissions import UserPermissions, get_caller, require_platform_unlocked
 from app.core.profiles import Capability
+from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg, PortalUser
 from app.models.retrieval_gaps import PortalRetrievalGap
 from app.models.support_cases import PortalSupportCase
@@ -35,6 +36,11 @@ router = APIRouter(
 # caller_client_id of the answer-review producer; a group containing one of its
 # rows is review-sourced rather than telemetry-only.
 _REVIEW_CALLER_CLIENT_ID = "human-review"
+
+
+class GapTopic(BaseModel):
+    id: int
+    name: str
 
 
 class GapOut(BaseModel):
@@ -65,6 +71,7 @@ class GapOut(BaseModel):
     # handle to close it, since folded findings share one key while their wording
     # differs. NULL for legacy telemetry groups.
     group_key: str | None = None
+    topic: GapTopic | None = None
 
 
 class GapsResponse(BaseModel):
@@ -174,7 +181,6 @@ async def list_gaps(
         stmt = stmt.where(PortalRetrievalGap.language == language)
     if not include_resolved:
         stmt = stmt.where(PortalRetrievalGap.resolved_at.is_(None))
-    # SPEC-KB-022 R7: filter by taxonomy node
     if taxonomy_node_id is not None:
         stmt = stmt.where(PortalRetrievalGap.taxonomy_node_ids.contains([taxonomy_node_id]))
 
@@ -191,6 +197,7 @@ async def list_gaps(
             language=language,
             include_resolved=include_resolved,
             limit=limit,
+            taxonomy_node_id=taxonomy_node_id,
         )
         return GapsResponse(gaps=support_only, total=len(support_only))
 
@@ -305,6 +312,7 @@ async def list_gaps(
             language=language,
             include_resolved=include_resolved,
             limit=limit,
+            taxonomy_node_id=taxonomy_node_id,
         )
     )
     # Highest-frequency groups first across both kinds.
@@ -321,6 +329,7 @@ async def _list_support_gaps(
     language: str | None,
     include_resolved: bool,
     limit: int,
+    taxonomy_node_id: int | None = None,
 ) -> list[GapOut]:
     """Case-backed findings, grouped by ``question_key`` with UNIQUE-CASE
     frequency (SPEC-RAG-SUPPORT-GAP).
@@ -332,8 +341,10 @@ async def _list_support_gaps(
     many times it was imported. Rows are only visible to a ``full``-telemetry
     org, so a downgraded tenant sees no support evidence here.
     """
-    org = (await db.execute(select(PortalOrg).where(PortalOrg.id == perms.org_id))).scalar_one_or_none()
-    if org is None or org.telemetry_level != "full":
+    telemetry_level = (
+        await db.execute(select(PortalOrg.telemetry_level).where(PortalOrg.id == perms.org_id))
+    ).scalar_one_or_none()
+    if telemetry_level != "full":
         return []
 
     stmt = (
@@ -369,9 +380,14 @@ async def _list_support_gaps(
         stmt = stmt.where(PortalRetrievalGap.language == language)
     if not include_resolved:
         stmt = stmt.where(PortalRetrievalGap.resolved_at.is_(None))
+    # SPEC-KB-022 R7: the taxonomy filter now covers support findings too, since
+    # they carry classified node ids. Without this a filtered view silently
+    # dropped every case-backed group regardless of its topic.
+    if taxonomy_node_id is not None:
+        stmt = stmt.where(PortalRetrievalGap.taxonomy_node_ids.contains([taxonomy_node_id]))
 
     result = await db.execute(stmt)
-    return [
+    gaps = [
         GapOut(
             query_text=r.query_text,
             gap_type=r.gap_type,
@@ -390,6 +406,41 @@ async def _list_support_gaps(
         )
         for r in result.all()
     ]
+
+    keys = [g.group_key for g in gaps if g.group_key is not None]
+    if keys:
+        topic_rows = (
+            await db.execute(
+                select(
+                    PortalRetrievalGap.question_key,
+                    PortalTaxonomyNode.id,
+                    PortalTaxonomyNode.name,
+                )
+                .join(
+                    PortalKnowledgeBase,
+                    (PortalKnowledgeBase.org_id == perms.org_id)
+                    & (PortalKnowledgeBase.slug == PortalRetrievalGap.nearest_kb_slug),
+                )
+                .join(
+                    PortalTaxonomyNode,
+                    (PortalTaxonomyNode.kb_id == PortalKnowledgeBase.id)
+                    & (PortalTaxonomyNode.id == func.any(PortalRetrievalGap.taxonomy_node_ids)),
+                )
+                .where(
+                    PortalRetrievalGap.org_id == perms.org_id,
+                    PortalRetrievalGap.support_case_id.isnot(None),
+                    PortalRetrievalGap.question_key.in_(keys),
+                )
+                .distinct(PortalRetrievalGap.question_key)
+                .order_by(PortalRetrievalGap.question_key, PortalTaxonomyNode.id)
+            )
+        ).all()
+        topic_by_key = {tr.question_key: GapTopic(id=tr.id, name=tr.name) for tr in topic_rows}
+        for g in gaps:
+            if g.group_key is not None:
+                g.topic = topic_by_key.get(g.group_key)
+
+    return gaps
 
 
 @router.post("/gaps/resolve", response_model=GapResolveResponse)

@@ -80,6 +80,8 @@ class _FakeHTTP:
         self.reassessment: object = None
         self.assessment_by: dict[str, object] = {}
         self.verification: object = None
+        self.answer_check: object = None
+        self.query_rewrite = "number porting port-in form"
         self.retrieval: dict = {}
         self.retrieval_sequence: list[dict] | None = None
         self.retrieval_status = 200
@@ -124,6 +126,12 @@ class _FakeHTTP:
             return _Resp(_chat(self.extraction))
         if system == getattr(sca, "NEED_VERIFICATION_SYSTEM_PROMPT", None):
             return _Resp(_chat(self._verify(user)))
+        if system == getattr(sca, "QUERY_REWRITE_SYSTEM_PROMPT", None):
+            return _Resp(_chat({"query": self.query_rewrite}))
+        if system == getattr(sca, "ANSWER_CHECK_SYSTEM_PROMPT", None):
+            return _Resp(
+                _chat(self.answer_check or {"answers_question": True, "reason": "The steps answer the question."})
+            )
         if system == getattr(sca, "REASSESSMENT_SYSTEM_PROMPT", None):
             return _Resp(_chat(self.reassessment if self.reassessment is not None else self.assessment))
         for needle, payload in self.assessment_by.items():
@@ -964,14 +972,17 @@ async def test_internal_note_reporting_customer_howto_is_retained(fake):
 @pytest.mark.parametrize(
     "role, visibility, kind, expected",
     [
-        ("unknown", "public", "transcript", "uncertain"),
+        ("unknown", "public", "transcript", "missing"),
+        ("unknown", "internal", "transcript", "uncertain"),
         ("agent", "public", "transcript", "uncertain"),
         ("customer", "public", "transcript", "missing"),
         ("customer", "internal", "transcript", "uncertain"),
         ("customer", "public", "note", "uncertain"),
     ],
 )
-async def test_call_gap_requires_a_source_customer_request(covered, role, visibility, kind, expected):
+async def test_call_gap_preserves_unknown_attribution_without_treating_agent_actions_as_customer_needs(
+    covered, role, visibility, kind, expected
+):
     covered.assessment = {
         "diagnosis": "missing",
         "rationale": "The porting procedure is absent.",
@@ -990,6 +1001,10 @@ async def test_call_gap_requires_a_source_customer_request(covered, role, visibi
     assert findings[0]["diagnosis"] == expected
     assert findings[0]["message_ids"] == ["m1"]
     assert findings[0]["missing_information"] == "Porting steps"
+    if role == "unknown" and expected == "missing":
+        assert findings[0]["audience"] == "unknown"
+        assert findings[0]["comparison_limitations"]
+        assert findings[0]["proposed_change"] == "Create a number-porting how-to article."
     if expected == "uncertain":
         assert "customer attribution" in findings[0]["rationale"]
         # A provisional/unknown outcome carries no actionable change.
@@ -1070,7 +1085,7 @@ async def test_alternate_search_finds_article_missed_by_original_yields_findabil
     assert second_body["scope"] == "org"
     assert second_body["kb_slugs"] == [KB]
     assert second_body["user_id"] == USER
-    assert second_body["query"] != first_body["query"]  # a genuinely different, source-grounded query
+    assert second_body["query"] == "number porting port-in form"
 
 
 async def test_alternate_retrieval_failure_fails_analysis_visibly(fake):
@@ -1130,3 +1145,29 @@ async def test_covered_verdict_skips_second_retrieval_and_has_no_proposed_change
     assert f["proposed_change"] == ""  # non-gap verdicts never carry a change
     assert f["search_queries"] == ["How do I move my number over?"]
     assert sum(url.endswith("/retrieve") for url, _, _ in fake.calls) == 1
+
+
+async def test_related_add_instructions_do_not_answer_a_removal_question(fake):
+    question = "How do I remove a mobile destination from my call group?"
+    fake.extraction = _one_question(["m1"], question)
+    fake.retrieval = _retrieval(
+        [_chunk("c1", "To add a group to your dial plan, click Add step and select Call group.")]
+    )
+    fake.assessment = {
+        "diagnosis": "findability",
+        "rationale": "The call-group article is related to the question.",
+        "missing_information": "",
+        "proposed_change": "Link the call-group article.",
+        "article_ids": ["c1"],
+    }
+    fake.answer_check = {"answers_question": False, "reason": "Adding a group does not explain removing a destination."}
+    findings = await _run(fake, _case([_msg("m1", "customer", question)]))
+    assert findings[0]["diagnosis"] == "uncertain"
+    assert findings[0]["proposed_change"] == ""
+    assert "removing a destination" in findings[0]["rationale"]
+
+
+async def test_invalid_answer_check_cannot_certify_an_answer(covered):
+    covered.answer_check = {"answers_question": "yes", "reason": "Related article."}
+    with pytest.raises(sca.SupportCaseAnalysisError, match="answer check"):
+        await _run(covered, _case([_msg("m1", "customer", "How do I port my number?")]))

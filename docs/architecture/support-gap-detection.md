@@ -50,7 +50,7 @@ Each proposal must expose source cases/passages, the relevant existing articles,
 
 Prioritize customer impact, unique case frequency, recency, support effort, and whether documentation can help. Retain serious low-frequency cases. Unknown outcomes remain unknown; do not invent an answer to complete a draft.
 
-Evaluate true proposals and missed gaps against human-labeled cases, including examples already covered by knowledge. Hold out later cases from tuning. Measure retrieval quality separately from answer correctness and grounding ([Ragas metrics](https://docs.ragas.io/en/stable/concepts/metrics/available_metrics/)). Check both historical applicability and whether a gap remains open against today's knowledge.
+Evaluate proposal usefulness through editorial decisions, keeping rejection, correction and acceptance distinct. Whole-case human labeling is optional evaluation work, not an ingestion or rollout prerequisite. Without independent case references, missed gaps and recall remain unmeasured. Hold out later cases from tuning. Measure retrieval quality separately from answer correctness and grounding ([Ragas metrics](https://docs.ragas.io/en/stable/concepts/metrics/available_metrics/)). Check both historical applicability and whether a gap remains open against today's knowledge.
 
 After editorial changes, measure task success and repeat contacts as well as content coverage. A session without a ticket is not proof of success ([KCS self-service measurement](https://library.serviceinnovation.org/KCS/Measuring_Self-Service_Success/20_Why_Measure_Self-Service_Success)). Start with scheduled ingestion and a weekly editorial cadence; adjust frequency from measured need.
 
@@ -232,6 +232,44 @@ First prove negative cases: raw support cases never call knowledge ingestion; re
 
 ### Human review workspace
 
+#### Editorial operating contract
+
+Tickets and phone transcripts enter analysis without manual source-content
+validation. A support colleague reviews public-chat answer quality in a separate
+feedback flow. Knowledge editors review proposed help-center changes, not a queue
+of transcripts to label. Existing whole-case reference and speaker-correction
+tools are optional diagnostics; the prepared development examples must not become
+a required annotation task for support staff.
+
+The target workflow is automatic source analysis, comparison with current scoped
+knowledge, a concrete proposal, collaborative editing with Claude, then explicit
+editor acceptance and publication through the existing authorized content flow.
+Claude assists with drafting and placement; it does not supply human approval.
+Each proposal should contain the reusable question, the proposed text change,
+an existing article/section or a suggested new location, the reason for that
+placement, cited source excerpts, compared articles, and any unresolved facts.
+Editors can accept, edit, reject or request clarification. A single explicit
+accept-and-publish action can confirm the final text and destination; successful
+publication must still be verified before a gap can be considered resolved.
+
+Missing speaker roles do not require staff to annotate the source before useful
+drafting can begin. Keep the attribution unknown and any inferred topic or answer
+provisional; do not claim a confirmed customer request, generalize account-specific
+terms, or invent instructions. A proposal without sufficient answer evidence asks
+for the specific missing fact rather than presenting a fabricated ready-to-publish
+answer. Source ambiguity and editorial usefulness are separate measurements.
+
+Measure acceptance, material edits, rejection reasons, review time and duplicate
+proposals by source channel and overall. These are editorial outcomes, not recall
+or proof of published-answer correctness. Reference-set precision/recall remains
+available only when independently reviewed case references actually exist.
+The current implementation below supports finding review; proposal drafting,
+placement, collaborative editing and publication are not yet a complete flow.
+Existing Knowledge MCP create/update tools write Klai Docs pages. They do not
+establish write access to an externally crawled help center. Resolve the original
+publication destination before wiring acceptance to a write; updating a retrieval
+copy must not be presented as updating the source help-center article.
+
 The support-case list includes all imported cases, including failed/pending analyses and cases with only covered or uncertain outcomes. It is scoped to one accessible organization knowledge base. Import opens the resulting case even when no gap was created. A case opens on its questions, with cited source excerpts and compared knowledge passages; the original conversation remains available separately.
 
 A reviewer can mark an analysis as correct, incorrect or uncertain and add a note. These are revision-bound judgments; an optional corrected diagnosis controls the derived inbox finding without changing the machine output or publishing knowledge. Source-role corrections and whole-case reference reviews have separate actions. Store them separately from machine analysis in the case's `reviews` JSONB column, keyed by the exact analysis revision and finding index. The revision includes the evidence hash, analysis version and raw analysis output. Reanalysis preserves older review entries without applying them to new output; case deletion and privacy purge delete the annotations with their evidence. There is no separate permanent evaluation archive in this iteration. The additive `reviews` column must exist before the updated endpoints serve traffic; the accompanying owner SQL handles installations where the application migration role does not own the evidence table.
@@ -252,11 +290,19 @@ complete conversations, including needs the extractor did not return.
 ### Comparison and grouping
 
 Use a bounded second retrieval grounded in the case context when the first
-search does not establish coverage. Preserve both queries and the compared
+search does not establish coverage. Rewrite the question into a concise query
+using only the question and relevant case terminology; do not concatenate the
+whole exchange. Preserve both queries and the compared
 source passages. An answer recovered only on the second search is evidence of
 a retrieval/findability problem, not missing content. A missing-content finding
 remains a candidate: bounded retrieval cannot prove exhaustive corpus absence.
 Failures in either search fail the analysis visibly.
+
+Before accepting `covered` or `findability`, a separate answer check examines
+the cited passages for the requested action, product and conditions. Related
+links or instructions for a different action are insufficient. A rejected
+coverage claim triggers the bounded second search; if still unsupported, the
+finding remains uncertain. This model check does not establish measured precision.
 
 Group paraphrases only within the same tenant, comparison KB, language, audience
 and diagnosis. A model may select an existing group from a bounded candidate
@@ -267,11 +313,17 @@ ungrouped outcome. Review grouping against human-labelled pairs before treating
 frequency as a reliable measure of demand. Frequency is one prioritization
 signal; severity, likely preventability and support effort require observed data.
 
+The overview groups these distinct needs under existing KB taxonomy topics.
+Topic membership never merges separate questions or adds their case counts
+together. Topics must belong to the same organization and KB; unclassified
+needs remain visible under “Not yet grouped”. Raw automatic retrieval signals
+have a separate view because they do not establish missing knowledge.
+
 ### Source roles and human corrections
 
 Call speaker IDs and customer/agent roles are separate facts. Accept explicit
 roles or a supplied speaker-to-role mapping from the authenticated transcript
-source. Unknown roles stay unknown. An authorized reviewer can correct cited
+source. Unknown roles stay unknown. As an optional diagnostic, an authorized reviewer can correct cited
 call-message roles and request reanalysis; record the actor and original source
 roles. Do not infer roles from speaker numbering. Raw API transcripts use this
 same evidence contract; audio upload is not a required production interface.
@@ -312,7 +364,7 @@ belong in this public repository.
 
 Report source completeness, analysis failures, abstentions, reviewed-case
 coverage, false positive findings and missed reference needs separately. Measure
-precision and recall only against complete human reference reviews. Unreviewed
+precision and recall only against optional complete human reference reviews. Unreviewed
 cases have unavailable quality metrics, never zero error or a perfect score.
 An empty prediction set with positive reference gaps has zero recall and
 undefined precision. Explain the matching method and independently review
@@ -375,7 +427,9 @@ The first iteration addresses source coverage before changing model prompts:
   evaluation, and a longer timeout only proves the turn finished, not that its
   answer was correct.
 - Calls with unknown customer attribution remain provisional. Existing tests
-  check both unknown-role abstention and explicit-role evidence. Speaker labels
+  check provisional unknown-role topics and explicit-role evidence. Unknown
+  attribution does not suppress an otherwise established conversation topic;
+  the finding retains `audience=unknown` and an attribution limitation. Speaker labels
   from [diarization](https://docs.aws.amazon.com/transcribe/latest/dg/diarization.html)
   do not establish customer/agent roles. Obtain provider role metadata or human
   correction before treating those findings as confirmed customer knowledge needs.
