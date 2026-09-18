@@ -78,7 +78,7 @@ async def log_answer_grounding(
                 "role": "user",
                 "content": grounding_check_user_content(
                     question=user_query,
-                    articles=_articles(citation_chunks),  # noqa: E501 shared builder, see tests
+                    articles=_articles(citation_chunks),
                     draft=draft,
                 ),
             },

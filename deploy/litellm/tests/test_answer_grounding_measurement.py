@@ -202,3 +202,81 @@ async def test_both_paths_hand_the_checker_the_same_text(monkeypatch):
         articles=[("Wachtrij", "Ga naar Belplan.")],
         draft="Ga naar Belplan.",
     )
+
+
+@pytest.mark.asyncio
+async def test_the_check_hands_back_its_verdict_and_counts_contradictions(monkeypatch, caplog):
+    """Two contracts the caller and the operator report depend on.
+
+    The verdict is returned so a caller can act on it without asking again, and
+    the contradiction count is logged apart from the rest because on real
+    internal answers those are 8% where any unsupported statement is 84%
+    (fifty answers from a customer's tenant, 2026-09-18). Warning on one in
+    twelve answers and warning on seven in ten are different products, so the
+    split has to survive a refactor.
+    """
+    import klai_answer_grounding as grounding
+
+    class _Resp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"statements": ['
+                                '{"statement": "Ga naar Belplan.", "evidence": "Ga naar Belplan.",'
+                                ' "support": "supported"},'
+                                '{"statement": "Bel 020-1234567.", "evidence": "",'
+                                ' "support": "not_in_articles"},'
+                                '{"statement": "Dat kost 5 euro.", "evidence": "",'
+                                ' "support": "contradicted"}'
+                                "]}"
+                            )
+                        }
+                    }
+                ]
+            }
+
+    async def _fake(_payload, _headers, _opts, _timeout):
+        return _Resp()
+
+    monkeypatch.setattr(grounding, "_post_to_rewrite_model", _fake)
+    monkeypatch.setattr(grounding, "ANSWER_GROUNDING_API_KEY", "k")
+
+    with caplog.at_level(logging.WARNING):
+        check = await grounding.log_answer_grounding(
+            user_query="Hoe stel ik een wachtrij in?",
+            draft="Ga naar Belplan.",
+            citation_chunks=[{"title": "Wachtrij", "text": "Ga naar Belplan."}],
+            kb_meta={"org_id": "8"},
+        )
+
+    assert check is not None
+    assert [item.statement for item in check.unsupported] == [
+        "Bel 020-1234567.",
+        "Dat kost 5 euro.",
+    ]
+    assert check.worth_repairing is True
+    logged = " ".join(record.getMessage() for record in caplog.records)
+    assert "contradicted=1" in logged
+    assert "unsupported=2" in logged
+
+
+@pytest.mark.asyncio
+async def test_a_failed_check_hands_back_nothing(monkeypatch):
+    """A caller must be able to tell "not checked" from "checked and clean"."""
+    import klai_answer_grounding as grounding
+
+    async def _boom(*_args, **_kwargs):
+        raise RuntimeError("upstream down")
+
+    monkeypatch.setattr(grounding, "_post_to_rewrite_model", _boom)
+    monkeypatch.setattr(grounding, "ANSWER_GROUNDING_API_KEY", "k")
+
+    assert await grounding.log_answer_grounding(
+        user_query="Q", draft="D", citation_chunks=[], kb_meta={"org_id": "8"}
+    ) is None
