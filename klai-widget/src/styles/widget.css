@@ -1065,7 +1065,9 @@
   width: 100%;
   min-width: 0;
   display: flex;
-  align-items: flex-end;
+  /* Top-aligned: the input rests at three lines and grows, so a bottom-aligned
+     send button drifts away from where the visitor starts typing. */
+  align-items: flex-start;
   gap: 8px;
 }
 
@@ -1148,8 +1150,10 @@
   line-height: 1.4;
   color: var(--klai-text-color);
   background-color: var(--klai-background-color);
-  min-height: 42px;
-  max-height: 120px;
+  /* Three lines tall at rest: a one-line box invites one-word questions, and a
+     vague question is what retrieval and the clarify flow handle worst. */
+  min-height: 84px;
+  max-height: 180px;
   overflow-y: auto;
   transition: border-color 0.15s;
 }

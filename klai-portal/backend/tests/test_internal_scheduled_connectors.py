@@ -23,11 +23,19 @@ def _request() -> MagicMock:
     return MagicMock()
 
 
-def _row(connector_id: str, schedule: str, zitadel_org_id: str) -> tuple[MagicMock, MagicMock]:
+def _row(
+    connector_id: str,
+    schedule: str,
+    zitadel_org_id: str,
+    connector_type: str = "notion",
+    encrypted_credentials: bytes | None = None,
+) -> tuple[MagicMock, MagicMock]:
     """One (PortalConnector, PortalOrg) row as returned by the joined select."""
     connector = MagicMock()
     connector.id = connector_id
     connector.schedule = schedule
+    connector.connector_type = connector_type
+    connector.encrypted_credentials = encrypted_credentials
     org = MagicMock()
     org.zitadel_org_id = zitadel_org_id
     return connector, org
@@ -148,6 +156,56 @@ class TestListScheduledConnectors:
             items = await list_scheduled_connectors(request=_request(), db=db)
 
         assert [item.connector_id for item in items] == ["web", "hs-on"]
+
+    @pytest.mark.asyncio
+    async def test_scheduled_connectors_reports_type_and_saved_credentials(self) -> None:
+        """klai-connector's session-touch job needs connector_type + has_saved_credentials
+        to find web-crawler connectors with a stored login to keep alive between crawls."""
+        from app.api.internal import list_scheduled_connectors
+
+        db = AsyncMock()
+        db.info = {}
+        result = MagicMock()
+        result.all.return_value = [
+            _row(
+                "11111111-1111-1111-1111-111111111111",
+                "0 3 * * *",
+                "200000000000000001",
+                connector_type="web_crawler",
+                encrypted_credentials=b"secret",
+            ),
+            _row(
+                "22222222-2222-2222-2222-222222222222",
+                "*/15 * * * *",
+                "200000000000000002",
+                connector_type="web_crawler",
+                encrypted_credentials=None,
+            ),
+            _row(
+                "33333333-3333-3333-3333-333333333333",
+                "0 4 * * *",
+                "200000000000000003",
+                connector_type="notion",
+                encrypted_credentials=b"secret",
+            ),
+        ]
+        db.execute = AsyncMock(return_value=result)
+
+        with (
+            patch("app.api.internal._require_internal_token", new=AsyncMock()),
+            patch("app.api.internal._audit_internal_call", new=AsyncMock()),
+            patch("app.api.internal.cross_org_scope", _fake_cross_org_scope),
+        ):
+            items = await list_scheduled_connectors(request=_request(), db=db)
+
+        # Web crawler with saved cookies: the case the touch job must find.
+        assert items[0].connector_type == "web_crawler"
+        assert items[0].has_saved_credentials is True
+        # Web crawler without saved credentials: nothing to keep alive.
+        assert items[1].has_saved_credentials is False
+        # Non-crawler type is reported as-is; the endpoint doesn't filter by type.
+        assert items[2].connector_type == "notion"
+
 
     @pytest.mark.asyncio
     async def test_scheduled_connectors_requires_internal_token(self) -> None:

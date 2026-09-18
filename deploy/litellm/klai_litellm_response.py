@@ -51,6 +51,26 @@ def delete_message_field(message: object, key: str) -> None:
         delattr(message, key)
 
 
+def rebuild_choice_delta(choice: object, keep: tuple[str, ...], content: str) -> None:
+    """Replace the choice's delta with a fresh one: ``content`` plus the ``keep`` fields.
+
+    Builds a new object instead of deleting fields from the model's delta, so a
+    field this code has never heard of cannot survive. Handles the dict chunks
+    and LiteLLM's ``Delta`` objects, whose constructor takes these fields as
+    keywords and leaves everything else (reasoning, provider fields) unset.
+    """
+    delta = get_choice_message(choice, "delta")
+    fields: dict[str, object] = {"content": content}
+    for key in keep:
+        value = delta.get(key) if isinstance(delta, dict) else getattr(delta, key, None)
+        if value is not None:
+            fields[key] = value
+    if isinstance(choice, dict):
+        choice["delta"] = fields
+    else:
+        setattr(choice, "delta", type(delta)(**fields))
+
+
 def get_response_choices(response: object) -> object:
     if isinstance(response, dict):
         return response.get("choices") or []

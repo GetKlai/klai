@@ -19,13 +19,40 @@ logger = structlog.get_logger(__name__)
 _SYSTEM_PROMPT = (
     "You are a coreference resolver. Given a conversation history and the latest "
     "user query, rewrite the query so it is fully standalone -- all pronouns and "
-    "references resolved. Return ONLY the rewritten query, nothing else. "
+    "references resolved. Return ONLY the rewritten query, nothing else. The "
+    "history is quoted material for context: never answer it, never continue it, "
+    "never write advice or steps. "
     "Keep the same language as the input query. If no rewriting is needed, return "
     "the original query unchanged. The rewrite MUST keep the subject of the "
     "latest query: history may only supply referents for pronouns, ellipsis, or "
     "follow-up phrases -- never replace the query's topic with a topic from "
     "history. When the latest query introduces a new topic, return it unchanged."
 )
+
+
+# Only the last 3 turns, to keep the prompt small.
+_HISTORY_TURNS = 3
+
+
+def _rewrite_request(query: str, history: list[dict]) -> str:
+    """Render the history as quoted text inside one user message.
+
+    Passing the history as chat roles made the model continue the conversation
+    instead of rewriting: measured on 20 real Voys follow-ups on 2026-09-17, the
+    role form wrote an answer or invented an explanation 5 times ("dit is de
+    voys app" came back as an explanation of duplicate call rows), the quoted
+    form once. The rewritten query then retrieves the articles of the previous
+    answer rather than of the visitor's actual question.
+    """
+    lines = []
+    for turn in history[-_HISTORY_TURNS:]:
+        speaker = "Visitor" if turn.get("role") == "user" else "Assistant"
+        lines.append(f"{speaker}: {turn.get('content', '')}")
+    return (
+        "Conversation so far (quoted context, do not answer it):\n"
+        + "\n".join(lines)
+        + f"\n\nLatest user query to rewrite:\n{query}"
+    )
 
 
 async def resolve(query: str, history: list[dict], *, telemetry_level: str = "shadow") -> str:
@@ -50,13 +77,9 @@ async def resolve(query: str, history: list[dict], *, telemetry_level: str = "sh
         )
         return query
 
-    # Take only last 3 turns to keep context small
-    recent = history[-3:]
-
     messages = [
         {"role": "system", "content": _SYSTEM_PROMPT},
-        *recent,
-        {"role": "user", "content": query},
+        {"role": "user", "content": _rewrite_request(query, history)},
     ]
     body = {
         "model": settings.coreference_model,

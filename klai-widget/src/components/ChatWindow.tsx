@@ -568,7 +568,7 @@ export function ChatWindow(props: ChatWindowProps) {
     const target = e.target as HTMLTextAreaElement;
     setInputValue(target.value);
     target.style.height = "auto";
-    target.style.height = `${Math.min(target.scrollHeight, 120)}px`;
+    target.style.height = `${Math.min(target.scrollHeight, 180)}px`;
   };
 
   // A conversation has started once the user has sent any message. The
@@ -926,7 +926,7 @@ export function ChatWindow(props: ChatWindowProps) {
             onInput={handleTextareaInput}
             onKeyDown={handleKeyDown}
             disabled={chatState.isStreaming || chatState.handoffConnecting || chatState.conversationStatus === "closed" || conversationActionBusy()}
-            rows={1}
+            rows={3}
             aria-label={t().inputLabel}
           />
           <Show

@@ -43,6 +43,7 @@ import {
   MARKDOWN_PROSE_CLASSES,
   normalizeConnectorPreselectType,
   previewUrlOnDetailsAdvance,
+  testUrlOnDetailsAdvance,
   VALID_PRESELECT_TYPES,
 } from './-connector-constants'
 import { PreviewClassificationFeedback } from './-connector-feedback'
@@ -211,11 +212,17 @@ function AddConnectorPage() {
         // it as a fallback crawl seed. The sync starts from base_url; only if
         // that discovers nothing does it fall back to this known-good page.
         // The preview URL stays a render-test — this is a separate config value.
+        // Scope check must include path_prefix, matching the backend's
+        // WebcrawlerConfig._assert_within_scope (base_url + path_prefix) -
+        // checking against the bare base_url let a seed from outside the
+        // configured locale/subtree through client-side, only to 422 on
+        // save (reported 2026-09-18, same page the operator had just
+        // tested).
         if (
           wcPreviewUrl &&
           wcPreviewUrl !== webcrawlerConfig.base_url &&
           previewResult?.classification === 'success' &&
-          isWithinBaseUrl(wcPreviewUrl, webcrawlerConfig.base_url)
+          isWithinBaseUrl(wcPreviewUrl, joinSeedUrl(webcrawlerConfig.base_url, webcrawlerConfig.path_prefix))
         ) {
           config.discovery_seed_url = wcPreviewUrl
         }
@@ -917,7 +924,9 @@ function AddConnectorPage() {
                           setWcPreviewUrl((current) =>
                             previewUrlOnDetailsAdvance(current, webcrawlerConfig.base_url),
                           )
-                          setWcTestUrl('')
+                          setWcTestUrl((current) =>
+                            testUrlOnDetailsAdvance(current, webcrawlerConfig.base_url),
+                          )
                           invalidateAuthProbe()
                           invalidatePreview()
                           setWcStep('auth-question')

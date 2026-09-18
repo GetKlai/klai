@@ -87,10 +87,23 @@ class WidgetConfig(BaseModel):
     welcome_message: str = ""
     system_prompt: str = Field(default="", max_length=4000)
     css_variables: dict[str, str] = Field(default_factory=dict)
-    # TWD-style starter chips shown on the empty state. Max 6 per
-    # TalkWithData convention. Each entry is rendered as a clickable
-    # pill that submits the text as the first user message.
-    conversation_starters: list[str] = Field(default_factory=list, max_length=6)
+    # TWD-style starter chips shown on the empty state. Each entry is
+    # rendered as a clickable pill that submits the text as the first user
+    # message. Capped at 3 (was 6): short, vague starters retrieve worse
+    # than a visitor's own concrete question, and the new clarify flow
+    # already prompts for specifics — fewer, better chips beat more, vaguer
+    # ones.
+    conversation_starters: list[str] = Field(default_factory=list, max_length=3)
+    # Subjects this widget does not answer, in the tenant's own words (Voys:
+    # prices, quotes, payment terms). The question judge reads them beside
+    # retrieval, and a turn that falls inside them gets ``off_topic_reply``
+    # verbatim plus the appointment button — the answer model never writes.
+    # Putting the same instruction in system_prompt was measured on 2026-09-17
+    # and landed it right 8 times out of 15, once quoting a price from an
+    # article; the profile above it and the articles below it pull harder than
+    # a tenant sentence in between.
+    off_topic_subjects: str = Field(default="", max_length=500)
+    off_topic_reply: str = Field(default="", max_length=500)
     # When true, the widget hides the AI introduction in the empty state.
     # The footer is configured independently through footer_text.
     hide_disclaimer: bool = False
@@ -222,7 +235,12 @@ def _widget_to_response(widget: Widget, kb_access_count: int) -> WidgetResponse:
             welcome_message=config.get("welcome_message", ""),
             system_prompt=config.get("system_prompt", ""),
             css_variables=config.get("css_variables", {}),
-            conversation_starters=config.get("conversation_starters", []),
+            # Widgets saved before the cap dropped from 6 to 3 can still carry
+            # up to 6 stored entries. Truncate on read instead of letting the
+            # model's max_length=3 raise here and 500 the list/detail response.
+            conversation_starters=(config.get("conversation_starters") or [])[:3],
+            off_topic_subjects=config.get("off_topic_subjects", ""),
+            off_topic_reply=config.get("off_topic_reply", ""),
             hide_disclaimer=config.get("hide_disclaimer", False),
             ai_disclosure_override=config.get("ai_disclosure_override"),
             footer_text=config.get("footer_text"),

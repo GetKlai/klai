@@ -127,6 +127,9 @@ __all__ = [
     "FINAL_RESPONSE_LANGUAGE_REMINDER",
     "GENERAL_CHAT_SYSTEM_PROMPT",
     "GROUNDED_CHAT_SYSTEM_PROMPT",
+    "GROUNDING_CHECK_SYSTEM_PROMPT",
+    "GROUNDING_NOTHING_LEFT",
+    "GROUNDING_REPAIR_SYSTEM_PROMPT",
     "KB_CONTEXT_LANGUAGE_REMINDER",
     "LANGUAGE_NAMES",
     "META_CHAT_SYSTEM_PROMPT",
@@ -135,15 +138,19 @@ __all__ = [
     "SUPPORT_CHAT_SYSTEM_PROMPT",
     "SUPPORT_EXPRESSIVE_CHAT_SYSTEM_PROMPT",
     "AnswerClaims",
+    "GroundedStatement",
+    "GroundingCheck",
     "answer_claims_response_format",
     "appointment_offer_marker",
     "broad_mode_answer_marker",
     "final_response_language_reminder",
+    "grounding_check_response_format",
     "has_direct_evidence_for_query",
     "is_broad_knowledge_answer",
     "may_show_model_text_without_sources",
     "no_citable_sources_message",
     "parse_answer_claims",
+    "parse_grounding_check",
     "should_clarify",
     "strip_appointment_offer_marker",
 ]
@@ -1117,3 +1124,115 @@ def should_clarify(confidence_band: object, *, has_direct_evidence: bool) -> boo
     :data:`CLARIFY_TURN_ADDENDUM` in on this same condition.
     """
     return confidence_band in ("low", "unknown") and not has_direct_evidence
+
+
+# ---------------------------------------------------------------------------
+# Statement-level grounding check (SPEC-RAG-ANSWER-JUDGES-001 v0.7.0)
+#
+# One question about a whole draft, answered by the small model, caught 22% of
+# the answers that state something the help articles do not, with 7 false alarms
+# out of 17 (54 hand-checked real answers, 2026-09-17). Listing every concrete
+# statement with the article text behind it caught 96% at 77% precision, and is
+# the only measure that moved the number: temperature 0, a stricter generation
+# instruction and removing the profile's closing rule each left it unchanged.
+# Shared so both chat paths judge by the same words.
+# ---------------------------------------------------------------------------
+
+GROUNDING_NOTHING_LEFT: Final[str] = "NOTHING_LEFT"
+
+GROUNDING_CHECK_SYSTEM_PROMPT = (
+    "You audit a reply from a company's help chat before a visitor sees it. You get the visitor's "
+    "question, the help-article excerpts the reply was written from, and the reply. Judge ONLY against "
+    "the excerpts, never against what you know.\n\n"
+    "List every concrete statement in the reply about the company or its product: a step, a menu path, a "
+    "button or field name, a setting, a feature or capability, a limitation, a policy, a price, an amount, "
+    "a time frame, a phone number or address, a cause of a problem, or a claim that something will now "
+    "work. Split a list of steps into one statement per step. Skip greetings, empathy, restating or "
+    "summarising the visitor's question or situation, a sentence that only asks the visitor what they mean or "
+    "which situation applies, a sentence that only introduces a list, an offer to book an appointment or "
+    "contact support, saying something was not found, and a sentence that repeats back what the visitor said "
+    "about their own situation. A question that also states something, such as a price or a step, is judged "
+    "on that statement.\n\n"
+    "For each statement:\n"
+    "statement: the reply's words, copied exactly.\n"
+    "evidence: the shortest excerpt text, copied exactly character for character, that states the same "
+    "thing; empty if there is none.\n"
+    "support: supported (the excerpts state it, a faithful paraphrase or translation counts), "
+    "not_in_articles (the excerpts do not state it, including a plausible step, label or consequence you "
+    "would have to infer or guess), contradicted (the excerpts say otherwise, or the text is about a "
+    "different product, situation or country than the reply applies it to).\n"
+    "A blank in an excerpt such as 'Ga naar .' means a link was removed; a reply that fills in a name for "
+    "it is not_in_articles."
+)
+
+GROUNDING_REPAIR_SYSTEM_PROMPT = (
+    "You edit a reply from a company's help chat before a visitor sees it. A checker found statements in "
+    "it that the help articles do not support. Return the reply with ONLY those statements removed or cut "
+    "back to the part the articles do support. Keep every other sentence exactly as written, in the same "
+    "order and format, and renumber a step list so it stays consecutive with no empty entries. Never add a "
+    "fact, step, name, number or advice that is not already in the reply, and never invert the meaning of a "
+    "sentence you keep: when a removal would leave a sentence saying the opposite or saying nothing, remove "
+    "that whole sentence. Leave a sentence that only says something was not found exactly as it is. Where a "
+    "removal leaves a gap the "
+    "visitor needs, add one short sentence in the reply's language saying that this part is not described "
+    "in our help articles and that they can book an appointment with an employee for a definite answer. "
+    "Add that sentence at most once. Remove a closing line that claims the task is now done if the steps no "
+    f"longer support it. If nothing useful remains, return exactly: {GROUNDING_NOTHING_LEFT}. Return only the edited "
+    "reply."
+)
+
+
+class GroundedStatement(BaseModel):
+    """One concrete statement the reply makes about the organisation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    statement: str
+    evidence: str
+    support: Literal["supported", "not_in_articles", "contradicted"]
+
+
+class GroundingCheck(BaseModel):
+    """Every statement in one reply, with the article text that backs it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    statements: list[GroundedStatement]
+
+    @property
+    def unsupported(self) -> list[GroundedStatement]:
+        return [item for item in self.statements if item.support != "supported"]
+
+    @property
+    def worth_repairing(self) -> bool:
+        """Two unsupported statements, or one that contradicts an article.
+
+        A single flag is right 77% of the time; this threshold was right 92% of
+        the time on the same 54 hand-checked answers. Repairing on one flag
+        deleted sentences that only restated the visitor's own situation.
+        """
+        unsupported = self.unsupported
+        return len(unsupported) >= 2 or any(item.support == "contradicted" for item in unsupported)
+
+
+def grounding_check_response_format() -> dict:
+    """The strict schema both paths send, so both get the same shape back."""
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "grounding_check",
+            "strict": True,
+            "schema": GroundingCheck.model_json_schema(),
+        },
+    }
+
+
+def parse_grounding_check(content: str | None) -> GroundingCheck | None:
+    """Parse a checker response; ``None`` on any failure, which reads as "not checked"."""
+    if not content:
+        return None
+    try:
+        return GroundingCheck.model_validate_json(content)
+    except Exception:
+        return None
+

@@ -33,6 +33,8 @@ export function DetailsTab({ widget }: Props) {
   const [pageContextEnabled, setPageContextEnabled] = useState(config.page_context_enabled ?? false)
   const [supportMode, setSupportMode] = useState(config.support_mode ?? false)
   const [toneRegister, setToneRegister] = useState<'restrained' | 'expressive'>(config.tone_register ?? 'restrained')
+  const [offTopicSubjects, setOffTopicSubjects] = useState(config.off_topic_subjects ?? '')
+  const [offTopicReply, setOffTopicReply] = useState(config.off_topic_reply ?? '')
 
   // The preview panel follows name and description live. Instructions,
   // template, customer-facing mode and the page-context toggle only reach
@@ -49,6 +51,8 @@ export function DetailsTab({ widget }: Props) {
       // out here made the panel answer in the saved tone without saying so,
       // which is the one thing a preview must never do.
       toneRegister !== (config.tone_register ?? 'restrained') ||
+      offTopicSubjects.trim() !== (config.off_topic_subjects ?? '') ||
+      offTopicReply.trim() !== (config.off_topic_reply ?? '') ||
       pageContextEnabled !== (config.page_context_enabled ?? false),
   })
 
@@ -65,7 +69,9 @@ export function DetailsTab({ widget }: Props) {
     setPageContextEnabled(config.page_context_enabled ?? false)
     setSupportMode(config.support_mode ?? false)
     setToneRegister(config.tone_register ?? 'restrained')
-  }, [widget.name, widget.description, config.system_prompt, config.template_slug, config.page_context_enabled, config.support_mode, config.tone_register])
+    setOffTopicSubjects(config.off_topic_subjects ?? '')
+    setOffTopicReply(config.off_topic_reply ?? '')
+  }, [widget.name, widget.description, config.system_prompt, config.template_slug, config.page_context_enabled, config.support_mode, config.tone_register, config.off_topic_subjects, config.off_topic_reply])
 
   const isDirty =
     name.trim() !== widget.name ||
@@ -74,7 +80,14 @@ export function DetailsTab({ widget }: Props) {
     (templateSlug || null) !== (config.template_slug ?? null) ||
     pageContextEnabled !== (config.page_context_enabled ?? false) ||
     supportMode !== (config.support_mode ?? false) ||
-    toneRegister !== (config.tone_register ?? 'restrained')
+    toneRegister !== (config.tone_register ?? 'restrained') ||
+    offTopicSubjects.trim() !== (config.off_topic_subjects ?? '') ||
+    offTopicReply.trim() !== (config.off_topic_reply ?? '')
+
+  // The backend only hands a turn off when subjects AND reply are both set,
+  // so saving one of them would show a success toast for a setting that does
+  // nothing. Block the save instead of letting the admin believe it is live.
+  const offTopicHalfFilled = !offTopicSubjects.trim() !== !offTopicReply.trim()
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -93,6 +106,8 @@ export function DetailsTab({ widget }: Props) {
       // internal widgets); stored regardless so switching customer mode
       // back on restores the admin's earlier register choice.
       tone_register: toneRegister,
+      off_topic_subjects: offTopicSubjects.trim(),
+      off_topic_reply: offTopicReply.trim(),
     }
     updateMutation.mutate(
       {
@@ -210,6 +225,39 @@ export function DetailsTab({ widget }: Props) {
               />
             </div>
           )}
+          {supportMode && (
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="widget-off-topic-subjects">{m.admin_widgets_off_topic_subjects_label()}</Label>
+                <p className="text-xs text-gray-600">{m.admin_widgets_off_topic_subjects_help()}</p>
+                <Textarea
+                  id="widget-off-topic-subjects"
+                  value={offTopicSubjects}
+                  onChange={(e) => setOffTopicSubjects(e.target.value)}
+                  rows={2}
+                  maxLength={500}
+                  placeholder={m.admin_widgets_off_topic_subjects_placeholder()}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="widget-off-topic-reply">{m.admin_widgets_off_topic_reply_label()}</Label>
+                <p className="text-xs text-gray-600">{m.admin_widgets_off_topic_reply_help()}</p>
+                <Textarea
+                  id="widget-off-topic-reply"
+                  value={offTopicReply}
+                  onChange={(e) => setOffTopicReply(e.target.value)}
+                  rows={3}
+                  maxLength={500}
+                  placeholder={m.admin_widgets_off_topic_reply_placeholder()}
+                />
+              </div>
+              {offTopicHalfFilled && (
+                <p className="text-sm text-[var(--color-destructive)]">
+                  {m.admin_widgets_off_topic_incomplete()}
+                </p>
+              )}
+            </div>
+          )}
         </div>
       </section>
 
@@ -220,7 +268,7 @@ export function DetailsTab({ widget }: Props) {
       )}
 
       <div className="pt-2">
-        <Button type="submit" disabled={updateMutation.isPending || name.trim().length < 3 || !isDirty}>
+        <Button type="submit" disabled={updateMutation.isPending || name.trim().length < 3 || !isDirty || offTopicHalfFilled}>
           {updateMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
           {m.admin_shared_save()}
         </Button>

@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import re
 
-from klai_chat_prompts import has_direct_evidence_for_query
+from klai_chat_prompts import has_direct_evidence_for_query, should_clarify
 from klai_citations import extract_salient_query_tokens
 
 # English on purpose: every other instruction block in the prompt stack is
@@ -27,19 +27,36 @@ LOW_CONFIDENCE_INJECTION_TEXT = (
     "clarifying question to the user — in the user's language — "
     "rather than giving a fabricated answer."
 )
-LOW_CONFIDENCE_OPEN_CONTEXT_TEXT = (
+_LOW_CONFIDENCE_OPEN_HEADER = (
     "[Klai retrieval — low relevance in Open mode]\n"
     "The retrieved KB material has a low relevance score for this "
-    "question. Treat the chunks as weak supplementary context. Open "
+    "question. Treat the chunks as weak supplementary context. "
+)
+_LOW_CONFIDENCE_OPEN_ORG_FACTS_RULE = (
+    "For organisation-specific facts, "
+    "prices, routes, product names, steps, or source claims: do not "
+    "invent them and say briefly that the knowledge base does not "
+    "support that specific claim."
+)
+LOW_CONFIDENCE_OPEN_CONTEXT_TEXT = (
+    _LOW_CONFIDENCE_OPEN_HEADER + "Open "
     "mode stays active: do not refuse solely because KB evidence is "
     "weak, tangential, or absent. Answer from general knowledge or "
     "visible user context when the question can be answered reliably "
     "that way. Present such parts explicitly as general knowledge or "
     "as derived from the user context, not as something that comes "
-    "from the knowledge base. For organisation-specific facts, "
-    "prices, routes, product names, steps, or source claims: do not "
-    "invent them and say briefly that the knowledge base does not "
-    "support that specific claim."
+    "from the knowledge base. " + _LOW_CONFIDENCE_OPEN_ORG_FACTS_RULE
+)
+# Open has no post-generation check, so a clarify turn (SPEC-RAG-CLARIFY-FLOW-001
+# REQ-5) keeps the labelling and org-facts rules and drops only "answer from
+# general knowledge now", which contradicts "ask first". Followed by the
+# clarify addendum at the call site.
+LOW_CONFIDENCE_OPEN_CLARIFY_TEXT = (
+    _LOW_CONFIDENCE_OPEN_HEADER
+    + "If you write anything from general knowledge or visible user context, "
+    "present it explicitly as general knowledge or as derived from the user "
+    "context, not as something that comes from the knowledge base. "
+    + _LOW_CONFIDENCE_OPEN_ORG_FACTS_RULE
 )
 LOW_CONFIDENCE_INJECTION_DISABLED = (
     os.getenv("KNOWLEDGE_DISABLE_LOW_CONFIDENCE_INJECTION", "0") == "1"
@@ -171,6 +188,9 @@ def should_apply_low_confidence_injection(
     user_query: object,
     evidence_chunks: list[dict],
 ) -> bool:
-    if confidence_band not in ("low", "unknown"):
-        return False
-    return not has_direct_evidence_for_query(user_query, evidence_chunks)
+    # One home for the condition: SPEC-RAG-CLARIFY-FLOW-001 decision 1 fires on
+    # exactly the turns this guard fires on.
+    return should_clarify(
+        confidence_band,
+        has_direct_evidence=has_direct_evidence_for_query(user_query, evidence_chunks),
+    )

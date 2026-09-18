@@ -537,6 +537,63 @@ async def test_public_bot_config_delivers_footer_links_in_widget():
 
 
 @pytest.mark.asyncio
+async def test_widget_config_truncates_conversation_starters_to_three():
+    """A widget saved before the cap dropped from 6 to 3 can still have up
+    to 6 stored starters. The public config truncates to 3 so every widget
+    shows at most 3 chips immediately, without the tenant re-saving."""
+    widget = FakeWidget()
+    widget.widget_config["conversation_starters"] = ["one", "two", "three", "four", "five"]
+    org = FakeOrg()
+    db = _make_db_chain(widget, org, [1])
+    request = _make_request("https://example.com")
+
+    with (
+        patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.get_redis_pool"),
+        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner.set_tenant", new=AsyncMock()),
+        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
+    ):
+        mock_settings.widget_jwt_secret = "shared-secret"
+
+        response = await widget_config(id=widget.widget_id, request=request, db=db)
+
+    assert json.loads(response.body.decode())["conversation_starters"] == ["one", "two", "three"]
+
+
+@pytest.mark.asyncio
+async def test_public_bot_config_truncates_conversation_starters_to_three():
+    """The share-link endpoint runs the same conversation-starters truncation."""
+    from app.api.partner import public_bot_config
+
+    org = FakeOrg()
+    widget = FakeWidget(
+        public_share_enabled=True,
+        widget_config={
+            "allowed_origins": [],
+            "title": "Public",
+            "welcome_message": "",
+            "system_prompt": "",
+            "css_variables": {},
+            "conversation_starters": ["one", "two", "three", "four", "five"],
+        },
+    )
+    db = _make_db_chain(widget, org, [10])
+
+    with (
+        patch("app.api.partner.settings") as mock_settings,
+        patch("app.api.partner.get_redis_pool"),
+        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner.set_tenant", new=AsyncMock()),
+        patch("app.api.partner.generate_session_token", return_value="public.jwt.token"),
+    ):
+        mock_settings.widget_jwt_secret = "shared-secret"
+        response = await public_bot_config(id=widget.widget_id, request=_make_request(), db=db)
+
+    assert json.loads(response.body.decode())["conversation_starters"] == ["one", "two", "three"]
+
+
+@pytest.mark.asyncio
 async def test_widget_config_hubspot_handoff_offered_to_the_platform_tenant():
     widget = FakeWidget()
     widget.widget_config["allowed_origins"] = ["https://getklai.getklai.com"]

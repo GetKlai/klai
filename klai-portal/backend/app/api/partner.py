@@ -9,9 +9,10 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 import uuid
 from asyncio import gather as asyncio_gather
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from urllib.parse import urlsplit
@@ -19,7 +20,7 @@ from urllib.parse import urlsplit
 import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from klai_chat_prompts.language import identify_text_language
+from klai_chat_prompts.language import identify_text_language, resolve_conversation_language
 from pydantic import BaseModel, Field, ValidationError
 from redis.exceptions import RedisError
 from sqlalchemy import select, text
@@ -40,13 +41,15 @@ from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg
 from app.models.widgets import Widget, WidgetKbAccess
 from app.services import escalation_intent as escalation_service
-from app.services import turn_scope
+from app.services import turn_judge
 from app.services.events import emit_event
 from app.services.gap_classification import classify_gap
 from app.services.partner_chat import (
     _last_user_message,
     chat_completion_non_streaming,
     chat_completion_streaming,
+    off_topic_response,
+    off_topic_stream,
     openai_chat_completion_non_streaming,
     openai_chat_completion_streaming,
     retrieve_context,
@@ -438,6 +441,32 @@ async def _widget_support_mode_enabled(auth: PartnerAuthContext, db: AsyncSessio
     )
     config = result.scalar_one_or_none() or {}
     return bool(config.get("support_mode")) if isinstance(config, dict) else False
+
+
+async def _widget_off_topic(auth: PartnerAuthContext, db: AsyncSession) -> tuple[str, str]:
+    """Return this widget's (subjects it does not answer, reply to give instead).
+
+    Both empty means the feature is off, which is every widget until an admin
+    fills them in. Same shape and same widget-JWT restriction as
+    :func:`_widget_support_mode_enabled`.
+    """
+    if not str(auth.key_id).startswith("wgt_"):
+        return "", ""
+    result = await db.execute(
+        select(Widget.widget_config).where(
+            Widget.widget_id == auth.key_id,
+            Widget.org_id == auth.org_id,
+        )
+    )
+    config = result.scalar_one_or_none() or {}
+    if not isinstance(config, dict):
+        return "", ""
+    subjects = config.get("off_topic_subjects")
+    reply = config.get("off_topic_reply")
+    return (
+        subjects.strip() if isinstance(subjects, str) else "",
+        reply.strip() if isinstance(reply, str) else "",
+    )
 
 
 async def _widget_tone_register(auth: PartnerAuthContext, db: AsyncSession) -> str:
@@ -1649,6 +1678,12 @@ async def canonical_chat_completions(
     )
 
 
+async def _timed[T](awaitable: Awaitable[T]) -> tuple[T, int]:
+    started = time.perf_counter()
+    result = await awaitable
+    return result, round((time.perf_counter() - started) * 1000)
+
+
 async def chat_completions(  # noqa: C901
     request: ChatCompletionsRequest,
     http_request: Request,
@@ -1660,6 +1695,7 @@ async def chat_completions(  # noqa: C901
     TASK-008: Non-streaming path.
     TASK-009: Streaming SSE path.
     """
+    turn_started = time.perf_counter()
     # 1. Permission check
     require_permission(auth, "chat")
 
@@ -1753,6 +1789,7 @@ async def chat_completions(  # noqa: C901
     widget_system_prompt = await _widget_system_prompt(auth, db)
     page_context_enabled = await _widget_page_context_enabled(auth, db) if is_widget_chat else False
     support_mode = await _widget_support_mode_enabled(auth, db) if is_widget_chat else False
+    off_topic_subjects, off_topic_reply = await _widget_off_topic(auth, db) if is_widget_chat else ("", "")
     # Register only matters when support mode is on; for internal widgets and
     # partner-key traffic it stays the default and changes nothing.
     tone_register = await _widget_tone_register(auth, db) if is_widget_chat and support_mode else "restrained"
@@ -1782,6 +1819,10 @@ async def chat_completions(  # noqa: C901
             audit_session_key = getattr(auth, "session_key", None) or session_key_from_token(raw_token)
             audit_ip_hash = hash_audit_value(http_request.client.host if http_request.client else None)
             audit_ua_hash = hash_audit_value(http_request.headers.get("user-agent"))
+
+    # Known as soon as the audit identity is resolved, and needed before the
+    # first early return that still has to record its answer.
+    audit_ready = is_widget_chat and audit_widget_id is not None and audit_session_key is not None
 
     # The user turn is written before retrieval so the gap task can wait for
     # the conversation row instead of racing it (first-turn gaps used to lose
@@ -1859,29 +1900,21 @@ async def chat_completions(  # noqa: C901
             top_k=knowledge.top_k if knowledge is not None and knowledge.top_k is not None else 8,
             retrieval_enabled=knowledge.enabled if knowledge is not None else True,
         )
-        visitor_turn = _last_user_message(request.messages) or ""
+        # SPEC-RAG-ANSWER-JUDGES-001 REQ-1. The question judge runs on every
+        # support-mode turn beside retrieval, so it costs no wall-clock of its
+        # own; each side is timed separately for partner_chat_turn_timing.
+        turn_judgement: turn_judge.TurnJudgement | None = None
+        turn_timing: dict[str, float] | None = None
         if support_mode:
-            retrieval_result, classification = await asyncio_gather(
-                retrieval,
-                escalation_service.classify_escalation(visitor_turn, settings),
+            (retrieval_result, retrieval_ms), (turn_judgement, turn_judge_ms) = await asyncio_gather(
+                _timed(retrieval),
+                _timed(turn_judge.judge_turn(request.messages, settings, off_topic_subjects=off_topic_subjects)),
             )
+            turn_timing = {"started_at": turn_started, "retrieval_ms": retrieval_ms, "turn_judge_ms": turn_judge_ms}
         else:
             retrieval_result = await retrieval
-            classification = None
         chunks, system_prompt, trusted_sources, broad_turn = retrieval_result
-
-        # SPEC-RAG-ANSWER-TIERS-001 REQ-1. Classify only when retrieval came
-        # back with a gap, which is the only situation where the class can
-        # change the outcome: with usable chunks the composer answers from them
-        # either way. Review on 2026-09-15 showed why this must not ride in the
-        # gather above — gather waits for its slowest member, so a classifier
-        # hitting its timeout would have added two seconds to a perfectly
-        # grounded answer. Now the cost lands on the turns that would otherwise
-        # have refused, measured at 13.5% of widget traffic over seven days.
-        turn_asserts = None
         gap = classify_gap(chunks) if support_mode else None
-        if gap is not None:
-            turn_asserts = await turn_scope.classify_turn_scope(visitor_turn, settings)
     except (httpx.TimeoutException, httpx.ReadTimeout) as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -1918,12 +1951,10 @@ async def chat_completions(  # noqa: C901
     # retrieval found, and the model is told so for this one turn. See
     # escalation_intent.py for why this layer exists.
     escalation = escalation_service.escalation_intent(_last_user_message(request.messages)) if support_mode else None
-    raw_sentiment = classification.get("sentiment") if classification else None
-    sentiment: Literal["negative", "neutral", "positive"] | None = (
-        raw_sentiment if raw_sentiment in ("negative", "neutral", "positive") else None  # type: ignore[assignment]
-    )
-    if escalation is None and classification:
-        if classification.get("wants_human") is True:
+    scope = turn_judgement.scope if turn_judgement else None
+    sentiment = turn_judgement.sentiment if turn_judgement else None
+    if escalation is None and turn_judgement:
+        if turn_judgement.wants_human:
             escalation = escalation_service.HUMAN_REQUEST
         elif sentiment == "negative":
             escalation = escalation_service.FRUSTRATION
@@ -1931,24 +1962,97 @@ async def chat_completions(  # noqa: C901
         system_prompt += escalation_service.ESCALATION_TURN_ADDENDUM[escalation]
     force_escalation = escalation is not None
 
-    # SPEC-RAG-ANSWER-TIERS-001 REQ-1, second half. Letting the class decide only
-    # what the composer does still left the model reading a profile that tells it
-    # to refuse when the articles do not cover the question. It could therefore
-    # write that refusal itself, and the composer would pass it through — it
-    # never reads the words. The class now reaches the generation too.
-    if turn_scope.is_conversational(turn_asserts):
-        system_prompt += turn_scope.CONVERSATIONAL_TURN_ADDENDUM
+    # SPEC-RAG-ANSWER-TIERS-001 REQ-1. A conversational turn leaves the
+    # knowledge pipeline only on a retrieval gap: with usable chunks the
+    # composer answers from them either way, and the answer judge still checks
+    # what an uncited reply claims. The class also reaches the generation, or
+    # the profile would tell the model to refuse "do you speak English".
+    conversational = gap is not None and turn_judge.is_conversational(scope)
+    if conversational:
+        system_prompt += turn_judge.CONVERSATIONAL_TURN_ADDENDUM
 
-    # REQ-4. Every classified turn logs its class, not just the conversational
-    # ones: a share you cannot see is a boundary that drifts unnoticed.
+    # SPEC-RAG-ANSWER-JUDGES-001 REQ-3. Clarity is measured and labels a draft
+    # that ends on a question, but no longer steers the generation. An
+    # instruction to ask rather than answer made answers worse in a blind
+    # comparison on 50 real Voys first questions (old system better in 19 of
+    # 23 turns that received it) and produced a real clarifying question only
+    # 2 times in 150 answers. Not on a broad-mode, escalation or conversational
+    # turn, where a question is never the intended reply.
+    clarity: Literal["clear", "ambiguous"] | None = turn_judgement.clarity if turn_judgement else None
+    if broad_turn or escalation or turn_judge.is_conversational(scope):
+        clarity = "clear"
+
     if support_mode:
+        # REQ-4. Every judged turn logs its outcome, failures as their own word:
+        # a share you cannot see is a boundary that drifts unnoticed.
+        if turn_judgement is None:
+            answer_signals["judge_failed"] = ["turn"]
+        else:
+            answer_signals["clarity"] = turn_judgement.clarity
         logger.info(
-            "partner_chat_turn_scope",
+            "partner_chat_turn_judge",
             org_id=auth.org_id,
             wgt_id=auth.key_id if str(auth.key_id).startswith("wgt_") else None,
-            turn_scope=turn_scope.scope_label(turn_asserts) if turn_asserts is not None or gap else "not_classified",
+            turn_scope=turn_judge.scope_label(scope),
+            wants_human=turn_judgement.wants_human if turn_judgement else None,
+            sentiment=sentiment,
+            clarity=turn_judgement.clarity if turn_judgement else None,
+            topic=turn_judgement.topic if turn_judgement else None,
             retrieval_gap=gap,
         )
+
+    # A subject this widget does not answer (prices, quotes, payment terms):
+    # the visitor gets the tenant's own sentence and the appointment button, and
+    # no model writes a word, so a price cannot slip in from an article. The
+    # judge decided this beside retrieval, so it costs no wall-clock; the
+    # generation this replaces makes the turn faster, not slower.
+    if (
+        support_mode
+        and off_topic_subjects
+        and off_topic_reply
+        and turn_judgement
+        and turn_judgement.topic == "not_handled"
+    ):
+        # A failing judge falls through to the normal answer on purpose: that is
+        # what the visitor got before this setting existed, and refusing every
+        # turn because one call timed out would be worse than answering one
+        # price question. Same fail direction as every other check here.
+        answer_signals.update(
+            decision="off_topic",
+            sources_count=0,
+            refused=False,
+            broad_mode=False,
+            model=request.model,
+        )
+        logger.info(
+            "partner_chat_off_topic",
+            org_id=auth.org_id,
+            wgt_id=auth.key_id if str(auth.key_id).startswith("wgt_") else None,
+        )
+        language = resolve_conversation_language(request.messages).language
+        if language is not None:
+            answer_signals["language"] = language
+        if audit_ready:
+            task = asyncio.create_task(
+                record_widget_turn(
+                    widget_id=audit_widget_id,  # type: ignore[arg-type]
+                    session_key=audit_session_key,  # type: ignore[arg-type]
+                    role="assistant",
+                    content=off_topic_reply,
+                    loaded_origin=http_request.headers.get("origin") or None,
+                    is_preview=getattr(auth, "is_preview", False),
+                    turn_id=request.widget_turn_id,
+                    answer_signals=answer_signals or None,
+                )
+            )
+            _pending.add(task)
+            task.add_done_callback(_pending.discard)
+        if request.stream:
+            return StreamingResponse(
+                content=off_topic_stream(reply=off_topic_reply, language=language),
+                media_type="text/event-stream",
+            )
+        return off_topic_response(model=request.model, reply=off_topic_reply, language=language)
 
     system_prompt, web_chunks, web_query = await _maybe_apply_web_search(
         request=request,
@@ -1979,7 +2083,6 @@ async def chat_completions(  # noqa: C901
     # assistant turn once the response is composed. Fire-and-forget so
     # an audit hiccup never breaks the chat. The identity these writes use
     # was resolved in step 6a, before retrieval. SPEC-WIDGET-ACTIVITY-001.
-    audit_ready = is_widget_chat and audit_widget_id is not None and audit_session_key is not None
     (
         allowed_source_urls,
         citation_source_urls,
@@ -2010,10 +2113,12 @@ async def chat_completions(  # noqa: C901
             support_mode=support_mode,
             broad_mode=broad_turn,
             force_escalation=force_escalation,
-            conversational=turn_scope.is_conversational(turn_asserts),
+            clarity=clarity,
+            conversational=conversational,
             sentiment=sentiment,
             answer_signals=answer_signals if audit_ready else None,
             signal_chunks=chunks,
+            turn_timing=turn_timing,
         )
         if audit_ready:
             streaming_gen = _audit_streaming_wrapper(
@@ -2051,10 +2156,12 @@ async def chat_completions(  # noqa: C901
         support_mode=support_mode,
         broad_mode=broad_turn,
         force_escalation=force_escalation,
-        conversational=turn_scope.is_conversational(turn_asserts),
+        clarity=clarity,
+        conversational=conversational,
         sentiment=sentiment,
         answer_signals=answer_signals if audit_ready else None,
         signal_chunks=chunks,
+        turn_timing=turn_timing,
     )
     if knowledge is not None and not knowledge.include_sources:
         for choice in result.get("choices") or []:
@@ -2886,6 +2993,18 @@ def _widget_booking_url(widget_config_data: dict[str, Any]) -> str:
     return _validated_http_url(widget_config_data.get("booking_url"))
 
 
+def _widget_conversation_starters(widget_config_data: dict[str, Any]) -> list[str]:
+    """Starter chips for the empty-state, capped at 3.
+
+    The admin form and its backing model reject more than 3 on save, but a
+    widget saved before that cap dropped from 6 can still carry up to 6
+    stored entries. Truncate here so every widget shows at most 3 chips
+    immediately, without requiring the tenant to re-save.
+    """
+    starters = widget_config_data.get("conversation_starters")
+    return starters[:3] if isinstance(starters, list) else []
+
+
 def _widget_nerds_integration(widget_config_data: dict[str, Any]) -> dict[str, Any]:
     """Nerds booking panel (Voys-specific support-partner integration).
 
@@ -3120,7 +3239,7 @@ async def widget_config(
         # TWD-style additions: chips and the optional AI-intro toggle.
         # system_prompt stays server-side only; footer Markdown is a separate
         # presentation field interpreted by the widget.
-        "conversation_starters": widget_config_data.get("conversation_starters", []),
+        "conversation_starters": _widget_conversation_starters(widget_config_data),
         "hide_disclaimer": widget_config_data.get("hide_disclaimer", False),
         "footer_text": widget_config_data.get("footer_text"),
         # Opt-in per widget: footer links then open in the widget's own in-chat
@@ -3270,7 +3389,7 @@ async def public_bot_config(
         "chat_endpoint": "/partner/v1/chat/completions",
         "session_token": session_token,
         "session_expires_at": expires_at.isoformat(),
-        "conversation_starters": widget_config_data.get("conversation_starters", []),
+        "conversation_starters": _widget_conversation_starters(widget_config_data),
         "hide_disclaimer": widget_config_data.get("hide_disclaimer", False),
         "footer_text": widget_config_data.get("footer_text"),
         "footer_links_in_widget": widget_config_data.get("footer_links_in_widget", False),

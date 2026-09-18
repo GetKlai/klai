@@ -29,9 +29,9 @@ import type { WidgetDetailResponse } from './-types'
 
 export type WidgetPreviewScope = 'details' | 'appearance'
 
-// Deliberately primitive-only (starters travel as raw textarea text) so the
-// publish effect can compare by value and no fresh array/object identity per
-// render can loop the provider.
+// Deliberately primitive-only (the three starter fields travel newline-joined
+// as one string) so the publish effect can compare by value and no fresh
+// array/object identity per render can loop the provider.
 export interface WidgetPreviewDraft {
   name?: string
   description?: string

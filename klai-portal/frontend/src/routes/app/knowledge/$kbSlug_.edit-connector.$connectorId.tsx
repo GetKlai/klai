@@ -423,15 +423,24 @@ function EditConnectorPage() {
         // page this session wins; otherwise keep the stored one, but only if it
         // is still inside the (possibly edited) base URL scope.
         const base = webcrawlerConfig.base_url
+        // Scope check must include path_prefix, matching the backend's
+        // WebcrawlerConfig._assert_within_scope (base_url + path_prefix) -
+        // checking against the bare base_url let a seed from outside the
+        // configured locale/subtree (e.g. base_url scoped to /nl but a
+        // validated /en/... page) through client-side, only to 422 on save
+        // (reported 2026-09-18, same page the operator had just tested).
+        const seedScope = joinSeedUrl(base, webcrawlerConfig.path_prefix)
         const validatedSeed =
           wcPreviewUrl &&
           wcPreviewUrl !== base &&
           previewResult?.classification === 'success' &&
-          isWithinBaseUrl(wcPreviewUrl, base)
+          isWithinBaseUrl(wcPreviewUrl, seedScope)
             ? wcPreviewUrl
             : ''
         const carriedSeed =
-          savedDiscoverySeedUrl && savedDiscoverySeedUrl !== base && isWithinBaseUrl(savedDiscoverySeedUrl, base)
+          savedDiscoverySeedUrl &&
+          savedDiscoverySeedUrl !== base &&
+          isWithinBaseUrl(savedDiscoverySeedUrl, seedScope)
             ? savedDiscoverySeedUrl
             : ''
         const discoverySeed = validatedSeed || carriedSeed

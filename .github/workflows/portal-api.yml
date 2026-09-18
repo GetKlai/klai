@@ -30,7 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: astral-sh/setup-uv@v10.1.0
         with:
           python-version: "3.13"
 
@@ -331,7 +331,7 @@ jobs:
       # failure. They create and drop their own throwaway role + tables, so
       # they are independent of the smoke-test schema above and of its
       # rollback step.
-      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: astral-sh/setup-uv@v10.1.0
         with:
           python-version: "3.13"
 
@@ -363,7 +363,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: astral-sh/setup-uv@v10.1.0
         with:
           python-version: "3.13"
 

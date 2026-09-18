@@ -308,6 +308,30 @@ class CrawlSyncClient:
         resp.raise_for_status()
         return resp.json()
 
+    async def crawl_keepalive(self, *, connector_id: str, org_id: str, url: str) -> dict[str, bool]:
+        """Touch a connector's stored session via POST /ingest/v1/crawl/keep-alive.
+
+        Best-effort liveness ping — the endpoint itself always returns 200 with
+        {"ok": bool} rather than a 4xx/5xx for an expired/missing session, so
+        raise_for_status() here only catches real transport/server failures
+        (network error, knowledge-ingest itself down), not "session expired".
+
+        Returns:
+            The raw JSON body — {"ok": bool}.
+
+        Raises:
+            httpx.HTTPStatusError: on 4xx/5xx (transport/server failure, not a
+                stale-session result — that comes back as ok=False with a 200).
+        """
+        body = {"connector_id": connector_id, "org_id": org_id, "url": url}
+        resp = await self._client.post(
+            "/ingest/v1/crawl/keep-alive",
+            json=body,
+            headers=self._headers(),
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     async def crawl_sync_cancel(self, job_id: str) -> None:
         """Cancel an in-flight ``run_crawl`` task on knowledge-ingest.
 

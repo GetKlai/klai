@@ -9,6 +9,7 @@
 // against). When a second wizard-only helper appears, split this file.
 
 import { type MultiSelectOption } from '@/components/ui/multi-select'
+import { isSameOrigin } from './-connector-shared/CrawlerAuthSetupStep'
 import type { ConnectorType, StepDeepLink } from './-connector-types'
 
 // Tailwind class string applied to the markdown preview pane in both
@@ -143,4 +144,26 @@ export function isWithinBaseUrl(url: string, baseUrl: string): boolean {
 export function previewUrlOnDetailsAdvance(currentPreviewUrl: string, baseUrl: string): string {
   const current = (currentPreviewUrl || '').trim()
   return isWithinBaseUrl(current, baseUrl) ? current : baseUrl
+}
+
+/**
+ * Which auth-probe "URL to test" value to show when advancing past the
+ * details step. Same bug class as `previewUrlOnDetailsAdvance` above (fixed
+ * 2026-08-13 for the sibling preview-URL field): the add-connector wizard
+ * cleared this field unconditionally on every "Next" from Details, so an
+ * operator who validated authentication and then went back to fix a typo in
+ * Details lost the validated URL, and the connector saved without it
+ * (reported 2026-09-18).
+ *
+ * Keep whatever is in the field while it is still on base_url's origin - a
+ * login wall can live outside the crawled subtree, so this checks the
+ * ORIGIN, not `isWithinBaseUrl`'s stricter path-prefix scope (matches how
+ * `WebcrawlerConfig.test_url` itself is validated). Empty when the operator
+ * edited base_url so the previous origin no longer applies, or when there
+ * was nothing to keep - the field then falls back to the derived base URL.
+ */
+export function testUrlOnDetailsAdvance(currentTestUrl: string, baseUrl: string): string {
+  const current = (currentTestUrl || '').trim()
+  if (!current) return ''
+  return isSameOrigin(current, baseUrl) ? current : ''
 }

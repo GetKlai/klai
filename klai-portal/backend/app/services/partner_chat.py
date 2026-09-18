@@ -56,6 +56,13 @@ from klai_chat_prompts.language import (
 
 from app.core.config import Settings
 from app.core.database import tenant_scoped_session
+from app.services.answer_grounding import (
+    NOTHING_LEFT,
+    GroundingCheck,
+    check_grounding,
+    repair_answer,
+)
+from app.services.answer_judge import decide_answer, is_clarifying_question, judge_answer
 from app.services.citations import (
     compose_answer_with_trusted_sources,
     evidence_chunks_from_chunks,
@@ -155,6 +162,39 @@ def safety_refusal_response(*, model: str, query: str = "") -> dict:
             }
         ],
     }
+
+
+def off_topic_response(*, model: str, reply: str, language: str | None) -> dict:
+    """The tenant's own reply for a subject this widget does not answer.
+
+    No model writes here: the visitor gets the configured sentence and the
+    appointment button, so a price or a procedure cannot slip in. Putting the
+    same rule in the widget's base prompt was measured on 2026-09-17 and landed
+    it right 8 times out of 15.
+    """
+    message = {
+        "role": "assistant",
+        "content": reply,
+        "sources": [],
+        "escalation": _appointment_escalation(),
+    }
+    if language is not None:
+        message["language"] = language
+    return {
+        "id": "chatcmpl-off-topic",
+        "object": "chat.completion",
+        "model": model,
+        "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
+    }
+
+
+async def off_topic_stream(*, reply: str, language: str | None) -> AsyncGenerator[bytes]:
+    """The same reply as :func:`off_topic_response`, in the widget's frames."""
+    if language is not None:
+        yield _sse_language_delta(language)
+    yield _sse_escalation_delta(_appointment_escalation())
+    yield _sse_content_delta(reply)
+    yield b"data: [DONE]\n\n"
 
 
 async def safety_refusal_stream(query: str = "") -> AsyncGenerator[bytes]:
@@ -1758,7 +1798,6 @@ def _compose_backend_managed_answer(
     web_query: str | None = None,
     helpdesk: bool = False,
     broad: bool = False,
-    conversational: bool = False,
     force_escalation: bool = False,
     *,
     response_language: str | None,
@@ -1789,6 +1828,15 @@ def _compose_backend_managed_answer(
     re-introduce it by omission. ``user_query`` stays the rewritten KB search
     query, the right input for citation composition and web validation
     (``query_text=``), which is why the two are separate parameters.
+
+    A conversational turn (turn_scope "conversation") is NOT special-cased here
+    any more. It used to skip the citation firewall and return the model's text
+    directly, which cost a misclassified real question its sources and turned it
+    into the fixed refusal (measured on 90 real Voys follow-ups on 2026-09-17:
+    11 fires, at least 3 wrong, one refusing "hoe kan ik kijken of er ergens een
+    doorschakeling in zit?"). Such a turn now takes the normal path: with no
+    supporting article the answer judge decides, and text that states nothing
+    about the organisation still reaches the visitor.
 
     ``broad`` marks a consented general-knowledge turn on the helpdesk widget:
     the model had the SUPPORT_BROAD profile, no article context was injected,
@@ -1829,36 +1877,6 @@ def _compose_backend_managed_answer(
     # carries the whole conversation, so it abstains far less; when it does
     # abstain the Dutch default still applies, deliberately.
     refusal_language = response_language
-    if conversational:
-        # SPEC-RAG-ANSWER-TIERS-001 REQ-1. The answer to this turn asserts
-        # nothing checkable outside this chat window — which language we speak,
-        # that the visitor is welcome, that this is an AI — so there is nothing
-        # for the citation firewall to ground and nothing to refuse. Before
-        # this branch such a turn fell into the strict path and came back as
-        # "I can't find this in our help articles" with a consent block and an
-        # appointment button under it.
-        #
-        # The artifact stripper still runs. Skipping the composer also skips
-        # the only MECHANICAL guard against a model-written URL or a fake "[1]"
-        # reaching the visitor; the SUPPORT profile's ban on them is a prompt,
-        # and a prompt is not a guarantee. Reviewed 2026-09-15 by reproducing
-        # exactly that: a conversational answer carrying an arbitrary link went
-        # through untouched.
-        #
-        # An escalation still shows its button. force_escalation fires on a
-        # frustrated or shouting visitor as well as on an explicit request for
-        # a person, and those turns are frequently conversational — a complaint
-        # about the previous answer asserts nothing about the organisation. The
-        # old behaviour answered them with "I can't find this in our help
-        # articles", which is both wrong and unkind. The offer is kept, the
-        # nonsense is not.
-        safe_text = _answer_without_retrieved_sources(text, citation_chunks)
-        if safe_text:
-            decision = {"reason": "conversational_turn", "turn_scope": "conversational"}
-            if offered_appointment:
-                decision["escalation"] = _appointment_escalation()
-            return safe_text, [], decision
-
     if broad:
         if not text.strip():
             # The model produced nothing even with the broad profile; stay on
@@ -1930,6 +1948,233 @@ def _compose_backend_managed_answer(
     return composed.content, sources, decision
 
 
+async def _judge_composed_answer(
+    content: str,
+    sources: list[dict],
+    decision: dict[str, Any],
+    *,
+    draft: str,
+    messages: list[dict],
+    citation_chunks: list[dict] | None,
+    settings: Settings,
+    org_id: int | str | None,
+    answer_signals: dict[str, Any] | None,
+    helpdesk: bool,
+    response_language: str | None,
+    force_escalation: bool,
+    conversational: bool,
+    clarity: Literal["clear", "ambiguous"] | None,
+) -> tuple[str, list[dict], dict[str, Any]]:
+    """SPEC-RAG-ANSWER-JUDGES-001 REQ-2/REQ-3: the answer judge, then the one decision.
+
+    Runs on the composer's result rather than inside it. The composer is
+    synchronous with two production callers and a large body of direct tests;
+    the judge is an HTTP call, and one async step after it keeps a single home
+    for the rule. With ``helpdesk`` off (internal widgets, partner-API keys) it
+    returns the composer's result untouched and makes no call: the judge and
+    the refusal are written for an external visitor. A consented broad-mode
+    answer is not judged either; it is labelled general knowledge, and every
+    fact in it would count as unsupported. Callers do not call this on a
+    safety-blocked turn.
+
+    The judge sees the draft after the marker and link stripper, exactly the
+    text the visitor would get. An empty result (the model wrote nothing) has
+    nothing to judge and keeps the composer's refusal.
+
+    A clarifying question carries no buttons: a "broaden the search" or "book
+    an appointment" button under a question reads as a refusal. An uncited
+    answer keeps only an appointment offer that the backend forced or the
+    model's own words make; a partial answer always gets one.
+    """
+    if not helpdesk or decision.get("broad_mode") == "answer":
+        return content, sources, decision
+    draft_text, model_offered_appointment = strip_appointment_offer_marker(draft)
+    safe_text = _answer_without_retrieved_sources(draft_text, citation_chunks)
+    if not safe_text:
+        return content, sources, decision
+    articles = [(_chunk_source_title(chunk), str(chunk.get("text") or "")) for chunk in citation_chunks or []]
+    # Both checks read the same draft and run together, so the heavier one costs
+    # its own 2.1 s median once and nothing on top of the light judge's 0.4 s.
+    checks_started = time.perf_counter()
+    judgement, grounding = await asyncio.gather(
+        judge_answer(messages=messages, draft=safe_text, articles=articles, settings=settings),
+        check_grounding(question=_visitor_question(messages), draft=safe_text, articles=articles, settings=settings),
+    )
+    checks_ms = _elapsed_ms(checks_started)
+    if judgement is not None and grounding is not None:
+        # The statement-level check decides grounding: measured against 54
+        # hand-checked answers it catches 96% where the light judge caught 22%.
+        judgement = judgement.model_copy(update={"grounding": _grounding_label(grounding)})
+    outcome = decide_answer(
+        has_sources=bool(sources),
+        escalation=force_escalation,
+        conversational=conversational,
+        clarity=clarity,
+        draft_is_question=is_clarifying_question(safe_text),
+        judgement=judgement,
+    )
+    verdicts = judgement.model_dump() if judgement is not None else {}
+    logger.info(
+        "partner_chat_answer_judge",
+        org_id=org_id,
+        decision=outcome,
+        judge_failed=judgement is None,
+        grounding_checked=grounding is not None,
+        checks_ms=checks_ms,
+        unsupported=len(grounding.unsupported) if grounding is not None else None,
+        **verdicts,
+    )
+    if answer_signals is not None:
+        answer_signals.update(verdicts, decision=outcome)
+        if grounding is not None:
+            answer_signals["unsupported"] = len(grounding.unsupported)
+        else:
+            answer_signals.setdefault("judge_failed", []).append("grounding")
+        if judgement is None:
+            answer_signals.setdefault("judge_failed", []).append("answer")
+
+    refused = bool(decision.get(_NO_CITABLE_SOURCES_DECISION_KEY))
+    if outcome == "refusal":
+        if refused:
+            return content, sources, decision
+        refusal: dict[str, Any] = {
+            "reason": "answer_judge_refusal",
+            _NO_CITABLE_SOURCES_DECISION_KEY: True,
+            "broad_mode": "offer",
+            "escalation": _appointment_escalation(),
+        }
+        return _no_citable_sources_message(response_language, helpdesk=True), [], refusal
+    if outcome == "clarifying_question":
+        return safe_text, [], {"reason": "clarifying_question"}
+    if refused:
+        content, sources = safe_text, []
+        decision = {
+            key: value
+            for key, value in decision.items()
+            if key not in (_NO_CITABLE_SOURCES_DECISION_KEY, "broad_mode", "escalation")
+        }
+        decision["reason"] = "uncited_no_claims"
+        if force_escalation or (model_offered_appointment and _text_offers_appointment(safe_text)):
+            decision["escalation"] = _appointment_escalation()
+    if outcome == "partial_answer":
+        decision["escalation"] = _appointment_escalation()
+    # Only a reply the visitor actually reads gets repaired: a refusal and a
+    # clarifying question state nothing about the organisation.
+    if outcome in ("answer", "partial_answer") and grounding is not None and grounding.worth_repairing:
+        content, sources, decision = await _repair_unsupported_statements(
+            content,
+            sources,
+            decision,
+            grounding=grounding,
+            citation_chunks=citation_chunks,
+            settings=settings,
+            org_id=org_id,
+            answer_signals=answer_signals,
+            response_language=response_language,
+        )
+    return content, sources, decision
+
+
+def _visitor_question(messages: list[dict]) -> str:
+    return _last_user_message(messages) or ""
+
+
+def _grounding_label(grounding: GroundingCheck) -> str:
+    if grounding.unsupported:
+        return "some_not_in_articles"
+    return "all_in_articles" if grounding.statements else "no_company_statements"
+
+
+async def _repair_unsupported_statements(
+    content: str,
+    sources: list[dict],
+    decision: dict[str, Any],
+    *,
+    grounding: GroundingCheck,
+    citation_chunks: list[dict] | None,
+    settings: Settings,
+    org_id: int | str | None,
+    answer_signals: dict[str, Any] | None,
+    response_language: str | None,
+) -> tuple[str, list[dict], dict[str, Any]]:
+    """Remove the statements the articles do not support, keep the rest.
+
+    Measured on 150 real answers: editing the reply this way took answers with
+    an unsupported statement from 49% to 11% (serious ones from 29% to 1%) and
+    cost no good answer, where deleting the flagged sentences in code cost one
+    and damaged two. A failed repair keeps the composed answer, which is what
+    the visitor got before this check existed.
+    """
+    repaired = await repair_answer(draft=content, unsupported=grounding.unsupported, settings=settings)
+    if repaired not in (None, NOTHING_LEFT):
+        # The repair model returns free text, so it passes the same two guards
+        # the composer's output already passed: the link and citation stripper,
+        # and the output safety check. A prompt that forbids adding a URL is not
+        # a guarantee (reproduced on the conversational branch, 2026-09-15).
+        repaired = _answer_without_retrieved_sources(str(repaired), citation_chunks)
+        if not repaired:
+            repaired = None
+        elif safety_reason := output_safety_violation(repaired):
+            logger.warning("partner_chat_repair_blocked", org_id=org_id, reason=safety_reason)
+            repaired = None
+    logger.info(
+        "partner_chat_answer_repair",
+        org_id=org_id,
+        unsupported=len(grounding.unsupported),
+        result="failed" if repaired is None else ("nothing_left" if repaired == NOTHING_LEFT else "repaired"),
+    )
+    if answer_signals is not None:
+        answer_signals["repaired"] = repaired not in (None, NOTHING_LEFT, content)
+    if repaired is None or repaired == content:
+        return content, sources, decision
+    if repaired == NOTHING_LEFT:
+        # Every statement was unsupported: there is no sourced answer left to
+        # keep, so the honest refusal is what remains.
+        return (
+            _no_citable_sources_message(response_language, helpdesk=True),
+            [],
+            {
+                "reason": "grounding_nothing_left",
+                _NO_CITABLE_SOURCES_DECISION_KEY: True,
+                "broad_mode": "offer",
+                "escalation": _appointment_escalation(),
+            },
+        )
+    decision = {**decision, "reason": "grounding_repaired"}
+    decision["escalation"] = _appointment_escalation()
+    return repaired, sources, decision
+
+
+def _log_turn_timing(
+    turn_timing: dict[str, float] | None,
+    *,
+    org_id: int | str | None,
+    generation_ms: int,
+    answer_judge_ms: int,
+) -> None:
+    """REQ-4: one line per support-mode turn with where its wall-clock went.
+
+    ``turn_timing`` comes from the route: ``started_at`` (perf_counter at the
+    start of the request), ``retrieval_ms`` and ``turn_judge_ms``, which ran
+    concurrently, so their sum is not a duration.
+    """
+    if turn_timing is None:
+        return
+    logger.info(
+        "partner_chat_turn_timing",
+        org_id=org_id,
+        retrieval_ms=turn_timing.get("retrieval_ms"),
+        turn_judge_ms=turn_timing.get("turn_judge_ms"),
+        generation_ms=generation_ms,
+        answer_judge_ms=answer_judge_ms,
+        total_ms=_elapsed_ms(turn_timing["started_at"]),
+    )
+
+
+def _elapsed_ms(started_at: float) -> int:
+    return round((time.perf_counter() - started_at) * 1000)
+
+
 def _count_citation_rescues(decision: dict[str, Any]) -> int:
     """Count applied rescues across the separate KB and web trust tiers."""
     count = sum(
@@ -1977,9 +2222,12 @@ async def _chat_completion_streaming_with_composed_citations(
     broad_mode: bool = False,
     conversational: bool = False,
     force_escalation: bool = False,
+    clarity: Literal["clear", "ambiguous"] | None = None,
     sentiment: Literal["negative", "neutral", "positive"] | None = None,
     answer_signals: dict[str, Any] | None = None,
     signal_chunks: list[dict] | None = None,
+    conversation: list[dict] | None = None,
+    turn_timing: dict[str, float] | None = None,
 ) -> AsyncGenerator[bytes]:
     """Collect text, compose deterministic citations, then stream once.
 
@@ -2016,6 +2264,7 @@ async def _chat_completion_streaming_with_composed_citations(
     # output-safety refusal, which has no conversation decision to follow.
     visitor_query = _last_user_message(augmented_messages) or ""
     chat_url = f"{settings.litellm_base_url}/v1/chat/completions"
+    generation_started = time.perf_counter()
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
             async with client.stream(
@@ -2066,6 +2315,7 @@ async def _chat_completion_streaming_with_composed_citations(
         yield b"data: [DONE]\n\n"
         return
 
+    generation_ms = _elapsed_ms(generation_started)
     content, sources, decision = _compose_backend_managed_answer(
         "".join(raw_text_parts),
         trusted_sources,
@@ -2075,11 +2325,10 @@ async def _chat_completion_streaming_with_composed_citations(
         web_query,
         helpdesk=support_mode,
         broad=broad_mode,
-        conversational=conversational,
         force_escalation=force_escalation,
         response_language=response_language,
     )
-    decision.update({"sentiment": sentiment} if support_mode and sentiment else {})
+    judge_started = time.perf_counter()
     if safety_reason := output_safety_violation("".join(raw_text_parts)):
         logger.warning(
             "partner_chat_output_blocked",
@@ -2092,6 +2341,27 @@ async def _chat_completion_streaming_with_composed_citations(
         content = safety_refusal_message(visitor_query)
         sources = []
         decision = {"reason": safety_reason}
+    else:
+        content, sources, decision = await _judge_composed_answer(
+            content,
+            sources,
+            decision,
+            draft="".join(raw_text_parts),
+            messages=conversation or [],
+            citation_chunks=citation_chunks,
+            settings=settings,
+            org_id=org_id,
+            answer_signals=answer_signals,
+            helpdesk=support_mode,
+            response_language=response_language,
+            force_escalation=force_escalation,
+            conversational=conversational,
+            clarity=clarity,
+        )
+        decision.update({"sentiment": sentiment} if support_mode and sentiment else {})
+    _log_turn_timing(
+        turn_timing, org_id=org_id, generation_ms=generation_ms, answer_judge_ms=_elapsed_ms(judge_started)
+    )
     # Consumed before the decision is logged so that event keeps its exact
     # payload: the marker only travels to the audit sink (see _fill_answer_signals).
     refused = bool(decision.pop(_NO_CITABLE_SOURCES_DECISION_KEY, False))
@@ -2756,9 +3026,11 @@ async def chat_completion_non_streaming(
     broad_mode: bool = False,
     conversational: bool = False,
     force_escalation: bool = False,
+    clarity: Literal["clear", "ambiguous"] | None = None,
     sentiment: Literal["negative", "neutral", "positive"] | None = None,
     answer_signals: dict[str, Any] | None = None,
     signal_chunks: list[dict] | None = None,
+    turn_timing: dict[str, float] | None = None,
 ) -> dict:
     """Forward to LiteLLM and return complete response as dict.
 
@@ -2790,6 +3062,7 @@ async def chat_completion_non_streaming(
     litellm_url = settings.litellm_base_url
     chat_url = f"{litellm_url}/v1/chat/completions"
 
+    generation_started = time.perf_counter()
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
@@ -2834,6 +3107,8 @@ async def chat_completion_non_streaming(
             detail={"error": {"type": "upstream_error", "message": "Chat service error"}},
         ) from exc
 
+    generation_ms = _elapsed_ms(generation_started)
+    answer_judge_ms = 0
     allowed_source_urls = allowed_source_urls or set()
     citation_source_urls = citation_source_urls or {}
     citation_source_metadata = citation_source_metadata or {}
@@ -2885,10 +3160,27 @@ async def chat_completion_non_streaming(
                     web_query,
                     helpdesk=support_mode,
                     broad=broad_mode,
-                    conversational=conversational,
                     force_escalation=force_escalation,
                     response_language=language_decision.language,
                 )
+                judge_started = time.perf_counter()
+                rendered_content, sources, decision = await _judge_composed_answer(
+                    rendered_content,
+                    sources,
+                    decision,
+                    draft=content,
+                    messages=messages,
+                    citation_chunks=citation_chunks,
+                    settings=settings,
+                    org_id=org_id,
+                    answer_signals=answer_signals,
+                    helpdesk=support_mode,
+                    response_language=language_decision.language,
+                    force_escalation=force_escalation,
+                    conversational=conversational,
+                    clarity=clarity,
+                )
+                answer_judge_ms = _elapsed_ms(judge_started)
                 decision.update({"sentiment": sentiment} if support_mode and sentiment else {})
                 # Popped before the log so that event keeps its exact payload;
                 # the marker only travels to the audit sink.
@@ -2916,6 +3208,7 @@ async def chat_completion_non_streaming(
                 if escalation := _appointment_escalation_signal(decision):
                     message["escalation"] = escalation
         stripped_links = 0
+        _log_turn_timing(turn_timing, org_id=org_id, generation_ms=generation_ms, answer_judge_ms=answer_judge_ms)
     else:
         stripped_links = _sanitize_completion_body(
             body,
@@ -2983,9 +3276,11 @@ async def chat_completion_streaming(
     broad_mode: bool = False,
     conversational: bool = False,
     force_escalation: bool = False,
+    clarity: Literal["clear", "ambiguous"] | None = None,
     sentiment: Literal["negative", "neutral", "positive"] | None = None,
     answer_signals: dict[str, Any] | None = None,
     signal_chunks: list[dict] | None = None,
+    turn_timing: dict[str, float] | None = None,
 ) -> AsyncGenerator[bytes]:
     """Stream LiteLLM SSE response with backend-managed KB citations.
 
@@ -3033,9 +3328,12 @@ async def chat_completion_streaming(
             broad_mode=broad_mode,
             conversational=conversational,
             force_escalation=force_escalation,
+            clarity=clarity,
             sentiment=sentiment,
             answer_signals=answer_signals,
             signal_chunks=signal_chunks,
+            conversation=messages,
+            turn_timing=turn_timing,
         ):
             yield chunk
         return

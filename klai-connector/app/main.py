@@ -36,6 +36,7 @@ from app.routes.sync import router as sync_router
 from app.services.crypto import PostgresSecretsStore
 from app.services.portal_client import PortalClient
 from app.services.scheduler import ConnectorScheduler
+from app.services.session_keepalive import SessionKeepAlive
 from app.services.sync_engine import SyncEngine
 from app.services.sync_run_reaper import SyncRunReaper
 from app.services.sync_run_resolver import SyncRunResolver
@@ -197,6 +198,18 @@ def create_app() -> FastAPI:
         app.state.sync_run_reaper = reaper
         app.state.sync_run_reaper_task = reaper_task
 
+        # Session keepalive: touches the stored session of every scheduled
+        # web_crawler connector with saved credentials, far more often than
+        # any crawl schedule, so it never goes idle between scheduled crawls
+        # (see app/services/session_keepalive.py for the production incident).
+        session_keepalive = SessionKeepAlive(
+            portal_client=portal_client,
+            crawl_sync_client=crawl_sync_client,
+        )
+        session_keepalive_task = asyncio.create_task(session_keepalive.async_run())
+        app.state.session_keepalive = session_keepalive
+        app.state.session_keepalive_task = session_keepalive_task
+
         # Scheduler
         scheduler = ConnectorScheduler()
         app.state.scheduler = scheduler
@@ -210,6 +223,9 @@ def create_app() -> FastAPI:
         reaper_task.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await reaper_task
+        session_keepalive_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await session_keepalive_task
         await scheduler.shutdown()
         await registry.aclose()
         await ingest_client.aclose()

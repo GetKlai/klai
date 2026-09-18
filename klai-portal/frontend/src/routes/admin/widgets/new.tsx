@@ -1,5 +1,9 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { WIDGET_DEFAULT_PRIMARY_COLOR } from '@/features/widgets/config/appearance'
+import {
+  WIDGET_DEFAULT_PRIMARY_COLOR,
+  starterFieldsToList,
+  toStarterFields,
+} from '@/features/widgets/config/appearance'
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { AlertTriangle, ArrowLeft, ArrowRight, Loader2 } from 'lucide-react'
@@ -38,7 +42,6 @@ interface Template {
 
 type Step = 'details' | 'kbs' | 'appearance' | 'embed'
 const STEPS: Step[] = ['details', 'kbs', 'appearance', 'embed']
-const MAX_STARTERS = 6
 
 interface FormState {
   // Algemeen
@@ -53,7 +56,7 @@ interface FormState {
   primary_color: string
   theme: 'light' | 'dark'
   welcome_message: string
-  starters_raw: string
+  starter_fields: string[]
   show_sources: boolean
   show_meta: boolean
   collect_user_info: boolean
@@ -75,7 +78,7 @@ const INITIAL_FORM: FormState = {
   primary_color: WIDGET_DEFAULT_PRIMARY_COLOR,
   theme: 'light',
   welcome_message: '',
-  starters_raw: '',
+  starter_fields: toStarterFields(undefined),
   show_sources: true,
   show_meta: false,
   collect_user_info: false,
@@ -99,11 +102,12 @@ function NewWidgetPage() {
 
   const currentIndex = STEPS.indexOf(step)
   const isLastStep = currentIndex === STEPS.length - 1
-  const starters = form.starters_raw
-    .split('\n')
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .slice(0, MAX_STARTERS)
+  const starters = starterFieldsToList(form.starter_fields)
+  const starterPlaceholders = [
+    m.admin_widgets_widget_starter_placeholder_1(),
+    m.admin_widgets_widget_starter_placeholder_2(),
+    m.admin_widgets_widget_starter_placeholder_3(),
+  ]
 
   const stepLabels: StepItem[] = [
     { label: m.admin_shared_wizard_step_details(), onClick: () => setStep('details') },
@@ -451,25 +455,30 @@ function NewWidgetPage() {
               <SectionHeading>
                 {m.admin_widgets_appearance_section_starters()}
               </SectionHeading>
-              <div className="space-y-1.5">
-                <Label htmlFor="widget-starters">
-                  {m.admin_widgets_widget_starters_label()}
-                </Label>
-                <p className="text-xs text-gray-600">
-                  {m.admin_widgets_widget_starters_help()}
-                </p>
-                <Textarea
-                  id="widget-starters"
-                  value={form.starters_raw}
-                  onChange={(e) =>
-                    setForm((p) => ({ ...p, starters_raw: e.target.value }))
-                  }
-                  rows={4}
-                  placeholder={m.admin_widgets_widget_starters_placeholder()}
-                />
-                <p className="text-xs text-gray-600">
-                  {starters.length}/{MAX_STARTERS}
-                </p>
+              <p className="mb-3 text-xs text-gray-600">
+                {m.admin_widgets_widget_starters_help()}
+              </p>
+              <div className="max-w-lg space-y-3">
+                {form.starter_fields.map((value, i) => (
+                  <div key={i} className="space-y-1.5">
+                    <Label htmlFor={`widget-starter-${i + 1}`}>
+                      {m.admin_widgets_widget_starter_label({ n: i + 1 })}
+                    </Label>
+                    <Input
+                      id={`widget-starter-${i + 1}`}
+                      value={value}
+                      onChange={(e) =>
+                        setForm((p) => ({
+                          ...p,
+                          starter_fields: p.starter_fields.map((v, idx) =>
+                            idx === i ? e.target.value : v,
+                          ),
+                        }))
+                      }
+                      placeholder={starterPlaceholders[i]}
+                    />
+                  </div>
+                ))}
               </div>
             </div>
 

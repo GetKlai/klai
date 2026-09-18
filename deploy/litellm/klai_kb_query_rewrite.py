@@ -13,9 +13,15 @@ import logging
 import os
 import re
 import time
+from typing import Literal
 
 import httpx
 
+from klai_chat_prompts import (
+    ANSWER_CLAIMS_SYSTEM_PROMPT,
+    answer_claims_response_format,
+    parse_answer_claims,
+)
 from klai_citations import (
     rewrite_preserves_subject as _rewrite_preserves_current_query,
     salient_tokens as _rewrite_salient_tokens,
@@ -451,6 +457,65 @@ async def rewrite_query(
     )
     meta["was_changed"] = rewritten.lower() != raw_query.strip().lower()
     return rewritten, meta
+
+
+# SPEC-RAG-CLARIFY-FLOW-001 REQ-4: same classifier input as path B
+# (klai-portal answer_claims.py) so both chat paths judge a draft identically.
+# The call reuses the rewrite's proxy contract on purpose: loopback on the
+# master key, `_klai_openai_passthrough` so this hook returns before touching
+# the request (otherwise the classification would itself be retrieved for and
+# rendered), and the delegated org so the PII enforcer masks the draft and the
+# user's words for the tenant. Model: QUERY_REWRITE_MODEL (klai-fast), the
+# model path B classifies with (settings.extraction_model). Timeout: 4 s, not
+# the rewrite's 1.5 s. The rewrite runs before retrieval on every turn over a
+# short prompt; this one carries the whole draft and runs only on a Strict
+# turn that would otherwise be refused, while the user waits on a buffered
+# reply. 4 s matches path B's bound for the same prompt; a timeout costs only
+# the friendly wording, because the fixed refusal is what the turn gets.
+ANSWER_CLAIMS_TIMEOUT = 4.0
+
+
+async def classify_answer_claims(
+    *,
+    user_query: str,
+    draft: str,
+    article_titles: list[str],
+    org_id: str | None,
+) -> Literal["no_claims", "claims"] | None:
+    """Return ``no_claims``, ``claims``, or ``None`` when the call failed. Never raises."""
+    if not QUERY_REWRITE_API_KEY:
+        return None
+    titles = "\n".join(f"- {title}" for title in article_titles) or "(none)"
+    payload = {
+        "model": QUERY_REWRITE_MODEL,
+        "messages": [
+            {"role": "system", "content": ANSWER_CLAIMS_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": (
+                    f"Visitor's last message:\n{user_query}\n\n"
+                    f"Draft reply:\n{draft}\n\n"
+                    f"Titles of the articles available when the draft was written:\n{titles}"
+                ),
+            },
+        ],
+        "temperature": 0.0,
+        "response_format": answer_claims_response_format(),
+        "metadata": _rewrite_call_metadata(org_id),
+    }
+    headers = {
+        "Authorization": f"Bearer {QUERY_REWRITE_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    try:
+        resp = await _post_to_rewrite_model(
+            payload, headers, {"timeout": ANSWER_CLAIMS_TIMEOUT}, ANSWER_CLAIMS_TIMEOUT
+        )
+        resp.raise_for_status()
+        return parse_answer_claims(resp.json()["choices"][0]["message"]["content"])
+    except Exception as exc:
+        logger.warning("answer_claims_classification_failed error=%s", repr(exc)[:120])
+        return None
 
 
 def format_taxonomy_for_prompt(

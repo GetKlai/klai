@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import asyncio
 import logging
 import re
 from dataclasses import dataclass, field
@@ -15,7 +16,10 @@ from klai_answer_epistemics import (
     strip_answer_contract_markers,
 )
 from klai_chat_prompts import _language_is_dutch as language_is_dutch
-from klai_chat_prompts import no_citable_sources_message
+from klai_chat_prompts import (
+    may_show_model_text_without_sources,
+    no_citable_sources_message,
+)
 from klai_citations import (
     compose_answer_with_trusted_sources,
     evidence_label_ids,
@@ -37,6 +41,8 @@ from klai_kb_chat_mode import prompt_mode_is_known, prompt_mode_is_strict
 # same prompt-injection hardening (strip brackets, collapse whitespace, cap
 # length). Duplicating the sanitizer would risk the two copies drifting.
 from klai_kb_context_prompt import _sanitize_question_echo
+from klai_answer_grounding import log_answer_grounding
+from klai_kb_query_rewrite import classify_answer_claims
 from klai_kb_traceability import dedupe_strings
 from klai_kb_urls import normalise_guard_url
 from klai_litellm_response import (
@@ -44,6 +50,7 @@ from klai_litellm_response import (
     get_choice_message,
     get_message_content,
     get_response_choices,
+    rebuild_choice_delta,
     set_message_content,
     set_message_field,
 )
@@ -53,6 +60,9 @@ from klai_pasted_correspondence import (
 )
 
 _STREAM_LINK_GUARD_TAIL_CHARS = 16
+# What a held Strict delta keeps besides its emptied content; see
+# compose_streaming_kb_response for why each one is safe before the decision.
+_HELD_DELTA_FIELDS = ("role", "tool_calls", "function_call")
 
 # A message with dozens of unchecked sub-questions (e.g. a pasted FAQ list)
 # would otherwise dominate the visible footer. Show individual questions for
@@ -1123,7 +1133,163 @@ def remove_already_streamed_prefix(final_text: str, emitted_text: str) -> str | 
     return None
 
 
-def compose_non_streaming_kb_response(
+# The two places where Strict replaces model-written text with the fixed
+# refusal because no source supports it. A refusal the model wrote itself
+# (strict_refusal_no_supported_sources) and the hook's own refusals are not
+# model drafts and never reach the classifier.
+_ANSWER_CLAIMS_REASONS = frozenset({"no_trusted_sources", "strict_no_sentence_level_support"})
+
+
+# Measuring only, on the same words the widget path judges by: the check lists
+# every concrete statement in the answer with the article text behind it. It
+# runs beside the response instead of in front of it, so the user waits for
+# nothing, and it never changes what the answer says. SPEC-RAG-ANSWER-JUDGES-001.
+_grounding_tasks: set[asyncio.Task] = set()
+
+
+def _forget_grounding_task(task: asyncio.Task) -> None:
+    """Drop the finished task and read its outcome.
+
+    Reading it is what keeps a crash inside the measurement from surfacing as an
+    unhandled task exception on the event loop; the measurement itself already
+    swallows its own errors, so this only covers what it cannot.
+    """
+    _grounding_tasks.discard(task)
+    if not task.cancelled() and task.exception() is not None:
+        _telemetry_logger.warning("kb_answer_grounding_task_failed error=%r", task.exception())
+
+
+def _measure_answer_grounding(
+    rendered_content: str, citation_chunks: list[dict], kb_meta: dict[str, Any]
+) -> None:
+    """Schedule the grounding check for this answer; never raises, never blocks."""
+    if not rendered_content.strip() or not _kb_meta_is_strict(kb_meta):
+        return
+    try:
+        # Ask for the loop BEFORE building the coroutine: a coroutine created
+        # without a loop to run it is never awaited and warns at GC.
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    task = asyncio.create_task(
+        log_answer_grounding(
+            user_query=str(kb_meta.get("user_query") or ""),
+            draft=rendered_content,
+            citation_chunks=citation_chunks,
+            kb_meta=kb_meta,
+        )
+    )
+    _grounding_tasks.add(task)
+    task.add_done_callback(_forget_grounding_task)
+
+
+async def _show_uncited_strict_draft(
+    text: str,
+    rendered_content: str,
+    no_citable_sources: bool,
+    decision: dict[str, Any],
+    *,
+    kb_meta: dict[str, Any],
+    allowed_image_urls: set[str],
+    trusted_sources: list[dict[str, Any]],
+    citation_chunks: list[dict],
+) -> tuple[str, bool, dict[str, Any]]:
+    """SPEC-RAG-CLARIFY-FLOW-001 REQ-4, decision 2 on path A (Strict).
+
+    Model-written text without a supporting source reaches the user only when
+    it asserts nothing about the organisation: a clarifying question or a
+    plain "I can't find that" does, a price or a procedure does not. Callers
+    only pass text the user has not seen yet (non-streaming, or the buffered
+    stream branch); on a stream that already showed the text the check could
+    not withhold anything.
+
+    The draft is stripped BEFORE classification with the renderer's own
+    cleanup for passed-through text (model links, citations, evidence labels,
+    answer-contract markers), so the classifier judges exactly what the user
+    would see. Anything but a confirmed ``no_claims`` keeps the refusal
+    ``_render_kb_citation_content`` already chose, so a failing classifier
+    restores today's behaviour.
+    """
+    if (
+        not no_citable_sources
+        or decision.get("no_citable_reason") not in _ANSWER_CLAIMS_REASONS
+        # The hook's own mock_response refusals (zero chunks, retrieval
+        # failure) also render as no_trusted_sources; they are not drafts.
+        or _is_strict_refusal_answer(text, refusal_language=kb_meta.get("response_language_target"))
+        # Strict stays KB-only for the user's own material (an attachment,
+        # pasted correspondence) and for multi-part messages: the clarify flow
+        # is about knowledge questions, not about opening Strict to summaries
+        # of what the user brought (product note in klai_knowledge.py).
+        or kb_meta.get("user_provided_content_context")
+        or kb_meta.get("pasted_correspondence_detected")
+        or kb_meta.get("multi_question")
+    ):
+        return rendered_content, no_citable_sources, decision
+    draft = strip_model_citation_artifacts(
+        strip_answer_contract_markers(text),
+        allowed_image_urls=allowed_image_urls,
+        source_titles={
+            source["title"] for source in trusted_sources if isinstance(source.get("title"), str)
+        },
+        evidence_ids=evidence_label_ids(citation_chunks),
+    )
+    if not draft:
+        return rendered_content, no_citable_sources, decision
+    result = await classify_answer_claims(
+        user_query=str(kb_meta.get("user_query") or ""),
+        draft=draft,
+        article_titles=list(
+            dict.fromkeys(
+                chunk["title"]
+                for chunk in citation_chunks
+                if isinstance(chunk.get("title"), str) and chunk["title"].strip()
+            )
+        ),
+        org_id=kb_meta.get("org_id"),
+    )
+    # REQ-6: one queryable word per classified turn; a failure is kept apart
+    # from "claims" because a rising share says something about the classifier.
+    label = result or "classifier_failed"
+    kb_meta["answer_claims"] = label
+    _telemetry_logger.warning(
+        "kb_answer_claims org_id=%s user_id=%s request_id=%s answer_claims=%s "
+        "no_citable_reason=%s clarify_turn=%s",
+        kb_meta.get("org_id"),
+        kb_meta.get("user_id"),
+        kb_meta.get("request_id"),
+        label,
+        decision.get("no_citable_reason"),
+        bool(kb_meta.get("clarify_turn")),
+    )
+    if not may_show_model_text_without_sources(result):
+        return rendered_content, no_citable_sources, decision
+    return draft, no_citable_sources, {**decision, "no_citable_reason": "uncited_no_claims"}
+
+
+def _strict_multiple_choices_refusal(
+    kb_meta: dict[str, Any],
+) -> tuple[str, list[dict[str, str]], bool, dict[str, Any]]:
+    """The fixed Strict refusal for a response carrying more than one choice.
+
+    The renderer tracks one answer per request (one buffer, one decision), so
+    it cannot vouch for several. Nothing sends ``n`` today and the Mistral
+    adapter does not support it, but Strict must not depend on that: every
+    choice gets the refusal and no choice text is judged or shown.
+    """
+    refusal, sources, no_citable_sources, decision = _render_kb_citation_content(
+        "",
+        allowed_image_urls=set(),
+        user_query=None,
+        refusal_language=kb_meta.get("response_language_target"),
+        trusted_sources=[],
+        evidence_chunks=[],
+        kb_narrow=True,
+        no_citable_message=kb_meta.get("no_citable_message"),
+    )
+    return refusal, sources, no_citable_sources, {**decision, "no_citable_reason": "strict_multiple_choices"}
+
+
+async def compose_non_streaming_kb_response(
     response: object,
     kb_meta: dict[str, Any],
 ) -> KbCitationRenderStats:
@@ -1148,7 +1314,9 @@ def compose_non_streaming_kb_response(
     ):
         return stats
 
-    for choice in get_response_choices(response):
+    choices = get_response_choices(response)
+    strict_multiple_choices = _kb_meta_is_strict(kb_meta) and len(choices) > 1
+    for choice in choices:
         message = get_choice_message(choice, "message")
         if message is None:
             continue
@@ -1158,25 +1326,41 @@ def compose_non_streaming_kb_response(
                 content, kb_meta, citation_chunks
             )
             stats.epistemics_measured = True
-            rendered_content, sources, no_citable_sources, decision = (
-                _render_kb_citation_content(
-                    inspected_content,
-                    allowed_image_urls=allowed_image_urls,
-                    user_query=kb_meta.get("user_query"),
-                    refusal_language=kb_meta.get("response_language_target"),
-                    trusted_sources=trusted_sources,
-                    evidence_chunks=citation_chunks,
-                    kb_narrow=_kb_meta_is_strict(kb_meta),
-                    retrieval_confidence_band=kb_meta.get("confidence_band"),
-                    allow_uncited_user_content=allow_uncited_user_content,
-                    suppress_citations_for_user_content=suppress_user_content_citations,
-                    no_citable_message=kb_meta.get("no_citable_message"),
-                    strip_correspondence_evidence_labels=bool(
-                        kb_meta.get("pasted_correspondence_detected")
-                    ),
+            if strict_multiple_choices:
+                rendered_content, sources, no_citable_sources, decision = (
+                    _strict_multiple_choices_refusal(kb_meta)
                 )
-            )
+            else:
+                rendered_content, sources, no_citable_sources, decision = (
+                    _render_kb_citation_content(
+                        inspected_content,
+                        allowed_image_urls=allowed_image_urls,
+                        user_query=kb_meta.get("user_query"),
+                        refusal_language=kb_meta.get("response_language_target"),
+                        trusted_sources=trusted_sources,
+                        evidence_chunks=citation_chunks,
+                        kb_narrow=_kb_meta_is_strict(kb_meta),
+                        retrieval_confidence_band=kb_meta.get("confidence_band"),
+                        allow_uncited_user_content=allow_uncited_user_content,
+                        suppress_citations_for_user_content=suppress_user_content_citations,
+                        no_citable_message=kb_meta.get("no_citable_message"),
+                        strip_correspondence_evidence_labels=bool(
+                            kb_meta.get("pasted_correspondence_detected")
+                        ),
+                    )
+                )
+                rendered_content, no_citable_sources, decision = await _show_uncited_strict_draft(
+                    inspected_content,
+                    rendered_content,
+                    no_citable_sources,
+                    decision,
+                    kb_meta=kb_meta,
+                    allowed_image_urls=allowed_image_urls,
+                    trusted_sources=trusted_sources,
+                    citation_chunks=citation_chunks,
+                )
             _record_answer_language(rendered_content, kb_meta)
+            _measure_answer_grounding(rendered_content, citation_chunks, kb_meta)
             if (
                 rendered_content != content
                 or sources
@@ -1205,7 +1389,7 @@ def compose_non_streaming_kb_response(
     return stats
 
 
-def compose_streaming_kb_response(
+async def compose_streaming_kb_response(
     response: object,
     kb_meta: dict[str, Any],
     *,
@@ -1235,17 +1419,111 @@ def compose_streaming_kb_response(
         return stats
 
     kb_narrow = _kb_meta_is_strict(kb_meta)
-    strict_no_sources = not trusted_sources and (force_no_citable or kb_narrow)
+    # Every Strict stream is held back in full. Whether a sentence is supported
+    # is only known at the final render, and the incremental guard below used
+    # to show the model's words first and append the fixed refusal after them,
+    # so unsupported text reached the user before any gate ran. Held deltas
+    # still go out as chunks with empty content, one per model token, which
+    # keeps bytes flowing to LibreChat while the answer is written. Open streams
+    # stay incremental: they never replace the model's text.
+    hold_until_rendered = kb_narrow or (not trusted_sources and force_no_citable)
     telemetry_only_stream = bool(
         citation_chunks
         and not trusted_sources
-        and not strict_no_sources
+        and not hold_until_rendered
         and not has_visible_activity
         and not correspondence_detected
         and not suppress_user_content_citations
     )
 
     should_flush = flush_stream
+
+    if hold_until_rendered or suppress_user_content_citations:
+        choices = [
+            choice
+            for choice in get_response_choices(response)
+            if get_choice_message(choice, "delta") is not None
+        ]
+        for choice in choices:
+            content = get_message_content(get_choice_message(choice, "delta"))
+            if isinstance(content, str) and content:
+                buffered = kb_meta.get("_citation_stream_guard_buffer") or ""
+                kb_meta["_citation_stream_guard_buffer"] = buffered + content
+            # Held chunks are rebuilt from an allowlist, not blanked field by
+            # field: reasoning, thinking, sources, provider fields and any field
+            # added later would otherwise reach the user before the grounding
+            # decision. Only the empty content (the keepalive), the role and
+            # tool invocations survive. tool_calls / function_call stay intact
+            # because LibreChat's agent needs them to run its tools (web_search,
+            # deferred tools); they are calls for the client to execute, not
+            # text rendered as the assistant's reply.
+            rebuild_choice_delta(choice, _HELD_DELTA_FIELDS, "")
+            stats.mutated_messages += 1
+            should_flush = should_flush or bool(get_choice_finish_reason(choice))
+        if kb_narrow and len(choices) > 1:
+            kb_meta["_strict_multiple_choices"] = True
+        if not should_flush or not choices:
+            return stats
+        inspected_content = _record_answer_epistemics(
+            kb_meta.get("_citation_stream_guard_buffer") or "",
+            kb_meta,
+            citation_chunks,
+        )
+        stats.epistemics_measured = True
+        if kb_meta.get("_strict_multiple_choices"):
+            rendered_content, sources, no_citable_sources, decision = (
+                _strict_multiple_choices_refusal(kb_meta)
+            )
+        else:
+            rendered_content, sources, no_citable_sources, decision = (
+                _render_kb_citation_content(
+                    inspected_content,
+                    allowed_image_urls=allowed_image_urls,
+                    user_query=kb_meta.get("user_query"),
+                    refusal_language=kb_meta.get("response_language_target"),
+                    trusted_sources=trusted_sources,
+                    evidence_chunks=citation_chunks,
+                    kb_narrow=kb_narrow,
+                    retrieval_confidence_band=kb_meta.get("confidence_band"),
+                    allow_uncited_user_content=allow_uncited_user_content,
+                    suppress_citations_for_user_content=suppress_user_content_citations,
+                    no_citable_message=kb_meta.get("no_citable_message"),
+                    strip_correspondence_evidence_labels=bool(
+                        kb_meta.get("pasted_correspondence_detected")
+                    ),
+                )
+            )
+            rendered_content, no_citable_sources, decision = await _show_uncited_strict_draft(
+                inspected_content,
+                rendered_content,
+                no_citable_sources,
+                decision,
+                kb_meta=kb_meta,
+                allowed_image_urls=allowed_image_urls,
+                trusted_sources=trusted_sources,
+                citation_chunks=citation_chunks,
+            )
+        _record_answer_language(rendered_content, kb_meta)
+        _measure_answer_grounding(rendered_content, citation_chunks, kb_meta)
+        _remember_citation_decision(
+            kb_meta,
+            decision,
+            no_citable_sources=no_citable_sources,
+        )
+        final_text = _append_visible_sources_section(rendered_content, sources, kb_meta=kb_meta)
+        for choice in choices:
+            delta = get_choice_message(choice, "delta")
+            # A held-back clarify turn can still end in a cited answer.
+            if sources:
+                set_message_field(delta, "sources", sources)
+            set_message_content(delta, final_text)
+        kb_meta["_citation_stream_sources_appended"] = True
+        kb_meta["_citation_stream_guard_buffer"] = ""
+        stats.rendered_messages += 1
+        stats.rendered_sources = len(sources)
+        stats.no_citable_sources = no_citable_sources
+        stats.citation_decisions.append(decision)
+        return stats
 
     for choice in get_response_choices(response):
         delta = get_choice_message(choice, "delta")
@@ -1268,59 +1546,6 @@ def compose_streaming_kb_response(
                 kb_meta["_citation_stream_full_parts"] = []
                 stats.epistemics_measured = True
             continue
-        if strict_no_sources or suppress_user_content_citations:
-            if isinstance(content, str) and content:
-                buffered = kb_meta.get("_citation_stream_guard_buffer") or ""
-                kb_meta["_citation_stream_guard_buffer"] = buffered + content
-                set_message_content(delta, "")
-                stats.mutated_messages += 1
-            if not should_flush:
-                continue
-            inspected_content = _record_answer_epistemics(
-                kb_meta.get("_citation_stream_guard_buffer") or "",
-                kb_meta,
-                citation_chunks,
-            )
-            stats.epistemics_measured = True
-            rendered_content, sources, no_citable_sources, decision = (
-                _render_kb_citation_content(
-                    inspected_content,
-                    allowed_image_urls=allowed_image_urls,
-                    user_query=kb_meta.get("user_query"),
-                    refusal_language=kb_meta.get("response_language_target"),
-                    trusted_sources=trusted_sources,
-                    evidence_chunks=citation_chunks,
-                    kb_narrow=kb_narrow,
-                    retrieval_confidence_band=kb_meta.get("confidence_band"),
-                    allow_uncited_user_content=allow_uncited_user_content,
-                    suppress_citations_for_user_content=suppress_user_content_citations,
-                    no_citable_message=kb_meta.get("no_citable_message"),
-                    strip_correspondence_evidence_labels=bool(
-                        kb_meta.get("pasted_correspondence_detected")
-                    ),
-                )
-            )
-            _record_answer_language(rendered_content, kb_meta)
-            _remember_citation_decision(
-                kb_meta,
-                decision,
-                no_citable_sources=no_citable_sources,
-            )
-            set_message_content(
-                delta,
-                _append_visible_sources_section(
-                    rendered_content, sources, kb_meta=kb_meta
-                ),
-            )
-            kb_meta["_citation_stream_sources_appended"] = True
-            kb_meta["_citation_stream_guard_buffer"] = ""
-            stats.mutated_messages += 1
-            stats.rendered_messages += 1
-            stats.rendered_sources = len(sources)
-            stats.no_citable_sources = no_citable_sources
-            stats.citation_decisions.append(decision)
-            return stats
-
         stream_buffer = kb_meta.get("_citation_stream_guard_buffer") or ""
         content_for_render = content
         if correspondence_detected:
@@ -1390,13 +1615,9 @@ def compose_streaming_kb_response(
             )
         )
         _record_answer_language(rendered_content, kb_meta)
+        _measure_answer_grounding(rendered_content, citation_chunks, kb_meta)
         tail = remove_already_streamed_prefix(rendered_content, emitted_text)
-        if tail is None and no_citable_sources:
-            # Deliberate replacement (strict refusal): the canned message is
-            # the contract and is short — append it in full after the stream.
-            tail = rendered_content
-            decision["stream_flush_alignment"] = "replacement_appended"
-        elif tail is None:
+        if tail is None:
             # The cleaner changed non-whitespace content inside the region the
             # user already saw, so the rendered answer cannot be aligned with
             # the stream. Never replay the full answer (Voys feedback #21,

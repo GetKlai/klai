@@ -97,12 +97,12 @@ describe("per-turn language switch", () => {
       { choices: [{ delta: { content: "You bet, go ahead." } }] },
     ]);
     const { container } = renderReadyWindow();
-    expect(placeholder(container)).toBe("Stel een vraag...");
+    expect(placeholder(container)).toBe("Beschrijf je vraag zo concreet mogelijk...");
 
     await ask(container, "Can we speak English?");
 
     await waitFor(() => expect(lastAnswerText(container)).toBe("You bet, go ahead."));
-    expect(placeholder(container)).toBe("Ask a question...");
+    expect(placeholder(container)).toBe("Describe your question as specifically as you can...");
     expect(container.querySelector(".klai-send-btn")?.getAttribute("aria-label")).toBe("Send message");
   });
 
@@ -113,7 +113,7 @@ describe("per-turn language switch", () => {
     await ask(container, "Hoe reset ik mijn wachtwoord?");
 
     await waitFor(() => expect(lastAnswerText(container)).toBe("Prima, hier is het antwoord."));
-    expect(placeholder(container)).toBe("Stel een vraag...");
+    expect(placeholder(container)).toBe("Beschrijf je vraag zo concreet mogelijk...");
   });
 
   it("keeps the switched language when a later turn carries no language field", async () => {
@@ -123,13 +123,13 @@ describe("per-turn language switch", () => {
     ]);
     const { container } = renderReadyWindow();
     await ask(container, "Switch to English please");
-    await waitFor(() => expect(placeholder(container)).toBe("Ask a question..."));
+    await waitFor(() => expect(placeholder(container)).toBe("Describe your question as specifically as you can..."));
 
     mockStream([{ choices: [{ delta: { content: "Still here." } }] }]);
     await ask(container, "Another question");
 
     await waitFor(() => expect(lastAnswerText(container)).toBe("Still here."));
-    expect(placeholder(container)).toBe("Ask a question...");
+    expect(placeholder(container)).toBe("Describe your question as specifically as you can...");
   });
 
   it("ignores a language the widget has no label set for", async () => {
@@ -142,7 +142,7 @@ describe("per-turn language switch", () => {
     await ask(container, "Sprechen Sie Deutsch?");
 
     await waitFor(() => expect(lastAnswerText(container)).toBe("Hallo."));
-    expect(placeholder(container)).toBe("Stel een vraag...");
+    expect(placeholder(container)).toBe("Beschrijf je vraag zo concreet mogelijk...");
   });
 
   it("leaves the externally loaded booking panel on the load-time locale", async () => {
@@ -153,7 +153,7 @@ describe("per-turn language switch", () => {
     const { container } = renderReadyWindow();
 
     await ask(container, "Can we speak English?");
-    await waitFor(() => expect(placeholder(container)).toBe("Ask a question..."));
+    await waitFor(() => expect(placeholder(container)).toBe("Describe your question as specifically as you can..."));
 
     // The Nerds panel frames a third-party page whose language is a product
     // decision of its own; it must not follow the conversation.
@@ -170,7 +170,7 @@ describe("per-turn language switch", () => {
     await ask(container, "Can I get an answer in English?");
 
     await waitFor(() => expect(lastAnswerText(container)).toBe("Yes."));
-    expect(placeholder(container)).toBe("Ask a question...");
+    expect(placeholder(container)).toBe("Describe your question as specifically as you can...");
   });
 });
 

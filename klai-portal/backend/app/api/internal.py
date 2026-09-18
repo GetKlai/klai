@@ -630,6 +630,8 @@ class ScheduledConnectorItem(BaseModel):
     connector_id: str
     zitadel_org_id: str
     schedule: str
+    connector_type: str
+    has_saved_credentials: bool
 
 
 @router.get("/scheduled-connectors", response_model=list[ScheduledConnectorItem])
@@ -674,6 +676,8 @@ async def list_scheduled_connectors(
             connector_id=str(connector.id),
             zitadel_org_id=org.zitadel_org_id,
             schedule=connector.schedule,
+            connector_type=connector.connector_type,
+            has_saved_credentials=connector.encrypted_credentials is not None,
         )
         for connector, org in rows
         if connector.connector_type != "hubspot_support"
