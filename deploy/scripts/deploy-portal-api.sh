@@ -14,6 +14,27 @@ PORTAL_CONTAINER="${KLAI_PORTAL_CONTAINER:-klai-core-portal-api-1}"
 
 cd "$COMPOSE_DIR"
 
+# Refuse to start a deploy that the disk cannot finish.
+#
+# On 2026-09-18 the root filesystem hit 100%. The pull and `alembic upgrade
+# head` both succeeded, and the deploy then died at the `mktemp -d` below with
+# ENOSPC — after the schema had already moved and before the post-deploy SQL
+# ran. Failing late is the expensive direction here: the half that landed is the
+# irreversible half.
+#
+# 4 GiB is roughly six times the 637 MB portal-api image, which covers the pull,
+# the layer extraction, and the migration's own temp files with room to spare. It
+# is a floor against a full disk, not a capacity plan: the Grafana rule
+# core01_disk_usage_high is what should catch the slope long before this fires.
+required_free_kib=$((4 * 1024 * 1024))
+available_kib="$(df -Pk . | awk 'NR==2 {print $4}')"
+if [[ "$available_kib" -lt "$required_free_kib" ]]; then
+    echo "ERROR: $(( available_kib / 1024 / 1024 )) GiB free on $(pwd), need 4 GiB to deploy safely." >&2
+    echo "       Refusing to start: a deploy that fails mid-flight can leave migrations applied" >&2
+    echo "       with post-deploy SQL unapplied. Free space first, then re-run." >&2
+    exit 1
+fi
+
 if [[ -f .env ]]; then
     # shellcheck disable=SC1091
     source .env

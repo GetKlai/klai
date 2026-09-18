@@ -721,6 +721,18 @@ services:
                       # review). Still read-only: no POST means no /connect.
       # POST / DELETE deliberately unset: this principal never mutates. That is
       # what keeps this a GET-only lane rather than a second create path.
+      #
+      # LOG_LEVEL feeds `log stdout format raw daemon "${LOG_LEVEL}"` in the
+      # image's haproxy.cfg.template, which also sets `option httplog`. At the
+      # image default (info) that writes one line per proxied request, and Alloy
+      # inspects every container on every discovery refresh: 19 lines/second,
+      # 18.9 GB in five weeks, on the same filesystem as /tmp and the Docker
+      # data root. That log filled core-01's root disk on 2026-09-18 and broke a
+      # portal-api deploy at `mktemp`. At warning the proxy still reports what an
+      # operator needs — startup, config errors, backend failures — and drops the
+      # per-request access log, which is Alloy's own polling and carries no
+      # information we act on.
+      LOG_LEVEL: warning
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:

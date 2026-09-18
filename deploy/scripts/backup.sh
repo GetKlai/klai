@@ -25,6 +25,28 @@ readonly MONGODB_MIN_NOFILE="${MONGODB_MIN_NOFILE:-64000}"
 readonly QDRANT_NETWORK="${QDRANT_NETWORK:-klai-net}"
 readonly TOTAL_STEPS=16
 
+# How many day-directories stay on core-01 after a successful run.
+#
+# The local copy is the staging area this script dumps into before it encrypts
+# and uploads, so the newest set has to exist. Keeping a tail of older sets on
+# top of that only buys one thing: restoring yesterday without downloading and
+# decrypting from the Storage Box first.
+#
+# It buys nothing for durability. /opt/klai/backups sits on the same /dev/md2
+# as the data it backs up, so any failure that costs us the databases costs us
+# these copies in the same moment. The retention that answers for durability is
+# the Storage Box, which holds every day-set since 2026-03-27 and is pruned by
+# nobody.
+#
+# This was 30 between 2026-03-27 and 2026-09-18, raised at the time for NEN 7510.
+# The offsite copy satisfies that retention on its own and satisfies it better,
+# being off-host; the local tail was paying 85 GiB for a week-and-a-bit of
+# convenience. At 5.1 GiB per day-set and growing, that tail was the second
+# largest consumer on a disk that reached 100% and broke a production deploy on
+# 2026-09-18. Seven days keeps "something broke and we noticed late" a local
+# restore, and hands the rest to the Storage Box.
+readonly LOCAL_RETENTION_DAYS="${LOCAL_RETENTION_DAYS:-7}"
+
 readonly AGE_RECIPIENTS=(
   "age1lyd243tsj8j7rn2wy4hdmnya99wsf2p87fpphys9k65kammerqsqnzpsur"
   "age15ztzw9vnngkdnw0pg5tn8upplglvhzkep23sm5zu86res5lcmv7syw5m4v"
@@ -635,8 +657,8 @@ local_retention() {
   local remaining
 
   printf '\n'
-  log "Local cleanup: removing backups older than the newest 30 days..."
-  find "${BACKUP_ROOT}/" -maxdepth 1 -type d -name '20*' | sort | head -n -30 | xargs -r rm -rf
+  log "Local cleanup: removing backups older than the newest ${LOCAL_RETENTION_DAYS} days..."
+  find "${BACKUP_ROOT}/" -maxdepth 1 -type d -name '20*' | sort | head -n "-${LOCAL_RETENTION_DAYS}" | xargs -r rm -rf
   remaining="$(find "${BACKUP_ROOT}/" -maxdepth 1 -type d -name '20*' | wc -l)"
   log "Local backups retained: ${remaining}"
 }

@@ -91,6 +91,10 @@ jobs:
           bash deploy/scripts/tests/docker-orphan-audit-hand-edits.test.sh
           bash deploy/scripts/tests/harden-docker-user-bot-isolation.test.sh
           bash deploy/scripts/tests/vexa12-transcription-path.test.sh
+          # deploy-portal-api.sh runs migrations before it swaps the container,
+          # so a mid-flight failure is the expensive kind. Its disk guard is
+          # what keeps a full disk from producing one.
+          bash deploy/scripts/tests/deploy-portal-api-disk-guard.test.sh
 
       - name: Sync docker-compose.yml + config + run smoke-test
         uses: appleboy/ssh-action@v1
