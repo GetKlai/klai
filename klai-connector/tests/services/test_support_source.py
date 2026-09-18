@@ -194,6 +194,68 @@ async def test_select_tickets_scoped_search_retains_recent_or_open() -> None:
     assert captured["limit"] == 200
 
 
+def _iso_ms(iso: str) -> int:
+    return int(datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp() * 1000)
+
+
+def _group_matches(ticket: dict[str, Any], group: dict[str, Any]) -> bool:
+    """Evaluate one AND filter group against a ticket, mirroring HubSpot search."""
+    props = ticket["properties"]
+    for f in group["filters"]:
+        value = props.get(f["propertyName"])
+        if f["operator"] == "GTE":
+            if value is None or _iso_ms(str(value)) < int(f["value"]):
+                return False
+        elif f["operator"] == "IN":
+            if str(value) not in set(f["values"]):
+                return False
+        else:  # pragma: no cover - the body only emits GTE/IN
+            raise AssertionError(f"unhandled operator {f['operator']}")
+    return True
+
+
+def _simulate_search(body: dict[str, Any], fixture: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return the tickets a HubSpot filterGroups OR/filters AND search would
+    select, deduplicated by id (a ticket matching several OR groups appears
+    once, as HubSpot returns distinct objects)."""
+    matched = [t for t in fixture if any(_group_matches(t, g) for g in body["filterGroups"])]
+    return matched
+
+
+async def test_select_tickets_includes_old_closed_ticket_modified_in_window() -> None:
+    """A ticket created long ago and now in a closed stage, but whose
+    hs_lastmodifieddate falls inside the lookback window, is selected via the
+    modified-in-window group. A stale closed ticket (no recent modification)
+    and a recently-modified ticket outside the configured pipeline are both
+    excluded, and an old still-open ticket is retained. The search body is
+    evaluated with a HubSpot OR/AND simulator so the behaviour, not the payload
+    shape, is what proves the fix.
+    """
+    out_of_pipeline = _ticket("204", "9", "2026-09-16T09:00:00Z", "2026-09-16T09:00:00Z")
+    out_of_pipeline["properties"]["hs_pipeline"] = "5"
+    fixture = [
+        _ticket("202", "9", "2026-01-01T09:00:00Z", "2026-09-16T09:00:00Z"),  # old+closed, modified in window
+        _ticket("203", "9", "2026-01-01T09:00:00Z", "2026-01-02T09:00:00Z"),  # old+closed, stale -> excluded
+        _ticket("150", "2", "2026-01-01T09:00:00Z", "2026-01-02T09:00:00Z"),  # old + open -> retained
+        out_of_pipeline,  # recent but wrong pipeline -> excluded
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/crm/v3/pipelines/tickets":
+            return _json(_pipelines_payload())
+        if path == _SEARCH_PATH:
+            matched = _simulate_search(_search_body(request), fixture)
+            return _json({"total": len(matched), "results": matched})
+        raise AssertionError(path)
+
+    reader = _reader(handler, config={"pipeline_ids": ["0"]})
+    tickets = await reader.select_tickets()
+    await reader.aclose()
+
+    assert sorted(t["id"] for t in tickets) == ["150", "202"]
+
+
 async def test_select_tickets_search_scopes_by_configured_pipeline() -> None:
     """A configured pipeline_ids set becomes an AND filter inside every OR group,
     so the search itself is scoped to those pipelines server-side."""

@@ -33,6 +33,10 @@ import sys
 # miss, which falls out of the "not actionable vs actionable = FN" rule below.
 ACTIONABLE = frozenset({"missing", "incomplete", "outdated", "contradictory", "findability", "audience"})
 
+_SOURCE_TO_CHANNEL = {"audio": "phone", "hubspot": "hubspot"}
+_EXPLICIT_CHANNELS = frozenset({"phone", "hubspot", "librechat", "webchat"})
+_CHANNEL_UNKNOWN = "unknown"
+
 
 class EvaluationError(ValueError):
     """Raised on malformed input or an alignment that does not fit its case."""
@@ -78,6 +82,37 @@ def _index_alignments(cases: list, alignments: list | None) -> dict:
     return result
 
 
+def _source_of(case: dict) -> str | None:
+    payload = case.get("payload")
+    source = payload.get("source") if isinstance(payload, dict) else None
+    return source or None
+
+
+def _resolve_channel(case: dict) -> str:
+    """Map a case to one stable channel key, failing loudly on a source/channel conflict."""
+    from_source = _SOURCE_TO_CHANNEL.get(_source_of(case) or "")
+    explicit = case.get("channel")
+    from_explicit = explicit if explicit in _EXPLICIT_CHANNELS else None
+    if from_source and from_explicit and from_source != from_explicit:
+        raise EvaluationError(
+            f"case {case['id']!r}: explicit channel {explicit!r} conflicts with source-derived {from_source!r}"
+        )
+    return from_source or from_explicit or _CHANNEL_UNKNOWN
+
+
+def _new_channel_bucket() -> dict:
+    return {
+        "total": 0,
+        "scored": 0,
+        "fully_reference_reviewed": 0,
+        "abstention_count": 0,
+        "source_status": {},
+        "tp": 0,
+        "fp": 0,
+        "fn": 0,
+    }
+
+
 def _score_case(findings: list, questions: list, matches: list) -> tuple[int, int, int]:
     tp = fp = fn = 0
     matched_findings: set = set()
@@ -105,13 +140,20 @@ def evaluate(cases: list, alignments: list | None = None) -> dict:
     total_findings = abstentions = fully_reviewed = 0
     unscored: list = []
     per_case: list = []
+    channels: dict = {}
     agg_tp = agg_fp = agg_fn = 0
     for case in cases:
         cid = case["id"]
         statuses[case["status"]] = statuses.get(case["status"], 0) + 1
         findings = case.get("analysis") or []
         total_findings += len(findings)
-        abstentions += sum(1 for f in findings if f["diagnosis"] == "uncertain")
+        case_abstentions = sum(1 for f in findings if f["diagnosis"] == "uncertain")
+        abstentions += case_abstentions
+        bucket = channels.setdefault(_resolve_channel(case), _new_channel_bucket())
+        bucket["total"] += 1
+        bucket["abstention_count"] += case_abstentions
+        status_key = case["status"]
+        bucket["source_status"][status_key] = bucket["source_status"].get(status_key, 0) + 1
         ref = case.get("reference")
         if ref is None:
             unscored.append({"case_id": cid, "reason": "no reference"})
@@ -125,6 +167,7 @@ def evaluate(cases: list, alignments: list | None = None) -> dict:
         if ref.get("content_hash") != case.get("content_hash"):
             raise EvaluationError(f"case {cid!r}: reviewed reference is stale (content_hash mismatch)")
         fully_reviewed += 1
+        bucket["fully_reference_reviewed"] += 1
         questions = ref["questions"]
         matches = aligned.get(cid)
         if findings and questions and matches is None:
@@ -132,6 +175,10 @@ def evaluate(cases: list, alignments: list | None = None) -> dict:
             continue
         tp, fp, fn = _score_case(findings, questions, matches or [])
         agg_tp, agg_fp, agg_fn = agg_tp + tp, agg_fp + fp, agg_fn + fn
+        bucket["scored"] += 1
+        bucket["tp"] += tp
+        bucket["fp"] += fp
+        bucket["fn"] += fn
         per_case.append(
             {
                 "case_id": cid,
@@ -151,6 +198,21 @@ def evaluate(cases: list, alignments: list | None = None) -> dict:
         "scored_cases": len(per_case),
         "unscored": unscored,
         "per_case": per_case,
+        "by_channel": {
+            channel: {
+                "total": b["total"],
+                "scored": b["scored"],
+                "fully_reference_reviewed": b["fully_reference_reviewed"],
+                "abstention_count": b["abstention_count"],
+                "source_status": b["source_status"],
+                "true_positives": b["tp"],
+                "false_positives": b["fp"],
+                "false_negatives": b["fn"],
+                "precision": _ratio(b["tp"], b["tp"] + b["fp"]),
+                "recall": _ratio(b["tp"], b["tp"] + b["fn"]),
+            }
+            for channel, b in channels.items()
+        },
         "aggregate": {
             "true_positives": agg_tp,
             "false_positives": agg_fp,

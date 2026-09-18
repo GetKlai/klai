@@ -33,8 +33,17 @@ def reference(questions, content_hash="h1", complete=True, reviewed_by="alice"):
     }
 
 
-def case(cid="c1", content_hash="h1", analysis_revision=1, status="analyzed", analysis=None, ref=None):
-    return {
+def case(
+    cid="c1",
+    content_hash="h1",
+    analysis_revision=1,
+    status="analyzed",
+    analysis=None,
+    ref=None,
+    source=None,
+    channel=None,
+):
+    rec = {
         "id": cid,
         "content_hash": content_hash,
         "analysis_revision": analysis_revision,
@@ -42,6 +51,11 @@ def case(cid="c1", content_hash="h1", analysis_revision=1, status="analyzed", an
         "analysis": analysis or [],
         "reference": ref,
     }
+    if source is not None:
+        rec["payload"] = {"source": source}
+    if channel is not None:
+        rec["channel"] = channel
+    return rec
 
 
 def alignment(cid="c1", content_hash="h1", analysis_revision=1, reviewed_by="alice", matches=None):
@@ -181,3 +195,62 @@ def test_main_nonzero_on_malformed_input(tmp_path, capsys):
     inp.write_text("{ not json")
     assert esg.main(["--input", str(inp)]) != 0
     assert capsys.readouterr().err.strip() != ""
+
+
+def test_by_channel_isolates_a_weak_channel_from_the_pool():
+    # A strong HubSpot prediction must not mask a phone channel that misses a
+    # real gap. Counts below are hand-worked from the fixtures, not derived from
+    # the implementation.
+    hub = case(
+        cid="hub",
+        source="hubspot",
+        analysis=[finding("missing")],
+        ref=reference([finding("missing")]),
+    )
+    phone = case(cid="phone", source="audio", analysis=[], ref=reference([finding("missing")]))
+    libre = case(cid="libre", channel="librechat", status="failed", ref=None)
+    unknown = case(cid="unk", analysis=[finding("uncertain")], ref=None)
+    align = alignment(cid="hub", matches=[{"finding_index": 0, "reference_index": 0}])
+
+    report = esg.evaluate([hub, phone, libre, unknown], [align])
+
+    # Pooled recall (1 TP over 1 TP + 1 FN) hides the phone failure at 0.5.
+    assert report["aggregate"]["recall"] == 0.5
+    assert report["aggregate"]["precision"] == 1.0
+
+    by = report["by_channel"]
+    assert by["hubspot"]["recall"] == 1.0
+    assert by["hubspot"]["true_positives"] == 1
+    assert by["hubspot"]["source_status"] == {"analyzed": 1}
+    assert by["phone"]["recall"] == 0.0
+    assert by["phone"]["false_negatives"] == 1
+    assert by["phone"]["source_status"] == {"analyzed": 1}
+    # LibreChat is unreviewed: no scored cases, metrics stay null.
+    assert by["librechat"]["scored"] == 0
+    assert by["librechat"]["recall"] is None
+    assert by["librechat"]["precision"] is None
+    assert by["librechat"]["source_status"] == {"failed": 1}
+    # Unknown lacks provenance and carries the abstention.
+    assert by["unknown"]["source_status"] == {"analyzed": 1}
+    assert by["unknown"]["abstention_count"] == 1
+    assert by["unknown"]["recall"] is None
+    # Only observed cohorts appear; webchat was never seen.
+    assert set(by) == {"hubspot", "phone", "librechat", "unknown"}
+
+
+def test_conflicting_channel_and_source_fails_loudly():
+    conflict = case(cid="x", source="audio", channel="librechat", analysis=[], ref=None)
+    with pytest.raises(esg.EvaluationError, match="conflict"):
+        esg.evaluate([conflict], None)
+
+
+def test_channel_report_leaks_no_raw_question_text():
+    hub = case(
+        cid="hub",
+        source="hubspot",
+        analysis=[finding("missing", question="secret-customer-question")],
+        ref=reference([finding("missing", question="secret-customer-question")]),
+    )
+    report = esg.evaluate([hub], [alignment(cid="hub", matches=[{"finding_index": 0, "reference_index": 0}])])
+    assert "secret-customer-question" not in json.dumps(report)
+    assert "secret-finding-text" not in json.dumps(report)

@@ -155,6 +155,10 @@ class _FakeCollection:
         if isinstance(cid_filter, dict) and "$in" in cid_filter:
             wanted = set(cid_filter["$in"])
             docs = [d for d in docs if d.get("conversationId") in wanted]
+        elif isinstance(cid_filter, dict) and "$nin" in cid_filter:
+            # Mongo excludes these before sort+limit, mirroring the fetch query.
+            excluded = set(cid_filter["$nin"])
+            docs = [d for d in docs if d.get("conversationId") not in excluded]
         return _Cursor(docs)
 
 
@@ -377,6 +381,53 @@ async def test_already_judged_conversation_is_not_rejudged():
     llm.assert_not_awaited()
     assert org.inserts == {}
     assert result == {"org_count": 1, "judged_count": 0}
+
+
+# ---------------------------------------------------------------------------
+# (c2) a full batch of judged newer conversations must not starve an older
+# unjudged one: the exclude set is applied BEFORE the Mongo limit.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_older_unjudged_conversation_survives_a_full_batch_of_judged():
+    """A judged recent batch must not hide the older backlog or remove its batch limit."""
+    from app.services import librechat_quality_judge as lj
+
+    judged_ids = [f"judged-{i:03d}" for i in range(lj._BATCH_SIZE)]
+    unjudged_ids = [f"old-unjudged-{i:03d}" for i in range(60)]
+    conversations = [_conv(cid, minutes=100 + i) for i, cid in enumerate(judged_ids)]
+    conversations.extend(_conv(cid, minutes=i) for i, cid in enumerate(unjudged_ids))
+    mongo = _FakeMongo(
+        {
+            "librechat-voys": {
+                "conversations": conversations,
+                "messages": [
+                    message
+                    for cid in unjudged_ids
+                    for message in [
+                        _msg(cid, user=True, minutes=0, text="oude vraag"),
+                        _msg(cid, user=False, minutes=1, text="oud antwoord"),
+                    ]
+                ],
+            }
+        }
+    )
+    org = _OrgDb(org_id=7, judged_external=set(judged_ids))
+
+    async def _fake_llm(*, model: str, user: str, system: str) -> str:
+        return _verdict_raw()
+
+    with (
+        patch(f"{_LJ}.pymongo.MongoClient", mongo.client),
+        patch.object(lj, "cross_org_session", _cross_org_returning([(7, "voys", ["librechat_quality_judge"])])),
+        patch.object(lj, "tenant_scoped_session", _tenant_returning(org)),
+        patch.object(lj, "_call_judge_llm", _fake_llm),
+    ):
+        result = await lj.librechat_judge_run_once()
+
+    assert set(org.inserts) == set(unjudged_ids[10:])
+    assert result == {"org_count": 1, "judged_count": 50}
 
 
 # ---------------------------------------------------------------------------
