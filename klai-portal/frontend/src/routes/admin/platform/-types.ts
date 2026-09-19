@@ -436,3 +436,17 @@ export interface PlatformSubdomainItem {
   status: 'up' | 'auth_required' | 'client_error' | 'server_error' | 'unreachable' | 'not_probed'
   status_code: number | null
 }
+
+// What the answer chain records, and why. Documentation, not data: the backend
+// returns the list in app/services/observability_signals.py and never the
+// contents of the logs or records themselves.
+export interface PlatformObservabilitySignal {
+  name: string
+  kind: 'log' | 'record' | 'report' | 'instrument' | 'guard'
+  service: string
+  // Keyed by locale; the backend always carries both 'nl' and 'en'.
+  purpose: Record<string, string>
+  how_to_read: string
+  read_automatically: boolean
+  source: string
+}
