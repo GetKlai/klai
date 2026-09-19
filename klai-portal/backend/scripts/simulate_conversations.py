@@ -227,7 +227,7 @@ async def _post_and_raise(call):
     return response
 
 
-async def _widget_reply(client: httpx.AsyncClient, token: str, messages: list[dict]) -> tuple[str, int]:
+async def _widget_reply(client: httpx.AsyncClient, token: str, messages: list[dict]) -> tuple[str, int, bool]:
     async def _call():
         return await client.post(
             f"{_widget_api_base()}/partner/v1/chat/completions",
@@ -237,7 +237,14 @@ async def _widget_reply(client: httpx.AsyncClient, token: str, messages: list[di
 
     response = await _with_backoff("de widget", lambda: _post_and_raise(_call))
     message = response.json()["choices"][0]["message"]
-    return message.get("content") or "", len(message.get("sources") or [])
+    return message.get("content") or "", len(message.get("sources") or []), bool(message.get("escalation"))
+
+
+# A real visitor who is offered a person twice clicks the button or leaves;
+# the simulated one, told to stop only when its goal is answered, kept asking
+# until the turn budget ran out (all twelve conversations of the 2026-09-18
+# baseline ran the full four turns). Two hand-offs end the conversation.
+_HAND_OFFS_BEFORE_GIVING_UP = 2
 
 
 async def _one_conversation(client: httpx.AsyncClient, token: str, goal: dict, max_turns: int) -> dict:
@@ -246,14 +253,16 @@ async def _one_conversation(client: httpx.AsyncClient, token: str, goal: dict, m
     messages: list[dict] = [{"role": "user", "content": goal["eerste"]}]
     transcript: list[str] = [f"Visitor: {goal['eerste']}"]
     eerste_bronnen = 0
+    doorverwijzingen = 0
 
     for turn in range(max_turns):
-        antwoord, bronnen = await _widget_reply(client, token, messages)
+        antwoord, bronnen, doorverwezen = await _widget_reply(client, token, messages)
         if turn == 0:
             eerste_bronnen = bronnen
         messages.append({"role": "assistant", "content": antwoord})
         transcript.append(f"Assistant: {antwoord}")
-        if turn == max_turns - 1:
+        doorverwijzingen += doorverwezen
+        if turn == max_turns - 1 or doorverwijzingen >= _HAND_OFFS_BEFORE_GIVING_UP:
             break
         await asyncio.sleep(_PAUSE_BETWEEN_TURNS)
         volgende = await _model(

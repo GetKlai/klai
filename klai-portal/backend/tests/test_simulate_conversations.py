@@ -22,14 +22,18 @@ import simulate_conversations as sim
 class _Client:
     """Stands in for httpx: the widget answers, then the simulated visitor speaks."""
 
-    def __init__(self, visitor_turns: list[str]) -> None:
+    def __init__(self, visitor_turns: list[str], *, escalation: bool = False) -> None:
         self.visitor_turns = list(visitor_turns)
         self.widget_calls = 0
+        self.escalation = escalation
 
     async def post(self, url: str, **kwargs):
         if "/partner/v1/chat/completions" in url:
             self.widget_calls += 1
-            return _Response({"choices": [{"message": {"content": "Ga naar Belplan.", "sources": [{"id": 1}]}}]})
+            message = {"content": "Ga naar Belplan.", "sources": [{"id": 1}]}
+            if self.escalation:
+                message = {"content": "Dit vind ik niet terug.", "sources": [], "escalation": {"appointment": True}}
+            return _Response({"choices": [{"message": message}]})
         reply = self.visitor_turns.pop(0) if self.visitor_turns else "DONE"
         return _Response({"choices": [{"message": {"content": reply}}]})
 
@@ -56,6 +60,24 @@ async def test_a_visitor_with_its_answer_stops_instead_of_filling_the_budget():
     assert result["beurten"] == 1, "the visitor said DONE, so the widget may not be asked again"
     assert client.widget_calls == 1
     assert result["bereikt"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_visitor_offered_a_person_twice_gives_up():
+    """The baseline of 2026-09-18 ran every conversation to the turn budget: a
+    visitor told to stop only when answered never stops after a hand-off. Two
+    appointment offers end the conversation, like a person who clicks the button."""
+    client = _Client(
+        ["nog een keer", "en nu?", "toch nog", '{"reached": false, "handed_off": true, "turns_wasted": 2, "why": "x"}'],
+        escalation=True,
+    )
+
+    result = await sim._one_conversation(
+        client, "tok", {"cid": "c1", "eerste": "Factuur dubbel geïncasseerd", "doel": "geld terug"}, 4
+    )
+
+    assert client.widget_calls == 2
+    assert result["beurten"] == 2
 
 
 @pytest.mark.asyncio
