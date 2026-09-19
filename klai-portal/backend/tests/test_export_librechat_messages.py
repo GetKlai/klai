@@ -14,7 +14,7 @@ _BASE = ["--database", "sample-chat", "--until", "2026-09-01T00:00:00+00:00"]
 
 def _msg(mid: str, hour: int, **extra: Any) -> dict[str, Any]:
     doc: dict[str, Any] = {key: None for key in export.PROJECTION if key != "_id"}
-    doc.update(messageId=mid, isCreatedByUser=True, createdAt=datetime(2026, 8, 1, hour, tzinfo=UTC))
+    doc.update(messageId=mid, isCreatedByUser=True, createdAt=datetime(2026, 8, 1, hour))
     return doc | extra
 
 

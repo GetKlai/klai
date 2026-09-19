@@ -47,8 +47,8 @@ to a question about us" is one, and refusing there is correct and deliberate —
 other, and refusing there is a category error. Today both produce the same
 output.
 
-Measured over seven days on the Voys widget: **73 of 540 turns (13.5%) ended on
-that refusal**, and in all 73 the retriever returned exactly three candidates
+Measured over seven days on one customer widget: **13.5% of turns ended on
+that refusal**, and in every one of them the retriever returned exactly three candidates
 and the selector rejected all of them. Retrieval never comes back empty; it
 comes back with three things that do not answer the question. So the refusal
 population is not "the knowledge base is missing content" — it is a mix of
