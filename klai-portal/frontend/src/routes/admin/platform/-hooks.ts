@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/lib/auth'
 import { apiFetch } from '@/lib/apiFetch'
 import type {
+  PlatformObservabilitySignal,
   PlatformStats,
   PlatformUser,
   PlatformOrg,
@@ -722,5 +723,16 @@ export function usePlatformDeprovisionTenant() {
       void qc.invalidateQueries({ queryKey: ['platform-orgs'] })
       void qc.invalidateQueries({ queryKey: ['platform-stats'] })
     },
+  })
+}
+
+// The list changes only with a deploy, so there is no reason to refetch it.
+export function usePlatformObservabilitySignals() {
+  const auth = useAuth()
+  return useQuery({
+    queryKey: ['platform-observability-signals'],
+    queryFn: async () => apiFetch<PlatformObservabilitySignal[]>('/api/admin/platform/signals'),
+    staleTime: Infinity,
+    enabled: auth.isAuthenticated,
   })
 }

@@ -21,6 +21,7 @@ import {
   usePlatformBots,
   usePlatformChatErrors,
   usePlatformKnowledgeBases,
+  usePlatformObservabilitySignals,
   usePlatformEditMessage,
   usePlatformMarkMessageThreadRead,
   usePlatformMessageThread,
@@ -261,6 +262,62 @@ export function StatusTab() {
           </a>
         </div>
       </div>
+
+      <ObservabilitySignalsSection />
+    </div>
+  )
+}
+
+// What is recorded and why, never what the records contain. The "read
+// automatically" column is the point: a signal nothing consumes on its own is
+// only useful to someone who knows it exists, and this page is how they find out.
+function ObservabilitySignalsSection() {
+  const signals = usePlatformObservabilitySignals()
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white px-5 py-5">
+      <p className="text-[0.9375rem] font-display text-gray-900">{m.platform_signals_title()}</p>
+      <p className="mt-0.5 mb-4 text-sm text-gray-600">{m.platform_signals_description()}</p>
+      {signals.isLoading ? (
+        <ListLoadingState label={m.platform_checking()} className="py-2" />
+      ) : !signals.data?.length ? (
+        <ListEmptyState title={m.platform_signals_empty()} />
+      ) : (
+        <DataTable>
+          <DataTableHeader>
+            <DataTableRow>
+              <DataTableHead>{m.platform_signals_col_name()}</DataTableHead>
+              <DataTableHead>{m.platform_signals_col_purpose()}</DataTableHead>
+              <DataTableHead>{m.platform_signals_col_read()}</DataTableHead>
+              <DataTableHead>{m.platform_signals_col_automatic()}</DataTableHead>
+            </DataTableRow>
+          </DataTableHeader>
+          <DataTableBody>
+            {signals.data.map((signal) => (
+              <DataTableRow key={signal.name}>
+                <DataTableCell>
+                  <p className="font-mono text-sm text-gray-900">{signal.name}</p>
+                  <p className="text-xs text-gray-600">{signal.service}</p>
+                </DataTableCell>
+                <DataTableCell>
+                  <p className="text-sm text-gray-700">{signal.purpose}</p>
+                  <p className="mt-1 text-xs text-gray-600">{signal.source}</p>
+                </DataTableCell>
+                <DataTableCell>
+                  <code className="text-xs text-gray-700 break-all">{signal.how_to_read}</code>
+                </DataTableCell>
+                <DataTableCell>
+                  {signal.read_automatically ? (
+                    <Badge variant="success">{m.platform_signals_automatic_yes()}</Badge>
+                  ) : (
+                    <Badge variant="secondary">{m.platform_signals_automatic_no()}</Badge>
+                  )}
+                </DataTableCell>
+              </DataTableRow>
+            ))}
+          </DataTableBody>
+        </DataTable>
+      )}
     </div>
   )
 }

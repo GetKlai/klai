@@ -2007,7 +2007,13 @@ async def _judge_composed_answer(
     checks_started = time.perf_counter()
     judgement, grounding = await asyncio.gather(
         judge_answer(messages=messages, draft=safe_text, articles=articles, settings=settings),
-        check_grounding(question=_visitor_question(messages), draft=safe_text, articles=articles, settings=settings),
+        check_grounding(
+            question=_visitor_question(messages),
+            draft=safe_text,
+            articles=articles,
+            settings=settings,
+            org_id=org_id,
+        ),
     )
     checks_ms = _elapsed_ms(checks_started)
     if judgement is not None and grounding is not None:
