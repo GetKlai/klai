@@ -21,9 +21,17 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Everything gh can publish text with: PRs, issues, comments, releases, and the
-# raw API (where a body travels as -f body=… or --input).
-PUBLISHING = re.compile(r"\bgh\s+(pr|issue|release|api|gist)\b")
+# Only the verbs that publish text. Reading (`gh pr view`, `gh issue list`) must
+# stay possible even when the command line itself names a customer, e.g. in a
+# grep for the very data being cleaned up; the first version blocked that.
+PUBLISHING = re.compile(
+    r"\bgh\s+(?:"
+    r"(?:pr|issue)\s+(?:create|edit|comment|review|close|reopen)"
+    r"|release\s+(?:create|edit)"
+    r"|gist\s+(?:create|edit)"
+    r"|api\b(?=[^|;&]*(?:\s-[fF]\s|\s--field|\s--raw-field|\s--input|\s-X\s*(?:POST|PATCH|PUT)|\s--method\s*(?:POST|PATCH|PUT)))"
+    r")"
+)
 FILE_FLAGS = {"--body-file", "-F", "--input", "--notes-file"}
 
 
@@ -43,9 +51,13 @@ def _attached_files(command: str) -> list[str]:
 def main() -> int:
     payload = json.load(sys.stdin)
     command = payload.get("tool_input", {}).get("command", "")
-    if not PUBLISHING.search(command):
+    match = PUBLISHING.search(command)
+    if not match:
         return 0
-    text = command
+    # From the publishing command on: an inline body or heredoc always follows
+    # it, and a body written earlier arrives through the file flags below. What
+    # comes before (a grep while cleaning up) is not sent.
+    text = command[match.start():]
     for path in _attached_files(command):
         text += "\n\n" + Path(path).read_text(encoding="utf-8", errors="replace")
     root = os.environ.get("CLAUDE_PROJECT_DIR", ".")
