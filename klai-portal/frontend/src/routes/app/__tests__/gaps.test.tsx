@@ -152,6 +152,24 @@ describe('GapsPage source column', () => {
     await screen.findByText('Andere vraag')
     expect(screen.getAllByText(/^(automatisch|automatic)$/i).length).toBeGreaterThan(0)
   })
+
+  it('shows every support source vendor behind a grouped need', async () => {
+    mockGaps([
+      gapItem({
+        source: 'support',
+        gap_type: 'content',
+        diagnosis: 'missing',
+        support_case_ids: [7, 8],
+        support_sources: ['audio', 'hubspot'],
+      }),
+    ])
+
+    render(<Wrapper><GapsPage /></Wrapper>)
+
+    await waitForRow()
+    expect(screen.getByText(/gespreksopname|call recording/i)).toBeTruthy()
+    expect(screen.getByText('HubSpot')).toBeTruthy()
+  })
 })
 
 describe('GapsPage language filter', () => {

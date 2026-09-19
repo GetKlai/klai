@@ -37,8 +37,8 @@ class TestClassifyGapTaxonomy:
         assert call_kwargs.kwargs["json"]["text"] == "How do I pay?"
 
     @pytest.mark.asyncio
-    async def test_classify_returns_empty_on_error(self):
-        """On HTTP error, returns empty list (best-effort)."""
+    async def test_classify_returns_none_on_error(self):
+        """An HTTP error stays distinct from a successful empty classification."""
         from app.services.knowledge_ingest_client import classify_gap_taxonomy
 
         mock_client = AsyncMock()
@@ -49,11 +49,11 @@ class TestClassifyGapTaxonomy:
         with patch("app.services.knowledge_ingest_client.httpx.AsyncClient", return_value=mock_client):
             result = await classify_gap_taxonomy("org1", "kb1", "test query")
 
-        assert result == []
+        assert result is None
 
     @pytest.mark.asyncio
-    async def test_classify_returns_empty_on_timeout(self):
-        """On timeout, returns empty list."""
+    async def test_classify_returns_none_on_timeout(self):
+        """A timeout stays distinct from a successful empty classification."""
         from app.services.knowledge_ingest_client import classify_gap_taxonomy
 
         mock_client = AsyncMock()
@@ -64,7 +64,7 @@ class TestClassifyGapTaxonomy:
         with patch("app.services.knowledge_ingest_client.httpx.AsyncClient", return_value=mock_client):
             result = await classify_gap_taxonomy("org1", "kb1", "test query")
 
-        assert result == []
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_classify_uses_correct_headers(self):

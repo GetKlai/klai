@@ -14,8 +14,11 @@ Coverage:
 from __future__ import annotations
 
 import os
+from datetime import date
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -23,6 +26,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 _TASK_NAME = "knowledge_ingest.eval.ragas_runner.evaluate_retrieval_quality_nightly"
+_GAP_TASK_NAME = "knowledge_ingest.eval.ragas_runner.evaluate_ingest_gap_canary_nightly"
 
 
 def _make_app():
@@ -90,6 +94,11 @@ def test_register_eval_tasks_registers_periodic_schedule():
     assert "rag-eval-knowledge_org" in suite_ids, (
         f"expected periodic registration for 'rag-eval-knowledge_org', got {suite_ids}"
     )
+    assert "ingest-gap-canary" in suite_ids
+    gap_entry = next(
+        entry for entry in periodic_entries if entry.periodic_id == "ingest-gap-canary"
+    )
+    assert "30 2" in str(gap_entry.cron)
 
     # All periodic entries must run at 02:00 UTC (cron "0 2 * * *").
     for entry in periodic_entries:
@@ -98,6 +107,28 @@ def test_register_eval_tasks_registers_periodic_schedule():
             assert "0 2" in cron_str, (
                 f"expected '0 2 ...' cron for {entry.periodic_id}, got {cron_str!r}"
             )
+
+
+def test_ingest_gap_task_has_waiting_and_running_locks() -> None:
+    from procrastinate.jobs import Job
+
+    from knowledge_ingest.eval.ragas_runner import register_eval_tasks
+
+    app, _connector = _make_app()
+    register_eval_tasks(app)
+
+    tasks = [
+        app.tasks[_GAP_TASK_NAME],
+        app.tasks["knowledge_ingest.eval.ragas_runner.evaluate_ingest_gap_canary_periodic"],
+    ]
+    assert all(task.queue == "rag-eval" for task in tasks)
+    assert all(task.queueing_lock == "ingest-gap-canary" for task in tasks)
+    assert all(task.lock == "ingest-gap-canary" for task in tasks)
+    for task in tasks:
+        job = Job(
+            queue=task.queue, task_name=task.name, lock=task.lock, queueing_lock=task.queueing_lock
+        )
+        assert task.get_retry_exception(TimeoutError(), job) is None
 
 
 # ---------------------------------------------------------------------------
@@ -391,3 +422,181 @@ async def test_expected_chunks_canary_fails_when_missing():
         user_zitadel_id=None,
         kb_slugs=["support", "sip"],
     )
+
+
+class _PortalResponse:
+    def __init__(self, status_code: int, body: dict | list):
+        self.status_code = status_code
+        self._body = body
+        self.request = httpx.Request("GET", "http://portal.test")
+
+    def json(self):
+        return self._body
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise httpx.HTTPStatusError(
+                f"status {self.status_code}",
+                request=self.request,
+                response=httpx.Response(self.status_code),
+            )
+
+
+class _PortalClient:
+    def __init__(self, reports: dict[str, dict | int]):
+        self.reports = reports
+        self.posts: list[str] = []
+        self.budgets: list[float] = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+    async def get(self, _url: str, **_kwargs):
+        return _PortalResponse(
+            200,
+            [
+                {"org_id": "org-a", "kb_slug": "support"},
+                {"org_id": "org-b", "kb_slug": "support"},
+            ],
+        )
+
+    async def post(self, url: str, **kwargs):
+        org_id = "org-a" if "/org-a/" in url else "org-b"
+        self.posts.append(org_id)
+        self.budgets.append(kwargs["json"]["budget_seconds"])
+        result = self.reports[org_id]
+        if isinstance(result, int):
+            return _PortalResponse(result, {"detail": "must not persist"})
+        return _PortalResponse(200, result)
+
+
+class _QdrantClient:
+    async def scroll(self, *, scroll_filter, **_kwargs):
+        org_id = next(
+            condition.match.value for condition in scroll_filter.must if condition.key == "org_id"
+        )
+        suffix = org_id[-1]
+        return (
+            [
+                SimpleNamespace(
+                    id=f"chunk-{suffix}",
+                    payload={
+                        "artifact_id": f"artifact-{suffix}",
+                        "text": f"private source text {suffix}",
+                        "questions": [f"private question {suffix}", "second private question"],
+                    },
+                )
+            ],
+            None,
+        )
+
+
+def _assessment(status: str) -> dict:
+    result = {
+        "question_id": f"question-{status}",
+        "source_chunk_id": f"chunk-{status}",
+        "source_artifact_id": f"artifact-{status}",
+        "source_content_hash": f"content-{status}",
+        "present_diagnosis": "covered" if status == "detected_missing" else "incomplete",
+        "status": status,
+    }
+    if status == "detected_missing":
+        result["withheld_diagnosis"] = "missing"
+    return {
+        "snapshot_hash": f"snapshot-{status}",
+        "scope_hash": f"scope-{status}",
+        "analyzer_version": "support-case-analysis-v10",
+        "judge_model": "judge",
+        "quality_status": "passed" if status == "detected_missing" else "inconclusive",
+        "counts": {status: 1},
+        "results": [result],
+    }
+
+
+@pytest.mark.asyncio
+async def test_ingest_gap_canary_rotates_and_stores_every_outcome_without_raw_text() -> None:
+    from knowledge_ingest.eval import ragas_runner
+
+    rows: list[dict] = []
+
+    async def capture(**kwargs):
+        rows.append(kwargs)
+        return len(rows)
+
+    first_portal = _PortalClient(
+        {"org-a": _assessment("detected_missing"), "org-b": _assessment("unscorable")}
+    )
+    with (
+        patch.object(ragas_runner.httpx, "AsyncClient", return_value=first_portal),
+        patch("knowledge_ingest.qdrant_store.get_client", return_value=_QdrantClient()),
+        patch("knowledge_ingest.eval.store.insert_eval_row", AsyncMock(side_effect=capture)),
+    ):
+        report = await ragas_runner.run_ingest_gap_canary(run_day=date(2026, 9, 19), limit=2)
+
+    assert report["attempted"] == 2
+    assert report["scored"] == 1
+    assert report["unscorable"] == 1
+    assert report["quality_status"] == "inconclusive"
+    assert all(0 < budget <= 240 for budget in first_portal.budgets)
+    assert len(rows) == 3  # two outcomes plus one run summary
+    assert all(row["suite"] == "ingest_gap_canary" for row in rows)
+    assert all(
+        row[metric] is None
+        for row in rows
+        for metric in ("context_precision", "context_recall", "faithfulness", "answer_relevance")
+    )
+    stored = str([row["meta"] for row in rows])
+    assert "private source text" not in stored
+    assert "private question" not in stored
+
+    second_portal = _PortalClient(
+        {"org-a": _assessment("detected_missing"), "org-b": _assessment("unscorable")}
+    )
+    with (
+        patch.object(ragas_runner.httpx, "AsyncClient", return_value=second_portal),
+        patch("knowledge_ingest.qdrant_store.get_client", return_value=_QdrantClient()),
+        patch("knowledge_ingest.eval.store.insert_eval_row", AsyncMock()),
+    ):
+        await ragas_runner.run_ingest_gap_canary(run_day=date(2026, 9, 20), limit=1)
+    assert first_portal.posts[0] != second_portal.posts[0]
+
+
+@pytest.mark.asyncio
+async def test_ingest_gap_canary_persists_partial_rows_before_http_failure() -> None:
+    from knowledge_ingest.eval import ragas_runner
+
+    rows: list[dict] = []
+
+    async def capture(**kwargs):
+        rows.append(kwargs)
+        return len(rows)
+
+    partial = _assessment("detected_missing")
+    partial["results"].append(
+        {
+            "question_id": "question-timeout",
+            "source_chunk_id": "chunk-timeout",
+            "source_artifact_id": "artifact-timeout",
+            "source_content_hash": "content-timeout",
+            "status": "failed",
+            "error_type": "TimeoutError",
+        }
+    )
+    portal = _PortalClient({"org-a": partial, "org-b": 429})
+    with (
+        patch.object(ragas_runner.httpx, "AsyncClient", return_value=portal),
+        patch("knowledge_ingest.qdrant_store.get_client", return_value=_QdrantClient()),
+        patch("knowledge_ingest.eval.store.insert_eval_row", AsyncMock(side_effect=capture)),
+        pytest.raises(RuntimeError, match="ingest_gap_canary_failed"),
+    ):
+        await ragas_runner.run_ingest_gap_canary(run_day=date(2026, 9, 19), limit=4)
+
+    statuses = [row["meta"].get("status") for row in rows]
+    assert "detected_missing" in statuses
+    assert "failed" in statuses
+    assert any(row["meta"].get("error_type") == "TimeoutError" for row in rows)
+    assert any(row["meta"].get("http_status") == 429 for row in rows)
+    assert "must not persist" not in str([row["meta"] for row in rows])

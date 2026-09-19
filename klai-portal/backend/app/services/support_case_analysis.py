@@ -36,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 
 import httpx
@@ -851,7 +852,13 @@ def _chunks_by_id(chunks: list[dict]) -> dict[str, dict]:
 
 
 async def _analyze_question(
-    question: _Question, messages_by_id: dict[str, dict], *, kb_slug: str, zitadel_org_id: str, user_id: str | None
+    question: _Question,
+    messages_by_id: dict[str, dict],
+    *,
+    kb_slug: str,
+    zitadel_org_id: str,
+    user_id: str | None,
+    retriever: Callable[..., Awaitable[list[dict]]] | None = None,
 ) -> dict:
     """Retrieve for one question and judge its answerability into a finding.
 
@@ -868,8 +875,9 @@ async def _analyze_question(
     # message_ids were validated against the case in _parse_questions, so every
     # id resolves here; this is the human-added evidence, not invented content.
     case_messages = [messages_by_id[mid] for mid in question.message_ids]
+    retrieve = retriever or _retrieve
     chunks = await asyncio.wait_for(
-        _retrieve(question.question, kb_slug=kb_slug, zitadel_org_id=zitadel_org_id, user_id=user_id),
+        retrieve(question.question, kb_slug=kb_slug, zitadel_org_id=zitadel_org_id, user_id=user_id),
         timeout=_RETRIEVAL_TIMEOUT_S,
     )
     raw = await asyncio.wait_for(
@@ -887,7 +895,7 @@ async def _analyze_question(
         if alternate:
             search_queries.append(alternate)
             alt_chunks = await asyncio.wait_for(
-                _retrieve(
+                retrieve(
                     alternate,
                     kb_slug=kb_slug,
                     zitadel_org_id=zitadel_org_id,

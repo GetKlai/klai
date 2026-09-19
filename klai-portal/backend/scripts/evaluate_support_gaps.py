@@ -16,6 +16,8 @@ No raw question or customer text is emitted, only ids, hashes, counts and ratios
 Usage:
 
     python scripts/evaluate_support_gaps.py --input cases.json [--alignment matches.json]
+    python scripts/evaluate_support_gaps.py --input first.json --repeat-input second.json \
+        --kb-snapshot snapshot-1 --repeat-kb-snapshot snapshot-1
 
 ``--input`` is a JSON array of case records; ``--alignment`` is an optional JSON
 array of per-case human matchings. Malformed input exits non-zero with a clear
@@ -110,6 +112,104 @@ def _new_channel_bucket() -> dict:
         "tp": 0,
         "fp": 0,
         "fn": 0,
+    }
+
+
+def _new_repeatability_bucket() -> dict:
+    return {
+        "first_findings": 0,
+        "repeat_findings": 0,
+        "stable": 0,
+        "changed": 0,
+        "diagnosis_changed": 0,
+        "evidence_changed": 0,
+        "missing_from_repeat": 0,
+        "new_in_repeat": 0,
+    }
+
+
+def _repeatability_result(bucket: dict) -> dict:
+    compared = bucket["stable"] + bucket["changed"] + bucket["missing_from_repeat"] + bucket["new_in_repeat"]
+    return {**bucket, "exact_repeatability": _ratio(bucket["stable"], compared)}
+
+
+def _finding_identity(finding: dict, *, case_id: object) -> str:
+    question = finding.get("question")
+    if not isinstance(question, str) or not question.strip():
+        raise EvaluationError(f"case {case_id!r}: finding has no question identity")
+    return " ".join(question.split()).casefold()
+
+
+def _index_findings(case: dict) -> dict[str, dict]:
+    findings = case.get("analysis")
+    if case.get("status") in {"failed", "pending"} or not isinstance(findings, list):
+        raise EvaluationError(f"case {case['id']!r}: analysis unavailable for repeatability")
+    indexed: dict[str, dict] = {}
+    for finding in findings:
+        identity = _finding_identity(finding, case_id=case["id"])
+        if identity in indexed:
+            raise EvaluationError(f"case {case['id']!r}: duplicate normalized question identity")
+        indexed[identity] = finding
+    return indexed
+
+
+def _evidence_signature(finding: dict) -> str:
+    evidence = {key: value for key, value in finding.items() if key not in {"question", "diagnosis", "review"}}
+    return json.dumps(evidence, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def _compare_case(first: dict, repeat: dict) -> dict:
+    first_findings = _index_findings(first)
+    repeat_findings = _index_findings(repeat)
+    bucket = _new_repeatability_bucket()
+    bucket["first_findings"] = len(first_findings)
+    bucket["repeat_findings"] = len(repeat_findings)
+    for identity in first_findings.keys() & repeat_findings.keys():
+        before, after = first_findings[identity], repeat_findings[identity]
+        diagnosis_changed = before.get("diagnosis") != after.get("diagnosis")
+        evidence_changed = _evidence_signature(before) != _evidence_signature(after)
+        if diagnosis_changed or evidence_changed:
+            bucket["changed"] += 1
+            bucket["diagnosis_changed"] += diagnosis_changed
+            bucket["evidence_changed"] += evidence_changed
+        else:
+            bucket["stable"] += 1
+    bucket["missing_from_repeat"] = len(first_findings.keys() - repeat_findings.keys())
+    bucket["new_in_repeat"] = len(repeat_findings.keys() - first_findings.keys())
+    return bucket
+
+
+def evaluate_repeatability(first: list, repeat: list, first_kb_snapshot: str, repeat_kb_snapshot: str) -> dict:
+    if not first_kb_snapshot.strip() or first_kb_snapshot != repeat_kb_snapshot:
+        raise EvaluationError("repeatability requires the same non-blank KB snapshot identity")
+    first_by_id = {case["id"]: case for case in first}
+    repeat_by_id = {case["id"]: case for case in repeat}
+    if len(first_by_id) != len(first) or len(repeat_by_id) != len(repeat):
+        raise EvaluationError("repeatability inputs contain duplicate case ids")
+    if first_by_id.keys() != repeat_by_id.keys():
+        raise EvaluationError("repeatability inputs contain different case ids")
+
+    aggregate = _new_repeatability_bucket()
+    channels: dict[str, dict] = {}
+    for case_id, before in first_by_id.items():
+        after = repeat_by_id[case_id]
+        if not before.get("content_hash") or before.get("content_hash") != after.get("content_hash"):
+            raise EvaluationError(f"case {case_id!r}: content_hash mismatch")
+        channel = _resolve_channel(before)
+        if channel != _resolve_channel(after):
+            raise EvaluationError(f"case {case_id!r}: channel mismatch")
+        comparison = _compare_case(before, after)
+        channel_bucket = channels.setdefault(channel, _new_repeatability_bucket())
+        for key, value in comparison.items():
+            aggregate[key] += value
+            channel_bucket[key] += value
+    return {
+        "measurement": "model_output_repeatability_not_accuracy",
+        "kb_snapshot": first_kb_snapshot,
+        "matching": "casefolded, whitespace-collapsed question; wording changes count as missing and new",
+        "total_cases": len(first),
+        "aggregate": _repeatability_result(aggregate),
+        "by_channel": {channel: _repeatability_result(bucket) for channel, bucket in channels.items()},
     }
 
 
@@ -235,15 +335,30 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Offline precision/recall for support-gap analysis.")
     parser.add_argument("--input", required=True, help="JSON array of case-detail records")
     parser.add_argument("--alignment", help="optional JSON array of human finding/reference matchings")
+    parser.add_argument("--repeat-input", help="second case-detail export for repeatability measurement")
+    parser.add_argument("--kb-snapshot", help="explicit KB snapshot identity for --input")
+    parser.add_argument("--repeat-kb-snapshot", help="explicit KB snapshot identity for --repeat-input")
     args = parser.parse_args(argv)
     try:
         cases = _load_json(args.input)
         if not isinstance(cases, list):
             raise EvaluationError("input must be a JSON array of case records")
-        alignments = _load_json(args.alignment) if args.alignment else None
-        if alignments is not None and not isinstance(alignments, list):
-            raise EvaluationError("alignment must be a JSON array of match records")
-        report = evaluate(cases, alignments)
+        if args.repeat_input:
+            if args.alignment:
+                raise EvaluationError("alignment is only valid for precision/recall evaluation")
+            if args.kb_snapshot is None or args.repeat_kb_snapshot is None:
+                raise EvaluationError("repeatability requires a KB snapshot identity for each input")
+            repeat = _load_json(args.repeat_input)
+            if not isinstance(repeat, list):
+                raise EvaluationError("repeat input must be a JSON array of case records")
+            report = evaluate_repeatability(cases, repeat, args.kb_snapshot, args.repeat_kb_snapshot)
+        else:
+            if args.kb_snapshot is not None or args.repeat_kb_snapshot is not None:
+                raise EvaluationError("KB snapshot arguments require --repeat-input")
+            alignments = _load_json(args.alignment) if args.alignment else None
+            if alignments is not None and not isinstance(alignments, list):
+                raise EvaluationError("alignment must be a JSON array of match records")
+            report = evaluate(cases, alignments)
     except EvaluationError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
