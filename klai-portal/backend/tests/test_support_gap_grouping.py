@@ -133,6 +133,39 @@ async def test_same_need_in_one_case_shares_one_group_and_keeps_evidence(monkeyp
     assert [row.evidence["message_ids"] for row in rows] == [["source-0"], ["source-1"], ["source-2"]]
 
 
+async def test_same_batch_self_match_keeps_other_merges(monkeypatch):
+    key = "local-port"
+    _patch_llm(
+        monkeypatch,
+        {
+            "assignments": [
+                {"index": 0, "group_question_key": key},
+                {"index": 1, "group_question_key": key},
+            ]
+        },
+    )
+    findings = [_finding("How do I port my number?"), _finding("Can I move my number over?")]
+    candidate = _candidate(key, "How do I port my number?")
+    candidate["finding_index"] = 0
+
+    result = await grp.group_findings(findings, [candidate])
+
+    assert "group_question_key" not in result[0]
+    assert result[1]["group_question_key"] == key
+
+
+@pytest.mark.parametrize("source_index", [1, False, -1])
+async def test_same_batch_match_rejects_future_boolean_and_unknown_indexes(monkeypatch, source_index):
+    _patch_llm(
+        monkeypatch,
+        {"assignments": [{"index": 0, "group_question_key": "other"}, {"index": 1, "group_question_key": None}]},
+    )
+    candidate = {**_candidate("other", "Other request"), "finding_index": source_index}
+
+    with pytest.raises(SupportCaseAnalysisError, match="same-batch"):
+        await grp.group_findings([_finding("First request"), _finding("Other request")], [candidate])
+
+
 async def test_different_device_stays_separate(monkeypatch):
     rec = _patch_llm(monkeypatch, {"assignments": [{"index": 0, "group_question_key": None}]})
     findings = [_finding("How do I set up voicemail on my desk phone?")]
