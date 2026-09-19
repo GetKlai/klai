@@ -13,10 +13,11 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import date, datetime
+from datetime import datetime
 
 import pymongo
 
+from app.services.librechat_chat_context import _iso
 from app.services.librechat_quality_judge import _message_text, _mongo_client
 
 _FIELDS = "messageId conversationId parentMessageId isCreatedByUser text content createdAt unfinished error feedback"
@@ -40,7 +41,7 @@ def _parse_window(since_raw: str, until_raw: str) -> tuple[datetime, datetime]:
 
 
 def _json_default(value: object) -> str:
-    return value.isoformat() if isinstance(value, date) else str(value)
+    return _iso(value) or str(value)
 
 
 def main(argv: list[str] | None = None) -> int:
