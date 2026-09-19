@@ -19,7 +19,7 @@ Een beurt van een bezoeker loopt door deze schakels. Per schakel: wat het doet, 
 | 5 | Antwoord schrijven | `partner_chat.py` + profiel in `klai-libs/chat-prompts` | ongewijzigd; promptvarianten gemeten en afgevallen. Valt de vraag binnen de onderwerpen die de widget niet behandelt, dan wordt deze schakel overgeslagen (v0.9.0) |
 | 6 | Koppelen aan bronnen | `klai-libs/citations` | ongewijzigd, dit is de ondergrens |
 | 7 | Controle achteraf op het antwoord | `services/answer_judge.py` + `services/answer_grounding.py`; intern `deploy/litellm/klai_answer_grounding.py` | licht oordeel plus controle per zin met reparatie, live 18 sep; dezelfde reparatie op het interne pad sinds #1526 en #1530, platform-breed (2.22, 2.23) |
-| 8 | Kennisbank | Voys-artikelen | ontbreekt bij één op de negen kennisvragen (6 van 54, met de zes onderwerpen erbij in 2.31); bij nog eens één op de acht staat het er maar is de eerste vraag te mager om het te bereiken. Niet aangepakt. De widget zoekt in één van de negen kennisbanken van Voys (`support`, 8947 chunks); prijzen, Ascend en de nerds-wiki staan buiten bereik |
+| 8 | Kennisbank | Voys-artikelen | ontbreekt bij één op de negen kennisvragen (6 van 54, met de zes onderwerpen erbij in 2.31); bij nog eens één op de acht staat het er maar is de eerste vraag te mager om het te bereiken. Niet aangepakt. De widget zoekt in één van de negen kennisbanken van Voys (`support`); prijzen, Ascend en de nerds-wiki staan buiten bereik |
 | — | Meten van de keten | `scripts/simulate_conversations.py` | hele gesprekken sinds 18 sep; ijking eerlijk gerekend 75% tegen 81% van de herspeling (2.19, gecorrigeerd in 2.24); bezoeker en scoorder sinds 2.24 op een ander model dan de controle die ze meten; nulmeting daarmee 33% doel bereikt, 8 van 12 doorverwezen (2.30); sinds 2.35 geeft de bezoeker na twee doorverwijzingen op en is de nulmeting 2 van 12 bereikt, 11 van 12 doorverwezen. Voor één schakel: de widgetroute in-process herspelen met de echte controles (2.32, 2.33, 2.37) |
 
 ---
@@ -29,7 +29,7 @@ Een beurt van een bezoeker loopt door deze schakels. Per schakel: wat het doet, 
 Alle metingen op echte Voys-gesprekken, als proefgesprek gedraaid, zonder iets op te slaan bij de klant.
 
 ### 2.1 Nulmeting oude systeem (14 dagen vóór de controles)
-98 antwoorden: 85 met bron, 4 zonder bron, 9 weigeringen. 38 keer een zwak zoekresultaat, waarvan er 32 tóch een antwoord met bron opleverden. Doorlooptijd over 275 antwoorden: mediaan 1,75 s, 90% binnen 3,76 s.
+87% van de antwoorden met bron, 4% zonder bron, 9% weigeringen. Bij 39% een zwak zoekresultaat, en daarvan leverde 84% tóch een antwoord met bron op. Doorlooptijd: mediaan 1,75 s, 90% binnen 3,76 s.
 
 ### 2.2 Vorm van het antwoordformaat (17 sep, productiemodel)
 Een ja/nee-veld "bevat dit beweringen die niet in de artikelen staan" kwam 18 van de 18 keer terug als "nee", ook bij een verzonnen telefoonnummer en een verzonnen prijs. Een keuzelijst met drie opties (`no_company_statements` / `all_in_articles` / `some_not_in_articles`) was 17 van de 18 keer goed. Een ja/nee-veld voor "is dit een wedervraag" was 0 van de 3 keer goed; dat wordt nu bepaald op het vraagteken.
@@ -242,8 +242,8 @@ kopieerbare zinnen — en is niet apart gemeten. Het is een beredeneerde aanpass
 bewezen winst. De oude configuratie staat als back-up buiten de repo.
 
 ### 2.14 Dezelfde controle op echte interne gesprekken van Voys (18 sep)
-Uit de LibreChat-tenant van Voys: 1097 vragen van 20 gebruikers over vijf maanden, waarvan
-751 antwoorden een bronverwijzing dragen. De 50 meest recente daarvan (9 tot en met 18 sep)
+Uit de LibreChat-tenant van Voys: ruim twee derde van de antwoorden over vijf maanden draagt een
+bronverwijzing. De 50 meest recente daarvan (9 tot en met 18 sep)
 door exact dezelfde controle als de widget, met de artikelen die het zoeken nu oplevert.
 
 | | Widget (2.8) | Interne chat |
@@ -657,9 +657,9 @@ factor 1,08 na het herrangschikken (`page_context.py::_apply_page_context_boost`
 stond nergens of dat helpt. De pagina van echte bezoekers wordt niet opgeslagen (niet in
 `widget_messages`, niet in `answer_signals`), dus gemeten met drie kunstmatige pagina's per vraag.
 
-Hoe vaak het speelt, uit de zoeklogs (`retrieval_decision_record`, 10 t/m 17 sep, Voys): 7 tot 14
-zoekopdrachten per dag hadden een pagina die met een kandidaat overlapte, tegen 24 tot 48 echte
-beurten per dag. Ruwweg een kwart tot een derde van de beurten komt dus van een artikelpagina.
+Hoe vaak het speelt, uit de zoeklogs (`retrieval_decision_record`, 10 t/m 17 sep): ruwweg een kwart
+tot een derde van de beurten had een pagina die met een kandidaat overlapte, en komt dus van een
+artikelpagina.
 
 Gemeten op de 22 kennisvragen uit 2.27 waarvoor een antwoordende passage in de top-50 zat:
 
