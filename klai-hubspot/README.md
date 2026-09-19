@@ -8,8 +8,7 @@ This directory contains HubSpot-specific extension projects. Keep these projects
 
 ## Accounts
 
-- Sandbox: `Sandbox environment | Voys` — Hub ID `147785398`
-- Live: `Voys` — Hub ID `5604529`
+- A sandbox and a live HubSpot account; their Hub IDs are in the private klai-infra documentation.
 
 Do not upload or deploy this project without explicitly targeting the sandbox during POC work.
 

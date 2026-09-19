@@ -37,7 +37,7 @@ related:
 
 Vastgesteld met Mark op 2026-09-17, na de achteruitgang van v0.2.0 en v0.3.0. Wijk hier niet van af zonder zijn akkoord; de secties daaronder zijn de geschiedenis die tot dit ontwerp leidde.
 
-**Uitgangspunt.** Het oorspronkelijke systeem is de ondergrens. Het toonde elk antwoord dat de citatiemotor aan een artikel kon koppelen, en controleerde alleen tekst zónder bron op beweringen. Dat werkte omdat bewijs besliste en geen mening: dezelfde vraag gaf dezelfde uitkomst. Voys, 14 dagen vóór de judges: 98 antwoorden, 85 met bron, 4 zonder bron, 9 weigeringen; 38 keer een zwak zoekresultaat, waarvan 32 toch een getoond antwoord met bron.
+**Uitgangspunt.** Het oorspronkelijke systeem is de ondergrens. Het toonde elk antwoord dat de citatiemotor aan een artikel kon koppelen, en controleerde alleen tekst zónder bron op beweringen. Dat werkte omdat bewijs besliste en geen mening: dezelfde vraag gaf dezelfde uitkomst. In de 14 dagen vóór de judges: 87% van de antwoorden met bron, 4% zonder bron, 9% weigeringen; bij 39% een zwak zoekresultaat, en daarvan 84% toch een getoond antwoord met bron.
 
 **Regels.**
 1. Een antwoord met bron wordt altijd getoond. Vindt de antwoord-judge dat het de vraag niet (volledig) beantwoordt, dan komt de afspraakknop eronder; zijn oordeel haalt nooit iets weg. Alleen de controle per zin mag tekst aanpassen: uitspraken die niet in de artikelen staan worden eruit gehaald (v0.7.0), en alleen als er niets bruikbaars overblijft wordt het de eerlijke weigering.

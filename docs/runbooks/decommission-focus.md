@@ -193,4 +193,4 @@ There is no rollback. The deletions are intentionally non-reversible:
   Step 4 ran but the rest didn't, the entry is still accurate
   documentation.
 
-If something feels wrong mid-runbook, STOP and ping `mark.vletter@voys.nl`.
+If something feels wrong mid-runbook, STOP and ping Mark.
