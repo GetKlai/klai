@@ -9,21 +9,40 @@ name: Guard per-customer data
 on:
   pull_request:
     branches: [main]
+    # "edited" because a body changed after opening is published too, and the
+    # 2026-09-18 leak lived on in the body's edit history.
+    types: [opened, edited, synchronize, reopened]
   # Also on a bare push: a branch without a pull request is public too, and
   # this is the only place that would notice.
   push:
     branches-ignore: [main]
+  issues:
+    types: [opened, edited]
+  issue_comment:
+    types: [created, edited]
 
 permissions:
   contents: read
 
+# The customer names for the name-next-to-a-number rule come from a secret, never
+# from this repository; the script prints a warning instead when it is absent
+# (pull requests from forks get no secrets).
+env:
+  KLAI_TENANT_NAMES: ${{ secrets.KLAI_TENANT_NAMES }}
+
 jobs:
   guard:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+
+      - name: Test the guard itself
+        # Its unit tests ran nowhere before; a regression would have turned the
+        # guard off without a sound.
+        run: pip install --quiet pytest && python3 -m pytest -q scripts/tests/test_audit_public_tenant_data.py
 
       - name: Scan the added lines against the default branch
         run: |
@@ -33,3 +52,30 @@ jobs:
           # header is invisible in a diff without them.
           git diff --no-color -U3 "$base...HEAD" \
             | python3 -B scripts/audit-public-tenant-data.py
+
+      - name: Scan the commit messages
+        run: |
+          set -euo pipefail
+          base="origin/${{ github.base_ref || github.event.repository.default_branch }}"
+          git log --format='%B' "$base..HEAD" \
+            | python3 -B scripts/audit-public-tenant-data.py --text commit-messages
+
+      - name: Scan the pull request title and body
+        if: github.event_name == 'pull_request'
+        env:
+          # Through env, never interpolated into the script: a body is user input.
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: printf '%s\n\n%s\n' "$PR_TITLE" "$PR_BODY" | python3 -B scripts/audit-public-tenant-data.py --text pull-request
+
+  issue-text:
+    if: github.event_name == 'issues' || github.event_name == 'issue_comment'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Scan the issue or comment text
+        env:
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: printf '%s\n\n%s\n\n%s\n' "$ISSUE_TITLE" "$ISSUE_BODY" "$COMMENT_BODY" | python3 -B scripts/audit-public-tenant-data.py --text issue

@@ -111,3 +111,62 @@ def test_this_guards_own_tests_are_exempt():
 
     assert audit.check(header + leak + "\n") == []
     assert audit.check("+++ b/scripts/tests/test_other.py\n@@ -1,0 +1,3 @@\n" + leak + "\n")
+
+
+# ---- A customer name next to a number, in prose (added 2026-09-19) ----
+#
+# The table rule alone let "Acme Telecom had 272 answers" through. The names come
+# from a private list at run time; a made-up one stands in for it here.
+
+_NAMES = ["Acme Telecom", "Privacy9"]
+
+
+def test_a_customer_count_in_a_sentence_is_blocked():
+    assert audit.check(_diff("+Acme Telecom had 272 answers in thirty days."), _NAMES)
+
+
+def test_a_sentence_wrapped_over_two_lines_is_still_one_sentence():
+    """Markdown in this repo wraps at about a hundred characters, so the name and
+    the number of the leaked sentence were on different lines."""
+    problems = audit.check(_diff("+Over thirty days Acme Telecom had", "+272 answers with a citation."), _NAMES)
+
+    assert problems == ["docs/x.md:1: a customer name next to a number"]
+
+
+def test_a_customer_row_is_caught_whatever_the_header_says():
+    """A table headed "| | Answers |" names no tenant, so the table rule missed it."""
+    assert audit.check(_diff("+| | Answers |", "+|---|---|", "+| Acme Telecom | 272 |"), _NAMES)
+
+
+def test_pr_numbers_dates_years_and_spec_ids_are_not_counts():
+    line = "+Acme Telecom widget fix (#1520) on 18 sep 2026, see SPEC-ACME-TELECOM-001 and v2."
+    assert audit.check(_diff(line), _NAMES) == []
+
+
+def test_a_digit_inside_the_name_is_not_a_count():
+    assert audit.check(_diff("+Privacy9 asked for an export."), _NAMES) == []
+
+
+def test_code_is_checked_in_its_comments_only():
+    """A fixture with an org slug and an id is not a leak; a comment reporting that
+    org's volume is."""
+    code = "klai-portal/backend/app/x.py"
+    assert audit.check(_diff('+ORG = ("Acme Telecom", 42)', path=code), _NAMES) == []
+    assert audit.check(_diff("+# Acme Telecom sends 40 tickets a day.", path=code), _NAMES)
+
+
+def test_without_a_name_list_only_the_shape_rules_run():
+    assert audit.check(_diff("+Acme Telecom had 272 answers."), []) == []
+
+
+def test_plain_text_is_checked_like_added_lines():
+    """Commit messages and pull-request bodies are not diffs."""
+    problems = audit.check(audit.as_diff("Title\n\nAcme Telecom had 272 answers.", "pull-request"), _NAMES)
+
+    assert problems == ["pull-request:3: a customer name next to a number"]
+
+
+def test_names_come_from_the_environment_before_the_file(monkeypatch):
+    monkeypatch.setenv("KLAI_TENANT_NAMES", "# comment\nAcme Telecom\n\n")
+
+    assert audit.load_names() == ["Acme Telecom"]
