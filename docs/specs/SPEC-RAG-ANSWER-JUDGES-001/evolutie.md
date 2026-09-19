@@ -1056,6 +1056,30 @@ vervolgbeurten van 2.32 (twee rondes, 70 beurten): het geval doet zich 1 en 2 ke
 beurten was het antwoord al de eerlijke "niet gevonden" mét bron. De regel zou dus hooguit twee van
 zeventig beurten raken en daar niets veranderen. Niet gebouwd.
 
+### 2.39 De afgekapte controle loopt door op de achtergrond en legt vast wat ze gevonden had (19 sep)
+Het besluit van 2.37 laat een open vraag: wat mist een bezoeker als de controle na 4 s wordt afgekapt?
+De herspeling zegt het voor 54 vragen, echt verkeer zegt het niet. Daarom wacht het antwoord nog steeds
+hooguit 4 s, maar de controle zelf wordt niet meer afgebroken. Ze loopt op de achtergrond af en logt
+haar oordeel als `answer_grounding_late`: aantal uitspraken, niet gedragen, tegengesproken, en of het
+de drempel voor een reparatie gehaald zou hebben. Wordt dat oordeel vaak "had gerepareerd moeten
+worden", dan is dat het bewijs om het budget naar 6 s te zetten; blijft het leeg, dan is 4 s
+bevestigd op echt verkeer.
+
+Drie grenzen, uit de review van #1554: een controle op de achtergrond krijgt hooguit 20 s in totaal,
+er lopen er hooguit 20 tegelijk (de rest wordt afgebroken en gelogd als
+`answer_grounding_late_skipped`, zodat een storing bij het model geen stapel taken oplevert), en een
+verzoek dat de bezoeker afbreekt, breekt ook zijn controle af.
+
+### 2.40 Acht meetpunten, geen enkele lezer: het overzicht onder Platform (19 sep)
+Bij het nalopen van deze keten bleek dat alles wat hierboven gemeten wordt in productie wel wordt
+vastgelegd, maar dat geen dashboard of alarm er één van leest. Wie niet weet dat
+`partner_chat_answer_judge` bestaat, vindt het niet. Platformbeheerders zien nu onder **Platform →
+Status → Meetpunten** alle elf meetpunten van deze keten: wat er wordt vastgelegd en waarom, waar je
+het leest, en of iets het automatisch leest. Het toont nooit de inhoud van de logs of records zelf.
+Alleen de bewaking op klantgegevens in de repository leest zichzelf; de andere tien zijn zichtbaar
+voor wie gaat kijken, en meer niet. De lijst staat in `app/services/observability_signals.py`; een
+nieuw meetpunt in deze keten hoort daar een regel bij te krijgen.
+
 ---
 
 ## 3. Wat er live ging, en waarom
@@ -1082,6 +1106,7 @@ zeventig beurten raken en daar niets veranderen. Niet gebouwd.
 | 18 sep | De reparatie ook op de vastgehouden Strict-stroom, waar elke interne beurt langskomt (#1530) | 2.23 |
 | 19 sep | Twee herformuleringen van de eerste vraag als eigen zoekpasses, na herrangschikken samengevoegd (retrieval-api `query_variants`, widget `query_paraphrase.py`, #1548) | 2.27 op zoekniveau, 2.33 eind-tot-eind: 63 om 43; live bevestigd in 2.34 |
 | 19 sep | Het harnas: de bezoeker geeft op na twee doorverwijzingen; nieuwe nulmeting | 2.35 |
+| 19 sep | Een afgekapte controle loopt door en logt wat ze gevonden had; overzicht van de meetpunten onder Platform → Status (#1554) | 2.39, 2.40 |
 
 ---
 
@@ -1127,8 +1152,9 @@ beter kan zonder eerst op echt verkeer te kijken.
    eigenaar.
 4. **Het budget van de controle per zin** (2.37): 4 s laat op eerste beurten 9 van 54 controles
    afkappen; 8 s laat ze afronden zonder meetbaar beter antwoord en met een zwaardere staart. 6 s is de
-   ongemeten middenweg (5 van de 9 gered, één tot twee seconden op die beurten). Een keuze van de
-   eigenaar tussen wachttijd en volledigheid van de controle.
+   ongemeten middenweg (5 van de 9 gered, één tot twee seconden op die beurten). Sinds 2.39 legt
+   `answer_grounding_late` op echt verkeer vast wat een afgekapte controle gevonden had; dat is het
+   gegeven onder deze keuze tussen wachttijd en volledigheid van de controle.
 
 **Onder de ruis**
 5. **Het vorige antwoord als zoekleg bij vervolgbeurten** (2.28, 2.32): 65 om 61 over twee rondes met
@@ -1144,7 +1170,9 @@ beter kan zonder eerst op echt verkeer te kijken.
    (`scripts/grounding_report.py`) en de beslisrecords (`query_variants_run`,
    `query_variants_added`) laten over een week zien of 2.33
    op echt verkeer hetzelfde doet als in de herspeling: meer antwoorden die de vraag oplossen, niet
-   meer niet-gedragen beweringen, en hoe vaak de controle afkapt.
+   meer niet-gedragen beweringen, en hoe vaak de controle afkapt. `answer_grounding_late` (2.39) zegt
+   daarbij wat die afgekapte controles gevonden hadden. Waar elk van deze staat: Platform → Status →
+   Meetpunten (2.40).
 
 **Gemeten en afgevallen, niet meer proberen:** doorvragen vóór het antwoord (2.4, 2.7, 2.10), keuzes
 uit gevonden artikelen (2.7), een taxonomie-aspect als zoekprefix (2.20), een sterkere paginaboost
