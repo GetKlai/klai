@@ -5,6 +5,10 @@
 
 MSG=$(cat "$1")
 
+# A commit message is published with the commit, so the per-customer data guard
+# reads it too (see scripts/audit-public-tenant-data.py).
+python3 -B scripts/audit-public-tenant-data.py --text commit-message < "$1" || exit 1
+
 # Zoek naar externe cross-referenties (bijv. Vexa-ai/vexa#190, some-org/some-repo#42)
 if echo "$MSG" | grep -qiE '[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+#[0-9]+'; then
     # Controleer of het een GetKlai referentie is (die zijn toegestaan)
