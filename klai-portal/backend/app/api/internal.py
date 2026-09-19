@@ -22,7 +22,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Annotated, Any, Literal, cast
 
 import redis.asyncio as aioredis
 import structlog
@@ -34,7 +34,7 @@ from jwt import PyJWKClient
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, ConfigDict, Field
 from redis.exceptions import RedisError
-from sqlalchemy import select, text
+from sqlalchemy import any_, literal, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_effective_capabilities
@@ -51,6 +51,7 @@ from app.services.entitlements import get_effective_products
 from app.services.events import emit_event
 from app.services.gap_events import record_gap_event
 from app.services.gap_rescorer import schedule_rescore
+from app.services.ingest_gap_evaluation import evaluate_ingest_snapshot
 from app.services.partner_rate_limit import check_rate_limit
 from app.services.pii_entity_policy import sanitize_stored_entities
 from app.services.provisioning.infrastructure import assert_shared_librechat_mount_sources_intact
@@ -991,7 +992,7 @@ async def admin_set_telemetry_level(
 
     if not body.reason or not body.reason.strip():
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="reason must be non-empty",
         )
     if len(body.reason) > 500:
@@ -2695,6 +2696,101 @@ async def get_kb_metadata_internal(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="KB not found")
 
     return KbMetadataResponse(slug=kb.slug, description=kb.description)
+
+
+class IngestGapEvalScope(BaseModel):
+    org_id: str
+    kb_slug: str
+
+
+class IngestGapEvalChunk(BaseModel):
+    chunk_id: Annotated[str, Field(min_length=1, max_length=200)]
+    artifact_id: Annotated[str | None, Field(max_length=200)] = None
+    text: Annotated[str, Field(min_length=1, max_length=200_000)]
+    questions: Annotated[list[Annotated[str, Field(min_length=1, max_length=8_000)]], Field(min_length=1)]
+
+
+class IngestGapEvalRequest(BaseModel):
+    snapshot_id: Annotated[str, Field(min_length=1, max_length=200)]
+    chunks: Annotated[list[IngestGapEvalChunk], Field(min_length=1, max_length=10)]
+    budget_seconds: Annotated[float, Field(gt=0, le=270)] = 270
+
+
+@router.get("/ingest-gap-eval/scopes", response_model=list[IngestGapEvalScope])
+async def list_ingest_gap_eval_scopes(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> list[IngestGapEvalScope]:
+    """Return server-authorized org-owned KB scopes for the nightly probe."""
+    await _require_internal_token(request)
+    async with cross_org_scope(db):
+        rows = (
+            await db.execute(
+                select(PortalOrg.zitadel_org_id, PortalKnowledgeBase.slug)
+                .join(PortalKnowledgeBase, PortalKnowledgeBase.org_id == PortalOrg.id)
+                .where(
+                    PortalOrg.deleted_at.is_(None),
+                    PortalOrg.provisioning_status == "ready",
+                    PortalOrg.telemetry_level == "full",
+                    literal("knowledge_gaps") == any_(PortalOrg.platform_unlocked_features),
+                    PortalKnowledgeBase.owner_type == "org",
+                )
+                .order_by(PortalOrg.zitadel_org_id, PortalKnowledgeBase.slug)
+            )
+        ).all()
+    await _audit_internal_call(request)
+    return [IngestGapEvalScope(org_id=org_id, kb_slug=kb_slug) for org_id, kb_slug in rows]
+
+
+@router.post("/ingest-gap-eval/{zitadel_org_id}/{kb_slug}")
+async def assess_ingest_gap_snapshot(
+    zitadel_org_id: str,
+    kb_slug: str,
+    body: IngestGapEvalRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Recheck policy and assess source-derived questions without storing text."""
+    await _require_internal_token(request)
+    org = (await db.execute(select(PortalOrg).where(PortalOrg.zitadel_org_id == zitadel_org_id))).scalar_one_or_none()
+    if (
+        org is None
+        or org.deleted_at is not None
+        or org.provisioning_status != "ready"
+        or org.telemetry_level != "full"
+        or "knowledge_gaps" not in (org.platform_unlocked_features or [])
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error_code": "ingest_gap_eval_disabled"},
+        )
+
+    org_id = org.id
+    await set_tenant(db, org_id)
+    kb = (
+        await db.execute(
+            select(PortalKnowledgeBase).where(
+                PortalKnowledgeBase.org_id == org_id,
+                PortalKnowledgeBase.slug == kb_slug,
+                PortalKnowledgeBase.owner_type == "org",
+            )
+        )
+    ).scalar_one_or_none()
+    if kb is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"error_code": "kb_not_found"})
+    question_count = sum(len(chunk.questions) for chunk in body.chunks)
+    if question_count > 10:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"error_code": "ingest_gap_eval_question_limit"},
+        )
+
+    snapshot = body.model_dump(exclude={"budget_seconds"})
+    for chunk in snapshot["chunks"]:
+        chunk.update(org_id=zitadel_org_id, kb_slug=kb_slug)
+    await db.rollback()
+    await _audit_internal_call(request, org_id=org_id)
+    return await evaluate_ingest_snapshot(snapshot, limit=10, budget_seconds=body.budget_seconds)
 
 
 # ============================================================================

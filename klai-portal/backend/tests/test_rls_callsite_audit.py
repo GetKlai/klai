@@ -45,6 +45,7 @@ TENANT_ESTABLISHING_CALLS: frozenset[str] = frozenset(
         "set_tenant",
         "tenant_scoped_session",
         "cross_org_session",
+        "cross_org_scope",
         "_get_caller_org",  # legacy imperative helper — calls set_tenant internally
         "get_caller",  # SPEC-PORTAL-RBAC-REFACTOR-001 declarative dependency
         "get_caller_at_least",  # role-bounded variant; resolves through get_caller

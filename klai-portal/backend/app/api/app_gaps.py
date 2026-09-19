@@ -67,6 +67,7 @@ class GapOut(BaseModel):
     diagnosis: str | None = None
     audience: str | None = None
     support_case_ids: list[int] = []
+    support_sources: list[str] = []
     # The group's persisted ``question_key`` for a support group — the reliable
     # handle to close it, since folded findings share one key while their wording
     # differs. NULL for legacy telemetry groups.
@@ -172,7 +173,10 @@ async def list_gaps(
             PortalRetrievalGap.support_case_id.is_(None),
         )
         .group_by(PortalRetrievalGap.query_text, PortalRetrievalGap.gap_type, PortalRetrievalGap.language)
-        .order_by(func.count().desc())
+        .order_by(
+            func.count().desc(),
+            func.max(PortalRetrievalGap.occurred_at).desc(),
+        )
         .limit(limit)
     )
     if gap_type:
@@ -315,8 +319,13 @@ async def list_gaps(
             taxonomy_node_id=taxonomy_node_id,
         )
     )
-    # Highest-frequency groups first across both kinds.
-    gaps.sort(key=lambda g: g.occurrence_count, reverse=True)
+    gaps.sort(
+        key=lambda g: (
+            -g.occurrence_count,
+            -g.last_occurred.timestamp(),
+            g.group_key or "",
+        )
+    )
     return GapsResponse(gaps=gaps, total=len(gaps))
 
 
@@ -359,11 +368,16 @@ async def _list_support_gaps(
             func.max(PortalRetrievalGap.top_score).label("top_score"),
             func.count(distinct(PortalRetrievalGap.support_case_id)).label("occurrence_count"),
             func.array_agg(distinct(PortalRetrievalGap.support_case_id)).label("support_case_ids"),
+            func.array_agg(distinct(PortalSupportCase.source)).label("support_sources"),
             func.max(PortalRetrievalGap.occurred_at).label("last_occurred"),
             case(
                 (func.bool_and(PortalRetrievalGap.resolved_at.isnot(None)), func.max(PortalRetrievalGap.resolved_at)),
                 else_=None,
             ).label("resolved_at"),
+        )
+        .join(
+            PortalSupportCase,
+            (PortalSupportCase.id == PortalRetrievalGap.support_case_id) & (PortalSupportCase.org_id == perms.org_id),
         )
         .where(
             PortalRetrievalGap.org_id == perms.org_id,
@@ -371,7 +385,11 @@ async def _list_support_gaps(
             PortalRetrievalGap.support_case_id.isnot(None),
         )
         .group_by(PortalRetrievalGap.question_key)
-        .order_by(func.count(distinct(PortalRetrievalGap.support_case_id)).desc())
+        .order_by(
+            func.count(distinct(PortalRetrievalGap.support_case_id)).desc(),
+            func.max(PortalRetrievalGap.occurred_at).desc(),
+            PortalRetrievalGap.question_key,
+        )
         .limit(limit)
     )
     if gap_type:
@@ -402,6 +420,7 @@ async def _list_support_gaps(
             diagnosis=r.diagnosis,
             audience=r.audience,
             support_case_ids=sorted(cid for cid in (r.support_case_ids or []) if cid is not None),
+            support_sources=sorted(r.support_sources or []),
             group_key=r.question_key,
         )
         for r in result.all()

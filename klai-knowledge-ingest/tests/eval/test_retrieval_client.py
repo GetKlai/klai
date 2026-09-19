@@ -91,6 +91,7 @@ async def test_retrieve_success_returns_chunks() -> None:
     assert result.chunks[0]["id"] == "c1"
     assert result.retrieval_ms >= 0
     assert transport.last_request is not None
+    assert transport.last_request.headers["X-Caller-Service"] == "knowledge-ingest"
     assert json.loads(transport.last_request.content)["kb_slugs"] == ["support", "sip"]
 
 

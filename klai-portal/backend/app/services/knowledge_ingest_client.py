@@ -416,11 +416,11 @@ async def enqueue_auto_categorise(
         )
 
 
-async def classify_gap_taxonomy(org_id: str, kb_slug: str, text: str) -> list[int]:
+async def classify_gap_taxonomy(org_id: str, kb_slug: str, text: str) -> list[int] | None:
     """Classify a gap query against a KB's taxonomy via knowledge-ingest.
 
-    Calls POST /ingest/v1/taxonomy/classify. Returns list of taxonomy node IDs.
-    Best-effort: returns empty list on any error (timeout, connection, HTTP error).
+    Calls POST /ingest/v1/taxonomy/classify. Returns taxonomy node IDs, including
+    an empty list for a successful no-match, or ``None`` when the call failed.
     """
     try:
         async with httpx.AsyncClient(
@@ -444,7 +444,7 @@ async def classify_gap_taxonomy(org_id: str, kb_slug: str, text: str) -> list[in
             extra={"org_id": org_id, "kb_slug": kb_slug},
             exc_info=True,
         )
-        return []
+        return None
 
 
 async def ingest_document(payload: dict) -> str:
