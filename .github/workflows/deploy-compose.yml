@@ -129,8 +129,18 @@ jobs:
               deploy/systemd \
               klai-libs/citations/klai_citations \
               scripts
-            cp deploy/docker-compose.yml /opt/klai/docker-compose.yml
-            cp deploy/docker-compose.override.yml /opt/klai/docker-compose.override.yml
+            # Write-then-rename, not `cp` in place. cp truncates the target and
+            # then writes it, and portal-api.yml and litellm-hook-deploy.yml run
+            # `docker compose` against this same file — both can fire on the same
+            # merge as this job. A read that lands between the truncate and the
+            # last write parses a partial file and fails that deploy. rename(2)
+            # on one filesystem is atomic, so a reader sees the old file or the
+            # new one and never half of either. Same idiom this script already
+            # uses for the deploy scripts below.
+            for f in docker-compose.yml docker-compose.override.yml; do
+              cp "deploy/$f" "/opt/klai/$f.tmp"
+              mv -f "/opt/klai/$f.tmp" "/opt/klai/$f"
+            done
 
             # LiteLLM uses the canonical citations package via bind mount.
             # Keep it present before compose can recreate litellm with the
