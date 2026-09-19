@@ -161,7 +161,7 @@ async def test_library_membership_path_allows_against_real_endpoint(
 ) -> None:
     with _patch_internal_secret(monkeypatch, "contract-test-secret"):
         result = await asserter_against_app.verify(
-            caller_service="scribe",
+            caller_service="knowledge-ingest",
             claimed_user_id="u-1",
             claimed_org_id="o-1",
             bearer_jwt=None,

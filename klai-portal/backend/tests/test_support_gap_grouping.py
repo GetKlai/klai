@@ -12,10 +12,12 @@ it originates only from a verified candidate key, never from an input payload.
 from __future__ import annotations
 
 import json
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from app.core.config import settings
+from app.services import support_cases
 from app.services import support_gap_grouping as grp
 from app.services.support_case_analysis import SupportCaseAnalysisError
 
@@ -83,6 +85,52 @@ async def test_paraphrased_same_need_merges_into_existing_group(monkeypatch):
     result = await group_and_assert_copy(findings, candidates)
     assert result[0]["group_question_key"] == "grp-port"
     assert rec.calls == 1
+
+
+async def test_same_need_in_one_case_shares_one_group_and_keeps_evidence(monkeypatch):
+    findings = [
+        _finding("How do I port my phone number?"),
+        _finding("Can I move my existing number over?"),
+        _finding("What is the process for transferring my number?"),
+    ]
+    for index, finding in enumerate(findings):
+        finding["message_ids"] = [f"source-{index}"]
+    first_key = support_cases._question_key(
+        question=findings[0]["question"],
+        diagnosis="missing",
+        language="en",
+        kb_slug="products",
+        audience="customer",
+    )
+    second_key = support_cases._question_key(
+        question=findings[1]["question"],
+        diagnosis="missing",
+        language="en",
+        kb_slug="products",
+        audience="customer",
+    )
+    _patch_llm(
+        monkeypatch,
+        {
+            "assignments": [
+                {"index": 0, "group_question_key": None},
+                {"index": 1, "group_question_key": first_key},
+                {"index": 2, "group_question_key": second_key},
+            ]
+        },
+    )
+
+    with patch.object(support_cases, "_open_group_candidates", AsyncMock(return_value=[])):
+        result = await support_cases._grouped_findings(
+            AsyncMock(), org_id=7, kb_slug="products", exclude_case_id=11, findings=findings
+        )
+
+    rows = [
+        support_cases._finding_gap(org_id=7, user_id="user", kb_slug="products", case_id=11, finding=finding)
+        for finding in result
+    ]
+    assert {row.question_key for row in rows} == {first_key}
+    assert [row.evidence["message_ids"] for row in rows] == [["source-0"], ["source-1"], ["source-2"]]
 
 
 async def test_different_device_stays_separate(monkeypatch):

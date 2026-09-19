@@ -20,11 +20,18 @@ Variant routing (REQ-6):
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import json
 import os
 import time
+from collections import Counter, defaultdict
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
+import httpx
 import structlog
 
 from knowledge_ingest import queues
@@ -33,9 +40,25 @@ from knowledge_ingest.config import settings
 logger = structlog.get_logger()
 
 _MAX_ERROR_LEN = 200
-
-
 _MIN_BODY_CANARY_CHARS = 16
+_INGEST_GAP_SUITE = "ingest_gap_canary"
+_INGEST_GAP_LOCK = "ingest-gap-canary"
+_INGEST_GAP_RUNTIME_S = 300
+_INGEST_GAP_PERSIST_RESERVE_S = 30
+_INGEST_GAP_LIMIT = 10
+_INGEST_GAP_SCROLL_LIMIT = 64
+
+
+def _hash(value: object) -> str:
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _rotated(values: list[Any], run_day: date, *, salt: str = "") -> list[Any]:
+    if not values:
+        return []
+    offset = (run_day.toordinal() + int(_hash(salt)[:8], 16)) % len(values)
+    return values[offset:] + values[:offset]
 
 
 def _chunk_canary_fields(chunk: dict[str, Any]) -> tuple[str, str]:
@@ -127,6 +150,7 @@ async def run_evaluation(suite: str, variant: str | None = None) -> dict:
 
     queries_processed: int = 0
     rows_written: int = 0
+    retrieval_failures: int = 0
 
     for query in loaded.queries:
         q_errors: list[str] = []
@@ -143,6 +167,7 @@ async def run_evaluation(suite: str, variant: str | None = None) -> dict:
         )
 
         if isinstance(retrieval, RetrievalFailure):
+            retrieval_failures += 1
             reason = retrieval.reason[:_MAX_ERROR_LEN]
             meta["error"] = f"retrieval_failed: {reason}"
             await insert_eval_row(
@@ -266,6 +291,18 @@ async def run_evaluation(suite: str, variant: str | None = None) -> dict:
         )
 
     duration_ms = int((time.monotonic() - t_start) * 1000)
+    if retrieval_failures:
+        logger.error(
+            "rag_eval_run_failed",
+            suite=suite,
+            variant=variant,
+            queries_processed=queries_processed,
+            rows_written=rows_written,
+            retrieval_failures=retrieval_failures,
+            duration_ms=duration_ms,
+        )
+        raise RuntimeError(f"rag_eval_retrieval_failed: {retrieval_failures}/{queries_processed}")
+
     logger.info(
         "rag_eval_run_completed",
         suite=suite,
@@ -280,6 +317,294 @@ async def run_evaluation(suite: str, variant: str | None = None) -> dict:
         "queries_processed": queries_processed,
         "rows_written": rows_written,
     }
+
+
+async def _scope_candidates(scope: dict[str, str], run_day: date, deadline: float) -> list[dict]:
+    from qdrant_client.models import FieldCondition, Filter, MatchValue
+
+    from knowledge_ingest import qdrant_store
+
+    async with asyncio.timeout_at(deadline):
+        points, _ = await qdrant_store.get_client().scroll(
+            collection_name=qdrant_store.COLLECTION,
+            scroll_filter=Filter(
+                must=[
+                    FieldCondition(key="org_id", match=MatchValue(value=scope["org_id"])),
+                    FieldCondition(key="kb_slug", match=MatchValue(value=scope["kb_slug"])),
+                ]
+            ),
+            limit=_INGEST_GAP_SCROLL_LIMIT,
+            with_payload=True,
+            with_vectors=False,
+        )
+
+    by_artifact: dict[str, list[dict]] = defaultdict(list)
+    for point in points:
+        payload = point.payload or {}
+        text = payload.get("text")
+        questions = payload.get("questions")
+        if payload.get("user_id") or not isinstance(text, str) or not text:
+            continue
+        if not isinstance(questions, list):
+            continue
+        chunk_id = str(point.id)
+        artifact_id = payload.get("artifact_id")
+        artifact_id = artifact_id if isinstance(artifact_id, str) and artifact_id else chunk_id
+        for question in questions:
+            if not isinstance(question, str) or not question.strip():
+                continue
+            by_artifact[artifact_id].append(
+                {
+                    "question": question.strip(),
+                    "chunk": {
+                        "chunk_id": chunk_id,
+                        "artifact_id": artifact_id,
+                        "text": text,
+                        "questions": [question.strip()],
+                    },
+                }
+            )
+
+    salt = f"{scope['org_id']}:{scope['kb_slug']}"
+    artifacts = _rotated(sorted(by_artifact), run_day, salt=salt)
+    for artifact_id in artifacts:
+        by_artifact[artifact_id].sort(
+            key=lambda item: _hash([run_day.isoformat(), item["question"]])
+        )
+    ordered: list[dict] = []
+    while any(by_artifact.values()):
+        for artifact_id in artifacts:
+            if by_artifact[artifact_id]:
+                ordered.append(by_artifact[artifact_id].pop(0))
+    return ordered
+
+
+async def _insert_gap_row(*, query_id: str, source_ids: list[str], meta: dict) -> None:
+    from knowledge_ingest.eval.store import insert_eval_row
+
+    await insert_eval_row(
+        suite=_INGEST_GAP_SUITE,
+        variant="source_derived_v1",
+        query_id=query_id,
+        context_precision=None,
+        context_recall=None,
+        faithfulness=None,
+        answer_relevance=None,
+        retrieved_chunk_ids=source_ids,
+        retrieval_ms=None,
+        total_tokens=None,
+        meta=meta,
+    )
+
+
+async def _run_ingest_gap_canary(*, run_day: date | None, limit: int) -> dict:
+    if not 1 <= limit <= _INGEST_GAP_LIMIT:
+        raise ValueError(f"limit must be between 1 and {_INGEST_GAP_LIMIT}")
+    run_day = run_day or datetime.now(UTC).date()
+    started = time.monotonic()
+    deadline = (
+        asyncio.get_running_loop().time() + _INGEST_GAP_RUNTIME_S - _INGEST_GAP_PERSIST_RESERVE_S
+    )
+    run_hash = _hash([run_day.isoformat(), _INGEST_GAP_SUITE])
+    headers = {"Authorization": f"Bearer {settings.portal_internal_token}"}
+    failures = 0
+    omitted_scopes = 0
+    status_counts: Counter[str] = Counter()
+    candidates: dict[tuple[str, str], list[dict]] = {}
+
+    try:
+        async with httpx.AsyncClient(timeout=_INGEST_GAP_RUNTIME_S) as client:
+            async with asyncio.timeout_at(deadline):
+                response = await client.get(
+                    f"{settings.portal_url}/internal/ingest-gap-eval/scopes", headers=headers
+                )
+            response.raise_for_status()
+            raw_scopes = response.json()
+            if not isinstance(raw_scopes, list):
+                raise TypeError("eligible scopes response must be a list")
+            scopes = [
+                scope
+                for scope in raw_scopes
+                if isinstance(scope, dict)
+                and isinstance(scope.get("org_id"), str)
+                and isinstance(scope.get("kb_slug"), str)
+            ]
+            scopes = _rotated(
+                sorted(scopes, key=lambda item: (item["org_id"], item["kb_slug"])), run_day
+            )
+
+            for index, scope in enumerate(scopes):
+                scope_key = (scope["org_id"], scope["kb_slug"])
+                try:
+                    candidates[scope_key] = await _scope_candidates(scope, run_day, deadline)
+                except Exception as exc:
+                    failures += 1
+                    status_counts["failed"] += 1
+                    omitted_scopes += len(scopes) - index
+                    await _insert_gap_row(
+                        query_id=_hash([run_hash, scope_key, "source_load_failed"]),
+                        source_ids=[],
+                        meta={
+                            "run_hash": run_hash,
+                            "scope_hash": _hash(scope_key),
+                            "status": "failed",
+                            "stage": "source_load",
+                            "error_type": type(exc).__name__,
+                        },
+                    )
+                    break
+
+            selected: list[tuple[tuple[str, str], dict]] = []
+            queues = {key: list(items) for key, items in candidates.items()}
+            while len(selected) < limit and any(queues.values()):
+                for scope_key in queues:
+                    if queues[scope_key] and len(selected) < limit:
+                        selected.append((scope_key, queues[scope_key].pop(0)))
+
+            by_scope: dict[tuple[str, str], list[dict]] = defaultdict(list)
+            for scope_key, candidate in selected:
+                by_scope[scope_key].append(candidate)
+            attempted = len(selected)
+            for scope_key, scope_candidates in by_scope.items():
+                org_id, kb_slug = scope_key
+                snapshot = {
+                    "snapshot_id": _hash([run_hash, scope_key]),
+                    "chunks": [candidate["chunk"] for candidate in scope_candidates],
+                }
+                try:
+                    remaining = deadline - asyncio.get_running_loop().time()
+                    model_budget = remaining - _INGEST_GAP_PERSIST_RESERVE_S
+                    if model_budget <= 0:
+                        raise TimeoutError
+                    snapshot["budget_seconds"] = model_budget
+                    async with asyncio.timeout_at(deadline):
+                        endpoint = (
+                            f"{settings.portal_url}/internal/ingest-gap-eval/"
+                            f"{quote(org_id, safe='')}/{quote(kb_slug, safe='')}"
+                        )
+                        response = await client.post(
+                            endpoint,
+                            headers=headers,
+                            json=snapshot,
+                        )
+                    response.raise_for_status()
+                    assessment = response.json()
+                    results = assessment.get("results") if isinstance(assessment, dict) else None
+                    if not isinstance(results, list) or len(results) != len(scope_candidates):
+                        raise TypeError("assessment response result count does not match request")
+                    for result in results:
+                        status_value = result.get("status", "failed")
+                        status_counts[status_value] += 1
+                        if status_value == "failed":
+                            failures += 1
+                        source_ids = [
+                            value
+                            for value in [result.get("source_chunk_id")]
+                            if isinstance(value, str)
+                        ]
+                        await _insert_gap_row(
+                            query_id=str(
+                                result.get("question_id") or _hash([run_hash, source_ids])
+                            ),
+                            source_ids=source_ids,
+                            meta={
+                                "run_hash": run_hash,
+                                "snapshot_hash": assessment.get("snapshot_hash"),
+                                "scope_hash": assessment.get("scope_hash"),
+                                "question_hash": result.get("question_id"),
+                                "source_content_hash": result.get("source_content_hash"),
+                                "analyzer_version": assessment.get("analyzer_version"),
+                                "judge_model": assessment.get("judge_model"),
+                                "status": status_value,
+                                "present_diagnosis": result.get("present_diagnosis"),
+                                "withheld_diagnosis": result.get("withheld_diagnosis"),
+                                "error_type": result.get("error_type"),
+                                "http_status": result.get("http_status"),
+                                "source_ids": {
+                                    "chunk": result.get("source_chunk_id"),
+                                    "artifact": result.get("source_artifact_id"),
+                                },
+                            },
+                        )
+                except Exception as exc:
+                    failures += len(scope_candidates)
+                    http_status = (
+                        exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+                    )
+                    for candidate in scope_candidates:
+                        status_counts["failed"] += 1
+                        chunk = candidate["chunk"]
+                        await _insert_gap_row(
+                            query_id=_hash(candidate["question"]),
+                            source_ids=[chunk["chunk_id"]],
+                            meta={
+                                "run_hash": run_hash,
+                                "scope_hash": _hash(scope_key),
+                                "question_hash": _hash(candidate["question"]),
+                                "source_content_hash": _hash(chunk["text"]),
+                                "status": "failed",
+                                "stage": "assessment",
+                                "error_type": type(exc).__name__,
+                                "http_status": http_status,
+                                "source_ids": {
+                                    "chunk": chunk["chunk_id"],
+                                    "artifact": chunk["artifact_id"],
+                                },
+                            },
+                        )
+    except Exception as exc:
+        failures += 1
+        status_counts["failed"] += 1
+        await _insert_gap_row(
+            query_id=_hash([run_hash, "scope_discovery_failed"]),
+            source_ids=[],
+            meta={
+                "run_hash": run_hash,
+                "status": "failed",
+                "stage": "scope_discovery",
+                "error_type": type(exc).__name__,
+            },
+        )
+        scopes = []
+        selected = []
+        attempted = 0
+
+    eligible = sum(len(items) for items in candidates.values())
+    scored = status_counts["detected_missing"] + status_counts["withheld_claimed_present"]
+    omitted = max(0, eligible - attempted)
+    quality_failures = status_counts["withheld_claimed_present"]
+    summary = {
+        "run_hash": run_hash,
+        "eligible_scopes": len(scopes),
+        "sampled_scopes": len({scope_key for scope_key, _ in selected}),
+        "omitted_scopes": omitted_scopes,
+        "eligible": eligible,
+        "attempted": attempted,
+        "scored": scored,
+        "unscorable": status_counts["unscorable"],
+        "failed": failures,
+        "omitted": omitted,
+        "coverage_status": "bounded_sample",
+        "candidate_scan_limit_per_scope": _INGEST_GAP_SCROLL_LIMIT,
+        "execution_ceiling": limit,
+        "runtime_ceiling_seconds": _INGEST_GAP_RUNTIME_S,
+        "duration_ms": int((time.monotonic() - started) * 1000),
+        "task_status": "failed" if failures else "completed",
+        "quality_status": "failed" if quality_failures else "inconclusive",
+        "status_counts": dict(sorted(status_counts.items())),
+    }
+    await _insert_gap_row(query_id=run_hash, source_ids=[], meta=summary)
+    if failures:
+        raise RuntimeError(f"ingest_gap_canary_failed: {failures}/{attempted}")
+    return summary
+
+
+async def run_ingest_gap_canary(
+    *, run_day: date | None = None, limit: int = _INGEST_GAP_LIMIT
+) -> dict:
+    """Run the source-derived probe inside one five-minute wall-clock budget."""
+    async with asyncio.timeout(_INGEST_GAP_RUNTIME_S):
+        return await _run_ingest_gap_canary(run_day=run_day, limit=limit)
 
 
 def register_eval_tasks(procrastinate_app: Any) -> None:
@@ -317,6 +642,31 @@ def register_eval_tasks(procrastinate_app: Any) -> None:
         return await run_evaluation(suite=suite)
 
     procrastinate_app.evaluate_retrieval_quality_nightly = evaluate_retrieval_quality_nightly  # type: ignore[attr-defined]
+
+    @procrastinate_app.task(
+        queue=queues.RAG_EVAL,
+        retry=False,
+        lock=_INGEST_GAP_LOCK,
+        queueing_lock=_INGEST_GAP_LOCK,
+    )
+    async def evaluate_ingest_gap_canary_nightly() -> dict:
+        return await run_ingest_gap_canary()
+
+    procrastinate_app.evaluate_ingest_gap_canary_nightly = evaluate_ingest_gap_canary_nightly  # type: ignore[attr-defined]
+
+    @procrastinate_app.periodic(cron="30 2 * * *", periodic_id=_INGEST_GAP_LOCK)
+    @procrastinate_app.task(
+        name="knowledge_ingest.eval.ragas_runner.evaluate_ingest_gap_canary_periodic",
+        queue=queues.RAG_EVAL,
+        retry=False,
+        lock=_INGEST_GAP_LOCK,
+        queueing_lock=_INGEST_GAP_LOCK,
+    )
+    async def evaluate_ingest_gap_canary_periodic(timestamp: int) -> dict:
+        logger.info("ingest_gap_canary_periodic_fired", deferrer_ts=timestamp)
+        return await run_ingest_gap_canary()
+
+    procrastinate_app.evaluate_ingest_gap_canary_periodic = evaluate_ingest_gap_canary_periodic  # type: ignore[attr-defined]
 
     # Periodic wrappers — one per suite. PeriodicDeferrer in the worker
     # picks them up and defers ``evaluate_retrieval_quality_nightly``

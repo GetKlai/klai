@@ -1,0 +1,30 @@
+#!/bin/bash
+# Pre-push hook — the last moment before a branch becomes public.
+#
+# The pre-commit hook checks each commit as it is made, but a commit made where
+# that hook did not run (another checkout, --no-verify, an amend in an editor)
+# still reaches GitHub through here. Everything this push would publish is
+# checked: the diff of every pushed commit and every commit message.
+# In a public repository a pushed branch is already disclosure, so CI can only
+# report what this hook should have stopped.
+
+set -euo pipefail
+
+zero=0000000000000000000000000000000000000000
+status=0
+
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+    [ "$local_sha" = "$zero" ] && continue  # a branch deletion publishes nothing
+    if [ "$remote_sha" = "$zero" ]; then
+        # A new branch: everything not already on main is new to the public.
+        base=$(git merge-base origin/main "$local_sha" 2>/dev/null || git rev-list --max-parents=0 "$local_sha" | tail -1)
+    else
+        base=$remote_sha
+    fi
+    git diff --no-color -U3 "$base" "$local_sha" \
+        | python3 -B scripts/audit-public-tenant-data.py || status=1
+    git log --format='%B' "$base..$local_sha" \
+        | python3 -B scripts/audit-public-tenant-data.py --text commit-messages || status=1
+done
+
+exit $status

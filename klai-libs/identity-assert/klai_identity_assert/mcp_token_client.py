@@ -53,7 +53,7 @@ class _McpTokenCache:
     when ``max_entries`` is exceeded.
     """
 
-    __slots__ = ("_store", "_ttl_seconds", "_max_entries")
+    __slots__ = ("_max_entries", "_store", "_ttl_seconds")
 
     def __init__(self, *, ttl_seconds: float, max_entries: int) -> None:
         if ttl_seconds <= 0:

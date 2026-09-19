@@ -77,7 +77,7 @@ async def test_full_run_against_sample_suite() -> None:
     from knowledge_ingest.eval.ragas_runner import register_eval_tasks
 
     register_eval_tasks(app)
-    task_fn = app.evaluate_retrieval_quality_nightly
+    task_fn = app.evaluate_retrieval_quality_nightly  # type: ignore[attr-defined]
 
     with (
         patch("knowledge_ingest.eval.store.get_pool", new_callable=AsyncMock, return_value=pool),
@@ -117,7 +117,7 @@ async def test_run_with_retrieval_failure() -> None:
     from knowledge_ingest.eval.ragas_runner import register_eval_tasks
 
     register_eval_tasks(app)
-    task_fn = app.evaluate_retrieval_quality_nightly
+    task_fn = app.evaluate_retrieval_quality_nightly  # type: ignore[attr-defined]
 
     retrieve_side_effects = [
         _make_retrieval_failure("HTTP 500: Internal Server Error"),
@@ -146,11 +146,11 @@ async def test_run_with_retrieval_failure() -> None:
             "knowledge_ingest.eval.ragas_runner.settings.rag_eval_suites_dir",
             str(_sample_suite_path().parent),
         ),
+        pytest.raises(RuntimeError, match=r"rag_eval_retrieval_failed: 1/3"),
     ):
-        result = await task_fn(suite="_sample")
+        await task_fn(suite="_sample")
 
-    assert result["queries_processed"] == 3
-    assert result["rows_written"] == 3
+    assert pool.fetchval.call_count == 3
 
     first_call_kwargs = pool.fetchval.call_args_list[0]
     params = list(first_call_kwargs[0][1:])
@@ -170,7 +170,7 @@ async def test_run_with_judge_failure() -> None:
     from knowledge_ingest.eval.ragas_runner import register_eval_tasks
 
     register_eval_tasks(app)
-    task_fn = app.evaluate_retrieval_quality_nightly
+    task_fn = app.evaluate_retrieval_quality_nightly  # type: ignore[attr-defined]
 
     partial_metrics = {
         "context_precision": 0.75,

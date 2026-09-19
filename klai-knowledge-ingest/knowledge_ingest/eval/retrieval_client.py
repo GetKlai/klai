@@ -84,7 +84,10 @@ async def retrieve_chunks(
         On any HTTP error (status >= 400), timeout, or connection error.
     """
     url = f"{settings.retrieval_api_url}/retrieve"
-    headers = {"X-Internal-Secret": settings.retrieval_internal_secret}
+    headers = {
+        "X-Internal-Secret": settings.retrieval_internal_secret,
+        "X-Caller-Service": "knowledge-ingest",
+    }
     body: dict[str, Any] = {
         "query": query,
         "org_id": org_zitadel_id,
