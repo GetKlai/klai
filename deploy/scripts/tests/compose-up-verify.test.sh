@@ -33,12 +33,17 @@ case "$1" in
   compose)
     shift
     case "$1" in
-      pull) exit 0 ;;
+      pull) printf '%s\n' "$*" >> "$fx/pull_argv"; exit 0 ;;
       ps)
         # After `up` the service may be serving a different container; a case
         # expresses that by providing cid_post.
-        if [[ -f "$fx/up_called" && -s "$fx/cid_post" ]]; then ids="$(read_fx cid_post)"
-        else ids="$(read_fx cid)"; fi
+        # Multi-service cases give each service its own cid_<svc> /
+        # cid_post_<svc>; every single-service case keeps using cid / cid_post.
+        svc="${@: -1}"
+        if [[ -f "$fx/cid_$svc" ]]; then pre="cid_$svc"; post="cid_post_$svc"
+        else pre="cid"; post="cid_post"; fi
+        if [[ -f "$fx/up_called" && -s "$fx/$post" ]]; then ids="$(read_fx "$post")"
+        else ids="$(read_fx "$pre")"; fi
         # Real `compose ps -q` lists RUNNING containers only; -a lifts that.
         # Without this distinction the stub would happily hand back a
         # created-or-exited container to a -q call and hide the whole reason
@@ -63,7 +68,7 @@ case "$1" in
     ;;
   inspect)
     cid="$2"; tmpl="$4"
-    [[ -n "$(read_fx cid)" ]] || exit 1
+    [[ -f "$fx/status_$cid" ]] || exit 1
     case "$tmpl" in
       '{{.Created}}')       read_fx "created_$cid" ;;
       '{{.Name}}')          read_fx "name_$cid" ;;
@@ -82,7 +87,7 @@ case "$1" in
   ps)     read_fx name_taken; exit 0 ;;
   rename) printf '%s -> %s\n' "$2" "$3" >> "$fx/renames"; exit 0 ;;
   logs)   echo "stub container log line"; exit 0 ;;
-  pull)   exit 0 ;;
+  pull)   printf 'docker %s\n' "$*" >> "$fx/pull_argv"; exit 0 ;;
 esac
 echo "stub: unexpected docker args: $*" >&2
 exit 90
@@ -300,6 +305,107 @@ new_case bulk_compose_fails
 fx up_rc 1
 run_target
 check "no service arg + compose failure -> non-zero" 1 "$rc"
+
+# --- Several services in one call: the bulk sweep in deploy-compose.yml ------
+#
+# That sweep ran a bare `docker compose up -d` over every service and called it
+# green once compose returned, which it does as soon as containers are CREATED.
+# On 2026-09-18 it recreated 31 services at once — Caddy and the fail-closed PII
+# analyzer among them — with nothing checking that any of them came back.
+
+# svc <name> <cid before up> <cid after up> <status after up>
+svc() {
+    local name="$1" pre="$2" post="$3" st="$4"
+    echo "$pre"  > "$case_dir/fixtures/cid_$name"
+    echo "$post" > "$case_dir/fixtures/cid_post_$name"
+    printf '/%s\n' "klai-core-$name-1" > "$case_dir/fixtures/name_$pre"
+    echo "running"              > "$case_dir/fixtures/status_$pre"
+    echo "2026-08-14T10:00:00Z" > "$case_dir/fixtures/created_$pre"
+    printf '/%s\n' "klai-core-$name-1" > "$case_dir/fixtures/name_$post"
+    echo "$st"                  > "$case_dir/fixtures/status_$post"
+    echo "2026-08-14T11:00:00Z" > "$case_dir/fixtures/created_$post"
+}
+
+# The reported case. Compose exits 0, one recreated container is dead.
+new_case multi_one_dead
+svc web w1 w2 running
+svc api a1 a2 exited
+run_target --no-pull web api
+check "several services, one recreated container dead -> 1" 1 "$rc"
+check_output "  names the dead service" "::error::api is 'exited'"
+
+new_case multi_all_up
+svc web w1 w2 running
+svc api a1 a2 running
+run_target --no-pull web api
+check "several services, all recreated and running -> 0" 0 "$rc"
+# One compose call for the whole list, so compose still orders the recreates by
+# depends_on. Per-service calls would lose that.
+if [[ "$(wc -l < "$case_dir/fixtures/up_argv" | tr -d ' ')" == "1" ]] \
+   && grep -q "web api" "$case_dir/fixtures/up_argv"; then
+    echo "  ok     one compose up for the whole list"
+else
+    echo "  FAIL   expected one compose up with both services: $(cat "$case_dir/fixtures/up_argv")"
+    failures=$((failures + 1))
+fi
+
+# Compose leaves a service alone when its definition did not change. Its
+# container is not this deploy's doing, so its state must not decide the
+# verdict — otherwise one long-dead unrelated service blocks every deploy.
+new_case multi_untouched_not_judged
+svc web w1 w2 running
+svc api a1 a1 exited
+run_target --no-pull web api
+check "service compose did not recreate is not judged -> 0" 0 "$rc"
+check_output "  says it was left alone" "api: not recreated"
+
+# No override on the multi path. For one service, a compose failure can be
+# overruled when that one container was verifiably replaced. With a list,
+# compose may have stopped part-way, and a service it never reached looks
+# exactly like one it had no reason to touch — overruling would call a
+# half-applied deploy green. Still repair the mangled name on the way out.
+new_case multi_compose_fails
+fx up_rc 1
+fx up_stderr "Error response from daemon: removal of container a1 is already in progress"
+svc web w1 w2 running
+svc api a1 a2 running
+printf '/%s\n' "3b375ef812c7_klai-core-api-1" > "$case_dir/fixtures/name_a2"
+run_target --no-pull web api
+check "several services + compose failure -> 1" 1 "$rc"
+check_output "  repairs the half-finished recreate name" "Renamed 3b375ef812c7_klai-core-api-1 back to klai-core-api-1"
+
+# --no-pull, both sides of it. The sweep never pulled, and pulling ~50 images on
+# every compose change would be slow and a new way to fail. But a caller that
+# omits the flag must keep pulling — every single-service deploy depends on it,
+# and a test that only checks "nothing was pulled" passes just as happily when
+# pulling is broken everywhere. vexa12-runtime is in the list so the separate
+# vexa pre-pull is covered too, not only `compose pull`.
+new_case multi_pulls_by_default
+svc web w1 w2 running
+svc vexa12-runtime v1 v2 running
+printf 'services:\n  web:\n    image: vexaai/v012-runtime:v1\n' > "$case_dir/docker-compose.yml"
+run_target web vexa12-runtime
+check "several services, no flag -> 0" 0 "$rc"
+if grep -q "^pull web vexa12-runtime" "$case_dir/fixtures/pull_argv" 2>/dev/null \
+   && grep -q "^docker pull vexaai/" "$case_dir/fixtures/pull_argv" 2>/dev/null; then
+    echo "  ok     without --no-pull: compose pull and vexa pre-pull both ran"
+else
+    echo "  FAIL   without --no-pull something was not pulled: $(cat "$case_dir/fixtures/pull_argv" 2>/dev/null)"
+    failures=$((failures + 1))
+fi
+
+new_case multi_no_pull
+svc web w1 w2 running
+svc vexa12-runtime v1 v2 running
+printf 'services:\n  web:\n    image: vexaai/v012-runtime:v1\n' > "$case_dir/docker-compose.yml"
+run_target --no-pull web vexa12-runtime
+check "--no-pull accepted -> 0" 0 "$rc"
+if [[ -s "$case_dir/fixtures/pull_argv" ]]; then
+    echo "  FAIL   --no-pull still pulled: $(cat "$case_dir/fixtures/pull_argv")"
+    failures=$((failures + 1))
+else
+    echo "  ok     --no-pull pulled nothing, vexa pre-pull included"
+fi
 
 echo
 if [[ "$failures" -eq 0 ]]; then

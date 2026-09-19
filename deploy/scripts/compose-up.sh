@@ -25,6 +25,12 @@
 #                                            (drops Python module cache for
 #                                            services whose code lives in
 #                                            bind-mounted .py files)
+#   compose-up.sh [--no-pull] <svc> <svc>… — one `up -d` for the whole list,
+#                                            then verify every container it
+#                                            actually recreated (the bulk
+#                                            sweep in deploy-compose.yml)
+#   --no-pull                              — skip `compose pull` and the Vexa
+#                                            pre-pull; any mode
 #
 # When to use --force-recreate:
 #   `docker compose up -d` only recreates a container when the compose
@@ -71,7 +77,8 @@ cd "$KLAI_DIR"
 POSTGRES_CONTAINER="${KLAI_POSTGRES_CONTAINER:-klai-core-postgres-1}"
 NO_DEPS_FLAG=""
 FORCE_RECREATE_FLAG=""
-SERVICE=""
+NO_PULL=""
+SERVICES=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -83,17 +90,31 @@ while [[ $# -gt 0 ]]; do
             FORCE_RECREATE_FLAG="--force-recreate"
             shift
             ;;
+        --no-pull)
+            NO_PULL=1
+            shift
+            ;;
         *)
-            if [[ -z "$SERVICE" ]]; then
-                SERVICE="$1"
-            else
-                echo "ERROR: unexpected argument '$1' — usage: compose-up.sh [--no-deps] [--force-recreate] [service]" >&2
-                exit 2
-            fi
+            SERVICES+=("$1")
             shift
             ;;
     esac
 done
+
+# SERVICE keeps its old meaning — set only for the single-service deploy every
+# service workflow uses — so that path and its verdict stay exactly as they were.
+SERVICE=""
+if (( ${#SERVICES[@]} == 1 )); then
+    SERVICE="${SERVICES[0]}"
+fi
+
+has_service() {
+    local s
+    for s in "${SERVICES[@]}"; do
+        [[ "$s" == "$1" ]] && return 0
+    done
+    return 1
+}
 
 litellm_prisma_migrate_enabled() {
     grep -Eq 'USE_PRISMA_MIGRATE:[[:space:]]*"?True"?' "$KLAI_DIR/docker-compose.yml"
@@ -305,7 +326,7 @@ verify_service_running() {
     return 0
 }
 
-if [[ "$SERVICE" == "litellm" ]]; then
+if has_service litellm; then
     check_litellm_prisma_migration_baseline
 fi
 
@@ -313,12 +334,106 @@ fi
 # skip the pre-pull entirely, so a bot image absent from the host surfaced only as
 # a /containers/create 404 on the next real meeting. docker-socket-proxy has IMAGES
 # disabled, so the runtime cannot recover by pulling it itself.
-if [[ -z "$SERVICE" || "$SERVICE" == "vexa12-runtime" || "$SERVICE" == "vexa12-meeting-api" ]]; then
+if [[ -z "$NO_PULL" ]] && { (( ${#SERVICES[@]} == 0 )) || has_service vexa12-runtime || has_service vexa12-meeting-api; }; then
     pull_vexa_runtime_images
 fi
 
+# REQ-2d post-deploy orphan snapshot. Best-effort — snapshot failure
+# does NOT fail the deploy. The snapshot script emits structlog-events
+# to stdout; Alloy picks them up into VictoriaLogs.
+orphan_snapshot() {
+    if [[ -x "$KLAI_DIR/scripts/audit-orphan-snapshot.sh" ]]; then
+        "$KLAI_DIR/scripts/audit-orphan-snapshot.sh" "${SERVICE:-all}" || \
+            echo "WARN: post-deploy orphan-snapshot failed (deploy itself succeeded)" >&2
+    else
+        echo "WARN: $KLAI_DIR/scripts/audit-orphan-snapshot.sh not installed yet — skipping post-deploy snapshot" >&2
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Several services in one call — the bulk sweep in deploy-compose.yml.
+#
+# That sweep used to run a bare `docker compose up -d` over every service and
+# report success when compose returned, which is when containers are CREATED,
+# not when they serve. On 2026-09-18 it recreated 31 services in one merge,
+# Caddy and the fail-closed PII analyzer among them, and nothing checked that
+# any came back.
+#
+# One `up -d` for the whole list, so compose still orders the recreates by
+# depends_on. Then only the containers that actually changed are judged: a
+# service compose had no reason to touch is not this deploy's doing, and letting
+# an unrelated long-dead container fail every compose change would train people
+# to ignore the red.
+#
+# Verification runs in parallel. Each check polls for VERIFY_POLLS x
+# VERIFY_INTERVAL (5 x 2s) so it can catch a crash loop, and done one after
+# another that was about five minutes for those 31 services. Side by side it is
+# one poll window, whatever the count. The services are distinct, so the renames
+# restore_canonical_name may do cannot collide.
+#
+# No override when compose fails. For one service, a compose failure can be
+# overruled once that one container is verifiably replaced (see the verdict
+# block below). With a list, compose may have stopped part-way, and a service
+# it never reached is indistinguishable from one it had no reason to touch — so
+# overruling would call a half-applied deploy green. Verification and the name
+# repair still run first, so the log says what did come up.
+# ---------------------------------------------------------------------------
+if (( ${#SERVICES[@]} > 1 )); then
+    declare -A PRE_BY_SERVICE=()
+    for svc in "${SERVICES[@]}"; do
+        PRE_BY_SERVICE[$svc]="$(service_container_id "$svc")"
+    done
+
+    if [[ -z "$NO_PULL" ]]; then
+        echo "Pulling ${#SERVICES[@]} services..."
+        if ! "$DOCKER" compose pull "${SERVICES[@]}" 2>&1; then
+            echo "WARN: pull had failures (likely klai/<svc>:local-tagged services) — proceeding with existing local images"
+        fi
+    fi
+
+    echo "Recreating ${#SERVICES[@]} services with --remove-orphans..."
+    COMPOSE_RC=0
+    # shellcheck disable=SC2086
+    "$DOCKER" compose up -d --remove-orphans $NO_DEPS_FLAG $FORCE_RECREATE_FLAG "${SERVICES[@]}" \
+        || COMPOSE_RC=$?
+
+    RECREATED=()
+    for svc in "${SERVICES[@]}"; do
+        if [[ "$(service_container_id "$svc")" != "${PRE_BY_SERVICE[$svc]}" ]]; then
+            RECREATED+=("$svc")
+        else
+            echo "$svc: not recreated — compose left it alone, so this deploy does not judge it"
+        fi
+    done
+
+    VERIFY_DIR="$(mktemp -d)"
+    VERIFY_PIDS=()
+    for svc in "${RECREATED[@]}"; do
+        ( verify_service_running "$svc" ) > "$VERIFY_DIR/$svc" 2>&1 &
+        VERIFY_PIDS+=("$!")
+    done
+    FAILED=()
+    for i in "${!RECREATED[@]}"; do
+        wait "${VERIFY_PIDS[$i]}" || FAILED+=("${RECREATED[$i]}")
+        cat "$VERIFY_DIR/${RECREATED[$i]}"
+    done
+    rm -rf "$VERIFY_DIR"
+
+    if (( ${#FAILED[@]} > 0 )); then
+        echo "::error::${#FAILED[@]} of ${#RECREATED[@]} recreated service(s) did not come up: ${FAILED[*]}"
+        exit 1
+    fi
+    if (( COMPOSE_RC != 0 )); then
+        echo "::error::docker compose exited $COMPOSE_RC; the ${#RECREATED[@]} service(s) it did recreate are running, but with several services a compose failure cannot be overruled — a service it never reached looks the same as one it had no reason to touch"
+        exit 1
+    fi
+    echo "Verified ${#RECREATED[@]} recreated service(s) running; $(( ${#SERVICES[@]} - ${#RECREATED[@]} )) left alone by compose"
+    orphan_snapshot
+    exit 0
+fi
+
 if [[ -n "$SERVICE" ]]; then
-    echo "Pulling $SERVICE..."
+    [[ -n "$NO_PULL" ]] || echo "Pulling $SERVICE..."
     # Pull is best-effort. Some services intentionally have no
     # registry image and `docker compose pull` exits non-zero:
     #   - retrieval-api: image klai/retrieval-api:local — tag-aliased
@@ -327,7 +442,7 @@ if [[ -n "$SERVICE" ]]; then
     #   - bge-m3-sparse on gpu-01: built from local context.
     # For these the existing image is already up-to-date in the local
     # daemon; we proceed to `up -d` which uses what's there.
-    if ! "$DOCKER" compose pull "$SERVICE" 2>&1; then
+    if [[ -z "$NO_PULL" ]] && ! "$DOCKER" compose pull "$SERVICE" 2>&1; then
         echo "WARN: pull failed for $SERVICE (likely a locally-tagged image like klai/<svc>:local) — proceeding with existing local image"
     fi
     if [[ -n "$FORCE_RECREATE_FLAG" ]]; then
@@ -409,12 +524,4 @@ if [[ -n "$SERVICE" ]]; then
     fi
 fi
 
-# REQ-2d post-deploy orphan snapshot. Best-effort — snapshot failure
-# does NOT fail the deploy. The snapshot script emits structlog-events
-# to stdout; Alloy picks them up into VictoriaLogs.
-if [[ -x "$KLAI_DIR/scripts/audit-orphan-snapshot.sh" ]]; then
-    "$KLAI_DIR/scripts/audit-orphan-snapshot.sh" "${SERVICE:-all}" || \
-        echo "WARN: post-deploy orphan-snapshot failed (deploy itself succeeded)" >&2
-else
-    echo "WARN: $KLAI_DIR/scripts/audit-orphan-snapshot.sh not installed yet — skipping post-deploy snapshot" >&2
-fi
+orphan_snapshot
