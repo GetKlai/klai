@@ -199,6 +199,30 @@ SIGNALS: list[ObservabilitySignal] = [
         source="evolutie.md 2.19, 2.24, 2.35",
     ),
     ObservabilitySignal(
+        name="scripts/export_librechat_messages.py",
+        kind="instrument",
+        service="portal-api (operator script)",
+        purpose={
+            "nl": "Leest gesprekken inclusief foutmeldingen voor onderzoek. Bevat klantdata: bewaar de uitvoer buiten de publieke repository.",
+            "en": "Reads conversations including failed messages for research. Contains customer data: keep output outside the public repository.",
+        },
+        how_to_read="python -m scripts.export_librechat_messages --database DB --since ISO --until ISO",
+        read_automatically=False,
+        source="SPEC-RAG-INTAKE-QUALITY-001",
+    ),
+    ObservabilitySignal(
+        name="knowledge_ingest.eval.intake_quality",
+        kind="report",
+        service="knowledge-ingest (offline operator script)",
+        purpose={
+            "nl": "Meet of een bekend bronantwoord in één zoekfragment past en terugkomt. Hergebruikt de RAGAS-suite; rapporteert alleen totalen uit een privéopname.",
+            "en": "Measures whether a known source answer fits in one indexed chunk and is returned. Reuses the RAGAS suite; reports only aggregates from a private snapshot.",
+        },
+        how_to_read="python -m knowledge_ingest.eval.intake_quality --suite PATH --snapshot PATH",
+        read_automatically=False,
+        source="SPEC-RAG-INTAKE-QUALITY-001",
+    ),
+    ObservabilitySignal(
         name="scripts/audit-public-tenant-data.py",
         kind="guard",
         service="repository (pre-commit, CI)",
