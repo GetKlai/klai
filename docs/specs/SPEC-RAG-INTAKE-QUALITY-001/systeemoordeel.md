@@ -8,17 +8,20 @@ nauwkeurigheidsscore en geen verklaring dat alle onderzoeksvragen zijn afgerond.
 
 De zoek- en antwoordketen is goed uitgebouwd en bevat gemeten verbeteringen.
 De kwaliteit van de opgenomen kennis en de betrouwbaarheid van de beoordelingen
-zijn minder goed onderbouwd. De eerstvolgende investering gaat naar bronbehoud
-en een controleerbare antwoordmeting, niet naar een nieuwe zoekarchitectuur.
+zijn minder goed onderbouwd. Zowel herstelde broninhoud als een vierde gevonden
+bron leverde in de volledige proeven geen herhaalbaar betere antwoorden op.
+De volgende stap vraagt betere referenties en een aangetoonde fout op een concrete
+antwoordroute voordat opnieuw een algemene instelling wordt veranderd.
 
 | Onderdeel | Bewijs | Oordeel en grens |
 |---|---|---|
 | Bevraging | Antwoordlog §2.29–2.34: letterlijke dekking 19/54 naar 32/54; herformuleringen winnen twee antwoordrondes. | Best onderbouwde onderdeel. De intake-nameting §6 bevat nog geen bevestiging op echt bezoekerverkeer. |
 | Antwoordcontrole | Antwoordlog beschrijft zincontrole, reparatie en afgewezen uitbreidingen. | Nuttig, maar afhankelijk van bronkwaliteit; betere zoekcijfers kunnen slechtere antwoorden opleveren. |
 | Gap detection | Intake-meetlog §5: scores missen 15/29 missing/incomplete-bevindingen; 5/34 covered krijgt een signaal. §10: vijf onbeoordeelbare detectorproeven. | Geschikt voor onderzoek door een inhoudseigenaar; nauwkeurigheid zonder menselijke referenties onbekend. |
-| Bronintake | §3 en §7: linktekstverlies op acht opnieuw opgehaalde pagina's; drie van vier onderzochte navigatiestappen ontbreken in de index. | Direct aangetoond verlies vóór chunking. Eerst bronbehoud tegen navigatieruis afwegen. |
+| Bronintake | §3 en §7: linktekstverlies vóór chunking. §11: 18 linklabels hersteld, maar antwoordvoorkeur 49–47 met tegengestelde rondes. | Herstel is gemeten en afgewezen voor uitrol; bronbehoud alleen garandeert geen betere antwoorden. |
 | Chunking en context | §4 en §7: 30 prefixen zonder duidelijke tegenspraak; acht gekozen antwoordspans passen in één child, vijf bereiken de antwoordcontext. | Geen bewijs voor een nieuwe chunker. Langere antwoorden, taxonomie en historische samenvattingen zijn niet afdoende beoordeeld. |
-| HyPE | §9: 35 voorkeuren voor aan, 29 voor uit, acht gelijk; richting wisselt per beoordelingsronde. | Geen overtuigende winnaar. Alternatieve vraagprompt en inschakeling per contenttype zijn nog niet getest. |
+| HyPE | §9: 35 voorkeuren voor aan, 29 voor uit, acht gelijk; richting wisselt per ronde. §12–13: twee foutieve navigatiechunks bereiken in de gekozen diagnoses niet de eerste twintig kandidaten. | Geen overtuigende winnaar en geen aangetoonde antwoordschade van deze twee fouten. Hiervoor nu geen nieuwe prompt bouwen; inschakeling per contenttype blijft onbeoordeeld. |
+| Bronselectie | §14: bekende-spandekking 11/30 naar 14/30; volledige antwoordvoorkeur 49–45 met tegengestelde rondes, onbewezen details 10 naar 13 beoordelingen. | Vier bronnen afgewezen voor uitrol. Meer gevonden tekst is hier geen aantoonbare antwoordwinst. |
 
 De vragenjudge bleek procedurevragen bij linklijsten te gemakkelijk goed te keuren
 (§4). Modeloordeel alleen is dus geen referentiewaarheid. Leg echte vragen,
@@ -27,12 +30,13 @@ door een agent van labels door een menselijke inhoudseigenaar.
 
 ## Prioriteit en open onderzoek
 
-1. **Bronbehoud:** bestaande raw/fit-uitvoer onderzoeken, dezelfde echte vragen
-   vóór en na de ingreep beantwoorden, extra navigatieruis en verlies van eerder
-   ondersteunde antwoorden meten. Daarna pas hercrawl met omvang en duur melden.
-2. **Vraaggeneratie:** bestaande navigatieherkenning hergebruiken; een gerichte
-   HyPE-prompt naast de huidige prompt meten. Alleen zinvolle vragen genereren
-   die uit de betreffende passage te beantwoorden zijn.
+1. **Beoordelingsreferenties:** inhoudseigenaren laten vastleggen welke bestaande
+   antwoorden en gaps werkelijk kloppen, via de aanwezige reviewvelden. Beperkt
+   bouwwerk; dit maakt volgende kwaliteitsbesluiten betrouwbaarder.
+2. **Gerichte bronselectie en vraaggeneratie:** pas een ingreep meten wanneer echte
+   vragen een concrete fout in vraagvectoren of bronselectie aantonen. De huidige twee
+   navigatiefouten rechtvaardigen na §12–13 geen implementatie; de algemene vierde
+   bron valt af in §14. Een nieuwe proef vereist een specifieke bronselectiefout.
 3. **Context en meetbaarheid:** gebruikte samenvattingen via bestaande opslag
    bewaren wanneer dit nodig blijkt voor een concrete proef. Historische
    samenvattingen zijn niet terug te halen door nieuwe te genereren.
