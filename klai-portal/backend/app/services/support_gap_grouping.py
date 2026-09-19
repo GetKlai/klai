@@ -147,9 +147,11 @@ def _parse_assignments(
             raise SupportCaseAnalysisError("grouping matched a candidate with a different diagnosis/language/audience")
         source_index = candidate.get("finding_index")
         if source_index is not None and (
-            type(source_index) is not int or source_index not in by_index or source_index >= index
+            type(source_index) is not int or source_index not in by_index or source_index > index
         ):
             raise SupportCaseAnalysisError("grouping matched a same-batch candidate that is not earlier")
+        if source_index == index:
+            continue
         matched[index] = key
     return matched
 
