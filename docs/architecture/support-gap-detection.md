@@ -441,3 +441,57 @@ as described in [Anthropic's evaluation guidance](https://www.anthropic.com/engi
 Research changes the next experiment; it does not authorize automatic knowledge
 publication or turn generated labels into expert truth. Private customer inputs,
 production counts and experiment artifacts stay outside this public document.
+
+### Checks without human reference labels
+
+Ingest already generates HyPE questions and stores them with the source chunks.
+These improve retrieval; generating them does not prove that the detector can
+distinguish an answered question from missing knowledge. Reuse that material
+for controlled checks rather than introducing another question generator.
+[Ragas documents source-derived synthetic test sets](https://docs.ragas.io/en/stable/concepts/test_data_generation/rag/);
+their results still need to be distinguished from independent customer-case accuracy.
+
+`scripts/evaluate_ingest_gaps.py` in the portal backend accepts a frozen export
+containing `snapshot_id` and enriched `chunks` with their existing `questions`.
+It runs the actual support assessor with the source present, then with all
+evidence withheld through a per-call retrieval override. Questions the source-present
+trial cannot establish are unscorable. Missing, uncertain and incorrect
+source-present claims remain separate outcomes. Reports retain hashes and
+analyzer provenance without reproducing source text. This measures assessment
+after ingestion, not retrieval recall: these questions already participate in
+the search index.
+
+The ingest worker also schedules this shared assessment at 02:30 UTC. Internal
+portal endpoints discover eligible organization-owned knowledge bases and
+recheck tenant policy before assessment: full telemetry and the knowledge-gap
+feature must both be enabled. Personal knowledge bases are excluded. The task
+reuses enriched source chunks and their existing questions; it does not process
+customer conversations during this check.
+
+Each nightly run has a five-minute execution budget and attempts at most ten
+questions across eligible scopes. Ten is an operational ceiling, not a sample
+size that establishes detector quality. Selection rotates by day, scope and
+artifact within a bounded source scan. Reports expose the scan ceiling and
+omitted candidates so that this sample cannot be mistaken for full coverage.
+Execution and queueing locks prevent overlapping runs and duplicate waiting
+jobs; [Procrastinate documents these as separate lock guarantees](https://procrastinate.readthedocs.io/en/stable/howto/advanced/locks.html).
+
+Existing evaluation rows store source identifiers, hashes, analyzer versions
+and outcomes without source text. Precision and recall remain null. A nightly
+sample remains inconclusive about overall detector quality even when all scored
+pairs pass. Unscorable questions remain visible, and external-service failures
+fail the task after persisting available results. Larger fixed customer-case
+comparisons and independently reviewed references remain separate evaluations.
+
+`scripts/evaluate_support_gaps.py --repeat-input second.json --kb-snapshot ID
+--repeat-kb-snapshot ID --input first.json` compares repeated case analyses.
+Both exports must describe the same case content and explicit KB snapshot.
+Keep analyzer and model versions fixed when measuring run-to-run variation.
+Question matching is wording-sensitive; changed wording is reported as an
+unmatched old and new finding, not as a proven semantic change. Human-reference
+precision and recall remain a separate mode.
+
+The ingest service's existing scheduled RAGAS suites measure retrieval and
+answer quality separately. Retrieval failures persist diagnostic rows but fail
+the overall run, including partially completed evaluations; a completed worker
+task must not stand in for a valid quality measurement.

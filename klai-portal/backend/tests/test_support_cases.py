@@ -9,6 +9,7 @@ and the case-detail KB firewall.
 
 from __future__ import annotations
 
+import asyncio
 import sys
 import types
 from collections.abc import Iterator
@@ -272,6 +273,63 @@ async def test_classify_findings_stamps_only_actionable_findings() -> None:
     classify.assert_awaited_once_with("z1", "kb-a", "Reset 2FA?")
     assert out[0]["taxonomy_node_ids"] == [5, 7]
     assert "taxonomy_node_ids" not in out[1]
+
+
+@pytest.mark.asyncio
+async def test_classify_findings_retries_failed_finding_without_marking_successful_empty() -> None:
+    findings = [
+        {"question": "Transient failure", "diagnosis": "missing", "comparison_limitations": []},
+        {"question": "No taxonomy match", "diagnosis": "missing", "comparison_limitations": []},
+    ]
+    classify = AsyncMock(side_effect=[None, [], [5]])
+    with patch("app.services.knowledge_ingest_client.classify_gap_taxonomy", classify):
+        out = await _classify_findings(zitadel_org_id="z1", kb_slug="kb-a", findings=findings)
+
+    assert out[0]["taxonomy_node_ids"] == [5]
+    assert out[0]["comparison_limitations"] == []
+    assert "taxonomy_node_ids" not in out[1]
+    assert out[1]["comparison_limitations"] == []
+
+
+@pytest.mark.asyncio
+async def test_classify_findings_marks_exhausted_taxonomy_failure_on_finding() -> None:
+    findings = [{"question": "Unavailable", "diagnosis": "missing", "comparison_limitations": []}]
+    classify = AsyncMock(side_effect=[None, None])
+    with patch("app.services.knowledge_ingest_client.classify_gap_taxonomy", classify):
+        out = await _classify_findings(zitadel_org_id="z1", kb_slug="kb-a", findings=findings)
+
+    assert "taxonomy_node_ids" not in out[0]
+    assert "taxonomy classification was unavailable" in " ".join(out[0]["comparison_limitations"]).lower()
+
+
+@pytest.mark.asyncio
+async def test_taxonomy_outage_returns_findings_with_partial_labels_within_retry_budget(monkeypatch) -> None:
+    findings = [{"question": name, "diagnosis": "missing"} for name in ("available", "recovered", "stalled", "queued")]
+    attempts = dict.fromkeys((f["question"] for f in findings), 0)
+
+    async def classify(_org, _kb, question):
+        assert (_org, _kb) == ("z1", "kb-a")
+        attempts[question] += 1
+        if question == "available":
+            return [3]
+        if attempts[question] == 1:
+            return None
+        if question == "recovered":
+            return [5]
+        await asyncio.Event().wait()
+
+    real_timeout = asyncio.timeout
+    monkeypatch.setattr(asyncio, "timeout", lambda seconds: real_timeout(None if seconds is None else seconds / 1000))
+    with patch("app.services.knowledge_ingest_client.classify_gap_taxonomy", classify):
+        result = await asyncio.wait_for(
+            _classify_findings(zitadel_org_id="z1", kb_slug="kb-a", findings=findings), timeout=0.2
+        )
+
+    assert result == findings
+    assert result[0]["taxonomy_node_ids"] == [3]
+    assert result[1]["taxonomy_node_ids"] == [5]
+    assert all("taxonomy_node_ids" not in finding and finding["comparison_limitations"] for finding in result[2:])
+    assert attempts == {"available": 1, "recovered": 2, "stalled": 2, "queued": 1}
 
 
 def test_question_key_keeps_kb_audience_diagnosis_distinct() -> None:

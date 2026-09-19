@@ -34,7 +34,7 @@ import { PageContainer } from '@/components/ui/page-container'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import { appNavActivityIsVisible, appNavGapsIsVisible } from '@/routes/app/-app-tools'
 import { TranscriptImportDialog } from './_components/TranscriptImportDialog'
-import { diagnosisLabel } from './-support-helpers'
+import { caseSourceLabel, diagnosisLabel } from './-support-helpers'
 
 type GapsSearch = { days?: number; gapType?: string; language?: string; include_resolved?: boolean }
 const VALID_DAYS = new Set([7, 14, 30, 60, 90])
@@ -82,6 +82,7 @@ interface GapRow {
   diagnosis: string | null
   audience: string | null
   support_case_ids: number[]
+  support_sources?: string[]
   group_key?: string | null
   topic: { id: number; name: string } | null
 }
@@ -441,7 +442,7 @@ export function GapsPage() {
               <DataTableHead>{m.gaps_column_query()}</DataTableHead>
               <DataTableHead className="w-24">{m.gaps_column_type()}</DataTableHead>
               <DataTableHead className="w-20">{m.gaps_column_language()}</DataTableHead>
-              <DataTableHead className="w-28">{m.gaps_column_source()}</DataTableHead>
+              <DataTableHead className="w-40">{m.gaps_column_source()}</DataTableHead>
               <DataTableHead className="w-32">{m.gaps_column_nearest_kb()}</DataTableHead>
               <DataTableHead align="right" className="w-20">{m.gaps_column_count()}</DataTableHead>
               <DataTableHead align="right" className="w-28">{m.gaps_column_last()}</DataTableHead>
@@ -522,13 +523,21 @@ export function GapsPage() {
                   </DataTableCell>
                   <DataTableCell className="text-gray-600">{gap.language ?? '–'}</DataTableCell>
                   <DataTableCell>
-                    <Badge variant={gap.source === 'automatic' ? 'secondary' : 'info'}>
-                      {gap.source === 'support'
-                        ? m.gaps_source_support()
-                        : gap.source === 'review'
-                          ? m.gaps_source_review()
-                          : m.gaps_source_automatic()}
-                    </Badge>
+                    <div className="flex flex-wrap gap-1">
+                      {gap.source === 'support' && (gap.support_sources ?? []).length > 0
+                        ? (gap.support_sources ?? []).map((source) => (
+                            <Badge key={source} variant="info">{caseSourceLabel(source)}</Badge>
+                          ))
+                        : (
+                            <Badge variant={gap.source === 'automatic' ? 'secondary' : 'info'}>
+                              {gap.source === 'support'
+                                ? m.gaps_source_support()
+                                : gap.source === 'review'
+                                  ? m.gaps_source_review()
+                                  : m.gaps_source_automatic()}
+                            </Badge>
+                          )}
+                    </div>
                   </DataTableCell>
                   <DataTableCell className="text-gray-600">
                     {gap.nearest_kb_slug ?? '—'}

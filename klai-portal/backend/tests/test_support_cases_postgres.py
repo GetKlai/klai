@@ -247,6 +247,44 @@ async def _gap_topics(factory, org_id: int = 901) -> list:
         )
 
 
+async def test_support_gap_provenance_counts_cases_once_and_orders_ties(pg) -> None:
+    admin, factory, _cid, _analyzer = pg
+    async with admin.begin() as conn:
+        case_ids = list(
+            (
+                await conn.execute(
+                    text(
+                        "INSERT INTO portal_support_cases "
+                        "(org_id,kb_slug,source,account_id,external_id,created_by,payload,content_hash,status) "
+                        "VALUES (901,'kb-a','audio','a','call','u','{}'::jsonb,:h,'analyzed'),"
+                        "(901,'kb-a','hubspot','a','ticket','u','{}'::jsonb,:h,'analyzed') RETURNING id"
+                    ),
+                    {"h": "s" * 64},
+                )
+            ).scalars()
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO portal_retrieval_gaps "
+                "(org_id,user_id,query_text,gap_type,support_case_id,diagnosis,question_key,occurred_at) VALUES "
+                "(901,'u','Mixed','content',:a,'missing','mixed','2026-09-18T10:00:00Z'),"
+                "(901,'u','Mixed again','content',:a,'missing','mixed','2026-09-18T11:00:00Z'),"
+                "(901,'u','Mixed ticket','content',:h,'missing','mixed','2026-09-18T12:00:00Z'),"
+                "(901,'u','Older','content',:a,'missing','z-old','2026-09-17T10:00:00Z'),"
+                "(901,'u','New B','content',:a,'missing','b-new','2026-09-19T10:00:00Z'),"
+                "(901,'u','New A','content',:a,'missing','a-new','2026-09-19T10:00:00Z')"
+            ),
+            {"a": case_ids[0], "h": case_ids[1]},
+        )
+
+    gaps = await _gap_topics(factory)
+    mixed = gaps[0]
+    assert (mixed.group_key, mixed.occurrence_count) == ("mixed", 2)
+    assert mixed.support_case_ids == sorted(case_ids)
+    assert mixed.support_sources == ["audio", "hubspot"]
+    assert [gap.group_key for gap in gaps[1:]] == ["a-new", "b-new", "z-old"]
+
+
 async def test_support_gap_classified_topic_surfaces_in_gaps(pg) -> None:
     admin, factory, cid, _analyzer = pg
     async with admin.begin() as conn:

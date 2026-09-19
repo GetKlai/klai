@@ -156,6 +156,7 @@ class VerifyResult:
 # longer runs.
 KNOWN_CALLER_SERVICES: frozenset[str] = frozenset(
     {
+        "knowledge-ingest",
         "knowledge-mcp",
         "scribe",
         "retrieval-api",

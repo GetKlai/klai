@@ -373,11 +373,36 @@ async def _grouped_findings(
     the judge fails, the findings simply stand on their own (logged, never lost).
     """
     candidates = await _open_group_candidates(db, org_id=org_id, kb_slug=kb_slug, exclude_case_id=exclude_case_id)
+    had_existing_candidates = bool(candidates)
+    candidate_keys = {candidate["question_key"] for candidate in candidates}
+    for index, finding in enumerate(findings):
+        if finding.get("diagnosis") not in INBOX_DIAGNOSES:
+            continue
+        key = _question_key(
+            question=finding["question"],
+            diagnosis=finding["diagnosis"],
+            language=finding.get("language"),
+            kb_slug=kb_slug,
+            audience=finding.get("audience"),
+        )
+        if key in candidate_keys:
+            continue
+        candidates.append(
+            {
+                "question_key": key,
+                "question": finding["question"],
+                "diagnosis": finding["diagnosis"],
+                "language": finding.get("language"),
+                "audience": finding.get("audience"),
+                "finding_index": index,
+            }
+        )
+        candidate_keys.add(key)
     # Close the read-only snapshot (commit, not rollback: rollback would expire a
     # caller's still-in-use rows, e.g. the rescore loop's case list) so no lock or
     # transaction is held across the model call.
     await db.commit()
-    if not candidates:
+    if not had_existing_candidates and len(candidates) < 2:
         return findings
     try:
         from app.services.support_gap_grouping import group_findings
@@ -403,8 +428,23 @@ async def _classify_findings(*, zitadel_org_id: str, kb_slug: str, findings: lis
     node_id_lists = await asyncio.gather(
         *(classify_gap_taxonomy(zitadel_org_id, kb_slug, f["question"]) for f in actionable)
     )
+    try:
+        async with asyncio.timeout(10.0):
+            for index, finding in enumerate(actionable):
+                if node_id_lists[index] is None:
+                    node_id_lists[index] = await classify_gap_taxonomy(zitadel_org_id, kb_slug, finding["question"])
+    except TimeoutError:
+        pass  # Unfinished classifications retain None and receive a visible limitation below.
     for finding, node_ids in zip(actionable, node_id_lists, strict=True):
-        if node_ids:
+        if node_ids is None:
+            limitation = (
+                "Taxonomy classification was unavailable within the retry budget, "
+                "so this finding may be missing topic labels."
+            )
+            limitations = finding.setdefault("comparison_limitations", [])
+            if limitation not in limitations:
+                limitations.append(limitation)
+        elif node_ids:
             finding["taxonomy_node_ids"] = node_ids
     return findings
 

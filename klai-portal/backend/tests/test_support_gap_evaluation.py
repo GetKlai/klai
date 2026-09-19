@@ -254,3 +254,67 @@ def test_channel_report_leaks_no_raw_question_text():
     report = esg.evaluate([hub], [alignment(cid="hub", matches=[{"finding_index": 0, "reference_index": 0}])])
     assert "secret-customer-question" not in json.dumps(report)
     assert "secret-finding-text" not in json.dumps(report)
+
+
+def test_repeatability_reports_output_changes_by_channel_without_customer_text():
+    first = [
+        case(
+            cid="phone",
+            source="audio",
+            analysis=[
+                finding("missing", "Secret reset question"),
+                finding("incomplete", "Secret evidence question"),
+                finding("audience", "Secret removed question"),
+            ],
+        ),
+        case(cid="hub", source="hubspot", analysis=[finding("missing", "Secret stable question")]),
+    ]
+    repeat = [
+        case(
+            cid="phone",
+            source="audio",
+            analysis=[
+                finding("outdated", "  secret RESET question "),
+                {**finding("incomplete", "Secret evidence question"), "message_ids": ["m2"]},
+                finding("findability", "Secret new wording"),
+            ],
+        ),
+        case(cid="hub", source="hubspot", analysis=[finding("missing", "Secret stable question")]),
+    ]
+
+    report = esg.evaluate_repeatability(first, repeat, "kb-v5", "kb-v5")
+
+    assert report["measurement"] == "model_output_repeatability_not_accuracy"
+    assert report["aggregate"] == {
+        "first_findings": 4,
+        "repeat_findings": 4,
+        "stable": 1,
+        "changed": 2,
+        "diagnosis_changed": 1,
+        "evidence_changed": 1,
+        "missing_from_repeat": 1,
+        "new_in_repeat": 1,
+        "exact_repeatability": 0.2,
+    }
+    assert report["by_channel"]["phone"]["changed"] == 2
+    assert report["by_channel"]["hubspot"]["stable"] == 1
+    assert "Secret" not in json.dumps(report)
+
+
+@pytest.mark.parametrize(
+    ("repeat", "first_snapshot", "repeat_snapshot", "error"),
+    [
+        ([case(content_hash="h2")], "kb-v5", "kb-v5", "content_hash"),
+        ([case()], "kb-v5", "kb-v6", "KB snapshot"),
+    ],
+)
+def test_repeatability_refuses_different_inputs(repeat, first_snapshot, repeat_snapshot, error):
+    with pytest.raises(esg.EvaluationError, match=error):
+        esg.evaluate_repeatability([case()], repeat, first_snapshot, repeat_snapshot)
+
+
+@pytest.mark.parametrize("invalid", [{"analysis": None}, {"analysis": "unavailable"}, {"status": "failed"}])
+def test_repeatability_refuses_unavailable_analysis(invalid):
+    first = {**case(), **invalid}
+    with pytest.raises(esg.EvaluationError, match="analysis unavailable"):
+        esg.evaluate_repeatability([first], [case()], "kb-v5", "kb-v5")
