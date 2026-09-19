@@ -462,9 +462,11 @@ if [[ -n "$SERVICE" ]]; then
     "$DOCKER" compose up -d --remove-orphans $NO_DEPS_FLAG $FORCE_RECREATE_FLAG "$SERVICE" \
         || COMPOSE_RC=$?
 else
-    echo "Pulling all services..."
-    if ! "$DOCKER" compose pull 2>&1; then
-        echo "WARN: bulk pull had failures (likely klai/<svc>:local-tagged services) — proceeding with existing local images"
+    if [[ -z "$NO_PULL" ]]; then
+        echo "Pulling all services..."
+        if ! "$DOCKER" compose pull 2>&1; then
+            echo "WARN: bulk pull had failures (likely klai/<svc>:local-tagged services) — proceeding with existing local images"
+        fi
     fi
     if [[ -n "$FORCE_RECREATE_FLAG" ]]; then
         echo "Recreating all services with --remove-orphans --force-recreate..."

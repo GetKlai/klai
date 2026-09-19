@@ -407,6 +407,18 @@ else
     echo "  ok     --no-pull pulled nothing, vexa pre-pull included"
 fi
 
+# The usage line promises --no-pull in every mode; the no-service path is the
+# one that still pulled unconditionally.
+new_case no_service_no_pull
+run_target --no-pull
+check "no service arg + --no-pull -> 0" 0 "$rc"
+if [[ -s "$case_dir/fixtures/pull_argv" ]]; then
+    echo "  FAIL   --no-pull without a service still pulled: $(cat "$case_dir/fixtures/pull_argv")"
+    failures=$((failures + 1))
+else
+    echo "  ok     --no-pull without a service pulled nothing"
+fi
+
 echo
 if [[ "$failures" -eq 0 ]]; then
     echo "compose-up-verify: all cases passed"
