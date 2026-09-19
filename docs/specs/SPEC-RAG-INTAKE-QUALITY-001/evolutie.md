@@ -203,3 +203,168 @@ nauwkeurigheidspercentage en is geen bewijs dat de intake goed of slecht scoort.
 Een bekend antwoordfragment is nog geen volledig beantwoorde gebruikersvraag.
 De vernieuwde offline support-gap-evaluator bevestigt opnieuw nul beoordeelbare
 cases wegens ontbrekende menselijke referenties.
+
+## 11. Bronbehoud: extern onderzoek en vooraf vastgelegde proef (19 september)
+
+De [systeembeoordeling en werkwijze](systeemoordeel.md) zijn vastgelegd in PR #1566.
+Afzonderlijke Sol-agents onderzoeken de filter, ontwerpen de proef en voeren de
+kleine configuratiewijziging uit; de hoofdagent controleert de meetopstelling.
+
+Primaire bronnen, geraadpleegd op 19 september:
+[Crawl4AI Fit Markdown](https://docs.crawl4ai.com/core/fit-markdown/), de
+[filterbron van 0.9.3](https://github.com/unclecode/crawl4ai/blob/v0.9.3/crawl4ai/content_filter_strategy.py)
+en [Markdown-generator](https://github.com/unclecode/crawl4ai/blob/v0.9.3/crawl4ai/markdown_generation_strategy.py).
+De draaiende versie is daadwerkelijk 0.9.3; de filterklasse is tegen die bron
+gecontroleerd. Pruning beoordeelt een ouder vóór zijn kinderen. Een span met
+voornamelijk linktekst kan daardoor geheel verdwijnen vóór de link wordt bezocht.
+
+Op acht vastgelegde pagina's is dezelfde `cleaned_html` door de daadwerkelijke
+generator verwerkt. De oude configuratie reproduceert de REST-uitvoer 8/8 exact.
+`preserve_tags=["a"]` verandert niets. De bestaande optie `preserve_tags=["span"]`
+herstelt alle 18 eerder ontbrekende unieke labels; het aantal links gaat van
+37 naar 83, gelijk aan de opgeschoonde HTML. Genormaliseerde tekst groeit 1,39%; Markdown
+groeit 6,29%, mede door de herstelde URL's. De overige pruning blijft actief.
+Een synthetische inline-linkproef faalt met de oude configuratie en slaagt met
+de kandidaat op dezelfde geïnstalleerde versie. Dit is nog geen antwoordwinst.
+
+Vooraf vastgelegd: zestien unieke echte vragen met hun oorspronkelijke historie,
+drie antwoordpogingen per variant en twee blinde beoordelingsrondes. Overlappende
+feit- en navigatievragen zijn samengevoegd, met meerdere referentiespans per vraag.
+Dezelfde vraag telt dus niet tweemaal als onafhankelijk geval.
+
+| Variant | Doel |
+|---|---|
+| P | Exacte kopie van de bestaande tenantindex. |
+| R | Vier gekozen artikelen opnieuw verrijkt vanuit dezelfde oude tekst; meet drift door opnieuw verwerken. |
+| N | Dezelfde vier artikelen opnieuw verrijkt met spanbehoud; het verschil met R is het broneffect. |
+
+De vier oude artikelteksten zijn exact gelijk aan de verse oude filteruitvoer.
+Alle varianten behouden dezelfde niet-behandelde zoekconcurrenten. Eigen Qdrant-
+collecties en aparte parentteksten voorkomen productiemutaties. De bestaande
+widgetroute blijft inclusief queryvorming, zoeken, herordenen, controles,
+reparatie en bronweergave actief; er wordt geen antwoordartikel vooraf ingevoegd.
+De drie testindexen zijn privé bewaard met de bestaande
+[Qdrant-snapshotfunctie](https://qdrant.tech/documentation/operations/snapshots/);
+bestandsgrootte en controlesom zijn na het kopiëren voor alle drie gecontroleerd.
+
+De beslispoort blijft antwoordlog §6: beide beoordelingsrondes dezelfde richting,
+voorkeursverschil boven de ruisgrens, geen verdwenen ondersteund antwoord en geen
+toename van onbewezen details. Rebuild-drift wordt apart gerapporteerd; fouten of
+ontbrekende resultaten mogen niet als lege maar geslaagde zoekactie meetellen.
+Latency, modelgebruik en uitkomst per unieke vraag worden eveneens vastgelegd.
+
+### Bredere broncontrole en kleinere kandidaat
+
+Twintig extra pagina's zijn vooraf gekozen: tien willekeurige gewone artikelen
+met vaste seed, vijf korte pagina's en vijf reeds als navigatie herkende pagina's.
+De oude generator reproduceert hun REST-uitvoer 20/20 exact, inclusief het
+gebruik van de uiteindelijke URL na redirects. Globaal spanbehoud wijzigt 18/20
+pagina's; op de vijf navigatiepagina's groeit de genormaliseerde tekst 63,28%.
+Dat maakt de eerste acht pagina's onvoldoende onderbouwing voor algemene uitrol.
+
+De bestaande optie `preserve_classes=["highlighted-color"]` geeft op de acht
+probleempagina's byte voor byte dezelfde Markdown als spanbehoud. Op de twintig
+extra pagina's verandert alleen de tekst van twee gewone artikelen: zestien
+extra links, 0,18% extra genormaliseerde tekst binnen de gewone artikelen en
+0,15% over de gehele steekproef. De korte en navigatiepagina's blijven exact
+gelijk. De smallere optie is daarom vóór de blinde antwoordbeoordeling gekozen.
+
+De oorspronkelijke acht pagina's bevatten na herstel 83 links en twee
+afbeeldingen; een telling van Markdown-linksyntax alleen zou die ten onrechte
+als 85 links rapporteren. Alle oorspronkelijke woordvolgordes blijven behouden.
+De steekproef dekt twee bronlayouts, niet alle mogelijke websites. De oplossing
+blijft gekoppeld aan een bestaande opmaakklasse en beschermt geen tekst waarvan
+een bovenliggend element al door pruning is verwijderd.
+
+### Controle van de meetopstelling
+
+De antwoordgeneratie levert alle 144 verwachte resultaten. De eerste juryproef
+is na 80 oordelen gestopt: de gebruikte prompt noemde alle gevonden passages
+ten onrechte de eigen antwoordcontext, inclusief passages die de selectie niet
+aan het antwoordmodel had doorgegeven. Deze oordelen tellen niet mee. De
+herstelde proef gebruikt de bestaande `render_evidence_context` voor precies
+de daadwerkelijk gebruikte passages; overige gevonden tekst blijft apart
+beschikbaar als referentie. Alle 831 gebruikte passages in de 144 antwoorden
+blijven in die weergave behouden. De antwoordparen en beslisgrenzen veranderen
+niet; beide beoordelingsrondes worden opnieuw uitgevoerd.
+
+Een verbindingsfout (`httpx.ReadError`) onderbreekt de herstelde juryproef na
+24 geldige oordelen. Hervatten behoudt die oordelen en controleert hun exacte
+plaats in de vooraf vastgelegde volgorde. Alleen transportfouten krijgen maximaal
+drie pogingen; elke poging houdt acht seconden startafstand. Prompt, rubric,
+antwoordparen en beslisgrenzen blijven ongewijzigd.
+
+### Van gevonden passage naar gebruikte antwoordcontext
+
+Tien vooraf bekende bronspans, zes feitelijk en vier navigerend, zijn elk in drie
+antwoordpogingen gevolgd. Dit is letterlijke dekking binnen een geselecteerde
+steekproef, geen semantische score of succespercentage voor alle zestien vragen.
+
+| Variant | Gevonden span, alle typen | Gebruikte span, alle typen | Gebruikte feitelijke span | Gebruikte navigatiespan |
+|---|---:|---:|---:|---:|
+| P | 14/30 | 11/30 | 8/18 | 3/12 |
+| R | 15/30 | 14/30 | 11/18 | 3/12 |
+| N | 21/30 | 15/30 | 6/18 | 9/12 |
+
+Bij één feitelijke span onderbreekt de vooraf bekende herstelde navigatietekst
+de letterlijke woordreeks. Alleen die invoeging weglaten voor een aanvullende
+controle geeft N 9/18 gebruikte feitelijke spans. De hoofdmeting hierboven
+blijft letterlijk. Een andere gevonden antwoordbron valt bij N in alle drie
+pogingen buiten de bestaande limiet van drie geselecteerde bronnen.
+
+De getoonde herordenscore is geen globale score waarmee dit direct te repareren
+is: hoofdvraag en herformulering krijgen afzonderlijke scores, waarna reciprocal
+rank fusion hun ranglijsten samenvoegt. De bronselectie gebruikt vervolgens die
+volgorde. Opnieuw sorteren op de getoonde deelscores zou het bestaande contract
+veranderen. Zie het [oorspronkelijke RRF-onderzoek](https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf)
+en de [Qdrant-uitleg](https://qdrant.tech/documentation/search/hybrid-queries/).
+Er is daarom geen zoek- of selectiewijziging aan deze bronproef toegevoegd.
+
+### Antwoorduitslag en besluit
+
+Alle 144 antwoorden en 192 geldige juryoordelen zijn compleet. De onderstaande
+voorkeuren tellen oordelen over dezelfde zestien vragen, geen onafhankelijke
+bezoekers. R is de opnieuw verwerkte oude tekst; N gebruikt de herstelde tekst.
+
+| Vergelijking | Ronde | Oude variant wint | Nieuwe variant wint | Gelijk | Verschil nieuw minus oud |
+|---|---:|---:|---:|---:|---:|
+| P → R | 1 | 21 | 26 | 1 | +5 |
+| P → R | 2 | 25 | 21 | 2 | −4 |
+| R → N | 1 | 26 | 22 | 0 | −4 |
+| R → N | 2 | 21 | 27 | 0 | +6 |
+
+**Besluit: niet uitrollen.** N wint samen 49 keer tegen 47 voor R. Beide rondes
+moesten positief zijn en het gezamenlijke verschil minstens tien; de uitkomst
+voldoet aan geen van beide voorwaarden. Op vraagniveau zijn zes verschillen
+positief, vier negatief en zes nul. Bij omgekeerde presentatie krijgen 11/48
+R–N-paren een andere winnaar. Dat kan presentatiegevoeligheid en variatie van de
+beoordelaar omvatten; deze proef scheidt die oorzaken niet.
+
+Opnieuw verwerken zonder bronwijziging geeft R 47 voorkeuren tegen 46 voor P,
+drie gelijke uitkomsten en eveneens tegengestelde rondes. Er is dus geen
+systematische voorkeur voor de rebuild. Binnen uitsluitend de R–N-beoordeling
+signaleert de jury onbewezen details bij R 23/96 en N 14/96 keer. Die gunstige
+nevenuitkomst vervangt de mislukte voorkeurspoort niet en is geen menselijk
+gevalideerde nauwkeurigheidsscore.
+
+Afzonderlijke agents hebben alle 39 gemarkeerde antwoordparen tegen vraag,
+historie, antwoord en werkelijk gebruikte context gecontroleerd: veertien P–R,
+veertien R–N en elf afgeleide P–N-signalen. Dit zijn geen menselijke labels of
+39 onafhankelijke vragen; P–N was bovendien geen rechtstreeks voorkeursduel.
+Binnen R–N bevestigt die inspectie vijf verliezen van bruikbare bronsteun bij
+twee vragen. De relevante bron wordt gevonden, maar de limiet van drie bronnen
+houdt haar buiten de gebruikte context. Andere signalen komen uit antwoordvariatie,
+onbewezen toevoegingen of inconsistente juryoordelen. Ook de veiligheidscontrole
+ondersteunt daarom geen uitrol.
+
+De mediane antwoordtijd is P 6,79 s, R 7,03 s en N 6,43 s; p95 is respectievelijk
+9,58 s, 9,64 s en 9,70 s. Vastgelegde tokens van de laatste antwoordaanroep zijn
+275.190, 269.999 en 271.371. Dit omvat niet alle zoek-, reparatie- en jurykosten;
+een totale kostenvergelijking is hiermee niet mogelijk.
+
+De configuratiekandidaat blijft buiten main en productie. De vastgelegde teksten,
+indexen en uitslagen blijven privé beschikbaar. De extractiewinst rechtvaardigt
+geen hercrawl zolang de antwoordwinst ontbreekt. De proef bevat één verrijking per
+herbouwde variant en drie antwoordpogingen; zij schat geen variatie tussen
+meerdere onafhankelijke intakeverrijkingen. De eerstvolgende inhoudelijke
+kandidaat blijft de kwaliteit van gegenereerde vragen bij navigatie-inhoud.
