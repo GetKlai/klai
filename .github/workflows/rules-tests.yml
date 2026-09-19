@@ -95,6 +95,10 @@ jobs:
         # suite is plain unittest with no dependencies.
         run: python3 .claude/hooks/klai/tests/public-github-mutation-guard.test.py
 
+      - name: Run gh text guard tests
+        # Blocks customer data in PR and issue bodies before gh sends them.
+        run: python3 .claude/hooks/klai/tests/public-text-guard.test.py
+
       - name: Run worktree guard tests
         # The worktree guard blocked its own documented escapes until this suite
         # existed; plain bash, no dependencies.
