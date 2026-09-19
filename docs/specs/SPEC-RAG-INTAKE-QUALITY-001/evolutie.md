@@ -368,3 +368,47 @@ geen hercrawl zolang de antwoordwinst ontbreekt. De proef bevat één verrijking
 herbouwde variant en drie antwoordpogingen; zij schat geen variatie tussen
 meerdere onafhankelijke intakeverrijkingen. De eerstvolgende inhoudelijke
 kandidaat blijft de kwaliteit van gegenereerde vragen bij navigatie-inhoud.
+
+## 12. Vraagvectoren: invloed aantonen vóór een promptwijziging (19 september)
+
+Voor deze stap zijn [HyPE v1](https://arxiv.org/html/2607.29402v1),
+[AQG v1](https://arxiv.org/html/2508.09755v1) en
+[Doc2Query-- v3](https://arxiv.org/abs/2301.03266v3) geraadpleegd.
+HyPE laat kwaliteitsselectie open; AQG vraagt om vragen die rechtstreeks uit de
+chunk beantwoordbaar zijn. Doc2Query-- toont schadelijke gegenereerde uitbreidingen
+in een andere zoekopzet. Deze bronnen motiveren broncontrole, geen verwachte
+winst voor onze eigen keten.
+
+De bestaande intake voegt alle gegenereerde vragen samen tot één vraagvector.
+Een lege vragenlijst is al toegestaan en gebruikt de oorspronkelijke chunktekst
+als vectorinput. Het KB-contentprofiel heeft een bestaand promptveld; een apart
+filter, nieuw model of nieuwe module is voor een eerste kandidaat niet nodig.
+Navigatieherkenning in de bestaande policy geldt alleen voor graph-verrijking;
+die policy uitbreiden zou meer veranderen dan vraaggeneratie.
+
+Alle dertig eerder onderzochte chunks hebben nog dezelfde tekst en vragen, plus
+een vraagvector met 1024 dimensies. Een nieuwe broninspectie door een agent
+bevestigt twee linklijsten met samen tien onbeantwoordbare procedurevragen.
+De oorspronkelijke judge keurde negen daarvan goed. Dit zijn agentlabels,
+geen onafhankelijke menselijke referenties.
+
+De diagnose gebruikt de zestien vastgelegde echte vragen uit §11, met hun
+opgeslagen resolved query van P, antwoordpoging 1. De productiehelper bouwt de
+tenant-, kennisbank- en tijdsfilters en haalt per zoekkanaal 240 kandidaten op.
+De drie kanalen leveren samen via RRF zestig kandidaten. Een tweede zoekactie
+gebruikt dezelfde vectoren en filters, maar laat uitsluitend het vraagkanaal weg.
+De kennisbankkoppeling is vooraf via de bestaande tenantgebonden sessie geverifieerd.
+
+| Controle | Uitkomst |
+|---|---:|
+| Complete vragen / afzonderlijke zoekkanalen | 16/16 / 48/48 |
+| Vragen waarvan de eerste twintig kandidaten veranderen zonder vraagkanaal | 16/16 |
+| Beide foutieve navigatiechunks aanwezig in enig kanaal bij deze vragen | 0/16 |
+
+**Besluit:** het vraagkanaal beïnvloedt de zoekselectie, maar deze meetset toont
+geen blootstelling aan de twee aangetoonde navigatiefouten. Daarmee is een
+gerichte promptwijziging nog niet meetbaar onderbouwd. Eerst bestaande echte
+gesprekken op passende onderwerpen controleren, vóór kandidaatgeneratie.
+De diagnose bevat geen herformuleringen, nieuwe coreference-stap, reranking,
+bronselectie of antwoorden; er volgt dus geen uitspraak over antwoordkwaliteit.
+Productiegegevens zijn alleen gelezen; de eigen meetcontainer is na exit 0 verwijderd.
