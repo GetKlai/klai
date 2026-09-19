@@ -412,3 +412,145 @@ gesprekken op passende onderwerpen controleren, vóór kandidaatgeneratie.
 De diagnose bevat geen herformuleringen, nieuwe coreference-stap, reranking,
 bronselectie of antwoorden; er volgt dus geen uitspraak over antwoordkwaliteit.
 Productiegegevens zijn alleen gelezen; de eigen meetcontainer is na exit 0 verwijderd.
+
+## 13. Vraagvectoren: aanvullende onderwerpcontrole (19 september)
+
+Na §12 zijn bestaande gespreksuitvoer en brononderwerpen gebruikt om vooraf de
+eerste twaalf unieke passende vragen in tijdsvolgorde vast te leggen. Vragen zijn
+niet herschreven of verzonnen; antwoorden en zoekuitkomsten bepaalden de selectie
+niet. Drie widgetvragen hebben expliciet geen test- of previewmarkering. Negen
+LibreChat-vragen zijn complete gebruikersberichten, maar die export bevat geen
+testmarkering; hun authenticiteit is daarmee niet volledig vast te stellen.
+Eén vraagtekst komt ook in de eerdere zestien voor. De groepen optellen als
+28 onafhankelijke vragen zou dus onjuist zijn.
+
+Dezelfde zoekhelper en tenant-/kennisbankfilters zijn hergebruikt. Ditmaal is
+de ongewijzigde gebruikersvraag de input; beschikbare historie wordt in deze
+basiskanaaldiagnose niet verwerkt. Alle twaalf zoekacties zijn compleet, met
+36 kanalen van 240 kandidaten en 24 fusies van zestig kandidaten.
+
+Eén van de twee foutieve navigatiechunks verschijnt nergens. De andere verschijnt
+bij twee vragen: eenmaal op fusiepositie 56, terwijl dezelfde zoekactie zonder
+vraagkanaal positie 51 geeft; eenmaal buiten de zestig gefuseerde kandidaten.
+Geen van beide chunks bereikt bij enige vraag de eerste twintig kandidaten
+die de reranker aangeboden krijgt. Dit bewijst geen onschadelijkheid bij andere
+vragen, herformuleringen of het volledige chatpad.
+
+**Besluit:** geen nieuwe vraagprompt bouwen op deze twee geselecteerde fouten.
+Het opslagprobleem is aangetoond, maar deze controles verbinden het niet aan
+verlies in de antwoordketen. De cohortuitbreiding stopt hier. Beide eigen
+meetcontainers uit §12–13 zijn verwijderd; productie is alleen gelezen.
+
+## 14. Vierde bron: proef door de antwoordketen (19 september)
+
+Extern onderzoek begint bij [RAGAs](https://aclanthology.org/2024.eacl-demo.16/),
+[Lost in the Middle](https://aclanthology.org/2024.tacl-1.9/) en
+[RECOMP](https://openreview.net/forum?id=mlJLVigNHp). Zij ondersteunen het apart
+meten van antwoorddekking, nutteloze context en werkelijk brongebruik. Meer
+context is op zichzelf geen bewijs voor betere antwoorden.
+
+De code bevat al `build_evidence_pack(..., max_sources=...)`. Bij één kennisbank
+houdt de huidige retrievalroute maximaal drie verschillende bronnen over; bij
+meerdere kennisbanken vijf. De helper bewaart de bestaande volgorde. Ruwe scores
+van verschillende zoekpasses opnieuw sorteren zou een andere ingreep zijn.
+
+De diagnose gebruikt uitsluitend de oorspronkelijke P-baseline uit §11:
+zestien vragen, ieder drie keer. Cap 3 reproduceert de 48 opgeslagen evidence-packs
+exact. Cap 4 behoudt alle oorspronkelijke bronnen en items in dezelfde relatieve
+volgorde; uitsluitend de vierde bron en haar items komen erbij.
+
+| Controle | Drie bronnen | Vier bronnen |
+|---|---:|---:|
+| Gedekte verwachte passages over drie pogingen | 11/30 | 14/30 |
+| Unieke verwachte passages minstens eenmaal gedekt | 4/10 | 5/10 |
+| Totale tekstomvang van evidence-items in tekens | 416.360 | 470.856 |
+| Mediane tekstomvang van evidence-items per antwoord | 7.365 | 8.081 |
+
+Alle drie extra dekkingobservaties zijn één passage bij één vraag, herhaald in
+drie pogingen. De definitie gebruikt dezelfde markdownstrip, witruimtenormalisatie
+en canonieke bronvergelijking als §11. Een voorlopige telling van 8 naar 11 gebruikte
+een andere normalisatie en is daarom vervangen. Bij 35/48 records komt een vierde
+bron erbij, samen 37 extra items; hun tekstomvang groeit met 13,1%.
+Dit telt geen metadata, overige prompttekst of modeltokens.
+
+Een aparte agent inspecteerde alle zestien eerste pogingen zonder de antwoorden
+of juryuitkomsten te lezen. Twee vierde bronnen bieden mogelijk nuttige extra
+informatie, waarvan één afhangt van een niet vastgesteld toesteltype; vier zijn
+redundant, zes niet relevant en vier vragen hebben geen vierde bron. Dit zijn
+agentlabels, geen menselijke beoordeling of gemeten antwoordwinst.
+
+**Vooraf vastgelegd:** één vergelijking door de volledige antwoordketen met
+alle zestien vragen, zonder selectie op de gevonden winst. Twee identieke kopieën
+van de bevroren productie-index houden Qdrant-inhoud en ouderteksten gelijk.
+De gedeelde live graph-service is niet bevroren en levert in de eerste controles
+ook kandidaten; de proef bevriest daarmee niet alle kennisopslag in de keten.
+Drie antwoordpogingen per variant en twee blinde, omgekeerd gepresenteerde
+beoordelingsrondes blijven vereist. Beide voorkeurssaldi moeten positief zijn,
+het gezamenlijke verschil minstens tien, zonder verlies van eerder ondersteunde
+antwoorden of toename van onbewezen details.
+
+De volledige proef bevat 96 antwoorden: zestien vragen, drie pogingen, twee
+varianten. Twee kopieën van dezelfde snapshot hebben exact dezelfde punten,
+payloads en vectoren; ouderteksten en de elf invoer-/harnasbestanden zijn op hash
+gecontroleerd. Een versiecontrole stopte de eerste start vóór enig antwoord.
+De inmiddels vernieuwde portal-image is daarna voor beide armen vastgelegd;
+alleen de gapgroepering verschilde, niet de antwoordroute. Hypothese, vragen en
+beslisgrenzen veranderden niet.
+
+Alle antwoorden bevatten precies één zoekaanvraag met de juiste bronlimiet.
+Vraag, historie, kennisbank en vaste zoekparameters zijn gelijk in 48/48 paren.
+Gegenereerde zoekvarianten zijn gelijk in 42/48; bij deze identieke aanvragen
+is de volgorde van teruggegeven chunk-ID's gelijk in 38/42. De live graaf levert
+telkens tien kandidaten. De proef omvat dus ook variatie in zoeken en genereren.
+
+De vierde bron komt in 35/48 antwoorden erbij. In de 38 paren met identieke
+aanvraag, opgeloste vraag en chunkvolgorde groeit de evidence-tekst 27 keer en
+blijft zij elf keer gelijk. De gevraagde modelalias is steeds dezelfde; 87/96
+responses noemen uitsluitend die alias, zodat het achterliggende model daar
+niet onafhankelijk is vast te stellen. Negen responses noemen twee concrete
+modellen. Model- en zoekvariatie beperken de causale uitleg van een verschil.
+
+Alle 96 antwoorden en 96 blinde beoordelingen zijn compleet. Iedere combinatie
+van vraag en antwoordpoging is in twee omgekeerde presentatievolgordes beoordeeld.
+De jury zag de werkelijk gebruikte context per antwoord en daarnaast een apart
+gelabelde unie van ruwe passages. Extra passages in die unie tellen niet als
+eigen-contextsteun. Er waren geen transportherhalingen of uitgesloten resultaten.
+
+| Uitkomst | Ronde 1 | Ronde 2 | Samen |
+|---|---:|---:|---:|
+| Drie bronnen beter | 24 | 21 | 45 |
+| Vier bronnen beter | 23 | 26 | 49 |
+| Gelijk | 1 | 1 | 2 |
+| Beoordeling met onbewezen detail, drie / vier | 5 / 7 | 5 / 6 | 10 / 13 |
+
+Het voorkeurssaldo voor vier bronnen is −1 en +5, samen +4. Daarmee falen beide
+voorkeursgrenzen; ook de grens voor onbewezen details faalt. Die laatste telling
+betreft beoordelingen met minstens één claim die niet door de unie wordt gedragen,
+geen onafhankelijke menselijke foutlabels. Bij 35/48 antwoordparen is het oordeel
+in beide volgordes gelijk; dertien krijgen tegengestelde winnaars. Per vraag zijn
+er zes positieve, zeven negatieve en drie gelijke gecombineerde saldi.
+
+De mediane doorlooptijd is 6,97 tegenover 7,18 seconden; p95 is 9,54 tegenover
+10,17 seconden. Het vastgelegde tokengebruik van de uiteindelijke antwoordaanroep
+is 274.631 tegenover 294.924. Dit sluit zoeken, reparaties en jurycalls uit en is
+daarom geen volledige kostenmeting.
+
+Een afzonderlijke agent inspecteerde alle zes verliesflags en negen bredere
+steunflags, samen dertien verschillende antwoordparen. Twee verliesflags houden
+stand; één antwoord verliest nuttige instructies maar biedt wel de expliciet
+gevraagde menselijke hulp. Eén andere escalatie is passend en twee flags zijn
+foutpositief of missen een bewezen goede baseline. Zes van de negen bredere flags
+betreffen steunverslechtering; drie blijken onjuist of inconsistent. Dit zijn
+agentlabels. De eerste telling van drie antwoordverliezen is aangescherpt door
+gevraagde menselijke hulp volgens het vooraf vastgelegde jurycontract te tellen.
+
+Een bevestigd verlies treedt op bij exact dezelfde aanvraag, zoekresultaten en
+antwoordcontext, zonder vierde bron. Een bredere flag blijkt juist een nuttig
+antwoord met de vierde bron te markeren. De proef rechtvaardigt dus geen causale
+claim dat de extra bron ieder verschil veroorzaakt, en evenmin een nieuwe
+algemene promptwijziging op basis van de flags alleen.
+
+**Besluit: niet uitrollen.** Meer bekende-spandekking levert hier geen herhaalbare
+antwoordwinst op. De bestaande limiet van drie bronnen blijft actief. Geen
+productcode gewijzigd, geen herindexering en geen nieuwe prompt gebouwd.
+Alle vijf eigen proefcontainers zijn na opslag van de resultaten verwijderd.
