@@ -185,3 +185,21 @@ enkele `plain_text`-passages zonder vraagvector. Dit is geen meting van het
 inschakelen van HyPE op andere typen. Een alternatieve vraagprompt is evenmin
 beproefd. Daarvoor ontbreken in deze proef vooraf gevalideerde vraagsets per type;
 de telling van vragen en vectoren uit §2 vervangt die antwoordproeven niet.
+
+## 10. Nieuwe bestaande gap-controle hergebruikt (19 september)
+
+Tijdens het onderzoek kwam een bron-afgeleide detectorcontrole op main:
+`ingest_gap_evaluation.evaluate_ingest_snapshot`, met een begrensde nachtelijke
+RAGAS-aanroep. Deze geeft de gap-beoordelaar een bron en houdt die daarna weg.
+Dat is een andere vraag dan onze offline meting van bronbehoud en zoekdekking.
+Geen tweede automatische detectorcontrole toegevoegd.
+
+De nieuwe controle is in een aparte container uitgevoerd op vijf van de echte
+widgetvragen uit §7, met hun volledige opgeslagen antwoordartikel. Uitkomst:
+**5 unscorable, 0 scored, 0 failed; inconclusive**. Met bron waren de oordelen
+missing, incomplete, uncertain, covered en non_knowledge. Alleen covered ging door
+naar de proef zonder bron; daar werd het oordeel non_knowledge. Dit geeft geen
+nauwkeurigheidspercentage en is geen bewijs dat de intake goed of slecht scoort.
+Een bekend antwoordfragment is nog geen volledig beantwoorde gebruikersvraag.
+De vernieuwde offline support-gap-evaluator bevestigt opnieuw nul beoordeelbare
+cases wegens ontbrekende menselijke referenties.
