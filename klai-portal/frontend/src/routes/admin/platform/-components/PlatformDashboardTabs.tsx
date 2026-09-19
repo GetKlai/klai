@@ -15,6 +15,7 @@ import {
   DataTableRow,
 } from "@/components/ui/data-table"
 import { ListEmptyState, ListLoadingState } from "@/components/ui/list-state"
+import { QueryErrorState } from "@/components/ui/query-error-state"
 import { getLocale } from "@/paraglide/runtime"
 import * as m from "@/paraglide/messages"
 import {
@@ -280,6 +281,8 @@ function ObservabilitySignalsSection() {
       <p className="mt-0.5 mb-4 text-sm text-gray-600">{m.platform_signals_description()}</p>
       {signals.isLoading ? (
         <ListLoadingState label={m.platform_checking()} className="py-2" />
+      ) : signals.isError ? (
+        <QueryErrorState error={signals.error} onRetry={() => void signals.refetch()} />
       ) : !signals.data?.length ? (
         <ListEmptyState title={m.platform_signals_empty()} />
       ) : (
@@ -300,7 +303,7 @@ function ObservabilitySignalsSection() {
                   <p className="text-xs text-gray-600">{signal.service}</p>
                 </DataTableCell>
                 <DataTableCell>
-                  <p className="text-sm text-gray-700">{signal.purpose}</p>
+                  <p className="text-sm text-gray-700">{signal.purpose[getLocale()] ?? signal.purpose.en}</p>
                   <p className="mt-1 text-xs text-gray-600">{signal.source}</p>
                 </DataTableCell>
                 <DataTableCell>

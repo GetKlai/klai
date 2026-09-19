@@ -444,7 +444,8 @@ export interface PlatformObservabilitySignal {
   name: string
   kind: 'log' | 'record' | 'report' | 'instrument' | 'guard'
   service: string
-  purpose: string
+  // Keyed by locale; the backend always carries both 'nl' and 'en'.
+  purpose: Record<string, string>
   how_to_read: string
   read_automatically: boolean
   source: string

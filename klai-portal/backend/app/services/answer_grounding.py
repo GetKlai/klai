@@ -122,7 +122,22 @@ async def _call(
 # out of time, and a replay of 4 s against 8 s could not tell whether that
 # mattered (logboek 2.37).
 _LATE_CHECK_CEILING_SECONDS = 20.0
+# A provider slowdown would otherwise turn every visitor turn into one more
+# background call, each with its own client, feeding the slowdown it came from.
+# Past this many the new one is cancelled and says so; the measurement is a
+# sample, and a sample does not need every turn of an outage.
+_LATE_CHECK_LIMIT = 20
 _late_checks: set[asyncio.Task] = set()
+
+
+async def _post_with_deadline(**kwargs) -> str:
+    """``_post`` under one TOTAL deadline.
+
+    httpx's timeout applies per phase (connect, write, read), so a slow response
+    could run well past it; this bounds the whole call.
+    """
+    async with asyncio.timeout(_LATE_CHECK_CEILING_SECONDS):
+        return await _post(**kwargs)
 
 
 def _log_late_verdict(task: asyncio.Task, *, org_id: int | str | None, started: float) -> None:
@@ -163,7 +178,7 @@ async def check_grounding(
     """
     started = time.perf_counter()
     task = asyncio.create_task(
-        _post(
+        _post_with_deadline(
             system_prompt=GROUNDING_CHECK_SYSTEM_PROMPT,
             user_content=grounding_check_user_content(question=question, articles=articles, draft=draft),
             settings=settings,
@@ -175,10 +190,20 @@ async def check_grounding(
         # shield: the budget ends the wait, not the call.
         content = await asyncio.wait_for(asyncio.shield(task), _CHECK_TIMEOUT_SECONDS)
     except TimeoutError:
+        logger.warning("answer_grounding_call_failed", reason="budget", budget_s=_CHECK_TIMEOUT_SECONDS)
+        if len(_late_checks) >= _LATE_CHECK_LIMIT:
+            task.cancel()
+            logger.warning("answer_grounding_late_skipped", org_id=org_id, running=len(_late_checks))
+            return None
         _late_checks.add(task)
         task.add_done_callback(lambda done: _log_late_verdict(done, org_id=org_id, started=started))
-        logger.warning("answer_grounding_call_failed", reason="budget", budget_s=_CHECK_TIMEOUT_SECONDS)
         return None
+    except asyncio.CancelledError:
+        # shield() also protects the call from the request being cancelled, so
+        # without this a shutdown or a dropped connection would leave it running
+        # untracked, with no callback to log or release it.
+        task.cancel()
+        raise
     except Exception:
         logger.warning("answer_grounding_call_failed", exc_info=True)
         return None

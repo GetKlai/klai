@@ -732,7 +732,7 @@ export function usePlatformObservabilitySignals() {
   return useQuery({
     queryKey: ['platform-observability-signals'],
     queryFn: async () => apiFetch<PlatformObservabilitySignal[]>('/api/admin/platform/signals'),
-    staleTime: Infinity,
+    staleTime: 5 * 60_000,
     enabled: auth.isAuthenticated,
   })
 }
