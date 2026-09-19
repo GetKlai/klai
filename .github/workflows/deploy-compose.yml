@@ -408,8 +408,27 @@ jobs:
             }
             trap 'on_compose_exit "$?"' EXIT
 
+            # Through compose-up.sh rather than a bare `docker compose up -d`.
+            # compose returns once containers are CREATED, so the bare call
+            # reported green while a recreated container could be dead on boot,
+            # crash-looping, or left under a hash-prefixed name by a
+            # half-finished recreate. On 2026-09-18 this sweep recreated 31
+            # services in one merge, Caddy and the fail-closed PII analyzer
+            # among them, with nothing checking any of them came back.
+            #
+            # compose-up.sh still issues one `up -d` for the whole list, so
+            # depends_on ordering is unchanged; it then verifies each container
+            # that was actually recreated, in parallel, and fails the step if
+            # any did not come up. --no-pull keeps this sweep's behaviour: it
+            # never pulled, and pulling every image on every compose change
+            # would be slow and a new way to fail. The script was installed a
+            # few steps up, in the deploy/scripts loop, so this is the version
+            # from this same commit.
+            #
+            # No `| tail` here: it hid the start of compose's output, and the
+            # per-service verdict is exactly what someone reading a red run needs.
             # shellcheck disable=SC2086
-            docker compose up -d --remove-orphans $COMPOSE_ENV_DRIFT_SERVICES 2>&1 | tail -50
+            /opt/klai/scripts/compose-up.sh --no-pull $COMPOSE_ENV_DRIFT_SERVICES
             trap - EXIT
             echo "::endgroup::"
 

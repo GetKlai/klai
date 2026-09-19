@@ -160,7 +160,8 @@ run_workflow_tail() {
       /echo "::group::SPEC-MCP-RETRIEVAL-001 follow-up/ { capture=1 }
       capture && /# SPEC-SEC-024 M4.3 — non-blocking post-deploy smoke-test/ { exit }
       capture { sub(/^            /, ""); print }
-    ' "$WORKFLOW" | sed 's|cd /opt/klai|cd "$WORK_DIR"|' >"$tmp/workflow-tail.sh"
+    ' "$WORKFLOW" | sed -e 's|cd /opt/klai|cd "$WORK_DIR"|' \
+        -e 's|/opt/klai/scripts/compose-up.sh|"$WORK_DIR/compose-up.sh"|' >"$tmp/workflow-tail.sh"
 
     cat >"$tmp/docker" <<'STUB'
 #!/usr/bin/env bash
@@ -180,6 +181,12 @@ case "$*" in
 esac
 exit 0
 STUB
+    cat >"$tmp/compose-up.sh" <<'STUB'
+#!/usr/bin/env bash
+echo "compose-up $*" >>"$CALLS"
+[ "$SCENARIO" = compose_fail ] && exit 42
+exit 0
+STUB
     cat >"$tmp/sudo" <<'STUB'
 #!/usr/bin/env bash
 echo "sudo $*" >>"$CALLS"
@@ -190,7 +197,7 @@ STUB
 echo "systemctl $*" >>"$CALLS"
 exit 0
 STUB
-    chmod +x "$tmp/docker" "$tmp/sudo" "$tmp/systemctl"
+    chmod +x "$tmp/docker" "$tmp/compose-up.sh" "$tmp/sudo" "$tmp/systemctl"
 
     set +e
     PATH="$tmp:$PATH" SCENARIO="$scenario" CALLS="$tmp/calls" WORK_DIR="$tmp" \
@@ -223,6 +230,8 @@ check "the env-drift compose call still excludes litellm" \
     bash -c 'grep -q "compose-up .* portal" <<<"$0" && ! grep -q "compose-up .* litellm" <<<"$0"' "$WORKFLOW_CALLS"
 
 run_workflow_tail success
+check "the sweep recreates through compose-up.sh with --no-pull, not bare compose" \
+    bash -c 'grep -q "^compose-up --no-pull .*portal" <<<"$0" && ! grep -q "^compose-up compose up" <<<"$0"' "$WORKFLOW_CALLS"
 check "a successful main compose re-applies the firewall exactly once" \
     bash -c '[ "$1" -eq 0 ] && [ "$(grep -c "^sudo systemctl restart klai-harden-firewall.service$" <<<"$0")" -eq 1 ]' "$WORKFLOW_CALLS" "$WORKFLOW_RC"
 
