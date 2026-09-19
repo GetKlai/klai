@@ -2,7 +2,7 @@
 
 Doel van dit bestand: wat er gemeten is, wat daaruit volgde, en wat er live staat. Zo hoeft niemand een meting of een onderzoek over te doen. De spec ernaast (`spec.md`) beschrijft het ontwerp; dit bestand beschrijft de weg ernaartoe.
 
-Bijgewerkt: 2026-09-19, na 2.34.
+Bijgewerkt: 2026-09-19, na 2.38.
 
 ---
 
@@ -20,7 +20,7 @@ Een beurt van een bezoeker loopt door deze schakels. Per schakel: wat het doet, 
 | 6 | Koppelen aan bronnen | `klai-libs/citations` | ongewijzigd, dit is de ondergrens |
 | 7 | Controle achteraf op het antwoord | `services/answer_judge.py` + `services/answer_grounding.py`; intern `deploy/litellm/klai_answer_grounding.py` | licht oordeel plus controle per zin met reparatie, live 18 sep; dezelfde reparatie op het interne pad sinds #1526 en #1530, platform-breed (2.22, 2.23) |
 | 8 | Kennisbank | Voys-artikelen | ontbreekt bij één op de negen kennisvragen (6 van 54, met de zes onderwerpen erbij in 2.31); bij nog eens één op de acht staat het er maar is de eerste vraag te mager om het te bereiken. Niet aangepakt. De widget zoekt in één van de negen kennisbanken van Voys (`support`, 8947 chunks); prijzen, Ascend en de nerds-wiki staan buiten bereik |
-| — | Meten van de keten | `scripts/simulate_conversations.py` | hele gesprekken sinds 18 sep; ijking eerlijk gerekend 75% tegen 81% van de herspeling (2.19, gecorrigeerd in 2.24); bezoeker en scoorder sinds 2.24 op een ander model dan de controle die ze meten; nulmeting daarmee 33% doel bereikt, 8 van 12 doorverwezen (2.30). Voor één schakel: de widgetroute in-process herspelen met de echte controles (2.32, 2.33) |
+| — | Meten van de keten | `scripts/simulate_conversations.py` | hele gesprekken sinds 18 sep; ijking eerlijk gerekend 75% tegen 81% van de herspeling (2.19, gecorrigeerd in 2.24); bezoeker en scoorder sinds 2.24 op een ander model dan de controle die ze meten; nulmeting daarmee 33% doel bereikt, 8 van 12 doorverwezen (2.30); sinds 2.35 geeft de bezoeker na twee doorverwijzingen op en is de nulmeting 2 van 12 bereikt, 11 van 12 doorverwezen. Voor één schakel: de widgetroute in-process herspelen met de echte controles (2.32, 2.33, 2.37) |
 
 ---
 
@@ -948,6 +948,114 @@ doorverwijzing.
 **Wat nu volgt** staat in §5 punt 1: het dagrapport van de controle per zin op eerste beurten, want in
 de herspeling liep die controle met de herformuleringen vaker tegen haar 4 s aan.
 
+### 2.35 De bezoeker geeft op na twee doorverwijzingen, en de nulmeting verschuift (19 sep)
+De bezoeker uit 2.24 stopt pas als zijn doel beantwoord is, en liep daardoor in 2.30 en 2.34 alle
+twaalf gesprekken de vier beurten vol, ook als de assistent al twee keer een medewerker had
+aangeboden. Een echte bezoeker klikt dan op de knop of gaat weg. Nu eindigt een gesprek na de tweede
+afspraakknop (`_HAND_OFFS_BEFORE_GIVING_UP = 2` in `simulate_conversations.py`), met een test die het
+vastlegt. Dezelfde twaalf gesprekken opnieuw, live, nul 429's:
+
+| | 2.30 (oude bezoeker) | 2.34 (na #1548, oude bezoeker) | **2.35 (na #1548, nieuwe bezoeker)** |
+|---|---|---|---|
+| Doel bereikt | 4 van 12 | 4 van 12 | **2 van 12** |
+| Eerlijk doorverwezen zonder antwoord | 8 van 12 | 9 van 12 | **11 van 12** |
+| Eerste antwoord met bron | 9 van 12 | 10 van 12 | 9 van 12 |
+| Gemiddeld aantal assistentbeurten | 4,0 | 4,0 | **2,5** (7 gesprekken stoppen na 2) |
+| Gemiddeld verspilde beurten | 1,2 | 1,1 | 0,5 |
+
+**Leesregel voor dit logboek, vanaf hier:** alles tot en met 2.34 staat tegen de nulmeting van 2.30
+(bezoeker die niet opgeeft); alles vanaf 2.35 staat tegen deze nulmeting. De twee zijn niet met elkaar
+te vergelijken: "doel bereikt" daalt van 4 naar 2 zonder dat de widget veranderde, omdat de bezoeker
+nu ophoudt waar een mens ophoudt en de scoorder een doorverwijzing niet als succes telt. Wat dit
+harnas nu laat zien is de widget zoals een bezoeker hem meemaakt: bij elf van de twaalf echte
+beginvragen eindigt het gesprek bij een medewerker, meestal binnen twee beurten.
+
+### 2.36 De zes onderwerpen die aantoonbaar ontbreken, voor de redactie (19 sep)
+Uit 2.31, per onderwerp: wat de bezoeker vroeg (eigen woorden, ingekort), wat hij er later bij zei, wat
+het zoeken wél vond en waarom dat het antwoord niet was. Geen code kan dit oplossen; het is inhoud.
+
+1. **Beschikbaarheid in de app automatisch op vaste tijden.** Vraag: "Is het mogelijk om de
+   beschikbaarheid in de app op vaste tijden automatisch in te stellen, bijvoorbeeld 8:30 aan en
+   17:00 uit, elke werkdag?" Later: "kan dit ook per collega?" Gevonden: *Openingstijden | Basis*,
+   *Verschillende manieren om Openingstijden te gebruiken*, *Zo gebruik je de Voys-app*. Die gaan
+   over openingstijden van een nummer in het belplan, niet over de persoonlijke
+   beschikbaarheidsstatus van een gebruiker in de app; of dat per gebruiker op een tijdschema kan,
+   staat nergens.
+2. **Gemiste oproep in het log terwijl een collega opnam.** Vraag: "zodra ik gebeld word en er wordt
+   opgenomen door een andere telefoon, blijft de oproep op mijn telefoon als gemist staan." Later:
+   "ik wil dat hij alleen als gemist staat als er niet wordt opgenomen." Gevonden: *Yealink
+   bureautelefoon functies*, *Ik heb een probleem met mijn Yealink*, *Cisco-functies*. Die beschrijven
+   toestelinstellingen in het algemeen; de instelling voor gemiste-oproepmeldingen bij een belgroep
+   (of dat het per toestel niet anders kan) staat er niet.
+3. **Het e-mailadres van gespreksnotificaties wijzigen.** Vraag: "ik wil dat de mail van een gemiste
+   oproep naar een ander e-mailadres wordt verzonden." Later: "de mails komen al binnen op ons
+   infomail, ik wil alleen het adres veranderen"; "waar staat het e-mailadres voor
+   gespreksnotificaties?"; "na Administratie zie ik geen Stap 4 notificaties." Gevonden:
+   *Gespreksnotificaties*, *E-mail voor gemiste gesprekken met Zapier*. Het eerste zegt dat de
+   notificaties bestaan, niet waar het adres staat en hoe je het wijzigt; het tweede is een omweg via
+   Zapier die de bezoeker niet zocht. De stappen in het artikel kloppen bovendien niet met wat de
+   bezoeker in het scherm zag ("geen Stap 4 notificaties").
+4. **Een belplan tijdelijk uitschakelen zodat het nummer direct overgaat.** Vraag: "Hoe kan ik
+   tijdelijk het hele belplan van een nummer weghalen zodat het nummer rechtstreeks, zonder menu, te
+   bereiken is, en daarna weer terugzetten?" Later: "niet naar voicemail omleiden"; "ik zie geen
+   bestemming onder tijdelijke omleiding"; "hoe verwijder ik een belplan." Gevonden: *Tijdelijke
+   omleiding*, *Je belplan instellen en aanpassen*. Tijdelijke omleiding stuurt naar een voicemail
+   of een ander nummer; een belplan pauzeren met behoud van het plan (of de aanbevolen werkwijze:
+   een kopie, een extensie) staat nergens beschreven.
+5. **Alle toestellen laten bellen bij een ontruiming.** Vraag: "Is het mogelijk dat bij een
+   ontruiming alle toestellen in het kantoor gebeld worden met een ontruimingsmelding?" Later: "het
+   hoeft niet automatisch; de BHV'er belt een nummer waardoor bij iedereen de telefoon overgaat en
+   blijft overgaan, of een speciale ringtone." Gevonden: *Belgroepen*, *Piketdienst*,
+   *Gespreksnotificaties*, *Snom-opties*. Belgroepen komt het dichtst bij (alle toestellen tegelijk
+   laten rinkelen) maar zegt niets over doorbellen na opnemen, een omroep of een aparte ringtone per
+   belgroep; een artikel "ontruiming of alarm via de telefonie" ontbreekt.
+6. **"Connectivity" in de app, en een dubbel gesprek zonder opname.** Vraag: "dubbel gesprek in
+   gesprekken, geen opname." Later: "gespreksopname staat aan en werkt normaal ook"; "was een
+   uitgaand gesprek"; de bezoeker zoekt een optie die hij "connectivity" of "connectify" noemt.
+   Gevonden: *De Voys App*, *iPhone Voys App Probleemoplosser*. Geen artikel noemt die optie of
+   beschrijft wat een dubbel gesprek in het overzicht betekent en waarom de opname dan ontbreekt.
+   Mogelijk is de term van de bezoeker zelf verkeerd; ook dan hoort de app-terminologie ergens
+   uitgelegd te staan.
+
+Daarnaast uit 2.16: de artikelketen voor internationale gesprekken loopt halverwege dood ("hoe schakel
+ik het account in voor internationale gesprekken" staat er niet, de bezoeker komt vast te zitten op
+*Belkosten*).
+
+### 2.37 Het budget van de controle per zin op eerste beurten: gemeten, niet verhoogd (19 sep)
+Met de herformuleringen live haalde de controle per zin in de herspeling van 2.33 haar 4 s vaker niet
+(13 en 14 van 54 tegen 3 en 5 daarvoor). Dan blijft het antwoord ongecontroleerd staan. Gemeten wat
+een ruimer budget doet: dezelfde 54 eerste vragen door de live keten (mét herformuleringen), één ronde
+met 4 s en één met 8 s voor de controle, reparatie ongewijzigd 3 s.
+
+| | Controle 4 s (huidig) | Controle 8 s |
+|---|---|---|
+| Controle niet afgerond binnen budget | 9 van 54 | 1 van 54 |
+| Gerepareerd | 6 | 24 |
+| Vaste weigering | 3 | 1 |
+| Antwoord met bron | 50 | 53 |
+| Duur van de controle-aanroep, mediaan / traagste tien procent | 2,3 s / 4,0 s (afgekapt) | 1,9 s / 4,2 s; 3 aanroepen boven 6 s |
+| Tijd per beurt, mediaan / traagste tien procent | 6,0 s / 9,5 s | 6,6 s / 9,6 s |
+| Beurten boven 12 s | 1 | 3 |
+| Blind, `klai-large` mét passages: beter | 27 | 24 (2 gelijk) |
+| "Bevat iets dat niet in de passages staat" | 7 | 7 |
+
+Het ruimere budget laat de controle afronden en de reparatie vier keer zo vaak draaien, maar in het
+blinde oordeel en in het aantal antwoorden met een niet-gedragen bewering is daar niets van terug te
+zien, terwijl de mediaan 0,6 s stijgt en het aantal beurten boven twaalf seconden verdrievoudigt. Eén
+ronde en 54 vragen, dus een verschil onder de ruis; maar de kosten zijn wél zichtbaar.
+
+**Besluit:** het budget blijft 4 s. Wie de controle liever wél laat afronden: van de 9 afgekapte
+aanroepen zaten er 5 tussen 4 en 6 s, dus 6 s dekt het merendeel tegen één tot twee seconden extra op
+alleen die beurten. Dat is een afweging tussen wachttijd en een controle die vaker afrondt zonder
+aantoonbaar beter antwoord, en die ligt bij de eigenaar van de widget.
+
+### 2.38 "Geen nieuwe gok zonder nieuw artikel": onder de ruis, niet gebouwd (19 sep)
+§5 noemde de regel: bij een vervolgbeurt waarvan het zoeken alleen artikelen oplevert die al geciteerd
+waren, een medewerker aanbieden in plaats van opnieuw te schrijven. Nagerekend op de 140 herspeelde
+vervolgbeurten van 2.32 (twee rondes, 70 beurten): het geval doet zich 1 en 2 keer voor, en in die
+beurten was het antwoord al de eerlijke "niet gevonden" mét bron. De regel zou dus hooguit twee van
+zeventig beurten raken en daar niets veranderen. Niet gebouwd.
+
 ---
 
 ## 3. Wat er live ging, en waarom
@@ -973,6 +1081,7 @@ de herspeling liep die controle met de herformuleringen vaker tegen haar 4 s aan
 | 18 sep | Het interne pad repareert, niet-streamend (#1526) | 2.22 |
 | 18 sep | De reparatie ook op de vastgehouden Strict-stroom, waar elke interne beurt langskomt (#1530) | 2.23 |
 | 19 sep | Twee herformuleringen van de eerste vraag als eigen zoekpasses, na herrangschikken samengevoegd (retrieval-api `query_variants`, widget `query_paraphrase.py`, #1548) | 2.27 op zoekniveau, 2.33 eind-tot-eind: 63 om 43; live bevestigd in 2.34 |
+| 19 sep | Het harnas: de bezoeker geeft op na twee doorverwijzingen; nieuwe nulmeting | 2.35 |
 
 ---
 
@@ -999,44 +1108,55 @@ Context rond de vraag als zoeksignaal (18 sep, voor 2.25 t/m 2.28):
 
 ## 5. Wat nog open staat
 
-Op volgorde van wat de metingen als grootste rem aanwijzen.
+Elk punt draagt zijn stand: **gemeten en afgevallen** (eind-tot-eind, met de sectie), **onder de ruis**
+(het verschil is kleiner dan §6 toelaat of het geval komt te weinig voor), of **buiten de code** (inhoud
+of een keuze van de eigenaar). Aan de zoekkant en in de keten staat niets meer open dat meetbaar
+beter kan zonder eerst op echt verkeer te kijken.
 
-1. **De herformuleringen op echt verkeer nameten.** 2.33 is live na de merge; de nulmeting van het
-   harnas (2.30) ligt klaar en het dagrapport van de controle per zin moet laten zien of de
-   controle op eerste beurten vaker haar 4 s haalt (in de herspeling liep zij bij 15 van de 54 af
-   tegen 3 tot 7 daarvoor). Zo niet, dan is het budget op de eerste beurt aan de beurt, niet de
-   herformulering.
-2. **De kennisbank aanvullen, met de lijst uit 2.31.** Zes onderwerpen ontbreken aantoonbaar
-   (beschikbaarheid in de app op vaste tijden, gemiste-oproep-log als een ander toestel opneemt,
-   notificatie-adres wijzigen, belplan tijdelijk uitschakelen, ontruimingsbel, "connectivity" in de
-   app); daarnaast liep in 2.16 de artikelketen halverwege dood bij internationale gesprekken. Dat
-   is één op de negen kennisvragen, geen derde; verder zoekwerk haalt dat niet weg.
-3. **De reikwijdte van de widget heroverwegen.** Hij mag in één van de negen kennisbanken zoeken.
-   `priceright-prijzen-voys` (4527 chunks) en `ascend` (6710) bevatten antwoorden op vragen die
-   bezoekers stellen. Voor een publieke helppagina is dat waarschijnlijk bewust, maar het is een
-   keuze die sinds de inrichting niet is herzien, en de instelling uit 2.10f vangt nu precies de
-   vragen af waarvan het antwoord in de kennisbank ernaast staat.
-4. **Meten op echt verkeer.** Alles hierboven is gemeten met herspelingen en simulaties. Het
-   dagrapport (`scripts/grounding_report.py`) had op 18 sep twee antwoorden. Wat er vandaag live
-   ging is dus nog nergens op echte bezoekers bevestigd.
-5. **Het harnas groter draaien.** Twaalf gesprekken kunnen een effect van de grootte van 2.21 niet
-   aantonen, en meer gesprekken kosten snelheidslimiet die met bezoekers gedeeld wordt. Meerdere
-   rondes buiten kantooruren.
-6. **Het valse alarm in de niet-behandelde onderwerpen.** Eén op de vijftig hulpvragen krijgt de
-   doorverwijstekst; drie oplossingen gemeten en alle drie duurder dan de kwaal (2.18). Dit is een
-   afweging voor de eigenaar van de widget.
-7. **Geen nieuwe gok zonder nieuw artikel:** bij een vervolgbeurt zonder nieuw gevonden artikel een
-   medewerker aanbieden (23 van de 38 correctiebeurten).
+**Buiten de code**
+1. **De kennisbank aanvullen** met de zes onderwerpen uit 2.36 en de dode artikelketen voor
+   internationale gesprekken (2.16). Eén op de negen kennisvragen (6 van 54) kan geen enkele schakel
+   beantwoorden omdat het antwoord er niet is; bij nog eens 7 staat het er wel maar bereikt de eerste
+   vraag het niet, en daar is het vragen dat het systeem niet mag doen (2.4, 2.25). Dit is de grootste
+   hefboom die over is.
+2. **De reikwijdte van de widget.** Hij zoekt in één van de negen kennisbanken; `priceright-prijzen-voys`
+   (4527 chunks) en `ascend` (6710) bevatten antwoorden op vragen die bezoekers stellen, en de
+   instelling uit 2.10f vangt precies die vragen af. Een keuze van de eigenaar.
+3. **Het valse alarm in de niet-behandelde onderwerpen** (2.18): één op de vijftig hulpvragen krijgt
+   de doorverwijstekst; drie oplossingen gemeten en alle drie duurder dan de kwaal. Een keuze van de
+   eigenaar.
+4. **Het budget van de controle per zin** (2.37): 4 s laat op eerste beurten 9 van 54 controles
+   afkappen; 8 s laat ze afronden zonder meetbaar beter antwoord en met een zwaardere staart. 6 s is de
+   ongemeten middenweg (5 van de 9 gered, één tot twee seconden op die beurten). Een keuze van de
+   eigenaar tussen wachttijd en volledigheid van de controle.
 
-Afgehandeld: de zware controle op verzonnen details (2.8, 2.9), dezelfde controle én reparatie op
-het interne pad (2.11, 2.14, 2.22, 2.23), de instelling per widget (2.10f, 2.13), de korte vraag met vervolgvraag (2.10),
-de stijlregels uit de basisprompt (2.5, 2.13), aspectgericht doorvragen (2.20), de paginaboost (2.26) en
-varianten voor het herschrijven (2.28: het vorige antwoord als leg wint, de vorige bezoekersbeurt niet).
+**Onder de ruis**
+5. **Het vorige antwoord als zoekleg bij vervolgbeurten** (2.28, 2.32): 65 om 61 over twee rondes met
+   tegengestelde rondes, meer verzinsels. Niet live.
+6. **"Geen nieuwe gok zonder nieuw artikel"** (2.38): raakt 1 tot 2 van 70 vervolgbeurten, die al goed
+   gingen.
+7. **Het harnas als effectmeter**: twaalf gesprekken zien een effect van de grootte van 2.21 of 2.34
+   niet (§6). Het harnas is de nulmeting en de bevestiging dat nieuwe code draait; het bewijs voor een
+   ketenwijziging komt uit de herspeling van 54 vragen in twee rondes (2.33).
 
-Niet meer proberen, met de meting erbij: doorvragen vóór het antwoord (2.4, 2.7, 2.10), keuzes uit
-gevonden artikelen (2.7), een taxonomie-aspect als zoekprefix (2.20), een sterkere paginaboost (2.26),
-en de zoekvraag verrijken met wat de bezoeker niet gezegd heeft (2.25: dat is het vraag-orakel achter
-de 29 om 7).
+**Wacht op echt verkeer, niet op code**
+8. **De herformuleringen op echte bezoekers.** Het dagrapport van de controle per zin
+   (`scripts/grounding_report.py`) en de beslisrecords (`query_variants_run`,
+   `query_variants_added`) laten over een week zien of 2.33
+   op echt verkeer hetzelfde doet als in de herspeling: meer antwoorden die de vraag oplossen, niet
+   meer niet-gedragen beweringen, en hoe vaak de controle afkapt.
+
+**Gemeten en afgevallen, niet meer proberen:** doorvragen vóór het antwoord (2.4, 2.7, 2.10), keuzes
+uit gevonden artikelen (2.7), een taxonomie-aspect als zoekprefix (2.20), een sterkere paginaboost
+(2.26), de zoekvraag verrijken met wat de bezoeker niet gezegd heeft (2.25), een zoekleg vóór het
+herrangschikken (2.32), het vorige antwoord als zoekpass (2.32), het eerder geciteerde artikel uit die
+pass weglaten (2.32), inkorten van de artikelen voor de controle (2.10b), samenvoegen van de twee
+controles achteraf (2.10c) en een ruimer controlebudget (2.37).
+
+**Afgehandeld en live:** de zware controle met reparatie op beide paden (2.8, 2.9, 2.22, 2.23), de
+instelling per widget (2.10f, 2.13), het chatcontract als bewijs (2.17), de afspraakknop onder een
+doodlopend antwoord (2.21), de herformuleringen op de eerste beurt (2.33, 2.34), en het harnas met
+gescheiden beoordelaar en een bezoeker die opgeeft (2.24, 2.35).
 
 ---
 
