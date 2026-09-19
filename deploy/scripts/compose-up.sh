@@ -271,8 +271,18 @@ verify_service_running() {
     # 0 = the service is up and stayed up; 1 = it is not.
     # Sets VERIFIED_CID to the container it judged, so the caller can tell a
     # replacement apart from the survivor of a failed recreate.
-    local service="$1" cid status health restarts prev_restarts="" i
-    cid="$(service_container_id "$service")"
+    #
+    # $2, when given, is the container id the caller already looked up. The
+    # multi-service path passes it so its parallel checks do not each start a
+    # `docker compose ps` — that parses the whole compose file and .env, and
+    # fifty of them at once was the cost of the lookup, not of the check. An
+    # explicitly empty $2 means "no container" and is judged as such.
+    local service="$1" cid status health restarts prev_restarts="" i code
+    if (( $# >= 2 )); then
+        cid="$2"
+    else
+        cid="$(service_container_id "$service")"
+    fi
     VERIFIED_CID="$cid"
     if [[ -z "$cid" ]]; then
         echo "::error::no container for $service after recreate"
@@ -290,6 +300,22 @@ verify_service_running() {
 
         if [[ -z "$status" ]]; then
             echo "::error::cannot inspect $service's container ($cid) — daemon unreachable or container gone"
+            return 1
+        fi
+        # A `restart: "no"` job is supposed to stop. glitchtip-migrate runs
+        # `manage.py migrate` and exits 0 when done; judged like a service it
+        # reads `exited` and fails every deploy that recreates it. Exit code
+        # decides instead. Scoped to restart:no so a long-running service that
+        # exits 0 is still reported down — it would come back up otherwise.
+        if [[ "$status" == "exited" \
+              && "$(inspect_field "$cid" '{{.HostConfig.RestartPolicy.Name}}')" == "no" ]]; then
+            code="$(inspect_field "$cid" '{{.State.ExitCode}}')"
+            if [[ "$code" == "0" ]]; then
+                echo "$service is a one-shot job and completed successfully"
+                return 0
+            fi
+            echo "::error::$service is a one-shot job and exited with code $code"
+            "$DOCKER" logs --tail 30 "$cid" 2>&1 | sed 's/^/    /' >&2 || true
             return 1
         fi
         if [[ "$status" != "running" ]]; then
@@ -398,8 +424,10 @@ if (( ${#SERVICES[@]} > 1 )); then
         || COMPOSE_RC=$?
 
     RECREATED=()
+    declare -A POST_BY_SERVICE=()
     for svc in "${SERVICES[@]}"; do
-        if [[ "$(service_container_id "$svc")" != "${PRE_BY_SERVICE[$svc]}" ]]; then
+        POST_BY_SERVICE[$svc]="$(service_container_id "$svc")"
+        if [[ "${POST_BY_SERVICE[$svc]}" != "${PRE_BY_SERVICE[$svc]}" ]]; then
             RECREATED+=("$svc")
         else
             echo "$svc: not recreated — compose left it alone, so this deploy does not judge it"
@@ -409,7 +437,7 @@ if (( ${#SERVICES[@]} > 1 )); then
     VERIFY_DIR="$(mktemp -d)"
     VERIFY_PIDS=()
     for svc in "${RECREATED[@]}"; do
-        ( verify_service_running "$svc" ) > "$VERIFY_DIR/$svc" 2>&1 &
+        ( verify_service_running "$svc" "${POST_BY_SERVICE[$svc]}" ) > "$VERIFY_DIR/$svc" 2>&1 &
         VERIFY_PIDS+=("$!")
     done
     FAILED=()

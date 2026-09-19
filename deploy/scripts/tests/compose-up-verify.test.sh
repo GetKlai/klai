@@ -37,6 +37,7 @@ case "$1" in
       ps)
         # After `up` the service may be serving a different container; a case
         # expresses that by providing cid_post.
+        echo x >> "$fx/ps_calls"
         # Multi-service cases give each service its own cid_<svc> /
         # cid_post_<svc>; every single-service case keeps using cid / cid_post.
         svc="${@: -1}"
@@ -80,6 +81,8 @@ case "$1" in
         sed -n "$((n + 1))p" "$fx/restarts" 2>/dev/null || read_fx restarts
         ;;
       *Health*)             read_fx health ;;
+      '{{.State.ExitCode}}')                read_fx "exitcode_$cid" ;;
+      '{{.HostConfig.RestartPolicy.Name}}') read_fx "restart_policy_$cid" ;;
       *) echo "stub: unexpected inspect template: $tmpl" >&2; exit 90 ;;
     esac
     exit 0
@@ -418,6 +421,52 @@ if [[ -s "$case_dir/fixtures/pull_argv" ]]; then
 else
     echo "  ok     --no-pull without a service pulled nothing"
 fi
+
+# One-shot jobs. glitchtip-migrate is `restart: "no"` running `manage.py
+# migrate`: after a recreate it applies migrations and exits 0, which is its
+# success. Judged as a service it reads `exited` and turns every compose deploy
+# red that recreates it — a glitchtip image bump, a GLITCHTIP_* change, or an
+# edit to the shared log-rotation anchor.
+new_case one_shot_succeeded
+fx status_cid123 "exited"
+fx exitcode_cid123 "0"
+fx restart_policy_cid123 "no"
+run_target demo
+check "restart:no job that exited 0 -> 0" 0 "$rc"
+check_output "  calls it a completed one-shot" "one-shot job and completed"
+
+new_case one_shot_failed
+fx status_cid123 "exited"
+fx exitcode_cid123 "1"
+fx restart_policy_cid123 "no"
+run_target demo
+check "restart:no job that exited 1 -> 1" 1 "$rc"
+check_output "  reports the exit code" "exited with code 1"
+
+# The exemption is for restart:no only. A long-running service that exits 0 is
+# still down, and the existing compose_green_container_exited case pins that
+# with no restart policy set; this pins it with the real policy.
+new_case long_running_exited_zero
+fx status_cid123 "exited"
+fx exitcode_cid123 "0"
+fx restart_policy_cid123 "unless-stopped"
+run_target demo
+check "unless-stopped service that exited 0 -> 1" 1 "$rc"
+
+# The parallel verifications must not look their container up again. Each
+# lookup is a `docker compose ps`, which parses the whole compose file and .env
+# (0.13s on core-01); re-querying from every parallel check turned a 51-service
+# sweep into 51 compose processes starting at once. The id is already known
+# from the post-up pass, so it is handed in: exactly one lookup per service
+# before `up`, one after, and none from the checks.
+new_case multi_no_relookup
+svc web w1 w2 running
+svc api a1 a2 running
+svc db d1 d2 running
+run_target --no-pull web api db
+check "three services recreated -> 0" 0 "$rc"
+check "  compose ps: one per service before up, one after, none from the checks" \
+    6 "$(wc -l < "$case_dir/fixtures/ps_calls" | tr -d ' ')"
 
 echo
 if [[ "$failures" -eq 0 ]]; then
