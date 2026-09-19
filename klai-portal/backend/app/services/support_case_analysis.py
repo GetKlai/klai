@@ -48,7 +48,7 @@ from app.trace import get_trace_headers
 # Bumped whenever the extraction/assessment prompts or the finding shape change,
 # so a caller can tell a re-analysis of the same case apart from the old one and
 # update a finding instead of inflating demand (contract § 3, "analysis version").
-ANALYSIS_VERSION = "support-case-analysis-v10"
+ANALYSIS_VERSION = "support-case-analysis-v11"
 
 # Defensive input bounds, from the shared contract ("Support up to 1,000
 # messages/segments and 200,000 text characters per case"). A case beyond these
@@ -258,7 +258,14 @@ that these searched queries found no answer. Apply the same account-action/state
 rule as the first assessment: a request for a customer's own account data or
 state (invoice, balance, current configuration, opening hours), an account
 action, an incident or a product fix is non_knowledge, not missing — distinguish
-it from a reusable how-to. proposed_change must not invent product behavior."""
+it from a reusable how-to. proposed_change must not invent product behavior.
+
+For missing, incomplete, outdated, contradictory, findability or audience,
+proposed_change MUST be nonempty. When passages are empty, a missing diagnosis
+still needs a concrete documentation request: describe which explanation or
+procedure the question requires, without inventing its answer or product behavior.
+Use uncertain with an empty proposed_change only when the evidence does not
+establish a reusable knowledge need."""
 
 _MEDIUM_PREPARATION = {
     "call": (
