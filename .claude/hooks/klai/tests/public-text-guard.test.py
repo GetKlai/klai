@@ -46,6 +46,15 @@ class PublicTextGuardTest(unittest.TestCase):
     def test_commands_that_publish_nothing_pass(self):
         self.assertEqual(run("echo Acme Telecom had 272 answers"), 0)
 
+    def test_what_runs_before_the_publishing_command_is_not_sent(self):
+        self.assertEqual(run("grep 'Acme Telecom 422' notes.md; gh pr create --fill"), 0)
+        self.assertEqual(run("grep x notes.md; gh pr create --body 'Acme Telecom had 272 answers.'"), 2)
+
+    def test_reading_a_pr_is_not_publishing(self):
+        """Cleaning up a leak starts with reading it, often with the name in a grep."""
+        self.assertEqual(run("gh pr view 419 --json body | grep -n 'Acme Telecom | 422'"), 0)
+        self.assertEqual(run("gh api repos/GetKlai/klai/pulls/419 --jq .body | grep 'Acme Telecom 422'"), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
