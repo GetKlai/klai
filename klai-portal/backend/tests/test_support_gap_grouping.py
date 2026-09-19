@@ -11,6 +11,7 @@ it originates only from a verified candidate key, never from an input payload.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, patch
 
@@ -84,7 +85,7 @@ async def test_paraphrased_same_need_merges_into_existing_group(monkeypatch):
 
     result = await group_and_assert_copy(findings, candidates)
     assert result[0]["group_question_key"] == "grp-port"
-    assert rec.calls == 1
+    assert rec.calls == 2
 
 
 async def test_same_need_in_one_case_shares_one_group_and_keeps_evidence(monkeypatch):
@@ -154,6 +155,69 @@ async def test_same_batch_self_match_keeps_other_merges(monkeypatch):
     assert result[1]["group_question_key"] == key
 
 
+async def test_metadata_cohorts_are_judged_without_competing_keys(monkeypatch):
+    def decisions(*items):
+        return {"assignments": [{"index": index, "group_question_key": key} for index, key in items]}
+
+    responses = iter(
+        [
+            decisions((1, None), (2, "missing-0")),
+            decisions((1, None), (2, "missing-0")),
+            decisions((3, None), (4, "incomplete-0")),
+            decisions((3, None), (4, None)),
+        ]
+    )
+    submitted = []
+
+    async def call(*, system: str, user: str) -> str:
+        submitted.append(json.loads(user))
+        return json.dumps(next(responses))
+
+    monkeypatch.setattr(grp, "_call_llm", call)
+    findings = [
+        _finding("Comment modifier mon profil ?", language="fr"),
+        _finding("How do I port a number in?"),
+        _finding("Bring my number into the service"),
+        _finding("Show my caller ID", diagnosis="incomplete"),
+        _finding("Hide my caller ID", diagnosis="incomplete"),
+    ]
+    candidates = [
+        {**_candidate("missing-0", findings[1]["question"]), "finding_index": 1},
+        {**_candidate("incomplete-0", findings[3]["question"], diagnosis="incomplete"), "finding_index": 3},
+    ]
+
+    result = await grp.group_findings(findings, candidates)
+
+    assert [[finding["index"] for finding in call["findings"]] for call in submitted] == [[1, 2]] * 2 + [[3, 4]] * 2
+    assert result[2]["group_question_key"] == "missing-0"
+    assert "group_question_key" not in result[4]
+
+
+async def test_metadata_cohorts_share_one_timeout_budget(monkeypatch):
+    monkeypatch.setattr(grp, "_GROUPING_TIMEOUT_S", 0.03)
+
+    async def call(*, system: str, user: str) -> str:
+        await asyncio.sleep(0.02)
+        submitted = json.loads(user)
+        return json.dumps(
+            {
+                "assignments": [
+                    {"index": finding["index"], "group_question_key": None} for finding in submitted["findings"]
+                ]
+            }
+        )
+
+    monkeypatch.setattr(grp, "_call_llm", call)
+    findings = [_finding("Missing answer"), _finding("Incomplete answer", diagnosis="incomplete")]
+    candidates = [
+        _candidate("missing", "Existing gap"),
+        _candidate("incomplete", "Existing gap", diagnosis="incomplete"),
+    ]
+
+    with pytest.raises(TimeoutError):
+        await grp.group_findings(findings, candidates)
+
+
 @pytest.mark.parametrize("source_index", [1, False, -1])
 async def test_same_batch_match_rejects_future_boolean_and_unknown_indexes(monkeypatch, source_index):
     _patch_llm(
@@ -163,7 +227,10 @@ async def test_same_batch_match_rejects_future_boolean_and_unknown_indexes(monke
     candidate = {**_candidate("other", "Other request"), "finding_index": source_index}
 
     with pytest.raises(SupportCaseAnalysisError, match="same-batch"):
-        await grp.group_findings([_finding("First request"), _finding("Other request")], [candidate])
+        await grp.group_findings(
+            [_finding("First request"), _finding("Other request")],
+            [candidate, _candidate("eligible", "An existing request")],
+        )
 
 
 async def test_different_device_stays_separate(monkeypatch):
@@ -229,7 +296,10 @@ async def test_match_across_different_diagnosis_is_rejected(monkeypatch):
     # differs — a wrong merge the server must refuse.
     _patch_llm(monkeypatch, {"assignments": [{"index": 0, "group_question_key": "grp-port"}]})
     findings = [_finding("How do I port my number?", diagnosis="missing")]
-    candidates = [_candidate("grp-port", "How do I port my number?", diagnosis="incomplete")]
+    candidates = [
+        _candidate("grp-port", "How do I port my number?", diagnosis="incomplete"),
+        _candidate("eligible", "How do I change my number?"),
+    ]
 
     with pytest.raises(SupportCaseAnalysisError):
         await grp.group_findings(findings, candidates)

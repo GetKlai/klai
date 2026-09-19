@@ -318,3 +318,64 @@ def test_repeatability_refuses_unavailable_analysis(invalid):
     first = {**case(), **invalid}
     with pytest.raises(esg.EvaluationError, match="analysis unavailable"):
         esg.evaluate_repeatability([first], [case()], "kb-v5", "kb-v5")
+
+
+def test_grouping_scores_explicit_memberships_independent_of_labels_and_order(tmp_path, capsys):
+    experiment = {
+        "scope_id": "frozen-kb-snapshot",
+        "reference_kind": "synthetic",
+        "reference_source": "worked-example-v1",
+        "findings": [
+            {"reference_id": "a", "channel": "phone", "predicted_cluster_id": "one"},
+            {"reference_id": "b", "channel": "phone", "predicted_cluster_id": "one"},
+            {"reference_id": "c", "channel": "hubspot", "predicted_cluster_id": "two"},
+            {"reference_id": "d", "channel": "hubspot", "predicted_cluster_id": "three"},
+            {"reference_id": "e", "channel": "hubspot", "predicted_cluster_id": "two"},
+        ],
+        "gold_groups": [["a", "b"], ["c", "d"], ["e"]],
+    }
+
+    expected = {
+        "true_merges": 1,
+        "false_merges": 1,
+        "missed_merges": 1,
+        "precision": 0.5,
+        "recall": 0.5,
+    }
+    report = esg.evaluate_grouping(experiment)
+    assert report["aggregate"] == expected
+    assert report["by_channel"] == {
+        "phone": {**expected, "false_merges": 0, "missed_merges": 0, "precision": 1.0, "recall": 1.0},
+        "hubspot": {**expected, "true_merges": 0, "precision": 0.0, "recall": 0.0},
+    }
+    assert report["cross_channel"] == {
+        "true_merges": 0,
+        "false_merges": 0,
+        "missed_merges": 0,
+        "precision": None,
+        "recall": None,
+    }
+
+    reordered = {
+        **experiment,
+        "findings": [
+            {**finding, "predicted_cluster_id": {"one": "z", "two": "x", "three": "y"}[finding["predicted_cluster_id"]]}
+            for finding in reversed(experiment["findings"])
+        ],
+        "gold_groups": list(reversed(experiment["gold_groups"])),
+    }
+    assert esg.evaluate_grouping(reordered) == report
+
+    unscored = esg.evaluate_grouping({key: value for key, value in experiment.items() if key != "gold_groups"})
+    assert unscored["scored"] is False
+    assert unscored["reason"] == "no independent gold groups"
+    assert unscored["aggregate"]["false_merges"] is None
+    with pytest.raises(esg.EvaluationError, match="finding must be an object"):
+        esg.evaluate_grouping({**experiment, "findings": ["not-an-object"]})
+    with pytest.raises(esg.EvaluationError, match="reference IDs"):
+        esg.evaluate_grouping({**experiment, "gold_groups": [[{"not": "hashable"}]]})
+
+    inp = tmp_path / "grouping.json"
+    inp.write_text(json.dumps(experiment))
+    assert esg.main(["--grouping", "--input", str(inp)]) == 0
+    assert json.loads(capsys.readouterr().out)["aggregate"] == expected

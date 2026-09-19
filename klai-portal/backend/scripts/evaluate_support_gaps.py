@@ -213,6 +213,102 @@ def evaluate_repeatability(first: list, repeat: list, first_kb_snapshot: str, re
     }
 
 
+def _grouping_metrics(true_merges: int, false_merges: int, missed_merges: int) -> dict:
+    return {
+        "true_merges": true_merges,
+        "false_merges": false_merges,
+        "missed_merges": missed_merges,
+        "precision": _ratio(true_merges, true_merges + false_merges),
+        "recall": _ratio(true_merges, true_merges + missed_merges),
+    }
+
+
+def _index_grouping(findings: list, gold_groups: object) -> tuple[dict[str, dict], dict[str, int]]:
+    by_id: dict[str, dict] = {}
+    for finding in findings:
+        if not isinstance(finding, dict):
+            raise EvaluationError("each grouping finding must be an object")
+        reference_id = finding.get("reference_id")
+        predicted = finding.get("predicted_cluster_id")
+        channel = finding.get("channel")
+        if not all(isinstance(value, str) and value.strip() for value in (reference_id, predicted, channel)):
+            raise EvaluationError("each grouping finding requires reference_id, predicted_cluster_id and channel")
+        reference_id = str(reference_id)
+        if reference_id in by_id:
+            raise EvaluationError(f"duplicate grouping reference_id {reference_id!r}")
+        by_id[reference_id] = finding
+
+    if not isinstance(gold_groups, list) or any(not isinstance(group, list) or not group for group in gold_groups):
+        raise EvaluationError("gold_groups must be an array of non-empty reference-id arrays")
+    gold_by_id: dict[str, int] = {}
+    for group_index, group in enumerate(gold_groups):
+        for reference_id in group:
+            if not isinstance(reference_id, str) or not reference_id.strip():
+                raise EvaluationError("gold_groups reference IDs must be non-blank strings")
+            if reference_id not in by_id:
+                raise EvaluationError(f"gold_groups contains unknown reference_id {reference_id!r}")
+            if reference_id in gold_by_id:
+                raise EvaluationError(f"gold_groups repeats reference_id {reference_id!r}")
+            gold_by_id[reference_id] = group_index
+    missing = by_id.keys() - gold_by_id.keys()
+    if missing:
+        raise EvaluationError(f"gold_groups omits reference_id {sorted(missing)[0]!r}")
+    return by_id, gold_by_id
+
+
+def evaluate_grouping(experiment: dict) -> dict:
+    scope_id = experiment.get("scope_id")
+    if not isinstance(scope_id, str) or not scope_id.strip():
+        raise EvaluationError("grouping evaluation requires a non-blank scope_id")
+    findings = experiment.get("findings")
+    if not isinstance(findings, list):
+        raise EvaluationError("grouping findings must be an array")
+
+    base = {"measurement": "pairwise_grouping_quality", "scope_id": scope_id, "total_findings": len(findings)}
+    reference_kind = experiment.get("reference_kind")
+    gold_groups = experiment.get("gold_groups")
+    if gold_groups is None:
+        empty = {key: None for key in _grouping_metrics(0, 0, 0)}
+        return {**base, "scored": False, "reason": "no independent gold groups", "aggregate": empty}
+    if reference_kind not in {"synthetic", "human_reviewed"}:
+        empty = {key: None for key in _grouping_metrics(0, 0, 0)}
+        return {**base, "scored": False, "reason": "reference is not independently authored", "aggregate": empty}
+    if not str(experiment.get("reference_source") or "").strip():
+        raise EvaluationError("grouping reference_source must be non-blank")
+    if reference_kind == "human_reviewed" and not str(experiment.get("reviewed_by") or "").strip():
+        raise EvaluationError("human-reviewed grouping reference requires reviewed_by")
+
+    by_id, gold_by_id = _index_grouping(findings, gold_groups)
+
+    totals = [0, 0, 0]
+    channel_totals = {finding["channel"]: [0, 0, 0] for finding in findings}
+    cross_channel = [0, 0, 0]
+    ids = sorted(by_id)
+    for left_index, left_id in enumerate(ids):
+        for right_id in ids[left_index + 1 :]:
+            gold_same = gold_by_id[left_id] == gold_by_id[right_id]
+            predicted_same = by_id[left_id]["predicted_cluster_id"] == by_id[right_id]["predicted_cluster_id"]
+            outcome = 0 if gold_same and predicted_same else 1 if predicted_same else 2 if gold_same else None
+            if outcome is None:
+                continue
+            totals[outcome] += 1
+            left_channel, right_channel = by_id[left_id]["channel"], by_id[right_id]["channel"]
+            bucket = (
+                channel_totals.setdefault(left_channel, [0, 0, 0]) if left_channel == right_channel else cross_channel
+            )
+            bucket[outcome] += 1
+
+    return {
+        **base,
+        "scored": True,
+        "reference_kind": reference_kind,
+        "reference_source": experiment["reference_source"],
+        "aggregate": _grouping_metrics(*totals),
+        "by_channel": {channel: _grouping_metrics(*counts) for channel, counts in sorted(channel_totals.items())},
+        "cross_channel": _grouping_metrics(*cross_channel),
+    }
+
+
 def _score_case(findings: list, questions: list, matches: list) -> tuple[int, int, int]:
     tp = fp = fn = 0
     matched_findings: set = set()
@@ -333,7 +429,8 @@ def _load_json(path: str) -> object:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Offline precision/recall for support-gap analysis.")
-    parser.add_argument("--input", required=True, help="JSON array of case-detail records")
+    parser.add_argument("--input", required=True, help="JSON case array or grouping experiment object")
+    parser.add_argument("--grouping", action="store_true", help="score one scoped grouping experiment")
     parser.add_argument("--alignment", help="optional JSON array of human finding/reference matchings")
     parser.add_argument("--repeat-input", help="second case-detail export for repeatability measurement")
     parser.add_argument("--kb-snapshot", help="explicit KB snapshot identity for --input")
@@ -341,9 +438,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         cases = _load_json(args.input)
-        if not isinstance(cases, list):
+        if args.grouping:
+            if args.alignment or args.repeat_input or args.kb_snapshot or args.repeat_kb_snapshot:
+                raise EvaluationError("--grouping is incompatible with alignment, repeat and KB snapshot arguments")
+            if not isinstance(cases, dict):
+                raise EvaluationError("grouping input must be one experiment object")
+            report = evaluate_grouping(cases)
+        elif not isinstance(cases, list):
             raise EvaluationError("input must be a JSON array of case records")
-        if args.repeat_input:
+        elif args.repeat_input:
             if args.alignment:
                 raise EvaluationError("alignment is only valid for precision/recall evaluation")
             if args.kb_snapshot is None or args.repeat_kb_snapshot is None:
