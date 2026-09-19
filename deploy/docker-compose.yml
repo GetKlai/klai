@@ -1860,7 +1860,7 @@ services:
   # it being healthy so the tables exist before the first query.
   vexa12-admin-api:
     logging: *log-rotation
-    image: vexaai/v012-admin-api:v0.12.26
+    image: vexaai/v012-admin-api:v0.13.1
     restart: unless-stopped
     environment:
       DB_HOST: postgres
@@ -1901,7 +1901,7 @@ services:
   # its listener is `fork,reuseaddr`, so a second client is fine.
   vexa12-runtime:
     logging: *log-rotation
-    image: vexaai/v012-runtime:v0.12.26
+    image: vexaai/v012-runtime:v0.13.1
     restart: unless-stopped
     environment:
       DOCKER_NETWORK: vexa12-bots
@@ -1936,7 +1936,7 @@ services:
   # ─── Vexa 0.12 meeting-api (bot lifecycle + transcript collector) ───────
   vexa12-meeting-api:
     logging: *log-rotation
-    image: vexaai/v012-meeting-api:v0.12.26
+    image: vexaai/v012-meeting-api:v0.13.1
     restart: unless-stopped
     environment:
       DB_HOST: postgres
@@ -2173,7 +2173,7 @@ services:
   #   - Web endpoint on :3902 (anonymous reads via Caddy /kb-images/ route)
   garage:
     logging: *log-rotation
-    image: dxflrs/garage:v2.3.0
+    image: dxflrs/garage:v2.4.1
     restart: unless-stopped
     volumes:
       - /opt/klai/garage-meta:/var/lib/garage/meta
