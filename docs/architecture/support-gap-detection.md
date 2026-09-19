@@ -313,6 +313,15 @@ ungrouped outcome. Review grouping against human-labelled pairs before treating
 frequency as a reliable measure of demand. Frequency is one prioritization
 signal; severity, likely preventability and support effort require observed data.
 
+Grouping judges compatible diagnosis/language/audience cohorts separately and
+offers only earlier same-case or existing candidates to each finding. Proposed
+matches receive a focused second check against their exact target; only an
+unchanged, approved match is retained. All calls share one 120-second deadline.
+Invalid responses fail the grouping attempt, preserving the original findings.
+Evaluate both missed and false merges on fixed examples in multiple input orders,
+including unseen examples with opposite actions and different devices. Model
+agreement alone is not an accuracy reference.
+
 The overview groups these distinct needs under existing KB taxonomy topics.
 Topic membership never merges separate questions or adds their case counts
 together. Topics must belong to the same organization and KB; unclassified
@@ -371,6 +380,16 @@ undefined precision. Explain the matching method and independently review
 semantic matches rather than presenting model agreement as expert truth.
 
 `klai-portal/backend/scripts/evaluate_support_gaps.py --input cases.json` evaluates exported case-detail records. `--alignment matches.json` supplies explicit human matches between finding and reference indexes, bound to the case content hash and analysis revision. Cases with both predictions and reference questions require this alignment. The report counts the scored subset and unreviewed cases separately; it never guesses matches or emits customer text.
+
+`--grouping --input experiment.json` separately scores grouping within one explicit
+tenant/KB snapshot scope. The experiment maps stable reference IDs to predicted
+cluster IDs and supplies a complete, independently authored gold partition. It
+reports pairwise false and missed merges overall, per channel and cross-channel;
+without that gold partition, all grouping quality metrics remain unscored.
+`{"scope_id":"kb-v1","reference_kind":"synthetic","reference_source":"fixture-v1",`
+`"findings":[{"reference_id":"a","channel":"phone","predicted_cluster_id":"p1"}],`
+`"gold_groups":[["a"]]}`. A human-reviewed reference instead uses
+`reference_kind: "human_reviewed"` and adds a non-blank `reviewed_by`.
 
 After an approved article edit, replay the affected reference questions and
 compare answerability before and after. Operational follow-up measures repeated
