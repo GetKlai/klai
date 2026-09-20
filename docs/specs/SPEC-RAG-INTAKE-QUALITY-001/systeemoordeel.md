@@ -32,9 +32,10 @@ door een agent van labels door een menselijke inhoudseigenaar.
 
 ## Prioriteit en open onderzoek
 
-1. **Gerichte intakeproef:** §16–17 isoleren een gemiste prijsregel; de bestaande
-   JSON-groepering brengt haar in een beperkte proef terug tot in de antwoordcontext.
-   Eerst de volledige ingest- en workerroute en herhaalde blinde antwoordproef meten.
+1. **Bedragen behouden vóór verdere intakeproeven:** §18 toont verlies van
+   decimale prijzen in de antwoordnabewerking. Herstel eerst deze gedeelde functie.
+   De JSON-groepering uit §16–17 vereist daarna nog de volledige ingest- en
+   workerroute en herhaalde blinde antwoordproef vóór een uitrolbesluit.
    Bronreferenties blijven vooraf onafhankelijk gecontroleerd. Inhoudseigenaren
    kunnen via de bestaande reviewvelden vastleggen welke antwoorden en gaps
    werkelijk kloppen; agentreferenties vervangen die menselijke labels niet.
