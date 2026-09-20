@@ -32,10 +32,12 @@ door een agent van labels door een menselijke inhoudseigenaar.
 
 ## Prioriteit en open onderzoek
 
-1. **Beoordelingsreferenties:** de bronreferenties uit §15 gebruiken om een
-   concrete fout te isoleren. Inhoudseigenaren kunnen via de bestaande reviewvelden
-   vastleggen welke antwoorden en gaps werkelijk kloppen. De agentreferenties
-   vervangen die menselijke labels niet.
+1. **Gerichte intakeproef:** §16–17 isoleren een gemiste prijsregel; de bestaande
+   JSON-groepering brengt haar in een beperkte proef terug tot in de antwoordcontext.
+   Eerst de volledige ingest- en workerroute en herhaalde blinde antwoordproef meten.
+   Bronreferenties blijven vooraf onafhankelijk gecontroleerd. Inhoudseigenaren
+   kunnen via de bestaande reviewvelden vastleggen welke antwoorden en gaps
+   werkelijk kloppen; agentreferenties vervangen die menselijke labels niet.
 2. **Gerichte bronselectie en vraaggeneratie:** pas een ingreep meten wanneer echte
    vragen een concrete fout in vraagvectoren of bronselectie aantonen. De huidige twee
    navigatiefouten rechtvaardigen na §12–13 geen implementatie; de algemene vierde
