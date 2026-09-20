@@ -678,3 +678,54 @@ kan al groeperen op categorie, entiteit en merk. Bij deze bron is dat niet
 ingesteld: hij gebruikt batches van maximaal tweehonderd records in feedvolgorde.
 **Vervolg:** dezelfde records met die bestaande groepering op een eigen kopie
 meten. Geen nieuwe groeperingsfunctie of productiewijziging vóór de meetpoort.
+
+## 17. Bestaande JSON-groepering door een beperkte zoekproef (20 september)
+
+De intakeproef uit §16 gebruikt de bestaande adapter en één bevroren feed.
+Alle 12.251 unieke records leveren in beide indelingen exact dezelfde multiset
+van gerenderde regels op. Groeperen op categorie, entiteit en merk maakt 111
+documenten in plaats van 62. De twee onderzochte prijsregels komen elk in een
+document met 45 verwante records, tegenover 200 gemengde records nu.
+
+**Correctie van de meetopstelling.** De eerste helperproef gebruikte chunks van
+2.000 tekens, zoals de ingest-API. De achtergrondworker verdeelt de tekst daarna
+opnieuw met de standaard van 1.200 tekens. Dit is bevestigd in de draaiende code
+en door een bestaande prijschunk letterlijk te reproduceren: alleen 1.200 geeft
+dezelfde chunk. De eerste proef is daarom geen geldige groeperingsvergelijking.
+De uitvoer is bewaard; de proef is opnieuw uitgevoerd met 1.200/200. Ook de live
+index veranderde tussendoor, dus de twee proeven zijn geen directe vergelijking
+van chunkgroottes.
+
+De gecorrigeerde voorproef kopieert de huidige index naar twee eigen collecties.
+P blijft gelijk; D krijgt alleen de twee gegroepeerde documenten erbij, met
+32 nieuwe chunks en zes eigen parents. De oude documenten blijven in D aanwezig.
+Dit onderzoekt of de andere bronindeling de gemiste regel kan terugbrengen;
+het is nog geen proef van de volledige connectorinstelling. De bestaande
+verrijkingsfuncties zijn hergebruikt, zonder de eerste POST-stap, blinde
+documentclassificatie en taxonomietoekenning.
+
+Twee echte vragen zijn ieder één keer door de huidige interne prehook gegaan,
+tegen P en D: vier beurten, in vastgelegde willekeurige volgorde en minimaal acht
+seconden tussen starts. De volledige zoekaanvraag is per vraag gelijk in beide
+armen. De gecontroleerde kennisbankkeuze uit §16 blijft gelden. De echte
+scoregrenzen, veiligheidscontrole en promptopbouw zijn meegenomen.
+
+| Eerste positie van de bekende prijsregel | P: huidige kopie | D: met gegroepeerde documenten |
+|---|---:|---:|
+| Eerder ontbrekende regel, ruwe zoekresultaten | Niet gevonden | 2 |
+| Eerder ontbrekende regel, uiteindelijke antwoordcontext | Niet gevonden | 2 |
+| Controle: reeds gevonden regel, ruwe zoekresultaten | 6 | 1 |
+| Controle: reeds gevonden regel, uiteindelijke antwoordcontext | 6 | 1 |
+
+Beide regels staan in D ook letterlijk in de opgebouwde prompt. Herhaalde
+parenttekst telt hierbij niet als extra onafhankelijke bron. Alle vier beurten
+bereiken de antwoordfase; er zijn geen uiteindelijke antwoorden gegenereerd.
+De gedeelde graaf bleef live. De 34 modelaanroepen voor de opbouw slaagden en rapporteerden
+37.430 tokens; embeddings en prehook-aanroepen vallen buiten dat tokengetal.
+De modelalias gaf twee concrete modelnamen en vier keer alleen de alias terug.
+
+**Besluit:** de beperkte zoekproef slaagt, maar geeft geen uitrolbewijs. Eerst
+volgen de volledige ingest- en workerroute op eigen opslag en de herhaalde,
+blinde antwoordvergelijking volgens antwoordlog §6. Zestien echte vragen zijn
+vooraf geselecteerd; hun bronreferenties worden onafhankelijk gecontroleerd.
+Alle eigen proefcontainers en tijdelijke configuratiekopieën zijn verwijderd.
