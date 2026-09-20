@@ -630,3 +630,51 @@ waargenomen verlies bij bronselectie. Ze rechtvaardigen geen nieuwe algemene
 instelling of herhaling van dezelfde afgewezen proef. Bronbehoud en vier bronnen
 blijven afgewezen voor uitrol; eerst is nieuw bewijs op een concrete antwoordroute
 nodig. Geen nieuwe productcode, antwoordgeneraties of productiewijzigingen in deze stap.
+
+## 16. Een interne vervolgvraag per stap onderzocht (20 september)
+
+[QReCC](https://aclanthology.org/2021.naacl-main.44/) scheidt herschrijven,
+zoeken en antwoordvorming in zijn evaluatie. Die scheiding is hier toegepast
+op één interne vervolgvraag waarvan de bekende bronpassage ontbrak in §15.
+De oude directe zoekproef verloor een prijsvoorwaarde uit de gesprekshistorie.
+Dat bewijst geen fout in het huidige interne chatpad: dat gebruikt eerst een
+eigen herschrijver en vraagt twintig zoekresultaten op, in plaats van acht.
+
+De bestaande functies voor historie, toegangsbeleid, taxonomie, herschrijven en
+zoeken zijn daarom aangeroepen in een eigen tijdelijke container. De werkelijke
+gebruikersidentiteit en actieve kennisfunctie zijn gecontroleerd. Alleen de
+kennisbankkeuze uit de eerdere proef is expliciet toegepast; de huidige opgeslagen
+voorkeur wijst elders. Dit is een gecontroleerde proef met huidige functies, geen
+letterlijke huidige gebruikersaanvraag. Er is geen antwoord gegenereerd.
+
+Ook deze herschrijver liet de prijsvoorwaarde weg. Een tweede zoekaanroep voegde
+alleen die voorwaarde toe aan de zoekvraag; alle andere aanvraagvelden bleven
+gelijk. Image en alle veertig gemounte onderdelen waren in beide proeven gelijk.
+
+| Controle | Huidige herschrijving | Met expliciete prijsvoorwaarde |
+|---|---:|---:|
+| Ruwe zoekresultaten / geselecteerde evidence-items | 20 / 16 | 20 / 16 |
+| Eerste positie van een passage uit het verwachte document | 4 | 1 |
+| Bekende prijsregel in ruwe resultaten | 0 | 0 |
+| Bekende prijsregel in geselecteerde evidence | 0 | 0 |
+
+De evidence is hier gemeten vóór de laatste score- en veiligheidsfilters van de
+chatlaag. De live index was niet bevroren. Dit is één gerichte diagnose, geen
+herhaalde antwoordproef of bewijs dat de gewijzigde vraag betere antwoorden geeft.
+Een promptwijziging alleen is daarmee niet onderbouwd. Alle eigen proefcontainers
+en tijdelijke kopieën van de draaiende configuratie zijn verwijderd.
+
+De specifieke child en zijn parent zijn live teruggelezen: beide bevatten de
+prijsregel en zijn gelijk aan hun bevroren versie. De traces tonen zeventig
+zoekkandidaten; de child ontbreekt in beide lijsten na reranking. Het verlies
+ligt dus bij kandidaatselectie of reranking, vóór parentvervanging. De bestaande
+logs bevatten niet alle kandidaat-ID's; die twee oorzaken zijn nog niet gescheiden.
+
+[TableRAG](https://proceedings.neurips.cc/paper_files/paper/2024/file/88dd7aa6979e352fda7c4952ca8eac59-Paper-Conference.pdf)
+onderzoekt het gericht ontsluiten van schema's en cellen bij tabelvragen; lange,
+gemengde rijen kunnen betekenis verliezen in één embedding. Dit motiveert een
+intakeproef, geen overdracht van hun winstcijfers. De bestaande JSON-feedadapter
+kan al groeperen op categorie, entiteit en merk. Bij deze bron is dat niet
+ingesteld: hij gebruikt batches van maximaal tweehonderd records in feedvolgorde.
+**Vervolg:** dezelfde records met die bestaande groepering op een eigen kopie
+meten. Geen nieuwe groeperingsfunctie of productiewijziging vóór de meetpoort.
