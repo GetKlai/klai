@@ -93,11 +93,16 @@ class _FakeHTTP:
         if self.verification is not None:
             return self.verification
         payload = json.loads(user)
+        assert isinstance(self.extraction, dict)
+        questions = self.extraction["questions"]
         decisions = [
             {
                 "index": cand["index"],
-                "keep": True,
+                "event_type": "learning_request",
                 "request_message_ids": cand["message_ids"][:1],
+                "question": questions[cand["index"]]["question"],
+                "language": questions[cand["index"]]["language"],
+                "applicability": questions[cand["index"]]["applicability"],
             }
             for cand in payload["candidates"]
         ]
@@ -605,20 +610,50 @@ async def test_llm_calls_use_configured_judge_endpoint(fake):
     await _run(fake, _case([_msg("m1", "customer", "reset 2fa")]))
 
     llm_calls = [c for c in fake.calls if "/chat/completions" in c[0]]
-    assert llm_calls, "expected at least the extraction call"
-    for index, (url, body, headers) in enumerate(llm_calls):
+    for url, body, headers in llm_calls:
         assert url == "http://litellm:4000/v1/chat/completions"
         assert headers["Authorization"] == "Bearer master-key"
         assert body["model"] == "klai-medium"
-        if index == 0:
-            question = body["response_format"]["json_schema"]["schema"]["properties"]["questions"]["items"]
-            assert body["response_format"]["type"] == "json_schema"
-            assert body["response_format"]["json_schema"]["strict"] is True
-            assert question["required"] == ["question", "language", "audience", "applicability", "message_ids"]
-            assert question["properties"]["audience"]["enum"] == ["customer", "internal", "unknown"]
-            assert question["properties"]["message_ids"]["items"]["enum"] == ["m1"]
-        else:
-            assert body["response_format"] == {"type": "json_object"}
+
+    extraction_body = llm_calls[0][1]
+    response_schema = extraction_body["response_format"]["json_schema"]
+    assert response_schema["strict"] is True
+    question_schema = response_schema["schema"]["properties"]["questions"]["items"]
+    assert question_schema["required"] == [
+        "question",
+        "language",
+        "audience",
+        "applicability",
+        "message_ids",
+    ]
+    assert question_schema["properties"]["audience"]["enum"] == ["customer", "internal", "unknown"]
+    assert question_schema["properties"]["message_ids"]["items"]["enum"] == ["m1"]
+
+    verification_body = next(
+        body for _, body, _ in llm_calls if body["messages"][0]["content"] == sca.NEED_VERIFICATION_SYSTEM_PROMPT
+    )
+    verification_schema = verification_body["response_format"]["json_schema"]
+    assert verification_schema["strict"] is True
+    decision_schema = verification_schema["schema"]["properties"]["decisions"]["items"]
+    assert decision_schema["required"] == [
+        "index",
+        "event_type",
+        "request_message_ids",
+        "question",
+        "language",
+        "applicability",
+    ]
+    assert decision_schema["properties"]["index"]["enum"] == [0]
+    assert decision_schema["properties"]["event_type"]["enum"] == [
+        "learning_request",
+        "customer_problem",
+        "support_work",
+        "unsupported",
+    ]
+    assert decision_schema["properties"]["request_message_ids"]["items"]["enum"] == ["m1"]
+
+    for _, body, _ in llm_calls[2:]:
+        assert body["response_format"] == {"type": "json_object"}
 
 
 async def test_prompts_frame_source_as_untrusted_data(fake):
@@ -654,7 +689,9 @@ async def test_prompts_frame_source_as_untrusted_data(fake):
     extraction_call = next(
         c
         for c in fake.calls
-        if "/chat/completions" in c[0] and c[1]["messages"][0]["content"].startswith(sca.EXTRACTION_SYSTEM_PROMPT)
+        if (body := c[1]) is not None
+        and "/chat/completions" in c[0]
+        and body["messages"][0]["content"].startswith(sca.EXTRACTION_SYSTEM_PROMPT)
     )
     assert injection in extraction_call[1]["messages"][-1]["content"]
 
@@ -748,7 +785,9 @@ def _extraction_call(fake: _FakeHTTP) -> tuple:
     return next(
         c
         for c in fake.calls
-        if "/chat/completions" in c[0] and c[1]["messages"][0]["content"].startswith(sca.EXTRACTION_SYSTEM_PROMPT)
+        if (body := c[1]) is not None
+        and "/chat/completions" in c[0]
+        and body["messages"][0]["content"].startswith(sca.EXTRACTION_SYSTEM_PROMPT)
     )
 
 
@@ -847,20 +886,35 @@ def call_candidates(covered):
     )
 
 
-async def test_agent_configuration_choice_is_removed_before_retrieval(covered, call_candidates):
-    # Every candidate is now submitted for need-verification, including the email
-    # question (q3), not only the call candidates.
+async def test_source_event_classification_only_retains_customer_needs(covered, call_candidates):
+    call_candidates["messages"][0]["text"] = "Call waiting is not working."
+    call_candidates["messages"][1]["text"] = "Could you send us a screenshot of the error?"
+    covered.extraction["questions"][1]["question"] = "How do I take a screenshot?"
     covered.verification = {
         "decisions": [
-            {"index": 0, "keep": True, "request_message_ids": ["q1"]},
-            {"index": 1, "keep": False, "request_message_ids": []},
-            {"index": 2, "keep": True, "request_message_ids": ["q3"]},
+            {
+                "index": 0,
+                "event_type": "customer_problem",
+                "request_message_ids": ["q1"],
+                "question": "Why is call waiting not working?",
+                "language": "en",
+                "applicability": "calls",
+            },
+            {"index": 1, "event_type": "support_work", "request_message_ids": ["q2"]},
+            {
+                "index": 2,
+                "event_type": "learning_request",
+                "request_message_ids": ["q3"],
+                "question": "How do I export?",
+                "language": "en",
+                "applicability": "email",
+            },
         ]
     }
     findings = await _run(covered, call_candidates)
-    assert [f["question"] for f in findings] == ["How does call waiting work?", "How do I export?"]
+    assert [f["question"] for f in findings] == ["Why is call waiting not working?", "How do I export?"]
     assert [body["query"] for url, body, _ in covered.calls if url.endswith("/retrieve")] == [
-        "How does call waiting work?",
+        "Why is call waiting not working?",
         "How do I export?",
     ]
     verification = next(
@@ -868,31 +922,96 @@ async def test_agent_configuration_choice_is_removed_before_retrieval(covered, c
         for url, body, _ in covered.calls
         if url.endswith("/chat/completions") and body["messages"][0]["content"] == sca.NEED_VERIFICATION_SYSTEM_PROMPT
     )
-    assert [q["index"] for q in json.loads(verification["messages"][-1]["content"])["candidates"]] == [0, 1, 2]
+    verification_input = json.loads(verification["messages"][-1]["content"])
+    assert "exchange" not in verification_input
+    assert [q["index"] for q in verification_input["candidates"]] == [0, 1, 2]
     assert findings[0]["message_ids"] == ["q1"]
+
+
+async def test_verification_distinguishes_questions_citing_the_same_source_message(fake):
+    fake.extraction = {
+        "questions": [
+            {
+                "question": question,
+                "language": "en",
+                "audience": "customer",
+                "applicability": "",
+                "message_ids": ["m1"],
+            }
+            for question in ("How do I add a greeting?", "How do I route calls after hours?")
+        ]
+    }
+    fake.verification = {
+        "decisions": [
+            {"index": 0, "event_type": "unsupported"},
+            {"index": 1, "event_type": "unsupported"},
+        ]
+    }
+
+    assert await _run(fake, _case([_msg("m1", "customer", "I have two questions about my call plan.")])) == []
+
+    verification = next(
+        body
+        for url, body, _ in fake.calls
+        if url.endswith("/chat/completions") and body["messages"][0]["content"] == sca.NEED_VERIFICATION_SYSTEM_PROMPT
+    )
+    assert json.loads(verification["messages"][-1]["content"])["candidates"] == [
+        {"index": 0, "message_ids": ["m1"], "request_hint": "How do I add a greeting?"},
+        {"index": 1, "message_ids": ["m1"], "request_hint": "How do I route calls after hours?"},
+    ]
 
 
 @pytest.mark.parametrize(
     "decisions",
     [
         [],  # wrong count: every candidate must be decided
-        [{"index": 0, "keep": False}, {"index": 0, "keep": False}, {"index": 2, "keep": False}],  # duplicate index
-        [{"index": 0, "keep": False}, {"index": 9, "keep": False}, {"index": 2, "keep": False}],  # out-of-range index
-        [{"index": 0, "keep": False}, {"index": True, "keep": False}, {"index": 2, "keep": False}],  # non-int index
-        [{"index": 0, "keep": "yes"}, {"index": 1, "keep": False}, {"index": 2, "keep": False}],  # non-bool keep
         [
-            {"index": 0, "keep": True, "request_message_ids": ["invented-id"]},  # ungrounded request id
-            {"index": 1, "keep": False},
-            {"index": 2, "keep": False},
+            {"index": 0, "event_type": "unsupported"},
+            {"index": 0, "event_type": "unsupported"},
+            {"index": 2, "event_type": "unsupported"},
+        ],  # duplicate index
+        [
+            {"index": 0, "event_type": "unsupported"},
+            {"index": 9, "event_type": "unsupported"},
+            {"index": 2, "event_type": "unsupported"},
+        ],  # out-of-range index
+        [
+            {"index": 0, "event_type": "unsupported"},
+            {"index": True, "event_type": "unsupported"},
+            {"index": 2, "event_type": "unsupported"},
+        ],  # non-int index
+        [
+            {"index": 0, "event_type": "other"},
+            {"index": 1, "event_type": "unsupported"},
+            {"index": 2, "event_type": "unsupported"},
+        ],  # invalid event type
+        [
+            {
+                "index": 0,
+                "event_type": "learning_request",
+                "request_message_ids": ["invented-id"],
+                "question": "How does call waiting work?",
+                "language": "en",
+                "applicability": "calls",
+            },  # ungrounded request id
+            {"index": 1, "event_type": "unsupported"},
+            {"index": 2, "event_type": "unsupported"},
         ],
         [
-            {"index": 0, "keep": True, "request_message_ids": []},
-            {"index": 1, "keep": False},
-            {"index": 2, "keep": False},
+            {
+                "index": 0,
+                "event_type": "learning_request",
+                "request_message_ids": [],
+                "question": "How does call waiting work?",
+                "language": "en",
+                "applicability": "calls",
+            },
+            {"index": 1, "event_type": "unsupported"},
+            {"index": 2, "event_type": "unsupported"},
         ],
     ],
 )
-async def test_invalid_call_verification_fails_before_retrieval(covered, call_candidates, decisions):
+async def test_invalid_source_event_verification_fails_before_retrieval(covered, call_candidates, decisions):
     covered.verification = {"decisions": decisions}
     with pytest.raises(sca.SupportCaseAnalysisError):
         await _run(covered, call_candidates)
@@ -911,6 +1030,131 @@ async def test_email_question_is_verified_and_retained(covered):
     assert len(verification) == 1
     assert [q["index"] for q in json.loads(verification[0]["messages"][-1]["content"])["candidates"]] == [0]
     assert [f["question"] for f in findings] == ["How do I port my number to Klai?"]
+
+
+async def test_source_verification_corrects_question_before_retrieval_and_assessment(fake):
+    case = _case(
+        [
+            _msg("m1", "customer", "Wie spiele ich samstags waehrend der Ladenoeffnung eine andere Ansage ab?"),
+            _msg("m2", "agent", "Dafuer erstellen wir eine neue Zeitgruppe nur fuer Samstag."),
+        ]
+    )
+    fake.extraction = {
+        "questions": [
+            {
+                "question": "Hoe stel ik alleen op zaterdag een andere voicemail in via de Voys-app?",
+                "language": "nl",
+                "audience": "customer",
+                "applicability": "Voys-app voicemail",
+                "message_ids": ["m1", "m2"],
+            }
+        ]
+    }
+    corrected = "Wie spiele ich samstags waehrend der Ladenoeffnung eine andere Ansage ab?"
+    fake.verification = {
+        "decisions": [
+            {
+                "index": 0,
+                "event_type": "learning_request",
+                "request_message_ids": ["m1"],
+                "question": corrected,
+                "language": "de",
+                "applicability": "Samstags waehrend der Ladenoeffnung",
+            }
+        ]
+    }
+    fake.retrieval = _retrieval([_chunk("c1", "Zeitgruppen koennen fuer einzelne Wochentage gelten.")])
+    fake.assessment = {
+        "diagnosis": "covered",
+        "rationale": "Der Artikel beschreibt Zeitgruppen fuer einzelne Wochentage.",
+        "missing_information": "",
+        "article_ids": ["c1"],
+    }
+
+    findings = await _run(fake, case)
+
+    retrieval = next(body for url, body, _ in fake.calls if url.endswith("/retrieve"))
+    assessment = next(
+        body
+        for url, body, _ in fake.calls
+        if url.endswith("/chat/completions") and body["messages"][0]["content"] == sca.ASSESSMENT_SYSTEM_PROMPT
+    )
+    answer_check = next(
+        body
+        for url, body, _ in fake.calls
+        if url.endswith("/chat/completions") and body["messages"][0]["content"] == sca.ANSWER_CHECK_SYSTEM_PROMPT
+    )
+    assessment_input = json.loads(assessment["messages"][-1]["content"])
+    answer_check_input = json.loads(answer_check["messages"][-1]["content"])
+    assert retrieval["query"] == corrected
+    assert assessment_input["question"] == corrected
+    assert assessment_input["case_messages"] == sca._clean_messages(case)
+    assert "applicability" not in assessment_input
+    assert answer_check_input["case_messages"] == sca._clean_messages(case)
+    assert "applicability" not in answer_check_input
+    assert findings[0]["question"] == corrected
+    assert findings[0]["language"] == "de"
+    assert findings[0]["applicability"] == "Samstags waehrend der Ladenoeffnung"
+
+
+@pytest.mark.parametrize("language, valid", [("Nederlands", False), ("nl", True)])
+async def test_source_verification_requires_canonical_language_code(fake, language, valid):
+    fake.extraction = _one_question(["m1"])
+    fake.verification = {
+        "decisions": [
+            {
+                "index": 0,
+                "event_type": "learning_request",
+                "request_message_ids": ["m1"],
+                "question": "Hoe porteer ik mijn nummer?",
+                "language": language,
+                "applicability": "nummerportering",
+            }
+        ]
+    }
+    fake.retrieval = _retrieval([_chunk("c1", "Dien het porteringsformulier in.")])
+    fake.assessment = {
+        "diagnosis": "covered",
+        "rationale": "Het artikel geeft de stap.",
+        "missing_information": "",
+        "article_ids": ["c1"],
+    }
+
+    if valid:
+        assert (await _run(fake, _case([_msg("m1", "customer", "Hoe porteer ik mijn nummer?")])))[0]["language"] == "nl"
+    else:
+        with pytest.raises(sca.SupportCaseAnalysisError, match="language"):
+            await _run(fake, _case([_msg("m1", "customer", "Hoe porteer ik mijn nummer?")]))
+        assert not any(url.endswith("/retrieve") for url, _, _ in fake.calls)
+
+
+async def test_kept_verification_without_complete_correction_fails_before_retrieval(fake):
+    fake.extraction = {
+        "questions": [
+            {
+                "question": "How do I take a screenshot?",
+                "language": "en",
+                "audience": "customer",
+                "applicability": "support evidence",
+                "message_ids": ["m1"],
+            }
+        ]
+    }
+    fake.verification = {
+        "decisions": [
+            {
+                "index": 0,
+                "event_type": "customer_problem",
+                "request_message_ids": ["m1"],
+                "question": "Why does the CRM notification repeat?",
+                "language": "en",
+            }
+        ]
+    }
+
+    with pytest.raises(sca.SupportCaseAnalysisError):
+        await _run(fake, _case([_msg("m1", "customer", "The CRM notification keeps repeating.")]))
+    assert not any(url.endswith("/retrieve") for url, _, _ in fake.calls)
 
 
 async def test_payment_agreed_note_candidate_is_rejected_before_retrieval(fake):
@@ -935,7 +1179,7 @@ async def test_payment_agreed_note_candidate_is_rejected_before_retrieval(fake):
             }
         ]
     }
-    fake.verification = {"decisions": [{"index": 0, "keep": False, "request_message_ids": []}]}
+    fake.verification = {"decisions": [{"index": 0, "event_type": "support_work", "request_message_ids": ["n1"]}]}
     findings = await _run(fake, case)
     assert findings == []
     assert not any(url.endswith("/retrieve") for url, _, _ in fake.calls)
@@ -959,7 +1203,18 @@ async def test_internal_note_reporting_customer_howto_is_retained(fake):
             }
         ]
     }
-    fake.verification = {"decisions": [{"index": 0, "keep": True, "request_message_ids": ["n1"]}]}
+    fake.verification = {
+        "decisions": [
+            {
+                "index": 0,
+                "event_type": "learning_request",
+                "request_message_ids": ["n1"],
+                "question": "How do I set up a call plan with greetings and voicemail?",
+                "language": "en",
+                "applicability": "call plan",
+            }
+        ]
+    }
     fake.retrieval = _retrieval([_chunk("c1", "Unrelated content about billing.")])
     fake.assessment = {
         "diagnosis": "missing",
@@ -1070,12 +1325,19 @@ async def test_alternate_search_finds_article_missed_by_original_yields_findabil
         "article_ids": ["c_right"],
     }
     findings = await _run(fake, _agent_backed_case())
-    assert len(findings) == 1
     f = findings[0]
     assert f["diagnosis"] == "findability"
     assert [a["chunk_id"] for a in f["articles"]] == ["c_right"]
     assert f["proposed_change"].strip()
     assert f["comparison_limitations"] == []  # not an absence, so no bounded-absence caveat
+    answer_check = next(
+        body
+        for url, body, _ in fake.calls
+        if url.endswith("/chat/completions") and body["messages"][0]["content"] == sca.ANSWER_CHECK_SYSTEM_PROMPT
+    )
+    assert json.loads(answer_check["messages"][-1]["content"])["case_messages"] == sca._clean_messages(
+        _agent_backed_case()
+    )
 
     retrieve_calls = [c for c in fake.calls if c[0].endswith("/retrieve")]
     assert len(retrieve_calls) == 2
@@ -1149,9 +1411,17 @@ async def test_covered_verdict_skips_second_retrieval_and_has_no_proposed_change
     findings = await _run(fake, _agent_backed_case())
     f = findings[0]
     assert f["diagnosis"] == "covered"
-    assert f["proposed_change"] == ""  # non-gap verdicts never carry a change
+    assert f["proposed_change"] == ""
     assert f["search_queries"] == ["How do I move my number over?"]
     assert sum(url.endswith("/retrieve") for url, _, _ in fake.calls) == 1
+    answer_check = next(
+        body
+        for url, body, _ in fake.calls
+        if url.endswith("/chat/completions") and body["messages"][0]["content"] == sca.ANSWER_CHECK_SYSTEM_PROMPT
+    )
+    assert json.loads(answer_check["messages"][-1]["content"])["case_messages"] == sca._clean_messages(
+        _agent_backed_case()
+    )
 
 
 async def test_related_add_instructions_do_not_answer_a_removal_question(fake):
