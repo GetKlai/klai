@@ -606,12 +606,19 @@ async def test_llm_calls_use_configured_judge_endpoint(fake):
 
     llm_calls = [c for c in fake.calls if "/chat/completions" in c[0]]
     assert llm_calls, "expected at least the extraction call"
-    for url, body, headers in llm_calls:
+    for index, (url, body, headers) in enumerate(llm_calls):
         assert url == "http://litellm:4000/v1/chat/completions"
         assert headers["Authorization"] == "Bearer master-key"
         assert body["model"] == "klai-medium"
-        # JSON mode is requested on every judge call (production judge supports it).
-        assert body["response_format"] == {"type": "json_object"}
+        if index == 0:
+            question = body["response_format"]["json_schema"]["schema"]["properties"]["questions"]["items"]
+            assert body["response_format"]["type"] == "json_schema"
+            assert body["response_format"]["json_schema"]["strict"] is True
+            assert question["required"] == ["question", "language", "audience", "applicability", "message_ids"]
+            assert question["properties"]["audience"]["enum"] == ["customer", "internal", "unknown"]
+            assert question["properties"]["message_ids"]["items"]["enum"] == ["m1"]
+        else:
+            assert body["response_format"] == {"type": "json_object"}
 
 
 async def test_prompts_frame_source_as_untrusted_data(fake):

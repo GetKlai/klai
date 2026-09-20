@@ -187,6 +187,7 @@ async def preview_crawl(
     org_id: str = "",
     try_ai: bool = False,
     cookies: list[dict] | None = None,
+    single_page_source: bool = False,
 ) -> dict:
     """Call knowledge-ingest preview endpoint and return fit_markdown + word_count.
 
@@ -213,12 +214,16 @@ async def preview_crawl(
                 "content_selector": content_selector,
                 "org_id": org_id,
                 "try_ai": try_ai,
+                "single_page_source": single_page_source,
             }
             if cookies:
                 payload["cookies"] = cookies
             resp = await client.post("/ingest/v1/crawl/preview", json=payload)
             resp.raise_for_status()
-            return resp.json()  # type: ignore[no-any-return]
+            data = resp.json()
+            if single_page_source and data.get("mode") != "single_page_source":
+                raise ValueError("knowledge-ingest did not use single-page source mode")
+            return data  # type: ignore[no-any-return]
     except Exception:
         logger.warning("preview_crawl failed", extra={"url": url}, exc_info=True)
         return {

@@ -48,7 +48,7 @@ from app.trace import get_trace_headers
 # Bumped whenever the extraction/assessment prompts or the finding shape change,
 # so a caller can tell a re-analysis of the same case apart from the old one and
 # update a finding instead of inflating demand (contract § 3, "analysis version").
-ANALYSIS_VERSION = "support-case-analysis-v11"
+ANALYSIS_VERSION = "support-case-analysis-v12"
 
 # Defensive input bounds, from the shared contract ("Support up to 1,000
 # messages/segments and 200,000 text characters per case"). A case beyond these
@@ -460,7 +460,7 @@ def _parse_json_object(raw: str) -> dict:
     return data
 
 
-async def _call_llm(*, system: str, user: str) -> str:
+async def _call_llm(*, system: str, user: str, response_format: dict[str, object] | None = None) -> str:
     """One LiteLLM chat completion against the configured judge model.
 
     Same endpoint, auth and trace propagation as
@@ -477,7 +477,7 @@ async def _call_llm(*, system: str, user: str) -> str:
             json={
                 "model": settings.conversation_judge_model,
                 "temperature": 0.1,
-                "response_format": {"type": "json_object"},
+                "response_format": response_format or {"type": "json_object"},
                 "messages": [
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
@@ -486,6 +486,38 @@ async def _call_llm(*, system: str, user: str) -> str:
         )
         resp.raise_for_status()
         return str(resp.json()["choices"][0]["message"]["content"])
+
+
+def _extraction_response_format(valid_ids: set[str]) -> dict[str, object]:
+    question_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "question": {"type": "string"},
+            "language": {"type": "string"},
+            "audience": {"type": "string", "enum": sorted(_AUDIENCES)},
+            "applicability": {"type": "string"},
+            "message_ids": {
+                "type": "array",
+                "minItems": 1,
+                "items": {"type": "string", "enum": sorted(valid_ids)},
+            },
+        },
+        "required": ["question", "language", "audience", "applicability", "message_ids"],
+    }
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "support_case_questions",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {"questions": {"type": "array", "maxItems": MAX_QUESTIONS, "items": question_schema}},
+                "required": ["questions"],
+            },
+        },
+    }
 
 
 def _parse_questions(raw: str, valid_ids: set[str]) -> list[_Question]:
@@ -989,7 +1021,12 @@ async def analyze_support_case(*, case: dict, kb_slug: str, zitadel_org_id: str,
     )
     mediums = {ex["medium"] for ex in exchanges}
     raw = await asyncio.wait_for(
-        _call_llm(system=_extraction_system_prompt(mediums), user=extraction_user), timeout=_LLM_TIMEOUT_S
+        _call_llm(
+            system=_extraction_system_prompt(mediums),
+            user=extraction_user,
+            response_format=_extraction_response_format(valid_ids),
+        ),
+        timeout=_LLM_TIMEOUT_S,
     )
     questions = _parse_questions(raw, valid_ids)
     questions = await _verify_questions(questions, messages_by_id)

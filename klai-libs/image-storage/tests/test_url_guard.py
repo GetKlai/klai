@@ -115,6 +115,33 @@ async def test_rejects_non_https() -> None:
 
 
 @pytest.mark.asyncio()
+async def test_http_opt_in_keeps_ssrf_classification() -> None:
+    with patch(
+        "klai_image_storage.url_guard._resolve_blocking",
+        return_value=("93.184.216.34",),
+    ):
+        validated = await validate_url_pinned("http://example.com/path", allow_http=True)
+    assert validated.url == "http://example.com/path"
+    assert validated.preferred_ip == "93.184.216.34"
+
+    for url, reason in (
+        ("http://10.0.0.5/", Reason.PRIVATE_IP),
+        ("http://docker-socket-proxy/", Reason.DOCKER_INTERNAL),
+    ):
+        with pytest.raises(SsrfBlockedError) as excinfo:
+            await validate_url_pinned(url, allow_http=True)
+        assert excinfo.value.reason == reason
+
+    with patch(
+        "klai_image_storage.url_guard._resolve_blocking",
+        return_value=("93.184.216.34", "10.0.0.5"),
+    ):
+        with pytest.raises(SsrfBlockedError) as excinfo:
+            await validate_url_pinned("http://mixed.example.test/", allow_http=True)
+    assert excinfo.value.reason == Reason.PRIVATE_IP
+
+
+@pytest.mark.asyncio()
 async def test_rejects_missing_hostname() -> None:
     with pytest.raises(SsrfBlockedError) as excinfo:
         await validate_url_pinned("https:///nohost")
