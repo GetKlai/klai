@@ -33,7 +33,7 @@ door een agent van labels door een menselijke inhoudseigenaar.
 ## Prioriteit en open onderzoek
 
 1. **Bedragen behouden vóór verdere intakeproeven:** §18 toont verlies van
-   decimale prijzen in de antwoordnabewerking. Herstel eerst deze gedeelde functie.
+   decimale prijzen in de antwoordnabewerking. De gedeelde functie is hersteld en live.
    De JSON-groepering uit §16–17 vereist daarna nog de volledige ingest- en
    workerroute en herhaalde blinde antwoordproef vóór een uitrolbesluit.
    Bronreferenties blijven vooraf onafhankelijk gecontroleerd. Inhoudseigenaren

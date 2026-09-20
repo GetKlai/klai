@@ -791,3 +791,8 @@ bestaande fouten vóór en na deze ingreep. Functiegerichte mutatietests doden
 witruimtegevallen buiten het verwijderde prijspatroon.
 De deterministische meetpoort slaagt: deze minimale prijsfix gaat door naar
 review en uitrol. De groeperingsproef blijft apart en is nog niet uitrolklaar.
+
+**Uitrol:** [PR #1581](https://github.com/GetKlai/klai/pull/1581) staat op main.
+De vijf main-workflows, drie servicedeploys en productietest zijn groen. Alle drie
+draaiende services bevatten de gereviewde code en behouden de voorbeeldbedragen;
+hun bestaande HTTP-gezondheidscontroles geven 200.
