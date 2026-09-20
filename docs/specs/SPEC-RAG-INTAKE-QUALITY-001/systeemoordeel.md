@@ -1,6 +1,6 @@
 # RAG-keten: systeemoordeel en verbeterwerkwijze
 
-Stand: 19 september 2026. Dit document verbindt de startopdracht, het
+Stand: 20 september 2026. Dit document verbindt de startopdracht, het
 [meetlog](evolutie.md) en de [intake-eval](spec.md). Het is geen algemene
 nauwkeurigheidsscore en geen verklaring dat alle onderzoeksvragen zijn afgerond.
 
@@ -10,8 +10,10 @@ De zoek- en antwoordketen is goed uitgebouwd en bevat gemeten verbeteringen.
 De kwaliteit van de opgenomen kennis en de betrouwbaarheid van de beoordelingen
 zijn minder goed onderbouwd. Zowel herstelde broninhoud als een vierde gevonden
 bron leverde in de volledige proeven geen herhaalbaar betere antwoorden op.
-De volgende stap vraagt betere referenties en een aangetoonde fout op een concrete
-antwoordroute voordat opnieuw een algemene instelling wordt veranderd.
+§15 legt acht onafhankelijk door agents gecontroleerde bronreferenties vast.
+Slechts één bron beantwoordt de bijbehorende vraag volledig; vijf referenties
+zijn gedeeltelijk en twee dubbelzinnig. Een volgende ingreep vereist een
+aangetoonde fout op een concrete antwoordroute.
 
 | Onderdeel | Bewijs | Oordeel en grens |
 |---|---|---|
@@ -30,9 +32,10 @@ door een agent van labels door een menselijke inhoudseigenaar.
 
 ## Prioriteit en open onderzoek
 
-1. **Beoordelingsreferenties:** inhoudseigenaren laten vastleggen welke bestaande
-   antwoorden en gaps werkelijk kloppen, via de aanwezige reviewvelden. Beperkt
-   bouwwerk; dit maakt volgende kwaliteitsbesluiten betrouwbaarder.
+1. **Beoordelingsreferenties:** de bronreferenties uit §15 gebruiken om een
+   concrete fout te isoleren. Inhoudseigenaren kunnen via de bestaande reviewvelden
+   vastleggen welke antwoorden en gaps werkelijk kloppen. De agentreferenties
+   vervangen die menselijke labels niet.
 2. **Gerichte bronselectie en vraaggeneratie:** pas een ingreep meten wanneer echte
    vragen een concrete fout in vraagvectoren of bronselectie aantonen. De huidige twee
    navigatiefouten rechtvaardigen na §12–13 geen implementatie; de algemene vierde

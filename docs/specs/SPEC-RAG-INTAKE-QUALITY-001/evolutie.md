@@ -554,3 +554,79 @@ algemene promptwijziging op basis van de flags alleen.
 antwoordwinst op. De bestaande limiet van drie bronnen blijft actief. Geen
 productcode gewijzigd, geen herindexering en geen nieuwe prompt gebouwd.
 Alle vijf eigen proefcontainers zijn na opslag van de resultaten verwijderd.
+
+## 15. Brononderbouwde referenties vóór een volgende reparatie (20 september)
+
+[Ragas](https://docs.ragas.io/en/stable/concepts/metrics/available_metrics/context_recall/)
+onderscheidt dekking van referentieclaims van het terugvinden van documenten.
+Een [prompt-gecontroleerde studie](https://arxiv.org/abs/2603.28005) laat bovendien
+zien dat het opsplitsen van claims niet vanzelf een betere beoordelaar oplevert;
+referentiekwaliteit beïnvloedt beide onderzochte beoordelingsvormen. De resultaten
+van die benchmarks zijn geen nauwkeurigheidsschatting voor onze keten.
+
+De bestaande intake-eval, suite-loader en markdownnormalisatie worden hergebruikt.
+Alle acht eerder gekozen gold-cases blijven in deze diagnose, inclusief historie.
+Zes krijgen het volledige, eerder vastgelegde ruwe bronartikel; twee krijgen de
+opgeslagen brontekst. Bronidentiteit en inhoud zijn vooraf op hash vastgelegd.
+Deze geselecteerde, eerder onderzochte cases zijn geen onafhankelijke testset.
+
+Een nieuwe agent stelt referentieantwoorden op uit alleen vraag, historie en
+bron. Hij krijgt geen proefantwoorden, zoekresultaten of juryuitslagen.
+Iedere feitelijke claim vereist een letterlijk broncitaat. Onbeantwoorde delen,
+ontbrekende gespreksdatum en passende menselijke hulp worden apart vastgelegd.
+Een tweede agent controleert de referenties vóór de dekkingsmeting.
+
+Dit levert agentlabels, geen menselijke waarheid. De bestaande supportreview
+reserveert `_reference` voor een menselijk oordeel; deze diagnose schrijft daar
+niets in. De eerdere afgewezen uitrolbesluiten blijven staan. Een nieuwe reparatie
+vereist een concrete oorzaak en vervolgens opnieuw de volledige antwoordproef.
+
+De onafhankelijke controle leidde tot correcties in zes referenties. Daarbij
+ontbraken relevante voorwaarden, werd een broninstructie te ruim uitgelegd en
+bleek een eerder assistentantwoord in de historie zelf niet brononderbouwd.
+Dat antwoord mag de betekenis van een vervolgvraag niet ongemerkt vastzetten.
+Ook een ontbrekende eenheid mag niet uit een eerdere assistentuitspraak worden
+overgenomen. Na één correctiecontrole zijn alle acht referenties geaccepteerd:
+één volledig, vijf gedeeltelijk en twee dubbelzinnig. Dit is geen telling van
+goede of slechte productantwoorden, maar van wat de aangeleverde bron onderbouwt.
+
+Vóór de meting zijn de definitieve referenties, controle en meetadapter op hash
+vastgezet. De 22 letterlijke citaten zijn na bestaande markdownnormalisatie
+43–294 tekens lang, mediaan 141. Sommige bevatten meerdere feiten; de maat is
+daarom dekking van tekstpassages, geen semantische beoordeling per los feit.
+
+| Stap in de oorspronkelijke momentopname | Gedekte passages |
+|---|---:|
+| Gecontroleerde brontekst | 22/22 |
+| In minstens één opgeslagen child-chunk | 21/22 |
+| Child met die passage teruggevonden | 12/22 |
+| Passage aanwezig in teruggegeven tekst, inclusief parents | 14/22 |
+
+Deze momentopname komt uit een directe `/retrieve`-aanroep met `top_k=8` en
+gesprekshistorie, zonder door de chatlaag gemaakte queryvarianten. De laatste rij
+betreft de zoek-API, niet de uiteindelijk geselecteerde antwoordcontext. Eén
+passage ontbreekt al in de opgeslagen brontekst; zeven andere staan in een child
+maar niet in de teruggegeven tekst. Die zeven zijn geen zeven bewezen bugs:
+dubbelzinnigheid en gevraagde menselijke hulp tellen mee in de referenties.
+
+Voor de zes crawlcases zijn twintig citaten ook tegen dezelfde vastgelegde HTML
+vergeleken. De oorspronkelijke filteruitvoer bevat er negentien; de eerder
+afgewezen optie die gemarkeerde inline-elementen behoudt bevat alle twintig.
+De ene herstelde passage ontbreekt ook in de oude opgeslagen chunks. Dit is
+werkelijk tekstverlies, geen verschil dat markdownnormalisatie wegpoetst.
+
+Daarna is een tweede diagnose vooraf vastgelegd op alleen de historische
+baseline met drie bronnen uit §14. De zes overlappende widgetcases hebben elk
+drie antwoordpogingen: twintig referentiepassages leveren zestig waarnemingen.
+Daarvan staan er 39 in de zoekresultaten en 37 in de werkelijk aangeleverde
+antwoordcontext. Het verschil betreft één passage in twee pogingen bij dezelfde
+vraag. De twee interne chatcases ontbreken in deze proef en worden niet ingevuld.
+De herhalingen zijn geen zestig onafhankelijke vragen. Deze terugblik beoordeelt
+geen antwoordtekst en vergelijkt geen nieuwe productvariant.
+
+**Besluit:** de meetlat is aangescherpt en de bestaande evaluatie hergebruikt.
+De cijfers isoleren één eerder bekende filterfout en bevestigen een eerder
+waargenomen verlies bij bronselectie. Ze rechtvaardigen geen nieuwe algemene
+instelling of herhaling van dezelfde afgewezen proef. Bronbehoud en vier bronnen
+blijven afgewezen voor uitrol; eerst is nieuw bewijs op een concrete antwoordroute
+nodig. Geen nieuwe productcode, antwoordgeneraties of productiewijzigingen in deze stap.
