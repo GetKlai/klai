@@ -937,6 +937,29 @@ async def _crawl_sync(
     return resp.json()
 
 
+async def crawl_single_page_source(url: str) -> CrawlResult:
+    """Fetch one URL with the lean interactive source-upload contract."""
+    crawler_config = {
+        "cache_mode": "bypass",
+        "wait_until": "domcontentloaded",
+        "page_timeout": 20_000,
+        "body_visibility_timeout": 2_000,
+        "markdown_generator": {
+            "type": "DefaultMarkdownGenerator",
+            "params": {
+                "options": {"type": "dict", "value": {"ignore_links": False, "body_width": 0}},
+            },
+        },
+    }
+    return await _crawl_page_with_config(
+        url,
+        crawler_config,
+        cookies=None,
+        selector=None,
+        timeout=60.0,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------

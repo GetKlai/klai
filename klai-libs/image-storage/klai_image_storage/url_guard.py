@@ -351,7 +351,7 @@ async def _resolve_async(hostname: str, timeout: float) -> tuple[str, ...]:
 # ---------------------------------------------------------------------------
 
 
-def _parse_and_classify(url: str) -> tuple[str, str]:
+def _parse_and_classify(url: str, *, allow_http: bool = False) -> tuple[str, str]:
     """Return ``(hostname, reason_if_rejected_else_empty)`` after URL parsing.
 
     Applies the scheme, hostname, and docker-internal checks that do
@@ -360,7 +360,7 @@ def _parse_and_classify(url: str) -> tuple[str, str]:
     """
 
     parsed = urlparse(url)
-    if parsed.scheme != "https":
+    if parsed.scheme != "https" and not (allow_http and parsed.scheme == "http"):
         raise SsrfBlockedError(
             f"Only HTTPS URLs are allowed. Got: {parsed.scheme!r}",
             reason=Reason.NON_HTTPS,
@@ -426,6 +426,7 @@ def _classify_resolved(
 async def validate_url_pinned(
     url: str,
     *,
+    allow_http: bool = False,
     dns_timeout: float = 2.0,
     cache: _DnsCache | None = None,
     log_as: str | None = "ssrf_blocked",
@@ -444,7 +445,7 @@ async def validate_url_pinned(
     """
 
     try:
-        hostname, _ = _parse_and_classify(url)
+        hostname, _ = _parse_and_classify(url, allow_http=allow_http)
     except SsrfBlockedError as exc:
         _log_blocked(event=log_as, url=url, hostname=exc.hostname, reason=exc.reason)
         raise
