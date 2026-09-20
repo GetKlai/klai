@@ -729,3 +729,65 @@ volgen de volledige ingest- en workerroute op eigen opslag en de herhaalde,
 blinde antwoordvergelijking volgens antwoordlog §6. Zestien echte vragen zijn
 vooraf geselecteerd; hun bronreferenties worden onafhankelijk gecontroleerd.
 Alle eigen proefcontainers en tijdelijke configuratiekopieën zijn verwijderd.
+
+## 18. De antwoordnabewerking verwijderde decimale prijzen (20 september)
+
+Een beperkte vervolgproef gebruikte de vier bevroren antwoordcontexten uit §17:
+twee echte vragen, beide varianten, drie generaties per combinatie. Vooraf waren
+alle zestien bronreferenties onafhankelijk gecontroleerd: acht dubbelzinnig,
+zeven gedeeltelijk en één onbeantwoordbaar. Dit zijn agentlabels, geen menselijke
+referenties. De twaalf antwoorden doorliepen de huidige nabewerking met twaalf groundingcontroles en
+zonder reparatieaanroep. De 24 modelaanroepen rapporteerden samen 267.042 tokens.
+Dit zijn herhaalde antwoorden op vaste contexten, geen herhaalde zoekproef.
+
+De geplande twaalf blinde beoordelingen stopten na vijf geslaagde beoordelingen
+op HTTP 429 bij de zesde aanroep. Ook keurden beoordelingen bedragen goed die
+in het uiteindelijke antwoord ontbraken. Deze onvolledige beoordeling levert
+geen winstclaim of uitrolbesluit voor de JSON-groepering op.
+
+**Contract en oorzaak.** Negen conceptantwoorden bevatten samen achttien bedragen
+met een decimale komma. De nabewerking verwijderde alle achttien. Een gedeelde
+regex beschouwde ongemarkeerde cijferreeksen met komma's als bronverwijzingen.
+Dezelfde functie bedient interne chat, de widget, streaming en antwoorden zonder
+geselecteerde bron. De fout ligt na het genereren, onafhankelijk van de vraag
+of een bedrag door de opgehaalde bron wordt ondersteund.
+
+[CommonMark 0.31.2](https://spec.commonmark.org/0.31.2/#list-items) beschrijft
+expliciete lijstmarkeringen; een losse decimale komma is geen lijstmarkering.
+De [Python-regexdocumentatie](https://docs.python.org/3/library/re.html) helpt de
+match te verklaren. Het doorslaggevende bewijs blijft de letterlijke uitvoer van
+de bestaande functie op de vastgelegde conceptantwoorden.
+
+**Ingreep.** Verwijder uitsluitend de regex en zijn vervangingsaanroep. De
+bestaande opschoning van expliciete bronmarkeringen blijft behouden. Eén eerst
+falende regressietest bewaart maand- en eenmalige bedragen en verwijdert tegelijk
+een expliciete bronmarkering. Voor deze deterministische tekstbewerking is exact
+behoud van de bedragen de meetpoort; een modeloordeel kan die controle niet vervangen.
+
+**Nameting.** Dezelfde twaalf conceptantwoorden zijn door de bestaande interne
+posthook en renderer herspeeld, eerst origineel en daarna met alleen de twee
+regels verwijderd. Images en overige gemounte bestanden bleven gelijk. De
+waargenomen uitkomst zonder modelreparatie is bevroren; grounding is niet opnieuw
+beoordeeld en alle nieuwe model- en zoekaanroepen waren geblokkeerd. De originele
+herspeling reproduceert alle twaalf eerder vastgelegde responsobjecten exact.
+
+| Letterlijke controle | Origineel | Met reparatie |
+|---|---:|---:|
+| Behouden bedragen uit negen conceptantwoorden | 0/18 | 18/18 |
+| Ongewijzigde antwoorden zonder prijs | 3/3 | 3/3 |
+| Ongewijzigde bronselecties | 12/12 | 12/12 |
+
+Buiten de bedragen en normalisatie van witruimte bleef de antwoordtekst gelijk.
+Dit bewijst behoud van de gegenereerde bedragen, niet hun inhoudelijke juistheid.
+Beide eigen containers en configuratiekopieën zijn verwijderd; productie bleef
+ongewijzigd tijdens de proef.
+
+**Controles en besluit.** Citations: 73 tests groen; interne chat: 1.058; portal:
+4.506; retrieval: 595. De chat-suite vereiste één correctie van een verouderde
+assertie op de deployvoorwaarde; de bestaande deploy-gedragstests blijven groen.
+De portal-typecheck slaagt. De losse citations-typecheck meldt dezelfde 167
+bestaande fouten vóór en na deze ingreep. Functiegerichte mutatietests doden
+119 van 141 varianten; 22 overleven in bestaande beeld-, footer-, opschoon- en
+witruimtegevallen buiten het verwijderde prijspatroon.
+De deterministische meetpoort slaagt: deze minimale prijsfix gaat door naar
+review en uitrol. De groeperingsproef blijft apart en is nog niet uitrolklaar.

@@ -1239,6 +1239,14 @@ def test_strip_preserves_blank_lines_between_paragraphs() -> None:
     assert strip_model_citation_artifacts(text) == text
 
 
+def test_strip_preserves_decimal_prices_while_removing_citation_marker() -> None:
+    from klai_citations import strip_model_citation_artifacts
+
+    text = "De module kost 5,75 euro per maand en eenmalig 23,50 euro [1]."
+
+    assert strip_model_citation_artifacts(text) == ("De module kost 5,75 euro per maand en eenmalig 23,50 euro.")
+
+
 def test_strip_keeps_form_numbering_separated_by_answer_lines() -> None:
     """Numbered question lines that continue the document sequence stay numbered.
 

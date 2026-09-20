@@ -85,7 +85,6 @@ _EVIDENCE_LABEL_RE = re.compile(
 )
 _EVIDENCE_ID_TOKEN_RE = re.compile(r"E\d{1,3}", re.IGNORECASE)
 _MALFORMED_NUMBER_URL_RE = re.compile(r"\b\d{1,3}\(https?://[^)\s]+\)", re.IGNORECASE)
-_BARE_NUMBER_RUN_RE = re.compile(r"(?<![\w/])\b\d{1,3}(?:\s*[,;]\s*\d{1,3})+\b(?=(?:[.!?])?(?:\s|$))")
 _TOKEN_RE = re.compile(r"[a-z0-9À-ÿ][a-z0-9À-ÿ_-]{2,}", re.IGNORECASE)
 # Bold/ATX-tolerant + multilingual: the model imitates our footer with bold,
 # markdown headings (## Sources) and/or English headings (**Sources**,
@@ -647,7 +646,6 @@ def strip_model_citation_artifacts(
     cleaned = _BARE_BRACKET_CITATION_RE.sub("", cleaned)
     cleaned = _PAREN_CITATION_RE.sub("", cleaned)
     cleaned = strip_injected_evidence_labels(cleaned, evidence_ids=evidence_ids)
-    cleaned = _BARE_NUMBER_RUN_RE.sub("", cleaned)
     cleaned = _RAW_URL_RE.sub("", cleaned)
     # Trailing whitespace only — `\s+\n` would also swallow blank lines and
     # collapse paragraph/form layout into one wall of text (Voys feedback #4/#21).
