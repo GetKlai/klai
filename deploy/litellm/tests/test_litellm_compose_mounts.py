@@ -41,7 +41,7 @@ def test_litellm_prisma_migrations_are_preflight_gated():
     assert "check_litellm_prisma_migration_baseline" in compose_up_text
     assert "public._prisma_migrations is missing" in compose_up_text
     assert "Refusing to recreate litellm" in compose_up_text
-    assert '[[ "$SERVICE" == "litellm" ]]' in compose_up_text
+    assert "if has_service litellm; then" in compose_up_text
     assert '[[ -z "$SERVICE" || "$SERVICE" == "litellm" ]]' not in compose_up_text
     assert "- 'deploy/docker-compose.yml'" in litellm_deploy_text
     assert "awk '$0 != \"litellm\"'" in deploy_compose_text
