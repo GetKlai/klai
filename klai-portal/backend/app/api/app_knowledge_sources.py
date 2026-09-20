@@ -267,13 +267,14 @@ async def add_url_source(
     perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> SourceIngestedResponse:
-    """Fetch a web page via crawl4ai and ingest its markdown."""
+    """Extract a web page through knowledge-ingest and ingest its markdown."""
     start = time.monotonic()
     kb = await _get_writable_kb_or_raise(kb_slug, perms, db)
     org = await _load_org_or_500(db, perms.org_id)
 
     try:
-        title, content, source_ref = await extract_url(body.url)
+        # Tenant identity for ingest is the Zitadel org id, never perms.org_id.
+        title, content, source_ref = await extract_url(body.url, org.zitadel_org_id)
     except InvalidUrlError as exc:
         raise HTTPException(status_code=400, detail="Not a valid URL") from exc
     except SSRFBlockedError as exc:

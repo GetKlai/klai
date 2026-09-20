@@ -31,6 +31,7 @@ from knowledge_ingest.crawl4ai_client import (
     LinkedPageSample,
     crawl_dom_summary,
     crawl_page,
+    crawl_single_page_source,
     sample_linked_pages,
 )
 from knowledge_ingest.db import tenant_scoped_connection
@@ -103,6 +104,7 @@ class CrawlPreviewRequest(BaseModel):
     org_id: str = ""  # optional for backwards compatibility; required for domain selector lookup
     try_ai: bool = False  # explicit opt-in for AI selector detection
     cookies: list[dict] | None = None  # browser cookies for authenticated crawling
+    single_page_source: bool = False
 
 
 class AuthGuardSuggestion(BaseModel):
@@ -122,6 +124,7 @@ class CrawlPreviewResponse(BaseModel):
     url: str
     fit_markdown: str
     word_count: int
+    mode: str = "connector_preview"
     warnings: list[str] = []
     content_selector: str | None = None
     selector_source: str | None = None  # "user" | "ai" | None
@@ -449,10 +452,24 @@ async def preview_crawl(body: CrawlPreviewRequest, request: Request) -> CrawlPre
     # ``except Exception`` from swallowing the 400-class rejection
     # into the historical 200-with-empty-body shape.
     try:
-        await validate_url_pinned(body.url)
+        await validate_url_pinned(body.url, allow_http=body.single_page_source)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
+        if body.single_page_source:
+            result = await crawl_single_page_source(body.url)
+            markdown = result.fit_markdown or result.raw_markdown
+            return CrawlPreviewResponse(
+                url=body.url,
+                fit_markdown=markdown,
+                word_count=len(markdown.split()),
+                mode="single_page_source",
+                classification="success" if markdown.strip() else "unknown",
+                classification_reason=None
+                if markdown.strip()
+                else "The page returned no usable content.",
+            )
+
         # Resolve effective selector: user-provided wins, then stored domain selector
         # SPEC-CRAWL-001 / R-2, R-6
         effective_selector = body.content_selector
