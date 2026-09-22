@@ -264,6 +264,24 @@ async def test_answered_draft_with_sources_is_shown_with_its_sources(stream):
     assert signals["decision"] == "answer"
 
 
+@pytest.mark.parametrize("stream", [True, False])
+async def test_a_widget_answer_reaches_the_visitor_without_dashes(stream):
+    """The widget owner wants no dash as punctuation in any reply; the model
+    writes them anyway, copying the prompt's own style. A range stays a range."""
+    answer = (
+        ANSWER_900.replace(".", " \u2014 kijk eerst of de factuur open staat.", 1)
+        + " Bereikbaar 9\u201317 uur \u2013 ook op zaterdag."
+    )
+    litellm = _LiteLLM(model_text=answer, answer_judge=_answer_verdict("answered"))
+
+    text, _, _ = await _answer(litellm, stream=stream, **_with_900_sources())
+
+    assert "\u2014" not in text
+    assert " \u2013 " not in text
+    assert "9\u201317" in text
+    assert ", kijk eerst of de factuur open staat" in text
+
+
 async def test_partial_answer_keeps_its_sources_and_gets_the_appointment_button():
     litellm = _LiteLLM(model_text=ANSWER_900, answer_judge=_answer_verdict("partial"))
 

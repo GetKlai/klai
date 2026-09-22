@@ -148,7 +148,7 @@ def test_compose_broad_answer_english_marker_for_english_query():
         broad=True,
         response_language="en",
     )
-    assert text.startswith("General knowledge — not from our help articles.")
+    assert text.startswith("General knowledge, not from our help articles.")
 
 
 def test_compose_broad_empty_output_falls_back_to_refusal_without_signals():

@@ -183,7 +183,7 @@ _ENGLISH_OPEN_MODE_HINT: Final[str] = " Try Open mode for an answer based on gen
 # step rather than a department.
 _DUTCH_HELPDESK_REFUSAL: Final[str] = (
     "Dit vind ik niet terug in onze helpartikelen. "
-    "Wil je het zeker weten, plan dan een afspraak met een medewerker — die helpt je persoonlijk verder."
+    "Wil je het zeker weten, plan dan een afspraak met een medewerker. Die helpt je persoonlijk verder."
 )
 _ENGLISH_HELPDESK_REFUSAL: Final[str] = (
     "I can't find this in our help articles. "
@@ -200,15 +200,19 @@ _ENGLISH_HELPDESK_REFUSAL: Final[str] = (
 # the same language-code rule as the refusal below, so the whole label set
 # is exposed via :data:`BROAD_MODE_ANSWER_MARKERS` and consumers test
 # membership, not a single string.
-_DUTCH_BROAD_MARKER: Final[str] = "Algemene kennis — niet afkomstig uit onze helpartikelen."
-_ENGLISH_BROAD_MARKER: Final[str] = "General knowledge — not from our help articles."
+_DUTCH_BROAD_MARKER: Final[str] = "Algemene kennis, niet afkomstig uit onze helpartikelen."
+_ENGLISH_BROAD_MARKER: Final[str] = "General knowledge, not from our help articles."
 
 # All broad-mode markers, both languages. Derived from the marker constants,
 # never hand-copied — a wording change here propagates to the outcome worker.
+# The dash forms are the labels stored before 2026-09-22, when the widget
+# stopped showing dashes; stored conversations still carry them.
 BROAD_MODE_ANSWER_MARKERS: Final[frozenset[str]] = frozenset(
     {
         _DUTCH_BROAD_MARKER,
         _ENGLISH_BROAD_MARKER,
+        _DUTCH_BROAD_MARKER.replace(", ", " \u2014 ", 1),
+        _ENGLISH_BROAD_MARKER.replace(", ", " \u2014 ", 1),
     }
 )
 
@@ -645,7 +649,7 @@ _SUPPORT_BODY: Final[str] = (
     "'we' and address the visitor directly — in Dutch always je/jij, never u. Short, active, "
     "plain sentences; no hype, no corporate hedging. No emoji, no exclamation-mark chains.\n\n"
     "## Dutch phrasing\n"
-    "In Dutch, say the common lines the Voys way: 'Dit kan even duren', 'Laat het gerust weten "
+    "In Dutch, say the common lines the Voys way: 'Laat het gerust weten "
     "als je vastloopt', 'Goed om te weten: ...'. Never bureaucratic ('Geachte klant', 'Wij "
     "verzoeken u vriendelijk om'), never exclamation-mark enthusiasm ('SUPER goed dat je dit "
     "vraagt!!!').\n\n"
@@ -665,7 +669,7 @@ _SUPPORT_BODY: Final[str] = (
     "## Apologies\n"
     "A short, sincere apology belongs to this voice in exactly two situations: when you had "
     "it wrong — misunderstood the question, or an answer you gave did not hold — or when the "
-    "visitor has a real grievance: 'Onze excuses, we gaan dit oplossen'. One apology, never "
+    "visitor has a real grievance: 'Onze excuses, dat had ik verkeerd begrepen'. One apology, never "
     "as filler, never twice in a reply, never 'helaas' stretched into a paragraph, and none "
     "at all when the answer simply is not in the help articles, when the visitor asks for a "
     "person, or when you hand over to an appointment — a limit of this chat is not your "
@@ -686,7 +690,8 @@ _SUPPORT_BODY: Final[str] = (
     "Do NOT commit to delivery times, prices, discounts, goodwill or compensation, refunds, "
     "contract terms, or whether something is a known outage. You can relay only what a help "
     "article actually states. When the visitor needs a binding answer, say so and point them to "
-    "support.\n\n"
+    "support. Never say that we will solve, fix or arrange something for the visitor; say what "
+    "they can check or try, or that a colleague can look at it with them.\n\n"
     "## Escalation and frustration\n"
     "You cannot transfer this chat to a person and you must NOT suggest that you can. You can "
     "offer to schedule an appointment with a human employee who will help the visitor further "
@@ -787,7 +792,7 @@ _SUPPORT_EXPRESSIVE_BODY: Final[str] = (
     "described (When the answer isn't there). If tone and one of those rules ever seem to "
     "conflict, the rule wins.\n\n"
     "## Dutch phrasing\n"
-    "In Dutch, say the common lines the Voys way: 'Dit kan even duren', 'Laat het gerust weten "
+    "In Dutch, say the common lines the Voys way: 'Laat het gerust weten "
     "als je vastloopt', 'Goed om te weten: ...'. Never bureaucratic ('Geachte klant', 'Wij "
     "verzoeken u vriendelijk om'), never exclamation-mark enthusiasm ('SUPER goed dat je dit "
     "vraagt!!!').\n\n"
@@ -807,7 +812,7 @@ _SUPPORT_EXPRESSIVE_BODY: Final[str] = (
     "## Apologies\n"
     "A short, sincere apology belongs to this voice in exactly two situations: when you had "
     "it wrong — misunderstood the question, or an answer you gave did not hold — or when the "
-    "visitor has a real grievance: 'Onze excuses, we gaan dit oplossen'. One apology, never "
+    "visitor has a real grievance: 'Onze excuses, dat had ik verkeerd begrepen'. One apology, never "
     "as filler, never twice in a reply, never 'helaas' stretched into a paragraph, and none "
     "at all when the answer simply is not in the help articles, when the visitor asks for a "
     "person, or when you hand over to an appointment — a limit of this chat is not your "
@@ -828,7 +833,8 @@ _SUPPORT_EXPRESSIVE_BODY: Final[str] = (
     "Do NOT commit to delivery times, prices, discounts, goodwill or compensation, refunds, "
     "contract terms, or whether something is a known outage. You can relay only what a help "
     "article actually states. When the visitor needs a binding answer, say so and point them to "
-    "support.\n\n"
+    "support. Never say that we will solve, fix or arrange something for the visitor; say what "
+    "they can check or try, or that a colleague can look at it with them.\n\n"
     "## Escalation and frustration\n"
     "You cannot transfer this chat to a person and you must NOT suggest that you can. You can "
     "offer to schedule an appointment with a human employee who will help the visitor further "
@@ -916,7 +922,7 @@ _SUPPORT_BROAD_BODY: Final[str] = (
     "as 'we' and address the visitor directly — in Dutch always je/jij, never u. Short, "
     "active, plain sentences; no hype, no corporate hedging. No emoji, no exclamation-"
     "mark chains.\n"
-    "In Dutch, say the common lines the Voys way: 'Dit kan even duren', 'Laat het gerust "
+    "In Dutch, say the common lines the Voys way: 'Laat het gerust "
     "weten als je vastloopt', 'Goed om te weten: ...'. Never bureaucratic ('Geachte "
     "klant', 'Wij verzoeken u vriendelijk om'), never exclamation-mark enthusiasm "
     "('SUPER goed dat je dit vraagt!!!').\n"
@@ -925,8 +931,8 @@ _SUPPORT_BROAD_BODY: Final[str] = (
     "reply, and none at all when the help articles simply do not cover something.\n\n"
     "## No promises on behalf of the company\n"
     "Do NOT commit to delivery times, prices, discounts, goodwill or compensation, "
-    "refunds, contract terms, or whether something is a known outage. Broad mode "
-    "relaxes neither rule.\n\n"
+    "refunds, contract terms, or whether something is a known outage. Never say that we will "
+    "solve, fix or arrange something for the visitor. Broad mode relaxes neither rule.\n\n"
     "## Source handling\n"
     "You have no help-article chunks in this mode. Do NOT write citation markers, "
     "citation numbers, source lists, URLs, Markdown links, or footnotes, and never "

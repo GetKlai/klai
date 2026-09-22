@@ -1236,6 +1236,59 @@ in een gesprek oplevert; hij zegt wel dat een algemene opdracht "vraag bij twijf
    procedure, dan komt het directe antwoord zonder vraag.
 4. *Uitrol* alleen als de meting in twee rondes dezelfde kant op wijst, met wachttijd erbij.
 
+### 2.45 Vaste zinnen die het model overnam: "Dit kan even duren", een belofte, gedachtestreepjes (22 sep)
+De eigenaar zag in beoordeelde gesprekken steeds dezelfde fouten terug. Alle drie kwamen uit de
+SUPPORT-prompts zelf:
+- "Dit kan even duren" stond als voorbeeld in de lijst "zeg de gewone zinnen op de Voys-manier", en
+  het model opende er antwoorden op een storing van één bezoeker mee;
+- het voorbeeld bij excuses was "Onze excuses, we gaan dit oplossen", en dat kwam terug als "we gaan
+  dit voor je oplossen", een belofte die de chat niet kan waarmaken;
+- gedachtestreepjes: de prompttekst staat er vol mee en nergens stond dat het niet mocht; ook de vaste
+  tekst bij "niet gevonden" en het label voor een antwoord uit algemene kennis bevatten er een. De
+  vaste "niet gevonden"-tekst werd in de twee weken ervoor 59 keer getoond.
+
+**Gewijzigd.** "Dit kan even duren" is uit de lijst; het excuusvoorbeeld is "Onze excuses, dat had ik
+verkeerd begrepen". In alle drie de widgetprofielen staat nu: zeg nooit dat wij iets voor de bezoeker
+oplossen, regelen of repareren. Een widgetantwoord gaat na de
+laatste controle door een vaste filter die een gedachtestreepje tussen woorden vervangt door een
+komma; een bereik als 9–17 blijft staan. De vaste teksten zijn zonder streepje herschreven. Opgeslagen
+gesprekken van vóór de wijziging dragen de oude teksten nog; de uitkomstlabels herkennen beide vormen.
+
+**Gemeten** met de nieuwe meting uit 2.44 (zie 2.46): de 17 beoordeelde gesprekken, twee rondes, de
+live code tegen deze wijziging, dezelfde gesimuleerde bezoeker en blinde beoordelaar in beide volgordes.
+"Dit kan even duren" 2 keer tegen 0, antwoorden met een gedachtestreepje 6 tegen 0, een belofte "we
+gaan" 0 tegen 0, antwoorden "niet gevonden" 6 tegen 7, mediane beurt 7,8 tegen 6,2 s. Blinde voorkeur
+ronde 1 live 23 tegen 11, ronde 2 deze wijziging 16 tegen 15: de richting slaat om, dus ruis (§6).
+Een extra regel "open niet met een storingspagina" is weer geschrapt: in de meting opende het model bij
+een storingsmelding toch met de statuspagina, en in de variant met die regel antwoordde het op dezelfde
+melding twee keer "niet beschreven". Die opening hoort bij de diagnosestap uit 2.46, niet in een zin.
+
+### 2.46 Doorvragen als instructie in de prompt: gemeten, niet genoeg (22 sep)
+**De meting.** `followup_eval` (buiten de repo, zoals §6 voorschrijft) speelt de widgetroute
+in-process met een alleen-lezen database en previewsessies. Per beoordeeld gesprek: het antwoord, dan
+een gesimuleerde bezoeker (`klai-large`) die alleen weet wat de echte bezoeker later zelf zei, dan het
+volgende antwoord. Een blinde beoordelaar (`klai-large`) vergelijkt beide gesprekken in beide
+volgordes tegen de verwachting uit de opmerking van de menselijke beoordelaar: begrijpt het systeem
+het probleem, kiest het de juiste vervolgstap, is het bruikbaar. De set: 17 gesprekken, 6 waar de
+beoordelaar doorvragen verwachtte, 1 met meerdere procedures, 10 controles.
+
+**De kandidaat.** Een instructie achter de prompt: meldt de bezoeker dat iets niet werkt, noem dan de
+oorzaken uit de gevonden artikelen en eindig met één vraag die ze onderscheidt; beschrijven de
+artikelen meerdere procedures, zet ze kort naast elkaar en vraag welke; anders direct antwoorden.
+
+**Uitkomst.** Blind ronde 1 kandidaat 20 tegen 10 (4 gelijk), ronde 2 16 tegen 16: geen vaste richting,
+dus ruis. De kandidaat stelde niet vaker een vraag (4 van 12 op gesprekken waar doorvragen verwacht
+werd, tegen 5 van 12 zonder). Bij "iedereen die belt gaat naar voicemail" legde hij nog steeds uit hoe
+je alles naar voicemail stuurt; bij "al dagen geen service" opende hij met de statuspagina ondanks het
+expliciete verbod. Eén gesprek won hij in alle vier de oordelen: "ik kan niet bellen of gebeld worden
+met mijn apparaat" kreeg "gebruik je de app op een iPhone of op Android?".
+
+**Besluit.** Niet live. Het past bij wat het onderzoek in 2.44 zegt: een losse opdracht in de prompt
+stuurt het model nauwelijks, en of een vraag nodig is moet uit de gevonden artikelen komen. De
+volgende kandidaat is de aparte diagnosestap: vóór het schrijven groepeert een kleine aanroep de
+gevonden artikelen tot oorzaken of procedures en kiest de ene vraag, en het antwoord krijgt die
+structuur mee in plaats van een algemene opdracht. Dezelfde meting beslist.
+
 ---
 
 ## 3. Wat er live ging, en waarom
