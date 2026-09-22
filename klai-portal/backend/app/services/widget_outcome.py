@@ -79,10 +79,13 @@ _BATCH_SIZE = 500
 # Generated from the single source of truth instead of duplicated here; both
 # rendered languages are enumerated explicitly — the helper now takes the
 # language CODE ("nl"/"en"), not a query to guess from.
+# The Dutch refusal carried a dash until 2026-09-22; conversations stored
+# before that are still labelled and judged, so its old form stays recognised.
 _SUPPORT_REFERRAL_TEXTS: frozenset[str] = frozenset(
     {
         no_citable_sources_message("en", helpdesk=True).strip(),
         no_citable_sources_message("nl", helpdesk=True).strip(),
+        no_citable_sources_message("nl", helpdesk=True).strip().replace(". Die helpt", " \u2014 die helpt"),
     }
 )
 

@@ -166,6 +166,16 @@ def safety_refusal_response(*, model: str, query: str = "") -> dict:
     }
 
 
+# A dash used as punctuation: an em dash anywhere between words, an en dash
+# with a space on either side. "9\u201317" keeps its range dash.
+_PUNCTUATION_DASH = re.compile(r"\s*\u2014\s*|\s+\u2013\s+")
+
+
+def without_dashes(text: str, *, helpdesk: bool) -> str:
+    """The widget owner wants no dash as punctuation in a reply; the model copies them from the prompt."""
+    return _PUNCTUATION_DASH.sub(", ", text) if helpdesk else text
+
+
 def off_topic_response(*, model: str, reply: str, language: str | None) -> dict:
     """The referral for a subject this widget does not answer.
 
@@ -2385,6 +2395,7 @@ async def _chat_completion_streaming_with_composed_citations(
             conversational=conversational,
             clarity=clarity,
         )
+        content = without_dashes(content, helpdesk=support_mode)
         decision.update({"sentiment": sentiment} if support_mode and sentiment else {})
     _log_turn_timing(
         turn_timing, org_id=org_id, generation_ms=generation_ms, answer_judge_ms=_elapsed_ms(judge_started)
@@ -3211,6 +3222,7 @@ async def chat_completion_non_streaming(
                     conversational=conversational,
                     clarity=clarity,
                 )
+                rendered_content = without_dashes(rendered_content, helpdesk=support_mode)
                 answer_judge_ms = _elapsed_ms(judge_started)
                 decision.update({"sentiment": sentiment} if support_mode and sentiment else {})
                 # Popped before the log so that event keeps its exact payload;

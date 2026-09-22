@@ -64,7 +64,7 @@ def test_suggest_open_mode_true_missing_language_falls_through_dutch() -> None:
 
 _DUTCH_HELPDESK = (
     "Dit vind ik niet terug in onze helpartikelen. "
-    "Wil je het zeker weten, plan dan een afspraak met een medewerker — die helpt je persoonlijk verder."
+    "Wil je het zeker weten, plan dan een afspraak met een medewerker. Die helpt je persoonlijk verder."
 )
 _ENGLISH_HELPDESK = (
     "I can't find this in our help articles. "

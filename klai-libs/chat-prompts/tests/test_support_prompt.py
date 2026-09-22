@@ -15,7 +15,9 @@ import pytest
 from klai_chat_prompts import (
     BROAD_MODE_ANSWER_MARKERS,
     GROUNDED_CHAT_SYSTEM_PROMPT,
+    SUPPORT_BROAD_CHAT_SYSTEM_PROMPT,
     SUPPORT_CHAT_SYSTEM_PROMPT,
+    SUPPORT_EXPRESSIVE_CHAT_SYSTEM_PROMPT,
     appointment_offer_marker,
     strip_appointment_offer_marker,
 )
@@ -223,3 +225,17 @@ def test_strip_appointment_marker_leaves_ordinary_text_byte_identical():
 def test_strip_appointment_marker_rejects_non_strings():
     assert strip_appointment_offer_marker(None) == ("", False)
     assert strip_appointment_offer_marker({"content": "x"}) == ("", False)
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [SUPPORT_CHAT_SYSTEM_PROMPT, SUPPORT_EXPRESSIVE_CHAT_SYSTEM_PROMPT, SUPPORT_BROAD_CHAT_SYSTEM_PROMPT],
+)
+def test_no_help_widget_prompt_hands_the_model_a_promise_or_an_outage_opening_line(prompt):
+    """The widget owner, on reviewed conversations of 2026-09-22: "Dit kan even
+    duren" opened replies to one visitor's problem, and "we gaan dit voor je
+    oplossen" promised what the chat cannot do. Both came from example lines in
+    these prompts, which the model copies."""
+    assert "Dit kan even duren" not in prompt
+    assert "we gaan dit oplossen" not in prompt
+    assert "Never say that we will solve, fix or arrange something" in prompt

@@ -59,6 +59,17 @@ def test_derive_escalated_when_last_answer_refers_to_support():
     assert derive_outcome(turns, has_handoff=False) == "escalated"
 
 
+def test_a_refusal_stored_before_the_dash_was_dropped_still_counts_as_escalation():
+    """The Dutch refusal lost its dash on 2026-09-22; conversations stored
+    before that carry the old sentence and are labelled after it."""
+    old = (
+        "Dit vind ik niet terug in onze helpartikelen. "
+        "Wil je het zeker weten, plan dan een afspraak met een medewerker \u2014 die helpt je persoonlijk verder."
+    )
+    turns = [_turn("user", "hoe vraag ik teruggave aan"), _turn("assistant", old)]
+    assert derive_outcome(turns, has_handoff=False) == "escalated"
+
+
 # ---------------------------------------------------------------------------
 # AC-O.1 — abandoned
 # ---------------------------------------------------------------------------

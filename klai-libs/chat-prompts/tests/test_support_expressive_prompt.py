@@ -132,7 +132,7 @@ def test_expressive_prompt_keeps_the_measured_voice_invariants():
     # je/jij never u, the Dutch phrasing set, the friend test.
     text = SUPPORT_EXPRESSIVE_CHAT_SYSTEM_PROMPT
     assert "je/jij, never u" in text
-    assert "Dit kan even duren" in text
+    assert "Laat het gerust weten" in text
     assert "Goed om te weten" in text
     assert "The friend test" in text
     assert "zou je dit tegen een vriend zeggen" in text
@@ -194,11 +194,13 @@ _PROFILE_HASHES = {
     "OPEN_KB_CHAT_SYSTEM_PROMPT": "2babfcab82348a9ddc90c21e48bc0e7de34a16dee20938fceac7ef9b4f02221b",
     "META_CHAT_SYSTEM_PROMPT": "1123025a36e42e114461db2730421de5f44e686b063a77ba6894fdfd7599bcf5",
     # re-baselined 2026-09-09: escalation section — a matching article no
-    # longer cancels the appointment offer. Deliberate, and the only profile
-    # that moved — the four unrelated profiles above and SUPPORT_BROAD below
-    # keep their original digests.
-    "SUPPORT_CHAT_SYSTEM_PROMPT": "a4a551d0b1ed9ce5b71fc57868a27212158ef3754e49199faf2489ffb78b16d2",
-    "SUPPORT_BROAD_CHAT_SYSTEM_PROMPT": "a8595ff04ff34cad9deb52eaca21e0961f8ad2ec1ca84f2b4f8df50d64fffbd1",
+    # longer cancels the appointment offer.
+    # re-baselined 2026-09-22, SUPPORT and SUPPORT_BROAD: the widget owner
+    # dropped "Dit kan even duren" and the promising apology example, and added
+    # the no-promise line (test_support_prompt.py).
+    # Deliberate; the four unrelated profiles above keep their digests.
+    "SUPPORT_CHAT_SYSTEM_PROMPT": "e95836b9dd84ca4287cb2e328e56d9126251f752f3689e143f0c75fc3cfc0f11",
+    "SUPPORT_BROAD_CHAT_SYSTEM_PROMPT": "12c767503d2479e3b661fbe04b100dae63fe2b494b3521a0b2b8975a0ac9135d",
 }
 _PROFILE_VALUES = {
     "GROUNDED_CHAT_SYSTEM_PROMPT": GROUNDED_CHAT_SYSTEM_PROMPT,

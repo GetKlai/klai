@@ -137,7 +137,7 @@ def test_broad_prompt_holds_the_support_tone_and_friend_test():
     # (docs/research/voys-tone-of-voice.md § 10-11).
     text = SUPPORT_BROAD_CHAT_SYSTEM_PROMPT
     assert "je/jij, never u" in text
-    assert "Dit kan even duren" in text
+    assert "Laat het gerust weten" in text
     assert "Goed om te weten" in text
     assert "The friend test" in text
     assert "zou je dit tegen een vriend zeggen" in text
@@ -239,7 +239,7 @@ def test_broad_mode_wording_did_not_leak_into_other_profiles(name: str):
         "broad mode",
         "world versus us",
         "One test replaces every guess",
-        "Algemene kennis —",
-        "General knowledge — not from our help articles",
+        "Algemene kennis, niet afkomstig",
+        "General knowledge, not from our help articles",
     ):
         assert leak not in text, f"{leak!r} leaked into {name}"
