@@ -1,42 +1,80 @@
 # RAG-keten: systeemoordeel en verbeterwerkwijze
 
-Stand: 20 september 2026. Dit document verbindt de startopdracht, het
+Stand: 22 september 2026. Dit document verbindt de startopdracht, het
 [meetlog](evolutie.md) en de [intake-eval](spec.md). Het is geen algemene
 nauwkeurigheidsscore en geen verklaring dat alle onderzoeksvragen zijn afgerond.
 
 ## Oordeel over de totale keten
 
-De zoek- en antwoordketen is goed uitgebouwd en bevat gemeten verbeteringen.
-De kwaliteit van de opgenomen kennis en de betrouwbaarheid van de beoordelingen
-zijn minder goed onderbouwd. Zowel herstelde broninhoud als een vierde gevonden
+De keten bevat gemeten deelverbeteringen, maar de eerdere conclusie over de
+bevraging was te positief. De eerste-vraagherformuleringen werden in de echte
+browserwidget overgeslagen, omdat de test en de deployproef een andere
+berichtgeschiedenis gebruikten; antwoordlog §2.41 legt de reparatie vast. Ook bewezen de antwoordbeoordelingen niet dat noodzakelijke
+verduidelijking behouden bleef. Zowel herstelde broninhoud als een vierde gevonden
 bron leverde in de volledige proeven geen herhaalbaar betere antwoorden op.
-§15 legt acht onafhankelijk door agents gecontroleerde bronreferenties vast.
-Slechts één bron beantwoordt de bijbehorende vraag volledig; vijf referenties
-zijn gedeeltelijk en twee dubbelzinnig. Een volgende ingreep vereist een
-aangetoonde fout op een concrete antwoordroute.
+De concrete prijsreparatie uit §18 staat live en behoudt alle achttien gemeten
+bedragen. De groeperingsproef uit §19 valt af: betere vindbaarheid leidde ook tot
+extra onbewezen details. Een volgende ingreep vereist een aangetoonde fout op
+een concrete antwoordroute, met een controle die zo'n fout ook werkelijk afwijst.
 
 | Onderdeel | Bewijs | Oordeel en grens |
 |---|---|---|
-| Bevraging | Antwoordlog §2.29–2.34: letterlijke dekking 19/54 naar 32/54; herformuleringen winnen twee antwoordrondes. | Best onderbouwde onderdeel. De intake-nameting §6 bevat nog geen bevestiging op echt bezoekerverkeer. |
-| Antwoordcontrole | Antwoordlog beschrijft zincontrole, reparatie en afgewezen uitbreidingen. | Nuttig, maar afhankelijk van bronkwaliteit; betere zoekcijfers kunnen slechtere antwoorden opleveren. |
+| Bevraging | Antwoordlog §2.29–2.34: herformuleringen winnen twee antwoordrondes. De controle van 22 september toonde dat de browsergeschiedenis de functie oversloeg; §2.41 repareert dat. | De gemeten winst is nog geen bewijs van werking voor echte widgetgebruikers; dat volgt uit de nameting op echt verkeer. Zie de correctie hieronder. |
+| Antwoordcontrole | §18: 18/18 bedragen behouden na reparatie. §19: de letterlijke controle blokkeert een onterecht positief modeloordeel. | Tekstbehoud bewezen; modeloordelen zijn geen zelfstandige grondwaarheid. Betere zoekcijfers kunnen slechtere antwoorden opleveren. |
 | Gap detection | Intake-meetlog §5: scores missen 15/29 missing/incomplete-bevindingen; 5/34 covered krijgt een signaal. §10: vijf onbeoordeelbare detectorproeven. | Geschikt voor onderzoek door een inhoudseigenaar; nauwkeurigheid zonder menselijke referenties onbekend. |
 | Bronintake | §3 en §7: linktekstverlies vóór chunking. §11: 18 linklabels hersteld, maar antwoordvoorkeur 49–47 met tegengestelde rondes. | Herstel is gemeten en afgewezen voor uitrol; bronbehoud alleen garandeert geen betere antwoorden. |
 | Chunking en context | §4 en §7: 30 prefixen zonder duidelijke tegenspraak; acht gekozen antwoordspans passen in één child, vijf bereiken de antwoordcontext. | Geen bewijs voor een nieuwe chunker. Langere antwoorden, taxonomie en historische samenvattingen zijn niet afdoende beoordeeld. |
 | HyPE | §9: 35 voorkeuren voor aan, 29 voor uit, acht gelijk; richting wisselt per ronde. §12–13: twee foutieve navigatiechunks bereiken in de gekozen diagnoses niet de eerste twintig kandidaten. | Geen overtuigende winnaar en geen aangetoonde antwoordschade van deze twee fouten. Hiervoor nu geen nieuwe prompt bouwen; inschakeling per contenttype blijft onbeoordeeld. |
-| Bronselectie | §14: bekende-spandekking 11/30 naar 14/30; volledige antwoordvoorkeur 49–45 met tegengestelde rondes, onbewezen details 10 naar 13 beoordelingen. | Vier bronnen afgewezen voor uitrol. Meer gevonden tekst is hier geen aantoonbare antwoordwinst. |
+| Bronselectie | §14: vierde bron zonder stabiele antwoordwinst. §19: groepering vindt de gemiste prijsregel, maar voegt drie antwoorden met een onbewezen valuta toe. | Beide kandidaten afgewezen voor uitrol. Meer gevonden tekst is hier geen aantoonbare antwoordwinst. |
 
 De vragenjudge bleek procedurevragen bij linklijsten te gemakkelijk goed te keuren
 (§4). Modeloordeel alleen is dus geen referentiewaarheid. Leg echte vragen,
 letterlijke bronpassages en verwachte inhoud vooraf vast; onderscheid controles
 door een agent van labels door een menselijke inhoudseigenaar.
 
+## Correctie op eerdere oplevering: 22 september
+
+Deze problemen waren al onderzocht. De tekortkoming zit in de vertaling naar
+productgedrag en de controle daarop, niet in ontbrekende onderzoeksdocumentatie.
+
+- **Herformuleringen, PR #1548:** `first_question_variants` sluit iedere historie
+  met een assistantbericht uit. De widget voegt sinds mei een assistantwelkomstbericht
+  toe. Zowel `test_query_paraphrase.py` als `simulate_conversations.py` begonnen
+  daarentegen met alleen een gebruikersbericht. Antwoordlog §2.34 noemde deze
+  rechtstreekse API-proef de live widget. De logs bewezen uitvoering voor die
+  vereenvoudigde invoer, niet voor het browserpad. De helper van vóór de reparatie
+  reproduceerde het verschil: welkomstbericht plus vraag gaf nul varianten; alleen
+  de vraag gaf er twee. De functie was uitgerold maar bereikte de browserroute niet.
+  Antwoordlog §2.41 legt de reparatie vast: "eerste vraag" telt nu de berichten van
+  de bezoeker, en test en harnas sturen de browservorm.
+- **Doorvragen, PR #1486:** de sturende instructie is bewust verwijderd op basis
+  van algemene modelvoorkeur (§2.4). De vervangende test levert zelf al een
+  verduidelijkingsvraag als modelantwoord aan. Hij bewijst niet dat een echte
+  onduidelijke hulpvraag nog tot doorvragen leidt. Een menselijke referentieset
+  voor noodzakelijke diagnose ontbrak als behoudseis. Alleen deze instructie
+  herstellen volstaat niet: ook de classificatie van onduidelijkheid kan falen.
+- **Onterechte commerciële afwijzing:** §2.18 beschrijft dezelfde foutklasse en
+  vermeldt expliciet dat de drie onderzochte oplossingen afvielen. Dat probleem
+  is dus nooit opgelost. Relevante gevonden bronnen kunnen nog steeds worden
+  vervangen door de vaste afwijstekst na de onderwerpclassificatie.
+- **Beoordeling:** brongetrouwheid en het oplossen van de bedoelde hulpvraag zijn
+  afzonderlijke eisen. §2.24 en §2.25 documenteerden al beperkingen van de
+  beoordelaars. Een onderbouwde procedure kan de verkeerde handeling adviseren;
+  verwijderen van onbewezen tekst bewijst evenmin dat een bruikbaar antwoord
+  overblijft. Succesclaims moeten beide eisen en het werkelijke browserpad dekken.
+
+De eerstvolgende prioriteit is het herstellen en toetsen van deze bestaande
+gedragsafspraken, vóór nieuwe intakevarianten. Historische meetresultaten blijven
+staan met hun oorspronkelijke bereik; zij gelden niet als bewijs dat deze
+problemen in productie zijn opgelost. Deze correctie is nog geen productfix.
+
 ## Prioriteit en open onderzoek
 
-1. **Bedragen behouden vóór verdere intakeproeven:** §18 toont verlies van
-   decimale prijzen in de antwoordnabewerking. De gedeelde functie is hersteld en live.
-   De JSON-groepering uit §16–17 vereist daarna nog de volledige ingest- en
-   workerroute en herhaalde blinde antwoordproef vóór een uitrolbesluit.
-   Bronreferenties blijven vooraf onafhankelijk gecontroleerd. Inhoudseigenaren
+1. **Bronwaarheid en beoordelingscontrole:** het prijsverlies is hersteld en live;
+   de JSON-groepering is afgewezen. De volledige herbouw vervalt voor die kandidaat.
+   Een afgeleid graaffeit kan dezelfde onbewezen aanvulling bevatten als het
+   antwoord en mag die niet als onafhankelijk bewijs bevestigen. Bronreferenties
+   blijven vooraf onafhankelijk gecontroleerd. Inhoudseigenaren
    kunnen via de bestaande reviewvelden vastleggen welke antwoorden en gaps
    werkelijk kloppen; agentreferenties vervangen die menselijke labels niet.
 2. **Gerichte bronselectie en vraaggeneratie:** pas een ingreep meten wanneer echte
@@ -89,8 +127,9 @@ Werk in kleine wijzigingen; de eerder goedgekeurde totale omvang is klasse L.
 
 Sol-agents krijgen afzonderlijke afgebakende opdrachten; de hoofdagent bewaakt
 de meetafspraak, gegevensgrenzen, integratie en uitrol. Eén agent beheert de
-gedeelde snelheid van herspelingen: maximaal één beurt per acht seconden,
-in eigen containers. Productiegegevens worden alleen gelezen; wijzigingen aan
+gedeelde snelheid van herspelingen en controleert zowel aanvragen als tokens
+per minuut. §19 gebruikte minimaal dertig seconden tussen starts, in eigen
+containers. Productiegegevens worden alleen gelezen; wijzigingen aan
 de klantketen volgen pas na de meetpoort. Geen nieuwe provider of dependency
 zonder akkoord. Blogconcepten blijven ongepubliceerd.
 

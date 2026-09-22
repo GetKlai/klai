@@ -54,8 +54,13 @@ class QueryParaphrases(BaseModel):
 async def first_question_variants(
     messages: list[dict], query: str, settings: Settings, *, support_mode: bool
 ) -> list[str]:
-    """Paraphrases for a first support-mode question; a follow-up has its history to search on."""
-    if not support_mode or any(message.get("role") == "assistant" for message in messages):
+    """Paraphrases for a first support-mode question; a follow-up has its history to search on.
+
+    "First" counts the visitor's turns, not the assistant's: the browser widget
+    seeds every conversation with its welcome line as an assistant message and
+    sends it back with the first question.
+    """
+    if not support_mode or sum(message.get("role") == "user" for message in messages) > 1:
         return []
     return await paraphrase_first_question(query, settings)
 

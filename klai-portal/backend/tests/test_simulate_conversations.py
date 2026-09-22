@@ -25,11 +25,13 @@ class _Client:
     def __init__(self, visitor_turns: list[str], *, escalation: bool = False) -> None:
         self.visitor_turns = list(visitor_turns)
         self.widget_calls = 0
+        self.widget_messages: list[list[dict]] = []
         self.escalation = escalation
 
     async def post(self, url: str, **kwargs):
         if "/partner/v1/chat/completions" in url:
             self.widget_calls += 1
+            self.widget_messages.append(list(kwargs["json"]["messages"]))
             message = {"content": "Ga naar Belplan.", "sources": [{"id": 1}]}
             if self.escalation:
                 message = {"content": "Dit vind ik niet terug.", "sources": [], "escalation": {"appointment": True}}
@@ -60,6 +62,23 @@ async def test_a_visitor_with_its_answer_stops_instead_of_filling_the_budget():
     assert result["beurten"] == 1, "the visitor said DONE, so the widget may not be asked again"
     assert client.widget_calls == 1
     assert result["bereikt"] is True
+
+
+@pytest.mark.asyncio
+async def test_the_first_request_has_the_browser_widget_shape():
+    """The browser sends its welcome line as an assistant message ahead of the
+    first question; a harness that leaves it out tests a route no visitor takes
+    (PR #1548 was measured that way and never reached real visitors)."""
+    client = _Client(["DONE", '{"reached": true, "handed_off": false, "turns_wasted": 0, "why": "answered"}'])
+
+    await sim._one_conversation(
+        client, "tok", {"cid": "c1", "eerste": "Hoe stel ik een wachtrij in?", "doel": "x"}, 4, welcome="Hoi!"
+    )
+
+    assert client.widget_messages[0] == [
+        {"role": "assistant", "content": "Hoi!"},
+        {"role": "user", "content": "Hoe stel ik een wachtrij in?"},
+    ]
 
 
 @pytest.mark.asyncio

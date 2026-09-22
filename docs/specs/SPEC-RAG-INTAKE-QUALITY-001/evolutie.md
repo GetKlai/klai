@@ -796,3 +796,68 @@ review en uitrol. De groeperingsproef blijft apart en is nog niet uitrolklaar.
 De vijf main-workflows, drie servicedeploys en productietest zijn groen. Alle drie
 draaiende services bevatten de gereviewde code en behouden de voorbeeldbedragen;
 hun bestaande HTTP-gezondheidscontroles geven 200.
+
+## 19. De beoordelingsproef scheidt zichtbaar antwoord en bronbewijs (22 september)
+
+[ALCE](https://aclanthology.org/2023.emnlp-main.398/) beoordeelt inhoudelijke
+juistheid en citatiekwaliteit afzonderlijk. De
+[Mistral-gebruikslimieten](https://docs.mistral.ai/admin/billing-usage/usage-limits)
+onderscheiden aanvragen en tokens per tijdseenheid. Beide grenzen bleken relevant
+voor de proef uit §18: vijf geslaagde beoordelingen verbruikten 440.876
+prompttokens; de zesde startte binnen hetzelfde tijdvak van 56,7 seconden en
+kreeg HTTP 429. Omdat de oorspronkelijke foutbody niet bewaard is, staat de
+precieze begrenzing niet vast.
+
+**Meetfout.** De beoordelaar kreeg het uiteindelijke antwoord inclusief verborgen
+bronmetadata en daarnaast opnieuw de bronobjecten. Daardoor stonden bedragen in
+het beoordelingsbericht die het zichtbare antwoord niet bevatte. Het oordeel
+schreef zulke bedragen toch aan het antwoord toe. Dit toont een fout in de
+beoordeling; de precieze bijdrage van metadata, gesprekshistorie en broncontext
+is niet afzonderlijk gemeten.
+
+**Hergebruik.** De bestaande footerhelper maakt de zichtbare antwoordtekst vrij
+van backendmetadata. Het bestaande beoordelingsschema blijft gelden. Volledige
+gesprekshistorie, eigen context, aanvullende zoekresultaten en vooraf gecontroleerde
+bronreferenties blijven afzonderlijk beschikbaar. Identieke bronpassages staan
+eenmaal in een gedeelde verzameling, met expliciete verwijzingen per antwoord.
+Afgeleide graaffeiten zijn geen zelfstandige bevestiging van feiten die de
+oorspronkelijke bron niet vastlegt. Letterlijke prijscontroles wijzen alle vijf
+eerder geaccepteerde foutieve beoordelingen af. Dat kalibreert deze foutgevallen;
+het bewijst geen algemene nauwkeurigheid van de beoordelaar.
+
+**Nieuwe antwoordmeting.** De vier bevroren contexten uit §17 kregen ieder drie
+nieuwe generaties, met de draaiende prijsreparatie uit §18. De twaalf antwoorden
+doorliepen twaalf echte groundingcontroles, zonder reparatieaanroep. Alle 24
+modelaanroepen slaagden en rapporteerden samen 268.773 tokens. Referenties bleven
+buiten de antwoordgeneratie. Een eigen container gebruikte gekopieerde livebestanden;
+alle veertig mounts bleven ongewijzigd en de proefcontainer en kopieën zijn verwijderd.
+
+De eerder gemiste regel levert in de gegroepeerde variant drie prijsantwoorden
+op, tegenover drie weigeringen bij de huidige indeling. De controlevraag behoudt
+in beide varianten haar bedragen. Alle negen prijsantwoorden voegen echter een
+valuta toe die de vooraf gecontroleerde oorspronkelijke bron niet vastlegt.
+Dat onderscheid blijft nodig wanneer de antwoordcontext zelf zo'n valuta via
+een afgeleid graaffeit of een voorbeeld noemt.
+
+De huidige variant gebruikte 73.040 tokens en de gegroepeerde 195.733, inclusief
+antwoordcontrole. De mediane antwoordduur was respectievelijk 3,24 en 8,40 seconden.
+De modelrouter koos verschillende modellen; één antwoord rapporteerde alleen de
+alias. Deze kleine proef is daarom geen zuivere vergelijking bij één vast model
+en geen voorspelling van productielatency. Er is niet opnieuw gezocht of volledig
+geïngesteerd: dit blijft een voorproef op vaste antwoordcontexten.
+
+**Stopcontrole en besluit.** De eerste nieuwe blinde beoordeling antwoordde met
+HTTP 200 en keurde de gegroepeerde prijsrespons volledig goed, zonder de
+onbewezen valuta te melden. De letterlijke controle wees dat oordeel af; de
+opstelling bewaarde de respons en stopte. Deze aanroep gebruikte 69.222 tokens.
+Er zijn dus geen twee geslaagde beoordelingsrondes en geen geldige voorkeursscore.
+De meetpoort voorkomt nu deze onterechte goedkeuring, maar het modeloordeel zelf
+is voor deze proef nog onvoldoende betrouwbaar.
+
+De groepering gaat niet live: zij voegt bij de eerder gemiste vraag drie
+antwoorden met een onbewezen detail toe. De vooraf vastgelegde grens verbiedt
+die toename, ook wanneer de prijsgetallen kloppen. De kostbare volledige
+ingest-, worker- en graafproef vervalt voor deze kandidaat; een mislukte
+voorproef rechtvaardigt die vervolgstap niet. De prijsreparatie uit §18 blijft
+de aangetoonde en uitgerolde verbetering. Een volgende inhoudelijke proef
+vereist eerst een bron die de ontbrekende prijsvoorwaarden expliciet vastlegt.
