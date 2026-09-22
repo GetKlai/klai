@@ -167,10 +167,11 @@ def safety_refusal_response(*, model: str, query: str = "") -> dict:
 
 
 def off_topic_response(*, model: str, reply: str, language: str | None) -> dict:
-    """The tenant's own reply for a subject this widget does not answer.
+    """The referral for a subject this widget does not answer.
 
-    No model writes here: the visitor gets the configured sentence and the
-    appointment button, so a price or a procedure cannot slip in. Putting the
+    No answer model writes here: the visitor gets the referral that names their
+    subject in a fixed sentence, or the configured one (off_topic_referral.py),
+    and the appointment button, so a price or a procedure cannot slip in. Putting the
     same rule in the widget's base prompt was measured on 2026-09-17 and landed
     it right 8 times out of 15.
     """

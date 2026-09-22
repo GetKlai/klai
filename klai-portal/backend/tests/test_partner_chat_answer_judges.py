@@ -106,8 +106,10 @@ class _LiteLLM:
         turn: dict | None = None,
         grounding: Any = None,
         repaired: str = "",
+        referral: str = "",
     ):
         self.model_text = model_text
+        self.referral = referral
         self.answer_judge = answer_judge if answer_judge is not None else _answer_verdict()
         self.turn = turn or _turn_verdict()
         # The statement-level check decides grounding, so by default it mirrors
@@ -141,6 +143,8 @@ class _LiteLLM:
         if schema == "turn_judge":
             self.turn_requests.append(body)
             return _json_reply(self.turn)
+        if schema == "off_topic_referral":
+            return _json_reply({"subject": self.referral})
         if schema == "query_paraphrase":
             # Retrieval input only (query_paraphrase.py); the judges under test
             # never see it, and it is not the answer request.
@@ -642,7 +646,13 @@ def _retrieval_reply(band: str = "low") -> httpx.Response:
 
 
 async def _route_turn(
-    monkeypatch, *, turn: dict, question: str = QUESTION_900, stream: bool = False, band: str = "low"
+    monkeypatch,
+    *,
+    turn: dict,
+    question: str = QUESTION_900,
+    stream: bool = False,
+    band: str = "low",
+    referral: str = "",
 ):
     from app.api import partner
     from app.api.partner import ChatCompletionsRequest, chat_completions
@@ -663,7 +673,9 @@ async def _route_turn(
     request = ChatCompletionsRequest(messages=[{"role": "user", "content": question}], stream=stream)
     http_request = MagicMock(headers={}, client=MagicMock(host="127.0.0.1"))
 
-    litellm = _LiteLLM(model_text=CLARIFYING_QUESTION, turn=turn, answer_judge=_answer_verdict("not_answered"))
+    litellm = _LiteLLM(
+        model_text=CLARIFYING_QUESTION, turn=turn, answer_judge=_answer_verdict("not_answered"), referral=referral
+    )
     with (
         respx.mock(assert_all_called=False) as router,
         patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=False)),
@@ -712,7 +724,16 @@ async def test_route_ambiguous_turn_gets_no_ask_instruction_and_a_question_draft
 OFF_TOPIC_REPLY = "Deze assistent helpt bij het gebruik van Voys, niet bij prijzen of offertes."
 
 
-async def _off_topic_turn(monkeypatch, *, topic: str, reply: str = OFF_TOPIC_REPLY, stream: bool = False):
+async def _off_topic_turn(
+    monkeypatch,
+    *,
+    topic: str,
+    reply: str = OFF_TOPIC_REPLY,
+    stream: bool = False,
+    wants_human: bool = False,
+    question: str = "Wat kost een 0800-nummer?",
+    referral: str = "",
+):
     from app.api import partner
 
     monkeypatch.setattr(
@@ -721,15 +742,20 @@ async def _off_topic_turn(monkeypatch, *, topic: str, reply: str = OFF_TOPIC_REP
         AsyncMock(return_value=("prijzen, tarieven, offertes, uitstel van betaling", reply)),
     )
     return await _route_turn(
-        monkeypatch, turn=_turn_verdict(topic=topic), question="Wat kost een 0800-nummer?", stream=stream
+        monkeypatch,
+        turn=_turn_verdict(topic=topic, wants_human=wants_human),
+        question=question,
+        stream=stream,
+        referral=referral,
     )
 
 
 @pytest.mark.parametrize("stream", [True, False])
 async def test_a_subject_the_widget_does_not_answer_gets_the_tenants_own_sentence(monkeypatch, stream):
     """Putting the same rule in the widget's base prompt landed it right 8 of 15
-    times on 2026-09-17, once quoting a price from an article. Here no model
-    writes at all."""
+    times on 2026-09-17, once quoting a price from an article. Here no answer
+    model writes; the referral call returns no subject, so the tenant's own
+    sentence stands."""
     litellm, text, extras = await _off_topic_turn(monkeypatch, topic="not_handled", stream=stream)
 
     assert text == OFF_TOPIC_REPLY
@@ -738,6 +764,77 @@ async def test_a_subject_the_widget_does_not_answer_gets_the_tenants_own_sentenc
     # Both shapes carry the appointment button and no sources.
     assert extras["escalation"] == [{"appointment": True}]
     assert extras["sources"] == []
+
+
+def _referral(subject: str) -> str:
+    return f"Over {subject} kijkt een collega graag persoonlijk met je mee. Plan hieronder een afspraak, dan helpen we je verder."
+
+
+@pytest.mark.parametrize("stream", [True, False])
+async def test_the_referral_names_what_the_visitor_asked_about(monkeypatch, stream):
+    """The tenant's fixed sentence lists every excluded subject, so a question
+    about an invoice was told about prices, quotes and contracts. The referral
+    names the visitor's own subject; no answer model is asked."""
+    litellm, text, extras = await _off_topic_turn(
+        monkeypatch, topic="not_handled", referral="je factuur", question="ik wil een factuur ontvangen", stream=stream
+    )
+
+    assert text == _referral("je factuur")
+    assert litellm.answer_requests == []
+    assert extras["escalation"] == [{"appointment": True}]
+
+
+async def test_a_request_for_a_person_on_an_excluded_subject_gets_the_referral_not_an_answer(monkeypatch):
+    """A request for a technical call got the sentence about prices and quotes.
+    It gets a referral naming the request, and still no answer model: the
+    human-request turn would generate with the articles in the prompt."""
+    litellm, text, extras = await _off_topic_turn(
+        monkeypatch,
+        topic="not_handled",
+        wants_human=True,
+        referral="een call over een CRM koppeling",
+        question="Kunnen we een call inplannen met jullie techniek over een CRM-koppeling?",
+    )
+
+    assert text == _referral("een call over een CRM koppeling")
+    assert litellm.answer_requests == []
+    assert extras["escalation"] == [{"appointment": True}]
+
+
+async def test_a_subject_with_a_word_the_visitor_did_not_use_falls_back_to_the_tenants_sentence(monkeypatch):
+    """The model may only name the subject in the visitor's words: "gratis" or
+    a price it made up never reaches the sentence."""
+    _, text, _ = await _off_topic_turn(monkeypatch, topic="not_handled", referral="een gratis 0800 nummer")
+
+    assert text == OFF_TOPIC_REPLY
+
+
+async def test_a_subject_that_is_not_a_plain_phrase_falls_back_to_the_tenants_sentence(monkeypatch):
+    _, text, _ = await _off_topic_turn(monkeypatch, topic="not_handled", referral="[een 0800-nummer](//x.example)")
+
+    assert text == OFF_TOPIC_REPLY
+
+
+async def test_the_referral_speaks_to_the_visitor_not_as_the_visitor(monkeypatch):
+    _, text, _ = await _off_topic_turn(
+        monkeypatch,
+        topic="not_handled",
+        referral="uitgaand bellen met mijn mobiele nummer",
+        question="ik wil graag uitgaand kunnen bellen met mijn mobiele nummer",
+    )
+
+    assert text == _referral("uitgaand bellen met je mobiele nummer")
+
+
+async def test_a_referral_may_repeat_the_visitors_own_number(monkeypatch):
+    _, text, _ = await _off_topic_turn(
+        monkeypatch,
+        topic="not_handled",
+        referral="een offerte voor 25 gebruikers",
+        question="25 gebruikers offerte graag",
+    )
+
+    assert text == _referral("een offerte voor 25 gebruikers")
 
 
 async def test_a_handled_subject_is_answered_as_usual(monkeypatch):

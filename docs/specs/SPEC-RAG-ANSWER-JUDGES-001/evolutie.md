@@ -1137,6 +1137,105 @@ eigenaar van de widget, net als de onderwerptekst "aanvragen voor nieuwe dienste
 tekst heeft ingevoerd, is niet na te gaan: widgetinstellingen hebben geen versiegeschiedenis. De
 drie eerder gemeten routes van 2.18 blijven afgevallen.
 
+**Besluit van de eigenaar (22 sep, later die dag).** Een verzoek om een mens mag niet op de vaste
+tekst over prijzen en offertes uitkomen, en de doorverwijzing mag het onderwerp van de bezoeker
+noemen in plaats van de hele lijst uitgesloten onderwerpen. Uitgewerkt in 2.43.
+
+### 2.43 De doorverwijzing noemt het onderwerp van de bezoeker (22 sep)
+**Eerste opzet, afgevallen in de review.** Een verzoek om een mens liet de vaste tekst over, en ging
+naar de gewone beurt voor een menselijk verzoek. Die beurt genereert met de gevonden artikelen in de
+prompt, en de woordherkenning voor een menselijk verzoek slaat ook aan op "kan iemand mij vertellen
+wat een 0800-nummer kost?". Een prijs uit een artikel kon zo alsnog bij de bezoeker komen, en de
+controle per zin zou die als gedragen goedkeuren. Daarnaast schreef een klein model de hele
+doorverwijzing, bewaakt door een lijst verboden tekens en woorden. De review vond daar gaten in:
+"is gratis", voluit geschreven bedragen, links zonder `http`.
+
+**Wat er gebouwd is.** Elke beurt met een uitgesloten onderwerp, ook een verzoek om een mens, krijgt
+een doorverwijzing met de afspraakknop, en geen antwoordmodel ziet de artikelen. Een kleine aanroep
+(`off_topic_referral.py`, `klai-fast`, 2,5 s) levert alleen het onderwerp: een korte zinsnede zoals
+"je factuur" of "een offerte voor 25 gebruikers". De zin eromheen is van ons: "Over … kijkt een
+collega graag persoonlijk met je mee. Plan hieronder een afspraak, dan helpen we je verder." De
+zinsnede mag alleen letters, cijfers en spaties bevatten, en elk inhoudswoord en elk getal moet uit
+de vraag van de bezoeker komen. Zo kan het model geen bewering, prijs of link toevoegen die de
+bezoeker niet zelf typte. Faalt de aanroep, komt de zinsnede er niet door, of is de taal geen
+Nederlands of Engels, dan blijft de vaste tekst van de widget staan. Alleen de Voys-widget gebruikt
+de instelling.
+
+**Meting van de eerste opzet** (22 echte vragen die de vaste tekst kregen, drie keer, `klai-fast`,
+7,5 s tussen aanroepen, eigen proefcontainer, geen schrijfacties): 66 van 66 aanroepen geslaagd, geen
+bedrag of link, mediaan 0,9 s en traagste 2,3 s. Wel twee keer een gedachtestreepje, en twee van de
+drie Engelse vragen kregen een Nederlandse zin. Beide zijn in de gebouwde opzet uitgesloten: de taal
+komt uit de gesprekstaal en de zin eromheen is vast.
+
+**Meting van de gebouwde opzet** (dezelfde 22 vragen, vier keer, verder gelijk): 77 van 88 keer een
+doorverwijzing met het onderwerp, 11 keer de vaste tekst. Van die 11 was er één een verlopen aanroep
+(2,5 s); de andere tien gebruikten een woord dat de bezoeker niet typte, zoals "opzegging" bij "hoe zeg
+ik mijn contract op", en vielen dus terecht terug. Geen enkele zin met een bedrag, een bewering of een
+link, omdat het model alleen het onderwerp levert. Mediaan 0,6 s, 90% binnen 1,0 s. De ik-vorm uit de
+eigen woorden van de bezoeker ("met mijn mobiele nummer") wordt vast omgezet naar de je-vorm; dat is
+nagerekend op dezelfde 88 opgeslagen uitkomsten. Voorbeelden: "Over je factuur kijkt een collega
+graag persoonlijk met je mee", "Over verdere integratie van Voys in je CRM platform …", "Over uitstel
+van betaling voor je factuur …".
+
+### 2.44 Doorvragen: wat de beoordelingen laten zien, wat het onderzoek zegt, en het ontwerp (22 sep)
+**Wat de beoordelingen laten zien.** Zeventien menselijk beoordeelde gesprekken van 22 september,
+goede en foute, met het hele gesprek erbij. In bijna elk begint het systeem meteen aan een antwoord,
+ook als het nog niet weet waar de bezoeker het over heeft:
+- "ik kan niet bellen of gebeld worden met mijn apparaat" kreeg een lange algemene lijst, terwijl de
+  vraag welk apparaat (toestel, Webphone, app; Android of iOS) alles bepaalde;
+- "inkomende gesprekken komen niet altijd door" kreeg een netwerkoorzaak, zonder te vragen wat er
+  niet doorkomt en wanneer;
+- een vraag over een AI-assistent koppelen nam één leverancier aan;
+- Webphone-meldingen kregen Windows-stappen voordat bleek dat de bezoeker een Mac had;
+- "bellen naar België aanzetten" werd twee keer verkeerd gelezen, terwijl het om belrechten voor het
+  buitenland ging.
+Waar het systeem wél eerst vroeg (welke headset; of de openingstijden-modules gevuld waren), oordeelde
+de beoordelaar goed of perfect. Het model kan het dus, maar doet het toevallig: 9 van de 38
+antwoorden in deze gesprekken bevatten een vraag. Op twee weken echt verkeer noemt de vraagbeoordelaar
+15% van de beurten onduidelijk (122 van 797), maar dat stuurt sinds 2.4 niets meer.
+
+**Afbakening van de eigenaar.** Een platformstoring is zeldzaam en het systeem moet daar niet omheen
+gebouwd worden: geen "dit kan even duren" of storingspagina als standaardopening. Individuele
+verstoringen zijn het grootste deel van het werk: niet kunnen uitbellen, niet gebeld worden, slechte
+audio, gesprekken die naar voicemail gaan.
+
+**Wat het onderzoek zegt.**
+- Of een vraag nodig is, voorspel je beter uit de gevonden artikelen dan uit de vraag zelf: een vage
+  vraag levert artikelen op die weinig op elkaar lijken, en die samenhang voorspelt de noodzaak
+  zonder training even goed als gesuperviseerde methoden
+  ([Arabzadeh, Seifikar en Clarke 2022](https://arxiv.org/abs/2208.04882)). Taalmodellen herkennen
+  vaagheid in de vraag zelf slecht ([CLAMBER, ACL 2024](https://aclanthology.org/2024.acl-long.578/)),
+  wat past bij de voicemailvraag die zes keer "duidelijk" heette.
+- Bij een storing werkt diagnose vóór advies: gevonden gevallen groeperen per mogelijke oorzaak en de
+  vraag stellen die tussen die oorzaken kiest. Op 150 IT-supportgevallen 78,7% opgelost tegen 41,3%
+  voor gewone RAG, in 3,9 beurten tegen 8,4 ([DQA, 2026](https://arxiv.org/abs/2604.05350)).
+- Een vraag moet steunen op wat er echt in de artikelen staat, anders verzint het model opties
+  ([Krasakis, Yates en Kanoulas 2024](https://arxiv.org/abs/2409.18575)); een specifieke vraag helpt
+  meer dan een algemene ([Rahmani e.a., EACL 2024](https://arxiv.org/abs/2402.01934)).
+- Wie een antwoord los beoordeelt, verkiest een volledig antwoord dat iets aanneemt boven een goede
+  vraag; beoordeel wat de beurt erna oplevert
+  ([Zhang, Knox en Choi, ICLR 2025](https://arxiv.org/abs/2410.13788)).
+
+**Wat dat zegt over 2.4.** De doorvraag-opdracht van toen hing aan een beoordelaar die naar de vraag
+keek, en werd gemeten met een beoordelaar die één antwoord tegen een ander legde. Beide zijn precies
+de twee zwaktes die het onderzoek noemt. De 19 om 4 van toen zegt dus weinig over wat een goede vraag
+in een gesprek oplevert; hij zegt wel dat een algemene opdracht "vraag bij twijfel" niet werkt.
+
+**Ontwerp, in deze volgorde.**
+1. *De meting eerst.* De menselijk beoordeelde gesprekken worden de meetset, met de opmerking van de
+   beoordelaar als verwachting. Een gesimuleerde bezoeker met het echte probleem beantwoordt de vraag
+   van het systeem, en gemeten wordt of het probleem na de volgende beurt is opgelost. De goed
+   beoordeelde gesprekken tellen mee als behoud: een heldere instelvraag mag niet trager of vragender
+   worden. Zonder deze meting wint gokken weer, zoals in 2.4.
+2. *Individuele storingen: eerst diagnose.* Meldt de bezoeker iets dat niet werkt, dan groepeert een
+   kleine aanroep de gevonden artikelen tot hooguit vier mogelijke oorzaken en kiest de ene vraag die
+   daartussen het meest onderscheidt. Het antwoord noemt kort de waarschijnlijke oorzaken en eindigt
+   met die vraag; opties komen alleen uit de gevonden artikelen.
+3. *Instelvragen met meerdere wegen: kort onderscheiden.* Vallen de gevonden artikelen uiteen in
+   verschillende procedures, dan staan die kort naast elkaar met één keuzevraag; wijzen ze naar één
+   procedure, dan komt het directe antwoord zonder vraag.
+4. *Uitrol* alleen als de meting in twee rondes dezelfde kant op wijst, met wachttijd erbij.
+
 ---
 
 ## 3. Wat er live ging, en waarom

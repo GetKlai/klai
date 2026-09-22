@@ -44,6 +44,7 @@ from app.services import escalation_intent as escalation_service
 from app.services import turn_judge
 from app.services.events import emit_event
 from app.services.gap_classification import classify_gap
+from app.services.off_topic_referral import off_topic_referral
 from app.services.partner_chat import (
     _last_user_message,
     chat_completion_non_streaming,
@@ -2002,10 +2003,13 @@ async def chat_completions(  # noqa: C901
         )
 
     # A subject this widget does not answer (prices, quotes, payment terms):
-    # the visitor gets the tenant's own sentence and the appointment button, and
-    # no model writes a word, so a price cannot slip in from an article. The
-    # judge decided this beside retrieval, so it costs no wall-clock; the
-    # generation this replaces makes the turn faster, not slower.
+    # the visitor gets a referral with the appointment button and no answer
+    # model sees the articles, so a price cannot slip in from one. The referral
+    # names the visitor's subject in a sentence of ours, or falls back to the
+    # tenant's own (off_topic_referral.py); that call waits up to 2.5 s, on these
+    # turns only. A request for a person lands here too: the human-request turn
+    # would generate with the articles in the prompt, and the phrase detector
+    # also fires on "kan iemand mij vertellen wat X kost".
     if (
         support_mode
         and off_topic_subjects
@@ -2024,12 +2028,15 @@ async def chat_completions(  # noqa: C901
             broad_mode=False,
             model=request.model,
         )
+        language = resolve_conversation_language(request.messages).language
+        referral = await off_topic_referral(_last_user_message(request.messages) or "", language, settings)
+        reply = referral or off_topic_reply
         logger.info(
             "partner_chat_off_topic",
             org_id=auth.org_id,
             wgt_id=auth.key_id if str(auth.key_id).startswith("wgt_") else None,
+            referral=referral is not None,
         )
-        language = resolve_conversation_language(request.messages).language
         if language is not None:
             answer_signals["language"] = language
         if audit_ready:
@@ -2038,7 +2045,7 @@ async def chat_completions(  # noqa: C901
                     widget_id=audit_widget_id,  # type: ignore[arg-type]
                     session_key=audit_session_key,  # type: ignore[arg-type]
                     role="assistant",
-                    content=off_topic_reply,
+                    content=reply,
                     loaded_origin=http_request.headers.get("origin") or None,
                     is_preview=getattr(auth, "is_preview", False),
                     turn_id=request.widget_turn_id,
@@ -2049,10 +2056,10 @@ async def chat_completions(  # noqa: C901
             task.add_done_callback(_pending.discard)
         if request.stream:
             return StreamingResponse(
-                content=off_topic_stream(reply=off_topic_reply, language=language),
+                content=off_topic_stream(reply=reply, language=language),
                 media_type="text/event-stream",
             )
-        return off_topic_response(model=request.model, reply=off_topic_reply, language=language)
+        return off_topic_response(model=request.model, reply=reply, language=language)
 
     system_prompt, web_chunks, web_query = await _maybe_apply_web_search(
         request=request,
