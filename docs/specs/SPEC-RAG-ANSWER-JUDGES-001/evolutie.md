@@ -1107,6 +1107,36 @@ herspeelde vragen meten precies wat deze reparatie inschakelt. De bekende bijwer
 voor het eerst op echt browserverkeer: ongeveer 2,3 s extra per eerste beurt en vaker een afgekapte
 controle per zin (2.33, 2.37). Die horen in de nameting van §5 punt 8.
 
+**Live (#1593, 22 sep).** Na de deploy draaide de productiecontainer de nieuwe helper. Eén eerste
+vraag in browservorm (welkomstregel van de widget plus vraag), via een previewsessie zodat er niets
+in de gesprekken van de klant terechtkwam: `partner_chat_query_paraphrase` met twee
+herformuleringen in 0,9 s, en in het beslisrecord van retrieval-api `query_variants_run=2`,
+`query_variants_failed=0`, `query_variants_added=2`. Dat bewijst dat de route nu werkt voor de
+berichtvorm die de browser verstuurt. Een klik in de echte widget is bewust overgeslagen, omdat
+die een gesprek in de tenant van de klant schrijft; de nameting op echt verkeer volgt uit §5 punt 8.
+
+### 2.42 Een technisch gespreksverzoek kreeg de commerciële doorverwijstekst (22 sep)
+Een bezoeker vroeg om een gesprek met de technische afdeling over een koppeling met hun CRM. De
+onderwerpbeoordelaar koos `not_handled`, waarna de vaste tekst over prijzen, offertes en contracten
+de antwoordgeneratie verving, terwijl het zoeken relevante integratieartikelen had gevonden. De
+menselijke beoordeling: een technische vraag, dus geen tekst over prijzen en offertes.
+
+In zes herhalingen van de beoordelaar (twee opstellingen van drie) gaf die bij deze beurt steeds
+`wants_human=true`; `topic` sloeg om tussen de opstellingen, maar daar verschilde ook het
+gerouteerde model, dus dat verschil is niet toe te schrijven aan de welkomstregel. Over de laatste
+dertig dagen kreeg de widget 35 keer de vaste tekst, in 12 gesprekken en op 22 verschillende
+vragen; `not_handled` samen met een verzoek om een mens kwam in die periode één keer voor, bij
+precies deze beurt.
+
+**Niet gebouwd, en waarom.** De voor de hand liggende ingreep is dat een verzoek om een mens voorgaat
+op de vaste tekst: dan schrijft het model een antwoord met de afspraakknop eronder. Dat breekt de
+garantie waarvoor de instelling bestaat, namelijk dat bij een uitgesloten onderwerp geen model een
+woord schrijft, ook niet bij "ik wil iemand spreken over een offerte". De ingreep raakt op dertig
+dagen één beurt; de vraag of die garantie moet wijken voor een gespreksverzoek is een keuze van de
+eigenaar van de widget, net als de onderwerptekst "aanvragen voor nieuwe diensten" zelf. Wie die
+tekst heeft ingevoerd, is niet na te gaan: widgetinstellingen hebben geen versiegeschiedenis. De
+drie eerder gemeten routes van 2.18 blijven afgevallen.
+
 ---
 
 ## 3. Wat er live ging, en waarom
@@ -1177,6 +1207,8 @@ beter kan zonder eerst op echt verkeer te kijken.
 3. **Het valse alarm in de niet-behandelde onderwerpen** (2.18): één op de vijftig hulpvragen krijgt
    de doorverwijstekst; drie oplossingen gemeten en alle drie duurder dan de kwaal. Een keuze van de
    eigenaar.
+   Een technisch gespreksverzoek dat de vaste tekst kreeg (2.42) hoort hierbij; de keuze daar is of
+   een verzoek om een mens voorgaat op de vaste tekst.
 4. **Het budget van de controle per zin** (2.37): 4 s laat op eerste beurten 9 van 54 controles
    afkappen; 8 s laat ze afronden zonder meetbaar beter antwoord en met een zwaardere staart. 6 s is de
    ongemeten middenweg (5 van de 9 gered, één tot twee seconden op die beurten). Sinds 2.39 legt
