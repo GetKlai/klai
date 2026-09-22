@@ -139,7 +139,7 @@ async def _session_token(widget_id: str) -> tuple[str, str]:
         tenant_slug=org.slug,
         is_preview=True,
     )
-    return token, str(widget.org_id)
+    return token, widget.widget_config.get("welcome_message", "")
 
 
 async def _goals(widget_id: str, limit: int, client: httpx.AsyncClient) -> list[dict]:
@@ -247,10 +247,17 @@ async def _widget_reply(client: httpx.AsyncClient, token: str, messages: list[di
 _HAND_OFFS_BEFORE_GIVING_UP = 2
 
 
-async def _one_conversation(client: httpx.AsyncClient, token: str, goal: dict, max_turns: int) -> dict:
-    """The visitor's own first words, then a simulated visitor for the rest."""
+async def _one_conversation(
+    client: httpx.AsyncClient, token: str, goal: dict, max_turns: int, *, welcome: str = ""
+) -> dict:
+    """The visitor's own first words, then a simulated visitor for the rest.
+
+    The browser widget opens every conversation with its welcome line as an
+    assistant message, even an empty one, and sends it with each request; the
+    harness sends the same shape, or it measures a route no visitor takes.
+    """
     doel = goal["doel"]
-    messages: list[dict] = [{"role": "user", "content": goal["eerste"]}]
+    messages: list[dict] = [{"role": "assistant", "content": welcome}, {"role": "user", "content": goal["eerste"]}]
     transcript: list[str] = [f"Visitor: {goal['eerste']}"]
     eerste_bronnen = 0
     doorverwijzingen = 0
@@ -323,7 +330,7 @@ async def main(widget_id: str, aantal: int, beurten: int) -> None:
     if _SIMULATION_MODEL == settings.answer_grounding_model:
         raise SystemExit("De simulatie mag niet op hetzelfde model draaien als de grounding check die ze meet.")
 
-    token, _ = await _session_token(widget_id)
+    token, welcome = await _session_token(widget_id)
 
     resultaten: list[dict] = []
     mislukt: list[str] = []
@@ -334,7 +341,7 @@ async def main(widget_id: str, aantal: int, beurten: int) -> None:
             return
         for index, goal in enumerate(goals, 1):
             try:
-                resultaat = await _one_conversation(client, token, goal, beurten)
+                resultaat = await _one_conversation(client, token, goal, beurten, welcome=welcome)
             except Exception as exc:  # one broken conversation may not stop the run
                 mislukt.append(f"{goal['cid']}: {exc!r}")
                 print(f"{index}/{len(goals)} mislukt: {exc!r}", flush=True)

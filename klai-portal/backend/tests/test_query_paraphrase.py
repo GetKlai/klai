@@ -20,6 +20,7 @@ _VARIANTS = [
     "Hoe schakel ik de gelijktijdige doorschakeling naar voicemail uit?",
     "Nummers niet tegelijk naar voicemail",
 ]
+_WELCOME = {"role": "assistant", "content": "Hoi! Waar kan ik je mee helpen?"}
 
 
 def _capture_retrieve(monkeypatch, captured: dict[str, Any]) -> None:
@@ -78,10 +79,26 @@ async def test_the_first_question_travels_with_two_paraphrases(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_the_widget_welcome_line_does_not_make_the_first_question_a_follow_up(monkeypatch):
+    """The browser widget seeds every conversation with its welcome line as an
+    assistant message and sends it back with the first question. That line is
+    not an answer: the visitor's first question still gets its paraphrases."""
+    captured: dict[str, Any] = {}
+    _capture_retrieve(monkeypatch, captured)
+    messages = [_WELCOME, {"role": "user", "content": _QUESTION}]
+    with patch.object(query_paraphrase, "paraphrase_first_question", AsyncMock(return_value=_VARIANTS)) as para:
+        await _retrieve(messages, _settings())
+
+    para.assert_awaited_once()
+    assert captured["body"]["query_variants"] == _VARIANTS
+
+
+@pytest.mark.asyncio
 async def test_a_follow_up_keeps_its_history_and_gets_no_paraphrases(monkeypatch):
     captured: dict[str, Any] = {}
     _capture_retrieve(monkeypatch, captured)
     messages = [
+        _WELCOME,
         {"role": "user", "content": _QUESTION},
         {"role": "assistant", "content": "Ga naar Belplan."},
         {"role": "user", "content": "en per collega?"},
@@ -91,7 +108,7 @@ async def test_a_follow_up_keeps_its_history_and_gets_no_paraphrases(monkeypatch
 
     para.assert_not_awaited()
     assert captured["body"]["query_variants"] is None
-    assert len(captured["body"]["conversation_history"]) == 2
+    assert len(captured["body"]["conversation_history"]) == 3
 
 
 @pytest.mark.asyncio

@@ -1080,6 +1080,33 @@ Alleen de bewaking op klantgegevens in de repository leest zichzelf; de andere t
 voor wie gaat kijken, en meer niet. De lijst staat in `app/services/observability_signals.py`; een
 nieuw meetpunt in deze keten hoort daar een regel bij te krijgen.
 
+### 2.41 De herformuleringen bereikten de browserwidget niet (22 sep)
+`first_question_variants` behandelde iedere beurt met een assistantbericht in de historie als
+vervolgbeurt. De browserwidget zet sinds mei zijn welkomstregel als assistantbericht vooraan in elk
+gesprek en stuurt die bij iedere vraag mee, ook als de regel leeg is. Een echte eerste vraag uit de
+browser kreeg daardoor nul herformuleringen. De unittest, de herspeling van 2.33 en het harnas van
+2.34 begonnen alle drie met alleen de vraag van de bezoeker. 2.34 noemde dat de live widget, maar
+bewees alleen de rechtstreekse API-route; wat 2.34 in de logs zag, klopt voor die route en blijft
+staan.
+
+Met de echte functie nagerekend: welkomstregel plus vraag gaf nul herformuleringen en nul
+aanroepen, alleen de vraag gaf er twee, een echte vervolgbeurt nul. Daardoor is ook §5 punt 8 tot nu
+toe niet gemeten: sinds 19 september draaide echt browserverkeer zonder herformuleringen, dus de
+gegevens van `answer_grounding_late` (2.39) over die periode gaan over eerste beurten zonder.
+
+**Gewijzigd.** "Eerste vraag" telt nu de beurten van de bezoeker: precies één gebruikersbericht.
+Nagelopen tegen de drie gespreksvormen die de widget verstuurt. Een nieuw gesprek (welkomstregel
+plus vraag) krijgt de herformuleringen. Een hervat gesprek stuurt de bewaarde historie mee en heeft
+dus eerdere gebruikersberichten, en na de toestemming voor een breder antwoord staat de
+oorspronkelijke vraag al in de historie; die twee blijven vervolgbeurten. De unittest stuurt nu de
+browservorm, en het harnas zet de welkomstregel van de widget vooraan, zodat het de route meet die
+een bezoeker neemt.
+
+**Bewijs voor de winst** blijft 2.33: de herformulering krijgt alleen de vraag zelf, dus de 54
+herspeelde vragen meten precies wat deze reparatie inschakelt. De bekende bijwerkingen gelden nu wel
+voor het eerst op echt browserverkeer: ongeveer 2,3 s extra per eerste beurt en vaker een afgekapte
+controle per zin (2.33, 2.37). Die horen in de nameting van §5 punt 8.
+
 ---
 
 ## 3. Wat er live ging, en waarom
@@ -1104,7 +1131,7 @@ nieuw meetpunt in deze keten hoort daar een regel bij te krijgen.
 | 18 sep | Doodlopend antwoord zonder bron krijgt de afspraakknop (#1520) | 2.21 |
 | 18 sep | Het interne pad repareert, niet-streamend (#1526) | 2.22 |
 | 18 sep | De reparatie ook op de vastgehouden Strict-stroom, waar elke interne beurt langskomt (#1530) | 2.23 |
-| 19 sep | Twee herformuleringen van de eerste vraag als eigen zoekpasses, na herrangschikken samengevoegd (retrieval-api `query_variants`, widget `query_paraphrase.py`, #1548) | 2.27 op zoekniveau, 2.33 eind-tot-eind: 63 om 43; live bevestigd in 2.34 |
+| 19 sep | Twee herformuleringen van de eerste vraag als eigen zoekpasses, na herrangschikken samengevoegd (retrieval-api `query_variants`, widget `query_paraphrase.py`, #1548) | 2.27 op zoekniveau, 2.33 eind-tot-eind: 63 om 43; 2.34 bevestigde alleen de rechtstreekse API-route, de browserwidget kreeg ze pas na 2.41 |
 | 19 sep | Het harnas: de bezoeker geeft op na twee doorverwijzingen; nieuwe nulmeting | 2.35 |
 | 19 sep | Een afgekapte controle loopt door en logt wat ze gevonden had; overzicht van de meetpunten onder Platform → Status (#1554) | 2.39, 2.40 |
 
@@ -1168,7 +1195,7 @@ beter kan zonder eerst op echt verkeer te kijken.
 **Wacht op echt verkeer, niet op code**
 8. **De herformuleringen op echte bezoekers.** Het dagrapport van de controle per zin
    (`scripts/grounding_report.py`) en de beslisrecords (`query_variants_run`,
-   `query_variants_added`) laten over een week zien of 2.33
+   `query_variants_added`) laten over een week na de reparatie van 2.41 zien of 2.33
    op echt verkeer hetzelfde doet als in de herspeling: meer antwoorden die de vraag oplossen, niet
    meer niet-gedragen beweringen, en hoe vaak de controle afkapt. `answer_grounding_late` (2.39) zegt
    daarbij wat die afgekapte controles gevonden hadden. Waar elk van deze staat: Platform → Status →
