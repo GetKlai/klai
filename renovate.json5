@@ -205,9 +205,56 @@
       rebaseWhen: 'conflicted',
     },
     {
-      description: 'Group Docker images — require manual review',
+      description:
+        'Group Docker images, and let patch and minor automerge like every \
+        other dependency. This group was automerge: false from the start and \
+        that is what PR #1306 measured: green and unmerged from 1 September \
+        to 23 September, with mongo 8.3.11, redis 8.10.2, grafana 13.2.2, \
+        ollama 0.34.3 and litellm 1.102.1 all queued behind it, unable to get \
+        a branch because the group already had one. It is the same failure \
+        this file documents for lockFileMaintenance — the realistic failure \
+        mode is nobody looking, not somebody looking and catching something. \
+        Majors still stop at the major rule below.',
       matchManagers: ['docker-compose', 'dockerfile'],
       groupName: 'Docker images',
+    },
+    {
+      description:
+        'Vexa is the one image set that may never automerge. A bump is not \
+        self-contained: the bot image is an ENV value, so `compose up` never \
+        fetches it and it must be pulled on core-01 BEFORE the first spawn \
+        (docker-socket-proxy has IMAGES disabled, SPEC-SEC-024). An automerge \
+        would sync a runtime that then spawns a bot image the host does not \
+        have. Vexa is also pre-1.0 and publishes no changelog, so Renovate \
+        reads v0.12.26 -> v0.13.1 as a minor where upstream means breaking. \
+        No matchManagers: this must cover both the three compose `image:` \
+        refs and the BROWSER_IMAGE pin from the custom manager above.',
+      matchPackageNames: ['vexaai/**'],
+      automerge: false,
+    },
+    {
+      description:
+        'A stateful engine may automerge a patch but never a minor. Within a \
+        series a patch is a bugfix against the same on-disk format; a minor \
+        is a new series, and for these images that means a migration order \
+        rather than a version string — mongo 8.2 -> 8.3 carries \
+        featureCompatibilityVersion, and a data store is the one thing you \
+        cannot undo by redeploying the previous tag. AGENTS.md keeps exactly \
+        this gate: what still gates a rollout is safety, and a migration \
+        order is named there. Majors already stop at the rule below; this \
+        adds the series jump.',
+      matchDatasources: ['docker'],
+      matchUpdateTypes: ['minor'],
+      matchPackageNames: [
+        'mongo',
+        'postgres',
+        'redis',
+        'rabbitmq',
+        'pgvector/pgvector',
+        'getmeili/meilisearch',
+        'qdrant/qdrant',
+        'falkordb/falkordb',
+      ],
       automerge: false,
     },
     {
