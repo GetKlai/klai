@@ -50,11 +50,15 @@ for F in $FILES; do
     #     this service previously ran a locally-built image under a name
     #     nothing could pull, and nothing noticed until an audit went looking.
     #     A pin that is not pullable must fail here, before the deploy.
+    #   - ghcr.io/calnode/* — pinned upstream release. Its releases are tagged
+    #     v0.9.0 on GitHub but published as 0.9.0 on the registry, so the
+    #     obvious copy of the release name yields a tag that does not exist.
     REFS=$(
         {
             grep -oE 'ghcr\.io/getklai/[a-z0-9-]+:[A-Za-z0-9._-]+' "$F" || true
             grep -oE 'vexaai/[a-z0-9-]+:[A-Za-z0-9._-]+' "$F" || true
             grep -oE 'ghcr\.io/firecrawl/[a-z0-9-]+:[A-Za-z0-9._-]+' "$F" || true
+            grep -oE 'ghcr\.io/calnode/[a-z0-9-]+:[A-Za-z0-9._-]+' "$F" || true
         } | sort -u
     )
 

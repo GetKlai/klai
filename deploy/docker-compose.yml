@@ -115,6 +115,7 @@ volumes:
   scribe-audio-data:
   runtime-api-docker-socket:   # SPEC-SEC-021 socat bridge socket (runtime-api <-> docker-socket-proxy)
   vaultwarden-data:            # Vaultwarden SQLite DB + attachments
+  calnode-data:                # Calnode SQLite DB + encrypted stored credentials
 
 # Log rotation. The daemon default lives outside this repo, in core-01's
 # /etc/docker/daemon.json:
@@ -2436,3 +2437,54 @@ services:
       resources:
         limits:
           memory: 2g
+
+  # ─── Calnode (booking page for demo calls) ───────────────────────────────
+  # Runs alongside cal-com; cal-com is removed in a follow-up once the 55
+  # existing bookings are exported. Cal.com went closed source in April 2026
+  # and the public repo is now cal.diy, which upstream itself marks as not for
+  # production, so our v6.2.0 pin is frozen and will never be patched again.
+  #
+  # One static Go binary with an embedded SQLite file: no Postgres, no Redis,
+  # which is why this needs no net-postgres and carries no DB credentials.
+  # The meeting link is a plain `link` location holding a Jitsi room, so
+  # nothing here depends on Google or Microsoft.
+  #
+  # Secrets in klai-infra/core-01/.env.sops (CALNODE_ prefix). The app refuses
+  # to start when BASE_URL is https and CALNODE_ENCRYPTION_KEY is unset, so
+  # both were delivered to /opt/klai/.env BEFORE this service landed.
+  calnode:
+    logging: *log-rotation
+    image: ghcr.io/calnode/calnode:0.9.0
+    restart: unless-stopped
+    environment:
+      BASE_URL: https://boek.${DOMAIN}
+      DATABASE_URL: sqlite:///data/calnode.db
+      CALNODE_ENCRYPTION_KEY: ${CALNODE_ENCRYPTION_KEY}
+      CALNODE_RECOVERY_SECRET: ${CALNODE_RECOVERY_SECRET}
+      EMAIL_SMTP_HOST: ${SMTP_HOST}
+      EMAIL_SMTP_PORT: ${SMTP_PORT:-587}
+      EMAIL_SMTP_USER: ${SMTP_USERNAME}
+      EMAIL_SMTP_PASS: ${SMTP_PASSWORD}
+      EMAIL_SMTP_STARTTLS: "true"
+      EMAIL_FROM_ADDRESS: hello@getklai.com
+      EMAIL_FROM_NAME: Klai
+      # Caddy is the only thing that reaches this container, so its
+      # X-Forwarded-For is worth believing. Left unset, the per-IP rate limit
+      # keys on the TCP peer and every visitor shares Caddy's single bucket.
+      # klai-net has no fixed subnet, so this names Docker's private range.
+      TRUSTED_PROXY_CIDRS: 172.16.0.0/12
+      TZ: Europe/Amsterdam
+    volumes:
+      - calnode-data:/data
+    networks:
+      - klai-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/readyz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 256m
