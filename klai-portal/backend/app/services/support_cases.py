@@ -30,7 +30,7 @@ from typing import Any, Literal, cast
 
 import structlog
 from fastapi import HTTPException
-from sqlalchemy import Row, delete, func, select, text
+from sqlalchemy import Row, delete, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import set_tenant
@@ -147,15 +147,20 @@ def _normalize_question(text_value: str) -> str:
     return re.sub(r"\s+", " ", text_value).strip().casefold()
 
 
-def _question_key(*, question: str, diagnosis: str, language: str | None, kb_slug: str, audience: str | None) -> str:
-    """Grouping key for support findings.
+def _question_key(*, question: str, language: str | None, kb_slug: str | None, audience: str | None) -> str:
+    """Grouping key for a customer NEED, shared by every gap producer (support
+    case findings and chat/widget/MCP telemetry — SPEC-RAG-GAP-GROUPING).
 
-    Equivalent questions across cases collapse into one inbox group while
-    keeping different diagnoses, KBs, languages and audiences distinct
-    (contract: "group normalized equivalent questions"). Semantic merging is a
-    later, measured extension — this is deliberately a normalized-text key.
+    Equivalent questions collapse into one inbox group, split only on KB,
+    language and audience: the axes that describe a genuinely different
+    editorial job. Diagnosis (missing/incomplete/...) and gap_type (hard/soft)
+    are dropped on purpose — they describe HOW a gap was detected, not WHAT the
+    customer needs, so a "missing" and an "incomplete" about the same question
+    belong in one group. A differently-worded paraphrase does not share this
+    literal key; ``support_gap_grouping.group_findings`` is what folds a
+    paraphrase (or a different producer's row) into an existing key.
     """
-    return "|".join([_normalize_question(question), diagnosis, language or "", kb_slug, audience or ""])
+    return "|".join([_normalize_question(question), language or "", kb_slug or "", audience or ""])
 
 
 def _finding_gap(
@@ -189,7 +194,6 @@ def _finding_gap(
         question_key=finding.get("group_question_key")
         or _question_key(
             question=finding["question"],
-            diagnosis=finding["diagnosis"],
             language=finding.get("language"),
             kb_slug=kb_slug,
             audience=finding.get("audience"),
@@ -324,28 +328,50 @@ async def _case_findings_count(db: AsyncSession, org_id: int, case_id: int) -> i
 GROUPING_CANDIDATE_LIMIT = 100
 
 
-async def _open_group_candidates(db: AsyncSession, *, org_id: int, kb_slug: str, exclude_case_id: int) -> list[dict]:
-    """Existing OPEN support groups for this org+KB, minus the case being analysed.
+async def _open_group_candidates(
+    db: AsyncSession,
+    *,
+    org_id: int,
+    kb_slug: str | None,
+    exclude_case_id: int | None,
+    exclude_gap_id: int | None = None,
+) -> list[dict]:
+    """Existing OPEN groups for this org+KB, across every producer (support
+    case findings and chat/widget/MCP telemetry alike — SPEC-RAG-GAP-GROUPING),
+    minus the case being (re)analysed, if any.
 
     One row per persisted ``question_key`` with the fields the grouping judge
     compares. Bounded so a large inbox cannot build an unbounded prompt.
     """
+    conditions = [
+        PortalRetrievalGap.org_id == org_id,
+        PortalRetrievalGap.nearest_kb_slug == kb_slug,
+        PortalRetrievalGap.resolved_at.is_(None),
+        PortalRetrievalGap.question_key.isnot(None),
+    ]
+    if exclude_gap_id is not None:
+        # The row asking the question is already in the table: without this it
+        # occupies one of the bounded candidate slots and can push a genuinely
+        # matching group out of the prompt.
+        conditions.append(PortalRetrievalGap.id != exclude_gap_id)
+    if exclude_case_id is not None:
+        # NULL-safe: a chat/telemetry row has no support_case_id, so a plain
+        # ``!=`` (which is NULL, i.e. excluded, against NULL) would silently
+        # drop every non-support candidate.
+        conditions.append(
+            or_(
+                PortalRetrievalGap.support_case_id.is_(None),
+                PortalRetrievalGap.support_case_id != exclude_case_id,
+            )
+        )
     stmt = (
         select(
             PortalRetrievalGap.question_key,
             func.max(PortalRetrievalGap.query_text).label("question"),
-            func.max(PortalRetrievalGap.diagnosis).label("diagnosis"),
             func.max(PortalRetrievalGap.language).label("language"),
             func.max(PortalRetrievalGap.audience).label("audience"),
         )
-        .where(
-            PortalRetrievalGap.org_id == org_id,
-            PortalRetrievalGap.nearest_kb_slug == kb_slug,
-            PortalRetrievalGap.support_case_id.isnot(None),
-            PortalRetrievalGap.support_case_id != exclude_case_id,
-            PortalRetrievalGap.resolved_at.is_(None),
-            PortalRetrievalGap.question_key.isnot(None),
-        )
+        .where(*conditions)
         .group_by(PortalRetrievalGap.question_key)
         .limit(GROUPING_CANDIDATE_LIMIT)
     )
@@ -354,7 +380,6 @@ async def _open_group_candidates(db: AsyncSession, *, org_id: int, kb_slug: str,
         {
             "question_key": r.question_key,
             "question": r.question,
-            "diagnosis": r.diagnosis,
             "language": r.language,
             "audience": r.audience,
         }
@@ -380,7 +405,6 @@ async def _grouped_findings(
             continue
         key = _question_key(
             question=finding["question"],
-            diagnosis=finding["diagnosis"],
             language=finding.get("language"),
             kb_slug=kb_slug,
             audience=finding.get("audience"),
@@ -391,7 +415,6 @@ async def _grouped_findings(
             {
                 "question_key": key,
                 "question": finding["question"],
-                "diagnosis": finding["diagnosis"],
                 "language": finding.get("language"),
                 "audience": finding.get("audience"),
                 "finding_index": index,
@@ -695,11 +718,12 @@ def _apply_findings(
         diagnosis = finding.get("diagnosis")
         if diagnosis not in INBOX_DIAGNOSES:
             continue
-        # Dedupe on the full grouping key so different audience/language within
-        # one case are kept as distinct findings.
+        # Dedupe on the grouping key so different audience/language within one
+        # case are kept as distinct findings; diagnosis no longer separates
+        # them here either — a "missing" and an "incomplete" about the same
+        # question in one case are the same need, same as across cases.
         key = _question_key(
             question=finding["question"],
-            diagnosis=diagnosis,
             language=finding.get("language"),
             kb_slug=kb_slug,
             audience=finding.get("audience"),
@@ -795,15 +819,10 @@ async def apply_review_visibility(
         row.resolved_at = None  # restore/reopen a review-dismissed finding
         row.resolved_by = None
         row.resolved_by_user_id = None
-        if row.diagnosis != effective:  # a correction re-buckets the derived row's diagnosis+group
-            row.diagnosis = effective
-            row.question_key = _question_key(
-                question=question,
-                diagnosis=cast(str, effective),
-                language=row.language,
-                kb_slug=row.nearest_kb_slug or case.kb_slug,
-                audience=row.audience,
-            )
+        # A correction changes which diagnosis is shown, but diagnosis is not
+        # part of ``question_key`` any more (SPEC-RAG-GAP-GROUPING) — the row
+        # stays in the same group regardless of which diagnosis it now carries.
+        row.diagnosis = effective
 
 
 async def upsert_support_case(
