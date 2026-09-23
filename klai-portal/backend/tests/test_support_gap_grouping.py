@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -127,7 +128,14 @@ async def test_same_need_in_one_case_shares_one_group_and_keeps_evidence(monkeyp
         )
 
     rows = [
-        support_cases._finding_gap(org_id=7, user_id="user", kb_slug="products", case_id=11, finding=finding)
+        support_cases._finding_gap(
+            org_id=7,
+            user_id="user",
+            kb_slug="products",
+            case_id=11,
+            finding=finding,
+            occurred_at=datetime(2026, 9, 1, tzinfo=UTC),
+        )
         for finding in result
     ]
     assert {row.question_key for row in rows} == {first_key}

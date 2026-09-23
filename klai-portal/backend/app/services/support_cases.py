@@ -158,6 +158,58 @@ def _question_key(*, question: str, diagnosis: str, language: str | None, kb_slu
     return "|".join([_normalize_question(question), diagnosis, language or "", kb_slug, audience or ""])
 
 
+def _case_occurred_at(case: PortalSupportCase) -> datetime:
+    """The case's own date, newest evidence first, as the floor for its findings.
+
+    Used when a finding cites no message that carries a timestamp: the last
+    message that has one, then the source's update stamp, then the import. A
+    call transcript carries no timestamps today and lands on the import.
+    """
+    payload = case.payload if isinstance(case.payload, dict) else {}
+    messages = payload.get("messages")
+    candidates: list[object] = []
+    if isinstance(messages, list):
+        candidates += [m.get("occurred_at") for m in reversed(messages) if isinstance(m, dict)]
+    candidates.append(payload.get("source_updated_at"))
+    for value in candidates:
+        parsed = _parse_source_timestamp(value)
+        if parsed is not None:
+            return parsed
+    return case.imported_at or datetime.now(tz=UTC)
+
+
+def _parse_source_timestamp(value: object) -> datetime | None:
+    """A source timestamp, or None. Never fabricates a date."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def _finding_occurred_at(case: PortalSupportCase, finding: dict) -> datetime:
+    """When THIS question was raised, not when the analyzer last ran.
+
+    A reanalysis rebuilds a case's rows, so an insert timestamp says when the
+    analyser ran and nothing about demand. One case can also raise several
+    questions months apart, and a recent follow-up must not make an old topic
+    look new, so the date comes from the messages the finding itself cites.
+    """
+    payload = case.payload if isinstance(case.payload, dict) else {}
+    messages = payload.get("messages")
+    cited = {mid for mid in finding.get("message_ids", []) or [] if isinstance(mid, str)}
+    dates = [
+        parsed
+        for m in (messages if isinstance(messages, list) else [])
+        if isinstance(m, dict) and m.get("id") in cited
+        for parsed in [_parse_source_timestamp(m.get("occurred_at"))]
+        if parsed is not None
+    ]
+    return max(dates) if dates else _case_occurred_at(case)
+
+
 def _finding_gap(
     *,
     org_id: int,
@@ -165,10 +217,12 @@ def _finding_gap(
     kb_slug: str,
     case_id: int,
     finding: dict,
+    occurred_at: datetime,
 ) -> PortalRetrievalGap:
     return PortalRetrievalGap(
         org_id=org_id,
         user_id=user_id,
+        occurred_at=occurred_at,
         query_text=finding["question"],
         # Every case-backed inbox row is a content gap: a content gap can exist
         # even when retrieval scores are healthy (diagnosis=incomplete with
@@ -707,7 +761,16 @@ def _apply_findings(
         if key in seen:
             continue
         seen.add(key)
-        db.add(_finding_gap(org_id=case.org_id, user_id=created_by, kb_slug=kb_slug, case_id=case.id, finding=finding))
+        db.add(
+            _finding_gap(
+                org_id=case.org_id,
+                user_id=created_by,
+                kb_slug=kb_slug,
+                case_id=case.id,
+                finding=finding,
+                occurred_at=_finding_occurred_at(case, finding),
+            )
+        )
         inserted += 1
     case.analysis = list(findings)
     return inserted
@@ -786,6 +849,7 @@ async def apply_review_visibility(
                     kb_slug=case.kb_slug,
                     case_id=case.id,
                     finding={**finding, "diagnosis": effective},
+                    occurred_at=_finding_occurred_at(case, finding),
                 )
             )
         # else: the machine row exists but was content-closed — leave that closure.
