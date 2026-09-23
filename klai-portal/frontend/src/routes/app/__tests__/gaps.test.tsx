@@ -332,6 +332,32 @@ describe('GapDetailPage', () => {
     paramsValue = { groupKey: gapGroupDigest(item) }
   }
 
+  it('finds the group again when the widened re-fetch aggregates it differently', async () => {
+    // The list asks for 30 open days and this page for 90 days including closed
+    // rows, so every MAX()/BOOL_OR() field on the row can come back different
+    // for one and the same group: an older occurrence with different wording,
+    // another nearest KB, or a closed human-review row that flips the source.
+    // Identity may only depend on the endpoint's GROUP BY keys.
+    const asListed = gapItem({
+      query_text: 'hoe reset ik mijn wachtwoord',
+      source: 'automatic',
+      nearest_kb_slug: 'company-kb',
+      group_key: 'hoe reset ik mijn wachtwoord|nl|company-kb|',
+    })
+    const asRefetched = {
+      ...asListed,
+      query_text: 'Hoe reset ik mijn wachtwoord?',
+      source: 'review',
+      nearest_kb_slug: 'support-kb',
+    }
+    paramsValue = { groupKey: gapGroupDigest(asListed) }
+    mockGaps([asRefetched])
+
+    render(<Wrapper><GapDetailPage /></Wrapper>)
+
+    await screen.findByText('Hoe reset ik mijn wachtwoord?')
+  })
+
   it('shows the conversations, issue and existing-knowledge stat cards', async () => {
     const item = gapItem({ occurrence_count: 5, top_score: 0.42, nearest_kb_slug: 'billing-kb' })
     setParamsFor(item)
