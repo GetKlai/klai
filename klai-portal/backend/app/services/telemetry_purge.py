@@ -4,9 +4,9 @@ Background loop that runs every 24 hours and deletes rows older than
 7 days from the three privacy-sensitive stores:
 
 1. ``telemetry.query_shadow``       — every row > 7d (REQ-7 retention)
-2. ``portal_retrieval_gaps``         — every row whose query_text is NOT
-                                        a redaction sentinel AND > 7d
-                                        (legacy or full-mode raw text)
+2. ``portal_retrieval_gaps``         — query-derived rows > 7d: no redaction
+                                        sentinel and no support case behind
+                                        them (EXPIRED_RAW_TELEMETRY_GAPS_SQL)
 3. portal-side mirror of the Redis
    retrieval-log already has its own 1h TTL, so no DB sweep here
 
@@ -40,6 +40,24 @@ PURGE_INTERVAL_SECONDS = 24 * 60 * 60
 RETENTION_DAYS = 7
 _RETRIEVAL_GAP_CHUNK_SIZE = 10_000
 
+# The TTL covers what it was written for: text derived from a chat query. Under
+# every telemetry mode no such record may outlive 7 days (docs/privacy/
+# telemetry-modes.md, dpa-telemetry-addendum.md §Retention), so a widget,
+# LibreChat, MCP or human-review row still expires here with its literal text.
+# A support-case finding is derived from a ticket or transcript the customer
+# imported, not from a chat query: its evidence lives in portal_support_cases,
+# which is kept for as long as the case is (and cascades on its delete). Purging
+# the finding while keeping its case left the knowledge inbox emptying itself a
+# week after every import, so those rows now age with their case instead.
+EXPIRED_RAW_TELEMETRY_GAPS_SQL = """
+    SELECT id FROM public.portal_retrieval_gaps
+    WHERE query_text NOT LIKE '[REDACTED:%'
+    AND support_case_id IS NULL
+    AND occurred_at < :cutoff
+    ORDER BY id
+    LIMIT :chunk_size
+"""
+
 
 async def _purge_once() -> dict[str, int]:
     """Run the three DELETEs in one pass and return per-store counts."""
@@ -60,24 +78,15 @@ async def _purge_once() -> dict[str, int]:
         except Exception:
             logger.warning("telemetry_purge_query_shadow_failed", exc_info=True)
 
-        # 2. portal_retrieval_gaps — only rows whose query_text is the
-        #    raw or legacy text. Rows with sentinel '[REDACTED:%' carry
-        #    no privacy debt and stay until the operator resolves the
-        #    underlying gap. The check uses NOT LIKE so both
-        #    '[REDACTED:legacy]' (one-time cleanup) and
+        # 2. portal_retrieval_gaps — raw retrieval telemetry only. Rows with
+        #    sentinel '[REDACTED:%' carry no privacy debt and stay until the
+        #    operator resolves the underlying gap. The check uses NOT LIKE so
+        #    both '[REDACTED:legacy]' (one-time cleanup) and
         #    '[REDACTED:shadow]' (ongoing shadow-mode inserts) survive.
         try:
             while True:
                 candidate_result = await db.execute(
-                    text(
-                        """
-                        SELECT id FROM public.portal_retrieval_gaps
-                        WHERE query_text NOT LIKE '[REDACTED:%'
-                        AND occurred_at < :cutoff
-                        ORDER BY id
-                        LIMIT :chunk_size
-                        """
-                    ),
+                    text(EXPIRED_RAW_TELEMETRY_GAPS_SQL),
                     {"cutoff": cutoff, "chunk_size": _RETRIEVAL_GAP_CHUNK_SIZE},
                 )
                 gap_ids = list(candidate_result.scalars().all())
