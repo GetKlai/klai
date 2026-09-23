@@ -952,7 +952,7 @@ services:
   # validator-env-parity).
   vaultwarden:
     logging: *log-rotation
-    image: vaultwarden/server:1.37.2
+    image: vaultwarden/server:1.37.3
     restart: unless-stopped
     environment:
       DOMAIN: "https://vault.getklai.com"
@@ -2173,7 +2173,7 @@ services:
   #   - Web endpoint on :3902 (anonymous reads via Caddy /kb-images/ route)
   garage:
     logging: *log-rotation
-    image: dxflrs/garage:v2.3.0
+    image: dxflrs/garage:v2.4.1
     restart: unless-stopped
     volumes:
       - /opt/klai/garage-meta:/var/lib/garage/meta
