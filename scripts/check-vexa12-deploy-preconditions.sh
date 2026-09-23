@@ -49,7 +49,7 @@ set -eu
 # This script is piped over SSH and runs on the host with no repo checkout,
 # so it cannot read that value -- the equality is asserted in CI instead, by
 # deploy/scripts/tests/check-vexa12-preconditions.test.sh. Bump both together.
-BOT_IMAGE="vexaai/vexa-bot:v0.12.26"
+BOT_IMAGE="vexaai/vexa-bot:v0.13.1"
 FAIL=0
 
 say_fail() { echo "FAIL: $1"; echo "      fix: $2"; FAIL=1; }
