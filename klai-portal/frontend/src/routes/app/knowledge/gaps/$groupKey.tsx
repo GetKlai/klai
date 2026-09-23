@@ -101,21 +101,24 @@ export function GapDetailPage() {
 
   const gap: GapRow | undefined = findGapByDigest(detailQuery.data?.gaps ?? [], groupKey)
 
+  // One body shape for every source: the backend treats group_key as
+  // authoritative when present (it matches every folded finding sharing that
+  // persisted key, regardless of wording), and falls back to the exact-text
+  // legacy match only when both group_key and diagnosis are absent -- which is
+  // the case for every automatic/review row today. Branching on source here
+  // would silently drop group_key for those rows once they start carrying one.
   const resolveMutation = useMutation({
     mutationFn: () => {
       if (!gap) throw new Error('no gap loaded')
-      const body =
-        gap.source === 'support'
-          ? {
-              query_text: gap.query_text,
-              gap_type: gap.gap_type,
-              language: gap.language,
-              diagnosis: gap.diagnosis,
-              audience: gap.audience,
-              nearest_kb_slug: gap.nearest_kb_slug,
-              group_key: gap.group_key,
-            }
-          : { query_text: gap.query_text, gap_type: gap.gap_type, language: gap.language }
+      const body = {
+        query_text: gap.query_text,
+        gap_type: gap.gap_type,
+        language: gap.language,
+        diagnosis: gap.diagnosis,
+        audience: gap.audience,
+        nearest_kb_slug: gap.nearest_kb_slug,
+        group_key: gap.group_key,
+      }
       return apiFetch<{ resolved: number }>('/api/app/gaps/resolve', {
         method: 'POST',
         body: JSON.stringify(body),

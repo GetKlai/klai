@@ -379,8 +379,13 @@ describe('GapDetailPage', () => {
     )
   })
 
-  it('posts the resolve body to /api/app/gaps/resolve after the confirm step', async () => {
-    const item = gapItem({ query_text: 'Wat zijn de openingstijden?', gap_type: 'hard', language: 'nl' })
+  it('posts the resolve body to /api/app/gaps/resolve after the confirm step, including group_key for a non-support gap', async () => {
+    const item = gapItem({
+      query_text: 'Wat zijn de openingstijden?',
+      gap_type: 'hard',
+      language: 'nl',
+      group_key: 'telemetry-group-key',
+    })
     setParamsFor(item)
     mockGaps([item])
 
@@ -401,6 +406,10 @@ describe('GapDetailPage', () => {
       query_text: 'Wat zijn de openingstijden?',
       gap_type: 'hard',
       language: 'nl',
+      diagnosis: null,
+      audience: null,
+      nearest_kb_slug: 'company-kb',
+      group_key: 'telemetry-group-key',
     })
   })
 
