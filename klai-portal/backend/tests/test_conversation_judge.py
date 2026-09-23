@@ -24,6 +24,7 @@ import asyncio
 import json
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -134,6 +135,8 @@ class _OrgDb:
     handoffs: set[int] = field(default_factory=set)
     inserts: dict[int, dict] = field(default_factory=dict)
     other_org_judged: set[int] = field(default_factory=set)
+    existing_gaps: set[int] = field(default_factory=set)  # still-open gap rows for that conversation
+    marked_test: set[int] = field(default_factory=set)
 
     def _result(self, rows):
         res = MagicMock()
@@ -178,6 +181,19 @@ class _OrgDb:
             self.inserts[conv_id] = dict(params)
             res = MagicMock()
             res.rowcount = 1
+            return res
+        if "FROM widget_conversations wc" in sql:  # gap guard: test-marked or already filed
+            assert params["org_id"] == self.org_id, "gap guard leaked another org's id"
+            cid = params["conversation_id"]
+            res = MagicMock()
+            res.first.return_value = MagicMock(
+                excluded=cid in self.preview or cid in self.marked_test, has_open_gap=cid in self.existing_gaps
+            )
+            return res
+        if "SELECT zitadel_org_id" in sql:
+            assert params["org_id"] == self.org_id
+            res = MagicMock()
+            res.scalar_one.return_value = f"zitadel-{self.org_id}"
             return res
         raise AssertionError(f"unexpected SQL in tenant session:\n{sql}")
 
@@ -603,3 +619,129 @@ async def test_loop_skips_both_passes_outside_the_window():
 
     webchat.assert_not_awaited()
     librechat.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# (g) a verdict that blames the knowledge base files a gap
+# ---------------------------------------------------------------------------
+
+
+def _gap_case(verdict_overrides: dict, *, existing_gaps: set[int] | None = None, marked_test: set[int] | None = None):
+    """One finished conversation, judged with the given verdict."""
+    from app.services import conversation_judge as cj
+
+    org = _OrgDb(
+        org_id=1,
+        outcome={1: "unknown"},
+        messages={
+            1: [("user", "Hoe verbind ik door in de app?", None, None), ("assistant", "Onduidelijk", None, None)]
+        },
+        existing_gaps=existing_gaps or set(),
+        marked_test=marked_test or set(),
+    )
+
+    @asynccontextmanager
+    async def _tenant(org_id):
+        yield org
+
+    async def _verdict(*, model: str, user: str) -> str:
+        return _verdict_raw(**verdict_overrides)
+
+    recorded = AsyncMock(return_value=SimpleNamespace(outcome="inserted", org_id=1))
+    return cj, org, _tenant, _verdict, recorded
+
+
+@pytest.mark.asyncio
+async def test_unresolved_retrieval_miss_files_the_visitor_question_as_a_gap() -> None:
+    """The judge is the only signal for an answer that was confident and wrong;
+    without this the knowledge inbox never hears about those conversations."""
+    cj, _org, tenant, verdict, recorded = _gap_case({"outcome": "unresolved", "failure_category": "retrieval_miss"})
+
+    with (
+        patch.object(cj, "tenant_scoped_session", tenant),
+        patch.object(cj, "_call_judge_llm", verdict),
+        patch.object(cj, "record_gap_event", recorded),
+    ):
+        await cj._judge_org(1)
+
+    assert recorded.await_count == 1
+    kwargs = recorded.await_args.kwargs
+    assert kwargs["query_text"] == "Hoe verbind ik door in de app?"  # the visitor's question, never the answer
+    assert kwargs["gap_type"] == "hard"
+    assert kwargs["conversation_id"] == 1
+    assert kwargs["caller_client_id"] == "quality-judge"
+
+
+@pytest.mark.asyncio
+async def test_a_conversation_that_already_has_a_gap_gets_no_second_one() -> None:
+    """Whoever filed it: a retrieval-score gap and a judge gap for the same
+    question would count one visitor question as two in the inbox."""
+    cj, _org, tenant, verdict, recorded = _gap_case(
+        {"outcome": "unresolved", "failure_category": "retrieval_wrong"}, existing_gaps={1}
+    )
+
+    with (
+        patch.object(cj, "tenant_scoped_session", tenant),
+        patch.object(cj, "_call_judge_llm", verdict),
+        patch.object(cj, "record_gap_event", recorded),
+    ):
+        await cj._judge_org(1)
+
+    assert recorded.await_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"outcome": "resolved", "failure_category": "none"},
+        {"outcome": "unresolved", "failure_category": "generation_error"},  # the answer existed, the model spoiled it
+        {"outcome": "partially_resolved", "failure_category": "scope_mismatch"},  # not ours to answer
+    ],
+)
+async def test_only_a_knowledge_cause_on_an_unresolved_conversation_files_a_gap(overrides) -> None:
+    cj, org, tenant, verdict, recorded = _gap_case(overrides)
+
+    with (
+        patch.object(cj, "tenant_scoped_session", tenant),
+        patch.object(cj, "_call_judge_llm", verdict),
+        patch.object(cj, "record_gap_event", recorded),
+    ):
+        await cj._judge_org(1)
+
+    assert recorded.await_count == 0
+    assert set(org.inserts) == {1}  # the judgment itself is still written
+
+
+@pytest.mark.asyncio
+async def test_a_failing_gap_write_costs_the_gap_not_the_judgement() -> None:
+    cj, org, tenant, verdict, _ = _gap_case({"outcome": "unresolved", "failure_category": "retrieval_miss"})
+    broken = AsyncMock(side_effect=RuntimeError("gap store unavailable"))
+
+    with (
+        patch.object(cj, "tenant_scoped_session", tenant),
+        patch.object(cj, "_call_judge_llm", verdict),
+        patch.object(cj, "record_gap_event", broken),
+    ):
+        judged = await cj._judge_org(1)
+
+    assert judged == 1 and set(org.inserts) == {1}
+
+
+@pytest.mark.asyncio
+async def test_marking_a_conversation_as_test_while_the_judge_runs_files_nothing() -> None:
+    """The reviewer's test-mark only resolves the gaps that exist at that moment,
+    so a judge still waiting on its LLM call must not add a new one after it."""
+    cj, _org, tenant, verdict, recorded = _gap_case(
+        {"outcome": "unresolved", "failure_category": "retrieval_miss"}, marked_test={1}
+    )
+
+    with (
+        patch.object(cj, "tenant_scoped_session", tenant),
+        patch.object(cj, "_call_judge_llm", verdict),
+        patch.object(cj, "record_gap_event", recorded),
+    ):
+        judged = await cj._judge_org(1)
+
+    assert recorded.await_count == 0
+    assert judged == 1  # the judgment itself still stands
