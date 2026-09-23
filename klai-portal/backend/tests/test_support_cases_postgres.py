@@ -682,10 +682,12 @@ async def test_purge_removes_all_support_evidence(pg) -> None:
     assert await _counts(admin) == (0, 0)
 
 
-async def test_manual_close_closes_the_whole_question_key_group_only(pg) -> None:
+async def test_manual_close_closes_every_diagnosis_in_the_group_but_only_that_kb(pg) -> None:
     """#A: a support group is closed by its persisted question_key, so two
-    differently cased/spaced cases in one group both close, while another KB or
-    diagnosis is untouched. The KB selector is required."""
+    differently cased/spaced cases AND a second diagnosis about the same
+    question all close together — a diagnosis says how a gap was detected, not
+    what the customer needs (SPEC-RAG-GAP-GROUPING). Another KB is untouched,
+    and the KB selector is required."""
     from app.api.app_gaps import GapResolveRequest, resolve_gap
     from app.services.support_cases import _question_key
     from tests.conftest import make_perms
@@ -693,16 +695,12 @@ async def test_manual_close_closes_the_whole_question_key_group_only(pg) -> None
     admin, factory, cid, _ = pg
     r = await _upsert(factory, cid, _payload())  # one real case to reference
     case_id = r.case_id
-    k_target = _question_key(question="How export?", diagnosis="missing", language="en", kb_slug="kb-a", audience=None)
-    k_other_diag = _question_key(
-        question="How export?", diagnosis="incomplete", language="en", kb_slug="kb-a", audience=None
-    )
-    k_other_kb = _question_key(
-        question="How export?", diagnosis="missing", language="en", kb_slug="kb-b", audience=None
-    )
+    k_target = _question_key(question="How export?", language="en", kb_slug="kb-a", audience=None)
+    k_other_kb = _question_key(question="How export?", language="en", kb_slug="kb-b", audience=None)
 
     async with admin.begin() as conn:
-        # Two spellings, one persisted key (the store normalized both the same).
+        # Two spellings and two diagnoses, one persisted key (the store
+        # normalized them all the same); a fourth row on another KB.
         await conn.execute(
             text(
                 "INSERT INTO portal_retrieval_gaps "
@@ -710,17 +708,17 @@ async def test_manual_close_closes_the_whole_question_key_group_only(pg) -> None
                 "VALUES "
                 "(901,'u','How export?','content','kb-a','en','missing',:k,:c),"
                 "(901,'u','how  export?','content','kb-a','en','missing',:k,:c),"
-                "(901,'u','How export?','content','kb-a','en','incomplete',:kd,:c),"
+                "(901,'u','How export?','content','kb-a','en','incomplete',:k,:c),"
                 "(901,'u','How export?','content','kb-b','en','missing',:kk,:c)"
             ),
-            {"k": k_target, "kd": k_other_diag, "kk": k_other_kb, "c": case_id},
+            {"k": k_target, "kk": k_other_kb, "c": case_id},
         )
 
     async with factory() as db:
         await set_tenant(db, 901)
         out = await resolve_gap(
             GapResolveRequest(
-                query_text="  HOW   Export? ",  # different casing/spacing than either stored row
+                query_text="  HOW   Export? ",  # different casing/spacing than any stored row
                 gap_type="content",
                 language="en",
                 diagnosis="missing",
@@ -729,23 +727,22 @@ async def test_manual_close_closes_the_whole_question_key_group_only(pg) -> None
             perms=make_perms(org_id=901),
             db=db,
         )
-    assert out.resolved == 2  # both spellings of the target group
+    assert out.resolved == 3  # both spellings and the second diagnosis
     async with admin.connect() as conn:
         rows = list(
             await conn.execute(
                 text(
                     "SELECT diagnosis, nearest_kb_slug, resolved_at IS NOT NULL AS closed "
                     "FROM portal_retrieval_gaps WHERE org_id=901 AND support_case_id IS NOT NULL "
-                    "AND question_key IN (:k,:kd,:kk) ORDER BY diagnosis, nearest_kb_slug"
+                    "AND question_key IN (:k,:kk) ORDER BY diagnosis, nearest_kb_slug"
                 ),
-                {"k": k_target, "kd": k_other_diag, "kk": k_other_kb},
+                {"k": k_target, "kk": k_other_kb},
             )
         )
-    # incomplete@kb-a and missing@kb-b stay open; only missing@kb-a closed.
     by = {(r[0], r[1]): r[2] for r in rows}
     assert by[("missing", "kb-a")] is True
-    assert by[("incomplete", "kb-a")] is False
-    assert by[("missing", "kb-b")] is False
+    assert by[("incomplete", "kb-a")] is True  # same need, closed with the group
+    assert by[("missing", "kb-b")] is False  # another KB is its own group
 
 
 async def test_manual_close_of_support_group_requires_kb_selector(pg) -> None:
