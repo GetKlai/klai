@@ -63,6 +63,8 @@ async def test_purge_once_runs_both_deletes_with_cutoff() -> None:
     # redacted sentinel rows.
     assert "portal_retrieval_gaps" in captured_calls[1]["sql"]
     assert "[REDACTED:%" in captured_calls[1]["sql"]
+    # Only query-derived rows expire; a support-case finding ages with its case.
+    assert "support_case_id IS NULL" in captured_calls[1]["sql"]
     assert "DELETE FROM public.portal_retrieval_gaps" in captured_calls[2]["sql"]
     assert captured_calls[2]["params"]["gap_ids"] == [11]
     # The TTL-bearing calls share the same cutoff (within a small clock skew).

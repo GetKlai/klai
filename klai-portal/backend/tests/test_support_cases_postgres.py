@@ -1509,3 +1509,73 @@ async def test_identical_reanalysis_preserves_current_human_correction(pg, machi
     if closed:
         assert rows[0].resolved_by == "manual"
     assert (await _read_reviews(admin, result.case_id))[review_key(revision, 0)]["corrected_diagnosis"] == corrected
+
+
+async def test_seven_day_purge_keeps_case_findings_and_still_expires_query_text(pg) -> None:
+    """The inbox's case evidence survives its retention job; chat text does not.
+
+    Until 2026-09-23 the 7-day TTL deleted every readable gap row, so a
+    case-backed finding disappeared a week after import while its support case
+    stayed, and no theme could show a trend across weeks. Rows derived from a
+    chat query keep the 7-day fence (docs/privacy/telemetry-modes.md), including
+    the one a human reviewer filed.
+    """
+    from app.services.telemetry_purge import EXPIRED_RAW_TELEMETRY_GAPS_SQL
+
+    admin, factory, cid, _ = pg
+    result = await _upsert(factory, cid, _payload())
+    async with admin.begin() as conn:
+        # The finding is as old as the raw rows, so "it survived" cannot be an
+        # artifact of its fresh insert timestamp.
+        await conn.execute(
+            text("UPDATE portal_retrieval_gaps SET occurred_at = now() - interval '30 days' WHERE support_case_id=:c"),
+            {"c": result.case_id},
+        )
+        await conn.execute(
+            text(
+                """
+                INSERT INTO portal_retrieval_gaps
+                    (org_id, user_id, query_text, gap_type, occurred_at, caller_client_id)
+                VALUES
+                    (901, 'u1', 'raw chat question', 'soft', now() - interval '30 days', 'widget-chat'),
+                    (901, 'u1', '[REDACTED:shadow]', 'soft', now() - interval '30 days', 'widget-chat'),
+                    (901, 'u1', 'question a reviewer filed', 'hard', now() - interval '30 days', 'human-review'),
+                    (901, 'u1', 'fresh chat question', 'soft', now(), 'widget-chat')
+                """
+            )
+        )
+        expired = (
+            (
+                await conn.execute(
+                    text(EXPIRED_RAW_TELEMETRY_GAPS_SQL.replace("public.", f"{_SCHEMA}.")),
+                    {"cutoff": datetime.now(UTC) - timedelta(days=7), "chunk_size": 100},
+                )
+            )
+            .scalars()
+            .all()
+        )
+        surviving = (
+            (
+                await conn.execute(
+                    text("SELECT query_text FROM portal_retrieval_gaps WHERE id <> ALL(CAST(:ids AS bigint[]))"),
+                    {"ids": list(expired)},
+                )
+            )
+            .scalars()
+            .all()
+        )
+        expired_text = (
+            (
+                await conn.execute(
+                    text("SELECT query_text FROM portal_retrieval_gaps WHERE id = ANY(CAST(:ids AS bigint[]))"),
+                    {"ids": list(expired)},
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    case_finding = (await _gap_rows(admin, result.case_id))[0]
+    assert case_finding.diagnosis == "missing"
+    assert sorted(expired_text) == ["question a reviewer filed", "raw chat question"]
+    assert sorted(surviving) == sorted([case_finding.query_text, "[REDACTED:shadow]", "fresh chat question"])
