@@ -40,6 +40,25 @@ PAIRS = [
          "CI uv dependency pin",
          "          --with litellm=={v}"),
     ]),
+    # Both spots are in the SAME file, which is the point: the runtime is a
+    # compose `image:` and the bot it spawns is an ENV value, so compose
+    # neither pulls nor recreates the bot. Renovate moved the three v012
+    # images to v0.13.1 on 2026-09-23 and left BROWSER_IMAGE on v0.12.26; the
+    # deploy went green and the mismatch only shows up when a meeting starts.
+    # The bot image must also be present on core-01 before the first spawn
+    # (docker-socket-proxy has IMAGES disabled, SPEC-SEC-024), which this
+    # check cannot see -- it proves the two pins agree, not that the host has
+    # the image.
+    ("vexa bot", [
+        ("deploy/docker-compose.yml",
+         r"^[^\S\n]*image:[^\S\n]*vexaai/v012-runtime:v([\w.+-]+)",
+         "compose runtime image",
+         "    image: vexaai/v012-runtime:v{v}"),
+        ("deploy/docker-compose.yml",
+         r"^[^\S\n]*BROWSER_IMAGE:[^\S\n]*vexaai/vexa-bot:v([\w.+-]+)",
+         "runtime BROWSER_IMAGE pin",
+         "      BROWSER_IMAGE: vexaai/vexa-bot:v{v}"),
+    ]),
 ]
 
 
@@ -87,11 +106,17 @@ def self_test():
         root = Path(td)
 
         def run(versions, drop=None, nomatch=None):
+            # Accumulate per path: a pair may have both spots in one file
+            # (vexa), and writing each spot separately would let the last one
+            # erase the pins written before it.
+            bodies = {}
             for (rel, _pattern, _label, tpl), v in zip(spots, versions):
+                bodies.setdefault(rel, []).append(
+                    tpl.format(v=v) if rel != nomatch else "# pin moved away")
+            for rel, parts in bodies.items():
                 path = root / rel
                 path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(tpl.format(v=v) if rel != nomatch
-                                else "# pin moved away\n")
+                path.write_text("\n".join(parts) + "\n")
             if drop is not None:
                 (root / drop).unlink()
             out = io.StringIO()
