@@ -244,6 +244,15 @@ _TOOLING: list[Subdomain] = [
         owner="Jantine",
     ),
     Subdomain(
+        subdomain="boek",
+        url="https://boek.getklai.com",
+        label="Calnode",
+        description="Booking-tool voor demo-calls met prospects; vervangt cal.",
+        category="tooling",
+        host="core-01",
+        owner="Mark",
+    ),
+    Subdomain(
         subdomain="status",
         url="https://status.getklai.com",
         label="Status page",

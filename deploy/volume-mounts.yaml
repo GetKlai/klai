@@ -377,6 +377,26 @@ mounts:
       backup coverage is intentionally not claimed here because backup.sh does
       not currently archive this volume.
 
+  calnode:
+    service: calnode
+    kind: named
+    host: calnode-data
+    container_path: /data
+    image: ghcr.io/calnode/calnode:0.9.0
+    category: data
+    data_path_source: compose DATABASE_URL=sqlite:///data/calnode.db
+    pii: true
+    backup: skip
+    backup_method: skip
+    retention: manual
+    retention_enforced_by: n/a
+    notes: |
+      Calnode SQLite DB: bookings, event types, and the encrypted SMTP and
+      calendar credentials. PII because a booking carries the booker's name
+      and email. Backup is not claimed: backup.sh does not archive this
+      volume yet, and Calnode's own Litestream integration is not configured.
+      Losing this volume loses the bookings, not the booking page.
+
   ollama:
     service: ollama
     kind: bind

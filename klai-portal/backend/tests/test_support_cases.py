@@ -13,6 +13,7 @@ import asyncio
 import sys
 import types
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -31,6 +32,7 @@ from app.services.support_cases import (
     _apply_findings,
     _classify_findings,
     _finding_gap,
+    _finding_occurred_at,
     _question_key,
     normalize_whisper_transcript,
     require_full_telemetry,
@@ -240,6 +242,7 @@ def test_finding_gap_is_always_content_type_with_signal_in_evidence() -> None:
         user_id="u1",
         kb_slug="kb-a",
         case_id=99,
+        occurred_at=datetime(2026, 9, 1, tzinfo=UTC),
         finding={
             "question": "How do I reset 2FA?",
             "language": "en",
@@ -859,3 +862,75 @@ def test_post_deploy_key_backfill_matches_the_application_key() -> None:
         _question_key(question=" Hoe  Werkt Dit? ", language="nl", kb_slug="kb-a", audience=None)
         == "hoe werkt dit?|nl|kb-a|"
     )
+
+
+def test_each_finding_is_dated_by_the_messages_it_cites() -> None:
+    """A reanalysis must not make every finding look like it happened today, and
+    a recent follow-up in the same case must not re-date an older question."""
+    case = PortalSupportCase(
+        id=1,
+        org_id=7,
+        status="analyzed",
+        imported_at=datetime(2026, 9, 23, tzinfo=UTC),
+        payload={
+            "source_updated_at": "2026-09-20T08:00:00Z",
+            "messages": [
+                {"id": "m1", "occurred_at": "2026-06-01T10:00:00Z"},
+                {"id": "m2", "occurred_at": "2026-06-01T10:05:00Z"},
+                {"id": "m9", "occurred_at": "2026-09-20T07:00:00Z"},
+            ],
+        },
+    )
+    db = _analysis_db()
+    _apply_findings(
+        db,
+        case=case,
+        findings=[
+            {"question": "Old topic", "diagnosis": "missing", "message_ids": ["m1", "m2"]},
+            {"question": "New topic", "diagnosis": "missing", "message_ids": ["m9"]},
+        ],
+        created_by="u1",
+        kb_slug="kb-a",
+    )
+
+    dated = [call.args[0].occurred_at for call in db.add.call_args_list]
+    assert dated == [datetime(2026, 6, 1, 10, 5, tzinfo=UTC), datetime(2026, 9, 20, 7, 0, tzinfo=UTC)]
+
+
+def test_finding_without_dated_messages_falls_back_to_source_then_import() -> None:
+    """A call transcript carries no timestamps, so its import time is the floor."""
+    dated = PortalSupportCase(
+        id=1,
+        org_id=7,
+        status="analyzed",
+        imported_at=datetime(2026, 9, 23, tzinfo=UTC),
+        payload={"source_updated_at": "2026-07-04T09:00:00Z", "messages": [{"id": "m1"}]},
+    )
+    undated = PortalSupportCase(
+        id=2,
+        org_id=7,
+        status="analyzed",
+        imported_at=datetime(2026, 9, 23, tzinfo=UTC),
+        payload={"messages": [{"id": "m1", "occurred_at": "not-a-date"}]},
+    )
+
+    assert _finding_occurred_at(dated, {"message_ids": ["m1"]}) == datetime(2026, 7, 4, 9, 0, tzinfo=UTC)
+    assert _finding_occurred_at(undated, {"message_ids": ["absent"]}) == datetime(2026, 9, 23, tzinfo=UTC)
+
+
+def test_post_deploy_backfill_redates_existing_findings_idempotently() -> None:
+    """Existing rows only pick up the new dating if something re-dates them.
+
+    A finding is rebuilt only when its case is reanalysed, which for unchanged
+    evidence never happens, so the rollout carries a backfill. It runs on every
+    deploy, so it must converge instead of rewriting rows it already fixed.
+    """
+    sql = (
+        Path(__file__).resolve().parents[1] / "alembic" / "versions" / "post_deploy_gap_finding_occurred_at.sql"
+    ).read_text()
+
+    assert "portal_retrieval_gaps" in sql and "support_case_id IS NOT NULL" in sql
+    # Same order as _finding_occurred_at: cited messages, any message, source stamp, import.
+    assert sql.index("message_ids") < sql.index("source_updated_at") < sql.index("imported_at")
+    # Converges: a second run finds nothing left to change.
+    assert "IS DISTINCT FROM dated.evidence_at" in sql
