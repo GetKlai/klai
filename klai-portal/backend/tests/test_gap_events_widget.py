@@ -227,6 +227,76 @@ async def test_widget_gap_soft_classification_with_none_scores(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_widget_soft_gap_derives_kb_slug_from_widget_scope(monkeypatch):
+    """Root cause: evidence-pack chunks carry no ``metadata.kb_slug``, so a
+    widget gap's ``nearest_kb_slug`` was always None and
+    ``record_gap_event``'s ``taxonomy_node_ids is None and nearest_kb_slug``
+    gate (app/services/gap_events.py) never started classification for
+    widget rows. When the turn was scoped to exactly one KB, that KB is
+    the KB the answer was retrieved from — use it."""
+    captured: dict[str, Any] = {}
+    _patch_retrieve(
+        monkeypatch,
+        {
+            "evidence_pack": {
+                "items": [
+                    {
+                        "chunk_id": "c1",
+                        "text": "Onzeker antwoord over een niche-onderwerp.",
+                        "source_url": "https://example.com/niche",
+                        "score": None,
+                    }
+                ],
+                "sources": [],
+            }
+        },
+    )
+    monkeypatch.setattr("app.services.partner_chat.tenant_scoped_session", _fake_tenant_session(captured))
+
+    with patch("app.services.partner_chat.record_gap_event", AsyncMock()) as mock_record:
+        await _call_retrieve_context(kb_slugs=["kb-alpha"])
+        await _drain_gap_tasks()
+
+    mock_record.assert_awaited_once()
+    kwargs = mock_record.await_args.kwargs
+    assert kwargs["gap_type"] == "soft"
+    assert kwargs["nearest_kb_slug"] == "kb-alpha"
+
+
+@pytest.mark.asyncio
+async def test_widget_soft_gap_keeps_kb_slug_none_when_scope_is_ambiguous(monkeypatch):
+    """Adjacent edge: a turn scoped to several KBs cannot be attributed to
+    one without knowing which KB the top chunk's artifact belongs to
+    (evidence-pack items carry no such field) — never guess an unrelated
+    KB, keep None."""
+    captured: dict[str, Any] = {}
+    _patch_retrieve(
+        monkeypatch,
+        {
+            "evidence_pack": {
+                "items": [
+                    {
+                        "chunk_id": "c1",
+                        "text": "Onzeker antwoord over een niche-onderwerp.",
+                        "source_url": "https://example.com/niche",
+                        "score": None,
+                    }
+                ],
+                "sources": [],
+            }
+        },
+    )
+    monkeypatch.setattr("app.services.partner_chat.tenant_scoped_session", _fake_tenant_session(captured))
+
+    with patch("app.services.partner_chat.record_gap_event", AsyncMock()) as mock_record:
+        await _call_retrieve_context(kb_slugs=["kb-alpha", "kb-beta"])
+        await _drain_gap_tasks()
+
+    mock_record.assert_awaited_once()
+    assert mock_record.await_args.kwargs["nearest_kb_slug"] is None
+
+
+@pytest.mark.asyncio
 async def test_widget_gap_write_failure_does_not_break_chat(monkeypatch):
     """A failing gap write is logged fire-and-forget; the chat answer still
     returns normally."""

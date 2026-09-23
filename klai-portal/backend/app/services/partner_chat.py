@@ -2634,6 +2634,11 @@ def _schedule_gap_event(
     query_text: str,
     chunks: list[dict],
     retrieval_ms: int,
+    # The KB slugs this turn was allowed to retrieve from (widget/partner-key
+    # scope, see SPEC-PARTNER-KB-SCOPE-001). Evidence-pack chunks carry no
+    # kb_slug of their own (see EvidenceItem in klai-retrieval-api), so this
+    # is the only source nearest_kb_slug can draw from on this path.
+    kb_slugs: list[str],
     is_preview: bool = False,
     # Audit identity of the widget conversation this turn belongs to, resolved
     # by the caller before retrieval. None for partner-key traffic and for
@@ -2660,9 +2665,12 @@ def _schedule_gap_event(
     in-process service instead of an HTTP POST to portal-api — this module
     runs inside portal-api itself, so a loopback call would be pointless.
 
-    ``nearest_kb_slug`` stays None in practice: the evidence-pack chunks on
-    this path carry no ``metadata.kb_slug`` (unlike the hook's raw chunks),
-    so the async taxonomy classification never triggers for widget rows.
+    ``nearest_kb_slug`` cannot come from the chunk itself: evidence-pack
+    items carry no ``kb_slug`` (unlike the hook's raw chunks). Falls back to
+    ``kb_slugs`` — the KB(s) this turn was scoped to — but only when that
+    scope is unambiguous (exactly one slug); with several candidate KBs and
+    no way to tell which one the top chunk's artifact belongs to, it stays
+    None rather than guessing (never cite an unrelated KB).
 
     ``conversation_id`` / ``language`` add the provenance the knowledge side
     needs to triage a gap: which conversation to jump back to, and in which
@@ -2680,7 +2688,7 @@ def _schedule_gap_event(
         if gap_type is None:
             return
         top_chunk, top_score = _top_chunk_score(chunks)
-        nearest_kb_slug = top_chunk.get("metadata", {}).get("kb_slug") if top_chunk and gap_type == "soft" else None
+        nearest_kb_slug = kb_slugs[0] if top_chunk and gap_type == "soft" and len(kb_slugs) == 1 else None
         # The visitor's question, not the answer: the answer does not exist
         # yet at this point, and "ontbreekt in het Engels" is a different
         # editorial gap than "ontbreekt in het Nederlands".
@@ -3023,6 +3031,7 @@ async def retrieve_context(
         query_text=query,
         chunks=chunks,
         retrieval_ms=retrieval_ms,
+        kb_slugs=kb_slugs,
         is_preview=is_preview,
         audit_widget_id=audit_widget_id,
         audit_session_key=audit_session_key,
