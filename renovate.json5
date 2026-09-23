@@ -228,8 +228,12 @@
         have. Vexa is also pre-1.0 and publishes no changelog, so Renovate \
         reads v0.12.26 -> v0.13.1 as a minor where upstream means breaking. \
         No matchManagers: this must cover both the three compose `image:` \
-        refs and the BROWSER_IMAGE pin from the custom manager above.',
+        refs and the BROWSER_IMAGE pin from the custom manager above. Its \
+        own groupName matters as much as the exemption: left in the Docker \
+        images group, one pending vexa bump would hold every automergeable \
+        image behind it and rebuild the jam this config just removed.',
       matchPackageNames: ['vexaai/**'],
+      groupName: 'Vexa bot pipeline',
       automerge: false,
     },
     {
@@ -242,7 +246,10 @@
         cannot undo by redeploying the previous tag. AGENTS.md keeps exactly \
         this gate: what still gates a rollout is safety, and a migration \
         order is named there. Majors already stop at the rule below; this \
-        adds the series jump.',
+        adds the series jump. Separate group for the same reason as Vexa: a \
+        waiting mongo series bump must not hold back everything that can \
+        merge on its own. Patches for these images stay in the main group \
+        and keep flowing.',
       matchDatasources: ['docker'],
       matchUpdateTypes: ['minor'],
       matchPackageNames: [
@@ -255,6 +262,7 @@
         'qdrant/qdrant',
         'falkordb/falkordb',
       ],
+      groupName: 'Data store series bumps',
       automerge: false,
     },
     {
