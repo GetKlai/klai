@@ -1103,13 +1103,19 @@ async def test_review_correction_to_non_actionable_suppresses(pg) -> None:
     assert (rows[0].closed, rows[0].resolved_by) == (True, "review")
 
 
-async def test_review_correction_rebuckets_the_diagnosis(pg) -> None:
+async def test_review_correction_changes_the_diagnosis_but_not_the_group(pg) -> None:
+    """A reviewer correcting 'missing' to 'outdated' says the gap was detected
+    differently, not that the customer needs something else, so the row keeps
+    the group it is in (SPEC-RAG-GAP-GROUPING: diagnosis is not part of the
+    grouping key). Before, the correction moved it into a group of its own."""
     admin, factory, cid, _ = pg
     r = await _upsert(factory, cid, _payload())
+    before = (await _gap_rows(admin, r.case_id))[0].question_key
     await _apply_visibility(factory, r.case_id, 0, "incorrect", "outdated")
     rows = await _gap_rows(admin, r.case_id)
     assert rows[0].diagnosis == "outdated" and rows[0].closed is False
-    assert "outdated" in rows[0].question_key  # the group key moved with the correction
+    assert rows[0].question_key == before
+    assert "outdated" not in rows[0].question_key
 
 
 async def test_review_promotes_an_uncertain_finding_into_a_candidate(pg) -> None:
