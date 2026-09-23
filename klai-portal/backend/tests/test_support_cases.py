@@ -336,14 +336,15 @@ async def test_taxonomy_outage_returns_findings_with_partial_labels_within_retry
     assert attempts == {"available": 1, "recovered": 2, "stalled": 2, "queued": 1}
 
 
-def test_question_key_keeps_kb_audience_diagnosis_distinct() -> None:
-    """Normalized grouping may never merge different KB, audience or diagnosis."""
-    base = dict(question="How do I reset 2FA?", diagnosis="missing", language="en", kb_slug="kb-a", audience="customer")
+def test_question_key_keeps_kb_audience_distinct_but_ignores_diagnosis() -> None:
+    """Normalized grouping may never merge different KB or audience, but a
+    diagnosis (missing/incomplete/...) is detection metadata, not part of the
+    need — it must not split the group (SPEC-RAG-GAP-GROUPING)."""
+    base = dict(question="How do I reset 2FA?", language="en", kb_slug="kb-a", audience="customer")
     same = _question_key(**{**base, "question": "  how   do i   RESET 2fa? "})  # whitespace/case only
     assert _question_key(**base) == same
     assert _question_key(**base) != _question_key(**{**base, "kb_slug": "kb-b"})
     assert _question_key(**base) != _question_key(**{**base, "audience": "internal"})
-    assert _question_key(**base) != _question_key(**{**base, "diagnosis": "incomplete"})
 
 
 # --------------------------------------------------------------------------- #
@@ -835,6 +836,32 @@ async def test_grouping_failure_logs_no_customer_text() -> None:
     assert result == findings
     assert diagnostics and "_grouped_findings" in diagnostics[0]
     assert secret not in diagnostics[0]
+
+
+def test_post_deploy_key_backfill_matches_the_application_key() -> None:
+    """Existing chat rows had no key, so the inbox grouped them on literal text.
+
+    The backfill gives them the key the application writes now; if the two ever
+    drift, the same question shows up as two groups.
+    """
+    sql = (
+        Path(__file__).resolve().parents[1] / "alembic" / "versions" / "post_deploy_gap_question_key_backfill.sql"
+    ).read_text()
+    # The file's header comment names the same columns, so read the statement only.
+    statement = sql[sql.index("UPDATE public.portal_retrieval_gaps") :]
+
+    assert "WHERE question_key IS NULL" in statement  # converges, and never rewrites a folded key
+    # Same segments, same order as _question_key.
+    assert (
+        statement.index("query_text")
+        < statement.index("language")
+        < statement.index("nearest_kb_slug")
+        < statement.index("audience")
+    )
+    assert (
+        _question_key(question=" Hoe  Werkt Dit? ", language="nl", kb_slug="kb-a", audience=None)
+        == "hoe werkt dit?|nl|kb-a|"
+    )
 
 
 def test_each_finding_is_dated_by_the_messages_it_cites() -> None:
