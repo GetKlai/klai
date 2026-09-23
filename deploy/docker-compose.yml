@@ -1905,7 +1905,7 @@ services:
     restart: unless-stopped
     environment:
       DOCKER_NETWORK: vexa12-bots
-      BROWSER_IMAGE: vexaai/vexa-bot:v0.12.26
+      BROWSER_IMAGE: vexaai/vexa-bot:v0.13.1
       # Agent/worker images are the 0.12 "second kind" — not deployed by Klai.
       AGENT_IMAGE: ""
       AGENT_WORKER_IMAGE: ""
