@@ -41,8 +41,10 @@ class ChatProfile:
     kb_slugs: tuple[str, ...] | None = None
     # Zitadel subject of the employee; only the internal surface has one.
     user_id: str | None = None
-    # Stream tokens as they arrive. Only an Open internal turn does: every
-    # other turn is held until the grounding check has decided what to show.
+    # Stream tokens as they arrive. Open and general internal turns do: an Open
+    # turn may use general knowledge and a general turn searches nothing, so
+    # neither waits on the grounding check. Every other turn is held until the
+    # check has decided what to show.
     stream_live: bool = False
 
 
@@ -99,5 +101,5 @@ def _internal_profile(user: PortalUser, *, knowledge: bool) -> ChatProfile:
         kb_scope=scope,
         kb_slugs=kb_slugs,
         user_id=user.zitadel_user_id,
-        stream_live=mode == "open",
+        stream_live=mode in ("open", "general"),
     )

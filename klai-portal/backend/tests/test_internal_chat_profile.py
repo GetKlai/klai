@@ -294,6 +294,7 @@ async def test_retrieval_disabled_is_general(world):
 
     assert profile.kb_mode == "general"
     assert profile.user_id == "sub-a"
+    assert profile.stream_live is True
 
 
 @pytest.mark.asyncio
