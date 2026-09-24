@@ -64,6 +64,7 @@ from app.services.answer_grounding import (
     repair_answer,
 )
 from app.services.answer_judge import decide_answer, is_clarifying_question, judge_answer
+from app.services.chat_profile import ChatProfile
 from app.services.citations import (
     compose_answer_with_trusted_sources,
     evidence_chunks_from_chunks,
@@ -81,6 +82,7 @@ from app.services.llm_safety_adapter import (
     check_widget_or_partner_input,
     safe_refusal_text,
 )
+from app.services.pasted_correspondence import PASTED_CORRESPONDENCE_SCOPE
 from app.services.query_paraphrase import first_question_variants
 from app.services.widget_audit import find_conversation_id
 from app.trace import get_trace_headers
@@ -215,13 +217,64 @@ async def safety_refusal_stream(query: str = "") -> AsyncGenerator[bytes]:
     yield b"data: [DONE]\n\n"
 
 
-def _normalize_llm_message(message: dict) -> dict[str, str] | None:
-    """Keep only provider-supported chat message fields."""
+def attachment_error_response(*, model: str, message: str) -> dict:
+    """Deterministic reply for a PDF attachment that could not be processed.
+
+    ``message`` is already rendered by
+    :func:`app.services.chat_attachments.user_visible_error` in the
+    conversation's language — no retrieval or generation happens for this
+    turn, matching the LiteLLM hook's ``mock_response`` short-circuit.
+    """
+    return {
+        "id": "chatcmpl-attachment-error",
+        "object": "chat.completion",
+        "model": model,
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": message, "sources": []},
+                "finish_reason": "stop",
+            }
+        ],
+    }
+
+
+async def attachment_error_stream(message: str) -> AsyncGenerator[bytes]:
+    yield _sse_content_delta(message)
+    yield b"data: [DONE]\n\n"
+
+
+def _normalize_llm_message(message: dict, *, keep_tool_fields: bool = False) -> dict[str, Any] | None:
+    """Keep only provider-supported chat message fields.
+
+    ``keep_tool_fields`` is off for the retrieval-facing caller
+    (:func:`_build_conversation_history`): a tool call and its result are
+    not something the visitor said, so they must not enter the search
+    query. It is on for the model-facing caller
+    (:func:`_augment_messages_with_system_prompt`): once ``tools`` is
+    forwarded to the model (see :func:`chat_completion_streaming`), the
+    model's own prior ``tool_calls`` and the ``tool`` role results answering
+    them must survive, or a second turn in a tool-calling conversation loses
+    the call the model is waiting on a result for.
+    """
     role = message.get("role")
+    content = message.get("content")
+    if keep_tool_fields and role == "tool":
+        tool_call_id = message.get("tool_call_id")
+        if isinstance(content, str) and isinstance(tool_call_id, str) and tool_call_id:
+            return {"role": "tool", "content": content, "tool_call_id": tool_call_id}
+        return None
     if role not in ("user", "assistant"):
         return None
+    if keep_tool_fields and role == "assistant":
+        tool_calls = message.get("tool_calls")
+        if isinstance(tool_calls, list) and tool_calls:
+            return {
+                "role": role,
+                "content": content if isinstance(content, str) else None,
+                "tool_calls": tool_calls,
+            }
 
-    content = message.get("content")
     if isinstance(content, str):
         return {"role": role, "content": content}
     if isinstance(content, list):
@@ -357,7 +410,7 @@ def _augment_messages_with_system_prompt(
     following the Dutch source language despite it, and on a turn with no
     chunks that reminder is not in the prompt at all.
     """
-    normalized = [msg for m in messages if (msg := _normalize_llm_message(m)) is not None]
+    normalized = [msg for m in messages if (msg := _normalize_llm_message(m, keep_tool_fields=True)) is not None]
     language_reminder = {
         "role": "system",
         "content": final_response_language_reminder(response_language),
@@ -1082,6 +1135,75 @@ def _earliest_guard_start(text: str) -> int:
     return min(starts) if starts else -1
 
 
+def _pop_live_stream_text(buffer: str, *, final: bool) -> tuple[str, str]:
+    """Withhold an incomplete markdown link/URL from a live (Open) stream.
+
+    Reuses ``_earliest_guard_start`` above (the same guard the legacy link
+    sanitizer uses) so there is one detector for "this token run might be the
+    start of a link", not two. Unlike the sanitizer, this only withholds —
+    it does not rewrite citation markup, because a live turn shows the
+    model's own words as they arrive; composition still runs once on the
+    full text at the end, same as a held turn.
+    """
+    start = _earliest_guard_start(buffer)
+    if start >= 0:
+        if final:
+            return buffer, ""
+        return buffer[:start], buffer[start:]
+    if final:
+        return buffer, ""
+    if len(buffer) <= _STREAM_GUARD_TAIL_CHARS:
+        return "", buffer
+    safe_len = len(buffer) - _STREAM_GUARD_TAIL_CHARS
+    return buffer[:safe_len], buffer[safe_len:]
+
+
+_WEB_SEARCH_TOOL_RE = re.compile(
+    r"(?:^|[_\-\s])(?:web[_\-\s]*search|websearch|search[_\-\s]*web|browser|searx|firecrawl)(?:$|[_\-\s])",
+    re.IGNORECASE,
+)
+
+
+def _tool_name(tool: object) -> str:
+    if not isinstance(tool, dict):
+        return ""
+    function = tool.get("function")
+    names = [tool.get("name"), tool.get("type"), function.get("name") if isinstance(function, dict) else None]
+    return " ".join(str(name) for name in names if name)
+
+
+def _tool_description(tool: object) -> str:
+    if not isinstance(tool, dict):
+        return ""
+    function = tool.get("function")
+    descriptions = [tool.get("description"), function.get("description") if isinstance(function, dict) else None]
+    return " ".join(str(description) for description in descriptions if description)
+
+
+def _is_web_search_tool(tool: object) -> bool:
+    name = _tool_name(tool)
+    if name and _WEB_SEARCH_TOOL_RE.search(name):
+        return True
+    return name.strip().lower() == "search" and "web" in _tool_description(tool).lower()
+
+
+def _strip_web_search_tools(tools: list[dict] | None) -> list[dict] | None:
+    """Remove web-search tool affordances for a Strict-KB turn.
+
+    Strict promises answers grounded only in the knowledge base; leaving a
+    web-search tool callable would let the model fold live web results into
+    that answer regardless. Ported from
+    ``deploy/litellm/klai_kb_request_context.py:strip_web_search_tools``,
+    which keeps enforcing this for LibreChat traffic through the hook until
+    slice 9 removes it — this is the one implementation for the knowledge
+    path in portal.
+    """
+    if not tools:
+        return tools
+    kept = [tool for tool in tools if not _is_web_search_tool(tool)]
+    return kept or None
+
+
 def _pop_sanitized_stream_text(  # noqa: C901 - small streaming state machine
     buffer: str,
     *,
@@ -1372,6 +1494,12 @@ def _sanitize_completion_body(
 
 def _sse_content_delta(text: str) -> bytes:
     payload = {"choices": [{"delta": {"content": text}}]}
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
+
+
+def _sse_tool_calls_delta(tool_calls: list[dict]) -> bytes:
+    """Forward a tool_calls delta unbuffered — never routed through the text buffer."""
+    payload = {"choices": [{"delta": {"tool_calls": tool_calls}}]}
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
 
 
@@ -2254,7 +2382,7 @@ def _renumber_sources(sources: list[dict]) -> list[dict]:
     return sources
 
 
-async def _chat_completion_streaming_with_composed_citations(
+async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - hold/live + tool_calls branching alongside existing composition
     *,
     augmented_messages: list[dict],
     model: str,
@@ -2279,6 +2407,9 @@ async def _chat_completion_streaming_with_composed_citations(
     signal_chunks: list[dict] | None = None,
     conversation: list[dict] | None = None,
     turn_timing: dict[str, float] | None = None,
+    profile: ChatProfile = ChatProfile(surface="widget"),
+    tools: list[dict] | None = None,
+    tool_choice: Any | None = None,
 ) -> AsyncGenerator[bytes]:
     """Collect text, compose deterministic citations, then stream once.
 
@@ -2306,6 +2437,24 @@ async def _chat_completion_streaming_with_composed_citations(
     ``signal_chunks`` is the retrieval result to score it on; it defaults to
     ``citation_chunks`` but differs on a broad-mode turn, where the caller
     empties the citation list on purpose.
+
+    ``profile.stream_live`` (only an Open internal turn) streams content
+    incrementally, through :func:`_pop_live_stream_text`, instead of holding
+    it for composition. Composition still runs once on the full text at the
+    end for sources/signals, but its content is not re-sent: the caller
+    already saw it live. A held turn (every other profile, unchanged
+    default) keeps buffering everything, and now sends an empty-content
+    keepalive frame per upstream token while it waits — but ONLY for
+    ``surface == "internal"``: widget/partner clients are proven byte-for-byte
+    unchanged by the existing streaming tests, and adding a frame those tests
+    do not expect would fail them even though the widget's own SSE parser
+    (``klai-widget/src/api/chat-stream.ts``) already ignores an empty
+    ``delta.content`` (falsy check before ``onToken``).
+
+    A ``tool_calls`` delta is forwarded unbuffered the moment it arrives,
+    regardless of hold/live — see :func:`_sse_tool_calls_delta`. It never
+    enters ``raw_text_parts``, so it can never reach the citation composer or
+    the grounding check.
     """
     raw_text_parts: list[str] = []
     # The page-context message is prepended, so the last user turn in
@@ -2316,17 +2465,23 @@ async def _chat_completion_streaming_with_composed_citations(
     visitor_query = _last_user_message(augmented_messages) or ""
     chat_url = f"{settings.litellm_base_url}/v1/chat/completions"
     generation_started = time.perf_counter()
+    live_buffer = ""
+    request_json: dict[str, Any] = {
+        "model": model,
+        "messages": augmented_messages,
+        "temperature": temperature,
+        "stream": True,
+    }
+    if tools:
+        request_json["tools"] = tools
+        if tool_choice is not None:
+            request_json["tool_choice"] = tool_choice
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
             async with client.stream(
                 "POST",
                 chat_url,
-                json={
-                    "model": model,
-                    "messages": augmented_messages,
-                    "temperature": temperature,
-                    "stream": True,
-                },
+                json=request_json,
                 headers={
                     "Authorization": f"Bearer {settings.litellm_master_key}",
                     **get_trace_headers(),
@@ -2347,9 +2502,18 @@ async def _chat_completion_streaming_with_composed_citations(
                         logger.debug("partner_chat_sse_parse_skipped", exc_info=True)
                         continue
                     delta = (evt.get("choices") or [{}])[0].get("delta") or {}
+                    if tool_calls := delta.get("tool_calls"):
+                        yield _sse_tool_calls_delta(tool_calls)
                     text = delta.get("content")
                     if isinstance(text, str) and text:
                         raw_text_parts.append(text)
+                        if profile.stream_live:
+                            live_buffer += text
+                            safe_text, live_buffer = _pop_live_stream_text(live_buffer, final=False)
+                            if safe_text:
+                                yield _sse_content_delta(safe_text)
+                        elif profile.surface == "internal":
+                            yield _sse_content_delta("")
     except httpx.TransportError:
         logger.warning("partner_chat_upstream_unreachable", org_id=org_id, target=chat_url, exc_info=True)
         yield _sse_error_frame("Chat service unavailable")
@@ -2365,6 +2529,11 @@ async def _chat_completion_streaming_with_composed_citations(
         yield _sse_error_frame("Chat service error")
         yield b"data: [DONE]\n\n"
         return
+
+    if profile.stream_live and live_buffer:
+        # Flush whatever the guard was still holding back (an incomplete
+        # link/URL tail that never completed before the upstream finished).
+        yield _sse_content_delta(live_buffer)
 
     generation_ms = _elapsed_ms(generation_started)
     content, sources, decision = _compose_backend_managed_answer(
@@ -2466,8 +2635,13 @@ async def _chat_completion_streaming_with_composed_citations(
                 }
             ]
         )
+    # A live turn already streamed its content as it arrived (see
+    # profile.stream_live above); the composed ``content`` here is only
+    # used for signals/logging, not re-sent, so the visitor never sees the
+    # answer twice.
     if not sources or not emit_sources:
-        yield _sse_content_delta(content)
+        if not profile.stream_live:
+            yield _sse_content_delta(content)
         yield b"data: [DONE]\n\n"
         _emit_language_correctness_log(
             org_id=org_id,
@@ -2488,7 +2662,8 @@ async def _chat_completion_streaming_with_composed_citations(
             }
         ]
     )
-    yield _sse_content_delta(content)
+    if not profile.stream_live:
+        yield _sse_content_delta(content)
     yield b"data: [DONE]\n\n"
     _emit_language_correctness_log(
         org_id=org_id,
@@ -2533,6 +2708,7 @@ def _build_system_prompt(
     support_mode: bool = False,
     broad_mode: bool = False,
     tone_register: str = "restrained",
+    pasted_correspondence: bool = False,
 ) -> str:
     """Build a grounded system prompt augmented with retrieved context chunks.
 
@@ -2551,6 +2727,12 @@ def _build_system_prompt(
     only change the default: an explicit ``original_system`` from the caller
     still wins, and the widget behaviour instructions, page context, safety
     hierarchy, and source-handling below are unchanged in every mode.
+
+    ``pasted_correspondence`` (see app.services.pasted_correspondence,
+    detected on the conversation before this call) appends the epistemic
+    answer contract right after the foundation prompt — below it, above
+    everything else — the same position the LiteLLM hook it moved from used.
+    Off by default, so a request without pasted correspondence is unchanged.
     """
     if support_mode and broad_mode:
         default_prompt = SUPPORT_BROAD_CHAT_SYSTEM_PROMPT
@@ -2561,6 +2743,8 @@ def _build_system_prompt(
     else:
         default_prompt = GROUNDED_CHAT_SYSTEM_PROMPT
     base = original_system or default_prompt
+    if pasted_correspondence:
+        base = f"{base}\n\n{PASTED_CORRESPONDENCE_SCOPE}"
     widget_system_prompt = (widget_system_prompt or "").strip()
     if widget_system_prompt:
         base = (
@@ -2829,6 +3013,13 @@ async def retrieve_context(
     support_mode: bool = False,
     broad_mode: bool = False,
     tone_register: str = "restrained",
+    # Detected by the caller on the request's messages (see
+    # app.services.pasted_correspondence.detect_pasted_correspondence)
+    # BEFORE this call. Threaded through to every _build_system_prompt call
+    # below so a pasted email gets the epistemic contract regardless of
+    # which return path (no query, no retrieval url, identity-assertion
+    # degraded, real retrieval) this turn takes.
+    pasted_correspondence: bool = False,
     is_preview: bool = False,
     # Audit identity of the widget conversation, resolved by the caller before
     # retrieval so the gap event can point at it (§4.5). See
@@ -2901,6 +3092,7 @@ async def retrieve_context(
                 backend_managed_citations=backend_managed_citations,
                 support_mode=support_mode,
                 tone_register=tone_register,
+                pasted_correspondence=pasted_correspondence,
             ),
             [],
             False,
@@ -2945,6 +3137,7 @@ async def retrieve_context(
                 backend_managed_citations=backend_managed_citations,
                 support_mode=support_mode,
                 tone_register=tone_register,
+                pasted_correspondence=pasted_correspondence,
             ),
             [],
             False,
@@ -2989,6 +3182,7 @@ async def retrieve_context(
                     backend_managed_citations=backend_managed_citations,
                     support_mode=support_mode,
                     tone_register=tone_register,
+                    pasted_correspondence=pasted_correspondence,
                 ),
                 [],
                 False,
@@ -3033,6 +3227,7 @@ async def retrieve_context(
         support_mode=support_mode,
         broad_mode=broad,
         tone_register=tone_register,
+        pasted_correspondence=pasted_correspondence,
     )
 
     # --- Gap detection (KB-014) ---
@@ -3070,7 +3265,7 @@ def _extract_completion_text(body: dict) -> str:
         return ""
 
 
-async def chat_completion_non_streaming(
+async def chat_completion_non_streaming(  # noqa: C901 - tools stripping/forwarding alongside existing markers/links branching
     messages: list[dict],
     model: str,
     temperature: float,
@@ -3098,6 +3293,9 @@ async def chat_completion_non_streaming(
     answer_signals: dict[str, Any] | None = None,
     signal_chunks: list[dict] | None = None,
     turn_timing: dict[str, float] | None = None,
+    profile: ChatProfile = ChatProfile(surface="widget"),
+    tools: list[dict] | None = None,
+    tool_choice: Any | None = None,
 ) -> dict:
     """Forward to LiteLLM and return complete response as dict.
 
@@ -3128,18 +3326,26 @@ async def chat_completion_non_streaming(
 
     litellm_url = settings.litellm_base_url
     chat_url = f"{litellm_url}/v1/chat/completions"
+    if profile.kb_mode == "strict":
+        tools = _strip_web_search_tools(tools)
+
+    request_json: dict[str, Any] = {
+        "model": model,
+        "messages": augmented_messages,
+        "temperature": temperature,
+        "stream": False,
+    }
+    if tools:
+        request_json["tools"] = tools
+        if tool_choice is not None:
+            request_json["tool_choice"] = tool_choice
 
     generation_started = time.perf_counter()
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
                 chat_url,
-                json={
-                    "model": model,
-                    "messages": augmented_messages,
-                    "temperature": temperature,
-                    "stream": False,
-                },
+                json=request_json,
                 headers={
                     "Authorization": f"Bearer {settings.litellm_master_key}",
                     **get_trace_headers(),
@@ -3351,6 +3557,9 @@ async def chat_completion_streaming(
     answer_signals: dict[str, Any] | None = None,
     signal_chunks: list[dict] | None = None,
     turn_timing: dict[str, float] | None = None,
+    profile: ChatProfile = ChatProfile(surface="widget"),
+    tools: list[dict] | None = None,
+    tool_choice: Any | None = None,
 ) -> AsyncGenerator[bytes]:
     """Stream LiteLLM SSE response with backend-managed KB citations.
 
@@ -3372,12 +3581,18 @@ async def chat_completion_streaming(
     same :func:`resolve_conversation_language` decision that steered the
     system prompt below — never a second, independently-computed guess. The
     frame is omitted entirely when the decision is ``None``.
+
+    ``tools``/``tool_choice`` are stripped of web-search affordances once
+    here, for a Strict profile, before either inner path sees them — one
+    strip, not one per path. See :func:`_strip_web_search_tools`.
     """
     language_decision = resolve_conversation_language(messages)
     augmented_messages = _augment_messages_with_system_prompt(
         messages, system_prompt, page_context, response_language=language_decision.language
     )
     user_query = source_query or _last_user_message(messages) or ""
+    if profile.kb_mode == "strict":
+        tools = _strip_web_search_tools(tools)
     if language_decision.language is not None:
         yield _sse_language_delta(language_decision.language)
     if citation_output == "markers":
@@ -3405,6 +3620,9 @@ async def chat_completion_streaming(
             signal_chunks=signal_chunks,
             conversation=messages,
             turn_timing=turn_timing,
+            profile=profile,
+            tools=tools,
+            tool_choice=tool_choice,
         ):
             yield chunk
         return
@@ -3425,6 +3643,8 @@ async def chat_completion_streaming(
         citation_source_metadata=citation_source_metadata,
         citation_output=citation_output,
         chunks_injected=len(citation_chunks or []),
+        tools=tools,
+        tool_choice=tool_choice,
     ):
         yield chunk
 
@@ -3457,6 +3677,8 @@ async def _chat_completion_streaming_sanitized(  # noqa: C901 - SSE state machin
     citation_source_metadata: dict[str, dict[str, str]] | None,
     citation_output: CitationOutput,
     chunks_injected: int | None = None,
+    tools: list[dict] | None = None,
+    tool_choice: Any | None = None,
 ) -> AsyncGenerator[bytes]:
     """Legacy partner streaming path with URL sanitization and linked citations.
 
@@ -3465,7 +3687,10 @@ async def _chat_completion_streaming_sanitized(  # noqa: C901 - SSE state machin
     That is intentional: hazardous instructions can span many deltas, and an
     incremental gate can leak an early phrase before the later topic token makes
     the full policy match. Current marker-mode clients are handled by
-    _chat_completion_streaming_with_composed_citations before this helper runs.
+    _chat_completion_streaming_with_composed_citations before this helper runs
+    (``_citation_runtime_options`` in ``app/api/partner.py`` always selects
+    marker mode today, so this path carries no live traffic; it stays for its
+    own direct test coverage and as a rollback route).
     """
     litellm_url = settings.litellm_base_url
     allowed_source_urls = allowed_source_urls or set()
@@ -3480,17 +3705,22 @@ async def _chat_completion_streaming_sanitized(  # noqa: C901 - SSE state machin
     # Refusal language comes from the visitor's own last turn, never from
     # user_query (which may be the KB-rewritten search query).
     visitor_query = _last_user_message(augmented_messages) or ""
+    request_json: dict[str, Any] = {
+        "model": model,
+        "messages": augmented_messages,
+        "temperature": temperature,
+        "stream": True,
+    }
+    if tools:
+        request_json["tools"] = tools
+        if tool_choice is not None:
+            request_json["tool_choice"] = tool_choice
 
     async with httpx.AsyncClient(timeout=120.0) as client:
         async with client.stream(
             "POST",
             f"{litellm_url}/v1/chat/completions",
-            json={
-                "model": model,
-                "messages": augmented_messages,
-                "temperature": temperature,
-                "stream": True,
-            },
+            json=request_json,
             headers={
                 "Authorization": f"Bearer {settings.litellm_master_key}",
                 **get_trace_headers(),
@@ -3545,6 +3775,8 @@ async def _chat_completion_streaming_sanitized(  # noqa: C901 - SSE state machin
                     logger.debug("partner_chat_sse_parse_skipped", exc_info=True)
                     continue
                 delta = (evt.get("choices") or [{}])[0].get("delta") or {}
+                if tool_calls := delta.get("tool_calls"):
+                    yield _sse_tool_calls_delta(tool_calls)
                 text = delta.get("content")
                 if not isinstance(text, str) or not text:
                     continue

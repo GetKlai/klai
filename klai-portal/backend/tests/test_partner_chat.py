@@ -1515,6 +1515,30 @@ def test_build_system_prompt_includes_widget_system_prompt():
     assert "URL rules for citations and source links" in prompt
 
 
+def test_build_system_prompt_adds_epistemic_contract_when_correspondence_detected():
+    """One-chat-pipeline slice 3: pasted correspondence is detection-gated
+    prompt content, not a permanent addition — see PASTED_CORRESPONDENCE_SCOPE."""
+    from app.services.partner_chat import _build_system_prompt
+    from app.services.pasted_correspondence import PASTED_CORRESPONDENCE_SCOPE
+
+    prompt = _build_system_prompt([], pasted_correspondence=True)
+
+    assert PASTED_CORRESPONDENCE_SCOPE in prompt
+
+
+def test_build_system_prompt_is_unchanged_without_pasted_correspondence():
+    """A request without pasted correspondence must produce a byte-identical
+    prompt to a call that never knew the parameter existed (default False)."""
+    from app.services.partner_chat import _build_system_prompt
+
+    chunks = [{"title": "Policy", "source_url": "https://docs.example.com/policy", "text": "Use policy text."}]
+    baseline = _build_system_prompt(chunks, widget_system_prompt="Use a calm tone.")
+    explicit_false = _build_system_prompt(chunks, widget_system_prompt="Use a calm tone.", pasted_correspondence=False)
+
+    assert baseline == explicit_false
+    assert "Pasted third-party correspondence" not in baseline
+
+
 def test_build_system_prompt_reinforces_user_language_after_kb_context():
     """Widget/partner prompts must not let Dutch KB chunks be the final language anchor."""
     from app.services.partner_chat import _build_system_prompt
@@ -3101,6 +3125,29 @@ async def test_retrieve_context_can_disable_retrieval(monkeypatch):
     assert trusted_sources == []
     assert system_prompt.startswith("Use this exact instruction.")
     assert "[Instruction hierarchy and safety]" in system_prompt
+
+
+@pytest.mark.asyncio
+async def test_retrieve_context_threads_pasted_correspondence_into_prompt(monkeypatch):
+    """One-chat-pipeline slice 3: detection is computed once by the caller
+    (see app.api.partner.chat_completions) and must reach the prompt on every
+    return path retrieve_context can take, including retrieval-disabled."""
+    from app.services.partner_chat import retrieve_context
+
+    fake_settings = MagicMock()
+    fake_settings.knowledge_retrieve_url = "http://retrieval-api:8040"
+
+    _chunks, system_prompt, _sources, _broad = await retrieve_context(
+        org_id=42,
+        zitadel_org_id="z-1",
+        kb_slugs=["support"],
+        messages=[{"role": "user", "content": "hello"}],
+        settings=fake_settings,
+        retrieval_enabled=False,
+        pasted_correspondence=True,
+    )
+
+    assert "Pasted third-party correspondence" in system_prompt
 
 
 # ---------------------------------------------------------------------------

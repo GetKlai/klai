@@ -1296,26 +1296,39 @@ async def test_canonical_knowledge_path_rejects_response_format():
 
 
 @pytest.mark.asyncio
-async def test_canonical_knowledge_path_rejects_tools():
+async def test_canonical_knowledge_path_forwards_tools(monkeypatch):
+    """Slice 2 (one-chat-pipeline): tools/tool_choice are no longer passthrough-only.
+
+    They used to 400 on the knowledge path (see the old
+    test_canonical_knowledge_path_rejects_tools); the knowledge path now
+    forwards them to LiteLLM (see chat_completion_streaming), so they must
+    reach ChatCompletionsRequest instead of being rejected.
+    """
     import app.api.partner as partner
 
-    with pytest.raises(HTTPException) as exc:
-        await partner.canonical_chat_completions(
-            http_request=_request(
-                {
-                    "model": "klai-primary",
-                    "messages": [{"role": "user", "content": "Answer from KB"}],
-                    "stream": False,
-                    "knowledge": {"enabled": True},
-                    "tools": [{"type": "function", "function": {"name": "lookup"}}],
-                }
-            ),
-            auth=_auth({"chat": True, "general_chat": True}),
-            db=AsyncMock(),
-        )
+    knowledge_flow = AsyncMock(return_value={"choices": [{"message": {"content": "rag"}}]})
+    monkeypatch.setattr(partner, "chat_completions", knowledge_flow)
+    tools = [{"type": "function", "function": {"name": "lookup"}}]
 
-    assert exc.value.status_code == 400
-    assert "tools" in exc.value.detail["error"]["message"]
+    result = await partner.canonical_chat_completions(
+        http_request=_request(
+            {
+                "model": "klai-primary",
+                "messages": [{"role": "user", "content": "Answer from KB"}],
+                "stream": False,
+                "knowledge": {"enabled": True},
+                "tools": tools,
+                "tool_choice": "auto",
+            }
+        ),
+        auth=_auth({"chat": True, "general_chat": True}),
+        db=AsyncMock(),
+    )
+
+    assert result == {"choices": [{"message": {"content": "rag"}}]}
+    sent_request = knowledge_flow.await_args.kwargs["request"]
+    assert sent_request.tools == tools
+    assert sent_request.tool_choice == "auto"
 
 
 @pytest.mark.asyncio
@@ -1330,9 +1343,7 @@ async def test_canonical_knowledge_path_rejects_multiple_passthrough_fields_sort
                     "messages": [{"role": "user", "content": "Answer from KB"}],
                     "stream": False,
                     "knowledge_base_ids": [1],
-                    "tools": [{"type": "function", "function": {"name": "lookup"}}],
                     "response_format": {"type": "json_object"},
-                    "tool_choice": "auto",
                     "parallel_tool_calls": False,
                     "prompt_cache_key": "cache-key",
                 }
@@ -1346,8 +1357,6 @@ async def test_canonical_knowledge_path_rejects_multiple_passthrough_fields_sort
     # Sorted alphabetically and all listed.
     assert message.index("parallel_tool_calls") < message.index("prompt_cache_key")
     assert message.index("prompt_cache_key") < message.index("response_format")
-    assert message.index("response_format") < message.index("tool_choice")
-    assert message.index("tool_choice") < message.index("tools")
 
 
 @pytest.mark.asyncio

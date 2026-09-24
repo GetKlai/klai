@@ -211,6 +211,17 @@ def _rotated_key_name(name: str, now: datetime) -> str:
     return f"{name[: 128 - len(suffix)]}{suffix}"
 
 
+def _reject_internal_chat(permissions: dict | None) -> None:
+    # An internal_chat key acts as any employee named in the request, personal
+    # knowledge bases included. Only tenant provisioning may mint one, and an
+    # admin must not get its plaintext through create or rotate.
+    if permissions and permissions.get("internal_chat"):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail="internal_chat keys are managed by Klai provisioning",
+        )
+
+
 def _validate_permissions_against_kb_access(
     permissions: dict,
     kb_access: list[KbAccessEntry],
@@ -244,6 +255,7 @@ async def create_api_key(
     db: AsyncSession = Depends(get_db),
 ) -> CreateApiKeyResponse:
     """Create a new partner API key."""
+    _reject_internal_chat(body.permissions)
     kb_ids = [entry.kb_id for entry in body.kb_access]
     await _validate_kb_ids(kb_ids, perms.org_id, perms.user_id, db)
     _validate_permissions_against_kb_access(body.permissions, body.kb_access)
@@ -392,6 +404,7 @@ async def rotate_api_key(
     zero-downtime rotation window.
     """
     source_key = await _get_key_or_404(key_id, perms.org_id, db)
+    _reject_internal_chat(source_key.permissions)
     if source_key.rotated_to_key_id is not None:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
@@ -489,6 +502,7 @@ async def update_api_key(
     db: AsyncSession = Depends(get_db),
 ) -> ApiKeyResponse:
     """Partial update of an API key."""
+    _reject_internal_chat(body.permissions)
     key = await _get_key_or_404(key_id, perms.org_id, db)
     effective_permissions = body.permissions if body.permissions is not None else key.permissions
     effective_kb_access = body.kb_access
