@@ -416,6 +416,40 @@ mounts:
       from the day the Coolify copy on public-01 is removed: once T4 runs
       (SPEC-INFRA-COOLIFY-EXIT-001) this is the only place the CRM exists.
 
+  crm-storage:
+    service: crm
+    kind: named
+    host: crm-storage
+    container_path: /app/packages/twenty-server/.local-storage
+    image: twentycrm/twenty:v1.20.0
+    category: data
+    data_path_source: running v1.20.0 container on public-01 held 13 uploaded files here (docker exec find, 2026-09-24)
+    verified: true
+    pii: true
+    backup: tar
+    backup_method: backup_crm_storage
+    retention: manual
+    retention_enforced_by: n/a
+    notes: |
+      Avatars and attachments uploaded to the CRM. Shared with crm-worker.
+      13 files, 1.5 MB when moved off Coolify.
+
+  crm-storage-worker:
+    service: crm-worker
+    kind: named
+    host: crm-storage
+    container_path: /app/packages/twenty-server/.local-storage
+    image: twentycrm/twenty:v1.20.0
+    category: data
+    data_path_source: running v1.20.0 container on public-01 held 13 uploaded files here (docker exec find, 2026-09-24)
+    verified: true
+    pii: true
+    backup: tar
+    backup_method: backup_crm_storage
+    retention: manual
+    retention_enforced_by: n/a
+    notes: Same volume as crm-storage; the worker reads and writes uploads too.
+
   ollama:
     service: ollama
     kind: bind

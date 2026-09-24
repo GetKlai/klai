@@ -121,6 +121,7 @@ volumes:
   vaultwarden-data:            # Vaultwarden SQLite DB + attachments
   calnode-data:                # Calnode SQLite DB + encrypted stored credentials
   crm-postgres-data:           # Twenty CRM database (SPEC-INFRA-COOLIFY-EXIT-001)
+  crm-storage:                 # Twenty CRM uploads: avatars and attachments
 
 # Log rotation. The daemon default lives outside this repo, in core-01's
 # /etc/docker/daemon.json:
@@ -2503,3 +2504,93 @@ services:
       resources:
         limits:
           memory: 256m
+
+  # ─── Twenty CRM — application ────────────────────────────────────────────
+  # Same image and the same effective settings as the Coolify deployment, so
+  # the move is a relocation. The Coolify environment also carried
+  # FRONT_BASE_URL, POSTGRES_ADMIN_PASSWORD, ENABLE_DB_MIGRATIONS,
+  # IS_SIGN_UP_DISABLED and API_RATE_LIMITING_*; none of them is read by
+  # v1.20.0 (grep of the shipped dist returns zero hits), so they are template
+  # residue and are not carried over.
+  #
+  # The image entrypoint runs `upgrade` on every start of the web container,
+  # and initialises a fresh schema when `core` is missing. That is why the
+  # database is restored before this service first starts, and why a version
+  # bump here is also the schema upgrade. The worker skips both, as it did
+  # under Coolify, so the two never migrate concurrently.
+  crm:
+    logging: *log-rotation
+    image: twentycrm/twenty:v1.20.0
+    restart: unless-stopped
+    environment:
+      SERVER_URL: https://crm.${DOMAIN}
+      APP_SECRET: ${CRM_APP_SECRET}
+      PG_DATABASE_URL: postgres://twenty:${CRM_POSTGRES_PASSWORD}@crm-postgres:5432/twenty
+      REDIS_URL: redis://crm-redis:6379
+      CACHE_STORAGE_TYPE: redis
+      MESSAGE_QUEUE_TYPE: pg-boss
+      STORAGE_TYPE: local
+      EMAIL_DRIVER: logger
+      SIGN_IN_PREFILLED: "false"
+      TELEMETRY_ENABLED: "false"
+      DEBUG_MODE: "false"
+      PASSWORD_RESET_TOKEN_EXPIRES_IN: 5m
+      WORKSPACE_INACTIVE_DAYS_BEFORE_NOTIFICATION: "7"
+      WORKSPACE_INACTIVE_DAYS_BEFORE_DELETION: "21"
+    volumes:
+      - crm-storage:/app/packages/twenty-server/.local-storage
+    networks:
+      - klai-net
+      - net-crm
+    depends_on:
+      crm-postgres:
+        condition: service_healthy
+      crm-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      # The entrypoint runs cache:flush, upgrade and cache:flush before the
+      # server listens.
+      start_period: 180s
+    deploy:
+      resources:
+        limits:
+          memory: 1536m
+
+  crm-worker:
+    logging: *log-rotation
+    image: twentycrm/twenty:v1.20.0
+    restart: unless-stopped
+    command: ["yarn", "worker:prod"]
+    environment:
+      SERVER_URL: https://crm.${DOMAIN}
+      APP_SECRET: ${CRM_APP_SECRET}
+      PG_DATABASE_URL: postgres://twenty:${CRM_POSTGRES_PASSWORD}@crm-postgres:5432/twenty
+      REDIS_URL: redis://crm-redis:6379
+      CACHE_STORAGE_TYPE: redis
+      MESSAGE_QUEUE_TYPE: pg-boss
+      STORAGE_TYPE: local
+      EMAIL_DRIVER: logger
+      SIGN_IN_PREFILLED: "false"
+      TELEMETRY_ENABLED: "false"
+      DEBUG_MODE: "false"
+      PASSWORD_RESET_TOKEN_EXPIRES_IN: 5m
+      WORKSPACE_INACTIVE_DAYS_BEFORE_NOTIFICATION: "7"
+      WORKSPACE_INACTIVE_DAYS_BEFORE_DELETION: "21"
+      DISABLE_DB_MIGRATIONS: "true"
+      DISABLE_CRON_JOBS_REGISTRATION: "true"
+    volumes:
+      - crm-storage:/app/packages/twenty-server/.local-storage
+    networks:
+      - klai-net
+      - net-crm
+    depends_on:
+      crm:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 1g

@@ -571,6 +571,29 @@ backup_crm_postgres() {
   record_file "${output}"
 }
 
+backup_crm_storage() {
+  local container
+  local output
+
+  container="$(ctr crm)"
+  output="${BACKUP_DIR}/crm-storage.tar.gz"
+
+  if ! container_running "${container}"; then
+    log "      Skipped (container not running)"
+    return 0
+  fi
+
+  if docker run --rm \
+      --volumes-from "${container}:ro" \
+      -v "${BACKUP_DIR}:/backup" \
+      alpine tar -czf /backup/crm-storage.tar.gz -C /app/packages/twenty-server/.local-storage . 2>/dev/null; then
+    record_optional_file "${output}" "Empty (no CRM uploads)"
+  else
+    rm -f "${output}"
+    log "      Tar failed; optional CRM uploads artifact skipped"
+  fi
+}
+
 backup_listmonk_uploads() {
   local container
   local output
@@ -738,6 +761,7 @@ main() {
   run_step "listmonk Postgres: dump all databases" backup_listmonk_postgres
   run_step "Twenty CRM Postgres: dump all databases" backup_crm_postgres
   run_step "listmonk uploads: tar campaign media" backup_listmonk_uploads
+  run_step "Twenty CRM uploads: tar avatars and attachments" backup_crm_storage
   run_step "Scribe audio: tar failed retry recordings" backup_scribe_audio
   run_step "Research uploads: rsync user uploads" backup_research_uploads
   run_step "Encrypt and upload to Storage Box" encrypt_and_upload
