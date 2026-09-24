@@ -520,6 +520,7 @@ async def test_a_turn_that_only_calls_a_tool_sends_no_refusal_after_the_call(mon
     )
 
     assert any("tool_calls" in c["delta"] for f in turn.frames for c in f.get("choices") or [])
+    assert turn.frames[-1]["choices"][0]["finish_reason"] == "tool_calls"
     assert turn.text == ""
 
 
@@ -564,3 +565,30 @@ async def test_a_blocked_live_answer_ends_with_the_refusal_not_the_rest_of_the_d
 
     assert "RDX" not in turn.text
     assert turn.text.rstrip().endswith(safety_refusal_message(QUESTION).rstrip())
+
+
+@pytest.mark.parametrize("kb_mode", ["open", "strict"])
+@pytest.mark.asyncio
+async def test_a_rejected_employee_identity_is_an_error_not_a_general_answer(monkeypatch, kb_mode):
+    from app.api import partner
+    from app.services import partner_chat
+
+    llm = _LiteLLM()
+    identity_error = httpx.Response(403, json={"detail": {"error": "identity_assertion_failed"}})
+    monkeypatch.setattr(partner.settings, "knowledge_retrieve_url", RETRIEVAL)
+
+    with pytest.raises(httpx.HTTPStatusError) as exc:
+        with respx.mock(assert_all_called=False) as router:
+            router.post(f"{RETRIEVAL}/retrieve").mock(return_value=identity_error)
+            router.post(f"{LITELLM}/v1/chat/completions").mock(side_effect=llm)
+            await partner_chat.retrieve_context(
+                org_id=7,
+                zitadel_org_id="zorg-acme",
+                kb_slugs=["handboek"],
+                messages=[{"role": "user", "content": QUESTION}],
+                settings=partner.settings,
+                profile=_internal(kb_mode=kb_mode),
+            )
+
+    assert exc.value.response.status_code == 403
+    assert llm.of("answer") == []

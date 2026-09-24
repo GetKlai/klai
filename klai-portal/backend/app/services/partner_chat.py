@@ -1594,7 +1594,7 @@ def _llm_request_body(
 
 def _sse_tool_calls_delta(tool_calls: list[dict]) -> bytes:
     """Forward a tool_calls delta unbuffered — never routed through the text buffer."""
-    payload = {"choices": [{"delta": {"tool_calls": tool_calls}}]}
+    payload = {"choices": [{"index": 0, "delta": {"tool_calls": tool_calls}}]}
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
 
 
@@ -2864,7 +2864,9 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
     if called_tool and not draft.strip():
         # A turn that only calls a tool is not an answer yet: the client runs
         # the tool and sends its result back. Composing it would append the
-        # no-sources refusal to the tool call.
+        # no-sources refusal to the tool call. OpenAI clients read the
+        # tool_calls finish reason as "run the tools now".
+        yield b'data: {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]}\n\n'
         yield b"data: [DONE]\n\n"
         return
     if pasted_correspondence:
@@ -3782,7 +3784,9 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
         # (the caller maps it). The internal chat does what the hook did:
         # Strict refuses, since it may only answer from the knowledge base;
         # Open answers from general knowledge and says the KB was unreachable.
-        if not internal:
+        # A rejected identity is not unavailability: it means the employee's
+        # sub or org did not verify, so it surfaces as an error.
+        if not internal or (isinstance(exc, httpx.HTTPStatusError) and _is_retrieval_identity_assertion_error(exc)):
             raise
         failure = f"HTTP {exc.response.status_code}" if isinstance(exc, httpx.HTTPStatusError) else type(exc).__name__
         logger.exception(
