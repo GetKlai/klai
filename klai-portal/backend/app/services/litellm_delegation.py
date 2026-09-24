@@ -11,7 +11,11 @@ from typing import Any
 
 
 def with_delegated_org(body: dict[str, Any], zitadel_org_id: str | None) -> dict[str, Any]:
-    """``body`` with the tenant's Zitadel org id in its metadata; unchanged without one."""
+    """``body`` with the tenant's Zitadel org id added to its metadata; unchanged without one.
+
+    Added, not replaced: a passthrough call also carries ``_klai_openai_passthrough``,
+    which tells the LiteLLM knowledge hook to leave the call alone.
+    """
     if zitadel_org_id:
-        body["metadata"] = {"_klai_delegated_org_id": zitadel_org_id}
+        body["metadata"] = {**(body.get("metadata") or {}), "_klai_delegated_org_id": zitadel_org_id}
     return body

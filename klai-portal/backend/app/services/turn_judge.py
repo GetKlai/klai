@@ -122,31 +122,35 @@ async def structured_judge_call[J: BaseModel](
     delegated_org_id: str | None = None,
 ) -> J | None:
     """One strict-json_schema call, on klai-fast unless ``model`` says otherwise;
-    ``None`` and ``<name>_failed`` on any failure."""
+    ``None`` and ``<name>_failed`` on any failure.
+
+    ``delegated_org_id`` is set on an internal-chat turn, for the same reason as
+    on its answer call: the master key belongs to no tenant, so LiteLLM masks
+    personal data only when the employee's org travels with the call.
+    """
     failure_event = f"{name}_failed"
+    body: dict = {
+        "model": model or settings.extraction_model,
+        # The same turn must get the same verdict: without a
+        # fixed temperature 5 of 9 replayed questions flipped.
+        "temperature": 0,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {"name": name, "strict": True, "schema": schema.model_json_schema()},
+        },
+    }
+    with_delegated_org(body, delegated_org_id)
     try:
         async with asyncio.timeout(timeout_seconds):
             async with httpx.AsyncClient(timeout=timeout_seconds) as client:
                 response = await client.post(
                     f"{settings.litellm_base_url}/v1/chat/completions",
                     headers={"Authorization": f"Bearer {settings.litellm_master_key}"},
-                    json=with_delegated_org(
-                        {
-                            "model": model or settings.extraction_model,
-                            # The same turn must get the same verdict: without a
-                            # fixed temperature 5 of 9 replayed questions flipped.
-                            "temperature": 0,
-                            "messages": [
-                                {"role": "system", "content": system_prompt},
-                                {"role": "user", "content": user_content},
-                            ],
-                            "response_format": {
-                                "type": "json_schema",
-                                "json_schema": {"name": name, "strict": True, "schema": schema.model_json_schema()},
-                            },
-                        },
-                        delegated_org_id,
-                    ),
+                    json=body,
                 )
                 response.raise_for_status()
                 content = response.json()["choices"][0]["message"]["content"]
