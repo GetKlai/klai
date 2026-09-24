@@ -15,7 +15,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { CoverageWidget } from '../CoverageWidget'
-import type { TaxonomyCoverage, TaxonomyCoverageNode } from '../../-kb-types'
+import type { TaxonomyCoverage, TaxonomyCoverageNode, TaxonomyNode } from '../../-kb-types'
 
 function node(overrides: Partial<TaxonomyCoverageNode> = {}): TaxonomyCoverageNode {
   return {
@@ -25,6 +25,20 @@ function node(overrides: Partial<TaxonomyCoverageNode> = {}): TaxonomyCoverageNo
     chunk_count: 10,
     gap_count: 0,
     health: 'healthy',
+    ...overrides,
+  }
+}
+
+function taxonomyNode(overrides: Partial<TaxonomyNode> = {}): TaxonomyNode {
+  return {
+    id: 1,
+    kb_id: 1,
+    parent_id: null,
+    name: 'Sales',
+    slug: 'sales',
+    sort_order: 0,
+    created_at: '2026-01-01T00:00:00Z',
+    created_by: 'u',
     ...overrides,
   }
 }
@@ -166,7 +180,43 @@ describe('CoverageWidget - delete-confirm', () => {
     fireEvent.click(screen.getByText('Delete'))
 
     expect(onDelete).toHaveBeenCalledTimes(1)
-    expect(onDelete).toHaveBeenCalledWith(42)
+    expect(onDelete).toHaveBeenCalledWith(42, null)
+  })
+
+  it('offers other topics except descendants and passes the chosen target to onDelete', () => {
+    const onDelete = vi.fn()
+    render(
+      <CoverageWidget
+        coverage={coverage({
+          nodes: [
+            node({ taxonomy_node_id: 1, taxonomy_node_name: 'Billing' }),
+            node({ taxonomy_node_id: 2, taxonomy_node_name: 'Invoices' }),
+            node({ taxonomy_node_id: 4, taxonomy_node_name: 'Refunds' }),
+          ],
+        })}
+        taxonomyNodes={[
+          taxonomyNode({ id: 1, name: 'Billing' }),
+          taxonomyNode({ id: 2, name: 'Invoices' }),
+          taxonomyNode({ id: 4, name: 'Refunds', parent_id: 1 }),
+        ]}
+        activeNodeId={null}
+        onNodeClick={() => {}}
+        canEdit
+        onRename={() => {}}
+        onDelete={onDelete}
+      />,
+    )
+
+    fireEvent.click(screen.getAllByLabelText('Delete')[0])
+    const target = screen.getByLabelText('Move questions and articles to…')
+    expect(within(target).getAllByRole('option').map((o) => o.textContent)).toEqual([
+      'Do not move',
+      'Invoices',
+    ])
+    fireEvent.change(target, { target: { value: '2' } })
+    fireEvent.click(screen.getByText('Delete'))
+
+    expect(onDelete).toHaveBeenCalledWith(1, 2)
   })
 
   it('does NOT call onDelete when user cancels', () => {

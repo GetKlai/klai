@@ -1552,6 +1552,8 @@
   "knowledge_taxonomy_node_delete": "Verwijderen",
   "knowledge_taxonomy_node_delete_confirm": "Verwijderen",
   "knowledge_taxonomy_node_delete_cancel": "Annuleren",
+  "knowledge_taxonomy_node_delete_reassign_label": "Vragen en artikelen verplaatsen naar…",
+  "knowledge_taxonomy_node_delete_reassign_none": "Niet verplaatsen",
   "knowledge_taxonomy_node_doc_count": "{count} documenten",
   "knowledge_taxonomy_proposals_heading": "Beoordelingswachtrij",
   "knowledge_taxonomy_proposals_empty": "Geen openstaande voorstellen",

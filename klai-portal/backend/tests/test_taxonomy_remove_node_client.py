@@ -28,3 +28,28 @@ async def test_remove_taxonomy_node_from_chunks_calls_ingest_endpoint():
         "/ingest/v1/taxonomy/remove-node",
         json={"org_id": "org1", "kb_slug": "support", "node_id": 5},
     )
+
+
+@pytest.mark.asyncio
+async def test_remove_taxonomy_node_with_replacement_calls_replace_endpoint():
+    from app.services.knowledge_ingest_client import remove_taxonomy_node_from_chunks
+
+    mock_resp = MagicMock()
+    mock_resp.json = MagicMock(return_value={"chunks_updated": 4})
+    mock_resp.raise_for_status = MagicMock()
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client.post = AsyncMock(return_value=mock_resp)
+
+    with patch("app.services.knowledge_ingest_client.httpx.AsyncClient", return_value=mock_client):
+        await remove_taxonomy_node_from_chunks("org1", "support", 5, replacement_node_id=9)
+
+    # A separate route, not an extra field on remove-node: an ingest build that
+    # predates it answers 404 (the delete fails loudly) instead of ignoring the
+    # unknown field and dropping the id from every chunk.
+    mock_client.post.assert_called_once_with(
+        "/ingest/v1/taxonomy/replace-node",
+        json={"org_id": "org1", "kb_slug": "support", "node_id": 5, "replacement_node_id": 9},
+    )

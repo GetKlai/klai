@@ -194,8 +194,16 @@ export function useRenameNode(kbSlug: string) {
 export function useDeleteNode(kbSlug: string) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: async (nodeId: number) => {
-      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/taxonomy/nodes/${nodeId}`, {
+    mutationFn: async ({
+      nodeId,
+      reassignToNodeId,
+    }: {
+      nodeId: number
+      /** Node that takes over the deleted node's chunks and gaps; null drops them. */
+      reassignToNodeId: number | null
+    }) => {
+      const query = reassignToNodeId === null ? '' : `?reassign_to_node_id=${reassignToNodeId}`
+      await apiFetch(`/api/app/knowledge-bases/${kbSlug}/taxonomy/nodes/${nodeId}${query}`, {
         method: 'DELETE',
       })
     },

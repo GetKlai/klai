@@ -68,3 +68,48 @@ async def test_remove_taxonomy_node_from_qdrant_clears_deleted_id_only():
             call("klai_knowledge", keys=["taxonomy_node_id"], points=["p4"]),
         ]
     )
+
+
+@pytest.mark.asyncio
+async def test_replace_taxonomy_node_in_qdrant_moves_id_without_duplicates():
+    from knowledge_ingest.routes.taxonomy import _remove_taxonomy_node_from_qdrant
+
+    client = MagicMock()
+    client.scroll = AsyncMock(
+        return_value=(
+            [
+                _point("p1", {"taxonomy_node_ids": [5, 7], "tags": ["billing"]}),
+                _point("p2", {"taxonomy_node_ids": [5, 9]}),
+                _point("p3", {"taxonomy_node_id": 5}),
+                _point("p4", {"taxonomy_node_ids": [7]}),
+            ],
+            None,
+        )
+    )
+    client.set_payload = AsyncMock()
+    client.delete_payload = AsyncMock()
+
+    updated = await _remove_taxonomy_node_from_qdrant(
+        client=client,
+        org_id="org-1",
+        kb_slug="support",
+        node_id=5,
+        replacement_node_id=9,
+    )
+
+    assert updated == 3
+    # Only taxonomy_node_ids is written; set_payload merges keys, so the raw
+    # tags on p1 stay as they are.
+    assert client.set_payload.await_args_list == [
+        call("klai_knowledge", payload={"taxonomy_node_ids": [7, 9]}, points=["p1"]),
+        call("klai_knowledge", payload={"taxonomy_node_ids": [9]}, points=["p2"]),
+        call("klai_knowledge", payload={"taxonomy_node_ids": [9]}, points=["p3"]),
+    ]
+    client.delete_payload.assert_awaited_once_with(
+        "klai_knowledge", keys=["taxonomy_node_id"], points=["p3"]
+    )
+    scroll_filter = client.scroll.await_args.kwargs["scroll_filter"]
+    assert [(c.key, c.match.value) for c in scroll_filter.must] == [
+        ("org_id", "org-1"),
+        ("kb_slug", "support"),
+    ]

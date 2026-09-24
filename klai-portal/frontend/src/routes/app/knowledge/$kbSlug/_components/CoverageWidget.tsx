@@ -15,7 +15,7 @@ import { useState } from 'react'
 import { Loader2, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import * as m from '@/paraglide/messages'
-import type { TaxonomyCoverage } from '../-kb-types'
+import type { TaxonomyCoverage, TaxonomyNode } from '../-kb-types'
 import { CoverageNodeRow } from './CoverageNodeRow'
 
 /** Minimum chunks before the Suggest CTA is offered at all. */
@@ -39,7 +39,25 @@ export interface CoverageWidgetProps {
   isBackfilling?: boolean
   canEdit?: boolean
   onRename?: (nodeId: number, newName: string, description?: string) => void
-  onDelete?: (nodeId: number) => void
+  /** Full node tree; the delete confirmation offers these as reassignment targets. */
+  taxonomyNodes?: TaxonomyNode[]
+  onDelete?: (nodeId: number, reassignToNodeId: number | null) => void
+}
+
+/** Nodes a deleted node can hand its chunks and gaps to: not itself, not its descendants. */
+function reassignTargets(nodes: TaxonomyNode[], nodeId: number): TaxonomyNode[] {
+  const excluded = new Set([nodeId])
+  let grew = true
+  while (grew) {
+    grew = false
+    for (const n of nodes) {
+      if (n.parent_id !== null && excluded.has(n.parent_id) && !excluded.has(n.id)) {
+        excluded.add(n.id)
+        grew = true
+      }
+    }
+  }
+  return nodes.filter((n) => !excluded.has(n.id))
 }
 
 export function CoverageWidget({
@@ -53,11 +71,13 @@ export function CoverageWidget({
   isBackfilling,
   canEdit = false,
   onRename,
+  taxonomyNodes = [],
   onDelete,
 }: CoverageWidgetProps) {
   const total = coverage.total_chunks
   const [editingNodeId, setEditingNodeId] = useState<number | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
+  const [reassignToNodeId, setReassignToNodeId] = useState<number | null>(null)
   const isMissingActionBusy = !!isBackfilling || !!isCategorizingMissing
 
   if (coverage.nodes.length === 0) {
@@ -135,9 +155,17 @@ export function CoverageWidget({
             setEditingNodeId(null)
           }}
           onCancelEdit={() => setEditingNodeId(null)}
-          onStartDelete={() => setConfirmDeleteId(node.taxonomy_node_id)}
+          reassignTargets={confirmDeleteId === node.taxonomy_node_id
+            ? reassignTargets(taxonomyNodes, node.taxonomy_node_id)
+            : []}
+          reassignToNodeId={reassignToNodeId}
+          onReassignChange={setReassignToNodeId}
+          onStartDelete={() => {
+            setConfirmDeleteId(node.taxonomy_node_id)
+            setReassignToNodeId(null)
+          }}
           onConfirmDelete={() => {
-            onDelete?.(node.taxonomy_node_id)
+            onDelete?.(node.taxonomy_node_id, reassignToNodeId)
             setConfirmDeleteId(null)
           }}
           onCancelDelete={() => setConfirmDeleteId(null)}
