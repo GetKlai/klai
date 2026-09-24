@@ -52,7 +52,7 @@ MEETING_API=$(resolve_container vexa12-meeting-api)
 MEETING_RUNTIME=$(resolve_container vexa12-runtime)
 MEETING_ADMIN=$(resolve_container vexa12-admin-api)
 GARAGE=$(resolve_container garage)
-CAL_COM=$(resolve_container cal-com)
+CALNODE=$(resolve_container calnode)
 VAULTWARDEN=$(resolve_container vaultwarden)
 VICTORIALOGS=$(resolve_container victorialogs)
 VICTORIAMETRICS=$(resolve_container victoriametrics)
@@ -234,7 +234,11 @@ push_healthcheck "$MEETING_ADMIN"   "${KUMA_TOKEN_VEXA_ADMIN:-}"    "Meeting Adm
 push_healthcheck "$GARAGE"          "${KUMA_TOKEN_GARAGE:-}"        "Object Storage"
 
 # Cal.com: meeting bookings (user-facing booking links).
-push_healthcheck "$CAL_COM"         "${KUMA_TOKEN_CALCOM:-}"        "Bookings"
+# KUMA_TOKEN_CALCOM keeps its name on purpose: it is the push token of the
+# Uptime Kuma monitor called "Bookings", which did not change when the booking
+# app behind it moved from cal.com to Calnode. Renaming the variable means
+# rotating the token in SOPS and in Kuma for no gain.
+push_healthcheck "$CALNODE"         "${KUMA_TOKEN_CALCOM:-}"        "Bookings"
 
 # ── Knowledge layer (service-level) ──────────────────────────────────────────
 

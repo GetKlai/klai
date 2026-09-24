@@ -199,7 +199,7 @@ pull_vexa_runtime_images() {
 # What is deliberately NOT done: waiting for a healthcheck to report `healthy`.
 # Only 19 of the compose services define one at all, none of the eight
 # ghcr.io/getklai/* application services among them, and start_period runs up
-# to 120s (cal-com). Blocking every deploy on the slowest starter would trade a
+# to 60s. Blocking every deploy on the slowest starter would trade a
 # silent failure for a guaranteed-slow one. `unhealthy` is treated as fatal,
 # `starting` is reported and accepted.
 # ---------------------------------------------------------------------------

@@ -33,7 +33,7 @@ async def test_onboarding_start_returns_200_when_listmonk_accepts(monkeypatch):
     body = internal.OnboardingStartRequest(
         name="Alice",
         email="alice@example.com",
-        cal_url="https://cal.getklai.com/klai/onboarding-intake",
+        cal_url="https://boek.getklai.com/book/onboarding-intake",
     )
     req = AsyncMock()
     resp = await internal.start_onboarding_drip(req, body)
@@ -41,12 +41,12 @@ async def test_onboarding_start_returns_200_when_listmonk_accepts(monkeypatch):
     assert resp.sent is True
     assert resp.subject == "Welcome to Klai, you're in"
     assert resp.body_html == ""
-    assert resp.cal_url == "https://cal.getklai.com/klai/onboarding-intake"
+    assert resp.cal_url == "https://boek.getklai.com/book/onboarding-intake"
     assert resp.sent_to == "alice@example.com"
     send_mock.assert_awaited_once_with(
         name="Alice",
         email="alice@example.com",
-        cal_url="https://cal.getklai.com/klai/onboarding-intake",
+        cal_url="https://boek.getklai.com/book/onboarding-intake",
     )
 
 
@@ -67,8 +67,8 @@ async def test_onboarding_start_defaults_cal_url_when_omitted(monkeypatch):
     resp = await internal.start_onboarding_drip(req, body)
 
     args = send_mock.call_args.kwargs
-    assert args["cal_url"] == "https://cal.getklai.com/klai/onboarding-intake"
-    assert resp.cal_url == "https://cal.getklai.com/klai/onboarding-intake"
+    assert args["cal_url"] == "https://boek.getklai.com/book/onboarding-intake"
+    assert resp.cal_url == "https://boek.getklai.com/book/onboarding-intake"
 
 
 @pytest.mark.asyncio
