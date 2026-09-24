@@ -114,7 +114,7 @@ def weak_sources_notice(kb_narrow: bool) -> str:
 # Multi-part user messages get one retrieval pass over the whole message, so
 # aggregate confidence and any-token overlap say nothing about per-question
 # coverage. This guard makes the model judge coverage per question instead of
-# interpolating over the gaps (2026-08-17 Voys webhook-FAQ incident: 11
+# interpolating over the gaps (2026-08-17 webhook-FAQ incident: 11
 # questions, 1 usable source, 11 confident answers).
 MULTI_QUESTION_GUARD_TEXT = (
     "[Klai retrieval — multi-part question]\n"
