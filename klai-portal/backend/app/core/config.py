@@ -248,6 +248,14 @@ class Settings(BaseSettings):
     # because the URL is config-pinned, not user-supplied.
     docling_url: str = "http://docling-serve:5001"
 
+    # Chat-attachment PDF normalisation (moved from the LiteLLM hook's
+    # klai_chat_attachments.py, one-chat-pipeline slice 3). Same defaults as
+    # the hook's KLAI_CHAT_PDF_* env vars.
+    chat_pdf_max_bytes: int = 20 * 1024 * 1024
+    chat_pdf_max_extracted_tokens: int = 120_000
+    chat_pdf_conversion_timeout_s: float = 45.0
+    chat_pdf_poll_interval_s: float = 1.0
+
     # Redis (used for retrieval logs and feedback idempotency -- SPEC-KB-015)
     redis_url: str = ""
 

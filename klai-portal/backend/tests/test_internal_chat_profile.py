@@ -450,3 +450,32 @@ async def test_internal_knowledge_feature_is_disabled_for_another_orgs_user(worl
 
     assert response.enabled is False
     assert response.zitadel_user_id is None
+
+
+# --- attachments are read for every surface except the anonymous widget ----
+
+
+@pytest.mark.parametrize(("profile", "reads_attachments"), [("widget", False), ("partner", True), ("internal", True)])
+@pytest.mark.asyncio
+async def test_pdf_attachments_are_not_converted_for_the_widget(monkeypatch, profile, reads_attachments):
+    import app.api.partner as partner
+
+    convert = AsyncMock(return_value=MagicMock(user_visible_error=None, processed_count=0))
+    monkeypatch.setattr(partner, "process_chat_attachments", convert)
+    stop = {"stopped": True}
+    monkeypatch.setattr(partner, "_widget_safety_block_response", lambda *_: stop)
+    request = partner.ChatCompletionsRequest(
+        model="klai-primary",
+        messages=[{"role": "user", "content": [{"type": "file", "file": {"filename": "a.pdf", "file_data": "x"}}]}],
+    )
+
+    result = await partner.chat_completions(
+        request=request,
+        http_request=MagicMock(),
+        auth=_auth(key_id="wgt_abc" if profile == "widget" else "key-1"),
+        db=MagicMock(),
+        profile=ChatProfile(surface=profile),
+    )
+
+    assert result is stop
+    assert convert.await_count == (1 if reads_attachments else 0)

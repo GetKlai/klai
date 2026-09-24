@@ -81,6 +81,7 @@ from app.services.llm_safety_adapter import (
     check_widget_or_partner_input,
     safe_refusal_text,
 )
+from app.services.pasted_correspondence import PASTED_CORRESPONDENCE_SCOPE
 from app.services.query_paraphrase import first_question_variants
 from app.services.widget_audit import find_conversation_id
 from app.trace import get_trace_headers
@@ -212,6 +213,33 @@ async def off_topic_stream(*, reply: str, language: str | None) -> AsyncGenerato
 
 async def safety_refusal_stream(query: str = "") -> AsyncGenerator[bytes]:
     yield _sse_content_delta(safety_refusal_message(query))
+    yield b"data: [DONE]\n\n"
+
+
+def attachment_error_response(*, model: str, message: str) -> dict:
+    """Deterministic reply for a PDF attachment that could not be processed.
+
+    ``message`` is already rendered by
+    :func:`app.services.chat_attachments.user_visible_error` in the
+    conversation's language — no retrieval or generation happens for this
+    turn, matching the LiteLLM hook's ``mock_response`` short-circuit.
+    """
+    return {
+        "id": "chatcmpl-attachment-error",
+        "object": "chat.completion",
+        "model": model,
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": message, "sources": []},
+                "finish_reason": "stop",
+            }
+        ],
+    }
+
+
+async def attachment_error_stream(message: str) -> AsyncGenerator[bytes]:
+    yield _sse_content_delta(message)
     yield b"data: [DONE]\n\n"
 
 
@@ -2533,6 +2561,7 @@ def _build_system_prompt(
     support_mode: bool = False,
     broad_mode: bool = False,
     tone_register: str = "restrained",
+    pasted_correspondence: bool = False,
 ) -> str:
     """Build a grounded system prompt augmented with retrieved context chunks.
 
@@ -2551,6 +2580,12 @@ def _build_system_prompt(
     only change the default: an explicit ``original_system`` from the caller
     still wins, and the widget behaviour instructions, page context, safety
     hierarchy, and source-handling below are unchanged in every mode.
+
+    ``pasted_correspondence`` (see app.services.pasted_correspondence,
+    detected on the conversation before this call) appends the epistemic
+    answer contract right after the foundation prompt — below it, above
+    everything else — the same position the LiteLLM hook it moved from used.
+    Off by default, so a request without pasted correspondence is unchanged.
     """
     if support_mode and broad_mode:
         default_prompt = SUPPORT_BROAD_CHAT_SYSTEM_PROMPT
@@ -2561,6 +2596,8 @@ def _build_system_prompt(
     else:
         default_prompt = GROUNDED_CHAT_SYSTEM_PROMPT
     base = original_system or default_prompt
+    if pasted_correspondence:
+        base = f"{base}\n\n{PASTED_CORRESPONDENCE_SCOPE}"
     widget_system_prompt = (widget_system_prompt or "").strip()
     if widget_system_prompt:
         base = (
@@ -2829,6 +2866,13 @@ async def retrieve_context(
     support_mode: bool = False,
     broad_mode: bool = False,
     tone_register: str = "restrained",
+    # Detected by the caller on the request's messages (see
+    # app.services.pasted_correspondence.detect_pasted_correspondence)
+    # BEFORE this call. Threaded through to every _build_system_prompt call
+    # below so a pasted email gets the epistemic contract regardless of
+    # which return path (no query, no retrieval url, identity-assertion
+    # degraded, real retrieval) this turn takes.
+    pasted_correspondence: bool = False,
     is_preview: bool = False,
     # Audit identity of the widget conversation, resolved by the caller before
     # retrieval so the gap event can point at it (§4.5). See
@@ -2901,6 +2945,7 @@ async def retrieve_context(
                 backend_managed_citations=backend_managed_citations,
                 support_mode=support_mode,
                 tone_register=tone_register,
+                pasted_correspondence=pasted_correspondence,
             ),
             [],
             False,
@@ -2945,6 +2990,7 @@ async def retrieve_context(
                 backend_managed_citations=backend_managed_citations,
                 support_mode=support_mode,
                 tone_register=tone_register,
+                pasted_correspondence=pasted_correspondence,
             ),
             [],
             False,
@@ -2989,6 +3035,7 @@ async def retrieve_context(
                     backend_managed_citations=backend_managed_citations,
                     support_mode=support_mode,
                     tone_register=tone_register,
+                    pasted_correspondence=pasted_correspondence,
                 ),
                 [],
                 False,
@@ -3033,6 +3080,7 @@ async def retrieve_context(
         support_mode=support_mode,
         broad_mode=broad,
         tone_register=tone_register,
+        pasted_correspondence=pasted_correspondence,
     )
 
     # --- Gap detection (KB-014) ---
