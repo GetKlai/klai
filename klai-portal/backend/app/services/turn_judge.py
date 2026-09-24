@@ -46,7 +46,7 @@ import structlog
 from pydantic import BaseModel, ConfigDict
 
 from app.core.config import Settings
-from app.services.query_rewrite import delegated_org_metadata
+from app.services.litellm_delegation import with_delegated_org
 
 logger = structlog.get_logger()
 
@@ -143,8 +143,7 @@ async def structured_judge_call[J: BaseModel](
             "json_schema": {"name": name, "strict": True, "schema": schema.model_json_schema()},
         },
     }
-    if delegated_org_id:
-        body["metadata"] = delegated_org_metadata(delegated_org_id)
+    with_delegated_org(body, delegated_org_id)
     try:
         async with asyncio.timeout(timeout_seconds):
             async with httpx.AsyncClient(timeout=timeout_seconds) as client:
@@ -186,7 +185,9 @@ def conversation_excerpt(messages: list[dict]) -> str:
     return "\n\n".join(lines)
 
 
-async def judge_turn(messages: list[dict], settings: Settings, *, off_topic_subjects: str = "") -> TurnJudgement | None:
+async def judge_turn(
+    messages: list[dict], settings: Settings, *, off_topic_subjects: str = "", delegated_org_id: str | None = None
+) -> TurnJudgement | None:
     """Judge the visitor's latest turn; ``None`` means the judge failed. Never raises."""
     excerpt = conversation_excerpt(messages)
     if "(LATEST message)" not in excerpt:
@@ -198,6 +199,7 @@ async def judge_turn(messages: list[dict], settings: Settings, *, off_topic_subj
         schema=TurnJudgement,
         timeout_seconds=_TURN_JUDGE_TIMEOUT_SECONDS,
         settings=settings,
+        delegated_org_id=delegated_org_id,
     )
 
 

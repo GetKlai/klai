@@ -97,6 +97,7 @@ from app.services.knowledge_prompts import (
     multi_question_guard,
     sub_query_grouped_context,
 )
+from app.services.litellm_delegation import with_delegated_org
 from app.services.llm_safety_adapter import (
     check_context_text,
     check_model_output,
@@ -105,7 +106,7 @@ from app.services.llm_safety_adapter import (
 )
 from app.services.pasted_correspondence import PASTED_CORRESPONDENCE_SCOPE, latest_user_turn_has_correspondence
 from app.services.query_paraphrase import first_question_variants
-from app.services.query_rewrite import delegated_org_metadata, rewrite_for_retrieval
+from app.services.query_rewrite import rewrite_for_retrieval
 from app.services.user_provided_content import has_user_provided_content
 from app.services.widget_audit import find_conversation_id
 from app.trace import get_trace_headers
@@ -1577,17 +1578,14 @@ def _llm_request_body(
 
     ``delegated_org_id`` is set for an internal-chat turn. The call runs on the
     master key, which belongs to no tenant, so LiteLLM's PII enforcer only masks
-    the employee's text for their org when the org travels with the call. The
-    widget and partner calls do not send it (unchanged).
+    the text for its org when the org travels with the call.
     """
     body: dict[str, Any] = {"model": model, "messages": messages, "temperature": temperature, "stream": stream}
     if tools:
         body["tools"] = tools
         if tool_choice is not None:
             body["tool_choice"] = tool_choice
-    if delegated_org_id:
-        body["metadata"] = delegated_org_metadata(delegated_org_id)
-    return body
+    return with_delegated_org(body, delegated_org_id)
 
 
 def _sse_tool_calls_delta(tool_calls: list[dict]) -> bytes:
@@ -1654,9 +1652,8 @@ def _with_openai_passthrough_metadata(
     ``org:none:`` prefix — an un-namespaced key is never forwarded.
     """
     forwarded = dict(body)
-    forwarded["metadata"] = (
-        delegated_org_metadata(delegated_org_id) if delegated_org_id else {"_klai_openai_passthrough": True}
-    )
+    forwarded["metadata"] = {"_klai_openai_passthrough": True}
+    with_delegated_org(forwarded, delegated_org_id)
     prompt_cache_key = forwarded.pop("prompt_cache_key", None)
     if prompt_cache_key is not None:
         namespace = org_id if org_id is not None else "none"
@@ -3687,7 +3684,11 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
         # A fanned-out message gets none: retrieval-api would run the
         # paraphrases of the whole message inside every sub-question's pass.
         query_variants = (
-            [] if sub_queries else await first_question_variants(messages, query, settings, support_mode=support_mode)
+            []
+            if sub_queries
+            else await first_question_variants(
+                messages, query, settings, support_mode=support_mode, delegated_org_id=zitadel_org_id
+            )
         )
         retrieve_body = {
             # Clipped below the 8000-char retrieval-api hard limit (SPEC-SEC-010

@@ -211,6 +211,7 @@ async def record_gap_event(
                     language=lang,
                     audience=audience,
                     base_key=base_key,
+                    delegated_org_id=zitadel_org_id,
                 )
                 if matched is not None:
                     # Ids only: the key carries the normalized question, which has no business in an app log.
@@ -339,6 +340,7 @@ async def fold_into_open_group(
     language: str | None,
     audience: str | None,
     base_key: str,
+    delegated_org_id: str | None = None,
 ) -> str | None:
     """Ask the grouping judge whether the group on ``base_key`` is the same
     need as an existing open group, and fold it onto that group's key when the
@@ -379,7 +381,9 @@ async def fold_into_open_group(
     if not candidates:
         return None
     candidates = await _closest_candidates(question, candidates)
-    matched = (await group_findings([finding], candidates))[0].get("group_question_key")
+    matched = (await group_findings([finding], candidates, delegated_org_id=delegated_org_id))[0].get(
+        "group_question_key"
+    )
     if matched is None or matched == base_key:
         return None
 

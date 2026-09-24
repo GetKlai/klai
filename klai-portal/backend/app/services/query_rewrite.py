@@ -24,6 +24,7 @@ import structlog
 from klai_citations import rewrite_preserves_subject, salient_tokens
 
 from app.core.config import Settings
+from app.services.litellm_delegation import with_delegated_org
 from app.services.redis_client import get_redis_pool
 
 logger = structlog.get_logger()
@@ -258,13 +259,6 @@ async def _post_rewrite(settings: Settings, payload: dict) -> str:
     return await asyncio.wait_for(_call(), timeout=QUERY_REWRITE_TIMEOUT)
 
 
-def delegated_org_metadata(zitadel_org_id: str) -> dict:
-    # The call runs on the master key, which belongs to no tenant; the PII
-    # enforcer accepts the delegated org only from the master key, so the
-    # user's question is masked for this org like on the main call.
-    return {"_klai_openai_passthrough": True, "_klai_delegated_org_id": zitadel_org_id}
-
-
 async def _taxonomy(zitadel_org_id: str, kb_slugs: list[str], settings: Settings, kind: str) -> dict:
     """GET /internal/v1/taxonomy/{trees,coverage}, Redis-cached for 5 minutes; {} on any failure."""
     cache_key = f"tax_{kind}:{zitadel_org_id}:{','.join(sorted(set(kb_slugs)))}"
@@ -355,8 +349,8 @@ async def rewrite_for_retrieval(
         "model": QUERY_REWRITE_MODEL,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.0,
-        "metadata": delegated_org_metadata(zitadel_org_id),
     }
+    with_delegated_org(payload, zitadel_org_id)
 
     meta: dict = {}
     started = time.monotonic()

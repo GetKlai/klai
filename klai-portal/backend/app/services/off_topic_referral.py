@@ -65,7 +65,9 @@ def _from_question(subject: str, question: str) -> bool:
     return all(word in _FREE_WORDS or word[:5] in asked for word in subject.lower().split())
 
 
-async def off_topic_referral(question: str, language: str | None, settings: Settings) -> str | None:
+async def off_topic_referral(
+    question: str, language: str | None, settings: Settings, *, delegated_org_id: str | None = None
+) -> str | None:
     """The referral for ``question``, or ``None`` when the tenant's fixed reply should be used."""
     template = _TEMPLATES.get(language or "")
     if template is None:
@@ -77,6 +79,7 @@ async def off_topic_referral(question: str, language: str | None, settings: Sett
         user_content=f"Language: {language}\n\nVisitor: {question}",
         schema=OffTopicSubject,
         timeout_seconds=_TIMEOUT_SECONDS,
+        delegated_org_id=delegated_org_id,
         settings=settings,
     )
     words = result.subject.split() if result is not None else []

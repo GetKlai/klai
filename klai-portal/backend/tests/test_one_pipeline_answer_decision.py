@@ -462,7 +462,7 @@ async def test_internal_turn_writes_one_record_of_signals_and_no_text(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_every_litellm_call_of_an_internal_turn_carries_the_org_and_a_widget_turns_do_not(monkeypatch):
+async def test_every_litellm_call_of_an_internal_and_a_widget_turn_carries_the_org(monkeypatch):
     extra = " Een aanvraag kost tien euro. Je krijgt altijd een extra vrije dag."
     plan = {"route": "choose", "question": "Gaat het om verlof aanvragen of om je leidinggevende?", "options": ["x"]}
     internal = _LiteLLM(
@@ -488,4 +488,4 @@ async def test_every_litellm_call_of_an_internal_turn_carries_the_org_and_a_widg
     assert kinds >= {"rewrite", "answer_plan", "answer", "answer_judge", "grounding_check", "repair"}
     assert all(body["metadata"]["_klai_delegated_org_id"] == "zorg-acme" for body in internal.calls)
     assert {"answer_plan", "answer", "answer_judge", "grounding_check"} <= {_LiteLLM._kind(b) for b in widget.calls}
-    assert not any("_klai_delegated_org_id" in (body.get("metadata") or {}) for body in widget.calls)
+    assert all(body["metadata"]["_klai_delegated_org_id"] == "zorg-acme" for body in widget.calls)

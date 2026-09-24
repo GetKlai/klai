@@ -1679,7 +1679,7 @@ async def test_folding_a_group_moves_every_row_that_shares_its_key(pg) -> None:
             await set_tenant(db, org_id)
             yield db
 
-    async def _judge(findings: list[dict], candidates: list[dict]) -> list[dict]:
+    async def _judge(findings: list[dict], candidates: list[dict], delegated_org_id: str | None = None) -> list[dict]:
         assert [c["question_key"] for c in candidates] == [k_target]  # its own key is not a candidate
         return [{**findings[0], "group_question_key": k_target}]
 
@@ -1844,7 +1844,7 @@ async def test_a_group_without_kb_folds_only_onto_shown_groups_without_kb(pg) ->
 
     seen: list[list[str]] = []
 
-    async def _judge(findings: list[dict], candidates: list[dict]) -> list[dict]:
+    async def _judge(findings: list[dict], candidates: list[dict], delegated_org_id: str | None = None) -> list[dict]:
         seen.append([c["question_key"] for c in candidates])
         return findings
 

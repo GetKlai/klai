@@ -1455,6 +1455,27 @@ antwoorden. De controle slaat herhalingen van de situatie van de bezoeker inmidd
 (`unsupported_statements`, hooguit vijf, elk hooguit 300 tekens), zodat een volgende kalibratierun
 kan laten zien hoe vaak één markering terecht is, en of repareren vanaf één markering nu wel veilig is.
 
+### 2.52 Eén afkeuring van de controle: nu in ongeveer de helft terecht, drempel blijft (24 sep)
+Een nieuwe kalibratierun (400 beurten; 35 vielen weg tijdens vier deploys van andere sessies) met de
+afgekeurde zinnen in het beslisrecord (2.51). Achttien antwoorden met een beste bron van 0,4 of hoger
+kregen precies één afkeuring. Elke afkeuring is met de hand getoetst tegen de tekst van de publieke
+artikelpagina's waarop het antwoord steunde: 8 terecht, 8 onterecht, 2 niet te beoordelen (een pagina
+achter een login, een pagina die niet meer bestaat). In 2.5 was dat 77% terecht; de controle is sindsdien
+anders gaan lezen, en één afkeuring is nu te onbetrouwbaar om op te repareren.
+
+**Besluit.** De reparatiedrempel blijft twee afkeuringen of één tegenspraak. Repareren vanaf één
+afkeuring zou even vaak een juiste zin schrappen als een verzonnen zin.
+
+**Het patroon in de onterechte afkeuringen** is een zin die alleen een lijst aankondigt (vier keer), een
+melding dat iets niet gevonden is en een aanbod (twee keer); de controle hoort die volgens haar eigen
+opdracht over te slaan. Over de hele run eindigden 8 van de 153 afgekeurde zinnen op een dubbele punt,
+en maar twee antwoorden werden daardoor onnodig gerepareerd. Onder de ruis: niet gebouwd.
+
+**Wat overblijft.** Bij 4 van de 18 was de ene afgekeurde zin een verzonnen feit in het kernantwoord,
+over beleid of over hoe het product zich gedraagt. Daar laat schrappen een gat, dus de oplossing ligt
+niet bij de drempel maar bij het ontbreken van dat feit in de kennisbank of bij een eerlijker "dit weet
+ik niet zeker"; dat is een apart punt.
+
 ---
 
 ## 3. Wat er live ging, en waarom
@@ -1552,12 +1573,11 @@ beter kan zonder eerst op echt verkeer te kijken.
    Meetpunten (2.40).
 
 **Volgende stappen, in deze volgorde (stand 24 sep, na 2.50)**
-9. **Wat het antwoordmodel er zelf bij verzint, bij sterke bronnen.** Boven een bronscore van 0,5 bevat
-   ongeveer de helft van de concepten een bewering die niet in de artikelen staat (2.50). De reparatie
-   van 2.22 haalt daar een deel van weg; gemeten wordt eerst wat de bezoeker ná die reparatie ziet,
-   daarna pas een ingreep.
-10. **Bruikbaarheid na reparatie.** Een reparatie kan zoveel wegstrepen dat er een vrijwel leeg antwoord
-    overblijft. Hoort in dezelfde meting als punt 9.
+9. **Wat het antwoordmodel er zelf bij verzint, bij sterke bronnen.** Gemeten (2.51, 2.52): de
+   reparatiedrempel blijft, één afkeuring is nu in ongeveer de helft terecht. Open blijft een klein
+   restant: een verzonnen feit in het kernantwoord met maar één afkeuring (4 van 18), waar schrappen een
+   gat laat.
+10. **Bruikbaarheid na reparatie.** Afgerond (2.51): in de data blijft geen leeg antwoord achter.
 11. **Nameting op echt verkeer** van de herformuleringen (2.41), de vraagstap (2.47) en de regel voor
     zwakke bronnen (2.48): hoe vaak ze vuren en wat ze aan wachttijd kosten. De logregels
     `answer_plan_decision`, `planned_question` en `weak_sources` staan erin.

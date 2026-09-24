@@ -1,6 +1,6 @@
 ---
 id: SPEC-INFRA-COOLIFY-EXIT-001
-version: "0.3.0"
+version: "0.4.0"
 status: draft
 created: 2026-09-24
 updated: 2026-09-24
@@ -252,6 +252,43 @@ genuine extension of the pipeline in this SPEC: the compose sync that
 `deploy-compose.yml` performs against core-01, pointed at a second host. Its
 push tokens are already referenced by `push-health.sh`, so the monitors and
 their tokens survive the move unchanged.
+
+### Status — Umami, Fider and Uptime Kuma done on 2026-09-24
+
+**Umami** serves analytics.getklai.com from core-01 on `3.4.0` with its own
+`postgres:16.13-alpine`. **Fider** serves feedback.getklai.com from core-01 on
+`v0.37.0`, and its database left PostgreSQL 12 for `postgres:17.10-alpine`. Both
+were restored into a throwaway database and compared table by table before the
+cutover, compared again after the final dump, and upgraded only after a
+rehearsal on throwaway containers. Both are now in the nightly backup; under
+Coolify neither had one. Their Coolify services, volumes and images are gone.
+
+**Uptime Kuma** runs on public-01 from `klai-infra/public-01/kuma/docker-compose.yml`
+on `2.5.5`. The move copied the SQLite file with the container stopped (same
+SHA-256 on both sides); the upgrade was rehearsed on a copy with `--network none`
+so it could not send notifications, and ran eight migrations with monitor,
+notification and status-page counts unchanged. All 63 monitors report, the 54
+push tokens are unchanged.
+
+Deviations from the plan above:
+
+- Kuma is deployed by hand from klai-infra, not by extending `deploy-compose.yml`
+  to a second host. No CI credential reaches public-01 today, and that
+  credential belongs to the website decision in section 6, which needs the same
+  path. Until Coolify leaves, Kuma is routed by `coolify-proxy` through Traefik
+  labels on the external `coolify` network.
+- The hairpin `extra_hosts` Kuma carried are gone. From the `coolify` network
+  getklai.com resolves to the public address and hairpins correctly, and
+  feedback.getklai.com no longer lives on public-01.
+- Kuma has no nightly backup; public-01 has no backup job at all. An encrypted
+  copy taken after the upgrade sits in the offsite Storage Box, verified by
+  download and decrypt.
+
+Two incidents during the cutovers, both repaired the same day: a Fider SMTP
+password with a space broke every script that sources the server `.env`, which
+stopped `push-health.sh` for about 29 minutes; and deleting the Umami Coolify
+service left Kuma attached to a removed network, which took status.getklai.com
+down for about three minutes.
 
 ## 6. The website, and then Coolify itself
 

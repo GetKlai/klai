@@ -131,9 +131,11 @@ class _LiteLLM:
         self.turn_requests: list[dict] = []
         self.grounding_requests: list[dict] = []
         self.repair_requests: list[dict] = []
+        self.requests: list[dict] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
+        self.requests.append(body)
         schema = (body.get("response_format") or {}).get("json_schema", {}).get("name")
         if schema == "answer_judge":
             self.judge_requests.append(body)
@@ -692,6 +694,7 @@ async def _route_turn(
     band: str = "low",
     referral: str = "",
     plan: dict | None = None,
+    litellm: _LiteLLM | None = None,
 ):
     from app.api import partner
     from app.api.partner import ChatCompletionsRequest, chat_completions
@@ -712,7 +715,7 @@ async def _route_turn(
     request = ChatCompletionsRequest(messages=[{"role": "user", "content": question}], stream=stream)
     http_request = MagicMock(headers={}, client=MagicMock(host="127.0.0.1"))
 
-    litellm = _LiteLLM(
+    litellm = litellm or _LiteLLM(
         model_text=CLARIFYING_QUESTION,
         turn=turn,
         answer_judge=_answer_verdict("not_answered"),
@@ -1000,3 +1003,57 @@ async def test_turn_judge_runs_concurrently_with_retrieval():
 
     timing = chat.call_args.kwargs["turn_timing"]
     assert {"retrieval_ms", "turn_judge_ms", "started_at"} <= timing.keys()
+
+
+# ─── Every LiteLLM call of a widget turn names the tenant for PII masking ─
+#
+# portal-api calls LiteLLM with the master key, which belongs to no tenant, so
+# LiteLLM's PII enforcer only masks the visitor's text when the org travels in
+# the body (klai_pii_enforce._delegated_org_id). One call without it is one
+# place the visitor's personal data reaches the model provider unmasked.
+
+DELEGATED = {"_klai_delegated_org_id": "zit-org-42"}
+
+
+def _call_kind(body: dict) -> str:
+    schema = (body.get("response_format") or {}).get("json_schema", {}).get("name")
+    if schema:
+        return schema
+    if "You edit a reply" in body["messages"][0]["content"]:
+        return "repair"
+    return "answer"
+
+
+def _metadata_per_call(litellm: _LiteLLM) -> list[tuple[str, Any]]:
+    return [(_call_kind(body), body.get("metadata")) for body in litellm.requests]
+
+
+@pytest.mark.parametrize("stream", [True, False])
+async def test_every_litellm_call_of_an_answered_widget_turn_names_the_tenant(monkeypatch, stream):
+    litellm = _LiteLLM(
+        model_text=ANSWER_900 + " Bel 020-7001234 voor een terugboeking.",
+        grounding=_grounding("Bel 020-7001234 voor een terugboeking.", contradicted=True, supported=(ANSWER_900,)),
+        repaired=ANSWER_900,
+    )
+
+    await _route_turn(monkeypatch, turn=_turn_verdict(), stream=stream, band="high", litellm=litellm)
+
+    calls = _metadata_per_call(litellm)
+    assert {kind for kind, _ in calls} == {
+        "turn_judge",
+        "query_paraphrase",
+        "answer_plan",
+        "answer",
+        "answer_judge",
+        "grounding_check",
+        "repair",
+    }
+    assert calls == [(kind, DELEGATED) for kind, _ in calls]
+
+
+async def test_the_off_topic_referral_call_names_the_tenant(monkeypatch):
+    litellm, _, _ = await _off_topic_turn(monkeypatch, topic="not_handled", referral="je factuur")
+
+    calls = _metadata_per_call(litellm)
+    assert {kind for kind, _ in calls} == {"turn_judge", "query_paraphrase", "off_topic_referral"}
+    assert calls == [(kind, DELEGATED) for kind, _ in calls]

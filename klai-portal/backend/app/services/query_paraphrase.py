@@ -52,7 +52,7 @@ class QueryParaphrases(BaseModel):
 
 
 async def first_question_variants(
-    messages: list[dict], query: str, settings: Settings, *, support_mode: bool
+    messages: list[dict], query: str, settings: Settings, *, support_mode: bool, delegated_org_id: str | None = None
 ) -> list[str]:
     """Paraphrases for a first support-mode question; a follow-up has its history to search on.
 
@@ -62,10 +62,12 @@ async def first_question_variants(
     """
     if not support_mode or sum(message.get("role") == "user" for message in messages) > 1:
         return []
-    return await paraphrase_first_question(query, settings)
+    return await paraphrase_first_question(query, settings, delegated_org_id=delegated_org_id)
 
 
-async def paraphrase_first_question(question: str, settings: Settings) -> list[str]:
+async def paraphrase_first_question(
+    question: str, settings: Settings, *, delegated_org_id: str | None = None
+) -> list[str]:
     """Up to two paraphrases of ``question``; empty on any failure, so retrieval runs as before."""
     started = time.perf_counter()
     result = await structured_judge_call(
@@ -76,6 +78,7 @@ async def paraphrase_first_question(question: str, settings: Settings) -> list[s
         timeout_seconds=_TIMEOUT_SECONDS,
         settings=settings,
         model=settings.retrieval_paraphrase_model,
+        delegated_org_id=delegated_org_id,
     )
     variants: list[str] = []
     for raw in result.variants if result is not None else []:

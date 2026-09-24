@@ -47,7 +47,7 @@ from klai_chat_prompts import (
 )
 
 from app.core.config import Settings
-from app.services.query_rewrite import delegated_org_metadata
+from app.services.litellm_delegation import with_delegated_org
 
 logger = structlog.get_logger()
 
@@ -99,13 +99,11 @@ async def _post(
     }
     if response_format is not None:
         payload["response_format"] = response_format
-    if delegated_org_id:
-        payload["metadata"] = delegated_org_metadata(delegated_org_id)
     async with httpx.AsyncClient(timeout=transport_timeout) as client:
         response = await client.post(
             f"{settings.litellm_base_url}/v1/chat/completions",
             headers={"Authorization": f"Bearer {settings.litellm_master_key}"},
-            json=payload,
+            json=with_delegated_org(payload, delegated_org_id),
         )
         response.raise_for_status()
         return response.json()["choices"][0]["message"]["content"]
