@@ -198,8 +198,8 @@ async def answer_plan(messages: list[dict], chunks: list[dict], settings: Settin
 # On the reviewed conversations that is where the wrong answers sit: a reply the
 # owner called correct had a best source of 0.80 at the median, one called wrong
 # for its knowledge 0.37, and five of those six sat under 0.5. In thirty days
-# 206 answers were written over a best source below 0.3, which is the "why is it
-# talking about Grandstream" class. The turn may still answer when an article
+# 30 of 113 real widget answers were written over a best source below 0.3,
+# which is the "why is it talking about Grandstream" class. The turn may still answer when an article
 # really does cover the question; what it may not do is build a plausible answer
 # out of a neighbouring one.
 WEAK_SOURCES_ADDENDUM = (
