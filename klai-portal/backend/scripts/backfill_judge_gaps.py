@@ -10,7 +10,12 @@ verdict is compared against the groups the earlier ones formed.
 
 The question is the one the conversation started with: for the webchat the
 stored ``first_user_query`` (it outlives the message retention), for LibreChat
-the first user message in the tenant's MongoDB.
+the first user message in the tenant's MongoDB. Each row is dated when that
+conversation started, not today, so the inbox's 30-day window counts it right.
+
+It refuses an organisation whose telemetry level changed within the window: the
+level decides whether a question may be stored at all, and the level that
+applied when a question was asked is what counts, not today's.
 
 Usage (inside the portal-api container). Run it as a module: invoked as a file,
 scripts/ sits first on sys.path and the ``app`` package cannot be imported.
@@ -24,6 +29,7 @@ import argparse
 import asyncio
 import json
 import sys
+from datetime import UTC, datetime
 
 
 async def _settle_background_tasks() -> None:
@@ -56,6 +62,19 @@ async def amain(args: argparse.Namespace) -> int:
     if org.telemetry_level != "full":
         print(f"org {args.org_slug} is not on full telemetry; its questions are not stored", file=sys.stderr)
         return 1
+    async with tenant_scoped_session(org.id) as db:
+        level_changed = (
+            await db.execute(
+                text(
+                    "SELECT 1 FROM portal_audit_log WHERE org_id = :org_id AND action = 'telemetry_level_changed' "
+                    "AND created_at > now() - make_interval(days => :days) LIMIT 1"
+                ),
+                {"org_id": org.id, "days": args.days},
+            )
+        ).first()
+    if level_changed is not None:
+        print(f"telemetry level of {args.org_slug} changed within {args.days} days; shorten --days", file=sys.stderr)
+        return 1
 
     async with tenant_scoped_session(org.id) as db:
         verdicts = (
@@ -63,7 +82,7 @@ async def amain(args: argparse.Namespace) -> int:
                 text(
                     """
                     SELECT j.channel, j.conversation_id, j.external_conversation_id,
-                           j.outcome, j.failure_category, j.confidence, wc.first_user_query
+                           j.outcome, j.failure_category, j.confidence, wc.first_user_query, wc.started_at
                       FROM conversation_quality_judgments j
                       LEFT JOIN widget_conversations wc ON wc.id = j.conversation_id
                      WHERE j.org_id = :org_id
@@ -78,14 +97,17 @@ async def amain(args: argparse.Namespace) -> int:
         ).all()
 
     librechat_ids = [v.external_conversation_id for v in verdicts if v.channel == "librechat"]
-    first_librechat_question: dict[str, str] = {}
+    first_librechat_question: dict[str, tuple[str, datetime | None]] = {}
     if librechat_ids:
         db_name = provisioning_names_for_slug(args.org_slug, domain=settings.domain).mongodb_database
         messages = await asyncio.to_thread(_sync_fetch_messages, db_name, librechat_ids)
         for cid, docs in messages.items():
-            question = next((t["content"] for t in _turns_from_messages(docs) if t["role"] == "user"), None)
-            if question:
-                first_librechat_question[cid] = question
+            first = next((d for d in docs if d.get("isCreatedByUser") and _turns_from_messages([d])), None)
+            if first is not None:
+                # pymongo returns naive UTC datetimes.
+                asked = first.get("createdAt")
+                asked = asked.replace(tzinfo=UTC) if asked is not None and asked.tzinfo is None else asked
+                first_librechat_question[cid] = (_turns_from_messages([first])[0]["content"], asked)
 
     # "skipped": file_judge_gap declined, i.e. a row the inbox shows already
     # covers the conversation, or the widget conversation is marked test/preview.
@@ -93,17 +115,19 @@ async def amain(args: argparse.Namespace) -> int:
     for v in verdicts:
         verdict = {"outcome": v.outcome, "failure_category": v.failure_category, "confidence": v.confidence}
         if v.channel == "webchat":
-            question = v.first_user_query
+            question, asked = v.first_user_query, v.started_at
             target = {"audience": "customer", "conversation_id": v.conversation_id}
         else:
-            question = first_librechat_question.get(v.external_conversation_id)
+            question, asked = first_librechat_question.get(v.external_conversation_id, (None, None))
             target = {"audience": "internal", "librechat_conversation_id": v.external_conversation_id}
         if not question:
             counts["no_question"] += 1
             continue
         try:
             async with tenant_scoped_session(org.id) as db:
-                filed = await file_judge_gap(db, org_id=org.id, question=question, verdict=verdict, **target)
+                filed = await file_judge_gap(
+                    db, org_id=org.id, question=question, verdict=verdict, occurred_at=asked, **target
+                )
             await _settle_background_tasks()
         except Exception as exc:
             # Keep going: one failed row must not stop the run; a rerun files it,

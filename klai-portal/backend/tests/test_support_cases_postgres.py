@@ -1518,14 +1518,16 @@ async def test_identical_reanalysis_preserves_current_human_correction(pg, machi
     assert (await _read_reviews(admin, result.case_id))[review_key(revision, 0)]["corrected_diagnosis"] == corrected
 
 
-async def test_seven_day_purge_keeps_case_findings_and_still_expires_query_text(pg) -> None:
-    """The inbox's case evidence survives its retention job; chat text does not.
+async def test_seven_day_purge_keeps_findings_and_verdicts_and_still_expires_query_text(pg) -> None:
+    """The inbox's evidence survives its retention job; raw search telemetry does not.
 
     Until 2026-09-23 the 7-day TTL deleted every readable gap row, so a
-    case-backed finding disappeared a week after import while its support case
-    stayed, and no theme could show a trend across weeks. Rows derived from a
-    chat query keep the 7-day fence (docs/privacy/telemetry-modes.md), including
-    the one a human reviewer filed.
+    case-backed finding disappeared a week after import, and no theme could
+    show a trend across weeks. The same held for a verdict row, a human
+    reviewer's or the conversation judge's, while a theme needs three
+    conversations in 30 days: a verdict gone after a week can never reach that.
+    Verdicts are a judgment about a conversation, kept like a case finding
+    (product decision, 2026-09-24); raw search telemetry keeps the 7-day fence.
     """
     from app.services.telemetry_purge import EXPIRED_RAW_TELEMETRY_GAPS_SQL
 
@@ -1547,6 +1549,7 @@ async def test_seven_day_purge_keeps_case_findings_and_still_expires_query_text(
                     (901, 'u1', 'raw chat question', 'soft', now() - interval '30 days', 'widget-chat'),
                     (901, 'u1', '[REDACTED:shadow]', 'soft', now() - interval '30 days', 'widget-chat'),
                     (901, 'u1', 'question a reviewer filed', 'hard', now() - interval '30 days', 'human-review'),
+                    (901, 'u1', 'question the judge filed', 'hard', now() - interval '30 days', 'quality-judge'),
                     (901, 'u1', 'fresh chat question', 'soft', now(), 'widget-chat')
                 """
             )
@@ -1584,8 +1587,16 @@ async def test_seven_day_purge_keeps_case_findings_and_still_expires_query_text(
 
     case_finding = (await _gap_rows(admin, result.case_id))[0]
     assert case_finding.diagnosis == "missing"
-    assert sorted(expired_text) == ["question a reviewer filed", "raw chat question"]
-    assert sorted(surviving) == sorted([case_finding.query_text, "[REDACTED:shadow]", "fresh chat question"])
+    assert expired_text == ["raw chat question"]
+    assert sorted(surviving) == sorted(
+        [
+            case_finding.query_text,
+            "[REDACTED:shadow]",
+            "fresh chat question",
+            "question a reviewer filed",
+            "question the judge filed",
+        ]
+    )
 
 
 async def test_inbox_lists_only_rows_that_show_the_visitor_was_not_helped(pg) -> None:

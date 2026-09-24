@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import math
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal
 
 import httpx
@@ -56,6 +57,8 @@ PROMPT_CANDIDATES = 30
 _CANDIDATE_POOL = 1000
 _EMBEDDING_MODEL = "klai-bge-m3"
 _EMBEDDING_TIMEOUT_S = 30.0
+# Inputs per embeddings request, under the embedding server's batch cap (256).
+_EMBEDDING_BATCH = 128
 
 
 def shows_unmet_need() -> ColumnElement[bool]:
@@ -117,6 +120,7 @@ async def record_gap_event(
     language: str | None = None,
     audience: str | None = None,
     evidence: dict | None = None,
+    occurred_at: datetime | None = None,
 ) -> GapEventResult:
     """Insert one knowledge-gap row, gated by the org's telemetry level.
 
@@ -132,7 +136,8 @@ async def record_gap_event(
     was asked in. ``audience`` ('customer' | 'internal') separates groups, since
     a customer and an employee missing knowledge are two editorial jobs;
     ``evidence`` carries the producer's own reference (the judge's verdict).
-    All stay NULL for callers that do not know them.
+    All stay NULL for callers that do not know them. ``occurred_at`` defaults to
+    now; a producer filing late (the judge backfill) passes when it was asked.
     """
     org_result = await db.execute(select(PortalOrg).where(PortalOrg.zitadel_org_id == zitadel_org_id))
     org = org_result.scalar_one_or_none()
@@ -178,6 +183,7 @@ async def record_gap_event(
         question_key=question_key,
         audience=audience,
         evidence=evidence,
+        **({"occurred_at": occurred_at} if occurred_at is not None else {}),
     )
     db.add(gap)
     await db.commit()
@@ -280,16 +286,35 @@ async def record_gap_event(
     return GapEventResult("created", org.id, gap.id)
 
 
+def compatible_scope(finding: dict, candidate: dict) -> bool:
+    """Whether the grouping judge may put ``finding`` in ``candidate``'s group.
+
+    Language is a hard separator; audience only separates when both sides know
+    it and disagree: an unrecorded audience (most chat/telemetry findings, and
+    any support finding the analyzer didn't classify) must not be its own
+    bucket walled off from every other one. Lives here rather than in
+    support_gap_grouping so the fold can shortlist with the same rule without
+    importing the analyzer.
+    """
+    if finding["language"] != candidate.get("language"):
+        return False
+    finding_audience, candidate_audience = finding.get("audience"), candidate.get("audience")
+    return finding_audience is None or candidate_audience is None or finding_audience == candidate_audience
+
+
 async def _embed(texts: list[str]) -> list[list[float]]:
     """BGE-M3 vectors through LiteLLM, the same endpoint and key as the judges."""
+    vectors: list[list[float]] = []
     async with httpx.AsyncClient(timeout=_EMBEDDING_TIMEOUT_S) as client:
-        resp = await client.post(
-            f"{settings.litellm_base_url}/v1/embeddings",
-            headers={"Authorization": f"Bearer {settings.litellm_master_key}", **get_trace_headers()},
-            json={"model": _EMBEDDING_MODEL, "input": texts},
-        )
-        resp.raise_for_status()
-        return [item["embedding"] for item in sorted(resp.json()["data"], key=lambda item: item["index"])]
+        for start in range(0, len(texts), _EMBEDDING_BATCH):
+            resp = await client.post(
+                f"{settings.litellm_base_url}/v1/embeddings",
+                headers={"Authorization": f"Bearer {settings.litellm_master_key}", **get_trace_headers()},
+                json={"model": _EMBEDDING_MODEL, "input": texts[start : start + _EMBEDDING_BATCH]},
+            )
+            resp.raise_for_status()
+            vectors += [item["embedding"] for item in sorted(resp.json()["data"], key=lambda item: item["index"])]
+    return vectors
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -343,14 +368,17 @@ async def fold_into_open_group(
             exclude_question_key=base_key,
             limit=_CANDIDATE_POOL,
         )
-    if not candidates:
-        return None
-    candidates = await _closest_candidates(question, candidates)
-
     # Diagnosis is a placeholder: chat/widget/MCP telemetry has no content
     # diagnosis, and the grouping judge no longer matches on it; it only needs
     # a value outside _NON_GAP_DIAGNOSES so the row is treated as an actual gap.
     finding = {"question": question, "diagnosis": "missing", "language": language, "audience": audience}
+    # Rank only groups the judge could accept (same language, audience not in
+    # conflict): otherwise close but incompatible groups fill the shortlist and
+    # push out the one that could match.
+    candidates = [c for c in candidates if compatible_scope(finding, c)]
+    if not candidates:
+        return None
+    candidates = await _closest_candidates(question, candidates)
     matched = (await group_findings([finding], candidates))[0].get("group_question_key")
     if matched is None or matched == base_key:
         return None

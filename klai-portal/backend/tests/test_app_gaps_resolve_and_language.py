@@ -85,6 +85,26 @@ async def test_record_gap_event_stores_conversation_and_language(monkeypatch) ->
     assert rows[1].language is None
 
 
+@pytest.mark.asyncio
+async def test_a_late_filed_gap_is_dated_by_its_conversation(monkeypatch) -> None:
+    """A verdict filed weeks after its conversation (the judge backfill) must
+    land on the conversation's date: the inbox counts needs per 30 days, and
+    dating them all today would pile a month into one week."""
+    monkeypatch.setattr("app.services.gap_events.set_tenant", AsyncMock())
+    monkeypatch.setattr("app.services.gap_events.asyncio.create_task", lambda coro: coro.close())
+    rows: list[Any] = []
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_scalar_result(_FakeOrg("full")))
+    db.add = MagicMock(side_effect=rows.append)
+    asked = datetime(2026, 9, 2, 14, 30, tzinfo=UTC)
+
+    await record_gap_event(
+        db, zitadel_org_id="zit-org-1", user_id="u-1", query_text="Belgroep?", gap_type="hard", occurred_at=asked
+    )
+
+    assert rows[0].occurred_at == asked
+
+
 # ---------------------------------------------------------------------------
 # record_gap_event — SPEC-RAG-GAP-GROUPING: every producer writes a
 # question_key, and a paraphrase of an open group is folded onto it async.
@@ -239,10 +259,13 @@ async def test_the_grouping_judge_sees_the_most_similar_groups_not_an_arbitrary_
     candidates = [
         {"question_key": f"k{i}", "question": f"vraag {i}", "language": "nl", "audience": None} for i in range(60)
     ]
+    # The closest group of all is in another language: the judge could never
+    # accept it, so it must not take a shortlist place.
+    candidates.append({"question_key": "en-twin", "question": "question", "language": "en", "audience": None})
 
     async def _embed(texts: list[str]) -> list[list[float]]:
         # The question points along x; candidate i leans towards x as i grows.
-        return [[1.0, 0.0]] + [[i / 60, 1 - i / 60] for i in range(60)]
+        return [[1.0, 0.0]] + [[i / 60, 1 - i / 60] for i in range(len(texts) - 1)]
 
     seen: list[list[str]] = []
 
@@ -262,8 +285,9 @@ async def test_the_grouping_judge_sees_the_most_similar_groups_not_an_arbitrary_
         )
 
     assert len(seen[0]) == gap_events.PROMPT_CANDIDATES
-    assert seen[0][0] == "k59"  # the most similar comes first
+    assert seen[0][0] == "k59"  # the most similar compatible group comes first
     assert "k0" not in seen[0]  # the least similar is left out
+    assert "en-twin" not in seen[0]
 
 
 # ---------------------------------------------------------------------------

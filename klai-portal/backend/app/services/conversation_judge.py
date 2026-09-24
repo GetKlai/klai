@@ -308,6 +308,7 @@ async def file_judge_gap(
     audience: str,
     conversation_id: int | None = None,
     librechat_conversation_id: str | None = None,
+    occurred_at: datetime | None = None,
 ) -> bool:
     """File the question as a knowledge gap when the judge blames knowledge.
 
@@ -381,6 +382,7 @@ async def file_judge_gap(
         language=identify_text_language(question),
         audience=audience,
         evidence=evidence,
+        occurred_at=occurred_at,
     )
     if result.outcome == "not_found":
         logger.warning("conversation_judge_gap_org_unresolved", org_id=org_id, conversation_id=conversation_id)
