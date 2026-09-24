@@ -26,6 +26,7 @@ import json
 import re
 import time
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass, field
 from typing import Any, Literal
 from urllib.parse import urlparse, urlunparse
 
@@ -42,11 +43,14 @@ from klai_chat_prompts import (
     broad_mode_answer_marker,
     chat_contract_article,
     final_response_language_reminder,
+    has_direct_evidence_for_query,
+    should_clarify,
     strip_appointment_offer_marker,
 )
 from klai_chat_prompts import (
     no_citable_sources_message as _no_citable_sources_message,
 )
+from klai_chat_prompts.kb_modes import strict_kb_unavailable_message
 from klai_chat_prompts.language import (
     UNKNOWN_LANGUAGE,
     identify_surface_language,
@@ -57,6 +61,7 @@ from klai_chat_prompts.language import (
 
 from app.core.config import Settings
 from app.core.database import tenant_scoped_session
+from app.services.answer_footer import render_answer_footer, strip_answer_footer_from_text
 from app.services.answer_grounding import (
     NOTHING_LEFT,
     GroundingCheck,
@@ -64,6 +69,14 @@ from app.services.answer_grounding import (
     repair_answer,
 )
 from app.services.answer_judge import decide_answer, is_clarifying_question, judge_answer
+from app.services.chat_profile import ChatProfile
+from app.services.chat_turn_rules import (
+    MAX_SUB_QUESTIONS,
+    is_meta_query,
+    is_multi_question_query,
+    is_trivial_turn,
+    split_sub_questions,
+)
 from app.services.citations import (
     compose_answer_with_trusted_sources,
     evidence_chunks_from_chunks,
@@ -75,13 +88,22 @@ from app.services.citations import (
 )
 from app.services.gap_classification import classify_gap
 from app.services.gap_events import record_gap_event
+from app.services.knowledge_prompts import (
+    InternalPromptState,
+    internal_system_prompt,
+    kb_context_block,
+    multi_question_guard,
+    sub_query_grouped_context,
+)
 from app.services.llm_safety_adapter import (
     check_context_text,
     check_model_output,
     check_widget_or_partner_input,
     safe_refusal_text,
 )
+from app.services.pasted_correspondence import PASTED_CORRESPONDENCE_SCOPE, latest_user_turn_has_correspondence
 from app.services.query_paraphrase import first_question_variants
+from app.services.query_rewrite import delegated_org_metadata, rewrite_for_retrieval
 from app.services.widget_audit import find_conversation_id
 from app.trace import get_trace_headers
 
@@ -215,13 +237,71 @@ async def safety_refusal_stream(query: str = "") -> AsyncGenerator[bytes]:
     yield b"data: [DONE]\n\n"
 
 
-def _normalize_llm_message(message: dict) -> dict[str, str] | None:
-    """Keep only provider-supported chat message fields."""
+def fixed_reply_response(*, model: str, message: str) -> dict:
+    """A reply decided without a model: an unreadable PDF attachment, or a
+    Strict turn that cannot search the knowledge base.
+
+    ``message`` is already rendered in the conversation's language; no
+    generation happens for this turn, matching the LiteLLM hook's
+    ``mock_response`` short-circuit.
+    """
+    return {
+        "id": "chatcmpl-fixed-reply",
+        "object": "chat.completion",
+        "model": model,
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": message, "sources": []},
+                "finish_reason": "stop",
+            }
+        ],
+    }
+
+
+async def fixed_reply_stream(message: str) -> AsyncGenerator[bytes]:
+    yield _sse_content_delta(message)
+    yield b"data: [DONE]\n\n"
+
+
+def _normalize_llm_message(message: dict, *, keep_tool_fields: bool = False) -> dict[str, Any] | None:
+    """Keep only provider-supported chat message fields.
+
+    ``keep_tool_fields`` is off for the retrieval-facing caller
+    (:func:`_build_conversation_history`): a tool call and its result are
+    not something the visitor said, so they must not enter the search
+    query. It is on for the model-facing caller
+    (:func:`_augment_messages_with_system_prompt`): once ``tools`` is
+    forwarded to the model (see :func:`chat_completion_streaming`), the
+    model's own prior ``tool_calls`` and the ``tool`` role results answering
+    them must survive, or a second turn in a tool-calling conversation loses
+    the call the model is waiting on a result for.
+
+    An assistant message's own ``content`` is stripped of the internal-chat
+    answer footer (:func:`app.services.answer_footer.strip_answer_footer_from_text`)
+    before either caller sees it: a footer LibreChat echoes back from a prior
+    turn must not enter the retrieval search query or the model's own history.
+    """
     role = message.get("role")
+    content = message.get("content")
+    if role == "assistant" and isinstance(content, str):
+        content = strip_answer_footer_from_text(content)
+    if keep_tool_fields and role == "tool":
+        tool_call_id = message.get("tool_call_id")
+        if isinstance(content, str) and isinstance(tool_call_id, str) and tool_call_id:
+            return {"role": "tool", "content": content, "tool_call_id": tool_call_id}
+        return None
     if role not in ("user", "assistant"):
         return None
+    if keep_tool_fields and role == "assistant":
+        tool_calls = message.get("tool_calls")
+        if isinstance(tool_calls, list) and tool_calls:
+            return {
+                "role": role,
+                "content": content if isinstance(content, str) else None,
+                "tool_calls": tool_calls,
+            }
 
-    content = message.get("content")
     if isinstance(content, str):
         return {"role": role, "content": content}
     if isinstance(content, list):
@@ -357,7 +437,7 @@ def _augment_messages_with_system_prompt(
     following the Dutch source language despite it, and on a turn with no
     chunks that reminder is not in the prompt at all.
     """
-    normalized = [msg for m in messages if (msg := _normalize_llm_message(m)) is not None]
+    normalized = [msg for m in messages if (msg := _normalize_llm_message(m, keep_tool_fields=True)) is not None]
     language_reminder = {
         "role": "system",
         "content": final_response_language_reminder(response_language),
@@ -1082,6 +1162,71 @@ def _earliest_guard_start(text: str) -> int:
     return min(starts) if starts else -1
 
 
+def _pop_live_stream_text(buffer: str) -> tuple[str, str]:
+    """Withhold an incomplete markdown link/URL from a live (Open) stream.
+
+    Reuses ``_earliest_guard_start`` above (the same guard the legacy link
+    sanitizer uses) so there is one detector for "this token run might be the
+    start of a link", not two. Unlike the sanitizer, this only withholds —
+    it does not rewrite citation markup, because a live turn shows the
+    model's own words as they arrive; composition still runs once on the
+    full text at the end, same as a held turn.
+    """
+    start = _earliest_guard_start(buffer)
+    if start >= 0:
+        return buffer[:start], buffer[start:]
+    if len(buffer) <= _STREAM_GUARD_TAIL_CHARS:
+        return "", buffer
+    safe_len = len(buffer) - _STREAM_GUARD_TAIL_CHARS
+    return buffer[:safe_len], buffer[safe_len:]
+
+
+_WEB_SEARCH_TOOL_RE = re.compile(
+    r"(?:^|[_\-\s])(?:web[_\-\s]*search|websearch|search[_\-\s]*web|browser|searx|firecrawl)(?:$|[_\-\s])",
+    re.IGNORECASE,
+)
+
+
+def _tool_name(tool: object) -> str:
+    if not isinstance(tool, dict):
+        return ""
+    function = tool.get("function")
+    names = [tool.get("name"), tool.get("type"), function.get("name") if isinstance(function, dict) else None]
+    return " ".join(str(name) for name in names if name)
+
+
+def _tool_description(tool: object) -> str:
+    if not isinstance(tool, dict):
+        return ""
+    function = tool.get("function")
+    descriptions = [tool.get("description"), function.get("description") if isinstance(function, dict) else None]
+    return " ".join(str(description) for description in descriptions if description)
+
+
+def _is_web_search_tool(tool: object) -> bool:
+    name = _tool_name(tool)
+    if name and _WEB_SEARCH_TOOL_RE.search(name):
+        return True
+    return name.strip().lower() == "search" and "web" in _tool_description(tool).lower()
+
+
+def _strip_web_search_tools(tools: list[dict] | None) -> list[dict] | None:
+    """Remove web-search tool affordances for a Strict-KB turn.
+
+    Strict promises answers grounded only in the knowledge base; leaving a
+    web-search tool callable would let the model fold live web results into
+    that answer regardless. Ported from
+    ``deploy/litellm/klai_kb_request_context.py:strip_web_search_tools``,
+    which keeps enforcing this for LibreChat traffic through the hook until
+    slice 9 removes it — this is the one implementation for the knowledge
+    path in portal.
+    """
+    if not tools:
+        return tools
+    kept = [tool for tool in tools if not _is_web_search_tool(tool)]
+    return kept or None
+
+
 def _pop_sanitized_stream_text(  # noqa: C901 - small streaming state machine
     buffer: str,
     *,
@@ -1375,6 +1520,39 @@ def _sse_content_delta(text: str) -> bytes:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
 
 
+def _llm_request_body(
+    model: str,
+    messages: list[dict],
+    temperature: float,
+    *,
+    stream: bool,
+    tools: list[dict] | None,
+    tool_choice: Any | None,
+    delegated_org_id: str | None,
+) -> dict[str, Any]:
+    """The body of one generation call to LiteLLM.
+
+    ``delegated_org_id`` is set for an internal-chat turn. The call runs on the
+    master key, which belongs to no tenant, so LiteLLM's PII enforcer only masks
+    the employee's text for their org when the org travels with the call. The
+    widget and partner calls do not send it (unchanged).
+    """
+    body: dict[str, Any] = {"model": model, "messages": messages, "temperature": temperature, "stream": stream}
+    if tools:
+        body["tools"] = tools
+        if tool_choice is not None:
+            body["tool_choice"] = tool_choice
+    if delegated_org_id:
+        body["metadata"] = delegated_org_metadata(delegated_org_id)
+    return body
+
+
+def _sse_tool_calls_delta(tool_calls: list[dict]) -> bytes:
+    """Forward a tool_calls delta unbuffered — never routed through the text buffer."""
+    payload = {"choices": [{"delta": {"tool_calls": tool_calls}}]}
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
+
+
 def _sse_sources_delta(sources: list[dict[str, str]]) -> bytes:
     payload = {"choices": [{"delta": {"sources": sources}}]}
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
@@ -1411,7 +1589,9 @@ def _sse_error_frame(message: str) -> bytes:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
 
 
-def _with_openai_passthrough_metadata(body: dict[str, Any], *, org_id: int | str | None = None) -> dict[str, Any]:
+def _with_openai_passthrough_metadata(
+    body: dict[str, Any], *, org_id: int | str | None = None, delegated_org_id: str | None = None
+) -> dict[str, Any]:
     """Mark portal-proxied OpenAI-compatible calls so LiteLLM hooks stay transparent.
 
     Also translates the OpenAI-style top-level ``prompt_cache_key`` into
@@ -1431,7 +1611,9 @@ def _with_openai_passthrough_metadata(body: dict[str, Any], *, org_id: int | str
     ``org:none:`` prefix — an un-namespaced key is never forwarded.
     """
     forwarded = dict(body)
-    forwarded["metadata"] = {"_klai_openai_passthrough": True}
+    forwarded["metadata"] = (
+        delegated_org_metadata(delegated_org_id) if delegated_org_id else {"_klai_openai_passthrough": True}
+    )
     prompt_cache_key = forwarded.pop("prompt_cache_key", None)
     if prompt_cache_key is not None:
         namespace = org_id if org_id is not None else "none"
@@ -1474,6 +1656,12 @@ def _openai_passthrough_litellm_key(settings: Settings) -> str:
             detail={"error": {"type": "service_unavailable", "message": "General chat key is not configured"}},
         )
     return key
+
+
+def _passthrough_key(settings: Settings, delegated_org_id: str | None) -> str:
+    # LiteLLM honours a delegated org only on the master key, so an internal
+    # call that must be PII-masked for its org cannot use the general chat key.
+    return settings.litellm_master_key if delegated_org_id else _openai_passthrough_litellm_key(settings)
 
 
 def _json_response_from_upstream(resp: httpx.Response) -> JSONResponse:
@@ -1521,6 +1709,7 @@ async def openai_chat_completion_non_streaming(
     settings: Settings,
     *,
     org_id: int | str | None = None,
+    delegated_org_id: str | None = None,
 ) -> dict[str, Any] | JSONResponse:
     """Forward an OpenAI-compatible chat completion request to LiteLLM unchanged.
 
@@ -1528,12 +1717,12 @@ async def openai_chat_completion_non_streaming(
     retrieval, citation composition, source filtering, and prompt injection.
     """
     chat_url = f"{settings.litellm_base_url}/v1/chat/completions"
-    api_key = _openai_passthrough_litellm_key(settings)
+    api_key = _passthrough_key(settings, delegated_org_id)
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.post(
                 chat_url,
-                json=_with_openai_passthrough_metadata(request_body, org_id=org_id),
+                json=_with_openai_passthrough_metadata(request_body, org_id=org_id, delegated_org_id=delegated_org_id),
                 headers={
                     "Authorization": f"Bearer {api_key}",
                     **get_trace_headers(),
@@ -1581,10 +1770,11 @@ async def openai_chat_completion_streaming(
     settings: Settings,
     *,
     org_id: int | str | None = None,
+    delegated_org_id: str | None = None,
 ) -> StreamingResponse | JSONResponse:
     """Proxy LiteLLM's OpenAI-compatible SSE stream without buffering or rewriting."""
     chat_url = f"{settings.litellm_base_url}/v1/chat/completions"
-    api_key = _openai_passthrough_litellm_key(settings)
+    api_key = _passthrough_key(settings, delegated_org_id)
     client: httpx.AsyncClient | None = None
     stream = None
     try:
@@ -1592,7 +1782,7 @@ async def openai_chat_completion_streaming(
         stream = client.stream(
             "POST",
             chat_url,
-            json=_with_openai_passthrough_metadata(request_body, org_id=org_id),
+            json=_with_openai_passthrough_metadata(request_body, org_id=org_id, delegated_org_id=delegated_org_id),
             headers={
                 "Authorization": f"Bearer {api_key}",
                 **get_trace_headers(),
@@ -1800,6 +1990,48 @@ def _answer_without_retrieved_sources(text: str, citation_chunks: list[dict] | N
     }
     cleaned = strip_model_citation_artifacts(text, evidence_ids=evidence_ids or None)
     return _LINKLIKE_RE.sub("", cleaned).strip()
+
+
+def _collapse_whitespace_with_index_map(text: str) -> tuple[str, list[int]]:
+    collapsed: list[str] = []
+    index_map: list[int] = []
+    in_whitespace = False
+    for index, char in enumerate(text):
+        if char.isspace():
+            if collapsed and not in_whitespace:
+                collapsed.append(" ")
+                index_map.append(index)
+            in_whitespace = True
+            continue
+        collapsed.append(char)
+        index_map.append(index)
+        in_whitespace = False
+    if collapsed and collapsed[-1] == " ":
+        collapsed.pop()
+        index_map.pop()
+    return "".join(collapsed), index_map
+
+
+def _unstreamed_tail(final_text: str, emitted_text: str, raw_text: str, citation_chunks: list[dict] | None) -> str:
+    """The part of a live answer the caller has not seen yet, cleaned.
+
+    A live turn streams the model's words up to any link or URL, which the
+    guard holds back until the end. The rest must come from the composed answer
+    so a model-written link is cleaned like on a held turn. The composer may
+    normalise whitespace, so the cut tolerates that; if it changed text the
+    caller already saw, the answer cannot be aligned and replaying it would
+    duplicate the whole answer (LibreChat, 2026-06-11), so the raw remainder
+    goes out with every link removed instead.
+    """
+    if not emitted_text or final_text.startswith(emitted_text):
+        return final_text[len(emitted_text) :]
+    collapsed_final, final_map = _collapse_whitespace_with_index_map(final_text)
+    collapsed_emitted, _ = _collapse_whitespace_with_index_map(emitted_text)
+    if collapsed_emitted and collapsed_final.startswith(collapsed_emitted):
+        return final_text[final_map[len(collapsed_emitted) - 1] + 1 :]
+    remainder = raw_text[len(emitted_text) :]
+    leading = remainder[: len(remainder) - len(remainder.lstrip())]
+    return leading + _answer_without_retrieved_sources(remainder, citation_chunks)
 
 
 def _compose_backend_managed_answer(
@@ -2259,7 +2491,7 @@ def _renumber_sources(sources: list[dict]) -> list[dict]:
     return sources
 
 
-async def _chat_completion_streaming_with_composed_citations(
+async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - hold/live + tool_calls branching alongside existing composition
     *,
     augmented_messages: list[dict],
     model: str,
@@ -2284,6 +2516,11 @@ async def _chat_completion_streaming_with_composed_citations(
     signal_chunks: list[dict] | None = None,
     conversation: list[dict] | None = None,
     turn_timing: dict[str, float] | None = None,
+    profile: ChatProfile = ChatProfile(surface="widget"),
+    tools: list[dict] | None = None,
+    tool_choice: Any | None = None,
+    delegated_org_id: str | None = None,
+    sub_queries: list[str] | None = None,
 ) -> AsyncGenerator[bytes]:
     """Collect text, compose deterministic citations, then stream once.
 
@@ -2311,6 +2548,32 @@ async def _chat_completion_streaming_with_composed_citations(
     ``signal_chunks`` is the retrieval result to score it on; it defaults to
     ``citation_chunks`` but differs on a broad-mode turn, where the caller
     empties the citation list on purpose.
+
+    ``profile.stream_live`` (only an Open internal turn) streams content
+    incrementally, through :func:`_pop_live_stream_text`, instead of holding
+    it for composition. Composition still runs once on the full text at the
+    end for sources/signals, but its content is not re-sent: the caller
+    already saw it live. A held turn (every other profile, unchanged
+    default) keeps buffering everything, and now sends an empty-content
+    keepalive frame per upstream token while it waits — but ONLY for
+    ``surface == "internal"``: widget/partner clients are proven byte-for-byte
+    unchanged by the existing streaming tests, and adding a frame those tests
+    do not expect would fail them even though the widget's own SSE parser
+    (``klai-widget/src/api/chat-stream.ts``) already ignores an empty
+    ``delta.content`` (falsy check before ``onToken``).
+
+    A ``tool_calls`` delta is forwarded unbuffered the moment it arrives,
+    regardless of hold/live — see :func:`_sse_tool_calls_delta`. It never
+    enters ``raw_text_parts``, so it can never reach the citation composer or
+    the grounding check.
+
+    For ``surface == "internal"`` with citable sources, a text footer
+    (:func:`app.services.answer_footer.render_answer_footer`) is appended as
+    the LAST render step, after composition/judge/repair have settled
+    ``sources`` — a held turn gets it baked into ``content``; a live turn,
+    whose content was already streamed with the model's own raw markers, gets
+    it as one extra content delta after the live text (see the emission
+    below). ``sub_queries`` is threaded through only to feed that footer.
     """
     raw_text_parts: list[str] = []
     # The page-context message is prepended, so the last user turn in
@@ -2321,17 +2584,23 @@ async def _chat_completion_streaming_with_composed_citations(
     visitor_query = _last_user_message(augmented_messages) or ""
     chat_url = f"{settings.litellm_base_url}/v1/chat/completions"
     generation_started = time.perf_counter()
+    live_buffer = ""
+    live_emitted: list[str] = []
+    request_json = _llm_request_body(
+        model,
+        augmented_messages,
+        temperature,
+        stream=True,
+        tools=tools,
+        tool_choice=tool_choice,
+        delegated_org_id=delegated_org_id,
+    )
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
             async with client.stream(
                 "POST",
                 chat_url,
-                json={
-                    "model": model,
-                    "messages": augmented_messages,
-                    "temperature": temperature,
-                    "stream": True,
-                },
+                json=request_json,
                 headers={
                     "Authorization": f"Bearer {settings.litellm_master_key}",
                     **get_trace_headers(),
@@ -2352,9 +2621,19 @@ async def _chat_completion_streaming_with_composed_citations(
                         logger.debug("partner_chat_sse_parse_skipped", exc_info=True)
                         continue
                     delta = (evt.get("choices") or [{}])[0].get("delta") or {}
+                    if tool_calls := delta.get("tool_calls"):
+                        yield _sse_tool_calls_delta(tool_calls)
                     text = delta.get("content")
                     if isinstance(text, str) and text:
                         raw_text_parts.append(text)
+                        if profile.stream_live:
+                            live_buffer += text
+                            safe_text, live_buffer = _pop_live_stream_text(live_buffer)
+                            if safe_text:
+                                live_emitted.append(safe_text)
+                                yield _sse_content_delta(safe_text)
+                        elif profile.surface == "internal":
+                            yield _sse_content_delta("")
     except httpx.TransportError:
         logger.warning("partner_chat_upstream_unreachable", org_id=org_id, target=chat_url, exc_info=True)
         yield _sse_error_frame("Chat service unavailable")
@@ -2439,6 +2718,30 @@ async def _chat_completion_streaming_with_composed_citations(
         model=model,
         query_text=visitor_query,
     )
+    # Deliberately kept separate as the last render step
+    # (chat-quality-history-and-plan.md §7.2): the widget got its
+    # sources/escalation frames above; an internal turn additionally gets
+    # them as a text footer, because LibreChat renders only text. Built from
+    # the same finalised ``sources`` the frames above used, so a held and a
+    # live turn number it identically — see the docstring above.
+    footer_text = ""
+    if profile.surface == "internal" and emit_sources:
+        footer_text = render_answer_footer(
+            sources=sources,
+            kb_mode=profile.kb_mode,
+            chunks_injected=len(citation_chunks or []),
+            sub_queries=sub_queries,
+            language=response_language,
+        )
+        if footer_text and not profile.stream_live:
+            content = f"{content.rstrip()}\n\n{footer_text}"
+    # What still has to go out: the whole answer on a held turn, only the
+    # unseen tail (plus the footer) on a live one.
+    outgoing = content
+    if profile.stream_live:
+        outgoing = _unstreamed_tail(content, "".join(live_emitted), "".join(raw_text_parts), citation_chunks)
+        if footer_text:
+            outgoing = f"{outgoing.rstrip()}\n\n{footer_text}"
     # Safety refusals above replace the decision dict, so no broad signal
     # survives on a blocked turn — deliberate: a blocked answer neither
     # labels itself general knowledge nor invites the visitor to broaden.
@@ -2472,7 +2775,8 @@ async def _chat_completion_streaming_with_composed_citations(
             ]
         )
     if not sources or not emit_sources:
-        yield _sse_content_delta(content)
+        if outgoing or not profile.stream_live:
+            yield _sse_content_delta(outgoing)
         yield b"data: [DONE]\n\n"
         _emit_language_correctness_log(
             org_id=org_id,
@@ -2493,7 +2797,8 @@ async def _chat_completion_streaming_with_composed_citations(
             }
         ]
     )
-    yield _sse_content_delta(content)
+    if outgoing or not profile.stream_live:
+        yield _sse_content_delta(outgoing)
     yield b"data: [DONE]\n\n"
     _emit_language_correctness_log(
         org_id=org_id,
@@ -2538,8 +2843,28 @@ def _build_system_prompt(
     support_mode: bool = False,
     broad_mode: bool = False,
     tone_register: str = "restrained",
+    pasted_correspondence: bool = False,
+    *,
+    profile: ChatProfile = ChatProfile(surface="widget"),
+    internal_state: InternalPromptState = "no_retrieval",
+    templates_block: str = "",
+    low_confidence: bool = False,
+    retrieval_failure: str = "",
+    web_search_available: bool = False,
+    images_base_url: str = "",
+    multi_question: bool = False,
+    sub_query_results: list[dict] | None = None,
+    unchecked_questions: list[str] | None = None,
 ) -> str:
     """Build a grounded system prompt augmented with retrieved context chunks.
+
+    The one prompt builder for every surface; the profile picks the text. An
+    internal profile gets the Strict/Open/general/meta prompts the LiteLLM
+    hook built (see app.services.knowledge_prompts), selected by
+    ``internal_state``; the widget and partner prompts below are unchanged.
+    The multi-part-question layout (``multi_question``, ``sub_query_results``,
+    ``unchecked_questions``) applies to every surface, because the
+    sub-question fan-out does.
 
     ``support_mode`` swaps the default profile from the internal-team GROUNDED
     prompt to the customer-facing SUPPORT_CHAT_SYSTEM_PROMPT for public
@@ -2556,7 +2881,36 @@ def _build_system_prompt(
     only change the default: an explicit ``original_system`` from the caller
     still wins, and the widget behaviour instructions, page context, safety
     hierarchy, and source-handling below are unchanged in every mode.
+
+    ``pasted_correspondence`` (see app.services.pasted_correspondence,
+    detected on the conversation before this call) appends the epistemic
+    answer contract right after the foundation prompt — below it, above
+    everything else — the same position the LiteLLM hook it moved from used.
+    Off by default, so a request without pasted correspondence is unchanged.
     """
+    if profile.surface == "internal":
+        kb_narrow = profile.kb_mode == "strict"
+        return internal_system_prompt(
+            state=internal_state,
+            kb_narrow=kb_narrow,
+            original_system=original_system,
+            templates_block=templates_block,
+            pasted_correspondence=pasted_correspondence,
+            context_block=kb_context_block(
+                kb_narrow=kb_narrow,
+                chunks=chunks,
+                templates_block=templates_block,
+                images_base_url=images_base_url,
+                low_confidence=low_confidence,
+                multi_question=multi_question,
+                sub_query_results=sub_query_results,
+                unchecked_questions=unchecked_questions,
+            )
+            if internal_state == "chunks"
+            else "",
+            retrieval_failure=retrieval_failure,
+            web_search_available=web_search_available,
+        )
     if support_mode and broad_mode:
         default_prompt = SUPPORT_BROAD_CHAT_SYSTEM_PROMPT
     elif support_mode:
@@ -2566,6 +2920,8 @@ def _build_system_prompt(
     else:
         default_prompt = GROUNDED_CHAT_SYSTEM_PROMPT
     base = original_system or default_prompt
+    if pasted_correspondence:
+        base = f"{base}\n\n{PASTED_CORRESPONDENCE_SCOPE}"
     widget_system_prompt = (widget_system_prompt or "").strip()
     if widget_system_prompt:
         base = (
@@ -2590,7 +2946,10 @@ def _build_system_prompt(
     if not chunks:
         return base
 
-    context_block = render_evidence_context(chunks, include_source_urls=not backend_managed_citations)
+    include_source_urls = not backend_managed_citations
+    context_block = sub_query_grouped_context(
+        chunks, sub_query_results, unchecked_questions, include_source_urls=include_source_urls
+    ) or render_evidence_context(chunks, include_source_urls=include_source_urls)
     if not context_block:
         return base
     if backend_managed_citations:
@@ -2612,6 +2971,8 @@ def _build_system_prompt(
             "- If several facts in one paragraph or list come from the same source_url, cite that source once.\n"
             "- If you cite multiple different documents at the same spot, separate citation numbers with commas.\n"
         )
+    if guard := multi_question_guard(multi_question=multi_question, sub_query_results=sub_query_results):
+        context_block = f"{context_block}\n\n{guard}"
     return f"{base}\n\n{url_guard}\nContext:\n{context_block}\n\n{KB_CONTEXT_LANGUAGE_REMINDER}"
 
 
@@ -2669,6 +3030,7 @@ def _schedule_gap_event(
     # The user-turn audit write of this request, when the caller started one:
     # the gap task waits for it so a first-turn gap still finds its conversation.
     audit_write: asyncio.Future[Any] | None = None,
+    caller_client_id: str | None = _WIDGET_GAP_CALLER_CLIENT_ID,
 ) -> None:
     """Gap detection + fire-and-forget registration for the widget / partner pad.
 
@@ -2762,7 +3124,7 @@ def _schedule_gap_event(
                         nearest_kb_slug=nearest_kb_slug,
                         chunks_retrieved=len(chunks),
                         retrieval_ms=retrieval_ms,
-                        caller_client_id=_WIDGET_GAP_CALLER_CLIENT_ID,
+                        caller_client_id=caller_client_id,
                         conversation_id=conversation_id,
                         language=language,
                     )
@@ -2791,6 +3153,78 @@ def _schedule_gap_event(
         logger.warning("partner_chat_gap_detection_failed", org_id=org_id, exc_info=True)
 
 
+@dataclass
+class KnowledgeTurn:
+    """What retrieve_context decided for this turn besides the prompt.
+
+    A caller-owned sink, like ``answer_signals``, so the four-tuple return
+    stays as it is. ``refusal`` set means: answer with this text, call no model.
+    """
+
+    refusal: str | None = None
+    multi_question: bool = False
+    low_confidence: bool = False
+    # The sub-questions retrieval fanned out over (at most MAX_SUB_QUESTIONS).
+    sub_queries: list[str] = field(default_factory=list)
+
+
+_URL_RE = re.compile(r"https?://\S+")
+
+
+def strict_risk_model(
+    requested: str, *, profile: ChatProfile, turn: KnowledgeTurn, chunks: list[dict], messages: list[dict]
+) -> str:
+    """The Strict-risk model rule, moved from the LiteLLM router (``_kb_risk_upgrade``).
+
+    A Strict internal turn that answers from chunks while the message is
+    multi-part or the evidence is weak gets ``klai-medium``: the conditions of
+    the 2026-08-17 fabricated-webhook-timeout incident. Chosen here, by name,
+    so the rule outlives the hook; the router passes an explicit model through.
+    The router's earlier rules still win, so a turn with tool results (router:
+    klai-large) or three or more URLs in one message (router: klai-fast) stays
+    on the requested model for the router to route.
+    """
+    if (
+        requested != "klai-primary"
+        or profile.surface != "internal"
+        or profile.kb_mode != "strict"
+        or not chunks
+        or not (turn.multi_question or turn.low_confidence)
+    ):
+        return requested
+    for message in messages:
+        content = message.get("content")
+        if message.get("role") == "tool" or (isinstance(content, str) and len(_URL_RE.findall(content)) >= 3):
+            return requested
+    return "klai-medium"
+
+
+_RETRIEVE_TIMEOUT_S = 10.0
+# The hook's production value (KNOWLEDGE_RETRIEVE_TIMEOUT in
+# deploy/docker-compose.yml): an employee waits for a sub-question fan-out
+# rather than lose the knowledge base, a widget visitor does not.
+_INTERNAL_RETRIEVE_TIMEOUT_S = 60.0
+# The hook's RETRIEVE_TOP_K: the reranker scores 20 candidates anyway, and 20
+# forwarded chunks beat 5 or 10 (SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-4).
+INTERNAL_RETRIEVE_TOP_K = 20
+# Strict only. A 0.05-relevance chunk once ended up as the "Bronnen" entry
+# under "Ik weet het niet." (2026-08-17); below 0.15 a chunk is noise.
+_KB_MIN_EVIDENCE_SCORE = 0.15
+
+
+def _chunk_below_evidence_floor(chunk: dict) -> bool:
+    """True when the chunk carries a ranking score below the floor.
+
+    Only final/reranker scores count: the raw retrieval ``score`` uses another
+    scale and defaults to 0.0 in several producers. No score keeps the chunk.
+    """
+    for key in ("final_score", "reranker_score"):
+        value = chunk.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value) < _KB_MIN_EVIDENCE_SCORE
+    return False
+
+
 _ANSWER_BANDS = frozenset({"high", "medium", "low", "unknown"})
 
 
@@ -2817,7 +3251,7 @@ def _record_retrieval_band(sink: dict[str, Any] | None, result: dict, *, blocked
     sink["band"] = "unknown" if blocked_chunk_count else band
 
 
-async def retrieve_context(
+async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches kept inline so the order stays readable
     org_id: int,
     zitadel_org_id: str,
     kb_slugs: list[str],
@@ -2834,6 +3268,13 @@ async def retrieve_context(
     support_mode: bool = False,
     broad_mode: bool = False,
     tone_register: str = "restrained",
+    # Detected by the caller on the request's messages (see
+    # app.services.pasted_correspondence.detect_pasted_correspondence)
+    # BEFORE this call. Threaded through to every _build_system_prompt call
+    # below so a pasted email gets the epistemic contract regardless of
+    # which return path (no query, no retrieval url, identity-assertion
+    # degraded, real retrieval) this turn takes.
+    pasted_correspondence: bool = False,
     is_preview: bool = False,
     # Audit identity of the widget conversation, resolved by the caller before
     # retrieval so the gap event can point at it (§4.5). See
@@ -2844,8 +3285,24 @@ async def retrieve_context(
     # Caller-owned audit sink (see _fill_answer_signals); this is where the
     # answer's certainty band enters it.
     answer_signals: dict[str, Any] | None = None,
+    # Which surface and mode this turn is; see app.services.chat_profile.
+    profile: ChatProfile = ChatProfile(surface="widget"),
+    # Internal surface only: the employee's active prompt templates as one
+    # block, the org's telemetry level (forwarded to retrieval-api, as the
+    # hook did), and whether a web-search tool is offered (general prompt).
+    templates_block: str = "",
+    telemetry_level: str = "shadow",
+    web_search_available: bool = False,
+    # Caller-owned sink for what this turn decided besides the prompt.
+    knowledge_turn: KnowledgeTurn | None = None,
 ) -> tuple[list[dict], str, list[dict[str, Any]], bool]:
     """Call retrieval-api and return (chunks, augmented_system_prompt, trusted_sources, broad).
+
+    One retrieval for every surface; ``profile`` sets what differs. An
+    internal turn sends the employee's identity and scope, a rewritten query
+    with the raw one beside it, and top_k 20; a Strict turn that cannot search
+    sets ``knowledge_turn.refusal`` and returns an empty prompt, and the
+    caller answers with that text without calling a model.
 
     Follows the pattern from deploy/litellm/klai_knowledge.py.
 
@@ -2895,65 +3352,133 @@ async def retrieve_context(
                 reason=safety_reason,
             )
             cleaned_page_context = None
-    if not retrieval_enabled or not query:
-        return (
-            [],
-            _build_system_prompt(
-                [],
-                original_system,
-                widget_system_prompt=widget_system_prompt,
-                page_context=cleaned_page_context,
-                backend_managed_citations=backend_managed_citations,
-                support_mode=support_mode,
-                tone_register=tone_register,
-            ),
-            [],
-            False,
+
+    internal = profile.surface == "internal"
+    turn = knowledge_turn if knowledge_turn is not None else KnowledgeTurn()
+
+    def prompt(prompt_chunks: list[dict], state: InternalPromptState = "no_retrieval", **extra: Any) -> str:
+        return _build_system_prompt(
+            prompt_chunks,
+            original_system,
+            widget_system_prompt=widget_system_prompt,
+            page_context=cleaned_page_context,
+            backend_managed_citations=backend_managed_citations,
+            support_mode=support_mode,
+            tone_register=tone_register,
+            pasted_correspondence=pasted_correspondence,
+            profile=profile,
+            internal_state=state,
+            templates_block=templates_block,
+            web_search_available=web_search_available,
+            images_base_url=settings.kb_images_base_url,
+            **extra,
+        )
+
+    # Turns that search nothing. General mode and questions about Klai itself
+    # have their own prompt (internal only: the widget has neither). A trivial
+    # message ("bedankt", "ok") skips retrieval on every surface, unless
+    # pasted correspondence is still in the conversation: a short follow-up
+    # there is exactly where the sender's claims get re-adopted as facts.
+    if internal and profile.kb_mode == "general":
+        return [], prompt([], "meta" if query and is_meta_query(query) else "general"), [], False
+    if internal and query and is_meta_query(query):
+        return [], prompt([], "meta"), [], False
+    trivial = bool(query) and not pasted_correspondence and is_trivial_turn(messages, query or "")
+    if not retrieval_enabled or not query or trivial:
+        return [], prompt([]), [], False
+    if internal and profile.kb_mode == "strict" and profile.kb_slugs == ():
+        # Strict with nothing to search refuses without a model call: a prompt
+        # that asks the model to refuse let a non-compliant model answer from
+        # general knowledge (the hook's strict_no_kb branch).
+        turn.refusal = _no_citable_sources_message(
+            resolve_conversation_language(messages).language, suggest_open_mode=True
+        )
+        return [], "", [], False
+
+    # A multi-part message fans out into one retrieval per question, on every
+    # surface. Not when the latest turn is pasted correspondence: its
+    # '?'-terminated header and signature lines are noise legs, and the
+    # distilled query is the question.
+    latest_correspondence = latest_user_turn_has_correspondence(messages)
+    all_sub_questions = [] if latest_correspondence else split_sub_questions(query)
+    sub_queries = turn.sub_queries = all_sub_questions[:MAX_SUB_QUESTIONS]
+    unchecked_questions = all_sub_questions[MAX_SUB_QUESTIONS:]
+    turn.multi_question = not latest_correspondence and (bool(sub_queries) or is_multi_question_query(query))
+    if unchecked_questions:
+        logger.warning(
+            "sub_questions_truncated",
+            org_id=org_id,
+            total_questions=len(all_sub_questions),
+            searched=len(sub_queries),
         )
 
     conversation_history = _build_conversation_history(messages)
-    # A first question travels with two paraphrases; a follow-up has its
-    # history to search on instead (query_paraphrase.py has the numbers).
-    query_variants = await first_question_variants(messages, query, settings, support_mode=support_mode)
-
-    retrieve_body: dict = {
-        # Clipped below the 8000-char retrieval-api hard limit (SPEC-SEC-010
-        # REQ-2.5) using the same helper as conversation_history entries. An
-        # unclipped query has no real bound short of the 128 KB request-body
-        # cap, sends garbage into coreference + BGE-M3 embedding (8192-token
-        # sequence limit), and can surface as an upstream 502 for partners.
-        "query": _clip_retrieval_history_content(query),
-        "org_id": zitadel_org_id,  # retrieval-api expects string org_id
-        "scope": "org",
-        "top_k": top_k,
-        "conversation_history": conversation_history,
-    }
-    if kb_slugs:
-        retrieve_body["kb_slugs"] = kb_slugs
-    retrieve_body["query_variants"] = query_variants or None
-    if partner_user_id is not None:
-        # F2: synthetic partner-level identity for product_events tagging.
-        retrieve_body["user_id"] = partner_user_id
-    if cleaned_page_context is not None:
-        retrieve_body["page_context"] = cleaned_page_context
+    retrieval_user_id = profile.user_id if internal else partner_user_id
+    retrieve_body: dict
+    if internal:
+        rewrite = await rewrite_for_retrieval(
+            query,
+            conversation_history,
+            zitadel_org_id=zitadel_org_id,
+            kb_slugs=kb_slugs,
+            pasted_correspondence=latest_correspondence,
+            settings=settings,
+        )
+        retrieve_body = {
+            "query": _clip_retrieval_history_content(rewrite.query),
+            "raw_query": _clip_retrieval_history_content(query),
+            "coreference_resolved": rewrite.coreference_resolved,
+            # The org comes from the authenticated key, never from the profile.
+            "org_id": zitadel_org_id,
+            "user_id": retrieval_user_id,
+            "scope": profile.kb_scope,
+            "top_k": top_k,
+            "conversation_history": conversation_history,
+            "telemetry_level": telemetry_level,
+            "kb_narrow": profile.kb_mode == "strict",
+        }
+        if kb_slugs:
+            retrieve_body["kb_slugs"] = kb_slugs
+        elif profile.kb_scope == "both":
+            # Every org KB plus every private KB the employee owns.
+            retrieve_body["include_owned_private_kbs"] = True
+        if rewrite.taxonomy_node_ids:
+            retrieve_body["taxonomy_node_ids"] = rewrite.taxonomy_node_ids
+    else:
+        # A first question travels with two paraphrases; a follow-up has its
+        # history to search on instead (query_paraphrase.py has the numbers).
+        # A fanned-out message gets none: retrieval-api would run the
+        # paraphrases of the whole message inside every sub-question's pass.
+        query_variants = (
+            [] if sub_queries else await first_question_variants(messages, query, settings, support_mode=support_mode)
+        )
+        retrieve_body = {
+            # Clipped below the 8000-char retrieval-api hard limit (SPEC-SEC-010
+            # REQ-2.5) using the same helper as conversation_history entries. An
+            # unclipped query has no real bound short of the 128 KB request-body
+            # cap, sends garbage into coreference + BGE-M3 embedding (8192-token
+            # sequence limit), and can surface as an upstream 502 for partners.
+            "query": _clip_retrieval_history_content(query),
+            "org_id": zitadel_org_id,  # retrieval-api expects string org_id
+            "scope": "org",
+            "top_k": top_k,
+            "conversation_history": conversation_history,
+        }
+        if kb_slugs:
+            retrieve_body["kb_slugs"] = kb_slugs
+        retrieve_body["query_variants"] = query_variants or None
+        if partner_user_id is not None:
+            # F2: synthetic partner-level identity for product_events tagging.
+            retrieve_body["user_id"] = partner_user_id
+        if cleaned_page_context is not None:
+            retrieve_body["page_context"] = cleaned_page_context
+    if sub_queries:
+        retrieve_body["sub_queries"] = sub_queries
 
     retrieval_url = settings.knowledge_retrieve_url
     if not retrieval_url:
         logger.warning("partner_chat_no_retrieval_url")
-        return (
-            [],
-            _build_system_prompt(
-                [],
-                original_system,
-                widget_system_prompt,
-                page_context=cleaned_page_context,
-                backend_managed_citations=backend_managed_citations,
-                support_mode=support_mode,
-                tone_register=tone_register,
-            ),
-            [],
-            False,
-        )
+        return [], prompt([]), [], False
 
     # SPEC-SEC-010 REQ-6.1: authenticate to retrieval-api with the dedicated
     # retrieval_api_internal_secret (separate from portal-api's mailer secret).
@@ -2964,46 +3489,68 @@ async def retrieve_context(
     # retrieve-caller-service-header-mismatch.
     retrieval_secret = settings.retrieval_api_internal_secret or settings.internal_secret
     retrieval_started = time.perf_counter()
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.post(
-            f"{retrieval_url}/retrieve",
-            json=retrieve_body,
-            headers={
-                "X-Internal-Secret": retrieval_secret,
-                "X-Caller-Service": "portal-api",
-                **get_trace_headers(),
-            },
+    try:
+        async with httpx.AsyncClient(
+            timeout=_INTERNAL_RETRIEVE_TIMEOUT_S if internal else _RETRIEVE_TIMEOUT_S
+        ) as client:
+            resp = await client.post(
+                f"{retrieval_url}/retrieve",
+                json=retrieve_body,
+                headers={
+                    "X-Internal-Secret": retrieval_secret,
+                    "X-Caller-Service": "portal-api",
+                    **get_trace_headers(),
+                },
+            )
+            try:
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                # An employee's identity is real, so a failed assertion is a
+                # failure to surface, not a synthetic widget identity to drop.
+                if internal or not _is_retrieval_identity_assertion_error(exc):
+                    raise
+                logger.warning(
+                    "partner_chat_retrieval_identity_assertion_degraded",
+                    org_id=org_id,
+                    status_code=exc.response.status_code if exc.response is not None else None,
+                )
+                return [], prompt([]), [], False
+            result = resp.json()
+    except httpx.HTTPError as exc:
+        # The widget and the partner API answer a failed retrieval with a 502
+        # (the caller maps it). The internal chat does what the hook did:
+        # Strict refuses, since it may only answer from the knowledge base;
+        # Open answers from general knowledge and says the KB was unreachable.
+        if not internal:
+            raise
+        failure = f"HTTP {exc.response.status_code}" if isinstance(exc, httpx.HTTPStatusError) else type(exc).__name__
+        logger.exception(
+            "partner_chat_internal_retrieval_failed", org_id=org_id, kb_mode=profile.kb_mode, failure=failure
         )
-        try:
-            resp.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            if not _is_retrieval_identity_assertion_error(exc):
-                raise
-            logger.warning(
-                "partner_chat_retrieval_identity_assertion_degraded",
-                org_id=org_id,
-                status_code=exc.response.status_code if exc.response is not None else None,
-            )
-            return (
-                [],
-                _build_system_prompt(
-                    [],
-                    original_system,
-                    widget_system_prompt=widget_system_prompt,
-                    page_context=cleaned_page_context,
-                    backend_managed_citations=backend_managed_citations,
-                    support_mode=support_mode,
-                    tone_register=tone_register,
-                ),
-                [],
-                False,
-            )
-        result = resp.json()
+        if profile.kb_mode == "strict":
+            turn.refusal = strict_kb_unavailable_message(resolve_conversation_language(messages).language)
+            return [], "", [], False
+        return [], prompt([], "retrieval_failure", retrieval_failure=failure), [], False
     retrieval_ms = int((time.perf_counter() - retrieval_started) * 1000)
 
     evidence_pack = result.get("evidence_pack")
     chunks = evidence_pack_items_as_chunks(evidence_pack)
     trusted_sources = trusted_sources_from_evidence_pack(evidence_pack)
+    if internal and profile.kb_mode == "strict":
+        # Strict promises knowledge-base-only answers, so noise-level evidence
+        # would become fabricated authority. Open keeps weak chunks as
+        # labelled weak context, as the hook did.
+        relevant = [chunk for chunk in chunks if not _chunk_below_evidence_floor(chunk)]
+        if len(relevant) < len(chunks):
+            logger.warning(
+                "kb_evidence_below_score_floor_dropped",
+                org_id=org_id,
+                dropped=len(chunks) - len(relevant),
+                kept=len(relevant),
+                floor=_KB_MIN_EVIDENCE_SCORE,
+            )
+            chunks = relevant
+            trusted_sources = _filter_trusted_sources_for_chunks(trusted_sources, chunks)
     safe_chunks: list[dict] = []
     blocked_chunk_count = 0
     for chunk in chunks:
@@ -3023,21 +3570,27 @@ async def retrieve_context(
         chunks = safe_chunks
         trusted_sources = _filter_trusted_sources_for_chunks(trusted_sources, chunks)
     _record_retrieval_band(answer_signals, result, blocked_chunk_count=blocked_chunk_count)
+    # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001: a low or unknown band without direct
+    # evidence for the question. Steers the internal prompt and the Strict-risk
+    # model choice; the widget stores the band but does not act on it yet.
+    turn.low_confidence = should_clarify(
+        result.get("confidence_band"), has_direct_evidence=has_direct_evidence_for_query(query, chunks)
+    )
     # Consented general-knowledge fallback: decided here, on the same
     # post-safety-filter chunks the gap event sees, and surfaced to the caller
     # as the fourth tuple element so the prompt swap and the answer label can
     # never disagree. On a broad turn no article context is injected and no
     # sources can be cited, regardless of what the weak chunks might support.
     broad = _broad_mode_active(chunks, support_mode=support_mode, broad_consent=broad_mode)
-    system_prompt = _build_system_prompt(
+    sub_query_results = [entry for entry in result.get("sub_results") or [] if isinstance(entry, dict)] or None
+    system_prompt = prompt(
         [] if broad else chunks,
-        original_system,
-        widget_system_prompt,
-        page_context=cleaned_page_context,
-        backend_managed_citations=backend_managed_citations,
-        support_mode=support_mode,
+        "chunks" if chunks else "zero_chunks",
         broad_mode=broad,
-        tone_register=tone_register,
+        low_confidence=turn.low_confidence,
+        multi_question=turn.multi_question,
+        sub_query_results=sub_query_results,
+        unchecked_questions=unchecked_questions or None,
     )
 
     # --- Gap detection (KB-014) ---
@@ -3047,7 +3600,7 @@ async def retrieve_context(
     _schedule_gap_event(
         org_id=org_id,
         zitadel_org_id=zitadel_org_id,
-        partner_user_id=partner_user_id,
+        partner_user_id=retrieval_user_id,
         query_text=query,
         chunks=chunks,
         retrieval_ms=retrieval_ms,
@@ -3056,6 +3609,8 @@ async def retrieve_context(
         audit_widget_id=audit_widget_id,
         audit_session_key=audit_session_key,
         audit_write=audit_write,
+        # NULL is LibreChat traffic on the gaps dashboard (SPEC-MCP-RETRIEVAL-001 REQ-9).
+        caller_client_id=None if internal else _WIDGET_GAP_CALLER_CLIENT_ID,
     )
 
     return chunks, system_prompt, ([] if broad else trusted_sources), broad
@@ -3075,7 +3630,7 @@ def _extract_completion_text(body: dict) -> str:
         return ""
 
 
-async def chat_completion_non_streaming(
+async def chat_completion_non_streaming(  # noqa: C901 - tools stripping/forwarding alongside existing markers/links branching
     messages: list[dict],
     model: str,
     temperature: float,
@@ -3103,6 +3658,11 @@ async def chat_completion_non_streaming(
     answer_signals: dict[str, Any] | None = None,
     signal_chunks: list[dict] | None = None,
     turn_timing: dict[str, float] | None = None,
+    profile: ChatProfile = ChatProfile(surface="widget"),
+    tools: list[dict] | None = None,
+    tool_choice: Any | None = None,
+    delegated_org_id: str | None = None,
+    sub_queries: list[str] | None = None,
 ) -> dict:
     """Forward to LiteLLM and return complete response as dict.
 
@@ -3133,18 +3693,25 @@ async def chat_completion_non_streaming(
 
     litellm_url = settings.litellm_base_url
     chat_url = f"{litellm_url}/v1/chat/completions"
+    if profile.kb_mode == "strict":
+        tools = _strip_web_search_tools(tools)
+
+    request_json = _llm_request_body(
+        model,
+        augmented_messages,
+        temperature,
+        stream=False,
+        tools=tools,
+        tool_choice=tool_choice,
+        delegated_org_id=delegated_org_id,
+    )
 
     generation_started = time.perf_counter()
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
                 chat_url,
-                json={
-                    "model": model,
-                    "messages": augmented_messages,
-                    "temperature": temperature,
-                    "stream": False,
-                },
+                json=request_json,
                 headers={
                     "Authorization": f"Bearer {settings.litellm_master_key}",
                     **get_trace_headers(),
@@ -3277,6 +3844,19 @@ async def chat_completion_non_streaming(
                 )
                 message["content"] = rendered_content
                 message["sources"] = sources
+                # Deliberately kept separate as the last render step
+                # (chat-quality-history-and-plan.md §7.2): see the matching
+                # comment on the streaming path.
+                if profile.surface == "internal":
+                    footer_text = render_answer_footer(
+                        sources=sources,
+                        kb_mode=profile.kb_mode,
+                        chunks_injected=len(citation_chunks or []),
+                        sub_queries=sub_queries,
+                        language=language_decision.language,
+                    )
+                    if footer_text:
+                        message["content"] = f"{rendered_content.rstrip()}\n\n{footer_text}"
                 if isinstance(decision, dict) and decision.get("broad_mode") in ("offer", "answer"):
                     message["broad_mode"] = decision["broad_mode"]
                 if escalation := _appointment_escalation_signal(decision):
@@ -3356,6 +3936,11 @@ async def chat_completion_streaming(
     answer_signals: dict[str, Any] | None = None,
     signal_chunks: list[dict] | None = None,
     turn_timing: dict[str, float] | None = None,
+    profile: ChatProfile = ChatProfile(surface="widget"),
+    tools: list[dict] | None = None,
+    tool_choice: Any | None = None,
+    delegated_org_id: str | None = None,
+    sub_queries: list[str] | None = None,
 ) -> AsyncGenerator[bytes]:
     """Stream LiteLLM SSE response with backend-managed KB citations.
 
@@ -3377,12 +3962,18 @@ async def chat_completion_streaming(
     same :func:`resolve_conversation_language` decision that steered the
     system prompt below — never a second, independently-computed guess. The
     frame is omitted entirely when the decision is ``None``.
+
+    ``tools``/``tool_choice`` are stripped of web-search affordances once
+    here, for a Strict profile, before either inner path sees them — one
+    strip, not one per path. See :func:`_strip_web_search_tools`.
     """
     language_decision = resolve_conversation_language(messages)
     augmented_messages = _augment_messages_with_system_prompt(
         messages, system_prompt, page_context, response_language=language_decision.language
     )
     user_query = source_query or _last_user_message(messages) or ""
+    if profile.kb_mode == "strict":
+        tools = _strip_web_search_tools(tools)
     if language_decision.language is not None:
         yield _sse_language_delta(language_decision.language)
     if citation_output == "markers":
@@ -3410,6 +4001,11 @@ async def chat_completion_streaming(
             signal_chunks=signal_chunks,
             conversation=messages,
             turn_timing=turn_timing,
+            profile=profile,
+            tools=tools,
+            tool_choice=tool_choice,
+            delegated_org_id=delegated_org_id,
+            sub_queries=sub_queries,
         ):
             yield chunk
         return
@@ -3430,6 +4026,9 @@ async def chat_completion_streaming(
         citation_source_metadata=citation_source_metadata,
         citation_output=citation_output,
         chunks_injected=len(citation_chunks or []),
+        tools=tools,
+        tool_choice=tool_choice,
+        delegated_org_id=delegated_org_id,
     ):
         yield chunk
 
@@ -3462,6 +4061,9 @@ async def _chat_completion_streaming_sanitized(  # noqa: C901 - SSE state machin
     citation_source_metadata: dict[str, dict[str, str]] | None,
     citation_output: CitationOutput,
     chunks_injected: int | None = None,
+    tools: list[dict] | None = None,
+    tool_choice: Any | None = None,
+    delegated_org_id: str | None = None,
 ) -> AsyncGenerator[bytes]:
     """Legacy partner streaming path with URL sanitization and linked citations.
 
@@ -3470,7 +4072,10 @@ async def _chat_completion_streaming_sanitized(  # noqa: C901 - SSE state machin
     That is intentional: hazardous instructions can span many deltas, and an
     incremental gate can leak an early phrase before the later topic token makes
     the full policy match. Current marker-mode clients are handled by
-    _chat_completion_streaming_with_composed_citations before this helper runs.
+    _chat_completion_streaming_with_composed_citations before this helper runs
+    (``_citation_runtime_options`` in ``app/api/partner.py`` always selects
+    marker mode today, so this path carries no live traffic; it stays for its
+    own direct test coverage and as a rollback route).
     """
     litellm_url = settings.litellm_base_url
     allowed_source_urls = allowed_source_urls or set()
@@ -3485,17 +4090,21 @@ async def _chat_completion_streaming_sanitized(  # noqa: C901 - SSE state machin
     # Refusal language comes from the visitor's own last turn, never from
     # user_query (which may be the KB-rewritten search query).
     visitor_query = _last_user_message(augmented_messages) or ""
+    request_json = _llm_request_body(
+        model,
+        augmented_messages,
+        temperature,
+        stream=True,
+        tools=tools,
+        tool_choice=tool_choice,
+        delegated_org_id=delegated_org_id,
+    )
 
     async with httpx.AsyncClient(timeout=120.0) as client:
         async with client.stream(
             "POST",
             f"{litellm_url}/v1/chat/completions",
-            json={
-                "model": model,
-                "messages": augmented_messages,
-                "temperature": temperature,
-                "stream": True,
-            },
+            json=request_json,
             headers={
                 "Authorization": f"Bearer {settings.litellm_master_key}",
                 **get_trace_headers(),
@@ -3550,6 +4159,8 @@ async def _chat_completion_streaming_sanitized(  # noqa: C901 - SSE state machin
                     logger.debug("partner_chat_sse_parse_skipped", exc_info=True)
                     continue
                 delta = (evt.get("choices") or [{}])[0].get("delta") or {}
+                if tool_calls := delta.get("tool_calls"):
+                    yield _sse_tool_calls_delta(tool_calls)
                 text = delta.get("content")
                 if not isinstance(text, str) or not text:
                     continue
