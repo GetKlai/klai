@@ -479,3 +479,25 @@ async def test_pdf_attachments_are_not_converted_for_the_widget(monkeypatch, pro
 
     assert result is stop
     assert convert.await_count == (1 if reads_attachments else 0)
+
+
+@pytest.mark.asyncio
+async def test_widget_key_cannot_send_tools():
+    import app.api.partner as partner
+
+    request = partner.ChatCompletionsRequest(
+        model="klai-primary",
+        messages=[{"role": "user", "content": "Hoi"}],
+        tools=[{"type": "function", "function": {"name": "search"}}],
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await partner.chat_completions(
+            request=request,
+            http_request=MagicMock(),
+            auth=_auth(key_id="wgt_abc"),
+            db=MagicMock(),
+            profile=ChatProfile(surface="widget"),
+        )
+
+    assert exc.value.status_code == 400

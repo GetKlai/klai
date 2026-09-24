@@ -111,15 +111,15 @@ _OPENAI_COMPATIBLE_MODEL_ALIASES = {
 _OPENAI_COMPATIBLE_ACCEPTED_MODELS = _OPENAI_COMPATIBLE_MODELS | set(_OPENAI_COMPATIBLE_MODEL_ALIASES)
 # General-passthrough-only fields: ChatCompletionsRequest (the knowledge-path
 # Pydantic model) silently drops unknown fields, so a partner sending these
-# alongside a knowledge field would get HTTP 200 with their schema/tools
-# quietly ignored instead of an error. Fail loudly instead — see
-# canonical_chat_completions.
+# alongside a knowledge field would get HTTP 200 with their schema quietly
+# ignored instead of an error. Fail loudly instead — see
+# canonical_chat_completions. ``tools``/``tool_choice`` used to be here too;
+# the knowledge path now forwards them (see ChatCompletionsRequest.tools),
+# so they are no longer passthrough-only.
 _PASSTHROUGH_ONLY_FIELDS = {
     "parallel_tool_calls",
     "prompt_cache_key",
     "response_format",
-    "tool_choice",
-    "tools",
 }
 # LibreChat's conversation-title prompt ("Please generate a concise, 5-word-or-less
 # title for the conversation ..."), same pattern as the LiteLLM hook's
@@ -249,6 +249,12 @@ class ChatCompletionsRequest(BaseModel):
     # turns are not audited. Same limits as the HubSpot handoff request.
     visitor_name: str | None = Field(default=None, max_length=120)
     visitor_email: str | None = Field(default=None, max_length=254)
+    # Forwarded to LiteLLM unmodified except for a Strict-KB profile, which
+    # strips web-search tools (see chat_completion_streaming). Client-side
+    # tool execution: portal never calls a tool itself, it only relays the
+    # model's tool_calls deltas and accepts the tool-role results back.
+    tools: list[dict[str, Any]] | None = None
+    tool_choice: Any | None = None
 
 
 class PartnerFeedbackRequest(BaseModel):
@@ -1762,6 +1768,10 @@ async def chat_completions(  # noqa: C901
 
     # 2-3. Model and messages validation.
     _validate_chat_request(request)
+    # Tools reach the model's prompt, so an anonymous widget visitor may not
+    # supply them; partner and internal keys are authenticated integrations.
+    if profile.surface == "widget" and (request.tools or request.tool_choice is not None):
+        raise _openai_error(status.HTTP_400_BAD_REQUEST, "tools are not supported on widget keys")
 
     # 3a. PDF attachments in the latest user turn become text before anything
     # reads the messages. Not for the widget: its visitors are anonymous and
@@ -2251,6 +2261,9 @@ async def chat_completions(  # noqa: C901
             answer_signals=answer_signals if audit_ready else None,
             signal_chunks=chunks,
             turn_timing=turn_timing,
+            profile=profile,
+            tools=request.tools,
+            tool_choice=request.tool_choice,
         )
         if audit_ready:
             streaming_gen = _audit_streaming_wrapper(
@@ -2295,6 +2308,9 @@ async def chat_completions(  # noqa: C901
         answer_signals=answer_signals if audit_ready else None,
         signal_chunks=chunks,
         turn_timing=turn_timing,
+        profile=profile,
+        tools=request.tools,
+        tool_choice=request.tool_choice,
     )
     if knowledge is not None and not knowledge.include_sources:
         for choice in result.get("choices") or []:
