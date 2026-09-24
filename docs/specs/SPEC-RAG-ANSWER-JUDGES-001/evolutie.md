@@ -1341,6 +1341,15 @@ zwakke bronnen, die apart gemeten wordt.
 **Uitgerold** met `partner_chat_answer_plan` in de logs en `planned_question` in het beslisrecord, zodat
 op echt verkeer te zien is hoe vaak de stap een vraag laat stellen.
 
+**Na de uitrol (24 sep).** Live nagelopen op de voicemailvraag: de stap koos terecht diagnose met twee
+juiste opties, maar zijn vraag ("Wat gebeurt er precies met de gesprekken?") noemde geen van beide en
+viel af op de regel dat de vraag een optie moet noemen. Geprobeerd en gemeten: de stap opdragen de keuze
+in de vraag te zetten, en één optiewoord laten volstaan in plaats van een hele optie. Ronde 1 de live
+versie 19 om 13, ronde 2 16 om 16, en de beurt werd trager (mediaan 7,8 tegen 7,0 s). Niet uitgerold.
+Wel uitgerold: elke beslissing van de stap komt als `answer_plan_decision` in de logs, met de route
+en welke controle een plan liet vallen, zonder de tekst van de vraag. Zonder die regel was het
+wegvallen van de voicemaildiagnose alleen met een handmatige proef te vinden geweest.
+
 ---
 
 ## 3. Wat er live ging, en waarom
