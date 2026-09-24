@@ -109,11 +109,79 @@ _MIN_SUB_QUESTION_CHARS = 8
 _MAX_SUB_QUESTION_CHARS = 300
 
 
+# Counting '?' misses the most common way a support question asks two things:
+# two questions joined by "en" behind a single mark ("Wat is de opzegtermijn
+# en hoe zeg ik namens een klant op?"). So every sentence ending in '?' still
+# counts once, exactly as before, and each further clause joined by en/and/or
+# counts again when it opens like a question of its own: a wh-word (optionally
+# after a preposition, "naar welk adres"), a finite verb in first position (how
+# a Dutch yes/no question inverts), or an embedded "of" (whether). A sentence
+# without '?' counts each clause of that shape. "Werkt dit op iOS en Android?"
+# stays one question: "Android" does not open like one.
+#
+# Rhetorical marks ("Echt waar?") are still counted. A filter for them was
+# tried and measured: on 18 Dutch messages written for the test it dropped as
+# many real questions ("Kosten? Levertijd? Garantie?") as it removed filler.
+_WH_WORDS = (
+    r"wie|wat|waar|waarom|waarvoor|waarmee|waardoor|wanneer|hoe|hoeveel|hoelang"
+    r"|welke|welk|who|what|where|why|when|how|which|whether"
+)
+_LEADING_COORDINATOR = r"^(?:en|of|maar|and|or|but)?\s*"
+_WH_START_RE = re.compile(
+    rf"{_LEADING_COORDINATOR}"
+    r"(?:(?:naar|met|voor|van|in|op|aan|bij|over|tot|uit|door"
+    r"|to|with|for|from|on|at|by)\s+)?"
+    rf"(?:{_WH_WORDS})\b",
+    re.IGNORECASE,
+)
+# The bare imperative stems ("doe", "do") are left out on purpose: "Doe dat
+# maar" opens with a verb and is an instruction, not a question.
+_INVERSION_START_RE = re.compile(
+    rf"{_LEADING_COORDINATOR}"
+    r"(?:is|zijn|was|waren|heb|heeft|hebben|had|hadden|kan|kun|kunt|kunnen"
+    r"|mag|mogen|moet|moeten|wil|wilt|willen|doet|doen|gaat|gaan|klopt|geldt"
+    r"|werkt|wordt|worden|komt|staat|lukt|krijg|krijgt|krijgen"
+    r"|does|did|can|could|should|would|will|are|were)\b",
+    re.IGNORECASE,
+)
+# "of" marks an embedded question only mid-clause ("… checken of dat geldt").
+_EMBEDDED_WHETHER_RE = re.compile(r"\w\s+of\s+\w", re.IGNORECASE)
+# A '.' or ':' ends a sentence only before whitespace, so "66.86" and "10:30"
+# stay inside one.
+_SENTENCE_END = r"(?:[?？;\n]|[.:](?=\s|$))"
+_SENTENCE_RE = re.compile(rf"(?:(?!{_SENTENCE_END}).)+{_SENTENCE_END}?", re.DOTALL)
+_COORDINATOR_RE = re.compile(r",?\s+\b(?:en|and|or)\b\s+", re.IGNORECASE)
+
+
+def _opens_like_question(clause: str) -> bool:
+    return len(clause.split()) >= 2 and bool(
+        _WH_START_RE.match(clause)
+        or _INVERSION_START_RE.match(clause)
+        or _EMBEDDED_WHETHER_RE.search(clause)
+    )
+
+
 def is_multi_question_query(query: object) -> bool:
     """Return whether the user message asks several distinct questions."""
     if not isinstance(query, str):
         return False
-    return sum(query.count(mark) for mark in _QUESTION_MARK_CHARS) >= 2
+    units = 0
+    for sentence in _SENTENCE_RE.findall(query):
+        sentence = sentence.strip()
+        marked = sentence.endswith(("?", _FULL_WIDTH_QUESTION_MARK))
+        clauses = [
+            _LEADING_LIST_MARKER_RE.sub("", clause.strip())
+            for clause in _COORDINATOR_RE.split(sentence.rstrip("?？.;:").strip())
+        ]
+        clauses = [clause for clause in clauses if clause]
+        if not clauses:
+            continue
+        units += int(marked) + sum(
+            _opens_like_question(clause) for clause in clauses[1 if marked else 0 :]
+        )
+        if units >= 2:
+            return True
+    return False
 
 
 def split_sub_questions(query: object, max_questions: int | None = None) -> list[str]:

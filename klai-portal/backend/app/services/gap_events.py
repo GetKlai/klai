@@ -143,53 +143,22 @@ async def record_gap_event(
         async def _group_gap(
             gap_id: int, org_int_id: int, kb_slug: str, question: str, lang: str | None, base_key: str
         ) -> None:
-            """Ask the grouping judge whether this row belongs in an existing
-            open group; stamp the row with that group's key when verified.
-
-            Background task on a fresh session, same pattern as
-            ``_classify_gap`` below. A failure (timeout, malformed model
-            output, RLS mismatch) is logged and leaves the row on its own
-            literal key — never lost, just not merged (SupportCaseAnalysisError
-            and friends are never raised across the request boundary).
-
-            The candidate snapshot is read before the model call, so a group
-            closed in between can still receive this row and reappear as open.
-            That is accepted: without the merge the same row would sit in the
-            list as its own open group anyway, so the user has one thing to
-            close either way, and no row is closed or lost by the race.
-            """
+            """Background wrapper, same pattern as ``_classify_gap`` below. A
+            failure (timeout, malformed model output, RLS mismatch) is logged
+            and leaves the row on its own literal key: never lost, just not
+            merged, and never raised across the request boundary."""
             try:
-                from app.core.database import tenant_scoped_session
-                from app.services.support_cases import _open_group_candidates
-                from app.services.support_gap_grouping import group_findings
-
-                async with tenant_scoped_session(org_int_id) as session:
-                    candidates = await _open_group_candidates(
-                        session, org_id=org_int_id, kb_slug=kb_slug, exclude_case_id=None, exclude_gap_id=gap_id
-                    )
-                candidates = [c for c in candidates if c.get("question_key") != base_key]
-                if not candidates:
-                    return
-
-                # Diagnosis is a placeholder: chat/widget/MCP telemetry has no
-                # content diagnosis, and the grouping judge no longer matches on
-                # it — it only needs a value outside _NON_GAP_DIAGNOSES so the
-                # row is treated as an actual gap.
-                finding = {"question": question, "diagnosis": "missing", "language": lang, "audience": None}
-                matched = (await group_findings([finding], candidates))[0].get("group_question_key")
-                if matched is None or matched == base_key:
-                    return
-
-                async with tenant_scoped_session(org_int_id) as session:
-                    result = await session.execute(
-                        update(PortalRetrievalGap).where(PortalRetrievalGap.id == gap_id).values(question_key=matched)
-                    )
-                    if result.rowcount == 0:  # type: ignore[attr-defined]
-                        raise RuntimeError(f"gap_grouping UPDATE matched 0 rows (gap_id={gap_id}, org_id={org_int_id})")
-                    await session.commit()
-
-                # Ids only: the key carries the normalized question, which has no business in an app log.
-                logger.info("gap_grouping_merged", gap_id=gap_id, org_id=org_int_id)
+                matched = await fold_into_open_group(
+                    org_id=org_int_id,
+                    kb_slug=kb_slug,
+                    question=question,
+                    language=lang,
+                    audience=None,
+                    base_key=base_key,
+                )
+                if matched is not None:
+                    # Ids only: the key carries the normalized question, which has no business in an app log.
+                    logger.info("gap_grouping_merged", gap_id=gap_id, org_id=org_int_id)
             except Exception:
                 logger.exception("gap_grouping_failed", gap_id=gap_id)
 
@@ -259,3 +228,65 @@ async def record_gap_event(
         )
 
     return GapEventResult("created", org.id, gap.id)
+
+
+async def fold_into_open_group(
+    *,
+    org_id: int,
+    kb_slug: str,
+    question: str,
+    language: str | None,
+    audience: str | None,
+    base_key: str,
+) -> str | None:
+    """Ask the grouping judge whether the group on ``base_key`` is the same
+    need as an existing open group, and fold it onto that group's key when the
+    judge verifies it. Returns the key it was folded onto, or None.
+
+    Shared by the write path (one new row, in the background) and the one-off
+    regroup script over existing rows (scripts/regroup_open_gaps.py), so both
+    merge by the same rule. Reuses ``support_gap_grouping.group_findings``
+    rather than a second mechanism.
+
+    The candidate snapshot is read before the model call, so a group closed in
+    between can still receive this group and reappear as open. That is
+    accepted: without the merge the same rows would sit in the list as their
+    own open group anyway, so the user has one thing to close either way, and
+    no row is closed or lost by the race.
+    """
+    from app.core.database import tenant_scoped_session
+    from app.services.support_cases import _open_group_candidates
+    from app.services.support_gap_grouping import group_findings
+
+    async with tenant_scoped_session(org_id) as session:
+        candidates = await _open_group_candidates(
+            session, org_id=org_id, kb_slug=kb_slug, exclude_case_id=None, exclude_question_key=base_key
+        )
+    if not candidates:
+        return None
+
+    # Diagnosis is a placeholder: chat/widget/MCP telemetry has no content
+    # diagnosis, and the grouping judge no longer matches on it; it only needs
+    # a value outside _NON_GAP_DIAGNOSES so the row is treated as an actual gap.
+    finding = {"question": question, "diagnosis": "missing", "language": language, "audience": audience}
+    matched = (await group_findings([finding], candidates))[0].get("group_question_key")
+    if matched is None or matched == base_key:
+        return None
+
+    # Every open row on the key moves, not only the asking row: rows on the same
+    # key are the same question, and leaving them behind would split it over two
+    # groups. Closed rows keep their key, so a fold never rewrites closed history.
+    async with tenant_scoped_session(org_id) as session:
+        result = await session.execute(
+            update(PortalRetrievalGap)
+            .where(
+                PortalRetrievalGap.org_id == org_id,
+                PortalRetrievalGap.question_key == base_key,
+                PortalRetrievalGap.resolved_at.is_(None),
+            )
+            .values(question_key=matched)
+        )
+        if result.rowcount == 0:  # type: ignore[attr-defined]
+            raise RuntimeError(f"gap_grouping UPDATE matched 0 rows (org_id={org_id})")
+        await session.commit()
+    return matched
