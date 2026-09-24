@@ -478,3 +478,148 @@ async def test_yes_to_the_assistants_question_still_searches(pipeline):
     )
 
     assert len(recorder.retrieve_bodies) == 1
+
+
+# --- user-provided content (slice 5b) ---------------------------------------
+#
+# An attachment (image/file part, or a converted PDF) is the user's own input:
+# it reaches the model on every surface but the widget (no anonymous upload),
+# never the retrieval query, and a Strict turn may read it even with zero
+# knowledge-base evidence instead of refusing without a model call.
+
+_SCREENSHOT_URL = "https://example.com/screenshot.png"
+
+
+def _image_turn(text: str) -> list[dict]:
+    return [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": text},
+                {"type": "image_url", "image_url": {"url": _SCREENSHOT_URL}},
+            ],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_internal_turn_with_image_keeps_it_for_the_model_text_only_for_retrieval(internal_pipeline):
+    recorder = internal_pipeline(_Recorder({"evidence_pack": _evidence_pack(), "confidence_band": "high"}))
+
+    await _chat(
+        _auth(key_id="key-internal", permissions=INTERNAL_KEY),
+        _internal(),
+        _image_turn("Wat staat op deze screenshot?"),
+    )
+
+    model_messages = recorder.model_bodies[-1]["messages"]
+    user_message = next(m for m in model_messages if m["role"] == "user" and isinstance(m["content"], list))
+    assert {"type": "image_url", "image_url": {"url": _SCREENSHOT_URL}} in user_message["content"]
+    assert recorder.retrieve_bodies[0]["query"] == "Wat staat op deze screenshot?"
+
+
+@pytest.mark.asyncio
+async def test_widget_turn_with_image_drops_it_from_the_model_body(pipeline):
+    recorder = pipeline(_Recorder({"evidence_pack": _evidence_pack(), "confidence_band": "high"}))
+
+    await _chat(
+        _auth(key_id="wgt_golden"),
+        ChatProfile(surface="widget"),
+        _image_turn("Wat staat op deze screenshot?"),
+    )
+
+    model_messages = recorder.model_bodies[-1]["messages"]
+    assert all(not isinstance(m["content"], list) for m in model_messages)
+    assert recorder.retrieve_bodies[0]["query"] == "Wat staat op deze screenshot?"
+
+
+@pytest.mark.asyncio
+async def test_strict_zero_chunks_with_attachment_calls_the_model_instead_of_refusing(internal_pipeline):
+    recorder = internal_pipeline(
+        _Recorder(
+            {"evidence_pack": _evidence_pack(0), "confidence_band": "unknown"},
+            model_text="Op de screenshot staat: Modus Open.",
+        )
+    )
+
+    result = await _chat(
+        _auth(key_id="key-internal", permissions=INTERNAL_KEY),
+        _internal(),
+        _image_turn("Wat staat op deze screenshot?"),
+    )
+
+    assert recorder.model_bodies, "the model must be called, not refused up front"
+    assert "Op de screenshot staat: Modus Open." in result["choices"][0]["message"]["content"]
+
+
+@pytest.mark.asyncio
+async def test_strict_zero_chunks_converted_pdf_calls_the_model_instead_of_refusing(internal_pipeline):
+    recorder = internal_pipeline(
+        _Recorder(
+            {"evidence_pack": _evidence_pack(0), "confidence_band": "unknown"},
+            model_text="Het document beschrijft optie Open.",
+        )
+    )
+
+    result = await _chat(
+        _auth(key_id="key-internal", permissions=INTERNAL_KEY),
+        _internal(),
+        [
+            {
+                "role": "user",
+                "content": (
+                    "Wat staat in dit document?\n\n"
+                    "[Uploaded PDF content]\n"
+                    "Filename: handleiding.pdf\n\n"
+                    "De modus heet Open.\n"
+                    "[End uploaded PDF content]"
+                ),
+            }
+        ],
+    )
+
+    assert recorder.model_bodies, "the model must be called, not refused up front"
+    assert "Het document beschrijft optie Open." in result["choices"][0]["message"]["content"]
+
+
+@pytest.mark.asyncio
+async def test_strict_zero_chunks_screenshot_word_without_attachment_still_refuses(internal_pipeline):
+    from klai_chat_prompts import no_citable_sources_message
+
+    recorder = internal_pipeline(_Recorder({"evidence_pack": _evidence_pack(0), "confidence_band": "unknown"}))
+
+    result = await _chat(
+        _auth(key_id="key-internal", permissions=INTERNAL_KEY),
+        _internal(),
+        [{"role": "user", "content": "Wat staat op deze screenshot?"}],
+    )
+
+    assert result["choices"][0]["message"]["content"] == no_citable_sources_message("nl", suggest_open_mode=True)
+    assert recorder.model_bodies == []
+
+
+@pytest.mark.asyncio
+async def test_strict_zero_chunks_attachment_answer_is_not_refused_or_repaired(internal_pipeline):
+    from klai_chat_prompts import no_citable_sources_message
+
+    recorder = internal_pipeline(
+        _Recorder(
+            {"evidence_pack": _evidence_pack(0), "confidence_band": "unknown"},
+            model_text="Op de screenshot staat een foutmelding over inloggen.",
+        )
+    )
+
+    result = await _chat(
+        _auth(key_id="key-internal", permissions=INTERNAL_KEY),
+        _internal(),
+        _image_turn("Wat staat op deze screenshot?"),
+    )
+
+    content = result["choices"][0]["message"]["content"]
+    assert "Op de screenshot staat een foutmelding over inloggen." in content
+    assert no_citable_sources_message("nl", suggest_open_mode=True) not in content
+    # No grounding check or answer judge call: only the query rewrite shows up
+    # beside the answer call itself, proving the repair step never ran.
+    assert len(recorder.rewrite_bodies) == 1
+
+    assert len(recorder.retrieve_bodies) == 1
