@@ -13,9 +13,11 @@ owner-only file, so a fold can be undone by hand. A fold only moves open rows,
 so that covers everything the run changes. The file holds normalized customer
 questions: keep it on the server or somewhere private, never in this repository.
 
-Usage (inside the portal-api container, which has the database and LiteLLM):
+Usage (inside the portal-api container, which has the database and LiteLLM).
+Run it as a module: invoked as a file, scripts/ sits first on sys.path and the
+``app`` package cannot be imported.
     docker exec -w /repo/klai-portal/backend klai-core-portal-api-1 \\
-        python scripts/regroup_open_gaps.py --org-slug <slug> --snapshot /tmp/regroup-<slug>.json
+        python -m scripts.regroup_open_gaps --org-slug <slug> --snapshot /tmp/regroup-<slug>.json
 """
 
 from __future__ import annotations
