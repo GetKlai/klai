@@ -224,7 +224,9 @@ def _root_key(key: str, matched: dict[int, str], candidates_by_key: dict[str, di
     return key
 
 
-async def group_findings(findings: list[dict], candidates: list[dict]) -> list[dict]:
+async def group_findings(
+    findings: list[dict], candidates: list[dict], *, delegated_org_id: str | None = None
+) -> list[dict]:
     """Return copies of ``findings``, stamping verified matches with ``group_question_key``.
 
     Stateless: no DB writes, no authorization; the caller scopes ``candidates`` to
@@ -265,13 +267,18 @@ async def group_findings(findings: list[dict], candidates: list[dict]) -> list[d
             }
             if not any(_candidates_for(index, finding, cohort_candidates) for index, finding in cohort):
                 continue
-            raw = await _call_llm(system=GROUPING_SYSTEM_PROMPT, user=_build_prompt(cohort, cohort_candidates))
+            raw = await _call_llm(
+                system=GROUPING_SYSTEM_PROMPT,
+                user=_build_prompt(cohort, cohort_candidates),
+                delegated_org_id=delegated_org_id,
+            )
             proposed = _parse_assignments(raw, cohort, candidates_by_key)
             if not proposed:
                 continue
             raw = await _call_llm(
                 system=VERIFICATION_SYSTEM_PROMPT,
                 user=_build_verification_prompt(cohort, proposed, candidates_by_key),
+                delegated_org_id=delegated_org_id,
             )
             verified = _parse_assignments(raw, cohort, candidates_by_key)
             matched.update({index: key for index, key in proposed.items() if verified.get(index) == key})

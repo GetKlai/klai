@@ -1910,7 +1910,14 @@ async def chat_completions(  # noqa: C901
         if support_mode:
             (retrieval_result, retrieval_ms), (turn_judgement, turn_judge_ms) = await asyncio_gather(
                 _timed(retrieval),
-                _timed(turn_judge.judge_turn(request.messages, settings, off_topic_subjects=off_topic_subjects)),
+                _timed(
+                    turn_judge.judge_turn(
+                        request.messages,
+                        settings,
+                        off_topic_subjects=off_topic_subjects,
+                        delegated_org_id=auth.zitadel_org_id,
+                    )
+                ),
             )
             turn_timing = {"started_at": turn_started, "retrieval_ms": retrieval_ms, "turn_judge_ms": turn_judge_ms}
         else:
@@ -2030,7 +2037,9 @@ async def chat_completions(  # noqa: C901
             model=request.model,
         )
         language = resolve_conversation_language(request.messages).language
-        referral = await off_topic_referral(_last_user_message(request.messages) or "", language, settings)
+        referral = await off_topic_referral(
+            _last_user_message(request.messages) or "", language, settings, delegated_org_id=auth.zitadel_org_id
+        )
         reply = referral or off_topic_reply
         logger.info(
             "partner_chat_off_topic",
@@ -2067,7 +2076,7 @@ async def chat_completions(  # noqa: C901
     # not when the visitor asked for a person or is frustrated: there the reply
     # is the appointment, and not on a conversational turn.
     if support_mode and not broad_turn and escalation is None and not turn_judge.is_conversational(scope):
-        plan = await answer_plan(request.messages, chunks, settings)
+        plan = await answer_plan(request.messages, chunks, settings, delegated_org_id=auth.zitadel_org_id)
         if plan:
             system_prompt += plan
             # The reply will end on that question, so the turn is clarifying
@@ -2164,6 +2173,7 @@ async def chat_completions(  # noqa: C901
             answer_signals=answer_signals if audit_ready else None,
             signal_chunks=chunks,
             turn_timing=turn_timing,
+            delegated_org_id=auth.zitadel_org_id,
         )
         if audit_ready:
             streaming_gen = _audit_streaming_wrapper(
@@ -2208,6 +2218,7 @@ async def chat_completions(  # noqa: C901
         answer_signals=answer_signals if audit_ready else None,
         signal_chunks=chunks,
         turn_timing=turn_timing,
+        delegated_org_id=auth.zitadel_org_id,
     )
     if knowledge is not None and not knowledge.include_sources:
         for choice in result.get("choices") or []:

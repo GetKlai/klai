@@ -1747,3 +1747,23 @@ async def test_master_key_without_a_delegation_is_still_not_enforced(monkeypatch
     out = await _pre_call(mod, _admin_key(), data)
 
     assert _TELEMETRY_IBAN in str(out["messages"])
+
+
+@pytest.mark.asyncio
+async def test_a_delegated_master_key_stream_is_masked_and_restored(monkeypatch):
+    """portal-api streams the widget answer on the master key with the tenant
+    named in metadata: the provider gets the placeholder, the visitor the value."""
+    mod = _load_telemetry_enforcer(monkeypatch)
+    data = _iban_request(mod, monkeypatch, {"_klai_delegated_org_id": _TELEMETRY_ORG})
+    data["stream"] = True
+    key = _admin_key()
+
+    out = await _pre_call(mod, key, data)
+    assert _TELEMETRY_IBAN not in str(out["messages"])
+
+    chunks = await _drain(
+        mod.klai_pii_enforcer.async_post_call_streaming_iterator_hook(
+            key, _achunks("Betaal op <IBAN_", "CODE_1> graag."), out
+        )
+    )
+    assert _all_content(chunks) == f"Betaal op {_TELEMETRY_IBAN} graag."

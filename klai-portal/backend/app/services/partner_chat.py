@@ -75,6 +75,7 @@ from app.services.citations import (
 )
 from app.services.gap_classification import classify_gap
 from app.services.gap_events import record_gap_event
+from app.services.litellm_delegation import with_delegated_org
 from app.services.llm_safety_adapter import (
     check_context_text,
     check_model_output,
@@ -1989,6 +1990,7 @@ async def _judge_composed_answer(
     conversational: bool,
     clarity: Literal["clear", "ambiguous"] | None,
     weak_sources: bool = False,
+    delegated_org_id: str | None = None,
 ) -> tuple[str, list[dict], dict[str, Any]]:
     """SPEC-RAG-ANSWER-JUDGES-001 REQ-2/REQ-3: the answer judge, then the one decision.
 
@@ -2029,13 +2031,20 @@ async def _judge_composed_answer(
     # its own 2.1 s median once and nothing on top of the light judge's 0.4 s.
     checks_started = time.perf_counter()
     judgement, grounding = await asyncio.gather(
-        judge_answer(messages=messages, draft=safe_text, articles=articles, settings=settings),
+        judge_answer(
+            messages=messages,
+            draft=safe_text,
+            articles=articles,
+            settings=settings,
+            delegated_org_id=delegated_org_id,
+        ),
         check_grounding(
             question=_visitor_question(messages),
             draft=safe_text,
             articles=articles,
             settings=settings,
             org_id=org_id,
+            delegated_org_id=delegated_org_id,
         ),
     )
     checks_ms = _elapsed_ms(checks_started)
@@ -2126,6 +2135,7 @@ async def _judge_composed_answer(
             org_id=org_id,
             answer_signals=answer_signals,
             response_language=response_language,
+            delegated_org_id=delegated_org_id,
         )
     return content, sources, decision
 
@@ -2151,6 +2161,7 @@ async def _repair_unsupported_statements(
     org_id: int | str | None,
     answer_signals: dict[str, Any] | None,
     response_language: str | None,
+    delegated_org_id: str | None,
 ) -> tuple[str, list[dict], dict[str, Any]]:
     """Remove the statements the articles do not support, keep the rest.
 
@@ -2160,7 +2171,9 @@ async def _repair_unsupported_statements(
     and damaged two. A failed repair keeps the composed answer, which is what
     the visitor got before this check existed.
     """
-    repaired = await repair_answer(draft=content, unsupported=grounding.unsupported, settings=settings)
+    repaired = await repair_answer(
+        draft=content, unsupported=grounding.unsupported, settings=settings, delegated_org_id=delegated_org_id
+    )
     if repaired not in (None, NOTHING_LEFT):
         # The repair model returns free text, so it passes the same two guards
         # the composer's output already passed: the link and citation stripper,
@@ -2284,6 +2297,7 @@ async def _chat_completion_streaming_with_composed_citations(
     signal_chunks: list[dict] | None = None,
     conversation: list[dict] | None = None,
     turn_timing: dict[str, float] | None = None,
+    delegated_org_id: str | None = None,
 ) -> AsyncGenerator[bytes]:
     """Collect text, compose deterministic citations, then stream once.
 
@@ -2326,12 +2340,15 @@ async def _chat_completion_streaming_with_composed_citations(
             async with client.stream(
                 "POST",
                 chat_url,
-                json={
-                    "model": model,
-                    "messages": augmented_messages,
-                    "temperature": temperature,
-                    "stream": True,
-                },
+                json=with_delegated_org(
+                    {
+                        "model": model,
+                        "messages": augmented_messages,
+                        "temperature": temperature,
+                        "stream": True,
+                    },
+                    delegated_org_id,
+                ),
                 headers={
                     "Authorization": f"Bearer {settings.litellm_master_key}",
                     **get_trace_headers(),
@@ -2414,6 +2431,7 @@ async def _chat_completion_streaming_with_composed_citations(
             conversational=conversational,
             clarity=clarity,
             weak_sources=weak_sources,
+            delegated_org_id=delegated_org_id,
         )
         content = without_dashes(content, helpdesk=support_mode)
         decision.update({"sentiment": sentiment} if support_mode and sentiment else {})
@@ -2914,7 +2932,9 @@ async def retrieve_context(
     conversation_history = _build_conversation_history(messages)
     # A first question travels with two paraphrases; a follow-up has its
     # history to search on instead (query_paraphrase.py has the numbers).
-    query_variants = await first_question_variants(messages, query, settings, support_mode=support_mode)
+    query_variants = await first_question_variants(
+        messages, query, settings, support_mode=support_mode, delegated_org_id=zitadel_org_id
+    )
 
     retrieve_body: dict = {
         # Clipped below the 8000-char retrieval-api hard limit (SPEC-SEC-010
@@ -3103,6 +3123,7 @@ async def chat_completion_non_streaming(
     answer_signals: dict[str, Any] | None = None,
     signal_chunks: list[dict] | None = None,
     turn_timing: dict[str, float] | None = None,
+    delegated_org_id: str | None = None,
 ) -> dict:
     """Forward to LiteLLM and return complete response as dict.
 
@@ -3139,12 +3160,15 @@ async def chat_completion_non_streaming(
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
                 chat_url,
-                json={
-                    "model": model,
-                    "messages": augmented_messages,
-                    "temperature": temperature,
-                    "stream": False,
-                },
+                json=with_delegated_org(
+                    {
+                        "model": model,
+                        "messages": augmented_messages,
+                        "temperature": temperature,
+                        "stream": False,
+                    },
+                    delegated_org_id,
+                ),
                 headers={
                     "Authorization": f"Bearer {settings.litellm_master_key}",
                     **get_trace_headers(),
@@ -3252,6 +3276,7 @@ async def chat_completion_non_streaming(
                     conversational=conversational,
                     clarity=clarity,
                     weak_sources=weak_sources,
+                    delegated_org_id=delegated_org_id,
                 )
                 rendered_content = without_dashes(rendered_content, helpdesk=support_mode)
                 answer_judge_ms = _elapsed_ms(judge_started)
@@ -3356,6 +3381,7 @@ async def chat_completion_streaming(
     answer_signals: dict[str, Any] | None = None,
     signal_chunks: list[dict] | None = None,
     turn_timing: dict[str, float] | None = None,
+    delegated_org_id: str | None = None,
 ) -> AsyncGenerator[bytes]:
     """Stream LiteLLM SSE response with backend-managed KB citations.
 
@@ -3410,6 +3436,7 @@ async def chat_completion_streaming(
             signal_chunks=signal_chunks,
             conversation=messages,
             turn_timing=turn_timing,
+            delegated_org_id=delegated_org_id,
         ):
             yield chunk
         return
@@ -3430,6 +3457,7 @@ async def chat_completion_streaming(
         citation_source_metadata=citation_source_metadata,
         citation_output=citation_output,
         chunks_injected=len(citation_chunks or []),
+        delegated_org_id=delegated_org_id,
     ):
         yield chunk
 
@@ -3462,6 +3490,7 @@ async def _chat_completion_streaming_sanitized(  # noqa: C901 - SSE state machin
     citation_source_metadata: dict[str, dict[str, str]] | None,
     citation_output: CitationOutput,
     chunks_injected: int | None = None,
+    delegated_org_id: str | None = None,
 ) -> AsyncGenerator[bytes]:
     """Legacy partner streaming path with URL sanitization and linked citations.
 
@@ -3490,12 +3519,15 @@ async def _chat_completion_streaming_sanitized(  # noqa: C901 - SSE state machin
         async with client.stream(
             "POST",
             f"{litellm_url}/v1/chat/completions",
-            json={
-                "model": model,
-                "messages": augmented_messages,
-                "temperature": temperature,
-                "stream": True,
-            },
+            json=with_delegated_org(
+                {
+                    "model": model,
+                    "messages": augmented_messages,
+                    "temperature": temperature,
+                    "stream": True,
+                },
+                delegated_org_id,
+            ),
             headers={
                 "Authorization": f"Bearer {settings.litellm_master_key}",
                 **get_trace_headers(),
