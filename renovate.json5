@@ -238,6 +238,21 @@
     },
     {
       description:
+        'Twenty CRM never automerges, for the same reason as Vexa: a bump is \
+        not self-contained. The image entrypoint runs `upgrade` on every start, \
+        so merging a new tag is a schema migration of the CRM, and Twenty only \
+        cross-upgrades from the first entry of TWENTY_PREVIOUS_VERSIONS \
+        onward. A pin below that floor needs an intermediate version first, \
+        which Renovate cannot know; as a plain minor it would have jumped \
+        v1.20.0 straight to v1.23.9 and let the entrypoint try. Its own group \
+        so a pending CRM bump never holds back images that can merge alone. \
+        See SPEC-INFRA-COOLIFY-EXIT-001 T2.',
+      matchPackageNames: ['twentycrm/twenty'],
+      groupName: 'Twenty CRM',
+      automerge: false,
+    },
+    {
+      description:
         'A stateful engine may automerge a patch but never a minor. Within a \
         series a patch is a bugfix against the same on-disk format; a minor \
         is a new series, and for these images that means a migration order \
