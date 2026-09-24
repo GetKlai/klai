@@ -2549,7 +2549,7 @@ services:
   # 3.0.3 -> 3.4.0 in one run, 12 migrations), so no stepping is needed.
   umami:
     logging: *log-rotation
-    image: ghcr.io/umami-software/umami:3.0.3
+    image: ghcr.io/umami-software/umami:3.4.0
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://umami:${UMAMI_POSTGRES_PASSWORD}@umami-postgres:5432/umami
