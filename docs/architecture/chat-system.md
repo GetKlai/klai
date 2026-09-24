@@ -20,6 +20,8 @@ Er zijn **twee chatpaden** met elk hun eigen beslislogica. Ze delen alleen de zo
 | Mens aanbieden | bestaat niet | afspraakknop bij weigering, deelantwoord, escalatie |
 | Wat er per beurt bewaard wordt | alleen logregels (30 dagen) | `widget_messages.answer_signals` in de database |
 
+**Twee paden is de uitzondering, niet de regel.** Het doel is één pijplijn ([plan §7](chat-quality-history-and-plan.md#7-plan-goedgekeurd-24-september-2026)). Een wijziging aan het chatpad zegt in de PR per beslissing die ze raakt: *gedeeld*, of *bewust apart, omdat …*. Geldige redenen om apart te zijn: de ingang en identiteit (teamkey tegenover anonieme bezoeker), de modi (Strict/Open tegenover support/breed), de afspraakknop tegenover de bronnenvoettekst, en het distilleren van geplakte correspondentie. De rest van de verschillen in de tabel hierboven is toevallig ontstaan en wordt samengevoegd; "het was al zo" is geen reden.
+
 Modelaliassen (`deploy/litellm/config.yaml`): `klai-primary` en `klai-fast` zijn allebei `mistral-small-2603` (`:7,29`), `klai-medium` is `mistral-medium-3.5` (`:70`), `klai-large` is `mistral-large-2512` (`:47`). Bij een quotafout vallen primary en fast terug op medium (`:114`). LiteLLM-timeout 120 s met 1 retry (`:122,125`).
 
 ---

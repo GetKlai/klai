@@ -148,7 +148,7 @@ Onderzoek van 24 september, bronnen 2024-2026. Dit bevestigt de lijn die het log
 ### 4.2 Minder verzonnen uitspraken
 - **Letterlijker overnemen en eerst de bronzinnen kiezen** vermindert verzinsels ([CopyPasteLLM](https://arxiv.org/abs/2510.00508); [Attribute First, then Generate, ACL 2024](https://arxiv.org/abs/2403.17104)). Promptinstructies helpen weinig ([Trust-Align, ICLR 2025](https://arxiv.org/abs/2409.11242)).
 - **Meer context is niet beter**: relevant ogende maar foute passages trekken het model mee ([Long-Context LLMs Meet RAG](https://arxiv.org/abs/2410.05983)).
-- **Langere antwoorden gaan samen met meer verzinsels** (samenhang op de [Vectara-leaderboard](https://github.com/vectara/hallucination-leaderboard)); bij Klai stegen verzinsels van 4 naar 9 toen antwoorden langer moesten.
+- **Langere antwoorden gaan samen met meer verzinsels** (samenhang op de [Vectara-leaderboard](https://github.com/vectara/hallucination-leaderboard)); bij Klai stegen verzinsels van 4 naar 9 toen er een vervolgvraag bij het antwoord moest (AJ 2.10).
 - **Controle per uitspraak is de standaard** ([FActScore](https://arxiv.org/abs/2305.14251), [MiniCheck](https://arxiv.org/abs/2404.10774)), wat Klai al doet.
 
 ### 4.3 Meten
@@ -195,75 +195,72 @@ Gevonden door de code naast de documenten te leggen (volledige lijst met ankers 
 
 ---
 
-## 7. Plan (ter goedkeuring)
+## 7. Plan (goedgekeurd 24 september 2026)
 
-### 7.1 Uitgangspunten
+### 7.1 Uitgangspunt: één chatpijplijn
 
-1. **Meer context over de vraag geeft een beter antwoord.** De richting is gemeten (AJ 2.25) en past bij het onderzoek; de winst komt uit de goede vraag op het goede moment, niet uit een instructie.
-2. **Weet het systeem het niet, dan geen slecht antwoord.** Twee gevallen die verschillend behandeld moeten worden: de kennis is er maar de vraag is onduidelijk, dan één gerichte vraag; de kennis is er niet, dan eerlijk zeggen dat het er niet staat, met een route naar een mens. Doorvragen lost het tweede niet op.
-3. **Die beslissing valt in een eigen stap na het zoeken**, op basis van wat er gevonden is, niet als instructie aan het antwoordmodel en niet op de zekerheidsband.
-4. **Bouwen en vergelijken met het oude, niet schaduwdraaien.** Elke wijziging wordt herspeeld op echte historische vragen tegen de huidige code, beoordeeld op de beurt ná een eventuele vraag, in twee rondes. Wijst het beide keren dezelfde kant op, dan gaat het live voor iedereen, en daarna volgen we het productiesignaal.
-5. **Hergebruik wat bewezen is.** Wat op de widget gewonnen heeft, gaat eerst naar de interne chat, via gedeelde code.
+De interne chat en de widget hebben elk hun eigen beslislogica, en die twee paden zijn de plek waar verbeteringen en kennis steeds uit elkaar lopen. Het doel is **één pijplijn**, met een tweede pad alleen waar de gebruiker of de modus dat echt vereist. Een verbouwing mag als die code weghaalt; complexiteit toevoegen om twee paden tegelijk te bedienen mag niet.
 
-### 7.2 Fase 0: fundament (ongeveer 3 dagen)
+**Toets bij elke stap.** Elke wijziging aan het chatpad zegt in de PR, per beslissing die ze raakt: *gedeeld*, of *bewust apart, omdat …*. "Het was al zo" is geen reden. De geldige redenen staan in §7.2; een nieuwe reden komt daar eerst bij, met akkoord.
 
-Zonder deze stap is elke volgende meting weer te klein of op de verkeerde route.
+### 7.2 Wat echt verschilt en wat toevallig dubbel is
 
-- **0.1 Het herspeelgereedschap in de repo.** De metingen van AJ 2.46-2.48 draaien met gereedschap buiten de repo. Dat wordt een operatorscript in `klai-portal/backend/scripts/` voor beide paden: historische widgetgesprekken én LibreChat-vragen (tien keer zoveel) opnieuw door de huidige code, met het zoeken zoals het nu scoort. Een gesimuleerde bezoeker die alleen weet wat de echte bezoeker later zei, in drie persona's (coöperatief, kortaf, ongeduldig). Het oordeel gaat over de beurt ná een vraag, blind in beide volgordes, in twee rondes. Beslissen vanaf ongeveer 85 niet-gelijke paren; kleinere sets alleen om te zien of een ingreep aankomt.
-- **0.2 Een menselijke ijkset van ongeveer 50 gesprekken** (nu 17), zodat we weten hoe vaak de LLM-rechter het met een inhoudseigenaar eens is.
-- **0.3 Zichtbaar maken wat pad A beslist.** De routerbeslissing op warning-niveau (één regel). Per beurt één beslisregel met band, score, verduidelijkt ja/nee, model, meervoudige vraag en grounding-uitkomst, zodat de interne chat dezelfde meetbaarheid krijgt als `answer_signals` op de widget. Op de widget de score opslaan waarop de band beslist, naast `top_score`.
-- **0.4 De kaart actueel houden.** Een test die faalt als er in het chatpad een LLM-aanroep bijkomt of verdwijnt zonder dat [chat-system.md](chat-system.md) meeverandert, en een regel die de kaart laat laden zodra iemand de chatcode aanraakt.
+**Echt verschillend** (blijft configuratie of een laatste stap, geen aparte beslislogica):
 
-**Klaar als:** het script draait op beide paden en reproduceert de uitkomst van AJ 2.48 op dezelfde beurten; de routerbeslissing en de beslisregel staan in de logs.
+| Verschil | Waarom |
+|---|---|
+| Ingang en identiteit: LibreChat met teamkey en gebruiker, tegenover een anonieme bezoeker met widgettoken | Andere gebruikers en andere autorisatie |
+| Modi: Strict en Open (intern), support en brede modus met toestemming (widget) | Andere afspraak over wat buiten de kennisbank mag |
+| Afspraakknop en escalatie op de widget; bronnenvoettekst en "Agent activiteit" intern | Een bezoeker kan naar een mens, een medewerker heeft de bronnen nodig |
+| Geplakte correspondentie herkennen en distilleren | Alleen medewerkers plakken klantmails; blijft een stap die alleen bij detectie afgaat |
+| Antwoordlengte | Komt uit de vragen (volledige procedures voor medewerkers), niet uit aparte code |
 
-### 7.3 Fase 1: de interne chat op het niveau van de widget (ongeveer een week)
+**Toevallig dubbel** (wordt één implementatie):
 
-Dit is de grootste bekende winst: vier verbeteringen die op de widget gewonnen hebben, ontbreken intern.
+| Beslissing | Nu |
+|---|---|
+| Een zoekvraag maken | Drie manieren: herschrijven (intern, elke beurt), parafraseren (widget, eerste vraag), coreferentie (zoekdienst, widget-vervolgvragen) |
+| Doorvragen | Intern een instructie bij een lage band; widget een aparte stap die de vraag uit de artikelen kiest |
+| Zwakke bronnen | Beide paden berekenen het, alleen de widget handelt ernaar |
+| Beslissen wat de gebruiker krijgt | Twee beslisfuncties (`klai_kb_answer_policy` en `decide_answer`) |
+| Controle en reparatie van onbewezen uitspraken | Prompt en drempel gedeeld, twee aanroepplekken met eigen regels; Open intern ongecontroleerd |
+| Vastleggen per beurt | Widget in `answer_signals`, intern alleen logregels |
+| Modelkeuze | Eén router, gebouwd op interne signalen, die op de widget half werkt |
 
-- **1.1 Het antwoordplan (`answer_plan`) ook op pad A**, in plaats van de verduidelijkingsinstructie bij een lage band. Gedeelde code via `klai-libs`.
-- **1.2 De zwakke-bronnenregel ook op pad A.** In Strict: eerlijk zeggen dat het niet in de kennisbank staat; in Open: dat zeggen en dan duidelijk gemarkeerd uit algemene kennis antwoorden.
-- **1.3 De twee herformuleringen van de eerste vraag ook op pad A**, naast de bestaande herschrijfaanroep.
-- **1.4 Grounding-controle in Open ten minste meten** (nu niets); daarna op basis van de cijfers beslissen of de reparatie ook daar hoort.
+### 7.3 Stappen
 
-Elk onderdeel apart herspelen op LibreChat-vragen tegen de huidige code; live alleen bij twee rondes dezelfde kant op. **Klaar als:** 1.1-1.3 winnen of zijn met cijfers afgewezen, en 1.4 levert een percentage.
+**Stap 0: kan de interne chat door de widgetpijplijn?** (onderzoek, geen code) Portal-api biedt al een OpenAI-compatibele endpoint. Uitzoeken, in de code en niet op aanname, of LibreChat daar via een intern profiel doorheen kan: streaming, tool-aanroepen en MCP, bijlagen, titels, kennisbankkeuze en Strict/Open per gebruiker, authenticatie, en wat de LiteLLM-hook nu doet dat de widgetpijplijn niet kan. Uitkomst: welke doelarchitectuur, wat de hook overhoudt (verwachting: modelroutering en PII-maskering), en wat verdwijnt.
 
-### 7.4 Fase 2: één beslisstap na het zoeken, op beide paden (ongeveer een week)
+**Stap 1: klein onderhoud** (los van de rest, ongeveer een dag). De modelkeuze zichtbaar in de logs; uitzoeken waarom 8 van 107 herschrijfaanroepen mislukken en de oorzaak oplossen; misleidend codecommentaar corrigeren.
 
-Jouw principe volledig uitgewerkt, voortbouwend op het antwoordplan.
+**Stap 2: de pijplijnen samenvoegen**, in de vorm die stap 0 aanwijst. De interne verschillen uit §7.2 worden configuratie van de ene pijplijn; de dubbele beslislogica verdwijnt uit de hook. Per beslissing uit de tabel "toevallig dubbel" één implementatie. Kan de interne chat niet door dezelfde endpoint, dan wordt de beslislogica één gedeelde module die beide ingangen aanroepen, zonder extra lagen.
 
-- **2.1 Het antwoordplan krijgt een vierde vraag mee: "staat het antwoord in deze passages?"**, met als uitkomst volledig, gedeeltelijk of niet. Dat hoort in dezelfde stap, maar niet zonder kosten: het antwoordplan ziet nu hooguit 8 passages van 400 tekens binnen 2 s, en dit oordeel heeft de volledige passages nodig, dus invoer en tijdsbudget veranderen en worden meegemeten. Het vervangt de vaste grens "alle bronnen < 0,4" en de band als trigger; de band blijft als meetpunt. De beslistabel:
-  - *volledig*: antwoorden, ook als de vraag kort is;
-  - *gedeeltelijk*: beantwoorden wat er staat en precies één gerichte vraag naar wat ontbreekt;
-  - *dubbelzinnig* (bestaande `diagnose`/`choose`): één vraag met opties uit de artikelen;
-  - *niet*: eerlijk "staat er niet", met de afspraakknop op de widget en intern met wat de kennisbank wél dekt.
-  Eerst ijken tegen ongeveer 100 door een mens gelabelde vraag-plus-passages (precisie en recall per uitkomst), dan herspelen.
-- **2.2 Na het antwoord op een verduidelijkingsvraag: samenvoegen en opnieuw zoeken.** Vraag plus antwoord worden één zelfstandige zoekvraag. Eerst meten wat de bestaande herschrijving en coreferentie daar nu al van maken.
-- **2.3 Magere eerste vragen** (een kwart) herkennen met de regel "zes woorden of minder" plus de spreiding van de gevonden artikelen, niet met een LLM-oordeel over vaagheid.
+**Stap 3: één manier om een zoekvraag te maken**, gekozen op meting uit de drie bestaande.
 
-**Klaar als:** de beslisstap wint op het herspelen van beide paden, en op echt verkeer daarna het aandeel "juiste vervolgstap" niet daalt en het aandeel onbewezen uitspraken niet stijgt.
+**Stap 4: modelkeuze meten**: small, medium en large op dezelfde vragen met dezelfde passages. Daarna beslissen of de router blijft zoals hij is.
 
-### 7.5 Fase 3: minder verzonnen uitspraken (ongeveer een week)
+**Later, alleen als de meting erom vraagt:** het oordeel "staat het antwoord in de passages?" in het antwoordplan; kortere antwoorden door eerst de bronzinnen te kiezen; banddrempels bijstellen.
 
-- **3.1 Kortere widgetantwoorden: eerst 1 tot 3 bronzinnen kiezen, dan alleen daaruit schrijven**, voor procedure- en prijsvragen. Meten per uitspraak én per antwoord, en of het doelfeit er nog in staat, zodat korter niet alleen wint door minder te zeggen.
-- **3.2 Modelkeuze meten op vaste passages.** Small, medium en large op dezelfde ongeveer 150 vragen met exact dezelfde passages. Tot die uitslag verandert de router niet, en komt er geen routering op moeilijkheid.
-- **3.3 "De reparatie haalde het meeste weg"** wordt een signaal voor een deelantwoord of een mens.
+### 7.4 Valideren, bij elke stap
 
-### 7.6 Fase 4: klein onderhoud (ongeveer een dag, kan parallel)
+- De bestaande gates van elke geraakte dienst, groen.
+- Oud tegen nieuw op dezelfde echte historische vragen, van de widget én uit LibreChat: blind in beide volgordes, twee rondes, en beoordeeld op de beurt ná een vraag als de wijziging vragen stelt. Voor de interne chat met een gesimuleerde medewerker die het ticket kent, niet met een bezoeker.
+- De padtoets uit §7.1 in de PR.
+- Na livegang de productiesignalen van de geraakte stap.
+- Eén review per PR (verificatie tegen de spec plus Sol).
 
-- **4.1** Uitzoeken waarom 8 van 107 herschrijfaanroepen op pad A mislukken (timeout 1,5 s bij een p95 van 1,2 s).
-- **4.2** Misleidend codecommentaar corrigeren (PII "INERT", docstring "skips silently").
+Tijd noemen we alleen waar een vergelijkbare wijziging een houvast geeft; de rest schatten we na stap 0.
 
-### 7.7 Wat we niet doen
+### 7.5 Wat we niet doen
 
 - Het antwoordmodel in dezelfde generatie laten doorvragen.
-- Een LLM alleen laten beslissen of een vraag te vaag is (45% vals "onduidelijk" gemeten).
+- Een LLM alleen laten beslissen of een vraag te vaag is.
 - De zekerheidsband als weigertrigger gebruiken.
 - Doorvragen beoordelen op de eerste beurt, of beslissen op 12 tot 30 paren.
 - Meer passages of bronnen toevoegen om gaten te dichten.
 - Aannemen dat het grotere model trouwer is.
-- Zekerheid uit het antwoordmodel zelf afleiden.
-- Altijd doorvragen bij korte vragen: een korte vraag waarvoor één artikel duidelijk wint, krijgt gewoon een antwoord.
+- Een laag of raamwerk bouwen alleen om twee paden tegelijk te bedienen.
 
-### 7.8 Waar het plan na goedkeuring leeft
+### 7.6 Waar dit plan leeft
 
-Als fasen in SPEC-RAG-ANSWER-JUDGES-001, dat de metingen van deze keten al bijhoudt; de uitkomsten per stap gaan in het bijbehorende logboek. Geen nieuwe SPEC.
+De uitkomsten per stap gaan in het logboek van SPEC-RAG-ANSWER-JUDGES-001; de padtoets en de lijst echte verschillen staan ook in [chat-system.md](chat-system.md), zodat ze gelezen worden vóór een wijziging.
