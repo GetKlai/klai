@@ -104,7 +104,8 @@ import sys
 import tempfile
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from itertools import pairwise
 from math import sqrt
 from pathlib import Path
 from uuid import uuid4
@@ -119,8 +120,10 @@ from sqlalchemy import text  # noqa: E402
 
 from app.core.config import settings  # noqa: E402
 from app.core.database import cross_org_session  # noqa: E402
+from app.core.provisioning_names import provisioning_names_for_slug  # noqa: E402
 from app.models.portal import PortalOrg  # noqa: E402
 from app.models.widgets import Widget, WidgetKbAccess  # noqa: E402
+from app.services.librechat_quality_judge import _message_text, _mongo_client  # noqa: E402
 from app.services.widget_auth import generate_session_token  # noqa: E402
 
 # The curated suites this script reuses rather than re-generating; see the module
@@ -342,6 +345,55 @@ async def _load_organic_questions(widget_id: str, limit: int) -> list[str]:
     return out
 
 
+# The widget's own tenant only: the database name comes from the widget's org
+# slug, so this can never read another tenant's LibreChat. Widget history is
+# short (the Voys widget went live mid-September 2026) and its internal
+# LibreChat holds roughly ten times as many real questions about the same
+# knowledge, asked by staff rather than visitors, so they widen the set. First
+# questions only, like the organic slice: a follow-up needs its conversation.
+_LIBRECHAT_DAYS = 90
+_LIBRECHAT_MAX_CHARS = 800
+
+
+def _load_librechat_questions(tenant_slug: str, limit: int) -> list[str]:
+    """Each conversation's own opening question, when it opened inside the window.
+
+    The opening is taken per conversation before any date or length filter: a
+    first pass that filtered first picked a later follow-up as the "first
+    question" of a conversation that opened before the window or whose opening
+    was over-long, and sent it to the widget without its context (review of
+    2026-09-24). Known ceiling: the grouping reads every user message of the
+    tenant; fine for an operator run, and a date-bounded match can come first
+    once a tenant's history makes that slow.
+    """
+    database = provisioning_names_for_slug(tenant_slug, domain=settings.domain).mongodb_database
+    since = datetime.now(UTC) - timedelta(days=_LIBRECHAT_DAYS)
+    pipeline = [
+        {"$match": {"isCreatedByUser": True}},
+        {"$sort": {"createdAt": 1}},
+        {
+            "$group": {
+                "_id": "$conversationId",
+                "text": {"$first": "$text"},
+                "content": {"$first": "$content"},
+                "createdAt": {"$first": "$createdAt"},
+            }
+        },
+    ]
+    with _mongo_client() as client:
+        openings = list(client[database].messages.aggregate(pipeline))
+    seen: set[str] = set()
+    out: list[str] = []
+    for doc in sorted(openings, key=lambda d: d["createdAt"]):
+        created = doc["createdAt"] if doc["createdAt"].tzinfo else doc["createdAt"].replace(tzinfo=UTC)
+        question = _message_text(doc).strip()
+        if created < since or not 0 < len(question) <= _LIBRECHAT_MAX_CHARS or question.lower() in seen:
+            continue
+        seen.add(question.lower())
+        out.append(question)
+    return out[:limit]
+
+
 @dataclass
 class _WidgetContext:
     wgt_id: str
@@ -437,7 +489,15 @@ async def _fetch_window(widget_id: str, since: datetime, until: datetime) -> lis
         band = signals.get("band")
         if band not in _VALID_BANDS:
             continue
-        out.append({"band": band, "decision": signals.get("decision"), "unsupported": signals.get("unsupported")})
+        out.append(
+            {
+                "band": band,
+                "decision": signals.get("decision"),
+                "unsupported": signals.get("unsupported"),
+                "top_score": signals.get("top_score"),
+                "verdict": signals.get("verdict"),
+            }
+        )
     return out
 
 
@@ -514,6 +574,37 @@ def _print_analysis(rows: list[dict]) -> None:
         "docstring) — read this table against 'predominantly grounded above high, "
         "predominantly unsupported/refused below low'."
     )
+    _print_score_strips(rows)
+
+
+# Where to put the widget's weak-sources bar (answer_plan.WEAK_SOURCES_ADDENDUM
+# fires on classify_gap "soft", every reranker score under 0.4). Grounded is
+# not relevant: an answer can be fully carried by an article about a
+# neighbouring subject. So per strip of the turn's own top_score (the
+# pre-boost reranker score, see module docstring) this adds the answer judge's
+# verdict, already recorded on every turn: does the reply answer the question.
+_SCORE_STRIPS = (0.0, 0.3, 0.4, 0.5, 0.6, 1.01)
+
+
+def _print_score_strips(rows: list[dict]) -> None:
+    scored = [r for r in rows if isinstance(r.get("top_score"), int | float)]
+    print(f"\n=== BY TOP SCORE STRIP ({len(scored)} turns with a score) ===")
+    print("Verdict and grounding are the judges' reading of the draft, before any repair.")
+    print(f"{'strip':<12}{'n':>5}{'answered':>10}{'grounded':>10}{'answers q':>12}{'partial':>10}{'not answered':>14}")
+    for lo, hi in pairwise(_SCORE_STRIPS):
+        items = [r for r in scored if lo <= r["top_score"] < hi]
+        if not items:
+            continue
+        answered = [r for r in items if r["decision"] in _ANSWERED_DECISIONS]
+        judged = [r for r in answered if isinstance(r["unsupported"], int)]
+        grounded = sum(1 for r in judged if r["unsupported"] == 0)
+        verdicts = [r["verdict"] for r in answered if r.get("verdict")]
+        count = {v: sum(1 for x in verdicts if x == v) for v in ("answered", "partial", "not_answered")}
+        n_v = len(verdicts)
+        print(
+            f"{f'{lo:.1f}-{min(hi, 1.0):.1f}':<12}{len(items):>5}{len(answered):>10}{f'{grounded}/{len(judged)}':>10}"
+            f"{f'{count["answered"]}/{n_v}':>12}{f'{count["partial"]}/{n_v}':>10}{f'{count["not_answered"]}/{n_v}':>14}"
+        )
 
 
 async def main(widget_id: str, max_questions: int) -> None:
@@ -533,6 +624,12 @@ async def main(widget_id: str, max_questions: int) -> None:
     organic = await _load_organic_questions(widget_id, limit=100)
     print(f"  organic (deduplicated): {len(organic)}", flush=True)
     questions += organic
+    ctx = await _load_widget_context(widget_id)
+    librechat = _load_librechat_questions(
+        ctx.tenant_slug, limit=int(os.getenv("KLAI_CALIBRATION_LIBRECHAT_MAX") or "300")
+    )
+    print(f"  librechat first questions, same tenant (deduplicated): {len(librechat)}", flush=True)
+    questions += librechat
     questions += _OFF_TOPIC_QUESTIONS
     print(f"  off-topic negatives: {len(_OFF_TOPIC_QUESTIONS)}", flush=True)
     if len(questions) > max_questions:
@@ -540,7 +637,6 @@ async def main(widget_id: str, max_questions: int) -> None:
         questions = questions[:max_questions]
     print(f"  total: {len(questions)}", flush=True)
 
-    ctx = await _load_widget_context(widget_id)
     since = datetime.now(UTC)
     async with httpx.AsyncClient(timeout=60.0) as client:
         for i, question in enumerate(questions, 1):
