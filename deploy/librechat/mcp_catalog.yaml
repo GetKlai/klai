@@ -11,6 +11,12 @@ servers:
     # it never issues PUT or TEST requests so no config_template is needed.
     managed: true
     required_env_vars: []
+  # Klai's own getklai tenant has this server configured against the Twenty
+  # CRM at crm.getklai.com, with the Twenty API key named "Klai-MCP". It is
+  # inactive today: the token stored for it was revoked, and LibreChat refuses
+  # any external MCP host not listed in mcpSettings.allowedDomains in
+  # deploy/librechat/librechat.yaml. Which key is which, where each token
+  # lives and how to switch this back on: klai-infra docs/twenty-api-keys.md.
   twenty-crm:
     display_name: "Twenty CRM"
     description: "Twenty CRM -- contacts, companies, deals, tasks"

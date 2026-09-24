@@ -421,7 +421,7 @@ mounts:
     kind: named
     host: crm-storage
     container_path: /app/packages/twenty-server/.local-storage
-    image: twentycrm/twenty:v1.20.0
+    image: twentycrm/twenty:v2.42.4
     category: data
     data_path_source: running v1.20.0 container on public-01 held 13 uploaded files here (docker exec find, 2026-09-24)
     verified: true
@@ -439,7 +439,7 @@ mounts:
     kind: named
     host: crm-storage
     container_path: /app/packages/twenty-server/.local-storage
-    image: twentycrm/twenty:v1.20.0
+    image: twentycrm/twenty:v2.42.4
     category: data
     data_path_source: running v1.20.0 container on public-01 held 13 uploaded files here (docker exec find, 2026-09-24)
     verified: true
