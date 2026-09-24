@@ -75,6 +75,13 @@ _UNRESOLVED_OUTCOMES = frozenset({"unresolved", "partially_resolved", "escalated
 # knowledge causes: the answer existed or the question was not one the knowledge
 # base should answer. Same split as _GAP_TYPE_FOR_CAUSE in app_activity.
 _GAP_TYPE_FOR_JUDGE_CAUSE = {"retrieval_miss": "hard", "retrieval_wrong": "soft"}
+# The question a judge row is filed under is the conversation's first message,
+# which in an internal chat can be a pasted document: one on the pilot tenant
+# was 385,043 characters. That broke the (org_id, query_text) index and bloated
+# grouping prompts until the grouping judge answered for the wrong findings.
+# Questions in the same sample were at most ~250 characters, so 500 keeps every
+# real question whole and a document's opening.
+JUDGE_QUESTION_MAX_CHARS = 500
 # A conversation is only judged while its OLDEST message is at least this far
 # from its org's retention cutoff (``started_at``: the conversation row and its
 # first message are written in the same transaction). Retention anonymizes the
@@ -323,6 +330,9 @@ async def file_judge_gap(
     gap_type = _GAP_TYPE_FOR_JUDGE_CAUSE.get(verdict.get("failure_category") or "")
     if gap_type is None or verdict.get("outcome") not in _UNRESOLVED_OUTCOMES:
         return False
+    question = question.strip()
+    if len(question) > JUDGE_QUESTION_MAX_CHARS:
+        question = question[: JUDGE_QUESTION_MAX_CHARS - 1].rstrip() + "…"
 
     evidence: dict = {key: verdict.get(key) for key in ("outcome", "failure_category", "confidence")}
     same_conversation = []

@@ -1864,3 +1864,29 @@ async def test_a_group_without_kb_folds_only_onto_shown_groups_without_kb(pg) ->
         )
 
     assert seen == [[key("Kan niet naar buiten bellen")]]
+
+
+async def test_a_pasted_document_is_filed_as_a_bounded_question(pg) -> None:
+    """An internal chat can open with a pasted document instead of a question;
+    one on the pilot tenant was 385,043 characters. As a gap row that broke the
+    (org_id, query_text) index outright and bloated every grouping prompt it
+    appeared in until the grouping judge answered for the wrong findings. The
+    row keeps the opening, bounded, and says it was cut."""
+    from app.services import conversation_judge as cj
+
+    _admin, factory, _cid, _analyzer = pg
+    recorded = AsyncMock(return_value=types.SimpleNamespace(outcome="created", org_id=901))
+    with patch.object(cj, "record_gap_event", recorded):
+        async with _tenant_db(factory) as db:
+            await cj.file_judge_gap(
+                db,
+                org_id=901,
+                question="SIP-rapport " + "x" * 20_000,
+                verdict=_JUDGE_MISS,
+                audience="internal",
+                librechat_conversation_id="lc-doc",
+            )
+
+    filed = recorded.await_args.kwargs["query_text"]
+    assert len(filed) <= cj.JUDGE_QUESTION_MAX_CHARS
+    assert filed.startswith("SIP-rapport ") and filed.endswith("…")

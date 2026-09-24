@@ -198,7 +198,9 @@ def _parse_assignments(
         if key is None:
             continue
         if not isinstance(key, str) or key not in candidates_by_key:
-            raise SupportCaseAnalysisError(f"grouping cites unknown group_question_key: {key!r}")
+            # The key is a normalized customer question: never put it in the message,
+            # which the callers log.
+            raise SupportCaseAnalysisError("grouping cites an unknown group_question_key")
         finding, candidate = by_index[index], candidates_by_key[key]
         if not compatible_scope(finding, candidate):
             raise SupportCaseAnalysisError("grouping matched a candidate with a different language/audience")
