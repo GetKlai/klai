@@ -1123,10 +1123,8 @@ menselijke beoordeling: een technische vraag, dus geen tekst over prijzen en off
 
 In zes herhalingen van de beoordelaar (twee opstellingen van drie) gaf die bij deze beurt steeds
 `wants_human=true`; `topic` sloeg om tussen de opstellingen, maar daar verschilde ook het
-gerouteerde model, dus dat verschil is niet toe te schrijven aan de welkomstregel. Over de laatste
-dertig dagen kreeg de widget 35 keer de vaste tekst, in 12 gesprekken en op 22 verschillende
-vragen; `not_handled` samen met een verzoek om een mens kwam in die periode één keer voor, bij
-precies deze beurt.
+gerouteerde model, dus dat verschil is niet toe te schrijven aan de welkomstregel. In de dertig dagen
+ervoor kwam `not_handled` samen met een verzoek om een mens één keer voor, bij precies deze beurt.
 
 **Niet gebouwd, en waarom.** De voor de hand liggende ingreep is dat een verzoek om een mens voorgaat
 op de vaste tekst: dan schrijft het model een antwoord met de afspraakknop eronder. Dat breekt de
@@ -1192,7 +1190,7 @@ ook als het nog niet weet waar de bezoeker het over heeft:
 Waar het systeem wél eerst vroeg (welke headset; of de openingstijden-modules gevuld waren), oordeelde
 de beoordelaar goed of perfect. Het model kan het dus, maar doet het toevallig: 9 van de 38
 antwoorden in deze gesprekken bevatten een vraag. Op twee weken echt verkeer noemt de vraagbeoordelaar
-15% van de beurten onduidelijk (122 van 797), maar dat stuurt sinds 2.4 niets meer.
+ongeveer één op de zeven beurten onduidelijk, maar dat stuurt sinds 2.4 niets meer.
 
 **Afbakening van de eigenaar.** Een platformstoring is zeldzaam en het systeem moet daar niet omheen
 gebouwd worden: geen "dit kan even duren" of storingspagina als standaardopening. Individuele
@@ -1244,8 +1242,8 @@ SUPPORT-prompts zelf:
 - het voorbeeld bij excuses was "Onze excuses, we gaan dit oplossen", en dat kwam terug als "we gaan
   dit voor je oplossen", een belofte die de chat niet kan waarmaken;
 - gedachtestreepjes: de prompttekst staat er vol mee en nergens stond dat het niet mocht; ook de vaste
-  tekst bij "niet gevonden" en het label voor een antwoord uit algemene kennis bevatten er een. De
-  vaste "niet gevonden"-tekst werd in de twee weken ervoor 59 keer getoond.
+  tekst bij "niet gevonden" en het label voor een antwoord uit algemene kennis bevatten er een, en
+  die vaste tekst is een van de vaakst getoonde antwoorden.
 
 **Gewijzigd.** "Dit kan even duren" is uit de lijst; het excuusvoorbeeld is "Onze excuses, dat had ik
 verkeerd begrepen". In alle drie de widgetprofielen staat nu: zeg nooit dat wij iets voor de bezoeker
@@ -1353,10 +1351,10 @@ wegvallen van de voicemaildiagnose alleen met een handmatige proef te vinden gew
 ### 2.48 Geen antwoord meer uit een zwakke bron (24 sep)
 **Aanleiding.** De menselijke beoordelingen scheiden goed en fout op de sterkte van de beste bron: bij
 antwoorden die de eigenaar goed noemde lag die mediaan op 0,80, bij "verkeerde kennis" op 0,37, en daar
-zat 5 van de 6 onder 0,5. In de dertig dagen ervoor kregen 30 van de 113 echte widgetantwoorden een
-antwoord boven een beste bron onder 0,3: het "waarom begint hij over Grandstream"-patroon. (Een eerdere
-versie van deze sectie en de commit van #1635 noemden 206: die telling filterde niet op test- en
-previewgesprekken, en 646 van de 759 antwoorden in die periode waren tests.) Het systeem kende die situatie al als
+zat 5 van de 6 onder 0,5. In de dertig dagen ervoor kwam ruim een kwart van de echte widgetantwoorden
+boven een beste bron onder 0,3: het "waarom begint hij over Grandstream"-patroon. (Een eerdere versie
+van deze sectie noemde een veel hoger aantal: die telling filterde niet op test- en previewgesprekken,
+die in die periode het overgrote deel van de antwoorden vormden.) Het systeem kende die situatie al als
 zachte lacune (`classify_gap`: elke bron onder 0,4), maar dat hield het antwoord niet tegen.
 
 **Gewijzigd.** Bij een zachte lacune, als de stap uit 2.47 geen vraag plande, krijgt het antwoordmodel
@@ -1385,16 +1383,15 @@ het auditrecord, zodat het gedrag niet afhangt van of er gelogd wordt. De meting
 tekst, dus deze reparatie verandert niets aan wat gemeten is.
 
 ### 2.49 Wat de historische gesprekken wel en niet kunnen, en LibreChat (24 sep)
-**Hoeveel historie er is.** Echte widgetgesprekken van Voys bestaan sinds 17 september: 58 gesprekken
-met 124 vragen van bezoekers, test- en previewgesprekken niet meegeteld. De interne LibreChat van Voys
-heeft 1117 vragen sinds 1 mei, 454 in de laatste 45 dagen. Tot nu toe mat deze keten alleen op de widget.
+**Hoeveel historie er is.** Echte widgetgesprekken bestaan pas sinds half september en zijn met enkele
+tientallen; de interne LibreChat van dezelfde klant heeft ruim vier maanden historie en ongeveer tien
+keer zoveel vragen. Tot nu toe mat deze keten alleen op de widget.
 
 **Wat daaruit volgt.** Om een wijziging te beoordelen is geen nieuw verkeer nodig: een historische vraag
 gaat opnieuw door de nieuwe code, met het zoeken zoals het nú scoort, en wordt blind vergeleken. Dat
 deden 2.46 tot en met 2.48 al, maar op kleine sets (17 en 27 beurten) en met bronscores uit het oude
 beslisrecord in plaats van opnieuw berekend. Dat laatste maakte de strook tussen 0,4 en 0,5 schijnbaar
-te klein om te meten (13 beurten), terwijl alle 124 widgetvragen en de LibreChat-vragen opnieuw gezocht
-kunnen worden. Wachten op echt verkeer is alleen nodig voor wat pas live zichtbaar wordt: hoe vaak een
+te klein om te meten, terwijl alle widgetvragen en de LibreChat-vragen opnieuw gezocht kunnen worden. Wachten op echt verkeer is alleen nodig voor wat pas live zichtbaar wordt: hoe vaak een
 stap vuurt en wat hij aan wachttijd kost.
 
 **LibreChat telt anders mee.** De wijzigingen van 2.41 tot en met 2.48 zitten in de widgetroute; LibreChat
