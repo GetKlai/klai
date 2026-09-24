@@ -276,7 +276,7 @@ _TOOLING: list[Subdomain] = [
         label="Analytics",
         description="Privacy-vriendelijke website-analytics.",
         category="tooling",
-        host="public-01",
+        host="core-01",
         owner="Jantine",
     ),
     Subdomain(
