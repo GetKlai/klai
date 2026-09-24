@@ -2539,6 +2539,40 @@ services:
         limits:
           memory: 512m
 
+  # ─── Umami — application ─────────────────────────────────────────────────
+  # Same image and effective settings as under Coolify, so the move is a
+  # relocation; the upgrade follows as its own change. Umami applies its
+  # Prisma migrations on start and, unlike Twenty, fails closed: check-db.js
+  # exits 1 when `prisma migrate deploy` fails, so a bad migration crash-loops
+  # visibly instead of serving a half-migrated schema. That is what makes a
+  # plain tag bump safe here. Its migrations are cumulative (verified
+  # 3.0.3 -> 3.4.0 in one run, 12 migrations), so no stepping is needed.
+  umami:
+    logging: *log-rotation
+    image: ghcr.io/umami-software/umami:3.0.3
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://umami:${UMAMI_POSTGRES_PASSWORD}@umami-postgres:5432/umami
+      DATABASE_TYPE: postgresql
+      APP_SECRET: ${UMAMI_APP_SECRET}
+      DISABLE_TELEMETRY: "1"
+    networks:
+      - klai-net
+      - net-umami
+    depends_on:
+      umami-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/heartbeat || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    deploy:
+      resources:
+        limits:
+          memory: 768m
+
   # ─── Twenty CRM — application ────────────────────────────────────────────
   # Same image and the same effective settings as the Coolify deployment, so
   # the move is a relocation. The Coolify environment also carried
