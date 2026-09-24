@@ -571,6 +571,22 @@ backup_crm_postgres() {
   record_file "${output}"
 }
 
+backup_fider_postgres() {
+  local container
+  local output
+
+  container="$(ctr fider-postgres)"
+  output="${BACKUP_DIR}/fider-postgres-all.sql"
+
+  if ! container_running "${container}"; then
+    log "      Skipped (container not running)"
+    return 0
+  fi
+
+  docker exec "${container}" pg_dumpall -U fider > "${output}"
+  record_file "${output}"
+}
+
 backup_umami_postgres() {
   local container
   local output
@@ -779,6 +795,7 @@ main() {
   run_step "listmonk uploads: tar campaign media" backup_listmonk_uploads
   run_step "Twenty CRM uploads: tar avatars and attachments" backup_crm_storage
   run_step "Umami Postgres: dump all databases" backup_umami_postgres
+  run_step "Fider Postgres: dump all databases" backup_fider_postgres
   run_step "Scribe audio: tar failed retry recordings" backup_scribe_audio
   run_step "Research uploads: rsync user uploads" backup_research_uploads
   run_step "Encrypt and upload to Storage Box" encrypt_and_upload
