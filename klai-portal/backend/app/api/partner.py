@@ -42,6 +42,7 @@ from app.models.portal import PortalOrg
 from app.models.widgets import Widget, WidgetKbAccess
 from app.services import escalation_intent as escalation_service
 from app.services import turn_judge
+from app.services.answer_plan import answer_plan
 from app.services.events import emit_event
 from app.services.gap_classification import classify_gap
 from app.services.off_topic_referral import off_topic_referral
@@ -2060,6 +2061,27 @@ async def chat_completions(  # noqa: C901
                 media_type="text/event-stream",
             )
         return off_topic_response(model=request.model, reply=reply, language=language)
+
+    # The one question this turn should ask, decided against what retrieval
+    # found (answer_plan.py). Not on a broad turn (no articles to reason over),
+    # not when the visitor asked for a person or is frustrated: there the reply
+    # is the appointment, and not on a conversational turn.
+    if support_mode and not broad_turn and escalation is None and not turn_judge.is_conversational(scope):
+        plan = await answer_plan(request.messages, chunks, settings)
+        if plan:
+            system_prompt += plan
+            # The reply will end on that question, so the turn is clarifying
+            # like the judge's own: without a citable source that keeps the
+            # buttons off it (answer_judge.decide_answer). With a source the
+            # judges still only add, so the appointment button can stand under
+            # the question; that contract is older than this step.
+            clarity = "ambiguous"
+            answer_signals["planned_question"] = True
+            logger.info(
+                "partner_chat_answer_plan",
+                org_id=auth.org_id,
+                wgt_id=auth.key_id if str(auth.key_id).startswith("wgt_") else None,
+            )
 
     system_prompt, web_chunks, web_query = await _maybe_apply_web_search(
         request=request,

@@ -107,9 +107,11 @@ class _LiteLLM:
         grounding: Any = None,
         repaired: str = "",
         referral: str = "",
+        plan: dict | None = None,
     ):
         self.model_text = model_text
         self.referral = referral
+        self.plan = plan or {"route": "direct", "question": "", "options": []}
         self.answer_judge = answer_judge if answer_judge is not None else _answer_verdict()
         self.turn = turn or _turn_verdict()
         # The statement-level check decides grounding, so by default it mirrors
@@ -143,6 +145,8 @@ class _LiteLLM:
         if schema == "turn_judge":
             self.turn_requests.append(body)
             return _json_reply(self.turn)
+        if schema == "answer_plan":
+            return _json_reply(self.plan)
         if schema == "off_topic_referral":
             return _json_reply({"subject": self.referral})
         if schema == "query_paraphrase":
@@ -671,6 +675,7 @@ async def _route_turn(
     stream: bool = False,
     band: str = "low",
     referral: str = "",
+    plan: dict | None = None,
 ):
     from app.api import partner
     from app.api.partner import ChatCompletionsRequest, chat_completions
@@ -692,7 +697,11 @@ async def _route_turn(
     http_request = MagicMock(headers={}, client=MagicMock(host="127.0.0.1"))
 
     litellm = _LiteLLM(
-        model_text=CLARIFYING_QUESTION, turn=turn, answer_judge=_answer_verdict("not_answered"), referral=referral
+        model_text=CLARIFYING_QUESTION,
+        turn=turn,
+        answer_judge=_answer_verdict("not_answered"),
+        referral=referral,
+        plan=plan,
     )
     with (
         respx.mock(assert_all_called=False) as router,
@@ -734,6 +743,37 @@ async def test_route_ambiguous_turn_gets_no_ask_instruction_and_a_question_draft
     assert "can mean different things" not in _system_prompt_sent(litellm)
     assert len(litellm.turn_requests) == 1
     assert text == CLARIFYING_QUESTION
+
+
+@pytest.mark.parametrize("stream", [True, False])
+async def test_a_turn_with_several_causes_is_told_which_question_to_ask(monkeypatch, stream):
+    """Every short question got one reading: "iedereen gaat naar voicemail" was
+    answered with the steps to send everyone to voicemail. When the articles
+    carry more than one cause, the turn is handed the question that tells them
+    apart instead of a rule about vagueness."""
+    plan = {
+        "route": "diagnose",
+        "question": "Gaat het om de automatische incasso of om de factuur zelf?",
+        "options": ["automatische incasso", "factuur"],
+    }
+    litellm, _, _ = await _route_turn(monkeypatch, turn=_turn_verdict(), stream=stream, band="high", plan=plan)
+
+    prompt = _system_prompt_sent(litellm)
+    assert plan["question"] in prompt
+    assert "automatische incasso; factuur" in prompt
+
+
+async def test_an_option_the_articles_do_not_carry_leaves_the_turn_alone(monkeypatch):
+    """The options must come from the retrieved articles, or the question
+    offers the visitor a cause the knowledge base cannot answer."""
+    plan = {
+        "route": "diagnose",
+        "question": "Gebruik je een Grandstream of een Yealink?",
+        "options": ["Grandstream", "Yealink"],
+    }
+    litellm, _, _ = await _route_turn(monkeypatch, turn=_turn_verdict(), band="high", plan=plan)
+
+    assert "[This turn] The visitor reports a problem" not in _system_prompt_sent(litellm)
 
 
 # ─── Subjects this widget does not answer ───────────────────────────────
