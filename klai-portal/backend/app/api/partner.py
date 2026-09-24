@@ -43,6 +43,7 @@ from app.models.widgets import Widget, WidgetKbAccess
 from app.services import escalation_intent as escalation_service
 from app.services import turn_judge
 from app.services.answer_plan import WEAK_SOURCES_ADDENDUM, answer_plan
+from app.services.chat_profile import ChatProfile
 from app.services.events import emit_event
 from app.services.gap_classification import classify_gap
 from app.services.off_topic_referral import off_topic_referral
@@ -106,15 +107,15 @@ _OPENAI_COMPATIBLE_MODEL_ALIASES = {
 _OPENAI_COMPATIBLE_ACCEPTED_MODELS = _OPENAI_COMPATIBLE_MODELS | set(_OPENAI_COMPATIBLE_MODEL_ALIASES)
 # General-passthrough-only fields: ChatCompletionsRequest (the knowledge-path
 # Pydantic model) silently drops unknown fields, so a partner sending these
-# alongside a knowledge field would get HTTP 200 with their schema/tools
-# quietly ignored instead of an error. Fail loudly instead — see
-# canonical_chat_completions.
+# alongside a knowledge field would get HTTP 200 with their schema quietly
+# ignored instead of an error. Fail loudly instead — see
+# canonical_chat_completions. ``tools``/``tool_choice`` used to be here too;
+# the knowledge path now forwards them (see ChatCompletionsRequest.tools),
+# so they are no longer passthrough-only.
 _PASSTHROUGH_ONLY_FIELDS = {
     "parallel_tool_calls",
     "prompt_cache_key",
     "response_format",
-    "tool_choice",
-    "tools",
 }
 _WIDGET_CLIENT_SESSION_RE = re.compile(r"^[A-Za-z0-9_-]{16,80}$")
 _MAX_WEB_SEARCH_QUERY_CHARS = 512
@@ -232,6 +233,12 @@ class ChatCompletionsRequest(BaseModel):
     # turns are not audited. Same limits as the HubSpot handoff request.
     visitor_name: str | None = Field(default=None, max_length=120)
     visitor_email: str | None = Field(default=None, max_length=254)
+    # Forwarded to LiteLLM unmodified except for a Strict-KB profile, which
+    # strips web-search tools (see chat_completion_streaming). Client-side
+    # tool execution: portal never calls a tool itself, it only relays the
+    # model's tool_calls deltas and accepts the tool-role results back.
+    tools: list[dict[str, Any]] | None = None
+    tool_choice: Any | None = None
 
 
 class PartnerFeedbackRequest(BaseModel):
@@ -2134,6 +2141,13 @@ async def chat_completions(  # noqa: C901
         citation_output,
     ) = _citation_runtime_options(trusted_sources, is_widget_chat=is_widget_chat)
 
+    # SLICE 1 TODO (auth/profile resolution) will replace this construction
+    # with its resolver output (surface="internal" for LibreChat, kb_mode/
+    # kb_scope/stream_live from the resolved identity); until then every
+    # caller of this route is the widget or the partner API, held (never
+    # stream_live), Strict by default — unchanged from today's behavior.
+    profile = ChatProfile(surface="widget" if is_widget_chat else "partner")
+
     # 8. Streaming or non-streaming
     if request.stream:
         streaming_gen = chat_completion_streaming(
@@ -2164,6 +2178,9 @@ async def chat_completions(  # noqa: C901
             answer_signals=answer_signals if audit_ready else None,
             signal_chunks=chunks,
             turn_timing=turn_timing,
+            profile=profile,
+            tools=request.tools,
+            tool_choice=request.tool_choice,
         )
         if audit_ready:
             streaming_gen = _audit_streaming_wrapper(
@@ -2208,6 +2225,9 @@ async def chat_completions(  # noqa: C901
         answer_signals=answer_signals if audit_ready else None,
         signal_chunks=chunks,
         turn_timing=turn_timing,
+        profile=profile,
+        tools=request.tools,
+        tool_choice=request.tool_choice,
     )
     if knowledge is not None and not knowledge.include_sources:
         for choice in result.get("choices") or []:
