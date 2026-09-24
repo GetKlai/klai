@@ -1,6 +1,6 @@
 ---
 id: SPEC-INFRA-COOLIFY-EXIT-001
-version: "0.2.0"
+version: "0.3.0"
 status: draft
 created: 2026-09-24
 updated: 2026-09-24
@@ -204,6 +204,33 @@ Only after T3 verifies clean:
   secrets, which are the last live remnant of the decommissioned booking tool;
 - the cal.com export sets, once the same data is demonstrably in the CRM;
 - the pre-upgrade Twenty dumps, once the upgraded instance has served a week.
+
+### Status — done on 2026-09-24
+
+T1 to T4 are complete. Twenty serves crm.getklai.com from core-01 on v2.42.4,
+the 64 cal.com attendee-bookings are all present (45 covered by notes the
+cal.com webhook wrote live in May and June, 19 added by the import, 10 people
+created), and the Coolify service, its volumes, cal-db, the cal_user role and
+the CAL_* secrets are gone. The CRM is now in the nightly backup and its
+offsite copy; under Coolify it had no backup at all.
+
+One deviation from T4: the pre-upgrade dumps were removed the same day rather
+than after a week. Before the Coolify copy was deleted, a copy of the current
+CRM was encrypted to the Storage Box and verified by downloading, decrypting
+and restoring it, with people, notes, companies, opportunities and note
+targets matching the live database. That copy supersedes the older dumps,
+which described a schema the CRM no longer has.
+
+Two things surfaced that this SPEC did not anticipate:
+
+- The seeded workflow "Create company when adding a new person" never
+  produced a record, before or after the upgrade. Its CODE steps need
+  `LOGIC_FUNCTION_TYPE`, which was never set. The website creates companies
+  itself, so only people created through the MCP, by hand or by an import go
+  without one. Enabling it is a separate decision: the LOCAL driver starts the
+  code with the CRM's full environment.
+- The key register (klai-infra `docs/twenty-api-keys.md`) now maps every
+  Twenty API key to its consumer. Two keys were revoked in the process.
 
 ## 5. Umami, Fider, Uptime Kuma
 
