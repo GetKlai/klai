@@ -389,19 +389,28 @@ async def _open_group_candidates(
     kb_slug: str | None,
     exclude_case_id: int | None,
     exclude_question_key: str | None = None,
+    limit: int = GROUPING_CANDIDATE_LIMIT,
 ) -> list[dict]:
     """Existing OPEN groups for this org+KB, across every producer (support
     case findings and chat/widget/MCP telemetry alike — SPEC-RAG-GAP-GROUPING),
-    minus the case being (re)analysed, if any.
+    minus the case being (re)analysed, if any. ``kb_slug=None`` means the
+    groups without a knowledge base.
 
-    One row per persisted ``question_key`` with the fields the grouping judge
-    compares. Bounded so a large inbox cannot build an unbounded prompt.
+    Only groups the inbox shows (``gap_events.shows_unmet_need``): folding onto
+    a redacted placeholder or a hidden low-score group would bury the finding
+    where nobody sees it. One row per persisted ``question_key`` with the fields
+    the grouping judge compares, newest group first, bounded by ``limit``.
     """
+    from app.services.gap_events import shows_unmet_need
+
     conditions = [
         PortalRetrievalGap.org_id == org_id,
-        PortalRetrievalGap.nearest_kb_slug == kb_slug,
+        PortalRetrievalGap.nearest_kb_slug.is_(None)
+        if kb_slug is None
+        else PortalRetrievalGap.nearest_kb_slug == kb_slug,
         PortalRetrievalGap.resolved_at.is_(None),
         PortalRetrievalGap.question_key.isnot(None),
+        shows_unmet_need(),
     ]
     if exclude_question_key is not None:
         # The group asking the question is already in the table: without this it
@@ -427,7 +436,8 @@ async def _open_group_candidates(
         )
         .where(*conditions)
         .group_by(PortalRetrievalGap.question_key)
-        .limit(GROUPING_CANDIDATE_LIMIT)
+        .order_by(func.max(PortalRetrievalGap.occurred_at).desc())
+        .limit(limit)
     )
     rows = (await db.execute(stmt)).all()
     return [

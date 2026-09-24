@@ -87,6 +87,9 @@ ALLOWED_HELPER_FUNCTIONS: frozenset[str] = frozenset(
         "_load_case_for_reanalysis",
         # Only called by list_gaps after its get_caller dependency scopes the session.
         "_list_support_gaps",
+        # Only called with a tenant_scoped_session(org_id) by both judge passes and
+        # the judge backfill script; its gap lookup also bounds by an explicit org_id.
+        "file_judge_gap",
         # app/services/access.py — all entry points take org_id parameter
         # and are only called from routes that ran _get_caller_org first.
         "_accessible_meetings_filter",
