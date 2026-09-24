@@ -83,7 +83,8 @@ async def amain(args: argparse.Namespace) -> int:
                 text(
                     """
                     SELECT j.channel, j.conversation_id, j.external_conversation_id,
-                           j.outcome, j.failure_category, j.confidence, wc.first_user_query, wc.started_at
+                           j.outcome, j.failure_category, j.confidence, j.judged_at,
+                           wc.first_user_query, wc.started_at
                       FROM conversation_quality_judgments j
                       LEFT JOIN widget_conversations wc ON wc.id = j.conversation_id
                      WHERE j.org_id = :org_id
@@ -98,11 +99,15 @@ async def amain(args: argparse.Namespace) -> int:
         ).all()
 
     librechat_ids = [v.external_conversation_id for v in verdicts if v.channel == "librechat"]
+    judged_at = {v.external_conversation_id: v.judged_at for v in verdicts if v.channel == "librechat"}
     librechat_question: dict[str, tuple[str, datetime | None]] = {}
     if librechat_ids:
         db_name = provisioning_names_for_slug(args.org_slug, domain=settings.domain).mongodb_database
         messages = await asyncio.to_thread(_sync_fetch_messages, db_name, librechat_ids)
         for cid, docs in messages.items():
+            # Only what the judge saw: a thread can carry on after its verdict.
+            cutoff = judged_at[cid]
+            docs = [d for d in docs if d.get("createdAt") is None or d["createdAt"].replace(tzinfo=UTC) <= cutoff]
             question = last_user_question(_turns_from_messages(docs))
             last = next((d for d in reversed(docs) if d.get("isCreatedByUser") and _turns_from_messages([d])), None)
             if question is not None and last is not None:
