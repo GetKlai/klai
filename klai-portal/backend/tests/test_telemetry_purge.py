@@ -201,13 +201,18 @@ def test_no_post_deploy_script_deletes_or_redacts_gap_rows() -> None:
     import re
     from pathlib import Path
 
+    table = r"(public\.)?portal_retrieval_gaps(\s+(AS\s+)?(?!SET\b|WHERE\b)\w+)?"
+    forbidden = re.compile(
+        rf"DELETE\s+FROM\s+{table}|UPDATE\s+{table}\s+SET\s+query_text\s*=\s*'\[REDACTED", re.IGNORECASE
+    )
+    # The aliased form an existing post-deploy script already uses must be caught too.
+    assert forbidden.search("UPDATE public.portal_retrieval_gaps g SET query_text = '[REDACTED:legacy]'")
+    assert not forbidden.search("UPDATE public.portal_retrieval_gaps g SET question_key = 'k'")
+
     versions = Path(__file__).resolve().parents[1] / "alembic" / "versions"
     offenders = []
     for path in sorted(versions.glob("post_deploy_*.sql")):
         # Comments are allowed to talk about it; statements are not.
-        sql = re.sub(r"--[^\n]*", "", path.read_text())
-        if re.search(r"DELETE\s+FROM\s+(public\.)?portal_retrieval_gaps", sql, re.IGNORECASE) or re.search(
-            r"UPDATE\s+(public\.)?portal_retrieval_gaps\s+SET\s+query_text\s*=\s*'\[REDACTED", sql, re.IGNORECASE
-        ):
+        if forbidden.search(re.sub(r"--[^\n]*", "", path.read_text())):
             offenders.append(path.name)
     assert offenders == []
