@@ -1535,7 +1535,7 @@ async def start_onboarding_drip(
     from app.services import listmonk
 
     email = _normalise_mailing_email(body.email)
-    cal_url = body.cal_url or "https://cal.getklai.com/klai/onboarding-intake"
+    cal_url = body.cal_url or "https://boek.getklai.com/book/onboarding-intake"
 
     try:
         result = await listmonk.send_onboarding_invite(
@@ -1612,7 +1612,7 @@ async def mailing_send(
     from app.services import listmonk
 
     email = _normalise_mailing_email(body.email)
-    cal_url = body.cal_url or "https://cal.getklai.com/klai/onboarding-intake"
+    cal_url = body.cal_url or "https://boek.getklai.com/book/onboarding-intake"
     try:
         result = await listmonk.send_onboarding_invite(
             email=email,

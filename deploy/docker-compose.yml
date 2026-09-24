@@ -2396,53 +2396,11 @@ services:
           # which now applies this same limit.
           memory: 3G
 
-  # ─── Cal.com (self-hosted scheduling) ────────────────────────────────────
-  # Deployed at https://cal.getklai.com
-  # DB: cal-db on klai-core-postgres-1 (role: cal_user).
-  # Secrets in klai-infra/core-01/.env.sops (CAL_* prefix).
-  # Deployment target and DNS records are environment-specific. Klai production
-  # host details live in the private infra repository.
-  cal-com:
-    logging: *log-rotation
-    image: calcom/cal.com:v6.2.0
-    restart: unless-stopped
-    environment:
-      NODE_ENV: production
-      NEXT_PUBLIC_WEBAPP_URL: https://cal.${DOMAIN}
-      NEXTAUTH_URL: https://cal.${DOMAIN}
-      NEXTAUTH_SECRET: ${CAL_NEXTAUTH_SECRET}
-      CALENDSO_ENCRYPTION_KEY: ${CAL_CALENDSO_ENCRYPTION_KEY}
-      DATABASE_URL: ${CAL_DATABASE_URL}
-      DATABASE_DIRECT_URL: ${CAL_DATABASE_URL}
-      EMAIL_FROM: hello@getklai.com
-      EMAIL_SERVER_HOST: ${SMTP_HOST}
-      EMAIL_SERVER_PORT: ${SMTP_PORT:-587}
-      EMAIL_SERVER_USER: ${SMTP_USERNAME}
-      EMAIL_SERVER_PASSWORD: ${SMTP_PASSWORD}
-    healthcheck:
-      # /api/health returns 404 in Cal.com v6. Use wget which exits 0 for
-      # any 2xx/3xx — a 307 to /auth/setup confirms the server is running.
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/auth/login || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 120s
-    networks:
-      - klai-net
-      - net-postgres
-    depends_on:
-      postgres:
-        condition: service_healthy
-    deploy:
-      resources:
-        limits:
-          memory: 2g
-
   # ─── Calnode (booking page for demo calls) ───────────────────────────────
-  # Runs alongside cal-com; cal-com is removed in a follow-up once the 55
-  # existing bookings are exported. Cal.com went closed source in April 2026
-  # and the public repo is now cal.diy, which upstream itself marks as not for
-  # production, so our v6.2.0 pin is frozen and will never be patched again.
+  # Replaced the self-hosted cal.com, removed here in the same change. Cal.com
+  # went closed source in April 2026 and the public repo is now cal.diy, which
+  # upstream itself marks as not for production, so the v6.2.0 pin we ran was
+  # frozen and carried 1620 unfixed high/critical CVEs on a public endpoint.
   #
   # One static Go binary with an embedded SQLite file: no Postgres, no Redis,
   # which is why this needs no net-postgres and carries no DB credentials.
