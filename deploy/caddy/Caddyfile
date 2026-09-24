@@ -528,9 +528,31 @@
     }
 }
 
-# Calnode — booking page for demo calls. Replaced cal.getklai.com, whose site
-# block is removed in this same change. Calnode reads the original Host to
-# build booking links, so this block must not rewrite it.
+# cal.getklai.com — decommissioned. Onboarding invites that went out before
+# the move still carry a cal.getklai.com booking link, and those live in
+# people's inboxes indefinitely. Without this block the host falls through to
+# the *.{$DOMAIN} wildcard, which answers 200 with the portal SPA: a prospect
+# clicking an old invite lands in the product instead of on a booking page.
+#
+# 302 and not 301: browsers cache a permanent redirect hard, and this host is
+# worth keeping available for something else later.
+cal.{$DOMAIN} {
+    tls {
+        dns hetzner {$HETZNER_AUTH_API_TOKEN}
+        propagation_delay 120s
+    }
+
+    log {
+        output stdout
+        format json
+    }
+
+    redir https://boek.{$DOMAIN}/book/onboarding-intake 302
+}
+
+# Calnode — booking page for demo calls. Replaced cal.getklai.com, which now
+# redirects here. Calnode reads the original Host to build booking links, so
+# this block must not rewrite it.
 boek.{$DOMAIN} {
     tls {
         dns hetzner {$HETZNER_AUTH_API_TOKEN}
