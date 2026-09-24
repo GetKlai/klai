@@ -1521,8 +1521,14 @@ def _message_text(content: object) -> str:
 def _is_librechat_title_request(messages: object) -> bool:
     if not isinstance(messages, list):
         return False
-    for message in messages:
-        if not isinstance(message, dict) or message.get("role") not in {"system", "developer", "user"}:
+    # The title instruction is either a system/developer message or the final
+    # user message. An earlier user turn asking to "summarize this chat" is a
+    # real question and must not send every later turn past the knowledge base.
+    for index, message in enumerate(messages):
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role")
+        if role not in {"system", "developer"} and not (role == "user" and index == len(messages) - 1):
             continue
         text = _message_text(message.get("content"))
         # The title prompt is short; a long pasted text that happens to say

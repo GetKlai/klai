@@ -501,3 +501,15 @@ async def test_widget_key_cannot_send_tools():
         )
 
     assert exc.value.status_code == 400
+
+
+def test_earlier_user_request_to_summarize_the_chat_does_not_make_later_turns_title_requests():
+    from app.api.partner import _is_librechat_title_request
+
+    messages = [
+        {"role": "user", "content": "Give this chat a better name, please."},
+        {"role": "assistant", "content": "Sure."},
+        {"role": "user", "content": "Hoe vraag ik verlof aan?"},
+    ]
+
+    assert _is_librechat_title_request(messages) is False
