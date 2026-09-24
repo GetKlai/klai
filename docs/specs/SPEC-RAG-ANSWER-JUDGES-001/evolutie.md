@@ -1400,6 +1400,43 @@ tien keer grotere bron van echte Voys-vragen over dezelfde kennisbank, gesteld d
 van klanten, en die kunnen als tweede meetset door de widgetroute. Of dezelfde verbeteringen ook in de
 interne keten horen, is een aparte vraag met een aparte meting.
 
+### 2.50 De drempel voor zwakke bronnen, gemeten op de brede set (24 sep)
+**Opzet, met bestaand gereedschap.** `scripts/calibrate_confidence_bands.py` (#1634) stuurt echte vragen
+als previewbeurt door de widgetroute en leest daarna het beslisrecord van elke beurt terug. Uitgebreid
+met twee dingen: de eerste vragen uit de interne LibreChat van dezelfde tenant als extra bron (de
+database volgt uit de organisatie van de widget, dus het script kan geen andere tenant lezen), en een
+tabel per strook van de beste bronscore met het oordeel dat de antwoordbeoordelaar per beurt al
+vastlegt: beantwoordt dit de vraag. Dat oordeel is hier de relevantiemaat, omdat "gedragen" alleen
+zegt dat iets in het artikel staat en niet dat het artikel over de vraag gaat. De verwachte bronnen in
+de gecureerde vraagsets bleken ongeschikt: meestal leeg, en waar ingevuld verwijzen ze naar interne
+kennis die de widget niet doorzoekt.
+
+**Uitkomst**, 433 beurten (gecureerde vragen, echte widgetvragen, eerste LibreChat-vragen, vaste
+negatieve vragen; 6 vielen weg tijdens een herstart van portal-api door een deploy van een andere
+sessie). Een eerste run is weggegooid: de review vond dat het script bij een gesprek dat vóór de
+periode begon, of met een te lange openingsvraag, een latere vervolgvraag als eerste vraag nam en die
+zonder context verstuurde. Nu wordt per gesprek eerst de echte openingsvraag bepaald. "Deels" staat
+voortaan als eigen kolom, en beide oordelen lezen het concept, vóór de reparatiestap.
+
+| Strook beste bron | Beurten | Beantwoordt de vraag | Deels | Niet | Zonder ongedragen bewering |
+|---|---|---|---|---|---|
+| onder 0,3 | 155 | 15 van 150 | 5 | 130 | 117 van 147 |
+| 0,3 tot 0,4 | 13 | 0 van 13 | 1 | 12 | 10 van 13 |
+| 0,4 tot 0,5 | 13 | 9 van 13 | 1 | 3 | 6 van 13 |
+| 0,5 tot 0,6 | 13 | 8 van 13 | 2 | 3 | 5 van 9 |
+| 0,6 en hoger | 133 | 89 van 133 | 27 | 17 | 54 van 107 |
+
+**Besluit.** De grens blijft 0,4. Tussen 0,4 en 0,5 beantwoordt het merendeel van de antwoorden de vraag
+wel (9 van 13); de grens naar 0,5 verschuiven zou die in "niet gevonden" veranderen. Onder 0,4 werkt de
+regel van 2.48 zoals bedoeld: daar beantwoordt nog maar een op de tien antwoorden de vraag, en de rest
+is overwegend het eerlijke "niet gevonden" zonder ongedragen bewering.
+
+**Wat de tabel verder laat zien.** Het grootste resterende probleem zit niet bij zwakke bronnen. Boven
+0,5 bevat ongeveer de helft van de concepten een bewering die niet in de artikelen staat (5 van 9 en
+54 van 107 zonder). Dat meet het concept vóór de reparatiestap van 2.22, dus wat de bezoeker ziet is
+beter dan dit getal, maar het wijst aan waar de volgende winst ligt: niet in welke bron er komt, maar in
+wat het antwoordmodel er zelf bij verzint.
+
 ---
 
 ## 3. Wat er live ging, en waarom
