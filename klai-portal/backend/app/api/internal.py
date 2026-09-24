@@ -26,12 +26,9 @@ from typing import Annotated, Any, Literal, cast
 
 import redis.asyncio as aioredis
 import structlog
-from bson import ObjectId
-from bson.errors import InvalidId
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import Response
 from jwt import PyJWKClient
-from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, ConfigDict, Field
 from redis.exceptions import RedisError
 from sqlalchemy import any_, literal, select, text
@@ -52,6 +49,7 @@ from app.services.events import emit_event
 from app.services.gap_events import record_gap_event
 from app.services.gap_rescorer import schedule_rescore
 from app.services.ingest_gap_evaluation import evaluate_ingest_snapshot
+from app.services.internal_chat_identity import LibreChatIdentityError, has_knowledge_access, resolve_librechat_user
 from app.services.partner_rate_limit import check_rate_limit
 from app.services.pii_entity_policy import sanitize_stored_entities
 from app.services.provisioning.infrastructure import assert_shared_librechat_mount_sources_intact
@@ -859,94 +857,26 @@ async def get_knowledge_feature(
     """
     await _require_internal_token(request)
 
-    # Set tenant context early using the org_id query param (Zitadel org ID).
-    # This is needed so subsequent queries on RLS-protected tables work correctly.
-    # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-2: also fetch telemetry_level so every
-    # disabled-path return surfaces the org's level (not the default).
-    org_lookup = await db.execute(
-        select(PortalOrg.id, PortalOrg.telemetry_level).where(PortalOrg.zitadel_org_id == org_id)
-    )
-    org_row = org_lookup.one_or_none()
-    portal_org_id = org_row[0] if org_row else None
-    org_telemetry_level: Literal["off", "shadow", "full"] = org_row[1] if org_row else "shadow"
-    if portal_org_id is not None:
-        await set_tenant(db, portal_org_id)
+    # SPEC-PRIVACY-QUERY-SHADOW-001 REQ-2: every disabled-path return surfaces
+    # the org's telemetry level (not the default).
+    org_result = await db.execute(select(PortalOrg).where(PortalOrg.zitadel_org_id == org_id))
+    org = org_result.scalar_one_or_none()
+    if org is None:
+        logger.warning("KB authz: unknown org %s — fail-closed", org_id)
+        await _audit_internal_call(request, org_id=0)
+        return KnowledgeFeatureResponse(enabled=False)
 
-    audit_org_id = portal_org_id or 0
+    # Lazy mapping LibreChat ObjectId → portal user, bound to this org; shared
+    # with the internal-chat entry on /partner/v1/chat/completions.
+    try:
+        user = await resolve_librechat_user(db, org, librechat_user_id)
+    except LibreChatIdentityError:
+        await _audit_internal_call(request, org_id=org.id)
+        return KnowledgeFeatureResponse(enabled=False, telemetry_level=org.telemetry_level)
 
-    # Step 1: fast path — librechat_user_id already mapped in PostgreSQL
-    result = await db.execute(select(PortalUser).where(PortalUser.librechat_user_id == librechat_user_id))
-    user = result.scalar_one_or_none()
+    enabled = await has_knowledge_access(db, user)
 
-    if user is None:
-        # Step 2: lazy MongoDB lookup to resolve LibreChat ObjectId → Zitadel user ID
-        if not settings.librechat_mongo_root_uri:
-            logger.warning("KB authz: LIBRECHAT_MONGO_ROOT_URI not set — fail-closed for user %s", librechat_user_id)
-            await _audit_internal_call(request, org_id=audit_org_id)
-            return KnowledgeFeatureResponse(enabled=False, telemetry_level=org_telemetry_level)
-
-        # Look up the org to get its LibreChat container name (= MongoDB database name)
-        org_result = await db.execute(select(PortalOrg).where(PortalOrg.zitadel_org_id == org_id))
-        org = org_result.scalar_one_or_none()
-        if org is None or not org.librechat_container:
-            logger.warning("KB authz: org %s has no librechat_container — fail-closed", org_id)
-            await _audit_internal_call(request, org_id=audit_org_id)
-            return KnowledgeFeatureResponse(enabled=False, telemetry_level=org_telemetry_level)
-
-        try:
-            oid = ObjectId(librechat_user_id)
-        except InvalidId:
-            logger.warning("KB authz: invalid ObjectId %s — fail-closed", librechat_user_id)
-            await _audit_internal_call(request, org_id=audit_org_id)
-            return KnowledgeFeatureResponse(enabled=False, telemetry_level=org_telemetry_level)
-
-        mongo_client: AsyncIOMotorClient | None = None
-        try:
-            mongo_client = AsyncIOMotorClient(settings.librechat_mongo_root_uri)
-            mongo_user = await mongo_client[org.librechat_container]["users"].find_one({"_id": oid})
-        except Exception as exc:
-            logger.warning(
-                "KB authz: MongoDB lookup failed for %s — fail-closed: %s",
-                librechat_user_id,
-                exc,
-                exc_info=True,
-            )
-            await _audit_internal_call(request, org_id=audit_org_id)
-            return KnowledgeFeatureResponse(enabled=False, telemetry_level=org_telemetry_level)
-        finally:
-            if mongo_client is not None:
-                mongo_client.close()
-
-        if mongo_user is None:
-            logger.warning("KB authz: no LibreChat user found for ObjectId %s — fail-closed", librechat_user_id)
-            await _audit_internal_call(request, org_id=audit_org_id)
-            return KnowledgeFeatureResponse(enabled=False, telemetry_level=org_telemetry_level)
-
-        zitadel_user_id = mongo_user.get("openidId") or mongo_user.get("openid_id") or mongo_user.get("sub")
-        if not zitadel_user_id:
-            logger.warning("KB authz: LibreChat user %s has no openidId/sub — fail-closed", librechat_user_id)
-            await _audit_internal_call(request, org_id=audit_org_id)
-            return KnowledgeFeatureResponse(enabled=False, telemetry_level=org_telemetry_level)
-
-        # Resolve portal user and cache the mapping
-        portal_result = await db.execute(select(PortalUser).where(PortalUser.zitadel_user_id == zitadel_user_id))
-        user = portal_result.scalar_one_or_none()
-        if user is None:
-            logger.warning("KB authz: no portal user for zitadel_user_id %s — fail-closed", zitadel_user_id)
-            await _audit_internal_call(request, org_id=audit_org_id)
-            return KnowledgeFeatureResponse(enabled=False, telemetry_level=org_telemetry_level)
-
-        user.librechat_user_id = librechat_user_id
-        await db.commit()
-
-    # Org-admins always get knowledge access
-    if user.role == "admin":
-        enabled = True
-    else:
-        products = await get_effective_products(user.zitadel_user_id, db)
-        enabled = "knowledge" in products
-
-    await _audit_internal_call(request, org_id=user.org_id or audit_org_id)
+    await _audit_internal_call(request, org_id=org.id)
     return KnowledgeFeatureResponse(
         enabled=enabled,
         kb_retrieval_enabled=user.kb_retrieval_enabled,
@@ -955,7 +885,7 @@ async def get_knowledge_feature(
         kb_narrow=user.kb_narrow,
         kb_pref_version=user.kb_pref_version,
         zitadel_user_id=user.zitadel_user_id,
-        telemetry_level=org_telemetry_level,
+        telemetry_level=org.telemetry_level,
     )
 
 

@@ -43,6 +43,7 @@ from app.models.widgets import Widget, WidgetKbAccess
 from app.services import escalation_intent as escalation_service
 from app.services import turn_judge
 from app.services.answer_plan import WEAK_SOURCES_ADDENDUM, answer_plan
+from app.services.chat_profile import ChatProfile, resolve_chat_profile
 from app.services.events import emit_event
 from app.services.gap_classification import classify_gap
 from app.services.off_topic_referral import off_topic_referral
@@ -116,6 +117,18 @@ _PASSTHROUGH_ONLY_FIELDS = {
     "tool_choice",
     "tools",
 }
+# LibreChat's conversation-title prompt ("Please generate a concise, 5-word-or-less
+# title for the conversation ..."), same pattern as the LiteLLM hook's
+# TITLE_GENERATION_RE until that hook is removed.
+_LIBRECHAT_TITLE_RE = re.compile(
+    r"(?:"
+    r"\b(?:generate|write|create|provide|give|summarize)\b"
+    r"(?=[\s\S]{0,240}\b(?:title|name|summary)\b)"
+    r"(?=[\s\S]{0,240}\b(?:conversation|chat)\b)"
+    r"|\b(?:title|name)\s+(?:this|the)\s+(?:conversation|chat)\b"
+    r")",
+    re.IGNORECASE,
+)
 _WIDGET_CLIENT_SESSION_RE = re.compile(r"^[A-Za-z0-9_-]{16,80}$")
 _MAX_WEB_SEARCH_QUERY_CHARS = 512
 _OPENAI_COMPAT_MAX_BODY_BYTES = 131_072
@@ -1495,6 +1508,20 @@ def _message_text(content: object) -> str:
     return ""
 
 
+def _is_librechat_title_request(messages: object) -> bool:
+    if not isinstance(messages, list):
+        return False
+    for message in messages:
+        if not isinstance(message, dict) or message.get("role") not in {"system", "developer", "user"}:
+            continue
+        text = _message_text(message.get("content"))
+        # The title prompt is short; a long pasted text that happens to say
+        # "summarize this conversation" is a real question.
+        if text and len(text) <= 4000 and _LIBRECHAT_TITLE_RE.search(text):
+            return True
+    return False
+
+
 def _clean_web_query(value: str | None) -> str | None:
     cleaned = re.sub(r"\s+", " ", value or "").strip()
     if not cleaned:
@@ -1549,6 +1576,10 @@ async def _openai_compatible_chat_completions_from_body(
     auth: PartnerAuthContext,
 ) -> Response | dict[str, Any]:
     require_permission(auth, "general_chat")
+    return await _general_passthrough(body, auth=auth)
+
+
+async def _general_passthrough(body: dict[str, Any], *, auth: PartnerAuthContext) -> Response | dict[str, Any]:
     validated_body = _validated_openai_compatible_body(body)
     await _enforce_openai_compatible_usage_limits(auth=auth, body=validated_body)
     if bool(validated_body.get("stream", False)):
@@ -1655,8 +1686,24 @@ async def canonical_chat_completions(
     partner key has ``general_chat`` and the request does not opt into Klai
     knowledge features. Supplying ``knowledge``/KB/web-search fields keeps the
     existing knowledge-grounded Klai behavior.
+
+    A key with ``internal_chat`` (LibreChat) is routed by its resolved profile,
+    not by body fields: title prompts go to the passthrough, every other turn
+    to the knowledge path, tools included.
     """
     body = await _openai_compatible_request_body(http_request)
+    profile = await resolve_chat_profile(db, auth, body.get("user"))
+    if profile.surface == "internal":
+        if _is_librechat_title_request(body.get("messages")):
+            return await _general_passthrough(body, auth=auth)
+        return await chat_completions(
+            request=_parse_knowledge_chat_request(body),
+            http_request=http_request,
+            auth=auth,
+            db=db,
+            profile=profile,
+        )
+
     if _openai_compatible_enabled(auth) and not _uses_knowledge_chat(body):
         return await _openai_compatible_chat_completions_from_body(body, auth=auth)
 
@@ -1677,6 +1724,7 @@ async def canonical_chat_completions(
         http_request=http_request,
         auth=auth,
         db=db,
+        profile=profile,
     )
 
 
@@ -1691,6 +1739,7 @@ async def chat_completions(  # noqa: C901
     http_request: Request,
     auth: PartnerAuthContext = Depends(get_partner_key),
     db: AsyncSession = Depends(get_db),
+    profile: ChatProfile | None = None,
 ):
     """Chat completions with RAG context from knowledge bases.
 
@@ -1700,6 +1749,12 @@ async def chat_completions(  # noqa: C901
     turn_started = time.perf_counter()
     # 1. Permission check
     require_permission(auth, "chat")
+    # canonical_chat_completions always passes the profile; direct callers get
+    # the one their key resolves to. From here on the profile, not the key, is
+    # what the generation functions receive.
+    if profile is None:
+        profile = await resolve_chat_profile(db, auth, None)
+    structlog.contextvars.bind_contextvars(chat_surface=profile.surface, chat_kb_mode=profile.kb_mode)
 
     # 2-3. Model and messages validation.
     _validate_chat_request(request)
