@@ -529,6 +529,31 @@
 }
 
 
+# Twenty CRM (SPEC-INFRA-COOLIFY-EXIT-001). Until the cutover the public
+# A record for crm still points at public-01, so this block serves nothing
+# yet; the certificate is issued over DNS-01 regardless, which is what lets
+# the new instance be verified with --resolve before any traffic moves.
+crm.{$DOMAIN} {
+    tls {
+        dns hetzner {$HETZNER_AUTH_API_TOKEN}
+        propagation_delay 120s
+    }
+
+    log {
+        output stdout
+        format json
+    }
+
+    reverse_proxy crm:3000 {
+        header_up X-Request-ID {http.request.uuid}
+        header_up -X-Internal-Secret
+        header_up -X-Caller-Service
+        header_up -X-Org-ID
+        header_up -X-Org-Slug
+        header_up -X-User-ID
+    }
+}
+
 # Calnode — booking page for demo calls. Took over cal.getklai.com from the
 # self-hosted cal.com it replaced, so the booking links already sitting in
 # prospects' inboxes keep working without a redirect hop. Calnode reads the
