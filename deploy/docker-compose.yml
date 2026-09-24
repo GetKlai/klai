@@ -41,6 +41,10 @@ networks:
     driver: bridge
     name: klai-net-listmonk
     internal: true   # only listmonk <-> its Postgres database
+  net-crm:
+    driver: bridge
+    name: klai-net-crm
+    internal: true   # only Twenty CRM <-> its Postgres and Redis
   net-meilisearch:
     driver: bridge
     name: klai-net-meilisearch
@@ -116,6 +120,7 @@ volumes:
   runtime-api-docker-socket:   # SPEC-SEC-021 socat bridge socket (runtime-api <-> docker-socket-proxy)
   vaultwarden-data:            # Vaultwarden SQLite DB + attachments
   calnode-data:                # Calnode SQLite DB + encrypted stored credentials
+  crm-postgres-data:           # Twenty CRM database (SPEC-INFRA-COOLIFY-EXIT-001)
 
 # Log rotation. The daemon default lives outside this repo, in core-01's
 # /etc/docker/daemon.json:
@@ -2442,6 +2447,58 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  # ─── Twenty CRM — datastores ─────────────────────────────────────────────
+  # Moved off Coolify on public-01 (SPEC-INFRA-COOLIFY-EXIT-001). The engines
+  # are pinned to exactly what ran there — PostgreSQL 16.13, Redis 7.4.8 —
+  # because this step is a relocation: if something breaks, it must be the
+  # move and not an engine upgrade hiding inside it.
+  #
+  # The datastores land before the application on purpose. Twenty runs its
+  # migrations on start, so pointed at an empty database it initialises a
+  # fresh install, and the restored dump would then collide with it. The dump
+  # goes in first; the app follows in a separate change.
+  #
+  # Redis is cache only (Twenty's queue is pg-boss, in Postgres), so it keeps
+  # no volume.
+  crm-postgres:
+    logging: *log-rotation
+    image: postgres:16.13-alpine
+    restart: unless-stopped
+    volumes:
+      - crm-postgres-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: twenty
+      POSTGRES_PASSWORD: ${CRM_POSTGRES_PASSWORD}
+      POSTGRES_DB: twenty
+    networks:
+      - net-crm
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U twenty -d twenty"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  crm-redis:
+    logging: *log-rotation
+    image: redis:7.4.8-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--maxmemory-policy", "noeviction", "--save", "", "--appendonly", "no"]
+    networks:
+      - net-crm
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
     deploy:
       resources:
         limits:

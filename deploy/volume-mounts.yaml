@@ -397,6 +397,25 @@ mounts:
       volume yet, and Calnode's own Litestream integration is not configured.
       Losing this volume loses the bookings, not the booking page.
 
+  crm-postgres:
+    service: crm-postgres
+    kind: named
+    host: crm-postgres-data
+    container_path: /var/lib/postgresql/data
+    image: postgres:16.13-alpine
+    category: data
+    data_path_source: upstream docs (PGDATA default)
+    pii: true
+    backup: sql
+    backup_method: pg_dumpall
+    retention: manual
+    retention_enforced_by: n/a
+    notes: |
+      Twenty CRM: people, companies, notes and the workspace metadata. PII by
+      definition. Dumped by backup_crm_postgres from the day it lands, not
+      from the day the Coolify copy on public-01 is removed: once T4 runs
+      (SPEC-INFRA-COOLIFY-EXIT-001) this is the only place the CRM exists.
+
   ollama:
     service: ollama
     kind: bind
