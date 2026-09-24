@@ -57,6 +57,7 @@ from klai_chat_prompts.language import (
 
 from app.core.config import Settings
 from app.core.database import tenant_scoped_session
+from app.services.answer_footer import render_answer_footer, strip_answer_footer_from_text
 from app.services.answer_grounding import (
     NOTHING_LEFT,
     GroundingCheck,
@@ -256,9 +257,16 @@ def _normalize_llm_message(message: dict, *, keep_tool_fields: bool = False) -> 
     model's own prior ``tool_calls`` and the ``tool`` role results answering
     them must survive, or a second turn in a tool-calling conversation loses
     the call the model is waiting on a result for.
+
+    An assistant message's own ``content`` is stripped of the internal-chat
+    answer footer (:func:`app.services.answer_footer.strip_answer_footer_from_text`)
+    before either caller sees it: a footer LibreChat echoes back from a prior
+    turn must not enter the retrieval search query or the model's own history.
     """
     role = message.get("role")
     content = message.get("content")
+    if role == "assistant" and isinstance(content, str):
+        content = strip_answer_footer_from_text(content)
     if keep_tool_fields and role == "tool":
         tool_call_id = message.get("tool_call_id")
         if isinstance(content, str) and isinstance(tool_call_id, str) and tool_call_id:
@@ -2410,6 +2418,7 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
     profile: ChatProfile = ChatProfile(surface="widget"),
     tools: list[dict] | None = None,
     tool_choice: Any | None = None,
+    sub_queries: list[str] | None = None,
 ) -> AsyncGenerator[bytes]:
     """Collect text, compose deterministic citations, then stream once.
 
@@ -2455,6 +2464,14 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
     regardless of hold/live — see :func:`_sse_tool_calls_delta`. It never
     enters ``raw_text_parts``, so it can never reach the citation composer or
     the grounding check.
+
+    For ``surface == "internal"`` with citable sources, a text footer
+    (:func:`app.services.answer_footer.render_answer_footer`) is appended as
+    the LAST render step, after composition/judge/repair have settled
+    ``sources`` — a held turn gets it baked into ``content``; a live turn,
+    whose content was already streamed with the model's own raw markers, gets
+    it as one extra content delta after the live text (see the emission
+    below). ``sub_queries`` is threaded through only to feed that footer.
     """
     raw_text_parts: list[str] = []
     # The page-context message is prepended, so the last user turn in
@@ -2603,6 +2620,23 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
         model=model,
         query_text=visitor_query,
     )
+    # Deliberately kept separate as the last render step
+    # (chat-quality-history-and-plan.md §7.2): the widget got its
+    # sources/escalation frames above; an internal turn additionally gets
+    # them as a text footer, because LibreChat renders only text. Built from
+    # the same finalised ``sources`` the frames above used, so a held and a
+    # live turn number it identically — see the docstring above.
+    footer_text = ""
+    if profile.surface == "internal" and emit_sources:
+        footer_text = render_answer_footer(
+            sources=sources,
+            kb_mode=profile.kb_mode,
+            chunks_injected=len(citation_chunks or []),
+            sub_queries=sub_queries,
+            language=response_language,
+        )
+        if footer_text and not profile.stream_live:
+            content = f"{content.rstrip()}\n\n{footer_text}"
     # Safety refusals above replace the decision dict, so no broad signal
     # survives on a blocked turn — deliberate: a blocked answer neither
     # labels itself general knowledge nor invites the visitor to broaden.
@@ -2664,6 +2698,12 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
     )
     if not profile.stream_live:
         yield _sse_content_delta(content)
+    elif footer_text:
+        # The live text itself already reached the caller token by token; the
+        # footer is new content the caller has not seen, so it goes out as one
+        # more delta before [DONE] instead of being folded into ``content``
+        # (which nothing re-sends on a live turn).
+        yield _sse_content_delta(f"\n\n{footer_text}")
     yield b"data: [DONE]\n\n"
     _emit_language_correctness_log(
         org_id=org_id,
@@ -3296,6 +3336,7 @@ async def chat_completion_non_streaming(  # noqa: C901 - tools stripping/forward
     profile: ChatProfile = ChatProfile(surface="widget"),
     tools: list[dict] | None = None,
     tool_choice: Any | None = None,
+    sub_queries: list[str] | None = None,
 ) -> dict:
     """Forward to LiteLLM and return complete response as dict.
 
@@ -3478,6 +3519,19 @@ async def chat_completion_non_streaming(  # noqa: C901 - tools stripping/forward
                 )
                 message["content"] = rendered_content
                 message["sources"] = sources
+                # Deliberately kept separate as the last render step
+                # (chat-quality-history-and-plan.md §7.2): see the matching
+                # comment on the streaming path.
+                if profile.surface == "internal":
+                    footer_text = render_answer_footer(
+                        sources=sources,
+                        kb_mode=profile.kb_mode,
+                        chunks_injected=len(citation_chunks or []),
+                        sub_queries=sub_queries,
+                        language=language_decision.language,
+                    )
+                    if footer_text:
+                        message["content"] = f"{rendered_content.rstrip()}\n\n{footer_text}"
                 if isinstance(decision, dict) and decision.get("broad_mode") in ("offer", "answer"):
                     message["broad_mode"] = decision["broad_mode"]
                 if escalation := _appointment_escalation_signal(decision):
@@ -3560,6 +3614,7 @@ async def chat_completion_streaming(
     profile: ChatProfile = ChatProfile(surface="widget"),
     tools: list[dict] | None = None,
     tool_choice: Any | None = None,
+    sub_queries: list[str] | None = None,
 ) -> AsyncGenerator[bytes]:
     """Stream LiteLLM SSE response with backend-managed KB citations.
 
@@ -3623,6 +3678,7 @@ async def chat_completion_streaming(
             profile=profile,
             tools=tools,
             tool_choice=tool_choice,
+            sub_queries=sub_queries,
         ):
             yield chunk
         return
