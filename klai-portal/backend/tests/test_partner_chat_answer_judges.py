@@ -312,6 +312,22 @@ async def test_ambiguous_turn_shows_the_clarifying_question_without_buttons(stre
 # ─── The statement-level grounding check and its repair ─────────────────
 
 
+async def test_the_decision_record_keeps_which_statement_the_check_flagged():
+    """A reply with one flagged statement goes out unrepaired by design (a single
+    flag was right 77% of the time, 2.5). To measure that again, and for a
+    reviewer to see what the check doubted, the record keeps the statement itself,
+    not only the count."""
+    litellm = _LiteLLM(
+        model_text=ANSWER_900 + " De incasso kun je altijd kosteloos terugdraaien.",
+        grounding=_grounding("De incasso kun je altijd kosteloos terugdraaien.", supported=(ANSWER_900,)),
+    )
+
+    _, signals, _ = await _answer(litellm, stream=False, **_with_900_sources())
+
+    assert signals["unsupported"] == 1
+    assert signals["unsupported_statements"] == ["De incasso kun je altijd kosteloos terugdraaien."]
+
+
 @pytest.mark.parametrize("stream", [True, False])
 async def test_an_answer_with_an_unsupported_statement_is_repaired_not_refused(stream):
     """Measured on 150 real answers: editing took answers with an unsupported
