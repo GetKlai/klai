@@ -38,14 +38,13 @@ scan needs the widget turn itself to record the post-boost score the band was de
 on (today's ``answer_signals.top_score`` is the pre-boost reranker score) — a separate
 change to partner_chat.py, not this script.
 
-Question set (~250, one tenant: Voys — the only org with both a real static KB and
-enough real widget traffic to do this respectably): the 71 hand-curated,
-difficulty-stratified queries in
+Question set (~250, one tenant with both a real static KB and live widget traffic):
+the hand-curated, difficulty-stratified queries in
 klai-knowledge-ingest/knowledge_ingest/eval/suites/{chat,knowledge_org}.yaml, up to
 100 real first-turn visitor questions from the last 90 days, and 120 fixed,
 hand-written off-topic questions (no Klai tenant KB covers any of them) as the
-"predominantly unsupported" anchor — real Voys traffic (62 conversations in 90 days)
-and the curated suites (71) together fall well short of 250 on their own.
+"predominantly unsupported" anchor, because the curated suites and real traffic
+together fall well short of 250 on their own.
 
 Known ceiling: single tenant. Upgrade path: rerun with more orgs once a second tenant
 has comparable volume.
@@ -207,11 +206,9 @@ _OFF_TOPIC_QUESTIONS = [
     "Wat is het verschil tussen UTC en GMT?",
     "How do noise-cancelling headphones work?",
     "Wat is een goed dieet voor iemand met een glutenallergie?",
-    # Extended 2026-09-24: the curated suites (71) + real Voys traffic (capped
-    # at ~62 conversations in 90 days — checked, that is the hard ceiling) fall
-    # ~60 short of the ~250 target on their own; off-topic negatives are the
-    # cheapest way to close the gap without inflating the curated/organic
-    # slices past what real data supports.
+    # Extended 2026-09-24: the curated suites and real traffic fall short of the
+    # ~250 target on their own; off-topic negatives close the gap without
+    # inflating the curated/organic slices past what real data supports.
     "Hoeveel eiwit heeft een volwassene per dag nodig?",
     "What causes a hangover and how do you cure one?",
     "Wat is het verschil tussen een komeet en een asteroïde?",
