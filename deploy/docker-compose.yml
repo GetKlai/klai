@@ -49,6 +49,10 @@ networks:
     driver: bridge
     name: klai-net-umami
     internal: true   # only Umami <-> its Postgres
+  net-fider:
+    driver: bridge
+    name: klai-net-fider
+    internal: true   # only Fider <-> its Postgres
   net-meilisearch:
     driver: bridge
     name: klai-net-meilisearch
@@ -127,6 +131,7 @@ volumes:
   crm-postgres-data:           # Twenty CRM database (SPEC-INFRA-COOLIFY-EXIT-001)
   crm-storage:                 # Twenty CRM uploads: avatars and attachments
   umami-postgres-data:         # Umami analytics database (SPEC-INFRA-COOLIFY-EXIT-001)
+  fider-postgres-data:         # Fider feedback board database (SPEC-INFRA-COOLIFY-EXIT-001)
 
 # Log rotation. The daemon default lives outside this repo, in core-01's
 # /etc/docker/daemon.json:
@@ -2531,6 +2536,34 @@ services:
       - net-umami
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U umami -d umami"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  # ─── Fider — datastore ───────────────────────────────────────────────────
+  # Moved off Coolify on public-01 (SPEC-INFRA-COOLIFY-EXIT-001). The one
+  # service in that move whose engine changes on the way: under Coolify it ran
+  # PostgreSQL 12.22, the last release that series will ever get, unsupported
+  # since November 2024. 17 is what Fider's own compose file uses. The data
+  # arrives by pg_dump from 12 and restore into 17, verified table by table.
+  fider-postgres:
+    logging: *log-rotation
+    image: postgres:17.10-alpine
+    restart: unless-stopped
+    volumes:
+      - fider-postgres-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: fider
+      POSTGRES_PASSWORD: ${FIDER_POSTGRES_PASSWORD}
+      POSTGRES_DB: fider
+    networks:
+      - net-fider
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fider -d fider"]
       interval: 30s
       timeout: 10s
       retries: 5
