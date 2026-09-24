@@ -388,7 +388,7 @@ async def _open_group_candidates(
     org_id: int,
     kb_slug: str | None,
     exclude_case_id: int | None,
-    exclude_gap_id: int | None = None,
+    exclude_question_key: str | None = None,
 ) -> list[dict]:
     """Existing OPEN groups for this org+KB, across every producer (support
     case findings and chat/widget/MCP telemetry alike — SPEC-RAG-GAP-GROUPING),
@@ -403,11 +403,11 @@ async def _open_group_candidates(
         PortalRetrievalGap.resolved_at.is_(None),
         PortalRetrievalGap.question_key.isnot(None),
     ]
-    if exclude_gap_id is not None:
-        # The row asking the question is already in the table: without this it
+    if exclude_question_key is not None:
+        # The group asking the question is already in the table: without this it
         # occupies one of the bounded candidate slots and can push a genuinely
         # matching group out of the prompt.
-        conditions.append(PortalRetrievalGap.id != exclude_gap_id)
+        conditions.append(PortalRetrievalGap.question_key != exclude_question_key)
     if exclude_case_id is not None:
         # NULL-safe: a chat/telemetry row has no support_case_id, so a plain
         # ``!=`` (which is NULL, i.e. excluded, against NULL) would silently

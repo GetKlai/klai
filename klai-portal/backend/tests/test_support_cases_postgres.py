@@ -85,6 +85,8 @@ _SETUP = [
         occurred_at timestamptz NOT NULL DEFAULT now(), resolved_at timestamptz, resolved_by varchar(16),
         resolved_by_user_id integer, support_case_id bigint, diagnosis varchar(24), question_key text,
         audience varchar(16), evidence jsonb)""",
+    # Only the id is read: list_gaps joins it to link a group to its conversation.
+    f"CREATE TABLE {_SCHEMA}.widget_conversations (id bigserial PRIMARY KEY, org_id integer NOT NULL)",
     f"""CREATE TABLE {_SCHEMA}.portal_support_cases (
         id bigserial PRIMARY KEY, org_id integer NOT NULL, kb_slug varchar(64) NOT NULL, connector_id uuid,
         source varchar(16) NOT NULL, account_id text NOT NULL, external_id text NOT NULL, created_by text NOT NULL,
@@ -1582,3 +1584,103 @@ async def test_seven_day_purge_keeps_case_findings_and_still_expires_query_text(
     assert case_finding.diagnosis == "missing"
     assert sorted(expired_text) == ["question a reviewer filed", "raw chat question"]
     assert sorted(surviving) == sorted([case_finding.query_text, "[REDACTED:shadow]", "fresh chat question"])
+
+
+async def test_inbox_lists_only_rows_that_show_the_visitor_was_not_helped(pg) -> None:
+    """A low retrieval score on its own does not show that a visitor went
+    unhelped, and a redacted row carries no question anyone could act on; on
+    the first tenant measured those two made up most open rows, including the
+    largest groups. The inbox keeps what does show it: a quality-judge or human-review
+    verdict, or a search that found nothing at all."""
+    from app.api.app_gaps import list_gaps
+    from tests.conftest import make_perms
+
+    admin, factory, _cid, _analyzer = pg
+    async with admin.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO portal_retrieval_gaps (org_id,user_id,query_text,gap_type,caller_client_id,language) "
+                "VALUES "
+                "(901,'u','Hoe laat open?','soft','widget-chat','nl'),"
+                "(901,'u','[REDACTED:legacy]','soft','widget-chat','nl'),"
+                "(901,'u','[REDACTED:legacy]','hard','human-review','nl'),"
+                "(901,'u','Kan niet bellen','soft','quality-judge','nl'),"
+                "(901,'u','Nummer instellen','soft','human-review','nl'),"
+                "(901,'u','Faxen','hard','widget-chat','nl')"
+            )
+        )
+
+    async with factory() as db:
+        await set_tenant(db, 901)
+        out = await list_gaps(
+            days=30,
+            gap_type=None,
+            language=None,
+            taxonomy_node_id=None,
+            limit=50,
+            include_resolved=False,
+            perms=make_perms(org_id=901),
+            db=db,
+        )
+
+    assert sorted(g.query_text for g in out.gaps) == ["Faxen", "Kan niet bellen", "Nummer instellen"]
+
+
+async def test_folding_a_group_moves_every_row_that_shares_its_key(pg) -> None:
+    """A fold merges one group into another, so every row on the folded key
+    moves along. Moving only the asking row split identical questions over two
+    groups, and a one-off regroup over existing rows would strand whatever an
+    earlier fold had already put on the key being moved."""
+    import contextlib
+
+    from app.services.gap_events import fold_into_open_group
+    from app.services.support_cases import _question_key
+
+    admin, factory, _cid, _analyzer = pg
+    k_moved = _question_key(question="Nummer instellen", language="nl", kb_slug="kb-a", audience=None)
+    k_target = _question_key(question="Hoe stel ik mijn nummer in?", language="nl", kb_slug="kb-a", audience=None)
+    async with admin.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO portal_retrieval_gaps "
+                "(org_id,user_id,query_text,gap_type,caller_client_id,language,nearest_kb_slug,question_key) VALUES "
+                "(901,'u','Nummer instellen','soft','human-review','nl','kb-a',:m),"
+                "(901,'u','nummer  instellen','hard','human-review','nl','kb-a',:m),"
+                "(901,'u','Hoe stel ik mijn nummer in?','soft','quality-judge','nl','kb-a',:t)"
+            ),
+            {"m": k_moved, "t": k_target},
+        )
+
+    @contextlib.asynccontextmanager
+    async def _scoped(org_id: int):
+        async with factory() as db:
+            await set_tenant(db, org_id)
+            yield db
+
+    async def _judge(findings: list[dict], candidates: list[dict]) -> list[dict]:
+        assert [c["question_key"] for c in candidates] == [k_target]  # its own key is not a candidate
+        return [{**findings[0], "group_question_key": k_target}]
+
+    grouping = types.ModuleType("app.services.support_gap_grouping")
+    grouping.group_findings = _judge  # type: ignore[attr-defined]
+    with (
+        patch("app.core.database.tenant_scoped_session", _scoped),
+        patch.dict(sys.modules, {"app.services.support_gap_grouping": grouping}),
+    ):
+        matched = await fold_into_open_group(
+            org_id=901,
+            kb_slug="kb-a",
+            question="Nummer instellen",
+            language="nl",
+            audience=None,
+            base_key=k_moved,
+        )
+
+    assert matched == k_target
+    async with admin.connect() as conn:
+        keys = (
+            (await conn.execute(text("SELECT DISTINCT question_key FROM portal_retrieval_gaps WHERE org_id=901")))
+            .scalars()
+            .all()
+        )
+    assert keys == [k_target]
