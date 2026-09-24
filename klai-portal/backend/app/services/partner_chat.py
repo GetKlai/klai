@@ -26,6 +26,7 @@ import json
 import re
 import time
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from typing import Any, Literal
 from urllib.parse import urlparse, urlunparse
 
@@ -42,6 +43,8 @@ from klai_chat_prompts import (
     broad_mode_answer_marker,
     chat_contract_article,
     final_response_language_reminder,
+    has_direct_evidence_for_query,
+    should_clarify,
     strip_appointment_offer_marker,
 )
 from klai_chat_prompts import (
@@ -65,6 +68,13 @@ from app.services.answer_grounding import (
 )
 from app.services.answer_judge import decide_answer, is_clarifying_question, judge_answer
 from app.services.chat_profile import ChatProfile
+from app.services.chat_turn_rules import (
+    MAX_SUB_QUESTIONS,
+    is_meta_query,
+    is_multi_question_query,
+    is_trivial_turn,
+    split_sub_questions,
+)
 from app.services.citations import (
     compose_answer_with_trusted_sources,
     evidence_chunks_from_chunks,
@@ -76,14 +86,23 @@ from app.services.citations import (
 )
 from app.services.gap_classification import classify_gap
 from app.services.gap_events import record_gap_event
+from app.services.knowledge_prompts import (
+    InternalPromptState,
+    internal_system_prompt,
+    kb_context_block,
+    multi_question_guard,
+    strict_kb_unavailable_message,
+    sub_query_grouped_context,
+)
 from app.services.llm_safety_adapter import (
     check_context_text,
     check_model_output,
     check_widget_or_partner_input,
     safe_refusal_text,
 )
-from app.services.pasted_correspondence import PASTED_CORRESPONDENCE_SCOPE
+from app.services.pasted_correspondence import PASTED_CORRESPONDENCE_SCOPE, latest_user_turn_has_correspondence
 from app.services.query_paraphrase import first_question_variants
+from app.services.query_rewrite import rewrite_for_retrieval
 from app.services.widget_audit import find_conversation_id
 from app.trace import get_trace_headers
 
@@ -217,16 +236,16 @@ async def safety_refusal_stream(query: str = "") -> AsyncGenerator[bytes]:
     yield b"data: [DONE]\n\n"
 
 
-def attachment_error_response(*, model: str, message: str) -> dict:
-    """Deterministic reply for a PDF attachment that could not be processed.
+def fixed_reply_response(*, model: str, message: str) -> dict:
+    """A reply decided without a model: an unreadable PDF attachment, or a
+    Strict turn that cannot search the knowledge base.
 
-    ``message`` is already rendered by
-    :func:`app.services.chat_attachments.user_visible_error` in the
-    conversation's language — no retrieval or generation happens for this
-    turn, matching the LiteLLM hook's ``mock_response`` short-circuit.
+    ``message`` is already rendered in the conversation's language; no
+    generation happens for this turn, matching the LiteLLM hook's
+    ``mock_response`` short-circuit.
     """
     return {
-        "id": "chatcmpl-attachment-error",
+        "id": "chatcmpl-fixed-reply",
         "object": "chat.completion",
         "model": model,
         "choices": [
@@ -239,7 +258,7 @@ def attachment_error_response(*, model: str, message: str) -> dict:
     }
 
 
-async def attachment_error_stream(message: str) -> AsyncGenerator[bytes]:
+async def fixed_reply_stream(message: str) -> AsyncGenerator[bytes]:
     yield _sse_content_delta(message)
     yield b"data: [DONE]\n\n"
 
@@ -2709,8 +2728,27 @@ def _build_system_prompt(
     broad_mode: bool = False,
     tone_register: str = "restrained",
     pasted_correspondence: bool = False,
+    *,
+    profile: ChatProfile = ChatProfile(surface="widget"),
+    internal_state: InternalPromptState = "no_retrieval",
+    templates_block: str = "",
+    low_confidence: bool = False,
+    retrieval_failure: str = "",
+    web_search_available: bool = False,
+    images_base_url: str = "",
+    multi_question: bool = False,
+    sub_query_results: list[dict] | None = None,
+    unchecked_questions: list[str] | None = None,
 ) -> str:
     """Build a grounded system prompt augmented with retrieved context chunks.
+
+    The one prompt builder for every surface; the profile picks the text. An
+    internal profile gets the Strict/Open/general/meta prompts the LiteLLM
+    hook built (see app.services.knowledge_prompts), selected by
+    ``internal_state``; the widget and partner prompts below are unchanged.
+    The multi-part-question layout (``multi_question``, ``sub_query_results``,
+    ``unchecked_questions``) applies to every surface, because the
+    sub-question fan-out does.
 
     ``support_mode`` swaps the default profile from the internal-team GROUNDED
     prompt to the customer-facing SUPPORT_CHAT_SYSTEM_PROMPT for public
@@ -2734,6 +2772,29 @@ def _build_system_prompt(
     everything else — the same position the LiteLLM hook it moved from used.
     Off by default, so a request without pasted correspondence is unchanged.
     """
+    if profile.surface == "internal":
+        kb_narrow = profile.kb_mode == "strict"
+        return internal_system_prompt(
+            state=internal_state,
+            kb_narrow=kb_narrow,
+            original_system=original_system,
+            templates_block=templates_block,
+            pasted_correspondence=pasted_correspondence,
+            context_block=kb_context_block(
+                kb_narrow=kb_narrow,
+                chunks=chunks,
+                templates_block=templates_block,
+                images_base_url=images_base_url,
+                low_confidence=low_confidence,
+                multi_question=multi_question,
+                sub_query_results=sub_query_results,
+                unchecked_questions=unchecked_questions,
+            )
+            if internal_state == "chunks"
+            else "",
+            retrieval_failure=retrieval_failure,
+            web_search_available=web_search_available,
+        )
     if support_mode and broad_mode:
         default_prompt = SUPPORT_BROAD_CHAT_SYSTEM_PROMPT
     elif support_mode:
@@ -2769,7 +2830,10 @@ def _build_system_prompt(
     if not chunks:
         return base
 
-    context_block = render_evidence_context(chunks, include_source_urls=not backend_managed_citations)
+    include_source_urls = not backend_managed_citations
+    context_block = sub_query_grouped_context(
+        chunks, sub_query_results, unchecked_questions, include_source_urls=include_source_urls
+    ) or render_evidence_context(chunks, include_source_urls=include_source_urls)
     if not context_block:
         return base
     if backend_managed_citations:
@@ -2791,6 +2855,8 @@ def _build_system_prompt(
             "- If several facts in one paragraph or list come from the same source_url, cite that source once.\n"
             "- If you cite multiple different documents at the same spot, separate citation numbers with commas.\n"
         )
+    if guard := multi_question_guard(multi_question=multi_question, sub_query_results=sub_query_results):
+        context_block = f"{context_block}\n\n{guard}"
     return f"{base}\n\n{url_guard}\nContext:\n{context_block}\n\n{KB_CONTEXT_LANGUAGE_REMINDER}"
 
 
@@ -2848,6 +2914,7 @@ def _schedule_gap_event(
     # The user-turn audit write of this request, when the caller started one:
     # the gap task waits for it so a first-turn gap still finds its conversation.
     audit_write: asyncio.Future[Any] | None = None,
+    caller_client_id: str | None = _WIDGET_GAP_CALLER_CLIENT_ID,
 ) -> None:
     """Gap detection + fire-and-forget registration for the widget / partner pad.
 
@@ -2941,7 +3008,7 @@ def _schedule_gap_event(
                         nearest_kb_slug=nearest_kb_slug,
                         chunks_retrieved=len(chunks),
                         retrieval_ms=retrieval_ms,
-                        caller_client_id=_WIDGET_GAP_CALLER_CLIENT_ID,
+                        caller_client_id=caller_client_id,
                         conversation_id=conversation_id,
                         language=language,
                     )
@@ -2970,6 +3037,76 @@ def _schedule_gap_event(
         logger.warning("partner_chat_gap_detection_failed", org_id=org_id, exc_info=True)
 
 
+@dataclass
+class KnowledgeTurn:
+    """What retrieve_context decided for this turn besides the prompt.
+
+    A caller-owned sink, like ``answer_signals``, so the four-tuple return
+    stays as it is. ``refusal`` set means: answer with this text, call no model.
+    """
+
+    refusal: str | None = None
+    multi_question: bool = False
+    low_confidence: bool = False
+
+
+_URL_RE = re.compile(r"https?://\S+")
+
+
+def strict_risk_model(
+    requested: str, *, profile: ChatProfile, turn: KnowledgeTurn, chunks: list[dict], messages: list[dict]
+) -> str:
+    """The Strict-risk model rule, moved from the LiteLLM router (``_kb_risk_upgrade``).
+
+    A Strict internal turn that answers from chunks while the message is
+    multi-part or the evidence is weak gets ``klai-medium``: the conditions of
+    the 2026-08-17 fabricated-webhook-timeout incident. Chosen here, by name,
+    so the rule outlives the hook; the router passes an explicit model through.
+    The router's earlier rules still win, so a turn with tool results (router:
+    klai-large) or three or more URLs in one message (router: klai-fast) stays
+    on the requested model for the router to route.
+    """
+    if (
+        requested != "klai-primary"
+        or profile.surface != "internal"
+        or profile.kb_mode != "strict"
+        or not chunks
+        or not (turn.multi_question or turn.low_confidence)
+    ):
+        return requested
+    for message in messages:
+        content = message.get("content")
+        if message.get("role") == "tool" or (isinstance(content, str) and len(_URL_RE.findall(content)) >= 3):
+            return requested
+    return "klai-medium"
+
+
+_RETRIEVE_TIMEOUT_S = 10.0
+# The hook's production value (KNOWLEDGE_RETRIEVE_TIMEOUT in
+# deploy/docker-compose.yml): an employee waits for a sub-question fan-out
+# rather than lose the knowledge base, a widget visitor does not.
+_INTERNAL_RETRIEVE_TIMEOUT_S = 60.0
+# The hook's RETRIEVE_TOP_K: the reranker scores 20 candidates anyway, and 20
+# forwarded chunks beat 5 or 10 (SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-4).
+INTERNAL_RETRIEVE_TOP_K = 20
+# Strict only. A 0.05-relevance chunk once ended up as the "Bronnen" entry
+# under "Ik weet het niet." (2026-08-17); below 0.15 a chunk is noise.
+_KB_MIN_EVIDENCE_SCORE = 0.15
+
+
+def _chunk_below_evidence_floor(chunk: dict) -> bool:
+    """True when the chunk carries a ranking score below the floor.
+
+    Only final/reranker scores count: the raw retrieval ``score`` uses another
+    scale and defaults to 0.0 in several producers. No score keeps the chunk.
+    """
+    for key in ("final_score", "reranker_score"):
+        value = chunk.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value) < _KB_MIN_EVIDENCE_SCORE
+    return False
+
+
 _ANSWER_BANDS = frozenset({"high", "medium", "low", "unknown"})
 
 
@@ -2996,7 +3133,7 @@ def _record_retrieval_band(sink: dict[str, Any] | None, result: dict, *, blocked
     sink["band"] = "unknown" if blocked_chunk_count else band
 
 
-async def retrieve_context(
+async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches kept inline so the order stays readable
     org_id: int,
     zitadel_org_id: str,
     kb_slugs: list[str],
@@ -3030,8 +3167,24 @@ async def retrieve_context(
     # Caller-owned audit sink (see _fill_answer_signals); this is where the
     # answer's certainty band enters it.
     answer_signals: dict[str, Any] | None = None,
+    # Which surface and mode this turn is; see app.services.chat_profile.
+    profile: ChatProfile = ChatProfile(surface="widget"),
+    # Internal surface only: the employee's active prompt templates as one
+    # block, the org's telemetry level (forwarded to retrieval-api, as the
+    # hook did), and whether a web-search tool is offered (general prompt).
+    templates_block: str = "",
+    telemetry_level: str = "shadow",
+    web_search_available: bool = False,
+    # Caller-owned sink for what this turn decided besides the prompt.
+    knowledge_turn: KnowledgeTurn | None = None,
 ) -> tuple[list[dict], str, list[dict[str, Any]], bool]:
     """Call retrieval-api and return (chunks, augmented_system_prompt, trusted_sources, broad).
+
+    One retrieval for every surface; ``profile`` sets what differs. An
+    internal turn sends the employee's identity and scope, a rewritten query
+    with the raw one beside it, and top_k 20; a Strict turn that cannot search
+    sets ``knowledge_turn.refusal`` and returns an empty prompt, and the
+    caller answers with that text without calling a model.
 
     Follows the pattern from deploy/litellm/klai_knowledge.py.
 
@@ -3081,67 +3234,133 @@ async def retrieve_context(
                 reason=safety_reason,
             )
             cleaned_page_context = None
-    if not retrieval_enabled or not query:
-        return (
-            [],
-            _build_system_prompt(
-                [],
-                original_system,
-                widget_system_prompt=widget_system_prompt,
-                page_context=cleaned_page_context,
-                backend_managed_citations=backend_managed_citations,
-                support_mode=support_mode,
-                tone_register=tone_register,
-                pasted_correspondence=pasted_correspondence,
-            ),
-            [],
-            False,
+
+    internal = profile.surface == "internal"
+    turn = knowledge_turn if knowledge_turn is not None else KnowledgeTurn()
+
+    def prompt(prompt_chunks: list[dict], state: InternalPromptState = "no_retrieval", **extra: Any) -> str:
+        return _build_system_prompt(
+            prompt_chunks,
+            original_system,
+            widget_system_prompt=widget_system_prompt,
+            page_context=cleaned_page_context,
+            backend_managed_citations=backend_managed_citations,
+            support_mode=support_mode,
+            tone_register=tone_register,
+            pasted_correspondence=pasted_correspondence,
+            profile=profile,
+            internal_state=state,
+            templates_block=templates_block,
+            web_search_available=web_search_available,
+            images_base_url=settings.kb_images_base_url,
+            **extra,
+        )
+
+    # Turns that search nothing. General mode and questions about Klai itself
+    # have their own prompt (internal only: the widget has neither). A trivial
+    # message ("bedankt", "ok") skips retrieval on every surface, unless
+    # pasted correspondence is still in the conversation: a short follow-up
+    # there is exactly where the sender's claims get re-adopted as facts.
+    if internal and profile.kb_mode == "general":
+        return [], prompt([], "meta" if query and is_meta_query(query) else "general"), [], False
+    if internal and query and is_meta_query(query):
+        return [], prompt([], "meta"), [], False
+    trivial = bool(query) and not pasted_correspondence and is_trivial_turn(messages, query or "")
+    if not retrieval_enabled or not query or trivial:
+        return [], prompt([]), [], False
+    if internal and profile.kb_mode == "strict" and profile.kb_slugs == ():
+        # Strict with nothing to search refuses without a model call: a prompt
+        # that asks the model to refuse let a non-compliant model answer from
+        # general knowledge (the hook's strict_no_kb branch).
+        turn.refusal = _no_citable_sources_message(
+            resolve_conversation_language(messages).language, suggest_open_mode=True
+        )
+        return [], "", [], False
+
+    # A multi-part message fans out into one retrieval per question, on every
+    # surface. Not when the latest turn is pasted correspondence: its
+    # '?'-terminated header and signature lines are noise legs, and the
+    # distilled query is the question.
+    latest_correspondence = latest_user_turn_has_correspondence(messages)
+    all_sub_questions = [] if latest_correspondence else split_sub_questions(query)
+    sub_queries = all_sub_questions[:MAX_SUB_QUESTIONS]
+    unchecked_questions = all_sub_questions[MAX_SUB_QUESTIONS:]
+    turn.multi_question = not latest_correspondence and (bool(sub_queries) or is_multi_question_query(query))
+    if unchecked_questions:
+        logger.warning(
+            "sub_questions_truncated",
+            org_id=org_id,
+            total_questions=len(all_sub_questions),
+            searched=len(sub_queries),
         )
 
     conversation_history = _build_conversation_history(messages)
-    # A first question travels with two paraphrases; a follow-up has its
-    # history to search on instead (query_paraphrase.py has the numbers).
-    query_variants = await first_question_variants(messages, query, settings, support_mode=support_mode)
-
-    retrieve_body: dict = {
-        # Clipped below the 8000-char retrieval-api hard limit (SPEC-SEC-010
-        # REQ-2.5) using the same helper as conversation_history entries. An
-        # unclipped query has no real bound short of the 128 KB request-body
-        # cap, sends garbage into coreference + BGE-M3 embedding (8192-token
-        # sequence limit), and can surface as an upstream 502 for partners.
-        "query": _clip_retrieval_history_content(query),
-        "org_id": zitadel_org_id,  # retrieval-api expects string org_id
-        "scope": "org",
-        "top_k": top_k,
-        "conversation_history": conversation_history,
-    }
-    if kb_slugs:
-        retrieve_body["kb_slugs"] = kb_slugs
-    retrieve_body["query_variants"] = query_variants or None
-    if partner_user_id is not None:
-        # F2: synthetic partner-level identity for product_events tagging.
-        retrieve_body["user_id"] = partner_user_id
-    if cleaned_page_context is not None:
-        retrieve_body["page_context"] = cleaned_page_context
+    retrieval_user_id = profile.user_id if internal else partner_user_id
+    retrieve_body: dict
+    if internal:
+        rewrite = await rewrite_for_retrieval(
+            query,
+            conversation_history,
+            zitadel_org_id=zitadel_org_id,
+            kb_slugs=kb_slugs,
+            pasted_correspondence=latest_correspondence,
+            settings=settings,
+        )
+        retrieve_body = {
+            "query": _clip_retrieval_history_content(rewrite.query),
+            "raw_query": _clip_retrieval_history_content(query),
+            "coreference_resolved": rewrite.coreference_resolved,
+            # The org comes from the authenticated key, never from the profile.
+            "org_id": zitadel_org_id,
+            "user_id": retrieval_user_id,
+            "scope": profile.kb_scope,
+            "top_k": top_k,
+            "conversation_history": conversation_history,
+            "telemetry_level": telemetry_level,
+            "kb_narrow": profile.kb_mode == "strict",
+        }
+        if kb_slugs:
+            retrieve_body["kb_slugs"] = kb_slugs
+        elif profile.kb_scope == "both":
+            # Every org KB plus every private KB the employee owns.
+            retrieve_body["include_owned_private_kbs"] = True
+        if rewrite.taxonomy_node_ids:
+            retrieve_body["taxonomy_node_ids"] = rewrite.taxonomy_node_ids
+    else:
+        # A first question travels with two paraphrases; a follow-up has its
+        # history to search on instead (query_paraphrase.py has the numbers).
+        # A fanned-out message gets none: retrieval-api would run the
+        # paraphrases of the whole message inside every sub-question's pass.
+        query_variants = (
+            [] if sub_queries else await first_question_variants(messages, query, settings, support_mode=support_mode)
+        )
+        retrieve_body = {
+            # Clipped below the 8000-char retrieval-api hard limit (SPEC-SEC-010
+            # REQ-2.5) using the same helper as conversation_history entries. An
+            # unclipped query has no real bound short of the 128 KB request-body
+            # cap, sends garbage into coreference + BGE-M3 embedding (8192-token
+            # sequence limit), and can surface as an upstream 502 for partners.
+            "query": _clip_retrieval_history_content(query),
+            "org_id": zitadel_org_id,  # retrieval-api expects string org_id
+            "scope": "org",
+            "top_k": top_k,
+            "conversation_history": conversation_history,
+        }
+        if kb_slugs:
+            retrieve_body["kb_slugs"] = kb_slugs
+        retrieve_body["query_variants"] = query_variants or None
+        if partner_user_id is not None:
+            # F2: synthetic partner-level identity for product_events tagging.
+            retrieve_body["user_id"] = partner_user_id
+        if cleaned_page_context is not None:
+            retrieve_body["page_context"] = cleaned_page_context
+    if sub_queries:
+        retrieve_body["sub_queries"] = sub_queries
 
     retrieval_url = settings.knowledge_retrieve_url
     if not retrieval_url:
         logger.warning("partner_chat_no_retrieval_url")
-        return (
-            [],
-            _build_system_prompt(
-                [],
-                original_system,
-                widget_system_prompt,
-                page_context=cleaned_page_context,
-                backend_managed_citations=backend_managed_citations,
-                support_mode=support_mode,
-                tone_register=tone_register,
-                pasted_correspondence=pasted_correspondence,
-            ),
-            [],
-            False,
-        )
+        return [], prompt([]), [], False
 
     # SPEC-SEC-010 REQ-6.1: authenticate to retrieval-api with the dedicated
     # retrieval_api_internal_secret (separate from portal-api's mailer secret).
@@ -3152,47 +3371,66 @@ async def retrieve_context(
     # retrieve-caller-service-header-mismatch.
     retrieval_secret = settings.retrieval_api_internal_secret or settings.internal_secret
     retrieval_started = time.perf_counter()
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.post(
-            f"{retrieval_url}/retrieve",
-            json=retrieve_body,
-            headers={
-                "X-Internal-Secret": retrieval_secret,
-                "X-Caller-Service": "portal-api",
-                **get_trace_headers(),
-            },
-        )
-        try:
-            resp.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            if not _is_retrieval_identity_assertion_error(exc):
-                raise
-            logger.warning(
-                "partner_chat_retrieval_identity_assertion_degraded",
-                org_id=org_id,
-                status_code=exc.response.status_code if exc.response is not None else None,
+    try:
+        async with httpx.AsyncClient(
+            timeout=_INTERNAL_RETRIEVE_TIMEOUT_S if internal else _RETRIEVE_TIMEOUT_S
+        ) as client:
+            resp = await client.post(
+                f"{retrieval_url}/retrieve",
+                json=retrieve_body,
+                headers={
+                    "X-Internal-Secret": retrieval_secret,
+                    "X-Caller-Service": "portal-api",
+                    **get_trace_headers(),
+                },
             )
-            return (
-                [],
-                _build_system_prompt(
-                    [],
-                    original_system,
-                    widget_system_prompt=widget_system_prompt,
-                    page_context=cleaned_page_context,
-                    backend_managed_citations=backend_managed_citations,
-                    support_mode=support_mode,
-                    tone_register=tone_register,
-                    pasted_correspondence=pasted_correspondence,
-                ),
-                [],
-                False,
-            )
-        result = resp.json()
+            try:
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                # An employee's identity is real, so a failed assertion is a
+                # failure to surface, not a synthetic widget identity to drop.
+                if internal or not _is_retrieval_identity_assertion_error(exc):
+                    raise
+                logger.warning(
+                    "partner_chat_retrieval_identity_assertion_degraded",
+                    org_id=org_id,
+                    status_code=exc.response.status_code if exc.response is not None else None,
+                )
+                return [], prompt([]), [], False
+            result = resp.json()
+    except httpx.HTTPError as exc:
+        # The widget and the partner API answer a failed retrieval with a 502
+        # (the caller maps it). The internal chat does what the hook did:
+        # Strict refuses, since it may only answer from the knowledge base;
+        # Open answers from general knowledge and says the KB was unreachable.
+        if not internal:
+            raise
+        failure = f"HTTP {exc.response.status_code}" if isinstance(exc, httpx.HTTPStatusError) else type(exc).__name__
+        logger.exception("partner_chat_internal_retrieval_failed", org_id=org_id, kb_mode=profile.kb_mode, failure=failure)
+        if profile.kb_mode == "strict":
+            turn.refusal = strict_kb_unavailable_message(resolve_conversation_language(messages).language)
+            return [], "", [], False
+        return [], prompt([], "retrieval_failure", retrieval_failure=failure), [], False
     retrieval_ms = int((time.perf_counter() - retrieval_started) * 1000)
 
     evidence_pack = result.get("evidence_pack")
     chunks = evidence_pack_items_as_chunks(evidence_pack)
     trusted_sources = trusted_sources_from_evidence_pack(evidence_pack)
+    if internal and profile.kb_mode == "strict":
+        # Strict promises knowledge-base-only answers, so noise-level evidence
+        # would become fabricated authority. Open keeps weak chunks as
+        # labelled weak context, as the hook did.
+        relevant = [chunk for chunk in chunks if not _chunk_below_evidence_floor(chunk)]
+        if len(relevant) < len(chunks):
+            logger.warning(
+                "kb_evidence_below_score_floor_dropped",
+                org_id=org_id,
+                dropped=len(chunks) - len(relevant),
+                kept=len(relevant),
+                floor=_KB_MIN_EVIDENCE_SCORE,
+            )
+            chunks = relevant
+            trusted_sources = _filter_trusted_sources_for_chunks(trusted_sources, chunks)
     safe_chunks: list[dict] = []
     blocked_chunk_count = 0
     for chunk in chunks:
@@ -3212,22 +3450,27 @@ async def retrieve_context(
         chunks = safe_chunks
         trusted_sources = _filter_trusted_sources_for_chunks(trusted_sources, chunks)
     _record_retrieval_band(answer_signals, result, blocked_chunk_count=blocked_chunk_count)
+    # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001: a low or unknown band without direct
+    # evidence for the question. Steers the internal prompt and the Strict-risk
+    # model choice; the widget stores the band but does not act on it yet.
+    turn.low_confidence = should_clarify(
+        result.get("confidence_band"), has_direct_evidence=has_direct_evidence_for_query(query, chunks)
+    )
     # Consented general-knowledge fallback: decided here, on the same
     # post-safety-filter chunks the gap event sees, and surfaced to the caller
     # as the fourth tuple element so the prompt swap and the answer label can
     # never disagree. On a broad turn no article context is injected and no
     # sources can be cited, regardless of what the weak chunks might support.
     broad = _broad_mode_active(chunks, support_mode=support_mode, broad_consent=broad_mode)
-    system_prompt = _build_system_prompt(
+    sub_query_results = [entry for entry in result.get("sub_results") or [] if isinstance(entry, dict)] or None
+    system_prompt = prompt(
         [] if broad else chunks,
-        original_system,
-        widget_system_prompt,
-        page_context=cleaned_page_context,
-        backend_managed_citations=backend_managed_citations,
-        support_mode=support_mode,
+        "chunks" if chunks else "zero_chunks",
         broad_mode=broad,
-        tone_register=tone_register,
-        pasted_correspondence=pasted_correspondence,
+        low_confidence=turn.low_confidence,
+        multi_question=turn.multi_question,
+        sub_query_results=sub_query_results,
+        unchecked_questions=unchecked_questions or None,
     )
 
     # --- Gap detection (KB-014) ---
@@ -3237,7 +3480,7 @@ async def retrieve_context(
     _schedule_gap_event(
         org_id=org_id,
         zitadel_org_id=zitadel_org_id,
-        partner_user_id=partner_user_id,
+        partner_user_id=retrieval_user_id,
         query_text=query,
         chunks=chunks,
         retrieval_ms=retrieval_ms,
@@ -3246,6 +3489,8 @@ async def retrieve_context(
         audit_widget_id=audit_widget_id,
         audit_session_key=audit_session_key,
         audit_write=audit_write,
+        # NULL is LibreChat traffic on the gaps dashboard (SPEC-MCP-RETRIEVAL-001 REQ-9).
+        caller_client_id=None if internal else _WIDGET_GAP_CALLER_CLIENT_ID,
     )
 
     return chunks, system_prompt, ([] if broad else trusted_sources), broad

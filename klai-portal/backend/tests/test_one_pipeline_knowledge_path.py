@@ -62,13 +62,20 @@ class _Resp:
 
 
 class _Recorder:
-    """httpx.AsyncClient double: records POST bodies by URL suffix."""
+    """httpx.AsyncClient double: records POST bodies by URL suffix.
+
+    The query rewrite also posts to LiteLLM, marked as passthrough; it is kept
+    apart so ``model_bodies`` holds only the answer call. Its reply is
+    ``rewrite_text`` (empty = the rewrite falls back to the raw question).
+    """
 
     def __init__(self, retrieve_payload: dict | Exception, model_text: str = ANSWER) -> None:
         self.retrieve_payload = retrieve_payload
         self.model_text = model_text
+        self.rewrite_text = ""
         self.retrieve_bodies: list[dict] = []
         self.model_bodies: list[dict] = []
+        self.rewrite_bodies: list[dict] = []
 
     def factory(self, *_: Any, **__: Any) -> _Recorder:
         return self
@@ -85,6 +92,9 @@ class _Recorder:
             if isinstance(self.retrieve_payload, Exception):
                 raise self.retrieve_payload
             return _Resp(self.retrieve_payload)
+        if json.get("metadata", {}).get("_klai_openai_passthrough"):
+            self.rewrite_bodies.append(json)
+            return _Resp({"choices": [{"message": {"content": self.rewrite_text}}]})
         self.model_bodies.append(json)
         return _Resp(
             {
@@ -168,3 +178,278 @@ async def test_widget_single_question_retrieve_body_and_prompt_match_the_golden(
     golden = json.loads(GOLDEN_PATH.read_text())
     assert recorder.retrieve_bodies == [golden["retrieve_body"]]
     assert _system_prompt(recorder) == golden["system_prompt"]
+
+
+# --- internal profile ------------------------------------------------------------
+
+INTERNAL_KEY = {"chat": True, "internal_chat": True}
+
+
+def _internal(**overrides: Any) -> ChatProfile:
+    values: dict[str, Any] = {
+        "surface": "internal",
+        "kb_mode": "strict",
+        "kb_scope": "org",
+        "kb_slugs": ("handboek",),
+        "user_id": "sub-employee",
+    }
+    values.update(overrides)
+    return ChatProfile(**values)
+
+
+@pytest.fixture
+def internal_pipeline(pipeline, monkeypatch):
+    import app.api.partner as partner
+
+    monkeypatch.setattr(partner, "internal_turn_settings", AsyncMock(return_value=([], "shadow")))
+    return pipeline
+
+
+@pytest.mark.asyncio
+async def test_strict_employee_with_personal_kb_searches_both_as_themselves_in_the_keys_org(internal_pipeline):
+    recorder = internal_pipeline(_Recorder({"evidence_pack": _evidence_pack(), "confidence_band": "high"}))
+
+    await _chat(
+        _auth(key_id="key-internal", permissions=INTERNAL_KEY, kb_access={}),
+        _internal(kb_scope="both"),
+        [{"role": "user", "content": "Hoe vraag ik verlof aan?"}],
+    )
+
+    body = recorder.retrieve_bodies[0]
+    assert body["scope"] == "both"
+    assert body["user_id"] == "sub-employee"
+    assert body["kb_slugs"] == ["handboek"]
+    assert body["org_id"] == "zorg-acme"
+    assert body["top_k"] == 20
+    assert body["kb_narrow"] is True
+
+
+@pytest.mark.asyncio
+async def test_org_sent_to_retrieval_is_the_keys_even_when_the_profile_names_another_orgs_user(internal_pipeline):
+    recorder = internal_pipeline(_Recorder({"evidence_pack": _evidence_pack(), "confidence_band": "high"}))
+
+    await _chat(
+        _auth(key_id="key-internal", permissions=INTERNAL_KEY, kb_access={}),
+        _internal(user_id="sub-of-globex", kb_slugs=("globex-handboek",)),
+        [{"role": "user", "content": "Hoe vraag ik verlof aan?"}],
+    )
+
+    assert [body["org_id"] for body in recorder.retrieve_bodies] == ["zorg-acme"]
+
+
+_TWO_QUESTIONS = "Wat is de opzegtermijn?\nHoe zeg ik op namens een klant?"
+_PASTED_TWO_QUESTIONS = (
+    "Kun je dit beantwoorden?\n\n"
+    "Van: Jan Jansen <jan@example.com>\n"
+    "Verzonden: vrijdag 14 augustus 2026 21:22\n"
+    "Aan: support@example.com\n"
+    "Onderwerp: Opzeggen\n\n"
+    "Wat is de opzegtermijn?\nHoe zeg ik op namens een klant?"
+)
+
+
+@pytest.mark.parametrize(
+    ("key_id", "permissions", "profile"),
+    [
+        ("wgt_golden", {"chat": True}, ChatProfile(surface="widget")),
+        ("key-partner", {"chat": True}, ChatProfile(surface="partner")),
+        ("key-internal", INTERNAL_KEY, _internal()),
+    ],
+)
+@pytest.mark.asyncio
+async def test_multi_question_turn_fans_out_on_every_surface(internal_pipeline, key_id, permissions, profile):
+    recorder = internal_pipeline(_Recorder({"evidence_pack": _evidence_pack(), "confidence_band": "high"}))
+
+    await _chat(_auth(key_id=key_id, permissions=permissions), profile, [{"role": "user", "content": _TWO_QUESTIONS}])
+
+    assert recorder.retrieve_bodies[0]["sub_queries"] == [
+        "Wat is de opzegtermijn?",
+        "Hoe zeg ik op namens een klant?",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_pasted_correspondence_in_the_latest_turn_is_not_split(internal_pipeline):
+    recorder = internal_pipeline(_Recorder({"evidence_pack": _evidence_pack(), "confidence_band": "high"}))
+
+    await _chat(
+        _auth(key_id="key-internal", permissions=INTERNAL_KEY),
+        _internal(),
+        [{"role": "user", "content": _PASTED_TWO_QUESTIONS}],
+    )
+
+    assert "sub_queries" not in recorder.retrieve_bodies[0]
+
+
+@pytest.mark.asyncio
+async def test_strict_with_nothing_to_search_refuses_without_retrieval_or_model(internal_pipeline):
+    from klai_chat_prompts import no_citable_sources_message
+
+    recorder = internal_pipeline(_Recorder({"evidence_pack": _evidence_pack()}))
+
+    result = await _chat(
+        _auth(key_id="key-internal", permissions=INTERNAL_KEY),
+        _internal(kb_slugs=()),
+        [{"role": "user", "content": "Hoe vraag ik verlof aan?"}],
+    )
+
+    assert result["choices"][0]["message"]["content"] == no_citable_sources_message("nl", suggest_open_mode=True)
+    assert recorder.retrieve_bodies == []
+    assert recorder.model_bodies == []
+
+
+@pytest.mark.asyncio
+async def test_general_mode_searches_nothing_and_uses_the_general_prompt(internal_pipeline):
+    from klai_chat_prompts import GENERAL_CHAT_SYSTEM_PROMPT
+
+    recorder = internal_pipeline(_Recorder({"evidence_pack": _evidence_pack()}))
+
+    await _chat(
+        _auth(key_id="key-internal", permissions=INTERNAL_KEY),
+        _internal(kb_mode="general", kb_slugs=None),
+        [{"role": "user", "content": "Schrijf een korte uitnodiging voor de borrel."}],
+    )
+
+    assert recorder.retrieve_bodies == []
+    assert _system_prompt(recorder).startswith(GENERAL_CHAT_SYSTEM_PROMPT)
+
+
+@pytest.mark.asyncio
+async def test_meta_question_gets_the_meta_prompt(internal_pipeline):
+    from klai_chat_prompts import META_CHAT_SYSTEM_PROMPT
+
+    recorder = internal_pipeline(_Recorder({"evidence_pack": _evidence_pack()}))
+
+    await _chat(
+        _auth(key_id="key-internal", permissions=INTERNAL_KEY),
+        _internal(),
+        [{"role": "user", "content": "Wat kan ik hier?"}],
+    )
+
+    assert recorder.retrieve_bodies == []
+    assert _system_prompt(recorder).startswith(META_CHAT_SYSTEM_PROMPT)
+
+
+@pytest.mark.asyncio
+async def test_strict_turn_on_weak_evidence_is_answered_by_klai_medium(internal_pipeline):
+    # Band "low" and no salient word of the question in the chunk: the
+    # conditions of the 2026-08-17 fabricated-webhook-timeout incident.
+    recorder = internal_pipeline(_Recorder({"evidence_pack": _evidence_pack(score=0.4), "confidence_band": "low"}))
+
+    await _chat(
+        _auth(key_id="key-internal", permissions=INTERNAL_KEY),
+        _internal(),
+        [{"role": "user", "content": "Welke timeout hanteert de webhookkoppeling?"}],
+    )
+
+    assert recorder.model_bodies[-1]["model"] == "klai-medium"
+
+
+@pytest.mark.asyncio
+async def test_strict_retrieval_failure_refuses_without_a_model_call(internal_pipeline):
+    import httpx
+
+    recorder = internal_pipeline(_Recorder(httpx.ConnectTimeout("retrieval down")))
+
+    result = await _chat(
+        _auth(key_id="key-internal", permissions=INTERNAL_KEY),
+        _internal(),
+        [{"role": "user", "content": "Hoe vraag ik verlof aan?"}],
+    )
+
+    assert "tijdelijk niet bereikbaar" in result["choices"][0]["message"]["content"]
+    assert recorder.model_bodies == []
+
+
+@pytest.mark.asyncio
+async def test_open_retrieval_failure_answers_with_the_unavailable_notice(internal_pipeline):
+    import httpx
+
+    recorder = internal_pipeline(_Recorder(httpx.ConnectTimeout("retrieval down")))
+
+    await _chat(
+        _auth(key_id="key-internal", permissions=INTERNAL_KEY),
+        _internal(kb_mode="open"),
+        [{"role": "user", "content": "Hoe vraag ik verlof aan?"}],
+    )
+
+    assert "TEMPORARILY UNAVAILABLE" in _system_prompt(recorder)
+
+
+@pytest.mark.asyncio
+async def test_internal_prompt_is_foundation_then_templates_then_librechats_own_system(internal_pipeline, monkeypatch):
+    import app.api.partner as partner
+    from klai_chat_prompts import GROUNDED_CHAT_SYSTEM_PROMPT
+
+    monkeypatch.setattr(
+        partner,
+        "internal_turn_settings",
+        AsyncMock(return_value=([{"source": "template", "name": "Formeel", "text": "Schrijf formeel."}], "full")),
+    )
+    recorder = internal_pipeline(_Recorder({"evidence_pack": _evidence_pack(), "confidence_band": "high"}))
+
+    await _chat(
+        _auth(key_id="key-internal", permissions=INTERNAL_KEY),
+        _internal(),
+        [
+            {"role": "system", "content": "LIBRECHAT AGENT INSTRUCTIONS"},
+            {"role": "user", "content": "Hoe vraag ik verlof aan?"},
+        ],
+    )
+
+    prompt = _system_prompt(recorder)
+    assert prompt.startswith(GROUNDED_CHAT_SYSTEM_PROMPT)
+    assert prompt.index("[Formeel]\nSchrijf formeel.") < prompt.index("Evidence E1")
+    assert prompt.endswith("\n\nLIBRECHAT AGENT INSTRUCTIONS")
+    assert recorder.retrieve_bodies[0]["telemetry_level"] == "full"
+
+
+@pytest.mark.asyncio
+async def test_internal_query_is_rewritten_and_the_raw_question_travels_beside_it(internal_pipeline):
+    recorder = _Recorder({"evidence_pack": _evidence_pack(), "confidence_band": "high"})
+    recorder.rewrite_text = "Hoe vraag ik verlof aan in het verlofsysteem?"
+    internal_pipeline(recorder)
+
+    await _chat(
+        _auth(key_id="key-internal", permissions=INTERNAL_KEY),
+        _internal(),
+        [
+            {"role": "user", "content": "Hoe werkt het verlofsysteem?"},
+            {"role": "assistant", "content": "Je vraagt verlof aan in het verlofsysteem."},
+            {"role": "user", "content": "Hoe vraag ik verlof aan?"},
+        ],
+    )
+
+    body = recorder.retrieve_bodies[0]
+    assert body["query"] == "Hoe vraag ik verlof aan in het verlofsysteem?"
+    assert body["raw_query"] == "Hoe vraag ik verlof aan?"
+    assert body["coreference_resolved"] is True
+
+
+# --- one trivial gate --------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_thank_you_searches_nothing(pipeline):
+    recorder = pipeline(_Recorder({"evidence_pack": _evidence_pack()}))
+
+    await _chat(_auth(key_id="wgt_golden"), ChatProfile(surface="widget"), [{"role": "user", "content": "bedankt!"}])
+
+    assert recorder.retrieve_bodies == []
+
+
+@pytest.mark.asyncio
+async def test_yes_to_the_assistants_question_still_searches(pipeline):
+    recorder = pipeline(_Recorder({"evidence_pack": _evidence_pack(), "confidence_band": "high"}))
+
+    await _chat(
+        _auth(key_id="wgt_golden"),
+        ChatProfile(surface="widget"),
+        [
+            {"role": "user", "content": "Mijn toestel belt niet uit."},
+            {"role": "assistant", "content": "Gaat het om een vaste lijn?"},
+            {"role": "user", "content": "ja"},
+        ],
+    )
+
+    assert len(recorder.retrieve_bodies) == 1

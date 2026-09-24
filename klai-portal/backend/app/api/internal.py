@@ -42,7 +42,6 @@ from app.core.provisioning_names import validate_slug_for_provisioning
 from app.models.connectors import PortalConnector
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg, PortalUser
-from app.models.templates import PortalTemplate
 from app.services.connector_credentials import SENSITIVE_FIELDS, credential_store
 from app.services.entitlements import get_effective_products
 from app.services.events import emit_event
@@ -52,6 +51,7 @@ from app.services.ingest_gap_evaluation import evaluate_ingest_snapshot
 from app.services.internal_chat_identity import LibreChatIdentityError, has_knowledge_access, resolve_librechat_user
 from app.services.partner_rate_limit import check_rate_limit
 from app.services.pii_entity_policy import sanitize_stored_entities
+from app.services.prompt_templates import effective_template_instructions
 from app.services.provisioning.infrastructure import assert_shared_librechat_mount_sources_intact
 from app.services.quality_scorer import schedule_quality_update
 from app.services.redis_client import get_redis_pool
@@ -1959,32 +1959,11 @@ async def get_effective_templates(
         )
     )
     user = user_row.scalar_one_or_none()
-    if user is None or not user.active_template_ids:
-        # Fail-safe: missing mapping or no active templates → empty.
-        await _audit_internal_call(request, org_id=org.id)
-        return TemplatesEffectiveResponse(instructions=[])
-
-    template_ids = list(user.active_template_ids)
-
-    tpl_rows = await db.execute(
-        select(PortalTemplate).where(
-            PortalTemplate.org_id == org.id,
-            PortalTemplate.id.in_(template_ids),
-            PortalTemplate.is_active.is_(True),
-        )
-    )
-    tpl_by_id = {t.id: t for t in tpl_rows.scalars().all()}
-
-    # Preserve user-specified order; skip ids that don't map (deleted or inactive).
-    instructions: list[TemplateInstruction] = []
-    for tid in template_ids:
-        tpl = tpl_by_id.get(tid)
-        if tpl is None:
-            continue
-        instructions.append(TemplateInstruction(name=tpl.name, text=tpl.prompt_text))
+    # Fail-safe: a missing mapping resolves to no templates, never a 404.
+    instructions = await effective_template_instructions(db, org.id, user.active_template_ids if user else None)
 
     await _audit_internal_call(request, org_id=org.id)
-    return TemplatesEffectiveResponse(instructions=instructions)
+    return TemplatesEffectiveResponse(instructions=[TemplateInstruction(**item) for item in instructions])
 
 
 # ---------------------------------------------------------------------------
