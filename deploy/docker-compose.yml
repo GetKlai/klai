@@ -414,8 +414,9 @@ services:
       # klai_pii_observe.py's module docstring.
       - ./litellm/klai_pii_observe.py:/app/klai_pii_observe.py:ro
       # SPEC-PRIVACY-MISTRAL-PII-001 Phase 3 (REQ-7 through REQ-11): mask/
-      # map/restore PII on the Mistral call path. Shipped INERT — gated
-      # behind KLAI_PII_ENFORCE (default off, see environment: below).
+      # map/restore PII on the Mistral call path. Gated behind
+      # KLAI_PII_ENFORCE; GA since 2026-08-25, see environment: below for
+      # the current default (true) and the kill switch.
       # klai_pii_enforce.py is the CustomLogger registered last in
       # config.yaml's litellm_settings.callbacks; the other four are its
       # pure/IO building blocks (entity classification, the bounded

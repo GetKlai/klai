@@ -141,9 +141,11 @@ litellm_settings:
     # the implementation report rather than silently actioned.
     - klai_pii_observe.klai_pii_observer
     # SPEC-PRIVACY-MISTRAL-PII-001 Phase 3 (REQ-7 through REQ-11): mask/map/
-    # restore PII on the Mistral call path. Shipped INERT — gated behind
-    # KLAI_PII_ENFORCE, default OFF (unset/false), so this PR reaches
-    # production changing nothing until the flag is deliberately flipped.
+    # restore PII on the Mistral call path. Gated behind KLAI_PII_ENFORCE,
+    # which is off unless the deployment sets it. GA since
+    # 2026-08-25: docker-compose.yml's environment: block defaults it to
+    # true for every org (KLAI_PII_ENFORCE_ORG_IDS defaults to `*`); see
+    # that block's comment for the rollout history and the kill switch.
     # Registered LAST (after klai_pii_observe) for two independent reasons,
     # both verified against the installed litellm==1.96.2 source and
     # documented in klai_pii_enforce.py's module docstring:
