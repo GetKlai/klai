@@ -258,7 +258,7 @@ async def _post_rewrite(settings: Settings, payload: dict) -> str:
     return await asyncio.wait_for(_call(), timeout=QUERY_REWRITE_TIMEOUT)
 
 
-def _call_metadata(zitadel_org_id: str) -> dict:
+def delegated_org_metadata(zitadel_org_id: str) -> dict:
     # The call runs on the master key, which belongs to no tenant; the PII
     # enforcer accepts the delegated org only from the master key, so the
     # user's question is masked for this org like on the main call.
@@ -355,7 +355,7 @@ async def rewrite_for_retrieval(
         "model": QUERY_REWRITE_MODEL,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.0,
-        "metadata": _call_metadata(zitadel_org_id),
+        "metadata": delegated_org_metadata(zitadel_org_id),
     }
 
     meta: dict = {}

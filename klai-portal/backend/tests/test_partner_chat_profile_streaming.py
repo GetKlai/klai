@@ -313,3 +313,63 @@ async def test_live_turn_never_streams_a_model_written_link_and_never_repeats_th
     assert "example.com" not in streamed
     assert streamed.count("Vraag verlof aan via") == 1
     assert "bij je leidinggevende." in streamed
+
+
+@pytest.mark.parametrize(("delegated_org_id", "expected_metadata"), [("zorg-a", True), (None, False)])
+@pytest.mark.asyncio
+async def test_internal_generation_call_carries_the_org_for_pii_masking(
+    monkeypatch, delegated_org_id, expected_metadata
+):
+    events = [{"choices": [{"delta": {"content": "Antwoord."}}]}]
+    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _RecordingClient(events))
+
+    async for _ in chat_completion_streaming(
+        messages=[{"role": "user", "content": "Wat is het telefoonnummer van Jan de Vries?"}],
+        model="klai-primary",
+        temperature=0.7,
+        system_prompt="prompt",
+        settings=_settings(),
+        citation_output="markers",
+        delegated_org_id=delegated_org_id,
+    ):
+        pass
+
+    sent = _RecordingClient.last_json or {}
+    assert (sent.get("metadata", {}).get("_klai_delegated_org_id") == "zorg-a") is expected_metadata
+
+
+@pytest.mark.asyncio
+async def test_delegated_passthrough_uses_the_master_key_so_litellm_honours_the_org(monkeypatch):
+    from app.services.partner_chat import openai_chat_completion_non_streaming
+
+    sent: dict = {}
+
+    class _Client:
+        def __init__(self, timeout):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def post(self, url, *, json, headers):
+            sent.update(json=json, headers=headers)
+            response = MagicMock(status_code=200)
+            response.json.return_value = {"choices": [{"message": {"content": "Titel"}}]}
+            return response
+
+    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", _Client)
+    settings = _settings()
+    settings.litellm_general_chat_key = "general"
+
+    await openai_chat_completion_non_streaming(
+        {"model": "klai-primary", "messages": [{"role": "user", "content": "Geef dit gesprek een titel"}]},
+        settings,
+        org_id=1,
+        delegated_org_id="zorg-a",
+    )
+
+    assert sent["headers"]["Authorization"] == "Bearer secret"
+    assert sent["json"]["metadata"]["_klai_delegated_org_id"] == "zorg-a"

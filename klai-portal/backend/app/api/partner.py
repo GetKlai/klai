@@ -1601,12 +1601,18 @@ async def _openai_compatible_chat_completions_from_body(
     return await _general_passthrough(body, auth=auth)
 
 
-async def _general_passthrough(body: dict[str, Any], *, auth: PartnerAuthContext) -> Response | dict[str, Any]:
+async def _general_passthrough(
+    body: dict[str, Any], *, auth: PartnerAuthContext, delegated_org_id: str | None = None
+) -> Response | dict[str, Any]:
     validated_body = _validated_openai_compatible_body(body)
     await _enforce_openai_compatible_usage_limits(auth=auth, body=validated_body)
     if bool(validated_body.get("stream", False)):
-        return await openai_chat_completion_streaming(validated_body, settings, org_id=auth.org_id)
-    return await openai_chat_completion_non_streaming(validated_body, settings, org_id=auth.org_id)
+        return await openai_chat_completion_streaming(
+            validated_body, settings, org_id=auth.org_id, delegated_org_id=delegated_org_id
+        )
+    return await openai_chat_completion_non_streaming(
+        validated_body, settings, org_id=auth.org_id, delegated_org_id=delegated_org_id
+    )
 
 
 async def openai_compatible_chat_completions(
@@ -1717,7 +1723,9 @@ async def canonical_chat_completions(
     profile = await resolve_chat_profile(db, auth, body.get("user"))
     if profile.surface == "internal":
         if _is_librechat_title_request(body.get("messages")):
-            return await _general_passthrough(body, auth=auth)
+            # The title prompt carries the conversation, so it is PII-masked
+            # for the employee's org like every other internal call.
+            return await _general_passthrough(body, auth=auth, delegated_org_id=auth.zitadel_org_id)
         return await chat_completions(
             request=_parse_knowledge_chat_request(body),
             http_request=http_request,
@@ -2284,6 +2292,10 @@ async def chat_completions(  # noqa: C901
         citation_output,
     ) = _citation_runtime_options(trusted_sources, is_widget_chat=is_widget_chat)
 
+    # An internal turn runs on LiteLLM's master key, so the employee's org has
+    # to travel with the call for LiteLLM to mask personal data (the LiteLLM
+    # hook got this from the tenant's own key). Widget and partner unchanged.
+    delegated_org_id = auth.zitadel_org_id if profile.surface == "internal" else None
     # 8. Streaming or non-streaming
     if request.stream:
         streaming_gen = chat_completion_streaming(
@@ -2317,6 +2329,7 @@ async def chat_completions(  # noqa: C901
             profile=profile,
             tools=request.tools,
             tool_choice=request.tool_choice,
+            delegated_org_id=delegated_org_id,
             sub_queries=knowledge_turn.sub_queries,
         )
         if audit_ready:
@@ -2365,6 +2378,7 @@ async def chat_completions(  # noqa: C901
         profile=profile,
         tools=request.tools,
         tool_choice=request.tool_choice,
+        delegated_org_id=delegated_org_id,
         sub_queries=knowledge_turn.sub_queries,
     )
     if knowledge is not None and not knowledge.include_sources:

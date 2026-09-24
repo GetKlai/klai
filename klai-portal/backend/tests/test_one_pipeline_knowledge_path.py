@@ -64,8 +64,8 @@ class _Resp:
 class _Recorder:
     """httpx.AsyncClient double: records POST bodies by URL suffix.
 
-    The query rewrite also posts to LiteLLM, marked as passthrough; it is kept
-    apart so ``model_bodies`` holds only the answer call. Its reply is
+    The query rewrite also posts to LiteLLM, without a ``stream`` field; it is
+    kept apart so ``model_bodies`` holds only the answer call. Its reply is
     ``rewrite_text`` (empty = the rewrite falls back to the raw question).
     """
 
@@ -92,7 +92,7 @@ class _Recorder:
             if isinstance(self.retrieve_payload, Exception):
                 raise self.retrieve_payload
             return _Resp(self.retrieve_payload)
-        if json.get("metadata", {}).get("_klai_openai_passthrough"):
+        if "stream" not in json:
             self.rewrite_bodies.append(json)
             return _Resp({"choices": [{"message": {"content": self.rewrite_text}}]})
         self.model_bodies.append(json)

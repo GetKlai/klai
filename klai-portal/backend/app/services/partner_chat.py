@@ -103,7 +103,7 @@ from app.services.llm_safety_adapter import (
 )
 from app.services.pasted_correspondence import PASTED_CORRESPONDENCE_SCOPE, latest_user_turn_has_correspondence
 from app.services.query_paraphrase import first_question_variants
-from app.services.query_rewrite import rewrite_for_retrieval
+from app.services.query_rewrite import delegated_org_metadata, rewrite_for_retrieval
 from app.services.widget_audit import find_conversation_id
 from app.trace import get_trace_headers
 
@@ -1520,6 +1520,33 @@ def _sse_content_delta(text: str) -> bytes:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
 
 
+def _llm_request_body(
+    model: str,
+    messages: list[dict],
+    temperature: float,
+    *,
+    stream: bool,
+    tools: list[dict] | None,
+    tool_choice: Any | None,
+    delegated_org_id: str | None,
+) -> dict[str, Any]:
+    """The body of one generation call to LiteLLM.
+
+    ``delegated_org_id`` is set for an internal-chat turn. The call runs on the
+    master key, which belongs to no tenant, so LiteLLM's PII enforcer only masks
+    the employee's text for their org when the org travels with the call. The
+    widget and partner calls do not send it (unchanged).
+    """
+    body: dict[str, Any] = {"model": model, "messages": messages, "temperature": temperature, "stream": stream}
+    if tools:
+        body["tools"] = tools
+        if tool_choice is not None:
+            body["tool_choice"] = tool_choice
+    if delegated_org_id:
+        body["metadata"] = delegated_org_metadata(delegated_org_id)
+    return body
+
+
 def _sse_tool_calls_delta(tool_calls: list[dict]) -> bytes:
     """Forward a tool_calls delta unbuffered — never routed through the text buffer."""
     payload = {"choices": [{"delta": {"tool_calls": tool_calls}}]}
@@ -1562,7 +1589,9 @@ def _sse_error_frame(message: str) -> bytes:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
 
 
-def _with_openai_passthrough_metadata(body: dict[str, Any], *, org_id: int | str | None = None) -> dict[str, Any]:
+def _with_openai_passthrough_metadata(
+    body: dict[str, Any], *, org_id: int | str | None = None, delegated_org_id: str | None = None
+) -> dict[str, Any]:
     """Mark portal-proxied OpenAI-compatible calls so LiteLLM hooks stay transparent.
 
     Also translates the OpenAI-style top-level ``prompt_cache_key`` into
@@ -1582,7 +1611,9 @@ def _with_openai_passthrough_metadata(body: dict[str, Any], *, org_id: int | str
     ``org:none:`` prefix — an un-namespaced key is never forwarded.
     """
     forwarded = dict(body)
-    forwarded["metadata"] = {"_klai_openai_passthrough": True}
+    forwarded["metadata"] = (
+        delegated_org_metadata(delegated_org_id) if delegated_org_id else {"_klai_openai_passthrough": True}
+    )
     prompt_cache_key = forwarded.pop("prompt_cache_key", None)
     if prompt_cache_key is not None:
         namespace = org_id if org_id is not None else "none"
@@ -1625,6 +1656,12 @@ def _openai_passthrough_litellm_key(settings: Settings) -> str:
             detail={"error": {"type": "service_unavailable", "message": "General chat key is not configured"}},
         )
     return key
+
+
+def _passthrough_key(settings: Settings, delegated_org_id: str | None) -> str:
+    # LiteLLM honours a delegated org only on the master key, so an internal
+    # call that must be PII-masked for its org cannot use the general chat key.
+    return settings.litellm_master_key if delegated_org_id else _openai_passthrough_litellm_key(settings)
 
 
 def _json_response_from_upstream(resp: httpx.Response) -> JSONResponse:
@@ -1672,6 +1709,7 @@ async def openai_chat_completion_non_streaming(
     settings: Settings,
     *,
     org_id: int | str | None = None,
+    delegated_org_id: str | None = None,
 ) -> dict[str, Any] | JSONResponse:
     """Forward an OpenAI-compatible chat completion request to LiteLLM unchanged.
 
@@ -1679,12 +1717,12 @@ async def openai_chat_completion_non_streaming(
     retrieval, citation composition, source filtering, and prompt injection.
     """
     chat_url = f"{settings.litellm_base_url}/v1/chat/completions"
-    api_key = _openai_passthrough_litellm_key(settings)
+    api_key = _passthrough_key(settings, delegated_org_id)
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.post(
                 chat_url,
-                json=_with_openai_passthrough_metadata(request_body, org_id=org_id),
+                json=_with_openai_passthrough_metadata(request_body, org_id=org_id, delegated_org_id=delegated_org_id),
                 headers={
                     "Authorization": f"Bearer {api_key}",
                     **get_trace_headers(),
@@ -1732,10 +1770,11 @@ async def openai_chat_completion_streaming(
     settings: Settings,
     *,
     org_id: int | str | None = None,
+    delegated_org_id: str | None = None,
 ) -> StreamingResponse | JSONResponse:
     """Proxy LiteLLM's OpenAI-compatible SSE stream without buffering or rewriting."""
     chat_url = f"{settings.litellm_base_url}/v1/chat/completions"
-    api_key = _openai_passthrough_litellm_key(settings)
+    api_key = _passthrough_key(settings, delegated_org_id)
     client: httpx.AsyncClient | None = None
     stream = None
     try:
@@ -1743,7 +1782,7 @@ async def openai_chat_completion_streaming(
         stream = client.stream(
             "POST",
             chat_url,
-            json=_with_openai_passthrough_metadata(request_body, org_id=org_id),
+            json=_with_openai_passthrough_metadata(request_body, org_id=org_id, delegated_org_id=delegated_org_id),
             headers={
                 "Authorization": f"Bearer {api_key}",
                 **get_trace_headers(),
@@ -2475,6 +2514,7 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
     profile: ChatProfile = ChatProfile(surface="widget"),
     tools: list[dict] | None = None,
     tool_choice: Any | None = None,
+    delegated_org_id: str | None = None,
     sub_queries: list[str] | None = None,
 ) -> AsyncGenerator[bytes]:
     """Collect text, compose deterministic citations, then stream once.
@@ -2541,16 +2581,15 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
     generation_started = time.perf_counter()
     live_buffer = ""
     live_emitted: list[str] = []
-    request_json: dict[str, Any] = {
-        "model": model,
-        "messages": augmented_messages,
-        "temperature": temperature,
-        "stream": True,
-    }
-    if tools:
-        request_json["tools"] = tools
-        if tool_choice is not None:
-            request_json["tool_choice"] = tool_choice
+    request_json = _llm_request_body(
+        model,
+        augmented_messages,
+        temperature,
+        stream=True,
+        tools=tools,
+        tool_choice=tool_choice,
+        delegated_org_id=delegated_org_id,
+    )
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
             async with client.stream(
@@ -3617,6 +3656,7 @@ async def chat_completion_non_streaming(  # noqa: C901 - tools stripping/forward
     profile: ChatProfile = ChatProfile(surface="widget"),
     tools: list[dict] | None = None,
     tool_choice: Any | None = None,
+    delegated_org_id: str | None = None,
     sub_queries: list[str] | None = None,
 ) -> dict:
     """Forward to LiteLLM and return complete response as dict.
@@ -3651,16 +3691,15 @@ async def chat_completion_non_streaming(  # noqa: C901 - tools stripping/forward
     if profile.kb_mode == "strict":
         tools = _strip_web_search_tools(tools)
 
-    request_json: dict[str, Any] = {
-        "model": model,
-        "messages": augmented_messages,
-        "temperature": temperature,
-        "stream": False,
-    }
-    if tools:
-        request_json["tools"] = tools
-        if tool_choice is not None:
-            request_json["tool_choice"] = tool_choice
+    request_json = _llm_request_body(
+        model,
+        augmented_messages,
+        temperature,
+        stream=False,
+        tools=tools,
+        tool_choice=tool_choice,
+        delegated_org_id=delegated_org_id,
+    )
 
     generation_started = time.perf_counter()
     try:
@@ -3895,6 +3934,7 @@ async def chat_completion_streaming(
     profile: ChatProfile = ChatProfile(surface="widget"),
     tools: list[dict] | None = None,
     tool_choice: Any | None = None,
+    delegated_org_id: str | None = None,
     sub_queries: list[str] | None = None,
 ) -> AsyncGenerator[bytes]:
     """Stream LiteLLM SSE response with backend-managed KB citations.
@@ -3959,6 +3999,7 @@ async def chat_completion_streaming(
             profile=profile,
             tools=tools,
             tool_choice=tool_choice,
+            delegated_org_id=delegated_org_id,
             sub_queries=sub_queries,
         ):
             yield chunk
@@ -3982,6 +4023,7 @@ async def chat_completion_streaming(
         chunks_injected=len(citation_chunks or []),
         tools=tools,
         tool_choice=tool_choice,
+        delegated_org_id=delegated_org_id,
     ):
         yield chunk
 
@@ -4016,6 +4058,7 @@ async def _chat_completion_streaming_sanitized(  # noqa: C901 - SSE state machin
     chunks_injected: int | None = None,
     tools: list[dict] | None = None,
     tool_choice: Any | None = None,
+    delegated_org_id: str | None = None,
 ) -> AsyncGenerator[bytes]:
     """Legacy partner streaming path with URL sanitization and linked citations.
 
@@ -4042,16 +4085,15 @@ async def _chat_completion_streaming_sanitized(  # noqa: C901 - SSE state machin
     # Refusal language comes from the visitor's own last turn, never from
     # user_query (which may be the KB-rewritten search query).
     visitor_query = _last_user_message(augmented_messages) or ""
-    request_json: dict[str, Any] = {
-        "model": model,
-        "messages": augmented_messages,
-        "temperature": temperature,
-        "stream": True,
-    }
-    if tools:
-        request_json["tools"] = tools
-        if tool_choice is not None:
-            request_json["tool_choice"] = tool_choice
+    request_json = _llm_request_body(
+        model,
+        augmented_messages,
+        temperature,
+        stream=True,
+        tools=tools,
+        tool_choice=tool_choice,
+        delegated_org_id=delegated_org_id,
+    )
 
     async with httpx.AsyncClient(timeout=120.0) as client:
         async with client.stream(
