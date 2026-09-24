@@ -43,11 +43,15 @@ from app.models.widgets import Widget, WidgetKbAccess
 from app.services import escalation_intent as escalation_service
 from app.services import turn_judge
 from app.services.answer_plan import WEAK_SOURCES_ADDENDUM, answer_plan
+from app.services.chat_attachments import process_chat_attachments
+from app.services.chat_profile import ChatProfile, resolve_chat_profile
 from app.services.events import emit_event
 from app.services.gap_classification import classify_gap
 from app.services.off_topic_referral import off_topic_referral
 from app.services.partner_chat import (
     _last_user_message,
+    attachment_error_response,
+    attachment_error_stream,
     chat_completion_non_streaming,
     chat_completion_streaming,
     off_topic_response,
@@ -69,6 +73,7 @@ from app.services.partner_support import (
     _message_payload,
     _session_payload,
 )
+from app.services.pasted_correspondence import detect_pasted_correspondence
 from app.services.quality_scorer import schedule_quality_update
 from app.services.redis_client import get_redis_pool
 from app.services.request_ip import resolve_caller_ip
@@ -106,16 +111,28 @@ _OPENAI_COMPATIBLE_MODEL_ALIASES = {
 _OPENAI_COMPATIBLE_ACCEPTED_MODELS = _OPENAI_COMPATIBLE_MODELS | set(_OPENAI_COMPATIBLE_MODEL_ALIASES)
 # General-passthrough-only fields: ChatCompletionsRequest (the knowledge-path
 # Pydantic model) silently drops unknown fields, so a partner sending these
-# alongside a knowledge field would get HTTP 200 with their schema/tools
-# quietly ignored instead of an error. Fail loudly instead — see
-# canonical_chat_completions.
+# alongside a knowledge field would get HTTP 200 with their schema quietly
+# ignored instead of an error. Fail loudly instead — see
+# canonical_chat_completions. ``tools``/``tool_choice`` used to be here too;
+# the knowledge path now forwards them (see ChatCompletionsRequest.tools),
+# so they are no longer passthrough-only.
 _PASSTHROUGH_ONLY_FIELDS = {
     "parallel_tool_calls",
     "prompt_cache_key",
     "response_format",
-    "tool_choice",
-    "tools",
 }
+# LibreChat's conversation-title prompt ("Please generate a concise, 5-word-or-less
+# title for the conversation ..."), same pattern as the LiteLLM hook's
+# TITLE_GENERATION_RE until that hook is removed.
+_LIBRECHAT_TITLE_RE = re.compile(
+    r"(?:"
+    r"\b(?:generate|write|create|provide|give|summarize)\b"
+    r"(?=[\s\S]{0,240}\b(?:title|name|summary)\b)"
+    r"(?=[\s\S]{0,240}\b(?:conversation|chat)\b)"
+    r"|\b(?:title|name)\s+(?:this|the)\s+(?:conversation|chat)\b"
+    r")",
+    re.IGNORECASE,
+)
 _WIDGET_CLIENT_SESSION_RE = re.compile(r"^[A-Za-z0-9_-]{16,80}$")
 _MAX_WEB_SEARCH_QUERY_CHARS = 512
 _OPENAI_COMPAT_MAX_BODY_BYTES = 131_072
@@ -232,6 +249,12 @@ class ChatCompletionsRequest(BaseModel):
     # turns are not audited. Same limits as the HubSpot handoff request.
     visitor_name: str | None = Field(default=None, max_length=120)
     visitor_email: str | None = Field(default=None, max_length=254)
+    # Forwarded to LiteLLM unmodified except for a Strict-KB profile, which
+    # strips web-search tools (see chat_completion_streaming). Client-side
+    # tool execution: portal never calls a tool itself, it only relays the
+    # model's tool_calls deltas and accepts the tool-role results back.
+    tools: list[dict[str, Any]] | None = None
+    tool_choice: Any | None = None
 
 
 class PartnerFeedbackRequest(BaseModel):
@@ -1495,6 +1518,26 @@ def _message_text(content: object) -> str:
     return ""
 
 
+def _is_librechat_title_request(messages: object) -> bool:
+    if not isinstance(messages, list):
+        return False
+    # The title instruction is either a system/developer message or the final
+    # user message. An earlier user turn asking to "summarize this chat" is a
+    # real question and must not send every later turn past the knowledge base.
+    for index, message in enumerate(messages):
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role")
+        if role not in {"system", "developer"} and not (role == "user" and index == len(messages) - 1):
+            continue
+        text = _message_text(message.get("content"))
+        # The title prompt is short; a long pasted text that happens to say
+        # "summarize this conversation" is a real question.
+        if text and len(text) <= 4000 and _LIBRECHAT_TITLE_RE.search(text):
+            return True
+    return False
+
+
 def _clean_web_query(value: str | None) -> str | None:
     cleaned = re.sub(r"\s+", " ", value or "").strip()
     if not cleaned:
@@ -1549,6 +1592,10 @@ async def _openai_compatible_chat_completions_from_body(
     auth: PartnerAuthContext,
 ) -> Response | dict[str, Any]:
     require_permission(auth, "general_chat")
+    return await _general_passthrough(body, auth=auth)
+
+
+async def _general_passthrough(body: dict[str, Any], *, auth: PartnerAuthContext) -> Response | dict[str, Any]:
     validated_body = _validated_openai_compatible_body(body)
     await _enforce_openai_compatible_usage_limits(auth=auth, body=validated_body)
     if bool(validated_body.get("stream", False)):
@@ -1655,8 +1702,24 @@ async def canonical_chat_completions(
     partner key has ``general_chat`` and the request does not opt into Klai
     knowledge features. Supplying ``knowledge``/KB/web-search fields keeps the
     existing knowledge-grounded Klai behavior.
+
+    A key with ``internal_chat`` (LibreChat) is routed by its resolved profile,
+    not by body fields: title prompts go to the passthrough, every other turn
+    to the knowledge path, tools included.
     """
     body = await _openai_compatible_request_body(http_request)
+    profile = await resolve_chat_profile(db, auth, body.get("user"))
+    if profile.surface == "internal":
+        if _is_librechat_title_request(body.get("messages")):
+            return await _general_passthrough(body, auth=auth)
+        return await chat_completions(
+            request=_parse_knowledge_chat_request(body),
+            http_request=http_request,
+            auth=auth,
+            db=db,
+            profile=profile,
+        )
+
     if _openai_compatible_enabled(auth) and not _uses_knowledge_chat(body):
         return await _openai_compatible_chat_completions_from_body(body, auth=auth)
 
@@ -1677,6 +1740,7 @@ async def canonical_chat_completions(
         http_request=http_request,
         auth=auth,
         db=db,
+        profile=profile,
     )
 
 
@@ -1691,6 +1755,7 @@ async def chat_completions(  # noqa: C901
     http_request: Request,
     auth: PartnerAuthContext = Depends(get_partner_key),
     db: AsyncSession = Depends(get_db),
+    profile: ChatProfile | None = None,
 ):
     """Chat completions with RAG context from knowledge bases.
 
@@ -1700,9 +1765,38 @@ async def chat_completions(  # noqa: C901
     turn_started = time.perf_counter()
     # 1. Permission check
     require_permission(auth, "chat")
+    # canonical_chat_completions always passes the profile; direct callers get
+    # the one their key resolves to. From here on the profile, not the key, is
+    # what the generation functions receive.
+    if profile is None:
+        profile = await resolve_chat_profile(db, auth, None)
+    structlog.contextvars.bind_contextvars(chat_surface=profile.surface, chat_kb_mode=profile.kb_mode)
 
     # 2-3. Model and messages validation.
     _validate_chat_request(request)
+    # Tools reach the model's prompt, so an anonymous widget visitor may not
+    # supply them; partner and internal keys are authenticated integrations.
+    if profile.surface == "widget" and (request.tools or request.tool_choice is not None):
+        raise _openai_error(status.HTTP_400_BAD_REQUEST, "tools are not supported on widget keys")
+
+    # 3a. PDF attachments in the latest user turn become text before anything
+    # reads the messages. Not for the widget: its visitors are anonymous and
+    # its UI has no upload, so a widget key must not be a public route into
+    # docling. The language is decided on the unmodified messages, so a Dutch
+    # PDF never overrules an English question.
+    if profile.surface != "widget":
+        attachment_language = resolve_conversation_language(request.messages).language
+        attachment_result = await process_chat_attachments(request.messages, language=attachment_language)
+        if attachment_result.user_visible_error is not None:
+            if request.stream:
+                return StreamingResponse(
+                    content=attachment_error_stream(attachment_result.user_visible_error),
+                    media_type="text/event-stream",
+                )
+            return attachment_error_response(model=request.model, message=attachment_result.user_visible_error)
+        if attachment_result.processed_count:
+            request.messages = attachment_result.messages
+
     if safety_response := _widget_safety_block_response(request, auth):
         return safety_response
     is_widget_chat = str(auth.key_id).startswith("wgt_")
@@ -1873,6 +1967,14 @@ async def chat_completions(  # noqa: C901
     # audit trail when it will read it.
     # @MX:SPEC: SPEC-KNOWLEDGE-ACTIVITY-001 §4.1
     answer_signals: dict[str, Any] = {}
+    # Pasted third-party correspondence (one-chat-pipeline slice 3, moved from
+    # klai_pasted_correspondence.py): conversation-wide by design so a
+    # follow-up turn still gets the epistemic contract while the
+    # correspondence stays in context. Threaded into retrieve_context so
+    # every return path (including the no-retrieval early returns) builds
+    # the same system prompt a later fan-out/clarify gate (slice 4/5) must
+    # also skip on, the way klai_knowledge.py does today.
+    pasted_correspondence = detect_pasted_correspondence(request.messages)
     try:
         # ``broad`` (4th element) is retrieve_context's per-turn decision:
         # support mode + visitor consent + a real retrieval attempt that
@@ -1894,6 +1996,7 @@ async def chat_completions(  # noqa: C901
             support_mode=support_mode,
             broad_mode=bool(request.broad_mode),
             tone_register=tone_register,
+            pasted_correspondence=pasted_correspondence,
             is_preview=getattr(auth, "is_preview", False),
             audit_widget_id=audit_widget_id,
             audit_session_key=audit_session_key,
@@ -2164,6 +2267,9 @@ async def chat_completions(  # noqa: C901
             answer_signals=answer_signals if audit_ready else None,
             signal_chunks=chunks,
             turn_timing=turn_timing,
+            profile=profile,
+            tools=request.tools,
+            tool_choice=request.tool_choice,
         )
         if audit_ready:
             streaming_gen = _audit_streaming_wrapper(
@@ -2208,6 +2314,9 @@ async def chat_completions(  # noqa: C901
         answer_signals=answer_signals if audit_ready else None,
         signal_chunks=chunks,
         turn_timing=turn_timing,
+        profile=profile,
+        tools=request.tools,
+        tool_choice=request.tool_choice,
     )
     if knowledge is not None and not knowledge.include_sources:
         for choice in result.get("choices") or []:
