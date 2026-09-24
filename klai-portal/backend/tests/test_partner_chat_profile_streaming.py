@@ -373,3 +373,11 @@ async def test_delegated_passthrough_uses_the_master_key_so_litellm_honours_the_
 
     assert sent["headers"]["Authorization"] == "Bearer secret"
     assert sent["json"]["metadata"]["_klai_delegated_org_id"] == "zorg-a"
+
+
+def test_a_delegated_title_passthrough_keeps_its_passthrough_marker():
+    from app.services.partner_chat import _with_openai_passthrough_metadata
+
+    body = _with_openai_passthrough_metadata({"model": "klai-primary", "messages": []}, delegated_org_id="zorg-a")
+
+    assert body["metadata"] == {"_klai_openai_passthrough": True, "_klai_delegated_org_id": "zorg-a"}
