@@ -1350,6 +1350,38 @@ Wel uitgerold: elke beslissing van de stap komt als `answer_plan_decision` in de
 en welke controle een plan liet vallen, zonder de tekst van de vraag. Zonder die regel was het
 wegvallen van de voicemaildiagnose alleen met een handmatige proef te vinden geweest.
 
+### 2.48 Geen antwoord meer uit een zwakke bron (24 sep)
+**Aanleiding.** De menselijke beoordelingen scheiden goed en fout op de sterkte van de beste bron: bij
+antwoorden die de eigenaar goed noemde lag die mediaan op 0,80, bij "verkeerde kennis" op 0,37, en daar
+zat 5 van de 6 onder 0,5. In de dertig dagen ervoor kregen 206 beurten een antwoord boven een beste bron
+onder 0,3: het "waarom begint hij over Grandstream"-patroon. Het systeem kende die situatie al als
+zachte lacune (`classify_gap`: elke bron onder 0,4), maar dat hield het antwoord niet tegen.
+
+**Gewijzigd.** Bij een zachte lacune, als de stap uit 2.47 geen vraag plande, krijgt het antwoordmodel
+de opdracht de artikelen alleen te gebruiken als één ervan de vraag letterlijk beantwoordt, en anders
+eerlijk te zeggen dat het niet in de helpartikelen staat, zonder omweg uit een naburig artikel, met de
+afspraakknop. Niet op een breed antwoord, een verzoek om een mens, of een gespreksbeurt: een bedankje
+haalt vaak ook alleen zwakke artikelen op en houdt zijn korte antwoord (gevonden in de review).
+
+**Gemeten** op de 27 meest recente echte beurten waar alle bronnen onder de drempel zaten en er tóch
+geantwoord werd, twee rondes, live code ernaast, blind in beide volgordes: ronde 1 34 om 17, ronde 2 40
+om 14. "Juiste vervolgstap" 74 tegen 30 van de 108 oordelen, mediane beurt 5,1 tegen 6,0 s. "Niet
+gevonden" steeg van 16 naar 29 van de 54 antwoorden. Omdat de beoordelaar hier als verwachting kreeg
+"antwoord alleen als een artikel het echt beantwoordt", zijn de 12 vragen die omsloegen ook met de hand
+nagelezen. Eén was een echt verlies: een vraag over een eigen geluidsfragment verloor een bruikbare
+route. Meerdere omslagen waren fouten die de eigenaar eerder zelf afkeurde: een Bubble-firewallantwoord
+op een vraag over buitenlandbellen, "controleer storingen en update de app" bij een permissiemelding,
+Belgische informatie bij bedrijfsgegevens en de iPhone-uitleg bij een bureautoestel. De rest was
+ongeveer gelijkwaardig.
+
+**Review en bronkaarten.** In de meting droeg 26 van de 29 antwoorden "dit vind ik niet terug" toch het
+naburige artikel als bronkaart eronder (live was dat al 12 van de 16), omdat het citaatfilter een
+bron houdt zodra de tekst er woorden mee deelt. De bezoeker zag dan "niet gevonden" met een ongerelateerd
+artikel eronder. Op een beurt met alleen zwakke bronnen vervallen de bronkaarten nu als de beoordelaar
+het antwoord niet "beantwoord" noemt; de afspraakknop blijft. De vlag gaat als parameter mee, niet via
+het auditrecord, zodat het gedrag niet afhangt van of er gelogd wordt. De meting beoordeelde alleen de
+tekst, dus deze reparatie verandert niets aan wat gemeten is.
+
 ---
 
 ## 3. Wat er live ging, en waarom

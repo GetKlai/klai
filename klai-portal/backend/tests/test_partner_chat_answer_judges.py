@@ -776,6 +776,39 @@ async def test_an_option_the_articles_do_not_carry_leaves_the_turn_alone(monkeyp
     assert "[This turn] The visitor reports a problem" not in _system_prompt_sent(litellm)
 
 
+@pytest.mark.parametrize(
+    ("band", "told"),
+    [("low", True), ("high", False)],
+)
+async def test_a_turn_whose_articles_all_score_below_the_bar_may_not_build_an_answer_from_them(monkeypatch, band, told):
+    """Answers the owner called wrong sat on a best source around 0.37, and a
+    question about outbound calling permissions was answered from the
+    click-to-call article. With every article below the gap threshold the turn
+    is told to answer only from one that really covers the question."""
+    litellm, _, _ = await _route_turn(monkeypatch, turn=_turn_verdict(), band=band)
+
+    assert ("Retrieval found nothing that clearly matches" in _system_prompt_sent(litellm)) is told
+
+
+async def test_a_thank_you_with_weak_articles_is_not_told_to_say_nothing_was_found(monkeypatch):
+    """A greeting or a thank-you often retrieves only weak articles; it still gets
+    the short conversational reply, not "not in the help articles" and a button."""
+    litellm, _, _ = await _route_turn(monkeypatch, turn=_turn_verdict(scope="conversation"), band="low")
+
+    assert "Retrieval found nothing that clearly matches" not in _system_prompt_sent(litellm)
+
+
+@pytest.mark.parametrize("stream", [True, False])
+async def test_an_unanswered_reply_over_weak_articles_shows_no_source_card(monkeypatch, stream):
+    """Measured on 27 real weak-source turns: 26 of 29 "not in the help articles"
+    replies still carried the neighbouring article as a source card, which
+    contradicts the text. The honest reply keeps its button, not the card."""
+    _, _, extras = await _route_turn(monkeypatch, turn=_turn_verdict(), band="low", stream=stream)
+
+    assert extras["sources"] == []
+    assert extras["escalation"] == [{"appointment": True}]
+
+
 # ─── Subjects this widget does not answer ───────────────────────────────
 
 
