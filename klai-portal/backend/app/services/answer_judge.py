@@ -31,12 +31,15 @@ refusal when it has none, which is what the claims check did on failure.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict
 
 from app.core.config import Settings
 from app.services.turn_judge import conversation_excerpt, structured_judge_call
+
+if TYPE_CHECKING:
+    from app.services.chat_profile import KbMode
 
 _ANSWER_JUDGE_TIMEOUT_SECONDS = 2.5
 # The judge sees at most the articles the model received (top_k, 8 by default),
@@ -80,7 +83,12 @@ def _judge_input(messages: list[dict], draft: str, articles: list[tuple[str, str
 
 
 async def judge_answer(
-    *, messages: list[dict], draft: str, articles: list[tuple[str, str]], settings: Settings
+    *,
+    messages: list[dict],
+    draft: str,
+    articles: list[tuple[str, str]],
+    settings: Settings,
+    delegated_org_id: str | None = None,
 ) -> AnswerJudgement | None:
     """Judge one draft; ``None`` means the judge failed. Never raises.
 
@@ -94,14 +102,16 @@ async def judge_answer(
         schema=AnswerJudgement,
         timeout_seconds=_ANSWER_JUDGE_TIMEOUT_SECONDS,
         settings=settings,
+        delegated_org_id=delegated_org_id,
     )
 
 
-AnswerDecision = Literal["answer", "partial_answer", "clarifying_question", "refusal"]
+AnswerDecision = Literal["answer", "partial_answer", "clarifying_question", "refusal", "general_knowledge"]
 
 
 def decide_answer(
     *,
+    kb_mode: KbMode,
     has_sources: bool,
     escalation: bool,
     conversational: bool,
@@ -109,7 +119,17 @@ def decide_answer(
     draft_is_question: bool,
     judgement: AnswerJudgement | None,
 ) -> AnswerDecision:
-    """What the visitor gets, from both judges. The judges only add; they never remove.
+    """What the user gets, for every surface. The judges only add; they never remove.
+
+    ``kb_mode`` is the mode the turn is answered under, which is where the
+    surfaces really differ (plan §7.2, "Modi"):
+
+    * ``general``: the turn searched nothing (general mode, a question about
+      Klai itself, a thank-you), so a missing source is never a reason to
+      refuse.
+    * ``open``: the knowledge base plus general knowledge. With a source the
+      answer is shown; without one it is shown labelled as general knowledge.
+    * ``strict`` (the widget, and the internal Strict mode): the rules below.
 
     The original system is the floor. It showed every draft the citation
     composer could anchor to an article, and only checked model text WITHOUT a
@@ -120,7 +140,8 @@ def decide_answer(
     an opinion a small model is not stable on, so it no longer removes anything.
 
     * With a source: always shown. A verdict other than ``answered`` adds the
-      appointment button under the answer (``partial_answer``).
+      appointment button under the answer (``partial_answer``) on the widget;
+      the internal chat has no button, so there it only records the verdict.
     * Without a source: the original claims rule. Unsupported statements get the
       refusal; otherwise the text is shown, as a clarifying question (no
       buttons) when the turn is ambiguous and the draft ends on a question.
@@ -128,6 +149,10 @@ def decide_answer(
 
     Safety blocks and broad-mode answers never get here.
     """
+    if kb_mode == "general":
+        return "answer"
+    if kb_mode == "open":
+        return "answer" if has_sources else "general_knowledge"
     if judgement is None:
         return "answer" if has_sources else "refusal"
     if has_sources:

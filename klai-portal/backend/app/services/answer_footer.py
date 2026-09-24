@@ -49,8 +49,22 @@ def _plural(count: int, singular: str, plural: str) -> str:
     return singular if count == 1 else plural
 
 
-def _format_agent_activity(*, kb_mode: str, chunks_injected: int, sub_queries: list[str], language: str) -> str:
+# An Open answer that no knowledge-base source supports, labelled here and
+# never by the model: the decision (answer_judge.decide_answer) is taken after
+# the text was written, and on a live turn after it was streamed, so the label
+# can only go in this footer.
+_GENERAL_KNOWLEDGE_LINE = {
+    "nl": "- Antwoord: algemene kennis, niet uit je kennisbank.",
+    "en": "- Answer: general knowledge, not from your knowledge base.",
+}
+
+
+def _format_agent_activity(
+    *, kb_mode: str, chunks_injected: int, sub_queries: list[str], language: str, general_knowledge: bool
+) -> str:
     lines = [("- Modus: " if language == "nl" else "- Mode: ") + _MODE_LABEL[language][kb_mode]]
+    if general_knowledge:
+        lines.append(_GENERAL_KNOWLEDGE_LINE[language])
     if chunks_injected:
         if language == "nl":
             chunk_label = _plural(chunks_injected, "fragment", "fragmenten")
@@ -73,8 +87,12 @@ def render_answer_footer(
     chunks_injected: int,
     sub_queries: list[str] | None = None,
     language: object = None,
+    general_knowledge: bool = False,
 ) -> str:
     """Render the "Bronnen"/"Agent activiteit" footer, or "" without sources.
+
+    ``general_knowledge`` (an Open answer without a supporting source) renders
+    the activity section with its general-knowledge line even without sources.
 
     ``sources`` must be the same labelled list the answer's inline citation
     markers were composed against (``_compose_backend_managed_answer``'s
@@ -95,7 +113,7 @@ def render_answer_footer(
     ``response_language`` / ``language_decision.language`` so the footer never
     disagrees with the answer it is attached to.
     """
-    if not sources:
+    if not sources and not general_knowledge:
         return ""
     language_code = "nl" if _language_is_dutch(language) else "en"
     sections: list[str] = []
@@ -108,6 +126,7 @@ def render_answer_footer(
         chunks_injected=chunks_injected,
         sub_queries=sub_queries or [],
         language=language_code,
+        general_knowledge=general_knowledge,
     )
     heading = "Agent activiteit" if language_code == "nl" else "Agent activity"
     sections.append(f"**{heading}**\n{activity}")

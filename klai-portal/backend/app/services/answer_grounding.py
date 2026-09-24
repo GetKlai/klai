@@ -47,6 +47,7 @@ from klai_chat_prompts import (
 )
 
 from app.core.config import Settings
+from app.services.query_rewrite import delegated_org_metadata
 
 logger = structlog.get_logger()
 
@@ -58,7 +59,20 @@ logger = structlog.get_logger()
 # timeout keeps the answer exactly as it was.
 _CHECK_TIMEOUT_SECONDS = 4.0
 _REPAIR_TIMEOUT_SECONDS = 3.0
+# The internal chat keeps the LiteLLM hook's budget (check 12 s, repair 8 s).
+# An employee's answer is a whole procedure rather than a short help reply, so
+# the check has more statements to go through (plan §7.2, "Antwoordlengte"),
+# and a Strict turn is held until the check decides anyway.
+_INTERNAL_CHECK_TIMEOUT_SECONDS = 12.0
+_INTERNAL_REPAIR_TIMEOUT_SECONDS = 8.0
 NOTHING_LEFT = GROUNDING_NOTHING_LEFT
+
+
+def grounding_budget(surface: str) -> tuple[float, float]:
+    """(check, repair) seconds for one surface; the widget and partner keep theirs."""
+    if surface == "internal":
+        return _INTERNAL_CHECK_TIMEOUT_SECONDS, _INTERNAL_REPAIR_TIMEOUT_SECONDS
+    return _CHECK_TIMEOUT_SECONDS, _REPAIR_TIMEOUT_SECONDS
 
 
 async def _post(
@@ -68,8 +82,13 @@ async def _post(
     settings: Settings,
     transport_timeout: float,
     response_format: dict | None = None,
+    delegated_org_id: str | None = None,
 ) -> str:
-    """One model call. Raises on any failure; the callers decide what that means."""
+    """One model call. Raises on any failure; the callers decide what that means.
+
+    ``delegated_org_id`` (internal chat only) lets LiteLLM mask personal data
+    for the employee's org on this master-key call, as on the answer call.
+    """
     payload: dict = {
         "model": settings.answer_grounding_model,
         "temperature": 0,
@@ -80,6 +99,8 @@ async def _post(
     }
     if response_format is not None:
         payload["response_format"] = response_format
+    if delegated_org_id:
+        payload["metadata"] = delegated_org_metadata(delegated_org_id)
     async with httpx.AsyncClient(timeout=transport_timeout) as client:
         response = await client.post(
             f"{settings.litellm_base_url}/v1/chat/completions",
@@ -97,6 +118,7 @@ async def _call(
     settings: Settings,
     timeout_seconds: float,
     response_format: dict | None = None,
+    delegated_org_id: str | None = None,
 ) -> str | None:
     try:
         async with asyncio.timeout(timeout_seconds):
@@ -106,6 +128,7 @@ async def _call(
                 settings=settings,
                 transport_timeout=timeout_seconds,
                 response_format=response_format,
+                delegated_org_id=delegated_org_id,
             )
     except Exception:
         logger.warning("answer_grounding_call_failed", exc_info=True)
@@ -170,6 +193,8 @@ async def check_grounding(
     articles: list[tuple[str, str]],
     settings: Settings,
     org_id: int | str | None = None,
+    timeout_seconds: float = _CHECK_TIMEOUT_SECONDS,
+    delegated_org_id: str | None = None,
 ) -> GroundingCheck | None:
     """List the reply's statements with their evidence; ``None`` when it did not return in time.
 
@@ -184,13 +209,14 @@ async def check_grounding(
             settings=settings,
             transport_timeout=_LATE_CHECK_CEILING_SECONDS,
             response_format=grounding_check_response_format(),
+            delegated_org_id=delegated_org_id,
         )
     )
     try:
         # shield: the budget ends the wait, not the call.
-        content = await asyncio.wait_for(asyncio.shield(task), _CHECK_TIMEOUT_SECONDS)
+        content = await asyncio.wait_for(asyncio.shield(task), timeout_seconds)
     except TimeoutError:
-        logger.warning("answer_grounding_call_failed", reason="budget", budget_s=_CHECK_TIMEOUT_SECONDS)
+        logger.warning("answer_grounding_call_failed", reason="budget", budget_s=timeout_seconds)
         if len(_late_checks) >= _LATE_CHECK_LIMIT:
             task.cancel()
             logger.warning("answer_grounding_late_skipped", org_id=org_id, running=len(_late_checks))
@@ -224,7 +250,14 @@ def cleanup_repair_artifacts(text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
 
 
-async def repair_answer(*, draft: str, unsupported: list[GroundedStatement], settings: Settings) -> str | None:
+async def repair_answer(
+    *,
+    draft: str,
+    unsupported: list[GroundedStatement],
+    settings: Settings,
+    timeout_seconds: float,
+    delegated_org_id: str | None,
+) -> str | None:
     """Return the reply without its unsupported statements, ``None`` on failure.
 
     Returns :data:`NOTHING_LEFT` when the model judges that nothing useful is
@@ -236,7 +269,8 @@ async def repair_answer(*, draft: str, unsupported: list[GroundedStatement], set
         system_prompt=GROUNDING_REPAIR_SYSTEM_PROMPT,
         user_content=grounding_repair_user_content(draft=draft, unsupported=unsupported),
         settings=settings,
-        timeout_seconds=_REPAIR_TIMEOUT_SECONDS,
+        timeout_seconds=timeout_seconds,
+        delegated_org_id=delegated_org_id,
     )
     if content is None:
         return None

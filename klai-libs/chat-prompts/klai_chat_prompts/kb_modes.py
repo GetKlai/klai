@@ -83,34 +83,33 @@ KB_ANSWER_FORMAT_INSTRUCTION = (
     "- Do NOT add images in the TL;DR (section 1).]\n"
 )
 
-# English on purpose: every other instruction block in the prompt stack is
-# English-wrapped (SPEC-RAG-MULTILINGUAL-CHAT-001 REQ-10). A Dutch guard here
-# was the last strong language anchor before generation and pulled English
-# questions into Dutch answers when the low-confidence band fired.
-LOW_CONFIDENCE_INJECTION_TEXT = (
-    "[Klai retrieval — low relevance]\n"
-    "The retrieved KB material has a low relevance score for this "
-    "question. Cite only what is literally in the chunks. Do NOT "
-    "invent integration routes, product names, steps, amounts, or "
-    "technical details that do not explicitly appear in the chunks. "
-    "If the material does not fully cover the question, close with a "
-    "clarifying question to the user — in the user's language — "
-    "rather than giving a fabricated answer."
+# The internal chat's wording of the widget's weak-source rule (portal
+# ``answer_plan.WEAK_SOURCES_ADDENDUM``): the same trigger, every retrieved
+# source below the gap threshold, and the same instruction, without the
+# widget's appointment button. It replaces the text that fired on the
+# retrieval confidence band and ended in a clarifying question: the band does
+# not predict whether an answer is right, and a question asked inside the
+# answer almost never came (docs/architecture/chat-quality-history-and-plan.md
+# §7.5). English on purpose, like every other instruction block here
+# (SPEC-RAG-MULTILINGUAL-CHAT-001 REQ-10).
+_WEAK_SOURCES_RULE = (
+    "\n\n[This turn] Retrieval found nothing that clearly matches: every knowledge-base source above "
+    "scored below the bar. Use them only if one of them literally answers what the user asked. "
 )
-LOW_CONFIDENCE_OPEN_CONTEXT_TEXT = (
-    "[Klai retrieval — low relevance in Open mode]\n"
-    "The retrieved KB material has a low relevance score for this "
-    "question. Treat the chunks as weak supplementary context. Open "
-    "mode stays active: do not refuse solely because KB evidence is "
-    "weak, tangential, or absent. Answer from general knowledge or "
-    "visible user context when the question can be answered reliably "
-    "that way. Present such parts explicitly as general knowledge or "
-    "as derived from the user context, not as something that comes "
-    "from the knowledge base. For organisation-specific facts, "
-    "prices, routes, product names, steps, or source claims: do not "
-    "invent them and say briefly that the knowledge base does not "
-    "support that specific claim."
-)
+
+
+def weak_sources_notice(kb_narrow: bool) -> str:
+    if kb_narrow:
+        return _WEAK_SOURCES_RULE + (
+            "If none does, say plainly in the user's language that you cannot find this in the knowledge "
+            "base, and give no steps and no workaround from a neighbouring source."
+        )
+    return _WEAK_SOURCES_RULE + (
+        "If none does, build no answer from a neighbouring source: say in the user's language that the "
+        "knowledge base does not cover this, and answer from general knowledge only where you can do so "
+        "reliably, presented as general knowledge."
+    )
+
 
 # Multi-part user messages get one retrieval pass over the whole message, so
 # aggregate confidence and any-token overlap say nothing about per-question
