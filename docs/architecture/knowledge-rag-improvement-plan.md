@@ -202,7 +202,8 @@ scribe-api `POST /v1/transcriptions/{id}/ingest` (`transcribe.py::ingest_transcr
 
 #### B2. Model routing: LiteLLM native complexity router pilot (GAP-ROUTE-01/02)
 
-- **Problem:** custom 3-signal router mis-routes (short complex question → fast; long trivial paste → large); `klai-medium` is only a quota fallback, never a routing target.
+- **Status (2026-09-24): measured and rejected.** In heuristic mode the native router classified all 19 Dutch eval queries, and their English translations, as `SIMPLE`: its keyword lists are English software-engineering terms, so it cannot tell a hard support question from an easy one. See `docs/architecture/chat-quality-history-and-plan.md`.
+- **Problem:** custom 3-signal router mis-routes (short complex question → fast; long trivial paste → large). Correction 2026-09-24: `klai-medium` has been a routing target since #1060 (18 Aug), for Strict KB turns with a multi-part question or low confidence (`custom_router.py` `_kb_risk_upgrade`).
 - **Research [online]:** LiteLLM now ships a **native complexity router**: rule-based, 7 dimensions (code 0.30, reasoning 0.25, technical terms 0.25, tokens 0.10, …), tier boundaries 0.15/0.35/0.60, <1ms, no external calls ([docs.litellm.ai/docs/proxy/auto_routing](https://docs.litellm.ai/docs/proxy/auto_routing)). Open bugs around content-array (multimodal) messages — test on Klai's message shapes first **[not individually verified]**. RouteLLM is the heavier trained upgrade (GPT-4-era benchmarks).
 - **Target:** shadow-run the native router alongside `custom_router.py` (log both decisions), compare on real traffic, then decide; include `klai-medium` as mid-tier target. At cutover remove the custom router (clean over parallel old+new).
 - **Ops note:** litellm deploys require `compose-up.sh --force-recreate` (bind-mounted Python module cache pitfall).
