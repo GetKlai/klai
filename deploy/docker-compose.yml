@@ -49,6 +49,10 @@ networks:
     driver: bridge
     name: klai-net-umami
     internal: true   # only Umami <-> its Postgres
+  net-fider:
+    driver: bridge
+    name: klai-net-fider
+    internal: true   # only Fider <-> its Postgres
   net-meilisearch:
     driver: bridge
     name: klai-net-meilisearch
@@ -127,6 +131,7 @@ volumes:
   crm-postgres-data:           # Twenty CRM database (SPEC-INFRA-COOLIFY-EXIT-001)
   crm-storage:                 # Twenty CRM uploads: avatars and attachments
   umami-postgres-data:         # Umami analytics database (SPEC-INFRA-COOLIFY-EXIT-001)
+  fider-postgres-data:         # Fider feedback board database (SPEC-INFRA-COOLIFY-EXIT-001)
 
 # Log rotation. The daemon default lives outside this repo, in core-01's
 # /etc/docker/daemon.json:
@@ -2538,6 +2543,68 @@ services:
       resources:
         limits:
           memory: 512m
+
+  # ─── Fider — datastore ───────────────────────────────────────────────────
+  # Moved off Coolify on public-01 (SPEC-INFRA-COOLIFY-EXIT-001). The one
+  # service in that move whose engine changes on the way: under Coolify it ran
+  # PostgreSQL 12.22, the last release that series will ever get, unsupported
+  # since November 2024. 17 is what Fider's own compose file uses. The data
+  # arrives by pg_dump from 12 and restore into 17, verified table by table.
+  fider-postgres:
+    logging: *log-rotation
+    image: postgres:17.10-alpine
+    restart: unless-stopped
+    volumes:
+      - fider-postgres-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: fider
+      POSTGRES_PASSWORD: ${FIDER_POSTGRES_PASSWORD}
+      POSTGRES_DB: fider
+    networks:
+      - net-fider
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fider -d fider"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  # ─── Umami — application ─────────────────────────────────────────────────
+  # Same image and effective settings as under Coolify, so the move is a
+  # relocation; the upgrade follows as its own change. Umami applies its
+  # Prisma migrations on start and, unlike Twenty, fails closed: check-db.js
+  # exits 1 when `prisma migrate deploy` fails, so a bad migration crash-loops
+  # visibly instead of serving a half-migrated schema. That is what makes a
+  # plain tag bump safe here. Its migrations are cumulative (verified
+  # 3.0.3 -> 3.4.0 in one run, 12 migrations), so no stepping is needed.
+  umami:
+    logging: *log-rotation
+    image: ghcr.io/umami-software/umami:3.4.0
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://umami:${UMAMI_POSTGRES_PASSWORD}@umami-postgres:5432/umami
+      DATABASE_TYPE: postgresql
+      APP_SECRET: ${UMAMI_APP_SECRET}
+      DISABLE_TELEMETRY: "1"
+    networks:
+      - klai-net
+      - net-umami
+    depends_on:
+      umami-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/heartbeat || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    deploy:
+      resources:
+        limits:
+          memory: 768m
 
   # ─── Twenty CRM — application ────────────────────────────────────────────
   # Same image and the same effective settings as the Coolify deployment, so

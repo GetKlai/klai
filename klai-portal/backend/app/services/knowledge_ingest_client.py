@@ -321,12 +321,22 @@ async def trigger_taxonomy_backfill(org_id: str, kb_slug: str) -> dict:
         return resp.json()  # type: ignore[no-any-return]
 
 
-async def remove_taxonomy_node_from_chunks(org_id: str, kb_slug: str, node_id: int) -> dict:
-    """Remove a deleted taxonomy node id from Qdrant chunk payloads.
+async def remove_taxonomy_node_from_chunks(
+    org_id: str, kb_slug: str, node_id: int, replacement_node_id: int | None = None
+) -> dict:
+    """Remove a deleted taxonomy node id from Qdrant chunk payloads, or replace
+    it by ``replacement_node_id`` when the chunks move to another node.
 
     Raises on failure so the portal delete endpoint can keep the DB node
     intact instead of leaving chunks with stale taxonomy references.
     """
+    # Replace uses its own route: an ingest build without it answers 404 and the
+    # delete fails, where an extra field on remove-node would be ignored and the
+    # id silently dropped from every chunk.
+    path, body = "/ingest/v1/taxonomy/remove-node", {"org_id": org_id, "kb_slug": kb_slug, "node_id": node_id}
+    if replacement_node_id is not None:
+        path = "/ingest/v1/taxonomy/replace-node"
+        body["replacement_node_id"] = replacement_node_id
     async with httpx.AsyncClient(
         base_url=settings.knowledge_ingest_url,
         headers={
@@ -336,10 +346,7 @@ async def remove_taxonomy_node_from_chunks(org_id: str, kb_slug: str, node_id: i
         },
         timeout=30.0,
     ) as client:
-        resp = await client.post(
-            "/ingest/v1/taxonomy/remove-node",
-            json={"org_id": org_id, "kb_slug": kb_slug, "node_id": node_id},
-        )
+        resp = await client.post(path, json=body)
         resp.raise_for_status()
         return resp.json()  # type: ignore[no-any-return]
 

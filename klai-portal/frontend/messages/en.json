@@ -1552,6 +1552,8 @@
   "knowledge_taxonomy_node_delete": "Delete",
   "knowledge_taxonomy_node_delete_confirm": "Delete",
   "knowledge_taxonomy_node_delete_cancel": "Cancel",
+  "knowledge_taxonomy_node_delete_reassign_label": "Move questions and articles to…",
+  "knowledge_taxonomy_node_delete_reassign_none": "Do not move",
   "knowledge_taxonomy_node_doc_count": "{count} documents",
   "knowledge_taxonomy_proposals_heading": "Review queue",
   "knowledge_taxonomy_proposals_empty": "No pending proposals",

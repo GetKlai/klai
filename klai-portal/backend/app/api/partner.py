@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from klai_chat_prompts.kb_modes import build_template_instructions_block
+from klai_chat_prompts.kb_modes import build_template_instructions_block, weak_sources_notice
 from klai_chat_prompts.language import identify_text_language, resolve_conversation_language
 from pydantic import BaseModel, Field, ValidationError
 from redis.exceptions import RedisError
@@ -78,7 +78,7 @@ from app.services.partner_support import (
     _message_payload,
     _session_payload,
 )
-from app.services.pasted_correspondence import detect_pasted_correspondence
+from app.services.pasted_correspondence import detect_pasted_correspondence, latest_user_turn_has_correspondence
 from app.services.prompt_templates import internal_turn_settings
 from app.services.quality_scorer import schedule_quality_update
 from app.services.redis_client import get_redis_pool
@@ -87,6 +87,7 @@ from app.services.retrieval_log import find_correlated_log, write_retrieval_log
 from app.services.web_search import build_web_results_block, search_web, web_results_as_chunks
 from app.services.widget_audit import (
     hash_audit_value,
+    record_internal_turn,
     record_widget_turn,
     session_key_from_token,
 )
@@ -590,6 +591,37 @@ async def _audit_streaming_wrapper(
             )
             _pending.add(task)
             task.add_done_callback(_pending.discard)
+
+
+def _write_internal_record(org_id: int, answer_signals: dict[str, Any], turn: KnowledgeTurn) -> None:
+    """One record per internal turn, written once the turn's own grounding check is done.
+
+    Signals only, never text: LibreChat keeps the conversation. An Open turn's
+    check runs after the reply went out (``turn.grounding_check``), so the
+    record waits for it rather than being written without its outcome.
+    """
+
+    answer_signals["sub_questions"] = len(turn.sub_queries)
+
+    async def write() -> None:
+        if turn.grounding_check is not None:
+            await turn.grounding_check
+        await record_internal_turn(org_id=org_id, answer_signals=answer_signals)
+
+    task = asyncio.create_task(write())
+    _pending.add(task)
+    task.add_done_callback(_pending.discard)
+
+
+async def _internal_record_streaming_wrapper(
+    inner: AsyncGenerator[bytes], *, org_id: int, answer_signals: dict[str, Any], turn: KnowledgeTurn
+) -> AsyncGenerator[bytes]:
+    """Pass the stream through, then write the turn's record, also when the client left early."""
+    try:
+        async for chunk in inner:
+            yield chunk
+    finally:
+        _write_internal_record(org_id, answer_signals, turn)
 
 
 def _support_user_hash(auth: PartnerAuthContext, hubspot_user_id: str | None) -> str:
@@ -2010,6 +2042,12 @@ async def chat_completions(  # noqa: C901
         instructions, telemetry_level = await internal_turn_settings(db, auth.org_id, profile.user_id)
         templates_block = build_template_instructions_block(instructions)
     knowledge_turn = KnowledgeTurn()
+    internal = profile.surface == "internal"
+    # An internal turn runs on LiteLLM's master key, so the employee's org has
+    # to travel with every model call of the turn for LiteLLM to mask personal
+    # data (the LiteLLM hook got this from the tenant's own key). Widget and
+    # partner unchanged.
+    delegated_org_id = auth.zitadel_org_id if internal else None
     try:
         # ``broad`` (4th element) is retrieve_context's per-turn decision:
         # support mode + visitor consent + a real retrieval attempt that
@@ -2060,10 +2098,14 @@ async def chat_completions(  # noqa: C901
                 _timed(turn_judge.judge_turn(request.messages, settings, off_topic_subjects=off_topic_subjects)),
             )
             turn_timing = {"started_at": turn_started, "retrieval_ms": retrieval_ms, "turn_judge_ms": turn_judge_ms}
+        elif internal:
+            retrieval_result, retrieval_ms = await _timed(retrieval)
+            turn_timing = {"started_at": turn_started, "retrieval_ms": retrieval_ms}
         else:
             retrieval_result = await retrieval
         chunks, system_prompt, trusted_sources, broad_turn = retrieval_result
-        gap = classify_gap(chunks) if support_mode else None
+        # The weak-source rule reads this on every judged surface (below).
+        gap = classify_gap(chunks) if support_mode or internal else None
     except (httpx.TimeoutException, httpx.ReadTimeout) as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -2091,7 +2133,9 @@ async def chat_completions(  # noqa: C901
         ) from exc
 
     if knowledge_turn.refusal is not None:
-        # A Strict turn that could not search: the fixed text, no model call.
+        # A Strict turn without evidence: the fixed text, no model call.
+        answer_signals.update(decision="refusal", refused=True, sources_count=0)
+        _write_internal_record(auth.org_id, answer_signals, knowledge_turn)
         if request.stream:
             return StreamingResponse(content=fixed_reply_stream(knowledge_turn.refusal), media_type="text/event-stream")
         return fixed_reply_response(model=request.model, message=knowledge_turn.refusal)
@@ -2219,11 +2263,19 @@ async def chat_completions(  # noqa: C901
         return off_topic_response(model=request.model, reply=reply, language=language)
 
     # The one question this turn should ask, decided against what retrieval
-    # found (answer_plan.py). Not on a broad turn (no articles to reason over),
-    # not when the visitor asked for a person or is frustrated: there the reply
-    # is the appointment, and not on a conversational turn.
-    if support_mode and not broad_turn and escalation is None and not turn_judge.is_conversational(scope):
-        plan = await answer_plan(request.messages, chunks, settings)
+    # found (answer_plan.py), on the widget and the internal chat alike. Not on
+    # a broad turn (no articles to reason over), not when the visitor asked for
+    # a person or is frustrated: there the reply is the appointment, not on a
+    # conversational turn, and not when the latest turn is pasted
+    # correspondence, whose question is the distilled email itself.
+    if (
+        (support_mode or internal)
+        and not broad_turn
+        and escalation is None
+        and not turn_judge.is_conversational(scope)
+        and not latest_user_turn_has_correspondence(request.messages)
+    ):
+        plan = await answer_plan(request.messages, chunks, settings, delegated_org_id=delegated_org_id)
         if plan:
             system_prompt += plan
             # The reply will end on that question, so the turn is clarifying
@@ -2242,16 +2294,19 @@ async def chat_completions(  # noqa: C901
     # Nothing retrieval found is a clear match and no question was planned:
     # answer only from an article that really covers the question (answer_plan.py).
     # A greeting or a thank-you usually retrieves only weak articles too; it
-    # keeps the conversational reply.
+    # keeps the conversational reply. One rule for every judged surface, read
+    # from the article scores; the retrieval band is stored, never used here.
+    # Only the wording differs: the widget offers its appointment button, an
+    # internal Open turn may still answer from general knowledge.
     if (
-        support_mode
+        (support_mode or internal)
         and gap == "soft"
         and not answer_signals.get("planned_question")
         and not broad_turn
         and escalation is None
         and not conversational
     ):
-        system_prompt += WEAK_SOURCES_ADDENDUM
+        system_prompt += weak_sources_notice(profile.kb_mode == "strict") if internal else WEAK_SOURCES_ADDENDUM
         answer_signals["weak_sources"] = True
 
     system_prompt, web_chunks, web_query = await _maybe_apply_web_search(
@@ -2292,10 +2347,9 @@ async def chat_completions(  # noqa: C901
         citation_output,
     ) = _citation_runtime_options(trusted_sources, is_widget_chat=is_widget_chat)
 
-    # An internal turn runs on LiteLLM's master key, so the employee's org has
-    # to travel with the call for LiteLLM to mask personal data (the LiteLLM
-    # hook got this from the tenant's own key). Widget and partner unchanged.
-    delegated_org_id = auth.zitadel_org_id if profile.surface == "internal" else None
+    # The widget's signals go to its audit row, the internal turn's to its own
+    # record; partner-API turns keep none.
+    turn_signals = answer_signals if audit_ready or internal else None
     # 8. Streaming or non-streaming
     if request.stream:
         streaming_gen = chat_completion_streaming(
@@ -2323,15 +2377,20 @@ async def chat_completions(  # noqa: C901
             weak_sources=bool(answer_signals.get("weak_sources")),
             conversational=conversational,
             sentiment=sentiment,
-            answer_signals=answer_signals if audit_ready else None,
+            answer_signals=turn_signals,
             signal_chunks=chunks,
             turn_timing=turn_timing,
             profile=profile,
             tools=request.tools,
             tool_choice=request.tool_choice,
             delegated_org_id=delegated_org_id,
-            sub_queries=knowledge_turn.sub_queries,
+            knowledge_turn=knowledge_turn,
+            pasted_correspondence=pasted_correspondence,
         )
+        if internal:
+            streaming_gen = _internal_record_streaming_wrapper(
+                streaming_gen, org_id=auth.org_id, answer_signals=answer_signals, turn=knowledge_turn
+            )
         if audit_ready:
             streaming_gen = _audit_streaming_wrapper(
                 streaming_gen,
@@ -2372,15 +2431,18 @@ async def chat_completions(  # noqa: C901
         weak_sources=bool(answer_signals.get("weak_sources")),
         conversational=conversational,
         sentiment=sentiment,
-        answer_signals=answer_signals if audit_ready else None,
+        answer_signals=turn_signals,
         signal_chunks=chunks,
         turn_timing=turn_timing,
         profile=profile,
         tools=request.tools,
         tool_choice=request.tool_choice,
         delegated_org_id=delegated_org_id,
-        sub_queries=knowledge_turn.sub_queries,
+        knowledge_turn=knowledge_turn,
+        pasted_correspondence=pasted_correspondence,
     )
+    if internal:
+        _write_internal_record(auth.org_id, answer_signals, knowledge_turn)
     if knowledge is not None and not knowledge.include_sources:
         for choice in result.get("choices") or []:
             message = choice.get("message") if isinstance(choice, dict) else None

@@ -17,10 +17,12 @@ import { useEffect, useRef, useState } from 'react'
 import { InlineDeleteConfirm } from '@/components/ui/inline-delete-confirm'
 import { InlineRowButton } from '@/components/ui/inline-row-button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { BorderedRowActionIconButton, RowActionGroup } from '@/components/ui/row-action'
+import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import * as m from '@/paraglide/messages'
-import type { TaxonomyCoverageNode } from '../-kb-types'
+import type { TaxonomyCoverageNode, TaxonomyNode } from '../-kb-types'
 
 /**
  * Coverage percentage threshold for the "healthy" green bar. Below this
@@ -47,6 +49,10 @@ export interface CoverageNodeRowProps {
   onStartEdit: () => void
   onSubmitEdit: (name: string, description: string) => void
   onCancelEdit: () => void
+  /** Where the chunks and gaps can go on delete; empty hides the choice. */
+  reassignTargets: TaxonomyNode[]
+  reassignToNodeId: number | null
+  onReassignChange: (nodeId: number | null) => void
   onStartDelete: () => void
   onConfirmDelete: () => void
   onCancelDelete: () => void
@@ -63,6 +69,9 @@ export function CoverageNodeRow({
   onStartEdit,
   onSubmitEdit,
   onCancelEdit,
+  reassignTargets,
+  reassignToNodeId,
+  onReassignChange,
   onStartDelete,
   onConfirmDelete,
   onCancelDelete,
@@ -85,6 +94,7 @@ export function CoverageNodeRow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEditing])
 
+  const reassignSelectId = `taxonomy-reassign-${node.taxonomy_node_id}`
   const pct = totalChunks > 0 ? Math.round((node.chunk_count / totalChunks) * 100) : 0
 
   function handleSubmit() {
@@ -178,6 +188,23 @@ export function CoverageNodeRow({
             placeholder={m.knowledge_taxonomy_node_description_placeholder()}
             onKeyDown={(e) => { if (e.key === 'Escape') onCancelEdit() }}
           />
+        ) : isConfirmingDelete && reassignTargets.length > 0 ? (
+          <div className="mb-2 space-y-1" onClick={(e) => e.stopPropagation()}>
+            <Label htmlFor={reassignSelectId} className="text-xs font-normal text-gray-600">
+              {m.knowledge_taxonomy_node_delete_reassign_label()}
+            </Label>
+            <Select
+              id={reassignSelectId}
+              value={reassignToNodeId ?? ''}
+              onChange={(e) => onReassignChange(e.target.value ? Number(e.target.value) : null)}
+              className="py-1.5"
+            >
+              <option value="">{m.knowledge_taxonomy_node_delete_reassign_none()}</option>
+              {reassignTargets.map((target) => (
+                <option key={target.id} value={target.id}>{target.name}</option>
+              ))}
+            </Select>
+          </div>
         ) : node.description ? (
           <p className="text-xs text-gray-600 mb-1 line-clamp-2">
             {node.description}

@@ -416,6 +416,25 @@ mounts:
       from the day the Coolify copy on public-01 is removed: once T4 runs
       (SPEC-INFRA-COOLIFY-EXIT-001) this is the only place the CRM exists.
 
+  fider-postgres:
+    service: fider-postgres
+    kind: named
+    host: fider-postgres-data
+    container_path: /var/lib/postgresql/data
+    image: postgres:17.10-alpine
+    category: data
+    data_path_source: upstream docs (PGDATA default)
+    pii: true
+    backup: sql
+    backup_method: pg_dumpall
+    retention: manual
+    retention_enforced_by: n/a
+    notes: |
+      Fider feedback board: posts, votes, users, and blobs (BLOB_STORAGE is
+      unset, so attachments live in the database). Most of its size is the
+      `logs` table, Fider's own application log. Dumped by
+      backup_fider_postgres; under Coolify it had no backup.
+
   umami-postgres:
     service: umami-postgres
     kind: named

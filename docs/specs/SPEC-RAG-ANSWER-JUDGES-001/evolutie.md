@@ -1437,6 +1437,24 @@ is overwegend het eerlijke "niet gevonden" zonder ongedragen bewering.
 beter dan dit getal, maar het wijst aan waar de volgende winst ligt: niet in welke bron er komt, maar in
 wat het antwoordmodel er zelf bij verzint.
 
+### 2.51 Punt 9 en 10 van §5: wat de bezoeker na de reparatie ziet (24 sep)
+Gemeten op de opgeslagen eindtekst van de kalibratierun van 2.50 (wat de bezoeker kreeg) plus het
+beslisrecord. Bij een beste bron van 0,5 of hoger bevatte 53 van de 129 beantwoorde concepten een
+bewering die niet in de artikelen staat: 25 met precies één, 28 met twee of meer. Die laatste worden
+gerepareerd; drie keer bleef er niets over en werd het "niet gevonden". De 24 antwoorden met één
+markering gaan ongerepareerd de deur uit, bewust: in 2.5 was één markering in 77% van de gevallen
+terecht en schrapte repareren daarop ook correcte zinnen.
+
+**Punt 10, een vrijwel leeg antwoord na reparatie, is in deze data geen probleem:** van alle
+gerepareerde antwoorden bleven er twee korter dan 120 tekens, en beide zijn bruikbare antwoorden.
+
+**Voor punt 9 ontbrak de afgekeurde zin zelf.** Het beslisrecord bewaarde alleen het aantal, en de
+oude meetsets hebben ofwel ingekorte artikelen (700 tekens, wat de controle misleidt) ofwel maar 25
+antwoorden. De controle slaat herhalingen van de situatie van de bezoeker inmiddels al over, dus de
+77% van 2.5 kan achterhaald zijn. Het beslisrecord bewaart nu ook de afgekeurde zinnen
+(`unsupported_statements`, hooguit vijf, elk hooguit 300 tekens), zodat een volgende kalibratierun
+kan laten zien hoe vaak één markering terecht is, en of repareren vanaf één markering nu wel veilig is.
+
 ---
 
 ## 3. Wat er live ging, en waarom
@@ -1546,24 +1564,27 @@ beter kan zonder eerst op echt verkeer te kijken.
 12. **De vraagstap laat soms een goede diagnose vallen** op de regel dat de vraag een optie moet noemen
     (live gezien bij de voicemailvraag, 2.47). Een lossere regel verloor de meting; eerst uit
     `answer_plan_decision` halen hoe vaak het gebeurt.
-13. **Kleine resten uit reviews:** de afspraakknop kan onder een geplande vraag staan als er bronnen
+13. **Het gespreksoverzicht toont nog niet welke zin de controle afkeurde.** Het beslisrecord bewaart
+    die zinnen sinds 2.51 (`unsupported_statements`); tonen vraagt een frontendwijziging met een
+    browsercontrole.
+14. **Kleine resten uit reviews:** de afspraakknop kan onder een geplande vraag staan als er bronnen
     zijn (2.47); de drift-test vergelijkt de widgetprompts niet tussen de twee kopieën (2.45); een
     gedachtestreepje aan het begin van een regel wordt een komma (2.45); de afspraakherkenning kent
     alleen Nederlands en Engels (2.48).
 
 **Bij de kennisbank van de klant (buiten de code)**
-14. Ontbrekende artikelen: uitbelpermissies en buitenlandbellen (standaard uit, niet altijd door een
+15. Ontbrekende artikelen: uitbelpermissies en buitenlandbellen (standaard uit, niet altijd door een
     beheerder aan te zetten), variabele caller-ID, klant worden, en enkele financiële vragen. De
     grootste thema's in de lacunes: belplannen en doorschakelen, nummerregistratie en portering,
     geluidsfragmenten en voicemail.
-15. Informatie voor Belgische klanten staat in dezelfde kennisbank en komt in Nederlandse antwoorden.
-16. De opening "controleer eerst de storingspagina" komt uit de eigen probleemoplosser-artikelen en is
+16. Informatie voor Belgische klanten staat in dezelfde kennisbank en komt in Nederlandse antwoorden.
+17. De opening "controleer eerst de storingspagina" komt uit de eigen probleemoplosser-artikelen en is
     alleen daar duurzaam weg te halen (2.45).
 
 **Keuzes van de eigenaar**
-17. De publieke-datacontrole (`audit-public-tenant-data.py`) is geen verplichte check, waardoor een
+18. De publieke-datacontrole (`audit-public-tenant-data.py`) is geen verplichte check, waardoor een
     falende controle een merge niet tegenhoudt (2.49).
-18. Of de verbeteringen van 2.41 tot en met 2.48 ook in de interne keten (LibreChat) horen; dat vraagt
+19. Of de verbeteringen van 2.41 tot en met 2.48 ook in de interne keten (LibreChat) horen; dat vraagt
     een eigen meting.
 
 **Gemeten en afgevallen, niet meer proberen:** doorvragen als opdracht aan het antwoordmodel (2.4,

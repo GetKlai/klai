@@ -25,8 +25,6 @@ from klai_chat_prompts import (
 )
 from klai_chat_prompts.kb_modes import (
     KB_ANSWER_FORMAT_INSTRUCTION,
-    LOW_CONFIDENCE_INJECTION_TEXT,
-    LOW_CONFIDENCE_OPEN_CONTEXT_TEXT,
     MULTI_QUESTION_FANOUT_GUARD_TEXT,
     MULTI_QUESTION_GUARD_TEXT,
     USER_PROVIDED_CONTENT_SCOPE,
@@ -161,7 +159,6 @@ def kb_context_block(
     chunks: list[dict[str, Any]],
     templates_block: str,
     images_base_url: str,
-    low_confidence: bool,
     multi_question: bool,
     sub_query_results: list[dict] | None,
     unchecked_questions: list[str] | None,
@@ -187,8 +184,6 @@ def kb_context_block(
             lines.append(f"![afbeelding {i}]({img_url})")
         lines.append("")
     lines.append("[End knowledge base context]")
-    if low_confidence:
-        lines.append(LOW_CONFIDENCE_INJECTION_TEXT if kb_narrow else LOW_CONFIDENCE_OPEN_CONTEXT_TEXT)
     if guard := multi_question_guard(multi_question=multi_question, sub_query_results=sub_query_results):
         lines.append(guard)
     lines.append(KB_CONTEXT_LANGUAGE_REMINDER)
