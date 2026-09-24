@@ -239,6 +239,16 @@ def _turns_from_messages(docs: list[dict]) -> list[dict]:
     return turns
 
 
+def last_user_question(turns: list[dict]) -> str | None:
+    """The question a LibreChat verdict is filed under: the employee's LAST one.
+
+    Unlike a webchat visit, a LibreChat thread runs for weeks (one judged in
+    September started in May), so its opening says little about what went
+    wrong when the judge looked at it; the most recent question does.
+    """
+    return next((turn["content"] for turn in reversed(turns) if turn["role"] == "user"), None)
+
+
 def _doc_had_error(doc: dict) -> bool:
     if doc.get("error"):
         return True
@@ -345,7 +355,7 @@ async def _judge_org(org_id: int, slug: str) -> int:
                 },
             )
             judged += 1
-            question = next((turn["content"] for turn in turns if turn["role"] == "user"), None)
+            question = last_user_question(turns)
             if question is not None:
                 pending_gaps.append((cid, question, verdict))
 

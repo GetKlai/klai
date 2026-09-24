@@ -8,10 +8,11 @@ judge passes use, so the duplicate check, audience and evidence are identical.
 Each row's grouping fold is awaited before the next row is filed, so every
 verdict is compared against the groups the earlier ones formed.
 
-The question is the one the conversation started with: for the webchat the
-stored ``first_user_query`` (it outlives the message retention), for LibreChat
-the first user message in the tenant's MongoDB. Each row is dated when that
-conversation started, not today, so the inbox's 30-day window counts it right.
+The question is the one the live passes file: for the webchat the question the
+visit started with (the stored ``first_user_query``, which outlives the message
+retention), dated when the visit started; for LibreChat the employee's last
+question in the tenant's MongoDB, dated when it was asked, since a thread can
+run for weeks. Not today's date, so the inbox's 30-day window counts it right.
 
 It refuses an organisation whose telemetry level changed within the window: the
 level decides whether a question may be stored at all, and the level that
@@ -47,7 +48,7 @@ async def amain(args: argparse.Namespace) -> int:
     from app.core.database import cross_org_session, tenant_scoped_session
     from app.core.provisioning_names import provisioning_names_for_slug
     from app.services.conversation_judge import file_judge_gap
-    from app.services.librechat_quality_judge import _sync_fetch_messages, _turns_from_messages
+    from app.services.librechat_quality_judge import _sync_fetch_messages, _turns_from_messages, last_user_question
 
     async with cross_org_session() as db:
         org = (
@@ -82,7 +83,8 @@ async def amain(args: argparse.Namespace) -> int:
                 text(
                     """
                     SELECT j.channel, j.conversation_id, j.external_conversation_id,
-                           j.outcome, j.failure_category, j.confidence, wc.first_user_query, wc.started_at
+                           j.outcome, j.failure_category, j.confidence, j.judged_at,
+                           wc.first_user_query, wc.started_at
                       FROM conversation_quality_judgments j
                       LEFT JOIN widget_conversations wc ON wc.id = j.conversation_id
                      WHERE j.org_id = :org_id
@@ -97,17 +99,22 @@ async def amain(args: argparse.Namespace) -> int:
         ).all()
 
     librechat_ids = [v.external_conversation_id for v in verdicts if v.channel == "librechat"]
-    first_librechat_question: dict[str, tuple[str, datetime | None]] = {}
+    judged_at = {v.external_conversation_id: v.judged_at for v in verdicts if v.channel == "librechat"}
+    librechat_question: dict[str, tuple[str, datetime | None]] = {}
     if librechat_ids:
         db_name = provisioning_names_for_slug(args.org_slug, domain=settings.domain).mongodb_database
         messages = await asyncio.to_thread(_sync_fetch_messages, db_name, librechat_ids)
         for cid, docs in messages.items():
-            first = next((d for d in docs if d.get("isCreatedByUser") and _turns_from_messages([d])), None)
-            if first is not None:
+            # Only what the judge saw: a thread can carry on after its verdict.
+            cutoff = judged_at[cid]
+            docs = [d for d in docs if d.get("createdAt") is None or d["createdAt"].replace(tzinfo=UTC) <= cutoff]
+            question = last_user_question(_turns_from_messages(docs))
+            last = next((d for d in reversed(docs) if d.get("isCreatedByUser") and _turns_from_messages([d])), None)
+            if question is not None and last is not None:
                 # pymongo returns naive UTC datetimes.
-                asked = first.get("createdAt")
+                asked = last.get("createdAt")
                 asked = asked.replace(tzinfo=UTC) if asked is not None and asked.tzinfo is None else asked
-                first_librechat_question[cid] = (_turns_from_messages([first])[0]["content"], asked)
+                librechat_question[cid] = (question, asked)
 
     # "skipped": file_judge_gap declined, i.e. a row the inbox shows already
     # covers the conversation, or the widget conversation is marked test/preview.
@@ -118,7 +125,7 @@ async def amain(args: argparse.Namespace) -> int:
             question, asked = v.first_user_query, v.started_at
             target = {"audience": "customer", "conversation_id": v.conversation_id}
         else:
-            question, asked = first_librechat_question.get(v.external_conversation_id, (None, None))
+            question, asked = librechat_question.get(v.external_conversation_id, (None, None))
             target = {"audience": "internal", "librechat_conversation_id": v.external_conversation_id}
         if not question:
             counts["no_question"] += 1
