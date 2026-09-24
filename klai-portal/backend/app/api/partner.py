@@ -43,11 +43,14 @@ from app.models.widgets import Widget, WidgetKbAccess
 from app.services import escalation_intent as escalation_service
 from app.services import turn_judge
 from app.services.answer_plan import WEAK_SOURCES_ADDENDUM, answer_plan
+from app.services.chat_attachments import process_chat_attachments
 from app.services.events import emit_event
 from app.services.gap_classification import classify_gap
 from app.services.off_topic_referral import off_topic_referral
 from app.services.partner_chat import (
     _last_user_message,
+    attachment_error_response,
+    attachment_error_stream,
     chat_completion_non_streaming,
     chat_completion_streaming,
     off_topic_response,
@@ -69,6 +72,7 @@ from app.services.partner_support import (
     _message_payload,
     _session_payload,
 )
+from app.services.pasted_correspondence import detect_pasted_correspondence
 from app.services.quality_scorer import schedule_quality_update
 from app.services.redis_client import get_redis_pool
 from app.services.request_ip import resolve_caller_ip
@@ -1703,6 +1707,25 @@ async def chat_completions(  # noqa: C901
 
     # 2-3. Model and messages validation.
     _validate_chat_request(request)
+
+    # 3a. PDF attachment normalisation (one-chat-pipeline slice 3, moved from
+    # the LiteLLM hook's klai_chat_attachments.py). Runs at the entry of the
+    # knowledge path, on every request that carries a file part in its latest
+    # user turn, regardless of surface — a no-op otherwise. The language
+    # decision is taken on the UNMODIFIED messages, same reason as the hook:
+    # a Dutch PDF must never overrule an English question.
+    attachment_language = resolve_conversation_language(request.messages).language
+    attachment_result = await process_chat_attachments(request.messages, language=attachment_language)
+    if attachment_result.user_visible_error is not None:
+        if request.stream:
+            return StreamingResponse(
+                content=attachment_error_stream(attachment_result.user_visible_error),
+                media_type="text/event-stream",
+            )
+        return attachment_error_response(model=request.model, message=attachment_result.user_visible_error)
+    if attachment_result.processed_count:
+        request.messages = attachment_result.messages
+
     if safety_response := _widget_safety_block_response(request, auth):
         return safety_response
     is_widget_chat = str(auth.key_id).startswith("wgt_")
@@ -1873,6 +1896,14 @@ async def chat_completions(  # noqa: C901
     # audit trail when it will read it.
     # @MX:SPEC: SPEC-KNOWLEDGE-ACTIVITY-001 §4.1
     answer_signals: dict[str, Any] = {}
+    # Pasted third-party correspondence (one-chat-pipeline slice 3, moved from
+    # klai_pasted_correspondence.py): conversation-wide by design so a
+    # follow-up turn still gets the epistemic contract while the
+    # correspondence stays in context. Threaded into retrieve_context so
+    # every return path (including the no-retrieval early returns) builds
+    # the same system prompt a later fan-out/clarify gate (slice 4/5) must
+    # also skip on, the way klai_knowledge.py does today.
+    pasted_correspondence = detect_pasted_correspondence(request.messages)
     try:
         # ``broad`` (4th element) is retrieve_context's per-turn decision:
         # support mode + visitor consent + a real retrieval attempt that
@@ -1894,6 +1925,7 @@ async def chat_completions(  # noqa: C901
             support_mode=support_mode,
             broad_mode=bool(request.broad_mode),
             tone_register=tone_register,
+            pasted_correspondence=pasted_correspondence,
             is_preview=getattr(auth, "is_preview", False),
             audit_widget_id=audit_widget_id,
             audit_session_key=audit_session_key,
