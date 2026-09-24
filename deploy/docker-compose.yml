@@ -2575,15 +2575,15 @@ services:
   # ─── Fider — application ─────────────────────────────────────────────────
   # Under Coolify this ran the moving tag `stable`, which resolved to a main-
   # branch build of 12 September 2025 (commit 320825dd, between v0.29.0 and
-  # v0.30.0) — not a release. It moves pinned to exactly that digest so the
-  # relocation changes nothing; the upgrade to a real release follows as its
-  # own change. The image's command is `./fider migrate && ./fider`, so a
+  # v0.30.0) — not a release. It moved pinned to that digest, then to v0.37.0
+  # in a separate change after a rehearsal on a copy (16 migrations, data
+  # tables unchanged). Fider's migrations are cumulative. The image's command is `./fider migrate && ./fider`, so a
   # failed migration keeps the server down rather than serving a half-
   # migrated schema. The image has no wget or curl; `fider ping` is its
   # health check.
   fider:
     logging: *log-rotation
-    image: getfider/fider@sha256:76247ab3d8d2716ba0522b7eb2091e9fc6b715eb19d8ac52f61fd0cb9e9cfbe5
+    image: getfider/fider:v0.37.0
     restart: unless-stopped
     environment:
       BASE_URL: https://feedback.${DOMAIN}
