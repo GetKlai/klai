@@ -2270,6 +2270,9 @@ async def chat_completions(  # noqa: C901
             profile=profile,
             tools=request.tools,
             tool_choice=request.tool_choice,
+            # Slice 4 supplies real sub-question text for the internal-chat
+            # footer; until then every call site here passes an empty list.
+            sub_queries=[],
         )
         if audit_ready:
             streaming_gen = _audit_streaming_wrapper(
@@ -2317,6 +2320,7 @@ async def chat_completions(  # noqa: C901
         profile=profile,
         tools=request.tools,
         tool_choice=request.tool_choice,
+        sub_queries=[],
     )
     if knowledge is not None and not knowledge.include_sources:
         for choice in result.get("choices") or []:
