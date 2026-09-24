@@ -1496,8 +1496,9 @@ beter kan zonder eerst op echt verkeer te kijken.
    daarbij wat die afgekapte controles gevonden hadden. Waar elk van deze staat: Platform → Status →
    Meetpunten (2.40).
 
-**Gemeten en afgevallen, niet meer proberen:** doorvragen vóór het antwoord (2.4, 2.7, 2.10), keuzes
-uit gevonden artikelen (2.7), een taxonomie-aspect als zoekprefix (2.20), een sterkere paginaboost
+**Gemeten en afgevallen, niet meer proberen:** doorvragen als opdracht aan het antwoordmodel (2.4,
+2.10, 2.46; een aparte vraagstap wint wél, 2.47), keuzes uit gevonden artikelen zonder vraagstap
+(2.7; in de vraagstap van 2.47 komen de opties juist uit de artikelen), een taxonomie-aspect als zoekprefix (2.20), een sterkere paginaboost
 (2.26), de zoekvraag verrijken met wat de bezoeker niet gezegd heeft (2.25), een zoekleg vóór het
 herrangschikken (2.32), het vorige antwoord als zoekpass (2.32), het eerder geciteerde artikel uit die
 pass weglaten (2.32), inkorten van de artikelen voor de controle (2.10b), samenvoegen van de twee

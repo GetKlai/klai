@@ -1,7 +1,7 @@
 ---
 id: SPEC-RAG-CLARIFY-FLOW-001
 version: "0.3.0"
-status: REQ-0, REQ-1, REQ-2, REQ-3 en REQ-6 (pad B) live; standaard aan voor elke helpdeskwidget; REQ-4 en REQ-5 (pad A) volgende
+status: "Stand 2026-09-24. Pad B: op 17 sep live gezet (#1474) en dezelfde dag vervangen door de vraag- en antwoordbeoordelaar van SPEC-RAG-ANSWER-JUDGES-001 (#1480); sinds #1620 kiest de widget een vraag met answer_plan. CLARIFY_TURN_ADDENDUM wordt op de widget niet gebruikt. Pad A: de verduidelijkingsbeslissing (REQ-5) en de claims-check (REQ-4) draaien. Zie docs/architecture/chat-system.md."
 created: 2026-09-17
 author: Claude (Opus 5), in opdracht van Mark Vletter
 priority: high
