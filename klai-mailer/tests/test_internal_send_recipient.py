@@ -285,7 +285,7 @@ def test_onboarding_invite_recipient_from_variables_email(client, stub_smtp):
             "variables": {
                 "name": "Alice",
                 "email": "alice@test.example",
-                "cal_url": "https://boek.getklai.com/book/onboarding-intake",
+                "cal_url": "https://cal.getklai.com/book/onboarding-intake",
             },
         },
     )
@@ -305,7 +305,7 @@ def test_onboarding_invite_to_mismatch_rejected(client, stub_smtp):
             "variables": {
                 "name": "Alice",
                 "email": "alice@test.example",
-                "cal_url": "https://boek.getklai.com/book/onboarding-intake",
+                "cal_url": "https://cal.getklai.com/book/onboarding-intake",
             },
         },
     )
@@ -344,7 +344,7 @@ def test_onboarding_invite_extra_field_rejected(client, stub_smtp):
             "variables": {
                 "name": "Alice",
                 "email": "alice@test.example",
-                "cal_url": "https://boek.getklai.com/book/onboarding-intake",
+                "cal_url": "https://cal.getklai.com/book/onboarding-intake",
                 "is_admin": True,
             },
         },
