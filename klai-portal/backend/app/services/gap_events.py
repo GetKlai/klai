@@ -104,6 +104,17 @@ async def record_gap_event(
     # embedding + features for support-team triage.
     effective_query_text = query_text if org.telemetry_level == "full" else "[REDACTED:shadow]"
 
+    # SPEC-RAG-GAP-GROUPING: every producer writes a question_key so the inbox
+    # can group on it instead of exact query text (app/api/app_gaps.py). This is
+    # the cheap literal-text key from support_cases._question_key — no model
+    # call on the write path. A paraphrase of an existing open group is folded
+    # onto that group's key asynchronously below, off the request path.
+    from app.services.support_cases import _question_key
+
+    question_key = _question_key(
+        question=effective_query_text, language=language, kb_slug=nearest_kb_slug, audience=None
+    )
+
     gap = PortalRetrievalGap(
         org_id=org.id,
         user_id=user_id,
@@ -117,9 +128,74 @@ async def record_gap_event(
         caller_client_id=caller_client_id,
         conversation_id=conversation_id,
         language=language,
+        question_key=question_key,
     )
     db.add(gap)
     await db.commit()
+
+    # Fold a paraphrase (or a different producer's finding) into an existing
+    # open group, off the request path. Redacted 'shadow' text carries no
+    # signal an LLM could compare — and would risk merging unrelated groups
+    # under one constant placeholder string — so only 'full' telemetry runs
+    # this; every other row still groups on its own literal key above.
+    if org.telemetry_level == "full" and nearest_kb_slug:
+
+        async def _group_gap(
+            gap_id: int, org_int_id: int, kb_slug: str, question: str, lang: str | None, base_key: str
+        ) -> None:
+            """Ask the grouping judge whether this row belongs in an existing
+            open group; stamp the row with that group's key when verified.
+
+            Background task on a fresh session, same pattern as
+            ``_classify_gap`` below. A failure (timeout, malformed model
+            output, RLS mismatch) is logged and leaves the row on its own
+            literal key — never lost, just not merged (SupportCaseAnalysisError
+            and friends are never raised across the request boundary).
+
+            The candidate snapshot is read before the model call, so a group
+            closed in between can still receive this row and reappear as open.
+            That is accepted: without the merge the same row would sit in the
+            list as its own open group anyway, so the user has one thing to
+            close either way, and no row is closed or lost by the race.
+            """
+            try:
+                from app.core.database import tenant_scoped_session
+                from app.services.support_cases import _open_group_candidates
+                from app.services.support_gap_grouping import group_findings
+
+                async with tenant_scoped_session(org_int_id) as session:
+                    candidates = await _open_group_candidates(
+                        session, org_id=org_int_id, kb_slug=kb_slug, exclude_case_id=None, exclude_gap_id=gap_id
+                    )
+                candidates = [c for c in candidates if c.get("question_key") != base_key]
+                if not candidates:
+                    return
+
+                # Diagnosis is a placeholder: chat/widget/MCP telemetry has no
+                # content diagnosis, and the grouping judge no longer matches on
+                # it — it only needs a value outside _NON_GAP_DIAGNOSES so the
+                # row is treated as an actual gap.
+                finding = {"question": question, "diagnosis": "missing", "language": lang, "audience": None}
+                matched = (await group_findings([finding], candidates))[0].get("group_question_key")
+                if matched is None or matched == base_key:
+                    return
+
+                async with tenant_scoped_session(org_int_id) as session:
+                    result = await session.execute(
+                        update(PortalRetrievalGap).where(PortalRetrievalGap.id == gap_id).values(question_key=matched)
+                    )
+                    if result.rowcount == 0:  # type: ignore[attr-defined]
+                        raise RuntimeError(f"gap_grouping UPDATE matched 0 rows (gap_id={gap_id}, org_id={org_int_id})")
+                    await session.commit()
+
+                # Ids only: the key carries the normalized question, which has no business in an app log.
+                logger.info("gap_grouping_merged", gap_id=gap_id, org_id=org_int_id)
+            except Exception:
+                logger.exception("gap_grouping_failed", gap_id=gap_id)
+
+        _grouping_task = asyncio.create_task(  # noqa: RUF006
+            _group_gap(gap.id, org.id, nearest_kb_slug, effective_query_text, language, question_key)
+        )
 
     # SPEC-KB-022 R6 + SPEC-KB-026 R4: async gap classification via knowledge-ingest
     if taxonomy_node_ids is None and nearest_kb_slug:

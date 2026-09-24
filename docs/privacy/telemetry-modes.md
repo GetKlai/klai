@@ -118,7 +118,12 @@ flip back when done.
   structlog processor strips raw-query-shaped fields from any future
   log line that was not explicitly gated.
 - Database: a daily cron job deletes rows older than 7 days from the
-  shadow store and from `portal_retrieval_gaps`.
+  shadow store and from `portal_retrieval_gaps`. In that table the TTL
+  covers the query-derived rows — widget, LibreChat, MCP and the ones a
+  reviewer files — which is where a literal query is stored. A row
+  carrying a `support_case_id` holds a question derived from a ticket or
+  call transcript the tenant imported, not from a query, so it lives as
+  long as its support case and is deleted with it.
 - Audit: every level change is recorded in `portal_audit_log` with
   the operator (or tenant-admin) identity and the reason.
 - Observability: a per-tenant privacy dashboard lets us spot tenants

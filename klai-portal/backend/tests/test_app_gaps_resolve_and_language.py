@@ -14,10 +14,11 @@ Row-level response fields are asserted against the endpoint's own rows.
 
 from __future__ import annotations
 
+import contextlib
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -25,6 +26,7 @@ from sqlalchemy.dialects import postgresql
 
 from app.api.app_gaps import GapResolveRequest, list_gaps, resolve_gap
 from app.services.gap_events import record_gap_event
+from app.services.support_cases import _question_key
 from tests.conftest import make_perms
 
 _NOW = datetime(2026, 9, 1, tzinfo=UTC)
@@ -84,6 +86,149 @@ async def test_record_gap_event_stores_conversation_and_language(monkeypatch) ->
 
 
 # ---------------------------------------------------------------------------
+# record_gap_event — SPEC-RAG-GAP-GROUPING: every producer writes a
+# question_key, and a paraphrase of an open group is folded onto it async.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_record_gap_event_writes_a_question_key(monkeypatch) -> None:
+    """Every gap row now carries a question_key, so list_gaps can group chat
+    rows the same way it already groups support findings."""
+    monkeypatch.setattr("app.services.gap_events.set_tenant", AsyncMock())
+    rows: list[Any] = []
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_scalar_result(_FakeOrg("full")))
+    db.add = MagicMock(side_effect=rows.append)
+
+    def _closing_create_task(coro):
+        coro.close()  # never actually scheduled: avoid the GC "never awaited" warning
+        return MagicMock()
+
+    with patch("app.services.gap_events.asyncio.create_task", side_effect=_closing_create_task):
+        await record_gap_event(
+            db,
+            zitadel_org_id="zit-org-1",
+            user_id="u-1",
+            query_text="How do I port my number?",
+            gap_type="hard",
+            nearest_kb_slug="products",
+            language="en",
+        )
+
+    assert rows[0].question_key == _question_key(
+        question="How do I port my number?", language="en", kb_slug="products", audience=None
+    )
+
+
+def _fake_tenant_scoped_session(session: AsyncMock):
+    @contextlib.asynccontextmanager
+    async def _session(org_id: int):
+        yield session
+
+    return _session
+
+
+@pytest.mark.asyncio
+async def test_record_gap_event_folds_a_paraphrase_onto_an_existing_group(monkeypatch) -> None:
+    """Two differently-worded chat questions about the same need collapse into
+    one group: the async grouping pass folds the second row's question_key
+    onto the first row's (SPEC-RAG-GAP-GROUPING) — reusing
+    ``support_gap_grouping.group_findings``, not a second mechanism."""
+    monkeypatch.setattr("app.services.gap_events.set_tenant", AsyncMock())
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_scalar_result(_FakeOrg("full")))
+    db.add = MagicMock()
+
+    captured: list[Any] = []
+    monkeypatch.setattr("app.services.gap_events.asyncio.create_task", lambda coro: captured.append(coro))
+
+    await record_gap_event(
+        db,
+        zitadel_org_id="zit-org-1",
+        user_id="u-1",
+        query_text="How do I move my number over?",
+        gap_type="hard",
+        nearest_kb_slug="products",
+        language="en",
+    )
+    grouping_coro = next(c for c in captured if c.cr_code.co_name == "_group_gap")
+    for other in captured:
+        if other is not grouping_coro:
+            other.close()  # unused taxonomy-classification coroutine: avoid the GC warning
+
+    existing_key = _question_key(question="How do I port my number?", language="en", kb_slug="products", audience=None)
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=MagicMock(rowcount=1))
+    session.commit = AsyncMock()
+
+    with (
+        patch("app.core.database.tenant_scoped_session", _fake_tenant_scoped_session(session)),
+        patch(
+            "app.services.support_cases._open_group_candidates",
+            AsyncMock(
+                return_value=[
+                    {
+                        "question_key": existing_key,
+                        "question": "How do I port my number?",
+                        "language": "en",
+                        "audience": None,
+                    }
+                ]
+            ),
+        ),
+        patch(
+            "app.services.support_gap_grouping.group_findings",
+            AsyncMock(return_value=[{"group_question_key": existing_key}]),
+        ),
+    ):
+        await grouping_coro
+
+    update_stmt = session.execute.await_args.args[0]
+    compiled = update_stmt.compile(dialect=postgresql.dialect())
+    assert "UPDATE portal_retrieval_gaps" in str(compiled)
+    assert existing_key in compiled.params.values()
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_record_gap_event_grouping_failure_leaves_the_row_on_its_own_key(monkeypatch) -> None:
+    """A grouping-judge failure (timeout, malformed model output, ...) must
+    never lose the row — it already committed on its own literal key before
+    this async pass ever runs; the pass just logs and stops."""
+    monkeypatch.setattr("app.services.gap_events.set_tenant", AsyncMock())
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_scalar_result(_FakeOrg("full")))
+    db.add = MagicMock()
+
+    captured: list[Any] = []
+    monkeypatch.setattr("app.services.gap_events.asyncio.create_task", lambda coro: captured.append(coro))
+
+    await record_gap_event(
+        db,
+        zitadel_org_id="zit-org-1",
+        user_id="u-1",
+        query_text="How do I move my number over?",
+        gap_type="hard",
+        nearest_kb_slug="products",
+        language="en",
+    )
+    grouping_coro = next(c for c in captured if c.cr_code.co_name == "_group_gap")
+    for other in captured:
+        if other is not grouping_coro:
+            other.close()  # unused taxonomy-classification coroutine: avoid the GC warning
+
+    session = AsyncMock()
+    with (
+        patch("app.core.database.tenant_scoped_session", _fake_tenant_scoped_session(session)),
+        patch("app.services.support_cases._open_group_candidates", AsyncMock(side_effect=RuntimeError("boom"))),
+    ):
+        await grouping_coro  # must not raise
+
+    session.execute.assert_not_awaited()  # no UPDATE was ever attempted
+
+
+# ---------------------------------------------------------------------------
 # GET /api/app/gaps — language grouping, source, conversation link
 # ---------------------------------------------------------------------------
 
@@ -93,10 +238,15 @@ def _group_row(
     gap_type: str = "hard",
     language: str | None = None,
     *,
+    group_key: str | None = None,
     has_review: bool = False,
     resolved_at: datetime | None = None,
 ) -> SimpleNamespace:
+    # A pre-migration row has no persisted question_key, so its group_key
+    # falls back to its own literal query_text (COALESCE(question_key,
+    # query_text) in app_gaps.py) — the default here mirrors that fallback.
     return SimpleNamespace(
+        group_key=group_key if group_key is not None else query_text,
         query_text=query_text,
         gap_type=gap_type,
         language=language,
@@ -114,11 +264,12 @@ def _resolved_by_row(
     gap_type: str = "hard",
     language: str | None = None,
     *,
+    group_key: str | None = None,
     resolved_by: str | None = "review",
     resolved_by_name: str | None = "Klaas Klai",
 ) -> SimpleNamespace:
     return SimpleNamespace(
-        query_text=query_text,
+        group_key=group_key if group_key is not None else query_text,
         gap_type=gap_type,
         language=language,
         resolved_by=resolved_by,
@@ -131,9 +282,11 @@ def _conv_row(
     conversation_id: int,
     gap_type: str = "hard",
     language: str | None = None,
+    *,
+    group_key: str | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
-        query_text=query_text,
+        group_key=group_key if group_key is not None else query_text,
         gap_type=gap_type,
         language=language,
         conversation_id=conversation_id,
@@ -208,7 +361,8 @@ async def test_list_gaps_groups_open_groups_per_language() -> None:
     assert out.total == 2
     grouped = db.statements[0]
     assert (
-        "GROUP BY portal_retrieval_gaps.query_text, portal_retrieval_gaps.gap_type, portal_retrieval_gaps.language"
+        "GROUP BY coalesce(portal_retrieval_gaps.question_key, portal_retrieval_gaps.query_text), "
+        "portal_retrieval_gaps.gap_type, portal_retrieval_gaps.language"
     ) in grouped
     assert "portal_retrieval_gaps.resolved_at IS NULL" in grouped
 

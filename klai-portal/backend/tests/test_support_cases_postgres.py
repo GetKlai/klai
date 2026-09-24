@@ -682,10 +682,12 @@ async def test_purge_removes_all_support_evidence(pg) -> None:
     assert await _counts(admin) == (0, 0)
 
 
-async def test_manual_close_closes_the_whole_question_key_group_only(pg) -> None:
+async def test_manual_close_closes_every_diagnosis_in_the_group_but_only_that_kb(pg) -> None:
     """#A: a support group is closed by its persisted question_key, so two
-    differently cased/spaced cases in one group both close, while another KB or
-    diagnosis is untouched. The KB selector is required."""
+    differently cased/spaced cases AND a second diagnosis about the same
+    question all close together — a diagnosis says how a gap was detected, not
+    what the customer needs (SPEC-RAG-GAP-GROUPING). Another KB is untouched,
+    and the KB selector is required."""
     from app.api.app_gaps import GapResolveRequest, resolve_gap
     from app.services.support_cases import _question_key
     from tests.conftest import make_perms
@@ -693,16 +695,12 @@ async def test_manual_close_closes_the_whole_question_key_group_only(pg) -> None
     admin, factory, cid, _ = pg
     r = await _upsert(factory, cid, _payload())  # one real case to reference
     case_id = r.case_id
-    k_target = _question_key(question="How export?", diagnosis="missing", language="en", kb_slug="kb-a", audience=None)
-    k_other_diag = _question_key(
-        question="How export?", diagnosis="incomplete", language="en", kb_slug="kb-a", audience=None
-    )
-    k_other_kb = _question_key(
-        question="How export?", diagnosis="missing", language="en", kb_slug="kb-b", audience=None
-    )
+    k_target = _question_key(question="How export?", language="en", kb_slug="kb-a", audience=None)
+    k_other_kb = _question_key(question="How export?", language="en", kb_slug="kb-b", audience=None)
 
     async with admin.begin() as conn:
-        # Two spellings, one persisted key (the store normalized both the same).
+        # Two spellings and two diagnoses, one persisted key (the store
+        # normalized them all the same); a fourth row on another KB.
         await conn.execute(
             text(
                 "INSERT INTO portal_retrieval_gaps "
@@ -710,17 +708,17 @@ async def test_manual_close_closes_the_whole_question_key_group_only(pg) -> None
                 "VALUES "
                 "(901,'u','How export?','content','kb-a','en','missing',:k,:c),"
                 "(901,'u','how  export?','content','kb-a','en','missing',:k,:c),"
-                "(901,'u','How export?','content','kb-a','en','incomplete',:kd,:c),"
+                "(901,'u','How export?','content','kb-a','en','incomplete',:k,:c),"
                 "(901,'u','How export?','content','kb-b','en','missing',:kk,:c)"
             ),
-            {"k": k_target, "kd": k_other_diag, "kk": k_other_kb, "c": case_id},
+            {"k": k_target, "kk": k_other_kb, "c": case_id},
         )
 
     async with factory() as db:
         await set_tenant(db, 901)
         out = await resolve_gap(
             GapResolveRequest(
-                query_text="  HOW   Export? ",  # different casing/spacing than either stored row
+                query_text="  HOW   Export? ",  # different casing/spacing than any stored row
                 gap_type="content",
                 language="en",
                 diagnosis="missing",
@@ -729,23 +727,22 @@ async def test_manual_close_closes_the_whole_question_key_group_only(pg) -> None
             perms=make_perms(org_id=901),
             db=db,
         )
-    assert out.resolved == 2  # both spellings of the target group
+    assert out.resolved == 3  # both spellings and the second diagnosis
     async with admin.connect() as conn:
         rows = list(
             await conn.execute(
                 text(
                     "SELECT diagnosis, nearest_kb_slug, resolved_at IS NOT NULL AS closed "
                     "FROM portal_retrieval_gaps WHERE org_id=901 AND support_case_id IS NOT NULL "
-                    "AND question_key IN (:k,:kd,:kk) ORDER BY diagnosis, nearest_kb_slug"
+                    "AND question_key IN (:k,:kk) ORDER BY diagnosis, nearest_kb_slug"
                 ),
-                {"k": k_target, "kd": k_other_diag, "kk": k_other_kb},
+                {"k": k_target, "kk": k_other_kb},
             )
         )
-    # incomplete@kb-a and missing@kb-b stay open; only missing@kb-a closed.
     by = {(r[0], r[1]): r[2] for r in rows}
     assert by[("missing", "kb-a")] is True
-    assert by[("incomplete", "kb-a")] is False
-    assert by[("missing", "kb-b")] is False
+    assert by[("incomplete", "kb-a")] is True  # same need, closed with the group
+    assert by[("missing", "kb-b")] is False  # another KB is its own group
 
 
 async def test_manual_close_of_support_group_requires_kb_selector(pg) -> None:
@@ -1106,13 +1103,19 @@ async def test_review_correction_to_non_actionable_suppresses(pg) -> None:
     assert (rows[0].closed, rows[0].resolved_by) == (True, "review")
 
 
-async def test_review_correction_rebuckets_the_diagnosis(pg) -> None:
+async def test_review_correction_changes_the_diagnosis_but_not_the_group(pg) -> None:
+    """A reviewer correcting 'missing' to 'outdated' says the gap was detected
+    differently, not that the customer needs something else, so the row keeps
+    the group it is in (SPEC-RAG-GAP-GROUPING: diagnosis is not part of the
+    grouping key). Before, the correction moved it into a group of its own."""
     admin, factory, cid, _ = pg
     r = await _upsert(factory, cid, _payload())
+    before = (await _gap_rows(admin, r.case_id))[0].question_key
     await _apply_visibility(factory, r.case_id, 0, "incorrect", "outdated")
     rows = await _gap_rows(admin, r.case_id)
     assert rows[0].diagnosis == "outdated" and rows[0].closed is False
-    assert "outdated" in rows[0].question_key  # the group key moved with the correction
+    assert rows[0].question_key == before
+    assert "outdated" not in rows[0].question_key
 
 
 async def test_review_promotes_an_uncertain_finding_into_a_candidate(pg) -> None:
@@ -1509,3 +1512,73 @@ async def test_identical_reanalysis_preserves_current_human_correction(pg, machi
     if closed:
         assert rows[0].resolved_by == "manual"
     assert (await _read_reviews(admin, result.case_id))[review_key(revision, 0)]["corrected_diagnosis"] == corrected
+
+
+async def test_seven_day_purge_keeps_case_findings_and_still_expires_query_text(pg) -> None:
+    """The inbox's case evidence survives its retention job; chat text does not.
+
+    Until 2026-09-23 the 7-day TTL deleted every readable gap row, so a
+    case-backed finding disappeared a week after import while its support case
+    stayed, and no theme could show a trend across weeks. Rows derived from a
+    chat query keep the 7-day fence (docs/privacy/telemetry-modes.md), including
+    the one a human reviewer filed.
+    """
+    from app.services.telemetry_purge import EXPIRED_RAW_TELEMETRY_GAPS_SQL
+
+    admin, factory, cid, _ = pg
+    result = await _upsert(factory, cid, _payload())
+    async with admin.begin() as conn:
+        # The finding is as old as the raw rows, so "it survived" cannot be an
+        # artifact of its fresh insert timestamp.
+        await conn.execute(
+            text("UPDATE portal_retrieval_gaps SET occurred_at = now() - interval '30 days' WHERE support_case_id=:c"),
+            {"c": result.case_id},
+        )
+        await conn.execute(
+            text(
+                """
+                INSERT INTO portal_retrieval_gaps
+                    (org_id, user_id, query_text, gap_type, occurred_at, caller_client_id)
+                VALUES
+                    (901, 'u1', 'raw chat question', 'soft', now() - interval '30 days', 'widget-chat'),
+                    (901, 'u1', '[REDACTED:shadow]', 'soft', now() - interval '30 days', 'widget-chat'),
+                    (901, 'u1', 'question a reviewer filed', 'hard', now() - interval '30 days', 'human-review'),
+                    (901, 'u1', 'fresh chat question', 'soft', now(), 'widget-chat')
+                """
+            )
+        )
+        expired = (
+            (
+                await conn.execute(
+                    text(EXPIRED_RAW_TELEMETRY_GAPS_SQL.replace("public.", f"{_SCHEMA}.")),
+                    {"cutoff": datetime.now(UTC) - timedelta(days=7), "chunk_size": 100},
+                )
+            )
+            .scalars()
+            .all()
+        )
+        surviving = (
+            (
+                await conn.execute(
+                    text("SELECT query_text FROM portal_retrieval_gaps WHERE id <> ALL(CAST(:ids AS bigint[]))"),
+                    {"ids": list(expired)},
+                )
+            )
+            .scalars()
+            .all()
+        )
+        expired_text = (
+            (
+                await conn.execute(
+                    text("SELECT query_text FROM portal_retrieval_gaps WHERE id = ANY(CAST(:ids AS bigint[]))"),
+                    {"ids": list(expired)},
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    case_finding = (await _gap_rows(admin, result.case_id))[0]
+    assert case_finding.diagnosis == "missing"
+    assert sorted(expired_text) == ["question a reviewer filed", "raw chat question"]
+    assert sorted(surviving) == sorted([case_finding.query_text, "[REDACTED:shadow]", "fresh chat question"])

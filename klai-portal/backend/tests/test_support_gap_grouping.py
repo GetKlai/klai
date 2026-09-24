@@ -1,18 +1,21 @@
 """Acceptance tests for support-gap grouping.
 
-Contract: docs/architecture/support-gap-detection.md § "Existing inbox".
-``group_findings`` folds a new finding into an existing open group only when the
-judge verifies the same reusable need (same diagnosis, language, audience). The
-single LiteLLM boundary is mocked here; every test asserts an observable outcome
-(a stamped or absent ``group_question_key``, the exact model input, or a raised
-error), never merely that nothing crashed. ``group_question_key`` is internal —
-it originates only from a verified candidate key, never from an input payload.
+Contract: docs/architecture/support-gap-detection.md § "Existing inbox" and
+SPEC-RAG-GAP-GROUPING. ``group_findings`` folds a new finding into an existing
+open group only when the judge verifies the same reusable need — same
+language, and the same audience when both sides know it; diagnosis never
+blocks a match. The single LiteLLM boundary is mocked here; every test asserts
+an observable outcome (a stamped or absent ``group_question_key``, the exact
+model input, or a raised error), never merely that nothing crashed.
+``group_question_key`` is internal — it originates only from a verified
+candidate key, never from an input payload.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -98,14 +101,12 @@ async def test_same_need_in_one_case_shares_one_group_and_keeps_evidence(monkeyp
         finding["message_ids"] = [f"source-{index}"]
     first_key = support_cases._question_key(
         question=findings[0]["question"],
-        diagnosis="missing",
         language="en",
         kb_slug="products",
         audience="customer",
     )
     second_key = support_cases._question_key(
         question=findings[1]["question"],
-        diagnosis="missing",
         language="en",
         kb_slug="products",
         audience="customer",
@@ -127,7 +128,14 @@ async def test_same_need_in_one_case_shares_one_group_and_keeps_evidence(monkeyp
         )
 
     rows = [
-        support_cases._finding_gap(org_id=7, user_id="user", kb_slug="products", case_id=11, finding=finding)
+        support_cases._finding_gap(
+            org_id=7,
+            user_id="user",
+            kb_slug="products",
+            case_id=11,
+            finding=finding,
+            occurred_at=datetime(2026, 9, 1, tzinfo=UTC),
+        )
         for finding in result
     ]
     assert {row.question_key for row in rows} == {first_key}
@@ -155,19 +163,24 @@ async def test_same_batch_self_match_keeps_other_merges(monkeypatch):
     assert result[1]["group_question_key"] == key
 
 
-async def test_metadata_cohorts_are_judged_without_competing_keys(monkeypatch):
+async def test_cohorts_split_on_language_and_merge_across_diagnosis(monkeypatch):
+    """SPEC-RAG-GAP-GROUPING: batches (and therefore prompt calls) split on
+    language only. A 'missing' and an 'incomplete' finding sit in the SAME
+    batch and either can match a candidate of the OTHER diagnosis; a different
+    language gets its own batch with its own candidate pool."""
+
     def decisions(*items):
         return {"assignments": [{"index": index, "group_question_key": key} for index, key in items]}
 
     responses = iter(
         [
-            decisions((1, None), (2, "missing-0")),
-            decisions((1, None), (2, "missing-0")),
-            decisions((3, None), (4, "incomplete-0")),
-            decisions((3, None), (4, None)),
+            decisions((0, None), (1, "grp-port")),  # english batch: grouping call
+            decisions((0, None), (1, "grp-port")),  # english batch: verification call
+            decisions((2, None)),  # french batch: grouping call
+            decisions((2, None)),  # french batch: verification call
         ]
     )
-    submitted = []
+    submitted: list[dict] = []
 
     async def call(*, system: str, user: str) -> str:
         submitted.append(json.loads(user))
@@ -175,25 +188,25 @@ async def test_metadata_cohorts_are_judged_without_competing_keys(monkeypatch):
 
     monkeypatch.setattr(grp, "_call_llm", call)
     findings = [
+        _finding("How do I set up voicemail?", diagnosis="missing"),
+        _finding("How do I move my number over?", diagnosis="incomplete"),
         _finding("Comment modifier mon profil ?", language="fr"),
-        _finding("How do I port a number in?"),
-        _finding("Bring my number into the service"),
-        _finding("Show my caller ID", diagnosis="incomplete"),
-        _finding("Hide my caller ID", diagnosis="incomplete"),
     ]
     candidates = [
-        {**_candidate("missing-0", findings[1]["question"]), "finding_index": 1},
-        {**_candidate("incomplete-0", findings[3]["question"], diagnosis="incomplete"), "finding_index": 3},
+        _candidate("grp-port", "How do I port my number?", diagnosis="missing"),
+        _candidate("grp-fr", "Une autre demande", diagnosis="missing", language="fr"),
     ]
 
     result = await grp.group_findings(findings, candidates)
 
-    assert [[finding["index"] for finding in call["findings"]] for call in submitted] == [[1, 2]] * 2 + [[3, 4]] * 2
-    assert result[2]["group_question_key"] == "missing-0"
-    assert "group_question_key" not in result[4]
+    assert [[f["index"] for f in call["findings"]] for call in submitted[:2]] == [[0, 1], [0, 1]]
+    assert [f["index"] for f in submitted[2]["findings"]] == [2]
+    assert "group_question_key" not in result[0]
+    assert result[1]["group_question_key"] == "grp-port"  # incomplete finding folded into a 'missing' group
 
 
 async def test_metadata_cohorts_share_one_timeout_budget(monkeypatch):
+    """Two DIFFERENT-language batches still share one overall timeout budget."""
     monkeypatch.setattr(grp, "_GROUPING_TIMEOUT_S", 0.03)
 
     async def call(*, system: str, user: str) -> str:
@@ -208,10 +221,10 @@ async def test_metadata_cohorts_share_one_timeout_budget(monkeypatch):
         )
 
     monkeypatch.setattr(grp, "_call_llm", call)
-    findings = [_finding("Missing answer"), _finding("Incomplete answer", diagnosis="incomplete")]
+    findings = [_finding("Missing answer"), _finding("Andere vraag", language="nl")]
     candidates = [
         _candidate("missing", "Existing gap"),
-        _candidate("incomplete", "Existing gap", diagnosis="incomplete"),
+        _candidate("nl-gap", "Bestaande vraag", language="nl"),
     ]
 
     with pytest.raises(TimeoutError):
@@ -291,13 +304,56 @@ async def test_fabricated_group_key_is_rejected(monkeypatch):
         await grp.group_findings(findings, candidates)
 
 
-async def test_match_across_different_diagnosis_is_rejected(monkeypatch):
-    # The model returned a whitelisted key, but for a candidate whose diagnosis
-    # differs — a wrong merge the server must refuse.
-    _patch_llm(monkeypatch, {"assignments": [{"index": 0, "group_question_key": "grp-port"}]})
+async def test_match_across_different_diagnosis_is_allowed(monkeypatch):
+    """SPEC-RAG-GAP-GROUPING: a 'missing' finding and an 'incomplete' candidate
+    about the same need are the same reusable knowledge gap — the diagnosis
+    difference must not block the merge."""
+    rec = _patch_llm(monkeypatch, {"assignments": [{"index": 0, "group_question_key": "grp-port"}]})
     findings = [_finding("How do I port my number?", diagnosis="missing")]
+    candidates = [_candidate("grp-port", "How do I port my number?", diagnosis="incomplete")]
+
+    result = await group_and_assert_copy(findings, candidates)
+    assert result[0]["group_question_key"] == "grp-port"
+    assert rec.calls == 2
+
+
+async def test_match_across_different_language_is_rejected(monkeypatch):
+    # The model returned a whitelisted key, but for a candidate whose language
+    # differs — a wrong merge the server must refuse. Language stays a hard
+    # separator, unlike diagnosis. A second, in-scope candidate keeps the batch
+    # from being skipped outright, so the mismatched pick is genuinely validated.
+    _patch_llm(monkeypatch, {"assignments": [{"index": 0, "group_question_key": "grp-port"}]})
+    findings = [_finding("How do I port my number?", language="en")]
     candidates = [
-        _candidate("grp-port", "How do I port my number?", diagnosis="incomplete"),
+        _candidate("grp-port", "Hoe draag ik mijn nummer over?", language="nl"),
+        _candidate("eligible", "How do I change my number?"),
+    ]
+
+    with pytest.raises(SupportCaseAnalysisError):
+        await grp.group_findings(findings, candidates)
+
+
+async def test_match_with_known_audience_against_unknown_candidate_is_allowed(monkeypatch):
+    """A concrete audience on one side and an unrecorded one on the other must
+    not block a match — most chat/telemetry findings never record an
+    audience, and treating "unknown" as its own bucket would wall them off
+    from every support-case group they could otherwise join."""
+    rec = _patch_llm(monkeypatch, {"assignments": [{"index": 0, "group_question_key": "grp-port"}]})
+    findings = [_finding("How do I port my number?", audience="customer")]
+    candidates = [_candidate("grp-port", "How do I port my number?", audience=None)]
+
+    result = await group_and_assert_copy(findings, candidates)
+    assert result[0]["group_question_key"] == "grp-port"
+    assert rec.calls == 2
+
+
+async def test_match_across_different_known_audience_is_rejected(monkeypatch):
+    # Both sides know the audience and disagree — a real editorial split. A
+    # second, in-scope candidate keeps the batch from being skipped outright.
+    _patch_llm(monkeypatch, {"assignments": [{"index": 0, "group_question_key": "grp-port"}]})
+    findings = [_finding("How do I port my number?", audience="customer")]
+    candidates = [
+        _candidate("grp-port", "How do I port my number?", audience="internal"),
         _candidate("eligible", "How do I change my number?"),
     ]
 

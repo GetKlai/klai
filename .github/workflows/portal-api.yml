@@ -16,6 +16,12 @@ on:
       # commit happened to carry it — which is how the disk guard added on
       # 2026-09-18 was still absent from the server after its PR had merged.
       - 'deploy/scripts/deploy-portal-api.sh'
+      # tests/contract/ asserts against the deployed compose file (Vexa bot
+      # pin, service wiring). Without this path the contract tests only run
+      # when backend code changes, so a compose-only PR goes green and main
+      # goes red for everyone else -- which is what happened on 2026-09-23.
+      - 'deploy/docker-compose.yml'
+      - 'scripts/check-vexa12-deploy-preconditions.sh'
       - '.github/workflows/portal-api.yml'
 permissions:
   contents: read

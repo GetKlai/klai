@@ -68,9 +68,11 @@ class GapOut(BaseModel):
     audience: str | None = None
     support_case_ids: list[int] = []
     support_sources: list[str] = []
-    # The group's persisted ``question_key`` for a support group — the reliable
-    # handle to close it, since folded findings share one key while their wording
-    # differs. NULL for legacy telemetry groups.
+    # The group's identity key: the persisted ``question_key`` when the row(s)
+    # have one (every producer writes one now — SPEC-RAG-GAP-GROUPING), else
+    # the row's own literal ``query_text`` for a pre-migration row. The
+    # reliable handle to close the group with ``/gaps/resolve``, since folded
+    # findings share one key while their wording differs.
     group_key: str | None = None
     topic: GapTopic | None = None
 
@@ -138,7 +140,9 @@ async def list_gaps(
     perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> GapsResponse:
-    """List gap events for the caller's org, grouped by query text + language.
+    """List gap events for the caller's org, grouped by customer need + language
+    (SPEC-RAG-GAP-GROUPING: the persisted ``question_key`` when a row has one,
+    falling back to its literal query text for a pre-migration row).
 
     Optional taxonomy_node_id filter: only return gaps classified to that node.
     Optional language filter (SPEC-KNOWLEDGE-ACTIVITY-001 §4.5): language is
@@ -147,9 +151,21 @@ async def list_gaps(
     """
     cutoff = datetime.now(tz=UTC) - timedelta(days=days)
 
+    # SPEC-RAG-GAP-GROUPING: group on the persisted ``question_key`` — the
+    # normalized-text need identifier every producer now writes — falling back
+    # to the row's own literal ``query_text`` when it has none (a row written
+    # before this shipped). The fallback exactly reproduces the old
+    # exact-tuple grouping for those rows, so nothing regroups on deploy; a new
+    # row's key can later be folded onto an earlier paraphrase's key by the
+    # grouping judge (SPEC-RAG-GAP-GROUPING), at which point they share one
+    # group here too. gap_type stays a separate axis on purpose (a hard vs
+    # soft retrieval miss is a different signal, even about the same need).
+    group_key_expr = func.coalesce(PortalRetrievalGap.question_key, PortalRetrievalGap.query_text)
+
     stmt = (
         select(
-            PortalRetrievalGap.query_text,
+            group_key_expr.label("group_key"),
+            func.max(PortalRetrievalGap.query_text).label("query_text"),
             PortalRetrievalGap.gap_type,
             PortalRetrievalGap.language,
             func.max(PortalRetrievalGap.top_score).label("top_score"),
@@ -172,7 +188,7 @@ async def list_gaps(
             # query_text grouping so the two never mix.
             PortalRetrievalGap.support_case_id.is_(None),
         )
-        .group_by(PortalRetrievalGap.query_text, PortalRetrievalGap.gap_type, PortalRetrievalGap.language)
+        .group_by(group_key_expr, PortalRetrievalGap.gap_type, PortalRetrievalGap.language)
         .order_by(
             func.count().desc(),
             func.max(PortalRetrievalGap.occurred_at).desc(),
@@ -213,7 +229,7 @@ async def list_gaps(
     # their own group key, and closing a gap must not hide its provenance.
     conv_result = await db.execute(
         select(
-            PortalRetrievalGap.query_text,
+            group_key_expr.label("group_key"),
             PortalRetrievalGap.gap_type,
             PortalRetrievalGap.language,
             PortalRetrievalGap.conversation_id,
@@ -223,13 +239,13 @@ async def list_gaps(
             PortalRetrievalGap.org_id == perms.org_id,
             PortalRetrievalGap.occurred_at >= cutoff,
             PortalRetrievalGap.conversation_id.isnot(None),
-            PortalRetrievalGap.query_text.in_({r.query_text for r in rows}),
+            group_key_expr.in_({r.group_key for r in rows}),
         )
         # DISTINCT ON keeps one row per group in PostgreSQL instead of streaming
         # every occurrence of a frequent question to pick the newest here.
-        .distinct(PortalRetrievalGap.query_text, PortalRetrievalGap.gap_type, PortalRetrievalGap.language)
+        .distinct(group_key_expr, PortalRetrievalGap.gap_type, PortalRetrievalGap.language)
         .order_by(
-            PortalRetrievalGap.query_text,
+            group_key_expr,
             PortalRetrievalGap.gap_type,
             PortalRetrievalGap.language,
             PortalRetrievalGap.occurred_at.desc(),
@@ -239,7 +255,7 @@ async def list_gaps(
     conversation_by_group: dict[tuple[str, str, str | None], int] = {}
     for row in conv_result.all():
         # Rows arrive newest-first, so the first hit per group is the one.
-        conversation_by_group.setdefault((row.query_text, row.gap_type, row.language), row.conversation_id)
+        conversation_by_group.setdefault((row.group_key, row.gap_type, row.language), row.conversation_id)
 
     # Who closed it: only asked for when closed rows are actually in view —
     # an open-only list never has a resolved row to attribute. Same
@@ -250,7 +266,7 @@ async def list_gaps(
     if include_resolved:
         resolved_result = await db.execute(
             select(
-                PortalRetrievalGap.query_text,
+                group_key_expr.label("group_key"),
                 PortalRetrievalGap.gap_type,
                 PortalRetrievalGap.language,
                 PortalRetrievalGap.resolved_by,
@@ -264,11 +280,11 @@ async def list_gaps(
                 PortalRetrievalGap.org_id == perms.org_id,
                 PortalRetrievalGap.occurred_at >= cutoff,
                 PortalRetrievalGap.resolved_at.isnot(None),
-                PortalRetrievalGap.query_text.in_({r.query_text for r in rows}),
+                group_key_expr.in_({r.group_key for r in rows}),
             )
-            .distinct(PortalRetrievalGap.query_text, PortalRetrievalGap.gap_type, PortalRetrievalGap.language)
+            .distinct(group_key_expr, PortalRetrievalGap.gap_type, PortalRetrievalGap.language)
             .order_by(
-                PortalRetrievalGap.query_text,
+                group_key_expr,
                 PortalRetrievalGap.gap_type,
                 PortalRetrievalGap.language,
                 PortalRetrievalGap.resolved_at.desc(),
@@ -277,7 +293,7 @@ async def list_gaps(
         )
         for row in resolved_result.all():
             resolved_by_group.setdefault(
-                (row.query_text, row.gap_type, row.language), (row.resolved_by, row.resolved_by_name)
+                (row.group_key, row.gap_type, row.language), (row.resolved_by, row.resolved_by_name)
             )
 
     gaps = [
@@ -286,20 +302,21 @@ async def list_gaps(
             gap_type=r.gap_type,
             language=r.language,
             source="review" if r.has_review else "automatic",
-            conversation_id=conversation_by_group.get((r.query_text, r.gap_type, r.language)),
+            conversation_id=conversation_by_group.get((r.group_key, r.gap_type, r.language)),
             top_score=r.top_score,
             nearest_kb_slug=r.nearest_kb_slug,
             occurrence_count=r.occurrence_count,
             last_occurred=r.last_occurred,
             resolved_at=r.resolved_at,
+            group_key=r.group_key,
             # A reopened group is open: its old closer must not travel along.
             resolved_by=(
-                resolved_by_group.get((r.query_text, r.gap_type, r.language), (None, None))[0]
+                resolved_by_group.get((r.group_key, r.gap_type, r.language), (None, None))[0]
                 if r.resolved_at is not None
                 else None
             ),
             resolved_by_name=(
-                resolved_by_group.get((r.query_text, r.gap_type, r.language), (None, None))[1]
+                resolved_by_group.get((r.group_key, r.gap_type, r.language), (None, None))[1]
                 if r.resolved_at is not None
                 else None
             ),
@@ -500,13 +517,15 @@ async def resolve_gap(
         .values(resolved_at=datetime.now(tz=UTC), resolved_by="manual", resolved_by_user_id=caller_id)
     )
 
-    # SPEC-RAG-SUPPORT-GAP: the persisted group key closes a support group
-    # authoritatively — folded findings share one key while their wording differs,
-    # so it matches them all where recomputing from a displayed question would not.
+    # SPEC-RAG-GAP-GROUPING: the persisted group key closes a group
+    # authoritatively — regardless of producer, folded findings share one key
+    # while their wording differs, so it matches them all where recomputing
+    # from a displayed question would not. COALESCE mirrors ``list_gaps``'s
+    # grouping expression so a pre-migration row (no question_key yet, its
+    # group_key is its own literal query_text) still closes correctly.
     if body.group_key is not None:
         stmt = stmt.where(
-            PortalRetrievalGap.support_case_id.isnot(None),
-            PortalRetrievalGap.question_key == body.group_key,
+            func.coalesce(PortalRetrievalGap.question_key, PortalRetrievalGap.query_text) == body.group_key,
         )
     # A diagnosis marks a support (case-backed) close. Without a key or a
     # diagnosis, the close only ever touches legacy telemetry rows (exact query
@@ -523,11 +542,12 @@ async def resolve_gap(
             stmt = stmt.where(PortalRetrievalGap.language == body.language)
     else:
         # A support group is identified by its persisted question_key (the same
-        # normalized question + diagnosis + language + KB + audience the inbox
-        # grouped on), so every spelling variant in the group closes together.
-        # The KB selector is required — omitting it must not close every KB's
-        # group — and the audience is matched deliberately (NULL matches NULL
-        # via the empty-string slot in the key).
+        # normalized question + language + KB + audience the inbox grouped on;
+        # diagnosis no longer separates it), so every spelling variant AND every
+        # diagnosis in the group closes together. The KB selector is required —
+        # omitting it must not close every KB's group — and the audience is
+        # matched deliberately (NULL matches NULL via the empty-string slot in
+        # the key).
         if not body.nearest_kb_slug:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -535,7 +555,6 @@ async def resolve_gap(
             )
         key = _question_key(
             question=body.query_text,
-            diagnosis=body.diagnosis,
             language=body.language,
             kb_slug=body.nearest_kb_slug,
             audience=body.audience,

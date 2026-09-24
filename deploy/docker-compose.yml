@@ -115,6 +115,7 @@ volumes:
   scribe-audio-data:
   runtime-api-docker-socket:   # SPEC-SEC-021 socat bridge socket (runtime-api <-> docker-socket-proxy)
   vaultwarden-data:            # Vaultwarden SQLite DB + attachments
+  calnode-data:                # Calnode SQLite DB + encrypted stored credentials
 
 # Log rotation. The daemon default lives outside this repo, in core-01's
 # /etc/docker/daemon.json:
@@ -952,7 +953,7 @@ services:
   # validator-env-parity).
   vaultwarden:
     logging: *log-rotation
-    image: vaultwarden/server:1.37.2
+    image: vaultwarden/server:1.37.3
     restart: unless-stopped
     environment:
       DOMAIN: "https://vault.getklai.com"
@@ -1797,7 +1798,7 @@ services:
   # cannot pull it — POST /containers/create fails with "No such image". The bot
   # image is an env value, not a compose service, so `compose up` does not fetch it
   # either. Run on core-01:
-  #     docker pull vexaai/vexa-bot:v0.12.26
+  #     docker pull vexaai/vexa-bot:v0.13.1
   # Checked — not enforced — by scripts/check-vexa12-deploy-preconditions.sh,
   # which is an operator command run by hand over SSH. No pipeline runs it, so
   # nothing stops a deploy that skipped the pull.
@@ -1860,7 +1861,7 @@ services:
   # it being healthy so the tables exist before the first query.
   vexa12-admin-api:
     logging: *log-rotation
-    image: vexaai/v012-admin-api:v0.12.26
+    image: vexaai/v012-admin-api:v0.13.1
     restart: unless-stopped
     environment:
       DB_HOST: postgres
@@ -1901,11 +1902,11 @@ services:
   # its listener is `fork,reuseaddr`, so a second client is fine.
   vexa12-runtime:
     logging: *log-rotation
-    image: vexaai/v012-runtime:v0.12.26
+    image: vexaai/v012-runtime:v0.13.1
     restart: unless-stopped
     environment:
       DOCKER_NETWORK: vexa12-bots
-      BROWSER_IMAGE: vexaai/vexa-bot:v0.12.26
+      BROWSER_IMAGE: vexaai/vexa-bot:v0.13.1
       # Agent/worker images are the 0.12 "second kind" — not deployed by Klai.
       AGENT_IMAGE: ""
       AGENT_WORKER_IMAGE: ""
@@ -1936,7 +1937,7 @@ services:
   # ─── Vexa 0.12 meeting-api (bot lifecycle + transcript collector) ───────
   vexa12-meeting-api:
     logging: *log-rotation
-    image: vexaai/v012-meeting-api:v0.12.26
+    image: vexaai/v012-meeting-api:v0.13.1
     restart: unless-stopped
     environment:
       DB_HOST: postgres
@@ -2053,7 +2054,7 @@ services:
   # when the container was recreated during the falkordb:latest -> v4.18.1 pin (5d12587e).
   falkordb:
     logging: *log-rotation
-    image: falkordb/falkordb:v4.20.4
+    image: falkordb/falkordb:v4.20.6
     restart: unless-stopped
     # SPEC-GRAPH-SCALE-001 REQ-2: the image bakes FALKORDB_ARGS="MAX_QUEUED_QUERIES 25
     # TIMEOUT 1000 RESULTSET_SIZE 10000" into its own Dockerfile (FalkorDB/FalkorDB#1826),
@@ -2173,7 +2174,7 @@ services:
   #   - Web endpoint on :3902 (anonymous reads via Caddy /kb-images/ route)
   garage:
     logging: *log-rotation
-    image: dxflrs/garage:v2.3.0
+    image: dxflrs/garage:v2.4.1
     restart: unless-stopped
     volumes:
       - /opt/klai/garage-meta:/var/lib/garage/meta
@@ -2436,3 +2437,54 @@ services:
       resources:
         limits:
           memory: 2g
+
+  # ─── Calnode (booking page for demo calls) ───────────────────────────────
+  # Runs alongside cal-com; cal-com is removed in a follow-up once the 55
+  # existing bookings are exported. Cal.com went closed source in April 2026
+  # and the public repo is now cal.diy, which upstream itself marks as not for
+  # production, so our v6.2.0 pin is frozen and will never be patched again.
+  #
+  # One static Go binary with an embedded SQLite file: no Postgres, no Redis,
+  # which is why this needs no net-postgres and carries no DB credentials.
+  # The meeting link is a plain `link` location holding a Jitsi room, so
+  # nothing here depends on Google or Microsoft.
+  #
+  # Secrets in klai-infra/core-01/.env.sops (CALNODE_ prefix). The app refuses
+  # to start when BASE_URL is https and CALNODE_ENCRYPTION_KEY is unset, so
+  # both were delivered to /opt/klai/.env BEFORE this service landed.
+  calnode:
+    logging: *log-rotation
+    image: ghcr.io/calnode/calnode:0.9.0
+    restart: unless-stopped
+    environment:
+      BASE_URL: https://boek.${DOMAIN}
+      DATABASE_URL: sqlite:///data/calnode.db
+      CALNODE_ENCRYPTION_KEY: ${CALNODE_ENCRYPTION_KEY}
+      CALNODE_RECOVERY_SECRET: ${CALNODE_RECOVERY_SECRET}
+      EMAIL_SMTP_HOST: ${SMTP_HOST}
+      EMAIL_SMTP_PORT: ${SMTP_PORT:-587}
+      EMAIL_SMTP_USER: ${SMTP_USERNAME}
+      EMAIL_SMTP_PASS: ${SMTP_PASSWORD}
+      EMAIL_SMTP_STARTTLS: "true"
+      EMAIL_FROM_ADDRESS: hello@getklai.com
+      EMAIL_FROM_NAME: Klai
+      # Caddy is the only thing that reaches this container, so its
+      # X-Forwarded-For is worth believing. Left unset, the per-IP rate limit
+      # keys on the TCP peer and every visitor shares Caddy's single bucket.
+      # klai-net has no fixed subnet, so this names Docker's private range.
+      TRUSTED_PROXY_CIDRS: 172.16.0.0/12
+      TZ: Europe/Amsterdam
+    volumes:
+      - calnode-data:/data
+    networks:
+      - klai-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/readyz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 256m
