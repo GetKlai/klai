@@ -1289,6 +1289,58 @@ volgende kandidaat is de aparte diagnosestap: vóór het schrijven groepeert een
 gevonden artikelen tot oorzaken of procedures en kiest de ene vraag, en het antwoord krijgt die
 structuur mee in plaats van een algemene opdracht. Dezelfde meting beslist.
 
+### 2.47 De diagnosestap: eerste versie gemeten, de vraag kende het gesprek niet (23 sep)
+2.46 liet zien dat een opdracht in de prompt het gedrag niet stuurt. Deze kandidaat beslist daarom
+vóór het schrijven, tegen wat het zoeken werkelijk vond: een kleine aanroep (`answer_plan.py`,
+`klai-fast`, 2 s) krijgt de vraag en de gevonden artikelen en kiest tussen direct antwoorden, een
+storing diagnosticeren en procedures onderscheiden. Bij de laatste twee levert hij één vraag en twee
+tot vier opties, en elke optie moet woordelijk in de artikelen voorkomen, dezelfde regel als de
+doorverwijzing van 2.43. Het antwoordmodel krijgt die vraag mee in plaats van een regel.
+
+**Eerste meting** (17 beoordeelde gesprekken, twee rondes, live code ernaast, blind in beide
+volgordes): ronde 1 de kandidaat 21 om 12, ronde 2 de live code 17 om 16. De richting slaat om, dus
+ruis (§6). Wachttijd bleef gelijk: mediaan 6,4 tegen 6,3 s per beurt.
+
+**Wat de gesprekken zelf lieten zien** telt hier zwaarder dan het oordeel. Bij "tijden instellen voor
+doorschakeling" zette de kandidaat de drie situaties naast elkaar en vroeg welke de bezoeker bedoelde,
+precies wat de menselijke beoordelaar verwachtte. Bij "iedereen die belt gaat naar voicemail" gaf hij
+geen instructies meer om voicemail juist aan te zetten. Maar op de controlegevallen stelde hij in 10
+van de 16 beurten een vraag terwijl er niets te vragen viel, en de reden bleek een ontwerpfout: de
+stap kreeg alleen het laatste bericht te zien. Op de beurt "Heb een macbook" vroeg hij daardoor welk
+probleem de bezoeker had, terwijl dat één beurt eerder stond. De opties waren soms geen oorzaak maar
+een herhaling van het symptoom.
+
+**Gewijzigd en opnieuw gemeten.** De stap leest nu dezelfde zes laatste beurten als het zoeken, mag
+niets vragen wat het gesprek al beantwoordt, en moet een optie naar de oorzaak of de procedure noemen
+in de woorden van het artikel. Tweede meting, zelfde opzet: ronde 1 de kandidaat 20 om 12, ronde 2
+18 om 13.
+
+**Review.** Drie ernstige bevindingen, alle drie gerepareerd met eerst een falende test. Een bericht
+dat als tekstdelen binnenkomt (een vorm die de route overal elders accepteert) liet de stap crashen.
+De vraag van de stap kwam zonder toets in de prompt van het antwoordmodel. En de optiecontrole liet een
+los getal of bedrag door, telde dubbele opties als twee keuzes en handhaafde de lengte niet. De vraag
+moet nu één regel zijn die op een vraagteken eindigt, zonder link of haken, en minstens één van de
+getoetste opties noemen; een getal in een optie moet letterlijk in de artikelen staan. Een eerste
+reparatie toetste elk woord van de vraag aan de artikelen. Dat schrapte precies de vragen waarvoor de
+stap bestaat (op de gesprekken waar doorvragen verwacht werd 1 van 6 in plaats van 4 van 6), omdat een
+storingsmelding andere woorden gebruikt dan het artikel dat de oorzaak uitlegt, en is vervangen.
+
+**Derde meting, de versie die live gaat:** ronde 1 17 om 14, ronde 2 24 om 9, dezelfde richting.
+"Begrijpt het probleem" 37 tegen 21 van de 68 oordelen, "juiste vervolgstap" 32 tegen 17, "bruikbaar"
+56 tegen 43. Mediane beurt 6,8 tegen 6,6 s. Wat het kost: op de controlegevallen stelde de stap in 5
+van de 16 beurten een vraag die niet nodig was (live 1 van 16), en twee gesprekken verloor hij in alle
+vier de oordelen: een headsetvraag waar het directe antwoord al goed was, en een webphoneprobleem
+waar de gestelde vraag minder hielp dan de lijst controles. Die twee blijven de maat voor een volgende
+versie.
+
+**Twee grenzen die blijven.** Heeft een beurt een bron, dan kan de afspraakknop nog onder de gestelde
+vraag staan: de beoordelaars voegen alleen toe en halen niets weg, een oudere afspraak die hier niet
+verandert. En de stap draait ook als het zoeken alleen zwakke bronnen vond; daar hoort de regel voor
+zwakke bronnen, die apart gemeten wordt.
+
+**Uitgerold** met `partner_chat_answer_plan` in de logs en `planned_question` in het beslisrecord, zodat
+op echt verkeer te zien is hoe vaak de stap een vraag laat stellen.
+
 ---
 
 ## 3. Wat er live ging, en waarom
