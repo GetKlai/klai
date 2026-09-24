@@ -207,8 +207,11 @@ export function useDeleteNode(kbSlug: string) {
         method: 'DELETE',
       })
     },
-    onSuccess: () =>
-      void queryClient.invalidateQueries({ queryKey: ['taxonomy-nodes', kbSlug] }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['taxonomy-nodes', kbSlug] })
+      // The coverage widget shows the deleted row and the target's counts.
+      void queryClient.invalidateQueries({ queryKey: ['taxonomy-coverage', kbSlug] })
+    },
   })
 }
 

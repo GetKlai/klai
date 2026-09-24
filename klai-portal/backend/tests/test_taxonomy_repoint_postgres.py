@@ -270,3 +270,41 @@ async def test_merge_proposal_moves_source_gaps_to_target_without_duplicates(pg,
     }
     chunks.assert_awaited_once_with("zit-901", "kb-a", _SRC, replacement_node_id=_TARGET)
     assert _SRC not in await _node_ids(admin)
+
+
+async def test_a_row_carrying_the_source_twice_ends_up_with_the_target_once(pg, chunks) -> None:
+    """Nothing in the schema stops an array holding the same id twice, and a
+    plain array_replace would turn [source, source] into [target, target],
+    which the coverage count then counts twice."""
+    admin, factory = pg
+    await _seed_gaps(admin, [(_ORG, "duplicate-source", [_SRC, _SRC])])
+
+    await _delete(factory, _SRC, reassign_to_node_id=_TARGET)
+
+    assert await _gap_topics(admin) == {"duplicate-source": [_TARGET]}
+
+
+async def test_a_target_deleted_while_waiting_stops_the_move(pg, chunks) -> None:
+    """Two admins at once: while one moves Billing onto Invoices, the other
+    deletes Invoices. Without a lock the first commit could still write the
+    deleted Invoices id onto gap rows; with it, the move waits for the other
+    delete and then refuses, leaving everything as it was."""
+    import asyncio
+
+    admin, factory = pg
+    await _seed_gaps(admin, [(_ORG, "only-source", [_SRC])])
+
+    async with admin.connect() as other:
+        tx = await other.begin()
+        await other.execute(text("SELECT id FROM portal_taxonomy_nodes WHERE id = :t FOR UPDATE"), {"t": _TARGET})
+        move = asyncio.create_task(_delete(factory, _SRC, reassign_to_node_id=_TARGET))
+        await asyncio.sleep(0.5)  # let the move reach its lock and wait there
+        await other.execute(text("DELETE FROM portal_taxonomy_nodes WHERE id = :t"), {"t": _TARGET})
+        await tx.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        await move
+    assert exc.value.status_code == 409
+    chunks.assert_not_awaited()
+    assert await _gap_topics(admin) == {"only-source": [_SRC]}
+    assert _SRC in await _node_ids(admin)

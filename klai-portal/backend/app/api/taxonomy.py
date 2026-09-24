@@ -215,6 +215,26 @@ async def _repoint_node_references(
     """
     from app.services.knowledge_ingest_client import remove_taxonomy_node_from_chunks
 
+    # Lock source and target, in id order, before anything moves: otherwise a
+    # concurrent delete of the target can commit between our checks and our
+    # commit, and gap rows end up carrying an id that no longer exists.
+    wanted = sorted({node_id} | ({target_id} if target_id is not None else set()))
+    locked = (
+        (
+            await db.execute(
+                select(PortalTaxonomyNode.id)
+                .where(PortalTaxonomyNode.id.in_(wanted), PortalTaxonomyNode.kb_id == kb.id)
+                .order_by(PortalTaxonomyNode.id)
+                .with_for_update()
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if sorted(locked) != wanted:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Referenced node no longer exists")
+
     try:
         await remove_taxonomy_node_from_chunks(zitadel_org_id, kb.slug, node_id, replacement_node_id=target_id)
     except Exception:
@@ -228,16 +248,20 @@ async def _repoint_node_references(
             detail="Could not update category on chunks",
         ) from None
 
-    # Replace in place without duplicating a target the row already has; an
-    # emptied array becomes NULL, the same "no topic" state a gap gets when
-    # classification finds nothing. Gap rows carry no kb_id, but node ids are
-    # globally unique, so org_id plus the id is the exact scope.
+    # Remove every occurrence of the source, then add the target once unless the
+    # row already has it: nothing stops an array holding an id twice, and a
+    # plain replace would double the target. An emptied array becomes NULL, the
+    # same "no topic" state a gap gets when classification finds nothing. Gap
+    # rows carry no kb_id, but node ids are globally unique, so org_id plus the
+    # id is the exact scope.
     await db.execute(
         text(
             "UPDATE portal_retrieval_gaps SET taxonomy_node_ids = NULLIF("
-            "CASE WHEN CAST(:target AS integer) IS NULL OR CAST(:target AS integer) = ANY(taxonomy_node_ids) "
+            "CASE WHEN CAST(:target AS integer) IS NULL "
+            "OR CAST(:target AS integer) = ANY(array_remove(taxonomy_node_ids, CAST(:source AS integer))) "
             "THEN array_remove(taxonomy_node_ids, CAST(:source AS integer)) "
-            "ELSE array_replace(taxonomy_node_ids, CAST(:source AS integer), CAST(:target AS integer)) END, "
+            "ELSE array_append(array_remove(taxonomy_node_ids, CAST(:source AS integer)), "
+            "CAST(:target AS integer)) END, "
             "'{}') "
             "WHERE org_id = :org_id AND CAST(:source AS integer) = ANY(taxonomy_node_ids)"
         ),
@@ -831,10 +855,9 @@ async def approve_proposal(
 
     # No post-commit refresh: RLS tenant context is transaction-scoped (see SPEC-SEC-021 post-mortem).
 
-    # Issue 2: invalidate coverage cache so the new node appears in the next
-    # GET /coverage call without a 5-minute wait.
-    if _new_node is not None:
-        _invalidate_coverage_cache(org.zitadel_org_id, kb_slug)
+    # Issue 2: invalidate coverage cache so a new node, or a merge that moved
+    # chunks and gaps, shows in the next GET /coverage without a 5-minute wait.
+    _invalidate_coverage_cache(org.zitadel_org_id, kb_slug)
 
     # Issue 1+4: trigger auto-categorise. When auto_categorise=false (batch
     # flow), skip — the caller will run a single backfill at the end. When

@@ -162,7 +162,7 @@ describe('useRenameNode', () => {
 // ---------------------------------------------------------------------------
 
 describe('useDeleteNode', () => {
-  it('DELETEs the node; invalidates taxonomy-nodes only', async () => {
+  it('DELETEs the node; invalidates taxonomy-nodes and taxonomy-coverage', async () => {
     apiFetchMock.mockResolvedValue(undefined)
     const client = makeClient()
     const spy = invalidationSpy(client)
@@ -179,7 +179,7 @@ describe('useDeleteNode', () => {
     )
     const keys = invalidatedKeys(spy)
     expect(keys).toContainEqual(['taxonomy-nodes', 'kb-a'])
-    expect(keys).not.toContainEqual(['taxonomy-coverage', 'kb-a'])
+    expect(keys).toContainEqual(['taxonomy-coverage', 'kb-a'])
   })
 
   it('sends the chosen reassignment target as reassign_to_node_id', async () => {
