@@ -1,6 +1,6 @@
 ---
 id: SPEC-INFRA-COOLIFY-EXIT-001
-version: "0.1.0"
+version: "0.2.0"
 status: draft
 created: 2026-09-24
 updated: 2026-09-24
@@ -137,23 +137,48 @@ moves.
 
 ### T2 — Upgrade inside the pipeline
 
-Twenty ships a per-version upgrade command and a cross-upgrade window. The
-window is `TWENTY_PREVIOUS_VERSIONS`, 46 entries beginning at `1.21.0`, and a
-pin below that floor is rejected with an explicit instruction to reach the
-floor first. We are on `1.20.0`, exactly one step below it.
+Twenty ships a per-version upgrade command and declares a cross-upgrade window,
+`TWENTY_PREVIOUS_VERSIONS`, beginning at `1.21.0`. The first draft of this SPEC
+took that at its word and planned two hops. A full rehearsal on a throwaway
+copy of the database, on 24 September, showed the window is not what the code
+can actually start from.
 
-So the upgrade is two stages, not forty-six:
+**What the rehearsal found.**
 
-1. `v1.21.0`, then its upgrade command. This lifts the workspace into the
-   supported window.
-2. `v2.42.2`, then `upgrade --dry-run`, read what it intends, then for real.
-   That command walks the remaining steps itself.
+1. `v2.42.4` started from a `1.21.0` schema fails immediately with
+   `column migration.isInitial does not exist`. That column is added by a
+   legacy migration from the 1.22 line, but the v2 sequence runner reads it in
+   its first step, before running any legacy migration. So v2 can only start
+   from a schema at least as new as 1.22, whatever the declared window says.
+2. The v1 images each upgrade exactly one minor and refuse a workspace below
+   their own previous version, so 1.22 and 1.23 have to be taken separately.
+3. From `1.23.9`, the `v2.42.4` run completes 350 of its steps and then fails
+   on `2.41.0_NormalizeWorkflowRecordCrudRichTextFieldsCommand`: the core copy
+   of one workflow version is persisted but missing from the flat entity maps.
+   The sequence is resumable, and the second run, starting from a freshly
+   flushed cache, completes that step and everything after it. It is a stale
+   cache inside the run, not a data problem.
+4. **The entrypoint cannot be trusted with this.** When `upgrade` fails it
+   still prints "Successfully migrated DB!", exits 0 and starts the server on
+   the half-migrated schema, which then reports healthy. A plain compose bump
+   would have put the CRM on a broken schema behind a green healthcheck.
 
-PostgreSQL 16 and Redis 7 stay: the upstream compose for the current version
-still specifies `postgres:16` and `redis`. No engine migration is part of this.
+**The procedure, proven end to end on the copy.**
 
-Each stage is its own PR with its own deploy and its own verification, because
-a failed schema migration is the one thing here that a DNS flip cannot undo.
+1. Stop `crm` and `crm-worker`, and take a fresh dump.
+2. Run each image once, as a one-shot container on `klai-net-crm` with the
+   app's environment, in this order: `v1.21.0`, `v1.22.6`, `v1.23.9`,
+   `v2.42.4`, and `v2.42.4` again if its first run reports a failure.
+3. After the last run, require that no step's latest attempt in
+   `core."upgradeMigration"` is anything but `completed`, and that the row
+   counts of people, companies, notes, opportunities, tasks and members equal
+   the pre-upgrade dump.
+4. Only then move the compose tag to `v2.42.4`. The entrypoint's own run is a
+   no-op at that point, which is the only condition under which it is safe.
+
+On the rehearsal copy, `v2.42.4` then served `/healthz` within 12 seconds,
+logged no errors, used about 1 GB of memory, and kept all four workflows
+active. PostgreSQL 16 and Redis 7 stay; upstream still specifies both.
 
 ### T3 — Import the historical appointments
 

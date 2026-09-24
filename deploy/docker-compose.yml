@@ -2515,12 +2515,19 @@ services:
   #
   # The image entrypoint runs `upgrade` on every start of the web container,
   # and initialises a fresh schema when `core` is missing. That is why the
-  # database is restored before this service first starts, and why a version
-  # bump here is also the schema upgrade. The worker skips both, as it did
-  # under Coolify, so the two never migrate concurrently.
+  # database is restored before this service first starts. The worker skips
+  # both, as it did under Coolify, so the two never migrate concurrently.
+  #
+  # Do not rely on the entrypoint for a version bump. When `upgrade` fails it
+  # still prints "Successfully migrated DB!", exits 0 and starts the server
+  # on a half-migrated schema, which then reports healthy. Run the upgrade as
+  # a one-shot container against the stopped app, confirm that no step's
+  # latest attempt in core."upgradeMigration" is anything but completed, and
+  # only then move this tag; the entrypoint's run is then a no-op.
+  # SPEC-INFRA-COOLIFY-EXIT-001 T2 has the procedure and why it took four hops.
   crm:
     logging: *log-rotation
-    image: twentycrm/twenty:v1.20.0
+    image: twentycrm/twenty:v2.42.4
     restart: unless-stopped
     environment:
       SERVER_URL: https://crm.${DOMAIN}
@@ -2558,11 +2565,11 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1536m
+          memory: 2g
 
   crm-worker:
     logging: *log-rotation
-    image: twentycrm/twenty:v1.20.0
+    image: twentycrm/twenty:v2.42.4
     restart: unless-stopped
     command: ["yarn", "worker:prod"]
     environment:
@@ -2593,4 +2600,4 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1g
+          memory: 1536m
