@@ -255,6 +255,10 @@ class Settings(BaseSettings):
     chat_pdf_max_extracted_tokens: int = 120_000
     chat_pdf_conversion_timeout_s: float = 45.0
     chat_pdf_poll_interval_s: float = 1.0
+    # Base for site-relative knowledge-base image paths in the internal chat
+    # prompt: the LiteLLM hook's KB_IMAGES_BASE_URL default, never overridden
+    # in production.
+    kb_images_base_url: str = "https://getklai.getklai.com"
 
     # Redis (used for retrieval logs and feedback idempotency -- SPEC-KB-015)
     redis_url: str = ""
