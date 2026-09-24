@@ -1507,8 +1507,8 @@ beter kan zonder eerst op echt verkeer te kijken.
 3. **Het valse alarm in de niet-behandelde onderwerpen** (2.18): één op de vijftig hulpvragen krijgt
    de doorverwijstekst; drie oplossingen gemeten en alle drie duurder dan de kwaal. Een keuze van de
    eigenaar.
-   Een technisch gespreksverzoek dat de vaste tekst kreeg (2.42) hoort hierbij; de keuze daar is of
-   een verzoek om een mens voorgaat op de vaste tekst.
+   De vaste tekst zelf noemt sinds 2.43 het onderwerp van de bezoeker in plaats van de hele lijst,
+   ook bij een verzoek om een mens; dat deel is opgelost.
 4. **Het budget van de controle per zin** (2.37): 4 s laat op eerste beurten 9 van 54 controles
    afkappen; 8 s laat ze afronden zonder meetbaar beter antwoord en met een zwaardere staart. 6 s is de
    ongemeten middenweg (5 van de 9 gered, één tot twee seconden op die beurten). Sinds 2.39 legt
@@ -1533,6 +1533,39 @@ beter kan zonder eerst op echt verkeer te kijken.
    daarbij wat die afgekapte controles gevonden hadden. Waar elk van deze staat: Platform → Status →
    Meetpunten (2.40).
 
+**Volgende stappen, in deze volgorde (stand 24 sep, na 2.50)**
+9. **Wat het antwoordmodel er zelf bij verzint, bij sterke bronnen.** Boven een bronscore van 0,5 bevat
+   ongeveer de helft van de concepten een bewering die niet in de artikelen staat (2.50). De reparatie
+   van 2.22 haalt daar een deel van weg; gemeten wordt eerst wat de bezoeker ná die reparatie ziet,
+   daarna pas een ingreep.
+10. **Bruikbaarheid na reparatie.** Een reparatie kan zoveel wegstrepen dat er een vrijwel leeg antwoord
+    overblijft. Hoort in dezelfde meting als punt 9.
+11. **Nameting op echt verkeer** van de herformuleringen (2.41), de vraagstap (2.47) en de regel voor
+    zwakke bronnen (2.48): hoe vaak ze vuren en wat ze aan wachttijd kosten. De logregels
+    `answer_plan_decision`, `planned_question` en `weak_sources` staan erin.
+12. **De vraagstap laat soms een goede diagnose vallen** op de regel dat de vraag een optie moet noemen
+    (live gezien bij de voicemailvraag, 2.47). Een lossere regel verloor de meting; eerst uit
+    `answer_plan_decision` halen hoe vaak het gebeurt.
+13. **Kleine resten uit reviews:** de afspraakknop kan onder een geplande vraag staan als er bronnen
+    zijn (2.47); de drift-test vergelijkt de widgetprompts niet tussen de twee kopieën (2.45); een
+    gedachtestreepje aan het begin van een regel wordt een komma (2.45); de afspraakherkenning kent
+    alleen Nederlands en Engels (2.48).
+
+**Bij de kennisbank van de klant (buiten de code)**
+14. Ontbrekende artikelen: uitbelpermissies en buitenlandbellen (standaard uit, niet altijd door een
+    beheerder aan te zetten), variabele caller-ID, klant worden, en enkele financiële vragen. De
+    grootste thema's in de lacunes: belplannen en doorschakelen, nummerregistratie en portering,
+    geluidsfragmenten en voicemail.
+15. Informatie voor Belgische klanten staat in dezelfde kennisbank en komt in Nederlandse antwoorden.
+16. De opening "controleer eerst de storingspagina" komt uit de eigen probleemoplosser-artikelen en is
+    alleen daar duurzaam weg te halen (2.45).
+
+**Keuzes van de eigenaar**
+17. De publieke-datacontrole (`audit-public-tenant-data.py`) is geen verplichte check, waardoor een
+    falende controle een merge niet tegenhoudt (2.49).
+18. Of de verbeteringen van 2.41 tot en met 2.48 ook in de interne keten (LibreChat) horen; dat vraagt
+    een eigen meting.
+
 **Gemeten en afgevallen, niet meer proberen:** doorvragen als opdracht aan het antwoordmodel (2.4,
 2.10, 2.46; een aparte vraagstap wint wél, 2.47), keuzes uit gevonden artikelen zonder vraagstap
 (2.7; in de vraagstap van 2.47 komen de opties juist uit de artikelen), een taxonomie-aspect als zoekprefix (2.20), een sterkere paginaboost
@@ -1544,7 +1577,10 @@ controles achteraf (2.10c) en een ruimer controlebudget (2.37).
 **Afgehandeld en live:** de zware controle met reparatie op beide paden (2.8, 2.9, 2.22, 2.23), de
 instelling per widget (2.10f, 2.13), het chatcontract als bewijs (2.17), de afspraakknop onder een
 doodlopend antwoord (2.21), de herformuleringen op de eerste beurt (2.33, 2.34), en het harnas met
-gescheiden beoordelaar en een bezoeker die opgeeft (2.24, 2.35).
+gescheiden beoordelaar en een bezoeker die opgeeft (2.24, 2.35), de herformuleringen ook in de
+browserwidget (2.41), de doorverwijzing die het onderwerp noemt (2.43), geen beloftes, vaste zinnen of
+gedachtestreepjes (2.45), de vraagstap (2.47), geen antwoord uit alleen zwakke bronnen (2.48) en de
+kalibratie per scorestrook met LibreChat-vragen (2.50).
 
 ---
 
