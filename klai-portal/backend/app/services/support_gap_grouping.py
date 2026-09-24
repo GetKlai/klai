@@ -35,6 +35,7 @@ import asyncio
 import copy
 import json
 
+from app.services.gap_events import compatible_scope
 from app.services.support_case_analysis import (
     _NON_GAP_DIAGNOSES,
     SupportCaseAnalysisError,
@@ -106,21 +107,10 @@ def _candidate_index(candidates: list[dict]) -> dict[str, dict]:
     return index
 
 
-def _compatible_scope(finding: dict, candidate: dict) -> bool:
-    """Language is a hard separator; audience only separates when both sides
-    know it and disagree — an unrecorded audience (most chat/telemetry
-    findings, and any support finding the analyzer didn't classify) must not
-    be its own bucket walled off from every other one."""
-    if finding["language"] != candidate.get("language"):
-        return False
-    finding_audience, candidate_audience = finding.get("audience"), candidate.get("audience")
-    return finding_audience is None or candidate_audience is None or finding_audience == candidate_audience
-
-
 def _candidates_for(index: int, finding: dict, candidates_by_key: dict[str, dict]) -> list[dict]:
     compatible = []
     for key, candidate in candidates_by_key.items():
-        if not _compatible_scope(finding, candidate):
+        if not compatible_scope(finding, candidate):
             continue
         source_index = candidate.get("finding_index")
         if type(source_index) is int and source_index >= index:
@@ -208,9 +198,11 @@ def _parse_assignments(
         if key is None:
             continue
         if not isinstance(key, str) or key not in candidates_by_key:
-            raise SupportCaseAnalysisError(f"grouping cites unknown group_question_key: {key!r}")
+            # The key is a normalized customer question: never put it in the message,
+            # which the callers log.
+            raise SupportCaseAnalysisError("grouping cites an unknown group_question_key")
         finding, candidate = by_index[index], candidates_by_key[key]
-        if not _compatible_scope(finding, candidate):
+        if not compatible_scope(finding, candidate):
             raise SupportCaseAnalysisError("grouping matched a candidate with a different language/audience")
         source_index = candidate.get("finding_index")
         if source_index is not None and (

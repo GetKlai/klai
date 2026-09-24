@@ -17,6 +17,7 @@ Run: ``uv run pytest tests/test_support_cases_postgres.py -m postgres -q``
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import copy
 import json
 import os
@@ -67,7 +68,7 @@ _SETUP = [
     END; $fn$
     """,
     f"CREATE TABLE {_SCHEMA}.portal_orgs (id integer PRIMARY KEY, telemetry_level text NOT NULL DEFAULT 'shadow', "
-    f"platform_unlocked_features text[] NOT NULL DEFAULT ARRAY[]::text[])",
+    f"platform_unlocked_features text[] NOT NULL DEFAULT ARRAY[]::text[], zitadel_org_id text)",
     f"CREATE TABLE {_SCHEMA}.portal_users (id bigserial PRIMARY KEY, org_id integer NOT NULL, "
     f"zitadel_user_id varchar(64))",
     f"CREATE TABLE {_SCHEMA}.portal_knowledge_bases (id bigserial PRIMARY KEY, org_id integer NOT NULL, "
@@ -86,7 +87,8 @@ _SETUP = [
         resolved_by_user_id integer, support_case_id bigint, diagnosis varchar(24), question_key text,
         audience varchar(16), evidence jsonb)""",
     # Only the id is read: list_gaps joins it to link a group to its conversation.
-    f"CREATE TABLE {_SCHEMA}.widget_conversations (id bigserial PRIMARY KEY, org_id integer NOT NULL)",
+    f"CREATE TABLE {_SCHEMA}.widget_conversations (id bigserial PRIMARY KEY, org_id integer NOT NULL, "
+    f"is_test boolean NOT NULL DEFAULT false, is_preview boolean NOT NULL DEFAULT false)",
     f"""CREATE TABLE {_SCHEMA}.portal_support_cases (
         id bigserial PRIMARY KEY, org_id integer NOT NULL, kb_slug varchar(64) NOT NULL, connector_id uuid,
         source varchar(16) NOT NULL, account_id text NOT NULL, external_id text NOT NULL, created_by text NOT NULL,
@@ -1516,14 +1518,16 @@ async def test_identical_reanalysis_preserves_current_human_correction(pg, machi
     assert (await _read_reviews(admin, result.case_id))[review_key(revision, 0)]["corrected_diagnosis"] == corrected
 
 
-async def test_seven_day_purge_keeps_case_findings_and_still_expires_query_text(pg) -> None:
-    """The inbox's case evidence survives its retention job; chat text does not.
+async def test_seven_day_purge_keeps_findings_and_verdicts_and_still_expires_query_text(pg) -> None:
+    """The inbox's evidence survives its retention job; raw search telemetry does not.
 
     Until 2026-09-23 the 7-day TTL deleted every readable gap row, so a
-    case-backed finding disappeared a week after import while its support case
-    stayed, and no theme could show a trend across weeks. Rows derived from a
-    chat query keep the 7-day fence (docs/privacy/telemetry-modes.md), including
-    the one a human reviewer filed.
+    case-backed finding disappeared a week after import, and no theme could
+    show a trend across weeks. The same held for a verdict row, a human
+    reviewer's or the conversation judge's, while a theme needs three
+    conversations in 30 days: a verdict gone after a week can never reach that.
+    Verdicts are a judgment about a conversation, kept like a case finding
+    (product decision, 2026-09-24); raw search telemetry keeps the 7-day fence.
     """
     from app.services.telemetry_purge import EXPIRED_RAW_TELEMETRY_GAPS_SQL
 
@@ -1545,6 +1549,7 @@ async def test_seven_day_purge_keeps_case_findings_and_still_expires_query_text(
                     (901, 'u1', 'raw chat question', 'soft', now() - interval '30 days', 'widget-chat'),
                     (901, 'u1', '[REDACTED:shadow]', 'soft', now() - interval '30 days', 'widget-chat'),
                     (901, 'u1', 'question a reviewer filed', 'hard', now() - interval '30 days', 'human-review'),
+                    (901, 'u1', 'question the judge filed', 'hard', now() - interval '30 days', 'quality-judge'),
                     (901, 'u1', 'fresh chat question', 'soft', now(), 'widget-chat')
                 """
             )
@@ -1582,8 +1587,16 @@ async def test_seven_day_purge_keeps_case_findings_and_still_expires_query_text(
 
     case_finding = (await _gap_rows(admin, result.case_id))[0]
     assert case_finding.diagnosis == "missing"
-    assert sorted(expired_text) == ["question a reviewer filed", "raw chat question"]
-    assert sorted(surviving) == sorted([case_finding.query_text, "[REDACTED:shadow]", "fresh chat question"])
+    assert expired_text == ["raw chat question"]
+    assert sorted(surviving) == sorted(
+        [
+            case_finding.query_text,
+            "[REDACTED:shadow]",
+            "fresh chat question",
+            "question a reviewer filed",
+            "question the judge filed",
+        ]
+    )
 
 
 async def test_inbox_lists_only_rows_that_show_the_visitor_was_not_helped(pg) -> None:
@@ -1694,3 +1707,186 @@ async def test_folding_a_group_moves_every_row_that_shares_its_key(pg) -> None:
         ).all()
     assert {r.question_key for r in rows if r.open} == {k_target}
     assert [r.question_key for r in rows if not r.open] == [k_moved]
+
+
+_JUDGE_MISS = {"outcome": "unresolved", "failure_category": "retrieval_miss", "confidence": "high"}
+
+
+@contextlib.asynccontextmanager
+async def _tenant_db(factory, org_id: int = 901):
+    async with factory() as db:
+        await set_tenant(db, org_id)
+        yield db
+
+
+async def test_a_hidden_telemetry_row_does_not_swallow_the_judge_verdict(pg) -> None:
+    """The judge skipped a conversation that already had an open gap row. Since
+    the inbox stopped listing low-score telemetry, that row is usually a hidden
+    one, so the verdict never reached the inbox at all. Only a row the inbox
+    shows may stand in for the verdict."""
+    from app.services import conversation_judge as cj
+
+    admin, factory, _cid, _analyzer = pg
+    async with admin.begin() as conn:
+        await conn.execute(text("INSERT INTO widget_conversations (id, org_id) VALUES (7, 901)"))
+        await conn.execute(
+            text(
+                "INSERT INTO portal_retrieval_gaps (org_id,user_id,query_text,gap_type,caller_client_id,conversation_id) "
+                "VALUES (901,'u','Hoe laat open?','soft','widget-chat',7)"
+            )
+        )
+
+    recorded = AsyncMock(return_value=types.SimpleNamespace(outcome="created", org_id=901))
+    with patch.object(cj, "record_gap_event", recorded):
+        async with _tenant_db(factory) as db:
+            filed = await cj.file_judge_gap(
+                db, org_id=901, question="Hoe laat open?", verdict=_JUDGE_MISS, audience="customer", conversation_id=7
+            )
+    assert filed is True
+    kwargs = recorded.await_args.kwargs
+    assert (kwargs["audience"], kwargs["conversation_id"], kwargs["gap_type"]) == ("customer", 7, "hard")
+    assert kwargs["evidence"] == {"outcome": "unresolved", "failure_category": "retrieval_miss", "confidence": "high"}
+
+    # A row the inbox does show still stands in for the verdict: no double count.
+    async with admin.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO portal_retrieval_gaps (org_id,user_id,query_text,gap_type,caller_client_id,conversation_id) "
+                "VALUES (901,'u','Hoe laat open?','hard','quality-judge',7)"
+            )
+        )
+    recorded.reset_mock()
+    with patch.object(cj, "record_gap_event", recorded):
+        async with _tenant_db(factory) as db:
+            filed = await cj.file_judge_gap(
+                db, org_id=901, question="Hoe laat open?", verdict=_JUDGE_MISS, audience="customer", conversation_id=7
+            )
+    assert filed is False
+    recorded.assert_not_awaited()
+
+
+async def test_a_librechat_verdict_is_filed_once_as_an_internal_need(pg) -> None:
+    """LibreChat conversations live in MongoDB, so the row carries the Mongo id
+    in its evidence; that id is what keeps one conversation to one row. The
+    audience is internal: an employee missing internal knowledge is a different
+    editorial job from a customer missing help content."""
+    from app.services import conversation_judge as cj
+
+    admin, factory, _cid, _analyzer = pg
+    async with admin.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO portal_retrieval_gaps (org_id,user_id,query_text,gap_type,caller_client_id,evidence) "
+                "VALUES (901,'u','SIP-trace lezen','hard','quality-judge','{\"librechat_conversation_id\": \"lc-1\"}')"
+            )
+        )
+
+    recorded = AsyncMock(return_value=types.SimpleNamespace(outcome="created", org_id=901))
+    with patch.object(cj, "record_gap_event", recorded):
+        async with _tenant_db(factory) as db:
+            again = await cj.file_judge_gap(
+                db,
+                org_id=901,
+                question="SIP-trace lezen",
+                verdict=_JUDGE_MISS,
+                audience="internal",
+                librechat_conversation_id="lc-1",
+            )
+        async with _tenant_db(factory) as db:
+            new = await cj.file_judge_gap(
+                db,
+                org_id=901,
+                question="Belgroep instellen",
+                verdict=_JUDGE_MISS,
+                audience="internal",
+                librechat_conversation_id="lc-2",
+            )
+
+    assert (again, new) == (False, True)
+    kwargs = recorded.await_args.kwargs
+    assert (kwargs["audience"], kwargs["conversation_id"]) == ("internal", None)
+    assert kwargs["evidence"]["librechat_conversation_id"] == "lc-2"
+
+
+async def test_a_group_without_kb_folds_only_onto_shown_groups_without_kb(pg) -> None:
+    """Judge rows carry no knowledge base (LibreChat does not record which one
+    was searched), so they fold among other groups without one. A candidate
+    must be a group the inbox shows: folding onto a redacted placeholder or a
+    hidden low-score group would bury the verdict where nobody sees it."""
+    from app.services.gap_events import fold_into_open_group
+    from app.services.support_cases import _question_key
+
+    admin, factory, _cid, _analyzer = pg
+
+    def key(q: str, kb: str | None = None) -> str:
+        return _question_key(question=q, language="nl", kb_slug=kb, audience="customer")
+
+    async with admin.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO portal_retrieval_gaps "
+                "(org_id,user_id,query_text,gap_type,caller_client_id,language,audience,nearest_kb_slug,question_key) "
+                "VALUES "
+                "(901,'u','Kan niet naar buiten bellen','hard','quality-judge','nl','customer',NULL,:shown),"
+                "(901,'u','Buitenlijn werkt niet','soft','widget-chat','nl','customer',NULL,:hidden),"
+                "(901,'u','[REDACTED:legacy]','hard','quality-judge','nl','customer',NULL,:redacted),"
+                "(901,'u','Bellen naar buiten','hard','quality-judge','nl','customer','kb-a',:other_kb),"
+                "(901,'u','Uitbellen lukt niet','hard','quality-judge','nl','customer',NULL,:asking)"
+            ),
+            {
+                "shown": key("Kan niet naar buiten bellen"),
+                "hidden": key("Buitenlijn werkt niet"),
+                "redacted": key("[REDACTED:legacy]"),
+                "other_kb": key("Bellen naar buiten", "kb-a"),
+                "asking": key("Uitbellen lukt niet"),
+            },
+        )
+
+    seen: list[list[str]] = []
+
+    async def _judge(findings: list[dict], candidates: list[dict]) -> list[dict]:
+        seen.append([c["question_key"] for c in candidates])
+        return findings
+
+    grouping = types.ModuleType("app.services.support_gap_grouping")
+    grouping.group_findings = _judge  # type: ignore[attr-defined]
+    with (
+        patch("app.core.database.tenant_scoped_session", lambda org_id: _tenant_db(factory, org_id)),
+        patch.dict(sys.modules, {"app.services.support_gap_grouping": grouping}),
+    ):
+        await fold_into_open_group(
+            org_id=901,
+            kb_slug=None,
+            question="Uitbellen lukt niet",
+            language="nl",
+            audience="customer",
+            base_key=key("Uitbellen lukt niet"),
+        )
+
+    assert seen == [[key("Kan niet naar buiten bellen")]]
+
+
+async def test_a_pasted_document_is_filed_as_a_bounded_question(pg) -> None:
+    """An internal chat can open with a pasted document instead of a question;
+    one on the pilot tenant was 385,043 characters. As a gap row that broke the
+    (org_id, query_text) index outright and bloated every grouping prompt it
+    appeared in until the grouping judge answered for the wrong findings. The
+    row keeps the opening, bounded, and says it was cut."""
+    from app.services import conversation_judge as cj
+
+    _admin, factory, _cid, _analyzer = pg
+    recorded = AsyncMock(return_value=types.SimpleNamespace(outcome="created", org_id=901))
+    with patch.object(cj, "record_gap_event", recorded):
+        async with _tenant_db(factory) as db:
+            await cj.file_judge_gap(
+                db,
+                org_id=901,
+                question="SIP-rapport " + "x" * 20_000,
+                verdict=_JUDGE_MISS,
+                audience="internal",
+                librechat_conversation_id="lc-doc",
+            )
+
+    filed = recorded.await_args.kwargs["query_text"]
+    assert len(filed) <= cj.JUDGE_QUESTION_MAX_CHARS
+    assert filed.startswith("SIP-rapport ") and filed.endswith("…")

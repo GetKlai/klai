@@ -81,6 +81,12 @@ class Settings(BaseSettings):
     # (REQ-8). Defaults derived from the 2026-05-07 Voys-Salesforce incident
     # (turn 1: 0.18 = low / hallucinated; turn 3 rekeningnummer: 0.96 = high).
     # Tunable post-deploy without code change.
+    #
+    # Calibrated on 2026-09-24, 254 preview turns, one tenant (see
+    # klai-portal/backend/scripts/calibrate_confidence_bands.py): among answered
+    # drafts, the share without unsupported statements is 72% high / 67% medium /
+    # 67% low, intervals overlapping — no better cut point shown, kept as-is. The
+    # band does separate refusal/off-topic outcomes (60% of low vs 9% of high).
     confidence_band_high_threshold: float = 0.60
     confidence_band_low_threshold: float = 0.30
 

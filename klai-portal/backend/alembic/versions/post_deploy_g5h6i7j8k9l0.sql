@@ -70,24 +70,15 @@ GRANT SELECT, INSERT, DELETE ON telemetry.query_shadow TO portal_api;
 
 -- ─── REQ-12: one-time legacy cleanup of pre-existing query content ────────
 --
--- These DML statements live here (not in the alembic migration) because
--- portal_retrieval_gaps is RLS-protected (Category-D, strict). Alembic
--- runs as the portal_api role without app.current_org_id set, which
--- raises 42501 against the strict policy. The klai superuser bypasses
--- RLS so this script can do the cleanup safely.
---
--- Idempotent: the WHERE clauses exclude already-redacted rows, so
--- re-runs on subsequent deploys are no-ops. Pre-flight verified
--- portal_retrieval_gaps is empty on prod (2026-05-08), so first-run
--- blast radius = 0.
-
-UPDATE public.portal_retrieval_gaps
-   SET query_text = '[REDACTED:legacy]'
- WHERE query_text NOT LIKE '[REDACTED:%'
-   AND occurred_at < now() - interval '7 days';
-
-DELETE FROM public.portal_retrieval_gaps
- WHERE occurred_at < now() - interval '30 days';
+-- Removed on 2026-09-24. This file is applied on EVERY portal-api rollout
+-- (deploy-portal-api.sh runs every post_deploy_*.sql), so the "one-time"
+-- cleanup that used to sit here was not one-time: every deploy redacted every
+-- gap row older than 7 days to '[REDACTED:legacy]' and deleted every row older
+-- than 30 days, support-case findings and conversation-judge verdicts
+-- included, overriding what telemetry_purge deliberately keeps. The May 2026
+-- cleanup it was written for had long been done. Retention of gap rows is
+-- telemetry_purge's job alone; tests/test_telemetry_purge.py fails if a
+-- post-deploy script deletes or redacts gap rows again.
 
 -- knowledge.retrieval_logs cleanup intentionally omitted: the table
 -- does not exist on prod (verified 2026-05-08). The retrieval-log

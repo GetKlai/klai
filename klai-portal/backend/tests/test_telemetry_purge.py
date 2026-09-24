@@ -189,3 +189,30 @@ async def test_purge_loop_exits_on_cancel(monkeypatch) -> None:
         pass
 
     assert purge_call_count >= 1
+
+
+def test_no_post_deploy_script_deletes_or_redacts_gap_rows() -> None:
+    """deploy-portal-api.sh applies every post_deploy_*.sql on every rollout,
+    so a statement written as a one-off cleanup runs again on each deploy.
+    The May 2026 legacy cleanup did exactly that: every deploy redacted every
+    gap row older than 7 days and deleted every row older than 30, case
+    findings and judge verdicts included, whatever telemetry_purge decided to
+    keep. Retention of gap rows belongs to telemetry_purge alone."""
+    import re
+    from pathlib import Path
+
+    table = r"(public\.)?portal_retrieval_gaps(\s+(AS\s+)?(?!SET\b|WHERE\b)\w+)?"
+    forbidden = re.compile(
+        rf"DELETE\s+FROM\s+{table}|UPDATE\s+{table}\s+SET\s+query_text\s*=\s*'\[REDACTED", re.IGNORECASE
+    )
+    # The aliased form an existing post-deploy script already uses must be caught too.
+    assert forbidden.search("UPDATE public.portal_retrieval_gaps g SET query_text = '[REDACTED:legacy]'")
+    assert not forbidden.search("UPDATE public.portal_retrieval_gaps g SET question_key = 'k'")
+
+    versions = Path(__file__).resolve().parents[1] / "alembic" / "versions"
+    offenders = []
+    for path in sorted(versions.glob("post_deploy_*.sql")):
+        # Comments are allowed to talk about it; statements are not.
+        if forbidden.search(re.sub(r"--[^\n]*", "", path.read_text())):
+            offenders.append(path.name)
+    assert offenders == []

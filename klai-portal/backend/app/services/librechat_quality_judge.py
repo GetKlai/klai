@@ -38,7 +38,7 @@ from sqlalchemy import text
 from app.core.config import settings
 from app.core.database import cross_org_session, tenant_scoped_session
 from app.core.provisioning_names import provisioning_names_for_slug
-from app.services.conversation_judge import _call_judge_llm, _parse_verdict
+from app.services.conversation_judge import _call_judge_llm, _parse_verdict, file_judge_gap
 
 logger = structlog.get_logger()
 
@@ -239,6 +239,16 @@ def _turns_from_messages(docs: list[dict]) -> list[dict]:
     return turns
 
 
+def last_user_question(turns: list[dict]) -> str | None:
+    """The question a LibreChat verdict is filed under: the employee's LAST one.
+
+    Unlike a webchat visit, a LibreChat thread runs for weeks (one judged in
+    September started in May), so its opening says little about what went
+    wrong when the judge looked at it; the most recent question does.
+    """
+    return next((turn["content"] for turn in reversed(turns) if turn["role"] == "user"), None)
+
+
 def _doc_had_error(doc: dict) -> bool:
     if doc.get("error"):
         return True
@@ -293,6 +303,7 @@ async def _judge_org(org_id: int, slug: str) -> int:
     """
     db_name = provisioning_names_for_slug(slug, domain=settings.domain).mongodb_database
     judged = 0
+    pending_gaps: list[tuple[str, str, dict]] = []
     async with tenant_scoped_session(org_id) as db:
         excl_result = await db.execute(text(_EXCLUDE_SQL), {"org_id": org_id})
         excluded = {row.external_conversation_id for row in excl_result.all()}
@@ -344,8 +355,29 @@ async def _judge_org(org_id: int, slug: str) -> int:
                 },
             )
             judged += 1
+            question = last_user_question(turns)
+            if question is not None:
+                pending_gaps.append((cid, question, verdict))
 
         await db.commit()
+
+    # Same order as the webchat pass: record_gap_event commits its own session,
+    # so filing inside the loop would commit this batch's judgments half-way.
+    # An employee missing internal knowledge is a different editorial job from
+    # a customer missing help content, hence audience='internal'.
+    for cid, question, verdict in pending_gaps:
+        try:
+            async with tenant_scoped_session(org_id) as gap_db:
+                await file_judge_gap(
+                    gap_db,
+                    org_id=org_id,
+                    question=question,
+                    verdict=verdict,
+                    audience="internal",
+                    librechat_conversation_id=cid,
+                )
+        except Exception:
+            logger.warning("librechat_judge_gap_failed", conversation_id=cid, exc_info=True)
 
     if judged:
         logger.info("librechat_quality_judged", org_id=org_id, judged_count=judged)

@@ -4,9 +4,10 @@ Background loop that runs every 24 hours and deletes rows older than
 7 days from the three privacy-sensitive stores:
 
 1. ``telemetry.query_shadow``       — every row > 7d (REQ-7 retention)
-2. ``portal_retrieval_gaps``         — query-derived rows > 7d: no redaction
-                                        sentinel and no support case behind
-                                        them (EXPIRED_RAW_TELEMETRY_GAPS_SQL)
+2. ``portal_retrieval_gaps``         — raw search telemetry > 7d: no redaction
+                                        sentinel, no support case and no
+                                        verdict behind it
+                                        (EXPIRED_RAW_TELEMETRY_GAPS_SQL)
 3. portal-side mirror of the Redis
    retrieval-log already has its own 1h TTL, so no DB sweep here
 
@@ -40,19 +41,20 @@ PURGE_INTERVAL_SECONDS = 24 * 60 * 60
 RETENTION_DAYS = 7
 _RETRIEVAL_GAP_CHUNK_SIZE = 10_000
 
-# The TTL covers what it was written for: text derived from a chat query. Under
-# every telemetry mode no such record may outlive 7 days (docs/privacy/
-# telemetry-modes.md, dpa-telemetry-addendum.md §Retention), so a widget,
-# LibreChat, MCP or human-review row still expires here with its literal text.
-# A support-case finding is derived from a ticket or transcript the customer
-# imported, not from a chat query: its evidence lives in portal_support_cases,
-# which is kept for as long as the case is (and cascades on its delete). Purging
-# the finding while keeping its case left the knowledge inbox emptying itself a
-# week after every import, so those rows now age with their case instead.
+# The TTL covers raw search telemetry: the query a widget, LibreChat or MCP
+# search logged. Two kinds of row are a finding about a need instead, and the
+# knowledge inbox is built on them: a support-case finding (its evidence lives
+# in portal_support_cases and cascades on its delete) and a verdict, filed by a
+# human reviewer or the conversation judge. Purging those while a theme needs
+# three conversations in 30 days left the inbox emptying itself every week, so
+# they are kept (product decision, 2026-09-24; the privacy documentation and
+# DPA are being updated to match). Everything else still expires here.
 EXPIRED_RAW_TELEMETRY_GAPS_SQL = """
     SELECT id FROM public.portal_retrieval_gaps
     WHERE query_text NOT LIKE '[REDACTED:%'
     AND support_case_id IS NULL
+    AND caller_client_id IS DISTINCT FROM 'human-review'
+    AND caller_client_id IS DISTINCT FROM 'quality-judge'
     AND occurred_at < :cutoff
     ORDER BY id
     LIMIT :chunk_size

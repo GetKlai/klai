@@ -182,6 +182,19 @@ describe('GapsPage list', () => {
     expect(screen.getAllByText(/^(beoordeling|review)$/i).length).toBeGreaterThan(0)
   })
 
+  it('marks a judge-found need and says whether a customer or an employee missed it', async () => {
+    mockGaps([
+      gapItem({ source: 'judge', audience: 'customer' }),
+      gapItem({ query_text: 'SIP-trace lezen', source: 'judge', audience: 'internal' }),
+    ])
+
+    render(<Wrapper><GapsPage /></Wrapper>)
+
+    await waitForRow()
+    expect(screen.getByText(/^(kwaliteitscheck|quality check) · (klant|customer)$/i)).toBeTruthy()
+    expect(screen.getByText(/^(kwaliteitscheck|quality check) · (intern|internal)$/i)).toBeTruthy()
+  })
+
   it('shows every support source vendor behind a grouped need', async () => {
     mockGaps([
       gapItem({
