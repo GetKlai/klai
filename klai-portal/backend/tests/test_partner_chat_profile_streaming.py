@@ -286,3 +286,30 @@ async def test_widget_profile_gets_no_keepalives_frames_stay_unchanged(monkeypat
     # Exactly one content frame: the composed answer, no keepalives at all.
     content_frames = [f for f in frames if "content" in f]
     assert len(content_frames) == 1
+
+
+@pytest.mark.asyncio
+async def test_live_turn_never_streams_a_model_written_link_and_never_repeats_the_answer(monkeypatch):
+    events = [
+        {"choices": [{"delta": {"content": "Vraag verlof aan via "}}]},
+        {"choices": [{"delta": {"content": "https://evil.example.com/verlof "}}]},
+        {"choices": [{"delta": {"content": "bij je leidinggevende."}}]},
+    ]
+    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _RecordingClient(events))
+
+    chunks = []
+    async for chunk in chat_completion_streaming(
+        messages=[{"role": "user", "content": "Hoe vraag ik verlof aan?"}],
+        model="klai-primary",
+        temperature=0.7,
+        system_prompt="prompt",
+        settings=_settings(),
+        citation_output="markers",
+        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
+    ):
+        chunks.append(chunk)
+
+    streamed = "".join(f.get("content") or "" for f in _sse_content_frames(b"".join(chunks).decode()))
+    assert "example.com" not in streamed
+    assert streamed.count("Vraag verlof aan via") == 1
+    assert "bij je leidinggevende." in streamed

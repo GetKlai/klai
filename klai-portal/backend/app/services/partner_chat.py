@@ -60,6 +60,7 @@ from klai_chat_prompts.language import (
 
 from app.core.config import Settings
 from app.core.database import tenant_scoped_session
+from app.services.answer_footer import render_answer_footer, strip_answer_footer_from_text
 from app.services.answer_grounding import (
     NOTHING_LEFT,
     GroundingCheck,
@@ -275,9 +276,16 @@ def _normalize_llm_message(message: dict, *, keep_tool_fields: bool = False) -> 
     model's own prior ``tool_calls`` and the ``tool`` role results answering
     them must survive, or a second turn in a tool-calling conversation loses
     the call the model is waiting on a result for.
+
+    An assistant message's own ``content`` is stripped of the internal-chat
+    answer footer (:func:`app.services.answer_footer.strip_answer_footer_from_text`)
+    before either caller sees it: a footer LibreChat echoes back from a prior
+    turn must not enter the retrieval search query or the model's own history.
     """
     role = message.get("role")
     content = message.get("content")
+    if role == "assistant" and isinstance(content, str):
+        content = strip_answer_footer_from_text(content)
     if keep_tool_fields and role == "tool":
         tool_call_id = message.get("tool_call_id")
         if isinstance(content, str) and isinstance(tool_call_id, str) and tool_call_id:
@@ -1154,7 +1162,7 @@ def _earliest_guard_start(text: str) -> int:
     return min(starts) if starts else -1
 
 
-def _pop_live_stream_text(buffer: str, *, final: bool) -> tuple[str, str]:
+def _pop_live_stream_text(buffer: str) -> tuple[str, str]:
     """Withhold an incomplete markdown link/URL from a live (Open) stream.
 
     Reuses ``_earliest_guard_start`` above (the same guard the legacy link
@@ -1166,11 +1174,7 @@ def _pop_live_stream_text(buffer: str, *, final: bool) -> tuple[str, str]:
     """
     start = _earliest_guard_start(buffer)
     if start >= 0:
-        if final:
-            return buffer, ""
         return buffer[:start], buffer[start:]
-    if final:
-        return buffer, ""
     if len(buffer) <= _STREAM_GUARD_TAIL_CHARS:
         return "", buffer
     safe_len = len(buffer) - _STREAM_GUARD_TAIL_CHARS
@@ -1949,6 +1953,48 @@ def _answer_without_retrieved_sources(text: str, citation_chunks: list[dict] | N
     return _LINKLIKE_RE.sub("", cleaned).strip()
 
 
+def _collapse_whitespace_with_index_map(text: str) -> tuple[str, list[int]]:
+    collapsed: list[str] = []
+    index_map: list[int] = []
+    in_whitespace = False
+    for index, char in enumerate(text):
+        if char.isspace():
+            if collapsed and not in_whitespace:
+                collapsed.append(" ")
+                index_map.append(index)
+            in_whitespace = True
+            continue
+        collapsed.append(char)
+        index_map.append(index)
+        in_whitespace = False
+    if collapsed and collapsed[-1] == " ":
+        collapsed.pop()
+        index_map.pop()
+    return "".join(collapsed), index_map
+
+
+def _unstreamed_tail(final_text: str, emitted_text: str, raw_text: str, citation_chunks: list[dict] | None) -> str:
+    """The part of a live answer the caller has not seen yet, cleaned.
+
+    A live turn streams the model's words up to any link or URL, which the
+    guard holds back until the end. The rest must come from the composed answer
+    so a model-written link is cleaned like on a held turn. The composer may
+    normalise whitespace, so the cut tolerates that; if it changed text the
+    caller already saw, the answer cannot be aligned and replaying it would
+    duplicate the whole answer (LibreChat, 2026-06-11), so the raw remainder
+    goes out with every link removed instead.
+    """
+    if not emitted_text or final_text.startswith(emitted_text):
+        return final_text[len(emitted_text) :]
+    collapsed_final, final_map = _collapse_whitespace_with_index_map(final_text)
+    collapsed_emitted, _ = _collapse_whitespace_with_index_map(emitted_text)
+    if collapsed_emitted and collapsed_final.startswith(collapsed_emitted):
+        return final_text[final_map[len(collapsed_emitted) - 1] + 1 :]
+    remainder = raw_text[len(emitted_text) :]
+    leading = remainder[: len(remainder) - len(remainder.lstrip())]
+    return leading + _answer_without_retrieved_sources(remainder, citation_chunks)
+
+
 def _compose_backend_managed_answer(
     text: str,
     trusted_sources: list[dict[str, Any]] | None,
@@ -2429,6 +2475,7 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
     profile: ChatProfile = ChatProfile(surface="widget"),
     tools: list[dict] | None = None,
     tool_choice: Any | None = None,
+    sub_queries: list[str] | None = None,
 ) -> AsyncGenerator[bytes]:
     """Collect text, compose deterministic citations, then stream once.
 
@@ -2474,6 +2521,14 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
     regardless of hold/live — see :func:`_sse_tool_calls_delta`. It never
     enters ``raw_text_parts``, so it can never reach the citation composer or
     the grounding check.
+
+    For ``surface == "internal"`` with citable sources, a text footer
+    (:func:`app.services.answer_footer.render_answer_footer`) is appended as
+    the LAST render step, after composition/judge/repair have settled
+    ``sources`` — a held turn gets it baked into ``content``; a live turn,
+    whose content was already streamed with the model's own raw markers, gets
+    it as one extra content delta after the live text (see the emission
+    below). ``sub_queries`` is threaded through only to feed that footer.
     """
     raw_text_parts: list[str] = []
     # The page-context message is prepended, so the last user turn in
@@ -2485,6 +2540,7 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
     chat_url = f"{settings.litellm_base_url}/v1/chat/completions"
     generation_started = time.perf_counter()
     live_buffer = ""
+    live_emitted: list[str] = []
     request_json: dict[str, Any] = {
         "model": model,
         "messages": augmented_messages,
@@ -2528,8 +2584,9 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
                         raw_text_parts.append(text)
                         if profile.stream_live:
                             live_buffer += text
-                            safe_text, live_buffer = _pop_live_stream_text(live_buffer, final=False)
+                            safe_text, live_buffer = _pop_live_stream_text(live_buffer)
                             if safe_text:
+                                live_emitted.append(safe_text)
                                 yield _sse_content_delta(safe_text)
                         elif profile.surface == "internal":
                             yield _sse_content_delta("")
@@ -2548,11 +2605,6 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
         yield _sse_error_frame("Chat service error")
         yield b"data: [DONE]\n\n"
         return
-
-    if profile.stream_live and live_buffer:
-        # Flush whatever the guard was still holding back (an incomplete
-        # link/URL tail that never completed before the upstream finished).
-        yield _sse_content_delta(live_buffer)
 
     generation_ms = _elapsed_ms(generation_started)
     content, sources, decision = _compose_backend_managed_answer(
@@ -2622,6 +2674,30 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
         model=model,
         query_text=visitor_query,
     )
+    # Deliberately kept separate as the last render step
+    # (chat-quality-history-and-plan.md §7.2): the widget got its
+    # sources/escalation frames above; an internal turn additionally gets
+    # them as a text footer, because LibreChat renders only text. Built from
+    # the same finalised ``sources`` the frames above used, so a held and a
+    # live turn number it identically — see the docstring above.
+    footer_text = ""
+    if profile.surface == "internal" and emit_sources:
+        footer_text = render_answer_footer(
+            sources=sources,
+            kb_mode=profile.kb_mode,
+            chunks_injected=len(citation_chunks or []),
+            sub_queries=sub_queries,
+            language=response_language,
+        )
+        if footer_text and not profile.stream_live:
+            content = f"{content.rstrip()}\n\n{footer_text}"
+    # What still has to go out: the whole answer on a held turn, only the
+    # unseen tail (plus the footer) on a live one.
+    outgoing = content
+    if profile.stream_live:
+        outgoing = _unstreamed_tail(content, "".join(live_emitted), "".join(raw_text_parts), citation_chunks)
+        if footer_text:
+            outgoing = f"{outgoing.rstrip()}\n\n{footer_text}"
     # Safety refusals above replace the decision dict, so no broad signal
     # survives on a blocked turn — deliberate: a blocked answer neither
     # labels itself general knowledge nor invites the visitor to broaden.
@@ -2654,13 +2730,9 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
                 }
             ]
         )
-    # A live turn already streamed its content as it arrived (see
-    # profile.stream_live above); the composed ``content`` here is only
-    # used for signals/logging, not re-sent, so the visitor never sees the
-    # answer twice.
     if not sources or not emit_sources:
-        if not profile.stream_live:
-            yield _sse_content_delta(content)
+        if outgoing or not profile.stream_live:
+            yield _sse_content_delta(outgoing)
         yield b"data: [DONE]\n\n"
         _emit_language_correctness_log(
             org_id=org_id,
@@ -2681,8 +2753,8 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
             }
         ]
     )
-    if not profile.stream_live:
-        yield _sse_content_delta(content)
+    if outgoing or not profile.stream_live:
+        yield _sse_content_delta(outgoing)
     yield b"data: [DONE]\n\n"
     _emit_language_correctness_log(
         org_id=org_id,
@@ -3541,6 +3613,7 @@ async def chat_completion_non_streaming(  # noqa: C901 - tools stripping/forward
     profile: ChatProfile = ChatProfile(surface="widget"),
     tools: list[dict] | None = None,
     tool_choice: Any | None = None,
+    sub_queries: list[str] | None = None,
 ) -> dict:
     """Forward to LiteLLM and return complete response as dict.
 
@@ -3723,6 +3796,19 @@ async def chat_completion_non_streaming(  # noqa: C901 - tools stripping/forward
                 )
                 message["content"] = rendered_content
                 message["sources"] = sources
+                # Deliberately kept separate as the last render step
+                # (chat-quality-history-and-plan.md §7.2): see the matching
+                # comment on the streaming path.
+                if profile.surface == "internal":
+                    footer_text = render_answer_footer(
+                        sources=sources,
+                        kb_mode=profile.kb_mode,
+                        chunks_injected=len(citation_chunks or []),
+                        sub_queries=sub_queries,
+                        language=language_decision.language,
+                    )
+                    if footer_text:
+                        message["content"] = f"{rendered_content.rstrip()}\n\n{footer_text}"
                 if isinstance(decision, dict) and decision.get("broad_mode") in ("offer", "answer"):
                     message["broad_mode"] = decision["broad_mode"]
                 if escalation := _appointment_escalation_signal(decision):
@@ -3805,6 +3891,7 @@ async def chat_completion_streaming(
     profile: ChatProfile = ChatProfile(surface="widget"),
     tools: list[dict] | None = None,
     tool_choice: Any | None = None,
+    sub_queries: list[str] | None = None,
 ) -> AsyncGenerator[bytes]:
     """Stream LiteLLM SSE response with backend-managed KB citations.
 
@@ -3868,6 +3955,7 @@ async def chat_completion_streaming(
             profile=profile,
             tools=tools,
             tool_choice=tool_choice,
+            sub_queries=sub_queries,
         ):
             yield chunk
         return

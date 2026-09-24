@@ -45,6 +45,10 @@ networks:
     driver: bridge
     name: klai-net-crm
     internal: true   # only Twenty CRM <-> its Postgres and Redis
+  net-umami:
+    driver: bridge
+    name: klai-net-umami
+    internal: true   # only Umami <-> its Postgres
   net-meilisearch:
     driver: bridge
     name: klai-net-meilisearch
@@ -122,6 +126,7 @@ volumes:
   calnode-data:                # Calnode SQLite DB + encrypted stored credentials
   crm-postgres-data:           # Twenty CRM database (SPEC-INFRA-COOLIFY-EXIT-001)
   crm-storage:                 # Twenty CRM uploads: avatars and attachments
+  umami-postgres-data:         # Umami analytics database (SPEC-INFRA-COOLIFY-EXIT-001)
 
 # Log rotation. The daemon default lives outside this repo, in core-01's
 # /etc/docker/daemon.json:
@@ -2505,6 +2510,34 @@ services:
       resources:
         limits:
           memory: 256m
+
+  # ─── Umami — datastore ───────────────────────────────────────────────────
+  # Moved off Coolify on public-01 (SPEC-INFRA-COOLIFY-EXIT-001), pinned to the
+  # PostgreSQL that ran there (16.13) so the move is a relocation. It lands
+  # before the app for the same reason as the CRM's: Umami applies its Prisma
+  # migrations on start, so pointed at an empty database it creates a fresh
+  # schema that the restored dump would collide with.
+  umami-postgres:
+    logging: *log-rotation
+    image: postgres:16.13-alpine
+    restart: unless-stopped
+    volumes:
+      - umami-postgres-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: umami
+      POSTGRES_PASSWORD: ${UMAMI_POSTGRES_PASSWORD}
+      POSTGRES_DB: umami
+    networks:
+      - net-umami
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U umami -d umami"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512m
 
   # ─── Twenty CRM — application ────────────────────────────────────────────
   # Same image and the same effective settings as the Coolify deployment, so
