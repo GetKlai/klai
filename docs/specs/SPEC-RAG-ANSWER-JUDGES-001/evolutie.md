@@ -1353,8 +1353,10 @@ wegvallen van de voicemaildiagnose alleen met een handmatige proef te vinden gew
 ### 2.48 Geen antwoord meer uit een zwakke bron (24 sep)
 **Aanleiding.** De menselijke beoordelingen scheiden goed en fout op de sterkte van de beste bron: bij
 antwoorden die de eigenaar goed noemde lag die mediaan op 0,80, bij "verkeerde kennis" op 0,37, en daar
-zat 5 van de 6 onder 0,5. In de dertig dagen ervoor kregen 206 beurten een antwoord boven een beste bron
-onder 0,3: het "waarom begint hij over Grandstream"-patroon. Het systeem kende die situatie al als
+zat 5 van de 6 onder 0,5. In de dertig dagen ervoor kregen 30 van de 113 echte widgetantwoorden een
+antwoord boven een beste bron onder 0,3: het "waarom begint hij over Grandstream"-patroon. (Een eerdere
+versie van deze sectie en de commit van #1635 noemden 206: die telling filterde niet op test- en
+previewgesprekken, en 646 van de 759 antwoorden in die periode waren tests.) Het systeem kende die situatie al als
 zachte lacune (`classify_gap`: elke bron onder 0,4), maar dat hield het antwoord niet tegen.
 
 **Gewijzigd.** Bij een zachte lacune, als de stap uit 2.47 geen vraag plande, krijgt het antwoordmodel
@@ -1381,6 +1383,25 @@ artikel eronder. Op een beurt met alleen zwakke bronnen vervallen de bronkaarten
 het antwoord niet "beantwoord" noemt; de afspraakknop blijft. De vlag gaat als parameter mee, niet via
 het auditrecord, zodat het gedrag niet afhangt van of er gelogd wordt. De meting beoordeelde alleen de
 tekst, dus deze reparatie verandert niets aan wat gemeten is.
+
+### 2.49 Wat de historische gesprekken wel en niet kunnen, en LibreChat (24 sep)
+**Hoeveel historie er is.** Echte widgetgesprekken van Voys bestaan sinds 17 september: 58 gesprekken
+met 124 vragen van bezoekers, test- en previewgesprekken niet meegeteld. De interne LibreChat van Voys
+heeft 1117 vragen sinds 1 mei, 454 in de laatste 45 dagen. Tot nu toe mat deze keten alleen op de widget.
+
+**Wat daaruit volgt.** Om een wijziging te beoordelen is geen nieuw verkeer nodig: een historische vraag
+gaat opnieuw door de nieuwe code, met het zoeken zoals het nú scoort, en wordt blind vergeleken. Dat
+deden 2.46 tot en met 2.48 al, maar op kleine sets (17 en 27 beurten) en met bronscores uit het oude
+beslisrecord in plaats van opnieuw berekend. Dat laatste maakte de strook tussen 0,4 en 0,5 schijnbaar
+te klein om te meten (13 beurten), terwijl alle 124 widgetvragen en de LibreChat-vragen opnieuw gezocht
+kunnen worden. Wachten op echt verkeer is alleen nodig voor wat pas live zichtbaar wordt: hoe vaak een
+stap vuurt en wat hij aan wachttijd kost.
+
+**LibreChat telt anders mee.** De wijzigingen van 2.41 tot en met 2.48 zitten in de widgetroute; LibreChat
+loopt via de LiteLLM-hook met het interne profiel en haalt er dus niets van. Zijn vragen zijn wel een
+tien keer grotere bron van echte Voys-vragen over dezelfde kennisbank, gesteld door medewerkers in plaats
+van klanten, en die kunnen als tweede meetset door de widgetroute. Of dezelfde verbeteringen ook in de
+interne keten horen, is een aparte vraag met een aparte meting.
 
 ---
 
