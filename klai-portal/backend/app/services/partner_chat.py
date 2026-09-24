@@ -2066,6 +2066,11 @@ async def _judge_composed_answer(
         answer_signals.update(verdicts, decision=outcome)
         if grounding is not None:
             answer_signals["unsupported"] = len(grounding.unsupported)
+            # The draft's flagged statements, not only their count: one flag is
+            # left unrepaired by design (worth_repairing), and without the text a
+            # measurement cannot tell whether that flag was right. Capped; it is
+            # text the stored reply already holds. Not shown in the activity view yet.
+            answer_signals["unsupported_statements"] = [item.statement[:300] for item in grounding.unsupported[:5]]
         else:
             answer_signals.setdefault("judge_failed", []).append("grounding")
         if judgement is None:
