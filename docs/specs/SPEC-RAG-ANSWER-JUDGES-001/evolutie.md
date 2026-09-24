@@ -1476,6 +1476,42 @@ over beleid of over hoe het product zich gedraagt. Daar laat schrappen een gat, 
 niet bij de drempel maar bij het ontbreken van dat feit in de kennisbank of bij een eerlijker "dit weet
 ik niet zeker"; dat is een apart punt.
 
+### 2.53 De vraagstap vuurt vrijwel nooit, en twee lossere versies winnen niet (24 sep)
+Punt 12 van §5 begon met tellen. Over de `answer_plan_decision`-regels van echt widgetverkeer koos de
+stap in ruim een derde van de beurten een vraag, maar kwam die vraag in minder dan één op de honderd
+beurten echt bij het antwoordmodel: ruim vier van de vijf plannen vielen op de regel dat de vraag een
+optie letterlijk moet noemen, de rest op opties die niet in de artikelen staan. In de meetopzet van §6
+hetzelfde beeld: de live code liet in 3 van de 66 beurten een vraag stellen.
+
+**Dat zet 2.47 in een ander licht.** De versie die daar won (17 om 14, dan 24 om 9) stelde in die meting
+in 1 van de 68 beurten een geplande vraag, en de lossere poging van 24 september in 1 van de 66. Die
+uitslagen gingen dus niet over de vraagstap; wat daar verschilde moet uit de rest van de keten komen.
+Alleen de twee versies van vóór de reviewcontroles vuurden echt (43 en 29 van de 68), en de tweede
+daarvan won beide rondes.
+
+**Twee versies gemeten**, elk tegen de live code, 17 beoordeelde gesprekken, twee rondes, blind in
+beide volgordes:
+
+- *De stap schrijft geen vraag meer, het antwoordmodel vraagt welke optie geldt.* Vuurt in 25 van de 68
+  beurten. Verliest beide rondes (15 om 18, 15 om 19), bruikbaar 40 tegen 54 van de 68. De opties zijn
+  labels van hooguit vier woorden en het antwoordmodel zet ze als menu neer ("modules aanpassen,
+  doorschakelen toevoegen"), eindigt een keer in het Engels ("Welke van deze drie applies voor jou?")
+  en biedt opties die niet passen, zoals iOS aan iemand met de Webphone.
+- *De stap houdt zijn eigen vraag, alleen de vorm wordt getoetst* (één regel, vraagteken, geen link of
+  code). Vuurt in 11 van de 36 beurten van de eerste ronde. 14 om 16, dan 17 om 16: de richting slaat
+  om, dus ruis. Bruikbaar 46 tegen 52. Hij wint waar een vraag paste (vier gesprekken in alle
+  of bijna alle oordelen), maar stelt ook een vraag bij 9 van de 16 beurten waar een direct antwoord
+  hoorde, tegen 5 bij de live code.
+
+**Besluit.** Geen van beide uitgerold; de live stap blijft zoals hij is. Een vraag die de diagnose
+bruikbaar maakt, moet de gesprekken winnen waar doorvragen hoort zonder de directe gevallen te
+verliezen, en dat doet een lossere controle alleen niet.
+
+**Wat de stap kost.** Hij draait op elke supportbeurt vóór het schrijven van het antwoord: mediaan 0,76 s,
+p90 1,2 s extra wachttijd, voor een effect in minder dan één op de honderd beurten. Sinds #1663 (ook
+24 september) is dezelfde stap de enige route voor doorvragen op alle drie de oppervlakken, ook in de
+interne chat. Beide metingen hier draaiden op de code van vóór die wijziging.
+
 ---
 
 ## 3. Wat er live ging, en waarom
@@ -1581,9 +1617,10 @@ beter kan zonder eerst op echt verkeer te kijken.
 11. **Nameting op echt verkeer** van de herformuleringen (2.41), de vraagstap (2.47) en de regel voor
     zwakke bronnen (2.48): hoe vaak ze vuren en wat ze aan wachttijd kosten. De logregels
     `answer_plan_decision`, `planned_question` en `weak_sources` staan erin.
-12. **De vraagstap laat soms een goede diagnose vallen** op de regel dat de vraag een optie moet noemen
-    (live gezien bij de voicemailvraag, 2.47). Een lossere regel verloor de meting; eerst uit
-    `answer_plan_decision` halen hoe vaak het gebeurt.
+12. **De vraagstap vuurt vrijwel nooit** (2.53): minder dan één op de honderd beurten krijgt de geplande
+    vraag, tegen 0,76 s wachttijd per beurt. Twee lossere controles gemeten, geen van beide wint. Open
+    is de keuze: de stap schrappen en de wachttijd terugwinnen, of een versie zoeken die alleen vraagt
+    waar het gesprek er echt om vraagt. Sinds #1663 hangt ook de interne chat aan deze stap.
 13. **Het gespreksoverzicht toont nog niet welke zin de controle afkeurde.** Het beslisrecord bewaart
     die zinnen sinds 2.51 (`unsupported_statements`); tonen vraagt een frontendwijziging met een
     browsercontrole.
