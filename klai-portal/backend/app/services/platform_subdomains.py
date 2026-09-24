@@ -267,7 +267,7 @@ _TOOLING: list[Subdomain] = [
         label="Feedback",
         description="Externe feedback-tool (productfeedback van klanten).",
         category="tooling",
-        host="public-01",
+        host="core-01",
         owner="Jantine",
     ),
     Subdomain(

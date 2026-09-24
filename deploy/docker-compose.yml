@@ -2572,6 +2572,48 @@ services:
         limits:
           memory: 512m
 
+  # ─── Fider — application ─────────────────────────────────────────────────
+  # Under Coolify this ran the moving tag `stable`, which resolved to a main-
+  # branch build of 12 September 2025 (commit 320825dd, between v0.29.0 and
+  # v0.30.0) — not a release. It moved pinned to that digest, then to v0.37.0
+  # in a separate change after a rehearsal on a copy (16 migrations, data
+  # tables unchanged). Fider's migrations are cumulative. The image's command is `./fider migrate && ./fider`, so a
+  # failed migration keeps the server down rather than serving a half-
+  # migrated schema. The image has no wget or curl; `fider ping` is its
+  # health check.
+  fider:
+    logging: *log-rotation
+    image: getfider/fider:v0.37.0
+    restart: unless-stopped
+    environment:
+      BASE_URL: https://feedback.${DOMAIN}
+      DATABASE_URL: postgres://fider:${FIDER_POSTGRES_PASSWORD}@fider-postgres:5432/fider?sslmode=disable
+      JWT_SECRET: ${FIDER_JWT_SECRET}
+      EMAIL_NOREPLY: feedback@getklai.com
+      EMAIL_SMTP_HOST: ${SMTP_HOST}
+      EMAIL_SMTP_PORT: "587"
+      EMAIL_SMTP_USERNAME: feedback@getklai.com
+      EMAIL_SMTP_PASSWORD: ${FIDER_SMTP_PASSWORD}
+      EMAIL_SMTP_ENABLE_STARTTLS: "true"
+      OAUTH_GITHUB_CLIENTID: Ov23li2svFLLNVG9eKgs
+      OAUTH_GITHUB_SECRET: ${FIDER_OAUTH_GITHUB_SECRET}
+    networks:
+      - klai-net
+      - net-fider
+    depends_on:
+      fider-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/app/fider", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
   # ─── Umami — application ─────────────────────────────────────────────────
   # Same image and effective settings as under Coolify, so the move is a
   # relocation; the upgrade follows as its own change. Umami applies its

@@ -106,6 +106,7 @@ from app.services.llm_safety_adapter import (
 from app.services.pasted_correspondence import PASTED_CORRESPONDENCE_SCOPE, latest_user_turn_has_correspondence
 from app.services.query_paraphrase import first_question_variants
 from app.services.query_rewrite import delegated_org_metadata, rewrite_for_retrieval
+from app.services.user_provided_content import has_user_provided_content
 from app.services.widget_audit import find_conversation_id
 from app.trace import get_trace_headers
 
@@ -266,7 +267,9 @@ async def fixed_reply_stream(message: str) -> AsyncGenerator[bytes]:
     yield b"data: [DONE]\n\n"
 
 
-def _normalize_llm_message(message: dict, *, keep_tool_fields: bool = False) -> dict[str, Any] | None:
+def _normalize_llm_message(
+    message: dict, *, keep_tool_fields: bool = False, keep_attachment_parts: bool = False
+) -> dict[str, Any] | None:
     """Keep only provider-supported chat message fields.
 
     ``keep_tool_fields`` is off for the retrieval-facing caller
@@ -278,6 +281,13 @@ def _normalize_llm_message(message: dict, *, keep_tool_fields: bool = False) -> 
     model's own prior ``tool_calls`` and the ``tool`` role results answering
     them must survive, or a second turn in a tool-calling conversation loses
     the call the model is waiting on a result for.
+
+    ``keep_attachment_parts`` is also off for the retrieval-facing caller —
+    retrieval-api takes text, never an image or a file — and on only for a
+    model-facing partner or internal turn (never the widget: its visitors are
+    anonymous and its UI has no upload, the same boundary slice 3 drew for PDF
+    conversion). On, a list ``content`` is kept AS IS instead of collapsed to
+    its text parts, so an image or file part reaches the model.
 
     An assistant message's own ``content`` is stripped of the internal-chat
     answer footer (:func:`app.services.answer_footer.strip_answer_footer_from_text`)
@@ -307,6 +317,9 @@ def _normalize_llm_message(message: dict, *, keep_tool_fields: bool = False) -> 
     if isinstance(content, str):
         return {"role": role, "content": content}
     if isinstance(content, list):
+        if keep_attachment_parts:
+            parts = [part for part in content if isinstance(part, dict)]
+            return {"role": role, "content": parts} if parts else None
         text = " ".join(
             part.get("text", "") for part in content if isinstance(part, dict) and part.get("type") == "text"
         ).strip()
@@ -432,8 +445,16 @@ def _augment_messages_with_system_prompt(
     page_context: PageContext | None = None,
     *,
     response_language: str | None,
+    profile: ChatProfile = ChatProfile(surface="widget"),
 ) -> list[dict]:
     """Assemble the provider payload: system prompt, turns, language contract.
+
+    ``profile.surface`` decides whether an image or file part in the
+    conversation reaches the model: kept for partner and internal, collapsed
+    to text for the widget (its visitors are anonymous and its UI has no
+    upload — the boundary slice 3 drew for PDF conversion in
+    ``app.services.chat_attachments``). Retrieval never sees these parts
+    either way; :func:`_build_conversation_history` always collapses to text.
 
     ``response_language`` is the caller's already-computed
     :func:`resolve_conversation_language` result (taken on the CALLER's message
@@ -453,7 +474,13 @@ def _augment_messages_with_system_prompt(
     following the Dutch source language despite it, and on a turn with no
     chunks that reminder is not in the prompt at all.
     """
-    normalized = [msg for m in messages if (msg := _normalize_llm_message(m, keep_tool_fields=True)) is not None]
+    keep_attachment_parts = profile.surface != "widget"
+    normalized = [
+        msg
+        for m in messages
+        if (msg := _normalize_llm_message(m, keep_tool_fields=True, keep_attachment_parts=keep_attachment_parts))
+        is not None
+    ]
     language_reminder = {
         "role": "system",
         "content": final_response_language_reminder(response_language),
@@ -2385,6 +2412,19 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
         # labelled general knowledge in the footer.
         return (content, sources, decision) if sources else (safe_text, [], {"reason": outcome})
 
+    if not articles and internal and knowledge_turn is not None and knowledge_turn.user_provided_content:
+        # No knowledge-base evidence to judge or repair against. The model's
+        # own permission (USER_PROVIDED_CONTENT_SCOPE) already limits a Strict
+        # turn to what the user's own attachment shows; running the statement
+        # grounding check against zero articles would read every observation
+        # as unsupported and repair it away (mirrors the hook's
+        # klai_kb_citation_render._repair_would_be_wrong). The composer's
+        # canned refusal is replaced by the model's own words, the same way an
+        # uncited draft with no unsupported claims already is below.
+        if answer_signals is not None:
+            answer_signals["decision"] = "answer"
+        return (content, sources, decision) if sources else (safe_text, [], {"reason": "user_provided_content"})
+
     # The checker only sees the question, the articles and the reply, so it cannot
     # know a booking button is really attached and flagged "Klik op de knop hieronder
     # om een afspraak in te plannen" as an unsupported claim about the company. Handing
@@ -3345,6 +3385,11 @@ class KnowledgeTurn:
     # An Open turn's grounding check, which runs after the reply; the per-turn
     # record waits for it before it is written.
     grounding_check: asyncio.Task[None] | None = None
+    # Internal only (app.services.user_provided_content.has_user_provided_content):
+    # this turn carries an attachment, a converted PDF, or an explicit question
+    # about the visible conversation. Read by the Strict zero-chunk refusal
+    # exception and by _judge_composed_answer's grounding-check bypass.
+    user_provided_content: bool = False
 
 
 _URL_RE = re.compile(r"https?://\S+")
@@ -3536,6 +3581,12 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
     turn = knowledge_turn if knowledge_turn is not None else KnowledgeTurn()
     turn.answer_mode = profile.kb_mode
     language = _response_language(messages, pasted_correspondence=pasted_correspondence)
+    # Internal only: an attachment, a converted PDF, or an explicit question
+    # about the visible conversation is the employee's own input, readable in
+    # Strict even with zero knowledge-base evidence (plan §7.2; ported from
+    # the hook's has_user_provided_content_context). See
+    # app.services.user_provided_content.
+    turn.user_provided_content = internal and has_user_provided_content(messages, query)
 
     def prompt(prompt_chunks: list[dict], state: InternalPromptState = "no_retrieval", **extra: Any) -> str:
         return _build_system_prompt(
@@ -3571,11 +3622,15 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
     if not retrieval_enabled or not query or trivial:
         return [], prompt([]), [], False
     if internal and profile.kb_mode == "strict" and profile.kb_slugs == ():
-        # Strict with nothing to search refuses without a model call: a prompt
-        # that asks the model to refuse let a non-compliant model answer from
-        # general knowledge (the hook's strict_no_kb branch).
-        turn.refusal = _no_citable_sources_message(language, suggest_open_mode=True)
-        return [], "", [], False
+        if not turn.user_provided_content:
+            # Strict with nothing to search refuses without a model call: a
+            # prompt that asks the model to refuse let a non-compliant model
+            # answer from general knowledge (the hook's strict_no_kb branch).
+            turn.refusal = _no_citable_sources_message(language, suggest_open_mode=True)
+            return [], "", [], False
+        # The user's own attachment is still readable even with no KB scope to
+        # search; answer as a zero-chunks Strict turn instead of refusing.
+        return [], prompt([], "zero_chunks"), [], False
 
     # A multi-part message fans out into one retrieval per question, on every
     # surface. Not when the latest turn is pasted correspondence: its
@@ -3781,14 +3836,17 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
     )
 
     if internal and profile.kb_mode == "strict" and not chunks:
-        # Strict with no evidence refuses without a model call, as the hook
-        # did for zero chunks and for a response without an evidence pack: a
-        # prompt that asks the model to refuse let a non-compliant model
-        # answer from general knowledge. The gap above is still recorded.
         if not isinstance(evidence_pack, dict):
             logger.error("retrieval_response_missing_evidence_pack", org_id=org_id)
-        turn.refusal = _no_citable_sources_message(language, suggest_open_mode=True)
-        return [], "", [], False
+        if not turn.user_provided_content:
+            # Strict with no evidence refuses without a model call, as the hook
+            # did for zero chunks and for a response without an evidence pack: a
+            # prompt that asks the model to refuse let a non-compliant model
+            # answer from general knowledge. The gap above is still recorded.
+            turn.refusal = _no_citable_sources_message(language, suggest_open_mode=True)
+            return [], "", [], False
+        # The user's own attachment is still readable with zero KB evidence;
+        # fall through to the zero_chunks prompt below instead of refusing.
 
     # Consented general-knowledge fallback: decided here, on the same
     # post-safety-filter chunks the gap event sees, and surfaced to the caller
@@ -3884,7 +3942,7 @@ async def chat_completion_non_streaming(  # noqa: C901 - tools stripping/forward
     response_language = _response_language(messages, pasted_correspondence=pasted_correspondence)
     sub_queries = knowledge_turn.sub_queries if knowledge_turn is not None else []
     augmented_messages = _augment_messages_with_system_prompt(
-        messages, system_prompt, page_context, response_language=response_language
+        messages, system_prompt, page_context, response_language=response_language, profile=profile
     )
 
     litellm_url = settings.litellm_base_url
@@ -4180,7 +4238,7 @@ async def chat_completion_streaming(
     """
     response_language = _response_language(messages, pasted_correspondence=pasted_correspondence)
     augmented_messages = _augment_messages_with_system_prompt(
-        messages, system_prompt, page_context, response_language=response_language
+        messages, system_prompt, page_context, response_language=response_language, profile=profile
     )
     user_query = source_query or _last_user_message(messages) or ""
     if profile.kb_mode == "strict":

@@ -30,6 +30,11 @@ from app.services.docling_client import DoclingError, DoclingTaskStatus, Docling
 _IMAGE_PLACEHOLDER = "<!-- image -->"
 _EMBEDDED_DATA_IMAGE_RE = re.compile(r"!\[[^\]]*\]\(data:image/[^)]*;base64,[^)]+\)")
 
+# Marks a converted PDF in the latest user message's text content. Exported so
+# app.services.user_provided_content can recognise a converted PDF as an
+# attachment without duplicating the literal.
+UPLOADED_PDF_CONTENT_MARKER = "[Uploaded PDF content]"
+
 
 @dataclass(frozen=True)
 class ChatAttachmentResult:
@@ -278,7 +283,7 @@ def _replace_latest_user_content(
         **original,
         "content": (
             f"{user_text.strip()}\n\n"
-            "[Uploaded PDF content]\n"
+            f"{UPLOADED_PDF_CONTENT_MARKER}\n"
             f"Filename: {filename}\n\n"
             f"{markdown.strip()}\n"
             "[End uploaded PDF content]"

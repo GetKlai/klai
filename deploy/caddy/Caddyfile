@@ -529,6 +529,29 @@
 }
 
 
+# Fider feedback board (SPEC-INFRA-COOLIFY-EXIT-001). Until the cutover the
+# public A record for feedback still points at public-01.
+feedback.{$DOMAIN} {
+    tls {
+        dns hetzner {$HETZNER_AUTH_API_TOKEN}
+        propagation_delay 120s
+    }
+
+    log {
+        output stdout
+        format json
+    }
+
+    reverse_proxy fider:3000 {
+        header_up X-Request-ID {http.request.uuid}
+        header_up -X-Internal-Secret
+        header_up -X-Caller-Service
+        header_up -X-Org-ID
+        header_up -X-Org-Slug
+        header_up -X-User-ID
+    }
+}
+
 # Umami analytics (SPEC-INFRA-COOLIFY-EXIT-001). Serves the tracker script the
 # website loads from every visitor's browser, so it is public by design. Until
 # the cutover the public A record for analytics still points at public-01.
