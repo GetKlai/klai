@@ -2415,7 +2415,7 @@ services:
     image: ghcr.io/calnode/calnode:0.9.0
     restart: unless-stopped
     environment:
-      BASE_URL: https://boek.${DOMAIN}
+      BASE_URL: https://cal.${DOMAIN}
       DATABASE_URL: sqlite:///data/calnode.db
       CALNODE_ENCRYPTION_KEY: ${CALNODE_ENCRYPTION_KEY}
       CALNODE_RECOVERY_SECRET: ${CALNODE_RECOVERY_SECRET}
