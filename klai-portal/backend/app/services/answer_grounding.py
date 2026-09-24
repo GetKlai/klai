@@ -47,6 +47,7 @@ from klai_chat_prompts import (
 )
 
 from app.core.config import Settings
+from app.services.litellm_delegation import with_delegated_org
 
 logger = structlog.get_logger()
 
@@ -68,6 +69,7 @@ async def _post(
     settings: Settings,
     transport_timeout: float,
     response_format: dict | None = None,
+    delegated_org_id: str | None = None,
 ) -> str:
     """One model call. Raises on any failure; the callers decide what that means."""
     payload: dict = {
@@ -84,7 +86,7 @@ async def _post(
         response = await client.post(
             f"{settings.litellm_base_url}/v1/chat/completions",
             headers={"Authorization": f"Bearer {settings.litellm_master_key}"},
-            json=payload,
+            json=with_delegated_org(payload, delegated_org_id),
         )
         response.raise_for_status()
         return response.json()["choices"][0]["message"]["content"]
@@ -97,6 +99,7 @@ async def _call(
     settings: Settings,
     timeout_seconds: float,
     response_format: dict | None = None,
+    delegated_org_id: str | None = None,
 ) -> str | None:
     try:
         async with asyncio.timeout(timeout_seconds):
@@ -106,6 +109,7 @@ async def _call(
                 settings=settings,
                 transport_timeout=timeout_seconds,
                 response_format=response_format,
+                delegated_org_id=delegated_org_id,
             )
     except Exception:
         logger.warning("answer_grounding_call_failed", exc_info=True)
@@ -170,6 +174,7 @@ async def check_grounding(
     articles: list[tuple[str, str]],
     settings: Settings,
     org_id: int | str | None = None,
+    delegated_org_id: str | None = None,
 ) -> GroundingCheck | None:
     """List the reply's statements with their evidence; ``None`` when it did not return in time.
 
@@ -184,6 +189,7 @@ async def check_grounding(
             settings=settings,
             transport_timeout=_LATE_CHECK_CEILING_SECONDS,
             response_format=grounding_check_response_format(),
+            delegated_org_id=delegated_org_id,
         )
     )
     try:
@@ -224,7 +230,9 @@ def cleanup_repair_artifacts(text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
 
 
-async def repair_answer(*, draft: str, unsupported: list[GroundedStatement], settings: Settings) -> str | None:
+async def repair_answer(
+    *, draft: str, unsupported: list[GroundedStatement], settings: Settings, delegated_org_id: str | None = None
+) -> str | None:
     """Return the reply without its unsupported statements, ``None`` on failure.
 
     Returns :data:`NOTHING_LEFT` when the model judges that nothing useful is
@@ -237,6 +245,7 @@ async def repair_answer(*, draft: str, unsupported: list[GroundedStatement], set
         user_content=grounding_repair_user_content(draft=draft, unsupported=unsupported),
         settings=settings,
         timeout_seconds=_REPAIR_TIMEOUT_SECONDS,
+        delegated_org_id=delegated_org_id,
     )
     if content is None:
         return None

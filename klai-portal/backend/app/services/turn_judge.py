@@ -46,6 +46,7 @@ import structlog
 from pydantic import BaseModel, ConfigDict
 
 from app.core.config import Settings
+from app.services.litellm_delegation import with_delegated_org
 
 logger = structlog.get_logger()
 
@@ -118,6 +119,7 @@ async def structured_judge_call[J: BaseModel](
     timeout_seconds: float,
     settings: Settings,
     model: str | None = None,
+    delegated_org_id: str | None = None,
 ) -> J | None:
     """One strict-json_schema call, on klai-fast unless ``model`` says otherwise;
     ``None`` and ``<name>_failed`` on any failure."""
@@ -128,20 +130,23 @@ async def structured_judge_call[J: BaseModel](
                 response = await client.post(
                     f"{settings.litellm_base_url}/v1/chat/completions",
                     headers={"Authorization": f"Bearer {settings.litellm_master_key}"},
-                    json={
-                        "model": model or settings.extraction_model,
-                        # The same turn must get the same verdict: without a
-                        # fixed temperature 5 of 9 replayed questions flipped.
-                        "temperature": 0,
-                        "messages": [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_content},
-                        ],
-                        "response_format": {
-                            "type": "json_schema",
-                            "json_schema": {"name": name, "strict": True, "schema": schema.model_json_schema()},
+                    json=with_delegated_org(
+                        {
+                            "model": model or settings.extraction_model,
+                            # The same turn must get the same verdict: without a
+                            # fixed temperature 5 of 9 replayed questions flipped.
+                            "temperature": 0,
+                            "messages": [
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": user_content},
+                            ],
+                            "response_format": {
+                                "type": "json_schema",
+                                "json_schema": {"name": name, "strict": True, "schema": schema.model_json_schema()},
+                            },
                         },
-                    },
+                        delegated_org_id,
+                    ),
                 )
                 response.raise_for_status()
                 content = response.json()["choices"][0]["message"]["content"]
@@ -176,7 +181,9 @@ def conversation_excerpt(messages: list[dict]) -> str:
     return "\n\n".join(lines)
 
 
-async def judge_turn(messages: list[dict], settings: Settings, *, off_topic_subjects: str = "") -> TurnJudgement | None:
+async def judge_turn(
+    messages: list[dict], settings: Settings, *, off_topic_subjects: str = "", delegated_org_id: str | None = None
+) -> TurnJudgement | None:
     """Judge the visitor's latest turn; ``None`` means the judge failed. Never raises."""
     excerpt = conversation_excerpt(messages)
     if "(LATEST message)" not in excerpt:
@@ -188,6 +195,7 @@ async def judge_turn(messages: list[dict], settings: Settings, *, off_topic_subj
         schema=TurnJudgement,
         timeout_seconds=_TURN_JUDGE_TIMEOUT_SECONDS,
         settings=settings,
+        delegated_org_id=delegated_org_id,
     )
 
 

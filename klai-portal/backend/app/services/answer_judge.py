@@ -80,7 +80,12 @@ def _judge_input(messages: list[dict], draft: str, articles: list[tuple[str, str
 
 
 async def judge_answer(
-    *, messages: list[dict], draft: str, articles: list[tuple[str, str]], settings: Settings
+    *,
+    messages: list[dict],
+    draft: str,
+    articles: list[tuple[str, str]],
+    settings: Settings,
+    delegated_org_id: str | None = None,
 ) -> AnswerJudgement | None:
     """Judge one draft; ``None`` means the judge failed. Never raises.
 
@@ -94,6 +99,7 @@ async def judge_answer(
         schema=AnswerJudgement,
         timeout_seconds=_ANSWER_JUDGE_TIMEOUT_SECONDS,
         settings=settings,
+        delegated_org_id=delegated_org_id,
     )
 
 

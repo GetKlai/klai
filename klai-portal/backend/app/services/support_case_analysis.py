@@ -43,6 +43,7 @@ import httpx
 
 from app.core.config import settings
 from app.services.gap_classification import classify_gap
+from app.services.litellm_delegation import with_delegated_org
 from app.trace import get_trace_headers
 
 # Bumped whenever the extraction/assessment prompts or the finding shape change,
@@ -461,7 +462,9 @@ def _parse_json_object(raw: str) -> dict:
     return data
 
 
-async def _call_llm(*, system: str, user: str, response_format: dict[str, object] | None = None) -> str:
+async def _call_llm(
+    *, system: str, user: str, response_format: dict[str, object] | None = None, delegated_org_id: str | None = None
+) -> str:
     """One LiteLLM chat completion against the configured judge model.
 
     Same endpoint, auth and trace propagation as
@@ -475,15 +478,18 @@ async def _call_llm(*, system: str, user: str, response_format: dict[str, object
                 "Authorization": f"Bearer {settings.litellm_master_key}",
                 **get_trace_headers(),
             },
-            json={
-                "model": settings.conversation_judge_model,
-                "temperature": 0.1,
-                "response_format": response_format or {"type": "json_object"},
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-            },
+            json=with_delegated_org(
+                {
+                    "model": settings.conversation_judge_model,
+                    "temperature": 0.1,
+                    "response_format": response_format or {"type": "json_object"},
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                },
+                delegated_org_id,
+            ),
         )
         resp.raise_for_status()
         return str(resp.json()["choices"][0]["message"]["content"])

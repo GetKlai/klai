@@ -15,16 +15,20 @@ Row-level response fields are asserted against the endpoint's own rows.
 from __future__ import annotations
 
 import contextlib
+import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
+import respx
 from fastapi import HTTPException
 from sqlalchemy.dialects import postgresql
 
 from app.api.app_gaps import GapResolveRequest, list_gaps, resolve_gap
+from app.core.config import settings
 from app.services.gap_events import record_gap_event
 from app.services.support_cases import _question_key
 from tests.conftest import make_perms
@@ -249,6 +253,57 @@ async def test_record_gap_event_grouping_failure_leaves_the_row_on_its_own_key(m
 
 
 @pytest.mark.asyncio
+async def test_the_grouping_judge_calls_of_a_gap_name_the_tenant(monkeypatch) -> None:
+    """The fold sends the visitor's question to the model on LiteLLM's master
+    key, which belongs to no tenant: without the org in the body LiteLLM's PII
+    enforcer cannot mask it (klai_pii_enforce._delegated_org_id)."""
+    monkeypatch.setattr("app.services.gap_events.set_tenant", AsyncMock())
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_scalar_result(_FakeOrg("full")))
+    db.add = MagicMock()
+    captured: list[Any] = []
+    monkeypatch.setattr("app.services.gap_events.asyncio.create_task", lambda coro: captured.append(coro))
+
+    await record_gap_event(
+        db,
+        zitadel_org_id="zit-org-1",
+        user_id="u-1",
+        query_text="How do I move my number over?",
+        gap_type="hard",
+        nearest_kb_slug="products",
+        language="en",
+    )
+    grouping_coro = next(c for c in captured if c.cr_code.co_name == "_group_gap")
+    for other in captured:
+        if other is not grouping_coro:
+            other.close()
+
+    existing_key = _question_key(question="How do I port my number?", language="en", kb_slug="products", audience=None)
+    candidate = {
+        "question_key": existing_key,
+        "question": "How do I port my number?",
+        "language": "en",
+        "audience": None,
+    }
+    reply = {"assignments": [{"index": 0, "group_question_key": existing_key}]}
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=MagicMock(rowcount=1))
+    with (
+        respx.mock(assert_all_called=False) as router,
+        patch("app.core.database.tenant_scoped_session", _fake_tenant_scoped_session(session)),
+        patch("app.services.support_cases._open_group_candidates", AsyncMock(return_value=[candidate])),
+    ):
+        litellm = router.post(f"{settings.litellm_base_url}/v1/chat/completions").mock(
+            return_value=httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(reply)}}]})
+        )
+        await grouping_coro
+
+    bodies = [json.loads(call.request.content) for call in litellm.calls]
+    assert len(bodies) == 2  # the grouping call and its verification
+    assert [body.get("metadata") for body in bodies] == [{"_klai_delegated_org_id": "zit-org-1"}] * 2
+
+
+@pytest.mark.asyncio
 async def test_the_grouping_judge_sees_the_most_similar_groups_not_an_arbitrary_hundred() -> None:
     """With hundreds of open groups the judge prompt cannot hold them all, and
     an unordered LIMIT handed it whichever groups the planner returned first,
@@ -269,7 +324,7 @@ async def test_the_grouping_judge_sees_the_most_similar_groups_not_an_arbitrary_
 
     seen: list[list[str]] = []
 
-    async def _judge(findings: list[dict], cands: list[dict]) -> list[dict]:
+    async def _judge(findings: list[dict], cands: list[dict], delegated_org_id: str | None = None) -> list[dict]:
         seen.append([c["question_key"] for c in cands])
         return findings
 
