@@ -29,11 +29,14 @@ from __future__ import annotations
 import re
 from typing import Literal
 
+import structlog
 from pydantic import BaseModel, ConfigDict
 
 from app.core.config import Settings
 from app.services.partner_chat import _normalize_llm_message
 from app.services.turn_judge import structured_judge_call
+
+logger = structlog.get_logger()
 
 PLAN_SYSTEM_PROMPT = (
     "You prepare one turn of a company's help chat. You get the visitor's question and the help "
@@ -146,6 +149,29 @@ def _conversation(messages: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _checked(result: AnswerPlan, chunks: list[dict]) -> tuple[str | None, str]:
+    """The addendum for a plan that passes every check, and the outcome to log either way."""
+    if result.route == "direct":
+        return None, "direct"
+    asked = " ".join(result.question.split())
+    if not asked.endswith("?") or "\n" in result.question.strip():
+        return None, "question_shape"
+    if len(asked) > _QUESTION_MAX_CHARS or len(asked.split()) > _MAX_QUESTION_WORDS or _NOT_A_QUESTION.search(asked):
+        return None, "question_shape"
+    options = _grounded_options(result.options, chunks)[:_MAX_OPTIONS]
+    if len(options) < _MIN_OPTIONS:
+        return None, "options_not_in_articles"
+    # The question lands in the answer model's system prompt, so it has to be
+    # tied to the options, which are themselves tied to the articles. Grounding
+    # every word of the question against the articles was measured on
+    # 2026-09-23 and dropped the diagnostic questions it exists for (1 of 6
+    # instead of 4 of 6). Accepting one option word instead of a whole option
+    # was measured on 2026-09-24 and did not win (13-19, then 16-16).
+    if not any(option.lower() in asked.lower() for option in options):
+        return None, "question_names_no_option"
+    return _ADDENDUM[result.route].format(options="; ".join(options), question=asked), result.route
+
+
 async def answer_plan(messages: list[dict], chunks: list[dict], settings: Settings) -> str | None:
     """A system-prompt addendum naming the one question to ask, or ``None`` to answer as before."""
     if not chunks:
@@ -158,22 +184,29 @@ async def answer_plan(messages: list[dict], chunks: list[dict], settings: Settin
         timeout_seconds=_TIMEOUT_SECONDS,
         settings=settings,
     )
-    if result is None or result.route == "direct":
+    if result is None:
         return None
-    asked = " ".join(result.question.split())
-    options = _grounded_options(result.options, chunks)[:_MAX_OPTIONS]
-    if not asked.endswith("?") or "\n" in result.question.strip():
-        return None
-    if len(asked) > _QUESTION_MAX_CHARS or len(asked.split()) > _MAX_QUESTION_WORDS or _NOT_A_QUESTION.search(asked):
-        return None
-    if len(options) < _MIN_OPTIONS:
-        return None
-    # The question lands in the answer model's system prompt, so it has to be
-    # tied to the options, which are themselves tied to the articles. Grounding
-    # every word of the question against the articles was measured on
-    # 2026-09-23 and dropped the diagnostic questions it exists for (1 of 6
-    # instead of 4 of 6): a visitor's symptom rarely shares wording with the
-    # article that explains its cause.
-    if not any(option.lower() in asked.lower() for option in options):
-        return None
-    return _ADDENDUM[result.route].format(options="; ".join(options), question=asked)
+    addendum, outcome = _checked(result, chunks)
+    # Counts and the outcome only, never the question text: a dropped plan is
+    # invisible in the reply, and without this line nobody could tell how often
+    # the step fires on real traffic or which check stops it.
+    logger.info("answer_plan_decision", route=result.route, outcome=outcome, options=len(result.options))
+    return addendum
+
+
+# Every retrieved article scored below the gap threshold (classify_gap "soft").
+# On the reviewed conversations that is where the wrong answers sit: a reply the
+# owner called correct had a best source of 0.80 at the median, one called wrong
+# for its knowledge 0.37, and five of those six sat under 0.5. Over a quarter of
+# real widget answers in the thirty days before were written over a best source
+# below 0.3, which is the "why is it talking about Grandstream" class. The turn may still answer when an article
+# really does cover the question; what it may not do is build a plausible answer
+# out of a neighbouring one.
+WEAK_SOURCES_ADDENDUM = (
+    "\n\n[This turn] Retrieval found nothing that clearly matches: every help article above scored below "
+    "the bar. Use them only if one of them literally answers what the visitor asked. If none does, say "
+    "plainly in the visitor's language that you cannot find this in the help articles, give no steps and no "
+    "workaround from a neighbouring article, and say that the visitor can plan an appointment with the "
+    "button under this reply. Then end the reply with the exact token [[APPOINTMENT_OFFER]] on its own "
+    "final line."
+)

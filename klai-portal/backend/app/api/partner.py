@@ -42,7 +42,7 @@ from app.models.portal import PortalOrg
 from app.models.widgets import Widget, WidgetKbAccess
 from app.services import escalation_intent as escalation_service
 from app.services import turn_judge
-from app.services.answer_plan import answer_plan
+from app.services.answer_plan import WEAK_SOURCES_ADDENDUM, answer_plan
 from app.services.events import emit_event
 from app.services.gap_classification import classify_gap
 from app.services.off_topic_referral import off_topic_referral
@@ -2083,6 +2083,21 @@ async def chat_completions(  # noqa: C901
                 wgt_id=auth.key_id if str(auth.key_id).startswith("wgt_") else None,
             )
 
+    # Nothing retrieval found is a clear match and no question was planned:
+    # answer only from an article that really covers the question (answer_plan.py).
+    # A greeting or a thank-you usually retrieves only weak articles too; it
+    # keeps the conversational reply.
+    if (
+        support_mode
+        and gap == "soft"
+        and not answer_signals.get("planned_question")
+        and not broad_turn
+        and escalation is None
+        and not conversational
+    ):
+        system_prompt += WEAK_SOURCES_ADDENDUM
+        answer_signals["weak_sources"] = True
+
     system_prompt, web_chunks, web_query = await _maybe_apply_web_search(
         request=request,
         auth=auth,
@@ -2143,6 +2158,7 @@ async def chat_completions(  # noqa: C901
             broad_mode=broad_turn,
             force_escalation=force_escalation,
             clarity=clarity,
+            weak_sources=bool(answer_signals.get("weak_sources")),
             conversational=conversational,
             sentiment=sentiment,
             answer_signals=answer_signals if audit_ready else None,
@@ -2186,6 +2202,7 @@ async def chat_completions(  # noqa: C901
         broad_mode=broad_turn,
         force_escalation=force_escalation,
         clarity=clarity,
+        weak_sources=bool(answer_signals.get("weak_sources")),
         conversational=conversational,
         sentiment=sentiment,
         answer_signals=answer_signals if audit_ready else None,

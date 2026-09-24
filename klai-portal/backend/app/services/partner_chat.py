@@ -1961,6 +1961,17 @@ def _compose_backend_managed_answer(
     return composed.content, sources, decision
 
 
+def _partial_answer_sources(sources: list[dict], *, weak_sources: bool) -> list[dict]:
+    """The sources a reply the judge does not call an answer keeps.
+
+    On a turn whose every article was weak (partner.py, the weak-sources rule)
+    such a reply is the honest "not in the help articles", and a source card
+    under it points at the neighbouring article the reply just declined to use.
+    Measured on 27 real weak-source turns, 26 of 29 such replies carried one.
+    """
+    return [] if weak_sources else sources
+
+
 async def _judge_composed_answer(
     content: str,
     sources: list[dict],
@@ -1977,6 +1988,7 @@ async def _judge_composed_answer(
     force_escalation: bool,
     conversational: bool,
     clarity: Literal["clear", "ambiguous"] | None,
+    weak_sources: bool = False,
 ) -> tuple[str, list[dict], dict[str, Any]]:
     """SPEC-RAG-ANSWER-JUDGES-001 REQ-2/REQ-3: the answer judge, then the one decision.
 
@@ -2095,6 +2107,7 @@ async def _judge_composed_answer(
             decision["escalation"] = _appointment_escalation()
     if outcome == "partial_answer":
         decision["escalation"] = _appointment_escalation()
+        sources = _partial_answer_sources(sources, weak_sources=weak_sources)
     # Only a reply the visitor actually reads gets repaired: a refusal and a
     # clarifying question state nothing about the organisation.
     if outcome in ("answer", "partial_answer") and grounding is not None and grounding.worth_repairing:
@@ -2260,6 +2273,7 @@ async def _chat_completion_streaming_with_composed_citations(
     conversational: bool = False,
     force_escalation: bool = False,
     clarity: Literal["clear", "ambiguous"] | None = None,
+    weak_sources: bool = False,
     sentiment: Literal["negative", "neutral", "positive"] | None = None,
     answer_signals: dict[str, Any] | None = None,
     signal_chunks: list[dict] | None = None,
@@ -2394,6 +2408,7 @@ async def _chat_completion_streaming_with_composed_citations(
             force_escalation=force_escalation,
             conversational=conversational,
             clarity=clarity,
+            weak_sources=weak_sources,
         )
         content = without_dashes(content, helpdesk=support_mode)
         decision.update({"sentiment": sentiment} if support_mode and sentiment else {})
@@ -3078,6 +3093,7 @@ async def chat_completion_non_streaming(
     conversational: bool = False,
     force_escalation: bool = False,
     clarity: Literal["clear", "ambiguous"] | None = None,
+    weak_sources: bool = False,
     sentiment: Literal["negative", "neutral", "positive"] | None = None,
     answer_signals: dict[str, Any] | None = None,
     signal_chunks: list[dict] | None = None,
@@ -3230,6 +3246,7 @@ async def chat_completion_non_streaming(
                     force_escalation=force_escalation,
                     conversational=conversational,
                     clarity=clarity,
+                    weak_sources=weak_sources,
                 )
                 rendered_content = without_dashes(rendered_content, helpdesk=support_mode)
                 answer_judge_ms = _elapsed_ms(judge_started)
@@ -3329,6 +3346,7 @@ async def chat_completion_streaming(
     conversational: bool = False,
     force_escalation: bool = False,
     clarity: Literal["clear", "ambiguous"] | None = None,
+    weak_sources: bool = False,
     sentiment: Literal["negative", "neutral", "positive"] | None = None,
     answer_signals: dict[str, Any] | None = None,
     signal_chunks: list[dict] | None = None,
@@ -3381,6 +3399,7 @@ async def chat_completion_streaming(
             conversational=conversational,
             force_escalation=force_escalation,
             clarity=clarity,
+            weak_sources=weak_sources,
             sentiment=sentiment,
             answer_signals=answer_signals,
             signal_chunks=signal_chunks,

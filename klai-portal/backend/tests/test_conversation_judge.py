@@ -182,13 +182,18 @@ class _OrgDb:
             res = MagicMock()
             res.rowcount = 1
             return res
-        if "FROM widget_conversations wc" in sql:  # gap guard: test-marked or already filed
+        if "FROM widget_conversations WHERE id" in sql:  # gap guard: test- or preview-marked
             assert params["org_id"] == self.org_id, "gap guard leaked another org's id"
-            cid = params["conversation_id"]
+            cid = params["cid"]
             res = MagicMock()
-            res.first.return_value = MagicMock(
-                excluded=cid in self.preview or cid in self.marked_test, has_open_gap=cid in self.existing_gaps
-            )
+            res.first.return_value = (cid in self.preview or cid in self.marked_test,)
+            return res
+        if "FROM portal_retrieval_gaps" in sql:  # gap guard: an open row the inbox shows
+            compiled = stmt.compile().params
+            assert self.org_id in compiled.values(), "gap guard leaked another org's id"
+            cid = next(v for k, v in compiled.items() if k.startswith("conversation_id"))
+            res = MagicMock()
+            res.first.return_value = (1,) if cid in self.existing_gaps else None
             return res
         if "SELECT zitadel_org_id" in sql:
             assert params["org_id"] == self.org_id
@@ -647,7 +652,7 @@ def _gap_case(verdict_overrides: dict, *, existing_gaps: set[int] | None = None,
     async def _verdict(*, model: str, user: str) -> str:
         return _verdict_raw(**verdict_overrides)
 
-    recorded = AsyncMock(return_value=SimpleNamespace(outcome="inserted", org_id=1))
+    recorded = AsyncMock(return_value=SimpleNamespace(outcome="created", org_id=1))
     return cj, org, _tenant, _verdict, recorded
 
 

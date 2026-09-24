@@ -661,3 +661,50 @@ async def test_loop_runs_both_channel_passes_independently():
 
     assert webchat.await_count == 2, "LibreChat failure stopped the webchat pass"
     assert librechat.await_count == 2, "webchat failure stopped the LibreChat pass"
+
+
+@pytest.mark.asyncio
+async def test_a_knowledge_failure_is_filed_as_an_internal_gap_after_the_judgment():
+    """The LibreChat pass judged conversations but never told the knowledge
+    inbox: on the pilot tenant that was the larger share of all knowledge
+    failures. It files after its own commit, like the webchat pass, but under
+    the employee's LAST question: a LibreChat thread runs for weeks (one judged
+    in September started in May), so its opening says little about what went
+    wrong when it was judged."""
+    from app.core.config import settings
+    from app.core.provisioning_names import provisioning_names_for_slug
+    from app.services import librechat_quality_judge as lj
+
+    db_name = provisioning_names_for_slug("voys", domain=settings.domain).mongodb_database
+    mongo = _FakeMongo(
+        {
+            db_name: {
+                "conversations": [_conv("c-miss", minutes=5)],
+                "messages": [
+                    _msg("c-miss", user=True, minutes=0, text="maak een samenvatting van dit document"),
+                    _msg("c-miss", user=False, minutes=1, text="Hier is de samenvatting."),
+                    _msg("c-miss", user=True, minutes=2, text="hoe lees ik een SIP-trace?"),
+                    _msg("c-miss", user=False, minutes=3, text="Dat staat niet in de kennisbank."),
+                ],
+            }
+        }
+    )
+    org = _OrgDb(org_id=7)
+
+    async def _fake_llm(*, model: str, user: str, system: str) -> str:
+        return _verdict_raw(outcome="unresolved", failure_category="retrieval_miss")
+
+    filed = AsyncMock(return_value=True)
+    with (
+        patch(f"{_LJ}.pymongo.MongoClient", mongo.client),
+        patch.object(lj, "cross_org_session", _cross_org_returning([(7, "voys", ["librechat_quality_judge"])])),
+        patch.object(lj, "tenant_scoped_session", _tenant_returning(org)),
+        patch.object(lj, "_call_judge_llm", _fake_llm),
+        patch.object(lj, "file_judge_gap", filed),
+    ):
+        await lj.librechat_judge_run_once()
+
+    assert "c-miss" in org.inserts  # the judgment itself is written
+    kwargs = filed.await_args.kwargs
+    assert kwargs["question"] == "hoe lees ik een SIP-trace?"
+    assert (kwargs["audience"], kwargs["librechat_conversation_id"], kwargs["org_id"]) == ("internal", "c-miss", 7)

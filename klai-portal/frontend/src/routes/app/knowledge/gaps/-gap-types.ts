@@ -14,7 +14,7 @@ export interface GapRow {
   occurrence_count: number
   last_occurred: string
   language: string | null
-  source: 'automatic' | 'review' | 'support'
+  source: 'automatic' | 'review' | 'judge' | 'support'
   conversation_id: number | null
   resolved_at: string | null
   resolved_by: 'rescorer' | 'review' | 'manual' | 'test' | null

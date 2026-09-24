@@ -46,11 +46,12 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import structlog
 from klai_chat_prompts.language import identify_text_language
-from sqlalchemy import text
+from sqlalchemy import or_, select, text
 
 from app.core.config import settings
 from app.core.database import cross_org_session, tenant_scoped_session
-from app.services.gap_events import record_gap_event
+from app.models.retrieval_gaps import PortalRetrievalGap
+from app.services.gap_events import JUDGE_CALLER_CLIENT_ID, record_gap_event, shows_unmet_need
 from app.services.widget_outcome import _SUPPORT_REFERRAL_TEXTS
 from app.trace import get_trace_headers
 
@@ -69,12 +70,18 @@ _BATCH_SIZE = 50
 # without this the knowledge inbox only ever learned about questions retrieval
 # already knew it had missed. A verdict of "not resolved, and the knowledge is
 # to blame" files the same kind of row a human reviewer files by hand.
-_JUDGE_GAP_CALLER_CLIENT_ID = "quality-judge"
 _UNRESOLVED_OUTCOMES = frozenset({"unresolved", "partially_resolved", "escalated"})
 # generation_error, scope_mismatch, user_confusion and policy_refusal are not
 # knowledge causes: the answer existed or the question was not one the knowledge
 # base should answer. Same split as _GAP_TYPE_FOR_CAUSE in app_activity.
 _GAP_TYPE_FOR_JUDGE_CAUSE = {"retrieval_miss": "hard", "retrieval_wrong": "soft"}
+# The question a judge row is filed under is the conversation's first message,
+# which in an internal chat can be a pasted document: one on the pilot tenant
+# was 385,043 characters. That broke the (org_id, query_text) index and bloated
+# grouping prompts until the grouping judge answered for the wrong findings.
+# Questions in the same sample were at most ~250 characters, so 500 keeps every
+# real question whole and a document's opening.
+JUDGE_QUESTION_MAX_CHARS = 500
 # A conversation is only judged while its OLDEST message is at least this far
 # from its org's retention cutoff (``started_at``: the conversation row and its
 # first message are written in the same transaction). Retention anonymizes the
@@ -299,56 +306,76 @@ ON CONFLICT (conversation_id) DO UPDATE SET
 """
 
 
-async def _file_knowledge_gap(
+async def file_judge_gap(
     db,
     *,
     org_id: int,
-    conversation_id: int,
-    turns: list[JudgeTurn],
+    question: str,
     verdict: dict,
-) -> None:
-    """File the visitor's question as a knowledge gap when the judge blames knowledge.
+    audience: str,
+    conversation_id: int | None = None,
+    librechat_conversation_id: str | None = None,
+    occurred_at: datetime | None = None,
+) -> bool:
+    """File the question as a knowledge gap when the judge blames knowledge.
 
     Mirrors the human-review path in ``app_activity._sync_review_gap``: the
     question the visitor asked, never the assistant's answer, through
     ``record_gap_event`` so the org's telemetry level still decides what is
-    stored. Best-effort by design — the judgment is the primary write, and a
-    failed gap must cost this conversation's row, not the batch.
+    stored. One conversation is either a widget conversation
+    (``conversation_id``) or a LibreChat one, which lives in MongoDB and is
+    referenced through the row's evidence. Returns whether a row was filed.
+    Best-effort for the callers: the judgment is the primary write.
     """
     gap_type = _GAP_TYPE_FOR_JUDGE_CAUSE.get(verdict.get("failure_category") or "")
     if gap_type is None or verdict.get("outcome") not in _UNRESOLVED_OUTCOMES:
-        return
-    # The verdict is about the whole conversation, so the row is anchored on the
-    # question the visitor came with. A later turn can be the one that failed;
-    # attributing it needs the judge to name the failing turn, which its schema
-    # does not carry today (upgrade path: return that message id in the verdict).
-    question = next((turn.content for turn in turns if turn.role == "user" and turn.content), None)
-    if question is None:
-        return
-    guard = await db.execute(
-        text(
-            """
-            SELECT wc.is_test OR wc.is_preview AS excluded,
-                   EXISTS (SELECT 1 FROM portal_retrieval_gaps g
-                            WHERE g.org_id = :org_id AND g.conversation_id = :conversation_id
-                              AND g.resolved_at IS NULL) AS has_open_gap
-              FROM widget_conversations wc
-             WHERE wc.id = :conversation_id AND wc.org_id = :org_id
-            """
-        ),
-        {"org_id": org_id, "conversation_id": conversation_id},
-    )
-    row = guard.first()
-    # One OPEN row per conversation, whoever filed it: the retrieval-score path
-    # may already have caught this same question, and two rows would count the
-    # one visitor question twice in the inbox. A row somebody already resolved
-    # does not suppress a fresh signal. The same read re-checks the test/preview
-    # marking, because a reviewer can mark a conversation while the judge waits
-    # on its LLM call and that marking only resolves the gaps existing then.
-    # Ceiling: a marking that lands between this read and the insert still slips
-    # through; closing that needs a row lock shared with the review endpoint.
-    if row is None or row.excluded or row.has_open_gap:
-        return
+        return False
+    question = question.strip()
+    if len(question) > JUDGE_QUESTION_MAX_CHARS:
+        question = question[: JUDGE_QUESTION_MAX_CHARS - 1].rstrip() + "…"
+
+    evidence: dict = {key: verdict.get(key) for key in ("outcome", "failure_category", "confidence")}
+    same_conversation = []
+    if conversation_id is not None:
+        # The same read re-checks the test/preview marking, because a reviewer
+        # can mark a conversation while the judge waits on its LLM call and that
+        # marking only resolves the gaps existing then. Ceiling: a marking that
+        # lands between this read and the insert still slips through; closing
+        # that needs a row lock shared with the review endpoint.
+        marking = (
+            await db.execute(
+                text("SELECT is_test OR is_preview FROM widget_conversations WHERE id = :cid AND org_id = :org_id"),
+                {"cid": conversation_id, "org_id": org_id},
+            )
+        ).first()
+        if marking is None or marking[0]:
+            return False
+        same_conversation.append(PortalRetrievalGap.conversation_id == conversation_id)
+    if librechat_conversation_id is not None:
+        evidence["librechat_conversation_id"] = librechat_conversation_id
+        same_conversation.append(
+            PortalRetrievalGap.evidence["librechat_conversation_id"].astext == librechat_conversation_id
+        )
+
+    # One OPEN row per conversation, whoever filed it, but only a row the inbox
+    # shows may stand in for the verdict: a hidden low-score row for the same
+    # question would otherwise swallow it. A resolved row does not suppress a
+    # fresh signal.
+    already = (
+        await db.execute(
+            select(PortalRetrievalGap.id)
+            .where(
+                PortalRetrievalGap.org_id == org_id,
+                PortalRetrievalGap.resolved_at.is_(None),
+                shows_unmet_need(),
+                or_(*same_conversation),
+            )
+            .limit(1)
+        )
+    ).first()
+    if already is not None:
+        return False
+
     # record_gap_event resolves the tenant by its Zitadel id, which is the only
     # org handle it takes; read it here so the common path never pays for it.
     zitadel_org_id = (
@@ -357,15 +384,19 @@ async def _file_knowledge_gap(
     result = await record_gap_event(
         db,
         zitadel_org_id=zitadel_org_id,
-        user_id=_JUDGE_GAP_CALLER_CLIENT_ID,
+        user_id=JUDGE_CALLER_CLIENT_ID,
         query_text=question,
         gap_type=gap_type,
-        caller_client_id=_JUDGE_GAP_CALLER_CLIENT_ID,
+        caller_client_id=JUDGE_CALLER_CLIENT_ID,
         conversation_id=conversation_id,
         language=identify_text_language(question),
+        audience=audience,
+        evidence=evidence,
+        occurred_at=occurred_at,
     )
     if result.outcome == "not_found":
         logger.warning("conversation_judge_gap_org_unresolved", org_id=org_id, conversation_id=conversation_id)
+    return result.outcome == "created"
 
 
 async def _judge_org(org_id: int) -> int:
@@ -476,9 +507,23 @@ async def _judge_org(org_id: int) -> int:
     # own session, which inside the loop would commit this batch's judgments
     # half-way and, on a failed write, roll the uncommitted ones back with it.
     for conv_id, turns, verdict in pending_gaps:
+        # The verdict is about the whole conversation, so the row is anchored on
+        # the question the visitor came with. A later turn can be the one that
+        # failed; attributing it needs the judge to name the failing turn, which
+        # its schema does not carry today (upgrade path: return that message id).
+        question = next((turn.content for turn in turns if turn.role == "user" and turn.content), None)
+        if question is None:
+            continue
         try:
             async with tenant_scoped_session(org_id) as gap_db:
-                await _file_knowledge_gap(gap_db, org_id=org_id, conversation_id=conv_id, turns=turns, verdict=verdict)
+                await file_judge_gap(
+                    gap_db,
+                    org_id=org_id,
+                    question=question,
+                    verdict=verdict,
+                    audience="customer",
+                    conversation_id=conv_id,
+                )
         except Exception:
             logger.warning("conversation_judge_gap_failed", conversation_id=conv_id, exc_info=True)
 

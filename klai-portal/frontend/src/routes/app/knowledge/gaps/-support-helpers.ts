@@ -119,6 +119,16 @@ export function supportCaseStatusBadge(status: string): { variant: SupportBadgeV
   }
 }
 
+/** Who missed the knowledge: a customer (help content) or an employee (internal
+    knowledge) are two different pages to write. Unknown values pass through. */
+export function audienceLabel(audience: string): string {
+  switch (audience) {
+    case 'customer': return m.gaps_audience_customer()
+    case 'internal': return m.gaps_audience_internal()
+    default: return audience
+  }
+}
+
 /** The vendor the case was imported from, kept separate from the per-message
     medium (a HubSpot thread can carry email and chat messages). */
 export function caseSourceLabel(source: string): string {

@@ -555,6 +555,22 @@ backup_listmonk_postgres() {
   record_file "${output}"
 }
 
+backup_crm_postgres() {
+  local container
+  local output
+
+  container="$(ctr crm-postgres)"
+  output="${BACKUP_DIR}/crm-postgres-all.sql"
+
+  if ! container_running "${container}"; then
+    log "      Skipped (container not running)"
+    return 0
+  fi
+
+  docker exec "${container}" pg_dumpall -U twenty > "${output}"
+  record_file "${output}"
+}
+
 backup_listmonk_uploads() {
   local container
   local output
@@ -720,6 +736,7 @@ main() {
   run_step "Garage: blob data tar" backup_garage_data
   run_step "Firecrawl Postgres: dump all databases" backup_firecrawl_postgres
   run_step "listmonk Postgres: dump all databases" backup_listmonk_postgres
+  run_step "Twenty CRM Postgres: dump all databases" backup_crm_postgres
   run_step "listmonk uploads: tar campaign media" backup_listmonk_uploads
   run_step "Scribe audio: tar failed retry recordings" backup_scribe_audio
   run_step "Research uploads: rsync user uploads" backup_research_uploads
