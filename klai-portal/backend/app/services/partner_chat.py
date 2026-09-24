@@ -1143,7 +1143,7 @@ def _earliest_guard_start(text: str) -> int:
     return min(starts) if starts else -1
 
 
-def _pop_live_stream_text(buffer: str, *, final: bool) -> tuple[str, str]:
+def _pop_live_stream_text(buffer: str) -> tuple[str, str]:
     """Withhold an incomplete markdown link/URL from a live (Open) stream.
 
     Reuses ``_earliest_guard_start`` above (the same guard the legacy link
@@ -1155,11 +1155,7 @@ def _pop_live_stream_text(buffer: str, *, final: bool) -> tuple[str, str]:
     """
     start = _earliest_guard_start(buffer)
     if start >= 0:
-        if final:
-            return buffer, ""
         return buffer[:start], buffer[start:]
-    if final:
-        return buffer, ""
     if len(buffer) <= _STREAM_GUARD_TAIL_CHARS:
         return "", buffer
     safe_len = len(buffer) - _STREAM_GUARD_TAIL_CHARS
@@ -1938,6 +1934,48 @@ def _answer_without_retrieved_sources(text: str, citation_chunks: list[dict] | N
     return _LINKLIKE_RE.sub("", cleaned).strip()
 
 
+def _collapse_whitespace_with_index_map(text: str) -> tuple[str, list[int]]:
+    collapsed: list[str] = []
+    index_map: list[int] = []
+    in_whitespace = False
+    for index, char in enumerate(text):
+        if char.isspace():
+            if collapsed and not in_whitespace:
+                collapsed.append(" ")
+                index_map.append(index)
+            in_whitespace = True
+            continue
+        collapsed.append(char)
+        index_map.append(index)
+        in_whitespace = False
+    if collapsed and collapsed[-1] == " ":
+        collapsed.pop()
+        index_map.pop()
+    return "".join(collapsed), index_map
+
+
+def _unstreamed_tail(final_text: str, emitted_text: str, raw_text: str, citation_chunks: list[dict] | None) -> str:
+    """The part of a live answer the caller has not seen yet, cleaned.
+
+    A live turn streams the model's words up to any link or URL, which the
+    guard holds back until the end. The rest must come from the composed answer
+    so a model-written link is cleaned like on a held turn. The composer may
+    normalise whitespace, so the cut tolerates that; if it changed text the
+    caller already saw, the answer cannot be aligned and replaying it would
+    duplicate the whole answer (LibreChat, 2026-06-11), so the raw remainder
+    goes out with every link removed instead.
+    """
+    if not emitted_text or final_text.startswith(emitted_text):
+        return final_text[len(emitted_text) :]
+    collapsed_final, final_map = _collapse_whitespace_with_index_map(final_text)
+    collapsed_emitted, _ = _collapse_whitespace_with_index_map(emitted_text)
+    if collapsed_emitted and collapsed_final.startswith(collapsed_emitted):
+        return final_text[final_map[len(collapsed_emitted) - 1] + 1 :]
+    remainder = raw_text[len(emitted_text) :]
+    leading = remainder[: len(remainder) - len(remainder.lstrip())]
+    return leading + _answer_without_retrieved_sources(remainder, citation_chunks)
+
+
 def _compose_backend_managed_answer(
     text: str,
     trusted_sources: list[dict[str, Any]] | None,
@@ -2483,6 +2521,7 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
     chat_url = f"{settings.litellm_base_url}/v1/chat/completions"
     generation_started = time.perf_counter()
     live_buffer = ""
+    live_emitted: list[str] = []
     request_json: dict[str, Any] = {
         "model": model,
         "messages": augmented_messages,
@@ -2526,8 +2565,9 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
                         raw_text_parts.append(text)
                         if profile.stream_live:
                             live_buffer += text
-                            safe_text, live_buffer = _pop_live_stream_text(live_buffer, final=False)
+                            safe_text, live_buffer = _pop_live_stream_text(live_buffer)
                             if safe_text:
+                                live_emitted.append(safe_text)
                                 yield _sse_content_delta(safe_text)
                         elif profile.surface == "internal":
                             yield _sse_content_delta("")
@@ -2546,11 +2586,6 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
         yield _sse_error_frame("Chat service error")
         yield b"data: [DONE]\n\n"
         return
-
-    if profile.stream_live and live_buffer:
-        # Flush whatever the guard was still holding back (an incomplete
-        # link/URL tail that never completed before the upstream finished).
-        yield _sse_content_delta(live_buffer)
 
     generation_ms = _elapsed_ms(generation_started)
     content, sources, decision = _compose_backend_managed_answer(
@@ -2637,6 +2672,13 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
         )
         if footer_text and not profile.stream_live:
             content = f"{content.rstrip()}\n\n{footer_text}"
+    # What still has to go out: the whole answer on a held turn, only the
+    # unseen tail (plus the footer) on a live one.
+    outgoing = content
+    if profile.stream_live:
+        outgoing = _unstreamed_tail(content, "".join(live_emitted), "".join(raw_text_parts), citation_chunks)
+        if footer_text:
+            outgoing = f"{outgoing.rstrip()}\n\n{footer_text}"
     # Safety refusals above replace the decision dict, so no broad signal
     # survives on a blocked turn — deliberate: a blocked answer neither
     # labels itself general knowledge nor invites the visitor to broaden.
@@ -2669,13 +2711,9 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
                 }
             ]
         )
-    # A live turn already streamed its content as it arrived (see
-    # profile.stream_live above); the composed ``content`` here is only
-    # used for signals/logging, not re-sent, so the visitor never sees the
-    # answer twice.
     if not sources or not emit_sources:
-        if not profile.stream_live:
-            yield _sse_content_delta(content)
+        if outgoing or not profile.stream_live:
+            yield _sse_content_delta(outgoing)
         yield b"data: [DONE]\n\n"
         _emit_language_correctness_log(
             org_id=org_id,
@@ -2696,14 +2734,8 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
             }
         ]
     )
-    if not profile.stream_live:
-        yield _sse_content_delta(content)
-    elif footer_text:
-        # The live text itself already reached the caller token by token; the
-        # footer is new content the caller has not seen, so it goes out as one
-        # more delta before [DONE] instead of being folded into ``content``
-        # (which nothing re-sends on a live turn).
-        yield _sse_content_delta(f"\n\n{footer_text}")
+    if outgoing or not profile.stream_live:
+        yield _sse_content_delta(outgoing)
     yield b"data: [DONE]\n\n"
     _emit_language_correctness_log(
         org_id=org_id,

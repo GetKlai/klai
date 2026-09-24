@@ -219,13 +219,13 @@ async def test_live_internal_turn_with_sources_appends_footer_as_extra_delta(mon
 
     body = b"".join(chunks).decode()
     content_frames = _content_frames(body)
-    # The live text already went out token-by-token, unrewritten (the raw
-    # model marker, not the composed "Naam."); the footer is new content the
-    # caller has not seen, so it is one more delta, never a resend of the
-    # answer.
-    assert "".join(content_frames[:-1]) == "Naam 4(https://getklai.com/docs/legal/privacy)."
-    footer_frame = content_frames[-1]
-    assert footer_frame.startswith("\n\n**Bronnen**")
+    # The live text went out up to the model's own link, which the guard held
+    # back and the end never replays raw; the footer is the last delta and
+    # the answer is never sent twice.
+    answer, footer_frame = "".join(content_frames).split("\n\n**Bronnen**")
+    assert answer.startswith("Naam")
+    assert "https://" not in answer
+    assert "\n\n**Bronnen**" in content_frames[-1]
     assert "[Privacy policy](https://getklai.com/docs/legal/privacy)" in footer_frame
     assert "**Agent activiteit**\n- Modus: Open, kennisbank met fallback." in footer_frame
     assert body.index("Agent activiteit") < body.index("[DONE]")
