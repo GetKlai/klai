@@ -280,7 +280,7 @@ async def _taxonomy(zitadel_org_id: str, kb_slugs: list[str], settings: Settings
         async with httpx.AsyncClient(timeout=TAXONOMY_FETCH_TIMEOUT) as client:
             resp = await client.get(
                 f"{settings.knowledge_retrieve_url}/internal/v1/taxonomy/{kind}",
-                params=[("org_id", zitadel_org_id)] + [("kb_slugs", s) for s in kb_slugs],
+                params={"org_id": zitadel_org_id, "kb_slugs": kb_slugs},
                 headers={
                     "X-Internal-Secret": settings.retrieval_api_internal_secret or settings.internal_secret,
                     "X-Caller-Service": "portal-api",
@@ -288,8 +288,8 @@ async def _taxonomy(zitadel_org_id: str, kb_slugs: list[str], settings: Settings
             )
             resp.raise_for_status()
             data = resp.json()
-    except Exception as exc:
-        logger.warning("taxonomy_fetch_failed", kind=kind, kb_count=len(kb_slugs), error=repr(exc)[:120])
+    except Exception:
+        logger.warning("taxonomy_fetch_failed", kind=kind, kb_count=len(kb_slugs), exc_info=True)
         return {}
     if not isinstance(data, dict):
         return {}

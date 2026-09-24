@@ -2879,7 +2879,7 @@ async def test_retrieve_context_sends_caller_service_header(monkeypatch):
         org_id=42,
         zitadel_org_id="z-1",
         kb_slugs=["kb-alpha"],
-        messages=[{"role": "user", "content": "hello"}],
+        messages=[{"role": "user", "content": "Hoe reset ik mijn wachtwoord?"}],
         settings=fake_settings,
     )
 
@@ -3141,7 +3141,7 @@ async def test_retrieve_context_threads_pasted_correspondence_into_prompt(monkey
         org_id=42,
         zitadel_org_id="z-1",
         kb_slugs=["support"],
-        messages=[{"role": "user", "content": "hello"}],
+        messages=[{"role": "user", "content": "Hoe reset ik mijn wachtwoord?"}],
         settings=fake_settings,
         retrieval_enabled=False,
         pasted_correspondence=True,
@@ -3199,7 +3199,7 @@ async def test_retrieve_context_passes_partner_user_id(monkeypatch):
         org_id=42,
         zitadel_org_id="z-1",
         kb_slugs=[],
-        messages=[{"role": "user", "content": "hello"}],
+        messages=[{"role": "user", "content": "Hoe reset ik mijn wachtwoord?"}],
         settings=fake_settings,
         partner_user_id="partner:key-abc-123",
     )
@@ -3301,7 +3301,7 @@ async def test_retrieve_context_propagates_non_identity_status_errors(monkeypatc
             org_id=42,
             zitadel_org_id="z-1",
             kb_slugs=[],
-            messages=[{"role": "user", "content": "hello"}],
+            messages=[{"role": "user", "content": "Hoe reset ik mijn wachtwoord?"}],
             settings=fake_settings,
         )
 
@@ -3534,7 +3534,7 @@ async def test_retrieve_context_omits_user_id_when_partner_user_id_none(monkeypa
         org_id=42,
         zitadel_org_id="z-1",
         kb_slugs=[],
-        messages=[{"role": "user", "content": "hello"}],
+        messages=[{"role": "user", "content": "Hoe reset ik mijn wachtwoord?"}],
         settings=fake_settings,
         # Note: no partner_user_id
     )

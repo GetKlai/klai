@@ -26,7 +26,7 @@ import json
 import re
 import time
 from collections.abc import AsyncGenerator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 from urllib.parse import urlparse, urlunparse
 
@@ -50,6 +50,7 @@ from klai_chat_prompts import (
 from klai_chat_prompts import (
     no_citable_sources_message as _no_citable_sources_message,
 )
+from klai_chat_prompts.kb_modes import strict_kb_unavailable_message
 from klai_chat_prompts.language import (
     UNKNOWN_LANGUAGE,
     identify_surface_language,
@@ -92,7 +93,6 @@ from app.services.knowledge_prompts import (
     internal_system_prompt,
     kb_context_block,
     multi_question_guard,
-    strict_kb_unavailable_message,
     sub_query_grouped_context,
 )
 from app.services.llm_safety_adapter import (
@@ -3120,6 +3120,8 @@ class KnowledgeTurn:
     refusal: str | None = None
     multi_question: bool = False
     low_confidence: bool = False
+    # The sub-questions retrieval fanned out over (at most MAX_SUB_QUESTIONS).
+    sub_queries: list[str] = field(default_factory=list)
 
 
 _URL_RE = re.compile(r"https?://\S+")
@@ -3355,7 +3357,7 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
     # distilled query is the question.
     latest_correspondence = latest_user_turn_has_correspondence(messages)
     all_sub_questions = [] if latest_correspondence else split_sub_questions(query)
-    sub_queries = all_sub_questions[:MAX_SUB_QUESTIONS]
+    sub_queries = turn.sub_queries = all_sub_questions[:MAX_SUB_QUESTIONS]
     unchecked_questions = all_sub_questions[MAX_SUB_QUESTIONS:]
     turn.multi_question = not latest_correspondence and (bool(sub_queries) or is_multi_question_query(query))
     if unchecked_questions:
@@ -3478,7 +3480,9 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
         if not internal:
             raise
         failure = f"HTTP {exc.response.status_code}" if isinstance(exc, httpx.HTTPStatusError) else type(exc).__name__
-        logger.exception("partner_chat_internal_retrieval_failed", org_id=org_id, kb_mode=profile.kb_mode, failure=failure)
+        logger.exception(
+            "partner_chat_internal_retrieval_failed", org_id=org_id, kb_mode=profile.kb_mode, failure=failure
+        )
         if profile.kb_mode == "strict":
             turn.refusal = strict_kb_unavailable_message(resolve_conversation_language(messages).language)
             return [], "", [], False

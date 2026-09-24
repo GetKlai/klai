@@ -1963,7 +1963,9 @@ async def get_effective_templates(
     instructions = await effective_template_instructions(db, org.id, user.active_template_ids if user else None)
 
     await _audit_internal_call(request, org_id=org.id)
-    return TemplatesEffectiveResponse(instructions=[TemplateInstruction(**item) for item in instructions])
+    return TemplatesEffectiveResponse(
+        instructions=[TemplateInstruction(name=item["name"], text=item["text"]) for item in instructions]
+    )
 
 
 # ---------------------------------------------------------------------------

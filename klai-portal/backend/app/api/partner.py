@@ -20,6 +20,7 @@ from urllib.parse import urlsplit
 import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from klai_chat_prompts.kb_modes import build_template_instructions_block
 from klai_chat_prompts.language import identify_text_language, resolve_conversation_language
 from pydantic import BaseModel, Field, ValidationError
 from redis.exceptions import RedisError
@@ -47,7 +48,6 @@ from app.services.chat_attachments import process_chat_attachments
 from app.services.chat_profile import ChatProfile, resolve_chat_profile
 from app.services.events import emit_event
 from app.services.gap_classification import classify_gap
-from app.services.knowledge_prompts import build_template_instructions_block
 from app.services.off_topic_referral import off_topic_referral
 from app.services.partner_chat import (
     INTERNAL_RETRIEVE_TOP_K,
@@ -2317,9 +2317,7 @@ async def chat_completions(  # noqa: C901
             profile=profile,
             tools=request.tools,
             tool_choice=request.tool_choice,
-            # Slice 4 supplies real sub-question text for the internal-chat
-            # footer; until then every call site here passes an empty list.
-            sub_queries=[],
+            sub_queries=knowledge_turn.sub_queries,
         )
         if audit_ready:
             streaming_gen = _audit_streaming_wrapper(
@@ -2367,7 +2365,7 @@ async def chat_completions(  # noqa: C901
         profile=profile,
         tools=request.tools,
         tool_choice=request.tool_choice,
-        sub_queries=[],
+        sub_queries=knowledge_turn.sub_queries,
     )
     if knowledge is not None and not knowledge.include_sources:
         for choice in result.get("choices") or []:

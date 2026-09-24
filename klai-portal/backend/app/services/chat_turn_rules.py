@@ -104,7 +104,10 @@ _FULL_WIDTH_QUESTION_MARK = "\uff1f"
 _QUESTION_MARK_CHARS = "?" + _FULL_WIDTH_QUESTION_MARK
 
 _LEADING_LIST_MARKER_RE = re.compile(r"^\s*(?:[-*+•]|\d{1,3}[.)])\s*")
-_QUESTION_SEGMENT_RE = re.compile(r"[^?\uff1f]+[?\uff1f]")
+# Split right after every question mark. A findall of "[^?]+[?]" gave the same
+# segments but backtracked quadratically on text without a mark: 1.4 s on 20 000
+# characters, and a partner body may carry 128 KB.
+_AFTER_QUESTION_MARK_RE = re.compile(r"(?<=[?\uff1f])")
 _MIN_SUB_QUESTION_CHARS = 8
 _MAX_SUB_QUESTION_CHARS = 300
 
@@ -203,7 +206,11 @@ def split_sub_questions(query: object, max_questions: int | None = None) -> list
         if stripped.endswith(("?", _FULL_WIDTH_QUESTION_MARK)) and len(stripped) >= _MIN_SUB_QUESTION_CHARS:
             questions.append(stripped[-_MAX_SUB_QUESTION_CHARS:])
     if len(questions) < 2:
-        segments = [" ".join(segment.split()) for segment in _QUESTION_SEGMENT_RE.findall(query)]
+        segments = [
+            " ".join(part.split())
+            for part in _AFTER_QUESTION_MARK_RE.split(query)
+            if len(part) > 1 and part.endswith(("?", _FULL_WIDTH_QUESTION_MARK))
+        ]
         questions = [
             segment[-_MAX_SUB_QUESTION_CHARS:] for segment in segments if len(segment) >= _MIN_SUB_QUESTION_CHARS
         ]

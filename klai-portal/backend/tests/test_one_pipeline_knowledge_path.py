@@ -175,9 +175,13 @@ async def test_widget_single_question_retrieve_body_and_prompt_match_the_golden(
         [{"role": "user", "content": "Hoe reset ik mijn wachtwoord?"}],
     )
 
+    from klai_chat_prompts import GROUNDED_CHAT_SYSTEM_PROMPT
+
     golden = json.loads(GOLDEN_PATH.read_text())
     assert recorder.retrieve_bodies == [golden["retrieve_body"]]
-    assert _system_prompt(recorder) == golden["system_prompt"]
+    assert _system_prompt(recorder) == golden["system_prompt"].replace(
+        "{GROUNDED_CHAT_SYSTEM_PROMPT}", GROUNDED_CHAT_SYSTEM_PROMPT
+    )
 
 
 # --- internal profile ------------------------------------------------------------
@@ -266,6 +270,26 @@ async def test_multi_question_turn_fans_out_on_every_surface(internal_pipeline, 
         "Wat is de opzegtermijn?",
         "Hoe zeg ik op namens een klant?",
     ]
+
+
+@pytest.mark.asyncio
+async def test_split_internal_turn_reports_its_sub_questions_in_the_footer(internal_pipeline):
+    pack = _evidence_pack()
+    pack["items"][0]["text"] = "De opzegtermijn is een maand. Je zegt op namens een klant via het klantportaal."
+    internal_pipeline(
+        _Recorder(
+            {"evidence_pack": pack, "confidence_band": "high"},
+            model_text="De opzegtermijn is een maand. Je zegt op namens een klant via het klantportaal.",
+        )
+    )
+
+    result = await _chat(
+        _auth(key_id="key-internal", permissions=INTERNAL_KEY),
+        _internal(),
+        [{"role": "user", "content": _TWO_QUESTIONS}],
+    )
+
+    assert "- Deelvragen: 2 apart gezocht." in result["choices"][0]["message"]["content"]
 
 
 @pytest.mark.asyncio
@@ -378,8 +402,9 @@ async def test_open_retrieval_failure_answers_with_the_unavailable_notice(intern
 
 @pytest.mark.asyncio
 async def test_internal_prompt_is_foundation_then_templates_then_librechats_own_system(internal_pipeline, monkeypatch):
-    import app.api.partner as partner
     from klai_chat_prompts import GROUNDED_CHAT_SYSTEM_PROMPT
+
+    import app.api.partner as partner
 
     monkeypatch.setattr(
         partner,
