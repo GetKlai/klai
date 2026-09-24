@@ -176,6 +176,52 @@ class TestMultiQuestionGuard:
         )
         assert not klai_knowledge._is_multi_question_query(None)
 
+    def test_two_questions_behind_one_question_mark(self, monkeypatch) -> None:
+        """Conjoined questions are multi-part even with a single '?'.
+
+        The employee gets one answer for two questions when this is missed:
+        the per-question coverage guard never fires.
+        """
+        klai_knowledge = _load_hook(monkeypatch)
+        assert klai_knowledge._is_multi_question_query(
+            "Wat is de opzegtermijn en hoe zeg ik namens een klant op?"
+        )
+        assert klai_knowledge._is_multi_question_query(
+            "Wanneer wordt de factuur verstuurd en naar welk adres gaat die?"
+        )
+        assert klai_knowledge._is_multi_question_query(
+            "Kun je uitleggen hoe de nummerweergave werkt en daarnaast "
+            "checken of dat ook geldt voor mobiele toestellen?"
+        )
+
+    def test_coordinated_words_in_one_question_stay_one(self, monkeypatch) -> None:
+        """"en" between two objects or verbs does not start a second question."""
+        klai_knowledge = _load_hook(monkeypatch)
+        assert not klai_knowledge._is_multi_question_query("Werkt dit op iOS en Android?")
+        assert not klai_knowledge._is_multi_question_query(
+            "Kun je dit controleren en aanpassen?"
+        )
+
+    def test_short_and_elliptic_questions_stay_multi(self, monkeypatch) -> None:
+        """An explicit '?' per question keeps counting, however terse."""
+        klai_knowledge = _load_hook(monkeypatch)
+        assert klai_knowledge._is_multi_question_query("Wat kost het? Hoe bestel ik?")
+        assert klai_knowledge._is_multi_question_query(
+            "Prijs per gebruiker per maand? Opzegtermijn voor ons contract?"
+        )
+
+    def test_statement_with_wh_words_is_not_a_question(self, monkeypatch) -> None:
+        """Wh-words inside a statement ask nothing.
+
+        Counting them would drop the deterministic low-confidence refusal for
+        a message that asks a single question.
+        """
+        klai_knowledge = _load_hook(monkeypatch)
+        assert not klai_knowledge._is_multi_question_query(
+            "Hoe verleng ik mijn contract? Ik weet hoe het contract werkt "
+            "en ik weet hoe de verlenging werkt."
+        )
+
     def test_guard_text_demands_per_question_coverage(self, monkeypatch) -> None:
         klai_knowledge = _load_hook(monkeypatch)
         text = klai_knowledge._MULTI_QUESTION_GUARD_TEXT
