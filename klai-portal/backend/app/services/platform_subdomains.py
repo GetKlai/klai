@@ -258,8 +258,8 @@ _TOOLING: list[Subdomain] = [
         label="CRM",
         description="Sales-CRM voor pipeline en klantcontact.",
         category="tooling",
-        host="public-01",
-        owner="Jantine",
+        host="core-01",
+        owner="Mark",
     ),
     Subdomain(
         subdomain="feedback",

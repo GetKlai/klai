@@ -1,5 +1,14 @@
 # Knowledge Retrieval Flow: How Chat with Knowledge Works
 
+> **Out of date for the chat request path (checked against code on 2026-09-24).** The current, code-verified description of both chat paths is [chat-system.md](chat-system.md); use it instead of Part 1 of this document. Statements below that the code contradicts:
+> - The widget and partner API do **not** go through `KlaiKnowledgeHook`: the hook skips master-key requests without an org, and widget retrieval runs in portal-api (`partner_chat.py`).
+> - The support widget is not grounded-KB-only: with the visitor's consent it answers from general knowledge when retrieval finds nothing (broad mode).
+> - `top_k` is 20 on internal chat and 8 on the widget and in retrieval-api, not 5.
+> - `*_unavailable` means the identity is missing; unreachable chat settings give a fixed refusal in both modes.
+> - Guardrails are deterministic rules without an external provider, and the hook checks input and context, not output.
+> - The hook fetches templates only; there is no rules fetch.
+> - `KNOWLEDGE_RETRIEVE_TIMEOUT` is 3.0 in code but 60.0 in the production compose file.
+
 > Engineering reference for the full retrieval pipeline — from user preference to LLM context injection.
 > Verified against `klai-portal/`, `klai-retrieval-api/`, and `deploy/litellm/` — April 2026 (updated 2026-05-06 post retrieval-coupling audit; updated 2026-06-08 post doc-vs-code drift audit).
 >

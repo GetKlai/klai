@@ -269,7 +269,10 @@ class TokenRouter(CustomLogger):
                 metadata.get("_klai_context_meta"),
                 context_result.meta,
             )
-            logger.info(
+            # WARNING: the container only ships WARNING+ to VictoriaLogs (see
+            # kb_clarify_decision in klai_knowledge.py), and this line is the
+            # only place the router's model choice is visible.
+            logger.warning(
                 "klai_router_final_model requested_model=%s final_model=%s "
                 "route_reason=%s model_profile=%s token_budget_applied=%s "
                 "omitted_history_messages=%d omitted_tool_messages=%d "

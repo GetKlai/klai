@@ -10,7 +10,10 @@ Configure in config.yaml:
 
 Authorization is fail-closed: any user without a verified knowledge entitlement
 receives no KB injection. If the portal authorization endpoint is unreachable,
-injection is silently skipped (WARNING logged).
+cached settings (Redis) are used when present (WARNING logged); with no cache
+to fall back on, the hook cannot know the user's Strict/Open mode and refuses
+the turn outright via mock_response instead of silently giving a general
+answer (see settings_unavailable handling below).
 
 KB-context presence is signalled to downstream hooks via data["_klai_kb_meta"].
 The custom_router uses this to prevent model downgrade for KB-enriched requests.
