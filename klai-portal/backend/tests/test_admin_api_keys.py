@@ -126,3 +126,53 @@ async def test_validate_kb_ids_rejects_other_users_personal_kb():
 
     assert exc.value.status_code == 400
     assert "not owned by the caller" in exc.value.detail
+
+
+# internal_chat lets the key holder act as any employee of the org (including
+# their personal knowledge bases), so only provisioning may mint such a key.
+@pytest.mark.asyncio
+async def test_admin_cannot_create_an_internal_chat_key():
+    from app.api.admin_api_keys import CreateApiKeyRequest, create_api_key
+
+    body = CreateApiKeyRequest(name="LibreChat", permissions={"chat": True, "internal_chat": True}, kb_access=[])
+    db = AsyncMock()
+
+    with pytest.raises(HTTPException) as exc:
+        await create_api_key(body=body, perms=SimpleNamespace(org_id=1, user_id="u"), _platform=None, db=db)
+
+    assert exc.value.status_code == 403
+    db.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_admin_cannot_grant_internal_chat_on_update(monkeypatch):
+    import app.api.admin_api_keys as admin_api_keys
+
+    key = SimpleNamespace(id="k", permissions={"chat": True}, created_by="u")
+    monkeypatch.setattr(admin_api_keys, "_get_key_or_404", AsyncMock(return_value=key))
+    body = admin_api_keys.UpdateApiKeyRequest(permissions={"chat": True, "internal_chat": True})
+
+    with pytest.raises(HTTPException) as exc:
+        await admin_api_keys.update_api_key(
+            key_id="k", body=body, perms=SimpleNamespace(org_id=1, user_id="u"), _platform=None, db=AsyncMock()
+        )
+
+    assert exc.value.status_code == 403
+    assert key.permissions == {"chat": True}
+
+
+@pytest.mark.asyncio
+async def test_admin_cannot_rotate_an_internal_chat_key(monkeypatch):
+    import app.api.admin_api_keys as admin_api_keys
+
+    key = SimpleNamespace(id="k", permissions={"chat": True, "internal_chat": True}, rotated_to_key_id=None)
+    monkeypatch.setattr(admin_api_keys, "_get_key_or_404", AsyncMock(return_value=key))
+    db = AsyncMock()
+
+    with pytest.raises(HTTPException) as exc:
+        await admin_api_keys.rotate_api_key(
+            key_id="k", perms=SimpleNamespace(org_id=1, user_id="u"), _platform=None, db=db
+        )
+
+    assert exc.value.status_code == 403
+    db.add.assert_not_called()

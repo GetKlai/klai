@@ -20,6 +20,7 @@ from urllib.parse import urlsplit
 import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from klai_chat_prompts.kb_modes import build_template_instructions_block, weak_sources_notice
 from klai_chat_prompts.language import identify_text_language, resolve_conversation_language
 from pydantic import BaseModel, Field, ValidationError
 from redis.exceptions import RedisError
@@ -43,13 +44,20 @@ from app.models.widgets import Widget, WidgetKbAccess
 from app.services import escalation_intent as escalation_service
 from app.services import turn_judge
 from app.services.answer_plan import WEAK_SOURCES_ADDENDUM, answer_plan
+from app.services.chat_attachments import process_chat_attachments
+from app.services.chat_profile import ChatProfile, resolve_chat_profile
 from app.services.events import emit_event
 from app.services.gap_classification import classify_gap
 from app.services.off_topic_referral import off_topic_referral
 from app.services.partner_chat import (
+    INTERNAL_RETRIEVE_TOP_K,
+    KnowledgeTurn,
+    _is_web_search_tool,
     _last_user_message,
     chat_completion_non_streaming,
     chat_completion_streaming,
+    fixed_reply_response,
+    fixed_reply_stream,
     off_topic_response,
     off_topic_stream,
     openai_chat_completion_non_streaming,
@@ -57,6 +65,7 @@ from app.services.partner_chat import (
     retrieve_context,
     safety_refusal_response,
     safety_refusal_stream,
+    strict_risk_model,
     widget_input_safety_violation,
 )
 from app.services.partner_rate_limit import check_rate_limit, check_weighted_rate_limit
@@ -69,6 +78,8 @@ from app.services.partner_support import (
     _message_payload,
     _session_payload,
 )
+from app.services.pasted_correspondence import detect_pasted_correspondence, latest_user_turn_has_correspondence
+from app.services.prompt_templates import internal_turn_settings
 from app.services.quality_scorer import schedule_quality_update
 from app.services.redis_client import get_redis_pool
 from app.services.request_ip import resolve_caller_ip
@@ -76,6 +87,7 @@ from app.services.retrieval_log import find_correlated_log, write_retrieval_log
 from app.services.web_search import build_web_results_block, search_web, web_results_as_chunks
 from app.services.widget_audit import (
     hash_audit_value,
+    record_internal_turn,
     record_widget_turn,
     session_key_from_token,
 )
@@ -106,16 +118,28 @@ _OPENAI_COMPATIBLE_MODEL_ALIASES = {
 _OPENAI_COMPATIBLE_ACCEPTED_MODELS = _OPENAI_COMPATIBLE_MODELS | set(_OPENAI_COMPATIBLE_MODEL_ALIASES)
 # General-passthrough-only fields: ChatCompletionsRequest (the knowledge-path
 # Pydantic model) silently drops unknown fields, so a partner sending these
-# alongside a knowledge field would get HTTP 200 with their schema/tools
-# quietly ignored instead of an error. Fail loudly instead — see
-# canonical_chat_completions.
+# alongside a knowledge field would get HTTP 200 with their schema quietly
+# ignored instead of an error. Fail loudly instead — see
+# canonical_chat_completions. ``tools``/``tool_choice`` used to be here too;
+# the knowledge path now forwards them (see ChatCompletionsRequest.tools),
+# so they are no longer passthrough-only.
 _PASSTHROUGH_ONLY_FIELDS = {
     "parallel_tool_calls",
     "prompt_cache_key",
     "response_format",
-    "tool_choice",
-    "tools",
 }
+# LibreChat's conversation-title prompt ("Please generate a concise, 5-word-or-less
+# title for the conversation ..."), same pattern as the LiteLLM hook's
+# TITLE_GENERATION_RE until that hook is removed.
+_LIBRECHAT_TITLE_RE = re.compile(
+    r"(?:"
+    r"\b(?:generate|write|create|provide|give|summarize)\b"
+    r"(?=[\s\S]{0,240}\b(?:title|name|summary)\b)"
+    r"(?=[\s\S]{0,240}\b(?:conversation|chat)\b)"
+    r"|\b(?:title|name)\s+(?:this|the)\s+(?:conversation|chat)\b"
+    r")",
+    re.IGNORECASE,
+)
 _WIDGET_CLIENT_SESSION_RE = re.compile(r"^[A-Za-z0-9_-]{16,80}$")
 _MAX_WEB_SEARCH_QUERY_CHARS = 512
 _OPENAI_COMPAT_MAX_BODY_BYTES = 131_072
@@ -232,6 +256,12 @@ class ChatCompletionsRequest(BaseModel):
     # turns are not audited. Same limits as the HubSpot handoff request.
     visitor_name: str | None = Field(default=None, max_length=120)
     visitor_email: str | None = Field(default=None, max_length=254)
+    # Forwarded to LiteLLM unmodified except for a Strict-KB profile, which
+    # strips web-search tools (see chat_completion_streaming). Client-side
+    # tool execution: portal never calls a tool itself, it only relays the
+    # model's tool_calls deltas and accepts the tool-role results back.
+    tools: list[dict[str, Any]] | None = None
+    tool_choice: Any | None = None
 
 
 class PartnerFeedbackRequest(BaseModel):
@@ -561,6 +591,37 @@ async def _audit_streaming_wrapper(
             )
             _pending.add(task)
             task.add_done_callback(_pending.discard)
+
+
+def _write_internal_record(org_id: int, answer_signals: dict[str, Any], turn: KnowledgeTurn) -> None:
+    """One record per internal turn, written once the turn's own grounding check is done.
+
+    Signals only, never text: LibreChat keeps the conversation. An Open turn's
+    check runs after the reply went out (``turn.grounding_check``), so the
+    record waits for it rather than being written without its outcome.
+    """
+
+    answer_signals["sub_questions"] = len(turn.sub_queries)
+
+    async def write() -> None:
+        if turn.grounding_check is not None:
+            await turn.grounding_check
+        await record_internal_turn(org_id=org_id, answer_signals=answer_signals)
+
+    task = asyncio.create_task(write())
+    _pending.add(task)
+    task.add_done_callback(_pending.discard)
+
+
+async def _internal_record_streaming_wrapper(
+    inner: AsyncGenerator[bytes], *, org_id: int, answer_signals: dict[str, Any], turn: KnowledgeTurn
+) -> AsyncGenerator[bytes]:
+    """Pass the stream through, then write the turn's record, also when the client left early."""
+    try:
+        async for chunk in inner:
+            yield chunk
+    finally:
+        _write_internal_record(org_id, answer_signals, turn)
 
 
 def _support_user_hash(auth: PartnerAuthContext, hubspot_user_id: str | None) -> str:
@@ -1495,6 +1556,26 @@ def _message_text(content: object) -> str:
     return ""
 
 
+def _is_librechat_title_request(messages: object) -> bool:
+    if not isinstance(messages, list):
+        return False
+    # The title instruction is either a system/developer message or the final
+    # user message. An earlier user turn asking to "summarize this chat" is a
+    # real question and must not send every later turn past the knowledge base.
+    for index, message in enumerate(messages):
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role")
+        if role not in {"system", "developer"} and not (role == "user" and index == len(messages) - 1):
+            continue
+        text = _message_text(message.get("content"))
+        # The title prompt is short; a long pasted text that happens to say
+        # "summarize this conversation" is a real question.
+        if text and len(text) <= 4000 and _LIBRECHAT_TITLE_RE.search(text):
+            return True
+    return False
+
+
 def _clean_web_query(value: str | None) -> str | None:
     cleaned = re.sub(r"\s+", " ", value or "").strip()
     if not cleaned:
@@ -1549,11 +1630,21 @@ async def _openai_compatible_chat_completions_from_body(
     auth: PartnerAuthContext,
 ) -> Response | dict[str, Any]:
     require_permission(auth, "general_chat")
+    return await _general_passthrough(body, auth=auth)
+
+
+async def _general_passthrough(
+    body: dict[str, Any], *, auth: PartnerAuthContext, delegated_org_id: str | None = None
+) -> Response | dict[str, Any]:
     validated_body = _validated_openai_compatible_body(body)
     await _enforce_openai_compatible_usage_limits(auth=auth, body=validated_body)
     if bool(validated_body.get("stream", False)):
-        return await openai_chat_completion_streaming(validated_body, settings, org_id=auth.org_id)
-    return await openai_chat_completion_non_streaming(validated_body, settings, org_id=auth.org_id)
+        return await openai_chat_completion_streaming(
+            validated_body, settings, org_id=auth.org_id, delegated_org_id=delegated_org_id
+        )
+    return await openai_chat_completion_non_streaming(
+        validated_body, settings, org_id=auth.org_id, delegated_org_id=delegated_org_id
+    )
 
 
 async def openai_compatible_chat_completions(
@@ -1655,8 +1746,26 @@ async def canonical_chat_completions(
     partner key has ``general_chat`` and the request does not opt into Klai
     knowledge features. Supplying ``knowledge``/KB/web-search fields keeps the
     existing knowledge-grounded Klai behavior.
+
+    A key with ``internal_chat`` (LibreChat) is routed by its resolved profile,
+    not by body fields: title prompts go to the passthrough, every other turn
+    to the knowledge path, tools included.
     """
     body = await _openai_compatible_request_body(http_request)
+    profile = await resolve_chat_profile(db, auth, body.get("user"))
+    if profile.surface == "internal":
+        if _is_librechat_title_request(body.get("messages")):
+            # The title prompt carries the conversation, so it is PII-masked
+            # for the employee's org like every other internal call.
+            return await _general_passthrough(body, auth=auth, delegated_org_id=auth.zitadel_org_id)
+        return await chat_completions(
+            request=_parse_knowledge_chat_request(body),
+            http_request=http_request,
+            auth=auth,
+            db=db,
+            profile=profile,
+        )
+
     if _openai_compatible_enabled(auth) and not _uses_knowledge_chat(body):
         return await _openai_compatible_chat_completions_from_body(body, auth=auth)
 
@@ -1677,6 +1786,7 @@ async def canonical_chat_completions(
         http_request=http_request,
         auth=auth,
         db=db,
+        profile=profile,
     )
 
 
@@ -1686,30 +1796,10 @@ async def _timed[T](awaitable: Awaitable[T]) -> tuple[T, int]:
     return result, round((time.perf_counter() - started) * 1000)
 
 
-async def chat_completions(  # noqa: C901
-    request: ChatCompletionsRequest,
-    http_request: Request,
-    auth: PartnerAuthContext = Depends(get_partner_key),
-    db: AsyncSession = Depends(get_db),
-):
-    """Chat completions with RAG context from knowledge bases.
-
-    TASK-008: Non-streaming path.
-    TASK-009: Streaming SSE path.
-    """
-    turn_started = time.perf_counter()
-    # 1. Permission check
-    require_permission(auth, "chat")
-
-    # 2-3. Model and messages validation.
-    _validate_chat_request(request)
-    if safety_response := _widget_safety_block_response(request, auth):
-        return safety_response
-    is_widget_chat = str(auth.key_id).startswith("wgt_")
-
-    # 4. Validate KB access. ``knowledge`` is a Klai extension on top of the
-    # OpenAI-compatible request shape. Top-level knowledge_base_ids remains
-    # supported for existing partner clients.
+async def _partner_kb_scope(
+    request: ChatCompletionsRequest, auth: PartnerAuthContext, db: AsyncSession
+) -> tuple[bool, list[str]]:
+    """Whether this widget/partner turn retrieves, and from which KB slugs (fail-closed)."""
     knowledge = request.knowledge
     retrieval_enabled = knowledge.enabled if knowledge is not None else True
     requested_kb_ids = (
@@ -1758,6 +1848,71 @@ async def chat_completions(  # noqa: C901
                 org_id=auth.org_id,
                 unresolved_kb_ids=len(kb_ids) - len(kb_slugs),
             )
+    return retrieval_enabled, kb_slugs
+
+
+async def chat_completions(  # noqa: C901
+    request: ChatCompletionsRequest,
+    http_request: Request,
+    auth: PartnerAuthContext = Depends(get_partner_key),
+    db: AsyncSession = Depends(get_db),
+    profile: ChatProfile | None = None,
+):
+    """Chat completions with RAG context from knowledge bases.
+
+    TASK-008: Non-streaming path.
+    TASK-009: Streaming SSE path.
+    """
+    turn_started = time.perf_counter()
+    # 1. Permission check
+    require_permission(auth, "chat")
+    # canonical_chat_completions always passes the profile; direct callers get
+    # the one their key resolves to. From here on the profile, not the key, is
+    # what the generation functions receive.
+    if profile is None:
+        profile = await resolve_chat_profile(db, auth, None)
+    structlog.contextvars.bind_contextvars(chat_surface=profile.surface, chat_kb_mode=profile.kb_mode)
+
+    # 2-3. Model and messages validation.
+    _validate_chat_request(request)
+    # Tools reach the model's prompt, so an anonymous widget visitor may not
+    # supply them; partner and internal keys are authenticated integrations.
+    if profile.surface == "widget" and (request.tools or request.tool_choice is not None):
+        raise _openai_error(status.HTTP_400_BAD_REQUEST, "tools are not supported on widget keys")
+
+    # 3a. PDF attachments in the latest user turn become text before anything
+    # reads the messages. Not for the widget: its visitors are anonymous and
+    # its UI has no upload, so a widget key must not be a public route into
+    # docling. The language is decided on the unmodified messages, so a Dutch
+    # PDF never overrules an English question.
+    if profile.surface != "widget":
+        attachment_language = resolve_conversation_language(request.messages).language
+        attachment_result = await process_chat_attachments(request.messages, language=attachment_language)
+        if attachment_result.user_visible_error is not None:
+            if request.stream:
+                return StreamingResponse(
+                    content=fixed_reply_stream(attachment_result.user_visible_error),
+                    media_type="text/event-stream",
+                )
+            return fixed_reply_response(model=request.model, message=attachment_result.user_visible_error)
+        if attachment_result.processed_count:
+            request.messages = attachment_result.messages
+
+    if safety_response := _widget_safety_block_response(request, auth):
+        return safety_response
+    is_widget_chat = str(auth.key_id).startswith("wgt_")
+
+    # 4. Validate KB access. ``knowledge`` is a Klai extension on top of the
+    # OpenAI-compatible request shape. Top-level knowledge_base_ids remains
+    # supported for existing partner clients.
+    knowledge = request.knowledge
+    if profile.surface == "internal":
+        # The employee's own KB settings, resolved into the profile, scope the
+        # turn; the internal key's kb_access plays no part. No slugs means every
+        # org KB, which retrieval-api scopes by the key's org and the employee.
+        retrieval_enabled, kb_slugs = True, list(profile.kb_slugs or [])
+    else:
+        retrieval_enabled, kb_slugs = await _partner_kb_scope(request, auth, db)
 
     # 6. Retrieve context.
     # F2 (audit retrieval-coupling-2026-05-06): pass synthetic partner_user_id
@@ -1862,8 +2017,9 @@ async def chat_completions(  # noqa: C901
     # kb_slugs to retrieval-api when the list is truthy, and an empty list
     # is silently treated as "no KB restriction" (widens to every KB the
     # org can see). The 400/403 guards above must have already fired for
-    # every empty-scope case by this point.
-    assert not retrieval_enabled or kb_slugs, (
+    # every empty-scope case by this point. The internal surface is the
+    # exception by design: its empty list is the employee's "every org KB".
+    assert profile.surface == "internal" or not retrieval_enabled or kb_slugs, (
         "chat_completions: retrieve_context must not be called with empty kb_slugs while retrieval is enabled"
     )
 
@@ -1873,6 +2029,25 @@ async def chat_completions(  # noqa: C901
     # audit trail when it will read it.
     # @MX:SPEC: SPEC-KNOWLEDGE-ACTIVITY-001 §4.1
     answer_signals: dict[str, Any] = {}
+    # Pasted third-party correspondence (one-chat-pipeline slice 3, moved from
+    # klai_pasted_correspondence.py): conversation-wide by design so a
+    # follow-up turn still gets the epistemic contract while the
+    # correspondence stays in context. Threaded into retrieve_context so
+    # every return path (including the no-retrieval early returns) builds
+    # the same system prompt a later fan-out/clarify gate (slice 4/5) must
+    # also skip on, the way klai_knowledge.py does today.
+    pasted_correspondence = detect_pasted_correspondence(request.messages)
+    templates_block, telemetry_level = "", "shadow"
+    if profile.surface == "internal" and profile.user_id is not None:
+        instructions, telemetry_level = await internal_turn_settings(db, auth.org_id, profile.user_id)
+        templates_block = build_template_instructions_block(instructions)
+    knowledge_turn = KnowledgeTurn()
+    internal = profile.surface == "internal"
+    # An internal turn runs on LiteLLM's master key, so the employee's org has
+    # to travel with every model call of the turn for LiteLLM to mask personal
+    # data (the LiteLLM hook got this from the tenant's own key). Widget and
+    # partner unchanged.
+    delegated_org_id = auth.zitadel_org_id if internal else None
     try:
         # ``broad`` (4th element) is retrieve_context's per-turn decision:
         # support mode + visitor consent + a real retrieval attempt that
@@ -1894,13 +2069,23 @@ async def chat_completions(  # noqa: C901
             support_mode=support_mode,
             broad_mode=bool(request.broad_mode),
             tone_register=tone_register,
+            pasted_correspondence=pasted_correspondence,
             is_preview=getattr(auth, "is_preview", False),
             audit_widget_id=audit_widget_id,
             audit_session_key=audit_session_key,
             audit_write=user_turn_write,
             retrieval_query=knowledge.query if knowledge is not None else None,
-            top_k=knowledge.top_k if knowledge is not None and knowledge.top_k is not None else 8,
-            retrieval_enabled=knowledge.enabled if knowledge is not None else True,
+            top_k=INTERNAL_RETRIEVE_TOP_K
+            if profile.surface == "internal"
+            else knowledge.top_k
+            if knowledge is not None and knowledge.top_k is not None
+            else 8,
+            retrieval_enabled=retrieval_enabled,
+            profile=profile,
+            templates_block=templates_block,
+            telemetry_level=telemetry_level,
+            web_search_available=any(_is_web_search_tool(tool) for tool in request.tools or []),
+            knowledge_turn=knowledge_turn,
         )
         # SPEC-RAG-ANSWER-JUDGES-001 REQ-1. The question judge runs on every
         # support-mode turn beside retrieval, so it costs no wall-clock of its
@@ -1913,10 +2098,14 @@ async def chat_completions(  # noqa: C901
                 _timed(turn_judge.judge_turn(request.messages, settings, off_topic_subjects=off_topic_subjects)),
             )
             turn_timing = {"started_at": turn_started, "retrieval_ms": retrieval_ms, "turn_judge_ms": turn_judge_ms}
+        elif internal:
+            retrieval_result, retrieval_ms = await _timed(retrieval)
+            turn_timing = {"started_at": turn_started, "retrieval_ms": retrieval_ms}
         else:
             retrieval_result = await retrieval
         chunks, system_prompt, trusted_sources, broad_turn = retrieval_result
-        gap = classify_gap(chunks) if support_mode else None
+        # The weak-source rule reads this on every judged surface (below).
+        gap = classify_gap(chunks) if support_mode or internal else None
     except (httpx.TimeoutException, httpx.ReadTimeout) as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -1942,6 +2131,17 @@ async def chat_completions(  # noqa: C901
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail={"error": {"type": "upstream_error", "message": "Retrieval service unavailable"}},
         ) from exc
+
+    if knowledge_turn.refusal is not None:
+        # A Strict turn without evidence: the fixed text, no model call.
+        answer_signals.update(decision="refusal", refused=True, sources_count=0)
+        _write_internal_record(auth.org_id, answer_signals, knowledge_turn)
+        if request.stream:
+            return StreamingResponse(content=fixed_reply_stream(knowledge_turn.refusal), media_type="text/event-stream")
+        return fixed_reply_response(model=request.model, message=knowledge_turn.refusal)
+    answer_model = strict_risk_model(
+        request.model, profile=profile, turn=knowledge_turn, chunks=chunks, messages=request.messages
+    )
 
     # 6b. Optional live web search (opt-in per request, gated per API key,
     #     never for public widget keys). Web results are a SEPARATE citation
@@ -2063,11 +2263,19 @@ async def chat_completions(  # noqa: C901
         return off_topic_response(model=request.model, reply=reply, language=language)
 
     # The one question this turn should ask, decided against what retrieval
-    # found (answer_plan.py). Not on a broad turn (no articles to reason over),
-    # not when the visitor asked for a person or is frustrated: there the reply
-    # is the appointment, and not on a conversational turn.
-    if support_mode and not broad_turn and escalation is None and not turn_judge.is_conversational(scope):
-        plan = await answer_plan(request.messages, chunks, settings)
+    # found (answer_plan.py), on the widget and the internal chat alike. Not on
+    # a broad turn (no articles to reason over), not when the visitor asked for
+    # a person or is frustrated: there the reply is the appointment, not on a
+    # conversational turn, and not when the latest turn is pasted
+    # correspondence, whose question is the distilled email itself.
+    if (
+        (support_mode or internal)
+        and not broad_turn
+        and escalation is None
+        and not turn_judge.is_conversational(scope)
+        and not latest_user_turn_has_correspondence(request.messages)
+    ):
+        plan = await answer_plan(request.messages, chunks, settings, delegated_org_id=delegated_org_id)
         if plan:
             system_prompt += plan
             # The reply will end on that question, so the turn is clarifying
@@ -2086,16 +2294,19 @@ async def chat_completions(  # noqa: C901
     # Nothing retrieval found is a clear match and no question was planned:
     # answer only from an article that really covers the question (answer_plan.py).
     # A greeting or a thank-you usually retrieves only weak articles too; it
-    # keeps the conversational reply.
+    # keeps the conversational reply. One rule for every judged surface, read
+    # from the article scores; the retrieval band is stored, never used here.
+    # Only the wording differs: the widget offers its appointment button, an
+    # internal Open turn may still answer from general knowledge.
     if (
-        support_mode
+        (support_mode or internal)
         and gap == "soft"
         and not answer_signals.get("planned_question")
         and not broad_turn
         and escalation is None
         and not conversational
     ):
-        system_prompt += WEAK_SOURCES_ADDENDUM
+        system_prompt += weak_sources_notice(profile.kb_mode == "strict") if internal else WEAK_SOURCES_ADDENDUM
         answer_signals["weak_sources"] = True
 
     system_prompt, web_chunks, web_query = await _maybe_apply_web_search(
@@ -2112,7 +2323,9 @@ async def chat_completions(  # noqa: C901
     task = asyncio.create_task(
         write_retrieval_log(
             org_id=auth.org_id,
-            user_id=f"partner:{auth.key_id}",
+            # The employee's sub for LibreChat traffic: feedback on an answer
+            # finds its retrieval under rl:{org}:{user}, as with the hook.
+            user_id=profile.user_id if profile.user_id is not None else f"partner:{auth.key_id}",
             chunk_ids=chunk_ids,
             reranker_scores=reranker_scores,
             query_resolved="",
@@ -2134,11 +2347,14 @@ async def chat_completions(  # noqa: C901
         citation_output,
     ) = _citation_runtime_options(trusted_sources, is_widget_chat=is_widget_chat)
 
+    # The widget's signals go to its audit row, the internal turn's to its own
+    # record; partner-API turns keep none.
+    turn_signals = answer_signals if audit_ready or internal else None
     # 8. Streaming or non-streaming
     if request.stream:
         streaming_gen = chat_completion_streaming(
             messages=request.messages,
-            model=request.model,
+            model=answer_model,
             temperature=request.temperature,
             system_prompt=system_prompt,
             settings=settings,
@@ -2161,10 +2377,20 @@ async def chat_completions(  # noqa: C901
             weak_sources=bool(answer_signals.get("weak_sources")),
             conversational=conversational,
             sentiment=sentiment,
-            answer_signals=answer_signals if audit_ready else None,
+            answer_signals=turn_signals,
             signal_chunks=chunks,
             turn_timing=turn_timing,
+            profile=profile,
+            tools=request.tools,
+            tool_choice=request.tool_choice,
+            delegated_org_id=delegated_org_id,
+            knowledge_turn=knowledge_turn,
+            pasted_correspondence=pasted_correspondence,
         )
+        if internal:
+            streaming_gen = _internal_record_streaming_wrapper(
+                streaming_gen, org_id=auth.org_id, answer_signals=answer_signals, turn=knowledge_turn
+            )
         if audit_ready:
             streaming_gen = _audit_streaming_wrapper(
                 streaming_gen,
@@ -2183,7 +2409,7 @@ async def chat_completions(  # noqa: C901
     # Non-streaming
     result = await chat_completion_non_streaming(
         messages=request.messages,
-        model=request.model,
+        model=answer_model,
         temperature=request.temperature,
         system_prompt=system_prompt,
         settings=settings,
@@ -2205,10 +2431,18 @@ async def chat_completions(  # noqa: C901
         weak_sources=bool(answer_signals.get("weak_sources")),
         conversational=conversational,
         sentiment=sentiment,
-        answer_signals=answer_signals if audit_ready else None,
+        answer_signals=turn_signals,
         signal_chunks=chunks,
         turn_timing=turn_timing,
+        profile=profile,
+        tools=request.tools,
+        tool_choice=request.tool_choice,
+        delegated_org_id=delegated_org_id,
+        knowledge_turn=knowledge_turn,
+        pasted_correspondence=pasted_correspondence,
     )
+    if internal:
+        _write_internal_record(auth.org_id, answer_signals, knowledge_turn)
     if knowledge is not None and not knowledge.include_sources:
         for choice in result.get("choices") or []:
             message = choice.get("message") if isinstance(choice, dict) else None

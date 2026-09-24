@@ -172,8 +172,15 @@ def _checked(result: AnswerPlan, chunks: list[dict]) -> tuple[str | None, str]:
     return _ADDENDUM[result.route].format(options="; ".join(options), question=asked), result.route
 
 
-async def answer_plan(messages: list[dict], chunks: list[dict], settings: Settings) -> str | None:
-    """A system-prompt addendum naming the one question to ask, or ``None`` to answer as before."""
+async def answer_plan(
+    messages: list[dict], chunks: list[dict], settings: Settings, *, delegated_org_id: str | None = None
+) -> str | None:
+    """A system-prompt addendum naming the one question to ask, or ``None`` to answer as before.
+
+    Every surface asks through this step; the internal chat's old instruction
+    to ask inside the answer is gone, because a model asked to do that almost
+    never did (plan §7.5).
+    """
     if not chunks:
         return None
     result = await structured_judge_call(
@@ -183,6 +190,7 @@ async def answer_plan(messages: list[dict], chunks: list[dict], settings: Settin
         schema=AnswerPlan,
         timeout_seconds=_TIMEOUT_SECONDS,
         settings=settings,
+        delegated_org_id=delegated_org_id,
     )
     if result is None:
         return None

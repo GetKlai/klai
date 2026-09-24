@@ -17,6 +17,8 @@ Layout:
   ``widget_conversations`` keyed on (widget_id, session_key), then
   INSERT into ``widget_messages`` with the next sequence number.
   Returns nothing — failures are logged but never re-raised.
+- ``record_internal_turn(...)``: the internal chat's per-turn signals, one
+  row in ``internal_chat_turns``, same failure contract.
 """
 
 from __future__ import annotations
@@ -299,3 +301,30 @@ async def record_widget_turn(
             widget_id=widget_id,
             role=role,
         )
+
+
+async def record_internal_turn(*, org_id: int, answer_signals: dict[str, Any]) -> None:
+    """Store one internal-chat turn's signals, the counterpart of ``widget_messages.answer_signals``.
+
+    The same signals the widget keeps per answer (decision, band, grounding
+    outcome, sub-question count, model, timings), filled by the same code in
+    ``partner_chat``, but no message text and no user: LibreChat already holds
+    the conversation, and this record exists to compare the pipeline's
+    decisions, not to keep a second copy of what employees wrote.
+
+    ``org_id`` is the authenticated key's org. The row is written on that
+    org's tenant-scoped session, so the Cat-D policy checks it; a failure is
+    logged and never reaches the employee's chat.
+    """
+    try:
+        async with tenant_scoped_session(org_id) as db:
+            await db.execute(
+                text(
+                    "INSERT INTO internal_chat_turns (org_id, answer_signals) "
+                    "VALUES (:org_id, CAST(:answer_signals AS jsonb))"
+                ),
+                {"org_id": org_id, "answer_signals": json.dumps(answer_signals)},
+            )
+            await db.commit()
+    except Exception:
+        logger.exception("internal_chat_turn_record_failed", org_id=org_id)
