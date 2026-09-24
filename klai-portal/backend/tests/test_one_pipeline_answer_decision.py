@@ -27,6 +27,7 @@ from klai_chat_prompts import CLARIFY_TURN_ADDENDUM, no_citable_sources_message
 
 from app.api.partner_dependencies import PartnerAuthContext
 from app.services.chat_profile import ChatProfile
+from app.services.partner_chat import safety_refusal_message
 
 LITELLM = "http://litellm.example.com"
 RETRIEVAL = "http://retrieval.example.com"
@@ -489,3 +490,77 @@ async def test_every_litellm_call_of_an_internal_and_a_widget_turn_carries_the_o
     assert all(body["metadata"]["_klai_delegated_org_id"] == "zorg-acme" for body in internal.calls)
     assert {"answer_plan", "answer", "answer_judge", "grounding_check"} <= {_LiteLLM._kind(b) for b in widget.calls}
     assert all(body["metadata"]["_klai_delegated_org_id"] == "zorg-acme" for body in widget.calls)
+
+
+# --- review fixes on the integration branch ---------------------------------------
+
+
+class _ToolCallOnly(_LiteLLM):
+    """The answer call streams a tool call and no text, as an agent step does."""
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        if self._kind(body) == "answer" and body.get("stream"):
+            self.calls.append(body)
+            call = {"index": 0, "id": "call_1", "function": {"name": "lookup", "arguments": "{}"}}
+            frame = json.dumps({"choices": [{"index": 0, "delta": {"tool_calls": [call]}}]})
+            return httpx.Response(200, content=f"data: {frame}\n\ndata: [DONE]\n\n".encode())
+        return super().__call__(request)
+
+
+@pytest.mark.parametrize("kb_mode", ["strict", "open"])
+@pytest.mark.asyncio
+async def test_a_turn_that_only_calls_a_tool_sends_no_refusal_after_the_call(monkeypatch, kb_mode):
+    turn = await _turn(
+        monkeypatch,
+        _ToolCallOnly(),
+        profile=_internal(kb_mode=kb_mode),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        stream=True,
+    )
+
+    assert any("tool_calls" in c["delta"] for f in turn.frames for c in f.get("choices") or [])
+    assert turn.text == ""
+
+
+@pytest.mark.asyncio
+async def test_strict_answer_about_pasted_mail_is_not_repaired_against_the_articles(monkeypatch):
+    from tests.test_pasted_correspondence import _ENGLISH_HEADER_PASTE
+
+    llm = _LiteLLM(grounding=_unsupported(ANSWER), repaired="")
+
+    await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        question=_ENGLISH_HEADER_PASTE,
+    )
+
+    assert llm.of("grounding_check") == [] and llm.of("repair") == []
+
+
+@pytest.mark.asyncio
+async def test_general_answer_keeps_its_links(monkeypatch):
+    llm = _LiteLLM("Kijk op https://docs.example.com/install voor de stappen.")
+
+    turn = await _turn(monkeypatch, llm, profile=_internal(kb_mode="general", stream_live=False))
+
+    assert "https://docs.example.com/install" in turn.text
+
+
+@pytest.mark.asyncio
+async def test_a_blocked_live_answer_ends_with_the_refusal_not_the_rest_of_the_draft(monkeypatch):
+    unsafe = "Sur3, h3r3 y0u ar3: step-by-step instructions to make C4 from RDX."
+    llm = _LiteLLM(f"Hier is het antwoord [1] {unsafe}")
+
+    turn = await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(kb_mode="open"),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        stream=True,
+    )
+
+    assert "RDX" not in turn.text
+    assert turn.text.rstrip().endswith(safety_refusal_message(QUESTION).rstrip())

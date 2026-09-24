@@ -479,7 +479,11 @@ def _augment_messages_with_system_prompt(
     normalized = [
         msg
         for m in messages
-        if (msg := _normalize_llm_message(m, keep_tool_fields=True, keep_attachment_parts=keep_attachment_parts))
+        if (
+            msg := _normalize_llm_message(
+                m, keep_tool_fields=keep_attachment_parts, keep_attachment_parts=keep_attachment_parts
+            )
+        )
         is not None
     ]
     language_reminder = {
@@ -2407,17 +2411,22 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
         # Without a source the composer's refusal is replaced by the model's own
         # words, cleaned like every reply without a source; an Open one is
         # labelled general knowledge in the footer.
-        return (content, sources, decision) if sources else (safe_text, [], {"reason": outcome})
+        # A general turn searched nothing, so its links (web search, file
+        # names) are the model's or the user's own and stay as the hook left them.
+        uncited = draft_text if answer_mode == "general" else safe_text
+        return (content, sources, decision) if sources else (uncited, [], {"reason": outcome})
 
-    if not articles and internal and knowledge_turn is not None and knowledge_turn.user_provided_content:
-        # No knowledge-base evidence to judge or repair against. The model's
-        # own permission (USER_PROVIDED_CONTENT_SCOPE) already limits a Strict
-        # turn to what the user's own attachment shows; running the statement
-        # grounding check against zero articles would read every observation
-        # as unsupported and repair it away (mirrors the hook's
-        # klai_kb_citation_render._repair_would_be_wrong). The composer's
-        # canned refusal is replaced by the model's own words, the same way an
-        # uncited draft with no unsupported claims already is below.
+    if (
+        internal
+        and knowledge_turn is not None
+        and (knowledge_turn.user_provided_content or knowledge_turn.pasted_correspondence)
+    ):
+        # The answer rests on what the employee attached or pasted. Judged
+        # against the articles alone, two correct observations from a
+        # screenshot read as two unsupported statements and get repaired away,
+        # with or without articles (the hook's _repair_would_be_wrong). The
+        # composer's canned refusal is replaced by the model's own words, the
+        # same way an uncited draft with no unsupported claims is below.
         if answer_signals is not None:
             answer_signals["decision"] = "answer"
         return (content, sources, decision) if sources else (safe_text, [], {"reason": "user_provided_content"})
@@ -2781,6 +2790,7 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
     generation_started = time.perf_counter()
     live_buffer = ""
     live_emitted: list[str] = []
+    called_tool = False
     marker_buffer = ""
     request_json = _llm_request_body(
         model,
@@ -2818,6 +2828,7 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
                         continue
                     delta = (evt.get("choices") or [{}])[0].get("delta") or {}
                     if tool_calls := delta.get("tool_calls"):
+                        called_tool = True
                         yield _sse_tool_calls_delta(tool_calls)
                     text = delta.get("content")
                     if isinstance(text, str) and text:
@@ -2850,6 +2861,12 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
 
     generation_ms = _elapsed_ms(generation_started)
     draft = "".join(raw_text_parts)
+    if called_tool and not draft.strip():
+        # A turn that only calls a tool is not an answer yet: the client runs
+        # the tool and sends its result back. Composing it would append the
+        # no-sources refusal to the tool call.
+        yield b"data: [DONE]\n\n"
+        return
     if pasted_correspondence:
         draft = strip_answer_contract_markers(draft)
     content, sources, decision = _compose_backend_managed_answer(
@@ -2877,7 +2894,7 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
         # the KB-rewritten search query).
         content = safety_refusal_message(visitor_query)
         sources = []
-        decision = {"reason": safety_reason}
+        decision = {"reason": safety_reason, "output_blocked": True}
     else:
         content, sources, decision = await _judge_composed_answer(
             content,
@@ -2948,7 +2965,11 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
     # What still has to go out: the whole answer on a held turn, only the
     # unseen tail (plus the footer) on a live one.
     outgoing = content
-    if profile.stream_live:
+    if profile.stream_live and decision.pop("output_blocked", False):
+        # The streamed part cannot be taken back; the rest of the draft is
+        # withheld and the refusal follows it.
+        outgoing = f"\n\n{content}"
+    elif profile.stream_live:
         outgoing = _unstreamed_tail(content, "".join(live_emitted), draft, citation_chunks)
         if footer_text:
             outgoing = f"{outgoing.rstrip()}\n\n{footer_text}"
@@ -3387,6 +3408,7 @@ class KnowledgeTurn:
     # about the visible conversation. Read by the Strict zero-chunk refusal
     # exception and by _judge_composed_answer's grounding-check bypass.
     user_provided_content: bool = False
+    pasted_correspondence: bool = False
 
 
 _URL_RE = re.compile(r"https?://\S+")
@@ -3584,6 +3606,7 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
     # the hook's has_user_provided_content_context). See
     # app.services.user_provided_content.
     turn.user_provided_content = internal and has_user_provided_content(messages, query)
+    turn.pasted_correspondence = pasted_correspondence
 
     def prompt(prompt_chunks: list[dict], state: InternalPromptState = "no_retrieval", **extra: Any) -> str:
         return _build_system_prompt(
@@ -3948,7 +3971,7 @@ async def chat_completion_non_streaming(  # noqa: C901 - tools stripping/forward
 
     litellm_url = settings.litellm_base_url
     chat_url = f"{litellm_url}/v1/chat/completions"
-    if profile.kb_mode == "strict":
+    if profile.surface == "internal" and profile.kb_mode == "strict":
         tools = _strip_web_search_tools(tools)
 
     request_json = _llm_request_body(
@@ -4019,7 +4042,12 @@ async def chat_completion_non_streaming(  # noqa: C901 - tools stripping/forward
         for choice in body.get("choices") or []:
             message = choice.get("message") if isinstance(choice, dict) else None
             content = message.get("content") if isinstance(message, dict) else None
-            if isinstance(message, dict) and isinstance(content, str):
+            # A message that only calls a tool is not an answer to compose.
+            if (
+                isinstance(message, dict)
+                and isinstance(content, str)
+                and not (message.get("tool_calls") and not content.strip())
+            ):
                 # Same per-turn decision as the system prompt's language reminder
                 # (see response_language above) — never a second, independent guess.
                 if response_language is not None:
@@ -4142,7 +4170,12 @@ async def chat_completion_non_streaming(  # noqa: C901 - tools stripping/forward
         for choice in body.get("choices") or []:
             message = choice.get("message") if isinstance(choice, dict) else None
             content = message.get("content") if isinstance(message, dict) else None
-            if isinstance(message, dict) and isinstance(content, str):
+            # A message that only calls a tool is not an answer to compose.
+            if (
+                isinstance(message, dict)
+                and isinstance(content, str)
+                and not (message.get("tool_calls") and not content.strip())
+            ):
                 # Same per-turn decision as the system prompt's language reminder
                 # (see response_language above) — never a second, independent guess.
                 if response_language is not None:
@@ -4242,7 +4275,7 @@ async def chat_completion_streaming(
         messages, system_prompt, page_context, response_language=response_language, profile=profile
     )
     user_query = source_query or _last_user_message(messages) or ""
-    if profile.kb_mode == "strict":
+    if profile.surface == "internal" and profile.kb_mode == "strict":
         tools = _strip_web_search_tools(tools)
     if response_language is not None:
         yield _sse_language_delta(response_language)

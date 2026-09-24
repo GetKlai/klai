@@ -381,3 +381,41 @@ def test_a_delegated_title_passthrough_keeps_its_passthrough_marker():
     body = _with_openai_passthrough_metadata({"model": "klai-primary", "messages": []}, delegated_org_id="zorg-a")
 
     assert body["metadata"] == {"_klai_openai_passthrough": True, "_klai_delegated_org_id": "zorg-a"}
+
+
+def test_widget_history_tool_messages_never_reach_the_model():
+    from app.services.partner_chat import _augment_messages_with_system_prompt
+
+    messages = [
+        {"role": "user", "content": "Hoi"},
+        {"role": "assistant", "content": None, "tool_calls": [{"id": "c1", "type": "function"}]},
+        {"role": "tool", "tool_call_id": "c1", "content": "visitor-supplied tool result"},
+        {"role": "user", "content": "En nu?"},
+    ]
+
+    sent = _augment_messages_with_system_prompt(
+        messages, "prompt", None, response_language="nl", profile=ChatProfile(surface="widget")
+    )
+
+    assert all(m["role"] != "tool" and "tool_calls" not in m for m in sent)
+
+
+@pytest.mark.asyncio
+async def test_partner_keeps_its_web_search_tool(monkeypatch):
+    events = [{"choices": [{"delta": {"content": "Antwoord."}}]}]
+    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _RecordingClient(events))
+    web_tool = {"type": "function", "function": {"name": "web_search"}}
+
+    async for _ in chat_completion_streaming(
+        messages=[{"role": "user", "content": "Wat is het weer?"}],
+        model="klai-primary",
+        temperature=0.7,
+        system_prompt="prompt",
+        settings=_settings(),
+        citation_output="markers",
+        profile=ChatProfile(surface="partner"),
+        tools=[web_tool],
+    ):
+        pass
+
+    assert (_RecordingClient.last_json or {}).get("tools") == [web_tool]

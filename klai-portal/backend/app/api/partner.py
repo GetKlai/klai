@@ -56,6 +56,7 @@ from app.services.partner_chat import (
     _last_user_message,
     chat_completion_non_streaming,
     chat_completion_streaming,
+    context_safety_violation,
     fixed_reply_response,
     fixed_reply_stream,
     off_topic_response,
@@ -143,6 +144,10 @@ _LIBRECHAT_TITLE_RE = re.compile(
 _WIDGET_CLIENT_SESSION_RE = re.compile(r"^[A-Za-z0-9_-]{16,80}$")
 _MAX_WEB_SEARCH_QUERY_CHARS = 512
 _OPENAI_COMPAT_MAX_BODY_BYTES = 131_072
+# LibreChat sends attachments base64-encoded inside the body: a PDF at the
+# 20 MB conversion limit (chat_pdf_max_bytes) is about 27 MB encoded, plus the
+# conversation. Only internal-chat keys get this ceiling.
+_INTERNAL_CHAT_MAX_BODY_BYTES = 32 * 1024 * 1024
 _OPENAI_COMPAT_DEFAULT_MAX_TOKENS = 2048
 _OPENAI_COMPAT_MAX_TOKENS = 4096
 _OPENAI_COMPAT_MAX_N = 1
@@ -696,13 +701,31 @@ async def _get_support_session_row(
     return row
 
 
-def _widget_safety_block_response(
+def _input_safety_block_response(
     request: ChatCompletionsRequest,
     auth: PartnerAuthContext,
+    profile: ChatProfile,
 ) -> Response | dict[str, Any] | None:
-    if not str(auth.key_id).startswith("wgt_"):
+    """Refuse a turn whose latest user message, or any tool result, is unsafe.
+
+    Widget and internal turns are checked (the internal chat had both checks in
+    the LiteLLM hook); partner-API traffic stays unchecked as before. Tool
+    results only exist on the internal surface, where the client runs tools.
+    """
+    if profile.surface == "partner":
         return None
     safety_reason = widget_input_safety_violation(request.messages)
+    if not safety_reason and profile.surface == "internal":
+        safety_reason = next(
+            (
+                reason
+                for m in request.messages
+                if m.get("role") == "tool"
+                and isinstance(m.get("content"), str)
+                and (reason := context_safety_violation(m["content"], query=_last_user_message(request.messages) or ""))
+            ),
+            None,
+        )
     if not safety_reason:
         return None
     logger.warning(
@@ -763,11 +786,13 @@ def _openai_compatible_model_entry(model: str) -> dict[str, Any]:
     return {"id": model, "object": "model", "created": 1_735_689_600, "owned_by": owned_by}
 
 
-async def _openai_compatible_request_body(http_request: Request) -> dict[str, Any]:
+async def _openai_compatible_request_body(
+    http_request: Request, *, max_bytes: int = _OPENAI_COMPAT_MAX_BODY_BYTES
+) -> dict[str, Any]:
     content_length = http_request.headers.get("content-length")
     if content_length is not None:
         try:
-            if int(content_length) > _OPENAI_COMPAT_MAX_BODY_BYTES:
+            if int(content_length) > max_bytes:
                 raise HTTPException(
                     status_code=status.HTTP_413_CONTENT_TOO_LARGE,
                     detail={
@@ -787,7 +812,7 @@ async def _openai_compatible_request_body(http_request: Request) -> dict[str, An
     total = 0
     async for chunk in http_request.stream():
         total += len(chunk)
-        if total > _OPENAI_COMPAT_MAX_BODY_BYTES:
+        if total > max_bytes:
             raise HTTPException(
                 status_code=status.HTTP_413_CONTENT_TOO_LARGE,
                 detail={
@@ -1751,7 +1776,10 @@ async def canonical_chat_completions(
     not by body fields: title prompts go to the passthrough, every other turn
     to the knowledge path, tools included.
     """
-    body = await _openai_compatible_request_body(http_request)
+    max_bytes = (
+        _INTERNAL_CHAT_MAX_BODY_BYTES if auth.permissions.get("internal_chat") else _OPENAI_COMPAT_MAX_BODY_BYTES
+    )
+    body = await _openai_compatible_request_body(http_request, max_bytes=max_bytes)
     profile = await resolve_chat_profile(db, auth, body.get("user"))
     if profile.surface == "internal":
         if _is_librechat_title_request(body.get("messages")):
@@ -1898,7 +1926,7 @@ async def chat_completions(  # noqa: C901
         if attachment_result.processed_count:
             request.messages = attachment_result.messages
 
-    if safety_response := _widget_safety_block_response(request, auth):
+    if safety_response := _input_safety_block_response(request, auth, profile):
         return safety_response
     is_widget_chat = str(auth.key_id).startswith("wgt_")
 
