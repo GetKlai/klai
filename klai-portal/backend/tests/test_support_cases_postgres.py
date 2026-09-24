@@ -1650,6 +1650,15 @@ async def test_folding_a_group_moves_every_row_that_shares_its_key(pg) -> None:
             ),
             {"m": k_moved, "t": k_target},
         )
+        # Already closed: a fold is about what is still open, so closed history stays put.
+        await conn.execute(
+            text(
+                "INSERT INTO portal_retrieval_gaps (org_id,user_id,query_text,gap_type,caller_client_id,language,"
+                "nearest_kb_slug,question_key,resolved_at) VALUES "
+                "(901,'u','Nummer instellen','soft','human-review','nl','kb-a',:m,now())"
+            ),
+            {"m": k_moved},
+        )
 
     @contextlib.asynccontextmanager
     async def _scoped(org_id: int):
@@ -1678,9 +1687,10 @@ async def test_folding_a_group_moves_every_row_that_shares_its_key(pg) -> None:
 
     assert matched == k_target
     async with admin.connect() as conn:
-        keys = (
-            (await conn.execute(text("SELECT DISTINCT question_key FROM portal_retrieval_gaps WHERE org_id=901")))
-            .scalars()
-            .all()
-        )
-    assert keys == [k_target]
+        rows = (
+            await conn.execute(
+                text("SELECT resolved_at IS NULL AS open, question_key FROM portal_retrieval_gaps WHERE org_id=901")
+            )
+        ).all()
+    assert {r.question_key for r in rows if r.open} == {k_target}
+    assert [r.question_key for r in rows if not r.open] == [k_moved]

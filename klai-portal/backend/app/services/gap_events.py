@@ -273,12 +273,17 @@ async def fold_into_open_group(
     if matched is None or matched == base_key:
         return None
 
-    # The whole group moves, not only the asking row: rows on the same key are
-    # the same question, and leaving them behind would split it over two groups.
+    # Every open row on the key moves, not only the asking row: rows on the same
+    # key are the same question, and leaving them behind would split it over two
+    # groups. Closed rows keep their key, so a fold never rewrites closed history.
     async with tenant_scoped_session(org_id) as session:
         result = await session.execute(
             update(PortalRetrievalGap)
-            .where(PortalRetrievalGap.org_id == org_id, PortalRetrievalGap.question_key == base_key)
+            .where(
+                PortalRetrievalGap.org_id == org_id,
+                PortalRetrievalGap.question_key == base_key,
+                PortalRetrievalGap.resolved_at.is_(None),
+            )
             .values(question_key=matched)
         )
         if result.rowcount == 0:  # type: ignore[attr-defined]

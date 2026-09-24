@@ -8,9 +8,10 @@ write path uses (``gap_events.fold_into_open_group``), oldest group first.
 
 Only 'full' telemetry, only rows with a knowledge base (candidates are scoped
 per KB) and never redacted rows, the same limits as the write path. Before any
-change it writes every open row's (id, question_key) to ``--snapshot`` so a
-fold can be undone by hand; that file holds normalized customer questions, so
-keep it on the server or in a private location, never in this repository.
+change it writes every open row's (id, question_key) to ``--snapshot``, a new
+owner-only file, so a fold can be undone by hand. A fold only moves open rows,
+so that covers everything the run changes. The file holds normalized customer
+questions: keep it on the server or somewhere private, never in this repository.
 
 Usage (inside the portal-api container, which has the database and LiteLLM):
     docker exec -w /repo/klai-portal/backend klai-core-portal-api-1 \\
@@ -22,6 +23,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 
 
@@ -104,7 +106,8 @@ async def amain(args: argparse.Namespace) -> int:
             )
         ).all()
 
-    with open(args.snapshot, "w", encoding="utf-8") as fh:
+    # Owner-only: the keys are normalized customer questions.
+    with os.fdopen(os.open(args.snapshot, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as fh:
         json.dump([{"id": r.id, "question_key": r.question_key} for r in open_rows], fh)
 
     before = await _group_sizes(org.id)
@@ -132,7 +135,8 @@ async def amain(args: argparse.Namespace) -> int:
     print(
         json.dumps({"groups_tried": len(groups), "folded": folded, "failed": failed, "before": before, "after": after})
     )
-    return 0
+    # A partial run is not a finished one: the unfolded groups need a rerun.
+    return 1 if failed else 0
 
 
 def main() -> int:
