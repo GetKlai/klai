@@ -192,3 +192,21 @@ async def answer_plan(messages: list[dict], chunks: list[dict], settings: Settin
     # the step fires on real traffic or which check stops it.
     logger.info("answer_plan_decision", route=result.route, outcome=outcome, options=len(result.options))
     return addendum
+
+
+# Every retrieved article scored below the gap threshold (classify_gap "soft").
+# On the reviewed conversations that is where the wrong answers sit: a reply the
+# owner called correct had a best source of 0.80 at the median, one called wrong
+# for its knowledge 0.37, and five of those six sat under 0.5. In thirty days
+# 206 answers were written over a best source below 0.3, which is the "why is it
+# talking about Grandstream" class. The turn may still answer when an article
+# really does cover the question; what it may not do is build a plausible answer
+# out of a neighbouring one.
+WEAK_SOURCES_ADDENDUM = (
+    "\n\n[This turn] Retrieval found nothing that clearly matches: every help article above scored below "
+    "the bar. Use them only if one of them literally answers what the visitor asked. If none does, say "
+    "plainly in the visitor's language that you cannot find this in the help articles, give no steps and no "
+    "workaround from a neighbouring article, and say that the visitor can plan an appointment with the "
+    "button under this reply. Then end the reply with the exact token [[APPOINTMENT_OFFER]] on its own "
+    "final line."
+)
