@@ -81,6 +81,10 @@ class RemoveNodeRequest(BaseModel):
     batch_size: int = 1000
 
 
+class ReplaceNodeRequest(RemoveNodeRequest):
+    replacement_node_id: int
+
+
 class RemoveNodeResponse(BaseModel):
     chunks_updated: int
 
@@ -139,11 +143,15 @@ async def _remove_taxonomy_node_from_qdrant(
     kb_slug: str,
     node_id: int,
     batch_size: int = 1000,
+    replacement_node_id: int | None = None,
 ) -> int:
-    """Remove a deleted taxonomy node id from all chunk payloads.
+    """Remove a deleted taxonomy node id from all chunk payloads, or replace it
+    by ``replacement_node_id`` (appended once, never duplicated).
 
     If a chunk has no remaining taxonomy_node_ids after removal, it becomes
     untagged and the normal missing-chunks backfill can classify it again.
+    Only taxonomy keys are written, so raw ``tags`` never change. Idempotent:
+    a rerun finds no chunk still carrying ``node_id``.
     """
     updated = 0
     offset = None
@@ -181,6 +189,11 @@ async def _remove_taxonomy_node_from_qdrant(
 
             if not ids_changed and not legacy_changed:
                 continue
+            if replacement_node_id is not None and replacement_node_id not in {
+                _payload_int(raw_id) for raw_id in remaining_ids
+            }:
+                remaining_ids.append(replacement_node_id)
+                ids_changed = True
 
             if ids_changed:
                 await client.set_payload(
@@ -450,6 +463,36 @@ async def taxonomy_remove_node(request: Request, req: RemoveNodeRequest) -> Remo
         org_id=req.org_id,
         kb_slug=req.kb_slug,
         node_id=req.node_id,
+        chunks_updated=chunks_updated,
+    )
+    return RemoveNodeResponse(chunks_updated=chunks_updated)
+
+
+@router.post("/ingest/v1/taxonomy/replace-node", response_model=RemoveNodeResponse)
+async def taxonomy_replace_node(request: Request, req: ReplaceNodeRequest) -> RemoveNodeResponse:
+    """Replace a taxonomy node id by another in chunk payloads.
+
+    Used when the portal deletes a node with a reassignment target or merges
+    it into another node, so affected chunks stay categorised.
+    """
+    client = AsyncQdrantClient(
+        url=settings.qdrant_url,
+        api_key=settings.qdrant_api_key or None,
+    )
+    chunks_updated = await _remove_taxonomy_node_from_qdrant(
+        client=client,
+        org_id=req.org_id,
+        kb_slug=req.kb_slug,
+        node_id=req.node_id,
+        batch_size=req.batch_size,
+        replacement_node_id=req.replacement_node_id,
+    )
+    logger.info(
+        "taxonomy_node_replaced_in_chunks",
+        org_id=req.org_id,
+        kb_slug=req.kb_slug,
+        node_id=req.node_id,
+        replacement_node_id=req.replacement_node_id,
         chunks_updated=chunks_updated,
     )
     return RemoveNodeResponse(chunks_updated=chunks_updated)

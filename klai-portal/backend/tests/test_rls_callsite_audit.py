@@ -177,6 +177,9 @@ ALLOWED_HELPER_FUNCTIONS: frozenset[str] = frozenset(
         "_execute_merge",
         "_execute_split",
         "_execute_rename",
+        # Called by delete_taxonomy_node (get_caller) and _execute_merge; locks
+        # the nodes by kb_id and updates gap rows by an explicit org_id predicate.
+        "_repoint_node_references",
         # app/services/access.py — get_accessible_kb_slugs takes org_id,
         # only called from app_knowledge_bases routes under _get_caller_org.
         "get_accessible_kb_slugs",

@@ -162,7 +162,7 @@ describe('useRenameNode', () => {
 // ---------------------------------------------------------------------------
 
 describe('useDeleteNode', () => {
-  it('DELETEs the node; invalidates taxonomy-nodes only', async () => {
+  it('DELETEs the node; invalidates taxonomy-nodes and taxonomy-coverage', async () => {
     apiFetchMock.mockResolvedValue(undefined)
     const client = makeClient()
     const spy = invalidationSpy(client)
@@ -170,7 +170,7 @@ describe('useDeleteNode', () => {
       wrapper: makeWrapper(client),
     })
 
-    result.current.mutate(7)
+    result.current.mutate({ nodeId: 7, reassignToNodeId: null })
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
 
     expect(apiFetchMock).toHaveBeenCalledWith(
@@ -179,7 +179,23 @@ describe('useDeleteNode', () => {
     )
     const keys = invalidatedKeys(spy)
     expect(keys).toContainEqual(['taxonomy-nodes', 'kb-a'])
-    expect(keys).not.toContainEqual(['taxonomy-coverage', 'kb-a'])
+    expect(keys).toContainEqual(['taxonomy-coverage', 'kb-a'])
+  })
+
+  it('sends the chosen reassignment target as reassign_to_node_id', async () => {
+    apiFetchMock.mockResolvedValue(undefined)
+    const client = makeClient()
+    const { result } = renderHook(() => useDeleteNode('kb-a'), {
+      wrapper: makeWrapper(client),
+    })
+
+    result.current.mutate({ nodeId: 7, reassignToNodeId: 3 })
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+    expect(apiFetchMock).toHaveBeenCalledWith(
+      '/api/app/knowledge-bases/kb-a/taxonomy/nodes/7?reassign_to_node_id=3',
+      { method: 'DELETE' },
+    )
   })
 })
 

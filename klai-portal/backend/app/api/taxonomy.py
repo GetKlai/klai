@@ -9,7 +9,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from log_utils import verify_shared_secret  # SPEC-SEC-INTERNAL-001 REQ-1.1
 from pydantic import BaseModel
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -195,6 +195,80 @@ async def _check_circular_reference(
         current = parent_node.parent_id if parent_node else None
 
 
+async def _repoint_node_references(
+    zitadel_org_id: str,
+    kb: PortalKnowledgeBase,
+    node_id: int,
+    target_id: int | None,
+    db: AsyncSession,
+) -> None:
+    """Move ``node_id`` to ``target_id`` (or drop it when None) in Qdrant chunks
+    and gap rows, before the caller deletes the node row and commits.
+
+    Chunks are updated first because they live outside this transaction: when
+    knowledge-ingest fails, the rollback leaves node, children and gap rows
+    exactly as they were (502). A commit failure after a successful chunk update
+    leaves the node in place with its chunks already moved; retrying is safe
+    because the ingest operation is idempotent. No compensating call: once a
+    chunk already carried the target, replace-then-reverse cannot tell which
+    chunks carried the source.
+    """
+    from app.services.knowledge_ingest_client import remove_taxonomy_node_from_chunks
+
+    # Lock source and target, in id order, before anything moves: otherwise a
+    # concurrent delete of the target can commit between our checks and our
+    # commit, and gap rows end up carrying an id that no longer exists.
+    wanted = sorted({node_id} | ({target_id} if target_id is not None else set()))
+    locked = (
+        (
+            await db.execute(
+                select(PortalTaxonomyNode.id)
+                .where(PortalTaxonomyNode.id.in_(wanted), PortalTaxonomyNode.kb_id == kb.id)
+                .order_by(PortalTaxonomyNode.id)
+                .with_for_update()
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if sorted(locked) != wanted:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Referenced node no longer exists")
+
+    try:
+        await remove_taxonomy_node_from_chunks(zitadel_org_id, kb.slug, node_id, replacement_node_id=target_id)
+    except Exception:
+        await db.rollback()
+        log.exception(
+            "taxonomy_node_chunk_cleanup_failed",
+            extra={"org_id": zitadel_org_id, "kb_slug": kb.slug, "node_id": node_id, "target_id": target_id},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not update category on chunks",
+        ) from None
+
+    # Remove every occurrence of the source, then add the target once unless the
+    # row already has it: nothing stops an array holding an id twice, and a
+    # plain replace would double the target. An emptied array becomes NULL, the
+    # same "no topic" state a gap gets when classification finds nothing. Gap
+    # rows carry no kb_id, but node ids are globally unique, so org_id plus the
+    # id is the exact scope.
+    await db.execute(
+        text(
+            "UPDATE portal_retrieval_gaps SET taxonomy_node_ids = NULLIF("
+            "CASE WHEN CAST(:target AS integer) IS NULL "
+            "OR CAST(:target AS integer) = ANY(array_remove(taxonomy_node_ids, CAST(:source AS integer))) "
+            "THEN array_remove(taxonomy_node_ids, CAST(:source AS integer)) "
+            "ELSE array_append(array_remove(taxonomy_node_ids, CAST(:source AS integer)), "
+            "CAST(:target AS integer)) END, "
+            "'{}') "
+            "WHERE org_id = :org_id AND CAST(:source AS integer) = ANY(taxonomy_node_ids)"
+        ),
+        {"source": node_id, "target": target_id, "org_id": kb.org_id},
+    )
+
+
 # -- Taxonomy nodes -----------------------------------------------------------
 
 
@@ -349,10 +423,16 @@ async def update_taxonomy_node(
 async def delete_taxonomy_node(
     kb_slug: str,
     node_id: int,
+    reassign_to_node_id: int | None = None,
     perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Delete a taxonomy node. Reparents children and removes its id from chunks. Requires owner role."""
+    """Delete a taxonomy node. Requires owner role.
+
+    Children move to the deleted node's parent. Chunks and gap rows that carry
+    the node id get ``reassign_to_node_id`` instead, or lose the id when no
+    target is given.
+    """
     kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
     await _require_role(kb, perms.user_id, db, "owner")
     org = await _load_org_or_500(db, perms.org_id)
@@ -367,6 +447,18 @@ async def delete_taxonomy_node(
     if not node:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Node not found")
 
+    if reassign_to_node_id is not None:
+        target_result = await db.execute(
+            select(PortalTaxonomyNode.id).where(
+                PortalTaxonomyNode.id == reassign_to_node_id,
+                PortalTaxonomyNode.kb_id == kb.id,
+            )
+        )
+        if target_result.scalar_one_or_none() is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target node not found")
+        # Rejects the node itself and its descendants.
+        await _check_circular_reference(node_id, reassign_to_node_id, kb.id, db)
+
     # Reassign children to the deleted node's parent
     await db.execute(
         update(PortalTaxonomyNode)
@@ -377,23 +469,7 @@ async def delete_taxonomy_node(
         .values(parent_id=node.parent_id)
     )
 
-    # Remove this node id from Qdrant chunk payloads before deleting the
-    # portal-owned taxonomy row. If this fails, keep the node so chunks do not
-    # retain stale ids that are no longer visible in the taxonomy tree.
-    from app.services.knowledge_ingest_client import remove_taxonomy_node_from_chunks
-
-    try:
-        await remove_taxonomy_node_from_chunks(org.zitadel_org_id, kb_slug, node_id)
-    except Exception:
-        await db.rollback()
-        log.exception(
-            "taxonomy_node_chunk_cleanup_failed",
-            extra={"org_id": org.zitadel_org_id, "kb_slug": kb_slug, "node_id": node_id},
-        )
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Could not remove category from chunks",
-        ) from None
+    await _repoint_node_references(org.zitadel_org_id, kb, node_id, reassign_to_node_id, db)
 
     # Document counts are no longer denormalised on portal_taxonomy_nodes
     # (column dropped in fd9c4a39d14b). Live counts come from Qdrant via the
@@ -573,6 +649,7 @@ async def _execute_proposal_action(
     proposal: PortalTaxonomyProposal,
     kb: PortalKnowledgeBase,
     caller_id: str,
+    zitadel_org_id: str,
     db: AsyncSession,
 ) -> PortalTaxonomyNode | None:
     """Execute the DB mutations for a proposal. Returns the new node for new_node proposals."""
@@ -606,7 +683,7 @@ async def _execute_proposal_action(
         db.add(new_node)
 
     elif proposal.proposal_type == "merge":
-        await _execute_merge(payload, kb, db)
+        await _execute_merge(payload, kb, zitadel_org_id, db)
 
     elif proposal.proposal_type == "split":
         await _execute_split(payload, kb, caller_id, db)
@@ -620,6 +697,7 @@ async def _execute_proposal_action(
 async def _execute_merge(
     payload: dict,
     kb: PortalKnowledgeBase,
+    zitadel_org_id: str,
     db: AsyncSession,
 ) -> None:
     source_id = payload.get("source_node_id")
@@ -634,6 +712,10 @@ async def _execute_merge(
     target_node = target_result.scalar_one_or_none()
     if not source_node or not target_node:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Referenced node does not exist")
+    # Merging into itself or a descendant would delete the target or leave it
+    # as its own parent.
+    await _check_circular_reference(source_node.id, target_node.id, kb.id, db)
+    await _repoint_node_references(zitadel_org_id, kb, source_node.id, target_node.id, db)
     await db.execute(
         update(PortalTaxonomyNode).where(PortalTaxonomyNode.parent_id == source_id).values(parent_id=target_id)
     )
@@ -747,7 +829,7 @@ async def approve_proposal(
             new_payload["description"] = body.description.strip()
         proposal.payload = new_payload  # JSONB needs reassignment for SQLAlchemy to detect change
 
-    _new_node = await _execute_proposal_action(proposal, kb, perms.user_id, db)
+    _new_node = await _execute_proposal_action(proposal, kb, perms.user_id, org.zitadel_org_id, db)
 
     proposal.status = "approved"
     proposal.reviewed_by = perms.user_id
@@ -773,10 +855,9 @@ async def approve_proposal(
 
     # No post-commit refresh: RLS tenant context is transaction-scoped (see SPEC-SEC-021 post-mortem).
 
-    # Issue 2: invalidate coverage cache so the new node appears in the next
-    # GET /coverage call without a 5-minute wait.
-    if _new_node is not None:
-        _invalidate_coverage_cache(org.zitadel_org_id, kb_slug)
+    # Issue 2: invalidate coverage cache so a new node, or a merge that moved
+    # chunks and gaps, shows in the next GET /coverage without a 5-minute wait.
+    _invalidate_coverage_cache(org.zitadel_org_id, kb_slug)
 
     # Issue 1+4: trigger auto-categorise. When auto_categorise=false (batch
     # flow), skip — the caller will run a single backfill at the end. When

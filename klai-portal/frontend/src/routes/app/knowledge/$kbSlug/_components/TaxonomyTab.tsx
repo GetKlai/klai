@@ -338,7 +338,8 @@ export function TaxonomyTab({ kbSlug: kbSlugProp }: { kbSlug?: string } = {}) {
               isBackfilling={isRetagging}
               canEdit={canEdit}
               onRename={(nodeId, newName, description) => renameNodeMutation.mutate({ nodeId, name: newName, description })}
-              onDelete={(nodeId) => deleteNodeMutation.mutate(nodeId)}
+              taxonomyNodes={nodes}
+              onDelete={(nodeId, reassignToNodeId) => deleteNodeMutation.mutate({ nodeId, reassignToNodeId })}
             />
           )}
 
