@@ -667,8 +667,10 @@ async def test_loop_runs_both_channel_passes_independently():
 async def test_a_knowledge_failure_is_filed_as_an_internal_gap_after_the_judgment():
     """The LibreChat pass judged conversations but never told the knowledge
     inbox: on the pilot tenant that was the larger share of all knowledge
-    failures. It now files the employee's first question, after its own
-    commit, the same way the webchat pass does."""
+    failures. It files after its own commit, like the webchat pass, but under
+    the employee's LAST question: a LibreChat thread runs for weeks (one judged
+    in September started in May), so its opening says little about what went
+    wrong when it was judged."""
     from app.core.config import settings
     from app.core.provisioning_names import provisioning_names_for_slug
     from app.services import librechat_quality_judge as lj
@@ -679,8 +681,10 @@ async def test_a_knowledge_failure_is_filed_as_an_internal_gap_after_the_judgmen
             db_name: {
                 "conversations": [_conv("c-miss", minutes=5)],
                 "messages": [
-                    _msg("c-miss", user=True, minutes=0, text="hoe lees ik een SIP-trace?"),
-                    _msg("c-miss", user=False, minutes=1, text="Dat staat niet in de kennisbank."),
+                    _msg("c-miss", user=True, minutes=0, text="maak een samenvatting van dit document"),
+                    _msg("c-miss", user=False, minutes=1, text="Hier is de samenvatting."),
+                    _msg("c-miss", user=True, minutes=2, text="hoe lees ik een SIP-trace?"),
+                    _msg("c-miss", user=False, minutes=3, text="Dat staat niet in de kennisbank."),
                 ],
             }
         }
