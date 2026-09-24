@@ -5,7 +5,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import case, distinct, func, or_, select, update
+from sqlalchemy import case, distinct, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_kb_with_access, require_capability
@@ -19,7 +19,7 @@ from app.models.support_cases import PortalSupportCase
 from app.models.taxonomy import PortalTaxonomyNode
 from app.models.widgets import WidgetConversation
 from app.services.access import is_personal_kb
-from app.services.conversation_judge import _JUDGE_GAP_CALLER_CLIENT_ID
+from app.services.gap_events import JUDGE_CALLER_CLIENT_ID, REVIEW_CALLER_CLIENT_ID, shows_unmet_need
 from app.services.support_case_reviews import REFERENCE_KEY, compute_analysis_revision, reviews_for_current_revision
 from app.services.support_cases import _question_key
 
@@ -34,13 +34,6 @@ router = APIRouter(
     ],
 )
 
-# caller_client_id of the answer-review producer; a group containing one of its
-# rows is review-sourced rather than telemetry-only.
-_REVIEW_CALLER_CLIENT_ID = "human-review"
-# Producers whose row is a verdict that the visitor went unhelped: a person in
-# the answer review, or the conversation judge.
-_VERDICT_CALLER_CLIENT_IDS = (_REVIEW_CALLER_CLIENT_ID, _JUDGE_GAP_CALLER_CLIENT_ID)
-
 
 class GapTopic(BaseModel):
     id: int
@@ -52,7 +45,8 @@ class GapOut(BaseModel):
     gap_type: str
     language: str | None = None
     # "support" = a case-backed content finding; "review" = a human already saw
-    # this question (answer-review flow); "automatic" = telemetry only.
+    # this question (answer-review flow); "judge" = the conversation judge found
+    # the knowledge to blame; "automatic" = telemetry only.
     source: str
     # Conversation the newest row of the group came from, NULL when the gap
     # has no conversation or that conversation no longer exists.
@@ -182,7 +176,10 @@ async def list_gaps(
                 (func.bool_and(PortalRetrievalGap.resolved_at.isnot(None)), func.max(PortalRetrievalGap.resolved_at)),
                 else_=None,
             ).label("resolved_at"),
-            func.bool_or(PortalRetrievalGap.caller_client_id == _REVIEW_CALLER_CLIENT_ID).label("has_review"),
+            func.bool_or(PortalRetrievalGap.caller_client_id == REVIEW_CALLER_CLIENT_ID).label("has_review"),
+            func.bool_or(PortalRetrievalGap.caller_client_id == JUDGE_CALLER_CLIENT_ID).label("has_judge"),
+            # Part of the group key, so one value per group.
+            func.max(PortalRetrievalGap.audience).label("audience"),
         )
         .where(
             PortalRetrievalGap.org_id == perms.org_id,
@@ -191,17 +188,11 @@ async def list_gaps(
             # with unique-case frequency); keep them out of the legacy
             # query_text grouping so the two never mix.
             PortalRetrievalGap.support_case_id.is_(None),
-            # Only rows that show the visitor went unhelped are inbox items. A
-            # low retrieval score ("soft") alone does not: most such answers
-            # were fine, and the judge now files a row for the ones that were
-            # not. A redacted row has no question anyone could act on. On the
-            # first tenant measured these two made up most open rows, including
-            # the largest groups. The rows stay stored; they only leave this list.
-            PortalRetrievalGap.query_text.not_like("[REDACTED:%"),
-            or_(
-                PortalRetrievalGap.gap_type == "hard",
-                PortalRetrievalGap.caller_client_id.in_(_VERDICT_CALLER_CLIENT_IDS),
-            ),
+            # Only rows that show the visitor went unhelped are inbox items. On
+            # the first tenant measured, low-score and redacted rows made up
+            # most open rows, including the largest groups. They stay stored;
+            # they only leave this list.
+            shows_unmet_need(),
         )
         .group_by(group_key_expr, PortalRetrievalGap.gap_type, PortalRetrievalGap.language)
         .order_by(
@@ -316,7 +307,8 @@ async def list_gaps(
             query_text=r.query_text,
             gap_type=r.gap_type,
             language=r.language,
-            source="review" if r.has_review else "automatic",
+            source="review" if r.has_review else "judge" if r.has_judge else "automatic",
+            audience=r.audience,
             conversation_id=conversation_by_group.get((r.group_key, r.gap_type, r.language)),
             top_score=r.top_score,
             nearest_kb_slug=r.nearest_kb_slug,

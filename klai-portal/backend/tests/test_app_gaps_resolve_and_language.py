@@ -228,6 +228,44 @@ async def test_record_gap_event_grouping_failure_leaves_the_row_on_its_own_key(m
     session.execute.assert_not_awaited()  # no UPDATE was ever attempted
 
 
+@pytest.mark.asyncio
+async def test_the_grouping_judge_sees_the_most_similar_groups_not_an_arbitrary_hundred() -> None:
+    """With hundreds of open groups the judge prompt cannot hold them all, and
+    an unordered LIMIT handed it whichever groups the planner returned first,
+    so the one it should match could simply be missing. Candidates are now
+    ranked by embedding similarity to the question and only the closest go in."""
+    from app.services import gap_events
+
+    candidates = [
+        {"question_key": f"k{i}", "question": f"vraag {i}", "language": "nl", "audience": None} for i in range(60)
+    ]
+
+    async def _embed(texts: list[str]) -> list[list[float]]:
+        # The question points along x; candidate i leans towards x as i grows.
+        return [[1.0, 0.0]] + [[i / 60, 1 - i / 60] for i in range(60)]
+
+    seen: list[list[str]] = []
+
+    async def _judge(findings: list[dict], cands: list[dict]) -> list[dict]:
+        seen.append([c["question_key"] for c in cands])
+        return findings
+
+    session = AsyncMock()
+    with (
+        patch("app.core.database.tenant_scoped_session", _fake_tenant_scoped_session(session)),
+        patch("app.services.support_cases._open_group_candidates", AsyncMock(return_value=candidates)),
+        patch("app.services.support_gap_grouping.group_findings", _judge),
+        patch.object(gap_events, "_embed", _embed),
+    ):
+        await gap_events.fold_into_open_group(
+            org_id=1, kb_slug=None, question="vraag", language="nl", audience=None, base_key="own"
+        )
+
+    assert len(seen[0]) == gap_events.PROMPT_CANDIDATES
+    assert seen[0][0] == "k59"  # the most similar comes first
+    assert "k0" not in seen[0]  # the least similar is left out
+
+
 # ---------------------------------------------------------------------------
 # GET /api/app/gaps — language grouping, source, conversation link
 # ---------------------------------------------------------------------------
@@ -240,6 +278,8 @@ def _group_row(
     *,
     group_key: str | None = None,
     has_review: bool = False,
+    has_judge: bool = False,
+    audience: str | None = None,
     resolved_at: datetime | None = None,
 ) -> SimpleNamespace:
     # A pre-migration row has no persisted question_key, so its group_key
@@ -256,6 +296,8 @@ def _group_row(
         last_occurred=_NOW,
         resolved_at=resolved_at,
         has_review=has_review,
+        has_judge=has_judge,
+        audience=audience,
     )
 
 
@@ -402,6 +444,19 @@ async def test_list_gaps_labels_group_source_from_caller_client_id() -> None:
     grouped = db.statements[0]
     assert "bool_or(portal_retrieval_gaps.caller_client_id = " in grouped
     assert "human-review" in db.compiled[0].params.values()
+
+
+@pytest.mark.asyncio
+async def test_list_gaps_labels_a_judge_group_and_carries_its_audience() -> None:
+    """A group the conversation judge filed is neither a human review nor bare
+    telemetry, and whether a customer or an employee missed the knowledge
+    decides who has to write it, so both travel to the screen."""
+    db = _FakeGapDb([_group_row(query_text="SIP-trace lezen", has_judge=True, audience="internal")])
+
+    out = await _list_gaps(db)
+
+    assert [(g.source, g.audience) for g in out.gaps] == [("judge", "internal")]
+    assert "quality-judge" in db.compiled[0].params.values()
 
 
 @pytest.mark.asyncio

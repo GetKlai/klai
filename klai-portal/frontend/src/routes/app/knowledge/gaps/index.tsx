@@ -29,11 +29,11 @@ import { PageHeader } from '@/components/ui/page-header'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import { appNavGapsIsVisible } from '@/routes/app/-app-tools'
 import { TranscriptImportDialog } from './_components/TranscriptImportDialog'
-import { caseSourceLabel, diagnosisLabel } from './-support-helpers'
+import { audienceLabel, caseSourceLabel, diagnosisLabel } from './-support-helpers'
 import { gapGroupDigest } from './-gap-identity'
-import { closerLabel, formatRelativeTime, type GapsResponse, type KBsResponse } from './-gap-types'
+import { closerLabel, formatRelativeTime, type GapRow, type GapsResponse, type KBsResponse } from './-gap-types'
 
-type GapSource = 'automatic' | 'review' | 'support'
+type GapSource = GapRow['source']
 type GapsSearch = { days?: number; language?: string; include_resolved?: boolean }
 const VALID_DAYS = new Set([7, 14, 30, 60, 90])
 // BCP-47-ish: 2-3 letter language subtag, optional 2-4 letter script/region
@@ -199,6 +199,7 @@ export function GapsPage() {
             <option value="">{m.gaps_filter_all()}</option>
             <option value="automatic">{m.gaps_source_automatic()}</option>
             <option value="review">{m.gaps_source_review()}</option>
+            <option value="judge">{m.gaps_source_judge()}</option>
             <option value="support">{m.gaps_source_support()}</option>
           </Select>
         </div>
@@ -273,7 +274,7 @@ export function GapsPage() {
                       {gap.source === 'support' && gap.diagnosis && (
                         <div className="mt-1 truncate text-xs text-gray-500">
                           {diagnosisLabel(gap.diagnosis)}
-                          {gap.audience ? ` · ${gap.audience}` : ''}
+                          {gap.audience ? ` · ${audienceLabel(gap.audience)}` : ''}
                         </div>
                       )}
                     </DataTableCell>
@@ -292,7 +293,9 @@ export function GapsPage() {
                                   ? m.gaps_source_support()
                                   : gap.source === 'review'
                                     ? m.gaps_source_review()
-                                    : m.gaps_source_automatic()}
+                                    : gap.source === 'judge'
+                                      ? `${m.gaps_source_judge()}${gap.audience ? ` · ${audienceLabel(gap.audience)}` : ''}`
+                                      : m.gaps_source_automatic()}
                               </Badge>
                             )}
                       </div>

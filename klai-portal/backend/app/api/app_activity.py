@@ -33,7 +33,7 @@ from app.core.database import get_db
 from app.core.permissions import ProfileRole, UserPermissions, get_caller, require_platform_unlocked
 from app.core.profiles import PROFILE_RANK, Capability
 from app.models.answer_reviews import AnswerReview
-from app.services.gap_events import record_gap_event
+from app.services.gap_events import REVIEW_CALLER_CLIENT_ID, record_gap_event
 
 logger = logging.getLogger(__name__)
 
@@ -389,7 +389,6 @@ UPDATE portal_retrieval_gaps
 # A knowledge cause is a gap by definition; the other causes are not the
 # knowledge base's fault (SPEC-KNOWLEDGE-ACTIVITY-001 §4.2, Appendix B).
 _GAP_TYPE_FOR_CAUSE = {"knowledge_missing": "hard", "knowledge_wrong": "soft"}
-_HUMAN_REVIEW_CALLER = "human-review"
 
 # Columns a re-review overwrites; everything else on the row is immutable
 # context or a snapshot taken when the review was filed.
@@ -1082,7 +1081,7 @@ async def _sync_review_gap(
             top_score=signals.get("top_score"),
             nearest_kb_slug=kb_slug,
             chunks_retrieved=int(signals.get("sources_count") or 0),
-            caller_client_id=_HUMAN_REVIEW_CALLER,
+            caller_client_id=REVIEW_CALLER_CLIENT_ID,
             conversation_id=message.conversation_id,
             language=_question_language(message, signals),
         )
