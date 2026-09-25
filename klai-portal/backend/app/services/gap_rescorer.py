@@ -128,10 +128,10 @@ async def rescore_open_gaps(
 
     resolved_count = 0
     # SPEC-SEC-IDENTITY-ASSERT-001 REQ-4.2: retrieval-api requires
-    # X-Caller-Service for any /retrieve with an end-user identity in the
-    # body. We send `system` here in user_id, but the header is still
-    # validated. Without it: 400 missing_caller_service → silent rescore
-    # noop. See pitfalls → retrieve-caller-service-header-mismatch.
+    # X-Caller-Service for every internal-secret /retrieve call, whether or
+    # not the body carries an end-user identity. Without it: 400
+    # missing_caller_service → silent rescore noop. See pitfalls →
+    # retrieve-caller-service-header-mismatch.
     #
     # SPEC-SEC-010 REQ-1: retrieval-api's AuthMiddleware treats
     # `Authorization: Bearer <token>` strictly as a JWT — non-JWT strings
@@ -155,13 +155,15 @@ async def rescore_open_gaps(
     async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
         for row in gap_queries:
             try:
+                # No user_id: a rescore has no end user. retrieval-api verifies
+                # any user_id against portal_users, so the old "system"
+                # placeholder got a 403 on every call.
                 resp = await client.post(
                     f"{settings.knowledge_retrieve_url}/retrieve",
                     headers=headers,
                     json={
                         "query": row.query_text,
                         "org_id": zitadel_org_id,
-                        "user_id": "system",
                         "scope": "org",
                         "top_k": 5,
                     },

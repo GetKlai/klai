@@ -120,6 +120,61 @@ async def test_rescore_marks_resolved_when_no_longer_gap() -> None:
 
 
 @pytest.mark.asyncio
+async def test_rescore_sends_no_end_user_identity() -> None:
+    """gap_rescorer is a tenant-only service call with no real end user.
+
+    Regression: sending ``user_id="system"`` makes retrieval-api's
+    ``verify_body_identity()`` take the user-bound identity-assert path and
+    look up "system" as a ``portal_users`` membership, which never exists --
+    every rescore was denied with 403 (production symptom: "gap_rescorer:
+    retrieval API returned 403 ... -- skipping", 150-350/day since
+    2026-09-18). ``user_id`` must be omitted/None so retrieval-api takes the
+    tenant-only verification path instead, the same one partner_chat uses for
+    anonymous widget calls with no ``partner_user_id``.
+    """
+    from app.services.gap_rescorer import rescore_open_gaps
+
+    mock_row = MagicMock()
+    mock_row.query_text = "identity test"
+    mock_row.gap_type = "soft"
+
+    mock_result = MagicMock()
+    mock_result.all.return_value = [mock_row]
+
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock(return_value=mock_result)
+    mock_db.commit = AsyncMock()
+
+    mock_response = MagicMock()
+    mock_response.is_success = True
+    mock_response.json.return_value = {"chunks": [{"reranker_score": 0.8}]}
+
+    with (
+        patch("app.services.gap_rescorer.settings") as mock_settings,
+        patch("app.services.gap_rescorer.httpx.AsyncClient") as mock_client_cls,
+    ):
+        mock_settings.knowledge_retrieve_url = "http://test-retrieve:8000"
+        mock_settings.internal_secret = ""
+        mock_settings.klai_gap_soft_threshold = 0.4
+        mock_settings.klai_gap_dense_threshold = 0.35
+
+        mock_client = AsyncMock()
+        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        await rescore_open_gaps(org_id=1, zitadel_org_id="z1", kb_slug=None, db=mock_db)
+
+    post_body = mock_client.post.call_args.kwargs["json"]
+    assert post_body.get("user_id") is None, (
+        "user_id must be omitted/None -- a synthetic 'system' user_id makes "
+        "retrieval-api's verify_body_identity() look up portal_users "
+        "membership for 'system', which never exists, and deny every "
+        "rescore with 403."
+    )
+
+
+@pytest.mark.asyncio
 async def test_rescore_keeps_open_when_still_gap() -> None:
     """Retrieval still returns low scores -- resolved_at stays None."""
     from app.services.gap_rescorer import rescore_open_gaps
