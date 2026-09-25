@@ -5,7 +5,9 @@
 # kinds of drift escape it. Pull requests it opens and nobody merges: on
 # 2026-09-25 six had been open for up to five weeks, the oldest since
 # 2026-08-22. And images Klai builds from upstream source, which no registry
-# lookup can follow. This fails, so the weekly run mails, until someone acts.
+# lookup can follow (crawl4ai, and Presidio and LibreChat, which are pinned by
+# digest or rebuilt from an upstream tag). This fails, so the weekly run
+# mails, until someone acts.
 #
 # Env: GH_TOKEN with read access to REPOS; MAX_PR_AGE_DAYS (default 14).
 set -uo pipefail
@@ -37,6 +39,27 @@ theirs=$(upstream_latest unclecode/crawl4ai)
 if [ -z "$theirs" ]; then fail "crawl4ai: could not read the upstream release"
 elif newer "$ours" "$theirs"; then fail "crawl4ai: we build $ours, upstream released $theirs (deploy/crawl4ai/Dockerfile)"
 else ok "crawl4ai: $ours is the upstream release"; fi
+
+ghcr_latest() { # newest plain X.Y.Z tag of a public GHCR image
+  local t; t=$(curl -fsS "https://ghcr.io/token?scope=repository:$1:pull" | python3 -c 'import json,sys;print(json.load(sys.stdin)["token"])') || return 0
+  curl -fsS -H "Authorization: Bearer $t" "https://ghcr.io/v2/$1/tags/list?n=1000" \
+    | python3 -c 'import json,re,sys;v=[x for x in json.load(sys.stdin).get("tags",[]) if re.fullmatch(r"\d+\.\d+\.\d+",x)];print(max(v,key=lambda s:tuple(map(int,s.split(".")))) if v else "")'
+}
+
+# Presidio is pinned by digest (analyzer base in its Dockerfile, anonymizer in
+# compose), which Renovate cannot map to a version.
+ours=$(sed -n "s/^  BASE_PRESIDIO_VERSION: '\(.*\)'/\1/p" .github/workflows/presidio-analyzer-image-build.yml)
+theirs=$(ghcr_latest data-privacy-stack/presidio-analyzer)
+if [ -z "$theirs" ]; then fail "presidio: could not read the upstream tags"
+elif newer "$ours" "$theirs"; then fail "presidio: we build on $ours, upstream published $theirs (deploy/presidio/analyzer/Dockerfile and the anonymizer digest in compose)"
+else ok "presidio: $ours is the upstream release"; fi
+
+# LibreChat is rebuilt from an upstream tag; release candidates do not count.
+ours=$(sed -n 's/^  DEFAULT_LIBRECHAT_TAG: v//p' .github/workflows/librechat-image-build.yml)
+theirs=$(gh api 'repos/danny-avila/LibreChat/tags?per_page=50' --jq '.[].name' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' | sort -V | tail -1)
+if [ -z "$theirs" ]; then fail "librechat: could not read the upstream tags"
+elif newer "$ours" "$theirs"; then fail "librechat: we build on $ours, upstream released $theirs (DEFAULT_LIBRECHAT_TAG)"
+else ok "librechat: $ours is the latest stable upstream release"; fi
 
 ours=$(grep -oE 'vexaai/transcription-service:[0-9.]+' deploy/docker-compose.gpu.yml | head -1 | sed 's/.*://')
 theirs=$(upstream_latest Vexa-ai/vexa)
