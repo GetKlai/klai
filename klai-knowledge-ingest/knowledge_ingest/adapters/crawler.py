@@ -30,6 +30,7 @@ from knowledge_ingest.crawl4ai_client import (
     _canonicalise_url,
     crawl_site,
 )
+from knowledge_ingest.crawl_change import crawl_change_hash, crawled_page_unchanged
 from knowledge_ingest.crawl_checkpoint import (
     ConnectionFactory,
     CrawlExecutionBusy,
@@ -1520,16 +1521,7 @@ async def _ingest_crawl_result(
     connector_id: str | None = None,
     resource_key: str | None = None,
 ) -> None:
-    """Process a crawl result: dedup, extract links, ingest.
-
-    WARNING (pipeline config change): modifying crawl4ai settings in
-    crawl4ai_client.build_crawl_config() changes content_hash for every page
-    even when the actual page content has not changed.  After such a change,
-    force a full re-ingest by clearing content_hash:
-      UPDATE knowledge.crawled_pages
-         SET content_hash = ''
-       WHERE org_id = '<org>' AND kb_slug = '<slug>';
-    """
+    """Process a crawl result: dedup, extract links, ingest."""
     if not result.success:
         # With a login indicator set, crawl4ai's wait_for fails on auth-walled
         # pages and returns success=False. run_crawl_job catches this first
@@ -1546,7 +1538,7 @@ async def _ingest_crawl_result(
     is_pdf = "application/pdf" in content_type_header or url.lower().endswith(".pdf")
     content_type = "pdf_document" if is_pdf else "kb_article"
 
-    # Dual-hash dedup (see migration 012)
+    # Dual-hash dedup (migration 012); content_hash is the change hash from crawl_change.
     if stored is _UNSET:
         stored = await pg_store.get_crawled_page_stored(conn, org_id, kb_slug, url)
 
@@ -1660,13 +1652,16 @@ async def _ingest_crawl_result(
         # Short but unique (no near-duplicate siblings): fall through and
         # keep it — this is the case the flat threshold got wrong.
 
-    content_hash = hashlib.sha256(text.encode()).hexdigest()
-    if stored is not None:
+    content_hash = crawl_change_hash(text, url)
+    if stored is not None and active_connector_artifact_exists:
         _, stored_content = stored  # type: ignore[misc]
-        if (
-            stored_content is not None
-            and stored_content == content_hash
-            and active_connector_artifact_exists
+        if await crawled_page_unchanged(
+            conn,
+            org_id=org_id,
+            kb_slug=kb_slug,
+            url=url,
+            stored_content_hash=stored_content,
+            change_hash=content_hash,
         ):
             await pg_store.upsert_crawled_page(
                 conn,
