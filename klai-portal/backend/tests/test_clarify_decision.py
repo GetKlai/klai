@@ -118,6 +118,53 @@ def test_a_hyphenated_title_word_stays_whole_as_an_option():
     assert clarify_gate(ASK, [ios, android], THRESHOLD).options == ("iOS-app", "Android-app")
 
 
+def test_a_shared_generic_section_heading_links_no_documents():
+    voicemail = _chunk("Voicemail", 0.9, heading="Voicemail > Setup")
+    invoices = _chunk("Invoices", 0.85, heading="Invoices > Setup")
+
+    gate = clarify_gate([{"role": "user", "content": "voicemail setup"}], [voicemail, invoices], THRESHOLD)
+
+    assert gate.reason == "no_axis"
+
+
+def test_leftover_title_words_are_no_variant():
+    """Measured on a production sample: two of ten written questions offered
+    "Draadloze Telefoons Basisstation Installatie" against "functies"."""
+    register = "Zeta > Zeta registreren bij het platform"
+    setup = _chunk("Hoe stel ik mijn Zeta bureautelefoon in?", 0.95, heading=register, slug="setup")
+    wireless = _chunk("Zeta Draadloze Telefoons (Basisstation) Installatie", 0.9, heading=register, slug="dect")
+    functions = _chunk("Zeta bureautelefoon functies", 0.85, heading="Functies > Doorverbinden", slug="functions")
+
+    gate = clarify_gate([{"role": "user", "content": "zeta registreren"}], [setup, wireless, functions], THRESHOLD)
+
+    assert gate.reason == "no_axis"
+
+
+def test_articles_for_two_different_devices_are_variants_without_a_shared_topic():
+    android = _chunk("Alpha app for Android", 0.9, heading="Alpha app for Android > FAQ")
+    iphone = _chunk("Alpha app iPhone troubleshooter", 0.85, heading="Troubleshooter > No sound")
+
+    gate = clarify_gate([{"role": "user", "content": "I hear nothing"}], [android, iphone], THRESHOLD)
+
+    assert (gate.reason, gate.axis, gate.options) == ("asked", "device", ("Android", "iPhone"))
+
+
+def test_a_visitor_who_names_any_device_is_not_asked_which_device():
+    """The visitor wrote "iPhone" and was still asked "iOS or Android?"."""
+    gate = clarify_gate([{"role": "user", "content": "I can't call from the webphone"}], [IPHONE, ANDROID], THRESHOLD)
+
+    assert gate.reason == "variant_named"
+
+
+def test_on_the_device_axis_the_options_are_the_devices_and_a_brand_word_names_none():
+    iphone = _chunk("Zeta iPhone troubleshooter", 0.9, heading="Troubleshooter > No connection", slug="iphone")
+    android = _chunk("Android app", 0.85, heading="Android app > FAQ", slug="android")
+
+    gate = clarify_gate([{"role": "user", "content": "no connection with zeta"}], [iphone, android], THRESHOLD)
+
+    assert (gate.reason, gate.options) == ("asked", ("iPhone", "Android"))
+
+
 async def _decide(question: str | None) -> ClarifyDecision:
     reply = None if question is None else cd.ClarifyQuestion(question=question)
     with patch.object(cd, "structured_judge_call", AsyncMock(return_value=reply)) as call:

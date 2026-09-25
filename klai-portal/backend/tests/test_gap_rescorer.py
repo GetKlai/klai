@@ -172,6 +172,9 @@ async def test_rescore_sends_no_end_user_identity() -> None:
         "membership for 'system', which never exists, and deny every "
         "rescore with 403."
     )
+    # A rescore is not a person asking: it may not count as a knowledge query
+    # of the tenant, nor log at the tenant's telemetry level.
+    assert post_body["purpose"] == "background"
 
 
 @pytest.mark.asyncio

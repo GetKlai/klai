@@ -30,7 +30,13 @@ class LibreChatIdentityError(Exception):
     """The LibreChat user id does not resolve to a user of this org."""
 
 
-async def resolve_librechat_user(db: AsyncSession, org: PortalOrg, librechat_user_id: str) -> PortalUser:
+async def resolve_librechat_user(
+    db: AsyncSession, org: PortalOrg, librechat_user_id: str, *, remember: bool = True
+) -> PortalUser:
+    """The portal user behind a LibreChat id; ``remember`` caches the mapping on the user row.
+
+    Operator scripts that only read production pass ``remember=False``.
+    """
     await set_tenant(db, org.id)
 
     # Fast path: the mapping was cached on an earlier call.
@@ -83,8 +89,9 @@ async def resolve_librechat_user(db: AsyncSession, org: PortalOrg, librechat_use
         logger.warning("KB authz: no portal user for zitadel_user_id %s — fail-closed", zitadel_user_id)
         raise LibreChatIdentityError
 
-    user.librechat_user_id = librechat_user_id
-    await db.commit()
+    if remember:
+        user.librechat_user_id = librechat_user_id
+        await db.commit()
     return user
 
 

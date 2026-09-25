@@ -189,7 +189,10 @@ async def test_new_call_runs_with_the_internal_profile_resolved_for_the_sampled_
         ),
     }
 
-    async def resolve_user(_db, _org, librechat_user_id):
+    remembered: list[bool] = []
+
+    async def resolve_user(_db, _org, librechat_user_id, *, remember):
+        remembered.append(remember)
         return employees[librechat_user_id]
 
     async def knowledge_access(_db, _user):
@@ -224,6 +227,7 @@ async def test_new_call_runs_with_the_internal_profile_resolved_for_the_sampled_
 
     samples = await replay._sample(_ORG, 5)
     assert [s.cid for s in samples] == ["c-strict"], "a user without knowledge mode is not replayed"
+    assert remembered and not any(remembered), "the replay may not write the LibreChat mapping to production"
     answer = await replay._new_answer(_ORG, samples[0].profile, [{"role": "user", "content": samples[0].asks[0]}])
 
     profile = calls[0]["profile"]

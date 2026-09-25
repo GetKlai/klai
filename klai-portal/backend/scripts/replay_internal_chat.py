@@ -228,7 +228,7 @@ async def _sample(org: PortalOrg, count: int) -> list[Sample]:
     async with tenant_scoped_session(org.id) as db:
         for user in dict.fromkeys(c["user"] for c in candidates):
             try:
-                profile = await resolve_internal_profile(db, org, user)
+                profile = await resolve_internal_profile(db, org, user, remember=False)
             except LibreChatIdentityError:
                 continue
             if _is_knowledge_profile(profile):

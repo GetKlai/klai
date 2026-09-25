@@ -464,6 +464,62 @@ class TestEmitEventUsesVerifiedTuple:
         ]
 
 
+@pytest.mark.parametrize(
+    ("purpose", "emitted", "level"), [("chat", 1, "full"), ("background", 0, "off")]
+)
+def test_a_background_retrieval_is_no_knowledge_query_of_the_tenant(
+    monkeypatch, app_client, purpose, emitted, level
+):
+    """A gap rescore or an evaluation run is not a person asking: counting it
+    inflated the tenant's usage metric by one event per replayed question."""
+
+    class _TenantOnlyAsserter:
+        async def verify_tenant(self, **_kw) -> VerifyResult:
+            return VerifyResult.allow_tenant(org_id="org-canonical", org_slug="acme")
+
+    monkeypatch.setattr(
+        "retrieval_api.middleware.auth._get_asserter", lambda: _TenantOnlyAsserter()
+    )
+    monkeypatch.setattr(
+        "retrieval_api.api.retrieve.get_canonical_level", AsyncMock(return_value="full")
+    )
+    events: list[str] = []
+    monkeypatch.setattr(
+        "retrieval_api.api.retrieve.emit_event", lambda event_type, **_kw: events.append(event_type)
+    )
+    levels: list[str] = []
+    from retrieval_api.api import retrieve as retrieve_module
+
+    record = retrieve_module._record_decision_and_shadow
+
+    def _record(state):
+        levels.append(state.effective_level)
+        record(state)
+
+    monkeypatch.setattr(retrieve_module, "_record_decision_and_shadow", _record)
+
+    patches = _patch_retrieval_pipeline_to_empty_results()
+    with patches[0], patches[1], patches[2], patches[3]:
+        resp = app_client.post(
+            "/retrieve",
+            json={
+                "query": "q",
+                "org_id": "org-body",
+                "scope": "org",
+                "telemetry_level": "full",
+                "purpose": purpose,
+            },
+            headers={
+                "X-Internal-Secret": "test-internal-secret-do-not-use-in-prod",
+                "X-Caller-Service": "portal-api",
+            },
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert len(events) == emitted
+    assert levels == [level]
+
+
 # ---------------------------------------------------------------------------
 # JWT path preservation: existing SPEC-SEC-010 cross-check still wins
 # (regression guard — Phase D extends the internal-secret path without

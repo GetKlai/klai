@@ -13,6 +13,9 @@ Modes:
   calls, and the evidence pack is cached in the output folder. The gate runs on
   every question and the question writer (klai-fast) only on the ones it
   fires on. Writes ``labels.jsonl`` for the owner to fill in.
+- ``gate <sample folder>`` (local, no settings, no network, no model): the
+  gate again over the questions and cached packs a ``sample`` run wrote, with
+  the owner's labels carried over, so every change is re-scored for free.
 - ``gate <replay.jsonl> [pool.json]`` (local, no settings, no network, no
   model): the gate over cached rows that carry ``top`` and ``titles`` only.
   Without per-chunk scores and heading paths every title counts as strong
@@ -34,6 +37,7 @@ hand and it never enters the repository.
 
     docker exec -w /repo/klai-portal/backend klai-core-portal-api-1 \\
         python scripts/clarify_gate_eval.py sample <org_slug> [n]
+    python scripts/clarify_gate_eval.py gate <sample folder>
     python scripts/clarify_gate_eval.py gate <replay.jsonl> [pool.json]
     python scripts/clarify_gate_eval.py score <labels.jsonl> [cases.json]
 """
@@ -146,6 +150,28 @@ def run_gate(replay_path: Path, pool_path: Path | None, threshold: float = _LOCA
                 threshold,
             )
         )
+    return rows
+
+
+def run_gate_on_sample(folder: Path, threshold: float = _LOCAL_THRESHOLD) -> list[dict]:
+    """The gate again over a folder ``sample`` wrote: its questions, its cached packs, its labels kept."""
+    from klai_citations import evidence_pack_items_as_chunks
+
+    rows = []
+    for line in (folder / "labels.jsonl").read_text().splitlines():
+        sampled = json.loads(line)
+        chunks = evidence_pack_items_as_chunks(json.loads((folder / "packs" / f"{sampled['id']}.json").read_text()))
+        messages = [*sampled["context"], {"role": "user", "content": sampled["question"]}]
+        scores = [c["reranker_score"] for c in chunks if c.get("reranker_score") is not None]
+        row = _row(
+            sampled["id"],
+            sampled["surface"],
+            messages,
+            max(scores, default=None),
+            clarify_gate(messages, chunks, threshold),
+            threshold,
+        )
+        rows.append({**row, **{key: sampled.get(key, "") for key in ("label_should_ask", "label_axis", "note")}})
     return rows
 
 
@@ -303,7 +329,7 @@ async def _librechat_openings(org: Any, count: int) -> list[tuple[str, str, list
     async with tenant_scoped_session(org.id) as db:
         for candidate in await asyncio.to_thread(read):
             try:
-                profile = await resolve_internal_profile(db, org, candidate["user"])
+                profile = await resolve_internal_profile(db, org, candidate["user"], remember=False)
             except LibreChatIdentityError:
                 continue
             # General searches nothing, and a personal-only scope is no org retrieval.
@@ -334,6 +360,8 @@ async def _evidence_pack(
         "top_k": top_k,
         "conversation_history": [],
         "telemetry_level": "off",
+        # Not a tenant's question: no knowledge.queried event in its usage.
+        "purpose": "background",
     }
     if kb_slugs:
         body["kb_slugs"] = kb_slugs
@@ -408,7 +436,11 @@ def main(argv: list[str]) -> None:
     if mode == "sample" and len(argv) in (3, 4):
         asyncio.run(run_sample(argv[2], int(argv[3]) if len(argv) == 4 else 250))
     elif mode == "gate" and len(argv) in (3, 4):
-        rows = run_gate(Path(argv[2]), Path(argv[3]) if len(argv) == 4 else None)
+        source = Path(argv[2])
+        if source.is_dir():
+            rows = run_gate_on_sample(source)
+        else:
+            rows = run_gate(source, Path(argv[3]) if len(argv) == 4 else None)
         path = _write_rows(_out_dir(), rows)
         _print_gate_summary(rows)
         print(f"conversations found for {sum(1 for r in rows if r['question'])}/{len(rows)} rows")

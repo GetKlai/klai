@@ -372,6 +372,35 @@ class TestSubQueryFanoutEmitsSingleEvent:
 
         assert emitted == []
 
+    @pytest.mark.asyncio
+    async def test_a_background_fan_out_emits_no_event_and_its_legs_stay_background(
+        self, monkeypatch
+    ):
+        emitted: list[str] = []
+        monkeypatch.setattr(
+            retrieve_module, "emit_event", lambda event_type, **_kw: emitted.append(event_type)
+        )
+        purposes: list[str] = []
+
+        async def fake_retrieve(sub_req, request, _auth=None):
+            purposes.append(sub_req.purpose)
+            return _response("medium", [_item("E1", f"c-{len(purposes)}")], [_source("S1", ["E1"])])
+
+        monkeypatch.setattr(retrieve_module, "retrieve", fake_retrieve)
+        request = MagicMock()
+        request.state = SimpleNamespace(
+            verified_caller=SimpleNamespace(org_id="org-1", user_id="user-1")
+        )
+
+        await retrieve_module._retrieve_sub_queries(
+            _request(["vraag een", "vraag twee"]).model_copy(update={"purpose": "background"}),
+            request,
+            MagicMock(),
+        )
+
+        assert emitted == []
+        assert purposes == ["background", "background"]
+
 
 class TestSubQueryTopKRespectsOne:
     @pytest.mark.asyncio

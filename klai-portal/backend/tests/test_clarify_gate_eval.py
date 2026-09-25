@@ -12,7 +12,9 @@ import json
 import sys
 from pathlib import Path
 
+import httpx
 import pytest
+import respx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
@@ -83,3 +85,49 @@ def test_the_gate_mode_prints_counts_and_writes_the_questions_outside_the_reposi
     assert question not in printed and "iPhone" not in printed
     (row,) = [json.loads(line) for line in (tmp_path / "out" / "labels.jsonl").read_text().splitlines()]
     assert (row["question"], row["options"]) == (question, ["iPhone", "Android"])
+
+
+async def test_the_sample_retrieval_is_a_background_call_and_is_cached(tmp_path, monkeypatch):
+    """An evaluation run is not a tenant's question: without ``purpose`` every
+    sampled question counted as a knowledge query in the tenant's usage."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "knowledge_retrieve_url", "http://retrieval.example.com")
+    pack = {"items": [{"title": "Alpha app iPhone", "reranker_score": 0.9}]}
+    with respx.mock() as router:
+        route = router.post("http://retrieval.example.com/retrieve").mock(
+            return_value=httpx.Response(200, json={"evidence_pack": pack})
+        )
+        first = await evaluation._evidence_pack(tmp_path, "w-1", "I can't call", "zorg-acme", ["help"], 8)
+        second = await evaluation._evidence_pack(tmp_path, "w-1", "I can't call", "zorg-acme", ["help"], 8)
+
+    assert first == second == pack
+    assert route.call_count == 1
+    body = json.loads(route.calls[0].request.content)
+    assert (body["purpose"], body["telemetry_level"]) == ("background", "off")
+
+
+def test_the_gate_mode_rescores_a_sample_folder_from_its_cached_packs_and_keeps_the_labels(
+    tmp_path, monkeypatch, capsys
+):
+    sample = tmp_path / "sample"
+    (sample / "packs").mkdir(parents=True)
+    labelled = {"id": "w-1", "surface": "widget", "question": "I can't call", "context": [], "label_should_ask": "y"}
+    (sample / "labels.jsonl").write_text(json.dumps(labelled) + "\n")
+    items = [
+        {
+            "title": f"Alpha phone app for {platform} troubleshooter",
+            "heading_path": "Troubleshooter > I can't call",
+            "source_url": f"https://help.example.com/{platform.lower()}",
+            "reranker_score": score,
+        }
+        for platform, score in (("iPhone", 0.9), ("Android", 0.8))
+    ]
+    (sample / "packs" / "w-1.json").write_text(json.dumps({"items": items}))
+    monkeypatch.setenv("KLAI_CLARIFY_OUT", str(tmp_path / "out"))
+
+    evaluation.main(["clarify_gate_eval.py", "gate", str(sample)])
+
+    assert "questions 1, gate fired 1/1" in capsys.readouterr().out
+    (row,) = [json.loads(line) for line in (tmp_path / "out" / "labels.jsonl").read_text().splitlines()]
+    assert (row["options"], row["top"], row["label_should_ask"]) == (["iPhone", "Android"], 0.9, "y")

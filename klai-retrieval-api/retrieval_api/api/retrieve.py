@@ -310,7 +310,9 @@ async def _retrieve_sub_queries(
         event_tenant_id = None
         event_user_id = None
 
-    if event_tenant_id is not None:
+    if req.purpose == "background":
+        pass
+    elif event_tenant_id is not None:
         emit_event(
             "knowledge.queried",
             tenant_id=event_tenant_id,
@@ -520,8 +522,11 @@ async def _resolve_identity_and_telemetry(
     # makes the knowledge-mcp's hardcoded 'shadow' correct under all
     # tenant configurations (a tenant on 'off' will never see shadow
     # rows from MCP traffic).
-    canonical_level = await get_canonical_level(req.org_id)
-    effective_level = resolve_effective_level(req.telemetry_level, canonical_level)
+    if req.purpose == "background":
+        effective_level = "off"
+    else:
+        canonical_level = await get_canonical_level(req.org_id)
+        effective_level = resolve_effective_level(req.telemetry_level, canonical_level)
 
     # REQ-13: bind effective_level on the structlog contextvar so the
     # shared anti-leakage processor (in klai-libs/log-utils) sees the
@@ -1401,7 +1406,10 @@ def _emit_product_event(state: RetrievalPipelineState) -> None:
         event_tenant_id = None
         event_user_id = None
 
-    if getattr(request.state, "klai_sub_query_internal", False):
+    if req.purpose == "background":
+        # A service re-running retrieval is not a question of the tenant.
+        pass
+    elif getattr(request.state, "klai_sub_query_internal", False):
         # This call is a sub-question leg of a fan-out request (see
         # ``_retrieve_sub_queries``): the caller emits ONE knowledge.queried
         # event for the original question after the fan-out completes, not

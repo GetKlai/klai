@@ -243,6 +243,22 @@ async def test_first_resolution_caches_the_librechat_mapping(world):
     assert _employee(world).librechat_user_id == OID_A
 
 
+@pytest.mark.asyncio
+async def test_an_operator_script_resolves_the_profile_without_writing_the_mapping(world):
+    """The labelling and replay scripts read production; resolving an employee must not write to it."""
+    from app.services.chat_profile import resolve_internal_profile
+
+    rows, events = world
+    db = _FakeDB(rows, events)
+    org = next(r for r in rows if isinstance(r, PortalOrg) and r.id == ORG_A)
+
+    profile = await resolve_internal_profile(db, org, OID_A, remember=False)
+
+    assert profile.user_id == "sub-a"
+    assert _employee(world).librechat_user_id is None
+    db.commit.assert_not_awaited()
+
+
 # --- surfaces that must not change -----------------------------------------
 
 

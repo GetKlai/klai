@@ -53,17 +53,32 @@ _TITLE_WORD = re.compile(r"[^\W_]+(?:-[^\W_]+)*")
 _STOPWORDS = frozenset(
     "a about all an and are at be by can do does for from get how i in into is it me my not of on or set the "
     "this to up use using we what when where which why with work works you your "
-    "aan af al alle als bij dat de den der die dit een en er gebruik gebruiken het hoe ik in is je jij kan kun "
-    "maar met mijn na naar niet of om ons op over stel te tot u uw van voor waar wanneer waarom wat we welke "
-    "wel werken werkt wij zijn zo".split()
+    "aan af al alle als bij dat de den der die dit een en er gebruik gebruiken heb hebben hebt heeft het hoe ik "
+    "in is je jij kan kun maar met mijn na naar niet of om ons op over stel te tot u uw van voor waar wanneer "
+    "waarom wat we welke wel werken werkt wij zijn zo".split()
 )
-# A variant word that names a device or platform, or a call direction, tells
-# the question writer which kind of fact to ask for. Anything else is an
-# edition when the titles share words, and a product when they share none.
-_DEVICE = frozenset(
-    "android iphone ipad ios mac macos macbook windows linux chromebook desktop laptop mobile mobiel browser".split()
+# Section and title words every kind of article carries. A shared "Setup" or
+# "FAQ" heading is no shared topic, and "functies" or "installatie" left over
+# from a title is no variant: on a production sample of 251 questions two of
+# ten written questions offered such leftovers as the choice.
+_GENERIC = frozenset(
+    "faq features functies guide handleiding inleiding installatie installation instellen instellingen "
+    "introduction manual opties options overview overzicht probleemoplosser problemen problems questions setup "
+    "troubleshooter veelgestelde vragen".split()
 )
+# The devices the knowledge bases write separate articles for, by class: two
+# names in one class ("iPhone", "iOS") are the same device to the visitor.
+_DEVICE_CLASSES = {
+    "iphone": "iphone ios ipad",
+    "android": "android",
+    "web": "webphone browser web",
+    "computer": "desktop laptop computer pc mac macos macbook windows",
+    "desk_phone": "toestel bureautelefoon desk yealink snom cisco gigaset grandstream",
+    "wireless": "dect draadloos draadloze wireless",
+    "headset": "headset",
+}
 _DIRECTION = frozenset("incoming outgoing inbound outbound inkomend inkomende uitgaand uitgaande".split())
+_MAX_OPTION_WORDS = 2
 
 
 def _stem(word: str) -> str:
@@ -76,8 +91,13 @@ def _stems(text: str) -> set[str]:
     return {_stem(w) for w in _WORD.findall(text.casefold()) if len(w) > 1 and w not in _STOPWORDS}
 
 
-_DEVICE_STEMS = {_stem(w) for w in _DEVICE}
+_GENERIC_STEMS = {_stem(w) for w in _GENERIC}
+_DEVICE_CLASS_OF = {_stem(w): name for name, words in _DEVICE_CLASSES.items() for w in words.split()}
 _DIRECTION_STEMS = {_stem(w) for w in _DIRECTION}
+
+
+def _devices(stems: set[str]) -> set[str]:
+    return {_DEVICE_CLASS_OF[s] for s in stems if s in _DEVICE_CLASS_OF}
 
 
 @dataclass(frozen=True)
@@ -120,27 +140,39 @@ def _strong_documents(chunks: list[dict], threshold: float) -> list[_Document]:
     return sorted(documents.values(), key=lambda d: d.score, reverse=True)
 
 
-def _shared_topic(a: _Document, b: _Document, asked: set[str]) -> set[str]:
-    """The stems two documents share as one topic the visitor asked about; empty when they do not."""
+def _link(a: _Document, b: _Document, asked: set[str]) -> set[str] | None:
+    """The topic stems that make two documents variants of one topic, or ``None`` when they are not.
+
+    A shared section heading or a mostly shared title counts only when a
+    non-generic part of it is what the visitor asked about. Titles naming
+    devices of different classes are variants anyway: retrieval already found
+    both for the question, and which device is used is what tells them apart.
+    """
     topic: set[str] = set()
+    linked = False
     for tail in a.tails & b.tails:
-        if set(tail.split()) & asked:
+        if (set(tail.split()) - _GENERIC_STEMS) & asked:
             topic |= set(tail.split())
-    shared = a.stems & b.stems
-    if shared & asked and 2 * len(shared) >= max(len(a.stems), len(b.stems)):
+            linked = True
+    a_topic, b_topic = a.stems - _GENERIC_STEMS, b.stems - _GENERIC_STEMS
+    shared = a_topic & b_topic
+    if shared & asked and 2 * len(shared) >= max(len(a_topic), len(b_topic)):
         topic |= shared
-    return topic
+        linked = True
+    a_devices, b_devices = _devices(a.stems), _devices(b.stems)
+    linked = linked or bool(a_devices and b_devices and a_devices != b_devices)
+    return topic if linked else None
 
 
 def _variant(document: _Document, others: list[_Document], topic: set[str]) -> str:
     """The words of the title no other document in the group carries, as the title writes them."""
-    elsewhere = topic.union(*(o.stems for o in others))
+    elsewhere = topic.union(_GENERIC_STEMS, *(o.stems for o in others))
     return " ".join(word for word in _TITLE_WORD.findall(document.title) if _stems(word) - elsewhere)
 
 
 def _axis(options: tuple[str, ...], titles_overlap: bool) -> Axis:
     stems = set().union(*(_stems(o) for o in options))
-    if stems & _DEVICE_STEMS:
+    if _devices(stems):
         return "device"
     if stems & _DIRECTION_STEMS:
         return "direction"
@@ -148,13 +180,13 @@ def _axis(options: tuple[str, ...], titles_overlap: bool) -> Axis:
 
 
 def _best_group(documents: list[_Document], asked: set[str]) -> tuple[list[_Document], set[str]]:
-    """The best-scoring group of documents linked by a shared topic, best first, and that topic."""
+    """The best-scoring group of linked documents, best first, and the topic they share."""
     groups: list[tuple[list[_Document], set[str]]] = []
     for document in documents:
         members, topic = [document], set()
         for group in list(groups):
-            links = [_shared_topic(document, member, asked) for member in group[0]]
-            if any(links):
+            links = [link for member in group[0] if (link := _link(document, member, asked)) is not None]
+            if links:
                 groups.remove(group)
                 members += group[0]
                 topic |= group[1].union(*links)
@@ -207,10 +239,19 @@ def clarify_gate(messages: list[dict], chunks: list[dict], threshold: float) -> 
         if variant and variant.casefold() not in {v.casefold() for v in variants}:
             variants.append(variant)
     options = tuple(variants[:_MAX_OPTIONS])
-    if len(options) < 2:
+    # A variant longer than two words is a leftover of titles that differ in
+    # more than one thing, not the one fact the visitor is asked for.
+    if len(options) < 2 or any(len(o.split()) > _MAX_OPTION_WORDS for o in options):
         return ClarifyDecision("no_axis", documents=len(documents))
     titles_overlap = any(a.stems & b.stems for a in members for b in members if a is not b)
-    decision = ClarifyDecision("asked", _axis(options, titles_overlap), len(documents), options)
-    if said & set().union(*(_stems(v) for v in variants)):
-        return dataclasses.replace(decision, reason="variant_named")
-    return decision
+    axis = _axis(options, titles_overlap)
+    if axis == "device":
+        # A visitor who names any device already said which one they use, even
+        # when the articles call it differently ("iPhone" against an "iOS"
+        # option). The option is the device itself, not a brand word the
+        # title happens to carry beside it ("Zeta iPhone").
+        named = bool(_devices(said))
+        options = tuple(" ".join(w for w in o.split() if _devices(_stems(w))) or o for o in options)
+    else:
+        named = bool(said & set().union(*(_stems(v) for v in variants)))
+    return ClarifyDecision("variant_named" if named else "asked", axis, len(documents), options)
