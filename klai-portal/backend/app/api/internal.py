@@ -326,7 +326,8 @@ async def _require_internal_token(request: Request, extra_secret: str = "") -> N
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Internal API not configured")
     token = request.headers.get("Authorization", "")
     # hmac.compare_digest is constant-time; string equality leaks length/prefix timing.
-    # Both comparisons always run so timing does not reveal which secret matched.
+    # Both comparisons always run, so the branch taken does not reveal which
+    # secret matched (compare_digest may still leak a length difference).
     master_ok = hmac.compare_digest(token, f"Bearer {settings.internal_secret}")
     extra_ok = hmac.compare_digest(token, f"Bearer {extra_secret}")
     if not (master_ok or (extra_secret and extra_ok)):
@@ -1498,6 +1499,9 @@ async def start_onboarding_drip(
     )
 
 
+_WEBSITE_MAILING_AUDIENCES = {"signups", "updates_opt_in"}
+
+
 @router.post("/mailing/sync-contact", response_model=MailingSyncContactResponse)
 async def mailing_sync_contact(
     request: Request,
@@ -1505,6 +1509,17 @@ async def mailing_sync_contact(
 ) -> MailingSyncContactResponse:
     """Sync a CRM/signup/user contact to listmonk mailing lists."""
     await _require_internal_token(request, extra_secret=settings.website_mailing_secret)
+    if (
+        settings.website_mailing_secret
+        and hmac.compare_digest(request.headers.get("Authorization", ""), f"Bearer {settings.website_mailing_secret}")
+        and (
+            not set(body.audiences) <= _WEBSITE_MAILING_AUDIENCES
+            or any((body.portal_user_id, body.zitadel_user_id, body.org_id))
+        )
+    ):
+        # The website secret lives on an internet-facing host; it may add a
+        # waitlist signup, never a portal user, org or CRM selection.
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed for the website secret")
 
     from app.services import listmonk
 

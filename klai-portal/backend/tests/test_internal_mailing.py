@@ -136,19 +136,45 @@ async def test_mailing_sync_contact_accepts_website_mailing_secret(monkeypatch):
     monkeypatch.setattr(internal.settings, "website_mailing_secret", "website-secret")
     monkeypatch.setattr(internal, "_check_rate_limit_internal", AsyncMock())
     monkeypatch.setattr(internal, "_audit_internal_call", AsyncMock())
-    monkeypatch.setattr(
-        "app.services.listmonk.sync_contact",
-        AsyncMock(return_value=ListmonkSyncResult(subscriber_id=7, lists_added=[1])),
-    )
+    sync_mock = AsyncMock(return_value=ListmonkSyncResult(subscriber_id=7, lists_added=[1]))
+    monkeypatch.setattr("app.services.listmonk.sync_contact", sync_mock)
 
     body = internal.MailingSyncContactRequest(
         email="alice@example.com",
         source="website_waitlist",
-        audiences=["signups"],
+        audiences=["signups", "updates_opt_in"],
     )
     resp = await internal.mailing_sync_contact(_request(token="Bearer website-secret"), body)
 
     assert resp.synced is True
+    sync_mock.assert_awaited_once()
+    assert sync_mock.call_args.kwargs["audiences"] == ["signups", "updates_opt_in"]
+    assert sync_mock.call_args.kwargs["email"] == "alice@example.com"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"audiences": ["signups", "users"]},
+        {"audiences": ["signups"], "portalUserId": 1},
+    ],
+)
+async def test_website_mailing_secret_is_limited_to_website_signups(monkeypatch, extra):
+    from app.api import internal
+
+    monkeypatch.setattr(internal.settings, "internal_secret", "master-secret")
+    monkeypatch.setattr(internal.settings, "website_mailing_secret", "website-secret")
+    monkeypatch.setattr(internal, "_check_rate_limit_internal", AsyncMock())
+    sync_mock = AsyncMock()
+    monkeypatch.setattr("app.services.listmonk.sync_contact", sync_mock)
+
+    body = internal.MailingSyncContactRequest(email="alice@example.com", source="website_waitlist", **extra)
+    with pytest.raises(HTTPException) as exc_info:
+        await internal.mailing_sync_contact(_request(token="Bearer website-secret"), body)
+
+    assert exc_info.value.status_code == 403
+    sync_mock.assert_not_awaited()
 
 
 @pytest.mark.asyncio
