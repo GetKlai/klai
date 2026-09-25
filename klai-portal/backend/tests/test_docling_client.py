@@ -63,10 +63,14 @@ class _PollClient:
         return _PollResponse(self._payload)
 
 
-# The ``TaskStatus`` enum of docling-jobkit 3.3.0 — the task state the poll
+# The ``TaskStatus`` enum of docling-jobkit — the task state the poll
 # endpoint can actually return — verified inside the running container
-# klai-core-docling-serve-1 (docling-serve 1.30.0) on 2026-09-10:
-# ``pending, started, success, failure``.
+# klai-core-docling-serve-1 (docling-serve 1.30.0, jobkit 3.3.0) on 2026-09-10,
+# and again inside docling-serve 1.35.0 (jobkit 3.8.0) on 2026-09-25 before
+# that bump: ``pending, started, success, failure``, unchanged. The same check
+# found /v1/convert/file/async, /v1/chunk/hybrid/file/async,
+# /v1/status/poll/{task_id} and /v1/result/{task_id} still served, and
+# ``document.md_content`` and ``chunks[].text`` still where the client reads them.
 #
 # Do NOT trust the openapi.json here: it types ``Task.task_status`` as
 # ``ConversionStatus``, which also lists ``partial_success`` and ``skipped``.

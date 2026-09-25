@@ -1,8 +1,8 @@
 """Docling-serve async client.
 
 SPEC-KB-FILE-UPLOAD-001 — wraps the three async endpoints exposed by
-``docling-serve v1.30.0`` (task-status vocabulary verified against
-docling-jobkit 3.3.0 inside ``klai-core-docling-serve-1`` on 2026-09-10;
+``docling-serve v1.35.0`` (task-status vocabulary verified in the container
+against docling-jobkit 3.3.0 on 2026-09-10 and 3.8.0 on 2026-09-25;
 the openapi.json types ``task_status`` as ``ConversionStatus``, which is
 misleading — ``partial_success`` and ``skipped`` are document statuses and
 can never appear as a task status):
