@@ -266,6 +266,10 @@ async def _old_answer(client: httpx.AsyncClient, tenant_key: str, librechat_user
 _captured_signals: list[dict] = []
 
 
+async def _skip_retrieval_log(*_: object, **__: object) -> None:
+    return None
+
+
 async def _capture_internal_turn(*, answer_signals: dict[str, Any], **_: object) -> None:
     """Stands in for ``record_internal_turn``: a replayed turn is not an employee's turn."""
     _captured_signals.append(dict(answer_signals))
@@ -543,6 +547,9 @@ async def main(org_slug: str, count: int, max_turns: int) -> None:
     org = await _load_org(org_slug)
     tenant_key = _tenant_litellm_key(org.slug)
     partner.record_internal_turn = _capture_internal_turn  # type: ignore[assignment]
+    # The retrieval log keys feedback to the chunks of the employee's latest
+    # turn; a replayed turn written there would be mistaken for theirs.
+    partner.write_retrieval_log = _skip_retrieval_log  # type: ignore[assignment]
 
     samples = await _sample(org, count)
     print(f"{len(samples)} conversations sampled from {len({s.librechat_user_id for s in samples})} users", flush=True)
