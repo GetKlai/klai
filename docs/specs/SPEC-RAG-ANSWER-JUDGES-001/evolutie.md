@@ -1477,11 +1477,16 @@ niet bij de drempel maar bij het ontbreken van dat feit in de kennisbank of bij 
 ik niet zeker"; dat is een apart punt.
 
 ### 2.53 De vraagstap vuurt vrijwel nooit, en twee lossere versies winnen niet (24 sep)
-Punt 12 van §5 begon met tellen. Over de `answer_plan_decision`-regels van echt widgetverkeer koos de
-stap in ruim een derde van de beurten een vraag, maar kwam die vraag in minder dan één op de honderd
-beurten echt bij het antwoordmodel: ruim vier van de vijf plannen vielen op de regel dat de vraag een
-optie letterlijk moet noemen, de rest op opties die niet in de artikelen staan. In de meetopzet van §6
-hetzelfde beeld: de live code liet in 3 van de 66 beurten een vraag stellen.
+Punt 12 van §5 begon met tellen. Over de `answer_plan_decision`-regels koos de stap in ruim een derde
+van de beurten een vraag, maar kwam die vraag in minder dan één op de honderd beurten echt bij het
+antwoordmodel: ruim vier van de vijf plannen vielen op de regel dat de vraag een optie letterlijk moet
+noemen, de rest op opties die niet in de artikelen staan. In de meetopzet van §6 hetzelfde beeld: de
+live code liet in 3 van de 66 beurten een vraag stellen.
+
+*Correctie (25 sep):* die logregels kwamen vrijwel allemaal uit de kalibratieruns van 24 september,
+echte vragen die als preview werden afgespeeld, en niet van bezoekers. Echt widgetverkeer leverde in die
+dagen maar een handvol beslissingen op. De verhoudingen gelden dus voor het gedrag van de stap op echte
+vragen, niet voor echt verkeer; 2.54 bevestigt ze met een replay.
 
 **Dat zet 2.47 in een ander licht.** De versie die daar won (17 om 14, dan 24 om 9) stelde in die meting
 in 1 van de 68 beurten een geplande vraag, en de lossere poging van 24 september in 1 van de 66. Die
@@ -1511,6 +1516,66 @@ verliezen, en dat doet een lossere controle alleen niet.
 p90 1,2 s extra wachttijd, voor een effect in minder dan één op de honderd beurten. Sinds #1663 (ook
 24 september) is dezelfde stap de enige route voor doorvragen op alle drie de oppervlakken, ook in de
 interne chat. Beide metingen hier draaiden op de code van vóór die wijziging.
+
+### 2.54 Waar het doorvragen misgaat, en hoe het eruit moet zien (25 sep)
+Geen wijziging, alleen onderzoek: wat missen bezoekers, wat stelt de vraagstap voor, en waarom komt
+daar niets van aan.
+
+**Wat bezoekers missen.** Van de echte widgetgesprekken met een tweede bericht van de bezoeker (32)
+moest de bezoeker in 5 à 6 een aanname rechtzetten die een vraag vooraf had voorkomen. Bijna altijd was
+dat welk apparaat of welke omgeving (de app op de telefoon, de Webphone of website op de computer, een
+bureautoestel) of welke richting (inkomend of uitgaand). In 5 werd een duidelijke vraag verkeerd gelezen,
+waar doorvragen niet helpt; in 3 klopte de inhoud niet; in 2 vroeg de assistent zelf door, en dat ging
+goed. Over alle 58 gesprekken vroeg het antwoordmodel uit zichzelf in 2 iets.
+
+**Wat de vraagstap voorstelt.** Replay op de live code van 25 september (na #1663): 488 echte vragen,
+124 widgetbeurten en 364 openingsvragen uit de interne chat van dezelfde tenant, door de echte route,
+gestopt direct na de vraagstap, zonder generatie en zonder schrijven. **Het plan werd 0 van de 488 keer
+toegepast.** Op de widgetbeurten deed de stap 31 voorstellen, met de hand beoordeeld door één beoordelaar:
+ongeveer de helft is een goede vraag naar een feit dat de bezoeker kent ("Welk apparaat gebruik je?",
+"Welk type headset gebruik je?", "Welk nummer wil je instellen?", "Wat gebeurt er precies met de app?"),
+op precies de gesprekken waar de bezoeker later iets moest rechtzetten. De andere helft laat de bezoeker
+zelf de oorzaak kiezen ("Welke situatie herken je het meest?"), vraagt wat al gezegd was, of vraagt
+naar het apparaat bij een probleem dat daar niet van afhangt. **De regel dat de vraag een optie moet
+noemen liet 29 van de 31 vallen, goed en slecht door elkaar:** een goede vraag naar een categorie somt
+de opties niet op. De stap duurde mediaan 0,6 s.
+
+**Wat verder misgaat in de keten.**
+- Vier plekken beslissen over vragen: de regel in het profiel (stuurt niet, 2.46), het oordeel over de
+  vraag (`clarity`, zei "onduidelijk" bij 1 van de 12 gevallen waar een vraag hoorde), de vraagstap en de
+  regel voor zwakke bronnen.
+- Een geplande vraag zet de regel voor zwakke bronnen uit, terwijl bij zwakke artikelen de meeste
+  onnodige vragen vallen (4 van de 5 in de meting van 2.53).
+- De opties komen uit wat het zoeken toevallig vond: een bezoeker op een laptop kreeg alleen
+  telefoonopties, omdat er alleen telefoonartikelen gevonden waren.
+- De opdracht aan het antwoordmodel laat eerst alle oorzaken opsommen, wat menu's oplevert (2.53).
+
+**Hoe het eruit moet zien.**
+- Eén beslismoment direct na het zoeken, met drie uitkomsten: antwoorden, één vraag, of eerlijk "niet in
+  de artikelen" met de afspraakknop.
+- Alleen vragen bij sterke artikelen die over verschillende varianten van hetzelfde onderwerp gaan
+  (apparaat of omgeving, richting, instelling) terwijl het gesprek geen variant noemt, en hooguit één
+  vraag tegelijk. De kennisbank is zo opgebouwd (aparte probleemoplossers per app, Webphone en toestel),
+  dus dat signaal staat in de artikelen zelf.
+- Altijd vragen naar een feit dat de bezoeker zonder vakkennis weet, nooit naar een oorzaak. De stap
+  zegt welk soort feit hij vraagt, en de controle toetst of dat feit al genoemd is, of het een
+  zelfdiagnose is en of de artikelen er echt op verschillen. De vormcontrole blijft; de regel dat de vraag
+  een optie noemt, gaat weg. Voorbeeldantwoorden komen uit een vaste lijst van wat de klant ondersteunt,
+  niet uit de gevonden fragmenten.
+- In het antwoord één korte zin die laat zien dat het probleem begrepen is, dan de vraag, zonder lijst
+  oorzaken.
+- Verkeerd gelezen duidelijke vragen horen bij begrijpen en zoeken, een apart spoor.
+
+**Hoe we zorgen dat het klopt.** Een mens labelt ongeveer honderd echte eerste vragen (vragen of
+antwoorden, en waarnaar); de zoekresultaten worden één keer bewaard zodat elke meetronde alleen de
+beslisstap draait; eerst de beslissing en de vraag toetsen tegen de labels, pas daarna volledige
+antwoorden. Live volgen we hoe vaak een bezoeker het antwoord moet rechtzetten. Elke controle bewaart
+privé een steekproef van wat ze laat vallen, zodat een regel die alles wegfiltert na een dag opvalt.
+
+**Grenzen van dit onderzoek:** kleine aantallen, één beoordelaar voor "goede vraag", en de blinde
+metingen leunen op een gesimuleerde bezoeker en een beoordelend model die tussen rondes wisselen. De
+meetruns van 24 en 25 september kostten bovendien veel modelaanroepen; een run met modelaanroepen start
+voortaan pas na een kostenschatting en akkoord.
 
 ---
 
@@ -1617,10 +1682,11 @@ beter kan zonder eerst op echt verkeer te kijken.
 11. **Nameting op echt verkeer** van de herformuleringen (2.41), de vraagstap (2.47) en de regel voor
     zwakke bronnen (2.48): hoe vaak ze vuren en wat ze aan wachttijd kosten. De logregels
     `answer_plan_decision`, `planned_question` en `weak_sources` staan erin.
-12. **De vraagstap vuurt vrijwel nooit** (2.53): minder dan één op de honderd beurten krijgt de geplande
-    vraag, tegen 0,76 s wachttijd per beurt. Twee lossere controles gemeten, geen van beide wint. Open
-    is de keuze: de stap schrappen en de wachttijd terugwinnen, of een versie zoeken die alleen vraagt
-    waar het gesprek er echt om vraagt. Sinds #1663 hangt ook de interne chat aan deze stap.
+12. **Doorvragen opnieuw ontwerpen** (2.53, 2.54): de vraagstap ziet de goede vraag vaak, maar de
+    controle erachter laat alles vallen (0 van 488 in de replay) en de stap kost 0,6 tot 0,8 s per beurt.
+    Het ontwerp staat in 2.54: één beslismoment, alleen vragen bij sterke artikelen die per variant
+    verschillen, altijd naar een feit dat de bezoeker kent. Eerste stap is een door een mens gelabelde set
+    van ongeveer honderd eerste vragen. Sinds #1663 hangt ook de interne chat aan deze stap.
 13. **Het gespreksoverzicht toont nog niet welke zin de controle afkeurde.** Het beslisrecord bewaart
     die zinnen sinds 2.51 (`unsupported_statements`); tonen vraagt een frontendwijziging met een
     browsercontrole.
