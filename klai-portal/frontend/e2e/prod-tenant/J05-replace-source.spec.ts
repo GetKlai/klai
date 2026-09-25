@@ -24,6 +24,7 @@ const RUN = e2ePrefix()
 const FILENAME = `${RUN}replace-journey.md`
 const CANARY_BEFORE = `klai-e2e-replace-before-${Date.now()}`
 const CANARY_AFTER = `klai-e2e-replace-after-${Date.now()}`
+const STALE_NAME = /^e2e-\d+-replace-journey\.md$/
 
 interface KnowledgeBase {
   slug: string
@@ -168,6 +169,19 @@ test.describe('J05 - replace a knowledge-base source', () => {
     test.slow()
     await page.goto('/app')
     const KB_SLUG = await resolveKbSlug(page)
+
+    // 0. Remove what earlier runs of this journey left behind. The delete in
+    //    step 5 only runs when every assertion before it passed, so each
+    //    failed run leaks one source; on 2026-09-25 those had filled the e2e
+    //    user's 20-item quota and every later run failed on the upload with
+    //    kb_quota_items_exceeded. Only this journey's own e2e-<ts>- files match.
+    const leftovers = await getJson<{ sources: Source[] }>(
+      page,
+      `/api/app/knowledge-bases/${KB_SLUG}/sources`,
+    )
+    for (const s of leftovers.sources.filter((s) => STALE_NAME.test(s.name))) {
+      expect(await deleteSource(page, KB_SLUG, s.id)).toBe(204)
+    }
 
     // Baseline: how many sources does this KB hold before we touch it?
     const before = await getJson<{ sources: Source[] }>(
