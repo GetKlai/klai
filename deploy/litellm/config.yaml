@@ -146,18 +146,28 @@ litellm_settings:
     # 2026-08-25: docker-compose.yml's environment: block defaults it to
     # true for every org (KLAI_PII_ENFORCE_ORG_IDS defaults to `*`); see
     # that block's comment for the rollout history and the kill switch.
-    # Registered LAST (after klai_pii_observe) for two independent reasons,
-    # both verified against the installed litellm==1.96.2 source and
-    # documented in klai_pii_enforce.py's module docstring:
+    # Registered last among the PII-phase hooks (after klai_pii_observe) for
+    # two independent reasons, both verified against the installed
+    # litellm==1.96.2 source and documented in klai_pii_enforce.py's module
+    # docstring:
     #   1. async_post_call_streaming_iterator_hook / async_post_call_
     #      success_hook: last-registered is outermost / applied last, so
-    #      its output is what the client actually receives.
+    #      its output is what the client actually receives. klai_prompt_cache
+    #      below declares neither hook, so it cannot affect this ordering.
     #   2. async_pre_call_hook runs callbacks in strict registration order,
     #      each seeing the previous one's mutated `data`. Masking AFTER
     #      klai_pii_observe keeps Phase 2's telemetry measuring the
     #      pre-mask payload even once enforcement is enabled for individual
     #      orgs, rather than measuring its own placeholders.
     - klai_pii_enforce.klai_pii_enforcer
+    # Derives a stable Mistral prompt_cache_key from the final routed model
+    # and the final system-role content. Registered last so the key reflects
+    # what klai_pii_enforce actually sent (post-mask), not a pre-mask draft.
+    # Sets it under `extra_body`, not as a top-level field: see
+    # klai_prompt_cache.py's module docstring for why a top-level
+    # `prompt_cache_key` is silently dropped for Mistral on this litellm
+    # version and `extra_body` is the verified working path.
+    - klai_prompt_cache.prompt_cache_key_injector
 
 # SPEC-PRIVACY-MISTRAL-PII-001 Phase 0 (REQ-0a/REQ-0b) — TEMPORARY,
 # EXPERIMENTAL, NOT the production control.
