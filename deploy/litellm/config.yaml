@@ -6,11 +6,7 @@ model_list:
     litellm_params:
       model: mistral/mistral-small-2603
       api_key: os.environ/MISTRAL_API_KEY_2
-      # Order 1: Pro organisations with pay-as-you-go off (MISTRAL_API_KEY_n),
-      # shuffled together; each stops at its allowance. Order 2: the Klai
-      # organisation (Pro, with a workspace spending cap). Order 3: the
-      # pay-as-you-go workspace, used only when everything above is full.
-      order: 1
+      order: 2
     rpm: 45
     tpm: 45000
 
@@ -18,20 +14,16 @@ model_list:
     litellm_params:
       model: mistral/mistral-small-2603
       api_key: os.environ/MISTRAL_API_KEY
-      order: 2
+      # Order 1: the Klai organisation; order 2: the next Pro organisation.
+      # Both are Pro with pay-as-you-go off, so each stops at its allowance
+      # and Mistral answers 402, which moves traffic to the next account.
+      order: 1
     # Mistral headers measured in prod on 2026-05-26:
     # mistral-small-2603 = 100 RPM / 100k TPM. klai-primary and klai-fast
     # share that same upstream model, so split the budget between aliases.
     rpm: 45
     tpm: 45000
 
-  - model_name: klai-primary
-    litellm_params:
-      model: mistral/mistral-small-2603
-      api_key: os.environ/MISTRAL_API_KEY_BACKUP
-      order: 3
-    rpm: 45
-    tpm: 45000
 
   # Fast: Mistral Small — bypasses custom_router.py routing
   # Use for lightweight, latency-sensitive user-facing calls
@@ -39,14 +31,6 @@ model_list:
     litellm_params:
       model: mistral/mistral-small-2603
       api_key: os.environ/MISTRAL_API_KEY_2
-      order: 1
-    rpm: 45
-    tpm: 45000
-
-  - model_name: klai-fast
-    litellm_params:
-      model: mistral/mistral-small-2603
-      api_key: os.environ/MISTRAL_API_KEY
       order: 2
     rpm: 45
     tpm: 45000
@@ -54,10 +38,11 @@ model_list:
   - model_name: klai-fast
     litellm_params:
       model: mistral/mistral-small-2603
-      api_key: os.environ/MISTRAL_API_KEY_BACKUP
-      order: 3
+      api_key: os.environ/MISTRAL_API_KEY
+      order: 1
     rpm: 45
     tpm: 45000
+
 
   # Large: Mistral Large — agentic / tool use flows
   # Auto-selected by custom_router.py when tool call history is detected
@@ -65,7 +50,7 @@ model_list:
     litellm_params:
       model: mistral/mistral-large-2512
       api_key: os.environ/MISTRAL_API_KEY_2
-      order: 1
+      order: 2
     rpm: 13
     tpm: 360000
 
@@ -73,19 +58,12 @@ model_list:
     litellm_params:
       model: mistral/mistral-large-2512
       api_key: os.environ/MISTRAL_API_KEY
-      order: 2
+      order: 1
     # Mistral headers measured in prod on 2026-05-26:
     # mistral-large-2512 = 15 RPM / 400k TPM.
     rpm: 13
     tpm: 360000
 
-  - model_name: klai-large
-    litellm_params:
-      model: mistral/mistral-large-2512
-      api_key: os.environ/MISTRAL_API_KEY_BACKUP
-      order: 3
-    rpm: 13
-    tpm: 360000
 
   # Medium: Mistral Medium 3.5 — middle-tier between klai-fast and klai-large.
   # Use for tasks where klai-fast hits its output-token ceiling but klai-large
@@ -96,7 +74,7 @@ model_list:
     litellm_params:
       model: mistral/mistral-medium-3.5
       api_key: os.environ/MISTRAL_API_KEY_2
-      order: 1
+      order: 2
     rpm: 900
     tpm: 450000
 
@@ -104,19 +82,12 @@ model_list:
     litellm_params:
       model: mistral/mistral-medium-3.5
       api_key: os.environ/MISTRAL_API_KEY
-      order: 2
+      order: 1
     # Mistral headers measured in prod on 2026-05-26:
     # mistral-medium-3.5 = 1000 RPM / 500k TPM.
     rpm: 900
     tpm: 450000
 
-  - model_name: klai-medium
-    litellm_params:
-      model: mistral/mistral-medium-3.5
-      api_key: os.environ/MISTRAL_API_KEY_BACKUP
-      order: 3
-    rpm: 900
-    tpm: 450000
 
   # Embeddings: BGE-M3 via TEI on gpu-01. Distinct model TYPE (not a
   # text-completion tier) — exposes the TEI endpoint already used by
@@ -151,6 +122,14 @@ router_settings:
     - enforce_model_rate_limits  # Queue requests when model RPM/TPM is hit
   allowed_fails: 2
   cooldown_time: 60
+  # An account moves to the next one only when it is full (Mistral answers 402
+  # at a spending limit; that is not retried and not cooled down). A 429 is a
+  # rate limit: retry the same account with backoff and never cool it down, so
+  # a busy minute does not push traffic to the next account.
+  retry_policy:
+    RateLimitErrorRetries: 3
+  allowed_fails_policy:
+    RateLimitErrorAllowedFails: 1000000
 
 litellm_settings:
   drop_params: true             # vLLM/Ollama does not accept all OpenAI params

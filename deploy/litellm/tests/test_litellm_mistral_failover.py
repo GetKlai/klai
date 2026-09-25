@@ -19,10 +19,9 @@ _CONFIG_PATH = _DEPLOY_DIR / "litellm" / "config.yaml"
 _COMPOSE_PATH = _DEPLOY_DIR / "docker-compose.yml"
 _ALIAS = "klai-medium"
 _PRIMARY_ALIAS = "klai-primary"
-_PRO_KEY = "pro-test-key"
-_PRIMARY_KEY = "primary-test-key"
-_BACKUP_KEY = "backup-test-key"
-_KEY_BY_ORDER = {1: _PRO_KEY, 2: _PRIMARY_KEY, 3: _BACKUP_KEY}
+_KLAI_KEY = "klai-test-key"
+_KLAI2_KEY = "klai2-test-key"
+_KEY_BY_ORDER = {1: _KLAI_KEY, 2: _KLAI2_KEY}
 _TEXT_ALIASES = {"klai-primary", "klai-fast", "klai-large", "klai-medium"}
 
 
@@ -106,7 +105,7 @@ async def test_healthy_primary_order_is_not_randomly_load_balanced(
     finally:
         router.reset()
 
-    assert calls == [_PRO_KEY] * 8
+    assert calls == [_KLAI_KEY] * 8
 
 
 @pytest.mark.asyncio
@@ -137,25 +136,21 @@ async def test_primary_alias_falls_back_to_medium_after_every_small_key_fails(
 
     assert response.choices[0].message.content == "backup response"
     assert calls == [
-        ("mistral/mistral-small-2603", _PRO_KEY),
-        ("mistral/mistral-small-2603", _PRO_KEY),
-        ("mistral/mistral-small-2603", _PRIMARY_KEY),
-        ("mistral/mistral-small-2603", _PRIMARY_KEY),
-        ("mistral/mistral-small-2603", _BACKUP_KEY),
-        ("mistral/mistral-small-2603", _BACKUP_KEY),
-        ("mistral/mistral-medium-3.5", _BACKUP_KEY),
+        *[("mistral/mistral-small-2603", _KLAI_KEY)] * 4,
+        *[("mistral/mistral-small-2603", _KLAI2_KEY)] * 4,
+        ("mistral/mistral-medium-3.5", _KLAI2_KEY),
     ]
 
 
 @pytest.mark.asyncio
-async def test_a_rate_limited_pro_organisation_hands_over_to_the_klai_organisation(
+async def test_a_rate_limit_is_retried_on_the_same_account(
     real_litellm,
 ) -> None:
     calls: list[str] = []
 
     async def provider_completion(**kwargs):
         calls.append(kwargs["api_key"])
-        if kwargs["api_key"] == _PRO_KEY:
+        if kwargs["api_key"] == _KLAI_KEY and len(calls) == 1:
             raise real_litellm.RateLimitError(
                 "rate limited",
                 llm_provider="mistral",
@@ -174,11 +169,11 @@ async def test_a_rate_limited_pro_organisation_hands_over_to_the_klai_organisati
         router.reset()
 
     assert response.choices[0].message.content == "backup response"
-    assert calls == [_PRO_KEY, _PRO_KEY, _PRIMARY_KEY]
+    assert calls == [_KLAI_KEY, _KLAI_KEY]
 
 
 @pytest.mark.asyncio
-async def test_organisations_over_their_monthly_limit_reach_pay_as_you_go_last(
+async def test_a_full_klai_account_hands_over_to_klai2(
     real_litellm,
 ) -> None:
     """Mistral answers 402 once an organisation or workspace spending limit is hit."""
@@ -186,7 +181,7 @@ async def test_organisations_over_their_monthly_limit_reach_pay_as_you_go_last(
 
     async def provider_completion(**kwargs):
         calls.append(kwargs["api_key"])
-        if kwargs["api_key"] in (_PRO_KEY, _PRIMARY_KEY):
+        if kwargs["api_key"] == _KLAI_KEY:
             raise real_litellm.APIError(
                 status_code=402,
                 message="Workspace monthly spending limit reached",
@@ -206,8 +201,8 @@ async def test_organisations_over_their_monthly_limit_reach_pay_as_you_go_last(
         router.reset()
 
     assert response.choices[0].message.content == "backup response"
-    # A 402 is not retried on the same key: each level is tried once, in order.
-    assert calls == [_PRO_KEY, _PRIMARY_KEY, _BACKUP_KEY]
+    # A 402 means the account is full: not retried, straight to the next account.
+    assert calls == [_KLAI_KEY, _KLAI2_KEY]
 
 
 @pytest.mark.asyncio
@@ -238,4 +233,4 @@ async def test_every_key_exhausted_ends_in_a_bounded_terminal_error(real_litellm
     finally:
         router.reset()
 
-    assert calls == [_PRO_KEY, _PRO_KEY, _PRIMARY_KEY, _PRIMARY_KEY] + [_BACKUP_KEY] * 4
+    assert calls == [_KLAI_KEY] * 4 + [_KLAI2_KEY] * 4
