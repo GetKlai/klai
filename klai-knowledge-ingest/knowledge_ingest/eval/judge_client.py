@@ -40,7 +40,11 @@ import httpx
 import structlog
 
 from knowledge_ingest.config import settings
-from knowledge_ingest.llm_throttle import shared_klai_fast_limiter
+from knowledge_ingest.llm_throttle import (
+    NoMediumFallbackTransport,
+    add_no_fallback,
+    shared_klai_fast_limiter,
+)
 
 logger = structlog.get_logger()
 
@@ -62,13 +66,23 @@ def _build_http_client(
     return httpx.AsyncClient(**kwargs)
 
 
-def _make_async_openai_client():
+def _make_async_openai_client(*, no_fallback: bool = False):
     from openai import AsyncOpenAI
 
-    return AsyncOpenAI(
-        base_url=f"{settings.litellm_url}/v1",
-        api_key=settings.litellm_api_key or "no-key",
-    )
+    kwargs: dict[str, Any] = {
+        "base_url": f"{settings.litellm_url}/v1",
+        "api_key": settings.litellm_api_key or "no-key",
+    }
+    if no_fallback:
+        # klai-fast judge calls (context_precision, context_recall,
+        # answer_relevancy, generate_answer) must not silently escalate to
+        # klai-medium -- see llm_throttle.add_no_fallback's docstring.
+        # Faithfulness's heavy_llm deliberately does NOT pass this: it already
+        # targets klai-medium directly and has no fallback entry to suppress.
+        kwargs["http_client"] = httpx.AsyncClient(
+            transport=NoMediumFallbackTransport(httpx.AsyncHTTPTransport())
+        )
+    return AsyncOpenAI(**kwargs)
 
 
 # Faithfulness's NLI verdicts prompt produces a multi-statement JSON
@@ -100,9 +114,12 @@ def _build_ragas_llm(
     extra: dict[str, int] = {}
     if max_tokens is not None:
         extra["max_tokens"] = max_tokens
+    # Only the default (klai-fast) judge model must be blocked from escalating
+    # to klai-medium -- an explicit ``model`` override (faithfulness) already
+    # targets klai-medium on purpose and stays as-is.
     return llm_factory(
         model or settings.rag_eval_judge_model,
-        client=_make_async_openai_client(),
+        client=_make_async_openai_client(no_fallback=model is None),
         **extra,
     )
 
@@ -217,7 +234,7 @@ async def generate_answer(
     try:
         await shared_klai_fast_limiter().acquire()
         async with _build_http_client(float(settings.rag_eval_judge_timeout), _transport) as client:
-            resp = await client.post(url, json=payload, headers=headers)
+            resp = await client.post(url, json=add_no_fallback(payload), headers=headers)
             resp.raise_for_status()
             data = resp.json()
         return data["choices"][0]["message"]["content"]

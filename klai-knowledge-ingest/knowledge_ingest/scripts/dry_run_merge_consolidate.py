@@ -59,7 +59,7 @@ from knowledge_ingest.clustering import (
 )
 from knowledge_ingest.config import settings
 from knowledge_ingest.description_generator import generate_node_description
-from knowledge_ingest.llm_throttle import shared_klai_fast_limiter
+from knowledge_ingest.llm_throttle import add_no_fallback, shared_klai_fast_limiter
 from knowledge_ingest.portal_client import (
     fetch_kb_metadata,
     fetch_taxonomy_nodes,
@@ -422,15 +422,17 @@ async def _group_and_assign(
                 "Authorization": f"Bearer {settings.litellm_api_key}",
                 "Content-Type": "application/json",
             },
-            json={
-                "model": settings.taxonomy_classification_model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message},
-                ],
-                "temperature": 0.2,
-                "max_tokens": max_tokens,
-            },
+            json=add_no_fallback(
+                {
+                    "model": settings.taxonomy_classification_model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_message},
+                    ],
+                    "temperature": 0.2,
+                    "max_tokens": max_tokens,
+                }
+            ),
         )
         resp.raise_for_status()
         data = resp.json()

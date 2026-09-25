@@ -64,9 +64,14 @@ def test_bulk_enrichment_backs_off_exponentially(registered_tasks):
 
 
 def test_graphiti_backs_off_exponentially(registered_tasks):
+    """September 2026: max_attempts=3 (~84s of backoff) gave up on an episode
+    a few seconds after graph.py's own inner retry loop already had -- 50
+    episodes dropped for good that month. The bounded lifetime must be hours,
+    not seconds, so a saturated klai-fast budget gets a real chance to drain.
+    """
     retry = registered_tasks[queues.GRAPHITI_BULK]
-    assert retry["max_attempts"] == 3
-    assert retry["exponential_wait"] == 4  # waits 4s, 16s
+    assert retry["max_attempts"] == 9
+    assert retry["exponential_wait"] == 4  # waits 4s, 16s, ..., 65536s (~24h)
 
 
 def test_no_enrichment_task_retries_instantly(registered_tasks):
@@ -77,3 +82,34 @@ def test_no_enrichment_task_retries_instantly(registered_tasks):
         assert (
             retry.get("wait", 0) or retry.get("linear_wait", 0) or retry.get("exponential_wait", 0)
         ), f"task on {queue_name} retries with zero wait"
+
+
+class TestGraphitiEpisodeFailureExhaustion:
+    """A failed episode must be re-queued (WARNING) on every attempt except
+    the last, and fail loudly (ERROR, artifact_id in the log) only once
+    procrastinate has actually given up -- not dropped silently the moment
+    graph.py's own inner retry loop returns None, the September 2026 bug."""
+
+    def test_early_attempt_is_re_queued_not_dropped(self):
+        event, exhausted = enrichment_tasks._graphiti_episode_failure_event(
+            attempt=0, max_attempts=enrichment_tasks._GRAPHITI_MAX_ATTEMPTS
+        )
+        assert exhausted is False
+        assert event == "graphiti_episode_partial"
+
+    def test_second_to_last_attempt_still_re_queues(self):
+        """Regression anchor for the old max_attempts=3 cutoff: attempt index
+        2 (the 3rd try) used to be the final one and must now still retry."""
+        event, exhausted = enrichment_tasks._graphiti_episode_failure_event(
+            attempt=2, max_attempts=enrichment_tasks._GRAPHITI_MAX_ATTEMPTS
+        )
+        assert exhausted is False
+        assert event == "graphiti_episode_partial"
+
+    def test_last_attempt_fails_loudly(self):
+        event, exhausted = enrichment_tasks._graphiti_episode_failure_event(
+            attempt=enrichment_tasks._GRAPHITI_MAX_ATTEMPTS - 1,
+            max_attempts=enrichment_tasks._GRAPHITI_MAX_ATTEMPTS,
+        )
+        assert exhausted is True
+        assert event == "graphiti_episode_exhausted"

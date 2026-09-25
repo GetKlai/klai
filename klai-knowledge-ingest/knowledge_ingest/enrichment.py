@@ -25,7 +25,7 @@ from pydantic import BaseModel, ValidationError
 
 from knowledge_ingest.config import settings
 from knowledge_ingest.context_strategies import STRATEGIES
-from knowledge_ingest.llm_throttle import shared_klai_fast_limiter
+from knowledge_ingest.llm_throttle import add_no_fallback, shared_klai_fast_limiter
 
 logger = structlog.get_logger()
 
@@ -174,7 +174,7 @@ async def _call_llm(prompt: str, path: str) -> dict:
         async with httpx.AsyncClient(timeout=settings.enrichment_timeout) as client:
             resp = await client.post(
                 f"{settings.litellm_url}/v1/chat/completions",
-                json=payload,
+                json=add_no_fallback(payload),
                 headers=headers,
             )
             resp.raise_for_status()

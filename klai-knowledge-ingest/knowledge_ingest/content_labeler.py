@@ -25,7 +25,7 @@ import httpx
 import structlog
 
 from knowledge_ingest.config import settings
-from knowledge_ingest.llm_throttle import shared_klai_fast_limiter
+from knowledge_ingest.llm_throttle import add_no_fallback, shared_klai_fast_limiter
 
 logger = structlog.get_logger()
 
@@ -98,15 +98,17 @@ async def _call_litellm(user_message: str) -> dict:
                 "Authorization": f"Bearer {settings.litellm_api_key}",
                 "Content-Type": "application/json",
             },
-            json={
-                "model": "klai-fast",
-                "messages": [
-                    {"role": "system", "content": _SYSTEM_PROMPT},
-                    {"role": "user", "content": user_message},
-                ],
-                "temperature": 0.0,
-                "max_tokens": 100,
-            },
+            json=add_no_fallback(
+                {
+                    "model": "klai-fast",
+                    "messages": [
+                        {"role": "system", "content": _SYSTEM_PROMPT},
+                        {"role": "user", "content": user_message},
+                    ],
+                    "temperature": 0.0,
+                    "max_tokens": 100,
+                }
+            ),
         )
         resp.raise_for_status()
         data = resp.json()

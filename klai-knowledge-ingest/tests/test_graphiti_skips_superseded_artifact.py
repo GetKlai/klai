@@ -265,9 +265,15 @@ async def test_partial_failure_records_episodes_created_before_the_error(graphit
 
 @pytest.mark.asyncio
 async def test_missing_episode_id_raises_and_reports_partial_coverage(graphiti_task):
+    """No ``context`` (as in this direct call) reads as attempt 0 of
+    ``_GRAPHITI_MAX_ATTEMPTS`` -- not exhausted, so procrastinate will
+    re-queue it and this logs at WARNING, not ERROR (that only fires once
+    the retry budget is actually spent -- see
+    TestGraphitiEpisodeFailureExhaustion in test_enrichment_retry_config.py).
+    """
     paragraph = ("A complete sentence. " * 1000).strip()
 
-    with patch.object(enrichment_tasks.logger, "error") as log_error:
+    with patch.object(enrichment_tasks.logger, "warning") as log_warning:
         ingest_episode, _, _ = await _run_active_document(
             graphiti_task,
             f"{paragraph}\n\n{paragraph}",
@@ -276,12 +282,14 @@ async def test_missing_episode_id_raises_and_reports_partial_coverage(graphiti_t
         )
 
     assert ingest_episode.await_count == 2
-    log_error.assert_called_once_with(
+    log_warning.assert_called_once_with(
         "graphiti_episode_partial",
         artifact_id=_ARTIFACT_ID,
         org_id=_ORG_ID,
         completed_parts=1,
         expected_parts=2,
+        attempt=1,
+        max_attempts=enrichment_tasks._GRAPHITI_MAX_ATTEMPTS,
     )
 
 

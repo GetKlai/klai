@@ -51,6 +51,28 @@ from knowledge_ingest.episode_text import split_episode_text
 
 logger = structlog.get_logger()
 
+# Bounded lifetime for a Graphiti episode that keeps failing (September 2026:
+# graph.py's own 3-attempt inner retry gave up and this task's old
+# max_attempts=3 gave up again a few seconds later, dropping 50 episodes for
+# good over the month). exponential_wait=4 walks 4s, 16s, 64s, 256s, 1024s,
+# 4096s, 16384s, 65536s -- ~24h of re-queued retries -- before the 9th
+# attempt fails for good. Pinned by tests/test_enrichment_retry_config.py.
+_GRAPHITI_MAX_ATTEMPTS = 9
+
+
+def _graphiti_episode_failure_event(attempt: int, max_attempts: int) -> tuple[str, bool]:
+    """Return (log_event_name, exhausted) for one failed episode-ingest attempt.
+
+    ``exhausted`` is True only on the LAST attempt procrastinate will make
+    (``retry=RetryStrategy(max_attempts=...)`` gives up once ``job.attempts``
+    reaches ``max_attempts``) -- every earlier attempt gets re-queued with a
+    delay by procrastinate, so it logs at WARNING; only the final,
+    permanent drop logs at ERROR so it is loud in the artifact_id it names.
+    """
+    exhausted = attempt + 1 >= max_attempts
+    return ("graphiti_episode_exhausted" if exhausted else "graphiti_episode_partial", exhausted)
+
+
 _procrastinate_app: Any = None
 
 
@@ -367,11 +389,20 @@ def _register_tasks(procrastinate_app: Any) -> None:
 
     @procrastinate_app.task(
         queue=queues.GRAPHITI_BULK,
-        # Waits 4s, 16s — graphiti already has a token bucket in graph.py, but
-        # LiteLLM 429s still surface here during crawl bursts.
-        retry=procrastinate.RetryStrategy(max_attempts=3, exponential_wait=4),
+        # Waits 4s, 16s, 64s, ... 65536s (~24h) -- graphiti already has a token
+        # bucket in graph.py, but LiteLLM 429s/saturation still surface here
+        # during crawl bursts, and now that klai-fast calls no longer escalate
+        # to klai-medium on a saturated Small budget (llm_throttle.
+        # add_no_fallback), a busy period shows up here as sustained
+        # rate-limiting instead of a quiet klai-medium success. A bounded but
+        # generous lifetime re-queues the episode instead of dropping it the
+        # moment graph.py's own inner retry gives up.
+        retry=procrastinate.RetryStrategy(max_attempts=_GRAPHITI_MAX_ATTEMPTS, exponential_wait=4),
+        pass_context=True,
     )
     async def ingest_graphiti_episode(
+        context: Any = None,
+        *,
         artifact_id: str,
         org_id: str,
         content_type: str,
@@ -510,12 +541,18 @@ def _register_tasks(procrastinate_app: Any) -> None:
                     entity_graph_data=entity_graph_data,
                 )
                 if episode_id is None:
-                    logger.error(
-                        "graphiti_episode_partial",
+                    attempt = context.job.attempts if context is not None else 0
+                    event, exhausted = _graphiti_episode_failure_event(
+                        attempt, _GRAPHITI_MAX_ATTEMPTS
+                    )
+                    (logger.error if exhausted else logger.warning)(
+                        event,
                         artifact_id=artifact_id,
                         org_id=org_id,
                         completed_parts=len(episode_ids),
                         expected_parts=len(episode_parts),
+                        attempt=attempt + 1,
+                        max_attempts=_GRAPHITI_MAX_ATTEMPTS,
                     )
                     raise RuntimeError(
                         f"Graphiti returned no episode id for part "
