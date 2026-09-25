@@ -1299,6 +1299,22 @@ async def run_crawl_job(
             _attach_crawl_warning(summary_payload, crawl_outcome_warning)
             summary_json = json.dumps(summary_payload)
         elif auth_wall_pages and (cookies or login_indicator_selector):
+            # A crawl with saved credentials that walls this many pages has
+            # lost (part of) its session. failed_partial alone went unnoticed
+            # for weeks in September 2026, so this is an error line that the
+            # login-wall alert rules page on.
+            wall_rate = round(len(auth_wall_pages) / len(results), 3)
+            if wall_rate >= settings.ingest_authwall_dirty_trip_rate:
+                logger.error(
+                    "crawl_job_auth_wall_rate_high",
+                    job_id=job_id,
+                    connector_id=connector_id,
+                    org_id=org_id,
+                    kb_slug=kb_slug,
+                    login_walls_skipped=len(auth_wall_pages),
+                    total_count=len(results),
+                    wall_rate=wall_rate,
+                )
             terminal_status = "failed_partial"
             summary_json = json.dumps(
                 _attach_crawl_warning(
