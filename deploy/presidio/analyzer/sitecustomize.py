@@ -27,16 +27,15 @@ Two things happen here, both required before ``app.py`` builds its
 
 Why the patch, not a config-only path
 --------------------------------------
-This image is pinned to presidio-analyzer 2.2.362 (see
-``deploy/docker-compose.yml``'s presidio-analyzer digest). That version's
-``SpacyNlpEngine.load()`` unconditionally calls ``spacy.load(model_name)`` for
-every configured language — there is no config-only way to request a blank,
-untrained pipeline (later Presidio versions added a `slim` engine with a
-`generic_tokenizer: "blank"` option, but even there the Docker-image config
+This image is pinned to presidio-analyzer 2.2.364 (see the Dockerfile's FROM
+digest). That version's ``SpacyNlpEngine.load()`` unconditionally calls
+``spacy.load(model_name)`` for every configured language — there is no
+config-only way to request a blank, untrained pipeline (2.2.364 ships a `slim`
+engine with a `generic_tokenizer: "blank"` option, but the Docker-image config
 surface, ``NlpEngineProvider.create_engine()``, never forwards
 ``supported_languages`` to the engine constructor for that shortcut to fire —
-verified by reading the installed source, both the 2.2.362 image and a 2.2.363
-sdist). Loading trained per-language models instead (`en_core_web_sm`,
+verified by reading the installed source of the 2.2.362 and 2.2.364 images).
+Loading trained per-language models instead (`en_core_web_sm`,
 `nl_core_news_sm`, ...) was measured at ~178ms per 10k-char document even with
 NER and the parser disabled — three times over the SPEC's 60ms p95 NFR budget,
 before this pack's own regex/checksum work even starts. `spacy.blank(lang)`
