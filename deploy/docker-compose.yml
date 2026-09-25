@@ -2603,6 +2603,10 @@ services:
       EMAIL_SMTP_ENABLE_STARTTLS: "true"
       OAUTH_GITHUB_CLIENTID: Ov23li2svFLLNVG9eKgs
       OAUTH_GITHUB_SECRET: ${FIDER_OAUTH_GITHUB_SECRET}
+      # Fider also writes every log line into its own `logs` table unless told
+      # not to; that table had grown to 732k rows and 247 of the database's
+      # 256 MB by 2026-09-25, never read. stdout already reaches VictoriaLogs.
+      LOG_SQL: "false"
     networks:
       - klai-net
       - net-fider
