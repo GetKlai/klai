@@ -229,11 +229,21 @@ class _FakeCursor:
         self.rowcount = rowcount
 
 
+class _NoTenantConn:
+    """A connection whose transaction has neither a tenant nor the cross-org bypass bound."""
+
+    def exec_driver_sql(self, _sql: str):
+        return self
+
+    def one(self) -> tuple[str, str]:
+        return "", ""
+
+
 def test_rls_guard_logs_error_on_zero_rowcount_dml(caplog):
     cursor = _FakeCursor(rowcount=0)
     statement = "UPDATE portal_knowledge_bases SET name='x' WHERE id = 99"
     with caplog.at_level(logging.ERROR, logger="app.core.rls_guard"):
-        _on_after_cursor_execute(None, cursor, statement, {}, None, False)
+        _on_after_cursor_execute(_NoTenantConn(), cursor, statement, {}, None, False)
     messages = [r.getMessage() for r in caplog.records]
     assert any("RLS silent-filter: UPDATE on portal_knowledge_bases matched 0 rows" in m for m in messages), messages
 
@@ -267,7 +277,7 @@ def test_rls_guard_strict_mode_raises(monkeypatch):
     cursor = _FakeCursor(rowcount=0)
     statement = "DELETE FROM portal_groups WHERE id = 1"
     with pytest.raises(RuntimeError, match="RLS silent-filter"):
-        _on_after_cursor_execute(None, cursor, statement, {}, None, False)
+        _on_after_cursor_execute(_NoTenantConn(), cursor, statement, {}, None, False)
 
 
 # ---------------------------------------------------------------------------
