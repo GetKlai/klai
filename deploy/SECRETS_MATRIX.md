@@ -87,7 +87,6 @@ details in the private infra repo.
 | `MAILER_PORTAL_API_URL` | klai-mailer | Portal API base URL for locale lookup. Falls back to code default http://portal-api:8010 when unset. Mapped to `PORTAL_API_URL` in-container. |
 | `MONGO_ROOT_PASSWORD` | portal-api | MongoDB root password for per-tenant LibreChat database provisioning. |
 | `MONGO_ROOT_USERNAME` | portal-api | MongoDB root username (non-secret but kept here for pairing with the password). |
-| `MISTRAL_API_KEY_2` | litellm | Mistral key of a second Pro organisation (pay-as-you-go off); first in the pool. |
 | `MISTRAL_API_KEY` | litellm | Mistral key of the Klai organisation's default workspace (Pro, workspace spending cap); used after the Pro pool. |
 | `MISTRAL_API_KEY_BACKUP` | litellm | PAYG Mistral key used only after every other deployment fails. |
 | `PORTAL_API_BFF_SESSION_KEY` | portal-api | Fernet key for BFF session records at rest in Redis (SPEC-AUTH-008). Mapped to `BFF_SESSION_KEY` in-container. |
@@ -121,6 +120,8 @@ details in the private infra repo.
 | `ZITADEL_IDP_GOOGLE_ID` | portal-api | Instance-level Zitadel IDP id for Google social login (non-secret). |
 | `ZITADEL_IDP_MICROSOFT_ID` | portal-api | Instance-level Zitadel IDP id for Microsoft social login (non-secret). |
 | `ZITADEL_PORTAL_CLIENT_ID` | portal-api | OIDC client_id for the BFF confidential WEB app (non-secret). |
+
+Mistral Pro pool (litellm): `MISTRAL_API_KEY_2` is the key of a second Pro organisation with pay-as-you-go off. It is first in line for every alias, before `MISTRAL_API_KEY` and `MISTRAL_API_KEY_BACKUP`, and `sync-env` treats it as required.
 
 ## Rotation coupling
 
