@@ -49,10 +49,6 @@ if [[ -f .env ]]; then
     source .env
 fi
 
-if [[ -n "${GHCR_READ_PAT:-}" ]]; then
-    echo "$GHCR_READ_PAT" | docker login ghcr.io -u "${GHCR_READ_USER:-mvletter}" --password-stdin
-fi
-
 echo "Pulling ${IMAGE}..."
 docker pull "$IMAGE"
 
