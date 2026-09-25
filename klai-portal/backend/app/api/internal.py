@@ -676,18 +676,25 @@ async def list_scheduled_connectors(
         )
         rows = result.all()
     await _audit_internal_call(request)
-    return [
-        ScheduledConnectorItem(
-            connector_id=str(connector.id),
-            zitadel_org_id=org.zitadel_org_id,
-            schedule=connector.schedule,
-            connector_type=connector.connector_type,
-            has_saved_credentials=connector.encrypted_credentials is not None,
+    items = []
+    for connector, org in rows:
+        if connector.connector_type == "hubspot_support" and "knowledge_gaps" not in (
+            getattr(org, "platform_unlocked_features", None) or []
+        ):
+            continue
+        # The query WHERE clause already requires schedule IS NOT NULL; this
+        # assert only narrows the type ORM attribute access can't express.
+        assert connector.schedule is not None
+        items.append(
+            ScheduledConnectorItem(
+                connector_id=str(connector.id),
+                zitadel_org_id=org.zitadel_org_id,
+                schedule=connector.schedule,
+                connector_type=connector.connector_type,
+                has_saved_credentials=connector.encrypted_credentials is not None,
+            )
         )
-        for connector, org in rows
-        if connector.connector_type != "hubspot_support"
-        or "knowledge_gaps" in (getattr(org, "platform_unlocked_features", None) or [])
-    ]
+    return items
 
 
 class SyncStatusCallback(BaseModel):

@@ -449,7 +449,7 @@ async def knowledge_bases_stats_summary(
         )
         .group_by(PortalRetrievalGap.nearest_kb_slug)
     )
-    gaps_by_slug: dict[str, int] = {slug: count for slug, count in gaps_result.all()}
+    gaps_by_slug: dict[str, int] = {slug: count for slug, count in gaps_result.all() if slug is not None}
 
     # Usage from knowledge.queried product events for the last 30 days.
     # Each event carries a kb_slugs[] array (a single retrieve call may target
