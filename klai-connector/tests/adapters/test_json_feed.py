@@ -141,6 +141,64 @@ async def test_ac2_without_group_by_parts_ignore_feed_order() -> None:
     assert await _parts(adapter, records, connector) == await _parts(adapter, records[::-1], connector)
 
 
+async def test_ignore_fields_timestamp_only_change_leaves_every_part_unchanged() -> None:
+    adapter = JsonFeedAdapter()
+    connector = _connector(max_records_per_doc=10, ignore_fields=["updated_at"])
+    records = [
+        {"name": f"Product {index:03d}", "price": index, "updated_at": "2026-09-24T00:00:00Z"} for index in range(300)
+    ]
+    before = await _parts(adapter, records, connector)
+
+    touched = [
+        {**record, "updated_at": "2026-09-25T00:00:00Z"} if record["name"] == "Product 004" else record
+        for record in records
+    ]
+    after = await _parts(adapter, touched, connector)
+
+    assert after == before
+    assert all(b"updated_at" not in content for content in after.values())
+
+
+async def test_ignore_fields_real_price_change_still_changes_its_part() -> None:
+    adapter = JsonFeedAdapter()
+    connector = _connector(max_records_per_doc=10, ignore_fields=["updated_at"])
+    records = [
+        {"name": f"Product {index:03d}", "price": index, "updated_at": "2026-09-24T00:00:00Z"} for index in range(300)
+    ]
+    before = await _parts(adapter, records, connector)
+
+    changed = [
+        {**record, "price": record["price"] + 1} if record["name"] == "Product 004" else record for record in records
+    ]
+    after = await _parts(adapter, changed, connector)
+
+    changed_paths = {path for path, content in before.items() if after.get(path) != content}
+    assert changed_paths
+    assert len(changed_paths) <= 2  # the record's own part, plus a new path only if it was a boundary record
+    assert any(b"price: 5" in after[path] for path in changed_paths)
+
+
+async def test_ignore_fields_never_supplies_the_record_label() -> None:
+    adapter = JsonFeedAdapter()
+    connector = _connector(
+        max_records_per_doc=10, ignore_fields=["updated_at"], record_label_fields=["updated_at", "name"]
+    )
+    records = [{"name": f"Product {index:03d}", "updated_at": "2026-09-24T00:00:00Z"} for index in range(30)]
+    before = await _parts(adapter, records, connector)
+
+    after = await _parts(adapter, [{**record, "updated_at": "2026-09-25T00:00:00Z"} for record in records], connector)
+
+    assert after == before
+
+
+async def test_ignore_fields_may_not_include_a_group_by_field() -> None:
+    adapter = JsonFeedAdapter()
+    connector = _connector(group_by=["category"], ignore_fields=["category"])
+
+    with pytest.raises(ValueError, match="group_by"):
+        await _parts(adapter, [{"category": "prijzen", "name": "Product 001"}], connector)
+
+
 async def test_ac3_documents_preserve_chunker_soft_boundaries() -> None:
     adapter = JsonFeedAdapter()
     connector = _connector(group_by=["category"])
