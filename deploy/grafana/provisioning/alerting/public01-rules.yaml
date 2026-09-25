@@ -12,10 +12,12 @@
 # 10 minutes measured on 2026-09-25. Ten minutes without a line means
 # public-01, its Caddy or its Alloy is down.
 #
-# Shape: `| limit 1` keeps the result at 0-1 rows (multi-row LogsQL results
-# trip the long-vs-wide dataframe error described in caddy-rules.yaml).
-# Silence arrives as NoData, so noDataState is Alerting; execErrState is
-# Error because a rule that exists to catch silence must not go quiet itself.
+# Shape: `| stats count()` with queryType `stats` and reducer `last`, the form
+# mail-chain-notification-rules.yaml verified live: zero matches return
+# Value=0. A bare filter, even with `| limit 1`, fails with "input data must
+# be a wide series but got type long" (seen on this rule's first deploy).
+# noDataState is Alerting and execErrState Error, because a rule that exists
+# to catch silence must not go quiet itself.
 
 apiVersion: 1
 
@@ -31,7 +33,7 @@ groups:
         data:
           - refId: query
             datasourceUid: victorialogs
-            queryType: instant
+            queryType: stats
             relativeTimeRange:
               from: 600
               to: 0
@@ -40,8 +42,8 @@ groups:
               datasource:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
-              expr: 'container:"klai-public-caddy-1" | limit 1'
-              queryType: instant
+              expr: 'container:"klai-public-caddy-1" | stats count() as lines'
+              queryType: stats
           - refId: reduce
             datasourceUid: __expr__
             relativeTimeRange:
@@ -50,7 +52,7 @@ groups:
             model:
               refId: reduce
               type: reduce
-              reducer: count
+              reducer: last
               expression: query
           - refId: threshold
             datasourceUid: __expr__
