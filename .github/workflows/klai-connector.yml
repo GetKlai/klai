@@ -188,7 +188,6 @@ jobs:
           script: |
             set -e
             source /opt/klai/.env
-            echo "$GHCR_READ_PAT" | docker login ghcr.io -u mvletter --password-stdin
             docker pull ghcr.io/getklai/klai-connector:latest
             # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3
             /opt/klai/scripts/compose-up.sh klai-connector
