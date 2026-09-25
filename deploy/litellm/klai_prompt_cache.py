@@ -85,11 +85,8 @@ narrowly-scoped change.
 from __future__ import annotations
 
 import hashlib
-import logging
 
 from litellm.integrations.custom_logger import CustomLogger
-
-logger = logging.getLogger("klai_prompt_cache")
 
 
 def _message_text(message: dict) -> str:
@@ -131,11 +128,6 @@ class PromptCacheKeyInjector(CustomLogger):
         digest = hashlib.sha256(f"{model}\n{prefix}".encode()).hexdigest()[:32]
         cache_key = f"klai-{digest}"
         extra_body["prompt_cache_key"] = cache_key
-        # WARNING: the container only ships WARNING+ to VictoriaLogs (see
-        # custom_router.py's klai_router_final_model line for the same
-        # constraint) -- this is the only place a cache-key assignment is
-        # visible without reading Mistral's own usage.prompt_tokens_details.
-        logger.warning("klai_prompt_cache_key_set model=%s cache_key=%s", model, cache_key)
         return data
 
 
