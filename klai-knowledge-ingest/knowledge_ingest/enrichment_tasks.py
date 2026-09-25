@@ -54,22 +54,23 @@ logger = structlog.get_logger()
 # Bounded lifetime for a Graphiti episode that keeps failing (September 2026:
 # graph.py's own 3-attempt inner retry gave up and this task's old
 # max_attempts=3 gave up again a few seconds later, dropping 50 episodes for
-# good over the month). exponential_wait=4 walks 4s, 16s, 64s, 256s, 1024s,
-# 4096s, 16384s, 65536s -- ~24h of re-queued retries -- before the 9th
-# attempt fails for good. Pinned by tests/test_enrichment_retry_config.py.
-_GRAPHITI_MAX_ATTEMPTS = 9
+# good over the month). procrastinate counts retries after the first run, so
+# 8 means 9 runs; exponential_wait=4 walks 4s, 16s, 64s, 256s, 1024s, 4096s,
+# 16384s, 65536s -- ~24h of re-queued retries -- before the episode fails for
+# good. Pinned by tests/test_enrichment_retry_config.py.
+_GRAPHITI_MAX_ATTEMPTS = 8
 
 
 def _graphiti_episode_failure_event(attempt: int, max_attempts: int) -> tuple[str, bool]:
     """Return (log_event_name, exhausted) for one failed episode-ingest attempt.
 
-    ``exhausted`` is True only on the LAST attempt procrastinate will make
-    (``retry=RetryStrategy(max_attempts=...)`` gives up once ``job.attempts``
-    reaches ``max_attempts``) -- every earlier attempt gets re-queued with a
+    ``exhausted`` is True only on the LAST run procrastinate will make
+    (``retry=RetryStrategy(max_attempts=...)`` gives up once ``job.attempts``,
+    the number of earlier runs, reaches ``max_attempts``) -- every earlier run gets re-queued with a
     delay by procrastinate, so it logs at WARNING; only the final,
     permanent drop logs at ERROR so it is loud in the artifact_id it names.
     """
-    exhausted = attempt + 1 >= max_attempts
+    exhausted = attempt >= max_attempts
     return ("graphiti_episode_exhausted" if exhausted else "graphiti_episode_partial", exhausted)
 
 
@@ -389,7 +390,7 @@ def _register_tasks(procrastinate_app: Any) -> None:
 
     @procrastinate_app.task(
         queue=queues.GRAPHITI_BULK,
-        # Waits 4s, 16s, 64s, ... 65536s (~24h) -- graphiti already has a token
+        # 9 runs, waits 4s, 16s, 64s, ... 65536s (~24h) -- graphiti already has a token
         # bucket in graph.py, but LiteLLM 429s/saturation still surface here
         # during crawl bursts, and now that klai-fast calls no longer escalate
         # to klai-medium on a saturated Small budget (llm_throttle.
@@ -552,7 +553,7 @@ def _register_tasks(procrastinate_app: Any) -> None:
                         completed_parts=len(episode_ids),
                         expected_parts=len(episode_parts),
                         attempt=attempt + 1,
-                        max_attempts=_GRAPHITI_MAX_ATTEMPTS,
+                        max_attempts=_GRAPHITI_MAX_ATTEMPTS + 1,
                     )
                     raise RuntimeError(
                         f"Graphiti returned no episode id for part "

@@ -289,7 +289,7 @@ async def test_missing_episode_id_raises_and_reports_partial_coverage(graphiti_t
         completed_parts=1,
         expected_parts=2,
         attempt=1,
-        max_attempts=enrichment_tasks._GRAPHITI_MAX_ATTEMPTS,
+        max_attempts=enrichment_tasks._GRAPHITI_MAX_ATTEMPTS + 1,
     )
 
 

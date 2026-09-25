@@ -149,4 +149,7 @@ def _rewrite_with_no_fallback(request: httpx.Request) -> httpx.Request:
         url=request.url,
         headers=headers,
         json=add_no_fallback(body),
+        # httpcore reads the client's timeouts from here; a rebuilt request
+        # without them has no timeout at all.
+        extensions=request.extensions,
     )

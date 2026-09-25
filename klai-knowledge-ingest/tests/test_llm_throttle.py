@@ -126,7 +126,7 @@ class TestNoMediumFallbackContract:
                 return httpx.Response(200, json={"ok": True}, request=request)
 
         transport = NoMediumFallbackTransport(_CapturingTransport())
-        async with httpx.AsyncClient(transport=transport) as client:
+        async with httpx.AsyncClient(transport=transport, timeout=httpx.Timeout(7.0)) as client:
             await client.post(
                 "http://litellm.internal/v1/chat/completions",
                 headers={"Authorization": "Bearer secret-key"},
@@ -139,6 +139,9 @@ class TestNoMediumFallbackContract:
         assert sent_body["model"] == "klai-fast"
         # Auth must survive the request being rebuilt.
         assert captured[0].headers["authorization"] == "Bearer secret-key"
+        # So must the client's timeouts: httpcore reads them from the request
+        # extensions, and without them a stuck call would hang forever.
+        assert captured[0].extensions["timeout"]["read"] == 7.0
 
     def test_every_chat_completions_caller_blocks_medium_fallback(self):
         """Every knowledge-ingest module that POSTs a raw chat/completions

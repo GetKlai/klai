@@ -70,8 +70,10 @@ def test_graphiti_backs_off_exponentially(registered_tasks):
     not seconds, so a saturated klai-fast budget gets a real chance to drain.
     """
     retry = registered_tasks[queues.GRAPHITI_BULK]
-    assert retry["max_attempts"] == 9
-    assert retry["exponential_wait"] == 4  # waits 4s, 16s, ..., 65536s (~24h)
+    # procrastinate counts retries after the first run: 8 means 9 runs, and
+    # the waits 4s, 16s, ..., 65536s add up to ~24h.
+    assert retry["max_attempts"] == 8
+    assert retry["exponential_wait"] == 4
 
 
 def test_no_enrichment_task_retries_instantly(registered_tasks):
@@ -106,9 +108,17 @@ class TestGraphitiEpisodeFailureExhaustion:
         assert exhausted is False
         assert event == "graphiti_episode_partial"
 
+    def test_attempt_before_the_last_is_still_retried(self):
+        """procrastinate only gives up once job.attempts reaches max_attempts."""
+        _, exhausted = enrichment_tasks._graphiti_episode_failure_event(
+            attempt=enrichment_tasks._GRAPHITI_MAX_ATTEMPTS - 1,
+            max_attempts=enrichment_tasks._GRAPHITI_MAX_ATTEMPTS,
+        )
+        assert exhausted is False
+
     def test_last_attempt_fails_loudly(self):
         event, exhausted = enrichment_tasks._graphiti_episode_failure_event(
-            attempt=enrichment_tasks._GRAPHITI_MAX_ATTEMPTS - 1,
+            attempt=enrichment_tasks._GRAPHITI_MAX_ATTEMPTS,
             max_attempts=enrichment_tasks._GRAPHITI_MAX_ATTEMPTS,
         )
         assert exhausted is True
