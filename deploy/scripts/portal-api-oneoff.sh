@@ -53,9 +53,19 @@ fi
 timestamp="$(date +%Y%m%d%H%M%S)"
 name="klai-oneoff-${timestamp}"
 out_dir="${out_dir:-${KLAI_ONEOFF_OUT:-/opt/klai/oneoff/${timestamp}}}"
+# --mount source= requires an absolute path; a relative --out otherwise fails
+# inside `docker run`, not here, which is a worse place to find out.
+[[ "$out_dir" == /* ]] || out_dir="$PWD/$out_dir"
 mkdir -p -m 700 "$out_dir"
 
 image="$(docker inspect --format '{{.Image}}' "$PORTAL_CONTAINER")"
+
+# The image runs as a non-root user (klai), so a 0700 dir created by whoever
+# invoked this script (typically root) is unwritable from inside the
+# container. docker top reads the uid the live process actually runs as,
+# which is the clone's uid too since it comes from the same image.
+container_uid="$(docker top "$PORTAL_CONTAINER" -o uid | tail -n +2 | head -n1 | tr -d '[:space:]')"
+chown "$container_uid" "$out_dir"
 
 env_file="$(mktemp)"
 chmod 600 "$env_file"
@@ -95,4 +105,5 @@ docker run --rm \
     "${mount_args[@]}" \
     --mount "type=bind,source=${out_dir},destination=/out" \
     -w /repo/klai-portal/backend \
+    --entrypoint "" \
     "$image" "$@"

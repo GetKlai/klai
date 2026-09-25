@@ -13,13 +13,17 @@ FAIL=0
 
 run_oneoff() {
     # $1 = "true"/"false" — what docker inspect reports for .State.Running
+    # $2 = "abs" (default; --out <tmp>/out), "rel" (--out out, run from <tmp>/work)
     local running="$1"
-    shift
+    local out_mode="${2:-abs}"
     tmp="$(mktemp -d)"
-    mkdir -p "$tmp/bin" "$tmp/out"
+    mkdir -p "$tmp/bin" "$tmp/out" "$tmp/work"
 
     export ONEOFF_TEST_TMP="$tmp"
     export ONEOFF_TEST_RUNNING="$running"
+    # docker top reports the uid the real container's process runs as; the
+    # stub reports our own uid so the script's `chown` needs no privilege.
+    export ONEOFF_TEST_UID="$(id -u)"
 
     cat >"$tmp/bin/docker" <<'STUB'
 #!/usr/bin/env bash
@@ -44,6 +48,9 @@ case "$1" in
                 ;;
         esac
         ;;
+    top)
+        printf 'UID\n%s\n' "$ONEOFF_TEST_UID"
+        ;;
     run)
         echo "$*" >> "$ONEOFF_TEST_TMP/run.log"
         args=("$@")
@@ -59,16 +66,23 @@ STUB
     chmod +x "$tmp/bin/docker"
 
     set +e
-    PATH="$tmp/bin:$PATH" bash "$SCRIPT" --out "$tmp/out" -- echo hello >"$tmp/out.log" 2>"$tmp/err.log"
+    if [ "$out_mode" = "rel" ]; then
+        # A relative --out has to resolve against the cwd the operator ran
+        # the script from, not against $tmp.
+        (cd "$tmp/work" && PATH="$tmp/bin:$PATH" bash "$SCRIPT" --out out -- echo hello >"$tmp/out.log" 2>"$tmp/err.log")
+    else
+        PATH="$tmp/bin:$PATH" bash "$SCRIPT" --out "$tmp/out" -- echo hello >"$tmp/out.log" 2>"$tmp/err.log"
+    fi
     LAST_RC=$?
     set -e
 
     LAST_RUN_LOG="$(cat "$tmp/run.log" 2>/dev/null || true)"
+    LAST_CALLS="$(cat "$tmp/calls.log" 2>/dev/null || true)"
     LAST_ENV_FILE="$tmp/run-env-file"
     LAST_ERR="$(cat "$tmp/err.log" 2>/dev/null || true)"
     LAST_TMP="$tmp"
 
-    unset ONEOFF_TEST_TMP ONEOFF_TEST_RUNNING
+    unset ONEOFF_TEST_TMP ONEOFF_TEST_RUNNING ONEOFF_TEST_UID
 }
 
 check() {
@@ -110,6 +124,9 @@ check "the command runs from the backend working directory" \
 check "the cloned image and the command are both on the docker run line" \
     bash -c 'echo "$0" | grep -q -- "sha256:deadbeef echo hello"' "$LAST_RUN_LOG"
 
+check "the image's own entrypoint (migrate-then-serve) is cleared, or the command never runs" \
+    bash -c 'echo "$0" | grep -Eq -- "--entrypoint[[:space:]]+sha256:deadbeef"' "$LAST_RUN_LOG"
+
 check "the Sentry DSN is dropped from the cloned environment" \
     bash -c '! grep -q "^SENTRY_DSN=" "$0"' "$LAST_ENV_FILE"
 
@@ -118,6 +135,14 @@ check "the GlitchTip DSN is dropped from the cloned environment" \
 
 check "an unrelated variable survives the clone" \
     bash -c 'grep -q "^FOO=bar$" "$0"' "$LAST_ENV_FILE"
+
+check "the output dir is chowned to the uid the image's process actually runs as" \
+    bash -c 'echo "$0" | grep -q -- "top klai-core-portal-api-1 -o uid"' "$LAST_CALLS"
+
+run_oneoff true rel
+
+check "a relative --out resolves to an absolute path before the mount" \
+    bash -c 'echo "$0" | grep -q -- "--mount type=bind,source=${1}/work/out,destination=/out"' "$LAST_RUN_LOG" "$LAST_TMP"
 
 run_oneoff false
 
