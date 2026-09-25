@@ -27,6 +27,8 @@ on:
       - '.claude/hooks/klai/container-hygiene-preflight.sh'
       - '.claude/hooks/klai/tests/**'
       - '.github/workflows/deploy-scripts-tests.yml'
+      - 'renovate.json5'
+      - 'scripts/test-renovate-config.sh'
   push:
     branches: [main]
     paths:
@@ -40,6 +42,8 @@ on:
       - '.claude/hooks/klai/container-hygiene-preflight.sh'
       - '.claude/hooks/klai/tests/**'
       - '.github/workflows/deploy-scripts-tests.yml'
+      - 'renovate.json5'
+      - 'scripts/test-renovate-config.sh'
 
 permissions:
   contents: read
@@ -66,6 +70,12 @@ jobs:
       # was recreated.
       - name: Parse the shell inside every workflow
         run: python3 scripts/check-workflow-shell-syntax.py
+
+      # renovate.yml runs this contract before every Renovate run, but only on
+      # main: on 2026-09-24 a comment quoting a checked setting broke it, and
+      # every scheduled run failed for 18 hours before anyone saw it.
+      - name: Renovate configuration contracts
+        run: sh scripts/test-renovate-config.sh
 
       - name: public script ownership suite
         run: bash deploy/scripts/tests/status-monitoring.test.sh

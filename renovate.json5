@@ -256,7 +256,7 @@
       // declared it could start from 1.21 and could not, because its first
       // step reads a column that only a 1.22 migration creates. Merged oldest
       // first, each PR is a single hop: merging one changes the image line,
-      // the next PR conflicts, and rebaseWhen: 'conflicted' regenerates it
+      // the next PR conflicts, and the rebase-on-conflict setting regenerates it
       // from the version that just landed.
       separateMultipleMinor: true,
       separateMultipleMajor: true,
