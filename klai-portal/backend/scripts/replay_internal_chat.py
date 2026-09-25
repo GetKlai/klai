@@ -694,7 +694,7 @@ def _print_invented(summary: dict) -> None:
     )
 
 
-async def rejudge(out: Path) -> None:
+async def rejudge(out: Path, org_slug: str | None = None) -> None:
     """Re-run only the judge over a finished run's turns.jsonl (no chat turns, no retrieval).
 
     For a run made before the judge input was stripped of decorations (§7.4
@@ -707,7 +707,10 @@ async def rejudge(out: Path) -> None:
     saved = json.loads((out / "sample.json").read_text())
     zitadel_org_id = saved.get("zitadel_org_id")
     if not zitadel_org_id:
-        raise SystemExit(f"{out / 'sample.json'} has no zitadel_org_id: it predates rejudge and cannot be rejudged.")
+        # A run made before sample.json carried the org: the slug names it.
+        if not org_slug:
+            raise SystemExit(f"{out / 'sample.json'} has no zitadel_org_id: pass the org slug as the second argument.")
+        zitadel_org_id = (await _load_org(org_slug)).zitadel_org_id
 
     records = [json.loads(line) for line in (out / "turns.jsonl").read_text().splitlines() if line.strip()]
     by_conversation: dict[int, list[dict]] = {}
@@ -741,7 +744,7 @@ async def rejudge(out: Path) -> None:
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "rejudge":
-        asyncio.run(rejudge(Path(sys.argv[2]).resolve()))
+        asyncio.run(rejudge(Path(sys.argv[2]).resolve(), sys.argv[3] if len(sys.argv) > 3 else None))
     else:
         asyncio.run(
             main(

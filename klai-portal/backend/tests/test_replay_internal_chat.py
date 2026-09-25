@@ -511,3 +511,24 @@ async def test_rejudge_reruns_only_the_judge_over_a_finished_runs_turns(monkeypa
     out = capsys.readouterr().out
     assert "NEW vs OLD: wins 0, ties 1, losses 0" in out
     assert "invented: OLD 1/1, NEW 1/1" in out
+
+
+@pytest.mark.asyncio
+async def test_rejudge_takes_the_org_slug_when_the_run_predates_the_saved_org(monkeypatch, tmp_path):
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    (out_dir / "sample.json").write_text(json.dumps({"count": 1, "max_turns": 1, "entries": []}))
+    (out_dir / "turns.jsonl").write_text("")
+    loaded: list[str] = []
+
+    async def load_org(slug):
+        loaded.append(slug)
+        return SimpleNamespace(zitadel_org_id="zorg-brightwater")
+
+    monkeypatch.setattr(replay, "_load_org", load_org)
+
+    with pytest.raises(SystemExit):
+        await replay.rejudge(out_dir)
+    await replay.rejudge(out_dir, "brightwater")
+
+    assert loaded == ["brightwater"]
