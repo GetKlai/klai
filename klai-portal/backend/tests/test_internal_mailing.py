@@ -125,3 +125,65 @@ async def test_mailing_endpoint_without_bearer_token_returns_401(monkeypatch):
         await internal._require_internal_token(_request())
 
     assert exc_info.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_mailing_sync_contact_accepts_website_mailing_secret(monkeypatch):
+    from app.api import internal
+    from app.services.listmonk import ListmonkSyncResult
+
+    monkeypatch.setattr(internal.settings, "internal_secret", "master-secret")
+    monkeypatch.setattr(internal.settings, "website_mailing_secret", "website-secret")
+    monkeypatch.setattr(internal, "_check_rate_limit_internal", AsyncMock())
+    monkeypatch.setattr(internal, "_audit_internal_call", AsyncMock())
+    monkeypatch.setattr(
+        "app.services.listmonk.sync_contact",
+        AsyncMock(return_value=ListmonkSyncResult(subscriber_id=7, lists_added=[1])),
+    )
+
+    body = internal.MailingSyncContactRequest(
+        email="alice@example.com",
+        source="website_waitlist",
+        audiences=["signups"],
+    )
+    resp = await internal.mailing_sync_contact(_request(token="Bearer website-secret"), body)
+
+    assert resp.synced is True
+
+
+@pytest.mark.asyncio
+async def test_website_mailing_secret_is_rejected_on_mailing_send(monkeypatch):
+    from app.api import internal
+
+    monkeypatch.setattr(internal.settings, "internal_secret", "master-secret")
+    monkeypatch.setattr(internal.settings, "website_mailing_secret", "website-secret")
+    send_mock = AsyncMock()
+    monkeypatch.setattr("app.services.listmonk.send_onboarding_invite", send_mock)
+
+    body = internal.MailingSendRequest(template="onboarding_invite", email="alice@example.com", name="Alice")
+    with pytest.raises(HTTPException) as exc_info:
+        await internal.mailing_send(_request("/internal/mailing/send", token="Bearer website-secret"), body)
+
+    assert exc_info.value.status_code == 401
+    send_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_mailing_sync_contact_rejects_empty_bearer_when_website_secret_unset(monkeypatch):
+    from app.api import internal
+
+    monkeypatch.setattr(internal.settings, "internal_secret", "master-secret")
+    monkeypatch.setattr(internal.settings, "website_mailing_secret", "")
+    sync_mock = AsyncMock()
+    monkeypatch.setattr("app.services.listmonk.sync_contact", sync_mock)
+
+    body = internal.MailingSyncContactRequest(
+        email="alice@example.com",
+        source="website_waitlist",
+        audiences=["signups"],
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        await internal.mailing_sync_contact(_request(token="Bearer "), body)
+
+    assert exc_info.value.status_code == 401
+    sync_mock.assert_not_awaited()

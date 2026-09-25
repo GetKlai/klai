@@ -128,6 +128,10 @@ class Settings(BaseSettings):
     # Generate with: openssl rand -hex 32
     internal_secret: str = ""
 
+    # Bearer secret for the public website host, valid only on
+    # /internal/mailing/sync-contact so that host never holds internal_secret.
+    website_mailing_secret: str = ""
+
     # SPEC-SEC-005 REQ-1.7: per-caller-IP rate limit ceiling for /internal/* endpoints.
     # Sliding-window (60s) over Redis; fails open when Redis is unavailable.
     # Tune via INTERNAL_RATE_LIMIT_RPM env var without code change.
