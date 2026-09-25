@@ -2538,6 +2538,7 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
             answer_signals=answer_signals,
             response_language=response_language,
             helpdesk=helpdesk,
+            internal=internal,
             timeout_seconds=repair_seconds,
             delegated_org_id=delegated_org_id,
         )
@@ -2566,6 +2567,7 @@ async def _repair_unsupported_statements(
     answer_signals: dict[str, Any] | None,
     response_language: str | None,
     helpdesk: bool,
+    internal: bool,
     timeout_seconds: float,
     delegated_org_id: str | None,
 ) -> tuple[str, list[dict], dict[str, Any]]:
@@ -2606,6 +2608,13 @@ async def _repair_unsupported_statements(
     if repaired is None or repaired == content:
         return content, sources, decision
     if repaired == NOTHING_LEFT:
+        if internal:
+            # The LiteLLM hook makes the same call on this outcome
+            # (deploy/litellm/klai_answer_grounding.py's kb_answer_repair_kept):
+            # emptying an employee's answer is a bigger change than the
+            # measurement supports, so the unrepaired answer goes out as it was.
+            logger.info("partner_chat_answer_repair_kept", org_id=org_id, unsupported=len(grounding.unsupported))
+            return content, sources, decision
         # Every statement was unsupported: there is no sourced answer left to
         # keep, so the honest refusal is what remains.
         refusal: dict[str, Any] = {"reason": "grounding_nothing_left", _NO_CITABLE_SOURCES_DECISION_KEY: True}
