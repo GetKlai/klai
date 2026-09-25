@@ -463,3 +463,8 @@ jobs:
             else
               echo "SPEC-SEC-024 smoke-test: PASS"
             fi
+
+            # Blocking: a Twenty image change is a schema migration, and its
+            # entrypoint reports success even when the upgrade failed. Renovate
+            # automerges Twenty, so this is what turns a failed migration red.
+            /opt/klai/scripts/check-twenty-upgrade.sh

@@ -7,6 +7,12 @@ Supported ``connector.config`` keys:
 * ``group_by``: fields used to group flat record arrays.
 * ``record_label_fields``: preferred record label fields.
 * ``field_labels``: field-to-display-label overrides.
+* ``ignore_fields``: flat record arrays only; field names never rendered into document text or the
+  "Velden" schema line, and thus never part of a part's content or slug — for
+  fields such as a per-record "updated at" timestamp that changes on every
+  sync without the record's real content changing. Spread over the feed,
+  such timestamp-only changes otherwise touch nearly every part each night
+  (measured 2026-09-25: 63 of 73 parts on a production feed).
 * ``max_records_per_doc``: average batch size without ``group_by`` (default 200).
 * ``max_doc_chars``: maximum rendered document size (default 120,000).
 
@@ -166,7 +172,9 @@ class JsonFeedAdapter(BaseAdapter):
         return url.strip()
 
     @staticmethod
-    def _config(connector: Any) -> tuple[dict[str, Any], list[str], list[str], dict[str, str], int, int]:
+    def _config(
+        connector: Any,
+    ) -> tuple[dict[str, Any], list[str], list[str], dict[str, str], int, int, frozenset[str]]:
         config: dict[str, Any] = connector.config or {}
         group_by = config.get("group_by", [])
         if not isinstance(group_by, list) or any(not isinstance(field, str) or not field for field in group_by):
@@ -182,6 +190,14 @@ class JsonFeedAdapter(BaseAdapter):
         ):
             raise ValueError("JSON feed connector config 'field_labels' must map field names to string labels")
 
+        ignore_fields = config.get("ignore_fields", [])
+        if not isinstance(ignore_fields, list) or any(
+            not isinstance(field, str) or not field for field in ignore_fields
+        ):
+            raise ValueError("JSON feed connector config 'ignore_fields' must be a list of non-empty field names")
+        if set(ignore_fields) & set(group_by):
+            raise ValueError("JSON feed connector config 'ignore_fields' may not include a 'group_by' field")
+
         max_records = config.get("max_records_per_doc", _DEFAULT_MAX_RECORDS_PER_DOC)
         if isinstance(max_records, bool) or not isinstance(max_records, int) or max_records < 1:
             raise ValueError("JSON feed connector config 'max_records_per_doc' must be a positive integer")
@@ -196,7 +212,7 @@ class JsonFeedAdapter(BaseAdapter):
             raise ValueError(
                 f"JSON feed connector config 'max_doc_chars' must be between 1 and {_DEFAULT_MAX_DOC_CHARS}"
             )
-        return config, group_by, label_fields, field_labels, max_records, max_chars
+        return config, group_by, label_fields, field_labels, max_records, max_chars, frozenset(ignore_fields)
 
     async def list_documents(
         self,
@@ -208,7 +224,7 @@ class JsonFeedAdapter(BaseAdapter):
         self._documents_by_connector.pop(connector_id, None)
         self._metrics_by_connector.pop(connector_id, None)
         url = self._extract_url(connector)
-        config, group_by, label_fields, field_labels, max_records, max_chars = self._config(connector)
+        config, group_by, label_fields, field_labels, max_records, max_chars, ignore_fields = self._config(connector)
         parsed = await self._fetch_json(url, connector_id)
 
         if _is_flat_record_array(parsed):
@@ -221,6 +237,7 @@ class JsonFeedAdapter(BaseAdapter):
                 field_labels=field_labels,
                 max_records=max_records,
                 max_chars=max_chars,
+                ignore_fields=ignore_fields,
             )
         else:
             rendered = self._render_nested_json(
@@ -347,6 +364,7 @@ class JsonFeedAdapter(BaseAdapter):
         field_labels: dict[str, str],
         max_records: int,
         max_chars: int,
+        ignore_fields: frozenset[str],
     ) -> dict[str, _RenderedDocument]:
         title = self._feed_title(config)
         if group_by:
@@ -364,6 +382,7 @@ class JsonFeedAdapter(BaseAdapter):
                 label_fields=label_fields,
                 field_labels=field_labels,
                 sort_records=True,
+                ignore_fields=ignore_fields,
             )
             documents: dict[str, _RenderedDocument] = {}
             for batch in _stable_batches(rendered_records, max_records):
@@ -374,7 +393,7 @@ class JsonFeedAdapter(BaseAdapter):
                         connector_id=connector_id,
                         slug=slug,
                         title=f"{title} — {slug}",
-                        schema=self._schema_fields(indexed_batch, field_labels),
+                        schema=self._schema_fields(indexed_batch, field_labels, ignore_fields),
                         records=batch,
                         group_values={},
                         max_chars=max_chars,
@@ -416,8 +435,9 @@ class JsonFeedAdapter(BaseAdapter):
                     label_fields=label_fields,
                     field_labels=field_labels,
                     sort_records=True,
+                    ignore_fields=ignore_fields,
                 )
-                schema = self._schema_fields(indexed_records, field_labels)
+                schema = self._schema_fields(indexed_records, field_labels, ignore_fields)
                 group_documents = self._split_record_group(
                     connector_id=connector_id,
                     slug=slug,
@@ -451,11 +471,14 @@ class JsonFeedAdapter(BaseAdapter):
     def _schema_fields(
         indexed_records: list[tuple[int, dict[str, Any]]],
         field_labels: dict[str, str],
+        ignore_fields: frozenset[str],
     ) -> list[str]:
         fields: list[str] = []
         seen: set[str] = set()
         for _, record in indexed_records:
             for field in record:
+                if field in ignore_fields:
+                    continue
                 if field not in seen:
                     seen.add(field)
                     fields.append(_humanize(field, field_labels))
@@ -469,19 +492,24 @@ class JsonFeedAdapter(BaseAdapter):
         label_fields: list[str],
         field_labels: dict[str, str],
         sort_records: bool,
+        ignore_fields: frozenset[str],
     ) -> list[_RenderedRecord]:
         rendered: list[_RenderedRecord] = []
         for index, record in indexed_records:
             try:
                 label_field = next(
-                    (field for field in label_fields if field in record and not _is_empty(record[field])),
+                    (
+                        field
+                        for field in label_fields
+                        if field in record and field not in ignore_fields and not _is_empty(record[field])
+                    ),
                     None,
                 )
                 label = _display_value(record[label_field]) if label_field else str(index + 1)
                 pairs = [
                     f"{_humanize(field, field_labels)}: {_display_value(value)}"
                     for field, value in record.items()
-                    if field != label_field and not _is_empty(value)
+                    if field != label_field and field not in ignore_fields and not _is_empty(value)
                 ]
                 line = f"- **{label}**"
                 if pairs:

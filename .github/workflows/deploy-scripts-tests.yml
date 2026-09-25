@@ -28,6 +28,7 @@ on:
       - '.claude/hooks/klai/tests/**'
       - '.github/workflows/deploy-scripts-tests.yml'
       - 'renovate.json5'
+      - 'deploy/docker-compose.yml'
       - 'scripts/test-renovate-config.sh'
   push:
     branches: [main]
@@ -43,6 +44,7 @@ on:
       - '.claude/hooks/klai/tests/**'
       - '.github/workflows/deploy-scripts-tests.yml'
       - 'renovate.json5'
+      - 'deploy/docker-compose.yml'
       - 'scripts/test-renovate-config.sh'
 
 permissions:
@@ -76,6 +78,22 @@ jobs:
       # every scheduled run failed for 18 hours before anyone saw it.
       - name: Renovate configuration contracts
         run: sh scripts/test-renovate-config.sh
+
+      # Renovate automerges Twenty one minor per PR, but nothing orders the
+      # merges. Only the next hop may go green; see check-twenty-hop.sh.
+      - name: Twenty moves one minor at a time
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --depth=1 origin "$BASE_SHA"
+          git show FETCH_HEAD:deploy/docker-compose.yml > "$RUNNER_TEMP/base-compose.yml"
+          bash deploy/scripts/check-twenty-hop.sh "$RUNNER_TEMP/base-compose.yml" deploy/docker-compose.yml
+
+      - name: Twenty hop and upgrade-check suites
+        run: |
+          bash deploy/scripts/tests/check-twenty-hop.test.sh
+          bash deploy/scripts/tests/check-twenty-upgrade.test.sh
 
       - name: public script ownership suite
         run: bash deploy/scripts/tests/status-monitoring.test.sh

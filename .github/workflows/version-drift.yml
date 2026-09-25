@@ -1,0 +1,30 @@
+name: Version drift
+
+# Weekly check for what Renovate cannot update or updates nobody merges; see
+# scripts/check-version-drift.sh. A failed scheduled run mails its owner,
+# which is the point: it stays red until someone merges or decides.
+
+on:
+  schedule:
+    - cron: '30 5 * * 1'  # Monday, after Renovate's Monday-morning window
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mint a token for the Klai Renovate app
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.RENOVATE_APP_ID }}
+          private-key: ${{ secrets.RENOVATE_PRIVATE_KEY }}
+          owner: GetKlai
+          repositories: klai,klai-website
+      - uses: actions/checkout@v7
+      - run: bash scripts/check-version-drift.sh
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
