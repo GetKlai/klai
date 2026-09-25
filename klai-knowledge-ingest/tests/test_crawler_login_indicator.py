@@ -15,6 +15,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import structlog.testing
 
 from knowledge_ingest.adapters.crawler import (
     AnonymousAuthWallDetected,
@@ -273,6 +274,7 @@ class TestRunCrawlJobAuthWall:
                 "knowledge_ingest.adapters.crawler._ingest_crawl_result",
                 new=AsyncMock(side_effect=wall_exc),
             ) as ingest_mock,
+            structlog.testing.capture_logs() as captured,
         ):
             await run_crawl_job(
                 connection_factory=connection_factory_for(mock_conn),
@@ -282,6 +284,11 @@ class TestRunCrawlJobAuthWall:
                 start_url="https://wiki.example",
                 cookies=[{"name": "session", "value": "dummy"}],
             )
+
+        # One walled page out of one fetched: an authenticated crawl losing
+        # its session must page someone, not only end as failed_partial.
+        rate_events = [e for e in captured if e["event"] == "crawl_job_auth_wall_rate_high"]
+        assert [(e["log_level"], e["wall_rate"]) for e in rate_events] == [("error", 1.0)]
 
         ingest_mock.assert_awaited_with(
             mock_conn,

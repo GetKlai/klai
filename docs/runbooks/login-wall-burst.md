@@ -38,7 +38,7 @@ Wait for the rate to drop after the backfill finishes.
 ### Step 2 — Which tenant is dominant?
 
 ```
-service:knowledge-ingest AND (event:login_wall_reject OR event:login_wall_degrade OR event:login_wall_detected)
+service:knowledge-ingest AND (event:content_wall_signal_reject OR event:content_wall_signal_degrade OR event:content_wall_signal_observed)
 | stats by(org_id, kb_slug) count()
 | sort desc
 | limit 5
@@ -72,7 +72,7 @@ gated previously-public content.
 
 - Identify the page domain dominating the detections:
   ```
-  service:knowledge-ingest AND event:login_wall_reject
+  service:knowledge-ingest AND event:content_wall_signal_reject
   | extract regex 'url=(?P<domain>https?://[^/ ]+)' from _msg
   | stats by(domain) count() | sort desc
   ```
@@ -84,6 +84,26 @@ gated previously-public content.
     different source, etc.).
 
 ## False positives
+
+A connector with saved cookies needs one check before anything else. A page
+that is long and clearly logged in can still carry one gate for a tab the
+session has lost access to, and on a wiki the anonymous view is often
+thousands of words too, so length does not prove the session is whole.
+Compare with the version stored from the last good crawl:
+
+```sql
+SELECT url, to_timestamp(crawled_at)::date,
+       raw_markdown ILIKE '%/login?%' AS stored_version_has_gate
+FROM knowledge.crawled_pages
+WHERE org_id = '<org>' AND kb_slug = '<kb>' AND url = ANY('{<sample_urls>}');
+```
+
+If the stored version has no gate and the rejected crawl does, the session
+lost access and the rejection is correct: it keeps the complete stored
+version in the knowledge base. Refresh the cookies and check the connector's
+`crawl_keepalive_probe` events (`ok:false` on every ping means the keep-alive
+is not keeping anything alive). Only when the stored version carries the same
+gate is the gate a permanent part of the page.
 
 If a single tenant insists their pages are NOT login-walled:
 

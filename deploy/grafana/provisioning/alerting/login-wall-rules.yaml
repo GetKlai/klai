@@ -5,15 +5,22 @@
 #
 #   R1  login_wall_burst                  HIGH   >50 detections in 10m
 #   R2  login_wall_detector_misconfigured WARN   any "config_invalid" log
+#   R3  crawl_session_lost                HIGH   an authenticated crawl walled
+#                                                >= 30% of its pages
 #
 # Routed via spec=SPEC-INGEST-LOGIN-WALL-DETECT-001 → klai-ops-alerts-email.
 #
-# Field shape verified against the structured logs emitted by Phase B:
+# Field shape verified against production VictoriaLogs (2026-09-25):
 #   service:knowledge-ingest
-#   event:login_wall_reject     (mode=reject)
-#   event:login_wall_degrade    (mode=degrade)
-#   event:login_wall_detected   (mode=audit_only)
+#   event:content_wall_signal_reject    (mode=reject)
+#   event:content_wall_signal_degrade   (mode=degrade)
+#   event:content_wall_signal_observed  (mode=audit_only)
 #   event:login_wall_detector_config_invalid (fail-safe trigger)
+#   event:crawl_job_auth_wall_rate_high (one per job, level=error)
+#
+# The crawler renamed its login_wall_* events on 2026-08-18 and R1 matched
+# nothing until 2026-09-25. tests/test_login_wall_alert_contract.py in
+# klai-knowledge-ingest now fails when an event queried here is not emitted.
 
 apiVersion: 1
 
@@ -49,7 +56,7 @@ groups:
               datasource:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
-              expr: 'service:knowledge-ingest AND (event:login_wall_reject OR event:login_wall_degrade OR event:login_wall_detected)'
+              expr: 'service:knowledge-ingest AND (event:content_wall_signal_reject OR event:content_wall_signal_degrade OR event:content_wall_signal_observed)'
               queryType: instant
           - refId: count
             datasourceUid: __expr__
@@ -108,7 +115,7 @@ groups:
 
             Triage:
               1. VictoriaLogs:
-                   service:knowledge-ingest AND (event:login_wall_reject OR event:login_wall_degrade OR event:login_wall_detected)
+                   service:knowledge-ingest AND (event:content_wall_signal_reject OR event:content_wall_signal_degrade OR event:content_wall_signal_observed)
                    | stats by(org_id, kb_slug) count() | sort desc
               2. Top org_id → check connector_id for that tenant's KB.
               3. If backfill: confirm `event=backfill_login_walls_complete`
@@ -182,3 +189,74 @@ groups:
               2. Valid values: reject | degrade | audit_only
               3. Fix in SOPS .env, redeploy via:
                    /opt/klai/scripts/compose-up.sh knowledge-ingest
+
+      # ── R3: crawl_session_lost ───────────────────────────────────────────
+      # One error line per crawl job that had saved cookies or a login
+      # indicator and still walled >= KLAI_INGEST_AUTHWALL_DIRTY_TRIP_RATE
+      # (default 30%) of its pages. R1 only sees sites large enough to log
+      # 50 walls in 10 minutes; this catches every connector.
+      - uid: spec-lwd-001-session-lost
+        title: crawl_session_lost
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: instant
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: 'service:knowledge-ingest AND event:crawl_job_auth_wall_rate_high'
+              queryType: instant
+          - refId: count
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: count
+              type: reduce
+              reducer: count
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: count
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: Alerting
+        for: 0s
+        keepFiringFor: 30m
+        isPaused: false
+        labels:
+          severity: warning
+          spec: SPEC-INGEST-LOGIN-WALL-DETECT-001
+          service_group: ingest
+        annotations:
+          summary: 'an authenticated crawl rejected a large share of its pages as login-walled'
+          runbook_url: 'docs/runbooks/login-wall-burst.md'
+          description: |
+            A web-crawler connector with saved credentials walled at least
+            30% of its pages. The walled pages keep their last good version;
+            they are not refreshed until the session is fixed.
+
+            Triage:
+              1. VictoriaLogs:
+                   service:knowledge-ingest AND event:crawl_job_auth_wall_rate_high
+                 gives connector_id, org_id, kb_slug and wall_rate.
+              2. Follow "False positives" in the runbook: compare the stored
+                 version of a sample URL before calling it a false positive.
+              3. Check the connector's crawl_keepalive_probe events.

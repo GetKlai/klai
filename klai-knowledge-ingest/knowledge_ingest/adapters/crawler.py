@@ -1270,6 +1270,24 @@ async def run_crawl_job(
         # takes priority. The ingest-failure guard sits right after the
         # fetch-failure guard: both are "Klai reached the site but the job
         # still produced nothing", just at a different pipeline stage.
+        # A crawl with saved credentials that walls this many pages has lost
+        # (part of) its session. failed_partial alone went unnoticed for weeks
+        # in September 2026, so this is an error line the login-wall alert
+        # rules page on, logged before any terminal-status choice so a job that
+        # also had fetch or ingest failures still reports it.
+        if auth_wall_pages and (cookies or login_indicator_selector) and results:
+            wall_fraction = len(auth_wall_pages) / len(results)
+            if wall_fraction >= settings.ingest_authwall_dirty_trip_rate:
+                logger.error(
+                    "crawl_job_auth_wall_rate_high",
+                    job_id=job_id,
+                    connector_id=connector_id,
+                    org_id=org_id,
+                    kb_slug=kb_slug,
+                    login_walls_skipped=len(auth_wall_pages),
+                    total_count=len(results),
+                    wall_rate=round(wall_fraction, 3),
+                )
         summary_json: str | None = None
         if job_cancelled:
             # 2026-08-19 (crawl-cancel): an operator cancel outranks every
