@@ -249,18 +249,19 @@
     },
     {
       description:
-        'Twenty CRM never automerges, for the same reason as Vexa: a bump is \
-        not self-contained. The image entrypoint runs `upgrade` on every start, \
-        so merging a new tag is a schema migration of the CRM, and Twenty only \
-        cross-upgrades from the first entry of TWENTY_PREVIOUS_VERSIONS \
-        onward. A pin below that floor needs an intermediate version first, \
-        which Renovate cannot know; as a plain minor it would have jumped \
-        v1.20.0 straight to v1.23.9 and let the entrypoint try. Its own group \
-        so a pending CRM bump never holds back images that can merge alone. \
+        'Twenty CRM automerges one minor at a time. Every bump is a schema \
+        migration (the entrypoint runs `upgrade` on start) and Twenty only \
+        upgrades cleanly from the previous minor, so skipping one is what \
+        broke the 24 September jump. Three things make that safe: one PR per \
+        minor (below), check-twenty-hop.sh in Deploy-script tests, which keeps \
+        every PR but the next hop red, and check-twenty-upgrade.sh in the \
+        core-01 deploy, which fails the deploy when the upgrade log does not \
+        show this version migrating without failures. Its own group so a \
+        pending CRM bump never holds back images that can merge alone. \
         See SPEC-INFRA-COOLIFY-EXIT-001 T2.',
       matchPackageNames: ['twentycrm/twenty'],
       groupName: 'Twenty CRM',
-      automerge: false,
+      automerge: true,
       // One PR per minor (and per major) instead of one PR that jumps to the
       // newest release. Upstream tests N-1 -> N far more than N-20 -> N, and
       // the 24 September upgrade showed what a long jump costs: v2.42.4
