@@ -5,9 +5,20 @@ model_list:
   - model_name: klai-primary
     litellm_params:
       model: mistral/mistral-small-2603
-      api_key: os.environ/MISTRAL_API_KEY
-      # Subscription workspace first; order 2 is the PAYG safety net.
+      api_key: os.environ/MISTRAL_API_KEY_2
+      # Order 1: Pro organisations with pay-as-you-go off (MISTRAL_API_KEY_n),
+      # shuffled together; each stops at its allowance. Order 2: the Klai
+      # organisation (Pro, with a workspace spending cap). Order 3: the
+      # pay-as-you-go workspace, used only when everything above is full.
       order: 1
+    rpm: 45
+    tpm: 45000
+
+  - model_name: klai-primary
+    litellm_params:
+      model: mistral/mistral-small-2603
+      api_key: os.environ/MISTRAL_API_KEY
+      order: 2
     # Mistral headers measured in prod on 2026-05-26:
     # mistral-small-2603 = 100 RPM / 100k TPM. klai-primary and klai-fast
     # share that same upstream model, so split the budget between aliases.
@@ -18,7 +29,7 @@ model_list:
     litellm_params:
       model: mistral/mistral-small-2603
       api_key: os.environ/MISTRAL_API_KEY_BACKUP
-      order: 2
+      order: 3
     rpm: 45
     tpm: 45000
 
@@ -27,7 +38,7 @@ model_list:
   - model_name: klai-fast
     litellm_params:
       model: mistral/mistral-small-2603
-      api_key: os.environ/MISTRAL_API_KEY
+      api_key: os.environ/MISTRAL_API_KEY_2
       order: 1
     rpm: 45
     tpm: 45000
@@ -35,8 +46,16 @@ model_list:
   - model_name: klai-fast
     litellm_params:
       model: mistral/mistral-small-2603
-      api_key: os.environ/MISTRAL_API_KEY_BACKUP
+      api_key: os.environ/MISTRAL_API_KEY
       order: 2
+    rpm: 45
+    tpm: 45000
+
+  - model_name: klai-fast
+    litellm_params:
+      model: mistral/mistral-small-2603
+      api_key: os.environ/MISTRAL_API_KEY_BACKUP
+      order: 3
     rpm: 45
     tpm: 45000
 
@@ -45,8 +64,16 @@ model_list:
   - model_name: klai-large
     litellm_params:
       model: mistral/mistral-large-2512
-      api_key: os.environ/MISTRAL_API_KEY
+      api_key: os.environ/MISTRAL_API_KEY_2
       order: 1
+    rpm: 13
+    tpm: 360000
+
+  - model_name: klai-large
+    litellm_params:
+      model: mistral/mistral-large-2512
+      api_key: os.environ/MISTRAL_API_KEY
+      order: 2
     # Mistral headers measured in prod on 2026-05-26:
     # mistral-large-2512 = 15 RPM / 400k TPM.
     rpm: 13
@@ -56,7 +83,7 @@ model_list:
     litellm_params:
       model: mistral/mistral-large-2512
       api_key: os.environ/MISTRAL_API_KEY_BACKUP
-      order: 2
+      order: 3
     rpm: 13
     tpm: 360000
 
@@ -68,8 +95,16 @@ model_list:
   - model_name: klai-medium
     litellm_params:
       model: mistral/mistral-medium-3.5
-      api_key: os.environ/MISTRAL_API_KEY
+      api_key: os.environ/MISTRAL_API_KEY_2
       order: 1
+    rpm: 900
+    tpm: 450000
+
+  - model_name: klai-medium
+    litellm_params:
+      model: mistral/mistral-medium-3.5
+      api_key: os.environ/MISTRAL_API_KEY
+      order: 2
     # Mistral headers measured in prod on 2026-05-26:
     # mistral-medium-3.5 = 1000 RPM / 500k TPM.
     rpm: 900
@@ -79,7 +114,7 @@ model_list:
     litellm_params:
       model: mistral/mistral-medium-3.5
       api_key: os.environ/MISTRAL_API_KEY_BACKUP
-      order: 2
+      order: 3
     rpm: 900
     tpm: 450000
 

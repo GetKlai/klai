@@ -30,12 +30,13 @@ def test_text_aliases_use_mistral_provider_only() -> None:
 
     assert set(models) == TEXT_ALIASES
     for alias, deployments in models.items():
-        assert len(deployments) == 2, alias
+        assert len(deployments) == 3, alias
         deployments_by_order = {params["order"]: params for params in deployments}
-        assert set(deployments_by_order) == {1, 2}, alias
-        assert deployments_by_order[1]["api_key"] == "os.environ/MISTRAL_API_KEY", alias
+        assert set(deployments_by_order) == {1, 2, 3}, alias
+        assert deployments_by_order[1]["api_key"] == "os.environ/MISTRAL_API_KEY_2", alias
+        assert deployments_by_order[2]["api_key"] == "os.environ/MISTRAL_API_KEY", alias
         assert (
-            deployments_by_order[2]["api_key"] == "os.environ/MISTRAL_API_KEY_BACKUP"
+            deployments_by_order[3]["api_key"] == "os.environ/MISTRAL_API_KEY_BACKUP"
         ), alias
         assert all(params["model"].startswith("mistral/") for params in deployments), (
             alias
@@ -49,3 +50,4 @@ def test_litellm_compose_scopes_primary_and_backup_mistral_keys() -> None:
 
     assert environment["MISTRAL_API_KEY"] == "${MISTRAL_API_KEY}"
     assert environment["MISTRAL_API_KEY_BACKUP"] == "${MISTRAL_API_KEY_BACKUP}"
+    assert environment["MISTRAL_API_KEY_2"] == "${MISTRAL_API_KEY_2}"
