@@ -725,8 +725,10 @@ async def rejudge(out: Path, org_slug: str | None = None) -> None:
             if not (record.get("old") and record.get("new")):
                 continue
             group = by_conversation[record["conversation"]]
-            old_answers = [r["old"] for r in group]
-            new_answers = [r["new"] for r in group]
+            # A side that ended earlier leaves None on its later turns; those
+            # are trailing, so dropping them keeps the turn index aligned.
+            old_answers = [r["old"] for r in group if r.get("old")]
+            new_answers = [r["new"] for r in group if r.get("new")]
             record["verdict"], record["old_flags"], record["new_flags"] = await _judge_pair(
                 client,
                 record["goal"],

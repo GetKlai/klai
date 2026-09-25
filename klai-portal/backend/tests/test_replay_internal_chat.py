@@ -532,3 +532,38 @@ async def test_rejudge_takes_the_org_slug_when_the_run_predates_the_saved_org(mo
     await replay.rejudge(out_dir, "brightwater")
 
     assert loaded == ["brightwater"]
+
+
+@pytest.mark.asyncio
+async def test_rejudge_skips_a_turn_where_one_side_ended_earlier(monkeypatch, tmp_path):
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    (out_dir / "sample.json").write_text(
+        json.dumps({"count": 1, "max_turns": 2, "zitadel_org_id": "zorg-x", "entries": []})
+    )
+    paired = {
+        "conversation": 1,
+        "cid": "c-1",
+        "mode": "open",
+        "goal": "g",
+        "turn": 0,
+        "old": _answer(10, 30, text="Antwoord oud."),
+        "new": _answer(20, 40, text="Antwoord nieuw."),
+        "verdict": "tie",
+        "old_flags": {},
+        "new_flags": {},
+    }
+    unpaired = {**paired, "turn": 1, "old": None, "verdict": "unpaired"}
+    (out_dir / "turns.jsonl").write_text(json.dumps(paired) + "\n" + json.dumps(unpaired) + "\n")
+    calls: list[str] = []
+
+    async def model(_client, _system, user, **_kwargs):
+        calls.append(user)
+        return _verdict("tie")
+
+    monkeypatch.setattr(replay.sim, "_model", model)
+
+    await replay.rejudge(out_dir)
+
+    assert len(calls) == 2
+    assert "WHAT FOLLOWED" in calls[0] and calls[0].count("WHAT FOLLOWED") == 1
