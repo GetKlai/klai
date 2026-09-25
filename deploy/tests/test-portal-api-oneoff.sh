@@ -21,7 +21,7 @@ run_oneoff() {
 
     export ONEOFF_TEST_TMP="$tmp"
     export ONEOFF_TEST_RUNNING="$running"
-    # docker top reports the uid the real container's process runs as; the
+    # `docker exec ... id -u` reports the uid the real container runs as; the
     # stub reports our own uid so the script's `chown` needs no privilege.
     export ONEOFF_TEST_UID="$(id -u)"
 
@@ -48,8 +48,8 @@ case "$1" in
                 ;;
         esac
         ;;
-    top)
-        printf 'UID\n%s\n' "$ONEOFF_TEST_UID"
+    exec)
+        printf '%s\n' "$ONEOFF_TEST_UID"
         ;;
     run)
         echo "$*" >> "$ONEOFF_TEST_TMP/run.log"
@@ -137,7 +137,7 @@ check "an unrelated variable survives the clone" \
     bash -c 'grep -q "^FOO=bar$" "$0"' "$LAST_ENV_FILE"
 
 check "the output dir is chowned to the uid the image's process actually runs as" \
-    bash -c 'echo "$0" | grep -q -- "top klai-core-portal-api-1 -o uid"' "$LAST_CALLS"
+    bash -c 'echo "$0" | grep -q -- "exec klai-core-portal-api-1 id -u"' "$LAST_CALLS"
 
 run_oneoff true rel
 

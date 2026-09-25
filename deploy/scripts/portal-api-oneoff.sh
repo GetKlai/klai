@@ -62,9 +62,10 @@ image="$(docker inspect --format '{{.Image}}' "$PORTAL_CONTAINER")"
 
 # The image runs as a non-root user (klai), so a 0700 dir created by whoever
 # invoked this script (typically root) is unwritable from inside the
-# container. docker top reads the uid the live process actually runs as,
-# which is the clone's uid too since it comes from the same image.
-container_uid="$(docker top "$PORTAL_CONTAINER" -o uid | tail -n +2 | head -n1 | tr -d '[:space:]')"
+# container. Ask the live container for its uid, which is the clone's uid too
+# since it comes from the same image. (`docker top -o uid` was tried first and
+# fails on the host with "Couldn't find PID field in ps output".)
+container_uid="$(docker exec "$PORTAL_CONTAINER" id -u)"
 chown "$container_uid" "$out_dir"
 
 env_file="$(mktemp)"
