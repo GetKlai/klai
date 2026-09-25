@@ -3,11 +3,12 @@
 Single source of truth for the platform-admin subdomain overview at
 ``/admin/platform`` (Subdomains tab). The list is curated by hand because
 DNS records live in Hetzner DNS (no API integration) and the Caddyfile
-only covers what core-01 serves — public-01 (Coolify) and external
+only covers what core-01 serves — public-01 (its own Caddyfile in
+klai-infra) and external
 services like Mailgun or ACME need to be tracked here explicitly or
 they fall off the radar.
 
-When you add a new subdomain anywhere (Caddyfile, Coolify app, Hetzner
+When you add a new subdomain anywhere (either Caddyfile, a Hetzner
 DNS record for an external service), add an entry here in the SAME PR
 or it WILL be forgotten. The platform-admin page is the only catalogue.
 
@@ -38,7 +39,7 @@ Host = Literal["core-01", "public-01", "gpu-01", "external"]
 """Where the service is physically hosted.
 
 - core-01: production VPS (Hetzner), Caddy-routed
-- public-01: Coolify VPS (Hetzner), Coolify-routed
+- public-01: website and status VPS (Hetzner), Caddy-routed
 - gpu-01: GPU VPS (Hetzner), tunneled via autossh from core-01
 - external: SaaS or third-party (Hetzner DNS only, no Klai infra)
 """

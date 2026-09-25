@@ -1,7 +1,7 @@
 ---
 id: SPEC-INFRA-COOLIFY-EXIT-001
-version: "0.4.0"
-status: draft
+version: "0.5.0"
+status: completed
 created: 2026-09-24
 updated: 2026-09-24
 author: Mark Vletter
@@ -301,6 +301,32 @@ and it is the one decision in this SPEC that could reasonably go the other way.
 When all five have moved, Coolify's own six containers go with them, and with
 them a beta-versioned control plane, a second Postgres, a second Redis, and a
 second reverse proxy running beside Caddy with its own TLS and routing.
+
+### Status — the website and Coolify, done on 2026-09-25
+
+getklai.com and www.getklai.com are served by Caddy on public-01 from
+`klai-infra/public-01/docker-compose.yml`, beside Uptime Kuma. Coolify, its
+database, Redis, Traefik, the Coolify SSH key in root's `authorized_keys` and
+the `coolify.getklai.com` record are gone; an encrypted dump of the Coolify
+database was verified in the offsite Storage Box before it was deleted. The
+cutover cost about 16 seconds for the site, the time Caddy took to obtain its
+certificates, and about a minute for status.getklai.com.
+
+The deploy path differs from section 6. GitHub Actions does not push an image;
+it lints, runs the route tests and builds the Dockerfile on every change.
+public-01 fetches `main` every two minutes with a read-only deploy key scoped
+to `GetKlai/klai-website`, builds the same Dockerfile and recreates the
+container on `klai-website:<commit>`. That needs no credential in CI and no
+registry token on the host, and it is how Coolify already built the site. The
+price is a few seconds of 502s per deploy, because the container is recreated
+in place.
+
+Moving the build exposed that Astro inlines private `import.meta.env` values
+at build time: the CRM routes only worked because Coolify passed every secret
+as a build variable, so the secrets were baked into the image. The routes now
+read `process.env` at runtime, the image carries no secrets, and the route
+tests no longer set them at build time, so they fail if that regresses. The
+secrets moved from Coolify into `klai-infra/public-01/website.env.sops`.
 
 ## 7. Capacity
 

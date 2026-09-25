@@ -43,7 +43,7 @@ import {
 
 // --- Subdomains overview ---------------------------------------------------
 //
-// Catalogue of every Klai-controlled subdomain (Caddyfile + Coolify +
+// Catalogue of every Klai-controlled subdomain (both Caddyfiles +
 // Hetzner DNS) so we can spot when a service drops off the radar. Combines
 // the curated static list with live tenant entries from portal_orgs, plus
 // a 3s liveness probe per URL.

@@ -21,8 +21,8 @@
 | Model Proxy | LiteLLM OSS -> Enterprise | Start free, upgrade at first revenue for audit trail |
 | Model routing | `custom_router.py` (`token_router` callback) | A LiteLLM callback (not the native Complexity Router): a 3-signal heuristic — tool-call detection, user-message token threshold, ≥3 URLs — that may upgrade `klai-primary`→`klai-large`. `routing_strategy: simple-shuffle` for replica load-balancing. See GAP-ROUTE-01/02. |
 | Reverse proxy | Caddy (core-01) | Better LLM streaming than Traefik, lighter, easier to debug |
-| Infra (public-01) | Coolify on Hetzner CX42 | Delay Kubernetes as long as possible (autoscaling = complexity) |
-| Infra (core-01) | Direct Docker on EX44 | Coolify's reverse proxy conflicts with Caddy; container lifecycle via custom provisioning service |
+| Infra (public-01) | Direct Docker on Hetzner CX42, compose in klai-infra | Website and Uptime Kuma only; Coolify was removed on 2026-09-25 (SPEC-INFRA-COOLIFY-EXIT-001) |
+| Infra (core-01) | Direct Docker on EX44 | Container lifecycle via custom provisioning service |
 
 ## Customer Portal
 
