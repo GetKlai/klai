@@ -75,7 +75,9 @@ async def resolve_chat_profile(db: AsyncSession, auth: PartnerAuthContext, libre
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_FORBIDDEN) from exc
 
 
-async def resolve_internal_profile(db: AsyncSession, org: PortalOrg, librechat_user_id: str) -> ChatProfile:
+async def resolve_internal_profile(
+    db: AsyncSession, org: PortalOrg, librechat_user_id: str, *, remember: bool = True
+) -> ChatProfile:
     """The internal profile of one LibreChat user of ``org``, as the internal chat resolves it.
 
     Shared with the operator replay (scripts/replay_internal_chat.py), so a
@@ -83,7 +85,7 @@ async def resolve_internal_profile(db: AsyncSession, org: PortalOrg, librechat_u
     gets. Raises ``LibreChatIdentityError`` when the id is not an active user
     of this org.
     """
-    user = await resolve_librechat_user(db, org, librechat_user_id)
+    user = await resolve_librechat_user(db, org, librechat_user_id, remember=remember)
     if user.status != "active":
         raise LibreChatIdentityError
     return _internal_profile(user, knowledge=await has_knowledge_access(db, user))

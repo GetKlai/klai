@@ -577,7 +577,7 @@ def _print_analysis(rows: list[dict]) -> None:
     _print_score_strips(rows)
 
 
-# Where to put the widget's weak-sources bar (answer_plan.WEAK_SOURCES_ADDENDUM
+# Where to put the widget's weak-sources bar (clarify_decision.WEAK_SOURCES_ADDENDUM
 # fires on classify_gap "soft", every reranker score under 0.4). Grounded is
 # not relevant: an answer can be fully carried by an article about a
 # neighbouring subject. So per strip of the turn's own top_score (the

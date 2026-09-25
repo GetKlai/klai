@@ -43,9 +43,9 @@ from app.models.portal import PortalOrg
 from app.models.widgets import Widget, WidgetKbAccess
 from app.services import escalation_intent as escalation_service
 from app.services import turn_judge
-from app.services.answer_plan import WEAK_SOURCES_ADDENDUM, answer_plan
 from app.services.chat_attachments import process_chat_attachments
 from app.services.chat_profile import ChatProfile, resolve_chat_profile
+from app.services.clarify_decision import WEAK_SOURCES_ADDENDUM, clarify_decision
 from app.services.events import emit_event
 from app.services.gap_classification import classify_gap
 from app.services.off_topic_referral import off_topic_referral
@@ -2298,10 +2298,10 @@ async def chat_completions(  # noqa: C901
         return off_topic_response(model=request.model, reply=reply, language=language)
 
     # The one question this turn should ask, decided against what retrieval
-    # found (answer_plan.py), on the widget and the internal chat alike. Not on
-    # a broad turn (no articles to reason over), not when the visitor asked for
-    # a person or is frustrated: there the reply is the appointment, not on a
-    # conversational turn, and not when the latest turn is pasted
+    # found (clarify_decision.py), on the widget and the internal chat alike.
+    # Not on a broad turn (no articles to reason over), not when the visitor
+    # asked for a person or is frustrated: there the reply is the appointment,
+    # not on a conversational turn, and not when the latest turn is pasted
     # correspondence, whose question is the distilled email itself.
     if (
         (support_mode or internal)
@@ -2310,9 +2310,9 @@ async def chat_completions(  # noqa: C901
         and not turn_judge.is_conversational(scope)
         and not latest_user_turn_has_correspondence(request.messages)
     ):
-        plan = await answer_plan(request.messages, chunks, settings, delegated_org_id=delegated_org_id)
-        if plan:
-            system_prompt += plan
+        decision = await clarify_decision(request.messages, chunks, settings, delegated_org_id=delegated_org_id)
+        if decision.addendum:
+            system_prompt += decision.addendum
             # The reply will end on that question, so the turn is clarifying
             # like the judge's own: without a citable source that keeps the
             # buttons off it (answer_judge.decide_answer). With a source the
@@ -2320,27 +2320,29 @@ async def chat_completions(  # noqa: C901
             # the question; that contract is older than this step.
             clarity = "ambiguous"
             answer_signals["planned_question"] = True
-            logger.info(
-                "partner_chat_answer_plan",
-                org_id=auth.org_id,
-                wgt_id=auth.key_id if str(auth.key_id).startswith("wgt_") else None,
-            )
+            answer_signals["asked_about"] = decision.axis
+        # Counts and fixed words only, never the question or the options: they
+        # are tenant article titles and the visitor's own words.
+        logger.info(
+            "clarify_decision",
+            org_id=auth.org_id,
+            wgt_id=auth.key_id if str(auth.key_id).startswith("wgt_") else None,
+            fired=decision.addendum is not None,
+            reason=decision.reason,
+            axis=decision.axis,
+            documents=decision.documents,
+            options=len(decision.options),
+        )
 
-    # Nothing retrieval found is a clear match and no question was planned:
-    # answer only from an article that really covers the question (answer_plan.py).
-    # A greeting or a thank-you usually retrieves only weak articles too; it
-    # keeps the conversational reply. One rule for every judged surface, read
-    # from the article scores; the retrieval band is stored, never used here.
-    # Only the wording differs: the widget offers its appointment button, an
-    # internal Open turn may still answer from general knowledge.
-    if (
-        (support_mode or internal)
-        and gap == "soft"
-        and not answer_signals.get("planned_question")
-        and not broad_turn
-        and escalation is None
-        and not conversational
-    ):
+    # Nothing retrieval found is a clear match: answer only from an article that
+    # really covers the question. The clarify decision never asks on such a
+    # turn, so this rule always applies there. A greeting or a thank-you usually
+    # retrieves only weak articles too; it keeps the conversational reply. One
+    # rule for every judged surface, read from the article scores; the retrieval
+    # band is stored, never used here. Only the wording differs: the widget
+    # offers its appointment button, an internal Open turn may still answer from
+    # general knowledge.
+    if (support_mode or internal) and gap == "soft" and not broad_turn and escalation is None and not conversational:
         system_prompt += weak_sources_notice(profile.kb_mode == "strict") if internal else WEAK_SOURCES_ADDENDUM
         answer_signals["weak_sources"] = True
 

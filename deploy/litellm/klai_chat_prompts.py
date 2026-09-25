@@ -40,9 +40,9 @@ SUPPORT-only behaviour (public help-page widget):
 
  8. Same KB grounding as GROUNDED, but for an external visitor on a help page
     rather than an internal colleague: the Voys brand voice (je/jij never u,
-    short active sentences, a Dutch phrasing set, one clarifying question
-    framed as curiosity, missing answers and earned apologies as on-brand
-    behaviour, the friend test as the final style check), no
+    short active sentences, a Dutch phrasing set, missing answers and
+    earned apologies as on-brand behaviour, the friend test as the final
+    style check), no
     "kennisbank"/"knowledge base" in user-facing wording (say "help
     articles"), and a strict no-promises / support-referral rule. Reuses the
     shared language-detection preamble verbatim — the three guards MUST NOT
@@ -124,6 +124,7 @@ from pydantic import BaseModel, ConfigDict
 __all__ = [
     "ANSWER_CLAIMS_SYSTEM_PROMPT",
     "BROAD_MODE_ANSWER_MARKERS",
+    "CLARIFY_QUESTION_WRITER_SYSTEM_PROMPT",
     "CLARIFY_TURN_ADDENDUM",
     "FINAL_RESPONSE_LANGUAGE_REMINDER",
     "GENERAL_CHAT_SYSTEM_PROMPT",
@@ -145,6 +146,7 @@ __all__ = [
     "appointment_offer_marker",
     "broad_mode_answer_marker",
     "chat_contract_article",
+    "clarify_question_addendum",
     "final_response_language_reminder",
     "grounding_check_response_format",
     "grounding_check_user_content",
@@ -610,9 +612,11 @@ _META_BODY: Final[str] = (
 # sources), but authored for an external visitor rather than an internal
 # colleague and tuned to the official Voys brand voice per
 # docs/research/voys-tone-of-voice.md § 10-11: je/jij never u, short active
-# sentences, a Dutch phrasing set, the clarifying question framed as
-# curiosity, admitting a missing answer and one earned apology as on-brand,
-# and the friend test as the final style check. Plain "help articles"
+# sentences, a Dutch phrasing set, admitting a missing answer and one earned
+# apology as on-brand, and the friend test as the final style check. Whether
+# to ask a question first is decided per turn in portal-api, from the
+# retrieved articles, and reaches the model as clarify_question_addendum: a
+# rule here was measured not to steer (SPEC-RAG-ANSWER-JUDGES-001 logbook 2.46). Plain "help articles"
 # wording instead of "kennisbank"/"knowledge base", and hard rules against
 # company commitments and against pretending a human hand-off exists —
 # instead the bot may offer a personal appointment, executed by the widget's
@@ -653,11 +657,6 @@ _SUPPORT_BODY: Final[str] = (
     "als je vastloopt', 'Goed om te weten: ...'. Never bureaucratic ('Geachte klant', 'Wij "
     "verzoeken u vriendelijk om'), never exclamation-mark enthusiasm ('SUPER goed dat je dit "
     "vraagt!!!').\n\n"
-    "## When the question is unclear\n"
-    "Curiosity is on-brand: you ask questions because you want to get the answer right. When "
-    "the ask is too vague to ground in the help articles, ask AT MOST ONE short clarifying "
-    "question, then stop and wait for the reply. Never ask several questions at once and never "
-    "guess an answer you could not ground.\n\n"
     "## When the answer isn't there\n"
     "Not having all the answers is on-brand, not a failing — what matters is caring enough to "
     "find a solution. Say plainly what the help articles do not answer, in the visitor's "
@@ -796,11 +795,6 @@ _SUPPORT_EXPRESSIVE_BODY: Final[str] = (
     "als je vastloopt', 'Goed om te weten: ...'. Never bureaucratic ('Geachte klant', 'Wij "
     "verzoeken u vriendelijk om'), never exclamation-mark enthusiasm ('SUPER goed dat je dit "
     "vraagt!!!').\n\n"
-    "## When the question is unclear\n"
-    "Curiosity is on-brand: you ask questions because you want to get the answer right. When "
-    "the ask is too vague to ground in the help articles, ask AT MOST ONE short clarifying "
-    "question, then stop and wait for the reply. Never ask several questions at once and never "
-    "guess an answer you could not ground.\n\n"
     "## When the answer isn't there\n"
     "Not having all the answers is on-brand, not a failing — what matters is caring enough to "
     "find a solution. Say plainly what the help articles do not answer, in the visitor's "
@@ -1011,6 +1005,38 @@ CLARIFY_TURN_ADDENDUM: Final[dict[str, str]] = {
     "external": _CLARIFY_TURN_ADDENDUM_EXTERNAL,
     "internal": _CLARIFY_TURN_ADDENDUM_INTERNAL,
 }
+
+
+# SPEC-RAG-ANSWER-JUDGES-001 logbook 2.54: the one question a widget, partner
+# or internal turn asks before it answers. Portal-api decides deterministically
+# from the retrieved articles that the question is needed and which variants
+# tell the articles apart; a small model only writes the question, and the
+# answer model gets it through the addendum. The earlier addendum had the answer
+# model name every likely cause first, which produced menus of keywords
+# (logbook 2.53), so this one asks for one sentence of understanding and the
+# question, nothing else.
+CLARIFY_QUESTION_WRITER_SYSTEM_PROMPT: Final[str] = (
+    "You write the one question a company's help chat asks before it answers. The help articles found "
+    "for the latest message cover the same topic in different variants, and which variant applies decides "
+    "the answer. You get the conversation, the kind of fact that tells the variants apart, and the variants "
+    "as the articles name them.\n"
+    "Write ONE short question in the language of the latest user message that asks which variant applies "
+    "and names the variants naturally, for example 'Bel je met de iPhone-app of met de Android-app?'. Ask "
+    "for a fact the person knows without expertise; never ask them to pick a cause, and never ask for "
+    "something the conversation already says. One line ending with a question mark: no links, no list, no "
+    "answer."
+)
+
+
+def clarify_question_addendum(question: str) -> str:
+    """The per-turn instruction that makes the answer model ask ``question`` instead of answering."""
+    return (
+        "\n\n[This turn] The help articles above cover this in more than one variant and the conversation "
+        "does not say which one applies, so do not answer yet. Write one short sentence that shows you "
+        "understand the problem, then ask this question in the language of the conversation, in your own "
+        "words, and stop there: no list of causes, no steps for one of the variants, no links. The "
+        "question: " + question
+    )
 
 
 # Decision 2: may the model's own uncited text reach the user? Classifies

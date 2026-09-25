@@ -1,7 +1,7 @@
 """One-chat-pipeline slice 5: one answer decision for every surface.
 
 The internal chat now takes what the widget already had instead of the LiteLLM
-hook's copies: ``decide_answer`` decides per mode, the answer plan asks the one
+hook's copies: ``decide_answer`` decides per mode, the clarify decision asks the one
 question, the weak-source rule replaces the band, the grounding check and its
 repair live in one place, and every turn leaves one record of signals.
 
@@ -79,13 +79,13 @@ class _LiteLLM:
         self,
         answer: str = ANSWER,
         *,
-        plan: dict | None = None,
+        question: str = "",
         judge: dict | None = None,
         grounding: dict | None = None,
         repaired: str = "",
     ) -> None:
         self.answer = answer
-        self.plan = plan or {"route": "direct", "question": "", "options": []}
+        self.question = question
         self.judge = judge or {"grounding": "all_in_articles", "verdict": "answered"}
         self.grounding = grounding or _supported(answer)
         self.repaired = repaired
@@ -108,7 +108,7 @@ class _LiteLLM:
         self.calls.append(body)
         kind = self._kind(body)
         replies: dict[str, Any] = {
-            "answer_plan": self.plan,
+            "clarify_question": {"question": self.question},
             "answer_judge": self.judge,
             "grounding_check": self.grounding,
             "repair": self.repaired,
@@ -315,30 +315,48 @@ async def test_a_turn_that_searched_nothing_is_never_refused_for_a_missing_sourc
     assert llm.of("answer_judge") == [] and llm.of("grounding_check") == []
 
 
-# --- Clarify through the answer plan; weak sources by the gap, not the band --------
+# --- One question when the articles differ in a variant; weak sources by the gap ---
+
+
+def _variant_pack(score: float = 0.82) -> dict:
+    """Two leave articles that differ only in the contract type, with the same section."""
+    items = [
+        {
+            "chunk_id": f"chunk-{kind}",
+            "evidence_id": f"ev-{kind}",
+            "text": ARTICLE,
+            "title": f"Verlof aanvragen {kind}",
+            "heading_path": f"Verlof aanvragen {kind} > Verlof aanvragen",
+            "source_url": f"https://kb.example.com/verlof-{kind.lower()}",
+            "reranker_score": score,
+            "final_score": score,
+        }
+        for kind in ("Vast", "Oproep")
+    ]
+    return {"items": items, "sources": [{"url": i["source_url"], "title": i["title"]} for i in items]}
+
+
+VARIANT_QUESTION = "Heb je een vast contract of een oproepcontract?"
 
 
 @pytest.mark.asyncio
-async def test_low_band_ambiguous_internal_question_gets_the_plan_question_not_a_clarify_instruction(monkeypatch):
-    plan = {
-        "route": "choose",
-        "question": "Gaat het om verlof aanvragen of om je leidinggevende?",
-        "options": ["verlof aanvragen", "leidinggevende"],
-    }
-    llm = _LiteLLM(plan=plan)
+async def test_internal_question_over_variant_articles_gets_the_written_question_not_a_clarify_instruction(
+    monkeypatch,
+):
+    llm = _LiteLLM(question=VARIANT_QUESTION)
 
-    await _turn(
+    turn = await _turn(
         monkeypatch,
         llm,
         profile=_internal(),
-        retrieval={"evidence_pack": _pack(score=0.2), "confidence_band": "low"},
-        question="verlof?",
+        retrieval={"evidence_pack": _variant_pack(), "confidence_band": "low"},
     )
 
     prompt = _system_prompt(llm)
-    assert plan["question"] in prompt
+    assert VARIANT_QUESTION in prompt
     assert CLARIFY_TURN_ADDENDUM["internal"].strip() not in prompt
-    assert "clarifying question" not in prompt
+    assert turn.records[-1]["planned_question"] is True
+    assert turn.records[-1]["asked_about"] == "edition"
 
 
 @pytest.mark.parametrize(("band", "score", "told"), [("low", 0.9, False), ("high", 0.2, True)])
@@ -465,30 +483,34 @@ async def test_internal_turn_writes_one_record_of_signals_and_no_text(monkeypatc
 @pytest.mark.asyncio
 async def test_every_litellm_call_of_an_internal_and_a_widget_turn_carries_the_org(monkeypatch):
     extra = " Een aanvraag kost tien euro. Je krijgt altijd een extra vrije dag."
-    plan = {"route": "choose", "question": "Gaat het om verlof aanvragen of om je leidinggevende?", "options": ["x"]}
     internal = _LiteLLM(
         ANSWER + extra,
-        plan=plan,
+        question=VARIANT_QUESTION,
         grounding=_unsupported("Een aanvraag kost tien euro.", "Je krijgt altijd een extra vrije dag."),
         repaired=ANSWER,
     )
     await _turn(
-        monkeypatch, internal, profile=_internal(), retrieval={"evidence_pack": _pack(), "confidence_band": "high"}
+        monkeypatch,
+        internal,
+        profile=_internal(),
+        retrieval={"evidence_pack": _variant_pack(), "confidence_band": "high"},
     )
-    widget = _LiteLLM(plan=plan)
+    widget = _LiteLLM(question=VARIANT_QUESTION)
     await _turn(
         monkeypatch,
         widget,
         profile=ChatProfile(surface="widget"),
-        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        retrieval={"evidence_pack": _variant_pack(), "confidence_band": "high"},
         key_id="wgt_acme",
         support_mode=True,
     )
 
     kinds = {_LiteLLM._kind(body) for body in internal.calls}
-    assert kinds >= {"rewrite", "answer_plan", "answer", "answer_judge", "grounding_check", "repair"}
+    assert kinds >= {"rewrite", "clarify_question", "answer", "answer_judge", "grounding_check", "repair"}
     assert all(body["metadata"]["_klai_delegated_org_id"] == "zorg-acme" for body in internal.calls)
-    assert {"answer_plan", "answer", "answer_judge", "grounding_check"} <= {_LiteLLM._kind(b) for b in widget.calls}
+    assert {"clarify_question", "answer", "answer_judge", "grounding_check"} <= {
+        _LiteLLM._kind(b) for b in widget.calls
+    }
     assert all(body["metadata"]["_klai_delegated_org_id"] == "zorg-acme" for body in widget.calls)
 
 

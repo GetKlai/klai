@@ -1577,6 +1577,41 @@ metingen leunen op een gesimuleerde bezoeker en een beoordelend model die tussen
 meetruns van 24 en 25 september kostten bovendien veel modelaanroepen; een run met modelaanroepen start
 voortaan pas na een kostenschatting en akkoord.
 
+### 2.55 Eén beslismoment gebouwd en gemeten: vast beslist, model schrijft alleen de vraag (25 sep)
+Het ontwerp van 2.54 is gebouwd, met één verschil: de antwoordopties komen niet uit een vaste lijst per
+klant maar uit de titels van de gevonden artikelen, per beurt. De beslissing loopt nu zonder model.
+Alleen artikelen op of boven de drempel voor zwakke bronnen tellen mee; twee of meer documenten zijn
+varianten van één onderwerp als ze een niet-generieke sectiekop delen die raakt aan wat de bezoeker
+schreef, als hun titels grotendeels overlappen op zo'n woord, of als hun titels verschillende
+apparaatklassen noemen en een sectie van een van beide over de vraag gaat. De variant is wat van een
+titel overblijft na de gedeelde en generieke woorden, hooguit twee woorden. Noemt de bezoeker al een
+variant, of bij een apparaatvraag welk apparaat dan ook, dan wordt niet gevraagd. Een klein model
+schrijft daarna alleen de vraag rond die opties, met de bestaande vormcontrole; de opdracht aan het
+antwoordmodel is één zin begrip en dan de vraag, zonder lijst oorzaken. De regel voor zwakke bronnen
+geldt weer onvoorwaardelijk, en de "vraag bij onduidelijkheid"-regel is uit de profielprompts met
+zoeken gehaald.
+
+**Gemeten vóór de uitrol**, op één tenant, zonder nieuwe zoekrun waar dat kon. Op 251 echte eerste
+vragen (widget en interne chat), met koppen en scores per fragment: de poort gaat in 6 beurten af,
+4 procent van de vragen met sterke artikelen en 0 procent van die met zwakke. Op de 17 beoordeelde
+gesprekken van 2.47: geen enkele onnodige vraag, 1 van de 7 gewenste vragen gesteld. De 6 gemiste
+vallen buiten wat deze poort kan zien: 3 hadden alleen zwakke artikelen (het zoekspoor), 2 vroegen om
+een storingsdiagnose in plaats van een variant, en 1 noemde al een apparaat waarvoor de artikelen geen
+variant kennen. Een eerdere, ruimere apparaatregel stelde op de replay van 488 vragen één onnodige
+vraag en is daarom vernauwd. Ter vergelijking: de oude stap bereikte in 30 dagen echt widgetverkeer
+0 van ruim honderd antwoorden, tegen 0,6 s per beurt; de nieuwe kost alleen een modelaanroep op de
+beurten waar hij vraagt.
+
+**Bijvangst van de meting.** Elke zoekaanroep telde als kennisvraag in de productstatistieken van de
+tenant, ook een evaluatie en de nachtelijke herscoring; de zoekaanroep kent nu een `purpose`
+"background" dat die telling en de telemetrie overslaat. En de profielresolver schreef tijdens een
+meting koppelingen weg; operator-scripts lezen nu alleen.
+
+**Wat nu volgt.** De eigenaar labelt blind zestig echte vragen (wel of niet vragen, en naar welk
+feit); precisie en recall daartegen bepalen de volgende ronde. Live logt elke beurt `clarify_decision`
+met reden en as, en het beslisrecord bewaart `asked_about`, zodat te meten is of het volgende bericht
+van de bezoeker dat feit geeft.
+
 ---
 
 ## 3. Wat er live ging, en waarom

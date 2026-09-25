@@ -19,6 +19,7 @@ import pytest
 import respx
 from helpers import FakeKB, FakeResult, make_partner_auth
 from klai_chat_prompts import no_citable_sources_message
+from structlog.testing import capture_logs
 
 from app.services import partner_chat, turn_judge
 
@@ -107,11 +108,11 @@ class _LiteLLM:
         grounding: Any = None,
         repaired: str = "",
         referral: str = "",
-        plan: dict | None = None,
+        question: str = "",
     ):
         self.model_text = model_text
         self.referral = referral
-        self.plan = plan or {"route": "direct", "question": "", "options": []}
+        self.question = question
         self.answer_judge = answer_judge if answer_judge is not None else _answer_verdict()
         self.turn = turn or _turn_verdict()
         # The statement-level check decides grounding, so by default it mirrors
@@ -147,8 +148,8 @@ class _LiteLLM:
         if schema == "turn_judge":
             self.turn_requests.append(body)
             return _json_reply(self.turn)
-        if schema == "answer_plan":
-            return _json_reply(self.plan)
+        if schema == "clarify_question":
+            return _json_reply({"question": self.question})
         if schema == "off_topic_referral":
             return _json_reply({"subject": self.referral})
         if schema == "query_paraphrase":
@@ -679,10 +680,14 @@ def test_turn_judge_reads_recent_turns_and_marks_the_latest_visitor_message():
 # ─── The route: judge beside retrieval, addendum, old clarify block gone ─
 
 
-def _retrieval_reply(band: str = "low") -> httpx.Response:
-    source = {"source_url": CHUNK_900["source_url"], "title": CHUNK_900["title"], "evidence_ids": ["ev1"]}
-    chunk = CHUNK_900 if band == "low" else {**CHUNK_900, "reranker_score": 0.95}
-    return httpx.Response(200, json={"confidence_band": band, "evidence_pack": {"items": [chunk], "sources": [source]}})
+def _retrieval_reply(band: str = "low", items: list[dict] | None = None) -> httpx.Response:
+    if items is None:
+        items = [CHUNK_900 if band == "low" else {**CHUNK_900, "reranker_score": 0.95}]
+    sources = [
+        {"source_url": item["source_url"], "title": item["title"], "evidence_ids": [item["evidence_id"]]}
+        for item in items
+    ]
+    return httpx.Response(200, json={"confidence_band": band, "evidence_pack": {"items": items, "sources": sources}})
 
 
 async def _route_turn(
@@ -693,7 +698,8 @@ async def _route_turn(
     stream: bool = False,
     band: str = "low",
     referral: str = "",
-    plan: dict | None = None,
+    question_written: str = "",
+    items: list[dict] | None = None,
     litellm: _LiteLLM | None = None,
 ):
     from app.api import partner
@@ -720,7 +726,7 @@ async def _route_turn(
         turn=turn,
         answer_judge=_answer_verdict("not_answered"),
         referral=referral,
-        plan=plan,
+        question=question_written,
     )
     with (
         respx.mock(assert_all_called=False) as router,
@@ -732,7 +738,7 @@ async def _route_turn(
         patch("app.services.partner_chat._schedule_gap_event"),
     ):
         router.post(f"{LITELLM}/v1/chat/completions").mock(side_effect=litellm)
-        router.post(f"{RETRIEVAL}/retrieve").mock(return_value=_retrieval_reply(band))
+        router.post(f"{RETRIEVAL}/retrieve").mock(return_value=_retrieval_reply(band, items))
         response = await chat_completions(request=request, http_request=http_request, auth=auth, db=db)
         if stream:
             frames = _frames([chunk async for chunk in response.body_iterator])
@@ -764,35 +770,86 @@ async def test_route_ambiguous_turn_gets_no_ask_instruction_and_a_question_draft
     assert text == CLARIFYING_QUESTION
 
 
+def _variant_items(score: float) -> list[dict]:
+    """Two troubleshooters that differ only in the platform, both with a section on not being able to call."""
+    return [
+        {
+            "chunk_id": f"v{i}",
+            "evidence_id": f"evv{i}",
+            "title": f"Alpha phone app for {platform} troubleshooter",
+            "heading_path": "Troubleshooter > I can't call",
+            "text": f"On {platform}, allow the microphone and restart the Alpha phone app.",
+            "source_url": f"https://help.example.com/{platform.lower()}",
+            "reranker_score": score - i / 10,
+        }
+        for i, platform in enumerate(("iPhone", "Android"))
+    ]
+
+
+VARIANT_QUESTION = "Do you call with the iPhone app or the Android app?"
+
+
 @pytest.mark.parametrize("stream", [True, False])
-async def test_a_turn_with_several_causes_is_told_which_question_to_ask(monkeypatch, stream):
-    """Every short question got one reading: "iedereen gaat naar voicemail" was
-    answered with the steps to send everyone to voicemail. When the articles
-    carry more than one cause, the turn is handed the question that tells them
-    apart instead of a rule about vagueness."""
-    plan = {
-        "route": "diagnose",
-        "question": "Gaat het om de automatische incasso of om de factuur zelf?",
-        "options": ["automatische incasso", "factuur"],
-    }
-    litellm, _, _ = await _route_turn(monkeypatch, turn=_turn_verdict(), stream=stream, band="high", plan=plan)
+async def test_strong_articles_on_one_topic_in_two_variants_hand_the_turn_one_question(monkeypatch, stream):
+    """ "ik kan niet bellen met mijn apparaat" got an iPhone answer for a visitor
+    who never named a device (logbook 2.44). When strong articles cover the same
+    topic per platform, the turn is handed the question that picks the platform."""
+    litellm, _, _ = await _route_turn(
+        monkeypatch,
+        turn=_turn_verdict(),
+        question="I can't call",
+        stream=stream,
+        band="high",
+        items=_variant_items(0.9),
+        question_written=VARIANT_QUESTION,
+    )
+
+    assert VARIANT_QUESTION in _system_prompt_sent(litellm)
+    writer_calls = [body for body in litellm.requests if _call_kind(body) == "clarify_question"]
+    assert [body.get("metadata") for body in writer_calls] == [DELEGATED]
+    assert "iPhone; Android" in writer_calls[0]["messages"][1]["content"]
+
+
+async def test_weak_articles_get_the_weak_source_rule_even_when_they_differ_in_a_variant(monkeypatch):
+    """A planned question used to switch the weak-source rule off, and weak
+    articles are where most needless questions were asked (logbook 2.54)."""
+    litellm, _, _ = await _route_turn(
+        monkeypatch,
+        turn=_turn_verdict(),
+        question="I can't call",
+        band="low",
+        items=_variant_items(0.3),
+        question_written=VARIANT_QUESTION,
+    )
 
     prompt = _system_prompt_sent(litellm)
-    assert plan["question"] in prompt
-    assert "automatische incasso; factuur" in prompt
+    assert "Retrieval found nothing that clearly matches" in prompt
+    assert VARIANT_QUESTION not in prompt
+    assert not [body for body in litellm.requests if _call_kind(body) == "clarify_question"]
 
 
-async def test_an_option_the_articles_do_not_carry_leaves_the_turn_alone(monkeypatch):
-    """The options must come from the retrieved articles, or the question
-    offers the visitor a cause the knowledge base cannot answer."""
-    plan = {
-        "route": "diagnose",
-        "question": "Gebruik je een Grandstream of een Yealink?",
-        "options": ["Grandstream", "Yealink"],
+async def test_the_decision_is_logged_without_any_text_of_the_turn(monkeypatch):
+    with capture_logs() as logs:
+        await _route_turn(
+            monkeypatch,
+            turn=_turn_verdict(),
+            question="I can't call since this morning",
+            band="high",
+            items=_variant_items(0.9),
+            question_written=VARIANT_QUESTION,
+        )
+
+    (decision,) = [entry for entry in logs if entry["event"] == "clarify_decision"]
+    assert {key: decision[key] for key in ("fired", "reason", "axis", "documents", "options")} == {
+        "fired": True,
+        "reason": "asked",
+        "axis": "device",
+        "documents": 2,
+        "options": 2,
     }
-    litellm, _, _ = await _route_turn(monkeypatch, turn=_turn_verdict(), band="high", plan=plan)
-
-    assert "[This turn] The visitor reports a problem" not in _system_prompt_sent(litellm)
+    rendered = repr(logs)
+    for text in (VARIANT_QUESTION, "since this morning", "iPhone", "Android", "troubleshooter"):
+        assert text not in rendered
 
 
 @pytest.mark.parametrize(
@@ -1042,7 +1099,6 @@ async def test_every_litellm_call_of_an_answered_widget_turn_names_the_tenant(mo
     assert {kind for kind, _ in calls} == {
         "turn_judge",
         "query_paraphrase",
-        "answer_plan",
         "answer",
         "answer_judge",
         "grounding_check",

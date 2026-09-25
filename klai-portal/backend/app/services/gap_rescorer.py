@@ -157,7 +157,8 @@ async def rescore_open_gaps(
             try:
                 # No user_id: a rescore has no end user. retrieval-api verifies
                 # any user_id against portal_users, so the old "system"
-                # placeholder got a 403 on every call.
+                # placeholder got a 403 on every call. "background" keeps the
+                # rescore out of the tenant's knowledge.queried count.
                 resp = await client.post(
                     f"{settings.knowledge_retrieve_url}/retrieve",
                     headers=headers,
@@ -166,6 +167,7 @@ async def rescore_open_gaps(
                         "org_id": zitadel_org_id,
                         "scope": "org",
                         "top_k": 5,
+                        "purpose": "background",
                     },
                 )
                 if not resp.is_success:

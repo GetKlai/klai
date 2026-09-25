@@ -87,12 +87,6 @@ def test_support_prompt_names_kennisbank_only_as_a_prohibition():
             assert "do not use" in lowered, f"kennisbank/knowledge base leaked outside the prohibition: {line!r}"
 
 
-def test_support_prompt_limits_clarifying_questions_to_one():
-    text = SUPPORT_CHAT_SYSTEM_PROMPT
-    assert "AT MOST ONE short" in text
-    assert "clarifying question" in text
-
-
 def test_support_prompt_keeps_multi_part_behaviour():
     # GROUNDED already answers multi-question messages per question; the
     # support profile preserves that behaviour (with customer wording).

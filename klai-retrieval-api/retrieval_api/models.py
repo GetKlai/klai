@@ -62,6 +62,12 @@ class RetrieveRequest(BaseModel):
     # without the field continue to work in the privacy-friendly mode (REQ-4
     # fail-open). Validation: gates content emission in REQ-5/6/7/8/9.
     telemetry_level: Literal["off", "shadow", "full"] = "shadow"
+    # Who is asking. "chat" is a person's question; "background" is a service
+    # re-running retrieval on its own (portal-api's gap rescorer, the clarify-gate
+    # evaluation). A background call emits no knowledge.queried product event,
+    # which counts a tenant's questions, and runs at telemetry level "off"
+    # whatever the body or the tenant says.
+    purpose: Literal["chat", "background"] = "chat"
     # SPEC-PORTAL-RBAC-REFACTOR-001 REQ-17: effective role propagated from the
     # MCP caller. Defaults to "unknown" so callers without the field (older
     # LiteLLM hook builds) continue to work without change. Retrieval-api uses
