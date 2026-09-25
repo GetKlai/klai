@@ -206,8 +206,8 @@ needs matching page updates.
 For website content, two things are worth knowing before you start, because
 both have already cost time. `klai-website` is a submodule that is usually
 NOT checked out in a Conductor worktree, so edit it in its own checkout, not
-from here. And a push to its `main` is the deploy — it is Coolify-hosted and
-rebuilds automatically, with no staging branch and no approval gate. Build
+from here. And a push to its `main` is the deploy: public-01 builds `main`
+within about two minutes, with no staging branch and no approval gate. Build
 locally first, and verify the deployed commit and the live URL afterwards.
 `docs/runbooks/website-publishing.md` has the exact commands.
 <!-- codebase-memory:start -->
