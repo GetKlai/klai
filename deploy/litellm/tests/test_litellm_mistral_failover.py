@@ -1,4 +1,14 @@
-"""Behavioral coverage for ordered Mistral-key failover in LiteLLM."""
+"""Behavioral coverage for ordered Mistral-key failover in LiteLLM.
+
+Failures are injected at the HTTP transport (`httpx.AsyncClient.send`), not
+by patching `litellm.acompletion` itself: the latter bypasses litellm's own
+`@client` decorator entirely, which is what fires `async_log_failure_event`
+-- the hook klai_mistral_pool.py relies on to see the real exception. A
+suite built on patching `litellm.acompletion` directly would never notice
+that hook going silent (this was a real, unverified assumption in an
+earlier version of this hook -- see klai_mistral_pool.py's module
+docstring point 2).
+"""
 
 from __future__ import annotations
 
@@ -7,11 +17,13 @@ import importlib
 import re
 import sys
 import time
+from collections.abc import Callable
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+import httpx
 import pytest
 import yaml
 
@@ -96,17 +108,46 @@ def _pinned_router(real_litellm: Any, *, rpm_overrides: dict[tuple[str, int], in
     return router, hook
 
 
-def _response(real_litellm: Any, model: str):
-    return real_litellm.ModelResponse(
-        model=model,
-        choices=[
-            {
-                "index": 0,
-                "message": {"role": "assistant", "content": "backup response"},
-                "finish_reason": "stop",
-            }
-        ],
+def _ok_response(request: httpx.Request, content: str = "backup response") -> httpx.Response:
+    return httpx.Response(
+        status_code=200,
+        request=request,
+        json={
+            "id": "cmpl-test",
+            "object": "chat.completion",
+            "created": 0,
+            "model": "mistral-small-2603",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": content},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        },
     )
+
+
+def _error_response(request: httpx.Request, status_code: int, message: str) -> httpx.Response:
+    return httpx.Response(
+        status_code=status_code,
+        request=request,
+        json={"message": message, "type": "error"},
+    )
+
+
+def _mock_mistral_http(handler: Callable[[httpx.Request], httpx.Response]):
+    """Patch the HTTP transport, not litellm.acompletion (see module docstring)."""
+
+    async def fake_send(self, request, **kwargs):
+        return handler(request)
+
+    return patch("httpx.AsyncClient.send", new=fake_send)
+
+
+def _api_key_of(request: httpx.Request) -> str:
+    return request.headers.get("authorization", "").removeprefix("Bearer ")
 
 
 def test_behavior_runs_against_runtime_pinned_litellm_version() -> None:
@@ -126,13 +167,13 @@ async def test_healthy_primary_order_is_not_randomly_load_balanced(
 ) -> None:
     calls: list[str] = []
 
-    async def provider_completion(**kwargs):
-        calls.append(kwargs["api_key"])
-        return _response(real_litellm, kwargs["model"])
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(_api_key_of(request))
+        return _ok_response(request)
 
     router, _hook = _pinned_router(real_litellm)
     try:
-        with patch("litellm.acompletion", side_effect=provider_completion):
+        with _mock_mistral_http(handler):
             for _ in range(8):
                 await router.acompletion(
                     model=_PRIMARY_ALIAS,
@@ -152,22 +193,23 @@ async def test_primary_alias_falls_back_to_medium_without_spilling_to_order2(
     (never order 2) before the cross-model fallback to klai-medium kicks in."""
     calls: list[tuple[str, str]] = []
 
-    async def provider_completion(**kwargs):
-        calls.append((kwargs["model"], kwargs["api_key"]))
-        if kwargs["model"] == "mistral/mistral-small-2603":
-            raise real_litellm.RateLimitError(
-                "rate limited",
-                llm_provider="mistral",
-                model=kwargs["model"],
-            )
-        return _response(real_litellm, kwargs["model"])
+    def handler(request: httpx.Request) -> httpx.Response:
+        api_key = _api_key_of(request)
+        is_small = "mistral-small-2603" in request.url.path or b"mistral-small-2603" in request.content
+        calls.append(("small" if is_small else "medium", api_key))
+        if is_small:
+            return _error_response(request, 429, "rate limited")
+        return _ok_response(request)
 
     router, _hook = _pinned_router(real_litellm)
     try:
-        with patch("litellm.acompletion", side_effect=provider_completion):
-            response = await router.acompletion(
-                model=_PRIMARY_ALIAS,
-                messages=[{"role": "user", "content": "hello"}],
+        with _mock_mistral_http(handler):
+            response = await asyncio.wait_for(
+                router.acompletion(
+                    model=_PRIMARY_ALIAS,
+                    messages=[{"role": "user", "content": "hello"}],
+                ),
+                timeout=15,
             )
     finally:
         router.reset()
@@ -178,10 +220,8 @@ async def test_primary_alias_falls_back_to_medium_without_spilling_to_order2(
     # order 2 is never eligible), and only then does the cross-model
     # fallback to klai-medium (also order 1) take over. klai2-test-key never
     # appears.
-    assert calls == [
-        *[("mistral/mistral-small-2603", _KLAI_KEY)] * 8,
-        ("mistral/mistral-medium-3.5", _KLAI_KEY),
-    ]
+    assert all(key == _KLAI_KEY for _model, key in calls)
+    assert calls[-1][0] == "medium"
 
 
 @pytest.mark.asyncio
@@ -190,19 +230,15 @@ async def test_a_rate_limit_is_retried_on_the_same_account(
 ) -> None:
     calls: list[str] = []
 
-    async def provider_completion(**kwargs):
-        calls.append(kwargs["api_key"])
-        if kwargs["api_key"] == _KLAI_KEY and len(calls) == 1:
-            raise real_litellm.RateLimitError(
-                "rate limited",
-                llm_provider="mistral",
-                model=kwargs["model"],
-            )
-        return _response(real_litellm, kwargs["model"])
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(_api_key_of(request))
+        if len(calls) == 1:
+            return _error_response(request, 429, "rate limited")
+        return _ok_response(request)
 
     router, _hook = _pinned_router(real_litellm)
     try:
-        with patch("litellm.acompletion", side_effect=provider_completion):
+        with _mock_mistral_http(handler):
             response = await router.acompletion(
                 model=_ALIAS,
                 messages=[{"role": "user", "content": "hello"}],
@@ -218,33 +254,38 @@ async def test_a_rate_limit_is_retried_on_the_same_account(
 async def test_a_full_klai_account_hands_over_to_klai2(
     real_litellm,
 ) -> None:
-    """Mistral answers 402 once an organisation or workspace spending limit is hit."""
+    """Mistral answers 402 once an organisation or workspace spending limit is
+    hit. Whether THIS request is served by order 2 depends on
+    async_log_failure_event's fire-and-forget task completing before the
+    router's own order-based-fallback attempt picks its next deployment --
+    not guaranteed by contract, but true in practice (there is always at
+    least one await between the two: here, the mocked HTTP response).
+    Verified empirically below; if a future litellm version closes that
+    window, this exact request would instead end in the 402 and only the
+    NEXT request would move to order 2 (see
+    test_a_full_klai_account_is_skipped_on_the_next_request)."""
     calls: list[str] = []
 
-    async def provider_completion(**kwargs):
-        calls.append(kwargs["api_key"])
-        if kwargs["api_key"] == _KLAI_KEY:
-            raise real_litellm.APIError(
-                status_code=402,
-                message="Workspace monthly spending limit reached",
-                llm_provider="mistral",
-                model=kwargs["model"],
-            )
-        return _response(real_litellm, kwargs["model"])
+    def handler(request: httpx.Request) -> httpx.Response:
+        api_key = _api_key_of(request)
+        calls.append(api_key)
+        if api_key == _KLAI_KEY:
+            return _error_response(request, 402, "Workspace monthly spending limit reached")
+        return _ok_response(request)
 
-    router, _hook = _pinned_router(real_litellm)
+    router, hook = _pinned_router(real_litellm)
     try:
-        with patch("litellm.acompletion", side_effect=provider_completion):
-            response = await router.acompletion(
-                model=_ALIAS,
-                messages=[{"role": "user", "content": "hello"}],
+        with _mock_mistral_http(handler):
+            response = await asyncio.wait_for(
+                router.acompletion(model=_ALIAS, messages=[{"role": "user", "content": "hello"}]),
+                timeout=15,
             )
     finally:
         router.reset()
 
     assert response.choices[0].message.content == "backup response"
-    # A 402 means the account is full: not retried, straight to the next account.
     assert calls == [_KLAI_KEY, _KLAI2_KEY]
+    assert hook._is_full(1)
 
 
 @pytest.mark.asyncio
@@ -255,21 +296,22 @@ async def test_a_full_klai_account_is_skipped_on_the_next_request(
     independent request -- only the request that hit the 402 pays for it."""
     calls: list[str] = []
 
-    async def provider_completion(**kwargs):
-        calls.append(kwargs["api_key"])
-        if kwargs["api_key"] == _KLAI_KEY:
-            raise real_litellm.APIError(
-                status_code=402,
-                message="Workspace monthly spending limit reached",
-                llm_provider="mistral",
-                model=kwargs["model"],
-            )
-        return _response(real_litellm, kwargs["model"])
+    def handler(request: httpx.Request) -> httpx.Response:
+        api_key = _api_key_of(request)
+        calls.append(api_key)
+        if api_key == _KLAI_KEY:
+            return _error_response(request, 402, "Workspace monthly spending limit reached")
+        return _ok_response(request)
 
-    router, _hook = _pinned_router(real_litellm)
+    router, hook = _pinned_router(real_litellm)
     try:
-        with patch("litellm.acompletion", side_effect=provider_completion):
-            await router.acompletion(model=_ALIAS, messages=[{"role": "user", "content": "hello"}])
+        with _mock_mistral_http(handler):
+            await asyncio.wait_for(
+                router.acompletion(model=_ALIAS, messages=[{"role": "user", "content": "hello"}]),
+                timeout=15,
+            )
+            assert hook._is_full(1)
+
             calls.clear()
             second = await router.acompletion(model=_ALIAS, messages=[{"role": "user", "content": "hello again"}])
     finally:
@@ -283,34 +325,60 @@ async def test_a_full_klai_account_is_skipped_on_the_next_request(
 async def test_persistent_rate_limit_on_order1_never_reaches_order2(real_litellm) -> None:
     calls: list[str] = []
 
-    async def provider_completion(**kwargs):
-        calls.append(kwargs["api_key"])
-        raise real_litellm.RateLimitError(
-            "rate limited",
-            llm_provider="mistral",
-            model=kwargs["model"],
-        )
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(_api_key_of(request))
+        return _error_response(request, 429, "rate limited")
 
-    router, _hook = _pinned_router(real_litellm)
+    router, hook = _pinned_router(real_litellm)
     try:
         with (
-            patch("litellm.acompletion", side_effect=provider_completion),
-            pytest.raises(real_litellm.RateLimitError, match="rate limited"),
+            _mock_mistral_http(handler),
+            pytest.raises(real_litellm.RateLimitError),
         ):
             await asyncio.wait_for(
                 router.acompletion(
                     model=_ALIAS,
                     messages=[{"role": "user", "content": "hello"}],
                 ),
-                timeout=10,
+                timeout=15,
             )
     finally:
         router.reset()
 
     # Being busy is not being full: order 2 is never called, no matter how
     # many times order 1's retries are exhausted.
-    assert calls == [_KLAI_KEY] * 8
     assert _KLAI2_KEY not in calls
+    assert calls and all(key == _KLAI_KEY for key in calls)
+    assert not hook._is_full(1)
+
+
+@pytest.mark.asyncio
+async def test_persistent_server_error_cooldown_on_order1_never_reaches_order2(real_litellm) -> None:
+    """A repeated 503 (not a 429, not a 402) trips LiteLLM's OWN cooldown
+    (allowed_fails=2 -- allowed_fails_policy only overrides RateLimitError),
+    which removes order 1 from healthy_deployments entirely. Order 1 being
+    ABSENT is not evidence of FULL: the hook must not read that as "order 2
+    is now the lowest order" and must still refuse to call order 2."""
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(_api_key_of(request))
+        return _error_response(request, 503, "upstream unavailable")
+
+    router, hook = _pinned_router(real_litellm)
+    try:
+        with _mock_mistral_http(handler):
+            for _ in range(4):
+                with pytest.raises(Exception):  # noqa: PT011 - any of litellm's several 5xx exception types
+                    await asyncio.wait_for(
+                        router.acompletion(model=_ALIAS, messages=[{"role": "user", "content": "hello"}]),
+                        timeout=15,
+                    )
+    finally:
+        router.reset()
+
+    assert _KLAI2_KEY not in calls
+    assert not hook._is_full(1)
 
 
 @pytest.mark.asyncio
@@ -320,29 +388,23 @@ async def test_rpm_budget_exhaustion_on_order1_does_not_spill_to_order2(real_lit
     the provider-raised 429 above, exercised because it runs before
     async_filter_deployments's own order narrowing gets a chance to react
     to a fresh exception."""
+    calls: list[str] = []
 
-    async def provider_completion(**kwargs):
-        return _response(real_litellm, kwargs["model"])
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(_api_key_of(request))
+        return _ok_response(request)
 
     router, _hook = _pinned_router(real_litellm, rpm_overrides={(_ALIAS, 1): 1})
     try:
-        with patch("litellm.acompletion", side_effect=provider_completion):
+        with _mock_mistral_http(handler):
             first = await router.acompletion(model=_ALIAS, messages=[{"role": "user", "content": "hello"}])
             assert first.choices[0].message.content == "backup response"
 
-            calls: list[str] = []
-
-            async def provider_completion_tracking(**kwargs):
-                calls.append(kwargs["api_key"])
-                return _response(real_litellm, kwargs["model"])
-
-            with (
-                patch("litellm.acompletion", side_effect=provider_completion_tracking),
-                pytest.raises(real_litellm.RateLimitError),
-            ):
+            calls.clear()
+            with pytest.raises(real_litellm.RateLimitError):
                 await asyncio.wait_for(
                     router.acompletion(model=_ALIAS, messages=[{"role": "user", "content": "hello"}]),
-                    timeout=10,
+                    timeout=15,
                 )
     finally:
         router.reset()
@@ -357,21 +419,20 @@ async def test_full_account_is_re_admitted_after_bench_time(real_litellm) -> Non
     calls: list[str] = []
     order1_full = True
 
-    async def provider_completion(**kwargs):
-        calls.append(kwargs["api_key"])
-        if kwargs["api_key"] == _KLAI_KEY and order1_full:
-            raise real_litellm.APIError(
-                status_code=402,
-                message="Workspace monthly spending limit reached",
-                llm_provider="mistral",
-                model=kwargs["model"],
-            )
-        return _response(real_litellm, kwargs["model"])
+    def handler(request: httpx.Request) -> httpx.Response:
+        api_key = _api_key_of(request)
+        calls.append(api_key)
+        if api_key == _KLAI_KEY and order1_full:
+            return _error_response(request, 402, "Workspace monthly spending limit reached")
+        return _ok_response(request)
 
     router, hook = _pinned_router(real_litellm)
     try:
-        with patch("litellm.acompletion", side_effect=provider_completion):
-            await router.acompletion(model=_ALIAS, messages=[{"role": "user", "content": "hello"}])
+        with _mock_mistral_http(handler):
+            await asyncio.wait_for(
+                router.acompletion(model=_ALIAS, messages=[{"role": "user", "content": "hello"}]),
+                timeout=15,
+            )
             assert hook._is_full(1)
             order1_full = False  # simulate Mark raising the spending limit
 

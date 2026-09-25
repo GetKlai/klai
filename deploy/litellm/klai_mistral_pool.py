@@ -5,7 +5,7 @@ klai-fast, klai-medium, klai-large).
 
 Mistral signals FULL with HTTP 402 ("Workspace/organisation monthly
 spending limit reached"). Being busy is not full: a 429 (upstream rate
-limit) or LiteLLM's own per-deployment rpm/tpm budget being exhausted must
+limit), an exhausted per-deployment rpm/tpm budget, or a transient 5xx must
 not send traffic to the next `order`. config.yaml's router_settings already
 get this right for the *retry* path (RateLimitErrorAllowedFails: 1000000
 keeps a 429 from cooling a deployment down). What they cannot reach is
@@ -17,60 +17,83 @@ order automatically -- as eagerly for a persistent 429 as for a genuine 402.
 Closing that gap is this hook's only job; it does not duplicate rpm/tpm
 enforcement or retry policy.
 
-Mechanism, verified against the installed litellm==1.96.2 source
-(docker exec klai-core-litellm-1, read-only) and against the real pinned
-package with `litellm.acompletion` patched (this module's tests):
+Verified against the installed litellm==1.96.2 source
+(docker exec klai-core-litellm-1, read-only) and, for anything timing- or
+kwargs-shape-sensitive, against the real pinned package with a mocked HTTP
+transport (this module's tests mock `httpx.AsyncClient.send`, not
+`litellm.acompletion` -- patching `litellm.acompletion` directly bypasses
+its `@client` decorator entirely, which is what fires the hooks below; a
+test suite built on that patch would never notice this hook going silent):
 
 1. `async_filter_deployments` (CustomLogger hook; router.py ~L7359 calls it
    from `async_get_available_deployment`, BEFORE the built-in `_target_order`
    narrowing at ~L10710) strips every deployment whose `order` is above the
-   lowest order that isn't currently marked FULL -- EXCEPT when the request
-   is itself LiteLLM's own order-based-fallback attempt (`_target_order` is
-   set) AND the order it is skipping past was never retried
-   (`metadata["previous_models"]` has at most one entry for it). LiteLLM
-   only reaches `_target_order` after every configured retry at the lower
-   order is exhausted (retry_policy.RateLimitErrorRetries: 3, i.e. 4
-   attempts, for a 429; config's global num_retries: 1, i.e. 2 attempts,
-   otherwise) -- UNLESS the error is non-retryable to begin with, which is
-   exactly what a 402 is (confirmed empirically: a 402 always reaches the
-   fallback after exactly one attempt). So "reached with only one prior
-   attempt" is a reliable, config-agnostic proxy for "this could not have
-   been retried", without needing the actual exception here (unavailable at
-   this point -- see below). Net effect:
+   lowest order that isn't currently marked FULL -- based on every order
+   this hook has ever SEEN for that model group (self._known_orders), not
+   just the orders present in THIS call's `healthy_deployments`. Cooldown
+   filtering runs before this hook (router.py ~L9793-9824: a deployment with
+   too many recent failures is dropped from `healthy_deployments` before
+   any callback sees it), so "order 1 is missing from this call" can mean
+   "order 1 is cooling down after repeated 503s", not "order 1 doesn't
+   exist" or "order 1 is FULL" -- only a confirmed 402 (point 2 below) may
+   ever promote a higher order. If the lowest non-FULL known order isn't
+   present in THIS call's `healthy_deployments` (cooldown, or genuinely
+   unhealthy), this returns an EMPTY list rather than falling through to a
+   higher order: litellm's own "no deployment" path (a bounded
+   RouterRateLimitError) is the correct outcome here, not a silent
+   FULL-unverified promotion. Also builds self._known_deployment_orders
+   (deployment id -> order) from whatever it sees, since the failure hook
+   below needs it and does not otherwise get `order` on its kwargs.
+   Net effect:
    - Healthy: unaffected -- order 1 was already the only eligible order.
-   - Persistent 429 / rpm-budget exhaustion on order 1: order 1 is retried
-     (`previous_models` grows past 1) before the fallback is even
-     attempted, so this exception does not apply, order 2 never survives
-     the filter, and `litellm.utils._get_order_filtered_deployments` --
-     finding no order-2 candidate to narrow to -- hands back whatever we
-     returned (order 1 only; see its own "target_order doesn't match any
-     deployment -- return all" fallback). The request keeps
-     waiting/retrying on order 1, or fails with the rate-limit error --
-     order 2 is never called.
-   - A 402 (or any other non-retried failure) on order 1: this SAME
-     request is served by order 2 immediately, without waiting for the
-     slower, log-event-based FULL marking below.
-   - Order 1 already marked FULL (from a previous request): order 1 is
-     stripped outright, order 2 (or the next non-FULL order) is returned,
-     independently of the above.
+   - Persistent 429 / rpm-budget exhaustion / any non-402 failure on order
+     1: order 1 is not FULL, so order 2 never survives this filter. When
+     the router's own order-based fallback then asks for `target_order=2`,
+     `litellm.utils._get_order_filtered_deployments` finds no order-2
+     candidate to narrow to and, per its own documented fallback ("target_
+     order doesn't match any deployment -- return all"), hands back
+     whatever we returned (order 1, or empty). Order 2 is never called.
+   - Order 1 already marked FULL (from an earlier request -- see point 2):
+     order 1 is stripped, order 2 (or the next non-FULL order) is used.
 
-2. `log_success_fallback_event` / `log_failure_fallback_event`
-   (router_utils/fallback_event_handlers.py) fire once the router's
-   order-based fallback has already tried the next order, and hand back
-   both `kwargs["_target_order"]` (the order just tried) and
-   `original_exception` (why the order below it was abandoned) -- the one
-   place in this call path that exposes the actual exception, in
-   particular `original_exception.status_code`. Unlike
-   `async_log_failure_event`, these run from the router's own recursive
-   fallback loop rather than the `@client`-decorated `litellm.acompletion`,
-   so they still fire when `litellm.acompletion` is patched directly in
-   tests (verified empirically: `async_log_failure_event` stayed silent
-   under that same patch). This is what durably marks an order FULL: only
-   ever on a confirmed `status_code == 402`, so a one-off non-retried
-   failure of some other kind (rule 1 above) affects only the request that
-   hit it, never the FULL state later requests see. Mistral organisations
-   are ordered contiguously (1, 2, 3, ...; see config.yaml's `order`
-   fields), so `target_order - 1` is the order that failed.
+2. `async_log_failure_event` (CustomLogger hook, fired from LiteLLM's own
+   per-call `Logging` object -- `logging_obj.async_failure_handler`,
+   scheduled via `asyncio.create_task` right where the failing call is
+   caught) is the one place in this call path carrying the ACTUAL
+   exception (`kwargs["exception"]`), so this is the only signal FULL
+   marking acts on -- never an attempt count or a target_order guess. It
+   does NOT carry `litellm_params["order"]` (empirically confirmed absent
+   here, unlike in `async_filter_deployments`), only `model_info["id"]`, so
+   the failing order is looked up via self._known_deployment_orders built
+   in point 1 -- exactly the fix for "determine the failed order from the
+   deployment that was actually called (model_info id -> order)", not
+   arithmetic on `target_order`. Marks that order FULL only when
+   `exception.status_code == 402`.
+   Registration: this fires correctly from a plain
+   `litellm.logging_callback_manager.add_litellm_callback(hook)` -- the
+   same call config.yaml's `litellm_settings.callbacks` list triggers via
+   `initialize_callbacks_on_proxy` -- because litellm's own `function_setup`
+   (run by the `@client` decorator on every real completion call) copies
+   `litellm.callbacks` into `_async_failure_callback` on first use
+   (`litellm/utils.py`'s `get_dynamic_callbacks`); no separate
+   `failure_callback:` config entry is needed. It is scheduled as a
+   fire-and-forget task, not awaited before the retry/fallback logic picks
+   the next deployment, so marking FULL in time for the SAME request that
+   hit the 402 is not guaranteed by contract -- only by there being an
+   `await` between the failure and the next deployment pick (there always
+   is at least one: the real network round-trip to Mistral, or -- in the
+   tests -- the mocked HTTP response). Verified empirically (this module's
+   tests) that it does land in time for the same request; if a future
+   litellm version removes that gap, the same request would simply fail
+   once and the NEXT, independent request would still correctly go to
+   order 2 -- never a silent FULL-unverified promotion either way.
+
+Single process: production runs exactly one `litellm` process, no
+`--num_workers` flag, no Compose `replicas:` (confirmed via `docker exec
+klai-core-litellm-1 ps aux` on 2026-09-25: one PID for the litellm
+process). Process-local dict state is therefore correct as-is; sharing it
+(Redis, etc.) is only needed if that ever changes to more than one worker
+or container replica.
 
 Bench time: 1 hour. A 402 means a monthly/workspace spending limit, which
 does not reset until the next billing cycle or Mark raising the limit by
@@ -104,10 +127,14 @@ class KlaiMistralPoolHook(CustomLogger):
     def __init__(self) -> None:
         super().__init__()
         self._full_until: dict[int, float] = {}
+        self._known_orders: dict[str, set[int]] = {}
+        self._known_deployment_orders: dict[str, int] = {}
 
     def reset(self) -> None:
-        """Test helper: clear all FULL state."""
+        """Test helper: clear all learned/FULL state."""
         self._full_until.clear()
+        self._known_orders.clear()
+        self._known_deployment_orders.clear()
 
     def _is_full(self, order: int) -> bool:
         full_until = self._full_until.get(order)
@@ -116,8 +143,8 @@ class KlaiMistralPoolHook(CustomLogger):
     def _mark_full(self, order: int) -> None:
         self._full_until[order] = time.monotonic() + BENCH_SECONDS
 
-    def _lowest_eligible_order(self, orders_present: set[int]) -> int | None:
-        for order in sorted(orders_present):
+    def _lowest_eligible_order(self, orders: set[int]) -> int | None:
+        for order in sorted(orders):
             if not self._is_full(order):
                 return order
         return None
@@ -133,48 +160,43 @@ class KlaiMistralPoolHook(CustomLogger):
         if isinstance(healthy_deployments, dict):
             return healthy_deployments
 
-        orders_present = {
-            order
-            for d in healthy_deployments
-            if (order := d.get("litellm_params", {}).get("order")) is not None
-        }
-        if not orders_present:
+        present_orders: set[int] = set()
+        for deployment in healthy_deployments:
+            litellm_params = deployment.get("litellm_params") or {}
+            order = litellm_params.get("order")
+            if order is None:
+                continue
+            present_orders.add(order)
+            deployment_id = (deployment.get("model_info") or {}).get("id")
+            if deployment_id is not None:
+                self._known_deployment_orders[deployment_id] = order
+
+        known = self._known_orders.setdefault(model, set())
+        if not present_orders and not known:
             # Not an ordered Mistral alias (e.g. klai-bge-m3): leave untouched.
             return healthy_deployments
+        known |= present_orders
 
-        target_order = (request_kwargs or {}).get("_target_order")
-        skipped_order = target_order - 1 if isinstance(target_order, int) else None
-        if skipped_order in orders_present and not self._is_full(skipped_order):
-            metadata = (request_kwargs or {}).get("metadata") or {}
-            previous_attempts = len(metadata.get("previous_models") or [])
-            if previous_attempts <= 1:
-                # Reached target_order without a retry at skipped_order: this
-                # request's own failure could not have been retried (see
-                # module docstring point 1). Serve it from target_order now;
-                # log_success/failure_fallback_event below decides whether
-                # that state should outlive this one request.
-                return [d for d in healthy_deployments if d.get("litellm_params", {}).get("order") == target_order]
-
-        eligible_order = self._lowest_eligible_order(orders_present)
+        eligible_order = self._lowest_eligible_order(known)
         if eligible_order is None:
-            # Every configured account is FULL.
+            # Every known account is FULL.
             return []
 
-        return [d for d in healthy_deployments if d.get("litellm_params", {}).get("order") == eligible_order]
+        # May be empty if `eligible_order` isn't in THIS call's healthy_
+        # deployments (e.g. cooling down) -- deliberately not falling
+        # through to a higher, non-FULL-verified order in that case (see
+        # module docstring point 1).
+        return [d for d in healthy_deployments if (d.get("litellm_params") or {}).get("order") == eligible_order]
 
-    def _mark_full_if_402(self, kwargs: dict, original_exception: Exception) -> None:
-        if getattr(original_exception, "status_code", None) != 402:
+    async def async_log_failure_event(self, kwargs, response_obj, start_time, end_time):
+        exception = kwargs.get("exception")
+        if getattr(exception, "status_code", None) != 402:
             return
-        target_order = kwargs.get("_target_order")
-        if not isinstance(target_order, int):
+        deployment_id = ((kwargs.get("litellm_params") or {}).get("model_info") or {}).get("id")
+        order = self._known_deployment_orders.get(deployment_id)
+        if order is None:
             return
-        self._mark_full(target_order - 1)
-
-    async def log_success_fallback_event(self, original_model_group, kwargs, original_exception):
-        self._mark_full_if_402(kwargs, original_exception)
-
-    async def log_failure_fallback_event(self, original_model_group, kwargs, original_exception):
-        self._mark_full_if_402(kwargs, original_exception)
+        self._mark_full(order)
 
 
 klai_mistral_pool_hook = KlaiMistralPoolHook()
