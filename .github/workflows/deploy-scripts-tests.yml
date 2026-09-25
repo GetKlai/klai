@@ -22,6 +22,7 @@ on:
       - 'scripts/check-vexa12-deploy-preconditions.sh'
       - '.github/workflows/**'
       - 'deploy/librechat/tests/**'
+      - 'deploy/tests/test-portal-api-oneoff.sh'
       - '**/Dockerfile'
       - '**/Dockerfile.*'
       - '.claude/hooks/klai/container-hygiene-preflight.sh'
@@ -38,6 +39,7 @@ on:
       - 'scripts/check-vexa12-deploy-preconditions.sh'
       - '.github/workflows/**'
       - 'deploy/librechat/tests/**'
+      - 'deploy/tests/test-portal-api-oneoff.sh'
       - '**/Dockerfile'
       - '**/Dockerfile.*'
       - '.claude/hooks/klai/container-hygiene-preflight.sh'
@@ -138,6 +140,9 @@ jobs:
 
       - name: portal-api deploy disk-guard suite
         run: bash deploy/scripts/tests/deploy-portal-api-disk-guard.test.sh
+
+      - name: portal-api one-off clone suite
+        run: bash deploy/tests/test-portal-api-oneoff.sh
 
       # The Vexa host-readiness checks are run by hand over SSH, which is
       # precisely why they rotted unnoticed: a guard nobody executes on a

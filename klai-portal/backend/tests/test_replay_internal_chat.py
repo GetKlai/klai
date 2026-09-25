@@ -237,3 +237,96 @@ async def test_new_call_runs_with_the_internal_profile_resolved_for_the_sampled_
     assert not calls[0]["auth"].permissions.get("internal_chat")
     assert answer["text"] == "Zie het handboek."
     assert answer["signals"] == {"decision": "answer"}
+
+
+def _resume_samples() -> list[replay.Sample]:
+    return [
+        replay.Sample("c-1", "u-1", _profile("sub-1"), ["Vraag 1"]),
+        replay.Sample("c-2", "u-2", _profile("sub-2"), ["Vraag 2"]),
+    ]
+
+
+def _patch_resume_run(monkeypatch, *, sample) -> None:
+    async def old_answer(_client, _key, user, _messages):
+        return {"text": f"OLD-{user}", "ttft_ms": 10, "total_ms": 30}
+
+    async def new_answer(_org, _profile, _messages):
+        return {"text": "NEW", "ttft_ms": 20, "total_ms": 40, "signals": None}
+
+    async def model(_client, system, _user, **_kwargs):
+        return "goal" if system == replay._GOAL_SYSTEM else _verdict("tie")
+
+    async def load_org(_slug):
+        return _ORG
+
+    monkeypatch.setattr(replay, "_route_logs_to", lambda _path: None)
+    monkeypatch.setattr(replay, "_load_org", load_org)
+    monkeypatch.setattr(replay, "_tenant_litellm_key", lambda _slug: "sk-synthetic")
+    monkeypatch.setattr(replay, "_sample", sample)
+    monkeypatch.setattr(replay, "_old_answer", old_answer)
+    monkeypatch.setattr(replay, "_new_answer", new_answer)
+    monkeypatch.setattr(replay.sim, "_model", model)
+    monkeypatch.setattr(replay.sim, "_PAUSE_BETWEEN_TURNS", 0)
+    monkeypatch.setattr(replay.sim, "_PAUSE_BETWEEN_CONVERSATIONS", 0)
+
+
+async def test_resuming_skips_done_conversations_and_appends(monkeypatch, tmp_path, capsys):
+    """A deploy that kills the process mid-run must not cost the conversations already replayed.
+
+    KLAI_REPLAY_OUT pointing at the interrupted run's own folder resumes it:
+    the sampled list is unchanged, but any cid already in turns.jsonl is
+    skipped instead of replayed a second time.
+    """
+    samples = _resume_samples()
+    out_dir = tmp_path / "out"
+    monkeypatch.setenv("KLAI_REPLAY_OUT", str(out_dir))
+
+    async def sample_first_only(_org, _count):
+        return samples[:1]
+
+    # The interrupted run: only c-1 was sampled and replayed before it died.
+    _patch_resume_run(monkeypatch, sample=sample_first_only)
+    await replay.main("brightwater", 1, 1)
+    assert (out_dir / "turns.jsonl").read_text().count("\n") == 1
+
+    # The resumed run: same folder, both conversations sampled again.
+    async def sample_both(_org, _count):
+        return samples
+
+    _patch_resume_run(monkeypatch, sample=sample_both)
+    await replay.main("brightwater", 2, 1)
+
+    out = capsys.readouterr().out
+    assert "1 conversation(s) already in" in out
+    assert "resuming the rest" in out
+
+    lines = [json.loads(line) for line in (out_dir / "turns.jsonl").read_text().splitlines()]
+    assert [r["cid"] for r in lines] == ["c-1", "c-2"], "c-1's line is kept, not replayed again"
+    assert lines[1]["conversation"] == 2, "the resumed conversation keeps its position in the sampled list"
+
+
+async def test_summary_from_an_appended_file_matches_a_single_run(monkeypatch, tmp_path):
+    """turns.jsonl written across two interrupted runs must summarize the same as one clean run."""
+    samples = _resume_samples()
+
+    async def sample_both(_org, _count):
+        return samples
+
+    single_out = tmp_path / "single"
+    monkeypatch.setenv("KLAI_REPLAY_OUT", str(single_out))
+    _patch_resume_run(monkeypatch, sample=sample_both)
+    await replay.main("brightwater", 2, 1)
+    single_summary = json.loads((single_out / "summary.json").read_text())
+
+    async def sample_first_only(_org, _count):
+        return samples[:1]
+
+    resumed_out = tmp_path / "resumed"
+    monkeypatch.setenv("KLAI_REPLAY_OUT", str(resumed_out))
+    _patch_resume_run(monkeypatch, sample=sample_first_only)
+    await replay.main("brightwater", 1, 1)
+    _patch_resume_run(monkeypatch, sample=sample_both)
+    await replay.main("brightwater", 2, 1)
+    resumed_summary = json.loads((resumed_out / "summary.json").read_text())
+
+    assert resumed_summary == single_summary

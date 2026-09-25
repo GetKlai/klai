@@ -217,7 +217,14 @@ _BACKOFF_SECONDS = (5.0, 15.0, 45.0)
 
 
 async def _with_backoff(what: str, call):
-    """Retry a throttled or briefly failing call instead of hammering through it."""
+    """Retry a throttled, unreachable, or briefly failing call instead of hammering through it.
+
+    A deploy of the callee (portal-api's own container, or a dependency like
+    LiteLLM) drops the connection mid-call rather than answering with a status
+    code, which is why ConnectError and ReadTimeout get the same treatment as
+    a 429/502/503: wait and retry, and only give up once the backoff budget is
+    spent.
+    """
     for wait in (*_BACKOFF_SECONDS, None):
         try:
             return await call()
@@ -226,6 +233,11 @@ async def _with_backoff(what: str, call):
             if not throttled or wait is None:
                 raise
             print(f"    {what} kreeg {exc.response.status_code}, {wait:.0f}s wachten", flush=True)
+            await asyncio.sleep(wait)
+        except (httpx.ConnectError, httpx.ReadTimeout) as exc:
+            if wait is None:
+                raise
+            print(f"    {what} kreeg {type(exc).__name__}, {wait:.0f}s wachten", flush=True)
             await asyncio.sleep(wait)
     raise RuntimeError("unreachable")
 
