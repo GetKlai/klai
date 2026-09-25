@@ -2,24 +2,10 @@
 # Schema: SPEC-CI-TRIVY-POLICY-001 REQ-5 (id + ≥40-char statement + expired_at).
 # Referenced from .github/workflows/docs.yml via `trivyignores:`.
 
-# NOTE 2026-08-12: entries below renewed from expired_at 2026-08-01 to
-# 2026-09-15 to unblock CI (the repo-wide REQ-5 validator hard-fails on any
-# past date, which blocked unrelated portal deploys). Upstream fixes were
-# still not shipped in the pinned base images at renewal time; a proper
-# re-evaluation is owed before 2026-09-15.
-vulnerabilities:
-  - id: CVE-2026-33671
-    statement: |
-      Trivy DB false-positive: per NVD (nvd.nist.gov/vuln/detail/
-      CVE-2026-33671), picomatch 4.0.4 IS the fix-version for this
-      CVE — affected range is 4.0.0..<4.0.4. PR #411 of
-      SPEC-CI-TRIVY-POLICY-001 bumped picomatch to 4.0.4 (and 2.3.2
-      for the chokidar tier), so per upstream advisory we are on the
-      patched version. Trivy's vulnerability database still flags
-      4.0.4 instances — this is a Trivy DB lag, not a real exposure.
-      As secondary defense, picomatch is build-tooling only
-      (chokidar / tinyglobby file-watching, Vite glob resolution);
-      runtime app code never invokes `picomatch.compile()` on user
-      input. Re-evaluate when Trivy DB recategorises 4.0.4 as fixed
-      OR when picomatch 4.1.x ships.
-    expired_at: 2026-09-15
+# 2026-09-25: CVE-2026-33671 (picomatch) entry removed. `trivy fs` against
+# klai-docs/package-lock.json with a freshly downloaded vulnerability DB
+# reports 0 findings for picomatch 2.3.2 / 4.0.5 / 4.0.7 (the versions
+# currently resolved) — the Trivy DB lag noted at the previous renewal has
+# resolved and the database now recognises 4.0.4+ as fixed. No entry is
+# needed until a new finding surfaces.
+vulnerabilities: []

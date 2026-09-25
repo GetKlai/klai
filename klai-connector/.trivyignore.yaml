@@ -1,40 +1,25 @@
 # Per-service Trivy ignore-list for klai-connector.
 # Schema: SPEC-CI-TRIVY-POLICY-001 REQ-5 (id + ≥40-char statement + expired_at).
 
-# NOTE 2026-08-12: entries below renewed from expired_at 2026-08-01 to
-# 2026-09-15 to unblock CI (the repo-wide REQ-5 validator hard-fails on any
-# past date, which blocked unrelated portal deploys). Upstream fixes were
-# still not shipped in the pinned base images at renewal time; a proper
-# re-evaluation is owed before 2026-09-15.
+# 2026-09-25 re-evaluation: `trivy image --ignore-unfixed` against the
+# current python:3.12-slim base (debian 13.7) reports 0 OS findings.
+# CVE-2026-29111 (systemd, fixed at 257.13-1~deb13u1) and CVE-2026-4878
+# (libcap2, fixed at 1:2.75-10+deb13u1) are both resolved at the installed
+# version already — entries removed. CVE-2025-69720 (ncurses) remains
+# unfixed upstream and is renewed below.
 vulnerabilities:
   - id: CVE-2025-69720
     statement: |
       ncurses out-of-bounds read in tic compiler (terminfo description
       compiler). Affects ncurses-bin / ncurses-base / libtinfo6 /
-      libncursesw6 in Debian 12/13 base of python:3.12-slim. Fixes are
-      pending in Debian's security update channel. klai-connector runs
-      uvicorn as the only entrypoint and never invokes the tic compiler
-      or any ncurses-using TUI; the library ships transitively via the
-      python:3.12-slim base. Upstream Debian package update will resolve
-      this within the expiry window — Renovate watches python:3.12-slim
-      for new builds.
-    expired_at: 2026-09-15
-
-  - id: CVE-2026-29111
-    statement: |
-      systemd path canonicalization issue in libsystemd0 / libudev1.
-      klai-connector runs as a single uvicorn process inside Docker and
-      never communicates with systemd / udev (no privileged mounts, no
-      hostnetwork, no /run/systemd access). Library ships transitively via
-      the python:3.12-slim base. Renovate-tracked base-image update will
-      pick up the Debian patch within the expiry window.
-    expired_at: 2026-09-15
-
-  - id: CVE-2026-4878
-    statement: |
-      libcap2 capability-string parsing issue. klai-connector container
-      runs without CAP_SYS_ADMIN / CAP_NET_ADMIN / file capabilities —
-      the libcap2 library ships transitively via python:3.12-slim and is
-      not exercised at runtime. Debian patch via Renovate-tracked base
-      bump within the expiry window.
-    expired_at: 2026-09-15
+      libncursesw6, installed version 6.5+20250216-2 in the current
+      python:3.12-slim (debian 13.7) base. Debian's security tracker
+      lists this "no-dsa" (minor issue, no fix planned) for trixie — no
+      fixed_version exists, so the STRICT-tier scan's `--ignore-unfixed`
+      flag already excludes it from gating; this entry documents the
+      finding for Security-tab visibility per docs/runbooks/
+      trivy-policy.md troubleshooting table. klai-connector runs uvicorn
+      as the only entrypoint and never invokes the tic compiler or any
+      ncurses-using TUI. Re-evaluate when Debian's security tracker
+      records a fixed_version for trixie.
+    expired_at: 2027-03-25

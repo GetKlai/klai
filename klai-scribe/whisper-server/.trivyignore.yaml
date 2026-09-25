@@ -2,28 +2,13 @@
 # Schema: SPEC-CI-TRIVY-POLICY-001 REQ-5 (id + ≥40-char statement + expired_at).
 # Referenced from .github/workflows/whisper-server.yml via `trivyignores:`.
 
-# NOTE 2026-08-12: entries below renewed from expired_at 2026-08-01 to
-# 2026-09-15 to unblock CI (the repo-wide REQ-5 validator hard-fails on any
-# past date, which blocked unrelated portal deploys). Upstream fixes were
-# still not shipped in the pinned base images at renewal time; a proper
-# re-evaluation is owed before 2026-09-15.
-vulnerabilities:
-  - id: CVE-2025-68973
-    statement: |
-      gnupg keybox parser out-of-bounds write. PR #411 of
-      SPEC-CI-TRIVY-POLICY-001 added `apt purge -y --auto-remove gnupg
-      gnupg2` to the Dockerfile, which removes most of the gnupg
-      family (gpg, gpg-agent, gpgsm, dirmngr, etc.). However, `gpgv`
-      remains because it's a hard dependency of `apt` itself — apt
-      uses gpgv to verify package signatures during install, so it
-      cannot be auto-removed without breaking apt.
-
-      Exposure analysis: gpgv only runs when apt-get install/update
-      executes against signed repositories. The whisper-server runtime
-      container never runs apt — it runs uvicorn for inference.
-      The vulnerable keybox parser code in gpgv requires being invoked
-      with a malicious keybox file, which has no path in our deployed
-      image (no apt invocation, no keybox file ingest, no user-supplied
-      keys). Re-evaluate when Ubuntu 24.04 ships gpgv ≥ 2.4.4-2ubuntu17.4
-      via Renovate's CUDA base-image bumps.
-    expired_at: 2026-09-15
+# 2026-09-25: CVE-2025-68973 (gnupg/gpgv) entry removed. The re-evaluation
+# criterion from the previous entry — Ubuntu 24.04 shipping gpgv >=
+# 2.4.4-2ubuntu17.4 — is met: the Dockerfile's `apt-get upgrade -y` step
+# (already present, runs before the gnupg purge) now resolves gpgv to
+# 2.4.4-2ubuntu17.6 from noble-security. Reproduced the Dockerfile's
+# update/upgrade/install/purge sequence against
+# nvidia/cuda:12.9.1-cudnn-runtime-ubuntu24.04 and confirmed via
+# `dpkg -l gpgv` (2.4.4-2ubuntu17.6) and a `trivy image --ignore-unfixed`
+# scan of the resulting image (0 findings).
+vulnerabilities: []
