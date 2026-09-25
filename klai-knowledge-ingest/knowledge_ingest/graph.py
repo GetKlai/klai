@@ -40,7 +40,11 @@ import knowledge_ingest.qdrant_store as qdrant_store
 from knowledge_ingest import _patch_graphiti
 from knowledge_ingest.build_estimate import maybe_warn_graph_scale, should_check_graph_scale
 from knowledge_ingest.config import settings
-from knowledge_ingest.llm_throttle import TokenBucketLimiter, shared_klai_fast_limiter
+from knowledge_ingest.llm_throttle import (
+    NoMediumFallbackTransport,
+    TokenBucketLimiter,
+    shared_klai_fast_limiter,
+)
 
 logger = structlog.get_logger()
 
@@ -439,6 +443,12 @@ def _get_graphiti() -> Graphiti:
         # klai-fast budget (knowledge_ingest.llm_throttle), not a Graphiti-only
         # rate. This prevents Graphiti's bursts from exceeding the upstream
         # klai-fast alias budget in combination with every other klai-fast caller.
+        #
+        # NoMediumFallbackTransport: adds fallbacks=[] to every request so a
+        # saturated klai-fast budget makes Graphiti wait (paced by the token
+        # bucket above) instead of LiteLLM silently escalating to klai-medium
+        # at ~10-12.5x the price. See llm_throttle.add_no_fallback's docstring
+        # for why this is fallbacks=[] and not disable_fallbacks.
         _llm_limiter = shared_klai_fast_limiter()
         openai_client = AsyncOpenAI(
             api_key=api_key,
@@ -446,7 +456,7 @@ def _get_graphiti() -> Graphiti:
             max_retries=0,
             http_client=httpx.AsyncClient(
                 transport=_RateLimitedTransport(
-                    wrapped=httpx.AsyncHTTPTransport(),
+                    wrapped=NoMediumFallbackTransport(httpx.AsyncHTTPTransport()),
                     limiter=_llm_limiter,
                 )
             ),

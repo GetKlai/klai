@@ -71,7 +71,7 @@ import structlog
 
 from knowledge_ingest.config import settings
 from knowledge_ingest.description_generator import generate_node_description
-from knowledge_ingest.llm_throttle import shared_klai_fast_limiter
+from knowledge_ingest.llm_throttle import add_no_fallback, shared_klai_fast_limiter
 from knowledge_ingest.portal_client import TaxonomyProposal, submit_taxonomy_proposal
 from knowledge_ingest.taxonomy_classifier import TaxonomyNode
 
@@ -295,15 +295,17 @@ async def _suggest_cluster_name(
                 "Authorization": f"Bearer {settings.litellm_api_key}",
                 "Content-Type": "application/json",
             },
-            json={
-                "model": settings.taxonomy_classification_model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message},
-                ],
-                "temperature": 0.3,
-                "max_tokens": 50,
-            },
+            json=add_no_fallback(
+                {
+                    "model": settings.taxonomy_classification_model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_message},
+                    ],
+                    "temperature": 0.3,
+                    "max_tokens": 50,
+                }
+            ),
         )
         resp.raise_for_status()
         data = resp.json()
@@ -395,15 +397,17 @@ async def _suggest_cluster_names_batched(
                     "Authorization": f"Bearer {settings.litellm_api_key}",
                     "Content-Type": "application/json",
                 },
-                json={
-                    "model": settings.taxonomy_classification_model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_message},
-                    ],
-                    "temperature": 0.3,
-                    "max_tokens": 1500,
-                },
+                json=add_no_fallback(
+                    {
+                        "model": settings.taxonomy_classification_model,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_message},
+                        ],
+                        "temperature": 0.3,
+                        "max_tokens": 1500,
+                    }
+                ),
             )
             resp.raise_for_status()
             data = resp.json()
@@ -634,15 +638,17 @@ async def _consolidate_to_parents(
                 "Authorization": f"Bearer {settings.litellm_api_key}",
                 "Content-Type": "application/json",
             },
-            json={
-                "model": settings.taxonomy_classification_model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message},
-                ],
-                "temperature": 0.2,
-                "max_tokens": max_tokens,
-            },
+            json=add_no_fallback(
+                {
+                    "model": settings.taxonomy_classification_model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_message},
+                    ],
+                    "temperature": 0.2,
+                    "max_tokens": max_tokens,
+                }
+            ),
         )
         resp.raise_for_status()
         data = resp.json()
@@ -1196,15 +1202,17 @@ async def _suggest_category_name(documents: list[DocumentSummary]) -> str | None
                 "Authorization": f"Bearer {settings.litellm_api_key}",
                 "Content-Type": "application/json",
             },
-            json={
-                "model": settings.taxonomy_classification_model,
-                "messages": [
-                    {"role": "system", "content": _PROPOSAL_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_message},
-                ],
-                "temperature": 0.3,
-                "max_tokens": 50,
-            },
+            json=add_no_fallback(
+                {
+                    "model": settings.taxonomy_classification_model,
+                    "messages": [
+                        {"role": "system", "content": _PROPOSAL_SYSTEM_PROMPT},
+                        {"role": "user", "content": user_message},
+                    ],
+                    "temperature": 0.3,
+                    "max_tokens": 50,
+                }
+            ),
         )
         resp.raise_for_status()
         data = resp.json()

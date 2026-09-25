@@ -17,7 +17,7 @@ import structlog
 from klai_llm_safety import SafetyPhase, SafetyRequest, SafetySurface, check_text
 
 from knowledge_ingest.config import settings
-from knowledge_ingest.llm_throttle import shared_klai_fast_limiter
+from knowledge_ingest.llm_throttle import add_no_fallback, shared_klai_fast_limiter
 
 logger = structlog.get_logger()
 
@@ -53,12 +53,14 @@ async def _call_llm(prompt: str, log_event: str) -> str | None:
             resp = await client.post(
                 f"{settings.litellm_url}/v1/chat/completions",
                 headers={"Authorization": f"Bearer {settings.litellm_api_key}"},
-                json={
-                    "model": "klai-fast",
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": 64,
-                    "temperature": 0,
-                },
+                json=add_no_fallback(
+                    {
+                        "model": "klai-fast",
+                        "messages": [{"role": "user", "content": prompt}],
+                        "max_tokens": 64,
+                        "temperature": 0,
+                    }
+                ),
             )
             resp.raise_for_status()
         data = resp.json()
