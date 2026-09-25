@@ -557,12 +557,21 @@ jobs:
         run: |
           git fetch --depth=1 origin main
           TIP="$(git rev-parse FETCH_HEAD)"
-          if [ "$TIP" = "$GITHUB_SHA" ]; then
+          # A newer commit only starts a newer run of this workflow when it
+          # touches one of the on.push.paths above; keep this list equal to
+          # that one. On 2026-09-25 a docs-only commit landed right behind
+          # #1672, no newer run started, and this check skipped the only
+          # deploy that portal change would ever get.
+          if [ "$TIP" = "$GITHUB_SHA" ] || git diff --quiet "$GITHUB_SHA" "$TIP" -- \
+              'klai-portal/backend/' 'klai-libs/chat-prompts/' 'klai-libs/citations/' \
+              'klai-libs/connector-credentials/' 'klai-libs/kb-slugs/' \
+              'deploy/scripts/deploy-portal-api.sh' 'deploy/docker-compose.yml' \
+              'scripts/check-vexa12-deploy-preconditions.sh' '.github/workflows/portal-api.yml'; then
             echo "current=true" >> "$GITHUB_OUTPUT"
-            echo "This run is main's tip ($GITHUB_SHA); deploying."
+            echo "No newer run of this workflow is coming after $GITHUB_SHA (main: $TIP); deploying."
           else
             echo "current=false" >> "$GITHUB_OUTPUT"
-            echo "main has moved to $TIP; this run is for $GITHUB_SHA. Leaving the deploy to the newer run."
+            echo "main has moved to $TIP with portal-api changes; this run is for $GITHUB_SHA. Leaving the deploy to the newer run."
           fi
 
       # Audit 2026-05-05: defence-in-depth gate. The deploy job is gated
