@@ -26,7 +26,7 @@ import math
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Literal, cast
+from typing import Literal, cast
 
 import structlog
 from fastapi import HTTPException
@@ -536,7 +536,7 @@ async def _classify_findings(*, zitadel_org_id: str, kb_slug: str, findings: lis
     return findings
 
 
-async def _org_policy(db: AsyncSession, org_id: int) -> Row[Any] | None:
+async def _org_policy(db: AsyncSession, org_id: int) -> Row[Literal["off", "shadow", "full"], list[str]] | None:
     return (
         await db.execute(
             select(PortalOrg.telemetry_level, PortalOrg.platform_unlocked_features)
@@ -546,7 +546,7 @@ async def _org_policy(db: AsyncSession, org_id: int) -> Row[Any] | None:
     ).one_or_none()
 
 
-def _assert_support_policy(policy: Row[tuple[str, list[str]]] | None) -> None:
+def _assert_support_policy(policy: Row[Literal["off", "shadow", "full"], list[str]] | None) -> None:
     require_full_telemetry(policy.telemetry_level if policy is not None else None)
     # assert_platform_unlocked reads platform_unlocked_features via getattr, so the
     # locked Row satisfies it exactly like a PortalOrg (the row is non-None here:
