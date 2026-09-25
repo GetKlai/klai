@@ -134,6 +134,17 @@
   // so a Vexa bump stays a deliberate operation with a manual step.
   customManagers: [
     {
+      // litellm-tests.yml runs the hook tests against the litellm PyPI
+      // package at the version the proxy image runs, and
+      // check-version-pin-agreement.py fails when the two differ. Without
+      // this manager a LiteLLM image bump could never go green on its own.
+      customType: 'regex',
+      managerFilePatterns: ['/^\\.github/workflows/litellm-tests\\.yml$/'],
+      matchStrings: ['litellm==(?<currentValue>[0-9][0-9.]*)'],
+      depNameTemplate: 'litellm',
+      datasourceTemplate: 'pypi',
+    },
+    {
       customType: 'regex',
       managerFilePatterns: ['/^deploy/docker-compose\\.yml$/'],
       matchStrings: [
@@ -392,6 +403,26 @@
       matchDatasources: ['docker'],
       matchPackageNames: ['python'],
       allowedVersions: '<3.14',
+    },
+    {
+      description:
+        'Python base-image minors are a runtime upgrade of every service at \
+        once (3.11/3.12 -> 3.13 arrived inside the Docker images group on \
+        2026-09-25 and broke two image scans). Their own group, merged by a \
+        person; patches stay in the Docker images group.',
+      matchDatasources: ['docker'],
+      matchPackageNames: ['python'],
+      matchUpdateTypes: ['minor', 'major'],
+      groupName: 'Python base image',
+      automerge: false,
+    },
+    {
+      description:
+        'LiteLLM image and the litellm PyPI pin the hook tests run against \
+        move together, so the tests exercise the version the proxy will run. \
+        Its own group so a LiteLLM change never holds back the other images.',
+      matchPackageNames: ['ghcr.io/berriai/litellm', 'litellm'],
+      groupName: 'LiteLLM',
     },
     {
       description:
