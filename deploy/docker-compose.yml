@@ -596,9 +596,10 @@ services:
   # Neither takes a secret, so this adds no `env_file` scope and no
   # `SECRETS_MATRIX.md` entry.
   presidio-analyzer:
-    # Digest published by presidio-analyzer-image-build.yml from c0d198b9d
-    # (tag 2.2.362-klai.1-c0d198b9da7b), carrying the EU-wide VAT recogniser,
-    # the Belgian enterprise number and the six-language registry.
+    # Digest published by presidio-analyzer-image-build.yml from 60c41ddae
+    # (tag 2.2.364-klai.1-60c41ddae0dd): upstream Presidio 2.2.364 under the
+    # same pack as before (EU-wide VAT recogniser, Belgian enterprise number,
+    # six-language registry).
     #
     # This pin is a SEPARATE step from merging a recogniser change: the build
     # runs on push to main and publishes a digest, and until this line points
@@ -607,7 +608,7 @@ services:
     # This is where REQ-3's Dutch recognizers (BSN/KvK/BTW/postcode) and
     # REQ-4's SECRET recognizer actually enter the request path.
     logging: *log-rotation
-    image: ghcr.io/getklai/presidio-analyzer@sha256:23f1c064761baadc030786aac60b58a42c5157bbf0c6e4a0201c538dc262241d
+    image: ghcr.io/getklai/presidio-analyzer@sha256:0605d1e943598ef74927588cef43673c91cfddcb5367d1fa9dbde22a8a1d721c
     restart: unless-stopped
     # klai_pii_enforce is fail-closed by contract (REQ-10): if this service does
     # not answer, the chat request is refused rather than forwarded unminimised,
