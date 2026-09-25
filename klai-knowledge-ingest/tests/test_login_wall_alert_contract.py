@@ -11,13 +11,22 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import yaml
+
 _REPO_ROOT = Path(__file__).parent.parent.parent
 _RULES = _REPO_ROOT / "deploy/grafana/provisioning/alerting/login-wall-rules.yaml"
 _SOURCE = Path(__file__).parent.parent / "knowledge_ingest"
 
 
 def test_every_alerted_event_is_emitted_by_knowledge_ingest() -> None:
-    exprs = re.findall(r"^\s*expr: '([^']*)'", _RULES.read_text(), flags=re.MULTILINE)
+    rules = yaml.safe_load(_RULES.read_text())
+    exprs = [
+        query["model"]["expr"]
+        for group in rules["groups"]
+        for rule in group["rules"]
+        for query in rule["data"]
+        if "expr" in query.get("model", {})
+    ]
     events = {e for expr in exprs for e in re.findall(r"event:(\w+)", expr)}
     source = "\n".join(p.read_text() for p in _SOURCE.rglob("*.py"))
     # Only a logger call counts: the old names still appear in comments.
