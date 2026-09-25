@@ -175,6 +175,17 @@
     },
     {
       description:
+        'vexaai/transcription-service is not published anywhere: it is built \
+        from Vexa-ai/vexa source on gpu-01 (tag <upstream>-local-<stamp>), so \
+        every run logged a failed lookup. Its upgrade path is the manual \
+        build in docs/runbooks/transcription-service-bump.md, not a PR.',
+      matchManagers: ['docker-compose'],
+      matchDatasources: ['docker'],
+      matchPackageNames: ['vexaai/transcription-service'],
+      enabled: false,
+    },
+    {
+      description:
         'Aqua blocks organization GitHub App tokens with its IP allowlist. Use \
         the public Git transport so action digest updates remain discoverable.',
       matchManagers: ['github-actions'],
