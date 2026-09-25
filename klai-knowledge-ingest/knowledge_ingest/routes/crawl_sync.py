@@ -24,6 +24,8 @@ import json
 import time
 import uuid
 from collections.abc import Mapping
+from html import unescape
+from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
@@ -42,13 +44,11 @@ from knowledge_ingest.connector_state import (
     activate_connector_resource,
     get_current_connector_resource_key,
 )
-from knowledge_ingest.crawl_result_processing import html_visible_text
-from knowledge_ingest.crawl_url_policy import same_site_domain
 from knowledge_ingest.db import get_pool, tenant_scoped_connection
 from knowledge_ingest.resource_jobs import cancel_jobs_by_resource_key, connector_resource_key
 from knowledge_ingest.routes.crawl import _probe_fetch, _ProbeResponse
 from knowledge_ingest.utils.auth_wall_classifier import classify_auth_wall
-from knowledge_ingest.utils.url_validator import SsrfBlockedError, validate_url_pinned
+from knowledge_ingest.utils.url_validator import validate_url_pinned
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -464,7 +464,7 @@ class CrawlKeepAliveResponse(BaseModel):
     # Populated only when ok=False, so klai-connector can log an actionable
     # error (connector id + reason) instead of a bare bool. One of:
     # "cookie_load_failed", "no_saved_credentials", "url_invalid",
-    # "fetch_failed", "redirect_left_domain", "too_many_redirects", or a
+    # "fetch_failed", "redirect_left_host", "too_many_redirects", or a
     # comma-joined classify_auth_wall match_reasons tuple (e.g.
     # "redirect_to_login", "end_of_body_login_marker").
     reason: str | None = None
@@ -472,50 +472,171 @@ class CrawlKeepAliveResponse(BaseModel):
 
 # A same-host language/path redirect (the observed production failure: root
 # 302 to /en) is one hop. 5 is generous headroom without letting a
-# misconfigured site turn every tick into a long redirect chain.
+# misconfigured site turn every tick into a long redirect chain -- the loop
+# below allows up to this many *followed* redirects, plus the final request.
 _MAX_KEEPALIVE_REDIRECTS = 5
 
+# Nav/header/footer boilerplate repeats on every page of a site regardless of
+# session state (e.g. a sitewide "Log in" link in the footer), so it must not
+# feed classify_auth_wall's end-of-body/embedded-gate rules -- unlike
+# crawl_result_processing.html_visible_text, which deliberately keeps that
+# text for its own (unrelated) thin-content-retry heuristic.
+_PROBE_MARKDOWN_SKIP_TAGS = frozenset(
+    {"script", "style", "noscript", "template", "svg", "nav", "header", "footer"}
+)
 
-async def _follow_same_site_redirects(
+
+class _ProbeMarkdownExtractor(HTMLParser):
+    """Cheap markdown-ish text view of a probed page for classify_auth_wall.
+
+    Not crawl4ai's real ``fit_markdown`` -- producing that needs a full
+    render via the crawl4ai container, which defeats the point of a cheap
+    30-minute httpx ping. This gets close enough for the classifier's rules
+    that matter here: renders ``<a href>`` as ``[text](href)`` so
+    ``embedded_login_gate`` (which matches on markdown link syntax) can
+    still fire, and drops nav/header/footer so the tail-window checked by
+    the end-of-body rules is the actual page body, not sitewide chrome.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._skip_depth = 0
+        self._link_href: str | None = None
+        self.parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        tag = tag.lower()
+        if tag in _PROBE_MARKDOWN_SKIP_TAGS:
+            self._skip_depth += 1
+        elif tag == "a" and self._skip_depth == 0:
+            href = dict(attrs).get("href")
+            if href:
+                self._link_href = href
+                self.parts.append("[")
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if tag in _PROBE_MARKDOWN_SKIP_TAGS and self._skip_depth:
+            self._skip_depth -= 1
+        elif tag == "a" and self._link_href is not None:
+            self.parts.append(f"]({self._link_href})")
+            self._link_href = None
+
+    def handle_data(self, data: str) -> None:
+        if self._skip_depth == 0:
+            self.parts.append(data)
+
+
+def _probe_markdown(html: str) -> str:
+    if not html:
+        return ""
+    parser = _ProbeMarkdownExtractor()
+    try:
+        parser.feed(html)
+    except Exception:
+        return ""
+    return unescape(" ".join(parser.parts))
+
+
+def _same_host_https(candidate_url: str, base_hostname: str, base_port: int) -> bool:
+    """A redirect may only be followed onto the identical host, over https.
+
+    Deliberately stricter than "same site": no apex/www equivalence, no
+    subdomain allowance. Saved cookies are host-scoped credentials -- treating
+    ``www.example.com`` and ``example.com`` (or http and https on the same
+    host) as interchangeable would replay them onto a host variant or send
+    them in the clear. This covers the one production redirect this probe
+    exists to follow (root -> ``/en`` on the identical host) and nothing
+    wider.
+    """
+    parsed = urlparse(candidate_url)
+    if parsed.scheme != "https":
+        return False
+    if (parsed.hostname or "").lower() != base_hostname.lower():
+        return False
+    return (parsed.port or 443) == base_port
+
+
+async def _follow_same_host_redirects(
     url: str,
     pin_map: dict[str, str],
     cookies: dict[str, str],
     base_hostname: str,
-) -> tuple[_ProbeResponse | None, str]:
-    """Follow same-site 3xx redirects to the real page cookies must reach.
+    base_port: int,
+) -> tuple[_ProbeResponse | None, str, str | None]:
+    """Follow same-host https 3xx redirects to the real page cookies must reach.
 
     ``_probe_fetch`` runs with ``follow_redirects=False`` so a bare 3xx never
-    silently escapes the SSRF pin. This drives that loop itself: each hop is
-    re-validated with :func:`validate_url_pinned` (so a redirect to a new
-    same-site host still gets its own pinned IP — no DNS-rebinding TOCTOU
-    across hops) and checked with :func:`same_site_domain` — a redirect to a
-    different site (e.g. an SSO host) is a boundary the probe must never
-    cross, so it is reported as a failure rather than followed.
+    silently escapes the SSRF pin. This drives that loop itself, refusing to
+    follow anything that is not :func:`_same_host_https` -- a scheme
+    downgrade, a port change, or any other host (apex/www variant, subdomain,
+    or a different site entirely) ends the probe rather than being followed.
+    Because the host never changes, the original SSRF pin stays valid for
+    every hop; no per-hop revalidation is needed.
 
-    Returns ``(final_response, final_url)`` on success, or
-    ``(None, reason)`` when a redirect leaves the site, the pinned
-    revalidation rejects a hop, or the hop budget is exhausted.
+    Returns ``(final_response, final_url, last_redirect_target)`` on success
+    -- ``last_redirect_target`` is the most recent ``Location`` this loop
+    followed, or ``None`` if the final response was not itself reached via a
+    redirect, so the caller can feed it to ``classify_auth_wall`` -- or
+    ``(None, reason, last_redirect_target)`` when a redirect left the host or
+    the hop budget is exhausted.
     """
     current_url = url
-    for _ in range(_MAX_KEEPALIVE_REDIRECTS):
+    last_redirect_target: str | None = None
+    for hop in range(_MAX_KEEPALIVE_REDIRECTS + 1):
         result = await _probe_fetch(current_url, pin_map, cookies)
         if not (300 <= result.status_code < 400 and result.location):
-            return result, current_url
+            return result, current_url, last_redirect_target
 
         next_url = urljoin(current_url, result.location)
-        next_host = urlparse(next_url).netloc.lower()
-        if not same_site_domain(next_host, base_hostname):
-            return None, f"redirect_left_domain:{next_host}"
+        if not _same_host_https(next_url, base_hostname, base_port):
+            return None, f"redirect_left_host:{urlparse(next_url).netloc.lower()}", next_url
+        if hop == _MAX_KEEPALIVE_REDIRECTS:
+            break
 
-        if next_host not in pin_map:
-            try:
-                validated = await validate_url_pinned(next_url)
-            except (ValueError, SsrfBlockedError) as exc:
-                return None, f"redirect_ssrf_blocked:{exc}"
-            pin_map[validated.hostname] = validated.preferred_ip
-
+        last_redirect_target = next_url
         current_url = next_url
-    return None, "too_many_redirects"
+    return None, "too_many_redirects", last_redirect_target
+
+
+# Last-known ok/not-ok state per connector, keyed by connector_id string.
+# Purely a log-noise gate: CrawlKeepAliveResponse.ok is always computed
+# fresh and correct regardless of this cache. Without it a persistently
+# logged-out connector logs an error on every 30-minute tick forever; this
+# logs once on the failing transition and once on recovery. Per-process (an
+# extra knowledge-ingest replica or a restart re-logs once) -- a deliberate
+# simplification; a shared store (Redis/DB) would make the debounce
+# cluster-wide if that ever matters.
+_last_probe_ok: dict[str, bool] = {}
+
+
+def _log_probe_result(
+    *, connector_id: str, org_id: str, url: str, ok: bool, reason: str | None, **fields: Any
+) -> None:
+    previous = _last_probe_ok.get(connector_id)
+    _last_probe_ok[connector_id] = ok
+    if ok:
+        logger.info(
+            "crawl_keepalive_probe",
+            connector_id=connector_id,
+            org_id=org_id,
+            url=url,
+            ok=True,
+            recovered=previous is False,
+            **fields,
+        )
+        return
+    if previous is False:
+        return  # already logged this connector as logged-out; do not repeat every tick
+    logger.error(
+        "crawl_keepalive_session_logged_out",
+        connector_id=connector_id,
+        org_id=org_id,
+        url=url,
+        ok=False,
+        reason=reason,
+        **fields,
+    )
 
 
 @router.post("/ingest/v1/crawl/keep-alive", response_model=CrawlKeepAliveResponse)
@@ -526,11 +647,12 @@ async def crawl_keepalive(req: CrawlKeepAliveRequest) -> CrawlKeepAliveResponse:
     session goes idle-timeout between once-daily scheduled crawls). Never
     raises — a failed touch is just ``ok=False``, not a 500.
 
-    Follows same-site redirects (REQ: the probed URL is often the site root,
-    which many CMSes 302 to a language path) and classifies the final page
-    with the shared :func:`classify_auth_wall` heuristic, so a redirect to a
-    login page or a thin authenticated-looking stub is caught the same way
-    the crawler itself would catch it — not just a bare status-code check.
+    Follows same-host https redirects (REQ: the probed URL is often the site
+    root, which many CMSes 302 to a language path) and classifies the final
+    page with the shared :func:`classify_auth_wall` heuristic, so a redirect
+    to a login page or a thin authenticated-looking stub is caught the same
+    way the crawler itself would catch it — not just a bare status-code
+    check.
     """
     try:
         cookies = await load_connector_cookies(
@@ -573,9 +695,10 @@ async def crawl_keepalive(req: CrawlKeepAliveRequest) -> CrawlKeepAliveResponse:
         return CrawlKeepAliveResponse(ok=False, reason="url_invalid")
 
     pin_map = {validated.hostname: validated.preferred_ip}
+    base_port = urlparse(req.url).port or 443
     try:
-        result, final = await _follow_same_site_redirects(
-            req.url, pin_map, cookie_dict, validated.hostname
+        result, final, last_redirect_target = await _follow_same_host_redirects(
+            req.url, pin_map, cookie_dict, validated.hostname, base_port
         )
     except Exception as exc:
         logger.warning(
@@ -587,21 +710,21 @@ async def crawl_keepalive(req: CrawlKeepAliveRequest) -> CrawlKeepAliveResponse:
         return CrawlKeepAliveResponse(ok=False, reason="fetch_failed")
 
     if result is None:
-        # `final` here is the reason string, not a URL (see the tuple-union
-        # return contract on `_follow_same_site_redirects`).
-        logger.error(
-            "crawl_keepalive_session_logged_out",
+        # `final` here is the reason string, not a URL (see the return
+        # contract on `_follow_same_host_redirects`).
+        _log_probe_result(
             connector_id=str(req.connector_id),
             org_id=req.org_id,
             url=req.url,
+            ok=False,
             reason=final,
         )
         return CrawlKeepAliveResponse(ok=False, reason=final)
 
-    visible_text = html_visible_text(result.text)
+    visible_text = _probe_markdown(result.text)
     auth_wall = classify_auth_wall(
         response_status_code=result.status_code,
-        redirect_target_url=None,  # already resolved by _follow_same_site_redirects
+        redirect_target_url=last_redirect_target,
         set_cookie_header=result.set_cookie,
         word_count=len(visible_text.split()),
         fit_markdown=visible_text,
@@ -610,15 +733,13 @@ async def crawl_keepalive(req: CrawlKeepAliveRequest) -> CrawlKeepAliveResponse:
     ok = 200 <= result.status_code < 300 and not auth_wall.is_walled
     reason = None if ok else (", ".join(auth_wall.match_reasons) or f"status_{result.status_code}")
 
-    log = logger.info if ok else logger.error
-    log(
-        "crawl_keepalive_probe" if ok else "crawl_keepalive_session_logged_out",
+    _log_probe_result(
         connector_id=str(req.connector_id),
         org_id=req.org_id,
         url=req.url,
-        final_url=final,
-        status_code=result.status_code,
         ok=ok,
         reason=reason,
+        final_url=final,
+        status_code=result.status_code,
     )
     return CrawlKeepAliveResponse(ok=ok, reason=reason)

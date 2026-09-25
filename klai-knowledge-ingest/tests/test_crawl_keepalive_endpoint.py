@@ -14,15 +14,21 @@ following it. Production data (September 2026) showed the probed URL is
 usually the site root, and many CMSes 302 that to a language path (``/en``)
 even for an authenticated session — every tick reported ok=false and the
 keep-alive never actually kept anything alive. These tests pin the fix: the
-probe now follows same-site redirects and classifies the final page with the
-shared ``classify_auth_wall`` heuristic instead of trusting a bare status
-code.
+probe now follows same-host https redirects and classifies the final page
+with the shared ``classify_auth_wall`` heuristic instead of trusting a bare
+status code.
+
+2026-09-25 (review pass): the first version of this fix allowed apex/www and
+scheme-downgrading redirects to be followed with the same cookie jar (a real
+cookie-leak/downgrade risk), never told the classifier about a followed
+redirect's target, fed it link-stripped text, and re-logged an error every
+tick for a connector that stayed logged out. The tests below pin all four.
 """
 
 from __future__ import annotations
 
 import uuid
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from klai_image_storage.url_guard import ValidatedURL
 
@@ -55,9 +61,9 @@ def _probe(
     )
 
 
-def _post(url: str = "https://wiki.example.com/") -> dict:
+def _post(connector_id: str | None = None, url: str = "https://wiki.example.com/") -> dict:
     return {
-        "connector_id": str(uuid.uuid4()),
+        "connector_id": connector_id or str(uuid.uuid4()),
         "org_id": "42",
         "url": url,
     }
@@ -90,9 +96,10 @@ class TestCrawlKeepaliveEndpoint:
         assert resp.json() == {"ok": True, "reason": None}
 
     def test_root_redirect_to_language_path_then_ok(self) -> None:
-        """The production failure mode: root 302s to /en, then /en is the
-        real authenticated page -> the probe must follow that hop and
-        report ok=True, not treat the bare 302 as a dead session."""
+        """The production failure mode: root 302s to /en on the same host,
+        then /en is the real authenticated page -> the probe must follow
+        that hop and report ok=True, not treat the bare 302 as a dead
+        session."""
         pool = _make_pool()
         with (
             _client_with_patches(pool) as (client, _defer),
@@ -110,7 +117,7 @@ class TestCrawlKeepaliveEndpoint:
                 "knowledge_ingest.routes.crawl_sync._probe_fetch",
                 new_callable=AsyncMock,
                 side_effect=[
-                    _probe(302, location="/en"),
+                    _probe(302, location="https://wiki.example.com/en"),
                     _probe(200, text="Welcome to the handbook. " * 20),
                 ],
             ),
@@ -120,7 +127,7 @@ class TestCrawlKeepaliveEndpoint:
         assert resp.json() == {"ok": True, "reason": None}
 
     def test_redirect_to_login_page_returns_ok_false_with_reason(self) -> None:
-        """A same-site redirect the probe follows can still land on a login
+        """A same-host redirect the probe follows can still land on a login
         page (expired session) — the final page must be classified, and the
         response must carry a reason so the caller can log it."""
         pool = _make_pool()
@@ -140,7 +147,7 @@ class TestCrawlKeepaliveEndpoint:
                 "knowledge_ingest.routes.crawl_sync._probe_fetch",
                 new_callable=AsyncMock,
                 side_effect=[
-                    _probe(302, location="/login"),
+                    _probe(302, location="https://wiki.example.com/login"),
                     _probe(200, text="Please log in to continue"),
                 ],
             ),
@@ -149,10 +156,12 @@ class TestCrawlKeepaliveEndpoint:
         assert resp.status_code == 200
         body = resp.json()
         assert body["ok"] is False
-        assert body["reason"] == "end_of_body_login_marker"
+        # Both the redirect target ("/login") and the landed page's own body
+        # ("please log in to continue") are independently walled signals.
+        assert body["reason"] == "redirect_to_login, end_of_body_login_marker"
 
     def test_redirect_to_another_host_is_not_followed(self) -> None:
-        """A redirect leaving the connector's site (e.g. an SSO host) must
+        """A redirect leaving the connector's host (e.g. an SSO host) must
         never be followed — that is an SSRF/host-pivot boundary, not just an
         auth signal."""
         pool = _make_pool()
@@ -178,7 +187,269 @@ class TestCrawlKeepaliveEndpoint:
         assert resp.status_code == 200
         body = resp.json()
         assert body["ok"] is False
-        assert body["reason"] is not None and body["reason"].startswith("redirect_left_domain")
+        assert body["reason"] is not None and body["reason"].startswith("redirect_left_host")
+
+    def test_https_to_http_downgrade_is_not_followed(self) -> None:
+        """A same-host redirect from https to http must not be followed --
+        following it would replay the connector's saved cookies over plain
+        HTTP."""
+        pool = _make_pool()
+        with (
+            _client_with_patches(pool) as (client, _defer),
+            patch(
+                "knowledge_ingest.routes.crawl_sync.load_connector_cookies",
+                new_callable=AsyncMock,
+                return_value=[{"name": "sid", "value": "abc123"}],
+            ),
+            patch(
+                "knowledge_ingest.routes.crawl_sync.validate_url_pinned",
+                new_callable=AsyncMock,
+                return_value=_VALIDATED,
+            ),
+            patch(
+                "knowledge_ingest.routes.crawl_sync._probe_fetch",
+                new_callable=AsyncMock,
+                return_value=_probe(302, location="http://wiki.example.com/en"),
+            ),
+        ):
+            resp = client.post("/ingest/v1/crawl/keep-alive", json=_post())
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is False
+        assert body["reason"] is not None and body["reason"].startswith("redirect_left_host")
+
+    def test_apex_www_redirect_is_not_followed(self) -> None:
+        """A redirect to the www-variant of the same site must not be
+        followed -- the probe's cookies are scoped to the exact configured
+        host, and treating apex/www as interchangeable would replay a
+        host-scoped cookie onto a different host."""
+        pool = _make_pool()
+        with (
+            _client_with_patches(pool) as (client, _defer),
+            patch(
+                "knowledge_ingest.routes.crawl_sync.load_connector_cookies",
+                new_callable=AsyncMock,
+                return_value=[{"name": "sid", "value": "abc123"}],
+            ),
+            patch(
+                "knowledge_ingest.routes.crawl_sync.validate_url_pinned",
+                new_callable=AsyncMock,
+                return_value=_VALIDATED,
+            ),
+            patch(
+                "knowledge_ingest.routes.crawl_sync._probe_fetch",
+                new_callable=AsyncMock,
+                return_value=_probe(302, location="https://www.wiki.example.com/en"),
+            ),
+        ):
+            resp = client.post("/ingest/v1/crawl/keep-alive", json=_post())
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is False
+        assert body["reason"] is not None and body["reason"].startswith("redirect_left_host")
+
+    def test_followed_redirect_target_feeds_the_classifier(self) -> None:
+        """A followed redirect landing on a /login path must be caught via
+        classify_auth_wall's redirect_to_login rule even when the login
+        page's own body is long enough to dodge every body-based rule --
+        the redirect target itself has to reach the classifier."""
+        pool = _make_pool()
+        # Long, innocuous body: no login phrases, no password form, no thin
+        # body -- every OTHER classify_auth_wall rule stays silent. Only the
+        # redirect_target_url rule can catch this.
+        long_body = "This is a perfectly ordinary paragraph of text. " * 40
+        with (
+            _client_with_patches(pool) as (client, _defer),
+            patch(
+                "knowledge_ingest.routes.crawl_sync.load_connector_cookies",
+                new_callable=AsyncMock,
+                return_value=[{"name": "sid", "value": "abc123"}],
+            ),
+            patch(
+                "knowledge_ingest.routes.crawl_sync.validate_url_pinned",
+                new_callable=AsyncMock,
+                return_value=_VALIDATED,
+            ),
+            patch(
+                "knowledge_ingest.routes.crawl_sync._probe_fetch",
+                new_callable=AsyncMock,
+                side_effect=[
+                    _probe(302, location="https://wiki.example.com/login?return_to=/en"),
+                    _probe(200, text=long_body),
+                ],
+            ),
+        ):
+            resp = client.post("/ingest/v1/crawl/keep-alive", json=_post())
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is False
+        assert body["reason"] == "redirect_to_login"
+
+    def test_embedded_login_gate_needs_link_href_preserved(self) -> None:
+        """embedded_login_gate matches markdown link syntax
+        (``[..login..](..login..)``); a plain-text view that drops the href
+        can never trigger it, silently losing detection of a login gate
+        embedded in an otherwise long page."""
+        pool = _make_pool()
+        html = (
+            "<html><body><article>"
+            + "Ordinary paragraph text about the product. " * 30
+            + '<p><a href="https://wiki.example.com/login">Log in</a> to '
+            "view this article in full.</p>" + "</article></body></html>"
+        )
+        with (
+            _client_with_patches(pool) as (client, _defer),
+            patch(
+                "knowledge_ingest.routes.crawl_sync.load_connector_cookies",
+                new_callable=AsyncMock,
+                return_value=[{"name": "sid", "value": "abc123"}],
+            ),
+            patch(
+                "knowledge_ingest.routes.crawl_sync.validate_url_pinned",
+                new_callable=AsyncMock,
+                return_value=_VALIDATED,
+            ),
+            patch(
+                "knowledge_ingest.routes.crawl_sync._probe_fetch",
+                new_callable=AsyncMock,
+                return_value=_probe(200, text=html),
+            ),
+        ):
+            resp = client.post("/ingest/v1/crawl/keep-alive", json=_post())
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is False
+        assert body["reason"] == "embedded_login_gate"
+
+    def test_footer_boilerplate_does_not_trip_end_of_body_marker(self) -> None:
+        """A sitewide footer link ("please log in") must not make every page
+        on the site look logged-out -- the classifier's end-of-body window
+        must see the article's own tail, not trailing nav/footer chrome."""
+        pool = _make_pool()
+        html = (
+            "<html><body>"
+            "<article>" + "Ordinary paragraph text about the product. " * 30 + "</article>"
+            "<footer>Please log in for account settings.</footer>"
+            "</body></html>"
+        )
+        with (
+            _client_with_patches(pool) as (client, _defer),
+            patch(
+                "knowledge_ingest.routes.crawl_sync.load_connector_cookies",
+                new_callable=AsyncMock,
+                return_value=[{"name": "sid", "value": "abc123"}],
+            ),
+            patch(
+                "knowledge_ingest.routes.crawl_sync.validate_url_pinned",
+                new_callable=AsyncMock,
+                return_value=_VALIDATED,
+            ),
+            patch(
+                "knowledge_ingest.routes.crawl_sync._probe_fetch",
+                new_callable=AsyncMock,
+                return_value=_probe(200, text=html),
+            ),
+        ):
+            resp = client.post("/ingest/v1/crawl/keep-alive", json=_post())
+        assert resp.status_code == 200
+        assert resp.json() == {"ok": True, "reason": None}
+
+    def test_allows_five_redirects_then_the_final_request(self) -> None:
+        """Exactly 5 followed same-host redirects plus a final 200 must
+        succeed -- the hop budget must not be consumed one request short."""
+        pool = _make_pool()
+        responses = [_probe(302, location=f"https://wiki.example.com/{i}") for i in range(5)]
+        responses.append(_probe(200, text="Welcome back. " * 20))
+        with (
+            _client_with_patches(pool) as (client, _defer),
+            patch(
+                "knowledge_ingest.routes.crawl_sync.load_connector_cookies",
+                new_callable=AsyncMock,
+                return_value=[{"name": "sid", "value": "abc123"}],
+            ),
+            patch(
+                "knowledge_ingest.routes.crawl_sync.validate_url_pinned",
+                new_callable=AsyncMock,
+                return_value=_VALIDATED,
+            ),
+            patch(
+                "knowledge_ingest.routes.crawl_sync._probe_fetch",
+                new_callable=AsyncMock,
+                side_effect=responses,
+            ) as probe_mock,
+        ):
+            resp = client.post("/ingest/v1/crawl/keep-alive", json=_post())
+        assert resp.json() == {"ok": True, "reason": None}
+        assert probe_mock.await_count == 6
+
+    def test_more_than_five_redirects_fails(self) -> None:
+        """A 6th consecutive same-host redirect exceeds the hop budget."""
+        pool = _make_pool()
+        responses = [_probe(302, location=f"https://wiki.example.com/{i}") for i in range(6)]
+        with (
+            _client_with_patches(pool) as (client, _defer),
+            patch(
+                "knowledge_ingest.routes.crawl_sync.load_connector_cookies",
+                new_callable=AsyncMock,
+                return_value=[{"name": "sid", "value": "abc123"}],
+            ),
+            patch(
+                "knowledge_ingest.routes.crawl_sync.validate_url_pinned",
+                new_callable=AsyncMock,
+                return_value=_VALIDATED,
+            ),
+            patch(
+                "knowledge_ingest.routes.crawl_sync._probe_fetch",
+                new_callable=AsyncMock,
+                side_effect=responses,
+            ) as probe_mock,
+        ):
+            resp = client.post("/ingest/v1/crawl/keep-alive", json=_post())
+        body = resp.json()
+        assert body["ok"] is False
+        assert body["reason"] == "too_many_redirects"
+        assert probe_mock.await_count == 6
+
+    def test_repeated_failure_logs_error_once_not_every_tick(self) -> None:
+        """A connector stuck logged-out must not re-alert on every 30-minute
+        tick forever -- one error on the failing transition, nothing while
+        it stays failing. (structlog in this codebase only routes through
+        stdlib logging -- and hence pytest's caplog -- once
+        knowledge_ingest.app has been imported somewhere in the test run, so
+        this asserts against a patched logger directly, same pattern as
+        test_auth_wall_signal_reporting.py.)"""
+        pool = _make_pool()
+        connector_id = str(uuid.uuid4())
+        mock_logger = MagicMock()
+        with (
+            _client_with_patches(pool) as (client, _defer),
+            patch("knowledge_ingest.routes.crawl_sync.logger", mock_logger),
+            patch(
+                "knowledge_ingest.routes.crawl_sync.load_connector_cookies",
+                new_callable=AsyncMock,
+                return_value=[{"name": "sid", "value": "abc123"}],
+            ),
+            patch(
+                "knowledge_ingest.routes.crawl_sync.validate_url_pinned",
+                new_callable=AsyncMock,
+                return_value=_VALIDATED,
+            ),
+            patch(
+                "knowledge_ingest.routes.crawl_sync._probe_fetch",
+                new_callable=AsyncMock,
+                return_value=_probe(302, location="https://accounts.example-sso.com/login"),
+            ),
+        ):
+            client.post("/ingest/v1/crawl/keep-alive", json=_post(connector_id))
+            client.post("/ingest/v1/crawl/keep-alive", json=_post(connector_id))
+            client.post("/ingest/v1/crawl/keep-alive", json=_post(connector_id))
+
+        logged_out_calls = [
+            call
+            for call in mock_logger.error.call_args_list
+            if call.args and call.args[0] == "crawl_keepalive_session_logged_out"
+        ]
+        assert len(logged_out_calls) == 1
 
     def test_connector_not_found_returns_ok_false_no_500(self) -> None:
         """load_connector_cookies raising ConnectorNotFoundError -> ok=False, no 500."""

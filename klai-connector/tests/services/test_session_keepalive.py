@@ -177,6 +177,32 @@ class TestTickPingsEligibleConnectors:
         assert error_records[0].reason == "redirect_to_login"
 
     @pytest.mark.asyncio
+    async def test_repeated_failure_logs_error_once_then_recovers(self, caplog: pytest.LogCaptureFixture) -> None:
+        """A connector stuck logged-out must not re-alert every tick forever:
+        one error on the failing transition, nothing while it stays failing,
+        one info when it recovers."""
+        item = _scheduled()
+        cfg = _config({"base_url": "https://wiki.example.com"})
+        keepalive, _, crawl_client = _make_keepalive(
+            scheduled=[item],
+            config_by_connector={item.connector_id: cfg},
+            keepalive_side_effect=[
+                {"ok": False, "reason": "redirect_to_login"},
+                {"ok": False, "reason": "redirect_to_login"},
+                {"ok": True, "reason": None},
+            ],
+        )
+
+        with caplog.at_level(logging.INFO):
+            await keepalive.tick()  # 1st failure -> error
+            await keepalive.tick()  # still failing -> no repeat error
+            await keepalive.tick()  # recovered -> info
+
+        error_records = [r for r in caplog.records if r.levelno == logging.ERROR]
+        assert len(error_records) == 1
+        assert any(r.getMessage() == "session_keepalive_recovered" for r in caplog.records)
+
+    @pytest.mark.asyncio
     async def test_one_bad_ping_does_not_abort_the_batch(self) -> None:
         good, bad = _scheduled(), _scheduled()
         cfg = _config({"base_url": "https://help.voys.nl"})
