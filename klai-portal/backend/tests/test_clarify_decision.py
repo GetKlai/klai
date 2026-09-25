@@ -144,9 +144,19 @@ def test_articles_for_two_different_devices_are_variants_without_a_shared_topic(
     android = _chunk("Alpha app for Android", 0.9, heading="Alpha app for Android > FAQ")
     iphone = _chunk("Alpha app iPhone troubleshooter", 0.85, heading="Troubleshooter > No sound")
 
-    gate = clarify_gate([{"role": "user", "content": "I hear nothing"}], [android, iphone], THRESHOLD)
+    gate = clarify_gate([{"role": "user", "content": "no sound in my calls"}], [android, iphone], THRESHOLD)
 
     assert (gate.reason, gate.axis, gate.options) == ("asked", "device", ("Android", "iPhone"))
+
+
+def test_device_articles_are_no_variants_when_no_section_is_about_the_question():
+    """Measured on the replay: a question about calling abroad was asked "Android or iPhone?"."""
+    android = _chunk("Alpha app for Android", 0.9, heading="Alpha app for Android > FAQ")
+    iphone = _chunk("Alpha app iPhone troubleshooter", 0.85, heading="Troubleshooter > No sound")
+
+    gate = clarify_gate([{"role": "user", "content": "calling abroad is blocked"}], [android, iphone], THRESHOLD)
+
+    assert gate.reason == "no_axis"
 
 
 def test_a_visitor_who_names_any_device_is_not_asked_which_device():

@@ -145,8 +145,9 @@ def _link(a: _Document, b: _Document, asked: set[str]) -> set[str] | None:
 
     A shared section heading or a mostly shared title counts only when a
     non-generic part of it is what the visitor asked about. Titles naming
-    devices of different classes are variants anyway: retrieval already found
-    both for the question, and which device is used is what tells them apart.
+    devices of different classes are variants as well, provided a section of
+    one of them is about what the visitor asked: without that, a question about
+    calling abroad was asked "Android or iPhone?" on a replay of real questions.
     """
     topic: set[str] = set()
     linked = False
@@ -160,7 +161,8 @@ def _link(a: _Document, b: _Document, asked: set[str]) -> set[str] | None:
         topic |= shared
         linked = True
     a_devices, b_devices = _devices(a.stems), _devices(b.stems)
-    linked = linked or bool(a_devices and b_devices and a_devices != b_devices)
+    section_asked = any((set(tail.split()) - _GENERIC_STEMS) & asked for tail in a.tails | b.tails)
+    linked = linked or bool(a_devices and b_devices and a_devices != b_devices and section_asked)
     return topic if linked else None
 
 
