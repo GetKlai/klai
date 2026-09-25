@@ -404,8 +404,8 @@
         }
     }
 
-    # Mailing triggers — externally reachable so Twenty CRM on public-01
-    # can POST workflow actions. Auth is Bearer <INTERNAL_SECRET>; without
+    # Mailing triggers — externally reachable so Twenty CRM workflows can
+    # POST actions; they call the public URL. Auth is Bearer <INTERNAL_SECRET>; without
     # the bearer these endpoints 401. Header-strip mirrors every
     # other public→portal-api route so external traffic can never inject
     # internal-trust headers.
@@ -529,8 +529,7 @@
 }
 
 
-# Fider feedback board (SPEC-INFRA-COOLIFY-EXIT-001). Until the cutover the
-# public A record for feedback still points at public-01.
+# Fider feedback board, moved off Coolify on public-01 (SPEC-INFRA-COOLIFY-EXIT-001).
 feedback.{$DOMAIN} {
     tls {
         dns hetzner {$HETZNER_AUTH_API_TOKEN}
@@ -553,8 +552,7 @@ feedback.{$DOMAIN} {
 }
 
 # Umami analytics (SPEC-INFRA-COOLIFY-EXIT-001). Serves the tracker script the
-# website loads from every visitor's browser, so it is public by design. Until
-# the cutover the public A record for analytics still points at public-01.
+# website loads from every visitor's browser, so it is public by design.
 analytics.{$DOMAIN} {
     tls {
         dns hetzner {$HETZNER_AUTH_API_TOKEN}
@@ -576,10 +574,7 @@ analytics.{$DOMAIN} {
     }
 }
 
-# Twenty CRM (SPEC-INFRA-COOLIFY-EXIT-001). Until the cutover the public
-# A record for crm still points at public-01, so this block serves nothing
-# yet; the certificate is issued over DNS-01 regardless, which is what lets
-# the new instance be verified with --resolve before any traffic moves.
+# Twenty CRM, moved off Coolify on public-01 (SPEC-INFRA-COOLIFY-EXIT-001).
 crm.{$DOMAIN} {
     tls {
         dns hetzner {$HETZNER_AUTH_API_TOKEN}
