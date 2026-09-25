@@ -22,6 +22,7 @@ from klai_chat_prompts import no_citable_sources_message
 from structlog.testing import capture_logs
 
 from app.services import partner_chat, turn_judge
+from app.services.chat_profile import ChatProfile
 
 LITELLM = "http://litellm:4000"
 RETRIEVAL = "http://retrieval-api:8040"
@@ -399,6 +400,41 @@ async def test_a_reply_that_is_entirely_unsupported_falls_back_to_the_refusal():
     assert text == REFUSAL_NL
     assert extras["sources"] == []
     assert signals["refused"] is True
+
+
+async def test_an_internal_strict_turn_keeps_the_unrepaired_answer_when_nothing_survives_repair():
+    """The LiteLLM hook keeps the unrepaired answer on this outcome instead of
+    emptying it into a refusal (kb_answer_repair_kept: "emptying an employee's
+    answer is a bigger change than the measurement supports"). Internal chat
+    must make the same call, unlike the widget above."""
+    draft = (
+        "Je betaalt je factuur via automatische incasso. Bel 020-7001234 om te storneren. "
+        "Het bedrag staat binnen 3 werkdagen terug."
+    )
+    litellm = _LiteLLM(
+        model_text=draft,
+        grounding=_grounding(
+            "Bel 020-7001234 om te storneren.",
+            "Het bedrag staat binnen 3 werkdagen terug.",
+        ),
+        repaired="NOTHING_LEFT",
+    )
+
+    text, signals, extras = await _answer(
+        litellm,
+        stream=True,
+        profile=ChatProfile(surface="internal", kb_mode="strict"),
+        support_mode=False,
+        **_with_900_sources(),
+    )
+
+    assert len(litellm.repair_requests) == 1
+    # The internal-chat footer is appended after the composed answer (see
+    # test_answer_footer.py); the answer itself is the unrepaired draft.
+    assert text.startswith(draft)
+    assert extras["sources"]
+    assert signals["refused"] is False
+    assert signals["repaired"] is False
 
 
 @pytest.mark.parametrize("stream", [True, False])

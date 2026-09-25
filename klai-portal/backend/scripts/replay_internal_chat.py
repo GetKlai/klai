@@ -58,6 +58,7 @@ import json
 import logging
 import math
 import os
+import re
 import sys
 import tempfile
 import time
@@ -87,6 +88,7 @@ from app.core.database import cross_org_session, tenant_scoped_session  # noqa: 
 from app.core.provisioning_names import provisioning_names_for_slug  # noqa: E402
 from app.logging_setup import setup_logging  # noqa: E402
 from app.models.portal import PortalOrg  # noqa: E402
+from app.services.answer_footer import strip_answer_footer_from_text  # noqa: E402
 from app.services.chat_profile import ChatProfile, resolve_internal_profile  # noqa: E402
 from app.services.internal_chat_identity import LibreChatIdentityError  # noqa: E402
 from app.services.librechat_quality_judge import (  # noqa: E402
@@ -128,13 +130,17 @@ _JUDGE_SYSTEM = (
     "same point of two separate conversations about the same goal. Each side shows the conversation so "
     "far, the ANSWER being judged, and sometimes WHAT FOLLOWED it. Decide which ANSWER served the employee "
     "better: grounded in the organisation's own knowledge rather than generic, correct, and complete "
-    "enough to act on. An honest 'this is not in the knowledge base' beats an invented answer. When an "
+    "enough to act on. An honest 'this is not in the knowledge base' beats an invented answer. A specific "
+    "procedure, list of steps, or figures that the answer does not tie to the organisation's own material "
+    "counts as invented, and an honest refusal beats it. When an "
     "ANSWER asks the employee a question, judge it by whether WHAT FOLLOWED then served the employee "
     "better than the other side, never by the question alone. The order in which the sides are shown "
     "means nothing. Answer with JSON only: "
-    '{"better": "A"|"B"|"tie", "A": {"refused": true|false, "asked": true|false}, '
-    '"B": {"refused": true|false, "asked": true|false}}. refused: the ANSWER said it could not help or '
-    "found nothing. asked: the ANSWER asked the employee a question to clarify what they need."
+    '{"better": "A"|"B"|"tie", "A": {"refused": true|false, "asked": true|false, "invented": true|false}, '
+    '"B": {"refused": true|false, "asked": true|false, "invented": true|false}}. refused: the ANSWER said '
+    "it could not help or found nothing. asked: the ANSWER asked the employee a question to clarify what "
+    "they need. invented: the ANSWER gave a specific procedure, steps, or figures not tied to the "
+    "organisation's own material."
 )
 
 
@@ -288,9 +294,13 @@ def _read_saved_sample(out: Path, count: int, max_turns: int) -> dict | None:
     return saved
 
 
-def _save_sample(out: Path, samples: list[Sample], count: int, max_turns: int) -> None:
+def _save_sample(out: Path, samples: list[Sample], count: int, max_turns: int, zitadel_org_id: str) -> None:
     entries = [{"cid": s.cid, "user": s.librechat_user_id} for s in samples]
-    (out / "sample.json").write_text(json.dumps({"count": count, "max_turns": max_turns, "entries": entries}, indent=2))
+    (out / "sample.json").write_text(
+        json.dumps(
+            {"count": count, "max_turns": max_turns, "zitadel_org_id": zitadel_org_id, "entries": entries}, indent=2
+        )
+    )
 
 
 def _body(messages: list[dict]) -> dict:
@@ -409,14 +419,28 @@ async def _converse(
     return answers
 
 
+# The OLD path's hidden source marker (deploy/litellm/klai_kb_citation_render.py's
+# _format_sources_metadata_marker): LibreChat never renders it, so a judge handed
+# it is handed thousands of characters the employee never read.
+_SOURCES_COMMENT_RE = re.compile(r"<!--\s*klai_sources=.*?-->", re.DOTALL)
+
+
+def _visible_text(text: str) -> str:
+    """What the employee actually read: no hidden sources comment, no "Bronnen"/
+    "Agent activiteit" footer (either language, either path's extra lines —
+    strip_answer_footer_from_text cuts everything from the footer heading on,
+    regardless of content, once the comment above it is gone)."""
+    return strip_answer_footer_from_text(_SOURCES_COMMENT_RE.sub("", text)).strip()
+
+
 def _side(answers: list[dict], turn: int) -> str:
-    before = [f"Employee: {a['employee']}\nAssistant: {a['text']}" for a in answers[:turn]]
+    before = [f"Employee: {a['employee']}\nAssistant: {_visible_text(a['text'])}" for a in answers[:turn]]
     judged = answers[turn]
     text = "CONVERSATION SO FAR:\n" + ("\n\n".join(before) or "(none)")
-    text += f"\n\nANSWER:\nEmployee: {judged['employee']}\nAssistant: {judged['text']}"
+    text += f"\n\nANSWER:\nEmployee: {judged['employee']}\nAssistant: {_visible_text(judged['text'])}"
     if turn + 1 < len(answers):
         after = answers[turn + 1]
-        text += f"\n\nWHAT FOLLOWED:\nEmployee: {after['employee']}\nAssistant: {after['text']}"
+        text += f"\n\nWHAT FOLLOWED:\nEmployee: {after['employee']}\nAssistant: {_visible_text(after['text'])}"
     return text
 
 
@@ -429,7 +453,9 @@ def _parse_verdict(raw: str) -> dict | None:
         return None
     for side in ("A", "B"):
         flags = parsed.get(side)
-        if not isinstance(flags, dict) or not all(isinstance(flags.get(f), bool) for f in ("refused", "asked")):
+        if not isinstance(flags, dict) or not all(
+            isinstance(flags.get(f), bool) for f in ("refused", "asked", "invented")
+        ):
             return None
     return parsed
 
@@ -462,7 +488,7 @@ async def _judge_pair(
     verdict = winners[0] if winners[0] == winners[1] else "tie"
 
     def flags(in_old_first: str, in_new_first: str) -> dict:
-        return {f: old_first[in_old_first][f] and new_first[in_new_first][f] for f in ("refused", "asked")}
+        return {f: old_first[in_old_first][f] and new_first[in_new_first][f] for f in ("refused", "asked", "invented")}
 
     return verdict, flags("A", "B"), flags("B", "A")
 
@@ -553,6 +579,7 @@ def summarize(records: list[dict]) -> dict:
         },
         "refusals": {"old": rate("old", "refused"), "new": rate("new", "refused")},
         "questions": {"old": rate("old", "asked"), "new": rate("new", "asked")},
+        "invented": {"old": rate("old", "invented"), "new": rate("new", "invented")},
         "latency_ms": {"old": latency("old"), "new": latency("new")},
         "new_signals": {
             "decision": dict(Counter(str(s.get("decision")) for s in present)),
@@ -596,9 +623,13 @@ def _print_summary(summary: dict) -> None:
     )
 
 
-async def main(org_slug: str, count: int, max_turns: int) -> None:
+def _check_judge_model_independence() -> None:
     if sim._SIMULATION_MODEL == settings.answer_grounding_model:
         raise SystemExit("The simulation may not run on the model of the grounding check it measures.")
+
+
+async def main(org_slug: str, count: int, max_turns: int) -> None:
+    _check_judge_model_independence()
     out = _out_dir(org_slug)
     _route_logs_to(out / "pipeline.log")
     org = await _load_org(org_slug)
@@ -611,7 +642,7 @@ async def main(org_slug: str, count: int, max_turns: int) -> None:
     saved = _read_saved_sample(out, count, max_turns)
     if saved is None:
         samples = await _sample(org, count)
-        _save_sample(out, samples, count, max_turns)
+        _save_sample(out, samples, count, max_turns, org.zitadel_org_id)
     else:
         samples = await _resample(org, saved["entries"])
 
@@ -655,11 +686,70 @@ async def main(org_slug: str, count: int, max_turns: int) -> None:
     print(f"files: {out}")
 
 
-if __name__ == "__main__":
-    asyncio.run(
-        main(
-            sys.argv[1],
-            int(sys.argv[2]) if len(sys.argv) > 2 else 12,
-            int(sys.argv[3]) if len(sys.argv) > 3 else 4,
-        )
+def _print_invented(summary: dict) -> None:
+    invented = summary["invented"]
+    print(
+        f"invented: OLD {invented['old']['count']}/{invented['old']['of']}, "
+        f"NEW {invented['new']['count']}/{invented['new']['of']}"
     )
+
+
+async def rejudge(out: Path, org_slug: str | None = None) -> None:
+    """Re-run only the judge over a finished run's turns.jsonl (no chat turns, no retrieval).
+
+    For a run made before the judge input was stripped of decorations (§7.4
+    of the plan doc): the same pairs, re-judged on what the employee actually
+    read. ``sample.json``'s ``zitadel_org_id`` (saved by ``main()``) is what
+    lets the judge calls carry the org, the same PII-masking requirement as a
+    live run, without reloading the org from the database.
+    """
+    _check_judge_model_independence()
+    saved = json.loads((out / "sample.json").read_text())
+    zitadel_org_id = saved.get("zitadel_org_id")
+    if not zitadel_org_id:
+        # A run made before sample.json carried the org: the slug names it.
+        if not org_slug:
+            raise SystemExit(f"{out / 'sample.json'} has no zitadel_org_id: pass the org slug as the second argument.")
+        zitadel_org_id = (await _load_org(org_slug)).zitadel_org_id
+
+    records = [json.loads(line) for line in (out / "turns.jsonl").read_text().splitlines() if line.strip()]
+    by_conversation: dict[int, list[dict]] = {}
+    for record in records:
+        if "turn" in record:
+            by_conversation.setdefault(record["conversation"], []).append(record)
+    for group in by_conversation.values():
+        group.sort(key=lambda r: r["turn"])
+
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        for record in records:
+            if not (record.get("old") and record.get("new")):
+                continue
+            group = by_conversation[record["conversation"]]
+            old_answers = [r["old"] for r in group]
+            new_answers = [r["new"] for r in group]
+            record["verdict"], record["old_flags"], record["new_flags"] = await _judge_pair(
+                client,
+                record["goal"],
+                _side(old_answers, record["turn"]),
+                _side(new_answers, record["turn"]),
+                zitadel_org_id,
+            )
+
+    (out / "turns.rejudged.jsonl").write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in records))
+    summary = summarize(records)
+    (out / "summary.rejudged.json").write_text(json.dumps(summary, indent=2))
+    _print_summary(summary)
+    _print_invented(summary)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "rejudge":
+        asyncio.run(rejudge(Path(sys.argv[2]).resolve(), sys.argv[3] if len(sys.argv) > 3 else None))
+    else:
+        asyncio.run(
+            main(
+                sys.argv[1],
+                int(sys.argv[2]) if len(sys.argv) > 2 else 12,
+                int(sys.argv[3]) if len(sys.argv) > 3 else 4,
+            )
+        )

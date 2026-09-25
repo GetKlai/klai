@@ -60,6 +60,26 @@ def test_strip_removes_the_footer_from_an_earlier_assistant_turn():
     assert strip_answer_footer_from_text(answer) == "Je kunt de VPN-instellingen aanpassen in het portaal."
 
 
+def test_strip_removes_the_old_paths_extra_activity_lines_too():
+    """The OLD (LiteLLM hook) footer carries lines this module's own
+    render_answer_footer never writes (deploy/litellm/klai_kb_citation_render.py's
+    _format_visible_agent_activity): scope, retrieval score, citability. They are
+    still footer-shaped bullets under the last "Agent activiteit" heading, so the
+    strip removes them the same way."""
+    answer = (
+        "Je kunt dit oplossen door de VPN-instellingen te resetten.\n\n"
+        "**Bronnen**\n- [VPN-instellingen](https://example.com/docs/vpn)\n\n"
+        "**Agent activiteit**\n"
+        "- Modus: Strict, alleen kennisbank.\n"
+        "- Kennisbank geraadpleegd: 4 fragmenten opgehaald in 320 ms.\n"
+        "- Kennisbanken in scope: IT-support.\n"
+        "- Bronselectie: 1 bron gekoppeld uit 3 kandidaatbronnen.\n"
+        "- Retrieval score: hoog; bronfragmenten gekoppeld.\n"
+        "- Citeerbaarheid: geen bruikbare bron geselecteerd (geen match)."
+    )
+    assert strip_answer_footer_from_text(answer) == "Je kunt dit oplossen door de VPN-instellingen te resetten."
+
+
 def test_strip_leaves_prose_that_only_mentions_the_heading_words():
     text = "Zie het kopje Agent activiteit in de instellingenpagina voor meer opties."
     assert strip_answer_footer_from_text(text) == text

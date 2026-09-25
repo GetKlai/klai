@@ -27,8 +27,8 @@ from app.services.chat_profile import ChatProfile
 _ORG = SimpleNamespace(id=7, slug="brightwater", zitadel_org_id="zorg-brightwater")
 
 
-def _verdict(better: str) -> str:
-    flags = {"refused": False, "asked": False}
+def _verdict(better: str, *, invented: bool = False) -> str:
+    flags = {"refused": False, "asked": False, "invented": invented}
     return json.dumps({"better": better, "A": flags, "B": flags})
 
 
@@ -59,11 +59,59 @@ async def test_pair_judge_reads_both_orders_and_a_disagreement_is_a_tie(
     assert prompts[1].index("NEW-SIDE") < prompts[1].index("OLD-SIDE")
 
 
-def _answer(ttft: int | None, total: int, signals: dict | None = None) -> dict:
-    return {"text": "x", "employee": "y", "ttft_ms": ttft, "total_ms": total, "signals": signals}
+_VISIBLE_ANSWER = "Je vraagt verlof aan via het formulier op het intranet."
+# The OLD path's footer: longer than NEW's, with lines NEW never renders
+# (deploy/litellm/klai_kb_citation_render.py's _format_visible_agent_activity).
+_OLD_FOOTER = (
+    "\n\n**Bronnen**\n- [Verlofbeleid](https://example.com/docs/verlof)\n\n"
+    "**Agent activiteit**\n"
+    "- Modus: Strict, alleen kennisbank.\n"
+    "- Kennisbank geraadpleegd: 3 fragmenten opgehaald in 210 ms.\n"
+    "- Retrieval score: hoog; bronfragmenten gekoppeld.\n"
+    "- Citeerbaarheid: geen bruikbare bron geselecteerd (geen match)."
+)
+_OLD_COMMENT = "\n\n<!-- klai_sources=eyJhIjoxfQ== -->"
+_NEW_FOOTER = (
+    "\n\n**Bronnen**\n- [Verlofbeleid](https://example.com/docs/verlof)\n\n"
+    "**Agent activiteit**\n- Modus: Strict, alleen kennisbank."
+)
 
 
-def _pair(conversation, mode, verdict, *, old_refused=False, new_asked=False, new_signals=None):
+def test_visible_text_strips_the_hidden_comment_and_both_footers():
+    """The judge sees only what LibreChat/the widget actually render, not the
+    OLD path's hidden sources comment or either path's text footer."""
+    old_text = _VISIBLE_ANSWER + _OLD_FOOTER + _OLD_COMMENT
+    new_text = _VISIBLE_ANSWER + _NEW_FOOTER
+
+    assert replay._visible_text(old_text) == _VISIBLE_ANSWER
+    assert replay._visible_text(new_text) == _VISIBLE_ANSWER
+
+
+def _answer(ttft: int | None, total: int, signals: dict | None = None, *, text: str = "x") -> dict:
+    return {"text": text, "employee": "y", "ttft_ms": ttft, "total_ms": total, "signals": signals}
+
+
+def test_side_hands_the_judge_equal_text_when_only_decorations_differ():
+    """OLD's hidden comment and longer footer must not be visible to the judge
+    as a difference: two answers with the same visible text and different
+    decorations read as the same ANSWER string."""
+    old_side = replay._side([_answer(10, 20, text=_VISIBLE_ANSWER + _OLD_FOOTER + _OLD_COMMENT)], 0)
+    new_side = replay._side([_answer(10, 20, text=_VISIBLE_ANSWER + _NEW_FOOTER)], 0)
+
+    assert old_side == new_side
+
+
+def _pair(
+    conversation,
+    mode,
+    verdict,
+    *,
+    old_refused=False,
+    new_asked=False,
+    new_signals=None,
+    old_invented=False,
+    new_invented=False,
+):
     return {
         "conversation": conversation,
         "mode": mode,
@@ -71,15 +119,15 @@ def _pair(conversation, mode, verdict, *, old_refused=False, new_asked=False, ne
         "verdict": verdict,
         "old": _answer(100, 1000),
         "new": _answer(200, 2000, new_signals),
-        "old_flags": {"refused": old_refused, "asked": False},
-        "new_flags": {"refused": False, "asked": new_asked},
+        "old_flags": {"refused": old_refused, "asked": False, "invented": old_invented},
+        "new_flags": {"refused": False, "asked": new_asked, "invented": new_invented},
     }
 
 
 def test_summary_counts_wins_ties_losses_and_rates_from_the_turns_file(tmp_path):
     records = [
         _pair(1, "strict", "new", new_signals={"decision": "answer", "grounding": "all_in_articles"}),
-        _pair(1, "strict", "tie", old_refused=True, new_signals={"decision": "refusal"}),
+        _pair(1, "strict", "tie", old_refused=True, old_invented=True, new_signals={"decision": "refusal"}),
         _pair(2, "open", "old", new_asked=True, new_signals={"decision": "answer", "planned_question": True}),
         _pair(2, "open", "new", new_signals=None),
         {**_pair(3, "open", "invalid"), "old_flags": None, "new_flags": None},
@@ -100,6 +148,8 @@ def test_summary_counts_wins_ties_losses_and_rates_from_the_turns_file(tmp_path)
     assert (summary["conversations"], summary["failed_conversations"]) == (4, 1)
     assert summary["refusals"]["old"] == {"count": 1, "of": 4}
     assert summary["questions"]["new"] == {"count": 1, "of": 4}
+    assert summary["invented"]["old"] == {"count": 1, "of": 4}
+    assert summary["invented"]["new"] == {"count": 0, "of": 4}
     assert summary["latency_ms"]["new"]["total_p50"] == 2000
     assert summary["new_signals"]["decision"] == {"answer": 2, "refusal": 1}
     assert summary["new_signals"]["answer_plan_fired"] == 1
@@ -291,8 +341,8 @@ def _seed_interrupted_run(out_dir: Path, *, done: list[str]) -> None:
                 "verdict": "tie",
                 "old": _answer(10, 30),
                 "new": _answer(20, 40),
-                "old_flags": {"refused": False, "asked": False},
-                "new_flags": {"refused": False, "asked": False},
+                "old_flags": {"refused": False, "asked": False, "invented": False},
+                "new_flags": {"refused": False, "asked": False, "invented": False},
             }
         )
         for i, cid in enumerate(["c-1", "c-2"])
@@ -403,3 +453,82 @@ async def test_resume_replays_the_original_sample_even_if_the_candidate_list_shi
     assert sample_calls["n"] == 1, "a resume must not call _sample() again"
     lines = [json.loads(line) for line in (out_dir / "turns.jsonl").read_text().splitlines()]
     assert [r["cid"] for r in lines] == ["c-1", "c-2"], "the original sample, not the shifted one, was replayed"
+
+
+async def test_rejudge_reruns_only_the_judge_over_a_finished_runs_turns(monkeypatch, tmp_path, capsys):
+    """rejudge reads a finished run's turns.jsonl, re-runs _judge_pair on the paired
+    turns only (no chat turn, no retrieval call), and writes turns.rejudged.jsonl
+    and summary.rejudged.json next to it."""
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    (out_dir / "sample.json").write_text(
+        json.dumps(
+            {
+                "count": 1,
+                "max_turns": 1,
+                "zitadel_org_id": "zorg-brightwater",
+                "entries": [{"cid": "c-1", "user": "u-1"}],
+            }
+        )
+    )
+    records = [
+        {
+            "conversation": 1,
+            "cid": "c-1",
+            "mode": "strict",
+            "goal": "Verlof aanvragen bij Brightwater",
+            "turn": 0,
+            "old": _answer(10, 30, text=_VISIBLE_ANSWER + _OLD_FOOTER + _OLD_COMMENT),
+            "new": _answer(20, 40, text=_VISIBLE_ANSWER + _NEW_FOOTER),
+            "verdict": "old",
+            "old_flags": {"refused": False, "asked": False, "invented": False},
+            "new_flags": {"refused": False, "asked": False, "invented": False},
+        }
+    ]
+    (out_dir / "turns.jsonl").write_text("".join(json.dumps(r) + "\n" for r in records))
+
+    model_calls: list[str] = []
+
+    async def model(_client, _system, user, **_kwargs):
+        model_calls.append(user)
+        return _verdict("tie", invented=True)
+
+    monkeypatch.setattr(replay.sim, "_model", model)
+
+    await replay.rejudge(out_dir)
+
+    assert len(model_calls) == 2, "only the two judge calls for this one pair, no chat turn, no retrieval"
+    rejudged = [json.loads(line) for line in (out_dir / "turns.rejudged.jsonl").read_text().splitlines()]
+    assert rejudged[0]["verdict"] == "tie"
+    assert rejudged[0]["old_flags"] == {"refused": False, "asked": False, "invented": True}
+    assert rejudged[0]["new_flags"] == {"refused": False, "asked": False, "invented": True}
+    # The judge was handed the same visible text on both sides, decorations stripped.
+    assert model_calls[0].count(_VISIBLE_ANSWER) == 2
+
+    summary = json.loads((out_dir / "summary.rejudged.json").read_text())
+    assert summary["invented"] == {"old": {"count": 1, "of": 1}, "new": {"count": 1, "of": 1}}
+
+    out = capsys.readouterr().out
+    assert "NEW vs OLD: wins 0, ties 1, losses 0" in out
+    assert "invented: OLD 1/1, NEW 1/1" in out
+
+
+@pytest.mark.asyncio
+async def test_rejudge_takes_the_org_slug_when_the_run_predates_the_saved_org(monkeypatch, tmp_path):
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    (out_dir / "sample.json").write_text(json.dumps({"count": 1, "max_turns": 1, "entries": []}))
+    (out_dir / "turns.jsonl").write_text("")
+    loaded: list[str] = []
+
+    async def load_org(slug):
+        loaded.append(slug)
+        return SimpleNamespace(zitadel_org_id="zorg-brightwater")
+
+    monkeypatch.setattr(replay, "_load_org", load_org)
+
+    with pytest.raises(SystemExit):
+        await replay.rejudge(out_dir)
+    await replay.rejudge(out_dir, "brightwater")
+
+    assert loaded == ["brightwater"]
