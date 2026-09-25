@@ -13,6 +13,7 @@ import httpx
 import pytest
 from klai_image_storage import PinnedResolverTransport
 
+from app.adapters.base import DocumentRef
 from app.adapters.json_feed import JsonFeedAdapter
 from app.clients.knowledge_ingest import _build_payload
 from app.services.url_guard import PersistedUrlRejectedError
@@ -69,7 +70,7 @@ async def _list_payload(
     adapter: JsonFeedAdapter,
     payload: object,
     connector: SimpleNamespace | None = None,
-) -> tuple[list, MagicMock, AsyncMock]:
+) -> tuple[list[DocumentRef], MagicMock, AsyncMock]:
     response = _StreamingResponse(status_code=200, headers={}, chunks=[json.dumps(payload).encode()])
     client_factory = MagicMock(return_value=_StreamingClient(response))
     validator = AsyncMock(return_value=SimpleNamespace(hostname="data.example.com", preferred_ip="203.0.113.10"))
@@ -113,20 +114,31 @@ async def test_ac1_flat_records_are_grouped_verbalized_sorted_and_deduplicated()
     }
 
 
-async def test_ac2_without_group_by_batches_in_feed_order() -> None:
-    adapter = JsonFeedAdapter()
-    connector = _connector(max_records_per_doc=2)
-    records = [{"name": name, "price": index} for index, name in enumerate(("Zulu", "Alpha", "Mike", "Bravo", "Echo"))]
+async def _parts(adapter: JsonFeedAdapter, records: object, connector: SimpleNamespace) -> dict[str, bytes]:
     refs, _, _ = await _list_payload(adapter, records, connector)
+    return {ref.path: await adapter.fetch_document(ref, connector) for ref in refs}
 
-    assert [ref.path for ref in refs] == [
-        "json-feed/connector-123/part-0001",
-        "json-feed/connector-123/part-0002",
-        "json-feed/connector-123/part-0003",
-    ]
-    assert [ref.extra["json_feed_record_count"] for ref in refs] == [2, 2, 1]
-    first = (await adapter.fetch_document(refs[0], connector)).decode()
-    assert first.index("**Zulu**") < first.index("**Alpha**")
+
+async def test_ac2_without_group_by_one_inserted_record_changes_only_one_part() -> None:
+    adapter = JsonFeedAdapter()
+    connector = _connector(max_records_per_doc=10)
+    records = [{"name": f"Product {index:03d}", "price": index} for index in range(300)]
+    before = await _parts(adapter, records, connector)
+    inserted = [*records[:5], {"name": "Product 004b", "price": 1}, *records[5:]]
+    after = await _parts(adapter, inserted, connector)
+
+    assert len(before) > 10
+    changed = set(before.items()) ^ set(after.items())
+    assert len({path for path, _ in changed}) <= 2  # the one part, before and after, under one path
+    assert sum(content.count(b"- **") for content in after.values()) == 301
+
+
+async def test_ac2_without_group_by_parts_ignore_feed_order() -> None:
+    adapter = JsonFeedAdapter()
+    connector = _connector(max_records_per_doc=10)
+    records = [{"name": f"Product {index:03d}", "price": index} for index in range(100)]
+
+    assert await _parts(adapter, records, connector) == await _parts(adapter, records[::-1], connector)
 
 
 async def test_ac3_documents_preserve_chunker_soft_boundaries() -> None:

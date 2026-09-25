@@ -461,7 +461,11 @@ class SyncEngine:
                 if documents_failed == 0 and adapter.stale_ref_cleanup_enabled is True:
                     current_refs = {ref.source_ref or ref.path for ref in refs}
                     stale_refs = sorted(prev_synced_refs - current_refs)
-                    if len(stale_refs) > max(1, len(prev_synced_refs) // 2):
+                    # Refuse only when the listing itself shrank to under half: a
+                    # transient subset must not erase the KB. Counting missing refs
+                    # instead also refused a same-size listing whose part names all
+                    # changed, which left every old json_feed part indexed forever.
+                    if stale_refs and len(current_refs) * 2 < len(prev_synced_refs):
                         stale_cleanup_refused = True
                         error_details.append(
                             {

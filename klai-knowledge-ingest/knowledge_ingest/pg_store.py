@@ -1459,6 +1459,19 @@ async def get_crawled_page_stored(
     return (row["raw_html_hash"], row["content_hash"]) if row else None
 
 
+async def get_crawled_page_markdown(
+    conn: asyncpg.Connection, org_id: str, kb_slug: str, url: str
+) -> str | None:
+    row = await conn.fetchrow(
+        "SELECT raw_markdown FROM knowledge.crawled_pages "
+        "WHERE org_id = $1 AND kb_slug = $2 AND url = $3",
+        org_id,
+        kb_slug,
+        url,
+    )
+    return row["raw_markdown"] if row else None
+
+
 async def get_crawled_page_hashes(
     conn: asyncpg.Connection,
     org_id: str,

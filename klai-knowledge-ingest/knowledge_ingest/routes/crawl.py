@@ -34,6 +34,7 @@ from knowledge_ingest.crawl4ai_client import (
     crawl_single_page_source,
     sample_linked_pages,
 )
+from knowledge_ingest.crawl_change import crawl_change_hash, crawled_page_unchanged
 from knowledge_ingest.db import tenant_scoped_connection
 from knowledge_ingest.domain_selectors import (
     extract_domain,
@@ -918,18 +919,11 @@ async def crawl_url(request: CrawlRequest, http_request: Request) -> CrawlRespon
             if stored_sel:
                 effective_selector, _ = stored_sel
 
-        # WARNING (pipeline config change): modifying crawl4ai settings in
-        # crawl4ai_client.build_crawl_config() changes content_hash for every page
-        # even when the actual page content has not changed.  After such a change,
-        # force a full re-ingest by clearing content_hash:
-        #   UPDATE knowledge.crawled_pages
-        #      SET content_hash = ''
-        #    WHERE org_id = '<org>' AND kb_slug = '<slug>';
         fit_md, _word_count, raw_html = await _run_crawl(request.url, effective_selector)
 
         # Dual-hash dedup (see migration 012):
         #   1. raw_html_hash unchanged → skip everything (fast path)
-        #   2. raw_html_hash changed, content_hash unchanged → JS/tracking update, skip ingest
+        #   2. raw_html_hash changed, change hash unchanged → JS/tracking/TOC noise, skip ingest
         #   3. both changed → real content change → full ingest
         raw_html_hash = hashlib.sha256(raw_html.encode()).hexdigest()
         stored = await pg_store.get_crawled_page_stored(
@@ -942,11 +936,18 @@ async def crawl_url(request: CrawlRequest, http_request: Request) -> CrawlRespon
                 logger.info("crawl_skipped_unchanged", url=request.url)
                 return CrawlResponse(url=request.url, path=_derive_path(), chunks_ingested=0)
 
-        content_hash = hashlib.sha256(fit_md.encode()).hexdigest()
+        content_hash = crawl_change_hash(fit_md, request.url)
 
         if stored is not None:
             _, stored_content = stored
-            if stored_content is not None and stored_content == content_hash:
+            if await crawled_page_unchanged(
+                conn,
+                org_id=request.org_id,
+                kb_slug=request.kb_slug,
+                url=request.url,
+                stored_content_hash=stored_content,
+                change_hash=content_hash,
+            ):
                 # HTML changed (JS / tracking pixel) but article content is identical
                 # → update raw_html_hash so future crawls hit the fast path, skip ingest
                 await pg_store.upsert_crawled_page(
