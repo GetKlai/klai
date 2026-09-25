@@ -427,18 +427,22 @@ services:
       # map/restore PII on the Mistral call path. Gated behind
       # KLAI_PII_ENFORCE; GA since 2026-08-25, see environment: below for
       # the current default (true) and the kill switch.
-      # klai_pii_enforce.py is the CustomLogger registered last in
-      # config.yaml's litellm_settings.callbacks; the other four are its
-      # pure/IO building blocks (entity classification, the bounded
-      # process-local restore map, span-selection + substitution, and
-      # per-org policy resolution) — split out so each has its own
-      # network-free unit-test surface.
+      # klai_pii_enforce.py is the CustomLogger registered last among the
+      # PII-phase hooks in config.yaml's litellm_settings.callbacks; the
+      # other four are its pure/IO building blocks (entity classification,
+      # the bounded process-local restore map, span-selection +
+      # substitution, and per-org policy resolution) — split out so each
+      # has its own network-free unit-test surface.
       - ./litellm/klai_pii_entities.py:/app/klai_pii_entities.py:ro
       - ./litellm/klai_pii_map_store.py:/app/klai_pii_map_store.py:ro
       - ./litellm/klai_pii_text_masking.py:/app/klai_pii_text_masking.py:ro
       - ./litellm/klai_pii_org_policy.py:/app/klai_pii_org_policy.py:ro
       - ./litellm/klai_pii_enforce.py:/app/klai_pii_enforce.py:ro
       - ./litellm/custom_router.py:/app/custom_router.py:ro
+      # Derives a stable Mistral prompt_cache_key; registered last in
+      # config.yaml's litellm_settings.callbacks. See klai_prompt_cache.py's
+      # module docstring for the caching mechanism.
+      - ./litellm/klai_prompt_cache.py:/app/klai_prompt_cache.py:ro
       # SPEC-CHAT-GUARDRAILS-001: vendored package copy of klai-libs/llm-safety
       # (kept byte-identical via deploy/litellm/tests/test_klai_llm_safety_drift.py).
       # Directory mount at /app/klai_llm_safety puts the package on PYTHONPATH
