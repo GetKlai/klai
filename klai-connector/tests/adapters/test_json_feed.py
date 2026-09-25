@@ -178,6 +178,27 @@ async def test_ignore_fields_real_price_change_still_changes_its_part() -> None:
     assert any(b"price: 5" in after[path] for path in changed_paths)
 
 
+async def test_ignore_fields_never_supplies_the_record_label() -> None:
+    adapter = JsonFeedAdapter()
+    connector = _connector(
+        max_records_per_doc=10, ignore_fields=["updated_at"], record_label_fields=["updated_at", "name"]
+    )
+    records = [{"name": f"Product {index:03d}", "updated_at": "2026-09-24T00:00:00Z"} for index in range(30)]
+    before = await _parts(adapter, records, connector)
+
+    after = await _parts(adapter, [{**record, "updated_at": "2026-09-25T00:00:00Z"} for record in records], connector)
+
+    assert after == before
+
+
+async def test_ignore_fields_may_not_include_a_group_by_field() -> None:
+    adapter = JsonFeedAdapter()
+    connector = _connector(group_by=["category"], ignore_fields=["category"])
+
+    with pytest.raises(ValueError, match="group_by"):
+        await _parts(adapter, [{"category": "prijzen", "name": "Product 001"}], connector)
+
+
 async def test_ac3_documents_preserve_chunker_soft_boundaries() -> None:
     adapter = JsonFeedAdapter()
     connector = _connector(group_by=["category"])

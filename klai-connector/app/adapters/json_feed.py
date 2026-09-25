@@ -7,7 +7,7 @@ Supported ``connector.config`` keys:
 * ``group_by``: fields used to group flat record arrays.
 * ``record_label_fields``: preferred record label fields.
 * ``field_labels``: field-to-display-label overrides.
-* ``ignore_fields``: field names never rendered into document text or the
+* ``ignore_fields``: flat record arrays only; field names never rendered into document text or the
   "Velden" schema line, and thus never part of a part's content or slug — for
   fields such as a per-record "updated at" timestamp that changes on every
   sync without the record's real content changing. Spread over the feed,
@@ -195,6 +195,8 @@ class JsonFeedAdapter(BaseAdapter):
             not isinstance(field, str) or not field for field in ignore_fields
         ):
             raise ValueError("JSON feed connector config 'ignore_fields' must be a list of non-empty field names")
+        if set(ignore_fields) & set(group_by):
+            raise ValueError("JSON feed connector config 'ignore_fields' may not include a 'group_by' field")
 
         max_records = config.get("max_records_per_doc", _DEFAULT_MAX_RECORDS_PER_DOC)
         if isinstance(max_records, bool) or not isinstance(max_records, int) or max_records < 1:
@@ -496,7 +498,11 @@ class JsonFeedAdapter(BaseAdapter):
         for index, record in indexed_records:
             try:
                 label_field = next(
-                    (field for field in label_fields if field in record and not _is_empty(record[field])),
+                    (
+                        field
+                        for field in label_fields
+                        if field in record and field not in ignore_fields and not _is_empty(record[field])
+                    ),
                     None,
                 )
                 label = _display_value(record[label_field]) if label_field else str(index + 1)
