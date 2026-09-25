@@ -76,12 +76,13 @@ def _stub_litellm():
         sys.modules.pop("klai_prompt_cache", None)
 
 
-def _run_hook(data: dict, call_type: str = "completion"):
+def _run_hook(data: dict, call_type: str = "completion", org_id: str | None = None):
+    key = types.SimpleNamespace(metadata={"org_id": org_id} if org_id else {})
     with _stub_litellm():
         import klai_prompt_cache
 
         hook = klai_prompt_cache.PromptCacheKeyInjector()
-        return asyncio.run(hook.async_pre_call_hook(None, None, data, call_type))
+        return asyncio.run(hook.async_pre_call_hook(key, None, data, call_type))
 
 
 def _system_message(text: str) -> dict:
@@ -210,6 +211,33 @@ def test_list_content_system_message_is_flattened_like_custom_router_does():
     out = _run_hook(data)
 
     assert out["extra_body"]["prompt_cache_key"]
+
+
+def test_a_caller_supplied_cache_key_is_kept():
+    """The partner passthrough already namespaces its key per org; never replace it."""
+    data = {
+        "model": "klai-fast",
+        "messages": [_system_message(_LONG_PREFIX_A), {"role": "user", "content": "hi"}],
+        "extra_body": {"prompt_cache_key": "org:7:ticket-1"},
+    }
+    out = _run_hook(data, org_id="7")
+
+    assert out["extra_body"]["prompt_cache_key"] == "org:7:ticket-1"
+
+
+def test_two_orgs_with_the_same_prompt_get_different_cache_keys():
+    """One shared cache entry across tenants would be a cross-tenant timing oracle."""
+
+    def request() -> dict:
+        return {
+            "model": "klai-fast",
+            "messages": [_system_message(_LONG_PREFIX_A), {"role": "user", "content": "hi"}],
+        }
+
+    key_a = _run_hook(request(), org_id="org-a")["extra_body"]["prompt_cache_key"]
+    key_b = _run_hook(request(), org_id="org-b")["extra_body"]["prompt_cache_key"]
+
+    assert key_a != key_b
 
 
 # --- Drift guard against the real, pinned litellm package -----------------

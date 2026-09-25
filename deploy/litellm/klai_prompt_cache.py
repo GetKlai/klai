@@ -55,8 +55,9 @@ Guarded by tests/test_klai_prompt_cache.py so a litellm bump that finally
 wires `prompt_cache_key` into `completion()`, or that closes the `extra_body`
 passthrough, goes red instead of silently breaking caching again.
 
-Cache key derivation: sha256 of (final routed model, concatenated
-system-role message content). The system prompt is the stable,
+Cache key derivation: sha256 of (org id from the key metadata, final routed
+model, concatenated system-role message content). A key the caller already
+set is kept. The system prompt is the stable,
 repeated-verbatim prefix for every caller here (KB system prompt, Graphiti
 extraction instructions, portal-api judge/grounding/paraphrase templates);
 everything after it (retrieved chunks, conversation turns) varies per
@@ -120,12 +121,17 @@ class PromptCacheKeyInjector(CustomLogger):
         if extra_body is None:
             extra_body = {}
             data["extra_body"] = extra_body
-        elif not isinstance(extra_body, dict):
-            # A caller already set a non-dict extra_body; do not clobber it.
+        elif not isinstance(extra_body, dict) or extra_body.get("prompt_cache_key"):
+            # Keep what the caller set: the partner passthrough already sends a
+            # key namespaced per org (partner_chat._with_openai_passthrough_metadata).
             return data
 
+        # Namespace per tenant, as the partner passthrough does: all tenants share
+        # one upstream Mistral key, so a shared cache entry across orgs would be a
+        # cross-tenant timing/billing oracle. Master-key calls carry no org.
+        org_id = (getattr(user_api_key_dict, "metadata", {}) or {}).get("org_id") or "internal"
         model = data.get("model") or ""
-        digest = hashlib.sha256(f"{model}\n{prefix}".encode()).hexdigest()[:32]
+        digest = hashlib.sha256(f"{org_id}\n{model}\n{prefix}".encode()).hexdigest()[:32]
         cache_key = f"klai-{digest}"
         extra_body["prompt_cache_key"] = cache_key
         return data
