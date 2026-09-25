@@ -241,5 +241,35 @@ async def test_a_real_failure_is_not_retried(monkeypatch):
     assert attempts["n"] == 1
 
 
+@pytest.mark.asyncio
+async def test_a_connect_error_is_retried_then_succeeds(monkeypatch):
+    """A deploy of the callee drops the connection mid-call rather than answering with a status code.
+
+    replay_internal_chat.py's OLD path saw this twice in production on
+    2026-09-2x: a LiteLLM hook deploy restarted klai-core-litellm-1 mid-replay,
+    and three in-flight conversations got httpx.ConnectError and were marked
+    failed instead of retried.
+    """
+    import httpx
+
+    slept: list[float] = []
+
+    async def _no_wait(seconds: float) -> None:
+        slept.append(seconds)
+
+    monkeypatch.setattr(sim.asyncio, "sleep", _no_wait)
+    attempts = {"n": 0}
+
+    async def _call():
+        attempts["n"] += 1
+        if attempts["n"] < 2:
+            raise httpx.ConnectError("connection reset", request=httpx.Request("POST", "http://x"))
+        return "ok"
+
+    assert await sim._with_backoff("old path", _call) == "ok"
+    assert attempts["n"] == 2
+    assert slept == [5.0]
+
+
 async def _noop() -> None:
     return None

@@ -55,7 +55,12 @@ jobs:
           # like glitchtip are scanned once per run.
           #
           # Excluded patterns (with rationale):
-          #   ghcr.io/getklai/*                — our own CI-built images; scanned per service
+          #   ghcr.io/getklai/* by tag         — our own CI-built images; scanned per service.
+          #                                      Digest-pinned ghcr.io/getklai images
+          #                                      (presidio-analyzer, librechat) ARE scanned
+          #                                      here: their build workflows run no Trivy,
+          #                                      so this was the only scan and they had
+          #                                      been skipped since they moved to GHCR.
           #   */klai                           — legacy on-server local builds (vexa-*:klai)
           #   */local                          — legacy on-server local builds (retrieval-api:local)
           #   *:*-local-YYMMDD-HHMM            — current convention for locally-built tags
@@ -65,15 +70,22 @@ jobs:
           #                                      SKIP-tier of SPEC-CI-TRIVY-POLICY-001 REQ-4: these
           #                                      images do not exist on Docker Hub so a `docker
           #                                      manifest inspect` always 404s.
+          # crawl4ai is built on core-01 and never pushed, so it cannot be
+          # pulled. Its Dockerfile adds one Python patch and no packages on
+          # top of the upstream image, so scanning that FROM image covers the
+          # same package set; without this its alerts were frozen at the
+          # 2026-08-03 scan of an image that no longer runs.
+          CRAWL4AI_BASE=$(sed -n 's/^FROM //p' deploy/crawl4ai/Dockerfile | head -1)
           TARGETS=$(
             {
               yq -o=json eval '.services | to_entries | map({"source": "deploy", "service": .key, "image": .value.image})' deploy/docker-compose.yml
               yq -o=json eval '.services | to_entries | map({"source": "dev", "service": .key, "image": .value.image})' docker-compose.dev.yml
             } \
-              | jq -sc '
+              | jq -sc --arg crawl4ai "$CRAWL4AI_BASE" '
                   add
                   | map(select(.image != null and .image != "~"))
-                  | map(select(.image | test("^(ghcr\\.io/getklai/|[^:]+:klai$|[^:]+:local$|[^:]+:.*-local-[0-9]{6}-[0-9]{4}$)") | not))
+                  | map(if (.image | test("^ghcr\\.io/getklai/crawl4ai:")) then .image = $crawl4ai else . end)
+                  | map(select(.image | test("^(ghcr\\.io/getklai/[^@]+$|[^:]+:klai$|[^:]+:local$|[^:]+:.*-local-[0-9]{6}-[0-9]{4}$)") | not))
                   | sort_by(.image)
                   | group_by(.image)
                   | map({

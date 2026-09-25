@@ -98,6 +98,9 @@ assert_contains "$config" \
   "minimumReleaseAge: '0 days'" \
   'Aqua Git-tag lookups without timestamps must not remain pending forever'
 assert_contains "$config" \
+  "internalChecksFilter: 'flexible'" \
+  'a group must not wait for its most frequently released member to age'
+assert_contains "$config" \
   "rebaseWhen: 'conflicted'" \
   'automerge updates must not invalidate green CI merely because main advanced'
 rebase_when_conflicted_count=$(grep -Fc "rebaseWhen: 'conflicted'" "$config")

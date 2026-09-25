@@ -41,8 +41,14 @@ through its tenant key), so LiteLLM applies the tenant's PII policy. Transcripts
 and the pipeline's own logs go to a directory outside the repository (default
 /tmp/replay-<org>-<timestamp>/, or KLAI_REPLAY_OUT); stdout shows counts only.
 
-    docker exec -w /repo/klai-portal/backend klai-core-portal-api-1 \\
-        python scripts/replay_internal_chat.py <org_slug> [conversations] [turns]
+A run takes tens of minutes, and ``docker exec`` runs inside the compose
+service: a deploy of portal-api recreates that container mid-run and kills the
+process. Run it in a throwaway clone instead, via deploy/scripts/portal-api-oneoff.sh,
+and point KLAI_REPLAY_OUT at the one-off's /out mount so an interrupted run can
+be resumed by pointing at the same folder again:
+
+    deploy/scripts/portal-api-oneoff.sh -- \\
+        env KLAI_REPLAY_OUT=/out python scripts/replay_internal_chat.py <org_slug> [conversations] [turns]
 """
 
 from __future__ import annotations
@@ -148,8 +154,19 @@ def _out_dir(org_slug: str) -> Path:
     out = Path(os.getenv("KLAI_REPLAY_OUT") or default).resolve()
     if out == REPO_ROOT or REPO_ROOT in out.parents:
         raise SystemExit("KLAI_REPLAY_OUT must be outside the repository: the transcripts are real conversations.")
-    out.mkdir(mode=0o700, parents=True, exist_ok=False)
+    # exist_ok: KLAI_REPLAY_OUT may point at a folder from an interrupted run,
+    # which main() resumes by reading its turns.jsonl.
+    out.mkdir(mode=0o700, parents=True, exist_ok=True)
     return out
+
+
+def _done_cids(out: Path) -> set[str]:
+    """Conversation ids already recorded in turns.jsonl, so a resumed run does not replay them again."""
+    path = out / "turns.jsonl"
+    if not path.exists():
+        return set()
+    with path.open() as handle:
+        return {json.loads(line)["cid"] for line in handle if line.strip()}
 
 
 def _route_logs_to(path: Path) -> None:
@@ -234,6 +251,46 @@ async def _sample(org: PortalOrg, count: int) -> list[Sample]:
             if _is_knowledge_profile(profile):
                 profiles[user] = profile
     return _pick(candidates, profiles, count)
+
+
+async def _resample(org: PortalOrg, entries: list[dict]) -> list[Sample]:
+    """Rebuild the exact samples a saved sample.json names, without asking Mongo which conversations are recent.
+
+    _candidates() windows on updatedAt, so re-running it on a resume can see a
+    different, reordered set if a conversation was touched in between — the
+    saved cid/user pairs are looked up directly instead.
+    """
+    database = provisioning_names_for_slug(org.slug, domain=settings.domain).mongodb_database
+    messages = await asyncio.to_thread(_sync_fetch_messages, database, [e["cid"] for e in entries])
+    profiles: dict[str, ChatProfile] = {}
+    async with tenant_scoped_session(org.id) as db:
+        for user in dict.fromkeys(e["user"] for e in entries):
+            profiles[user] = await resolve_internal_profile(db, org, user, remember=False)
+    samples = []
+    for entry in entries:
+        turns = _turns_from_messages(messages.get(entry["cid"], []))
+        asks = [turn["content"] for turn in turns if turn["role"] == "user"]
+        samples.append(Sample(entry["cid"], entry["user"], profiles[entry["user"]], asks))
+    return samples
+
+
+def _read_saved_sample(out: Path, count: int, max_turns: int) -> dict | None:
+    """The saved sample.json for this run, or None on a first run (nothing saved yet)."""
+    path = out / "sample.json"
+    if not path.exists():
+        return None
+    saved = json.loads(path.read_text())
+    if saved["count"] != count or saved["max_turns"] != max_turns:
+        raise SystemExit(
+            f"{path} was sampled for count={saved['count']} max_turns={saved['max_turns']}; "
+            f"this run asked for count={count} max_turns={max_turns}. Resume with the same arguments."
+        )
+    return saved
+
+
+def _save_sample(out: Path, samples: list[Sample], count: int, max_turns: int) -> None:
+    entries = [{"cid": s.cid, "user": s.librechat_user_id} for s in samples]
+    (out / "sample.json").write_text(json.dumps({"count": count, "max_turns": max_turns, "entries": entries}, indent=2))
 
 
 def _body(messages: list[dict]) -> dict:
@@ -551,23 +608,47 @@ async def main(org_slug: str, count: int, max_turns: int) -> None:
     # turn; a replayed turn written there would be mistaken for theirs.
     partner.write_retrieval_log = _skip_retrieval_log  # type: ignore[assignment]
 
-    samples = await _sample(org, count)
-    print(f"{len(samples)} conversations sampled from {len({s.librechat_user_id for s in samples})} users", flush=True)
-    records: list[dict] = []
-    async with httpx.AsyncClient(timeout=180.0) as client:
-        for index, sample in enumerate(samples, 1):
-            try:
-                records.extend(await _replay_one(client, org, tenant_key, sample, max_turns, index))
-            except Exception as exc:  # one broken conversation may not stop the run
-                records.append({"conversation": index, "mode": sample.profile.kb_mode, "error": type(exc).__name__})
-                print(f"{index}/{len(samples)} failed: {type(exc).__name__}", flush=True)
-            else:
-                print(f"{index}/{len(samples)} replayed", flush=True)
-            await asyncio.sleep(sim._PAUSE_BETWEEN_CONVERSATIONS)
+    saved = _read_saved_sample(out, count, max_turns)
+    if saved is None:
+        samples = await _sample(org, count)
+        _save_sample(out, samples, count, max_turns)
+    else:
+        samples = await _resample(org, saved["entries"])
 
-    with (out / "turns.jsonl").open("w") as handle:
-        for record in records:
-            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    done_cids = _done_cids(out)
+    if done_cids:
+        resuming = sum(1 for s in samples if s.cid in done_cids)
+        print(f"{resuming} conversation(s) already in {out}, resuming the rest", flush=True)
+    print(f"{len(samples)} conversations sampled from {len({s.librechat_user_id for s in samples})} users", flush=True)
+
+    turns_path = out / "turns.jsonl"
+    # Appended and flushed per conversation: a deploy that kills this process
+    # mid-run must not lose the conversations that already finished.
+    with turns_path.open("a") as handle:
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            for index, sample in enumerate(samples, 1):
+                if sample.cid in done_cids:
+                    continue
+                try:
+                    conv_records = await _replay_one(client, org, tenant_key, sample, max_turns, index)
+                except Exception as exc:  # one broken conversation may not stop the run
+                    conv_records = [
+                        {
+                            "conversation": index,
+                            "cid": sample.cid,
+                            "mode": sample.profile.kb_mode,
+                            "error": type(exc).__name__,
+                        }
+                    ]
+                    print(f"{index}/{len(samples)} failed: {type(exc).__name__}", flush=True)
+                else:
+                    print(f"{index}/{len(samples)} replayed", flush=True)
+                for record in conv_records:
+                    handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+                handle.flush()
+                await asyncio.sleep(sim._PAUSE_BETWEEN_CONVERSATIONS)
+
+    records = [json.loads(line) for line in turns_path.read_text().splitlines() if line.strip()]
     summary = summarize(records)
     (out / "summary.json").write_text(json.dumps(summary, indent=2))
     _print_summary(summary)
