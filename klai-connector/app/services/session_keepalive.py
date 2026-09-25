@@ -117,6 +117,15 @@ class SessionKeepAlive:
             )
             return False
 
+        if result.get("reason") == "no_saved_credentials":
+            # The portal flags the connector as credentialed, but knowledge-ingest
+            # finds no cookies to send: there is no session to keep alive, so this
+            # is not a logged-out session and must not raise an error line.
+            logger.info(
+                "session_keepalive_no_stored_cookies",
+                extra={"connector_id": str(item.connector_id)},
+            )
+            return True
         ok = bool(result.get("ok"))
         previous = self._last_ok.get(item.connector_id)
         self._last_ok[item.connector_id] = ok

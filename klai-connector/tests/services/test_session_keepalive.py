@@ -203,6 +203,24 @@ class TestTickPingsEligibleConnectors:
         assert any(r.getMessage() == "session_keepalive_recovered" for r in caplog.records)
 
     @pytest.mark.asyncio
+    async def test_connector_without_stored_cookies_is_not_reported_logged_out(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Nothing to keep alive is not a lost session: no error line."""
+        item = _scheduled()
+        cfg = _config({"base_url": "https://docs.example.com"})
+        keepalive, _, _ = _make_keepalive(
+            scheduled=[item],
+            config_by_connector={item.connector_id: cfg},
+            keepalive_side_effect=[{"ok": False, "reason": "no_saved_credentials"}],
+        )
+
+        with caplog.at_level(logging.INFO):
+            await keepalive.tick()
+
+        assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+    @pytest.mark.asyncio
     async def test_one_bad_ping_does_not_abort_the_batch(self) -> None:
         good, bad = _scheduled(), _scheduled()
         cfg = _config({"base_url": "https://help.voys.nl"})
