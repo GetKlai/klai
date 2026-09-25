@@ -39,16 +39,21 @@ class _HTMLTextCounter(HTMLParser):
             self.parts.append(data)
 
 
-def html_text_word_count(html: str) -> int:
-    """Count visible HTML words without executing or rendering the document."""
+def html_visible_text(html: str) -> str:
+    """Return visible HTML text (script/style/svg stripped) without rendering."""
     if not html:
-        return 0
+        return ""
     parser = _HTMLTextCounter()
     try:
         parser.feed(html)
     except Exception:
-        return 0
-    return len(unescape(" ".join(parser.parts)).split())
+        return ""
+    return unescape(" ".join(parser.parts))
+
+
+def html_text_word_count(html: str) -> int:
+    """Count visible HTML words without executing or rendering the document."""
+    return len(html_visible_text(html).split())
 
 
 def should_retry_relaxed_for_thin_content(result: CrawlResult) -> bool:

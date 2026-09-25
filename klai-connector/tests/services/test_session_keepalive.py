@@ -8,6 +8,7 @@ directly rather than starting the loop.
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from unittest.mock import AsyncMock, MagicMock
 
@@ -107,6 +108,31 @@ class TestTickPingsEligibleConnectors:
         )
 
     @pytest.mark.asyncio
+    async def test_prefers_discovery_seed_url_over_base_url(self) -> None:
+        """No canary_url yet (predates the field) -> the validated interior
+        seed page beats the site root, which is exactly the URL that 302s to
+        a language path in production (see session_keepalive.py docstring)."""
+        item = _scheduled()
+        cfg = _config(
+            {
+                "base_url": "https://wiki.example.com",
+                "discovery_seed_url": "https://wiki.example.com/en/handbook",
+            }
+        )
+        keepalive, _, crawl_client = _make_keepalive(
+            scheduled=[item],
+            config_by_connector={item.connector_id: cfg},
+        )
+
+        await keepalive.tick()
+
+        crawl_client.crawl_keepalive.assert_awaited_once_with(
+            connector_id=str(item.connector_id),
+            org_id=item.org_id,
+            url="https://wiki.example.com/en/handbook",
+        )
+
+    @pytest.mark.asyncio
     async def test_skips_web_crawler_without_saved_credentials(self) -> None:
         item = _scheduled(has_saved_credentials=False)
         keepalive, _, crawl_client = _make_keepalive(scheduled=[item])
@@ -125,6 +151,30 @@ class TestTickPingsEligibleConnectors:
 
         assert pinged == 0
         crawl_client.crawl_keepalive.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_logged_out_session_logs_error_with_connector_id_and_reason(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """ok=False must be loud (error-level) and actionable (connector id +
+        reason), not the WARNING-and-nothing-else that let 5,648 ping_not_ok
+        warnings accumulate silently in production."""
+        item = _scheduled()
+        cfg = _config({"base_url": "https://wiki.example.com"})
+        keepalive, _, crawl_client = _make_keepalive(
+            scheduled=[item],
+            config_by_connector={item.connector_id: cfg},
+            keepalive_side_effect=[{"ok": False, "reason": "redirect_to_login"}],
+        )
+
+        with caplog.at_level(logging.ERROR):
+            pinged = await keepalive.tick()
+
+        assert pinged == 1  # ping succeeded (no exception); session is just stale
+        error_records = [r for r in caplog.records if r.levelno == logging.ERROR]
+        assert len(error_records) == 1
+        assert error_records[0].connector_id == str(item.connector_id)
+        assert error_records[0].reason == "redirect_to_login"
 
     @pytest.mark.asyncio
     async def test_one_bad_ping_does_not_abort_the_batch(self) -> None:

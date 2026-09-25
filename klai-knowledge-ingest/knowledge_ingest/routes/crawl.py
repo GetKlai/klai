@@ -700,12 +700,17 @@ async def preview_crawl(body: CrawlPreviewRequest, request: Request) -> CrawlPre
 
 @dataclass
 class _ProbeResponse:
-    """Result of a single httpx GET inside auth_probe."""
+    """Result of a single httpx GET inside auth_probe / crawl_keepalive."""
 
     status_code: int
     word_count: int
     byte_size: int
     text: str
+    # ``location``/``set_cookie`` are None for auth_probe's callers (2xx/4xx
+    # bodies don't need them); crawl_keepalive reads them to follow same-site
+    # redirects and to feed classify_auth_wall's cookie heuristic.
+    location: str | None = None
+    set_cookie: str | None = None
 
 
 _PROBE_UA = (
@@ -740,6 +745,8 @@ async def _probe_fetch(
             word_count=len(r.text.split()),
             byte_size=len(r.text),
             text=r.text,
+            location=r.headers.get("location"),
+            set_cookie=r.headers.get("set-cookie"),
         )
 
 

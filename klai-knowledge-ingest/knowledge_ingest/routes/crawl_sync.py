@@ -25,7 +25,7 @@ import time
 import uuid
 from collections.abc import Mapping
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import structlog
 from fastapi import APIRouter, HTTPException
@@ -42,10 +42,13 @@ from knowledge_ingest.connector_state import (
     activate_connector_resource,
     get_current_connector_resource_key,
 )
+from knowledge_ingest.crawl_result_processing import html_visible_text
+from knowledge_ingest.crawl_url_policy import same_site_domain
 from knowledge_ingest.db import get_pool, tenant_scoped_connection
 from knowledge_ingest.resource_jobs import cancel_jobs_by_resource_key, connector_resource_key
-from knowledge_ingest.routes.crawl import _probe_fetch
-from knowledge_ingest.utils.url_validator import validate_url_pinned
+from knowledge_ingest.routes.crawl import _probe_fetch, _ProbeResponse
+from knowledge_ingest.utils.auth_wall_classifier import classify_auth_wall
+from knowledge_ingest.utils.url_validator import SsrfBlockedError, validate_url_pinned
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -458,6 +461,61 @@ class CrawlKeepAliveRequest(BaseModel):
 
 class CrawlKeepAliveResponse(BaseModel):
     ok: bool
+    # Populated only when ok=False, so klai-connector can log an actionable
+    # error (connector id + reason) instead of a bare bool. One of:
+    # "cookie_load_failed", "no_saved_credentials", "url_invalid",
+    # "fetch_failed", "redirect_left_domain", "too_many_redirects", or a
+    # comma-joined classify_auth_wall match_reasons tuple (e.g.
+    # "redirect_to_login", "end_of_body_login_marker").
+    reason: str | None = None
+
+
+# A same-host language/path redirect (the observed production failure: root
+# 302 to /en) is one hop. 5 is generous headroom without letting a
+# misconfigured site turn every tick into a long redirect chain.
+_MAX_KEEPALIVE_REDIRECTS = 5
+
+
+async def _follow_same_site_redirects(
+    url: str,
+    pin_map: dict[str, str],
+    cookies: dict[str, str],
+    base_hostname: str,
+) -> tuple[_ProbeResponse | None, str]:
+    """Follow same-site 3xx redirects to the real page cookies must reach.
+
+    ``_probe_fetch`` runs with ``follow_redirects=False`` so a bare 3xx never
+    silently escapes the SSRF pin. This drives that loop itself: each hop is
+    re-validated with :func:`validate_url_pinned` (so a redirect to a new
+    same-site host still gets its own pinned IP — no DNS-rebinding TOCTOU
+    across hops) and checked with :func:`same_site_domain` — a redirect to a
+    different site (e.g. an SSO host) is a boundary the probe must never
+    cross, so it is reported as a failure rather than followed.
+
+    Returns ``(final_response, final_url)`` on success, or
+    ``(None, reason)`` when a redirect leaves the site, the pinned
+    revalidation rejects a hop, or the hop budget is exhausted.
+    """
+    current_url = url
+    for _ in range(_MAX_KEEPALIVE_REDIRECTS):
+        result = await _probe_fetch(current_url, pin_map, cookies)
+        if not (300 <= result.status_code < 400 and result.location):
+            return result, current_url
+
+        next_url = urljoin(current_url, result.location)
+        next_host = urlparse(next_url).netloc.lower()
+        if not same_site_domain(next_host, base_hostname):
+            return None, f"redirect_left_domain:{next_host}"
+
+        if next_host not in pin_map:
+            try:
+                validated = await validate_url_pinned(next_url)
+            except (ValueError, SsrfBlockedError) as exc:
+                return None, f"redirect_ssrf_blocked:{exc}"
+            pin_map[validated.hostname] = validated.preferred_ip
+
+        current_url = next_url
+    return None, "too_many_redirects"
 
 
 @router.post("/ingest/v1/crawl/keep-alive", response_model=CrawlKeepAliveResponse)
@@ -467,6 +525,12 @@ async def crawl_keepalive(req: CrawlKeepAliveRequest) -> CrawlKeepAliveResponse:
     Best-effort liveness ping for klai-connector's keep-alive job (a stored
     session goes idle-timeout between once-daily scheduled crawls). Never
     raises — a failed touch is just ``ok=False``, not a 500.
+
+    Follows same-site redirects (REQ: the probed URL is often the site root,
+    which many CMSes 302 to a language path) and classifies the final page
+    with the shared :func:`classify_auth_wall` heuristic, so a redirect to a
+    login page or a thin authenticated-looking stub is caught the same way
+    the crawler itself would catch it — not just a bare status-code check.
     """
     try:
         cookies = await load_connector_cookies(
@@ -486,10 +550,10 @@ async def crawl_keepalive(req: CrawlKeepAliveRequest) -> CrawlKeepAliveResponse:
             connector_id=str(req.connector_id),
             error=str(exc),
         )
-        return CrawlKeepAliveResponse(ok=False)
+        return CrawlKeepAliveResponse(ok=False, reason="cookie_load_failed")
 
     if not cookies:
-        return CrawlKeepAliveResponse(ok=False)
+        return CrawlKeepAliveResponse(ok=False, reason="no_saved_credentials")
 
     cookie_dict = {
         c["name"]: c["value"]
@@ -506,11 +570,13 @@ async def crawl_keepalive(req: CrawlKeepAliveRequest) -> CrawlKeepAliveResponse:
             url=req.url,
             error=str(exc),
         )
-        return CrawlKeepAliveResponse(ok=False)
+        return CrawlKeepAliveResponse(ok=False, reason="url_invalid")
 
     pin_map = {validated.hostname: validated.preferred_ip}
     try:
-        result = await _probe_fetch(req.url, pin_map, cookie_dict)
+        result, final = await _follow_same_site_redirects(
+            req.url, pin_map, cookie_dict, validated.hostname
+        )
     except Exception as exc:
         logger.warning(
             "crawl_keepalive_fetch_failed",
@@ -518,20 +584,41 @@ async def crawl_keepalive(req: CrawlKeepAliveRequest) -> CrawlKeepAliveResponse:
             url=req.url,
             error=str(exc),
         )
-        return CrawlKeepAliveResponse(ok=False)
+        return CrawlKeepAliveResponse(ok=False, reason="fetch_failed")
 
-    # `_probe_fetch` runs with follow_redirects=False, so any 3xx is a
-    # redirect that was never followed — commonly a redirect to a login page
-    # for an expired session (exactly the RedCactus failure mode this
-    # endpoint exists to prevent). Treating status_code < 400 as success
-    # misreported that as a live session. Only a direct 2xx counts.
-    ok = 200 <= result.status_code < 300
-    logger.info(
-        "crawl_keepalive_probe",
+    if result is None:
+        # `final` here is the reason string, not a URL (see the tuple-union
+        # return contract on `_follow_same_site_redirects`).
+        logger.error(
+            "crawl_keepalive_session_logged_out",
+            connector_id=str(req.connector_id),
+            org_id=req.org_id,
+            url=req.url,
+            reason=final,
+        )
+        return CrawlKeepAliveResponse(ok=False, reason=final)
+
+    visible_text = html_visible_text(result.text)
+    auth_wall = classify_auth_wall(
+        response_status_code=result.status_code,
+        redirect_target_url=None,  # already resolved by _follow_same_site_redirects
+        set_cookie_header=result.set_cookie,
+        word_count=len(visible_text.split()),
+        fit_markdown=visible_text,
+        raw_html=result.text,
+    )
+    ok = 200 <= result.status_code < 300 and not auth_wall.is_walled
+    reason = None if ok else (", ".join(auth_wall.match_reasons) or f"status_{result.status_code}")
+
+    log = logger.info if ok else logger.error
+    log(
+        "crawl_keepalive_probe" if ok else "crawl_keepalive_session_logged_out",
         connector_id=str(req.connector_id),
         org_id=req.org_id,
         url=req.url,
+        final_url=final,
         status_code=result.status_code,
         ok=ok,
+        reason=reason,
     )
-    return CrawlKeepAliveResponse(ok=ok)
+    return CrawlKeepAliveResponse(ok=ok, reason=reason)

@@ -308,16 +308,19 @@ class CrawlSyncClient:
         resp.raise_for_status()
         return resp.json()
 
-    async def crawl_keepalive(self, *, connector_id: str, org_id: str, url: str) -> dict[str, bool]:
+    async def crawl_keepalive(self, *, connector_id: str, org_id: str, url: str) -> dict[str, bool | str | None]:
         """Touch a connector's stored session via POST /ingest/v1/crawl/keep-alive.
 
         Best-effort liveness ping — the endpoint itself always returns 200 with
-        {"ok": bool} rather than a 4xx/5xx for an expired/missing session, so
-        raise_for_status() here only catches real transport/server failures
-        (network error, knowledge-ingest itself down), not "session expired".
+        {"ok": bool, "reason": str | None} rather than a 4xx/5xx for an
+        expired/missing session, so raise_for_status() here only catches real
+        transport/server failures (network error, knowledge-ingest itself
+        down), not "session expired".
 
         Returns:
-            The raw JSON body — {"ok": bool}.
+            The raw JSON body — {"ok": bool, "reason": str | None}. ``reason``
+            is set whenever ``ok`` is False (e.g. "redirect_to_login",
+            "no_saved_credentials") so callers can log something actionable.
 
         Raises:
             httpx.HTTPStatusError: on 4xx/5xx (transport/server failure, not a

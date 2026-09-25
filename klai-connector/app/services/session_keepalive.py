@@ -68,11 +68,7 @@ class SessionKeepAlive:
             logger.exception("session_keepalive_list_failed")
             return 0
 
-        candidates = [
-            item
-            for item in scheduled
-            if item.connector_type == "web_crawler" and item.has_saved_credentials
-        ]
+        candidates = [item for item in scheduled if item.connector_type == "web_crawler" and item.has_saved_credentials]
         pinged = 0
         for item in candidates:
             if await self._ping(item):
@@ -89,7 +85,14 @@ class SessionKeepAlive:
             )
             return False
 
-        url = config.config.get("canary_url") or config.config.get("base_url")
+        # Preference order: canary_url and discovery_seed_url are both
+        # wizard-validated interior pages (proved reachable with cookies at
+        # setup time); base_url is the site root and is the fallback of last
+        # resort — on many CMSes it 302s to a language/landing path rather
+        # than serving authenticated content directly.
+        url = (
+            config.config.get("canary_url") or config.config.get("discovery_seed_url") or config.config.get("base_url")
+        )
         if not url:
             return False
 
@@ -107,8 +110,12 @@ class SessionKeepAlive:
             return False
 
         if not result.get("ok"):
-            logger.warning(
-                "session_keepalive_ping_not_ok",
-                extra={"connector_id": str(item.connector_id), "url": url},
+            logger.error(
+                "session_keepalive_session_logged_out",
+                extra={
+                    "connector_id": str(item.connector_id),
+                    "url": url,
+                    "reason": result.get("reason"),
+                },
             )
         return True
