@@ -33,7 +33,7 @@ groups:
         data:
           - refId: query
             datasourceUid: victorialogs
-            queryType: instant
+            queryType: stats
             relativeTimeRange:
               from: 600
               to: 0
@@ -46,8 +46,8 @@ groups:
               # "health" and "fail" (case-insensitive). Note: this is
               # text-substring matching on _msg, NOT structured field
               # access — see DEFERRED.md history for context.
-              expr: '_time:10m container:~".*librechat.*" AND _msg:i("health") AND _msg:i("fail")'
-              queryType: instant
+              expr: '_time:10m container:~".*librechat.*" AND _msg:i("health") AND _msg:i("fail") | stats count() as n'
+              queryType: stats
           - refId: count
             datasourceUid: __expr__
             relativeTimeRange:
@@ -56,7 +56,7 @@ groups:
             model:
               refId: count
               type: reduce
-              reducer: count
+              reducer: last
               expression: query
           - refId: threshold
             datasourceUid: __expr__

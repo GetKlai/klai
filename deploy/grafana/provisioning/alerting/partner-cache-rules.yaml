@@ -107,7 +107,7 @@ groups:
         data:
           - refId: keycount
             datasourceUid: victorialogs
-            queryType: instant
+            queryType: stats
             relativeTimeRange:
               from: 3600
               to: 0
@@ -117,10 +117,10 @@ groups:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
               expr: '_time:1h service:portal-api AND event:partner_openai_cache_usage AND cache_key_present:true | stats count() as n'
-              queryType: instant
+              queryType: stats
           - refId: cachedsum
             datasourceUid: victorialogs
-            queryType: instant
+            queryType: stats
             relativeTimeRange:
               from: 3600
               to: 0
@@ -130,7 +130,7 @@ groups:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
               expr: '_time:1h service:portal-api AND event:partner_openai_cache_usage AND cache_key_present:true | stats sum(cached_tokens) as total_cached'
-              queryType: instant
+              queryType: stats
           - refId: keycount_n
             datasourceUid: __expr__
             relativeTimeRange:

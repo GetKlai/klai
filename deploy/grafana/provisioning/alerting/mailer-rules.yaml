@@ -259,7 +259,7 @@ groups:
         data:
           - refId: query
             datasourceUid: victorialogs
-            queryType: instant
+            queryType: stats
             relativeTimeRange:
               from: 300
               to: 0
@@ -277,8 +277,8 @@ groups:
               # Combining it with the literal `POST /notify HTTP` rules
               # out unrelated app-level log lines that happen to contain
               # `" 5` (e.g. structlog JSON entries with " 5" inside).
-              expr: 'service:klai-mailer AND _msg:"POST /notify HTTP" AND _msg:"\" 5"'
-              queryType: instant
+              expr: 'service:klai-mailer AND _msg:"POST /notify HTTP" AND _msg:"\" 5" | stats count() as n'
+              queryType: stats
           - refId: reduce
             datasourceUid: __expr__
             relativeTimeRange:
@@ -287,7 +287,7 @@ groups:
             model:
               refId: reduce
               type: reduce
-              reducer: count
+              reducer: last
               expression: query
           - refId: threshold
             datasourceUid: __expr__

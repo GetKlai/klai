@@ -41,7 +41,7 @@ groups:
         data:
           - refId: query
             datasourceUid: victorialogs
-            queryType: instant
+            queryType: stats
             relativeTimeRange:
               from: 300
               to: 0
@@ -51,7 +51,7 @@ groups:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
               expr: '_time:5m service:caddy | stats quantile(0.95, duration) as p95'
-              queryType: instant
+              queryType: stats
           - refId: reduce
             datasourceUid: __expr__
             relativeTimeRange:
@@ -121,7 +121,7 @@ groups:
         data:
           - refId: current
             datasourceUid: victorialogs
-            queryType: instant
+            queryType: stats
             relativeTimeRange:
               from: 300
               to: 0
@@ -131,10 +131,10 @@ groups:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
               expr: '_time:5m service:caddy | stats count() as n'
-              queryType: instant
+              queryType: stats
           - refId: baseline
             datasourceUid: victorialogs
-            queryType: instant
+            queryType: stats
             relativeTimeRange:
               from: 3600
               to: 0
@@ -144,7 +144,7 @@ groups:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
               expr: '_time:1h service:caddy | stats count() as n'
-              queryType: instant
+              queryType: stats
           - refId: current_n
             datasourceUid: __expr__
             relativeTimeRange:
@@ -174,13 +174,16 @@ groups:
               refId: drop_signal
               type: math
               # Boolean math:
-              #   (current * 60 < baseline * 0.2 * 12) → ratio condition
-              #     simplifies to: current * 5 < baseline (i.e. current per 1h
-              #     equivalent < 20% of the actual 1h count).
+              #   (current * 12 < baseline * 0.2) → current 5m, scaled to 1h,
+              #     is below 20% of the 1h count; simplifies to
+              #     current * 60 < baseline. The earlier `current * 5` form
+              #     fired at normal traffic (live 2026-09-25: current 1231,
+              #     baseline 20423) and only stayed quiet because the query
+              #     never evaluated.
               #   (baseline > 600) → minimum-baseline guard, avoids quiet-period fires.
               # Each comparison returns 1.0 or 0.0; multiplying gives boolean AND.
               # threshold > 0 then fires only when both are true.
-              expression: '($current_n * 5 < $baseline_n) * ($baseline_n > 600)'
+              expression: '($current_n * 60 < $baseline_n) * ($baseline_n > 600)'
           - refId: threshold
             datasourceUid: __expr__
             relativeTimeRange:

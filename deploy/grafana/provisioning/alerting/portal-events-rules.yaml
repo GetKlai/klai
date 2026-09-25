@@ -36,7 +36,7 @@ groups:
         data:
           - refId: query
             datasourceUid: victorialogs
-            queryType: instant
+            queryType: stats
             relativeTimeRange:
               from: 60
               to: 0
@@ -45,8 +45,8 @@ groups:
               datasource:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
-              expr: 'service:portal-api AND event:redis_flushall_failed'
-              queryType: instant
+              expr: 'service:portal-api AND event:redis_flushall_failed | stats count() as n'
+              queryType: stats
           - refId: count
             datasourceUid: __expr__
             relativeTimeRange:
@@ -55,7 +55,7 @@ groups:
             model:
               refId: count
               type: reduce
-              reducer: count
+              reducer: last
               expression: query
           - refId: threshold
             datasourceUid: __expr__

@@ -34,7 +34,7 @@ groups:
         data:
           - refId: query
             datasourceUid: victorialogs
-            queryType: instant
+            queryType: stats
             relativeTimeRange:
               from: 600
               to: 0
@@ -43,8 +43,8 @@ groups:
               datasource:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
-              expr: 'service:portal-api AND event:bff_proxy_verified AND verified:false'
-              queryType: instant
+              expr: 'service:portal-api AND event:bff_proxy_verified AND verified:false | stats count() as n'
+              queryType: stats
           - refId: reduce
             datasourceUid: __expr__
             relativeTimeRange:
@@ -53,7 +53,7 @@ groups:
             model:
               refId: reduce
               type: reduce
-              reducer: count
+              reducer: last
               expression: query
           - refId: threshold
             datasourceUid: __expr__
@@ -106,7 +106,7 @@ groups:
         data:
           - refId: query
             datasourceUid: victorialogs
-            queryType: instant
+            queryType: stats
             relativeTimeRange:
               from: 300
               to: 0
@@ -115,8 +115,8 @@ groups:
               datasource:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
-              expr: 'service:scribe-api AND event:scribe_auth_internal_secret_mismatch'
-              queryType: instant
+              expr: 'service:scribe-api AND event:scribe_auth_internal_secret_mismatch | stats count() as n'
+              queryType: stats
           - refId: reduce
             datasourceUid: __expr__
             relativeTimeRange:
@@ -125,7 +125,7 @@ groups:
             model:
               refId: reduce
               type: reduce
-              reducer: count
+              reducer: last
               expression: query
           - refId: threshold
             datasourceUid: __expr__

@@ -42,8 +42,8 @@ groups:
               # rather than _msg, so we scope the text search to those fields.
               # Covers docker-py raising APIError (lands in error:) as well as
               # uncaught tracebacks (lands in exception:).
-              expr: 'service:(portal-api OR runtime-api) AND (error:Forbidden OR exception:Forbidden) AND (error:docker-socket-proxy OR exception:docker-socket-proxy)'
-              queryType: instant
+              expr: 'service:(portal-api OR runtime-api) AND (error:Forbidden OR exception:Forbidden) AND (error:docker-socket-proxy OR exception:docker-socket-proxy) | stats count() as n'
+              queryType: stats
           - refId: reduce
             datasourceUid: __expr__
             relativeTimeRange:
@@ -52,7 +52,7 @@ groups:
             model:
               refId: reduce
               type: reduce
-              reducer: count
+              reducer: last
               expression: query
           - refId: threshold
             datasourceUid: __expr__

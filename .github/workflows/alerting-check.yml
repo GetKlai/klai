@@ -7,6 +7,7 @@ on:
       - 'deploy/grafana/provisioning/dashboards/**'
       - 'scripts/audit-alert-secrets.sh'
       - 'scripts/audit-alert-uid-length.sh'
+      - 'scripts/audit-alert-logsql-shape.py'
       - 'scripts/verify-alert-runbooks.sh'
       - 'scripts/test-alerting-guards.sh'
       - 'deploy/scripts/verify-alert-datasource-access.py'
@@ -21,6 +22,7 @@ on:
       - 'deploy/grafana/provisioning/dashboards/**'
       - 'scripts/audit-alert-secrets.sh'
       - 'scripts/audit-alert-uid-length.sh'
+      - 'scripts/audit-alert-logsql-shape.py'
       - 'scripts/verify-alert-runbooks.sh'
       - 'scripts/test-alerting-guards.sh'
       - 'deploy/scripts/verify-alert-datasource-access.py'
@@ -53,6 +55,12 @@ jobs:
       # .claude/rules/klai/infra/observability.md.
       - name: Audit Grafana UID length (40-char limit)
         run: bash scripts/audit-alert-uid-length.sh
+
+      # A VictoriaLogs query with queryType instant returns log rows that
+      # Grafana's reduce step rejects, so the rule sits in an error state:
+      # firing on nothing with execErrState Alerting, never firing with OK.
+      - name: Audit VictoriaLogs alert query shape (stats only)
+        run: python3 scripts/audit-alert-logsql-shape.py
 
       # The datasource-access checker itself runs at deploy time, on core-01,
       # where a real database exists. What CI can prove is that its relation

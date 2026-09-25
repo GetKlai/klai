@@ -38,7 +38,7 @@ groups:
         data:
           - refId: query
             datasourceUid: victorialogs
-            queryType: instant
+            queryType: stats
             relativeTimeRange:
               from: 900
               to: 0
@@ -47,8 +47,8 @@ groups:
               datasource:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
-              expr: 'service:knowledge-ingest AND event:enrichment_llm_error'
-              queryType: instant
+              expr: 'service:knowledge-ingest AND event:enrichment_llm_error | stats count() as n'
+              queryType: stats
           - refId: count
             datasourceUid: __expr__
             relativeTimeRange:
@@ -57,7 +57,7 @@ groups:
             model:
               refId: count
               type: reduce
-              reducer: count
+              reducer: last
               expression: query
           - refId: threshold
             datasourceUid: __expr__
@@ -127,7 +127,7 @@ groups:
         data:
           - refId: query
             datasourceUid: victorialogs
-            queryType: instant
+            queryType: stats
             relativeTimeRange:
               from: 1800
               to: 0
@@ -136,8 +136,8 @@ groups:
               datasource:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
-              expr: 'service:knowledge-ingest AND event:stale_pending_artifacts_failed'
-              queryType: instant
+              expr: 'service:knowledge-ingest AND event:stale_pending_artifacts_failed | stats count() as n'
+              queryType: stats
           - refId: count
             datasourceUid: __expr__
             relativeTimeRange:
@@ -146,7 +146,7 @@ groups:
             model:
               refId: count
               type: reduce
-              reducer: count
+              reducer: last
               expression: query
           - refId: threshold
             datasourceUid: __expr__
