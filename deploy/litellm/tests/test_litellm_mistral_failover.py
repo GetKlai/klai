@@ -19,8 +19,10 @@ _CONFIG_PATH = _DEPLOY_DIR / "litellm" / "config.yaml"
 _COMPOSE_PATH = _DEPLOY_DIR / "docker-compose.yml"
 _ALIAS = "klai-medium"
 _PRIMARY_ALIAS = "klai-primary"
+_PRO_KEY = "pro-test-key"
 _PRIMARY_KEY = "primary-test-key"
 _BACKUP_KEY = "backup-test-key"
+_KEY_BY_ORDER = {1: _PRO_KEY, 2: _PRIMARY_KEY, 3: _BACKUP_KEY}
 _TEXT_ALIASES = {"klai-primary", "klai-fast", "klai-large", "klai-medium"}
 
 
@@ -51,9 +53,7 @@ def _pinned_router(real_litellm: Any):
     ]
     for deployment in deployments:
         order = deployment["litellm_params"]["order"]
-        deployment["litellm_params"]["api_key"] = (
-            _PRIMARY_KEY if order == 1 else _BACKUP_KEY
-        )
+        deployment["litellm_params"]["api_key"] = _KEY_BY_ORDER[order]
     real_litellm.num_retries = config["litellm_settings"]["num_retries"]
     return real_litellm.Router(
         model_list=deployments,
@@ -106,11 +106,11 @@ async def test_healthy_primary_order_is_not_randomly_load_balanced(
     finally:
         router.reset()
 
-    assert calls == [_PRIMARY_KEY] * 8
+    assert calls == [_PRO_KEY] * 8
 
 
 @pytest.mark.asyncio
-async def test_primary_alias_falls_back_to_medium_after_both_keys_fail(
+async def test_primary_alias_falls_back_to_medium_after_every_small_key_fails(
     real_litellm,
 ) -> None:
     calls: list[tuple[str, str]] = []
@@ -137,6 +137,8 @@ async def test_primary_alias_falls_back_to_medium_after_both_keys_fail(
 
     assert response.choices[0].message.content == "backup response"
     assert calls == [
+        ("mistral/mistral-small-2603", _PRO_KEY),
+        ("mistral/mistral-small-2603", _PRO_KEY),
         ("mistral/mistral-small-2603", _PRIMARY_KEY),
         ("mistral/mistral-small-2603", _PRIMARY_KEY),
         ("mistral/mistral-small-2603", _BACKUP_KEY),
@@ -146,12 +148,14 @@ async def test_primary_alias_falls_back_to_medium_after_both_keys_fail(
 
 
 @pytest.mark.asyncio
-async def test_primary_429_uses_backup_key(real_litellm) -> None:
+async def test_a_rate_limited_pro_organisation_hands_over_to_the_klai_organisation(
+    real_litellm,
+) -> None:
     calls: list[str] = []
 
     async def provider_completion(**kwargs):
         calls.append(kwargs["api_key"])
-        if kwargs["api_key"] == _PRIMARY_KEY:
+        if kwargs["api_key"] == _PRO_KEY:
             raise real_litellm.RateLimitError(
                 "rate limited",
                 llm_provider="mistral",
@@ -170,11 +174,45 @@ async def test_primary_429_uses_backup_key(real_litellm) -> None:
         router.reset()
 
     assert response.choices[0].message.content == "backup response"
-    assert calls == [_PRIMARY_KEY, _PRIMARY_KEY, _BACKUP_KEY]
+    assert calls == [_PRO_KEY, _PRO_KEY, _PRIMARY_KEY]
 
 
 @pytest.mark.asyncio
-async def test_both_keys_exhaust_to_bounded_terminal_error(real_litellm) -> None:
+async def test_organisations_over_their_monthly_limit_reach_pay_as_you_go_last(
+    real_litellm,
+) -> None:
+    """Mistral answers 402 once an organisation or workspace spending limit is hit."""
+    calls: list[str] = []
+
+    async def provider_completion(**kwargs):
+        calls.append(kwargs["api_key"])
+        if kwargs["api_key"] in (_PRO_KEY, _PRIMARY_KEY):
+            raise real_litellm.APIError(
+                status_code=402,
+                message="Workspace monthly spending limit reached",
+                llm_provider="mistral",
+                model=kwargs["model"],
+            )
+        return _response(real_litellm, kwargs["model"])
+
+    router = _pinned_router(real_litellm)
+    try:
+        with patch("litellm.acompletion", side_effect=provider_completion):
+            response = await router.acompletion(
+                model=_ALIAS,
+                messages=[{"role": "user", "content": "hello"}],
+            )
+    finally:
+        router.reset()
+
+    assert response.choices[0].message.content == "backup response"
+    assert calls[-1] == _BACKUP_KEY
+    assert calls.index(_PRIMARY_KEY) > calls.index(_PRO_KEY)
+    assert calls.index(_BACKUP_KEY) > calls.index(_PRIMARY_KEY)
+
+
+@pytest.mark.asyncio
+async def test_every_key_exhausted_ends_in_a_bounded_terminal_error(real_litellm) -> None:
     calls: list[str] = []
 
     async def provider_completion(**kwargs):
@@ -201,4 +239,4 @@ async def test_both_keys_exhaust_to_bounded_terminal_error(real_litellm) -> None
     finally:
         router.reset()
 
-    assert calls == [_PRIMARY_KEY, _PRIMARY_KEY, _BACKUP_KEY, _BACKUP_KEY]
+    assert calls == [_PRO_KEY, _PRO_KEY, _PRIMARY_KEY, _PRIMARY_KEY] + [_BACKUP_KEY] * 4
