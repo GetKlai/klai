@@ -1,7 +1,7 @@
 # Klai build of crawl4ai: one patch on top of upstream.
 #
 # Build (on core-01, where the compose stack runs):
-#   docker build -t ghcr.io/getklai/crawl4ai:0.9.3-local-<YYMMDD-HHMM> deploy/crawl4ai/
+#   docker build -t ghcr.io/getklai/crawl4ai:0.9.4-local-<YYMMDD-HHMM> deploy/crawl4ai/
 #
 # The tag follows the locally-built convention accepted by
 # deploy/check-image-pullable.sh (`<semver>-local-YYMMDD-HHMM`) — this image
@@ -23,7 +23,7 @@
 # untrusted-allowed list and server-clamped, so we set it per request from
 # knowledge_ingest/crawl4ai_config.py instead of patching a hardcoded 30000
 # and steering it with an env var. A supported field beats a patched constant.
-FROM unclecode/crawl4ai:0.9.3
+FROM unclecode/crawl4ai:0.9.4
 
 # site-packages is root-owned; the base image runs as appuser.
 USER root
