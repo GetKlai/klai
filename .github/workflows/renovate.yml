@@ -70,6 +70,9 @@ jobs:
         with:
           app-id: ${{ secrets.RENOVATE_APP_ID }}
           private-key: ${{ secrets.RENOVATE_PRIVATE_KEY }}
+          # Without owner/repositories the token is scoped to this repo only.
+          owner: GetKlai
+          repositories: klai,klai-website
 
       - uses: actions/checkout@v7
 
@@ -80,7 +83,12 @@ jobs:
         with:
           token: ${{ steps.app-token.outputs.token }}
         env:
-          RENOVATE_REPOSITORIES: '["GetKlai/klai"]'
+          # klai-website ran its own Renovate on GITHUB_TOKEN, which may not
+          # open pull requests in this org: every weekly run from at least
+          # 2026-07-06 to 2026-09-21 ended in platform-unknown-error. It rides
+          # on this app token instead; its own renovate.json still decides
+          # schedule and automerge.
+          RENOVATE_REPOSITORIES: '["GetKlai/klai", "GetKlai/klai-website"]'
           # Provision Docker hostRules for ghcr.io from the short-lived app
           # token. The app installation has Packages: read; without this flag
           # the Docker datasource still makes anonymous private-image lookups.
