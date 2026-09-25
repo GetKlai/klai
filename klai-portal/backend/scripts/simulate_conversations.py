@@ -47,6 +47,7 @@ from app.core.config import settings  # noqa: E402
 from app.core.database import cross_org_session  # noqa: E402
 from app.models.portal import PortalOrg  # noqa: E402
 from app.models.widgets import Widget, WidgetKbAccess  # noqa: E402
+from app.services.litellm_delegation import with_delegated_org  # noqa: E402
 from app.services.widget_auth import generate_session_token  # noqa: E402
 
 # Real conversations with at least two visitor turns: one turn is a replay, and
@@ -170,20 +171,33 @@ async def _goals(widget_id: str, limit: int, client: httpx.AsyncClient) -> list[
     return goals
 
 
-async def _model(client: httpx.AsyncClient, system: str, user: str, *, max_tokens: int = 200) -> str:
+async def _model(
+    client: httpx.AsyncClient,
+    system: str,
+    user: str,
+    *,
+    max_tokens: int = 200,
+    temperature: float = 0.3,
+    zitadel_org_id: str | None = None,
+) -> str:
+    """One call on the master key; ``zitadel_org_id`` names the tenant so LiteLLM masks its PII."""
+
     async def _call():
         return await client.post(
             f"{settings.litellm_base_url}/v1/chat/completions",
             headers={"Authorization": f"Bearer {settings.litellm_master_key}"},
-            json={
-                "model": _SIMULATION_MODEL,
-                "temperature": 0.3,
-                "max_tokens": max_tokens,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-            },
+            json=with_delegated_org(
+                {
+                    "model": _SIMULATION_MODEL,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                },
+                zitadel_org_id,
+            ),
         )
 
     response = await _with_backoff("het model", lambda: _post_and_raise(_call))
