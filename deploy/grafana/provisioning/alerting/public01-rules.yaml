@@ -1,0 +1,93 @@
+# public-01 silence — the only alert that does not depend on Uptime Kuma.
+#
+# public-01 runs the website, status.getklai.com and Uptime Kuma itself.
+# Kuma watches everything else, but nothing watched Kuma: when public-01 went
+# down, the site, the status page and every Kuma notification went with it,
+# silently. This rule runs in Grafana on core-01 and mails through
+# klai-ops-alerts-email, so it shares nothing with public-01.
+#
+# Signal: the Caddy on public-01 ships its JSON access log through public-01's
+# Alloy to VictoriaLogs. Kuma requests getklai.com through that Caddy every
+# minute, so the stream never goes quiet on a healthy host: 530-710 lines per
+# 10 minutes measured on 2026-09-25. Ten minutes without a line means
+# public-01, its Caddy or its Alloy is down.
+#
+# Shape: `| stats count()` with queryType `stats` and reducer `last`, the form
+# mail-chain-notification-rules.yaml verified live: zero matches return
+# Value=0. A bare filter, even with `| limit 1`, fails with "input data must
+# be a wide series but got type long" (seen on this rule's first deploy).
+# noDataState is Alerting and execErrState Error, because a rule that exists
+# to catch silence must not go quiet itself.
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: public-01
+    folder: Klai
+    interval: 1m
+    rules:
+      - uid: public01-caddy-logs-silent
+        title: public01_caddy_logs_silent
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: stats
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: 'container:"klai-public-caddy-1" | stats count() as lines'
+              queryType: stats
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [1], type: lt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: Alerting
+        execErrState: Error
+        for: 2m
+        keepFiringFor: 5m
+        isPaused: false
+        labels:
+          severity: critical
+          spec: SPEC-OBS-001
+          service_group: public-01
+        annotations:
+          summary: 'No logs from public-01 for 10 minutes: website, status page and Uptime Kuma may be down'
+          runbook_url: 'https://github.com/GetKlai/klai-infra/blob/main/docs/runbooks/platform-recovery.md#public-01-silent'
+          description: |
+            The Caddy on public-01 has shipped no log line to VictoriaLogs for
+            10 minutes. Kuma monitors the site through that Caddy every minute,
+            so on a healthy host this never happens. Either public-01, its
+            Caddy, or its Alloy is down. While public-01 is down, Uptime Kuma
+            is down too and no other alert will reach you.
+
+            Triage:
+              1. curl -sI https://getklai.com https://status.getklai.com
+              2. ssh to public-01 and run: docker ps
+              3. See the runbook for recovery.
