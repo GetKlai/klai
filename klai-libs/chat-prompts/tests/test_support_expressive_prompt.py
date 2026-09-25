@@ -177,7 +177,6 @@ def test_expressive_prompt_keeps_the_hard_rules_present():
     assert "No promises on behalf of the company" in text
     assert "Do NOT commit to" in text
     assert "cannot transfer this chat to a person" in text
-    assert "AT MOST ONE short clarifying question" in text
     assert "Ik vind dit niet terug in onze helpartikelen" in text
     assert "I can't find this in our help articles" in text
 
@@ -199,7 +198,10 @@ _PROFILE_HASHES = {
     # dropped "Dit kan even duren" and the promising apology example, and added
     # the no-promise line (test_support_prompt.py).
     # Deliberate; the four unrelated profiles above keep their digests.
-    "SUPPORT_CHAT_SYSTEM_PROMPT": "e95836b9dd84ca4287cb2e328e56d9126251f752f3689e143f0c75fc3cfc0f11",
+    # re-baselined 2026-09-25, SUPPORT: the "When the question is unclear" rule
+    # is gone; the question is decided per turn from the retrieved articles
+    # (SPEC-RAG-ANSWER-JUDGES-001 logbook 2.54).
+    "SUPPORT_CHAT_SYSTEM_PROMPT": "b5ae89b97b7d8aebe5697db6b0054fa353d51a345fc3831bd698e915595ff627",
     "SUPPORT_BROAD_CHAT_SYSTEM_PROMPT": "12c767503d2479e3b661fbe04b100dae63fe2b494b3521a0b2b8975a0ac9135d",
 }
 _PROFILE_VALUES = {

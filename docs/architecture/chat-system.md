@@ -14,7 +14,7 @@ Er zijn **twee chatpaden** met elk hun eigen beslislogica. Ze delen alleen de zo
 |---|---|---|
 | Ingang | LibreChat → LiteLLM-proxy, hook `klai_knowledge.py` | `POST /partner/v1/chat/completions` in portal-api |
 | Waar de beslissingen vallen | LiteLLM-callbacks vóór en na het model | portal-api, rond één modelaanroep |
-| Vraag verduidelijken | instructie aan het antwoordmodel, bij band `low` zonder direct bewijs | aparte stap `answer_plan` kiest vóór het schrijven één vraag uit de gevonden artikelen |
+| Vraag verduidelijken | instructie aan het antwoordmodel, bij band `low` zonder direct bewijs | vaste regel over de gevonden artikelen (`clarify_gate`) beslist of er één vraag komt; een klein model schrijft alleen die vraag |
 | Zwakke zoekresultaten | band stuurt verduidelijken, Strict-weigering en modelkeuze | band wordt alleen opgeslagen; de regel "alle bronnen < 0,4" stuurt |
 | Onbewezen uitspraken | alleen in Strict gecontroleerd en gerepareerd; Open niet | gecontroleerd per uitspraak, gerepareerd of geweigerd |
 | Mens aanbieden | bestaat niet | afspraakknop bij weigering, deelantwoord, escalatie |
@@ -99,8 +99,8 @@ Ingang: `POST /partner/v1/chat/completions` (`klai-portal/backend/app/api/partne
 | B9 | Brede modus (algemene kennis) alleen met toestemming van de bezoeker en bij nul chunks (`services/partner_chat.py:2501-2524`) | B8 | nee | – | `answer_signals.broad_mode` |
 | B10 | Escalatie (support): regex op "mens gevraagd" of frustratie, of vraagbeoordelaar (`services/escalation_intent.py:81-92`, `api/partner.py:1955-1965`) | tekst + B6 | nee | – | – |
 | B11 | **Buiten het onderwerp** (support, als ingesteld): een doorverwijzing met afspraakknop, zonder antwoordmodel (`api/partner.py:2014-2063`) | B6 | `klai-fast`, 2,5 s | vaste tekst | `partner_chat_off_topic` |
-| B12 | **Antwoordplan** (support, niet bij brede modus, escalatie of gespreksbeurt): kiest `direct`, `diagnose` (meerdere oorzaken) of `choose` (meerdere procedures). Bij de laatste twee krijgt het antwoordmodel één vraag met 2 tot 4 opties die letterlijk uit de artikelen moeten komen, en de opdracht met die vraag te eindigen (`services/answer_plan.py:1-90,152-172`, `api/partner.py:2066-2084`) | gesprek + top 8 chunks | `klai-fast`, 2 s | geen plan | `answer_plan_decision`, `answer_signals.planned_question` |
-| B13 | **Zwakke bronnen** (support, soft gap, geen geplande vraag): "gebruik de artikelen alleen als er één de vraag letterlijk beantwoordt, zeg anders dat het er niet staat", met afspraakknop; bronkaarten vervallen als het antwoord niet `answered` heet (`api/partner.py:2087-2099`, `services/answer_plan.py:205-212`) | B8 | nee | – | `answer_signals.weak_sources` |
+| B12 | **Eén vraag vooraf** (support en intern, niet bij brede modus, escalatie, gespreksbeurt of geplakte correspondentie): vraagt alleen als sterke artikelen (≥ drempel) uit twee of meer documenten hetzelfde onderwerp in verschillende varianten behandelen (gedeelde kop of grotendeels gedeelde titel die raakt aan wat de bezoeker zei) en het gesprek geen variant noemt; opties zijn de varianten uit de titels, hooguit vier. Nooit bij een soft gap en niet direct na een eigen vraag. Het schrijfmodel krijgt gesprek, as en opties; de vraag moet één regel met vraagteken zijn (`services/clarify_gate.py`, `services/clarify_decision.py`, `api/partner.py`) | gesprek + sterke chunks | alleen de schrijfstap: `klai-fast`, 2 s | direct antwoorden | `clarify_decision` (fired, reason, axis, documents, options), `answer_signals.planned_question`, `answer_signals.asked_about` |
+| B13 | **Zwakke bronnen** (support en intern, soft gap): "gebruik de artikelen alleen als er één de vraag letterlijk beantwoordt, zeg anders dat het er niet staat", met afspraakknop; bronkaarten vervallen als het antwoord niet `answered` heet (`api/partner.py:2087-2099`, `services/clarify_decision.py`) | B8 | nee | – | `answer_signals.weak_sources` |
 
 ### 2.2 Generatie
 
@@ -165,7 +165,7 @@ Ingang: `POST /partner/v1/chat/completions` (`klai-portal/backend/app/api/partne
 
 **Logregels van pad A** (`service:litellm` in VictoriaLogs). Alleen **warning en hoger** komt aan (`klai_kb_citation_render.py:1016-1022`). Zichtbaar zijn onder meer `query_rewrite*`, `kb_clarify_decision`, `low_confidence_injection_applied`, `kb_answer_claims`, `kb_answer_grounding`, `kb_answer_repaired`, `kb_citations_*`, `chat_synthesis_complete`, `llm_safety_litellm_*`. **Niet zichtbaar** (info): de routerbeslissing (`custom_router.py:272`), taxonomie, meta-vragen, titelverzoeken en de Strict-weigeringen zonder kennisbank. Welk model een interne beurt kreeg, is daardoor niet terug te vinden.
 
-**Logregels van pad B** (`service:portal-api`, structlog, info komt wel aan): `partner_chat_turn_judge`, `partner_chat_answer_judge`, `partner_chat_query_paraphrase`, `partner_chat_answer_repair`, `answer_plan_decision`, `partner_chat_turn_timing`, `answer_grounding_late`, `partner_chat_off_topic`.
+**Logregels van pad B** (`service:portal-api`, structlog, info komt wel aan): `partner_chat_turn_judge`, `partner_chat_answer_judge`, `partner_chat_query_paraphrase`, `partner_chat_answer_repair`, `clarify_decision`, `partner_chat_turn_timing`, `answer_grounding_late`, `partner_chat_off_topic`.
 
 **Database**
 - `widget_messages.answer_signals` (per assistent-beurt van support-widgets): band, top_score (vóór boosts), gat-type, bronnen, broad_mode, taal, model, duidelijkheid, verdict, grounding, beslissing, aantal onbewezen uitspraken, gerepareerd, geplande vraag, zwakke bronnen. Pad A heeft hier geen tegenhanger.

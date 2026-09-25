@@ -84,7 +84,7 @@ KB_ANSWER_FORMAT_INSTRUCTION = (
 )
 
 # The internal chat's wording of the widget's weak-source rule (portal
-# ``answer_plan.WEAK_SOURCES_ADDENDUM``): the same trigger, every retrieved
+# ``clarify_decision.WEAK_SOURCES_ADDENDUM``): the same trigger, every retrieved
 # source below the gap threshold, and the same instruction, without the
 # widget's appointment button. It replaces the text that fired on the
 # retrieval confidence band and ended in a clarifying question: the band does
