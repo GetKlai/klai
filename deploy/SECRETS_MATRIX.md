@@ -115,6 +115,7 @@ details in the private infra repo.
 | `VEXA_WEBHOOK_SECRET` | portal-api | Signs Vexa webhook deliveries to portal; config.py validator fails closed on empty/whitespace (SEC-013 F-033). |
 | `VICTORIALOGS_AUTH_PASSWORD` | victorialogs | HTTP basic-auth password (set via `-httpAuth.password` cmdline flag). Also needed inside the container so the busybox-wget healthcheck can build the auth header. |
 | `VICTORIALOGS_AUTH_USER` | victorialogs | HTTP basic-auth username (set via `-httpAuth.username` cmdline flag). Also needed inside the container for the healthcheck. |
+| `WEBSITE_MAILING_SECRET` | portal-api | Bearer secret for the public website host, accepted only on `/internal/mailing/sync-contact` so that host never holds `INTERNAL_SECRET`. Empty disables it. |
 | `WIDGET_JWT_SECRET` | portal-api | Signs widget JWTs (SPEC-WIDGET-001). Empty value causes widget endpoints to return 503 — not a validator-blocked field. |
 | `ZITADEL_IDP_GOOGLE_ID` | portal-api | Instance-level Zitadel IDP id for Google social login (non-secret). |
 | `ZITADEL_IDP_MICROSOFT_ID` | portal-api | Instance-level Zitadel IDP id for Microsoft social login (non-secret). |

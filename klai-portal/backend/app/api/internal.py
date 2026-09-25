@@ -304,7 +304,7 @@ async def _audit_internal_call(request: Request, org_id: int | None = None) -> N
         )
 
 
-async def _require_internal_token(request: Request) -> None:
+async def _require_internal_token(request: Request, extra_secret: str = "") -> None:
     """Validate the shared secret, enforce rate limit, and stash audit context.
 
     Order of operations (SPEC-SEC-005):
@@ -318,13 +318,19 @@ async def _require_internal_token(request: Request) -> None:
 
     This coroutine is called directly at the top of each handler (not registered as a
     FastAPI dependency) to preserve the existing call sites unchanged.
+
+    ``extra_secret`` lets one route accept a second, narrower bearer secret. An
+    empty value is skipped, so an unset secret can never match ``Bearer ``.
     """
     if not settings.internal_secret:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Internal API not configured")
     token = request.headers.get("Authorization", "")
     # hmac.compare_digest is constant-time; string equality leaks length/prefix timing.
-    expected = f"Bearer {settings.internal_secret}"
-    if not hmac.compare_digest(token, expected):
+    # Both comparisons always run, so the branch taken does not reveal which
+    # secret matched (compare_digest may still leak a length difference).
+    master_ok = hmac.compare_digest(token, f"Bearer {settings.internal_secret}")
+    extra_ok = hmac.compare_digest(token, f"Bearer {extra_secret}")
+    if not (master_ok or (extra_secret and extra_ok)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
 
     # Token check passed. Proceed to rate limit + audit context.
@@ -1493,13 +1499,27 @@ async def start_onboarding_drip(
     )
 
 
+_WEBSITE_MAILING_AUDIENCES = {"signups", "updates_opt_in"}
+
+
 @router.post("/mailing/sync-contact", response_model=MailingSyncContactResponse)
 async def mailing_sync_contact(
     request: Request,
     body: MailingSyncContactRequest,
 ) -> MailingSyncContactResponse:
     """Sync a CRM/signup/user contact to listmonk mailing lists."""
-    await _require_internal_token(request)
+    await _require_internal_token(request, extra_secret=settings.website_mailing_secret)
+    if (
+        settings.website_mailing_secret
+        and hmac.compare_digest(request.headers.get("Authorization", ""), f"Bearer {settings.website_mailing_secret}")
+        and (
+            not set(body.audiences) <= _WEBSITE_MAILING_AUDIENCES
+            or any((body.portal_user_id, body.zitadel_user_id, body.org_id))
+        )
+    ):
+        # The website secret lives on an internet-facing host; it may add a
+        # waitlist signup, never a portal user, org or CRM selection.
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed for the website secret")
 
     from app.services import listmonk
 

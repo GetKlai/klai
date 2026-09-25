@@ -1078,6 +1078,8 @@ services:
       BFF_SESSION_KEY: ${PORTAL_API_BFF_SESSION_KEY:-}
       # ─── Internal service-to-service secrets ────────────────────
       INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
+      # Website-only bearer, accepted solely on /internal/mailing/sync-contact.
+      WEBSITE_MAILING_SECRET: ${WEBSITE_MAILING_SECRET:-}
       KLAI_CONNECTOR_SECRET: ${PORTAL_API_KLAI_CONNECTOR_SECRET}
       DOCS_INTERNAL_SECRET: ${DOCS_INTERNAL_SECRET}
       KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
