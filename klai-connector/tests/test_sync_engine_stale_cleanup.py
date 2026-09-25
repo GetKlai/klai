@@ -228,6 +228,31 @@ async def test_shrunken_listing_refuses_cleanup_and_preserves_baseline_for_recov
 
 
 @pytest.mark.asyncio
+async def test_renamed_parts_of_an_equally_large_listing_replace_the_old_parts() -> None:
+    """A json_feed whose part names all change (same size) must not keep the old parts indexed."""
+    previous_refs = [_ref(chr(ord("a") + index)) for index in range(10)]
+    renamed_refs = [_ref(chr(ord("k") + index)) for index in range(10)]
+    previous = MagicMock()
+    previous.cursor_state = {"synced_refs": [ref.source_ref for ref in previous_refs]}
+    current = _sync_run()
+    ingest_client = MagicMock()
+    ingest_client.ingest_document = AsyncMock()
+    ingest_client.delete_connector_document = AsyncMock()
+    engine = _engine(
+        runs=[current],
+        adapter=_adapter(renamed_refs),
+        ingest_client=ingest_client,
+        previous_run=previous,
+    )
+
+    await engine.run_sync(CONNECTOR_ID, uuid.uuid4())
+
+    deleted = sorted(call.kwargs["source_ref"] for call in ingest_client.delete_connector_document.await_args_list)
+    assert deleted == sorted(ref.source_ref for ref in previous_refs)
+    assert current.cursor_state["synced_refs"] == sorted(ref.source_ref for ref in renamed_refs)
+
+
+@pytest.mark.asyncio
 async def test_partial_sync_never_deletes_stale_groups() -> None:
     """AC-6: one failed document gates every destructive reconciliation call."""
     refs = [_ref("a"), _ref("b")]

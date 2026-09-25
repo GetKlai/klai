@@ -367,7 +367,7 @@ class JsonFeedAdapter(BaseAdapter):
             )
             documents: dict[str, _RenderedDocument] = {}
             for batch in _stable_batches(rendered_records, max_records):
-                slug = f"part-{hashlib.sha256(batch[0].line.encode()).hexdigest()[:8]}"
+                slug = f"part-{hashlib.sha256(batch[0].line.encode()).hexdigest()[:16]}"
                 indexed_batch = [(item.index, records[item.index]) for item in batch]
                 documents.update(
                     self._split_record_group(
