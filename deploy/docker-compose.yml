@@ -651,7 +651,7 @@ services:
 
   presidio-anonymizer:
     logging: *log-rotation
-    image: ghcr.io/data-privacy-stack/presidio-anonymizer@sha256:a10a12a2a613d13cf29d3ad3641e3258444dd8c90403dd644a0a114c472c2483
+    image: ghcr.io/data-privacy-stack/presidio-anonymizer@sha256:e567013893ebc80994e3799f6f55c86aa1f0b0fadb779571ab346f0ec45365c1
     restart: unless-stopped
     networks:
       - inference

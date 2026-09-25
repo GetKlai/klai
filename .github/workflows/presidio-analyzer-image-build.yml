@@ -41,7 +41,7 @@ env:
   # The presidio-analyzer version baked into the Dockerfile's FROM digest —
   # kept as a human label on the tag; the digest (not this tag) is what
   # deploy/docker-compose.yml actually pins.
-  BASE_PRESIDIO_VERSION: '2.2.362'
+  BASE_PRESIDIO_VERSION: '2.2.364'
   DEFAULT_PATCH_REVISION: '1'
 
 jobs:

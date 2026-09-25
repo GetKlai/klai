@@ -30,12 +30,11 @@ spacy = pytest.importorskip("spacy")
 import sitecustomize  # noqa: E402  (import for side effect: registers recognizers + patches SpacyNlpEngine)
 from presidio_analyzer import AnalyzerEngineProvider  # noqa: E402
 
-# Inside the real image, ANALYZER_CONF_FILE (and the two empty-string
-# overrides — see Dockerfile's comment for why they must be falsy on this
-# presidio-analyzer version) are already set, so this uses the exact
-# baked-in production config. Outside the image (plain local/CI run against
-# a repo checkout), fall back to the repo-relative path with the same
-# falsy overrides the Dockerfile sets.
+# Inside the real image, ANALYZER_CONF_FILE and the stock NLP_CONF_FILE /
+# RECOGNIZER_REGISTRY_CONF_FILE defaults are already set, so this builds the
+# engine exactly as app.py does, including which config source wins (see the
+# Dockerfile's comment). Outside the image (plain local/CI run against a repo
+# checkout), fall back to the repo-relative path with no per-section files.
 _REPO_CONF_FILE = str(Path(__file__).resolve().parent.parent / "analyzer" / "conf" / "analyzer.yaml")
 
 # The one path every check in this file must use. Inside the image only
