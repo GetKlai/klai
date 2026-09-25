@@ -10,9 +10,9 @@ Supported ``connector.config`` keys:
 * ``ignore_fields``: field names never rendered into document text or the
   "Velden" schema line, and thus never part of a part's content or slug — for
   fields such as a per-record "updated at" timestamp that changes on every
-  sync without the record's real content changing (measured on the Voys
-  PriceRight feed 2026-09-25: 306/12,254 records touch only ``updated_at``
-  nightly, forcing an unrelated re-ingest of nearly every part).
+  sync without the record's real content changing. Spread over the feed,
+  such timestamp-only changes otherwise touch nearly every part each night
+  (measured 2026-09-25: 63 of 73 parts on a production feed).
 * ``max_records_per_doc``: average batch size without ``group_by`` (default 200).
 * ``max_doc_chars``: maximum rendered document size (default 120,000).
 
