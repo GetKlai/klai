@@ -270,30 +270,63 @@ def _patch_resume_run(monkeypatch, *, sample) -> None:
     monkeypatch.setattr(replay.sim, "_PAUSE_BETWEEN_CONVERSATIONS", 0)
 
 
+def _seed_interrupted_run(out_dir: Path, *, done: list[str]) -> None:
+    """The files a process killed mid-run leaves behind: sample.json is written up front, turns.jsonl only
+
+    carries the conversations that finished before the kill.
+    """
+    out_dir.mkdir()
+    (out_dir / "sample.json").write_text(
+        json.dumps(
+            {"count": 2, "max_turns": 1, "entries": [{"cid": "c-1", "user": "u-1"}, {"cid": "c-2", "user": "u-2"}]}
+        )
+    )
+    lines = [
+        json.dumps(
+            {
+                "conversation": i + 1,
+                "cid": cid,
+                "mode": "strict",
+                "turn": 0,
+                "verdict": "tie",
+                "old": _answer(10, 30),
+                "new": _answer(20, 40),
+                "old_flags": {"refused": False, "asked": False},
+                "new_flags": {"refused": False, "asked": False},
+            }
+        )
+        for i, cid in enumerate(["c-1", "c-2"])
+        if cid in done
+    ]
+    (out_dir / "turns.jsonl").write_text("".join(line + "\n" for line in lines))
+
+
+def _resample_from(samples: list[replay.Sample]):
+    async def resample(_org, entries):
+        by_cid = {s.cid: s for s in samples}
+        return [by_cid[e["cid"]] for e in entries]
+
+    return resample
+
+
+async def _sample_must_not_be_called(_org, _count):
+    raise AssertionError("a resume must rebuild the saved sample, not call _sample() again")
+
+
 async def test_resuming_skips_done_conversations_and_appends(monkeypatch, tmp_path, capsys):
     """A deploy that kills the process mid-run must not cost the conversations already replayed.
 
-    KLAI_REPLAY_OUT pointing at the interrupted run's own folder resumes it:
-    the sampled list is unchanged, but any cid already in turns.jsonl is
-    skipped instead of replayed a second time.
+    A resume points KLAI_REPLAY_OUT at the interrupted run's own folder and
+    passes the SAME count/max_turns: sample.json pins the sampled cids, and
+    any cid already in turns.jsonl is skipped instead of replayed again.
     """
     samples = _resume_samples()
     out_dir = tmp_path / "out"
+    _seed_interrupted_run(out_dir, done=["c-1"])
     monkeypatch.setenv("KLAI_REPLAY_OUT", str(out_dir))
 
-    async def sample_first_only(_org, _count):
-        return samples[:1]
-
-    # The interrupted run: only c-1 was sampled and replayed before it died.
-    _patch_resume_run(monkeypatch, sample=sample_first_only)
-    await replay.main("brightwater", 1, 1)
-    assert (out_dir / "turns.jsonl").read_text().count("\n") == 1
-
-    # The resumed run: same folder, both conversations sampled again.
-    async def sample_both(_org, _count):
-        return samples
-
-    _patch_resume_run(monkeypatch, sample=sample_both)
+    _patch_resume_run(monkeypatch, sample=_sample_must_not_be_called)
+    monkeypatch.setattr(replay, "_resample", _resample_from(samples))
     await replay.main("brightwater", 2, 1)
 
     out = capsys.readouterr().out
@@ -318,15 +351,55 @@ async def test_summary_from_an_appended_file_matches_a_single_run(monkeypatch, t
     await replay.main("brightwater", 2, 1)
     single_summary = json.loads((single_out / "summary.json").read_text())
 
-    async def sample_first_only(_org, _count):
-        return samples[:1]
-
+    # Same two conversations, but interrupted after the first and resumed.
     resumed_out = tmp_path / "resumed"
+    _seed_interrupted_run(resumed_out, done=["c-1"])
     monkeypatch.setenv("KLAI_REPLAY_OUT", str(resumed_out))
-    _patch_resume_run(monkeypatch, sample=sample_first_only)
-    await replay.main("brightwater", 1, 1)
-    _patch_resume_run(monkeypatch, sample=sample_both)
+    _patch_resume_run(monkeypatch, sample=_sample_must_not_be_called)
+    monkeypatch.setattr(replay, "_resample", _resample_from(samples))
     await replay.main("brightwater", 2, 1)
     resumed_summary = json.loads((resumed_out / "summary.json").read_text())
 
     assert resumed_summary == single_summary
+
+
+async def test_resume_replays_the_original_sample_even_if_the_candidate_list_shifts(monkeypatch, tmp_path):
+    """A resume must not re-query which conversations are recent: that list can drift between runs.
+
+    _sample() reads the newest-updated conversations from Mongo, so a
+    conversation touched between the interrupted run and the resume can
+    reorder or replace what it returns. sample.json pins the original
+    cid/user pairs on the first run so a resume rebuilds exactly those,
+    instead of whatever _sample() would return now.
+    """
+    original = _resume_samples()
+    shifted = [replay.Sample("c-3", "u-3", _profile("sub-3"), ["Nieuw gesprek"]), *original]
+
+    out_dir = tmp_path / "out"
+    monkeypatch.setenv("KLAI_REPLAY_OUT", str(out_dir))
+
+    sample_calls = {"n": 0}
+
+    async def sample_original(_org, _count):
+        sample_calls["n"] += 1
+        return original
+
+    _patch_resume_run(monkeypatch, sample=sample_original)
+    await replay.main("brightwater", 2, 1)
+    assert sample_calls["n"] == 1
+
+    async def sample_shifted(_org, _count):
+        sample_calls["n"] += 1
+        return shifted
+
+    async def resample(_org, entries):
+        by_cid = {s.cid: s for s in original}
+        return [by_cid[e["cid"]] for e in entries]
+
+    _patch_resume_run(monkeypatch, sample=sample_shifted)
+    monkeypatch.setattr(replay, "_resample", resample)
+    await replay.main("brightwater", 2, 1)
+
+    assert sample_calls["n"] == 1, "a resume must not call _sample() again"
+    lines = [json.loads(line) for line in (out_dir / "turns.jsonl").read_text().splitlines()]
+    assert [r["cid"] for r in lines] == ["c-1", "c-2"], "the original sample, not the shifted one, was replayed"
