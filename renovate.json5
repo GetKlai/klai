@@ -80,6 +80,13 @@
   // generating the lockfile, producing a PR that cannot build. Keep the two
   // numbers in sync; the npm one also applies to every manual install.
   minimumReleaseAge: '7 days',
+  // With the default 'strict', a grouped update waits until EVERY member's
+  // newest release is 7 days old. Ollama and LiteLLM release weekly, so the
+  // Docker images group never aged: on 2026-09-25 Grafana 13.2.2 (out since
+  // 2026-09-15) and Ollama 0.34 had been held back for weeks behind it, and
+  // their Trivy findings with them. 'flexible' takes, per dependency, the
+  // newest version that has already aged, so the group lands.
+  internalChecksFilter: 'flexible',
 
   // The gap that caused the August 2026 audit findings. Renovate only bumps
   // DECLARED dependencies; vulnerable TRANSITIVE pins inside uv.lock and
