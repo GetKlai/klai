@@ -35,7 +35,7 @@ groups:
         data:
           - refId: query
             datasourceUid: victorialogs
-            queryType: instant
+            queryType: stats
             relativeTimeRange:
               from: 900   # 15 minutes
               to: 0
@@ -44,8 +44,8 @@ groups:
               datasource:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
-              expr: 'service:portal-api AND (level:error OR level:exception) AND _msg:"signup"'
-              queryType: instant
+              expr: 'service:portal-api AND (level:error OR level:exception) AND _msg:"signup" | stats count() as n'
+              queryType: stats
           - refId: count
             datasourceUid: __expr__
             relativeTimeRange:
@@ -54,7 +54,7 @@ groups:
             model:
               refId: count
               type: reduce
-              reducer: count
+              reducer: last
               expression: query
           - refId: threshold
             datasourceUid: __expr__
@@ -107,7 +107,7 @@ groups:
         data:
           - refId: query
             datasourceUid: victorialogs
-            queryType: instant
+            queryType: stats
             relativeTimeRange:
               from: 900
               to: 0
@@ -116,8 +116,8 @@ groups:
               datasource:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
-              expr: 'service:litellm AND level:error AND _msg:"retrieval"'
-              queryType: instant
+              expr: 'service:litellm AND level:error AND _msg:"retrieval" | stats count() as n'
+              queryType: stats
           - refId: count
             datasourceUid: __expr__
             relativeTimeRange:
@@ -126,7 +126,7 @@ groups:
             model:
               refId: count
               type: reduce
-              reducer: count
+              reducer: last
               expression: query
           - refId: threshold
             datasourceUid: __expr__
@@ -180,7 +180,7 @@ groups:
         data:
           - refId: query
             datasourceUid: victorialogs
-            queryType: instant
+            queryType: stats
             relativeTimeRange:
               from: 900
               to: 0
@@ -189,8 +189,8 @@ groups:
               datasource:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
-              expr: 'service:litellm AND _msg:"TIJDELIJK NIET BEREIKBAAR"'
-              queryType: instant
+              expr: 'service:litellm AND _msg:"TIJDELIJK NIET BEREIKBAAR" | stats count() as n'
+              queryType: stats
           - refId: count
             datasourceUid: __expr__
             relativeTimeRange:
@@ -199,7 +199,7 @@ groups:
             model:
               refId: count
               type: reduce
-              reducer: count
+              reducer: last
               expression: query
           - refId: threshold
             datasourceUid: __expr__

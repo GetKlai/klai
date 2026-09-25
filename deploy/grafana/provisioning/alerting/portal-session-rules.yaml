@@ -57,7 +57,7 @@ groups:
         data:
           - refId: query
             datasourceUid: victorialogs
-            queryType: instant
+            queryType: stats
             relativeTimeRange:
               from: 60
               to: 0
@@ -67,7 +67,7 @@ groups:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
               expr: '_time:1m service:portal-api event:sso_cookie_key_missing_startup_abort | stats count() as n'
-              queryType: instant
+              queryType: stats
           - refId: reduce
             datasourceUid: __expr__
             relativeTimeRange:
@@ -150,7 +150,7 @@ groups:
         data:
           - refId: query
             datasourceUid: victorialogs
-            queryType: instant
+            queryType: stats
             relativeTimeRange:
               from: 60
               to: 0
@@ -160,7 +160,7 @@ groups:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
               expr: '_time:1m service:portal-api event:totp_pending_redis_unavailable | stats count() as n'
-              queryType: instant
+              queryType: stats
           - refId: reduce
             datasourceUid: __expr__
             relativeTimeRange:

@@ -47,7 +47,7 @@ groups:
         data:
           - refId: query
             datasourceUid: victorialogs
-            queryType: instant
+            queryType: stats
             relativeTimeRange:
               from: 600
               to: 0
@@ -56,8 +56,8 @@ groups:
               datasource:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
-              expr: 'service:knowledge-ingest AND (event:content_wall_signal_reject OR event:content_wall_signal_degrade OR event:content_wall_signal_observed)'
-              queryType: instant
+              expr: 'service:knowledge-ingest AND (event:content_wall_signal_reject OR event:content_wall_signal_degrade OR event:content_wall_signal_observed) | stats count() as n'
+              queryType: stats
           - refId: count
             datasourceUid: __expr__
             relativeTimeRange:
@@ -66,7 +66,7 @@ groups:
             model:
               refId: count
               type: reduce
-              reducer: count
+              reducer: last
               expression: query
           - refId: threshold
             datasourceUid: __expr__
@@ -131,7 +131,7 @@ groups:
         data:
           - refId: query
             datasourceUid: victorialogs
-            queryType: instant
+            queryType: stats
             relativeTimeRange:
               from: 600
               to: 0
@@ -140,8 +140,8 @@ groups:
               datasource:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
-              expr: 'service:knowledge-ingest AND event:login_wall_detector_config_invalid'
-              queryType: instant
+              expr: 'service:knowledge-ingest AND event:login_wall_detector_config_invalid | stats count() as n'
+              queryType: stats
           - refId: count
             datasourceUid: __expr__
             relativeTimeRange:
@@ -150,7 +150,7 @@ groups:
             model:
               refId: count
               type: reduce
-              reducer: count
+              reducer: last
               expression: query
           - refId: threshold
             datasourceUid: __expr__
@@ -201,7 +201,7 @@ groups:
         data:
           - refId: query
             datasourceUid: victorialogs
-            queryType: instant
+            queryType: stats
             relativeTimeRange:
               from: 600
               to: 0
@@ -210,8 +210,8 @@ groups:
               datasource:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
-              expr: 'service:knowledge-ingest AND event:crawl_job_auth_wall_rate_high'
-              queryType: instant
+              expr: 'service:knowledge-ingest AND event:crawl_job_auth_wall_rate_high | stats count() as n'
+              queryType: stats
           - refId: count
             datasourceUid: __expr__
             relativeTimeRange:
@@ -220,7 +220,7 @@ groups:
             model:
               refId: count
               type: reduce
-              reducer: count
+              reducer: last
               expression: query
           - refId: threshold
             datasourceUid: __expr__

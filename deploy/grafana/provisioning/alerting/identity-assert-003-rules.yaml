@@ -31,7 +31,7 @@ groups:
         data:
           - refId: query
             datasourceUid: victorialogs
-            queryType: instant
+            queryType: stats
             relativeTimeRange:
               from: 600
               to: 0
@@ -40,8 +40,8 @@ groups:
               datasource:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
-              expr: 'service:retrieval-api AND event:identity_assertion_failed'
-              queryType: instant
+              expr: 'service:retrieval-api AND event:identity_assertion_failed | stats count() as n'
+              queryType: stats
           - refId: reduce
             datasourceUid: __expr__
             relativeTimeRange:
@@ -50,7 +50,7 @@ groups:
             model:
               refId: reduce
               type: reduce
-              reducer: count
+              reducer: last
               expression: query
           - refId: threshold
             datasourceUid: __expr__
@@ -95,7 +95,7 @@ groups:
         data:
           - refId: query
             datasourceUid: victorialogs
-            queryType: instant
+            queryType: stats
             relativeTimeRange:
               from: 600
               to: 0
@@ -104,8 +104,8 @@ groups:
               datasource:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
-              expr: 'service:retrieval-api AND event:missing_org_id'
-              queryType: instant
+              expr: 'service:retrieval-api AND event:missing_org_id | stats count() as n'
+              queryType: stats
           - refId: reduce
             datasourceUid: __expr__
             relativeTimeRange:
@@ -114,7 +114,7 @@ groups:
             model:
               refId: reduce
               type: reduce
-              reducer: count
+              reducer: last
               expression: query
           - refId: threshold
             datasourceUid: __expr__
@@ -157,7 +157,7 @@ groups:
         data:
           - refId: query
             datasourceUid: victorialogs
-            queryType: instant
+            queryType: stats
             relativeTimeRange:
               from: 600
               to: 0
@@ -166,8 +166,8 @@ groups:
               datasource:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
-              expr: 'service:klai-connector AND event:identity_assertion_failed'
-              queryType: instant
+              expr: 'service:klai-connector AND event:identity_assertion_failed | stats count() as n'
+              queryType: stats
           - refId: reduce
             datasourceUid: __expr__
             relativeTimeRange:
@@ -176,7 +176,7 @@ groups:
             model:
               refId: reduce
               type: reduce
-              reducer: count
+              reducer: last
               expression: query
           - refId: threshold
             datasourceUid: __expr__

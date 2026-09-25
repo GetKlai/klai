@@ -47,7 +47,7 @@ groups:
         data:
           - refId: query
             datasourceUid: victorialogs
-            queryType: instant
+            queryType: stats
             relativeTimeRange:
               from: 300
               to: 0
@@ -57,7 +57,7 @@ groups:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
               expr: '_time:5m service:portal-api event:mfa_check_failed | stats count() as n'
-              queryType: instant
+              queryType: stats
           - refId: reduce
             datasourceUid: __expr__
             relativeTimeRange:
@@ -132,7 +132,7 @@ groups:
         data:
           - refId: query
             datasourceUid: victorialogs
-            queryType: instant
+            queryType: stats
             relativeTimeRange:
               from: 60
               to: 0
@@ -142,7 +142,7 @@ groups:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
               expr: '_time:1m service:portal-api event:mfa_check_failed outcome:fail-open | stats count() as n'
-              queryType: instant
+              queryType: stats
           - refId: reduce
             datasourceUid: __expr__
             relativeTimeRange:

@@ -47,7 +47,7 @@ groups:
         data:
           - refId: query
             datasourceUid: victorialogs
-            queryType: instant
+            queryType: stats
             relativeTimeRange:
               from: 600
               to: 0
@@ -56,8 +56,8 @@ groups:
               datasource:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
-              expr: '_time:10m service:portal-api AND ("Could not refresh instance" OR "InsufficientPrivilegeError" OR "42501")'
-              queryType: instant
+              expr: '_time:10m service:portal-api AND ("Could not refresh instance" OR "InsufficientPrivilegeError" OR "42501") | stats count() as n'
+              queryType: stats
           - refId: reduce
             datasourceUid: __expr__
             relativeTimeRange:
@@ -66,7 +66,7 @@ groups:
             model:
               refId: reduce
               type: reduce
-              reducer: count
+              reducer: last
               expression: query
           - refId: threshold
             datasourceUid: __expr__
