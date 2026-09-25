@@ -206,9 +206,8 @@ async def test_organisations_over_their_monthly_limit_reach_pay_as_you_go_last(
         router.reset()
 
     assert response.choices[0].message.content == "backup response"
-    assert calls[-1] == _BACKUP_KEY
-    assert calls.index(_PRIMARY_KEY) > calls.index(_PRO_KEY)
-    assert calls.index(_BACKUP_KEY) > calls.index(_PRIMARY_KEY)
+    # A 402 is not retried on the same key: each level is tried once, in order.
+    assert calls == [_PRO_KEY, _PRIMARY_KEY, _BACKUP_KEY]
 
 
 @pytest.mark.asyncio
