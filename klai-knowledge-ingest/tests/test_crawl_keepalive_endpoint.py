@@ -10,7 +10,7 @@ authenticated GET so the session never goes idle. It is best-effort — it
 must never surface a 500 to the caller.
 
 2026-09-25: the probe used to treat any bare 3xx as "not ok" without ever
-following it. Production data (connector b369796b) showed the probed URL is
+following it. Production data (September 2026) showed the probed URL is
 usually the site root, and many CMSes 302 that to a language path (``/en``)
 even for an authenticated session — every tick reported ok=false and the
 keep-alive never actually kept anything alive. These tests pin the fix: the
