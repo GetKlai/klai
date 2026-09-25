@@ -251,6 +251,23 @@ De interne chat en de widget hebben elk hun eigen beslislogica, en die twee pade
 
 Tijd noemen we alleen waar een vergelijkbare wijziging een houvast geeft; de rest schatten we na stap 0.
 
+**Replay interne chat, oud tegen nieuw (25 september 2026).** Twaalf echte gesprekken van één tenant,
+vier beurten elk, een gesimuleerde medewerker met het doel uit het echte gesprek, beide paden op
+dezelfde vragen, `klai-large` als beoordelaar in beide volgordes (`scripts/replay_internal_chat.py`,
+gedraaid in een wegwerpcontainer via `deploy/scripts/portal-api-oneoff.sh`). De eerste beoordeling
+zag 6 keer nieuw beter, 22 gelijk en 14 keer oud beter, maar kreeg versieringen te zien in plaats van
+antwoorden: het oude pad plakt onder elk antwoord een verborgen bronnenblok in base64 en een langere
+voettekst die ook onder een weigering staat, en in vier Strict-beurten waar beide kanten met dezelfde
+zin weigerden koos de beoordelaar vier keer oud. Op de zichtbare tekst, met beide voetteksten en het
+verborgen blok eraf en met de opdracht een niet aan eigen materiaal gebonden procedure als verzonnen
+te tellen, wordt het 12 keer nieuw beter, 27 gelijk en 3 keer oud beter (Open 12-19-2, Strict 0-8-1);
+verzonnen inhoud oud 13 van 42, nieuw 2 van 42; weigeringen oud 14 procent, nieuw 26 procent; eerste
+woord nieuw 2,2 s tegen 2,5 s mediaan. Vijftien ongelijke paren is minder dan de 47 die §4.3 vraagt,
+dus dit is een richting, geen bewijs; wel is het de richting die de plan-eis stelt (beter, minder
+verzinsels, en de extra weigeringen vallen samen met antwoorden die het oude pad verzon). Twee lessen
+voor elke volgende meting: een beoordelaar krijgt alleen wat de gebruiker leest, en een
+meting van een uur draait buiten de compose-service, want elke deploy naar main maakt die opnieuw aan.
+
 ### 7.5 Wat we niet doen
 
 - Het antwoordmodel in dezelfde generatie laten doorvragen.
