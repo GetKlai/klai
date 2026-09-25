@@ -366,6 +366,10 @@ services:
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro
+      # Ordered-account Mistral failover (first entry in config.yaml's
+      # litellm_settings.callbacks): see klai_mistral_pool.py's module
+      # docstring.
+      - ./litellm/klai_mistral_pool.py:/app/klai_mistral_pool.py:ro
       - ./litellm/klai_knowledge.py:/app/klai_knowledge.py:ro
       - ./litellm/klai_context.py:/app/klai_context.py:ro
       - ./litellm/klai_answer_epistemics.py:/app/klai_answer_epistemics.py:ro

@@ -111,7 +111,9 @@ search_tools:
 router_settings:
   # LiteLLM v1.96.2 filters to the lowest deployment order before applying
   # simple-shuffle, then advances on any failure except context-window and
-  # content-policy errors, which follow their dedicated fallback paths.
+  # content-policy errors, which follow their dedicated fallback paths --
+  # including a persistent 429, which is why klai_mistral_pool_hook above is
+  # needed to keep that advance FULL-gated instead of retry-exhaustion-gated.
   # Behavioral coverage: tests/test_litellm_mistral_failover.py.
   routing_strategy: simple-shuffle
   # klai-primary and klai-fast share the same upstream Mistral Small quota.
@@ -138,6 +140,16 @@ litellm_settings:
   # 429/503. Callers with semantic retry needs keep their own backoff.
   num_retries: 1
   callbacks:
+    # Keeps every klai-* Mistral alias on the lowest Pro organisation that
+    # isn't FULL (Mistral 402): closes the gap where LiteLLM's own built-in
+    # order-based fallback (router.py's "ORDER-BASED FALLBACKS") moves
+    # traffic to the next `order` on a persistent 429 too, not just a 402.
+    # Order-independent of the other callbacks below: it only touches
+    # deployment SELECTION (async_filter_deployments) and post-hoc FULL-state
+    # bookkeeping (log_success/failure_fallback_event), never the outbound
+    # request/response payload those mutate. See klai_mistral_pool.py's
+    # module docstring. Tests: tests/test_litellm_mistral_failover.py.
+    - klai_mistral_pool.klai_mistral_pool_hook
     - klai_knowledge.klai_knowledge_hook
     - custom_router.token_router
     # SPEC-PRIVACY-MISTRAL-PII-001 Phase 2 (REQ-5, REQ-6): read-only PII
