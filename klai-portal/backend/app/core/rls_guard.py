@@ -12,7 +12,12 @@ value), this turns into a class of silent bug where:
     but zero rows changed.
 
 This module hooks SQLAlchemy's `after_cursor_execute` event to detect these
-silent-filter patterns and log them at ERROR level with traceback.
+silent-filter patterns and log them at ERROR level with traceback. A 0-row
+DML only counts when the transaction has no tenant scope bound (no
+`app.current_org_id` and no cross-org bypass): with a scope bound, 0 rows is
+the query's real answer, and flagging it produced 40-70 false alarms a day on
+the support-case findings clear. A GUC bound to the WRONG org cannot be told
+apart from a legitimately empty match, so that case is not detected here.
 
 Two modes:
 
@@ -132,8 +137,22 @@ def _extract_dml_table(statement: str) -> tuple[str, str] | None:
     return op, name
 
 
+def _tenant_context_bound(conn: Any) -> bool:
+    """Whether the transaction that ran the statement carries a tenant scope.
+
+    The GUCs are transaction-local (see ``app.core.database``), so this reads
+    exactly the context the statement ran under. With a scope bound, a 0-row
+    result is the query's real answer: an idempotent clear of rows that do not
+    exist (a support case's findings before any were written) is not a filter.
+    """
+    org_id, cross_org = conn.exec_driver_sql(
+        "SELECT current_setting('app.current_org_id', true), current_setting('app.cross_org_admin', true)"
+    ).one()
+    return bool(org_id) or cross_org == "true"
+
+
 def _on_after_cursor_execute(
-    _conn: Any,
+    conn: Any,
     cursor: Any,
     statement: str,
     _parameters: Any,
@@ -147,6 +166,8 @@ def _on_after_cursor_execute(
     if match is None:
         return
     op, table = match
+    if _tenant_context_bound(conn):
+        return
     # The calling frame tells us which application code triggered this.
     # Limit traceback to application frames to keep log volume reasonable.
     stack = traceback.extract_stack(limit=25)
@@ -154,9 +175,8 @@ def _on_after_cursor_execute(
     caller = "\n".join(f"    {f.filename}:{f.lineno} in {f.name}" for f in app_frames)
     statement_preview = " ".join(statement.split())[:180]
     msg = (
-        f"RLS silent-filter: {op} on {table} matched 0 rows. "
-        f"Likely cause: app.current_org_id missing or mismatched on this "
-        f"connection. Statement: {statement_preview}"
+        f"RLS silent-filter: {op} on {table} matched 0 rows with no "
+        f"app.current_org_id bound on this transaction. Statement: {statement_preview}"
     )
     if _strict_mode():
         raise RuntimeError(msg)

@@ -1209,6 +1209,25 @@ async def test_rescore_reanalyses_scoped_support_cases(pg) -> None:
     assert analyzer.analyze_support_case.await_count == before + 2  # forced, both re-run
 
 
+async def test_clearing_a_case_without_findings_is_not_an_rls_silent_filter(pg, monkeypatch) -> None:
+    """Every import and reanalysis clears the case's derived rows before writing
+    new ones. For a new case, or a case whose analysis produced no inbox finding,
+    that DELETE legitimately matches 0 rows under a correctly bound tenant, and
+    the RLS guard must not report it as a missing tenant context (production
+    logged 40-70 of these false alarms a day from 2026-09-18)."""
+    from app.core.rls_guard import install_rls_guard
+
+    admin, factory, cid, analyzer = pg
+    analyzer.analyze_support_case = AsyncMock(
+        return_value=[{"question": "Reset 2FA?", "diagnosis": "covered", "gap_type": None, "language": "en"}]
+    )
+    install_rls_guard(factory.kw["bind"])
+    monkeypatch.setenv("PORTAL_RLS_GUARD_STRICT", "1")
+    await _upsert(factory, cid, _payload())
+    assert await _reanalyse_scoped(factory, "kb-a") == (1, 0)
+    assert await _counts(admin) == (1, 0)
+
+
 async def test_rescore_support_reanalysis_is_gated_on_full_telemetry(pg) -> None:
     admin, factory, cid, analyzer = pg
     await _upsert(factory, cid, _payload())
