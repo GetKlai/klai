@@ -120,7 +120,7 @@ class KnowledgeIngestClient:
         user_id: str | None = None,
         document_extra: dict[str, object] | None = None,
         resource_generation: str | None = None,
-    ) -> None:
+    ) -> bool:
         """Send a parsed document to knowledge-ingest for embedding.
 
         Args:
@@ -140,6 +140,14 @@ class KnowledgeIngestClient:
                 ``req.user_id`` so knowledge-ingest can pass the
                 personal-KB owner-binding check (``personal_kb_owner_mismatch``).
                 Without it, syncs to ``personal-{user}`` KBs return 403.
+
+        Returns:
+            Whether the knowledge base changed. knowledge-ingest answers
+            ``status: "skipped"`` when it wrote nothing (content unchanged,
+            empty document, connector deleting) and ``status: "ok"`` after a
+            write. Any status other than ``skipped`` counts as a change, so an
+            unexpected answer errs toward reanalysing rather than missing new
+            content.
 
         Raises:
             ValueError: If content exceeds the knowledge-ingest request contract.
@@ -187,6 +195,7 @@ class KnowledgeIngestClient:
         )
         response.raise_for_status()
         logger.info("Ingested document: %s", path)
+        return response.json().get("status") != "skipped"
 
     async def delete_connector_document(
         self,

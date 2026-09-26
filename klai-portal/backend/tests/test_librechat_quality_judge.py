@@ -562,6 +562,23 @@ def test_derive_signals_had_error_branches(docs, expected):
     assert lj._derive_signals(docs)["had_error"] is expected
 
 
+def test_user_prompt_for_an_oversized_transcript_keeps_the_latest_turns_under_the_cap():
+    from app.services import librechat_quality_judge as lj
+    from app.services.conversation_judge import JUDGE_TRANSCRIPT_MAX_CHARS
+
+    turns = [
+        {"role": "user" if i % 2 == 0 else "assistant", "content": f"turn {i} " + "x" * 20_000} for i in range(200)
+    ]
+    turns.append({"role": "user", "content": "the latest question"})
+
+    prompt = lj._build_user_prompt(turns, explicit_rating=None, had_error=False)
+
+    assert len(prompt) <= JUDGE_TRANSCRIPT_MAX_CHARS + 200
+    transcript = json.loads(prompt)["transcript"]
+    assert transcript[-1]["content"] == "the latest question"
+    assert "turn 0 " not in prompt
+
+
 # ---------------------------------------------------------------------------
 # (e) invalid judge JSON: conversation skipped, batch continues
 # ---------------------------------------------------------------------------

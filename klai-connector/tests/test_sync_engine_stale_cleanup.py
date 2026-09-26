@@ -376,13 +376,14 @@ class _ContentHashDedupFake:
         self.requests = 0
         self.ingests = 0
 
-    async def ingest_document(self, *, path: str, content: str, **_kwargs: Any) -> None:
+    async def ingest_document(self, *, path: str, content: str, **_kwargs: Any) -> bool:
         self.requests += 1
         content_hash = hashlib.sha256(content.encode()).hexdigest()
         if self._hashes.get(path) == content_hash:
-            return
+            return False
         self._hashes[path] = content_hash
         self.ingests += 1
+        return True
 
     async def delete_connector_document(self, **_kwargs: Any) -> None:
         return None
@@ -412,3 +413,26 @@ async def test_two_unchanged_syncs_reach_dedup_but_create_one_ingest() -> None:
     assert ingest_client.ingests == 1
     assert first.status == SyncStatus.COMPLETED
     assert second.status == SyncStatus.COMPLETED
+    reported = [call.kwargs["documents_changed"] for call in engine._portal_client.report_sync_status.await_args_list]
+    assert reported == [1, 0]
+
+
+@pytest.mark.asyncio
+async def test_documents_changed_counts_real_ingests_and_stale_deletes_but_not_skips() -> None:
+    """The portal spends LLM calls on support reanalysis only for changed
+    knowledge, so an ingest that knowledge-ingest skipped as unchanged must not
+    count, while a real ingest and a stale-ref delete both do."""
+    refs = [_ref("a"), _ref("b")]
+    previous = MagicMock()
+    previous.cursor_state = {"synced_refs": [refs[0].source_ref, refs[1].source_ref, f"json-feed:{CONNECTOR_ID}:c"]}
+    current = _sync_run()
+    ingest_client = MagicMock()
+    ingest_client.ingest_document = AsyncMock(side_effect=[False, True])
+    ingest_client.delete_connector_document = AsyncMock()
+    engine = _engine(runs=[current], adapter=_adapter(refs), ingest_client=ingest_client, previous_run=previous)
+
+    await engine.run_sync(CONNECTOR_ID, uuid.uuid4())
+
+    assert current.status == SyncStatus.COMPLETED
+    engine._portal_client.report_sync_status.assert_awaited_once()
+    assert engine._portal_client.report_sync_status.await_args.kwargs["documents_changed"] == 2

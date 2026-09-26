@@ -198,3 +198,32 @@ def test_connector_payload_forwards_sync_generation() -> None:
     payload = _build_payload(**_base_kwargs(), resource_generation="sync-run-42")
 
     assert payload["resource_generation"] == "sync-run-42"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("body", "changed"),
+    [
+        ({"status": "skipped", "reason": "content unchanged", "chunks": 0}, False),
+        ({"status": "ok", "chunks": 3, "title": "Doc", "artifact_id": "a-1"}, True),
+    ],
+)
+async def test_ingest_document_reports_whether_knowledge_changed(body: dict, changed: bool) -> None:
+    client = KnowledgeIngestClient(base_url="http://knowledge-ingest:8100", internal_secret="placeholder-secret")
+    await client._client.aclose()
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    response.json = MagicMock(return_value=body)
+    client._client = MagicMock()
+    client._client.post = AsyncMock(return_value=response)
+
+    result = await client.ingest_document(
+        org_id="org-1",
+        kb_slug="support",
+        path="doc.md",
+        content="hello",
+        source_connector_id="connector-1",
+        source_ref="doc.md",
+    )
+
+    assert result is changed

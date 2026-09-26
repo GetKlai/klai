@@ -204,6 +204,8 @@ class TestResolveTerminalCompleted:
         portal.report_sync_status.assert_awaited_once()
         assert portal.report_sync_status.await_args.kwargs["sync_status"] == SyncStatus.COMPLETED
         assert portal.report_sync_status.await_args.kwargs["documents_ok"] == 368
+        # pages_done also counts pages skipped as unchanged; the changed count is unknown.
+        assert portal.report_sync_status.await_args.kwargs["documents_changed"] is None
 
         assert snap.status == SyncStatus.COMPLETED
         assert snap.pages_done == 368

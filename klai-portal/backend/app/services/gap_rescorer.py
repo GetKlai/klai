@@ -310,9 +310,12 @@ async def schedule_rescore(
     kb_slug: str | None,
     db_factory,
     delay_seconds: float = 5.0,
+    reanalyse_support: bool = True,
 ) -> None:
-    """Fire-and-forget wrapper: delay then rescore telemetry gaps and reanalyse
-    support cases, each on its own fresh DB session.
+    """Fire-and-forget wrapper: delay then rescore telemetry gaps and, unless
+    ``reanalyse_support`` is off, reanalyse support cases, each on its own fresh
+    DB session. The connector-sync caller turns it off and goes through
+    ``schedule_support_reanalysis`` instead.
 
     Uses asyncio.create_task for non-blocking execution. All exceptions are caught
     and logged so one failing pass never aborts the other.
@@ -326,6 +329,8 @@ async def schedule_rescore(
             except Exception:
                 logger.exception("gap_rescorer: unhandled error in background task")
             break  # only one session needed
+        if not reanalyse_support:
+            return
         async for db in db_factory():
             try:
                 await reanalyse_scoped_support_cases(org_id, zitadel_org_id, kb_slug, db)
@@ -337,3 +342,54 @@ async def schedule_rescore(
         asyncio.get_running_loop().create_task(_run())
     except RuntimeError:
         logger.warning("gap_rescorer: no running event loop -- cannot schedule re-scoring")
+
+
+# A connector sync that changed knowledge force-reanalyses up to
+# MAX_SUPPORT_CASES_PER_TRIGGER support cases at ~9 klai-medium calls each. An
+# org's connectors finish one after another in the same nightly window, so each
+# qualifying sync restarts a per-org timer and the org gets one run after the
+# last of them instead of one per sync.
+SUPPORT_REANALYSIS_DEBOUNCE_SECONDS = 15 * 60
+# In-process state is enough because portal-api runs as a single uvicorn
+# process in a single container (scripts/uvicorn-launch.sh passes no --workers,
+# deploy/docker-compose.yml sets no replicas). A restart drops a pending timer;
+# the next sync that changes knowledge schedules one again.
+_support_reanalysis_timers: dict[int, asyncio.Task] = {}
+_support_reanalysis_locks: dict[int, asyncio.Lock] = {}
+_support_reanalysis_tasks: set[asyncio.Task] = set()
+
+
+def schedule_support_reanalysis(
+    org_id: int,
+    zitadel_org_id: str,
+    db_factory,
+    delay_seconds: float = SUPPORT_REANALYSIS_DEBOUNCE_SECONDS,
+) -> None:
+    """Debounced org-wide support reanalysis after a connector sync changed knowledge.
+
+    Each call restarts the org's timer, and a run waits for any earlier run of
+    the same org to finish, so two runs never spend on the same cases at once.
+    """
+    pending = _support_reanalysis_timers.pop(org_id, None)
+    if pending is not None:
+        pending.cancel()
+
+    async def _run() -> None:
+        await asyncio.sleep(delay_seconds)
+        # Past the debounce: a later sync now queues a follow-up run instead of
+        # cancelling this one, so the content it brings is still reanalysed.
+        if _support_reanalysis_timers.get(org_id) is task:
+            del _support_reanalysis_timers[org_id]
+        async with _support_reanalysis_locks.setdefault(org_id, asyncio.Lock()):
+            async for db in db_factory():
+                try:
+                    await reanalyse_scoped_support_cases(org_id, zitadel_org_id, None, db)
+                except Exception:
+                    logger.exception("gap_rescorer: unhandled error reanalysing support cases")
+                break
+
+    task = asyncio.get_running_loop().create_task(_run())
+    _support_reanalysis_timers[org_id] = task
+    # The event loop holds tasks weakly; keep a strong reference until done.
+    _support_reanalysis_tasks.add(task)
+    task.add_done_callback(_support_reanalysis_tasks.discard)

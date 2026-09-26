@@ -141,6 +141,7 @@ class TestReaperFinalisesTerminalRemote:
 
         portal.report_sync_status.assert_awaited_once()
         assert portal.report_sync_status.await_args.kwargs["sync_status"] == SyncStatus.COMPLETED
+        assert portal.report_sync_status.await_args.kwargs["documents_changed"] is None
         # Reaper MUST NOT cancel the upstream job.
         crawl_client.crawl_sync_cancel.assert_not_awaited()
 

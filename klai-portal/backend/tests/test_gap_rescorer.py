@@ -497,3 +497,83 @@ async def test_schedule_rescore_also_reanalyses_support_cases() -> None:
     rescore.assert_awaited_once()
     reanalyse.assert_awaited_once()
     assert reanalyse.await_args.args[:3] == (1, "zit-1", "kb-a")
+
+
+@pytest.mark.asyncio
+async def test_connector_sync_rescore_can_leave_support_cases_alone() -> None:
+    """The connector-sync caller runs support reanalysis through its own debounced
+    path, so its retrieval rescore must not reanalyse support cases as well."""
+    import asyncio
+
+    from app.services import gap_rescorer
+
+    rescore = AsyncMock()
+    reanalyse = AsyncMock(return_value=(0, 0))
+    with (
+        patch.object(gap_rescorer, "rescore_open_gaps", rescore),
+        patch.object(gap_rescorer, "reanalyse_scoped_support_cases", reanalyse),
+    ):
+
+        async def factory():
+            yield AsyncMock()
+
+        await gap_rescorer.schedule_rescore(2, "zit-2", None, factory, delay_seconds=0, reanalyse_support=False)
+        await asyncio.sleep(0.05)
+
+    rescore.assert_awaited_once()
+    reanalyse.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_several_syncs_of_one_org_within_the_debounce_window_reanalyse_once() -> None:
+    import asyncio
+
+    from app.services import gap_rescorer
+
+    reanalyse = AsyncMock(return_value=(0, 0))
+
+    async def factory():
+        yield AsyncMock()
+
+    with patch.object(gap_rescorer, "reanalyse_scoped_support_cases", reanalyse):
+        for _ in range(3):
+            gap_rescorer.schedule_support_reanalysis(3, "zit-3", factory, delay_seconds=0.05)
+            await asyncio.sleep(0.01)
+        await asyncio.sleep(0.2)
+
+    reanalyse.assert_awaited_once()
+    assert reanalyse.await_args.args[:3] == (3, "zit-3", None)
+
+
+@pytest.mark.asyncio
+async def test_support_reanalysis_runs_of_one_org_never_overlap() -> None:
+    """A sync that lands while a reanalysis is already running queues a second
+    run behind it instead of running both at once."""
+    import asyncio
+
+    from app.services import gap_rescorer
+
+    in_flight = 0
+    max_in_flight = 0
+
+    async def slow_reanalyse(*_args, **_kwargs):
+        nonlocal in_flight, max_in_flight
+        in_flight += 1
+        max_in_flight = max(max_in_flight, in_flight)
+        await asyncio.sleep(0.05)
+        in_flight -= 1
+        return 0, 0
+
+    reanalyse = AsyncMock(side_effect=slow_reanalyse)
+
+    async def factory():
+        yield AsyncMock()
+
+    with patch.object(gap_rescorer, "reanalyse_scoped_support_cases", reanalyse):
+        gap_rescorer.schedule_support_reanalysis(4, "zit-4", factory, delay_seconds=0)
+        await asyncio.sleep(0.01)  # the first run is past its debounce and running
+        gap_rescorer.schedule_support_reanalysis(4, "zit-4", factory, delay_seconds=0)
+        await asyncio.sleep(0.3)
+
+    assert reanalyse.await_count == 2
+    assert max_in_flight == 1

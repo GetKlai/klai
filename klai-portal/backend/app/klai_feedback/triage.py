@@ -149,6 +149,9 @@ async def _call_triage_llm(*, model: str, user: str) -> str:
                         {"role": "system", "content": _TRIAGE_SYSTEM},
                         {"role": "user", "content": user},
                     ],
+                    # Background work stays on Small. See
+                    # app.services.turn_judge.structured_judge_call for why ``fallbacks: []``.
+                    "fallbacks": [],
                 },
                 "portal:feedback-triage",
             ),

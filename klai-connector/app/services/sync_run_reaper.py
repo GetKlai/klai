@@ -42,6 +42,7 @@ from app.core.enums import SyncStatus
 from app.core.logging import get_logger
 from app.models.sync_run import SyncRun
 from app.services.crawl_sync_status import (
+    CRAWL_DOCUMENTS_CHANGED_UNKNOWN,
     is_completed_remote_crawl_status,
     is_failed_remote_crawl_status,
     remote_crawl_failure_error,
@@ -276,6 +277,7 @@ class SyncRunReaper:
             documents_failed=0,
             bytes_processed=0,
             error_details=None,
+            documents_changed=CRAWL_DOCUMENTS_CHANGED_UNKNOWN,
         )
         logger.info(
             "sync_run_reaper_finalised_completed",
@@ -332,6 +334,7 @@ class SyncRunReaper:
             documents_failed=max(0, documents_total - documents_ok),
             bytes_processed=0,
             error_details=error_details,
+            documents_changed=CRAWL_DOCUMENTS_CHANGED_UNKNOWN,
         )
         logger.info(
             "sync_run_reaper_finalised_failed",
