@@ -16,5 +16,6 @@ from typing import Any
 
 def with_feature_tag(body: dict[str, Any], tag: str) -> dict[str, Any]:
     """``body`` with ``tag`` added to its LiteLLM spend tags. Added, not replaced."""
-    body["metadata"] = {**(body.get("metadata") or {}), "tags": [tag]}
+    metadata = body.get("metadata") or {}
+    body["metadata"] = {**metadata, "tags": [*(metadata.get("tags") or []), tag]}
     return body

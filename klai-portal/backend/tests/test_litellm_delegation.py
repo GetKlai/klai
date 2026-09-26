@@ -21,3 +21,9 @@ def test_with_feature_tag_composes_with_delegated_org_either_order():
     body = with_feature_tag(body, "portal:turn-judge")
 
     assert body["metadata"] == {"_klai_delegated_org_id": "zorg-2", "tags": ["portal:turn-judge"]}
+
+
+def test_with_feature_tag_keeps_existing_tags():
+    body = with_feature_tag({"model": "klai-fast", "metadata": {"tags": ["caller:existing"]}}, "portal:turn-judge")
+
+    assert body["metadata"]["tags"] == ["caller:existing", "portal:turn-judge"]

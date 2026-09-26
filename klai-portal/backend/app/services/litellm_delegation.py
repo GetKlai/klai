@@ -32,5 +32,6 @@ def with_feature_tag(body: dict[str, Any], tag: str) -> dict[str, Any]:
     survives a 402/429 spend row exactly like a 200 one. Added, not replaced,
     same as ``with_delegated_org`` above.
     """
-    body["metadata"] = {**(body.get("metadata") or {}), "tags": [tag]}
+    metadata = body.get("metadata") or {}
+    body["metadata"] = {**metadata, "tags": [*(metadata.get("tags") or []), tag]}
     return body

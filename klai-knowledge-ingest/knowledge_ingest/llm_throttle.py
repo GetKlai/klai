@@ -116,7 +116,8 @@ def with_feature_tag(payload: dict, *, tag: str) -> dict:
     path, so a tag survives a 402/429 row exactly like a 200 one. ``tag`` is
     required (not defaulted) so a new caller cannot forget to name its feature.
     """
-    return {**payload, "metadata": {**(payload.get("metadata") or {}), "tags": [tag]}}
+    metadata = payload.get("metadata") or {}
+    return {**payload, "metadata": {**metadata, "tags": [*(metadata.get("tags") or []), tag]}}
 
 
 # ---------------------------------------------------------------------------
@@ -202,6 +203,9 @@ class NoMediumFallbackTransport(httpx.AsyncBaseTransport):
         request = _rewrite_body(request, lambda body: add_no_fallback(body, tag=self._tag))
         return await self._wrapped.handle_async_request(request)
 
+    async def aclose(self) -> None:
+        await self._wrapped.aclose()
+
 
 class TaggingTransport(httpx.AsyncBaseTransport):
     """Wraps a transport, adding only a spend tag -- no ``fallbacks: []``.
@@ -219,3 +223,6 @@ class TaggingTransport(httpx.AsyncBaseTransport):
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         request = _rewrite_body(request, lambda body: with_feature_tag(body, tag=self._tag))
         return await self._wrapped.handle_async_request(request)
+
+    async def aclose(self) -> None:
+        await self._wrapped.aclose()

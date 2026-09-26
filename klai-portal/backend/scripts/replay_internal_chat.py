@@ -96,6 +96,7 @@ from app.services.librechat_quality_judge import (  # noqa: E402
     _sync_fetch_messages,
     _turns_from_messages,
 )
+from app.services.litellm_delegation import with_feature_tag  # noqa: E402
 from app.services.provisioning.infrastructure import _read_dotenv_file  # noqa: E402
 
 REPO_ROOT = BACKEND_ROOT.parents[1]
@@ -317,7 +318,7 @@ async def _old_answer(client: httpx.AsyncClient, tenant_key: str, librechat_user
             "POST",
             f"{settings.litellm_base_url}/v1/chat/completions",
             headers={"Authorization": f"Bearer {tenant_key}"},
-            json={**_body(messages), "user": librechat_user_id},
+            json=with_feature_tag({**_body(messages), "user": librechat_user_id}, "script:replay_internal_chat"),
         ) as response:
             response.raise_for_status()
             async for line in response.aiter_lines():
