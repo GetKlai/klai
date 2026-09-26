@@ -29,7 +29,7 @@ GPU production image pins are intentionally not listed in this public repo becau
 | `postgres` | `pgvector/pgvector:0.8.6-pg18` | pgvector 0.8.6 on pg18 (bumped 2026-08-13, same Postgres major — data-compatible). PostgreSQL major version upgrades require dump/restore. pg18 is the current stable (since Sept 2025). Upgrade path: `pg_dumpall` → stop services → change image → delete volume → restore dump. |
 | `firecrawl-postgres` | `postgres:18.4-alpine` | Firecrawl-internal queue DB (NUQ schema). Pinned to match main postgres major. Data is transient (queue state), so cross-major migration is just a volume delete. |
 | `listmonk-db` | `postgres:17.10-alpine` | Dedicated database for listmonk campaigns, subscribers, templates, and admin users. Kept on the upstream listmonk Docker Compose default; dump/restore before any major PostgreSQL bump. |
-| `mongodb` | `mongo:8.2.12` | MongoDB 8 is the current stable major. LibreChat tenants depend on this. Major upgrades require replica-set-aware migration. |
+| `mongodb` | `mongo:8.0.32` | The 8.0 LTS line, kept there by Renovate (`allowedVersions: <8.1`). We ran the 8.2 minor release with FCV 8.0 until 2026-09-26; 8.3 would have required FCV 8.2 first and minors are supported only briefly, and Community has no binary downgrade, so the return to 8.0 was a mongodump/mongorestore into the new `mongodb-data-80` volume (all 43 databases and 30,953 documents compared equal on a copy first). LibreChat tenants depend on this. |
 | `redis` | `redis:8.10.0-alpine` | Bumped 2026-08-13: 8.8.1 was a security release on our 8.8.0 pin; 8.10.0 is current stable on the same major. Redis 8 (GA Aug 2025) ships Vector Sets + hash-field-TTL. |
 | `vexa-redis` | `redis:8.10.0-alpine` | Aligned with main redis major. Isolated network; bot state + pub/sub + transcription streams. |
 | `qdrant` | `qdrant/qdrant:v1.19.1` | Vector store for Klai Knowledge. Binary-incompatible on major bumps — pin explicitly. Bumped 2026-09-11. Read, not assumed: 1.19.1 was booted against a COPY of production's 1.19.0 storage before merging -- collection recovered, status green, 43,865 points, scroll with payload answered, zero errors or panics in the log. Two fixes in it matter to a host that has been OOM-killed — flush CoW segments before building a payload index, and repair Gridstore pages after an unsafe shutdown. Two behaviour changes checked against our code first: a scroll without `limit` no longer bypasses `max_query_limit` (all 19 of our scroll calls pass one), and empty dense vectors are now rejected rather than accepted (bge-m3 is always 1024-dim). |
@@ -92,7 +92,7 @@ issues locally.
 |---|---|---|
 | `postgres` | `pgvector/pgvector:0.8.6-pg18` | Same as prod. |
 | `redis` | `redis:8.10.0-alpine` | Aligned with prod (was `redis:alpine`). |
-| `mongodb` | `mongo:8.2.12` | Same as prod. |
+| `mongodb` | `mongo:8.0.32` | Same as prod. |
 | `meilisearch` | `getmeili/meilisearch:v1.53.0` | Aligned with prod; keep `MEILI_DB_PATH=/meili_data` in dev as well. |
 | `litellm` | `ghcr.io/berriai/litellm:v1.96.2` | Same as prod. |
 
