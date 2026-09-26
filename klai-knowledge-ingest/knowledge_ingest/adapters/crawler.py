@@ -1507,15 +1507,25 @@ async def _enqueue_taxonomy_backfill_after_crawl(
         )
         return None
 
+    from procrastinate.exceptions import AlreadyEnqueued
+
     proc_app = get_app()
     lock = f"taxonomy-backfill:{org_id}:{kb_slug}"
-    backfill_job_id = await proc_app.run_taxonomy_backfill.configure(  # type: ignore[attr-defined]
-        queueing_lock=lock,
-    ).defer_async(
-        org_id=org_id,
-        kb_slug=kb_slug,
-        batch_size=100,
-    )
+    try:
+        backfill_job_id = await proc_app.run_taxonomy_backfill.configure(  # type: ignore[attr-defined]
+            queueing_lock=lock,
+        ).defer_async(
+            org_id=org_id,
+            kb_slug=kb_slug,
+            batch_size=100,
+        )
+    except AlreadyEnqueued:
+        # A backfill for this KB is already waiting; it classifies every chunk
+        # without taxonomy_node_ids when it runs, so it covers this crawl too.
+        logger.info(
+            "crawl_taxonomy_backfill_already_queued", org_id=org_id, kb_slug=kb_slug, job_id=job_id
+        )
+        return None
     logger.info(
         "crawl_taxonomy_backfill_enqueued",
         org_id=org_id,

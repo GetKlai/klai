@@ -58,3 +58,34 @@ async def test_crawl_taxonomy_backfill_enqueues_deduped_job_when_nodes_exist():
         kb_slug="support",
         batch_size=100,
     )
+
+
+@pytest.mark.asyncio
+async def test_crawl_taxonomy_backfill_already_queued_does_not_fail_the_crawl():
+    """A backfill already waiting under the same queueing lock covers this crawl too."""
+    from procrastinate.exceptions import AlreadyEnqueued
+
+    from knowledge_ingest.adapters.crawler import _enqueue_taxonomy_backfill_after_crawl
+
+    configured = SimpleNamespace(
+        defer_async=AsyncMock(side_effect=AlreadyEnqueued("already queued"))
+    )
+    run_taxonomy_backfill = MagicMock()
+    run_taxonomy_backfill.configure.return_value = configured
+    app = SimpleNamespace(run_taxonomy_backfill=run_taxonomy_backfill)
+
+    with (
+        patch(
+            "knowledge_ingest.portal_client.fetch_taxonomy_nodes",
+            AsyncMock(return_value=[SimpleNamespace(id=1, name="Support")]),
+        ),
+        patch("knowledge_ingest.enrichment_tasks.get_app", return_value=app),
+    ):
+        result = await _enqueue_taxonomy_backfill_after_crawl(
+            org_id="org-1",
+            kb_slug="support",
+            job_id="crawl-1",
+            pages_done=3,
+        )
+
+    assert result is None
