@@ -361,7 +361,7 @@ services:
   # ─── LiteLLM ──────────────────────────────────────────────────────────────
   litellm:
     logging: *log-rotation
-    image: ghcr.io/berriai/litellm:v1.96.2
+    image: ghcr.io/berriai/litellm:v1.102.1
     restart: unless-stopped
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     volumes:
