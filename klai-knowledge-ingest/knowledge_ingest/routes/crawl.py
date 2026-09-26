@@ -711,9 +711,10 @@ class _ProbeResponse:
     # redirects and to feed classify_auth_wall's cookie heuristic.
     location: str | None = None
     set_cookie: str | None = None
-    # Cookies this response set for the requested host itself (name -> value),
-    # so crawl_keepalive can store a session value the site rotated.
-    new_cookies: dict[str, str] = field(default_factory=dict)
+    # Cookies this response set for the requested host itself, keyed by
+    # (name, path), so crawl_keepalive can store a session value the site
+    # rotated without touching a same-named cookie on another path.
+    new_cookies: dict[tuple[str, str], str] = field(default_factory=dict)
 
 
 _PROBE_UA = (
@@ -751,7 +752,7 @@ async def _probe_fetch(
             location=r.headers.get("location"),
             set_cookie=r.headers.get("set-cookie"),
             new_cookies={
-                c.name: c.value
+                (c.name, c.path): c.value
                 for c in r.cookies.jar
                 if c.value and c.domain.lstrip(".") == r.url.host
             },

@@ -38,7 +38,9 @@ from knowledge_ingest.connector_cookies import (
     ConnectorDecryptError,
     ConnectorNotFoundError,
     ConnectorOrgMismatchError,
+    StoredCredentials,
     load_connector_cookies,
+    load_connector_credentials,
     store_refreshed_connector_cookies,
 )
 from knowledge_ingest.connector_state import (
@@ -564,6 +566,7 @@ async def _follow_same_host_redirects(
     cookies: dict[str, str],
     base_hostname: str,
     base_port: int,
+    issued: dict[tuple[str, str], str],
 ) -> tuple[_ProbeResponse | None, str, str | None]:
     """Follow same-host https 3xx redirects to the real page cookies must reach.
 
@@ -581,14 +584,16 @@ async def _follow_same_host_redirects(
     redirect, so the caller can feed it to ``classify_auth_wall`` -- or
     ``(None, reason, last_redirect_target)`` when a redirect left the host or
     the hop budget is exhausted.
+
+    Every cookie the site sets along the way lands in ``issued`` (keyed by
+    name and path) and, like in a browser, is sent on the next hop.
     """
     current_url = url
     last_redirect_target: str | None = None
     for hop in range(_MAX_KEEPALIVE_REDIRECTS + 1):
         result = await _probe_fetch(current_url, pin_map, cookies)
-        # Like a browser, the next hop carries whatever the site just set. The
-        # caller reads the same (mutated) dict to store rotated values.
-        cookies.update(result.new_cookies)
+        issued.update(result.new_cookies)
+        cookies.update({name: value for (name, _path), value in result.new_cookies.items()})
         if not (300 <= result.status_code < 400 and result.location):
             return result, current_url, last_redirect_target
 
@@ -612,6 +617,84 @@ async def _follow_same_host_redirects(
 # simplification; a shared store (Redis/DB) would make the debounce
 # cluster-wide if that ever matters.
 _last_probe_ok: dict[str, bool] = {}
+
+# Connectors already logged as probing a page that is not gated for anonymous
+# visitors (so no cookie is ever stored for them); same per-process debounce
+# as _last_probe_ok.
+_public_probe_logged: set[str] = set()
+
+
+def _classify_probe(
+    result: _ProbeResponse, redirect_target_url: str | None
+) -> tuple[bool, str | None]:
+    """Return ``(ok, reason)`` for a probed page: 2xx and not an auth wall."""
+    visible_text = _probe_markdown(result.text)
+    auth_wall = classify_auth_wall(
+        response_status_code=result.status_code,
+        redirect_target_url=redirect_target_url,
+        set_cookie_header=result.set_cookie,
+        word_count=len(visible_text.split()),
+        fit_markdown=visible_text,
+        raw_html=result.text,
+    )
+    ok = 200 <= result.status_code < 300 and not auth_wall.is_walled
+    reason = None if ok else (", ".join(auth_wall.match_reasons) or f"status_{result.status_code}")
+    return ok, reason
+
+
+async def _store_if_session_proven(
+    req: CrawlKeepAliveRequest,
+    stored: StoredCredentials,
+    final_url: str,
+    pin_map: dict[str, str],
+    hostname: str,
+    issued: dict[tuple[str, str], str],
+) -> None:
+    """Store re-issued cookies only when the stored session demonstrably matters.
+
+    A 200 without a login marker is not proof: a public page sets an
+    anonymous session cookie too, and storing that would replace a working
+    session. So the same final URL (same host, same SSRF pin) is fetched once
+    without cookies, and the write happens only when that anonymous answer is
+    walled. Never logs a cookie value or an exception text.
+    """
+    connector_id = str(req.connector_id)
+    try:
+        anonymous = await _probe_fetch(final_url, pin_map)
+    except Exception as exc:
+        logger.warning(
+            "crawl_keepalive_anonymous_probe_failed",
+            connector_id=connector_id,
+            error_type=type(exc).__name__,
+        )
+        return
+    anon_redirect = urljoin(final_url, anonymous.location) if anonymous.location else None
+    anonymous_ok, _ = _classify_probe(anonymous, anon_redirect)
+    if anonymous_ok:
+        if connector_id not in _public_probe_logged:
+            _public_probe_logged.add(connector_id)
+            logger.info(
+                "crawl_keepalive_cookie_store_skipped_public_page",
+                connector_id=connector_id,
+                url=final_url,
+            )
+        return
+    _public_probe_logged.discard(connector_id)
+    try:
+        await store_refreshed_connector_cookies(
+            connector_id=req.connector_id,
+            stored=stored,
+            pool=await get_pool(),
+            kek_hex=settings.encryption_key,
+            hostname=hostname,
+            refreshed=issued,
+        )
+    except Exception as exc:
+        logger.error(
+            "crawl_keepalive_cookie_store_failed",
+            connector_id=connector_id,
+            error_type=type(exc).__name__,
+        )
 
 
 def _log_probe_result(
@@ -659,7 +742,7 @@ async def crawl_keepalive(req: CrawlKeepAliveRequest) -> CrawlKeepAliveResponse:
     check.
     """
     try:
-        cookies = await load_connector_cookies(
+        stored = await load_connector_credentials(
             connector_id=req.connector_id,
             expected_zitadel_org_id=req.org_id,
             pool=await get_pool(),
@@ -678,15 +761,15 @@ async def crawl_keepalive(req: CrawlKeepAliveRequest) -> CrawlKeepAliveResponse:
         )
         return CrawlKeepAliveResponse(ok=False, reason="cookie_load_failed")
 
-    if not cookies:
+    if stored is None or not stored.payload.get("cookies"):
         return CrawlKeepAliveResponse(ok=False, reason="no_saved_credentials")
+    cookies = stored.payload["cookies"]
 
     cookie_dict = {
         c["name"]: c["value"]
         for c in cookies
         if isinstance(c, dict) and c.get("name") and c.get("value")
     }
-    sent_cookies = dict(cookie_dict)
 
     try:
         validated = await validate_url_pinned(req.url)
@@ -701,9 +784,10 @@ async def crawl_keepalive(req: CrawlKeepAliveRequest) -> CrawlKeepAliveResponse:
 
     pin_map = {validated.hostname: validated.preferred_ip}
     base_port = urlparse(req.url).port or 443
+    issued: dict[tuple[str, str], str] = {}
     try:
         result, final, last_redirect_target = await _follow_same_host_redirects(
-            req.url, pin_map, cookie_dict, validated.hostname, base_port
+            req.url, pin_map, cookie_dict, validated.hostname, base_port, issued
         )
     except Exception as exc:
         logger.warning(
@@ -726,41 +810,11 @@ async def crawl_keepalive(req: CrawlKeepAliveRequest) -> CrawlKeepAliveResponse:
         )
         return CrawlKeepAliveResponse(ok=False, reason=final)
 
-    visible_text = _probe_markdown(result.text)
-    auth_wall = classify_auth_wall(
-        response_status_code=result.status_code,
-        redirect_target_url=last_redirect_target,
-        set_cookie_header=result.set_cookie,
-        word_count=len(visible_text.split()),
-        fit_markdown=visible_text,
-        raw_html=result.text,
-    )
-    ok = 200 <= result.status_code < 300 and not auth_wall.is_walled
-    reason = None if ok else (", ".join(auth_wall.match_reasons) or f"status_{result.status_code}")
+    ok, reason = _classify_probe(result, last_redirect_target)
 
-    # Only a session the site just confirmed as logged in is worth keeping; a
-    # logged-out answer must never overwrite the stored credentials.
-    refreshed = {
-        name: value for name, value in cookie_dict.items() if value != sent_cookies.get(name)
-    }
-    if ok and refreshed:
-        try:
-            await store_refreshed_connector_cookies(
-                connector_id=req.connector_id,
-                expected_zitadel_org_id=req.org_id,
-                pool=await get_pool(),
-                kek_hex=settings.encryption_key,
-                hostname=validated.hostname,
-                refreshed=refreshed,
-            )
-        except Exception as exc:
-            # Never log the exception text next to cookie handling; the type
-            # is enough to find the failure without risking a value in logs.
-            logger.error(
-                "crawl_keepalive_cookie_store_failed",
-                connector_id=str(req.connector_id),
-                error_type=type(exc).__name__,
-            )
+    # A logged-out answer must never overwrite the stored credentials.
+    if ok and issued:
+        await _store_if_session_proven(req, stored, final, pin_map, validated.hostname, issued)
 
     _log_probe_result(
         connector_id=str(req.connector_id),

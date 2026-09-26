@@ -20,6 +20,7 @@ from knowledge_ingest.connector_cookies import (
     ConnectorDecryptError,
     ConnectorNotFoundError,
     ConnectorOrgMismatchError,
+    StoredCredentials,
     load_connector_cookies,
     store_refreshed_connector_cookies,
 )
@@ -49,6 +50,7 @@ async def test_returns_cookies_for_valid_connector() -> None:
     pool = _mock_pool(
         {
             "id": uuid.UUID(int=1),
+            "org_id": 7,
             "encrypted_credentials": encrypted,
             "zitadel_org_id": "42",
             "connector_dek_enc": dek_enc,
@@ -68,6 +70,7 @@ async def test_empty_list_for_public_connector() -> None:
     pool = _mock_pool(
         {
             "id": uuid.UUID(int=1),
+            "org_id": 7,
             "encrypted_credentials": None,
             "zitadel_org_id": "42",
             "connector_dek_enc": None,
@@ -101,6 +104,7 @@ async def test_org_mismatch_raises() -> None:
     pool = _mock_pool(
         {
             "id": uuid.UUID(int=1),
+            "org_id": 7,
             "encrypted_credentials": encrypted,
             "zitadel_org_id": "77",
             "connector_dek_enc": dek_enc,
@@ -123,6 +127,7 @@ async def test_wrong_kek_raises_decrypt_error() -> None:
     pool = _mock_pool(
         {
             "id": uuid.UUID(int=1),
+            "org_id": 7,
             "encrypted_credentials": encrypted,
             "zitadel_org_id": "42",
             "connector_dek_enc": dek_enc,
@@ -159,6 +164,7 @@ async def test_tampered_cookies_blob_raises_decrypt_error() -> None:
     pool = _mock_pool(
         {
             "id": uuid.UUID(int=1),
+            "org_id": 7,
             "encrypted_credentials": bytes(tampered),
             "zitadel_org_id": "42",
             "connector_dek_enc": dek_enc,
@@ -189,24 +195,30 @@ def test_shared_lib_still_raises_invalid_tag_on_wrong_kek() -> None:
         )
 
 
-def _row(encrypted: bytes, dek_enc: bytes) -> dict:
-    return {
-        "id": uuid.UUID(int=1),
-        "encrypted_credentials": encrypted,
-        "zitadel_org_id": "42",
-        "connector_dek_enc": dek_enc,
-    }
+def _stored(kek_hex: str, cookies: list[dict], **extra: object) -> StoredCredentials:
+    encrypted, dek_enc = _build_blobs(kek_hex, cookies, **extra)
+    store = ConnectorCredentialStore(kek_hex)
+    payload = store.decrypt_credentials_from_blobs(
+        encrypted_credentials=encrypted, connector_dek_enc=dek_enc
+    )
+    return StoredCredentials(payload=payload, encrypted=encrypted, dek_enc=dek_enc, org_id=7)
+
+
+def _written_payload(pool: MagicMock, kek_hex: str, dek_enc: bytes) -> dict:
+    new_blob = pool.execute.await_args.args[1]
+    return ConnectorCredentialStore(kek_hex).decrypt_credentials_from_blobs(
+        encrypted_credentials=new_blob, connector_dek_enc=dek_enc
+    )
 
 
 @pytest.mark.asyncio
-async def test_refreshed_session_cookie_replaces_the_stored_value() -> None:
-    """A rolling session only survives if the value the site re-issues is the
-    one replayed next time. Only the refreshed value changes; everything else
-    in the encrypted payload stays, and the write is a compare-and-swap on the
-    blob it read so a concurrent cookie paste in the portal is never
-    overwritten."""
+async def test_refresh_is_bound_to_the_blob_the_probe_read() -> None:
+    """The probe read blob A, then made its HTTP request. If the owner pasted
+    blob B meanwhile, the refresh from A's response must not overwrite B: the
+    update is applied to A's payload and guarded on A itself (plus the org),
+    never on a fresh re-read."""
     kek_hex = os.urandom(32).hex()
-    encrypted, dek_enc = _build_blobs(
+    stored = _stored(
         kek_hex,
         [
             {"name": "sid", "value": "pasted", "domain": "wiki.example.com", "path": "/"},
@@ -214,26 +226,25 @@ async def test_refreshed_session_cookie_replaces_the_stored_value() -> None:
         ],
         auth_headers={"X-Example": "unchanged"},
     )
-    pool = _mock_pool(_row(encrypted, dek_enc))
+    pool = MagicMock()
+    pool.fetchrow = AsyncMock()
     pool.execute = AsyncMock(return_value="UPDATE 1")
 
     changed = await store_refreshed_connector_cookies(
         connector_id=uuid.UUID(int=1),
-        expected_zitadel_org_id="42",
+        stored=stored,
         pool=pool,
         kek_hex=kek_hex,
         hostname="wiki.example.com",
-        refreshed={"sid": "issued", "unrelated": "ignored"},
+        refreshed={("sid", "/"): "issued", ("unrelated", "/"): "ignored"},
     )
 
     assert changed == 1
-    new_blob, connector_id, guard = pool.execute.await_args.args[1:]
-    assert connector_id == uuid.UUID(int=1)
-    assert guard == encrypted
-    payload = ConnectorCredentialStore(kek_hex).decrypt_credentials_from_blobs(
-        encrypted_credentials=new_blob, connector_dek_enc=dek_enc
-    )
-    assert payload == {
+    pool.fetchrow.assert_not_awaited()
+    sql, _new_blob, connector_id, guard, org_id = pool.execute.await_args.args
+    assert "org_id = $4" in sql
+    assert (connector_id, guard, org_id) == (uuid.UUID(int=1), stored.encrypted, 7)
+    assert _written_payload(pool, kek_hex, stored.dek_enc) == {
         "cookies": [
             {"name": "sid", "value": "issued", "domain": "wiki.example.com", "path": "/"},
             {"name": "xsrf", "value": "keep", "domain": ".wiki.example.com", "path": "/"},
@@ -243,23 +254,54 @@ async def test_refreshed_session_cookie_replaces_the_stored_value() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cookie_scoped_to_another_host_is_never_rewritten() -> None:
-    """Saved cookies are host-scoped credentials: a response from one host
-    must not rewrite a same-named cookie saved for a different host."""
+async def test_only_the_cookie_with_the_same_path_is_rewritten() -> None:
+    """A Set-Cookie for path "/" must not rewrite a same-named cookie saved
+    for another path; a saved cookie without a path counts as "/"."""
     kek_hex = os.urandom(32).hex()
-    encrypted, dek_enc = _build_blobs(
-        kek_hex, [{"name": "sid", "value": "pasted", "domain": "sso.example.com", "path": "/"}]
+    stored = _stored(
+        kek_hex,
+        [
+            {"name": "sid", "value": "root", "domain": "wiki.example.com"},
+            {"name": "sid", "value": "admin", "domain": "wiki.example.com", "path": "/admin"},
+        ],
     )
-    pool = _mock_pool(_row(encrypted, dek_enc))
+    pool = MagicMock()
     pool.execute = AsyncMock(return_value="UPDATE 1")
 
     changed = await store_refreshed_connector_cookies(
         connector_id=uuid.UUID(int=1),
-        expected_zitadel_org_id="42",
+        stored=stored,
         pool=pool,
         kek_hex=kek_hex,
         hostname="wiki.example.com",
-        refreshed={"sid": "issued"},
+        refreshed={("sid", "/"): "issued"},
+    )
+
+    assert changed == 1
+    assert _written_payload(pool, kek_hex, stored.dek_enc)["cookies"] == [
+        {"name": "sid", "value": "issued", "domain": "wiki.example.com"},
+        {"name": "sid", "value": "admin", "domain": "wiki.example.com", "path": "/admin"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_cookie_scoped_to_another_host_is_never_rewritten() -> None:
+    """Saved cookies are host-scoped credentials: a response from one host
+    must not rewrite a same-named cookie saved for a different host."""
+    kek_hex = os.urandom(32).hex()
+    stored = _stored(
+        kek_hex, [{"name": "sid", "value": "pasted", "domain": "sso.example.com", "path": "/"}]
+    )
+    pool = MagicMock()
+    pool.execute = AsyncMock(return_value="UPDATE 1")
+
+    changed = await store_refreshed_connector_cookies(
+        connector_id=uuid.UUID(int=1),
+        stored=stored,
+        pool=pool,
+        kek_hex=kek_hex,
+        hostname="wiki.example.com",
+        refreshed={("sid", "/"): "issued"},
     )
 
     assert changed == 0
