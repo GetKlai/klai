@@ -28,7 +28,7 @@ Modelaliassen (`deploy/litellm/config.yaml`): `klai-primary` en `klai-fast` zijn
 
 ## 1. Pad A: interne chat (LibreChat → LiteLLM)
 
-LibreChat vraagt altijd `klai-primary` aan, ook voor titels (`deploy/librechat/librechat.yaml:176-200`). LiteLLM draait de callbacks in deze volgorde (`deploy/litellm/config.yaml:126-158`): `klai_knowledge.klai_knowledge_hook`, `custom_router.token_router`, `klai_pii_observe`, `klai_pii_enforce`. "Mock" hieronder betekent: het model wordt overgeslagen en de gebruiker krijgt een vaste tekst (`data["mock_response"]`). Alle ankers in deze sectie zijn in `deploy/litellm/` tenzij anders vermeld.
+LibreChat vraagt altijd `klai-primary` aan, ook voor titels (`deploy/librechat/librechat.yaml:176-202`). LiteLLM draait de callbacks in deze volgorde (`deploy/litellm/config.yaml:126-158`): `klai_knowledge.klai_knowledge_hook`, `custom_router.token_router`, `klai_pii_observe`, `klai_pii_enforce`. "Mock" hieronder betekent: het model wordt overgeslagen en de gebruiker krijgt een vaste tekst (`data["mock_response"]`). Alle ankers in deze sectie zijn in `deploy/litellm/` tenzij anders vermeld.
 
 ### 1.1 Vóór het model (`klai_knowledge.py`)
 
