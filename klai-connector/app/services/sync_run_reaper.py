@@ -44,6 +44,7 @@ from app.models.sync_run import SyncRun
 from app.services.crawl_sync_status import (
     is_completed_remote_crawl_status,
     is_failed_remote_crawl_status,
+    remote_crawl_documents_changed,
     remote_crawl_failure_error,
 )
 from app.services.portal_client import PortalClient
@@ -215,7 +216,12 @@ class SyncRunReaper:
         pages_done = int(live.get("pages_done") or 0)
 
         if is_completed_remote_crawl_status(live_status):
-            await self._finalise_completed(row, pages_done=pages_done, pages_total=pages_total)
+            await self._finalise_completed(
+                row,
+                pages_done=pages_done,
+                pages_total=pages_total,
+                documents_changed=remote_crawl_documents_changed(live),
+            )
             return True
         if is_failed_remote_crawl_status(live_status):
             await self._finalise_failed(
@@ -244,6 +250,7 @@ class SyncRunReaper:
         *,
         pages_done: int,
         pages_total: int,
+        documents_changed: int | None,
     ) -> None:
         completed_at = datetime.now(UTC)
         # Use tenant_scoped_session so the UPDATE passes the WITH CHECK
@@ -276,6 +283,7 @@ class SyncRunReaper:
             documents_failed=0,
             bytes_processed=0,
             error_details=None,
+            documents_changed=documents_changed,
         )
         logger.info(
             "sync_run_reaper_finalised_completed",
@@ -332,6 +340,8 @@ class SyncRunReaper:
             documents_failed=max(0, documents_total - documents_ok),
             bytes_processed=0,
             error_details=error_details,
+            # The portal acts on documents_changed only for a completed run.
+            documents_changed=None,
         )
         logger.info(
             "sync_run_reaper_finalised_failed",

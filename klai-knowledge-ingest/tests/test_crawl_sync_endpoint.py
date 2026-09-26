@@ -59,7 +59,7 @@ def _make_pool(
             if job_row is None:
                 return None
             # Echo the id the handler queried with so the response matches.
-            return {**job_row, "id": args[0]}
+            return {"pages_changed": None, **job_row, "id": args[0]}
         if "procrastinate_jobs" in stmt:
             return proc_row
         return None
@@ -592,6 +592,7 @@ class TestCrawlSyncStatusEndpoint:
                 "status": "running",
                 "pages_total": 20,
                 "pages_done": 7,
+                "pages_changed": 3,
                 "error": None,
             },
         )
@@ -604,7 +605,17 @@ class TestCrawlSyncStatusEndpoint:
         assert body["status"] == "running"
         assert body["pages_total"] == 20
         assert body["pages_done"] == 7
+        assert body["pages_changed"] == 3
         assert body["error"] is None
+
+    def test_job_created_before_change_counting_reports_unknown_changes(self) -> None:
+        pool = _make_pool(
+            job_row={"status": "completed", "pages_total": 5, "pages_done": 5, "error": None},
+        )
+        with _client_with_patches(pool) as (client, _defer):
+            resp = client.get(f"/ingest/v1/crawl/sync/{uuid.uuid4()}/status")
+        assert resp.status_code == 200
+        assert resp.json()["pages_changed"] is None
 
     def test_failed_partial_returns_error_summary_reason(self) -> None:
         pool = _make_pool(

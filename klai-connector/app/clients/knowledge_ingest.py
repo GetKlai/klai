@@ -120,7 +120,7 @@ class KnowledgeIngestClient:
         user_id: str | None = None,
         document_extra: dict[str, object] | None = None,
         resource_generation: str | None = None,
-    ) -> None:
+    ) -> bool:
         """Send a parsed document to knowledge-ingest for embedding.
 
         Args:
@@ -140,6 +140,14 @@ class KnowledgeIngestClient:
                 ``req.user_id`` so knowledge-ingest can pass the
                 personal-KB owner-binding check (``personal_kb_owner_mismatch``).
                 Without it, syncs to ``personal-{user}`` KBs return 403.
+
+        Returns:
+            Whether the knowledge base changed. knowledge-ingest answers
+            ``status: "skipped"`` when it wrote nothing (content unchanged,
+            empty document, connector deleting) and ``status: "ok"`` after a
+            write. Any status other than ``skipped`` counts as a change, so an
+            unexpected answer errs toward reanalysing rather than missing new
+            content.
 
         Raises:
             ValueError: If content exceeds the knowledge-ingest request contract.
@@ -187,6 +195,7 @@ class KnowledgeIngestClient:
         )
         response.raise_for_status()
         logger.info("Ingested document: %s", path)
+        return response.json().get("status") != "skipped"
 
     async def delete_connector_document(
         self,
@@ -195,8 +204,12 @@ class KnowledgeIngestClient:
         kb_slug: str,
         source_connector_id: str,
         source_ref: str,
-    ) -> None:
-        """Delete one connector artifact by its stable provider reference."""
+    ) -> bool:
+        """Delete one connector artifact by its stable provider reference.
+
+        Returns whether knowledge was removed: knowledge-ingest answers
+        ``artifacts_deleted: 0`` when nothing matched the reference.
+        """
         response = await self._client.delete(
             "/ingest/v1/connector/document",
             params={
@@ -212,6 +225,7 @@ class KnowledgeIngestClient:
         )
         response.raise_for_status()
         logger.info("Deleted stale connector document: %s", source_ref)
+        return response.json()["artifacts_deleted"] > 0
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client."""

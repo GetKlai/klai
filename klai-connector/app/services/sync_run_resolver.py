@@ -38,6 +38,7 @@ from app.models.sync_run import SyncRun
 from app.services.crawl_sync_status import (
     is_completed_remote_crawl_status,
     is_terminal_remote_crawl_status,
+    remote_crawl_documents_changed,
     remote_crawl_failure_error,
 )
 from app.services.portal_client import PortalClient
@@ -280,6 +281,7 @@ class SyncRunResolver:
             documents_failed=documents_failed,
             bytes_processed=0,
             error_details=error_details,
+            documents_changed=remote_crawl_documents_changed(live),
         )
         logger.info(
             "sync_run_resolver_terminalized",

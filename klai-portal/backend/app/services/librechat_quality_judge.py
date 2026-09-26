@@ -38,7 +38,13 @@ from sqlalchemy import text
 from app.core.config import settings
 from app.core.database import cross_org_session, tenant_scoped_session
 from app.core.provisioning_names import provisioning_names_for_slug
-from app.services.conversation_judge import _MAX_JUDGE_ATTEMPTS, _call_judge_llm, _parse_verdict, file_judge_gap
+from app.services.conversation_judge import (
+    _MAX_JUDGE_ATTEMPTS,
+    _call_judge_llm,
+    _parse_verdict,
+    file_judge_gap,
+    transcript_tail,
+)
 
 logger = structlog.get_logger()
 
@@ -302,12 +308,13 @@ def _derive_signals(docs: list[dict]) -> dict:
 
 
 def _build_user_prompt(turns: list[dict], *, explicit_rating: str | None, had_error: bool) -> str:
-    """JSON-encoded transcript (role/content per turn) plus the two signals —
-    same ``json.dumps(..., ensure_ascii=False)`` shape as the webchat pass;
-    this channel has no sources field to carry."""
+    """JSON-encoded transcript tail (role/content per turn, bounded by
+    ``transcript_tail``) plus the two signals — same ``json.dumps(...,
+    ensure_ascii=False)`` shape as the webchat pass; this channel has no
+    sources field to carry."""
     return json.dumps(
         {
-            "transcript": turns,
+            "transcript": transcript_tail(turns),
             "signals": {
                 "explicit_rating": explicit_rating,
                 "had_error": had_error,

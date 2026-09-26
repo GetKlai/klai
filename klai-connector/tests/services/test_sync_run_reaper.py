@@ -127,7 +127,14 @@ class TestReaperFinalisesTerminalRemote:
         reaper, crawl_client, _, portal, _ = _make_reaper(
             candidate_rows=[row],
             status_responses=[
-                {"job_id": "abc123", "status": "completed", "pages_done": 100, "pages_total": 100, "error": None},
+                {
+                    "job_id": "abc123",
+                    "status": "completed",
+                    "pages_done": 100,
+                    "pages_total": 100,
+                    "pages_changed": 7,
+                    "error": None,
+                },
             ],
         )
 
@@ -141,6 +148,7 @@ class TestReaperFinalisesTerminalRemote:
 
         portal.report_sync_status.assert_awaited_once()
         assert portal.report_sync_status.await_args.kwargs["sync_status"] == SyncStatus.COMPLETED
+        assert portal.report_sync_status.await_args.kwargs["documents_changed"] == 7
         # Reaper MUST NOT cancel the upstream job.
         crawl_client.crawl_sync_cancel.assert_not_awaited()
 

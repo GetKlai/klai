@@ -83,6 +83,14 @@ _GAP_TYPE_FOR_JUDGE_CAUSE = {"retrieval_miss": "hard", "retrieval_wrong": "soft"
 # Questions in the same sample were at most ~250 characters, so 500 keeps every
 # real question whole and a document's opening.
 JUDGE_QUESTION_MAX_CHARS = 500
+# The judge used to receive the whole transcript; one production LibreChat
+# thread made a ~172k-token prompt. The verdict is filed under the latest
+# question and trusts the latest rating, so the judge gets the newest turns
+# that fit in 60,000 characters (~15k tokens, about twice a support-case
+# analysis prompt). Each turn's content and sources are clipped at 8,000
+# characters first, so one pasted document cannot push every other turn out.
+JUDGE_TRANSCRIPT_MAX_CHARS = 60_000
+_JUDGE_TURN_FIELD_MAX_CHARS = 8_000
 # A conversation is only judged while its OLDEST message is at least this far
 # from its org's retention cutoff (``started_at``: the conversation row and its
 # first message are written in the same transaction). Retention anonymizes the
@@ -205,6 +213,29 @@ def _derive_signals(turns: list[JudgeTurn], *, had_handoff: bool) -> dict:
     }
 
 
+def _clip_turn_field(value: object) -> object:
+    if value is None or isinstance(value, bool | int | float):
+        return value
+    encoded = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+    if len(encoded) <= _JUDGE_TURN_FIELD_MAX_CHARS:
+        return value
+    return encoded[:_JUDGE_TURN_FIELD_MAX_CHARS] + " […]"
+
+
+def transcript_tail(turns: list[dict]) -> list[dict]:
+    """The newest turns, oldest first, whose JSON fits in ``JUDGE_TRANSCRIPT_MAX_CHARS``."""
+    tail: list[dict] = []
+    used = 0
+    for turn in reversed(turns):
+        clipped = {key: _clip_turn_field(value) for key, value in turn.items()}
+        # +2 for the ", " separator json.dumps puts between list items.
+        used += len(json.dumps(clipped, ensure_ascii=False)) + 2
+        if used > JUDGE_TRANSCRIPT_MAX_CHARS:
+            break
+        tail.append(clipped)
+    return tail[::-1]
+
+
 def _build_user_prompt(
     turns: list[JudgeTurn],
     *,
@@ -217,7 +248,9 @@ def _build_user_prompt(
     ``triage._build_triage_prompt``."""
     return json.dumps(
         {
-            "transcript": [{"role": t.role, "content": t.content, "sources": t.sources} for t in turns],
+            "transcript": transcript_tail(
+                [{"role": t.role, "content": t.content, "sources": t.sources} for t in turns]
+            ),
             "signals": {
                 "explicit_rating": explicit_rating,
                 "had_citation_refusal": had_citation_refusal,

@@ -112,6 +112,23 @@ def test_user_prompt_carries_transcript_and_signals_json():
     )
 
 
+def test_user_prompt_for_an_oversized_transcript_keeps_the_latest_turns_under_the_cap():
+    from app.services.conversation_judge import JUDGE_TRANSCRIPT_MAX_CHARS, _build_user_prompt
+
+    turns = [
+        _turn("user" if i % 2 == 0 else "assistant", f"turn {i} " + "x" * 20_000, sources=[{"n": i, "t": "y" * 30_000}])
+        for i in range(200)
+    ]
+    turns.append(_turn("user", "the latest question"))
+
+    prompt = _build_user_prompt(turns, explicit_rating=None, had_citation_refusal=False, had_handoff=False)
+
+    assert len(prompt) <= JUDGE_TRANSCRIPT_MAX_CHARS + 200
+    transcript = json.loads(prompt)["transcript"]
+    assert transcript[-1]["content"] == "the latest question"
+    assert "turn 0 " not in prompt
+
+
 # ---------------------------------------------------------------------------
 # Test doubles for the loop — same mock-session style as test_widget_outcome
 # ---------------------------------------------------------------------------

@@ -184,7 +184,14 @@ class TestResolveTerminalCompleted:
     async def test_completed_writes_terminal_state_and_reports(self) -> None:
         resolver, crawl_client, session, portal = _make_resolver(
             status_responses=[
-                {"job_id": "abc123", "status": "completed", "pages_done": 368, "pages_total": 368, "error": None},
+                {
+                    "job_id": "abc123",
+                    "status": "completed",
+                    "pages_done": 368,
+                    "pages_total": 368,
+                    "pages_changed": 12,
+                    "error": None,
+                },
             ],
         )
         row = _row()
@@ -204,6 +211,8 @@ class TestResolveTerminalCompleted:
         portal.report_sync_status.assert_awaited_once()
         assert portal.report_sync_status.await_args.kwargs["sync_status"] == SyncStatus.COMPLETED
         assert portal.report_sync_status.await_args.kwargs["documents_ok"] == 368
+        # pages_done also counts pages skipped as unchanged; pages_changed does not.
+        assert portal.report_sync_status.await_args.kwargs["documents_changed"] == 12
 
         assert snap.status == SyncStatus.COMPLETED
         assert snap.pages_done == 368

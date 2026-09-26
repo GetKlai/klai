@@ -95,6 +95,10 @@ class CrawlSyncStatusResponse(BaseModel):
     status: str
     pages_total: int | None
     pages_done: int | None
+    # Pages whose knowledge changed: (re)ingested pages plus retired stale
+    # pages. pages_done also counts pages skipped as unchanged. None for a job
+    # created before the column existed.
+    pages_changed: int | None
     error: str | None
 
 
@@ -305,7 +309,7 @@ async def crawl_sync_status(job_id: str) -> CrawlSyncStatusResponse:
     pool = await get_pool()
     row = await pool.fetchrow(
         """
-        SELECT id, status, pages_total, pages_done, error, error_summary
+        SELECT id, status, pages_total, pages_done, pages_changed, error, error_summary
         FROM knowledge.crawl_jobs
         WHERE id = $1
         """,
@@ -318,6 +322,7 @@ async def crawl_sync_status(job_id: str) -> CrawlSyncStatusResponse:
         status=row["status"],
         pages_total=row["pages_total"],
         pages_done=row["pages_done"],
+        pages_changed=row["pages_changed"],
         error=_crawl_sync_error(row),
     )
 

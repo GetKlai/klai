@@ -1167,8 +1167,9 @@ async def run_crawl_job(
                     # side effects and progress update have finished.
                     if login_indicator_selector and not result.success:
                         raise AuthWallDetected(login_indicator_selector)
+                    page_changed = False
                     try:
-                        await _ingest_crawl_result(
+                        page_changed = await _ingest_crawl_result(
                             conn,
                             result,
                             url,
@@ -1210,10 +1211,15 @@ async def run_crawl_job(
                         logger.warning("crawl_page_failed", url=url, job_id=job_id, error=str(exc))
                         pages_failed += 1
 
+                    # pages_changed is incremented in the database rather than
+                    # set from a local counter, so pages changed by an earlier,
+                    # superseded attempt of this job are not lost on recovery.
                     await conn.execute(
-                        "UPDATE knowledge.crawl_jobs SET pages_done=$1, updated_at=$2 "
-                        "WHERE id=$3 AND execution_generation=$4 AND status='running'",
+                        "UPDATE knowledge.crawl_jobs "
+                        "SET pages_done=$1, pages_changed=pages_changed+$2, updated_at=$3 "
+                        "WHERE id=$4 AND execution_generation=$5 AND status='running'",
                         pages_done,
+                        1 if page_changed else 0,
                         int(time.time()),
                         job_id,
                         execution_generation,
@@ -1421,6 +1427,14 @@ async def run_crawl_job(
                                         stale_paths=stale_paths_deleted,
                                     )
                                 )
+                                await conn.execute(
+                                    "UPDATE knowledge.crawl_jobs "
+                                    "SET pages_changed=pages_changed+$1 "
+                                    "WHERE id=$2 AND execution_generation=$3",
+                                    retired_count,
+                                    job_id,
+                                    execution_generation,
+                                )
                                 logger.info(
                                     "crawl_connector_stale_artifacts_retired",
                                     job_id=job_id,
@@ -1548,8 +1562,13 @@ async def _ingest_crawl_result(
     authenticated_context: bool = False,
     connector_id: str | None = None,
     resource_key: str | None = None,
-) -> None:
-    """Process a crawl result: dedup, extract links, ingest."""
+) -> bool:
+    """Process a crawl result: dedup, extract links, ingest.
+
+    Returns whether the knowledge base changed: False for every skip (unchanged
+    raw HTML, change-hash noise, too-short content, or knowledge-ingest's own
+    content-hash no-op), True after a real ingest.
+    """
     if not result.success:
         # With a login indicator set, crawl4ai's wait_for fails on auth-walled
         # pages and returns success=False. run_crawl_job catches this first
@@ -1590,7 +1609,7 @@ async def _ingest_crawl_result(
             and active_connector_artifact_exists
         ):
             logger.info("crawl_skipped_unchanged", url=url, org_id=org_id, kb_slug=kb_slug)
-            return
+            return False
 
     text = result.fit_markdown or result.raw_markdown or ""
     front_matter = (result.metadata or {}).get("description", "")
@@ -1652,7 +1671,7 @@ async def _ingest_crawl_result(
             threshold=_HARD_MIN_CONTENT_LENGTH,
             reason=PersistSkipReason.CONTENT_TOO_SHORT.value,
         )
-        return
+        return False
     if stripped_length < settings.ingest_min_content_length:
         duplicate_signal = await detect_anonymous_auth_wall(
             result.raw_markdown or "",
@@ -1676,7 +1695,7 @@ async def _ingest_crawl_result(
                 evidence=duplicate_signal.evidence,
                 reason=PersistSkipReason.CONTENT_TOO_SHORT.value,
             )
-            return
+            return False
         # Short but unique (no near-duplicate siblings): fall through and
         # keep it — this is the case the flat threshold got wrong.
 
@@ -1702,7 +1721,7 @@ async def _ingest_crawl_result(
                 crawled_at=int(time.time()),
             )
             logger.info("crawl_skipped_html_noise", url=url, org_id=org_id, kb_slug=kb_slug)
-            return
+            return False
 
     # page_simhash was computed earlier (see comment above, near the
     # short-content-cluster gate) and is reused here unchanged.
@@ -1882,7 +1901,7 @@ async def _ingest_crawl_result(
     # SPEC-CRAWLER-005 Fase 6 follow-up: was "connector"; crawl chunks now carry
     # source_type="crawl" so retrieval + assertions can distinguish them from
     # non-crawl connector artifacts (notion, github, gdrive).
-    await ingest_document(
+    ingest_result = await ingest_document(
         conn,
         IngestRequest(
             org_id=org_id,
@@ -1926,6 +1945,7 @@ async def _ingest_crawl_result(
             url=url,
             content_simhash=page_simhash,
         )
+    return ingest_result.get("status") != "skipped"
 
 
 async def _update_job(conn: asyncpg.Connection, job_id: str) -> None:

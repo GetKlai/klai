@@ -54,6 +54,7 @@ from app.middleware.tenant_host import KlaiTenantHostMiddleware
 from app.services.bot_poller import poll_loop
 from app.services.conversation_judge import conversation_judge_loop
 from app.services.events import _pending as _event_tasks
+from app.services.gap_rescorer import support_reanalysis_loop
 from app.services.kb_upload_poller import run_poll_loop as run_kb_upload_poll_loop
 from app.services.password_policy_guard import assert_zitadel_password_policy_compatible
 from app.services.recording_cleanup import recording_cleanup_loop
@@ -308,6 +309,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     conversation_judge_task = asyncio.create_task(conversation_judge_loop())
     logger.info("Conversation quality judge loop started")
 
+    # Support-case reanalysis requested by connector syncs that changed
+    # knowledge, debounced per org (portal_orgs.support_reanalysis_requested_at).
+    support_reanalysis_task = asyncio.create_task(support_reanalysis_loop())
+    logger.info("Support reanalysis loop started")
+
     imap_task: asyncio.Task[None] | None = None
     if settings.imap_host and settings.imap_username:
         from app.services.imap_listener import start_imap_listener
@@ -326,6 +332,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     widget_messages_retention_task.cancel()
     widget_outcome_task.cancel()
     conversation_judge_task.cancel()
+    support_reanalysis_task.cancel()
     if imap_task is not None:
         imap_task.cancel()
     if _event_tasks:

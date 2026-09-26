@@ -67,6 +67,9 @@ async def _call_llm(system: str, user: str, model: str, temperature: float = 0.1
                         {"role": "system", "content": system},
                         {"role": "user", "content": user},
                     ],
+                    # Background work stays on Small. See
+                    # turn_judge.structured_judge_call for why ``fallbacks: []``.
+                    "fallbacks": [],
                 },
                 "portal:meeting-summarizer",
             ),

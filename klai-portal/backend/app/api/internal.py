@@ -46,7 +46,7 @@ from app.services.connector_credentials import SENSITIVE_FIELDS, credential_stor
 from app.services.entitlements import get_effective_products
 from app.services.events import emit_event
 from app.services.gap_events import record_gap_event
-from app.services.gap_rescorer import schedule_rescore
+from app.services.gap_rescorer import request_support_reanalysis, schedule_rescore
 from app.services.ingest_gap_evaluation import evaluate_ingest_snapshot
 from app.services.internal_chat_identity import LibreChatIdentityError, has_knowledge_access, resolve_librechat_user
 from app.services.partner_rate_limit import check_rate_limit
@@ -706,6 +706,10 @@ class SyncStatusCallback(BaseModel):
     documents_failed: int = 0
     bytes_processed: int = 0
     error_details: list[dict] | None = None
+    # Documents whose knowledge actually changed in this run (new or edited
+    # content plus deletions). None means the connector did not say: an older
+    # connector during rollout, or a path where the count is unknown.
+    documents_changed: int | None = None
 
 
 @router.post("/connectors/{connector_id}/sync-status", status_code=status.HTTP_204_NO_CONTENT)
@@ -719,6 +723,11 @@ async def receive_sync_status(
 
     Updates last_sync_at and last_sync_status on the portal connector record.
     Called by klai-connector after each sync run completes.
+
+    A completed sync always re-scores open retrieval gaps, which only costs
+    retrieval calls. Support-case reanalysis costs LLM calls per case, so it
+    runs only when the sync reports changed documents; an unknown count spends
+    nothing.
     """
     await _require_internal_token(request)
     connector = await db.get(PortalConnector, connector_id)
@@ -741,7 +750,17 @@ async def receive_sync_status(
                 kb_slug=None,  # connector sync covers all KBs
                 db_factory=get_db,
                 delay_seconds=0.0,  # no delay needed -- connector already fully synced
+                reanalyse_support=False,
             )
+            if body.documents_changed is None:
+                structlog_logger.info(
+                    "support_reanalysis_skipped_documents_changed_unknown",
+                    connector_id=connector_id,
+                    sync_run_id=body.sync_run_id,
+                    org_id=connector.org_id,
+                )
+            elif body.documents_changed > 0:
+                await request_support_reanalysis(db, connector.org_id)
     await _audit_internal_call(request, org_id=connector.org_id)
 
 

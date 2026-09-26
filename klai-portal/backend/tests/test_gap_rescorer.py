@@ -497,3 +497,99 @@ async def test_schedule_rescore_also_reanalyses_support_cases() -> None:
     rescore.assert_awaited_once()
     reanalyse.assert_awaited_once()
     assert reanalyse.await_args.args[:3] == (1, "zit-1", "kb-a")
+
+
+@pytest.mark.asyncio
+async def test_connector_sync_rescore_can_leave_support_cases_alone() -> None:
+    """The connector-sync caller runs support reanalysis through its own debounced
+    path, so its retrieval rescore must not reanalyse support cases as well."""
+    import asyncio
+
+    from app.services import gap_rescorer
+
+    rescore = AsyncMock()
+    reanalyse = AsyncMock(return_value=(0, 0))
+    with (
+        patch.object(gap_rescorer, "rescore_open_gaps", rescore),
+        patch.object(gap_rescorer, "reanalyse_scoped_support_cases", reanalyse),
+    ):
+
+        async def factory():
+            yield AsyncMock()
+
+        await gap_rescorer.schedule_rescore(2, "zit-2", None, factory, delay_seconds=0, reanalyse_support=False)
+        await asyncio.sleep(0.05)
+
+    rescore.assert_awaited_once()
+    reanalyse.assert_not_awaited()
+
+
+def _fake_cross_org_session(due_rows: list, executed: list):
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _session():
+        db = AsyncMock()
+
+        async def _execute(statement, params=None):
+            executed.append((str(statement), params or {}))
+            result = MagicMock()
+            result.all.return_value = due_rows
+            return result
+
+        db.execute = AsyncMock(side_effect=_execute)
+        yield db
+
+    return _session
+
+
+@pytest.mark.asyncio
+async def test_connector_sync_requests_support_reanalysis_durably_restarting_the_debounce() -> None:
+    """The request is a timestamp on the org row, not in-process state, so a
+    restart cannot drop it; each qualifying sync restamps it, which restarts the
+    debounce so several syncs of one night coalesce into one run."""
+    from app.services import gap_rescorer
+
+    db = AsyncMock()
+    await gap_rescorer.request_support_reanalysis(db, 3)
+
+    statement, params = str(db.execute.await_args.args[0]), db.execute.await_args.args[1]
+    assert "UPDATE portal_orgs SET support_reanalysis_requested_at = now()" in statement
+    assert params == {"org_id": 3}
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_due_support_reanalysis_runs_once_and_clears_only_the_request_it_served() -> None:
+    """An org whose request is older than the debounce is reanalysed once. The
+    request is cleared only if it still carries the timestamp that was picked
+    up, so a sync that lands during the run keeps its own request."""
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    from app.services import gap_rescorer
+
+    picked = datetime(2026, 9, 26, 2, 0, tzinfo=UTC)
+    executed: list = []
+    due = [SimpleNamespace(id=3, zitadel_org_id="zit-3", support_reanalysis_requested_at=picked)]
+    reanalyse = AsyncMock(return_value=(1, 0))
+
+    async def factory():
+        yield AsyncMock()
+
+    with (
+        patch.object(gap_rescorer, "cross_org_session", _fake_cross_org_session(due, executed)),
+        patch.object(gap_rescorer, "reanalyse_scoped_support_cases", reanalyse),
+    ):
+        ran = await gap_rescorer.run_due_support_reanalyses(factory)
+
+    assert ran == 1
+    reanalyse.assert_awaited_once()
+    assert reanalyse.await_args.args[:3] == (3, "zit-3", None)
+    select_sql, select_params = executed[0]
+    assert "support_reanalysis_requested_at <=" in select_sql
+    assert select_params == {"debounce_seconds": gap_rescorer.SUPPORT_REANALYSIS_DEBOUNCE_SECONDS}
+    clear_sql, clear_params = executed[-1]
+    assert "SET support_reanalysis_requested_at = NULL" in clear_sql
+    assert "support_reanalysis_requested_at = :requested_at" in clear_sql
+    assert clear_params == {"org_id": 3, "requested_at": picked}

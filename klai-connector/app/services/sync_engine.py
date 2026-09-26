@@ -177,6 +177,10 @@ class SyncEngine:
         records_total = 0
         duplicates_collapsed = 0
         stale_groups_deleted = 0
+        # Real ingests and deletes that removed knowledge only: knowledge-ingest
+        # skips unchanged content, and the portal spends LLM calls on support
+        # reanalysis only after a sync that changed something.
+        documents_changed = 0
         stale_cleanup_refused = False
         # SPEC-INGEST-RECONCILE-001 AC-6 — per-sync skip-reason aggregation
         # ``{PersistSkipReason: count}``. Persisted to
@@ -274,6 +278,7 @@ class SyncEngine:
                     documents_failed=0,
                     bytes_processed=0,
                     error_details=sync_run.error_details,
+                    documents_changed=0,
                 )
                 return
 
@@ -291,6 +296,7 @@ class SyncEngine:
                 resume_ingested_refs: set[str] = set()
                 if last_pending and last_pending.cursor_state:
                     resume_ingested_refs = set(last_pending.cursor_state.get("ingested_refs", []))
+                    documents_changed = int(last_pending.cursor_state.get("documents_changed", 0))
                     if resume_ingested_refs:
                         logger.info(
                             "Resuming interrupted sync for connector %s: %d refs already ingested, skipping",
@@ -323,6 +329,7 @@ class SyncEngine:
                             documents_failed=0,
                             bytes_processed=0,
                             error_details=None,
+                            documents_changed=0,
                         )
                         return
 
@@ -415,7 +422,7 @@ class SyncEngine:
                                 or None
                             )  # Convert empty list to None
 
-                        await self._ingest_client.ingest_document(
+                        changed = await self._ingest_client.ingest_document(
                             org_id=portal_config.zitadel_org_id,
                             kb_slug=portal_config.kb_slug,
                             path=ref.path,
@@ -432,11 +439,15 @@ class SyncEngine:
                             document_extra=ref.extra,
                         )
                         documents_ok += 1
+                        documents_changed += int(changed)
                         resume_ingested_refs.add(ref_key)
 
                         # Checkpoint progress every 10 docs so a crash can resume mid-sync.
                         if documents_ok % 10 == 0:
-                            sync_run.cursor_state = {"ingested_refs": list(resume_ingested_refs)}
+                            sync_run.cursor_state = {
+                                "ingested_refs": list(resume_ingested_refs),
+                                "documents_changed": documents_changed,
+                            }
                             await session.commit()
 
                     except PersistedUrlRejectedError:
@@ -488,7 +499,7 @@ class SyncEngine:
                     else:
                         for stale_ref in stale_refs:
                             try:
-                                await self._ingest_client.delete_connector_document(
+                                removed = await self._ingest_client.delete_connector_document(
                                     org_id=portal_config.zitadel_org_id,
                                     kb_slug=portal_config.kb_slug,
                                     source_connector_id=str(connector_id),
@@ -511,6 +522,7 @@ class SyncEngine:
                                 )
                                 break
                             stale_groups_deleted += 1
+                            documents_changed += int(removed)
 
                 # @MX:NOTE: Layer C boilerplate detection and CanaryMismatchError /
                 #   CrawlJobPendingError handling were removed in SPEC-CRAWLER-004
@@ -636,6 +648,7 @@ class SyncEngine:
                     "duplicates_collapsed": duplicates_collapsed,
                     "stale_groups_deleted": stale_groups_deleted,
                     "stale_cleanup_refused": stale_cleanup_refused,
+                    "documents_changed": documents_changed,
                 },
             )
 
@@ -650,6 +663,7 @@ class SyncEngine:
             documents_failed=documents_failed,
             bytes_processed=bytes_processed,
             error_details=error_details if error_details else None,
+            documents_changed=documents_changed,
         )
 
     async def _run_web_crawler_delegation(
@@ -819,6 +833,7 @@ class SyncEngine:
             documents_failed=0,
             bytes_processed=0,
             error_details=failure_error_details or None,
+            documents_changed=0,  # nothing was enqueued, so nothing was crawled
         )
 
     async def _run_hubspot_support_sync(
@@ -999,6 +1014,9 @@ class SyncEngine:
             documents_failed=documents_failed,
             bytes_processed=0,
             error_details=error_details if error_details else None,
+            # Support cases are evidence for the portal, never knowledge base
+            # documents; the portal analyses each case on receipt.
+            documents_changed=0,
         )
 
     async def _upload_images(
@@ -1069,6 +1087,7 @@ class SyncEngine:
                     documents_failed=0,
                     bytes_processed=0,
                     error_details=error_details,
+                    documents_changed=0,
                 )
 
     @staticmethod

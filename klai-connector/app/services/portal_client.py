@@ -159,6 +159,7 @@ class PortalClient:
         documents_failed: int,
         bytes_processed: int,
         error_details: list[dict[str, Any]] | None,
+        documents_changed: int | None,
     ) -> None:
         """Report sync run results to portal.
 
@@ -175,6 +176,10 @@ class PortalClient:
             documents_failed: Documents that failed.
             bytes_processed: Total bytes processed.
             error_details: Per-document error list, or None.
+            documents_changed: Documents whose knowledge actually changed in
+                this run (real ingests plus deletions), or None when the path
+                cannot know. The portal reanalyses support cases only for a
+                positive count, so an unchanged sync costs no LLM calls.
         """
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -190,6 +195,7 @@ class PortalClient:
                         "documents_failed": documents_failed,
                         "bytes_processed": bytes_processed,
                         "error_details": error_details,
+                        "documents_changed": documents_changed,
                     },
                 )
                 response.raise_for_status()

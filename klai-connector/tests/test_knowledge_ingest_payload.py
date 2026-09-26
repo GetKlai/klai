@@ -96,11 +96,12 @@ async def test_delete_connector_document_sends_scoped_internal_request():
     await client._client.aclose()
     response = MagicMock()
     response.raise_for_status = MagicMock()
+    response.json = MagicMock(return_value={"status": "ok", "artifacts_deleted": 1, "episodes_deleted": 0})
     http_client = MagicMock()
     http_client.delete = AsyncMock(return_value=response)
     client._client = http_client
 
-    await client.delete_connector_document(
+    removed = await client.delete_connector_document(
         org_id="org-1",
         kb_slug="prices",
         source_connector_id="connector-1",
@@ -121,6 +122,27 @@ async def test_delete_connector_document_sends_scoped_internal_request():
         },
     )
     response.raise_for_status.assert_called_once_with()
+    assert removed is True
+
+
+@pytest.mark.asyncio
+async def test_delete_that_removed_no_artifact_reports_no_change() -> None:
+    client = KnowledgeIngestClient("http://knowledge-ingest", "internal-secret")
+    await client._client.aclose()
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    response.json = MagicMock(return_value={"status": "ok", "artifacts_deleted": 0, "episodes_deleted": 0})
+    client._client = MagicMock()
+    client._client.delete = AsyncMock(return_value=response)
+
+    removed = await client.delete_connector_document(
+        org_id="org-1",
+        kb_slug="prices",
+        source_connector_id="connector-1",
+        source_ref="json-feed:connector-1:group-a",
+    )
+
+    assert removed is False
 
 
 class TestSenderEmailAndMentionedEmails:
@@ -198,3 +220,32 @@ def test_connector_payload_forwards_sync_generation() -> None:
     payload = _build_payload(**_base_kwargs(), resource_generation="sync-run-42")
 
     assert payload["resource_generation"] == "sync-run-42"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("body", "changed"),
+    [
+        ({"status": "skipped", "reason": "content unchanged", "chunks": 0}, False),
+        ({"status": "ok", "chunks": 3, "title": "Doc", "artifact_id": "a-1"}, True),
+    ],
+)
+async def test_ingest_document_reports_whether_knowledge_changed(body: dict, changed: bool) -> None:
+    client = KnowledgeIngestClient(base_url="http://knowledge-ingest:8100", internal_secret="placeholder-secret")
+    await client._client.aclose()
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    response.json = MagicMock(return_value=body)
+    client._client = MagicMock()
+    client._client.post = AsyncMock(return_value=response)
+
+    result = await client.ingest_document(
+        org_id="org-1",
+        kb_slug="support",
+        path="doc.md",
+        content="hello",
+        source_connector_id="connector-1",
+        source_ref="doc.md",
+    )
+
+    assert result is changed

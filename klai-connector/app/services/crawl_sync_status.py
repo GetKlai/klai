@@ -21,6 +21,16 @@ def is_failed_remote_crawl_status(status: str) -> bool:
     return status in FAILED_REMOTE_CRAWL_STATUSES
 
 
+def remote_crawl_documents_changed(live: dict[str, Any]) -> int | None:
+    """Pages whose knowledge changed during the crawl, from the status payload.
+
+    Not ``pages_done``: that also counts pages knowledge-ingest skipped as
+    unchanged. None for a job created before knowledge-ingest counted changes,
+    which the portal treats as "spend nothing on support reanalysis".
+    """
+    return live.get("pages_changed")
+
+
 def remote_crawl_failure_error(live: dict[str, Any]) -> str:
     error = live.get("error")
     if error:
