@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
-# Probe Mistral API auth for the deployed Klai workspace key.
+# Probe that the deployed Klai workspace key can actually complete a request.
+#
+# It used to GET /v1/models, which only proves the key is valid. On
+# 2026-09-26 the workspace hit its monthly spending limit: every completion
+# returned 402 for hours while /v1/models kept answering 200 and this probe
+# stayed green. A one-token completion sees what users see.
 #
 # Emits one JSON line to stdout and to /opt/klai/logs for Alloy file scraping.
 set -euo pipefail
 
 ENV_FILE="${KLAI_ENV_FILE:-/opt/klai/.env}"
-URL="${MISTRAL_PROBE_URL:-https://api.mistral.ai/v1/models}"
+URL="${MISTRAL_PROBE_URL:-https://api.mistral.ai/v1/chat/completions}"
+MODEL="${MISTRAL_PROBE_MODEL:-mistral-small-2603}"
 TIMEOUT="${MISTRAL_PROBE_TIMEOUT:-10}"
 LOG_FILE="${MISTRAL_PROBE_LOG_FILE:-/opt/klai/logs/mistral-api-probe.log}"
 
@@ -68,7 +74,8 @@ if [[ -z "$key" ]]; then
 fi
 
 http_status=$(
-  printf 'header = "Authorization: Bearer %s"\nurl = "%s"\n' "$key" "$URL" | curl --config - -sS -m "$TIMEOUT" \
+  printf 'header = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\nurl = "%s"\ndata = "{\\"model\\":\\"%s\\",\\"max_tokens\\":1,\\"messages\\":[{\\"role\\":\\"user\\",\\"content\\":\\"ok\\"}]}"\n' \
+    "$key" "$URL" "$MODEL" | curl --config - -sS -m "$TIMEOUT" \
     -o /dev/null -w '%{http_code}' 2>/dev/null || true
 )
 
@@ -79,7 +86,9 @@ if [[ "$http_status" == "200" ]]; then
 fi
 
 error_category=provider_transport_error
-if [[ "$http_status" =~ ^[0-9]{3}$ && "$http_status" != "000" ]]; then
+if [[ "$http_status" == "402" ]]; then
+  error_category=provider_budget_exhausted
+elif [[ "$http_status" =~ ^[0-9]{3}$ && "$http_status" != "000" ]]; then
   error_category=provider_http_error
 fi
 emit fail "${http_status:-0}" "" "$error_category" ""

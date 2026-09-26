@@ -30,7 +30,8 @@ cat > "$tmp/bin/curl" <<'STUB'
 set -euo pipefail
 config=$(cat)
 if [[ " $* " == *" -w "* ]]; then
-    [[ "$config" == *'url = "https://api.mistral.ai/v1/models"'* ]]
+    [[ "$config" == *'url = "https://api.mistral.ai/v1/chat/completions"'* ]]
+    [[ "$config" == *'max_tokens'* ]]
     [[ "$config" == *'header = "Authorization: Bearer provider-key"'* ]]
     headers_file="" body_file=""
     while [[ $# -gt 0 ]]; do
@@ -67,6 +68,13 @@ if grep -q 'provider-key' "$tmp/probe.log"; then
     echo "reflected provider key leaked in failed probe log" >&2
     exit 1
 fi
+# The workspace key stays valid when its spending limit is reached; only a
+# real completion sees the 402. That is how the 2026-09-26 outage stayed green.
+PROVIDER_STATUS=402 PATH="$tmp/bin:$PATH" KLAI_ENV_FILE="$tmp/env" \
+    MISTRAL_PROBE_LOG_FILE="$tmp/probe.log" HEARTBEAT_LOG="$tmp/heartbeat" \
+    bash "$ROOT/scripts/mistral-api-probe.sh" >/dev/null
+grep -q 'heartbeat-token?status=down' "$tmp/heartbeat"
+grep -q '"error":"provider_budget_exhausted"' "$tmp/probe.log"
 grep -v KUMA_TOKEN_MISTRAL "$tmp/env" > "$tmp/env-without-heartbeat"
 if PATH="$tmp/bin:$PATH" KLAI_ENV_FILE="$tmp/env-without-heartbeat" \
     MISTRAL_PROBE_LOG_FILE="$tmp/probe.log" HEARTBEAT_LOG="$tmp/heartbeat" \
