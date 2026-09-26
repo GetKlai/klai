@@ -271,6 +271,7 @@ async def group_findings(
                 system=GROUPING_SYSTEM_PROMPT,
                 user=_build_prompt(cohort, cohort_candidates),
                 delegated_org_id=delegated_org_id,
+                feature_tag="portal:gap-grouping",
             )
             proposed = _parse_assignments(raw, cohort, candidates_by_key)
             if not proposed:
@@ -279,6 +280,7 @@ async def group_findings(
                 system=VERIFICATION_SYSTEM_PROMPT,
                 user=_build_verification_prompt(cohort, proposed, candidates_by_key),
                 delegated_org_id=delegated_org_id,
+                feature_tag="portal:gap-grouping",
             )
             verified = _parse_assignments(raw, cohort, candidates_by_key)
             matched.update({index: key for index, key in proposed.items() if verified.get(index) == key})

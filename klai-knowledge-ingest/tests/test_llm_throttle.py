@@ -15,9 +15,11 @@ import pytest
 
 from knowledge_ingest.llm_throttle import (
     NoMediumFallbackTransport,
+    TaggingTransport,
     TokenBucketLimiter,
     add_no_fallback,
     shared_klai_fast_limiter,
+    with_feature_tag,
 )
 
 
@@ -104,13 +106,20 @@ class TestNoMediumFallbackContract:
     def test_add_no_fallback_blocks_medium_without_touching_the_rest(self):
         payload = {"model": "klai-fast", "messages": [{"role": "user", "content": "hi"}]}
 
-        result = add_no_fallback(payload)
+        result = add_no_fallback(payload, tag="ingest:enrichment")
 
         assert result["fallbacks"] == []
         assert result["model"] == "klai-fast"
         assert result["messages"] == payload["messages"]
         # Must not mutate the caller's dict -- callers may reuse it.
         assert "fallbacks" not in payload
+
+    def test_add_no_fallback_also_tags_the_feature(self):
+        """SPEC: every LiteLLM call is attributable to the feature that made
+        it (LiteLLM_SpendLogs.request_tags, from metadata.tags)."""
+        result = add_no_fallback({"model": "klai-fast"}, tag="ingest:taxonomy")
+
+        assert result["metadata"]["tags"] == ["ingest:taxonomy"]
 
     @pytest.mark.asyncio
     async def test_no_medium_fallback_transport_rewrites_outbound_request(self):
@@ -125,7 +134,7 @@ class TestNoMediumFallbackContract:
                 captured.append(request)
                 return httpx.Response(200, json={"ok": True}, request=request)
 
-        transport = NoMediumFallbackTransport(_CapturingTransport())
+        transport = NoMediumFallbackTransport(_CapturingTransport(), tag="ingest:graph")
         async with httpx.AsyncClient(transport=transport, timeout=httpx.Timeout(7.0)) as client:
             await client.post(
                 "http://litellm.internal/v1/chat/completions",
@@ -137,11 +146,74 @@ class TestNoMediumFallbackContract:
         sent_body = json.loads(captured[0].content)
         assert sent_body["fallbacks"] == []
         assert sent_body["model"] == "klai-fast"
+        assert sent_body["metadata"]["tags"] == ["ingest:graph"]
         # Auth must survive the request being rebuilt.
         assert captured[0].headers["authorization"] == "Bearer secret-key"
         # So must the client's timeouts: httpcore reads them from the request
         # extensions, and without them a stuck call would hang forever.
         assert captured[0].extensions["timeout"]["read"] == 7.0
+
+
+class TestFeatureTagContract:
+    """SPEC: every LiteLLM call must be attributable to the feature that made
+    it, so spend per feature per day is queryable from LiteLLM_SpendLogs."""
+
+    def test_with_feature_tag_adds_not_replaces_existing_metadata(self):
+        body = {"model": "klai-fast", "metadata": {"other": "value"}}
+
+        result = with_feature_tag(body, tag="ingest:eval")
+
+        assert result["metadata"] == {"other": "value", "tags": ["ingest:eval"]}
+        # Must not mutate the caller's dict.
+        assert "tags" not in body["metadata"]
+
+    @pytest.mark.asyncio
+    async def test_tagging_transport_tags_without_touching_fallbacks(self):
+        """RAGAS' faithfulness heavy_llm targets klai-medium directly and has
+        no fallback entry to suppress -- it must still be tagged."""
+        captured: list[httpx.Request] = []
+
+        class _CapturingTransport(httpx.AsyncBaseTransport):
+            async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+                captured.append(request)
+                return httpx.Response(200, json={"ok": True}, request=request)
+
+        transport = TaggingTransport(_CapturingTransport(), tag="ingest:eval")
+        async with httpx.AsyncClient(transport=transport, timeout=httpx.Timeout(7.0)) as client:
+            await client.post(
+                "http://litellm.internal/v1/chat/completions",
+                json={"model": "klai-medium", "messages": [{"role": "user", "content": "hi"}]},
+            )
+
+        sent_body = json.loads(captured[0].content)
+        assert sent_body["metadata"]["tags"] == ["ingest:eval"]
+        assert "fallbacks" not in sent_body
+
+    def test_every_chat_completions_caller_tags_its_feature(self):
+        """Mirrors TestChatCompletionsThrottleDriftGuard's pattern: every
+        module that POSTs a raw chat/completions body must route it through
+        one of the tagging helpers -- otherwise its spend is invisible in the
+        per-feature spend report (the 2026-09-25/26 $13 klai-medium incident
+        this whole change fixes)."""
+        package_root = Path(__file__).resolve().parent.parent / "knowledge_ingest"
+        offenders: list[str] = []
+
+        for path in sorted(package_root.rglob("*.py")):
+            relative = path.relative_to(package_root)
+            if "tests" in relative.parts:
+                continue
+            source = path.read_text(encoding="utf-8")
+            if "chat/completions" in source and not (
+                "add_no_fallback" in source
+                or "TaggingTransport" in source
+                or "with_feature_tag" in source
+            ):
+                offenders.append(str(relative))
+
+        assert not offenders, (
+            "These files POST to chat/completions without tagging the "
+            f"feature (add_no_fallback / TaggingTransport / with_feature_tag): {offenders}"
+        )
 
     def test_every_chat_completions_caller_blocks_medium_fallback(self):
         """Every knowledge-ingest module that POSTs a raw chat/completions

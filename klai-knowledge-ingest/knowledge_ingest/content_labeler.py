@@ -107,7 +107,8 @@ async def _call_litellm(user_message: str) -> dict:
                     ],
                     "temperature": 0.0,
                     "max_tokens": 100,
-                }
+                },
+                tag="ingest:content-labeler",
             ),
         )
         resp.raise_for_status()

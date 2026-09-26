@@ -304,7 +304,8 @@ async def _suggest_cluster_name(
                     ],
                     "temperature": 0.3,
                     "max_tokens": 50,
-                }
+                },
+                tag="ingest:proposal-generator",
             ),
         )
         resp.raise_for_status()
@@ -406,7 +407,8 @@ async def _suggest_cluster_names_batched(
                         ],
                         "temperature": 0.3,
                         "max_tokens": 1500,
-                    }
+                    },
+                    tag="ingest:proposal-generator",
                 ),
             )
             resp.raise_for_status()
@@ -647,7 +649,8 @@ async def _consolidate_to_parents(
                     ],
                     "temperature": 0.2,
                     "max_tokens": max_tokens,
-                }
+                },
+                tag="ingest:proposal-generator",
             ),
         )
         resp.raise_for_status()
@@ -1211,7 +1214,8 @@ async def _suggest_category_name(documents: list[DocumentSummary]) -> str | None
                     ],
                     "temperature": 0.3,
                     "max_tokens": 50,
-                }
+                },
+                tag="ingest:proposal-generator",
             ),
         )
         resp.raise_for_status()

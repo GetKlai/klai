@@ -53,7 +53,10 @@ def test_openai_passthrough_metadata_strips_user_metadata():
 
     forwarded = _with_openai_passthrough_metadata(body)
 
-    assert forwarded["metadata"] == {"_klai_openai_passthrough": True}
+    assert forwarded["metadata"] == {
+        "_klai_openai_passthrough": True,
+        "tags": ["portal:partner-openai-passthrough"],
+    }
     assert body["metadata"] == {"customer": "acme"}
 
 

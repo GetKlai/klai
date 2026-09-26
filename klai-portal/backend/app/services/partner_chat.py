@@ -97,7 +97,7 @@ from app.services.knowledge_prompts import (
     multi_question_guard,
     sub_query_grouped_context,
 )
-from app.services.litellm_delegation import with_delegated_org
+from app.services.litellm_delegation import with_delegated_org, with_feature_tag
 from app.services.llm_safety_adapter import (
     check_context_text,
     check_model_output,
@@ -1589,6 +1589,7 @@ def _llm_request_body(
         body["tools"] = tools
         if tool_choice is not None:
             body["tool_choice"] = tool_choice
+    with_feature_tag(body, "portal:partner-chat-answer")
     return with_delegated_org(body, delegated_org_id)
 
 
@@ -1658,6 +1659,7 @@ def _with_openai_passthrough_metadata(
     forwarded = dict(body)
     forwarded["metadata"] = {"_klai_openai_passthrough": True}
     with_delegated_org(forwarded, delegated_org_id)
+    with_feature_tag(forwarded, "portal:partner-openai-passthrough")
     prompt_cache_key = forwarded.pop("prompt_cache_key", None)
     if prompt_cache_key is not None:
         namespace = org_id if org_id is not None else "none"

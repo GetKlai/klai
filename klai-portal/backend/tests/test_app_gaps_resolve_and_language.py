@@ -300,7 +300,9 @@ async def test_the_grouping_judge_calls_of_a_gap_name_the_tenant(monkeypatch) ->
 
     bodies = [json.loads(call.request.content) for call in litellm.calls]
     assert len(bodies) == 2  # the grouping call and its verification
-    assert [body.get("metadata") for body in bodies] == [{"_klai_delegated_org_id": "zit-org-1"}] * 2
+    assert [body.get("metadata") for body in bodies] == [
+        {"_klai_delegated_org_id": "zit-org-1", "tags": ["portal:gap-grouping"]}
+    ] * 2
 
 
 @pytest.mark.asyncio

@@ -39,6 +39,24 @@ class TestCoreference:
         assert result == "Tell me more"
 
     @pytest.mark.asyncio
+    async def test_call_carries_the_feature_tag(self):
+        """SPEC: every LiteLLM call is attributable to the feature that made
+        it (LiteLLM_SpendLogs.request_tags, from metadata.tags)."""
+        captured: dict = {}
+
+        async def _fake_call_llm(body, headers):
+            captured["body"] = body
+            return "resolved"
+
+        with patch("retrieval_api.services.coreference._call_llm", new=_fake_call_llm):
+            await resolve(
+                "What is their policy?",
+                [{"role": "user", "content": "Tell me about Klai"}],
+            )
+
+        assert captured["body"]["metadata"]["tags"] == ["retrieval:coreference"]
+
+    @pytest.mark.asyncio
     async def test_normal_resolution(self):
         """LLM resolves coreference successfully."""
         with patch(

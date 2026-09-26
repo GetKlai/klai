@@ -10,6 +10,7 @@ budget should move (logboek 2.37).
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -28,6 +29,35 @@ _VERDICT = (
     '{"statement": "Dat kost 5 euro.", "evidence": "", "support": "contradicted"}'
     "]}"
 )
+
+
+@pytest.mark.asyncio
+async def test_the_call_carries_the_feature_tag():
+    """SPEC: every LiteLLM call is attributable to the feature that made it
+    (LiteLLM_SpendLogs.request_tags, from metadata.tags)."""
+    posted: dict = {}
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            posted["json"] = json
+            resp = MagicMock()
+            resp.raise_for_status = MagicMock()
+            resp.json.return_value = {"choices": [{"message": {"content": "ok"}}]}
+            return resp
+
+    with patch("httpx.AsyncClient", _Client):
+        await ag._post(system_prompt="sys", user_content="user", settings=_Settings(), transport_timeout=1.0)
+
+    assert posted["json"]["metadata"]["tags"] == ["portal:answer-grounding"]
 
 
 @pytest.mark.asyncio

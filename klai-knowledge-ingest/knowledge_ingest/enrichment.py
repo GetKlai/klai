@@ -174,7 +174,7 @@ async def _call_llm(prompt: str, path: str) -> dict:
         async with httpx.AsyncClient(timeout=settings.enrichment_timeout) as client:
             resp = await client.post(
                 f"{settings.litellm_url}/v1/chat/completions",
-                json=add_no_fallback(payload),
+                json=add_no_fallback(payload, tag="ingest:enrichment"),
                 headers=headers,
             )
             resp.raise_for_status()

@@ -53,9 +53,11 @@ from knowledge_ingest.config import settings
 
 __all__ = [
     "NoMediumFallbackTransport",
+    "TaggingTransport",
     "TokenBucketLimiter",
     "add_no_fallback",
     "shared_klai_fast_limiter",
+    "with_feature_tag",
 ]
 
 _shared_limiter: TokenBucketLimiter | None = None
@@ -103,8 +105,49 @@ def shared_klai_fast_limiter() -> TokenBucketLimiter:
 #     Live-verified: a request with ``fallbacks: []`` against the
 #     currently-degraded order:1 key still returned 200 via order:2's
 #     mistral-small-2603, exactly like a request with no override at all.
-def add_no_fallback(payload: dict) -> dict:
-    """Return a chat-completions payload with ``fallbacks: []`` set.
+def with_feature_tag(payload: dict, *, tag: str) -> dict:
+    """Return ``payload`` with ``tag`` recorded as a LiteLLM spend tag.
+
+    Written to ``metadata.tags`` -- the field ``LiteLLM_SpendLogs.request_tags``
+    is read from (``get_logging_payload`` in litellm's
+    ``spend_tracking_utils.py``), verified against the litellm 1.96.2 actually
+    running on core-01 (klai-core-litellm-1), by reading the installed source.
+    That same payload builder runs on both the success and the failure logging
+    path, so a tag survives a 402/429 row exactly like a 200 one. ``tag`` is
+    required (not defaulted) so a new caller cannot forget to name its feature.
+    """
+    metadata = payload.get("metadata") or {}
+    return {**payload, "metadata": {**metadata, "tags": [*(metadata.get("tags") or []), tag]}}
+
+
+# ---------------------------------------------------------------------------
+# No-medium-fallback (measured September 2026: $583 of ~$1,048 LLM spend was
+# background graph/enrichment/taxonomy work silently served by klai-medium at
+# ~10-12.5x klai-fast's price, because deploy/litellm/config.yaml's
+# router_settings.fallbacks routes a saturated klai-fast to klai-medium —
+# a fallback meant for interactive chat latency, not background work).
+#
+# ``fallbacks: []`` per request, NOT ``disable_fallbacks: true``. Verified
+# against the litellm==1.96.2 actually running on core-01
+# (klai-core-litellm-1), by reading the installed source and by a live probe
+# through klai-portal/backend's settings.litellm_base_url:
+#
+#   * ``disable_fallbacks: true`` short-circuits
+#     ``Router.async_function_with_fallbacks_common_utils`` before it builds
+#     ANY fallback list -- which also skips the "ORDER-BASED FALLBACKS" block
+#     that fails ``klai-fast``'s order:1 (subscription) deployment over to
+#     order:2 (PAYG) on the SAME model. Live proof: with the subscription key
+#     currently over its Mistral workspace monthly spending limit,
+#     ``disable_fallbacks: true`` returned the raw 402 from Mistral instead of
+#     silently succeeding via order:2 the way a plain request does.
+#   * ``fallbacks: []`` (a per-request override of the model-group fallback
+#     list) is read independently of the order-based block -- order-based
+#     failover still runs, only the escalation to klai-medium is suppressed.
+#     Live-verified: a request with ``fallbacks: []`` against the
+#     currently-degraded order:1 key still returned 200 via order:2's
+#     mistral-small-2603, exactly like a request with no override at all.
+def add_no_fallback(payload: dict, *, tag: str) -> dict:
+    """Return a chat-completions payload with ``fallbacks: []`` set, tagged with ``tag``.
 
     Use for every klai-fast call made by background ingest work (graph
     extraction, enrichment, taxonomy, labeling, selector-AI, RAG eval). Chat
@@ -112,34 +155,22 @@ def add_no_fallback(payload: dict) -> dict:
     the global fallback, so this is applied per-request here, not in
     ``deploy/litellm/config.yaml``.
     """
-    return {**payload, "fallbacks": []}
+    return {**with_feature_tag(payload, tag=tag), "fallbacks": []}
 
 
-class NoMediumFallbackTransport(httpx.AsyncBaseTransport):
-    """Wraps a transport, adding ``fallbacks: []`` to every JSON POST body.
+def _rewrite_body(request: httpx.Request, transform) -> httpx.Request:
+    """Rebuild a POST request with ``transform`` applied to its JSON body.
 
-    For callers that hand LiteLLM traffic to a library that builds its own
-    request body (Graphiti's ``AsyncOpenAI`` client, RAGAS' judge LLM) rather
-    than constructing the payload dict themselves -- see ``add_no_fallback``
-    for callers that do.
+    A GET, or a body without a ``messages`` or ``input`` key (neither a
+    chat-completions nor an embeddings call), passes through untouched.
     """
-
-    def __init__(self, wrapped: httpx.AsyncBaseTransport) -> None:
-        self._wrapped = wrapped
-
-    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        request = _rewrite_with_no_fallback(request)
-        return await self._wrapped.handle_async_request(request)
-
-
-def _rewrite_with_no_fallback(request: httpx.Request) -> httpx.Request:
     if request.method != "POST":
         return request
     try:
         body = json.loads(request.content)
     except (json.JSONDecodeError, UnicodeDecodeError):
         return request
-    if not isinstance(body, dict) or "messages" not in body:
+    if not isinstance(body, dict) or ("messages" not in body and "input" not in body):
         return request
     headers = httpx.Headers(
         [(k, v) for k, v in request.headers.raw if k.lower() != b"content-length"]
@@ -148,8 +179,50 @@ def _rewrite_with_no_fallback(request: httpx.Request) -> httpx.Request:
         method=request.method,
         url=request.url,
         headers=headers,
-        json=add_no_fallback(body),
+        json=transform(body),
         # httpcore reads the client's timeouts from here; a rebuilt request
         # without them has no timeout at all.
         extensions=request.extensions,
     )
+
+
+class NoMediumFallbackTransport(httpx.AsyncBaseTransport):
+    """Wraps a transport, adding ``fallbacks: []`` and a spend tag to every JSON POST body.
+
+    For callers that hand LiteLLM traffic to a library that builds its own
+    request body (Graphiti's ``AsyncOpenAI`` client, RAGAS' judge LLM) rather
+    than constructing the payload dict themselves -- see ``add_no_fallback``
+    for callers that do.
+    """
+
+    def __init__(self, wrapped: httpx.AsyncBaseTransport, *, tag: str) -> None:
+        self._wrapped = wrapped
+        self._tag = tag
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        request = _rewrite_body(request, lambda body: add_no_fallback(body, tag=self._tag))
+        return await self._wrapped.handle_async_request(request)
+
+    async def aclose(self) -> None:
+        await self._wrapped.aclose()
+
+
+class TaggingTransport(httpx.AsyncBaseTransport):
+    """Wraps a transport, adding only a spend tag -- no ``fallbacks: []``.
+
+    For a call that already targets its model directly and has no fallback
+    entry to suppress (RAGAS' faithfulness ``heavy_llm``, pinned to
+    klai-medium), so tagging must not imply a fallback opinion it does not
+    need.
+    """
+
+    def __init__(self, wrapped: httpx.AsyncBaseTransport, *, tag: str) -> None:
+        self._wrapped = wrapped
+        self._tag = tag
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        request = _rewrite_body(request, lambda body: with_feature_tag(body, tag=self._tag))
+        return await self._wrapped.handle_async_request(request)
+
+    async def aclose(self) -> None:
+        await self._wrapped.aclose()

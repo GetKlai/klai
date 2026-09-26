@@ -66,6 +66,33 @@ def _mock_gap_event_scheduling(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+def test_llm_request_body_carries_the_feature_tag():
+    """SPEC: every LiteLLM call is attributable to the feature that made it
+    (LiteLLM_SpendLogs.request_tags, from metadata.tags)."""
+    from app.services.partner_chat import _llm_request_body
+
+    body = _llm_request_body(
+        "klai-primary",
+        [{"role": "user", "content": "hi"}],
+        0.3,
+        stream=False,
+        tools=None,
+        tool_choice=None,
+        delegated_org_id=None,
+    )
+
+    assert body["metadata"]["tags"] == ["portal:partner-chat-answer"]
+
+
+def test_openai_passthrough_metadata_carries_the_feature_tag():
+    from app.services.partner_chat import _with_openai_passthrough_metadata
+
+    forwarded = _with_openai_passthrough_metadata({"model": "gpt-4o", "messages": []})
+
+    assert forwarded["metadata"]["tags"] == ["portal:partner-openai-passthrough"]
+    assert forwarded["metadata"]["_klai_openai_passthrough"] is True
+
+
 def test_llm_messages_strip_widget_metadata():
     """Widget-only metadata must never be sent back to the LLM provider."""
     from app.services.partner_chat import _augment_messages_with_system_prompt

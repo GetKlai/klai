@@ -41,6 +41,7 @@ from retrieval_api.services.evidence_pack import (
     evidence_pack_sources_payload,
 )
 from retrieval_api.services.llm_safety_adapter import check_synthesis_context
+from retrieval_api.services.llm_spend_tags import with_feature_tag
 
 logger = logging.getLogger(__name__)
 
@@ -262,12 +263,15 @@ async def synthesize(
         }
     )
 
-    body = {
-        "model": settings.synthesis_model,
-        "messages": messages,
-        "stream": True,
-        "temperature": 0.3,
-    }
+    body = with_feature_tag(
+        {
+            "model": settings.synthesis_model,
+            "messages": messages,
+            "stream": True,
+            "temperature": 0.3,
+        },
+        "retrieval:synthesis",
+    )
     headers = {}
     if settings.litellm_api_key:
         headers["Authorization"] = f"Bearer {settings.litellm_api_key}"

@@ -43,7 +43,7 @@ import httpx
 
 from app.core.config import settings
 from app.services.gap_classification import classify_gap
-from app.services.litellm_delegation import with_delegated_org
+from app.services.litellm_delegation import with_delegated_org, with_feature_tag
 from app.trace import get_trace_headers
 
 # Bumped whenever the extraction/assessment prompts or the finding shape change,
@@ -463,13 +463,20 @@ def _parse_json_object(raw: str) -> dict:
 
 
 async def _call_llm(
-    *, system: str, user: str, response_format: dict[str, object] | None = None, delegated_org_id: str | None = None
+    *,
+    system: str,
+    user: str,
+    response_format: dict[str, object] | None = None,
+    delegated_org_id: str | None = None,
+    feature_tag: str = "portal:support-case-analysis",
 ) -> str:
     """One LiteLLM chat completion against the configured judge model.
 
     Same endpoint, auth and trace propagation as
     ``conversation_judge._call_judge_llm``; temperature pinned low for a stable
-    classification.
+    classification. ``feature_tag`` defaults to this module's own feature but
+    is overridden by ``support_gap_grouping.py``, which reuses this function
+    for an unrelated feature (grouping open gaps by question).
     """
     async with httpx.AsyncClient(timeout=_LLM_TIMEOUT_S) as client:
         resp = await client.post(
@@ -478,17 +485,20 @@ async def _call_llm(
                 "Authorization": f"Bearer {settings.litellm_master_key}",
                 **get_trace_headers(),
             },
-            json=with_delegated_org(
-                {
-                    "model": settings.conversation_judge_model,
-                    "temperature": 0.1,
-                    "response_format": response_format or {"type": "json_object"},
-                    "messages": [
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": user},
-                    ],
-                },
-                delegated_org_id,
+            json=with_feature_tag(
+                with_delegated_org(
+                    {
+                        "model": settings.conversation_judge_model,
+                        "temperature": 0.1,
+                        "response_format": response_format or {"type": "json_object"},
+                        "messages": [
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": user},
+                        ],
+                    },
+                    delegated_org_id,
+                ),
+                feature_tag,
             ),
         )
         resp.raise_for_status()

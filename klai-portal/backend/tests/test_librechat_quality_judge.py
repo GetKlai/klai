@@ -322,10 +322,11 @@ async def test_unlocked_org_conversation_is_judged_and_stored():
 
     captured: dict = {}
 
-    async def _fake_llm(*, model: str, user: str, system: str) -> str:
+    async def _fake_llm(*, model: str, user: str, system: str, feature_tag: str = "") -> str:
         captured["model"] = model
         captured["user"] = user
         captured["system"] = system
+        captured["feature_tag"] = feature_tag
         return _verdict_raw()
 
     with (
@@ -351,6 +352,8 @@ async def test_unlocked_org_conversation_is_judged_and_stored():
     # The second (internal-audience) rubric is what reaches the model.
     assert captured["system"] == lj.LIBRECHAT_JUDGE_SYSTEM_PROMPT
     assert captured["model"] == settings.conversation_judge_model
+    # LibreChat spend must be distinguishable from the webchat judge's own tag.
+    assert captured["feature_tag"] == "portal:librechat-judge"
     payload = json.loads(captured["user"])
     assert payload["signals"] == {"explicit_rating": "thumbsUp", "had_error": False}
 
@@ -429,7 +432,7 @@ async def test_older_unjudged_conversation_survives_a_full_batch_of_judged():
     )
     org = _OrgDb(org_id=7, judged_external=set(judged_ids))
 
-    async def _fake_llm(*, model: str, user: str, system: str) -> str:
+    async def _fake_llm(*, model: str, user: str, system: str, feature_tag: str = "") -> str:
         return _verdict_raw()
 
     with (
@@ -472,7 +475,7 @@ async def test_roles_and_signals_come_from_the_real_librechat_fields():
 
     captured: dict = {}
 
-    async def _fake_llm(*, model: str, user: str, system: str) -> str:
+    async def _fake_llm(*, model: str, user: str, system: str, feature_tag: str = "") -> str:
         captured["user"] = user
         return _verdict_raw(outcome="unresolved", failure_category="generation_error", confidence="medium")
 
@@ -521,7 +524,7 @@ async def test_structured_content_error_with_false_legacy_flag_reaches_the_judge
 
     captured: dict = {}
 
-    async def _fake_llm(*, model: str, user: str, system: str) -> str:
+    async def _fake_llm(*, model: str, user: str, system: str, feature_tag: str = "") -> str:
         signals = json.loads(user)["signals"]
         captured["had_error"] = signals["had_error"]
         # Distinguishable verdict driven by the observed platform signal, so the
@@ -583,7 +586,7 @@ async def test_invalid_judge_json_is_skipped_and_batch_continues():
     )
     org = _OrgDb(org_id=7)
 
-    async def _llm_returns_garbage_for_c1(*, model: str, user: str, system: str) -> str:
+    async def _llm_returns_garbage_for_c1(*, model: str, user: str, system: str, feature_tag: str = "") -> str:
         payload = json.loads(user)
         if payload["transcript"][0]["content"] == "q1":
             return "this is definitely not the JSON the schema asked for"
@@ -762,7 +765,7 @@ async def test_a_knowledge_failure_is_filed_as_an_internal_gap_after_the_judgmen
     )
     org = _OrgDb(org_id=7)
 
-    async def _fake_llm(*, model: str, user: str, system: str) -> str:
+    async def _fake_llm(*, model: str, user: str, system: str, feature_tag: str = "") -> str:
         return _verdict_raw(outcome="unresolved", failure_category="retrieval_miss")
 
     filed = AsyncMock(return_value=True)

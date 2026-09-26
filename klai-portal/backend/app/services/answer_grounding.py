@@ -47,7 +47,7 @@ from klai_chat_prompts import (
 )
 
 from app.core.config import Settings
-from app.services.litellm_delegation import with_delegated_org
+from app.services.litellm_delegation import with_delegated_org, with_feature_tag
 
 logger = structlog.get_logger()
 
@@ -99,6 +99,7 @@ async def _post(
     }
     if response_format is not None:
         payload["response_format"] = response_format
+    with_feature_tag(payload, "portal:answer-grounding")
     async with httpx.AsyncClient(timeout=transport_timeout) as client:
         response = await client.post(
             f"{settings.litellm_base_url}/v1/chat/completions",
