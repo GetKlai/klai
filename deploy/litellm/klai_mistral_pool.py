@@ -95,12 +95,12 @@ process). Process-local dict state is therefore correct as-is; sharing it
 (Redis, etc.) is only needed if that ever changes to more than one worker
 or container replica.
 
-Bench time: 1 hour. A 402 means a monthly/workspace spending limit, which
-does not reset until the next billing cycle or Mark raising the limit by
-hand -- so most re-probes within the hour would just waste a call. An hour
-is short enough to notice a same-day limit increase without adding a
-second control surface, and self-corrects if wrong: a probe that gets
-another 402 simply re-arms the full hour. Known ceiling: expiry is a plain
+Bench time: 5 minutes. A 402 means a monthly/workspace spending limit that
+only a person lifts (raising the limit, enabling pay-as-you-go, adding an
+account). A probe that gets another 402 costs nothing and re-arms the
+bench, while a short bench means traffic returns within minutes of that
+fix instead of up to an hour later (measured need, 2026-09-26: every
+account went FULL overnight and recovery waits on the owner). Known ceiling: expiry is a plain
 timestamp, not a single-flight probe, so a burst of concurrent requests
 right at expiry could all reach the still-full account before any of their
 402s re-arms it. Given Mistral's per-deployment rpm caps (45-900 depending
@@ -117,8 +117,8 @@ import time
 from litellm.integrations.custom_logger import CustomLogger
 
 # A 402 marks the failing organisation FULL for this long before the next
-# request is allowed to probe it again. See module docstring for why 1 hour.
-BENCH_SECONDS = 3600
+# request is allowed to probe it again. See module docstring for why 5 minutes.
+BENCH_SECONDS = 300
 
 
 class KlaiMistralPoolHook(CustomLogger):
