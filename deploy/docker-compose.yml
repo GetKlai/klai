@@ -260,7 +260,7 @@ services:
   # ─── listmonk PostgreSQL (mailing.getklai.com) ───────────────────────────
   listmonk-db:
     logging: *log-rotation
-    image: postgres:17.10-alpine
+    image: postgres:17.11-alpine
     restart: unless-stopped
     volumes:
       - listmonk-postgres-data:/var/lib/postgresql/data
@@ -279,7 +279,7 @@ services:
   # ─── Meilisearch ──────────────────────────────────────────────────────────
   meilisearch:
     logging: *log-rotation
-    image: getmeili/meilisearch:v1.53.0
+    image: getmeili/meilisearch:v1.54.0
     restart: unless-stopped
     volumes:
       - meilisearch-data:/meili_data
@@ -288,6 +288,12 @@ services:
       MEILI_DB_PATH: /meili_data
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
       MEILI_NO_ANALYTICS: "true"
+      # A Meilisearch minor refuses to open the previous minor's database
+      # ("Your database version (1.53.0) is incompatible") unless told to
+      # migrate it on start. Verified on a copy of this volume on 2026-09-26:
+      # 1.53 -> 1.54 upgraded in place with every index and document count
+      # unchanged. The migration is one-way: roll back from a backup.
+      MEILI_UPGRADE_DB: "true"
     networks:
       - net-meilisearch
     healthcheck:
@@ -2346,7 +2352,7 @@ services:
   # candidate first, then editing here.
   firecrawl-postgres:
     logging: *log-rotation
-    image: postgres:18.4-alpine
+    image: postgres:18.6-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: firecrawl
@@ -2492,7 +2498,7 @@ services:
   # no volume.
   crm-postgres:
     logging: *log-rotation
-    image: postgres:16.13-alpine
+    image: postgres:16.15-alpine
     restart: unless-stopped
     volumes:
       - crm-postgres-data:/var/lib/postgresql/data
@@ -2537,7 +2543,7 @@ services:
   # schema that the restored dump would collide with.
   umami-postgres:
     logging: *log-rotation
-    image: postgres:16.13-alpine
+    image: postgres:16.15-alpine
     restart: unless-stopped
     volumes:
       - umami-postgres-data:/var/lib/postgresql/data
@@ -2565,7 +2571,7 @@ services:
   # arrives by pg_dump from 12 and restore into 17, verified table by table.
   fider-postgres:
     logging: *log-rotation
-    image: postgres:17.10-alpine
+    image: postgres:17.11-alpine
     restart: unless-stopped
     volumes:
       - fider-postgres-data:/var/lib/postgresql/data
