@@ -187,13 +187,14 @@ router_settings:
   # needed to keep that advance FULL-gated instead of retry-exhaustion-gated.
   # Behavioral coverage: tests/test_litellm_mistral_failover.py.
   routing_strategy: simple-shuffle
-  # Chat (klai-primary) falls back to Mistral Large when Small fails or its
-  # budget is spent: Large is the next model up that costs less than Medium on
-  # both input and output. klai-fast has no fallback: it carries bulk
-  # background traffic, and a fallback to Medium served Small-intended load at
-  # ~10x the input price from 2026-09-09 for every caller that did not send
-  # `fallbacks: []`.
-  fallbacks: [{"klai-primary": ["klai-large"]}]
+  # Small (klai-primary, klai-fast) falls back to Mistral Large when it fails or
+  # its budget is spent: Large is the next model up that costs less than Medium
+  # on both input and output. Nothing falls back to Medium: that fallback served
+  # Small-intended load at ~10x the input price from 2026-09-09. klai-fast also
+  # carries user traffic (custom_router sends web-search and long turns there),
+  # so it keeps a fallback; bulk background callers send `fallbacks: []` per
+  # request and stay on Small.
+  fallbacks: [{"klai-primary": ["klai-large"]}, {"klai-fast": ["klai-large"]}]
   optional_pre_call_checks:
     - enforce_model_rate_limits  # Queue requests when model RPM/TPM is hit
   allowed_fails: 2

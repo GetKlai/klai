@@ -236,27 +236,31 @@ async def test_primary_alias_falls_back_to_large_without_spilling_to_order2(
 
 
 @pytest.mark.asyncio
-async def test_fast_alias_never_falls_back_to_medium(real_litellm) -> None:
-    """klai-fast carries bulk Small traffic. When Small keeps failing the
-    caller gets the error; the same load is never served on Medium, which
-    costs ~10x the input price."""
-    models: list[str] = []
+async def test_fast_alias_falls_back_to_large_never_medium(real_litellm) -> None:
+    """klai-fast also carries user traffic, so when Small keeps failing it is
+    served by Large, never by Medium (~10x Small's input price). A bulk caller
+    that sends ``fallbacks: []`` stays on Small and gets the error."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        models.append(re.search(rb"mistral-(small|medium|large)", request.content).group(1).decode())
-        return _error_response(request, 429, "rate limited")
+    async def models_tried(**kwargs) -> list[str]:
+        models: list[str] = []
 
-    router, _hook = _pinned_router(real_litellm)
-    try:
-        with _mock_mistral_http(handler), pytest.raises(real_litellm.RateLimitError):
-            await asyncio.wait_for(
-                router.acompletion(model="klai-fast", messages=[{"role": "user", "content": "hello"}]),
-                timeout=15,
-            )
-    finally:
-        router.reset()
+        def handler(request: httpx.Request) -> httpx.Response:
+            models.append(re.search(rb"mistral-(small|medium|large)", request.content).group(1).decode())
+            return _error_response(request, 429, "rate limited")
 
-    assert models and set(models) == {"small"}
+        router, _hook = _pinned_router(real_litellm)
+        try:
+            with _mock_mistral_http(handler), pytest.raises(real_litellm.RateLimitError):
+                await asyncio.wait_for(
+                    router.acompletion(model="klai-fast", messages=[{"role": "user", "content": "hello"}], **kwargs),
+                    timeout=15,
+                )
+        finally:
+            router.reset()
+        return models
+
+    assert set(await models_tried()) == {"small", "large"}
+    assert set(await models_tried(fallbacks=[])) == {"small"}
 
 
 @pytest.mark.asyncio

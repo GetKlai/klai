@@ -238,7 +238,7 @@ groups:
                   reducer: { params: [], type: last }
                   type: query
         noDataState: OK
-        execErrState: OK
+        execErrState: Error
         for: 0s
         keepFiringFor: 30m
         isPaused: false
@@ -251,8 +251,8 @@ groups:
           description: |
             A klai-* Mistral deployment spent its daily max_budget
             (deploy/litellm/config.yaml) and LiteLLM refused requests for it
-            in the last 5m. klai-primary falls back to klai-large; every other
-            alias answers HTTP 500 until the 24h window resets or LiteLLM
+            in the last 5m. klai-primary and klai-fast fall back to klai-large;
+            klai-medium and klai-large answer an error until the 24h window resets or LiteLLM
             restarts (spend is counted in process memory).
 
             Triage:
