@@ -309,7 +309,8 @@ async def test_in_job_slowdown_rate_is_persisted_for_the_next_crawl(
         *, urls: list[str], rate_limit: float | None, **_kwargs: Any
     ) -> ChunkedFetchResult:
         observed_rates.append(rate_limit)
-        if len(observed_rates) <= 3:
+        # The plain batch, the stealth retry it earns, and two slowed batches.
+        if len(observed_rates) <= 4:
             return ChunkedFetchResult(
                 raw_results=[
                     {
@@ -398,7 +399,7 @@ async def test_in_job_slowdown_rate_is_persisted_for_the_next_crawl(
             rate_limit=2.0,
         )
 
-    assert observed_rates == [2.0, 1.0, 0.5, 0.25]
+    assert observed_rates == [2.0, 2.0, 1.0, 0.5, 0.25]
     persisted_state = save_state.await_args.kwargs["state"]
     assert persisted_state.rate_limit == pytest.approx(0.25)
 

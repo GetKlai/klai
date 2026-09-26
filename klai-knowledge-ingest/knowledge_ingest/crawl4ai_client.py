@@ -965,48 +965,35 @@ async def crawl_single_page_source(url: str) -> CrawlResult:
 # ---------------------------------------------------------------------------
 
 
-def _build_browser_config_with_cookies(
-    cookies: list[dict[str, Any]] | None,
-    *,
-    stealth: bool = False,
-) -> dict[str, Any] | None:
-    """Build a BrowserConfig payload for stealth mode.
+# The Chrome major must match the Chromium bundled in the crawl4ai image
+# (153 in 0.9.4); deploy/tests/crawl4ai-cookie-contract.sh fails when they
+# drift. Left to itself crawl4ai sends a hardcoded "Chrome/116" from that
+# Chromium 153 engine, and its ``user_agent_mode="random"`` pool is just as
+# stale. Measured 2026-09-26: a help centre answered every Chrome major below
+# 140 with HTTP 401 (140 and up: 200), and a Cloudflare-fronted site blocked
+# the stale string more often than a current one.
+_BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36"
+)
 
-    ``stealth=True`` turns on crawl4ai's own ``enable_stealth`` and a
-    randomised user agent. Both are shipped crawl4ai features and both pass
-    its untrusted-config boundary (``magic``, ``simulate_user`` and
+
+def _build_browser_config(*, stealth: bool = False) -> dict[str, Any]:
+    """Build the BrowserConfig payload every crawl4ai request carries.
+
+    ``stealth=True`` adds crawl4ai's own ``enable_stealth``, which passes its
+    untrusted-config boundary (``magic``, ``simulate_user`` and
     ``override_navigator`` do NOT — the server rejects those with HTTP 400).
-    Reserved for the escalation path in ``crawl_site``: it is not the default
-    because a randomised UA can change what a site serves, and every crawl
-    that works today does so without it.
+    Stealth is earned by an observed block in ``crawl_site``, not the default.
 
-    ``cookies`` is accepted but no longer placed on ``BrowserConfig`` here —
-    see ``_build_cookie_hooks``. crawl4ai >= 0.9's untrusted-config boundary
-    (CVE-2026-57572 hardening) added ``cookies``/``storage_state`` to
-    ``BrowserConfig``'s forbidden-field list for every network request, the
-    same wall #873 hit for ``js_code`` (see that commit). Verified live
-    against our own crawl4ai server 2026-09-10: a ``cookies`` key in
-    ``browser_config.params`` now gets HTTP 400 "field 'cookies' is not
-    permitted on BrowserConfig from an untrusted request" — this used to
-    work on crawl4ai 0.8.x and silently stopped once we moved to 0.9.x.
-
-    Returns ``None`` when stealth is off, so callers can do:
-
-        bc = _build_browser_config_with_cookies(cookies)
-        if bc:
-            payload["browser_config"] = bc
+    Cookies never go on ``BrowserConfig``: crawl4ai >= 0.9's untrusted-config
+    boundary (CVE-2026-57572 hardening) answers a ``cookies`` key there with
+    HTTP 400 (verified 2026-09-10). They travel via ``_build_cookie_hooks``.
     """
-    del cookies  # kept in the signature so callers don't need two branches
-    params: dict[str, Any] = {}
+    params: dict[str, Any] = {"user_agent": _BROWSER_USER_AGENT}
     if stealth:
         params["enable_stealth"] = True
-        params["user_agent_mode"] = "random"
-    if not params:
-        return None
-    return {
-        "type": "BrowserConfig",
-        "params": params,
-    }
+    return {"type": "BrowserConfig", "params": params}
 
 
 def _build_cookie_hooks(cookies: list[dict[str, Any]] | None) -> dict[str, Any] | None:
@@ -1014,7 +1001,7 @@ def _build_cookie_hooks(cookies: list[dict[str, Any]] | None) -> dict[str, Any] 
 
     crawl4ai's server-side "untrusted-config boundary" (introduced fixing
     CVE-2026-57572) forbids raw ``BrowserConfig.cookies``/``storage_state``
-    on every network request — see ``_build_browser_config_with_cookies``.
+    on every network request — see ``_build_browser_config``.
     The safe, currently-supported replacement is a declarative hook: a
     fixed, server-validated action (``add_cookies``) instead of an arbitrary
     config field. It runs at ``on_page_context_created``, i.e. before
@@ -1124,10 +1111,8 @@ async def _crawl_page_with_config(
     payload: dict[str, Any] = {
         "urls": [url],
         "crawler_config": {"type": "CrawlerRunConfig", "params": crawler_config},
+        "browser_config": _build_browser_config(stealth=stealth),
     }
-    bc = _build_browser_config_with_cookies(cookies, stealth=stealth)
-    if bc:
-        payload["browser_config"] = bc
     hooks = _build_cookie_hooks(cookies)
     if hooks:
         payload["hooks"] = hooks
@@ -1848,6 +1833,10 @@ async def _crawl_site_in_host_scope(
     consecutive_rate_limit_slowdowns = int(
         restored.get("consecutive_rate_limit_slowdowns", 0) if restored else 0
     )
+    # Earned once per crawl by the first blocked or failed batch, then kept:
+    # starting every batch plain again would hand the site a fresh block to
+    # count against us each time.
+    stealth = bool(restored.get("stealth", False)) if restored else False
     checkpointed_results = len(crawl_results)
     checkpointed_outcomes = len(outcomes)
 
@@ -1870,6 +1859,7 @@ async def _crawl_site_in_host_scope(
                 "sequential_recovery_time_remaining": sequential_recovery_time_remaining,
                 "current_rate_limit": current_rate_limit,
                 "consecutive_rate_limit_slowdowns": consecutive_rate_limit_slowdowns,
+                "stealth": stealth,
             }
         )
         checkpointed_results = len(crawl_results)
@@ -1919,6 +1909,7 @@ async def _crawl_site_in_host_scope(
             urls=batch,
             crawler_config=crawler_config,
             cookies=cookies,
+            stealth=stealth,
             rate_limit=current_rate_limit,
             cancel_check=cancel_check,
         )
@@ -1941,17 +1932,34 @@ async def _crawl_site_in_host_scope(
         # a real per-URL result in fetch.raw_results (or was intentionally
         # skipped above) and must not be re-fetched or reclassified.
         retry_urls = [u for u, exc in fetch.failed.items() if _is_recoverable_bulk_failure(exc)]
-        if retry_urls and not fetch.cancelled:
-            # Escalation step 1: retry ONLY the still-failing subset with
-            # crawl4ai's stealth mode + a randomised UA. Measured on
-            # intermedia.com 2026-08-15: the plain bulk request 500s
-            # wholesale, the identical batch with stealth returns 200 with
-            # 5 of 6 pages — seconds, not the ~20 minutes the sequential
-            # path costs. Stealth is not the default because a randomised
-            # UA can change what a site serves, and every crawl that works
-            # today works without it; earning it via a failure keeps
-            # healthy sites untouched.
-            logger.info("crawl_bulk_5xx_stealth_retry", urls=len(retry_urls))
+        if not stealth and not fetch.cancelled:
+            # crawl4ai >= 0.9 reports an anti-bot block as a per-page 429 or
+            # challenge result inside an HTTP 200, not as the wholesale 5xx
+            # the escalation below was built on (crawl4ai 0.8.9), so a
+            # blocked page earns stealth too. The URLs its stop left unsent
+            # go along, so the slow-down ladder below judges the stealth
+            # answer instead of the plain one.
+            blocked_urls = [
+                page["url"]
+                for page in fetch.raw_results
+                if page.get("url")
+                and _classify_fetch_outcome(page) in _STEALTH_EARNING_REASON_CODES
+            ]
+            if blocked_urls:
+                retry_urls += blocked_urls + not_attempted_urls
+                not_attempted_urls = []
+                stop_trigger_reason_code = None
+        if retry_urls and not stealth and not fetch.cancelled:
+            # Escalation step 1: retry ONLY the blocked or still-failing
+            # subset with crawl4ai's stealth mode. Measured on intermedia.com
+            # 2026-08-15: the plain bulk request 500s wholesale, the identical
+            # batch with stealth returns 200 with 5 of 6 pages — seconds, not
+            # the ~20 minutes the sequential path costs. Measured again
+            # 2026-09-26 on the per-page shape: of the same seven URLs, 4 came
+            # back plain and 6 with stealth.
+            # Earning it via a failure keeps healthy sites on the plain path.
+            stealth = True
+            logger.info("crawl_stealth_escalation", urls=len(retry_urls))
             stealth_fetch = await _chunked_bulk_fetch(
                 urls=retry_urls,
                 crawler_config=crawler_config,
@@ -2229,10 +2237,8 @@ async def _fetch_seed_page(
     payload: dict[str, Any] = {
         "urls": [start_url],
         "crawler_config": {"type": "CrawlerRunConfig", "params": crawler_config},
+        "browser_config": _build_browser_config(),
     }
-    bc = _build_browser_config_with_cookies(cookies)
-    if bc:
-        payload["browser_config"] = bc
     hooks = _build_cookie_hooks(cookies)
     if hooks:
         payload["hooks"] = hooks
@@ -3084,6 +3090,15 @@ def _lower_rate_limit_for_slowdown(current_rate_limit: float | None) -> float:
 # (config.py) for the production evidence and the replacement crawl-wide
 # ratio+floor decision owned by ``host_circuit_breaker.evaluate_chunk``.
 _STOP_CHUNKING_REASON_CODES = frozenset({FetchReasonCode.RATE_LIMITED.value})
+# Per-page results that say "the site is blocking a bot", which is what
+# stealth addresses; see the escalation in ``_crawl_site_in_host_scope``.
+_STEALTH_EARNING_REASON_CODES = frozenset(
+    {
+        FetchReasonCode.RATE_LIMITED.value,
+        FetchReasonCode.BLOCKED_ANTI_BOT.value,
+        FetchReasonCode.REFUSED.value,
+    }
+)
 _NON_STOP_CHUNKING_REASON_CODES = frozenset(
     {
         FetchReasonCode.SUCCESS.value,
@@ -3279,10 +3294,8 @@ async def _chunked_bulk_fetch_with_session(
         payload: dict[str, Any] = {
             "urls": chunk_urls,
             "crawler_config": {"type": "CrawlerRunConfig", "params": crawler_config},
+            "browser_config": _build_browser_config(stealth=stealth),
         }
-        bc = _build_browser_config_with_cookies(cookies, stealth=stealth)
-        if bc:
-            payload["browser_config"] = bc
         hooks = _build_cookie_hooks(cookies)
         if hooks:
             payload["hooks"] = hooks
@@ -3588,6 +3601,7 @@ async def _crawl_dom_summary_in_host_scope(url: str) -> list[dict] | None:
     payload = {
         "urls": [url],
         "crawler_config": {"type": "CrawlerRunConfig", "params": config},
+        "browser_config": _build_browser_config(),
     }
 
     try:

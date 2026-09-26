@@ -2134,7 +2134,7 @@ async def test_recovery_breaker_still_fires_when_nothing_was_recovered(
 # Stealth escalation: one retry of the same batch before the slow path
 #
 # Measured on intermedia.com 2026-08-15: the plain bulk request 500s
-# wholesale, the identical batch with crawl4ai's enable_stealth + random UA
+# wholesale, the identical batch with crawl4ai's enable_stealth
 # returns 200 with 5 of 6 pages. Seconds instead of the ~20 minutes the
 # sequential path costs, so it is tried first — but only after a failure, so
 # sites that work today are untouched.
@@ -2194,10 +2194,8 @@ async def test_bulk_5xx_is_retried_with_stealth_before_the_sequential_path(
 
     bulk_payloads = [p for p in seen if len(p["urls"]) > 1]
     assert len(bulk_payloads) == 2, "one plain attempt, then exactly one stealth retry"
-    assert bulk_payloads[0].get("browser_config") is None
-    stealth_params = bulk_payloads[1]["browser_config"]["params"]
-    assert stealth_params["enable_stealth"] is True
-    assert stealth_params["user_agent_mode"] == "random"
+    assert "enable_stealth" not in bulk_payloads[0]["browser_config"]["params"]
+    assert bulk_payloads[1]["browser_config"]["params"]["enable_stealth"] is True
 
     # The stealth retry succeeded, so the slow per-URL path never ran.
     assert [p for p in seen if len(p["urls"]) == 1 and p["urls"][0] != "https://example.com"] == []
@@ -2208,6 +2206,88 @@ async def test_bulk_5xx_is_retried_with_stealth_before_the_sequential_path(
         "https://example.com/page-a",
         "https://example.com/page-b",
     }
+
+
+def _ok_page(url: str) -> dict[str, Any]:
+    return {
+        "url": url,
+        "success": True,
+        "status_code": 200,
+        "html": "<html><body>Real page content, plenty of words here.</body></html>",
+        "markdown": "Real page content, plenty of words here.",
+        "links": {"internal": []},
+        "media": {},
+    }
+
+
+def _blocked_page(url: str, *, status: int, reason: str) -> dict[str, Any]:
+    return {
+        "url": url,
+        "success": False,
+        "status_code": status,
+        "error_message": f"Blocked by anti-bot protection: {reason}",
+        "html": "",
+        "markdown": "",
+        "links": {"internal": []},
+        "media": {},
+    }
+
+
+@pytest.mark.asyncio
+async def test_per_page_anti_bot_block_earns_stealth_for_the_rest_of_the_crawl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """crawl4ai 0.9 answers an anti-bot block with HTTP 200 and a per-page
+    429 or challenge result, never with the wholesale 5xx the stealth
+    escalation used to wait for. A blocked page must still earn stealth:
+    the blocked and not-yet-sent URLs are retried with it, and every later
+    request of the crawl keeps it instead of starting plain again."""
+    urls = [f"https://example.com/page-{i}" for i in range(4)]
+
+    async def _fake_sitemap(_base: str) -> list[str]:
+        return urls
+
+    monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _fake_sitemap)
+    _patch_seed(monkeypatch, _seed("https://example.com"))
+
+    async def _no_sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(crawl4ai_client, "_slowdown_sleep", _no_sleep)
+
+    seen: list[dict[str, Any]] = []
+
+    async def _fake_crawl_sync(
+        _client: httpx.AsyncClient, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        seen.append(payload)
+        params = (payload.get("browser_config") or {}).get("params") or {}
+        stealth = params.get("enable_stealth") is True
+        results = []
+        for u in payload["urls"]:
+            if stealth:
+                results.append(_ok_page(u))
+            elif u.endswith("-0"):
+                results.append(_blocked_page(u, status=429, reason="HTTP 429 Too Many Requests"))
+            else:
+                results.append(_blocked_page(u, status=307, reason="Cloudflare JS challenge"))
+        return {"results": results}
+
+    monkeypatch.setattr(crawl4ai_client, "_crawl_sync", _fake_crawl_sync)
+
+    results, outcomes = await crawl4ai_client.crawl_site(
+        start_url="https://example.com", max_pages=10
+    )
+
+    by_url = {o["url"]: o["reason_code"] for o in outcomes}
+    assert {u: by_url[u] for u in urls} == {u: FetchReasonCode.SUCCESS.value for u in urls}
+    assert {r.url for r in results} >= set(urls)
+    stealth_flags = [
+        ((p.get("browser_config") or {}).get("params") or {}).get("enable_stealth") is True
+        for p in seen
+    ]
+    assert True in stealth_flags
+    assert all(stealth_flags[stealth_flags.index(True) :])
 
 
 class TestClassifyFetchOutcomeRateLimitedWrapper:
@@ -2723,28 +2803,45 @@ async def test_crawl_site_recovery_stops_mid_batch_once_time_budget_genuinely_sp
     assert by_url["https://example.com/page-c"]["reason_code"] == FetchReasonCode.HTTP_5XX.value
 
 
-def test_browser_config_never_carries_cookies() -> None:
-    """Regression: crawl4ai >= 0.9 rejects a ``cookies`` key inside
-    ``browser_config.params`` with HTTP 400 ("not permitted on BrowserConfig
-    from an untrusted request") - its CVE-2026-57572 untrusted-config
-    boundary. ``_build_browser_config_with_cookies`` must never place cookies
-    there again; verified live against our own crawl4ai server 2026-09-10.
-    Stealth must still work and must not resurrect a ``cookies`` key.
+@pytest.mark.asyncio
+async def test_crawl_requests_claim_a_current_chrome_not_crawl4ais_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without a user agent of our own, crawl4ai sends its built-in
+    "Chrome/116" string from a Chromium 153 engine. Measured 2026-09-26: a
+    help centre answered that string (and every Chrome major below 140) with
+    HTTP 401, and crawl4ai's random UA pool for stealth draws from the same
+    stale range. Every request, plain or stealth, must claim the current
+    Chrome. Cookies must still never ride on BrowserConfig: crawl4ai >= 0.9
+    rejects that field with HTTP 400 (verified 2026-09-10).
     """
+    seen: list[dict[str, Any]] = []
+
+    async def _fake_crawl_sync(
+        _client: httpx.AsyncClient, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        seen.append(payload)
+        return {"results": [_ok_page(payload["urls"][0])]}
+
+    monkeypatch.setattr(crawl4ai_client, "_crawl_sync", _fake_crawl_sync)
     cookies = [{"name": "session", "value": "abc", "domain": "example.com", "path": "/"}]
 
-    plain = crawl4ai_client._build_browser_config_with_cookies(cookies)
-    assert plain is None
+    await crawl4ai_client._fetch_seed_page(
+        start_url="https://example.com", crawler_config={}, cookies=cookies
+    )
+    await crawl4ai_client._chunked_bulk_fetch(
+        urls=["https://example.com/a"], crawler_config={}, cookies=cookies, stealth=True
+    )
 
-    stealth = crawl4ai_client._build_browser_config_with_cookies(cookies, stealth=True)
-    assert stealth is not None
-    assert "cookies" not in stealth["params"]
-    assert stealth["params"]["enable_stealth"] is True
-
-    assert crawl4ai_client._build_browser_config_with_cookies(None) is None
-    stealth_only = crawl4ai_client._build_browser_config_with_cookies(None, stealth=True)
-    assert stealth_only is not None
-    assert "cookies" not in stealth_only["params"]
+    plain, stealth = (p["browser_config"]["params"] for p in seen)
+    for params in (plain, stealth):
+        assert "cookies" not in params
+        assert "user_agent_mode" not in params
+        chrome_major = int(params["user_agent"].split("Chrome/")[1].split(".")[0])
+        assert chrome_major >= 140
+    assert plain["user_agent"] == stealth["user_agent"]
+    assert "enable_stealth" not in plain
+    assert stealth["enable_stealth"] is True
 
 
 def test_cookie_hooks_use_declarative_add_cookies_action() -> None:

@@ -7,7 +7,7 @@
 # missing: the previous test asserted the SHAPE of the dict we build, which
 # stayed green for four weeks while crawl4ai silently dropped it.
 #
-# Three contracts, because fixing the first exposed the others:
+# Four contracts, because fixing the first exposed the others:
 #
 #   DELIVERY  -- the request field is `hooks`; we sent `hooks_config`, which
 #     is not on crawl4ai's request model, and pydantic discards an unknown
@@ -29,6 +29,9 @@
 #     field WITHOUT a word (measured on 0.9.3), so a rename upstream would
 #     restore the 30s-per-page tax with no signal at all. Same trap as the
 #     field name above; pinned here rather than trusted.
+#
+#   USER-AGENT -- the Chrome major knowledge_ingest claims must be the one
+#     this image runs; see the section below.
 #
 # Accepting the request is not applying the cookies, and applying them to the
 # right request is not the same as applying them to only that one.
@@ -109,6 +112,46 @@ if default <= 2000:
           file=sys.stderr)
 print(f"OK: body_visibility_timeout is read (2000, default {default}).")
 PY
+
+# USER-AGENT. knowledge_ingest sends its own user agent because crawl4ai's
+# default claims Chrome/116 from a far newer engine, and sites block the stale
+# string (a help centre answered every major below 140 with 401, 2026-09-26).
+# The claimed major must be the one this image runs, or a bump quietly
+# reopens that gap.
+CLAIMED=$(grep -o '"(KHTML, like Gecko) Chrome/[0-9]*' \
+    "$ROOT/klai-knowledge-ingest/knowledge_ingest/crawl4ai_client.py" | sed 's/.*Chrome\///')
+[ -n "$CLAIMED" ] || { echo "no _BROWSER_USER_AGENT found in crawl4ai_client.py" >&2; exit 1; }
+docker exec -i -e CLAIMED="$CLAIMED" ${P}-srv python - <<'PY'
+import os
+import sys
+
+from crawl4ai.async_configs import BrowserConfig, Provenance
+from playwright.sync_api import sync_playwright
+
+claimed = os.environ["CLAIMED"]
+UA = f"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{claimed}.0.0.0 Safari/537.36"
+with sync_playwright() as p:
+    browser = p.chromium.launch()
+    engine = browser.version.split(".")[0]
+    browser.close()
+if claimed != engine:
+    print(f"CONTRACT BROKEN - knowledge_ingest claims Chrome/{claimed} while the image "
+          f"runs Chromium {engine}. Set the image's major in _BROWSER_USER_AGENT in "
+          "knowledge_ingest/crawl4ai_client.py; a stale major is what sites block.",
+          file=sys.stderr)
+    raise SystemExit(1)
+cfg = BrowserConfig.load(
+    {"type": "BrowserConfig", "params": {"user_agent": UA, "enable_stealth": True}},
+    provenance=Provenance.UNTRUSTED,
+)
+if cfg.user_agent != UA or cfg.enable_stealth is not True:
+    print(f"CONTRACT BROKEN - BrowserConfig made user_agent={cfg.user_agent!r} "
+          f"enable_stealth={cfg.enable_stealth!r} of what we send.", file=sys.stderr)
+    raise SystemExit(1)
+print(f"OK: we claim Chrome/{claimed}, the image runs Chromium {engine}, "
+      "and user_agent and enable_stealth are read.")
+PY
+
 docker exec -i -e TOKEN="$TOKEN" ${P}-srv python - <<'PY'
 import json, os, sys
 import httpx
