@@ -3,7 +3,7 @@
 # `../klai-libs/identity-assert` resolves WITHIN the container too. Same
 # pattern as klai-knowledge-mcp (Phase B) and klai-knowledge-ingest.
 
-FROM python:3.12-slim
+FROM python:3.13-slim
 
 # Apply security patches to base image OS packages (Trivy blocks the deploy
 # on unfixed CVEs shipped by python:3.12-slim, e.g. CVE-2026-53615)
