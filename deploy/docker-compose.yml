@@ -265,7 +265,7 @@ services:
   # ─── listmonk PostgreSQL (mailing.getklai.com) ───────────────────────────
   listmonk-db:
     logging: *log-rotation
-    image: postgres:17.11-alpine
+    image: postgres:18.6-alpine
     restart: unless-stopped
     volumes:
       - listmonk-postgres-data:/var/lib/postgresql/data
@@ -2377,7 +2377,7 @@ services:
 
   firecrawl-rabbitmq:
     logging: *log-rotation
-    image: rabbitmq:3.13.7-alpine
+    image: rabbitmq:4.3.6-alpine
     restart: unless-stopped
     networks:
       - klai-net
@@ -2503,7 +2503,7 @@ services:
   # no volume.
   crm-postgres:
     logging: *log-rotation
-    image: postgres:16.15-alpine
+    image: postgres:18.6-alpine
     restart: unless-stopped
     volumes:
       - crm-postgres-data:/var/lib/postgresql/data
@@ -2525,7 +2525,7 @@ services:
 
   crm-redis:
     logging: *log-rotation
-    image: redis:7.4.8-alpine
+    image: redis:8.10.2-alpine
     restart: unless-stopped
     command: ["redis-server", "--maxmemory-policy", "noeviction", "--save", "", "--appendonly", "no"]
     networks:
@@ -2548,7 +2548,7 @@ services:
   # schema that the restored dump would collide with.
   umami-postgres:
     logging: *log-rotation
-    image: postgres:16.15-alpine
+    image: postgres:18.6-alpine
     restart: unless-stopped
     volumes:
       - umami-postgres-data:/var/lib/postgresql/data
@@ -2576,7 +2576,7 @@ services:
   # arrives by pg_dump from 12 and restore into 17, verified table by table.
   fider-postgres:
     logging: *log-rotation
-    image: postgres:17.11-alpine
+    image: postgres:18.6-alpine
     restart: unless-stopped
     volumes:
       - fider-postgres-data:/var/lib/postgresql/data
