@@ -6,6 +6,9 @@
 #                                            klai_knowledge_hook in the last 5m
 #   R2  litellm_provider_auth_failed   CRIT  ANY upstream provider auth failure
 #                                            emitted by LiteLLM in the last 5m
+#   R3  litellm_budget_exhausted       CRIT  ANY request refused because a
+#                                            Mistral deployment spent its daily
+#                                            max_budget (added 2026-09-26)
 #
 # Why an error-rate alert (not a count threshold):
 #   The 2026-04-28 -> 2026-05-05 outage went undetected for 7 days because
@@ -186,3 +189,79 @@ groups:
               3. Remember that `klai-primary`, `klai-fast`, `klai-large`, and
                  `klai-medium` all read `os.environ/MISTRAL_API_KEY`; fallback
                  between those aliases does not mitigate a bad Mistral key.
+
+      # -- R3: litellm_budget_exhausted -------------------------------------
+      - uid: obs-004-litellm-budget-exhausted
+        title: litellm_budget_exhausted
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: stats
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              # Raised by LiteLLM 1.96.2's RouterBudgetLimiting
+              # (router_strategy/budget_limiter.py) when every deployment
+              # left for a request has spent its max_budget.
+              expr: |
+                _time:5m service:litellm "No deployments available - crossed budget"
+                  | stats count() as n
+              queryType: stats
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        keepFiringFor: 30m
+        isPaused: false
+        labels:
+          severity: critical
+          spec: SPEC-SEC-IDENTITY-ASSERT-001
+          service_group: litellm
+        annotations:
+          summary: 'LiteLLM daily spend ceiling reached for a Mistral alias'
+          description: |
+            A klai-* Mistral deployment spent its daily max_budget
+            (deploy/litellm/config.yaml) and LiteLLM refused requests for it
+            in the last 5m. klai-primary and klai-fast fall back to klai-large;
+            klai-medium and klai-large answer an error until the 24h window resets or LiteLLM
+            restarts (spend is counted in process memory).
+
+            Triage:
+              1. VictoriaLogs (Grafana -> Explore):
+                   _time:1h service:litellm "crossed budget"
+                 The message names the model_name (alias) that ran out.
+              2. Find the caller that drove the spend: which service sends
+                 that alias, and whether its volume is expected (bulk ingest,
+                 an eval run, a routing change).
+              3. Normal traffic outgrew the budget: raise max_budget for that
+                 alias in config.yaml. Unexpected traffic: stop the caller;
+                 the ceiling is doing its job.

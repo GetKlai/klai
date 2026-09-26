@@ -14,8 +14,10 @@ LiteLLM 1.96.2's own unconditional "ORDER-BASED FALLBACKS" in router.py
 exception other than ContextWindowExceededError / ContentPolicyViolationError
 that survives the configured retries makes the router try the next-higher
 order automatically -- as eagerly for a persistent 429 as for a genuine 402.
-Closing that gap is this hook's only job; it does not duplicate rpm/tpm
-enforcement or retry policy.
+Closing that gap is this hook's main job; it does not duplicate rpm/tpm
+enforcement or retry policy. Its one other job is logging a daily spend
+ceiling (config.yaml max_budget) that a cross-model fallback absorbed, see
+log_success_fallback_event.
 
 Verified against the installed litellm==1.96.2 source
 (docker exec klai-core-litellm-1, read-only) and, for anything timing- or
@@ -112,6 +114,7 @@ ever isn't.
 
 from __future__ import annotations
 
+import logging
 import time
 
 from litellm.integrations.custom_logger import CustomLogger
@@ -119,6 +122,8 @@ from litellm.integrations.custom_logger import CustomLogger
 # A 402 marks the failing organisation FULL for this long before the next
 # request is allowed to probe it again. See module docstring for why 5 minutes.
 BENCH_SECONDS = 300
+
+logger = logging.getLogger(__name__)
 
 
 class KlaiMistralPoolHook(CustomLogger):
@@ -197,6 +202,15 @@ class KlaiMistralPoolHook(CustomLogger):
         if order is None:
             return
         self._mark_full(order)
+
+    async def log_success_fallback_event(self, original_model_group, kwargs, original_exception):
+        # LiteLLM 1.96.2 logs a spent deployment budget only at debug level
+        # (router_strategy/budget_limiter.py) unless the whole request fails,
+        # so klai-primary running out and klai-large serving it would go
+        # unseen. Its message text is kept so the litellm_budget_exhausted
+        # alert matches both this and an outright refusal.
+        if "crossed budget" in str(original_exception):
+            logger.error("klai_mistral_pool: %s served by fallback: %s", original_model_group, original_exception)
 
 
 klai_mistral_pool_hook = KlaiMistralPoolHook()
