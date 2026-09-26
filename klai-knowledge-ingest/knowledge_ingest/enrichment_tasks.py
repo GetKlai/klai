@@ -46,6 +46,7 @@ from knowledge_ingest.document_normalizer import normalize_document_for_chunking
 from knowledge_ingest.enrichment_policy import (
     GRAPHITI_EXTRACTION_VERSION,
     enrichment_skip_reason,
+    resumable_episode_ids,
 )
 from knowledge_ingest.episode_text import split_episode_text
 
@@ -72,22 +73,6 @@ def _graphiti_episode_failure_event(attempt: int, max_attempts: int) -> tuple[st
     """
     exhausted = attempt >= max_attempts
     return ("graphiti_episode_exhausted" if exhausted else "graphiti_episode_partial", exhausted)
-
-
-def _resumable_episode_ids(extra: dict) -> list[str]:
-    """Return the parts an unfinished run of the current extraction already wrote.
-
-    A retry or a zombie-recovered job re-reads the row and would otherwise
-    start at part 1 again, paying for every finished part twice and appending
-    duplicate episodes. ``graphiti_episode_ids_version`` is written before the
-    first part is extracted, so the ids only count when it matches: ids from an
-    older extraction version are exactly what a replacement run must delete.
-    """
-    if extra.get("graphiti_episode_complete") is not False:
-        return []
-    if extra.get("graphiti_episode_ids_version") != GRAPHITI_EXTRACTION_VERSION:
-        return []
-    return list(extra.get("graphiti_episode_ids") or [])
 
 
 _procrastinate_app: Any = None
@@ -479,7 +464,7 @@ def _register_tasks(procrastinate_app: Any) -> None:
                 return
             from knowledge_ingest import graph as graph_module
 
-            done_ids = _resumable_episode_ids(artifact["extra"])
+            done_ids = resumable_episode_ids(artifact["extra"])
             if replace_stale:
                 # Delete at execution time so old episodes stay readable while
                 # the bulk queue drains. A resumed run keeps the parts an
@@ -583,16 +568,15 @@ def _register_tasks(procrastinate_app: Any) -> None:
                         attempt, _GRAPHITI_MAX_ATTEMPTS
                     )
                     if exhausted:
-                        # Terminal marker: the stale-version refresh gate in
-                        # graph_refresh.py reads only this key, so an unchanged
-                        # re-sync no longer starts a fresh ~24h retry cycle.
-                        # complete stays False, so the partial graph is still
-                        # visible; a content change is a new artifact and
-                        # extracts again.
+                        # graph_refresh.py holds an unchanged re-sync back for
+                        # a cool-off from this moment instead of starting a
+                        # new ~24h retry cycle right away. The version stays
+                        # stale, so the document is retried after the cool-off
+                        # and resumes after the parts stored so far.
                         await pg_store.update_artifact_extra(
                             conn,
                             artifact_id,
-                            {"graphiti_extraction_version": GRAPHITI_EXTRACTION_VERSION},
+                            {"graphiti_exhausted_at": int(time.time())},
                         )
                     (logger.error if exhausted else logger.warning)(
                         event,

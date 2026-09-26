@@ -226,6 +226,8 @@ async def chunks_summary(
 class ReindexResponse(BaseModel):
     artifact_id: str
     index_status: str
+    # Outcome of maybe_refresh_stale_graph; None when the graph is current.
+    graph_refresh: str | None = None
 
 
 class RenameUploadRequest(BaseModel):
@@ -254,6 +256,7 @@ async def reindex_upload(
     Returns 202 Accepted when the enrichment job has been enqueued.
     """
     verified_org_id = await assert_caller_identity_tenant_only(request, claimed_org_id=org_id)
+    graph_refresh: str | None = None
     async with tenant_scoped_connection(verified_org_id) as conn:
         updated = await pg_store.set_artifact_index_status(
             conn, artifact_id, verified_org_id, "pending"
@@ -271,7 +274,7 @@ async def reindex_upload(
                     reason="no document_text",
                 )
             else:
-                await maybe_refresh_stale_graph(
+                graph_refresh = await maybe_refresh_stale_graph(
                     conn,
                     artifact_id=artifact_id,
                     extra=extra,
@@ -281,6 +284,7 @@ async def reindex_upload(
                     content_type=artifact["content_type"],
                     belief_time_start=artifact["belief_time_start"],
                     indexable_content=document_text,
+                    user_requested=True,
                 )
     if updated is None:
         raise HTTPException(status_code=404, detail="artifact not found")
@@ -301,15 +305,21 @@ async def reindex_upload(
             "reindex_already_enqueued",
             artifact_id=artifact_id,
             org_id=verified_org_id,
+            graph_refresh=graph_refresh,
         )
-        return ReindexResponse(artifact_id=artifact_id, index_status="pending")
+        return ReindexResponse(
+            artifact_id=artifact_id, index_status="pending", graph_refresh=graph_refresh
+        )
 
     logger.info(
         "reindex_enqueued",
         artifact_id=artifact_id,
         org_id=verified_org_id,
+        graph_refresh=graph_refresh,
     )
-    return ReindexResponse(artifact_id=artifact_id, index_status="pending")
+    return ReindexResponse(
+        artifact_id=artifact_id, index_status="pending", graph_refresh=graph_refresh
+    )
 
 
 @router.patch(
